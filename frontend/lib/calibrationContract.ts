@@ -136,11 +136,36 @@
 // the q269 reason: they describe how rows are plotted, not which qualify. No
 // cell changes identity — golf and entertainment move toward honest and stay on
 // the board rather than being relabelled under an old caption.
+// CAL-P1138 2026-09-13: "q271" added (#997, D112) — the recount's last method
+// item, the symmetric settlement channels. The rule this file states is that a
+// bump introducing an exclusion class the page has no field for must teach the
+// page FIRST. q271 introduces none, and that is a claim about direction rather
+// than a hope: EVERY previous bump in this list narrowed, and q271 is the first
+// that WIDENS. It admits the lone-claim pair (`all_losers` + `clean_resolution`
+// on a market with exactly one captured outcome, where no sibling's price can
+// be grading the row) and removes nothing, so there is no new exclusion, no new
+// count, and no bullet owed. The checks that could still have caught something:
+//
+//   * the exclusions list needs no entry — nothing is newly excluded, and the
+//     backend's `excluded_by_cell` gains no key;
+//   * no label goes stale — every caption here describes HOW rows are plotted,
+//     not which qualify, and no cell changes identity. A cell can newly clear
+//     the publish bar on the added rows, which this page renders generically;
+//   * the one payload block whose meaning does move — `truth_evidence`, whose
+//     `rule` string now names the lone-claim exception — is not rendered on
+//     this page at all (verified, not assumed: no reference to `truth_evidence`
+//     or `price_derived_excluded` exists in `page.tsx` or `lib/api.ts`), so it
+//     reaches no reader and owes no copy.
+//
+// Kept ADDITIVE for the reason above: the list accepts the old payload and the
+// new one, so neither deploy order can open a window where the page reads a
+// live payload as incompatible and blanks itself.
 export const COMPATIBLE_POPULATION_VERSIONS: readonly string[] = [
   "q267",
   "q268",
   "q269",
   "q270",
+  "q271",
   "q1530",
 ];
 

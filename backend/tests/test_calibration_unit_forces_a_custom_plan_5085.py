@@ -99,7 +99,17 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: ``CALIBRATION_POPULATION_VERSION`` is itself a hashed input — so an UNMOVED
 #: fingerprint would have been the bug. The rebuild is the one the version bump
 #: already pays for; nothing extra is spent by these two riding along.
-LIVE_INPUT_FINGERPRINT = "6ae473752d0fb502ac0932825eb8e1bc"
+#:
+#: RE-ANCHORED AGAIN for CAL-P1138 (q271, D112 #997): ``6ae47375…`` -> ``66179356…``.
+#: Same reasoning, and the move is again the EXPECTED one rather than a
+#: surprise to be papered over — which is worth saying explicitly, because
+#: re-anchoring a pin is how a rig starts agreeing with whatever it is given.
+#: Two hashed inputs changed on purpose: ``_calibration_population_ctes`` now
+#: renders the lone-claim admission in ``ranked_outcomes``, and
+#: ``CALIBRATION_POPULATION_VERSION`` moved q270 -> q271. An UNMOVED fingerprint
+#: would have meant the widening never reached the population SQL. The bank is
+#: discarded either way by the version bump, so the re-key costs nothing extra.
+LIVE_INPUT_FINGERPRINT = "661793560ea5219af31abeb6d3bbf6ca"
 
 
 class _Db:

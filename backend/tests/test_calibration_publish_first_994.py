@@ -587,7 +587,13 @@ def orchestrator(monkeypatch):
         observations=[],
         summary=lambda: "ok",
     )
-    monkeypatch.setattr(gate, "evaluate_publish", lambda response, baseline: verdict)
+    # CAL-P1138: `**_` so this stub keeps standing in for the real signature.
+    # The gate gained a keyword-only `declaration_for_baseline` resolver; a
+    # stub pinned to the old arity turns a signature change into a TypeError
+    # in six tests that are about session counts, not about declarations.
+    monkeypatch.setattr(
+        gate, "evaluate_publish", lambda response, baseline, **_: verdict
+    )
     monkeypatch.setattr(gate, "gate_ledger_record", lambda v: {})
     monkeypatch.setattr(gate, "_parse_generated_at", lambda s: None)
     monkeypatch.setattr(
@@ -861,7 +867,13 @@ def _refuse_the_gate(monkeypatch, *, codes=("population_shrink",)):
         observations=[],
         summary=lambda: "population fell 24.7% against a 5% limit",
     )
-    monkeypatch.setattr(gate, "evaluate_publish", lambda response, baseline: verdict)
+    # CAL-P1138: `**_` so this stub keeps standing in for the real signature.
+    # The gate gained a keyword-only `declaration_for_baseline` resolver; a
+    # stub pinned to the old arity turns a signature change into a TypeError
+    # in six tests that are about session counts, not about declarations.
+    monkeypatch.setattr(
+        gate, "evaluate_publish", lambda response, baseline, **_: verdict
+    )
     monkeypatch.setattr(
         pc, "_file_publish_gate_rejection", lambda v: {"action": "commented"}
     )

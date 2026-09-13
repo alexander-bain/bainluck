@@ -1,10 +1,16 @@
 import inspect
 import json
+import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.utils.resolution_authority import (
+    LONE_CLAIM_N_OUTCOMES,
+    LONE_CLAIM_TRUTH_ELIGIBLE_SOURCES,
+    LONE_CLAIM_TRUTH_ELIGIBLE_SOURCES_SQL,
+)
 from scripts.evals import cohort_sweep
 from scripts.evals.cohort_sweep import (
     load_from_session,
@@ -124,7 +130,27 @@ async def test_composed_sql_is_the_full_published_population(monkeypatch):
     # /api/calibration because both compose the same _calibration_population_ctes.
     assert "resolution_source IN (" in sql and "'api_settlement'" in sql
     assert "'pass2_guess'" not in sql
-    assert "'clean_resolution'" not in sql and "'settlement_sync'" not in sql
+    assert "'settlement_sync'" not in sql
+    # D112 / q271: the lone-claim pair (``all_losers`` + ``clean_resolution``) is
+    # no longer excluded by omission — it is ADMITTED, so the sweep keeps loading
+    # exactly what /api/calibration publishes. It is admitted only inside the
+    # shape-confined unit ``calibration_truth_eligible_sql`` renders, so what this
+    # test guards is the CONFINEMENT, not the absence: every occurrence of either
+    # name must sit behind its ``= 1`` outcome-count term. An edit that names the
+    # pair in a bare WHERE, or drops the shape half, leaves a name unaccounted for
+    # and fails here. (The alias is left unpinned — the confinement is the
+    # invariant, not which CTE supplies the count.)
+    lone_claim_unit = re.compile(
+        r"\(COALESCE\([\w.]+, 0\) = "
+        + str(LONE_CLAIM_N_OUTCOMES)
+        + r" AND fo\.resolution_source IN "
+        + re.escape(LONE_CLAIM_TRUTH_ELIGIBLE_SOURCES_SQL)
+        + r"\)"
+    )
+    confined = lone_claim_unit.findall(sql)
+    assert len(confined) == 1
+    for lone_source in LONE_CLAIM_TRUTH_ELIGIBLE_SOURCES:
+        assert sql.count(f"'{lone_source}'") == len(confined)
     # Every published exclusion (resolved from the shared predicate constants).
     assert "futures_odds_snapshots" in sql  # liquidity / poly-placeholder
     assert "is_kalshi_prop_threshold" in sql

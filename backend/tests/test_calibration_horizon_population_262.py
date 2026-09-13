@@ -73,17 +73,70 @@ class TestHorizonSQLReusesCanonicalPopulation:
 
     def test_uses_truth_allowlist_not_legacy_denylist(self):
         sql = self._sql()
-        # The legacy NOT-IN denylist tokens must be gone from every horizon.
-        for token in ("pass2_guess", "pass2_loser", "all_losers", "no_pregame_trading"):
-            assert token not in sql, f"legacy denylist token leaked into horizon SQL: {token}"
-        # The independent-truth allowlist (rendered as an IN-list) is present; a
-        # price-derived source (settlement_sync) and clean_resolution are NOT in
-        # it (they only appear, unquoted, in the explanatory comment). Check the
-        # SQL-literal (quoted) form so the comment mention doesn't false-positive.
-        assert "resolution_source IN (" in sql
-        assert "'api_settlement'" in sql
-        assert "'settlement_sync'" not in sql
-        assert "'clean_resolution'" not in sql
+        # CAL-P1138 (D112, #997): `all_losers` and `clean_resolution` are no
+        # longer absent from this SQL — the lone-claim arm admits that pair at
+        # exactly one captured outcome. So the property under test has to be
+        # stated as what it always MEANT rather than as the absence it used to
+        # be able to assume: no legacy NOT-IN denylist, and no unconfined
+        # admission of a price-derived source.
+        #
+        # Comments are stripped first. Both halves of D112 are heavily commented
+        # and every token below appears in that prose; asserting over the raw
+        # string would make this test pass or fail on wording.
+        executable = "\n".join(
+            line.split("--")[0] for line in sql.split("\n")
+        )
+
+        # 1. No denylist, in any form. These tokens were the old NOT-IN list and
+        #    none of them is in the D112 pair, so their absence is unchanged.
+        for token in ("pass2_guess", "pass2_loser", "no_pregame_trading"):
+            assert token not in executable, (
+                f"legacy denylist token leaked into horizon SQL: {token}"
+            )
+
+        # 2. The allowlist is still the mechanism.
+        assert "resolution_source IN (" in executable
+        assert "'api_settlement'" in executable
+
+        # 3. `settlement_sync` stays out ENTIRELY — it is tier-3 and overwrites
+        #    the very channels that would balance the lone-claim pair, so it is
+        #    excluded from that pair on purpose (see LONE_CLAIM_TRUTH_ELIGIBLE_
+        #    SOURCES). This is the assertion that keeps D112 from reading as a
+        #    general relaxation of price-derived truth.
+        assert "'settlement_sync'" not in executable
+
+        # 4. The pair may appear ONLY inside the shape-confined admission, never
+        #    as a bare member of the allowlist. Checked structurally: every
+        #    occurrence of the pair literal must sit in the rendered lone-claim
+        #    fragment, and that fragment must be guarded by the shape test.
+        from app.utils.resolution_authority import (
+            LONE_CLAIM_TRUTH_ELIGIBLE_SOURCES_SQL,
+        )
+
+        pair = LONE_CLAIM_TRUTH_ELIGIBLE_SOURCES_SQL
+        # NON-VACUITY FIRST. The count-equality below is satisfied by 0 == 0, so
+        # on a tree where D112 was reverted or the horizon stopped reusing the
+        # canonical chain this test would go quietly green while asserting
+        # nothing. The horizon inherits exactly one admission (ranked_outcomes).
+        assert executable.count(pair) == 1, (
+            "the horizon SQL carries no lone-claim admission — either D112 is "
+            "not wired or the horizon no longer reuses the canonical population"
+        )
+        assert executable.count("'clean_resolution'") == executable.count(pair), (
+            "clean_resolution appears outside the lone-claim admission — a "
+            "price-derived source has been admitted without the shape that "
+            "makes it independent"
+        )
+        assert executable.count("'all_losers'") == executable.count(pair)
+        for occurrence in range(executable.count(pair)):
+            idx = -1
+            for _ in range(occurrence + 1):
+                idx = executable.index(pair, idx + 1)
+            preceding = executable[max(0, idx - 200):idx]
+            assert "= 1" in preceding and "COALESCE(" in preceding, (
+                "the lone-claim pair is rendered without its NULL-safe `= 1` "
+                "shape guard in front of it"
+            )
 
     def test_carries_every_artifact_exclusion_flag(self):
         sql = self._sql()

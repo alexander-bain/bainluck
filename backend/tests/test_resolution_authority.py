@@ -20,6 +20,8 @@ from app.utils.resolution_authority import (
     DETERMINISTIC_SOURCES,
     GUESS_FAMILY_SOURCES,
     KNOWN_SOURCES,
+    LONE_CLAIM_N_OUTCOMES,
+    LONE_CLAIM_TRUTH_ELIGIBLE_SOURCES,
     OVERWRITABLE_WINNER_SOURCES,
     OVERWRITABLE_WINNER_SOURCES_SQL,
     PRICE_DERIVED_SOURCES,
@@ -28,6 +30,7 @@ from app.utils.resolution_authority import (
     TERMINAL_SOURCES,
     authority_tier,
     calibration_truth_class,
+    calibration_truth_eligible_sql,
     can_write_winner,
     is_authoritative,
     is_calibration_truth_eligible,
@@ -331,3 +334,158 @@ class TestCalibrationTruthEligibility:
         assert "'settlement_sync'" not in CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL
         assert "'clean_resolution'" not in CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL
         assert "'pass2_guess'" not in CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL
+
+
+class TestLoneClaimSymmetryGate:
+    """D112: truth-eligibility is source × MARKET SHAPE.
+
+    A lone-claim market (exactly one outcome) has no sibling whose price could be
+    grading it, so its two price-derived channels ARE the venue's answer — but
+    they are admitted as a PAIR or not at all. ``all_losers`` can only stamp a
+    loss and ``clean_resolution`` is what stamps the matching win, so admitting
+    the loser-only channel alone censors the sample rather than widening it:
+    measured 617/2,097 = 29.4% against a ~50% forecast, versus 1,566/3,046 =
+    51.4% with both.
+    """
+
+    def test_the_pair_is_exactly_the_two_price_derived_lone_claim_channels(self):
+        # THE SYMMETRY GATE. Removing either member re-creates the 29.4% censored
+        # sample (drop clean_resolution) or admits wins with no matching losses
+        # (drop all_losers). Both directions must fail here, so the set is pinned
+        # by equality, not by membership.
+        assert LONE_CLAIM_TRUTH_ELIGIBLE_SOURCES == {"all_losers", "clean_resolution"}
+
+    def test_the_pair_is_loser_bearing_and_winner_bearing(self):
+        # Why equality above is the right assertion and not mere pedantry: the
+        # pair spans BOTH grade directions. all_losers is structurally
+        # loss-only; clean_resolution is the channel that can crown. A future
+        # edit that swapped in a second loss-only source would keep the set at
+        # size 2 and still censor, so name the asymmetry explicitly.
+        assert "all_losers" in TERMINAL_SOURCES  # loss-only, by construction
+        assert "clean_resolution" in PRICE_DERIVED_SOURCES  # can stamp a winner
+        assert LONE_CLAIM_TRUTH_ELIGIBLE_SOURCES & PRICE_DERIVED_SOURCES
+        assert LONE_CLAIM_TRUTH_ELIGIBLE_SOURCES - PRICE_DERIVED_SOURCES
+
+    def test_lone_claim_admits_both_channels(self):
+        for s in ("all_losers", "clean_resolution"):
+            assert is_calibration_truth_eligible(s, n_outcomes=1) is True, s
+
+    def test_no_leak_into_multi_outcome(self):
+        # At >= 2 outcomes a sibling's price grades the row (C20/C21 leakage is
+        # real again) and rung 1's "all-loser market is UNKNOWN truth" applies.
+        for s in ("all_losers", "clean_resolution"):
+            for n in (2, 3, 12, 60):
+                assert is_calibration_truth_eligible(s, n_outcomes=n) is False, (s, n)
+
+    def test_absent_or_nonsense_shape_fails_closed(self):
+        # Shape is REQUIRED, not merely respected: the default keeps every
+        # existing shape-blind caller at its exact previous answer, and a zero /
+        # negative / None count is never read as "lone".
+        for s in ("all_losers", "clean_resolution"):
+            assert is_calibration_truth_eligible(s) is False, s
+            for n in (None, 0, -1):
+                assert is_calibration_truth_eligible(s, n_outcomes=n) is False, (s, n)
+
+    def test_shape_never_narrows_an_already_eligible_source(self):
+        # The shape half may only ADD. An independently-settled source stays
+        # eligible at every shape, including the lone-claim one.
+        for s in sorted(CALIBRATION_TRUTH_ELIGIBLE_SOURCES):
+            for n in (None, 1, 2, 9):
+                assert is_calibration_truth_eligible(s, n_outcomes=n) is True, (s, n)
+
+    def test_shape_does_not_rehabilitate_guesses_or_voids(self):
+        # "Nobody won != cancelled" licenses the lone-claim PAIR, nothing else.
+        # A guess is still a guess and a genuine void is still a void at n=1.
+        for s in sorted(GUESS_FAMILY_SOURCES) + [
+            "pass2_loser", "did_not_play", "withdrew", "no_pregame_trading",
+            "ungradeable_result",
+        ]:
+            assert is_calibration_truth_eligible(s, n_outcomes=1) is False, s
+        assert is_calibration_truth_eligible("brand_new_writer", n_outcomes=1) is False
+        assert is_calibration_truth_eligible(None, n_outcomes=1) is False
+
+    def test_settlement_sync_is_never_rehabilitated_by_shape(self):
+        # settlement_sync is price-derived like clean_resolution, but it is NOT
+        # in the lone-claim pair: it is tier-3 and overwrites the very channels
+        # that would balance it, so admitting it re-opens C20/C21 at n=1.
+        assert "settlement_sync" not in LONE_CLAIM_TRUTH_ELIGIBLE_SOURCES
+        assert is_calibration_truth_eligible("settlement_sync", n_outcomes=1) is False
+
+    def test_sql_renderer_mirrors_the_python_predicate(self):
+        shape_blind = calibration_truth_eligible_sql()
+        # Omitting the shape column reproduces the pre-D112 predicate EXACTLY, so
+        # a call site with no shape join in scope cannot silently widen.
+        assert shape_blind == (
+            f"fo.resolution_source IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}"
+        )
+        assert "'all_losers'" not in shape_blind
+        assert "'clean_resolution'" not in shape_blind
+
+        shaped = calibration_truth_eligible_sql(n_outcomes_col="mrs.n_outcomes")
+        # The shape test and the pair are emitted as ONE unit — a call site
+        # cannot take the pair without the "= 1" that confines it.
+        assert "COALESCE(mrs.n_outcomes, 0) = 1" in shaped
+        assert "'all_losers'" in shaped and "'clean_resolution'" in shaped
+        assert shaped.startswith("(") and shaped.endswith(")")
+        assert shaped.count("(") == shaped.count(")")
+        # Safe to drop straight after an AND: the OR is fully parenthesised, so
+        # it cannot swallow a sibling conjunct at the call site.
+        assert " OR (" in shaped
+
+    def test_the_shape_term_is_null_safe_so_the_predicate_can_be_negated(self):
+        """CAL-P1138. The bare ``n = 1`` form is a trap under ``NOT``.
+
+        The shape column reaches every call site through a LEFT JOIN, so it is
+        NULL for a market with no shape row. With a bare comparison the whole
+        predicate goes three-valued and ``NOT`` of it is NULL — which is not
+        TRUE, so the row silently stops matching its own negation. There is
+        exactly one negated call site (the coverage bridge's
+        ``truth_ineligible_source`` rung) and it is the one a widening sweep
+        skips, so the renderer carries the NULL-safety rather than trusting
+        each site to remember it.
+
+        Asserted on the RENDERED SQL rather than by describing it, and paired:
+        the guard is worthless if it does not also prove the unsafe form is
+        gone.
+        """
+        shaped = calibration_truth_eligible_sql(n_outcomes_col="mrs.n_outcomes")
+
+        assert "COALESCE(mrs.n_outcomes, 0)" in shaped
+        # The unguarded comparison must not survive anywhere in the rendered
+        # expression — including as the tail of the COALESCE form, which is why
+        # this looks for the column immediately followed by the comparison.
+        assert "mrs.n_outcomes = 1" not in shaped
+        assert "mrs.n_outcomes =1" not in shaped
+
+        # And the same must hold for any column name a call site passes.
+        negated = calibration_truth_eligible_sql(
+            source_col="cu.resolution_source", n_outcomes_col="mrs_cov.n_outcomes"
+        )
+        assert "COALESCE(mrs_cov.n_outcomes, 0) = 1" in negated
+        assert "mrs_cov.n_outcomes = 1" not in negated
+
+    def test_the_coalesce_leaves_positive_call_sites_answering_as_before(self):
+        """NULL-safety must not have widened anything.
+
+        ``COALESCE(n, 0)`` and a bare ``n`` differ only where ``n`` is NULL, and
+        there the two answers are FALSE and NULL — indistinguishable to a
+        ``WHERE``. The rule that matters is the one the docstring promises: an
+        ABSENT shape is not a lone claim, so a market with no shape row keeps
+        its pre-D112 answer and the shape can only ever widen. ``0`` is the
+        right sentinel precisely because no market can have zero outcomes and
+        still produce a row here.
+        """
+        assert 0 != LONE_CLAIM_N_OUTCOMES
+        # The Python mirror already fails closed on an absent shape; the SQL
+        # sentinel has to agree with it, or the two halves of one contract
+        # disagree about the same market.
+        assert is_calibration_truth_eligible("all_losers", n_outcomes=None) is False
+        assert is_calibration_truth_eligible("all_losers", n_outcomes=0) is False
+        assert is_calibration_truth_eligible("all_losers", n_outcomes=1) is True
+
+    def test_sql_renderer_honours_a_custom_source_column(self):
+        shaped = calibration_truth_eligible_sql(
+            source_col="cu.resolution_source", n_outcomes_col="cu.n_outcomes"
+        )
+        assert "fo.resolution_source" not in shaped
+        assert shaped.count("cu.resolution_source") == 2

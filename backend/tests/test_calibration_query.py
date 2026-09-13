@@ -152,11 +152,39 @@ async def test_calibration_payload_excludes_guessed_and_price_derived_resolution
     assert "fo.resolution_source IN ('api_settlement'" in futures_sql or (
         "resolution_source IN (" in futures_sql and "'api_settlement'" in futures_sql
     )
-    # Guess-family and price-derived sources must NOT appear in the population
-    # filter (they are excluded by omission from the allowlist).
+    # Guess-family sources must NOT appear in the population filter (they are
+    # excluded by omission from the allowlist).
     assert "'pass2_guess'" not in futures_sql
-    assert "'clean_resolution'" not in futures_sql
-    assert "'settlement_sync'" not in futures_sql
+
+    # CAL-P1138 (D112, #997): `clean_resolution` IS now in this SQL, and its
+    # absence can no longer be the test. A price-derived source still cannot
+    # grade its own forecast — what changed is the recognition that on a
+    # LONE-CLAIM market (exactly one captured outcome) there is no sibling whose
+    # price could be doing the grading, so the venue's own settlement is
+    # independent after all. The assertion becomes: it may appear only inside
+    # the shape-confined admission, never as a plain member of the allowlist.
+    from app.utils.resolution_authority import (
+        CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL,
+        LONE_CLAIM_TRUTH_ELIGIBLE_SOURCES_SQL,
+    )
+
+    # The base allowlist itself must still exclude it — this is the line that
+    # would catch someone "fixing" D112 by simply adding the source to the list,
+    # which would admit it at EVERY shape and re-open the leakage.
+    assert "'clean_resolution'" not in CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL
+    assert "'settlement_sync'" not in CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL
+
+    executable = "\n".join(line.split("--")[0] for line in futures_sql.split("\n"))
+    pair = LONE_CLAIM_TRUTH_ELIGIBLE_SOURCES_SQL
+    # Non-vacuity: the population scan carries exactly one admission. Without
+    # this, the equality below is satisfied by 0 == 0 on a reverted tree.
+    assert executable.count(pair) == 1
+    assert executable.count("'clean_resolution'") == 1
+
+    # `settlement_sync` is excluded outright, at every shape: it is tier-3 and
+    # overwrites the very channels that would balance the pair, so admitting it
+    # at n=1 would re-open the leakage the shape argument closes.
+    assert "'settlement_sync'" not in executable
 
 
 @pytest.mark.asyncio

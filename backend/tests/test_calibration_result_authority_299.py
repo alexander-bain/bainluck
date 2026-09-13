@@ -540,13 +540,33 @@ class TestPublishOrPark:
         predicate changes — the Kalshi writer bar (#5401) and the one-forecast-
         per-threshold-ladder collapse (#5305) — so it meets the same bar q269
         met, by the same argument, on different rows.
+
+        CAL-P1138 moves it to q271 (D112, #997), and this bump is the first in
+        the series that WIDENS: it admits the lone-claim settlement pair rather
+        than removing anything. The bar is unchanged and is still met — the
+        truth allowlist is part of the population predicate, so the methodology
+        really did move — but the direction is worth naming here, because the
+        argument for the EMPTY compatibility list is different than it was. For
+        q269 and q270 the outgoing artifact published prices the new method
+        calls wrong, so serving it would re-publish the error. A q270 artifact
+        holds no price q271 calls wrong; it is merely narrower. The list is
+        still empty because this file's entry bar is methodological IDENTITY
+        and q271 changes the truth allowlist, not because the old argument
+        still applies. That distinction is recorded at the constant and in
+        `docs/calibration-methodology-ledger.md` as an open question for Alex,
+        since what /calibration shows during a rollover is a reader-visible
+        call.
         """
-        assert pc.CALIBRATION_POPULATION_VERSION == "q270"
+        assert pc.CALIBRATION_POPULATION_VERSION == "q271"
         assert pc.COMPATIBLE_PREVIOUS_POPULATION_VERSIONS == ()
-        assert pc.POPULATION_VERSION_DARK_WINDOW_ACCEPTED == "q270"
+        assert pc.POPULATION_VERSION_DARK_WINDOW_ACCEPTED == "q271"
         assert pc.PREVIOUS_PUBLISHED_POPULATION_VERSION == "q269", (
             "q269 is the version the live artifact carries; if this moves, the "
-            "lit-path arm above is checking the wrong predecessor"
+            "lit-path arm above is checking the wrong predecessor. MEASURED "
+            "2026-09-13 04:57Z and still true at the time of writing: "
+            "/api/calibration returns 503 no_trustworthy_snapshot, because q270 "
+            "merged and went live on the web but `bainluck-heavy` has not taken "
+            "the sha, so the last PUBLISHED artifact is still q269."
         )
 
 

@@ -902,6 +902,7 @@ def evaluate_publish(
     published: Any,
     *,
     durable_probe: Optional[Callable[[], baseline_probe.BaselineProbe]] = None,
+    declaration_for_baseline: Optional[Callable[[Optional[str]], Any]] = None,
 ) -> PublishVerdict:
     """Decide whether ``candidate`` may replace ``published``.
 
@@ -1097,6 +1098,49 @@ def evaluate_publish(
         drift_pct = (cand_pop - prev_pop) / prev_pop * 100.0
         drop_pct = -drift_pct  # positive = shrink, matching the declaration
         raw_declaration = cand["version_declaration"]
+
+        # CAL-P1138: LATE-BOUND DECLARATIONS. A bump whose predecessor has not
+        # published yet cannot know at edit time which artifact it will replace,
+        # so it may ship an arm per baseline and let the transition pick one.
+        # The choice has to be made HERE, because this is the first point at
+        # which the baseline is resolved: `published` may have been empty and
+        # recovered from durable history above, and the caller cannot see that
+        # without running the same probe again — which costs a second database
+        # session on the publish-first path (#994 forbids exactly that) and
+        # could in principle answer differently from the probe that actually
+        # decided the comparison.
+        #
+        # The producer's pre-stamped value WINS when it exists: a caller that
+        # knows its own transition is never overridden by this, so every
+        # existing single-declaration build behaves exactly as before.
+        if raw_declaration is None and declaration_for_baseline is not None:
+            try:
+                raw_declaration = declaration_for_baseline(prev["population_version"])
+            except Exception as exc:  # noqa: BLE001 — selection is best-effort
+                # This module has no logger on purpose — it is a pure evaluator
+                # whose findings travel on the verdict, where a rejection can
+                # carry them into a deduped issue. A swallowed resolver failure
+                # would otherwise be indistinguishable from a bump that had
+                # nothing to declare, which is the "uncheckable reads as clean"
+                # shape the observation machinery exists to close.
+                raw_declaration = None
+                observe(
+                    "version_declaration_resolver_failed",
+                    f"the declaration resolver raised "
+                    f"{type(exc).__name__}: {exc} — this bump is judged "
+                    f"UNDECLARED, which is the strict side (the ordinary "
+                    f"population band applies and a large move is refused)",
+                    published_version=prev["population_version"],
+                )
+            if raw_declaration is not None:
+                # Into the CANDIDATE PAYLOAD as well, not just this local: the
+                # artifact that publishes has to carry the statement it was
+                # admitted on, or the page shows a number whose justification
+                # exists nowhere. This is the one place the gate writes to its
+                # input, and it is why the caller serialises AFTER the gate.
+                cand["version_declaration"] = raw_declaration
+                if isinstance(candidate, dict):
+                    candidate[DECLARATION_FIELD] = raw_declaration
 
         if raw_declaration is None:
             if abs(drift_pct) <= POPULATION_TOLERANCE * 100.0:
