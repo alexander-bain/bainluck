@@ -78,6 +78,10 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
     nonisolated struct BoardSection: Equatable, Sendable, Identifiable {
         let id: String
         let title: String
+        /// "Settled · Elena Rybakina won the title." — present only once the
+        /// draw has been graded (#5917). Nil is the live board, which says
+        /// nothing about settlement because there is nothing to say.
+        let settledNote: String?
         let rows: [BoardRow]
         /// "Top 6 of 36 still in the draw" — shown only when rows were trimmed.
         let trimNote: String?
@@ -86,9 +90,12 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
         /// no drawn row carries a delta, because there is then nothing to
         /// reconcile and a sentence about an absent column is noise.
         let deltaWindowNote: String?
-        /// The RACE chart above the rows (#2911). Always present, because a
-        /// board that cannot be charted still says why in `emptyNote`.
-        let chart: RaceChartData
+        /// The RACE chart above the rows (#2911). Present whenever there is a
+        /// race to describe — a board that cannot be charted still says why in
+        /// `emptyNote`. Nil only on a DECIDED board with no history to draw
+        /// (#5917): the race is over, and "no contender has a price to chart"
+        /// is a sentence about prices nobody is waiting for.
+        let chart: RaceChartData?
     }
 
     /// One printed row of a curated question's field or comparison.
@@ -247,8 +254,15 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
         )
         let boardSections = response.boards.compactMap { Self.boardSection($0, starts: windowStarts) }
         boards = boardSections
+        // "Yet" is a promise, and a tournament that has crowned its champions
+        // cannot keep it (#5917). A decided draw now KEEPS its board, so this
+        // sentence is once again only reachable before the prices arrive — but
+        // a payload that sends a decided board we cannot render must not fall
+        // back into it either.
         boardsEmptyNote = boardSections.isEmpty
-            ? "Nobody is priced to win the title yet." : nil
+            ? (response.boards.contains { $0.decided != nil }
+                ? nil : "Nobody is priced to win the title yet.")
+            : nil
 
         let allProps = response.props
         let shownProps = allProps.prefix(Self.propsLimit).map { Self.propRow($0) }
@@ -507,17 +521,60 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
         return percents
     }
 
+    /// ═══ A DECIDED DRAW IS ANSWERED WITH A NAME (#5917, native arm) ═══
+    ///
+    /// The web board printed "Rybakina 99% TO WIN THE TITLE" sixteen hours after
+    /// she won it. This phone did something worse and less visible: the filter
+    /// below kept only rows whose `state` is `live`, and a decided draw has
+    /// none — so `boardSection` returned nil, the WOMEN'S SINGLES card vanished
+    /// from the hub entirely, and `boardsEmptyNote` stood ready to tell a reader
+    /// on finals day that "nobody is priced to win the title yet". Photographed
+    /// on the phone at 15:46Z, `artifacts-native-020/n147-hub-s07.png`: the
+    /// men's board is followed straight by LATEST RESULTS.
+    ///
+    /// The champion is not a missing contender. `state == "live"` is the right
+    /// question for "who is still playing" and the wrong one for "what does this
+    /// board say", and those two stopped being the same question the moment the
+    /// draw was graded — which is Alex's standing ruling (*settled means
+    /// settled*) one surface further along from #5893.
+    ///
+    /// **Decided is read from the payload, never adjudicated here.** `decided`
+    /// is live's statement (#5917's producer half); a `won` row is the same
+    /// payload saying it a second way and is accepted so that one half of the
+    /// contract arriving without the other still names a champion rather than
+    /// deleting the card. `results` is NOT consulted: a client that decides the
+    /// state of a draw from match rows is the thing ordering put live first.
+    ///
+    /// What a decided board prints, matching the web twin word for word (notice
+    /// 35 — one family): the champion's row says **Won**, the field says
+    /// **Out**, and neither says a percentage, because a probability to win a
+    /// title that has been won is the defect, not the data. There is no
+    /// staleness apology to remove here — this phone never had one — but for the
+    /// same reason there must be no dash where the percent was: `—` in a
+    /// TO-WIN-THE-TITLE column reads as "we lost the number", and we did not.
     private static func boardSection(
         _ board: TournamentHubBoard,
         starts: RaceChartWindowStarts
     ) -> BoardSection? {
+        let champion = decidedChampion(board)
+        let isDecided = board.decided != nil || board.rows.contains { $0.state == "won" }
+
         // Someone knocked out is not a contender; the board keeps them so the
         // web page can grey them, but a six-row phone list must spend its rows
-        // on players still in the draw.
-        let standing = board.rows.filter { ($0.state ?? "live") == "live" }
-        guard !standing.isEmpty else { return nil }
+        // on players still in the draw. Once the draw is decided nobody is still
+        // in it, and the standings ARE the answer, so the whole field stays.
+        let field = isDecided
+            ? board.rows
+            : board.rows.filter { ($0.state ?? "live") == "live" }
+        guard !field.isEmpty else { return nil }
 
-        let ordered = standing.sorted { lhs, rhs in
+        let ordered = field.sorted { lhs, rhs in
+            // The champion leads their own board even if the ranks arrived
+            // ordered by a price nobody is quoting any more.
+            if let champion {
+                if lhs.id == champion.id { return true }
+                if rhs.id == champion.id { return false }
+            }
             switch (lhs.rank, rhs.rank) {
             case let (l?, r?): return l < r
             case (nil, _?): return false
@@ -528,29 +585,71 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
         let shown = ordered.prefix(boardRowLimit)
         let rendered = boardRenderedPercents(board.rows)
 
+        // A decided board with no history draws no frame rather than an empty
+        // one carrying a sentence about prices (web's #5934, arm 5). Settled
+        // rows arrive with `probability: null`, and `RaceChart.series` skips
+        // those, so this is today's every decided board.
+        let chart = raceChart(ordered, starts: starts)
+
         return BoardSection(
             id: board.id,
             title: board.label ?? board.draw,
+            settledNote: isDecided
+                ? (champion.map { "Settled · \($0.displayName) won the title." }
+                    ?? "Settled · this draw is decided.")
+                : nil,
             rows: shown.map { row in
                 BoardRow(
                     id: row.id,
                     rank: row.rank,
                     name: row.displayName,
                     flagUrl: row.image?.flagUrl,
-                    percentText: formatProbabilityOrDash(
-                        row.probability, renderedPercent: rendered[row.id]),
+                    percentText: boardRowValueText(row, renderedPercent: rendered[row.id]),
                     deltaPoints: movementPoints(row.trendDelta)
                 )
             },
             trimNote: ordered.count > shown.count
-                ? "Top \(shown.count) of \(ordered.count) still in the draw"
+                ? (isDecided
+                    ? "Top \(shown.count) of \(ordered.count) in the final standings"
+                    : "Top \(shown.count) of \(ordered.count) still in the draw")
                 : nil,
             // Over `shown`, not `ordered`: the note reconciles the deltas a
             // reader can see with the chart above them, and the rows below the
             // cut are not on this screen to be reconciled.
             deltaWindowNote: RaceChart.deltaWindowNote(rows: Array(shown)),
-            chart: raceChart(ordered, starts: starts)
+            chart: isDecided && chart.series.isEmpty ? nil : chart
         )
+    }
+
+    /// The row the board's `decided` block names, falling back to the row that
+    /// says it won. Nil when the draw is decided but the winner is not on the
+    /// board — an entity key we cannot resolve is a board we cannot narrate, and
+    /// printing the raw key as prose is worse than the general sentence.
+    private static func decidedChampion(_ board: TournamentHubBoard) -> TournamentHubBoardRow? {
+        if let key = board.decided?.winnerEntityKey,
+           let named = board.rows.first(where: { $0.entityKey == key }) {
+            return named
+        }
+        if board.decided != nil { return nil }
+        return board.rows.first { $0.state == "won" }
+    }
+
+    /// What the right-hand column of a board row says.
+    ///
+    /// A result, where the payload has graded one; otherwise the probability, or
+    /// the dash that keeps the column's shape when a contender has no price.
+    /// The two words are the web's (`contenderChart.ts`'s legend), so the same
+    /// tournament cannot be `Won` on one surface and `Champion` on the other.
+    private static func boardRowValueText(
+        _ row: TournamentHubBoardRow,
+        renderedPercent: Int?
+    ) -> String {
+        switch row.state {
+        case "won": return "Won"
+        case "eliminated": return "Out"
+        default:
+            return formatProbabilityOrDash(row.probability, renderedPercent: renderedPercent)
+        }
     }
 
     /// The board's top three as a RACE chart (#2911).

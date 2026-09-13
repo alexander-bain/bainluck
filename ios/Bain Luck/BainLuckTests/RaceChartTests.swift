@@ -446,16 +446,19 @@ final class RaceChartTests: XCTestCase {
 
         XCTAssertEqual(presentation.boards.count, 2)
 
-        let mens = presentation.boards[0]
-        XCTAssertNil(mens.chart.emptyNote)
-        XCTAssertEqual(mens.chart.series.map(\.displayName), ["Carlos Alcaraz", "Alexander Zverev"])
-        XCTAssertEqual(mens.chart.initialRange, .draw, "two readings inside the draw earn the default")
-        XCTAssertEqual(mens.chart.starts.draw, "2026-08-30")
+        // `chart` is optional since #5917 — a DECIDED board with no history
+        // draws no frame at all. Both boards here are live, so both have one,
+        // and unwrapping is the assertion that says so.
+        let mens = try XCTUnwrap(presentation.boards[0].chart)
+        XCTAssertNil(mens.emptyNote)
+        XCTAssertEqual(mens.series.map(\.displayName), ["Carlos Alcaraz", "Alexander Zverev"])
+        XCTAssertEqual(mens.initialRange, .draw, "two readings inside the draw earn the default")
+        XCTAssertEqual(mens.starts.draw, "2026-08-30")
 
         // One reading is a state, and it gets its OWN sentence — not the one
         // that means "nobody is priced".
-        let womens = presentation.boards[1]
-        XCTAssertEqual(womens.chart.emptyNote, "Only one reading so far — there is no line to draw yet.")
+        let womens = try XCTUnwrap(presentation.boards[1].chart)
+        XCTAssertEqual(womens.emptyNote, "Only one reading so far — there is no line to draw yet.")
     }
 
     func testBoardWithNoPricedContenderSaysSo() throws {
@@ -467,8 +470,11 @@ final class RaceChartTests: XCTestCase {
         """
         let response = try decoder.decode(TournamentHubResponse.self, from: Data(payload.utf8))
         let board = try XCTUnwrap(TournamentHubPresentation(response: response).boards.first)
-        XCTAssertEqual(board.chart.emptyNote, "No contender on this board has a price to chart.")
-        XCTAssertTrue(board.chart.series.isEmpty)
+        // A LIVE board with no price keeps its frame and says why: the race is
+        // still on and the reader is waiting for a number that is coming.
+        let chart = try XCTUnwrap(board.chart)
+        XCTAssertEqual(chart.emptyNote, "No contender on this board has a price to chart.")
+        XCTAssertTrue(chart.series.isEmpty)
     }
 
     // MARK: - The view's day↔instant round trip

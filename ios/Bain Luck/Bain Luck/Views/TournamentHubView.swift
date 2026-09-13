@@ -392,10 +392,22 @@ private struct TournamentHubBoardCard: View {
             // round — and a reader who sees three named lines then reads the
             // same three names at the top of the list never has to work out
             // which rows are drawn.
-            RaceChartView(data: board.chart)
-                .id(board.id)
+            if let chart = board.chart {
+                RaceChartView(data: chart)
+                    .id(board.id)
 
-            Divider().overlay(DS.border)
+                Divider().overlay(DS.border)
+            }
+
+            // #5917: the answer, before the standings that produced it. A
+            // decided draw is settled, not stale, so this is a result sentence
+            // and not a warning — no ⚠, no amber.
+            if let settled = board.settledNote {
+                Text(settled)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(DS.emerald)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(board.rows) { row in

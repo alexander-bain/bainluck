@@ -111,12 +111,14 @@ final class TournamentHubRenderSmokeTests: XCTestCase {
         let presentation = try RaceChartBoardFixture.presentation()
         let board = try XCTUnwrap(presentation.boards.first, "the fixture carries one board")
 
-        // The chart is a CHART, not the "one reading" note standing in for one.
-        XCTAssertNil(board.chart.emptyNote, "the fixture's rows carry drawable series")
-        XCTAssertEqual(board.chart.series.count, 3)
+        // The chart is a CHART, not the "one reading" note standing in for one —
+        // nor the nil a DECIDED board draws instead of an empty frame (#5917).
+        let chart = try XCTUnwrap(board.chart, "a live board keeps its race")
+        XCTAssertNil(chart.emptyNote, "the fixture's rows carry drawable series")
+        XCTAssertEqual(chart.series.count, 3)
         XCTAssertEqual(
             RaceChart.ceiling(
-                board.chart.series, range: board.chart.initialRange, starts: board.chart.starts),
+                chart.series, range: chart.initialRange, starts: chart.starts),
             0.75,
             "a 44.5% leader against a 100% ceiling is #3032")
 
