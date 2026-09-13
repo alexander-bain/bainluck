@@ -114,8 +114,14 @@ export interface PricedCompetitor {
  *
  * The tennis adapter's primary label is the bare word "Winner", which turns the
  * natural sentence into "Alexander Zverev leads the Winner at 57%". A label
- * that names something real — "Main event", "California Governor" — reads
- * correctly in the same slot, so only the generic ones are dropped.
+ * that names something real — "Main event", "California Governor" — belongs in
+ * the copy, so only the generic ones are dropped.
+ *
+ * This drops a label from the copy entirely; it does NOT decide how a surviving
+ * one is worded. The claim this comment used to make — that a real label "reads
+ * correctly in the same slot" — was false for four of the five that survive it
+ * (see the census at the field branch), and "leads the California Governor at
+ * 95%" was the counter-example it named itself. Wording is the field branch's.
  */
 const GENERIC_PRIMARY_LABEL = /^(winner|winner\?|champion|champ|outright)$/i;
 
@@ -301,13 +307,36 @@ export function buildEventConceptShareCopy(source: EventConceptShareSource): {
   // makes. Spelling the contest out in the title costs the event's own name,
   // which is the one word a reader needs, and unfurlers truncate a title long
   // before a description.
+  // The label is a PREFIX, never the object of "leads the ___" (#6006). Every
+  // label that reaches this line is minted by one of eight adapters, and the
+  // article reads correctly for exactly one of them:
+  //
+  //   "Main event"             event_combat.py:1248,1352  ✓  reads correctly
+  //   "Race winner"            event_f1.py:358            ✗  "leads the Race winner at"
+  //   "General Classification" event_cycling.py:778       ✗
+  //   clean_category_label()   event_awards.py:545        ✗  "leads the Best Picture at"
+  //   clean_race_label()       event_election.py:473      ✗  "leads the California Governor at"
+  //
+  // ("Winner" from golf, soccer and tennis never arrives — `contestLabel`
+  // drops it.) Four of the five refute the article, so there is no article
+  // rule to write: dropping "the" unconditionally breaks the three role
+  // labels, and a "Best …" prefix test misses "California Governor".
+  //
+  // The DUEL branch above already solved this — it carries the label as a
+  // leading clause and has shipped that way since #5833 ("Main event. Zevan
+  // Hunt 55%, Mayton Perea 44%."). This is the same composition, so the two
+  // branches of one function stop disagreeing, and the sentence is the house
+  // form used by `ladderShareNoun`, `dateBucketCard` and `compactRow` alike.
   const leader = priced[0];
-  const sentence = label
-    ? `${leader.name} leads the ${label} at ${leader.probability}.`
-    : `${leader.name} leads at ${leader.probability}.`;
+  const line = `${leader.name} leads at ${leader.probability}`;
+  const context = [where, label].filter(
+    (part): part is string => part !== null
+  );
 
   return {
     title: `${name}${sep}${leader.name} ${leader.probability}`,
-    description: truncateShareText(where ? `${where}. ${sentence}` : sentence),
+    description: truncateShareText(
+      context.length > 0 ? `${context.join(". ")}. ${line}.` : `${line}.`
+    ),
   };
 }

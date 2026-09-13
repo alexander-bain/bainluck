@@ -363,3 +363,165 @@ describe("an unusable payload claims nothing", () => {
     expect(copy.description.endsWith("...")).toBe(true);
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// #6006 — THE LABEL IS A PREFIX, NOT THE OBJECT OF "leads the ___".
+//
+// None of the four fixtures above reaches the FIELD branch carrying a label:
+// UFC/midterms/US Open are all two-priced duels, and the two nine-priced
+// fields have their "Winner" dropped by `contestLabel`. That hole is why
+// "The Odyssey leads the Best Picture at 42%." shipped and sat on production.
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * `/event/awards/academy-awards-2027` — REAL, captured 2026-09-13 23:2xZ.
+ * 40 priced nominees, so it is a field; the label survives `contestLabel`.
+ * Trimmed to six competitors; the tail is more of the same and the branch
+ * only ever prints `priced[0]`.
+ */
+const OSCARS: EventConceptShareSource = {
+  event: {
+    name: "The Oscars 2027",
+    slug: "academy-awards-2027",
+    status: "upcoming",
+    venue: null,
+    location: null,
+  },
+  primary: {
+    label: "Best Picture",
+    competitors: [
+      { name: "The Odyssey", probability: 0.416, won: false },
+      { name: "Dune: Part Three", probability: 0.088, won: false },
+      { name: "The Black Ball", probability: 0.08, won: false },
+      { name: "Digger", probability: 0.073, won: false },
+      { name: "Wild Horse Nine", probability: 0.034, won: false },
+      { name: "The Debut", probability: 0.027, won: false },
+    ],
+  },
+};
+
+/**
+ * Every label an adapter can put in front of this branch.
+ *
+ * Read from the eight `"primary"` envelopes in `backend/app/utils/` rather
+ * than sampled from pages, so it is the whole population and not a draw from
+ * it. "Winner" (golf `event_concept.py:1129`, soccer `event_soccer.py:964`,
+ * tennis) is absent on purpose — `contestLabel` drops it before this point,
+ * which the two describes above already cover.
+ */
+const ADAPTER_LABELS: ReadonlyArray<readonly [string, string]> = [
+  ["Main event", "event_combat.py:1248,1352"],
+  ["Race winner", "event_f1.py:358"],
+  ["General Classification", "event_cycling.py:778"],
+  ["Best Picture", "event_awards.py:545 clean_category_label()"],
+  ["California Governor", "event_election.py:473 clean_race_label()"],
+];
+
+/** The OSCARS field, relabelled — the shape every adapter above produces. */
+const fieldLabelled = (label: string): EventConceptShareSource => ({
+  ...OSCARS,
+  primary: { ...OSCARS.primary, label },
+});
+
+describe("the #6006 fixture reaches the branch the others miss", () => {
+  // Without this the rules below could pass over a shape that never gets
+  // there, exactly as the original four fixtures did.
+  it("is a field (3+ priced), unlike the three duels", () => {
+    const priced = (s: EventConceptShareSource) =>
+      (s.primary?.competitors ?? []).filter((c) => (c?.probability ?? 0) > 0)
+        .length;
+    expect(priced(OSCARS)).toBeGreaterThanOrEqual(3);
+    expect([priced(UFC_CARD), priced(MIDTERMS), priced(US_OPEN)]).toEqual([
+      2, 2, 2,
+    ]);
+  });
+
+  it("carries a label that survives `contestLabel`, unlike the two fields", () => {
+    // IRISH_OPEN and US_OPEN are fields too, but their label is dropped — so
+    // they exercise the `label === null` arm, never this one.
+    expect(buildEventConceptShareCopy(OSCARS).description).toContain(
+      "Best Picture"
+    );
+    for (const dropped of [IRISH_OPEN, US_OPEN]) {
+      expect(buildEventConceptShareCopy(dropped).description).not.toContain(
+        "Winner"
+      );
+    }
+  });
+});
+
+describe("a field's label is a prefix, for every label an adapter mints", () => {
+  it("the live defect string is gone and the prefix form is published", () => {
+    expect(buildEventConceptShareCopy(OSCARS)).toEqual({
+      title: "The Oscars 2027: The Odyssey 42%",
+      description: "Best Picture. The Odyssey leads at 42%.",
+    });
+  });
+
+  it.each(ADAPTER_LABELS)(
+    "%s reads correctly (%s)",
+    (label) => {
+      const { description } = buildEventConceptShareCopy(fieldLabelled(label));
+      // THE REFUSAL ARM: never the article construction...
+      expect(description).not.toContain(`leads the ${label}`);
+      // ...AND ITS POSITIVE TWIN: the label is still published, as a prefix,
+      // and the leader still gets a sentence. A fix that simply stopped
+      // printing the label would satisfy the line above on its own.
+      expect(description).toBe(`${label}. The Odyssey leads at 42%.`);
+    }
+  );
+
+  it("never emits 'leads the' on any adapter label, dropped ones included", () => {
+    const every = [
+      ...ADAPTER_LABELS.map(([label]) => fieldLabelled(label)),
+      fieldLabelled("Winner"),
+      OSCARS,
+      IRISH_OPEN,
+      US_OPEN,
+      UFC_CARD,
+      MIDTERMS,
+    ];
+    for (const source of every) {
+      expect(buildEventConceptShareCopy(source).description).not.toContain(
+        "leads the "
+      );
+    }
+  });
+
+  it("agrees with the duel branch of the same function", () => {
+    // The two branches disagreed for #5833's whole life: the duel carried the
+    // label as a leading clause while the field inlined it after an article.
+    // Same payload, same label, one competitor dropped to make it a duel.
+    const duel: EventConceptShareSource = {
+      ...OSCARS,
+      primary: {
+        ...OSCARS.primary,
+        competitors: (OSCARS.primary?.competitors ?? []).slice(0, 2),
+      },
+    };
+    const lead = (s: EventConceptShareSource) =>
+      buildEventConceptShareCopy(s).description.split(". ")[0];
+    expect(lead(duel)).toBe("Best Picture");
+    expect(lead(OSCARS)).toBe("Best Picture");
+  });
+
+  it("still puts the venue first when a field has both", () => {
+    // `where` led the sentence before this change and must keep doing so; the
+    // label joins it as a second clause rather than displacing it.
+    const withVenue = {
+      ...OSCARS,
+      event: { ...OSCARS.event, venue: "Dolby Theatre", location: "Hollywood" },
+    };
+    expect(buildEventConceptShareCopy(withVenue).description).toBe(
+      "Dolby Theatre, Hollywood. Best Picture. The Odyssey leads at 42%."
+    );
+  });
+
+  it("a labelless field is untouched by this change", () => {
+    // The `label === null` arm is the one that was already right. Golf is the
+    // regression control: byte-identical to the assertion above this block.
+    expect(buildEventConceptShareCopy(IRISH_OPEN).description).toBe(
+      "Trump International Golf Links & Hotel Ireland, Doonbeg, Ireland. Shane Lowry leads at 85%."
+    );
+  });
+});
