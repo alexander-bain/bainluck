@@ -199,18 +199,50 @@ function formatFinishedDate(commenceTime: string): string {
 // Reason badge — styled pill with contextual icon (matches iOS EventCardView)
 // ============================================================================
 
+// #5749 — these patterns match the PHRASE a reason template emits, never a bare
+// word that a name can supply. Every reason a card carries is a template from
+// `feed_reasons.py` / `highlights.py` with a team or market name interpolated
+// into it, so a classifier that reads the rendered sentence is reading the name
+// too: `"kentucky wildcats leading after starting at 24%".includes("wild")` was
+// true, and 27 of 5,592 distinct team names (16 on "wild", 11 on "even") styled
+// their own cards. The Minnesota Wild claimed a lead change in every state it
+// was ever in, and Benevento was always "virtually even".
+//
+// Word boundaries alone are not the fix: `\bwild\b` still matches "Minnesota
+// Wild". The keyword has to be pinned to the words the template puts around it
+// — "wild GAME", "close MATCHUP" — because that is the part a name cannot forge.
+// Boundaries are enough for `upset`/`underdog`/`odds`/`shifted`, which measured
+// 0 team names and are not name-shaped; they are used there so the family stays
+// legible next to the two that needed phrases.
+const REASON_STYLES: ReadonlyArray<{
+  pattern: RegExp;
+  icon: string;
+  colorClass: string;
+  bgClass: string;
+}> = [
+  // "Upset result" · "Won as 24% underdog" · "Upset brewing" · "Recent upset"
+  { pattern: /\bupsets?\b|\bunderdogs?\b/, icon: "⚠", colorClass: "text-orange-500", bgClass: "bg-orange-500/10" },
+  // "Virtually even" · "Tight game" · "Close matchup" · "Starting soon — close matchup"
+  {
+    pattern: /\bvirtually even\b|\btight game\b|\bclose (?:matchup|game)\b/,
+    icon: "⚖",
+    colorClass: "text-blue-500",
+    bgClass: "bg-blue-500/10",
+  },
+  // "Big odds movement in X" · "X odds shifted 12% since open" · "Shifted since Tuesday" · "Line moving"
+  { pattern: /\bline mov|\bshifted\b|\bodds\b/, icon: "↕", colorClass: "text-purple-500", bgClass: "bg-purple-500/10" },
+  // "Starting soon"
+  { pattern: /\bstarting soon\b/, icon: "🕐", colorClass: "text-green-500", bgClass: "bg-green-500/10" },
+  // "Wild game" — the ONLY served reason this family has; "wild" alone was the hijack.
+  { pattern: /\bwild game\b|\blead change|\bexciting\b/, icon: "⚡", colorClass: "text-yellow-500", bgClass: "bg-yellow-500/10" },
+];
+
 function reasonStyle(text: string): { icon: string | null; colorClass: string; bgClass: string } {
   const lower = text.toLowerCase();
-  if (lower.includes("upset") || lower.includes("underdog")) {
-    return { icon: "⚠", colorClass: "text-orange-500", bgClass: "bg-orange-500/10" };
-  } else if (lower.includes("close") || lower.includes("tight") || lower.includes("even")) {
-    return { icon: "⚖", colorClass: "text-blue-500", bgClass: "bg-blue-500/10" };
-  } else if (lower.includes("line mov") || lower.includes("shifted") || lower.includes("odds")) {
-    return { icon: "↕", colorClass: "text-purple-500", bgClass: "bg-purple-500/10" };
-  } else if (lower.includes("starting soon")) {
-    return { icon: "🕐", colorClass: "text-green-500", bgClass: "bg-green-500/10" };
-  } else if (lower.includes("lead change") || lower.includes("wild") || lower.includes("exciting")) {
-    return { icon: "⚡", colorClass: "text-yellow-500", bgClass: "bg-yellow-500/10" };
+  for (const style of REASON_STYLES) {
+    if (style.pattern.test(lower)) {
+      return { icon: style.icon, colorClass: style.colorClass, bgClass: style.bgClass };
+    }
   }
   return { icon: null, colorClass: "text-text-secondary", bgClass: "" };
 }

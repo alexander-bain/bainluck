@@ -35,6 +35,22 @@
 //
 // Both directions per gotcha #43: the styled branch gains the floor escape AND the plain
 // branch is asserted unchanged AND the finished card is asserted NOT to gain it.
+//
+// ## 2026-09-12, #5749 — the styled specimen changed, and the measurement above did not
+//
+// The production row measured here reached the styled branch for the WRONG REASON: `reasonStyle`
+// matched "wild" inside "Kentucky Wildcats", so the badge was the ⚡ "something wild is happening"
+// pill on a sentence that says the favourite is ahead. #5749 pinned each keyword to the phrase its
+// template emits, and that row now correctly takes the plain `<p>` branch — the same branch arm 3
+// already asserted for its sibling "Oklahoma State Cowboys leading after starting at 8%".
+//
+// So the pixel record above stands unedited: it is what was measured, on the row that was measured,
+// on the code of that day. What it proved — that the styled branch holds at min-content while a
+// `flex-shrink-0` sibling is laid out over the thumbs — is a property of the BRANCH, not of that
+// sentence. The styled arms therefore move to a reason that reaches the branch on its own merits
+// (`{team} odds shifted {dir} {pts} today in {market}`, a real `feed_reasons.py` template) and is
+// 61 characters — LONGER than the 47-character row that produced the 20px overlap, so the geometry
+// this file stands in for is stressed harder, not less. Nothing was relaxed to make it pass.
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -55,10 +71,15 @@ jest.mock("@/components/Analytics", () => ({
   useAnalyticsContext: () => ({ track: () => {} }),
 }));
 
-// The production specimen, verbatim: the row that measured 20px into both buttons.
-// Its reason reaches the STYLED branch — `reasonStyle` matches "wild" inside "Wildcats" —
-// which is how a 51-character reason came to sit in a pill that refuses to shrink.
-const SPECIMEN_REASON = "Kentucky Wildcats leading after starting at 24%";
+// The production specimen, verbatim: the row that measured 20px into both buttons. It reached
+// the STYLED branch because `reasonStyle` matched "wild" inside "Wildcats" — the #5749 defect.
+// Kept, because arm 3 is the place that proves the row is now classified honestly.
+const MEASURED_ROW_REASON = "Kentucky Wildcats leading after starting at 24%";
+
+// What the styled arms use since #5749: a real `feed_reasons.py` movement template, which
+// reaches the ↕ branch on the words the template itself emits and cannot be reclassified by
+// renaming the team. 61 characters vs the measured row's 47.
+const SPECIMEN_REASON = "Kentucky Wildcats odds shifted up 5 points today in moneyline";
 
 function makeData(over: Partial<FeedEventData> = {}): FeedEventData {
   return {
@@ -137,6 +158,15 @@ describe("#3075 — the footer's context text stays out of the thumb buttons", (
     const html = render(makeData(), "Oklahoma State Cowboys leading after starting at 8%");
     expect(badgeSpan(html)).toBeNull();
     expect(plainParagraph(html)).toContain("truncate");
+
+    // #5749 — and so does the row that was actually measured. Before #5749 these two sentences,
+    // the same template with a different team in it, took different branches: the Wildcats one
+    // was styled and could not shrink, the Cowboys one was plain and clipped. The team name was
+    // the whole difference. This is the assertion that says the layout hazard the file guards is
+    // no longer reachable by being called the Wildcats.
+    const measured = render(makeData(), MEASURED_ROW_REASON);
+    expect(badgeSpan(measured)).toBeNull();
+    expect(plainParagraph(measured)).toContain("truncate");
   });
 
   it("arm 4: a FINISHED card does NOT become shrinkable, because it may not abbreviate", () => {
