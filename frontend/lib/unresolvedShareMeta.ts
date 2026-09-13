@@ -58,8 +58,17 @@ import { withSiteSuffix } from "@/lib/eventShareMeta";
 import { selfCanonical } from "@/lib/routeMetadata";
 import { defaultShareCard } from "@/lib/shareCard";
 
-/** Which of the two things a link can name. */
-export type UnresolvedSubject = "game" | "market";
+/**
+ * Which of the four things a link can name — one per unfurl route.
+ *
+ * `"tournament"` and `"event"` joined in #5861. Their two routes were fixed by
+ * #5813 and #5833 and are correct about `canonical` and `og:url`; what neither
+ * declared was a `twitter` block, so a dead link on either still sent the home
+ * page's `twitter:title` and `twitter:description`. Adopting this builder
+ * closes that and settles the voice — the same condition was reading "This game
+ * isn't on Bain Luck" on two routes and "Tournament Odds" on another.
+ */
+export type UnresolvedSubject = "game" | "market" | "tournament" | "event";
 
 /**
  * Why the payload did not arrive.
@@ -83,6 +92,42 @@ export interface UnresolvedCopy {
 const SUBJECT_NOUN: Record<UnresolvedSubject, string> = {
   game: "game",
   market: "market",
+  tournament: "tournament",
+  event: "event",
+};
+
+/**
+ * The `"unavailable"` copy, which is the text each route ALREADY shipped.
+ *
+ * That branch is not a new claim — it is the old fallback, now merely saying
+ * which page it is on. Keeping the existing words is what makes this table
+ * reviewable: every string here can be found in the route it came from.
+ */
+const UNAVAILABLE_COPY: Record<UnresolvedSubject, UnresolvedCopy> = {
+  game: {
+    title: "Game Odds",
+    description: "Game probabilities translated into plain English.",
+  },
+  market: {
+    title: "Market Odds",
+    description: "Prediction market probabilities translated into plain English.",
+  },
+  tournament: {
+    title: "Tournament Odds",
+    description: "Every contender's chance of winning, as one clean probability.",
+  },
+  event: {
+    title: "Event Odds",
+    description: "Every market on this event, as one clean probability.",
+  },
+};
+
+/** The second sentence of the `"not-found"` copy — what the site offers instead. */
+const NOT_FOUND_INVITATION: Record<UnresolvedSubject, string> = {
+  game: "See today's games and what the world thinks will happen, as probabilities.",
+  market: "See what the world thinks will happen, as probabilities.",
+  tournament: "See every contender's chance of winning, as one clean probability.",
+  event: "See what the world thinks will happen, as probabilities.",
 };
 
 /**
@@ -100,27 +145,15 @@ export function unresolvedShareCopy(
   subject: UnresolvedSubject,
   failure: ResolutionFailure
 ): UnresolvedCopy {
-  const noun = SUBJECT_NOUN[subject];
-
   if (failure === "not-found") {
+    const noun = SUBJECT_NOUN[subject];
     return {
       title: `This ${noun} isn't on Bain Luck`,
-      description:
-        subject === "game"
-          ? "There's no game at this link. See today's games and what the world thinks will happen, as probabilities."
-          : "There's no market at this link. See what the world thinks will happen, as probabilities.",
+      description: `There's no ${noun} at this link. ${NOT_FOUND_INVITATION[subject]}`,
     };
   }
 
-  return subject === "game"
-    ? {
-        title: "Game Odds",
-        description: "Game probabilities translated into plain English.",
-      }
-    : {
-        title: "Market Odds",
-        description: "Prediction market probabilities translated into plain English.",
-      };
+  return UNAVAILABLE_COPY[subject];
 }
 
 /**
@@ -189,14 +222,23 @@ export function unresolvedMetadata(
 }
 
 /**
- * The route path for a segment that did NOT resolve to a row.
+ * The route path for segments that did NOT resolve to a row.
  *
- * The resolved branches canonicalise to the payload's own id, so
- * `/futures/86832?x` and `/futures/86832` agree. There is no id to ask here, so
- * the requested segment is what the page is — percent-encoded, which keeps
+ * The resolved branches canonicalise to the payload's own id or slug, so
+ * `/futures/86832?x` and `/futures/86832` agree. There is nothing to ask here,
+ * so the requested segments are what the page is — percent-encoded, which keeps
  * `//evil.example` and `../` a single inert path segment rather than a new
  * origin or a climb out of the route.
+ *
+ * ⚠️ The encoding is the point, and it is not decoration. Next hands
+ * `generateMetadata` a DECODED segment, so a `[slug]` param can already contain
+ * `/` or `..`; `app/tournaments/[slug]/layout.tsx` interpolated it raw
+ * (`/tournaments/${slug}`) and would canonicalise such a request to a path that
+ * is not the page.
+ *
+ * Variadic because `/event/[domain]/[slug]` is two segments and each must be
+ * encoded separately — encoding them joined would escape the slash between them.
  */
-export function unresolvedPath(base: "events" | "futures", segment: string): string {
-  return `/${base}/${encodeURIComponent(segment)}`;
+export function unresolvedPath(base: string, ...segments: string[]): string {
+  return `/${base}/${segments.map(encodeURIComponent).join("/")}`;
 }
