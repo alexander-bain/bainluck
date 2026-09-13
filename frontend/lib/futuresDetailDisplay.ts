@@ -33,10 +33,117 @@ export function isGenericOutcomeLabel(name: string | null | undefined): boolean 
   return n === "yes" || n === "no" || n === "" || n === "over" || n === "under";
 }
 
-/** Display label for the leader outcome — generic binaries become "Yes". */
+/**
+ * #5997 — A NAME THAT STATES A SIDE IS NEVER SUBSTITUTABLE BY "Yes".
+ *
+ * The "Yes" substitution exists so a hero has something to say when the outcome
+ * it features is named with a bare identifier — "May 18", "2026", "Option A" —
+ * which means nothing above a percentage. That is a readability fix and it is
+ * fine. It becomes a lie the moment the featured outcome's own name states which
+ * SIDE of the question it is: "Yes" is not a neutral placeholder, it is an
+ * answer, and printing it over the `No` row's number answers the question
+ * backwards.
+ *
+ * Measured on production 2026-09-13 by lane1b/224: `/futures/20571021` serves
+ * `Yes: null, No: 0.39` and the hero read **"39% / Yes"**; `/futures/16634786`
+ * serves `Yes: null, No: 0.664` and read **"66% / Yes"**. The caption went with
+ * them, because it comes through `leaderLabel` below. **3,768 unresolved binary
+ * markets have a leading (or sole-priced) `No` row** — every one of those pages
+ * was crowning the wrong side.
+ *
+ * Over/Under and the comparative forms are here for the same reason and not as
+ * a widening: "Yes" over an `Under 100` row asserts the opposite threshold, and
+ * a name like `Under 100` is perfectly readable in a hero as itself. What is NOT
+ * here is the bare-identifier family (dates, numbers, `Option A`) — those carry
+ * no answer at all, so the substitution stays theirs.
+ */
+export function statesItsOwnSide(name: string | null | undefined): boolean {
+  const n = (name || "").trim();
+  if (!n) return false;
+  return (
+    /^(yes|no)(\s|$)/i.test(n) ||
+    /^(over|under|above|below|at least|at most|more than|less than|fewer than)(\s|$)/i.test(n) ||
+    /^[<>=]+\s*\d/.test(n)
+  );
+}
+
+/**
+ * Display label for the leader outcome — generic binaries become "Yes", EXCEPT
+ * where the name states its own side (#5997), which is returned as served.
+ */
 export function leaderLabel(leader: MovementLeader | null): string | null {
   if (!leader) return null;
+  const served = (leader.name || "").trim();
+  if (statesItsOwnSide(served)) return served;
   return isGenericOutcomeLabel(leader.name) ? "Yes" : (leader.name as string);
+}
+
+/**
+ * The name to print beside the hero's number, and in the settled sentence.
+ *
+ * #5997 — `isGenericOutcomeName` is the WIDE predicate (dates, bare numbers,
+ * `Option A`, short tokens), and substituting "Yes" for those is a readability
+ * fix. It is a lie for a name that states its own side, because the hero
+ * features whichever outcome LEADS and that is routinely the `No` row: on
+ * `/futures/20571021` (`Yes: null, No: 0.39`) the hero read "39% / Yes".
+ * `statesItsOwnSide` is shared with `leaderLabel`, so the hero, this page's
+ * settled sentence and the movement caption cannot answer the same question
+ * three different ways.
+ */
+export function heroOutcomeLabel(name: string): string {
+  const served = name.trim();
+  if (statesItsOwnSide(served)) return served;
+  return isGenericOutcomeName(name) ? "Yes" : name;
+}
+
+/**
+ * Detect whether an outcome name is a recognizable entity (person, team, place)
+ * vs a generic/date-like identifier that needs extra context in the hero display.
+ *
+ * Returns true for names like "May 18", "2026", "Q3", "Option A", "Before July",
+ * "Over 5.5", bare numbers, single short words, or Yes/No variants.
+ * Returns false for names that look like real entities: "Celtics", "Trump",
+ * "Kendrick Lamar", "Manchester City".
+ *
+ * Moved here from `app/futures/[id]/page.tsx` by #5997, unchanged: it is half of
+ * `heroOutcomeLabel`, and a predicate that decides what a hero SAYS could not be
+ * unit-tested while it sat inside a page that needs SWR, framer and three charts
+ * to render. Its only callers are in this module.
+ */
+export function isGenericOutcomeName(name: string): boolean {
+  const trimmed = name.trim();
+
+  // Short single-token names (<=4 chars) are likely generic unless they look like
+  // known abbreviations that are still meaningful (e.g., "Yes", "No")
+  if (trimmed.length <= 3) return true;
+
+  // Bare numbers or numbers with units: "5", "42.5", "100+", "$50"
+  if (/^[$]?\d+([.,]\d+)?[+%]?$/.test(trimmed)) return true;
+
+  // Date patterns: "May 18", "June 2026", "Jan 1, 2027", "2025-06", "Q3 2026"
+  const datePatterns = [
+    /^(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d/i,
+    /^(Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d/i,
+    /^\d{4}(-\d{2})?$/,
+    /^Q[1-4]\b/i,
+    /^(Before|After|By)\s+(January|February|March|April|May|June|July|August|September|October|November|December)/i,
+    /^(Before|After|By)\s+(Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i,
+    /^(Before|After|By)\s+\d{4}/i,
+    /^Week\s+\d/i,
+  ];
+  if (datePatterns.some((p) => p.test(trimmed))) return true;
+
+  // Threshold/range patterns: "Over 5.5", "Under 100", ">=50", "250+"
+  if (/^(Over|Under|Above|Below|At least|At most|More than|Less than|Fewer than)\s/i.test(trimmed)) return true;
+  if (/^[<>=]+\s*\d/.test(trimmed)) return true;
+
+  // Yes/No variants
+  if (/^(Yes|No)(\s|$)/i.test(trimmed)) return true;
+
+  // Option/Choice labels: "Option A", "Choice 1"
+  if (/^(Option|Choice|Bucket)\s/i.test(trimmed)) return true;
+
+  return false;
 }
 
 /**

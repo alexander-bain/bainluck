@@ -9,10 +9,19 @@ import {
 } from "../../lib/futuresDetailDisplay";
 
 describe("leaderLabel", () => {
-  test("generic binary names render as Yes", () => {
-    for (const n of ["Yes", "No", "over", "UNDER", ""]) {
-      expect(leaderLabel({ name: n, probability: 0.5 })).toBe("Yes");
+  // #5997 AMENDED THIS EXPECTATION, and the amendment is the ship: "No", "over"
+  // and "UNDER" used to render as "Yes" here, which is how the hero came to
+  // print "39% / Yes" over the No row on /futures/20571021. A name that states
+  // its own side is now returned as served; only a name that carries NO answer
+  // is substituted. The empty-name case below is untouched and is why the
+  // substitution still exists at all. Full reasoning: `statesItsOwnSide`.
+  test("a name that states its own side is kept", () => {
+    for (const n of ["Yes", "No", "over", "UNDER"]) {
+      expect(leaderLabel({ name: n, probability: 0.5 })).toBe(n);
     }
+  });
+  test("a name that carries no answer renders as Yes", () => {
+    expect(leaderLabel({ name: "", probability: 0.5 })).toBe("Yes");
   });
   test("real names are kept", () => {
     expect(leaderLabel({ name: "Gavin Newsom", probability: 0.3 })).toBe("Gavin Newsom");
