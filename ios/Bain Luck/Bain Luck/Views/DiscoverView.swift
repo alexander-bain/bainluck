@@ -672,6 +672,40 @@ struct DiscoverView: View {
             .count
     }
 
+    /// The dismiss store a refresh hands back (#5951).
+    ///
+    /// `refreshFeed` used to call `dismissedAt.removeAll()`, on the reading that
+    /// a refresh should "show a full feed this session". That reading predates
+    /// the floor: #1221 exists precisely so a heavy dismiss history can no longer
+    /// collapse the page (`applyFloor` backfills to `feedFloor`), so emptying the
+    /// store bought nothing the floor does not already buy — and it cost the one
+    /// promise the whole ship is about. A reader who swiped six cards away and
+    /// pulled down to see what else there was got all six back, on the same
+    /// screen, one gesture later.
+    ///
+    /// Web has never done this: `discover/page.tsx` persists its dismissals "so
+    /// anonymous users do not see the same card again after refresh while the
+    /// server downrank catches up", and only the paging state resets. The two
+    /// surfaces now answer "does a dismissed card stay dismissed" the same way,
+    /// which is the client half of #5951 — the server half (a swiped concept or
+    /// tournament card stays swiped) suppresses for a signed-in reader, and this
+    /// is what holds for an anonymous one, and for a signed-in one in the seconds
+    /// before the next build.
+    ///
+    /// AGES rather than keeps verbatim: the store is a decaying one, and a
+    /// refresh is the natural moment to drop what has outlived `dismissTTL` — the
+    /// same prune `loadDismissed` does at launch and `saveDismissed` does on
+    /// write, so a long-lived session cannot hold a swipe past its 14 days just
+    /// by never being relaunched. Pruning is not persisted here: the store on
+    /// disk is already written pruned, and a refresh is not a swipe.
+    static func dismissStoreAfterRefresh(
+        _ store: [String: TimeInterval],
+        now: TimeInterval = Date().timeIntervalSince1970
+    ) -> [String: TimeInterval] {
+        let cutoff = now - dismissTTL
+        return store.filter { $0.value >= cutoff }
+    }
+
     /// Memoized presentation (L2-202 / C42 P2). SwiftUI re-evaluates every
     /// computed property read in `body` on each render — scroll (`visibleCount`),
     /// impression tracking (`seenImpressions`), and any unrelated `@State` change
@@ -1542,9 +1576,8 @@ struct DiscoverView: View {
     @MainActor
     private func refreshFeed() async {
         visibleCount = 20
-        // Refresh shows a full feed this session (in-memory clear); the
-        // persisted, decaying store on disk is intact for the next launch.
-        dismissedAt.removeAll()
+        // A refresh AGES the dismiss store; it does not empty it (#5951).
+        dismissedAt = Self.dismissStoreAfterRefresh(dismissedAt)
         dismissVersion &+= 1
         seenImpressions.removeAll()
         await vm.load()
