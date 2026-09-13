@@ -225,6 +225,12 @@ describe("a route that declares openGraph declares its image too", () => {
  * it and you cannot quietly leave it behind, so it can only shrink.
  */
 const INHERITS_THE_ROOT_IDENTITY: readonly string[] = [
+  // Measured 2026-09-13 09:45Z, and the reason this one is not the next ship:
+  // `prediction_challenges` holds ZERO rows on production and nothing in the
+  // app links to `/challenge/`, so no such URL has ever existed to be pasted.
+  // It stays listed because the defect is real in the source — the day the
+  // feature gets a reader, it gets a layout — and a ratchet that drops a route
+  // for having no traffic is an exemption list wearing a ratchet's clothes.
   "/challenge/[id]",
   // A `permanentRedirect` and nothing else — the legacy single-segment key
   // `/event/event%3A<domain>%3A<slug>`. It renders no HTML, so it cannot unfurl
@@ -234,7 +240,9 @@ const INHERITS_THE_ROOT_IDENTITY: readonly string[] = [
   // list would be lying in the other direction if it were removed on a reason
   // the rule cannot see.
   "/event/[domain]",
-  "/hub/[competition]",
+  // `/hub/[competition]` was here until #5877 gave it a layout. Removing the
+  // line is not tidying — the rule below ("the list holds nothing that has
+  // since been fixed") fails until it goes, which is the ratchet working.
 ];
 
 /** `export const metadata` or `generateMetadata`, in a page or its own layout. */
@@ -310,9 +318,14 @@ describe("a dynamic route does not unfurl as the home page", () => {
     expect(routes).toContain("/tournaments/[slug]");
     expect(routes).toContain("/events/[id]");
     expect(routes).toContain("/futures/[id]");
+    expect(routes).toContain("/hub/[competition]");
     expect(routes.length).toBeGreaterThanOrEqual(12);
 
     expect(rootInheritors).not.toContain("/tournaments/[slug]");
+    // #5877. Asserted on the DECLARING side rather than merely absent from the
+    // list, because "not on the list" is also what a route the walk never saw
+    // looks like — and that is the way this whole file goes vacuous.
+    expect(rootInheritors).not.toContain("/hub/[competition]");
   });
 
   it("the rule can actually fail — the predicates are not stuck on true", () => {
