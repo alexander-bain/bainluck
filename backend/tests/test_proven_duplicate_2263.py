@@ -519,11 +519,18 @@ class TestEverySurfaceThatPrintsOneCardPerGame:
                                 — the search box's zero state, eight chips across
                                 four sources
 
-        The count went 7 -> 8 -> 9 -> 10 by ADDING a surface each time, never by
-        dropping the clause from one. If a future change makes this fail, check
-        which of the two it was before touching the number: this assertion
-        exists to catch the deletion, and bumping it to match a deletion is how
-        such a guard dies.
+        The count went 7 -> 8 -> 9 -> 10 -> 11 by ADDING a surface each time,
+        never by dropping the clause from one. If a future change makes this
+        fail, check which of the two it was before touching the number: this
+        assertion exists to catch the deletion, and bumping it to match a
+        deletion is how such a guard dies.
+
+        The eleventh is `list_events` (#5918, 2026-09-13) — the last list
+        surface without the belt, which served `Malaga CF @ RC Celta de Vigo`
+        and `Málaga @ Celta Vigo` as two cards on one La Liga page because the
+        name-keyed fold cannot squash one club's two spellings together. Its own
+        behavioural half is `tests/test_events_list_tag_fold_5918.py`, which
+        drives the route over a real engine rather than counting source.
 
         All three suggestion sources carry it, not only "starting soon" — the
         one a twin reaches today. "This query cannot return a tagged row anyway"
@@ -543,8 +550,9 @@ class TestEverySurfaceThatPrintsOneCardPerGame:
         from app.routes import events
 
         source = inspect.getsource(events)
-        assert source.count("not_a_proven_duplicate()") == 10, (
-            "one of the ten search-surface call sites is gone — see CERT-439"
+        assert source.count("not_a_proven_duplicate()") == 11, (
+            "one of the eleven call sites in this module is gone — see CERT-439 "
+            "(and #5918 for the eleventh, `list_events`)"
         )
 
     def test_the_behavioural_search_gate_exists_and_is_wired_into_ci(self):
