@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from sqlalchemy import select, or_, and_, func, delete, case, update, text
+from sqlalchemy import select, or_, and_, func, delete, case, update, text, bindparam
 from sqlalchemy.orm import joinedload
 
 from app.tasks.base import get_task_session
@@ -3600,6 +3600,37 @@ _PHASE2B_EVENTS_PER_SOURCE = 75
 _PHASE2B_CURSOR_KEY_PREFIX = "phase2b:completed_catchup:cursor:"
 
 
+def _blend_group_for_refs(refs, outcomes_by_market) -> list:
+    """Turn this task's scalar refs into the shared module's group (#5820).
+
+    ONE CONSTRUCTION SITE, because the inputs are the gate's evidence and a
+    second copy is how one caller quietly stops supplying a clause's input
+    (#1951 — the same reason `market_assigned_settled` is imported rather than
+    retyped). Two passes build a group now: `_phase2_persist_group_reading`,
+    which then asks for a reading, and `_phase2c_settled_speaker_sweep`, which
+    only asks whether the group may still speak.
+
+    * ``event_commence_time`` — #4854: the EVENT's kickoff, which the market row
+      does not carry (`futures_markets.commence_time` is the market's own clock
+      and disagrees with the event's by over an hour on 315 of 337 live
+      Polymarket rows). The scalar copy already holds it, so the observation
+      gate costs no second query; a ref that does not carry it leaves that gate
+      abstaining.
+    * ``event_has_result`` — #5820's tri-state, likewise carried on the ref.
+      Phase 2's query joins Event so it is measured there; phase 2b's does not
+      and passes None deliberately. See both construction sites.
+    """
+    return [
+        _LiveBlendGroup(
+            market=ref,
+            outcomes=outcomes_by_market.get(ref.market_id, []),
+            event_commence_time=ref.event_commence_time,
+            event_has_result=ref.event_has_result,
+        )
+        for ref in refs
+    ]
+
+
 async def _retire_unbacked_blend_source(session, anchor, blend_group, stats) -> bool:
     """Drop a stored source leg no admissible market in the group can back (#5031).
 
@@ -3783,24 +3814,7 @@ async def _phase2_persist_group_reading(
     for outcome_row in outcome_rows.scalars().all():
         outcomes_by_market.setdefault(outcome_row.market_id, []).append(outcome_row)
 
-    blend_group = [
-        _LiveBlendGroup(
-            market=ref,
-            outcomes=outcomes_by_market.get(ref.market_id, []),
-            # #4854: the EVENT's kickoff, which the market row does not carry —
-            # `futures_markets.commence_time` is the market's own clock and
-            # disagrees with the event's by over an hour on 315 of 337 live
-            # Polymarket rows. This scalar copy already holds it, so the
-            # observation gate can be asked here without a second query; a
-            # caller that does not supply it leaves the gate abstaining.
-            event_commence_time=ref.event_commence_time,
-            # #5820: the tri-state the scalar copy already carries. Phase 2's
-            # own query joins Event, so this is measured; phase 2b's does not,
-            # and its refs say None — see that construction site.
-            event_has_result=ref.event_has_result,
-        )
-        for ref in refs
-    ]
+    blend_group = _blend_group_for_refs(refs, outcomes_by_market)
     reading = _compute_source_home_probability(
         blend_group, anchor.home_team_name, anchor.away_team_name,
     )
@@ -4079,6 +4093,253 @@ async def _phase2b_completed_catchup(session, now, stats, time_remaining_fn) -> 
 
     stats["funnel"]["phase2b_sources_filled"] += filled
     return filled
+
+
+# Phase 2c bounds (#5820). Both ends (gotcha #41): the floor stops the scan
+# walking backwards forever into games nobody opens, and the page size plus the
+# page ceiling stop one sweep spending a 15-minute task's clock.
+#
+# IT PAGES WITHIN THE RUN, and that is not a nicety. Measured on production
+# 2026-09-13 06:4xZ, the screen returns **915 Kalshi and 197 Polymarket**
+# candidates — a single 300-row page would bind on the first run, and because a
+# candidate the decision legitimately REFUSES never leaves the population, the
+# same oldest 300 would be re-read every quarter hour and the tail would never
+# be reached. An in-run cursor on `(commence_time, id)` costs no cross-run state
+# (no Redis, nothing to lose or clamp) and cannot pin: each page starts where
+# the last one ended. The population then converges, because every row the sweep
+# retires drops out of the screen — steady state is the refusals alone.
+#
+# `phase2c_ceiling_hit` is the alarm for the case the ceiling still binds
+# (gotcha #53 — the truncated case is loud, not silent).
+_PHASE2C_AGE_FLOOR_DAYS = 7
+_PHASE2C_EVENTS_PER_PAGE = 300
+_PHASE2C_MAX_PAGES_PER_SOURCE = 6
+
+# The candidate screen. Module-level so a test can read the same object the task
+# executes rather than a retyped copy of it.
+#
+# THE SETTLED ARM IS BOUND FROM `ASSIGNED_SETTLED_STATUSES`, NOT TYPED HERE, and
+# its second half mirrors the predicate's second half: `market_assigned_settled`
+# is status OR grade, because Kalshi leaves settled markets `status='open'`
+# (gotcha #33) and only `is_winner` says so. This SQL is a SCREEN and the Python
+# predicate is the decision — every row it admits is re-asked through
+# `admissible_as_blend_speaker`, so the screen can only ever cost reach, never
+# add it. `test_the_screen_cannot_drift_from_the_predicate` binds the two.
+_PHASE2C_CANDIDATE_SQL = text(
+    "SELECT e.id, e.home_team_name, e.away_team_name, e.commence_time "
+    "FROM events e "
+    "WHERE e.completed_at IS NULL "
+    "AND e.commence_time >= :floor AND e.commence_time <= :now "
+    "AND (e.commence_time, e.id) > (:cursor_time, :cursor_id) "
+    "AND jsonb_exists(e.win_probability_sources, :source) "
+    "AND EXISTS (SELECT 1 FROM futures_markets fm "
+    "            WHERE fm.event_id = e.id AND fm.source = :source "
+    "              AND (LOWER(fm.status) IN :settled_statuses "
+    "                   OR EXISTS (SELECT 1 FROM futures_outcomes fo "
+    "                              WHERE fo.market_id = fm.id "
+    "                                AND fo.is_winner IS TRUE))) "
+    # `id` rides the ORDER BY and the cursor because `commence_time` is not
+    # unique — 30 fixtures can share a kickoff minute, and a cursor on the
+    # timestamp alone either re-reads them or steps over them.
+    "ORDER BY e.commence_time ASC, e.id ASC LIMIT :lim"
+).bindparams(bindparam("settled_statuses", expanding=True))
+
+
+async def _phase2c_settled_speaker_sweep(session, now, stats, time_remaining_fn) -> int:
+    """Reach the resultless events Phase 2 never selects, and retire there (#5820).
+
+    WHY THE CLAUSE ALONE WAS NOT THE FIX (CERT-2787). The settled-speaker clause
+    lives in `admissible_as_blend_speaker`, and on this task it is only ever
+    asked about rows Phase 2 selected. Phase 2 selects
+    `status IN ('scheduled','live')` plus completed/closed inside 24 hours — and
+    the population the clause exists for is none of those. Measured on
+    production 2026-09-13 05:16Z: of the 150 resultless events publishing a
+    settled speaker, **144 are `suspended`**, including the issue's own specimen
+    `/events/15310861` (Liu vs Blinkova, hero 99% – 1% over "No result
+    reported"). The other live writer cannot rescue them either: the WebSocket
+    fast lane recomputes only after a price batch, and a settled book is
+    entitled never to tick again. So the leg could sit at 0.99 forever while
+    every gate in the stack agreed it was inadmissible.
+
+    IT DOES NOT ASK FOR A STATUS, AND THAT IS THE REPAIR. A status allowlist is
+    what produced the gap; writing a second one with `suspended` bolted on would
+    leave the next vocabulary value out in exactly the same way. The reader's
+    condition is `completed_at IS NULL` — no result reported — so that is the
+    condition the scan uses, and `events.status` is not consulted at all.
+
+    FOUR PROPERTIES, and each is a test below:
+
+    1. STRICTLY SUBTRACTIVE. It calls `_retire_unbacked_blend_source` and
+       nothing else: no reading is computed, no `win_prob_snapshots` row is
+       written, no link is touched. It can remove a stored leg its own gate
+       refuses; it cannot add or move a number, which is why it is safe to run
+       over a population Phase 2 deliberately excludes (the "prediction market
+       bleed" boundary, 0t-1, is a rule about writing prices after the whistle).
+    2. ITS REACH IS ONE CAUSE. `admissible_speakers_are_settled_without_result`
+       gates every retirement, so this sweep retires only what #5820 named. The
+       other three silences — #5031's group of Player Props, #5548's settled
+       book, #4854's unobserved book — keep exactly the reach they have today;
+       refs are built with `event_commence_time=None` so the kickoff clause
+       abstains here rather than quietly acquiring the suspended cohort.
+    3. IDEMPOTENT AND SELF-DRAINING. The screen demands the source key be
+       PRESENT, so a retired event leaves the population on the next pass and a
+       second run of the same page is a no-op. A refused candidate stays, costs
+       one in-memory decision, and is bounded by the cap above.
+    4. BOUNDED AT BOTH ENDS, plus the task's own clock, and it never unlinks —
+       the destructive Phase 2 population is not widened by one row to get this
+       reach.
+
+    Returns the number of legs retired.
+    """
+    from app.utils.settledness import ASSIGNED_SETTLED_STATUSES
+
+    funnel = stats.setdefault("funnel", {})
+    funnel.setdefault("phase2c_events_scanned", 0)
+    funnel.setdefault("phase2c_sources_retired", 0)
+    funnel.setdefault("phase2c_budget_stopped", False)
+    funnel.setdefault("phase2c_ceiling_hit", False)
+    # The retirement counts the CAUSE, and Phase 2 can retire for the same
+    # cause earlier in the same run. So this pass's own number is a difference,
+    # not a read: taken before, taken after, subtracted.
+    retired_before = funnel.get("blend_source_retired_settled_without_result", 0)
+
+    age_floor = now - timedelta(days=_PHASE2C_AGE_FLOOR_DAYS)
+
+    for source in ("kalshi", "polymarket"):
+        # The in-run cursor. Seeded at the floor so the first page is the
+        # oldest row inside it (gotcha #41: oldest-first WITHIN a floor), and
+        # advanced past each page so no page can be read twice or skipped.
+        # The floor is therefore stated twice — here and in the `:floor`
+        # predicate — and measured: widening either ALONE changes no verdict,
+        # widening both retires the 10-day row the gate is supposed to leave.
+        # Keep both; the predicate is what a reader of the SQL sees.
+        cursor_time, cursor_id = age_floor, -1
+        for page in range(_PHASE2C_MAX_PAGES_PER_SOURCE):
+            if time_remaining_fn() < 60:
+                funnel["phase2c_budget_stopped"] = True
+                break
+
+            candidates = (
+                await session.execute(
+                    _PHASE2C_CANDIDATE_SQL,
+                    {
+                        "floor": age_floor,
+                        # Kickoff passed. A market that settles before its event
+                        # starts is a different defect with a different owner
+                        # (#5771's pre-kickoff withdrawal), and this scan must
+                        # not be a second writer on it.
+                        "now": now,
+                        "cursor_time": cursor_time,
+                        "cursor_id": cursor_id,
+                        "source": source,
+                        "settled_statuses": sorted(ASSIGNED_SETTLED_STATUSES),
+                        "lim": _PHASE2C_EVENTS_PER_PAGE,
+                    },
+                )
+            ).all()
+            if not candidates:
+                break
+            cursor_time, cursor_id = candidates[-1][3], candidates[-1][0]
+            if (
+                len(candidates) == _PHASE2C_EVENTS_PER_PAGE
+                and page == _PHASE2C_MAX_PAGES_PER_SOURCE - 1
+            ):
+                # A full LAST page is the only shape that means rows were left
+                # behind. A full page anywhere else is just a full page.
+                funnel["phase2c_ceiling_hit"] = True
+
+            await _phase2c_decide_page(
+                session, source, candidates, stats, time_remaining_fn
+            )
+
+    retired = (
+        funnel.get("blend_source_retired_settled_without_result", 0) - retired_before
+    )
+    funnel["phase2c_sources_retired"] += retired
+    return retired
+
+
+async def _phase2c_decide_page(
+    session, source, candidates, stats, time_remaining_fn
+) -> None:
+    """One page of #5820 candidates: group, ask the shared gate, retire."""
+    from app.models.models import FuturesMarket, FuturesOutcome
+
+    funnel = stats.setdefault("funnel", {})
+    event_names = {row[0]: (row[1], row[2]) for row in candidates}
+    funnel["phase2c_events_scanned"] = (
+        funnel.get("phase2c_events_scanned", 0) + len(event_names)
+    )
+
+    market_rows = (
+        await session.execute(
+            select(FuturesMarket).where(
+                FuturesMarket.event_id.in_(list(event_names)),
+                FuturesMarket.source == source,
+            )
+        )
+    ).scalars().all()
+    if not market_rows:
+        return
+
+    # One outcome query for the whole page. The grade arm of
+    # `market_assigned_settled` reads these rows, and the admission gate is a
+    # pure function that may not touch a lazy relationship on the write path
+    # (MissingGreenlet), so they are fetched here and passed.
+    outcomes_by_market: dict[int, list] = {}
+    outcome_rows = (
+        await session.execute(
+            select(FuturesOutcome)
+            .where(FuturesOutcome.market_id.in_([m.id for m in market_rows]))
+            .order_by(FuturesOutcome.rank)
+        )
+    ).scalars().all()
+    for outcome_row in outcome_rows:
+        outcomes_by_market.setdefault(outcome_row.market_id, []).append(outcome_row)
+
+    groups: dict[int, list[_LinkedMarketRef]] = {}
+    for market_row in market_rows:
+        home_name, away_name = event_names[market_row.event_id]
+        groups.setdefault(market_row.event_id, []).append(
+            _LinkedMarketRef(
+                market_id=market_row.id,
+                source=market_row.source,
+                external_id=market_row.external_id,
+                name=market_row.name,
+                event_id=market_row.event_id,
+                # Property 2. The one-cause gate below is what makes #4854's
+                # silence unreachable from here — it demands the group speak
+                # with the settled clause WITHDRAWN, which a group silenced by
+                # the kickoff clause cannot do. This `None` is the second lock,
+                # not the first: the screen does not read `commence_time` into
+                # the ref, so the pass carries no kickoff to arm it with.
+                # Measured as equivalent rather than assumed — supplying the
+                # real kickoff here changes no verdict in either suite.
+                event_commence_time=None,
+                home_team_name=home_name,
+                away_team_name=away_name,
+                status=market_row.status,
+                # The screen's own predicate, restated as evidence: every row
+                # on this page came back because `completed_at IS NULL`.
+                event_has_result=False,
+            )
+        )
+
+    for event_id, refs in groups.items():
+        if time_remaining_fn() < 30:
+            funnel["phase2c_budget_stopped"] = True
+            return
+        blend_group = _blend_group_for_refs(refs, outcomes_by_market)
+        if not admissible_speakers_are_settled_without_result(blend_group):
+            continue
+        try:
+            await _retire_unbacked_blend_source(session, refs[0], blend_group, stats)
+        except Exception as e:  # noqa: BLE001 — one event must not stop the sweep
+            await session.rollback()
+            stats.setdefault("errors", []).append(
+                f"phase2c_{event_id}: {str(e)[:100]}"
+            )
+            continue
 
 
 async def _match_prediction_markets(limit: int = 500):
@@ -4506,6 +4767,18 @@ async def _match_prediction_markets(limit: int = 500):
         except Exception as e:
             await session.rollback()
             stats["errors"].append(f"phase2b: {str(e)[:100]}")
+
+        # ── Phase 2c: the resultless cohort Phase 2's status list never sees ─
+        # Retirement only, one cause, bounded at both ends — see the helper.
+        # Runs after 2b so a leg 2b has just legitimately written on a finished
+        # game is never the row this pass reads.
+        try:
+            await _phase2c_settled_speaker_sweep(
+                session, now, stats, _time_remaining,
+            )
+        except Exception as e:
+            await session.rollback()
+            stats["errors"].append(f"phase2c: {str(e)[:100]}")
 
     # Published after the matcher's session is closed, on the receipts' own
     # session. Phase 2 commits each unlink inline, so by here every claim in the

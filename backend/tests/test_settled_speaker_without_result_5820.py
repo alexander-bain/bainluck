@@ -76,12 +76,23 @@ KICKOFF = NOW - timedelta(hours=5)
 
 
 class _Market:
-    def __init__(self, mid, name, *, source="kalshi", external_id=None, status="open"):
+    def __init__(
+        self,
+        mid,
+        name,
+        *,
+        source="kalshi",
+        external_id=None,
+        status="open",
+        event_id=None,
+    ):
         self.id = mid
         self.name = name
         self.source = source
         self.external_id = external_id
         self.status = status
+        # Only the sweep reads this: it groups a page of market rows by event.
+        self.event_id = event_id
 
 
 class _Outcome:
@@ -594,3 +605,536 @@ class TestBothWritersMeasureIt:
                 f"{name} must derive event_has_result from the event's "
                 "completed_at, or the gate never arms on its path"
             )
+
+
+# =============================================================================
+# 6. The reach — the clause is only worth what the scan that asks it selects
+#
+# CERT-2787's BLOCK, and it is the whole repair. The clause above is correct and
+# was unreachable: on this task it is only ever asked about rows PHASE 2
+# selected, and Phase 2 selects `status IN ('scheduled','live')` plus
+# completed/closed inside 24 hours. Production 2026-09-13 05:16Z: of the 150
+# resultless events publishing a settled speaker, **144 are `suspended`** —
+# including the specimen — and the WebSocket writer cannot rescue them either,
+# because it recomputes only after a price batch and a settled book may never
+# tick again. So `_phase2c_settled_speaker_sweep` is the scheduled path that
+# selects them, and these are the tests that it selects the right ones and
+# retires for one cause only.
+# =============================================================================
+
+
+class _SweepSession:
+    """Serves the four statements the sweep and the retirement issue.
+
+    Dispatch is on the statement text in the order the sweep issues them, and
+    `FROM events e` is tested BEFORE `events`: the candidate screen mentions
+    `futures_markets` inside its EXISTS, and the retirement's own read is a
+    different query over the same table.
+    """
+
+    def __init__(self, candidates=(), markets=(), outcomes=(), wps=None, pages=None):
+        # `pages` is the paging fixture: one list per candidate query, served in
+        # order. `candidates` is the single-page shorthand — one page, then the
+        # empty answer a real second page gives.
+        self._pages = (
+            [list(page) for page in pages]
+            if pages is not None
+            else [list(candidates)]
+        )
+        self._markets = list(markets)
+        self._outcomes = list(outcomes)
+        self._wps = wps
+        self.texts: list[str] = []
+        self.params: list[dict | None] = []
+        self.updates = []
+        self.added = []
+        self.commits = 0
+
+    async def execute(self, stmt, params=None):
+        sql = str(stmt)
+        self.texts.append(sql)
+        self.params.append(params)
+        if sql.lstrip().upper().startswith("UPDATE"):
+            self.updates.append(stmt)
+            return _Result([])
+        if "FROM events e" in sql:
+            # Each page is served ONCE, in order, and the fake runs dry after
+            # them. A fake that answered every query with the same page would
+            # double every count, hide a per-source bug behind it, and spin the
+            # pager forever.
+            return _Result(self._pages.pop(0) if self._pages else [])
+        if "FROM futures_markets" in sql:
+            return _Result(self._markets)
+        if "FROM futures_outcomes" in sql:
+            return _Result(self._outcomes)
+        if "events" in sql:
+            return _Result([], scalar=self._wps)
+        raise AssertionError(f"unexpected statement: {sql[:160]}")
+
+    def add(self, obj):  # pragma: no cover — asserted empty, never exercised
+        self.added.append(obj)
+
+    async def commit(self):
+        self.commits += 1
+
+    async def rollback(self):  # pragma: no cover — error path only
+        pass
+
+    def candidate_sql(self):
+        return next(sql for sql in self.texts if "FROM events e" in sql)
+
+    def candidate_params(self):
+        return self.params[self.texts.index(self.candidate_sql())]
+
+    def written_sources(self):
+        for stmt in self.updates:
+            values = dict(stmt._values)
+            col = Event.__table__.c.win_probability_sources
+            if col in values:
+                return values[col].value
+        return None
+
+
+def _sweep_stats():
+    return {"funnel": {}, "errors": []}
+
+
+async def _run_sweep(session, *, seconds_left=600.0, now=NOW):
+    from app.tasks.prediction_market_matching import _phase2c_settled_speaker_sweep
+
+    stats = _sweep_stats()
+    retired = await _phase2c_settled_speaker_sweep(
+        session, now, stats, lambda: seconds_left
+    )
+    return stats, retired
+
+
+def _settled_market_row():
+    return _Market(
+        MARKET_ID,
+        f"{HOME} vs {AWAY}",
+        external_id=TICKER,
+        status="resolved",
+        event_id=EVENT_ID,
+    )
+
+
+def _settled_outcome_rows():
+    return [
+        _Outcome(1, HOME, 0.99, market_id=MARKET_ID),
+        _Outcome(2, AWAY, 0.01, market_id=MARKET_ID),
+    ]
+
+
+_FROZEN_WPS = {
+    "kalshi": {"value": 0.99, "updated_at": "2026-09-13T03:53:13.405235+00:00"},
+    "espn": {"value": 0.5, "updated_at": "2026-09-13T03:00:00+00:00"},
+}
+
+
+@pytest.mark.asyncio
+class TestTheScanSelectsThePopulationTheClauseIsFor:
+    async def test_the_screen_never_asks_for_an_event_STATUS(self):
+        """The BLOCK's cause, asserted as an absence.
+
+        A status allowlist is what left 144 of 150 rows unreachable. Writing a
+        second one with `suspended` bolted on would leave the next vocabulary
+        value out the same way, so the scan asks the reader's own condition —
+        `completed_at IS NULL` — and never consults `events.status`.
+        """
+        from app.tasks.prediction_market_matching import _PHASE2C_CANDIDATE_SQL
+
+        sql = str(_PHASE2C_CANDIDATE_SQL)
+        assert "e.completed_at IS NULL" in sql
+        assert "e.status" not in sql, (
+            "the candidate screen filters on events.status — that is exactly the "
+            "shape that made the clause unreachable for the suspended cohort"
+        )
+        for status_word in ("scheduled", "live", "suspended"):
+            assert f"'{status_word}'" not in sql, (
+                f"the screen names the event status {status_word!r}; the "
+                "population is defined by having no result, not by a vocabulary"
+            )
+
+    async def test_the_screen_demands_the_stored_key_be_PRESENT(self):
+        """The mirror image of Phase 2b, and the reason this drains itself.
+
+        2b fills HOLES, so it demands the key be absent. This one withdraws, so
+        it demands the key be there — which also means a retired event leaves
+        the population on the next pass instead of being re-decided forever.
+        """
+        from app.tasks.prediction_market_matching import _PHASE2C_CANDIDATE_SQL
+
+        sql = str(_PHASE2C_CANDIDATE_SQL)
+        assert "jsonb_exists(e.win_probability_sources, :source)" in sql
+        assert "NOT jsonb_exists" not in sql
+
+    async def test_the_screen_cannot_drift_from_the_predicate(self):
+        """Both arms of `market_assigned_settled`, and the statuses are BOUND.
+
+        The screen is a pre-filter for a decision made in Python, so it may only
+        ever cost reach — but a hand-typed status list would cost it silently
+        the day `ASSIGNED_SETTLED_STATUSES` gains a value. The list is bound from
+        the constant, and the grade arm is here because Kalshi leaves settled
+        markets `status='open'` (gotcha #33).
+        """
+        from app.utils.settledness import ASSIGNED_SETTLED_STATUSES
+
+        session = _SweepSession()
+        await _run_sweep(session)
+
+        sql = session.candidate_sql()
+        assert "LOWER(fm.status) IN " in sql
+        assert "fo.is_winner IS TRUE" in sql, (
+            "the screen has no grade arm, so every gotcha #33 row — settled at "
+            "the venue, `status='open'` in our table — is invisible to it"
+        )
+        for status_word in sorted(ASSIGNED_SETTLED_STATUSES):
+            assert f"'{status_word}'" not in sql, (
+                "the settled statuses are typed into the SQL instead of bound "
+                "from ASSIGNED_SETTLED_STATUSES, so the two can drift"
+            )
+        assert session.candidate_params()["settled_statuses"] == sorted(
+            ASSIGNED_SETTLED_STATUSES
+        )
+
+    async def test_it_is_bounded_at_both_ends_and_ordered_oldest_first(self):
+        """gotcha #41 — a floor AND a cap, and the tail is taken first."""
+        from app.tasks.prediction_market_matching import (
+            _PHASE2C_AGE_FLOOR_DAYS,
+            _PHASE2C_EVENTS_PER_PAGE,
+        )
+
+        session = _SweepSession()
+        await _run_sweep(session)
+
+        sql = session.candidate_sql()
+        assert "ORDER BY e.commence_time ASC, e.id ASC LIMIT :lim" in sql, (
+            "`commence_time` is not unique — 30 fixtures can share a kickoff "
+            "minute — so a cursor ordered on it alone re-reads or skips them"
+        )
+        params = session.candidate_params()
+        assert params["floor"] == NOW - timedelta(days=_PHASE2C_AGE_FLOOR_DAYS)
+        assert params["lim"] == _PHASE2C_EVENTS_PER_PAGE
+        assert params["now"] == NOW, (
+            "a market that settles BEFORE its event starts is #5771's defect and "
+            "a different writer's; this scan must stop at the kickoff line"
+        )
+        assert params["cursor_time"] == params["floor"] and params["cursor_id"] == -1, (
+            "the first page must start at the floor, oldest row first"
+        )
+
+    async def test_both_sources_are_swept(self):
+        session = _SweepSession()
+        await _run_sweep(session)
+
+        asked = [p["source"] for p in session.params if p and "source" in p]
+        assert asked == ["kalshi", "polymarket"]
+
+    async def test_it_pages_within_the_run_and_the_cursor_advances(self):
+        """The production screen returns 915 Kalshi rows against a 300 page.
+
+        A single page would bind on the first run, and because a candidate the
+        decision REFUSES never leaves the population, the same oldest 300 would
+        be re-read every quarter hour and the tail would never be reached. So
+        the scan pages inside the run, and page two starts where page one ended.
+        """
+        from app.tasks.prediction_market_matching import _PHASE2C_EVENTS_PER_PAGE
+
+        last = KICKOFF + timedelta(minutes=7)
+        page1 = [(i, HOME, AWAY, KICKOFF) for i in range(_PHASE2C_EVENTS_PER_PAGE - 1)]
+        page1.append((99_001, HOME, AWAY, last))
+        session = _SweepSession(pages=[page1, [(99_002, HOME, AWAY, last)], []])
+        stats, _ = await _run_sweep(session)
+
+        cursors = [
+            (p["cursor_time"], p["cursor_id"])
+            for p in session.params
+            if p and "cursor_time" in p
+        ]
+        assert cursors[0][1] == -1
+        assert cursors[1] == (last, 99_001), (
+            "page two did not resume from page one's last row — a cursor that "
+            "does not advance is the pinning this paging exists to prevent"
+        )
+        assert stats["funnel"]["phase2c_events_scanned"] == _PHASE2C_EVENTS_PER_PAGE + 1
+
+    async def test_only_a_full_LAST_page_raises_the_alarm(self):
+        """gotcha #53 — the truncated case is loud, not silent.
+
+        A full page in the middle of the run is just a full page; the pager
+        takes the next one. A full page at the ceiling is the one shape that
+        means rows were left behind, and it is the signal to raise the ceiling
+        or page harder rather than to assume the sweep kept up.
+        """
+        from app.tasks.prediction_market_matching import (
+            _PHASE2C_EVENTS_PER_PAGE,
+            _PHASE2C_MAX_PAGES_PER_SOURCE,
+        )
+
+        def _page(start):
+            return [
+                (start + i, HOME, AWAY, KICKOFF + timedelta(seconds=start + i))
+                for i in range(_PHASE2C_EVENTS_PER_PAGE)
+            ]
+
+        every_page_full = [
+            _page(p * _PHASE2C_EVENTS_PER_PAGE)
+            for p in range(_PHASE2C_MAX_PAGES_PER_SOURCE)
+        ]
+        stats, _ = await _run_sweep(_SweepSession(pages=every_page_full))
+        assert stats["funnel"]["phase2c_ceiling_hit"] is True
+
+        one_short = [_page(0), [(9_999, HOME, AWAY, KICKOFF)]]
+        stats, _ = await _run_sweep(_SweepSession(pages=one_short))
+        assert stats["funnel"]["phase2c_ceiling_hit"] is False
+
+    async def test_the_time_budget_stops_it_before_it_queries(self):
+        """It shares a 15-minute task with a link pass and a backfill."""
+        session = _SweepSession()
+        stats, retired = await _run_sweep(session, seconds_left=10.0)
+
+        assert session.texts == [], "the sweep queried with no time budget left"
+        assert stats["funnel"]["phase2c_budget_stopped"] is True
+        assert retired == 0
+
+
+@pytest.mark.asyncio
+class TestTheSweepRetiresOneCauseAndOnlyOne:
+    async def test_the_suspended_specimen_is_retired_and_writes_no_snapshot(self):
+        """The ship: event 15310861's 0.99 is withdrawn by a scheduled pass."""
+        session = _SweepSession(
+            candidates=[(EVENT_ID, HOME, AWAY, KICKOFF)],
+            markets=[_settled_market_row()],
+            outcomes=_settled_outcome_rows(),
+            wps=dict(_FROZEN_WPS),
+        )
+        stats, retired = await _run_sweep(session)
+
+        assert retired == 1
+        written = session.written_sources()
+        assert written is not None and "kalshi" not in written
+        assert written["espn"]["value"] == 0.5, (
+            "a retirement removes ONE source key and never touches a sibling"
+        )
+        assert session.added == [], (
+            "the sweep wrote a snapshot — it may only withdraw, never draw a new "
+            "point on a chart for a game that is still unresolved"
+        )
+        assert stats["funnel"]["blend_source_retired_settled_without_result"] == 1
+        assert stats["funnel"]["phase2c_sources_retired"] == 1
+        assert stats["funnel"]["phase2c_events_scanned"] == 1
+
+    async def test_a_market_kalshi_left_open_but_graded_is_still_retired(self):
+        """gotcha #33 through the whole path, not just the predicate."""
+        market = _Market(
+            MARKET_ID,
+            f"{HOME} vs {AWAY}",
+            external_id=TICKER,
+            status="open",
+            event_id=EVENT_ID,
+        )
+        session = _SweepSession(
+            candidates=[(EVENT_ID, HOME, AWAY, KICKOFF)],
+            markets=[market],
+            outcomes=[
+                _Outcome(1, HOME, 0.99, is_winner=True, market_id=MARKET_ID),
+                _Outcome(2, AWAY, 0.01, market_id=MARKET_ID),
+            ],
+            wps=dict(_FROZEN_WPS),
+        )
+        _, retired = await _run_sweep(session)
+
+        assert retired == 1
+        assert "kalshi" not in session.written_sources()
+
+    async def test_a_live_speaker_beside_the_settled_one_keeps_the_leg(self):
+        """The transient case, and the reason the decision is not the screen.
+
+        The screen admits this event — it holds a settled market — and the
+        shared admission function is what refuses to retire: a live winner
+        market can still speak, so the source still has an opinion and the
+        reader is still being shown a real number.
+        """
+        live = _Market(
+            MARKET_ID + 1,
+            f"{HOME} vs {AWAY}",
+            external_id=f"{TICKER}-LIVE",
+            status="open",
+            event_id=EVENT_ID,
+        )
+        session = _SweepSession(
+            candidates=[(EVENT_ID, HOME, AWAY, KICKOFF)],
+            markets=[_settled_market_row(), live],
+            outcomes=_settled_outcome_rows()
+            + [
+                _Outcome(1, HOME, 0.64, market_id=MARKET_ID + 1),
+                _Outcome(2, AWAY, 0.36, market_id=MARKET_ID + 1),
+            ],
+            wps=dict(_FROZEN_WPS),
+        )
+        stats, retired = await _run_sweep(session)
+
+        assert retired == 0
+        assert session.written_sources() is None, (
+            "a group that still holds a live speaker lost its leg"
+        )
+        assert stats["funnel"].get("blend_source_retired_settled_without_result") is None
+
+    async def test_the_kickoff_clause_does_not_ride_along(self):
+        """Property 2: this sweep's reach is ONE cause.
+
+        A book nobody has looked at since kickoff (#4854) is a different
+        silence, its reach over the suspended cohort has never been measured,
+        and a retirement is destructive. The GATE is what makes it unreachable:
+        it demands the group speak with the settled clause withdrawn, which a
+        group the kickoff clause has silenced cannot do. (Supplying the real
+        kickoff to the refs is measured equivalent — that is why the assertion
+        is on the verdict and not on the absent field.) If this ever goes red,
+        the sweep has quietly acquired another population.
+        """
+        stale = _Outcome(1, HOME, 0.55, market_id=MARKET_ID)
+        stale.last_updated = KICKOFF - timedelta(hours=3)
+        other = _Outcome(2, AWAY, 0.45, market_id=MARKET_ID)
+        other.last_updated = KICKOFF - timedelta(hours=3)
+        session = _SweepSession(
+            candidates=[(EVENT_ID, HOME, AWAY, KICKOFF)],
+            markets=[
+                _Market(
+                    MARKET_ID,
+                    f"{HOME} vs {AWAY}",
+                    external_id=TICKER,
+                    status="open",
+                    event_id=EVENT_ID,
+                )
+            ],
+            outcomes=[stale, other],
+            wps=dict(_FROZEN_WPS),
+        )
+        _, retired = await _run_sweep(session)
+
+        assert retired == 0
+        assert session.written_sources() is None
+
+    async def test_a_group_silent_for_another_reason_is_left_alone(self):
+        """Property 2 again, and this is the arm that carries it.
+
+        A Polymarket group of nothing but Exact Score derivatives holds no
+        market ADMITTED to speak for the winner, so it is silent for #5031's
+        reason — and #5031's retirement reaches Phase 2's population by design.
+        Whether it should also reach the suspended cohort has never been
+        measured and a retirement is destructive, so the sweep abstains. Delete
+        the one-cause gate and this leg disappears under
+        `blend_source_retired_no_winner_market`.
+        """
+        settled = _Market(
+            MARKET_ID,
+            f"{HOME} vs. {AWAY} - Exact Score",
+            source="polymarket",
+            external_id="0xexact1",
+            status="resolved",
+            event_id=EVENT_ID,
+        )
+        live = _Market(
+            MARKET_ID + 1,
+            f"{HOME} vs. {AWAY} - Exact Score",
+            source="polymarket",
+            external_id="0xexact2",
+            status="open",
+            event_id=EVENT_ID,
+        )
+        session = _SweepSession(
+            candidates=[(EVENT_ID, HOME, AWAY, KICKOFF)],
+            markets=[settled, live],
+            outcomes=[
+                _Outcome(1, "2 - 0", 1.0, market_id=MARKET_ID),
+                _Outcome(2, "1 - 2", 0.0, market_id=MARKET_ID),
+                _Outcome(1, "2 - 1", 0.41, market_id=MARKET_ID + 1),
+                _Outcome(2, "0 - 2", 0.59, market_id=MARKET_ID + 1),
+            ],
+            wps={
+                "polymarket": {"value": 0.99, "updated_at": "2026-09-13T03:53:13Z"},
+            },
+        )
+        stats, retired = await _run_sweep(session)
+
+        assert retired == 0
+        assert session.written_sources() is None, (
+            "the sweep retired a leg for #5031's cause — its reach is supposed "
+            "to be the settled-speaker clause and nothing else"
+        )
+        assert "blend_source_retired_no_winner_market" not in stats["funnel"]
+
+    async def test_one_bad_event_does_not_wipe_the_page(self):
+        """gotcha #42 — the healthy sibling on the same page still retires."""
+
+        class _Exploding(_SweepSession):
+            async def execute(self, stmt, params=None):
+                sql = str(stmt)
+                if sql.lstrip().upper().startswith("UPDATE") and not self.updates:
+                    self.updates.append(stmt)
+                    raise RuntimeError("deadlock detected")
+                return await super().execute(stmt, params)
+
+        second = EVENT_ID + 1
+        session = _Exploding(
+            candidates=[(EVENT_ID, HOME, AWAY, KICKOFF), (second, HOME, AWAY, KICKOFF)],
+            markets=[
+                _settled_market_row(),
+                _Market(
+                    MARKET_ID + 2,
+                    f"{HOME} vs {AWAY}",
+                    external_id=f"{TICKER}-2",
+                    status="resolved",
+                    event_id=second,
+                ),
+            ],
+            outcomes=_settled_outcome_rows()
+            + [
+                _Outcome(1, HOME, 0.98, market_id=MARKET_ID + 2),
+                _Outcome(2, AWAY, 0.02, market_id=MARKET_ID + 2),
+            ],
+            wps=dict(_FROZEN_WPS),
+        )
+        stats, retired = await _run_sweep(session)
+
+        assert retired == 1, "the second event was starved by the first one's error"
+        assert any("phase2c_" in err for err in stats["errors"])
+
+
+class TestTheTaskActuallyRunsTheSweep:
+    def test_the_matcher_awaits_it(self):
+        """A helper nothing calls is the defect this repair exists to fix.
+
+        Read from the AST inside `_match_prediction_markets` itself, not from a
+        source scan: a call in a comment, in a docstring, or in a sibling
+        function would satisfy a grep and change nothing on production.
+        """
+        import ast
+        import pathlib
+
+        path = (
+            pathlib.Path(__file__).resolve().parents[1]
+            / "app"
+            / "tasks"
+            / "prediction_market_matching.py"
+        )
+        tree = ast.parse(path.read_text())
+        matcher = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.AsyncFunctionDef)
+            and node.name == "_match_prediction_markets"
+        )
+        awaited = [
+            node
+            for node in ast.walk(matcher)
+            if isinstance(node, ast.Await)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "_phase2c_settled_speaker_sweep"
+        ]
+        assert awaited, (
+            "_match_prediction_markets never awaits the sweep, so the clause "
+            "keeps the reach that CERT-2787 blocked it for"
+        )
