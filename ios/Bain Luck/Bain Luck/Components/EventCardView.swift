@@ -132,6 +132,46 @@ struct EventCardView: View {
 
     // MARK: - Top Bar
 
+    /// Whether the top row draws the served `headline` as a pill.
+    ///
+    /// #5868 — A LIVE CARD DRAWS NO HEADLINE PILL, because on a live card the
+    /// server sends the SAME sentence in `headline` and in `reason`, and this
+    /// card renders both: the pill up here, the grey `reasonBadge` down in
+    /// `footerRow`. Photographed on production 2026-09-13 09:01Z
+    /// (`artifacts-native-142/sports.png`): under Live Now, "Sangju Sangmu FC
+    /// leading after starting at 45%" and "Hokkaido Nippon-Ham Fighters chance
+    /// rose from 46% to 88%" each appear twice on their own card, ~40pt apart.
+    /// Measured on the same payload — of 70 event items, 2 of the 3 live ones
+    /// print the sentence twice and 0 of the 11 non-live ones do, because a
+    /// non-live headline is a short tag ("Recent upset", "Line moving") that
+    /// says something the reason does not. The pill also has no line limit, so
+    /// a sentence-length headline wraps to three lines and deforms the badge
+    /// row it shares with the league name, the LIVE badge and the bookmark.
+    ///
+    /// THIS IS THE WEB CARD'S RULE, PORTED, NOT A NEW ONE. `FeedCard.tsx:661`
+    /// has gated this same pill on `!isLive` for the event card (and :1328 for
+    /// the concept card) all along; iOS never got it. That gap is #4002's shape
+    /// — one card holding two opinions on two platforms — so the fix is the
+    /// twin's condition rather than a second rule invented here.
+    ///
+    /// It REMOVES the pill rather than de-duplicating it, and that is the
+    /// deliberate part: the third live card in that payload (KBO, Hanwha v Kia)
+    /// carries headline "Odds moved" beside reason "Virtually even", two
+    /// different sentences, and this rule drops that pill too — exactly as web
+    /// already does. The narrower alternative, `lib/headlineEcho.ts` (#4403),
+    /// is what the FUTURES family uses on web, not the event card; adopting it
+    /// here would put the two platforms back out of step on one component.
+    ///
+    /// Pure and out here for the reason `EventCardFooter` is: a condition
+    /// spelled inline in a `ViewBuilder` is a condition no test can reach, and
+    /// the guard has to be able to fail in both directions.
+    enum EventCardHeadlinePill {
+        static func isDrawn(headline: String?, isLive: Bool) -> Bool {
+            guard let headline, !headline.isEmpty else { return false }
+            return !isLive
+        }
+    }
+
     private var topBar: some View {
         HStack(spacing: 6) {
             Text(event.sportName ?? sportDisplayName(for: event.sport))
@@ -151,7 +191,7 @@ struct EventCardView: View {
             if let badge = personalizationBadge {
                 badge
             }
-            if let headline, !headline.isEmpty {
+            if EventCardHeadlinePill.isDrawn(headline: headline, isLive: isLive), let headline {
                 Text(headline)
                     .font(.caption2)
                     .fontWeight(.semibold)
