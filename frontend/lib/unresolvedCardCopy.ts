@@ -69,6 +69,10 @@ const SUBJECT_EYEBROW: Record<UnresolvedSubject, string> = {
   event: "Event",
   hub: "Competition",
   team: "Team",
+  // Matches `collectionCardCopy`'s pill for a bracket that DOES resolve, so the
+  // two `/playoffs/<slug>` cards are the same card with different words rather
+  // than two designs.
+  bracket: "Playoffs",
 };
 
 /**
@@ -90,6 +94,7 @@ const NOT_FOUND_SUBTITLE: Record<UnresolvedSubject, string> = {
   event: "The link may be old, or this may not be an event we cover.",
   hub: "The link may be old, or this may not be a competition we cover.",
   team: "The link may be old, or this may not be a team we cover.",
+  bracket: "The link may be old, or this league may not run a championship grid.",
 };
 
 /**

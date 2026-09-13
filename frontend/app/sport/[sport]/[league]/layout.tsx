@@ -1,57 +1,59 @@
 import type { Metadata } from "next";
 
-import { defaultShareCard } from "@/lib/shareCard";
+import { leagueShare } from "@/lib/collectionShareMeta";
+import { withSiteSuffix } from "@/lib/eventShareMeta";
+import { selfCanonical } from "@/lib/routeMetadata";
+import { buildShareUrl } from "@/lib/share";
 
-const LEAGUE_NAMES: Record<string, string> = {
-  pga: "PGA Tour",
-  dpworld: "DP World Tour",
-  lpga: "LPGA",
-  liv: "LIV Golf",
-  kft: "Korn Ferry Tour",
-  nba: "NBA",
-  wnba: "WNBA",
-  ncaab: "NCAA Men's Basketball",
-  wncaab: "NCAA Women's Basketball",
-  nfl: "NFL",
-  ncaaf: "NCAA Football",
-  cfl: "CFL",
-  ufl: "UFL",
-  nhl: "NHL",
-  mlb: "MLB",
-  ncaa: "College Baseball",
-  epl: "Premier League",
-  mls: "MLS",
-  laliga: "La Liga",
-  bundesliga: "Bundesliga",
-  seriea: "Serie A",
-  ligue1: "Ligue 1",
-  ucl: "Champions League",
-  atp: "ATP Tour",
-  wta: "WTA Tour",
-  ufc: "UFC",
-};
-
+/**
+ * The same two defects as `app/sport/[sport]/layout.tsx`, on the URL a fan is
+ * most likely to paste. Measured with a crawler UA on production 2026-09-13:
+ *
+ *   /sport/football/nfl   <title>        NFL Odds &amp; Schedule - BainLuck
+ *                         og:title       NFL - BainLuck
+ *                         og:image       https://www.bainluck.com/opengraph-image
+ *                         twitter:title  Bain Luck — Prediction Market Discovery
+ *   /sport/basketball/nba  the same, with "NBA".
+ *
+ * The house card and an inherited `twitter` block: a pasted NFL link previewed
+ * on X as the home page, and in Slack as the home page's picture beside the
+ * word "NFL".
+ *
+ * `LEAGUE_NAMES` moved to `lib/collectionShareMeta.ts` as
+ * `LEAGUE_DISPLAY_NAMES` — the card's headline and this `<title>` are the same
+ * string, and the day they come from two tables is the day one says "NFL" and
+ * the other "Nfl".
+ *
+ * ⚠️ `title` carries the suffix here. See the ⚠️ in `app/sport/[sport]/layout.tsx`.
+ */
 export async function generateMetadata({
   params,
 }: {
   params: Promise<{ sport: string; league: string }>;
 }): Promise<Metadata> {
   const { sport, league } = await params;
-  const name = LEAGUE_NAMES[league] || league.toUpperCase();
-  const path = `/sport/${sport}/${league}`;
+  const path = `/sport/${encodeURIComponent(sport)}/${encodeURIComponent(league)}`;
+  const share = leagueShare(sport, league);
+  const socialTitle = withSiteSuffix(share.name);
+  const image = buildShareUrl(`${path}/opengraph-image`);
+
   return {
-    title: `${name} Odds & Schedule - BainLuck`,
-    description: `${name} win probabilities, championship odds, upcoming schedule, and event cards. Betting markets translated into intuitive probabilities.`,
-    // LAT-P278: no canonical of its own meant this inherited the root's
-    // `canonical: "/"` and declared itself a duplicate of the homepage.
-    alternates: { canonical: path },
+    ...selfCanonical(path),
+    title: withSiteSuffix(share.pageTitle),
+    description: share.description,
     openGraph: {
-      title: `${name} - BainLuck`,
-      description: `${name} schedule, odds, and championship grid.`,
+      title: socialTitle,
+      description: share.description,
       url: path,
-      // Explicit because `generateMetadata` does NOT inherit the root
-      // `opengraph-image` — see `lib/shareCard.ts` for the measured table.
-      images: defaultShareCard(),
+      siteName: "Bain Luck",
+      type: "website",
+      images: [{ url: image, alt: share.name, width: 1200, height: 630 }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: socialTitle,
+      description: share.description,
+      images: [image],
     },
   };
 }

@@ -23,42 +23,22 @@ import type {
   GolfScheduleResponse,
   GolfScheduleEvent,
 } from "@/lib/types";
+import {
+  PLAYOFF_LEAGUES as LEAGUES,
+  PLAYOFF_LEAGUE_MAP as LEAGUE_MAP,
+  playoffDisplayName,
+  type LeagueInfo,
+} from "@/lib/playoffLeagues";
 
 // ---------------------------------------------------------------------------
-// League registry — all 13 leagues from backend config
+// League registry — all 14 leagues, now in `lib/playoffLeagues.ts`.
+//
+// It moved because this file is `"use client"` and the route's share card runs
+// on the edge: `opengraph-image.tsx` and `generateMetadata` cannot import a
+// client page, and a second copy of the table is how the fifteenth league ends
+// up in one of them and not the other. The rows are unchanged, and the names
+// are aliased on import so nothing below this line had to move.
 // ---------------------------------------------------------------------------
-
-interface LeagueInfo {
-  slug: string;
-  label: string;
-  emoji: string;
-  group: "us" | "college" | "soccer" | "other";
-  conferences?: string[];
-}
-
-const LEAGUES: LeagueInfo[] = [
-  { slug: "nba", label: "NBA", emoji: "\u{1F3C0}", group: "us", conferences: ["Eastern", "Western"] },
-  { slug: "nfl", label: "NFL", emoji: "\u{1F3C8}", group: "us", conferences: ["AFC", "NFC"] },
-  { slug: "mlb", label: "MLB", emoji: "\u26BE", group: "us", conferences: ["American League", "National League"] },
-  { slug: "nhl", label: "NHL", emoji: "\u{1F3D2}", group: "us", conferences: ["Eastern", "Western"] },
-  { slug: "wnba", label: "WNBA", emoji: "\u{1F3C0}", group: "us" },
-  { slug: "ncaa-basketball", label: "NCAAB", emoji: "\u{1F3C0}", group: "college" },
-  { slug: "ncaa-women-basketball", label: "WNCAAB", emoji: "\u{1F3C0}", group: "college" },
-  { slug: "ncaa-football", label: "NCAAF", emoji: "\u{1F3C8}", group: "college" },
-  { slug: "epl", label: "EPL", emoji: "\u26BD", group: "soccer" },
-  { slug: "la-liga", label: "La Liga", emoji: "\u26BD", group: "soccer" },
-  { slug: "champions-league", label: "UCL", emoji: "\u26BD", group: "soccer" },
-  { slug: "bundesliga", label: "Bundesliga", emoji: "\u26BD", group: "soccer" },
-  { slug: "mls", label: "MLS", emoji: "\u26BD", group: "soccer" },
-  { slug: "golf", label: "Golf", emoji: "\u26F3", group: "other" },
-];
-
-const LEAGUE_MAP: Record<string, LeagueInfo> = Object.fromEntries(LEAGUES.map((l) => [l.slug, l]));
-LEAGUE_MAP["ucl"] = LEAGUE_MAP["champions-league"];
-LEAGUE_MAP["ncaab"] = LEAGUE_MAP["ncaa-basketball"];
-LEAGUE_MAP["ncaaf"] = LEAGUE_MAP["ncaa-football"];
-LEAGUE_MAP["wncaab"] = LEAGUE_MAP["ncaa-women-basketball"];
-LEAGUE_MAP["ncaa"] = LEAGUE_MAP["ncaa-basketball"];
 
 const SOURCE_LABELS: Record<string, string> = {
   odds_api: "Sportsbooks",
@@ -559,11 +539,11 @@ export default function PlayoffGridPage({
 }) {
   const slug = params.sport.toLowerCase();
   const league = LEAGUE_MAP[slug];
-  const displayName = league
-    ? slug === "golf"
-      ? "Golf Tournament Odds"
-      : `${league.label} Championship Grid`
-    : `${slug} Championship Grid`;
+  // The `<h1>`, and — via `playoffShare` — the share card's headline, from one
+  // call. The `!league` arm never reaches the heading (that branch returns the
+  // "League Not Found" picker below) and is kept only so the analytics title
+  // below is defined.
+  const displayName = league ? playoffDisplayName(league) : `${slug} Championship Grid`;
 
   usePageTracking({ pageType: "playoff_grid", pageTitle: `${displayName} - Bain Luck` });
   useScrollDepth({ pageType: "playoff_grid" });

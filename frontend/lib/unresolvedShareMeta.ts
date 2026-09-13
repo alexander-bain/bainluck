@@ -79,6 +79,16 @@ import { defaultShareCard } from "@/lib/shareCard";
  * names nothing; the WRONG-SPORT case (#5852) is not this subject and must not
  * use it, because "this team isn't on Bain Luck" is false about a team that is
  * on Bain Luck at a different address. `lib/teamShareMeta.ts` owns that one.
+ *
+ * `"bracket"` joined with the four collection routes (`lib/collectionShareMeta.ts`).
+ * It is the one subject whose absence is decided WITHOUT a request: the fourteen
+ * leagues that have a championship grid are a local table, and
+ * `/playoffs/<anything-else>` renders "League Not Found" and a league picker for
+ * exactly the slugs that table misses. So `"not-found"` here is as well-founded
+ * as a 404 is elsewhere — and `"unavailable"` is UNREACHABLE from that route,
+ * because there is nothing to be unavailable. A `Record` keyed on this union has
+ * to carry an entry for it anyway; the tables below say so where it happens
+ * rather than leaving a reader to wonder which branch ships.
  */
 export type UnresolvedSubject =
   | "game"
@@ -86,7 +96,8 @@ export type UnresolvedSubject =
   | "tournament"
   | "event"
   | "hub"
-  | "team";
+  | "team"
+  | "bracket";
 
 /**
  * Why the payload did not arrive.
@@ -114,6 +125,10 @@ const SUBJECT_NOUN: Record<UnresolvedSubject, string> = {
   event: "event",
   hub: "competition",
   team: "team",
+  // "Bracket" and not "playoff grid": the page's own `<h1>` says "Championship
+  // Grid", but that is the name of the TABLE on it. A reader who pasted
+  // `/playoffs/nfl` was after the bracket.
+  bracket: "bracket",
 };
 
 /**
@@ -157,6 +172,15 @@ const UNAVAILABLE_COPY: Record<UnresolvedSubject, UnresolvedCopy> = {
     title: "Team Odds",
     description: "Win probabilities, championship odds and season futures, as one clean number.",
   },
+  // ⚠️ UNREACHABLE from `/playoffs/[sport]`, and deliberately so: that route
+  // resolves against a local table, so it never has a payload that could fail
+  // to arrive. Present because the `Record` demands it. If a later ship gives
+  // the bracket a fetch, this is the text it starts from — don't invent a
+  // second voice for it then.
+  bracket: {
+    title: "Championship Grid",
+    description: "Every team's road to the title, as one clean probability.",
+  },
 };
 
 /** The second sentence of the `"not-found"` copy — what the site offers instead. */
@@ -167,6 +191,7 @@ const NOT_FOUND_INVITATION: Record<UnresolvedSubject, string> = {
   event: "See what the world thinks will happen, as probabilities.",
   hub: "See the sports and competitions we cover, as probabilities.",
   team: "See today's games and what the world thinks will happen, as probabilities.",
+  bracket: "See the leagues with a championship grid, and who the season is going to.",
 };
 
 /**
