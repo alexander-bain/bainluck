@@ -309,6 +309,121 @@ class TestOrientation:
         assert not orientation_agrees("Ben Shelton", "Stefanos Tsitsipas", "", "")
 
 
+class TestAnAccentIsNotADifferentPlayer:
+    """🔴 #5901 — the orientation check refused the fold on 3 of 3 names that could reach it.
+
+    `\\w` is Unicode-aware in Python 3, so before this fix `ć`, `à` and `á`
+    survived the punctuation pass and `{jović}` and `{jovic}` were DISJOINT
+    sets. Measured by authority/172 on production 2026-09-13: of 193 tagged
+    duplicate pairs the predicate refused 7, five purely on an accent — and
+    `Bondár`, `Cinà` and `Jović` are the ENTIRE non-ASCII tennis-name
+    population (3 of 3,438 distinct names over 30 days). A 5-in-193 refusal
+    rate reads small; the rate that matters is 3 of 3.
+
+    What the reader got: not a blank card and not two cards — the suppression
+    worked. The surviving page blended fewer sources than the data supported
+    and its chart drew fewer series, with nothing anywhere reporting a problem.
+    """
+
+    def test_the_five_refused_production_pairs_now_fold(self):
+        """Verbatim from the issue's specimen table — ghost, then canonical.
+
+        Every one of these was `orientation_agrees == False` on 2026-09-13, and
+        every one is one player spelled twice. This is the population the ship
+        exists to move; if a later widening-refusal breaks it, it breaks here.
+        """
+        pairs = [
+            # (canonical_home, canonical_away, ghost_home, ghost_away)
+            ("Alex Michelsen", "Federico Cinà", "Alex Michelsen", "Federico Cina"),
+            ("Alex Michelsen", "Federico Cinà", "Michelsen", "Cina"),
+            ("Iva Jović", "Alexandra Eala", "Jovic", "Eala"),
+            ("Iva Jović", "Magdalena Frech", "Jovic", "Frech"),
+            ("Lucie Havlickova", "Anna Bondár", "Havlickova", "Bondar"),
+        ]
+        assert [orientation_agrees(*p) for p in pairs] == [True] * 5
+
+    def test_the_id_anchored_la_liga_pair_folds(self):
+        """authority/173: the same refusal on a pair that already shares a contest id.
+
+        `15298077 Celta Vigo v Málaga` and `15310518 RC Celta de Vigo v Malaga
+        CF` are one kickoff on one `statpal_fixture_id` (9543417), and
+        production served both — the first with 75%/25% and crests, the second
+        with "No price yet". `reconcile_shared_fixture_ids` wrote
+        `tags_written: 0` for the pass because `{málaga} != {malaga, cf}`.
+
+        So the fix is not only the blend: it unblocks the id-anchored WRITER
+        too, which is why #5901 is p1 and not a chart nicety.
+        """
+        assert orientation_agrees(
+            "Celta Vigo", "Málaga", "RC Celta de Vigo", "Malaga CF"
+        )
+
+    def test_the_fold_is_the_shared_table_and_not_a_private_nfd_rule(self):
+        """🔴 The mutation this class exists to kill.
+
+        The obvious one-line fix is `unicodedata.normalize("NFD", …)` plus a
+        drop of the combining marks. That passes every assertion above and is
+        still wrong: `ø`, `ł`, `ß` and `đ` carry the mark INSIDE the glyph, so
+        NFD has nothing to decompose, the letter survives to the `[^\\w\\s]`
+        pass, and THAT deletes it. Deleting a letter does not shorten a token,
+        it splits one — `Bodø/Glimt` becomes `{bod, glimt}` and `bod` matches
+        nothing (#5878).
+
+        Only `strip_diacritics`, which applies `EXTRA_TRANSLITERATIONS` first,
+        gets these. Asserting them here is what makes "imported the shared
+        table" a tested claim rather than a sentence in a docstring.
+        """
+        assert orientation_agrees("Bodø/Glimt", "Tromsø", "Bodo/Glimt", "Tromso")
+        assert orientation_agrees("Widzew Łódź", "Śląsk", "Widzew Lodz", "Slask")
+        assert orientation_agrees("Strauß", "Beşiktaş", "Strauss", "Besiktas")
+
+    def test_the_widening_does_not_reach_the_pair_the_subset_rule_refuses(self):
+        """🔴 Red Sox / White Sox still refuse — accented or not.
+
+        The fold makes strictly MORE token sets equal, so the question a
+        widening must answer is what it now lets through that the predicate
+        exists to stop. Neither spelling of this pair contains a mark, so the
+        fold cannot reach it — and the accented restatement proves the refusal
+        survives the new code path rather than merely bypassing it.
+        """
+        assert not orientation_agrees(
+            "Boston Red Sox", "Chicago White Sox", "White Sox", "Red Sox"
+        )
+        assert not orientation_agrees(
+            "Bóston Red Sox", "Chicago White Sox", "White Sox", "Red Sox"
+        )
+
+    def test_a_swapped_accented_ghost_is_still_refused(self):
+        """The fold must not buy the orientation guard's silence.
+
+        Same two players, slots crossed, one side accented. Folding this plots
+        Jović's curve as Eala's — the inverted chart failure mode 1 exists for,
+        now reachable through the new code path.
+        """
+        assert not orientation_agrees("Iva Jović", "Alexandra Eala", "Eala", "Jovic")
+
+    def test_an_accented_blank_still_matches_nothing(self):
+        """`strip_diacritics("")` is `""`, so the emptiness test is unchanged."""
+        assert not orientation_agrees("Iva Jović", "Alexandra Eala", "", "")
+
+    def test_the_accented_ghost_reaches_the_folded_id_list(self):
+        """End to end: the predicate's answer has to arrive at the chart's id list.
+
+        A unit-only fix leaves the serving path untested, and the serving path
+        is where the reader lost the sources.
+        """
+        eng = _engine(
+            _event(CANON_ID, home="Iva Jović", away="Alexandra Eala"),
+            _event(
+                GHOST_ID,
+                home="Jovic",
+                away="Eala",
+                tags=[duplicate_tag(CANON_ID)],
+            ),
+        )
+        assert _folded(eng, CANON_ID) == [CANON_ID, GHOST_ID]
+
+
 # ── Failure mode 2: interleaving ─────────────────────────────────────────────
 
 
