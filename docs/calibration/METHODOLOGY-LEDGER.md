@@ -40,7 +40,9 @@ file currently carries ONE. Do not read the absence of an entry as the absence o
 
 Fable's list, 2026-09-11 11:17am PT, and where each stands after CAL-P1113's pass:
   * D80    -> written up, under "Execution changes"; effect measured (the 17-piece beat, refuted).
-  * D112   -> NOT written up, and deliberately: it is not on master. See "Not in force" below.
+  * D112   -> WRITTEN UP 2026-09-13, the day it landed (q271, `554f77546`). Its "what it affected"
+              row is PENDING the first q271 rebuild and says so; it is not filled from the
+              pre-ship upper bound.
   * D119   -> written up, under "Execution changes"; effect measured (two post-release beats).
   * #4745  -> written up as a grading-method entry; effect measured (34,615 rows).
   * #4853  -> still open (it is a ship-ORDER issue, not itself one methodology change). Its
@@ -57,6 +59,47 @@ rebuild that accompanied the change, and say so.
 > **This ledger is seeded but not complete.** It carries every methodology change this lane can
 > measure as of 2026-09-11. What is knowingly missing is named at the foot of the file, under "Not
 > in force, or not yet measured". Do not read the absence of an entry as the absence of a change.
+
+---
+
+## 2026-09-13 — a one-question market its venue settled is graded, not thrown away
+
+**Population version:** `q271` (from `q270`) · **Code:** `5def08cb4` (the wiring) and `31de29e1b`
+(the population guard), merged as `554f77546`; the fingerprint ratchet that pins the new rule is
+`047496d86` · **Issue:** #997 (the ship, #5827) · **Review:** CERT-2788
+**Ruled by:** Alex — D112, ruled and amended 2026-09-10. This is the last of the five method items
+Alex named on 2026-09-12, so the single recount is now complete on the method side.
+
+**What changed.** We only grade ourselves against an answer that came from somewhere other than the
+market's own price — otherwise the price is marking its own homework. One way a market settles is by
+every other outcome losing, and until now we threw all of those away as unsafe. On a market that
+asks exactly one question — a single Yes/No, with one outcome captured — there is no other outcome,
+so there is no sibling price that could have decided it: the answer is the venue's own. From this
+change those rows are graded like any other. At two outcomes or more nothing changes; the old
+exclusion stands, for the same reason it always did.
+
+**Why.** Measured, not argued. Admitting only the "everything else lost" half of the pair gives a
+censored sample — every row it lets in was pre-selected to be a loss — and it shows: those rows come
+true 617 of 2,097 times, **29.4%**, against forecasts averaging about 50%. Admit the pair together
+and it is 1,566 of 3,046, **51.4%** — the coin flip the prices said it should be. So the two channels
+are admitted together or not at all.
+
+**This is the first population change in the series that widens rather than narrows.** The two before
+it (`q269`, `q270`) removed rows the new method called wrong. This one removes nothing. It admits up
+to ~3,046 rows the previous curve was simply missing — an upper bound, because they still have to
+clear every other filter on the page. That direction is why the earlier recount could publish
+honestly without it: their absence was a coverage gap, never a wrong number.
+
+**What it affected.** _Pending the measured rebuild._ The published row counts per cell, and what
+they did to each cell's error, go here when the first rebuild under `q271` completes — not before,
+and not from the ~3,046 upper bound above, which is a population size and not a published count.
+
+**The page was dark while this landed, and that was accepted in advance.** `/api/calibration` has
+served nothing since 04:48Z on 2026-09-13: the site reached `q271` before the rebuild that produces
+`q271` numbers could finish one, and we refuse to serve numbers computed under an older rule while
+claiming the newer one. Alex accepted that window by name ("for as long as it takes is fine") rather
+than publish the older recount and immediately re-darken the page for this one. It is a declared
+wait, not a fault, and it ends when the rebuild publishes.
 
 ---
 
@@ -268,13 +311,12 @@ separate machine for the rebuild) remains open and remains Alex's.
 
 # Not in force, or not yet measured
 
-* **D112 — the losing days back in** (lone-claim markets admit both settlement channels). Ruled by
-  Alex and amended 2026-09-10, built on `98f75b9b` (PR #4927), **not on master** — its review
-  (CERT-2550) did not pass it, and it reads `diverged` against master at 2026-09-11 19:26Z. Its
-  measurement exists and is large — the
-  literal wording admits only one channel and yields 617/2,097 = 29.4% against a ~50% forecast, while
-  both channels give 1,566/3,046 = **51.4%**, the coin flip — but a ledger entry asserts a rule that
-  was **in force**, and this one never has been. It gets its entry the day it lands.
+* **D112 — the losing days back in** (lone-claim markets admit both settlement channels)
+  **LANDED 2026-09-13 and has its own entry above.** The version that landed is not the one this
+  bullet used to name: `98f75b9b` (PR #4927) was refused by its review (CERT-2550) and never reached
+  master; what is in force is `5def08cb4` / `31de29e1b`, merged as `554f77546` under CERT-2788. The
+  entry's "what it affected" row is still open, and deliberately: the first `q271` rebuild has not
+  published, so there is no measured published count to write down yet.
 * **#4853** is a ship-order issue, not a single methodology change; its constituent fixes are entered
   here as they land.
 * **CU-3 / #5275**, the shape → semantic recut, has not landed.
