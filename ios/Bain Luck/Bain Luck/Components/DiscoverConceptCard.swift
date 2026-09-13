@@ -179,7 +179,7 @@ struct NativeConceptDiscoverCard: View {
     /// 40%", never a price). Clamped because an independent-binary field can sum
     /// past 100% (gotcha #23) and a card must not print 104%.
     private func probabilityLabel(_ probability: Double) -> String {
-        "\(FeedProbabilityScale.wholePercent(fromFraction: probability))%"
+        FeedProbabilityScale.percentLabel(fromFraction: probability)
     }
 
     /// The favourite's field-size qualifier, or `nil` when there is no field
