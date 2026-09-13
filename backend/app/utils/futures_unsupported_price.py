@@ -65,7 +65,6 @@ from __future__ import annotations
 from typing import Optional
 
 from app.utils.kalshi_empty_book import (
-    ASK_ONLY_TRUSTED_MAX,
     KALSHI_BOOKMAKER,
     is_lone_ask_on_empty_book,
 )
@@ -160,7 +159,3 @@ def price_is_unsupported(
         return False
     return is_lone_ask_on_empty_book(yes_bid, yes_ask, last_price)
 
-
-# Re-exported so a reader of this module can see the bound the rule turns on
-# without opening a second file, and so a test can assert the two agree.
-_ASK_ONLY_TRUSTED_MAX = ASK_ONLY_TRUSTED_MAX
