@@ -40,7 +40,7 @@ from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.utils.futures_market_snapshot import price_observed_at_iso
+from app.utils.futures_market_snapshot import concept_price_observed_at_iso
 
 from app.utils.settledness import (
     market_assigned_settled,
@@ -317,8 +317,11 @@ class ElectionEventAdapter:
             return real[:limit]
 
         # Marquee competitors (the hero head-to-head + settled crown).
+        # #5809: bound to a name so the price-age fold runs over the SAME
+        # filtered, capped rows the card displays — see `event_awards`.
+        marquee_outcomes = _outcomes(marquee, limit=40)
         competitors = []
-        for o in _outcomes(marquee, limit=40):
+        for o in marquee_outcomes:
             competitors.append(
                 {
                     "name": o.name,
@@ -470,8 +473,13 @@ class ElectionEventAdapter:
                 "label": clean_race_label(marquee.name),
                 "competitors": competitors,
                 "evolution_market_id": marquee.id,
-                # #5778 — see `event_cycling`.
-                "price_observed_at": price_observed_at_iso(marquee),
+                # #5778 — see `event_cycling`. #5809: over the DISPLAYED rows,
+                # never the market — a race whose field is two named candidates
+                # plus a dropped "Any other candidate" catch-all is exactly the
+                # shape where the two sets disagree.
+                "price_observed_at": concept_price_observed_at_iso(
+                    marquee_outcomes, "co_equal_list", len(competitors)
+                ),
             },
             "sections": sections,
             "children": children,

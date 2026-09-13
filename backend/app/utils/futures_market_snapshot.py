@@ -519,8 +519,17 @@ def _outcome_probability(outcome: Any) -> float:
         return -1.0
 
 
-def _top_price_observed_at(outcomes: Iterable[Any]) -> Any:
+def _top_price_observed_at(
+    outcomes: Iterable[Any], leg_count: int = CARD_PRICE_AGE_LEG_COUNT
+) -> Any:
     """`MIN(last_updated)` over the legs the CARD SHOWS, or `None` (#5809).
+
+    `leg_count` DEFAULTS to the futures card's three and is passed explicitly
+    only by the concept path, which shows one leg or two — see
+    `concept_card_leg_count`. It is a parameter rather than two copies of this
+    fold because the rule ("the oldest of what is displayed") is identical and
+    only the window differs; what must never be shared is the *choice* of
+    window, which is why no caller may pass a number it computed itself.
 
     ═══ WHY THIS EXISTS BESIDE `_price_polled_at` AND DOES NOT REPLACE IT ═══
 
@@ -584,7 +593,7 @@ def _top_price_observed_at(outcomes: Iterable[Any]) -> Any:
         stamp
         for stamp in (
             (_instance_dict(o) or _NO_INSTANCE_DICT).get("last_updated")
-            for o in ranked[:CARD_PRICE_AGE_LEG_COUNT]
+            for o in ranked[:leg_count]
         )
         if stamp is not None
     ]
@@ -762,17 +771,24 @@ def price_observed_at_iso(market: Any) -> str | None:
     somewhere, and doing it once here is what stops each caller getting it
     right separately.
 
-    ═══ SEVEN CALL SITES, ONE RULE ═══
+    ═══ 🔴 NO APP CALL SITE TODAY, AND THAT IS DELIBERATE (#5809) ═══
 
-    Every concept-envelope adapter writes this key beside the
-    `evolution_market_id` it already derives from the same market object. Seven
-    copies of `stamp.isoformat() if stamp else None` is seven chances for one
-    domain to drift — and a card that discloses its price age on the cycling
-    concept but not the F1 one is the defect #5778 was filed on, not half a
-    fix. `feed.py`'s `_card_price_observed_at` (#5752) is the same rule on the
-    futures serializers and should be collapsed onto this function once that
-    change is on master; it is deliberately left alone here because it is in
-    the desk tray and rewriting it would invalidate a gated sha.
+    This shipped (#5778) as the one helper all seven concept adapters called.
+    #5809 then moved every one of them to `concept_price_observed_at_iso`,
+    because folding `MAX` over a MARKET answers a different question from "how
+    old are the prices this CARD shows" — see that function for the filtering
+    that makes the two sets genuinely different rather than merely differently
+    computed.
+
+    It is kept rather than deleted for one named consumer, not on general
+    principle: `feed.py`'s `_card_price_observed_at` (#5752) is this exact rule
+    open-coded on the futures serializers and should be collapsed onto this
+    function. That collapse is not done here because those lines are inside a
+    gated sha in the desk tray and rewriting them would invalidate it.
+
+    So a reader finding this unused should NOT wire it back into a concept
+    adapter — the guard in `test_concept_card_price_observed_at_5778` refuses
+    that by name, and the refusal message says why.
 
     ═══ `None` IS AN ANSWER ═══
 
@@ -785,6 +801,110 @@ def price_observed_at_iso(market: Any) -> str | None:
     this shipped".
     """
     stamp = price_poll_stamp(market)
+    if stamp is None:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp.isoformat()
+
+
+#: A concept card that renders a BOUT prints both sides, so both are displayed
+#: facts and the mark must speak for the older of them.
+CONCEPT_BOUT_LEG_COUNT = 2
+#: Every other concept card prints exactly one probability — `leader`, the
+#: favourite — so exactly one price is displayed and nothing else may date it.
+CONCEPT_LEADER_LEG_COUNT = 1
+#: `_bout_from_competitors`' archetype gate, named here so this module and
+#: `feed.py` cannot drift on it silently; the guard test scans both for it.
+CONCEPT_BOUT_KIND = "co_equal_list"
+
+
+def concept_card_leg_count(kind: Any, competitor_count: int) -> int:
+    """How many prices a concept card DISPLAYS, given its envelope (#5809).
+
+    ═══ WHY THIS IS NOT `CARD_PRICE_AGE_LEG_COUNT` ═══
+
+    A futures card prints its top three outcomes. A concept card never prints
+    three. `ConceptCard.tsx` renders exactly one of two things on its unsettled
+    branch, and they are mutually exclusive in the source (`leader` is computed
+    as `!whatHit && !bout && …`):
+
+      * a BOUT — two names, two percentages, one row each; or
+      * a LEADER — one big percentage and one name.
+
+    So reusing the futures three here would date a concept card by two
+    candidates it does not show. ux/1226 declined to ship that on exactly this
+    reasoning, and it is worth restating why an over-statement is not the safe
+    direction merely because it errs old: the mark's whole job is to tell a
+    reader which numbers to trust. A card whose three-deep fold reaches a dead
+    47th leg would print "priced 3 days ago" over two prices polled a minute
+    ago — the disclosure firing when it should be silent, which teaches a reader
+    to ignore it, and an ignored disclosure protects nobody on the card that
+    needed it. Both directions are a lie; #5809 is on record about that.
+
+    ═══ THE GATE MIRRORS `_bout_from_competitors`, DELIBERATELY ═══
+
+    The bout is admitted by ARCHETYPE AND COUNT, not by count alone — a
+    two-entry `winner_field` (a Grand Tour thinned to two riders, a golf major
+    down to a final pair) stays an outright and prints one number. That is
+    `_bout_from_competitors`' own rule and the copy here is the risk this
+    function exists to concentrate: one place to read, one place to scan. The
+    guard test asserts the two agree on all four corners of (kind, count).
+
+    A count this function cannot trust degrades to the LEADER window, which is
+    the narrow one: a wrong guess there dates the card by the single price it
+    most certainly does display.
+    """
+    if kind == CONCEPT_BOUT_KIND and competitor_count == CONCEPT_BOUT_LEG_COUNT:
+        return CONCEPT_BOUT_LEG_COUNT
+    return CONCEPT_LEADER_LEG_COUNT
+
+
+def concept_price_observed_at_iso(
+    outcomes: Iterable[Any], kind: Any, competitor_count: int
+) -> str | None:
+    """When the prices a CONCEPT card displays were last polled (#5809).
+
+    `price_observed_at_iso`' sibling for the concept envelope, and it takes
+    OUTCOMES rather than a market on purpose. That is the whole correction.
+
+    ═══ WHY NOT A MARKET ═══
+
+    `price_observed_at_iso(market)` folds over `market.outcomes` — every leg the
+    market has. A concept adapter's `competitors` list is NOT that set: every
+    adapter filters it first, and the rows they drop are exactly the rows most
+    likely to carry the extreme probability that a top-N-by-probability fold
+    would then select. `event_cycling._real_outcomes` and the `_outcomes`
+    closures in `event_awards` / `event_election` drop `is_field_outcome` names
+    (the "Field" / "any other" catch-all, which on a 184-rider Grand Tour can
+    out-price every named rider), `is_placeholder_outcome_name` rows, and rows
+    with no probability at all; awards and election additionally cap at 40.
+
+    So a fold over the MARKET can rank a leg the card never prints and date the
+    card by it — which is #5809's own defect wearing a concept costume. Passing
+    the adapter's already-filtered list means the fold ranks the same rows the
+    reader sees, and the "is this the displayed set?" question is answered by
+    construction at the call site instead of being re-derived here from data
+    that no longer knows what was filtered.
+
+    ═══ `None` IS AN ANSWER, AND TENNIS IS WHY IT HAS TO BE ═══
+
+    An outcome carrying no `last_updated` contributes nothing, and a set in
+    which none does folds to `None` — "we do not know", which every consumer
+    reads as not-fresh (gotcha #53), never as fresh. `tennis_population`'s
+    `OutcomeRow` is a `__slots__` row carrying exactly
+    `("name", "current_probability", "is_winner")`, so tennis genuinely cannot
+    date its prices and correctly discloses nothing; `_instance_dict` degrades
+    it rather than raising. The call stays at that site for the reason #5778
+    gave: if that row ever widens, the card lights up with no edit here.
+
+    The UTC offset is applied here for the same reason `price_observed_at_iso`
+    applies it — an offsetless stamp is parsed as LOCAL time by `Date.parse`,
+    which would age a just-polled price by the reader's own offset.
+    """
+    stamp = _top_price_observed_at(
+        outcomes, concept_card_leg_count(kind, competitor_count)
+    )
     if stamp is None:
         return None
     if stamp.tzinfo is None:
@@ -931,6 +1051,8 @@ __all__ = [
     "market_load_options",
     "opening_baseline_stamp",
     "price_poll_stamp",
+    "concept_card_leg_count",
+    "concept_price_observed_at_iso",
     "to_plain",
     "from_plain",
     "is_snapshot_payload",

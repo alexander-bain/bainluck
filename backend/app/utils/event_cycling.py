@@ -36,7 +36,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.utils.futures_market_snapshot import price_observed_at_iso
+from app.utils.futures_market_snapshot import concept_price_observed_at_iso
 from app.utils.settledness import settled_under_assigned_state
 from app.utils.winner_field_selection import prefer_graded_winner_field
 
@@ -785,7 +785,16 @@ class CyclingEventAdapter:
                 # market. A Vuelta GC field measured 5h01m old under a `LIVE`
                 # pill printing `96%` is what that discard looked like to a
                 # reader.
-                "price_observed_at": price_observed_at_iso(winner),
+                #
+                # #5809 — and it is `real_outcomes`, NOT `winner.outcomes`. The
+                # card prints ONE rider, so one price is displayed; folding over
+                # the market would rank the "Field" catch-all `_real_outcomes`
+                # just dropped, which on a 184-way independent-binary GC can
+                # out-price every named rider (gotcha #23) and would date the
+                # card by a row nobody can see.
+                "price_observed_at": concept_price_observed_at_iso(
+                    real_outcomes, "winner_field", len(competitors)
+                ),
             },
             "sections": sections,
             "children": children,

@@ -39,7 +39,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.utils.futures_market_snapshot import price_observed_at_iso
+from app.utils.futures_market_snapshot import concept_price_observed_at_iso
 from app.utils.nation_flags import flag_url as nation_flag_url
 from app.utils.nation_flags import is_nation as nation_is_nation
 from app.utils.winner_field_selection import prefer_graded_winner_field
@@ -742,6 +742,11 @@ class SoccerEventAdapter:
         # --- Competitors (winner field) -----------------------------------------
         competitors: list[dict] = []
         as_of = None
+        # #5809: hoisted out of the branch below so the envelope's price-age
+        # fold can run over the rows the card DISPLAYS. `winner_outcomes` is
+        # capped at `_COMPETITOR_CAP` before anything is rendered, so the
+        # market's own outcome list is a larger set than the reader ever sees.
+        ranked: list = []
         if winner_market is not None:
             ranked = sorted(
                 winner_outcomes,
@@ -963,10 +968,16 @@ class SoccerEventAdapter:
                 ),
                 # #5778 — see `event_cycling`. Guarded on the same `is not None`
                 # as the id beside it: this adapter is the one that can build a
-                # `primary` with no winner market at all, and `price_poll_stamp`
-                # takes a market, not an Optional.
+                # `primary` with no winner market at all.
+                #
+                # #5809: folds over `ranked` — the capped, displayed rows — not
+                # the market. The guard is kept even though an empty `ranked`
+                # already folds to `None`, because it states the invariant at
+                # the site rather than relying on a fold two modules away.
                 "price_observed_at": (
-                    price_observed_at_iso(winner_market)
+                    concept_price_observed_at_iso(
+                        ranked, "winner_field", len(competitors)
+                    )
                     if winner_market is not None
                     else None
                 ),

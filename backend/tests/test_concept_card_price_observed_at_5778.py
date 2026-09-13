@@ -412,11 +412,20 @@ def test_guard_the_census_still_sees_every_site():
 def _price_value_at_each_site() -> list[tuple[str, int, str]]:
     """`(module, lineno, kind)` for the VALUE each envelope gives the key.
 
-    `kind` is one of `helper` (a call to `price_observed_at_iso`), `none` (the
-    literal `None`), or `other`. Read from the AST rather than by string search
-    because the question is what the expression IS, not whether the module
-    happens to mention the helper somewhere — an import line alone satisfies a
-    substring test while every call site writes `None`.
+    `kind` is one of `helper` (a call to the CONCEPT helper,
+    `concept_price_observed_at_iso`), `market_helper` (a call to the
+    market-level `price_observed_at_iso`), `none` (the literal `None`), or
+    `other`. Read from the AST rather than by string search because the
+    question is what the expression IS, not whether the module happens to
+    mention the helper somewhere — an import line alone satisfies a substring
+    test while every call site writes `None`.
+
+    `market_helper` is a SEPARATE kind rather than just another `other` (#5809)
+    so its assertion can name the actual regression. `price_observed_at_iso`
+    folds `MAX` over every leg the market has; a concept card prints one price
+    (two in a bout), so that helper at one of these sites dates the card by
+    candidates the reader cannot see — which is the defect #5809 closed, and it
+    would reappear here as a plausible-looking one-word edit.
     """
     out: list[tuple[str, int, str]] = []
     for module, lineno, _keys in _envelope_dicts():
@@ -452,7 +461,11 @@ def _classify(value: ast.expr) -> str:
     if isinstance(value, ast.Call):
         func = value.func
         name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
-        return "helper" if name == "price_observed_at_iso" else "other"
+        if name == "concept_price_observed_at_iso":
+            return "helper"
+        if name == "price_observed_at_iso":
+            return "market_helper"
+        return "other"
     if isinstance(value, ast.Constant) and value.value is None:
         return "none"
     return "other"
@@ -480,6 +493,16 @@ def test_guard_every_site_is_wired_to_the_helper_or_a_named_null():
     assert null_modules == sorted(m for m, _why in NULL_ALLOWED_SITES), (
         "an adapter answers `price_observed_at` with a bare `None` that is not "
         f"on the named-exception list: {null_modules}"
+    )
+
+    market = [(m, ln) for m, ln, kind in sites if kind == "market_helper"]
+    assert not market, (
+        "#5809 REGRESSION: a concept envelope dates its card with the "
+        "MARKET-level `price_observed_at_iso`, which folds MAX over every leg "
+        "the market has. A concept card prints one price (two in a bout), so "
+        "this stamp can be newer than everything the reader can see and the "
+        "age mark goes silent on exactly the card it exists for. Use "
+        f"`concept_price_observed_at_iso` with the DISPLAYED rows. Sites: {market}"
     )
 
     other = [(m, ln) for m, ln, kind in sites if kind == "other"]

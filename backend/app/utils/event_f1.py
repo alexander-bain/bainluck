@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.utils.futures_market_snapshot import price_observed_at_iso
+from app.utils.futures_market_snapshot import concept_price_observed_at_iso
 
 # Tokens stripped when deriving the GP name from a market title.
 _F1_STOPWORDS = {
@@ -262,10 +262,18 @@ class F1EventAdapter:
         # L2-83: compute the status once — reused by the settled crown and envelope.
         event_status = f1_status(winner.status, winner.resolution_date, now)
 
+        # #5809: the filtered rows are bound to a name so the price-age fold
+        # below runs over what the card DISPLAYS. `winner.outcomes` still holds
+        # the `is_field_outcome` catch-all this loop drops, and on a race field
+        # that row can out-price every named driver.
+        field_outcomes = [
+            o
+            for o in (winner.outcomes or [])
+            if not is_field_outcome(o.name)
+            and not is_placeholder_outcome_name(o.name)
+        ]
         competitors = []
-        for o in winner.outcomes or []:
-            if is_field_outcome(o.name) or is_placeholder_outcome_name(o.name):
-                continue
+        for o in field_outcomes:
             competitors.append({
                 "name": o.name,
                 "probability": (
@@ -353,7 +361,10 @@ class F1EventAdapter:
                 # #5778 — see `event_cycling`. Every concept adapter carries the
                 # age or the contract has drifted; a reader gets no say in which
                 # domain their card came from.
-                "price_observed_at": price_observed_at_iso(winner),
+                # #5809: over `field_outcomes` (displayed), not `winner.outcomes`.
+                "price_observed_at": concept_price_observed_at_iso(
+                    field_outcomes, "winner_field", len(competitors)
+                ),
             },
             "sections": sections,
             "children": children,

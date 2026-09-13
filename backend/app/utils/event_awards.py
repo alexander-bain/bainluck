@@ -41,7 +41,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.utils.futures_market_snapshot import price_observed_at_iso
+from app.utils.futures_market_snapshot import concept_price_observed_at_iso
 
 from app.utils.settledness import (
     market_assigned_settled,
@@ -389,8 +389,14 @@ class AwardsEventAdapter:
             return real[:limit]
 
         # Marquee competitors (the hero head-to-head + settled crown).
+        # #5809: bound to a name so the price-age fold below runs over the SAME
+        # filtered, capped rows the card displays — `_outcomes` drops the
+        # `is_field_outcome` catch-all and every placeholder, and caps at 40, so
+        # `marquee.outcomes` is a different (larger) set that can rank a row no
+        # reader sees.
+        marquee_outcomes = _outcomes(marquee, limit=40)
         competitors = []
-        for o in _outcomes(marquee, limit=40):
+        for o in marquee_outcomes:
             competitors.append(
                 {
                     "name": o.name,
@@ -539,8 +545,13 @@ class AwardsEventAdapter:
                 "label": clean_category_label(marquee.name),
                 "competitors": competitors,
                 "evolution_market_id": marquee.id,
-                # #5778 — see `event_cycling`.
-                "price_observed_at": price_observed_at_iso(marquee),
+                # #5778 — see `event_cycling`. #5809: over the DISPLAYED rows
+                # (`marquee_outcomes`), never the market, and with this card's
+                # own leg count — an awards `co_equal_list` is a bout only when
+                # the category came down to two nominees.
+                "price_observed_at": concept_price_observed_at_iso(
+                    marquee_outcomes, "co_equal_list", len(competitors)
+                ),
             },
             "sections": sections,
             "children": children,
