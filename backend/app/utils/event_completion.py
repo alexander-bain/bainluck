@@ -63,13 +63,31 @@ TICKER_DERIVED_COMMENCE_SOURCE = "kalshi_ticker"
 #: inheriting the clock by omission.
 DERIVED_COMMENCE_SOURCES = frozenset({TICKER_DERIVED_COMMENCE_SOURCE})
 
-#: #3488/#3544. What Kalshi's `/markets` calls ``occurrence_datetime``: the hour
-#: the venue says the thing STARTS, as opposed to ``close_time``, which is when
-#: the market settles (gotcha #14). Deliberately NOT in
+#: #3488/#3544. What Kalshi's `/markets` calls ``occurrence_datetime``: a
+#: published hour from the venue, as opposed to ``close_time``, which is a
+#: multi-day settlement backstop (gotcha #14). Deliberately NOT in
 #: ``DERIVED_COMMENCE_SOURCES`` — that set means "nothing published one", and
-#: here something did. The contrast is the whole point of naming it separately
-#: from ``kalshi_ticker``: same provider, same row, but a published hour instead
-#: of a day parsed out of a ticker, so a clock MAY be run from it.
+#: here something did. The contrast with ``kalshi_ticker`` is the whole point of
+#: naming it separately: same provider, same row, but a published hour instead
+#: of a day parsed out of a ticker.
+#:
+#: 🔴 **IT IS NOT THE HOUR THE THING STARTS, AND THIS ENTRY SAID SO UNTIL #5905.**
+#: Read at the venue 2026-09-13 (notice 26), ``occurrence_datetime`` is
+#: byte-identical to ``expected_expiration_time`` on every market returned — when
+#: the contract is expected to RESOLVE, which is after the thing has finished.
+#: Measured against rows a schedule provider anchored, it sits exactly 180
+#: minutes after a soccer kick-off, 11 of 11, and the same 3h pad shows on NFL.
+#: ``app/utils/kalshi_occurrence_start.py`` carries the venue reads, the census,
+#: and the recovery — and the reason the pad may not be inherited by MMA (255 to
+#: 345 minutes, a spread) or boxing (~14 days).
+#:
+#: What this entry does NOT change is :func:`commence_time_is_a_reported_start`,
+#: which still answers True here. That is deliberate and it is a KNOWN
+#: OUTSTANDING DEFECT, not an endorsement: a row promoted on this instant goes
+#: ``live`` about when the match ends. It is left alone because #5905 ships a
+#: serve-time recovery that writes nothing, and flipping a clock rule is a
+#: separate change with its own population to measure (2 rows carried this
+#: provenance on 2026-09-13). Tracked on #5905.
 KALSHI_OCCURRENCE_COMMENCE_SOURCE = "kalshi_occurrence"
 
 
