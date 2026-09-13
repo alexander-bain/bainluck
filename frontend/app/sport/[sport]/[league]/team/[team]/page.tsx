@@ -10,6 +10,7 @@ import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { getSiteUrl } from "@/lib/siteUrl";
 import LoadingState from "@/components/LoadingState";
 import { teamLeagueLabel } from "@/lib/teamLeagueLabel";
+import { describeTeamRoute } from "@/lib/teamRouteSport";
 import { isGameLive, assignGameNumbers } from "@/lib/teamGames";
 import { sportKeyToGridSlug } from "@/lib/gridSlug";
 import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
@@ -140,6 +141,39 @@ export default function TeamPage() {
     data;
   const leaguePath = `/sport/${sport}/${league}`;
   const leagueLabel = teamLeagueLabel(team, league);
+
+  // #5852 — the slug resolved to a team in another sport. `/api/teams/{slug}`
+  // matches on the slug alone, so a name-derived URL for a slugless team lands
+  // on whoever owns that string: an NCAAF hero sent readers to the WNCAAB page
+  // of the same university, HTTP 200, no football on it. Say so and point at
+  // the page that does exist, rather than render a confident wrong team.
+  const route = describeTeamRoute(team, sport);
+  if (route.offRoute) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 py-12 text-center">
+        <p className="text-text-secondary text-sm mb-3">
+          We don&apos;t have a {sport} page for {team.name}.
+        </p>
+        <div className="flex items-center justify-center gap-4">
+          {route.canonicalPath && (
+            <Link
+              href={route.canonicalPath}
+              className="text-sm text-accent-brand hover:underline transition-colors"
+            >
+              {team.name}
+              {route.familyLabel ? ` — ${route.familyLabel}` : ""}
+            </Link>
+          )}
+          <Link
+            href={leaguePath}
+            className="text-sm text-text-muted hover:text-text-primary transition-colors"
+          >
+            Back to {league.toUpperCase()}
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   // G1/G2 chips, drawn only from the provider's own doubleheader metadata —
   // never inferred from a same-day opponent pair, which is indistinguishable
