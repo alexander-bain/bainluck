@@ -13,21 +13,43 @@ import {
 } from "@/lib/eventOutcome";
 import type { EventTournamentResponse } from "@/lib/types";
 import EventBootScript from "@/components/event/EventBootScript";
+import {
+  unresolvedMetadata,
+  unresolvedPath,
+  type ResolutionFailure,
+} from "@/lib/unresolvedShareMeta";
+
+/** The event, or WHY there is no event — #5840 needs the two apart. */
+type EventLookup =
+  | { ok: true; event: EventDetailResponse }
+  | { ok: false; failure: ResolutionFailure };
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || "https://api.bainluck.com").replace(/\/$/, "");
 
-async function fetchEvent(id: string): Promise<EventDetailResponse | null> {
+/**
+ * #5840: a 404 and a bad minute are NOT the same answer.
+ *
+ * This used to return `null` for both, and the miss branch then claimed the
+ * game did not exist. Claiming absence on a 500 or a dropped connection would
+ * `noindex` a real game for as long as the failure lasted, so absence is
+ * claimed only on a 404 — the one status that means it — or on a segment that
+ * could never be an id at all.
+ */
+async function fetchEvent(id: string): Promise<EventLookup> {
   const eventId = Number.parseInt(id, 10);
-  if (!Number.isFinite(eventId) || eventId <= 0) return null;
+  if (!Number.isFinite(eventId) || eventId <= 0) {
+    return { ok: false, failure: "not-found" };
+  }
 
   try {
     const response = await fetch(`${API_URL}/api/events/${eventId}`, {
       next: { revalidate: 60 },
     });
-    if (!response.ok) return null;
-    return response.json();
+    if (response.status === 404) return { ok: false, failure: "not-found" };
+    if (!response.ok) return { ok: false, failure: "unavailable" };
+    return { ok: true, event: await response.json() };
   } catch {
-    return null;
+    return { ok: false, failure: "unavailable" };
   }
 }
 
@@ -68,13 +90,16 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
   const { id } = await params;
-  const event = await fetchEvent(id);
-  if (!event) {
-    return {
-      title: "Event Odds - Bain Luck",
-      description: "Game probabilities translated into plain English.",
-    };
+  const lookup = await fetchEvent(id);
+  if (!lookup.ok) {
+    // #5840 — this branch used to return title+description and nothing else, so
+    // Next inherited the root's `canonical: "/"` and `og:url: "/"` and a dead
+    // game link previewed as the Bain Luck home page. Its title also carried a
+    // suffix the root template appends again: `Event Odds - Bain Luck | Bain Luck`.
+    return unresolvedMetadata(unresolvedPath("events", id), "game", lookup.failure);
   }
+
+  const event = lookup.event;
 
   // Q441/#1495: a settled event leads with the RESULT, not with the last price
   // captured before the final whistle. The copy decision lives in a pure module so
