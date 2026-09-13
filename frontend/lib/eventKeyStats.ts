@@ -18,7 +18,10 @@ import {
   categoryLabelFormat,
   CATEGORY_LABEL_FORMAT,
 } from "@/lib/chartTimeline";
-import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
+import {
+  hasProbabilitySourceReading,
+  shouldWithholdProbability,
+} from "@/lib/probabilityEvidence";
 import { renderedDuelPercents, renderedPercent } from "@/lib/renderedPercent";
 
 // ---------------------------------------------------------------------------
@@ -976,9 +979,39 @@ export function resolveProbability(
   // `probKnown` is the same judgment made on the fact itself, and it is
   // absent-means-true, so a scrub point (which always carries a real reading)
   // behaves exactly as before.
+  // #5890 — AND THE EVENT MUST STILL HAVE A SOURCE. The snapshot rail is
+  // immutable history; `win_probability_sources` is the live claim. When the
+  // backend WITHDRAWS a source (#5820 pulls a speaker whose market we have
+  // already settled, `_retire_unpriced_legs` pulls a leg that stopped trading)
+  // the bag empties and the API serves the event with no `hero_probability` at
+  // all — but the withdrawn price is still the last point on the rail, so this
+  // arm handed it straight back and the withdrawal never reached the reader.
+  //
+  // Measured on production 2026-09-13, /events/15310861 (Liu v Blinkova,
+  // suspended, no result): bag `{}`, no `hero_probability` and no
+  // `win_probability_sources` key in the payload, chart tail 0.9945 — and the
+  // hero printed `99% – 1%` captioned "Kalshi, Polymarket" under a "No result
+  // reported" badge. 0.99 was a SETTLED Kalshi market's price; the caption is
+  // the tell, since a row carrying no sources cannot name two.
+  //
+  // Driven through this function over a 40-event production sample the same
+  // morning: 17 reached this arm, all 17 with an empty bag, 11 of them at a
+  // settlement-shaped 0.99/0.01 tail. Nothing with a live source changed.
+  //
+  // NOT the value test. The `isFinished` extreme-value clause below refuses a
+  // settled-looking tail; that catches 11 of the 17 and misses the six whose
+  // withdrawn price is unremarkable (0.645, 0.43, 0.245), while blanking real
+  // near-certain readings that a live source still stands behind. The honest
+  // question is not "is this number extreme" but "does anyone still say it".
+  //
+  // The rule is uniform across states on purpose — a withdrawn price is no more
+  // sayable on a live match than a dark one, and UX-P042 above already refuses
+  // an untraded placeholder the row DOES carry. The callers render
+  // "No price"/"No price yet", which is what the API is already saying.
   if (
     !withheld &&
     homeProb === null &&
+    hasProbabilitySourceReading(event.win_probability_sources) &&
     lastChartPoint &&
     lastChartPoint.probKnown !== false &&
     !(

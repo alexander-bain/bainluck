@@ -46,6 +46,19 @@ interface EventHeroProbabilityPairProps {
    * as before and the #2085 guard keeps testing the same thing.
    */
   animate?: boolean;
+  /**
+   * #5890 — has this match started?
+   *
+   * Only the no-reading copy reads it. "No price yet" is a promise about the
+   * future, and on a match that kicked off last night it is simply false: the
+   * prices existed and were withdrawn. That state used to be rare enough to
+   * ignore (a dark match whose chart had no usable point); refusing to
+   * un-withdraw a price makes it the normal render for ~280 started events in a
+   * 48-hour window, so the tense has to be right.
+   *
+   * Defaults false, so every existing caller keeps the exact string it has.
+   */
+  started?: boolean;
 }
 
 /** How long the count takes. Comfortably under the 5s minimum between updates. */
@@ -142,6 +155,7 @@ export default function EventHeroProbabilityPair({
   awayColor,
   probSourceLabel,
   animate = false,
+  started = false,
 }: EventHeroProbabilityPairProps) {
   // #5696 — THE BIGGEST NUMBER ON THE SITE, PAINTED WHITE ON A WHITE CARD.
   //
@@ -202,7 +216,7 @@ export default function EventHeroProbabilityPair({
         data-probability-source={probSourceLabel ?? ""}
       >
         <span className="text-lg font-semibold text-text-muted leading-none">
-          No price yet
+          {started ? "No price" : "No price yet"}
         </span>
       </div>
     );

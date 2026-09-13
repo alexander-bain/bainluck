@@ -105,7 +105,20 @@ describe("#3459 — what the two screens do with it", () => {
       probKnown: true,
     };
     const resolved = resolveProbability(
-      evt(),
+      // #5890 — the event carries the source its own history names. The chart
+      // fallback is now gated on the row still HAVING a source, because an
+      // emptied `win_probability_sources` is a WITHDRAWAL (a settled speaker
+      // pulled by #5820, an untraded leg pulled by `_retire_unpriced_legs`) and
+      // the withdrawn price is still sitting on the immutable snapshot rail. An
+      // ESPN series that is genuinely live is written alongside its bag entry,
+      // so this is the payload this arm has always meant; the arm still tests
+      // what it says it tests, which is that 0.5 is a READING and not an
+      // absence.
+      evt({
+        win_probability_sources: {
+          espn: { value: 0.5, display_name: "ESPN", type: "model", color: "#CC0000" },
+        },
+      }),
       hist({ win_prob_sources: { espn: ESPN_META } }),
       evenPoint,
       true,

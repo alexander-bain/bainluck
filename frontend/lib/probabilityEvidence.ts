@@ -45,6 +45,8 @@
  * PURE: no I/O, no fetch, no DB.
  */
 
+import { PROBABILITY_SOURCE_KEYS } from "@/lib/confidence";
+
 /**
  * The value a Polymarket book reports when it has no trading to price from.
  *
@@ -100,6 +102,44 @@ export function readSourceValues(
     if (value !== null) out.push([name, value]);
   }
   return out;
+}
+
+/**
+ * Every source in the bag that is a probability READING, by NAME and by value.
+ *
+ * #5890 — `readSourceValues` answers "does this entry carry a number", which is
+ * not the same question as "is this entry a source". `betting_book_count` is
+ * served in the same decorated shape and its value is a finite number (11.0),
+ * so a bare value read counts it as an opinion — the exact miscount #3914 fixed
+ * in the confidence bars. The allowlist is `PROBABILITY_SOURCE_KEYS`, mirrored
+ * from the backend aggregator's `SOURCE_WEIGHTS`, so one definition of "a
+ * source" serves the bars, the blend and this gate.
+ */
+export function readProbabilitySourceValues(
+  sources: WinProbabilitySources,
+): Array<[string, number]> {
+  return readSourceValues(sources).filter(([name]) =>
+    PROBABILITY_SOURCE_KEYS.has(name),
+  );
+}
+
+/**
+ * Does any source still stand behind this event's probability?
+ *
+ * #5890 — the question a renderer must ask before it falls back to history. An
+ * empty bag is not an absence of data, it is a WITHDRAWAL: `_retire_unpriced_legs`
+ * and #5820 both work by taking a source out of `win_probability_sources`, and
+ * the API then serves the event with no `hero_probability` at all. The snapshot
+ * rail behind the chart is immutable, so the withdrawn price is still sitting in
+ * it, and a hero that reads that rail un-withdraws the number the backend just
+ * pulled. Measured 2026-09-13 on /events/15310861: row bag `{}`, payload hero
+ * absent, page `99% – 1%` captioned "Kalshi, Polymarket" — a settled market's
+ * price presented as a live chance over a "No result reported" badge.
+ */
+export function hasProbabilitySourceReading(
+  sources: WinProbabilitySources,
+): boolean {
+  return readProbabilitySourceValues(sources).length > 0;
 }
 
 /**
