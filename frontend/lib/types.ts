@@ -668,6 +668,18 @@ export interface FuturesMarket {
   category_tags?: string[];
   created_at: string | null;
   updated_at: string | null;
+  /**
+   * #6018 — when the PRICES this payload carries were last written, as opposed
+   * to `updated_at` above, which is when the market ROW was touched. Different
+   * passes write the two, so they disagree by months in both directions; the
+   * card's age pip reads this one via `lib/futuresCardPriceAge`.
+   *
+   * OPTIONAL, and absent is a third state, not a synonym for null: only
+   * `/api/events/search` computes it (the detail payload carries per-outcome
+   * `last_updated` instead, which the same helper folds), and Vercel ships
+   * ahead of Heroku, so every deploy has a window where it is missing.
+   */
+  prices_updated_at?: string | null;
   source_count?: number;
   group_id?: string | null;
   canonical_market_key?: string | null;

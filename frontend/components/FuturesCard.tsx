@@ -19,6 +19,7 @@ import { fadeIn, staggerContainer, staggerItem } from "@/lib/animations";
 import { outcomeDisplayNames } from "@/lib/outcomeLabels";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
+import { renderedPricesAsOf } from "@/lib/futuresCardPriceAge";
 // #5552 — the SAME predicate `components/futures/OutcomeRow` uses, imported rather
 // than restated. Its docstring records that restating `isResolved && is_winner === X`
 // per branch is exactly how that surface drifted, so this card calls the one function
@@ -99,6 +100,9 @@ export default function FuturesCard({
   personalizationReasons,
 }: FuturesCardProps) {
   const outcomes = market.top_outcomes || market.outcomes || [];
+  // #6018: the footer pip's subject. Derived off the same row pick as `outcomes`
+  // above, so the age covers exactly what is drawn beneath it.
+  const pricesAsOf = renderedPricesAsOf(market);
   // #2662: some markets name every outcome with this market's own full title plus a
   // suffix, so the rows read identically once truncated. Evaluate the all-or-nothing
   // predicate over the WHOLE shipped set, not the sliced five — a market whose first
@@ -257,9 +261,15 @@ export default function FuturesCard({
                 </span>
               ) : null}
             </div>
-            {market.updated_at && (
+            {/* #6018: the age of the PRICES drawn above, never the moment the
+                market ROW was touched. `market.updated_at` is what this printed
+                until now, and it was measured wrong in both directions on one
+                screenshot — see `lib/futuresCardPriceAge`. `null` renders
+                nothing: an empty corner claims nothing, the old pip claimed
+                something false. */}
+            {pricesAsOf && (
               <span className="text-micro text-text-muted">
-                {formatRelativeTime(market.updated_at)}
+                {formatRelativeTime(pricesAsOf)}
               </span>
             )}
           </div>
