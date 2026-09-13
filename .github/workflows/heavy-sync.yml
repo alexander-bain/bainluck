@@ -267,7 +267,12 @@ jobs:
           if [ -z "${ADMIN_TOKEN:-}" ]; then
             echo "ADMIN_TOKEN is not set — the in-flight gate will read UNKNOWN."
           fi
-          curl -fsS --max-time 45 \
+          # `--retry`, because ONE READ IS NOT A READING of this endpoint:
+          # measured 2026-09-13 11:02-11:03Z, two of eight calls returned HTTP
+          # 500 (the inspect broadcast raises and the route does not catch it).
+          # An UNKNOWN is safe — it proceeds — but an instrument that is inert a
+          # quarter of the time is a veto that reads as one and is not.
+          curl -fsS --max-time 45 --retry 2 --retry-delay 3 --retry-all-errors \
             -H "Authorization: Bearer ${ADMIN_TOKEN:-}" \
             -H "X-BainLuck-Origin: heavy-sync-workflow" \
             "https://api.bainluck.com/api/admin/celery/inspect" \

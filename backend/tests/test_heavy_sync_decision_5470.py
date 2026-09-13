@@ -783,6 +783,11 @@ def test_the_workflow_gates_the_push_on_the_in_flight_verdict():
     )
     assert "api.bainluck.com" in curl_line
     assert "X-BainLuck-Origin" in body
+    # One read is not a reading: two of eight calls to this endpoint returned
+    # HTTP 500 when it was measured (2026-09-13 11:02-11:03Z). UNKNOWN proceeds,
+    # so a flaky instrument does not break the sync — it quietly turns the veto
+    # off, which is worse than failing, because the gate still reads as present.
+    assert "--retry" in body
 
 
 # ---------------------------------------------------------------------------
