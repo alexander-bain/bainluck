@@ -101,6 +101,7 @@ from sqlalchemy.sql.expression import ColumnElement
 
 from app.models.models import Event
 from app.services.anchor_channel import DUPLICATE_TAG_PREFIX, duplicate_tag
+from app.utils.name_normalization import strip_diacritics
 
 #: The LIKE pattern matching any `provenance:duplicate-of:<id>` element inside
 #: the serialised `event_tags` array.
@@ -215,10 +216,35 @@ async def folded_event_ids(db, canonical_event_id: int) -> list[int]:
 
 
 def _name_tokens(name: str | None) -> frozenset[str]:
-    """Lowercased word tokens of a team/player name, punctuation dropped."""
+    """Lowercased word tokens of a team/player name, diacritics folded, punctuation dropped.
+
+    The fold is :func:`app.utils.name_normalization.strip_diacritics` — the one
+    table #5878 established — and not a private rule, so this cannot drift away
+    from the nine other places that fold a name.
+
+    It is load-bearing, not tidiness. ``\\w`` is Unicode-aware in Python 3, so
+    ``ć``, ``à`` and ``á`` are word characters and survive the punctuation pass:
+    ``{jović}`` and ``{jovic}`` are DISJOINT sets, :func:`_same_side` is False,
+    and :func:`orientation_agrees` declines a fold the data supports. Measured on
+    production 2026-09-13 (authority/172, #5901): of 193 tagged duplicate pairs 7
+    were refused, 5 of them purely by an accent — and ``Bondár``, ``Cinà`` and
+    ``Jović`` are the ENTIRE non-ASCII tennis-name population (3 of 3,438
+    distinct names over 30 days), so the unfolded predicate failed on 100% of the
+    names that could reach it.
+
+    Folding BEFORE casefolding rather than after: ``strip_diacritics`` expands
+    ``ß`` → ``ss`` and ``ø`` → ``o`` from its own table, which NFD cannot
+    decompose and which the punctuation pass would otherwise DELETE — and
+    deleting a letter does not shorten a token, it splits one (#5878).
+
+    This widens what matches, so read :func:`_same_side` for what still must not:
+    the subset rule refuses ``Red Sox``/``White Sox``, and no accent appears in
+    either, so nothing this fold does can reach that pair.
+    """
     if not name:
         return frozenset()
-    return frozenset(t for t in re.sub(r"[^\w\s]", " ", name.casefold()).split() if t)
+    folded = strip_diacritics(name).casefold()
+    return frozenset(t for t in re.sub(r"[^\w\s]", " ", folded).split() if t)
 
 
 def _same_side(a: str | None, b: str | None) -> bool:

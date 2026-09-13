@@ -74,8 +74,18 @@ goes wrong. So the id is necessary and never sufficient.
     token set, ``Mainz`` is a subset of ``FSV Mainz 05`` — and it is here for the
     swapped pair, because the read side folds the suppressed row's
     ``win_probability_sources`` onto the survivor and a swapped fold prints one
-    side's probability under the other's name. Stated as measured-inert rather
-    than left to look load-bearing.
+    side's probability under the other's name.
+
+    **"Inert" was true of those nine groups and of nothing else** (#5901,
+    corrected 2026-09-13). Over the 193 pairs the read side actually carries it
+    refused 7, five of them purely because one row spelled a name with an accent
+    and the other did not — including a La Liga pair sharing ``statpal_fixture_id``
+    9543417, where ``Málaga`` and ``Malaga CF`` were disjoint token sets and this
+    task wrote ``tags_written: 0`` while production served two cards for one
+    fixture. The predicate now folds diacritics through the shared table, so the
+    refusals it is left with are real disagreements. A count measured on one
+    pass's population is a statement about that population, never about the
+    predicate.
 
 Two rows already tagged are skipped rather than re-tagged, and a row already
 carrying ANY ``duplicate-of:`` tag is left alone: it is suppressed already, and a
