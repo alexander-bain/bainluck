@@ -73,8 +73,20 @@ import { defaultShareCard } from "@/lib/shareCard";
  * the nav calls these pages "MMA" and "Tennis", and no reader has ever called
  * one a hub. "Hub" is our word for the route; "competition" is the reader's
  * word for the thing, and `SUBJECT_NOUN` exists precisely so the two can differ.
+ *
+ * `"team"` joined with `/sport/[sport]/[league]/team/[team]`'s own card. Only
+ * the `"not-found"` branch is ever reached on that route from a segment that
+ * names nothing; the WRONG-SPORT case (#5852) is not this subject and must not
+ * use it, because "this team isn't on Bain Luck" is false about a team that is
+ * on Bain Luck at a different address. `lib/teamShareMeta.ts` owns that one.
  */
-export type UnresolvedSubject = "game" | "market" | "tournament" | "event" | "hub";
+export type UnresolvedSubject =
+  | "game"
+  | "market"
+  | "tournament"
+  | "event"
+  | "hub"
+  | "team";
 
 /**
  * Why the payload did not arrive.
@@ -101,6 +113,7 @@ const SUBJECT_NOUN: Record<UnresolvedSubject, string> = {
   tournament: "tournament",
   event: "event",
   hub: "competition",
+  team: "team",
 };
 
 /**
@@ -136,6 +149,14 @@ const UNAVAILABLE_COPY: Record<UnresolvedSubject, UnresolvedCopy> = {
     title: "Competition Odds",
     description: "Every market in this competition, as one clean probability.",
   },
+  // The words `app/sport/[sport]/[league]/team/[team]/layout.tsx` already
+  // shipped, reduced to the subject: its title was
+  // `"<Name> <LEAGUE> Odds & Probabilities"`, which cannot be said when the
+  // name is exactly what did not arrive.
+  team: {
+    title: "Team Odds",
+    description: "Win probabilities, championship odds and season futures, as one clean number.",
+  },
 };
 
 /** The second sentence of the `"not-found"` copy — what the site offers instead. */
@@ -145,6 +166,7 @@ const NOT_FOUND_INVITATION: Record<UnresolvedSubject, string> = {
   tournament: "See every contender's chance of winning, as one clean probability.",
   event: "See what the world thinks will happen, as probabilities.",
   hub: "See the sports and competitions we cover, as probabilities.",
+  team: "See today's games and what the world thinks will happen, as probabilities.",
 };
 
 /**

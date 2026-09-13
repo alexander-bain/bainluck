@@ -384,7 +384,6 @@ const SHARES_THE_SITE_CARD: readonly string[] = [
   "/playoffs/[sport]",
   "/sport/[sport]",
   "/sport/[sport]/[league]",
-  "/sport/[sport]/[league]/team/[team]",
 ];
 
 /** Dynamic routes that say something about themselves, and so could say this. */
@@ -432,6 +431,9 @@ describe("an entity route unfurls with its own picture", () => {
       "/hub/[competition]",
       "/events/[id]",
       "/futures/[id]",
+      // The team page, which the 2026-09-08 measurement in `lib/shareCard.ts`
+      // names as the one a fan actually pastes. Last off the list.
+      "/sport/[sport]/[league]/team/[team]",
     ]) {
       expect(siteCardRoutes).not.toContain(route);
       expect(
