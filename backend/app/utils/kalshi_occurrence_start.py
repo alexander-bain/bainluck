@@ -140,13 +140,26 @@ KALSHI_OCCURRENCE_TIMED_SOURCES = frozenset({"kalshi", "kalshi_occurrence"})
 #: (authority/179 measured the ladder: 21:45 → 18:45 → 15:45 → 12:45).
 #: `/api/leagues/{sport_key}` passes the SAME upcoming row objects through
 #: :func:`app.utils.event_twin_fold.fold_twin_events` twice in one request —
-#: `league_futures.py:2483` `_folded_upcoming(_g_events)` and then `:2543`
-#: `_folded_past_rails(..., _g_events)` — with no re-query between them. That
-#: route is latent today only because its `upcoming_games_query` is a bare
-#: `select(Event)` with no `selectinload(Event.sport)`, so
-#: :func:`loaded_sport_key` returns ``None`` there and nothing fires; the day its
-#: owner adds the eager load it wants, a page would advertise a kick-off SIX
-#: hours early and the eager load would look like the innocent change.
+#: `league_futures.py` `_folded_upcoming(_g_events)` and then
+#: `_folded_past_rails(..., _g_events)` — with no re-query between them.
+#:
+#: 🔴 **THIS STAMP IS THE SOLE GUARD ON THAT ROUTE, AND IT IS LOAD-BEARING
+#: TODAY.** Until 2026-09-13 this note said the double fold was "latent only
+#: because `upcoming_games_query` is a bare `select(Event)` with no
+#: `selectinload(Event.sport)`", so :func:`loaded_sport_key` answered ``None``
+#: and nothing fired. That has been FALSE since #5918: `eda376abc` (08:34Z)
+#: wrote the sentence and `0ccf6e77c` (09:19Z) added the eager load 45 minutes
+#: later — it is `league_futures.py`'s `upcoming_games_query`, on the
+#: `.options(selectinload(Event.sport))` line. The recovery therefore DOES fire
+#: on that route, the second fold is real, and the only thing standing between a
+#: reader and a kick-off advertised SIX hours early is this attribute.
+#: Measured holding on production 2026-09-13 21:5xZ (lane1/299, #5998): the page
+#: served `19:00:00Z` — one subtraction, not two. Delete this stamp, or let a
+#: caller hand the recovery freshly-queried objects twice, and the ladder
+#: authority/179 measured returns: 21:45 → 18:45 → 15:45 → 12:45.
+#:
+#: Line numbers are deliberately not quoted here: the previous version of this
+#: note pinned `:2483`/`:2543` and both had moved within the day.
 #:
 #: An unmapped attribute is the right sentinel because its lifetime is exactly
 #: the lifetime of the reading it guards: it lives on the hydrated instance, dies

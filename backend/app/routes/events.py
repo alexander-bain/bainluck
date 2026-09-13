@@ -237,6 +237,7 @@ _PLACEHOLDER_TEAM_RE = re.compile(
 # 38-item ladder to the 3 meaningful lines on event 14961907).
 _SPREAD_DEEP_OTM_FLOOR = 0.02
 from app.utils.event_twin_fold import fold_twin_events
+from app.utils.kalshi_occurrence_start import recover_kalshi_occurrence_starts
 from app.utils.event_taxonomy import compute_event_tags, validate_tag
 from app.utils.game_state import normalize_live_game_state
 from app.utils.sport_keys import (
@@ -11739,6 +11740,57 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
                 "This fixture was removed from the schedule — it was either a "
                 "duplicate of another game or a game that will not be played."
             ),
+        )
+
+    # ── #5905: the event page agreed with no other surface about kick-off ─────
+    #
+    # Every LIST-shaped surface reaches this correction through
+    # `fold_twin_events`, which runs `recover_kalshi_occurrence_starts` at its
+    # top. This route folds nothing — there is one row, and nothing to fold it
+    # against — so it served the raw column, and the raw column on a
+    # Kalshi-minted row is the market's EXPECTED EXPIRATION, not the kick-off
+    # (gotcha #14).
+    #
+    # The two endpoints therefore contradicted each other about the same game.
+    # Measured on production 2026-09-13 23:0xZ, `/api/leagues/soccer_other`
+    # served Famalicão v Sporting CP (`15307690`) at `19:30Z` while
+    # `/api/events/15307690` served `22:30Z` — a reader tapping the card watched
+    # the kick-off move three hours. Same for `15308597` (20:00 vs 23:00) and
+    # `15311626`. Forty-plus such rows were upcoming within three days, and the
+    # recovery's own docstring names this population: 16 of the 29
+    # reader-visible ghosts HAVE NO TWIN AT ALL, so the fold could never have
+    # been what reaches them — only correcting the row does.
+    #
+    # Safe to call on a single-row list: the function is serve-time only
+    # (`set_committed_value`, gotcha #4 — nothing is marked dirty and no later
+    # flush can persist it), it returns without touching a row whose
+    # `commence_time_source` is not Kalshi-timed or whose `external_id` says a
+    # schedule provider reported the start, and `KALSHI_RECOVERY_STAMP` makes a
+    # second pass over the same object a no-op. `Event.sport` is eagerly loaded
+    # on both queries above, so `loaded_sport_key` answers rather than
+    # emitting IO.
+    #
+    # AFTER the duplicate resolution and the retired-row refusal, deliberately:
+    # whichever row we are actually about to serve is the row whose kick-off has
+    # to be right, and a row we are about to 410 does not need correcting.
+    try:
+        recover_kalshi_occurrence_starts([event])
+    except Exception:
+        # Gotcha #42, and the same bargain the fold makes: this correction
+        # improves the page and is never a precondition for having one. A row
+        # served with the column we stored is worse than a corrected one and far
+        # better than a 500 on an event page.
+        #
+        # The ROW's id, never the path parameter — `event_id` is user-provided
+        # and CodeQL grades interpolating it `py/log-injection` at medium
+        # severity, which notice 32 refuses. Measured: it did, on the first push
+        # of this change. `league_futures.py` refuses the same thing for the
+        # same reason and settles on the same substitute ("the dropped ids name
+        # the league more precisely than its key would"); the hydrated row's own
+        # id is the value we actually corrected, so it is also the better log.
+        logger.exception(
+            "event detail: kalshi occurrence recovery failed for %s",
+            getattr(event, "id", None),
         )
 
     # Load only the latest odds snapshot per bookmaker (not ALL snapshots).
