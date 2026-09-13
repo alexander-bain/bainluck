@@ -589,7 +589,7 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
         // one carrying a sentence about prices (web's #5934, arm 5). Settled
         // rows arrive with `probability: null`, and `RaceChart.series` skips
         // those, so this is today's every decided board.
-        let chart = raceChart(ordered, starts: starts)
+        let chart = raceChart(ordered, starts: starts, rendered: rendered)
 
         return BoardSection(
             id: board.id,
@@ -658,11 +658,15 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
     /// and the list can never describe two different fields — and the legend
     /// names the three, which is how a reader of a six-row list knows which
     /// three have lines.
+    /// `rendered` is the board's decided percent per row (#5949): the legend
+    /// prints what the rows beneath it print, never its own rounding of the same
+    /// fraction. One card cannot answer one question twice.
     private static func raceChart(
         _ ordered: [TournamentHubBoardRow],
-        starts: RaceChartWindowStarts
+        starts: RaceChartWindowStarts,
+        rendered: [String: Int] = [:]
     ) -> RaceChartData {
-        let series = RaceChart.series(from: ordered)
+        let series = RaceChart.series(from: ordered, renderedPercents: rendered)
         let ranges = RaceChart.availableRanges(starts: starts)
         let drawable = ranges.filter { RaceChart.isDrawable(series, range: $0, starts: starts) }
 
