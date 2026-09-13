@@ -23,7 +23,8 @@ the team must also match, which is why the pool came back empty in production.
 `TestTheSeedIsReal` fails loudly if the seed stops reaching the pool at all.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -518,11 +519,42 @@ class TestATimeQualifierConstrainsTheAnswer:
     @pytest.fixture
     async def two_lakers_games(self, recorder, monkeypatch):
         """The production specimen, reduced: a future game the scorer ranks
-        first, and a same-day game it ranks second."""
+        first, and a same-day game it ranks second.
+
+        THE SAME-DAY ROW IS TRUNCATED TO THE EASTERN DAY, NOT OFFSET INTO IT.
+        `today` is resolved in US/Eastern on both sides of the route — the SQL
+        key (`func.timezone(_EASTERN_TZ_NAME, Event.commence_time)`) and the
+        Python scorer (`eastern_game_date`) — so `now + timedelta(hours=3)` is
+        not a same-day anchor, it is a same-day anchor *for 21 hours a day*.
+        Between 01:00Z and 04:00Z (21:00–23:59 ET) three hours past `now` lands
+        on the NEXT Eastern date, row 7002 stops qualifying, the +40d game leads
+        and this test fails on code that is perfectly correct. Measured: it
+        reddened master's own source at 01:28Z on 2026-09-13 while master's CI
+        — run before 01:00Z — was green on the same sha.
+
+        Gotcha #44 in the form `clock_sweep.py` does not reach: the anchor does
+        not branch on the clock, it is *carried across* a boundary by an offset.
+        Truncating first and placing the row at a fixed hour inside `now`'s own
+        Eastern date removes the carry, at every hour of the day.
+
+        Noon is safe as that hour: nothing in the `today` path reads past-vs-
+        future. `rank_with_keys` and the SQL ordering key both compare Eastern
+        DATES only, and the sibling `two_seasons` fixture already proves a row
+        800 days in the past reaches this pool.
+        """
+        # Imported from the route rather than retyped: a hand-copied
+        # "America/New_York" would keep agreeing with itself if the route ever
+        # moved its own day boundary.
+        from app.routes.events import _EASTERN_TZ_NAME
+
         now = datetime.now(timezone.utc)
+        eastern = ZoneInfo(_EASTERN_TZ_NAME)
+        same_eastern_day = datetime.combine(
+            now.astimezone(eastern).date(), time(12, 0), tzinfo=eastern
+        ).astimezone(timezone.utc)
         rows = [
             _event_row(7001, "Warriors", "Los Angeles Lakers", now + timedelta(days=40)),
-            _event_row(7002, "Gannon", "Mercyhurst Lakers", now + timedelta(hours=3)),
+            _event_row(7002, "Gannon", "Mercyhurst Lakers", same_eastern_day),
         ]
         async for ac in _client_for(_make_seeded_db(recorder, rows), monkeypatch):
             yield ac
