@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 from app.utils.event_twin_fold import fold_twin_events, twin_fold_key
 from app.utils.kalshi_occurrence_start import (
     KALSHI_EXPECTED_EXPIRATION_PAD,
+    KALSHI_RECOVERY_STAMP,
     kalshi_occurrence_scheduled_start,
     recover_kalshi_occurrence_starts,
 )
@@ -433,3 +434,132 @@ def test_an_orm_row_whose_sport_was_not_eager_loaded_is_left_alone():
 
     assert recover_kalshi_occurrence_starts([row]) == 0
     assert row.commence_time == datetime(2026, 9, 19, 22, 0, tzinfo=timezone.utc)
+
+
+# ── the same objects, folded more than once ───────────────────────────────────
+#
+# Found by authority/179 on this sha before it landed, and latent rather than
+# live: `/api/leagues/{sport_key}` folds the same upcoming rows twice in one
+# request, and it is the one route whose query does not eager-load `Event.sport`,
+# so nothing fires there today. These pin the arithmetic anyway, because the
+# thing that makes it live is a one-line eager load on someone else's route.
+
+
+def test_folding_the_same_rows_twice_moves_the_hour_once():
+    """The recovery keys on a field it does not change, so it must self-stop.
+
+    Without the stamp this is 16:00Z — a kick-off served three hours BEFORE the
+    whistle, which is a worse lie than the three-hours-late one this ship fixes.
+    """
+    real, ghost = _europa_pair()
+    rows = [real, ghost]
+
+    fold_twin_events(rows)
+    fold_twin_events(rows)
+
+    assert ghost.commence_time == KICKOFF
+    assert real.commence_time == KICKOFF
+
+
+def test_the_leagues_route_folds_the_same_objects_twice_in_one_request():
+    """The caller shape, not a synthetic repeat.
+
+    `league_futures.py:2483` folds `_g_events`, then `:2543` folds
+    `[*upcoming, *results, *unreported]` with no re-query between them — the same
+    row objects, twice. A reader on that page must be told one hour.
+    """
+    real, ghost = _europa_pair()
+    upcoming = [real, ghost]
+    results = [_Row(99, home="Roma", away="Lille", commence_time=KICKOFF)]
+
+    fold_twin_events(upcoming)  # _folded_upcoming
+    fold_twin_events([*upcoming, *results])  # _folded_past_rails
+
+    assert ghost.commence_time == KICKOFF, (
+        "the second fold subtracted a second pad: 19:00Z kick-off served at 16:00Z"
+    )
+
+
+def test_a_third_and_fourth_pass_change_nothing_either():
+    """Idempotent, not merely twice-safe — no caller promises a count of folds."""
+    _, ghost = _europa_pair()
+
+    for _ in range(4):
+        recover_kalshi_occurrence_starts([ghost])
+
+    assert ghost.commence_time == KICKOFF
+
+
+def test_a_second_pass_reports_no_corrections_so_a_count_is_never_doubled():
+    """The return value is corrections MADE, and a caller may report it."""
+    _, ghost = _europa_pair()
+
+    assert recover_kalshi_occurrence_starts([ghost]) == 1
+    assert recover_kalshi_occurrence_starts([ghost]) == 0
+
+
+def test_it_is_the_stamp_that_stops_the_second_pass_and_nothing_else():
+    """Anti-vacuous: prove the guard is load-bearing.
+
+    If the second pass were a no-op for some other reason — a changed source, a
+    guard somewhere else — this test would pass with the stamp deleted and the
+    three above would be worth nothing.
+    """
+    _, ghost = _europa_pair()
+
+    assert recover_kalshi_occurrence_starts([ghost]) == 1
+    assert getattr(ghost, KALSHI_RECOVERY_STAMP) is True
+
+    delattr(ghost, KALSHI_RECOVERY_STAMP)
+
+    assert recover_kalshi_occurrence_starts([ghost]) == 1
+    assert ghost.commence_time == KICKOFF - KALSHI_EXPECTED_EXPIRATION_PAD
+
+
+def test_a_real_orm_row_folded_twice_moves_once_and_is_still_not_dirty():
+    """The stamp on the object type production hands this.
+
+    An unmapped attribute must not become a pending write: the mapper does not
+    map it, so there is nothing to flush — but that is the claim, and this is
+    where it is checked rather than asserted in a docstring.
+    """
+    from sqlalchemy import inspect as sa_inspect
+
+    from app.models.models import Event, Sport
+
+    row = Event(
+        id=15307701,
+        sport_id=7,
+        home_team_name="Sevilla",
+        away_team_name="Barcelona",
+        commence_time=datetime(2026, 9, 19, 22, 0, tzinfo=timezone.utc),
+        commence_time_source="kalshi",
+        external_id=None,
+    )
+    row.sport = Sport(key="soccer_spain_la_liga")
+
+    assert recover_kalshi_occurrence_starts([row]) == 1
+    assert recover_kalshi_occurrence_starts([row]) == 0
+    assert row.commence_time == datetime(2026, 9, 19, 19, 0, tzinfo=timezone.utc)
+
+    state = sa_inspect(row)
+    assert not state.attrs["commence_time"].history.has_changes()
+    assert KALSHI_RECOVERY_STAMP not in {attr.key for attr in state.mapper.attrs}, (
+        "the stamp must be a name the mapper does not know, or it is a column "
+        "write wearing a sentinel's clothes"
+    )
+
+
+def test_the_lazy_safe_sport_read_is_public_and_its_old_name_still_resolves():
+    """`#5918`'s soccer gate imports this; two copies of it is how one rots.
+
+    The private alias stays because a branch based on the sha that had only the
+    private name must keep importing.
+    """
+    from app.utils import kalshi_occurrence_start as mod
+
+    row = _Row(1, sport_key="soccer_spain_la_liga")
+
+    assert mod.loaded_sport_key(row) == "soccer_spain_la_liga"
+    assert mod._loaded_sport_key is mod.loaded_sport_key
+    assert "loaded_sport_key" in mod.__all__
