@@ -781,7 +781,13 @@ def test_the_workflow_gates_the_push_on_the_in_flight_verdict():
     curl_line = next(
         ln for ln in body.splitlines() if "api/admin/celery/inspect" in ln
     )
-    assert "api.bainluck.com" in curl_line
+    # The WHOLE url, by equality. `"api.bainluck.com" in line` is the substring
+    # check CodeQL calls `py/incomplete-url-substring-sanitization` and it is
+    # right to: the host it matches can sit anywhere, so `evil.test/?r=api.
+    # bainluck.com` satisfies it. Here that would pass a workflow reading the
+    # active fleet off somebody else's box.
+    url = re.search(r'"(https://[^"]+)"', curl_line)
+    assert url and url.group(1) == "https://api.bainluck.com/api/admin/celery/inspect"
     assert "X-BainLuck-Origin" in body
     # One read is not a reading: two of eight calls to this endpoint returned
     # HTTP 500 when it was measured (2026-09-13 11:02-11:03Z). UNKNOWN proceeds,
