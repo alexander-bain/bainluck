@@ -27,7 +27,8 @@ class Sport(SimpleNamespace):
 def load(paths: list[str]) -> list:
     rows = []
     for path in paths:
-        payload = json.load(open(path))
+        with open(path) as handle:
+            payload = json.load(handle)
         cols = payload["columns"]
         for raw in payload["rows"]:
             r = dict(zip(cols, raw))
