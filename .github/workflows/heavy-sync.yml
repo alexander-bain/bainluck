@@ -267,24 +267,68 @@ jobs:
           if [ -z "${ADMIN_TOKEN:-}" ]; then
             echo "ADMIN_TOKEN is not set — the in-flight gate will read UNKNOWN."
           fi
-          # `--retry`, because ONE READ IS NOT A READING of this endpoint:
-          # measured 2026-09-13 11:02-11:03Z, two of eight calls returned HTTP
-          # 500 (the inspect broadcast raises and the route does not catch it).
-          # An UNKNOWN is safe — it proceeds — but an instrument that is inert a
-          # quarter of the time is a veto that reads as one and is not.
-          curl -fsS --max-time 45 --retry 2 --retry-delay 3 --retry-all-errors \
-            -H "Authorization: Bearer ${ADMIN_TOKEN:-}" \
-            -H "X-BainLuck-Origin: heavy-sync-workflow" \
-            "https://api.bainluck.com/api/admin/celery/inspect" \
-            -o "$INSPECT_JSON" \
-            || echo "the inspect read failed; the gate treats that as UNKNOWN."
 
-          set +e
-          python3 scripts/heavy_sync_decision.py inflight \
-            --inspect-json "$INSPECT_JSON" \
-            $DISPATCH_FLAG
-          INFLIGHT=$?
-          set -e
+          # BUSY IS "NOT YET", NOT "NOT TODAY" — THE READ IS REPEATED UNTIL THE
+          # BAND CLOSES. One read of a busy worker used to end the run, and the
+          # three gates compose into a convergence rate that reading measured as
+          # ~zero: heavy sat 299 min / 75 commits behind at 14:53Z Sunday with
+          # five `backend/app/tasks` files dark, and in those five hours exactly
+          # ONE trigger cleared both the band and the cycle floor — 14:46:23Z,
+          # run 34763629805 — which read `poll_kalshi_markets` and held. Sampled
+          # on the minute after it (latency/377, /api/admin/celery/inspect every
+          # ~50 s): BUSY at :54, :55, :56, :57 and **IDLE at :58:02**, still
+          # inside the band. The opportunity was there; nothing looked again.
+          #
+          # This is strictly more chances at the SAME verdict, never a weaker
+          # one: every state it pushes in is a state the single read would also
+          # have pushed in. It cannot reach past the band, because the deadline
+          # IS the band (`band-seconds-left`) — the same edge `decide` gates on,
+          # asked again rather than restated. So the accuracy rebuild keeps
+          # every protection it had, and `--dispatched` is unaffected (the
+          # in-flight verdict is BYPASSED, so the loop breaks on its first read).
+          while true; do
+            # Removed FIRST: with `--fail` curl writes no body, so a failed read
+            # would otherwise leave the PREVIOUS iteration's payload in place and
+            # the gate would judge a stale fleet. Absent is the honest state, and
+            # the gate already reads absent as UNKNOWN.
+            rm -f "$INSPECT_JSON"
+            # `--retry`, because ONE READ IS NOT A READING of this endpoint:
+            # measured 2026-09-13 11:02-11:03Z, two of eight calls returned HTTP
+            # 500 (the inspect broadcast raises and the route does not catch it).
+            # An UNKNOWN is safe — it proceeds — but an instrument that is inert a
+            # quarter of the time is a veto that reads as one and is not.
+            curl -fsS --max-time 45 --retry 2 --retry-delay 3 --retry-all-errors \
+              -H "Authorization: Bearer ${ADMIN_TOKEN:-}" \
+              -H "X-BainLuck-Origin: heavy-sync-workflow" \
+              "https://api.bainluck.com/api/admin/celery/inspect" \
+              -o "$INSPECT_JSON" \
+              || echo "the inspect read failed; the gate treats that as UNKNOWN."
+
+            set +e
+            python3 scripts/heavy_sync_decision.py inflight \
+              --inspect-json "$INSPECT_JSON" \
+              $DISPATCH_FLAG
+            INFLIGHT=$?
+            set -e
+            # Only BUSY is worth waiting on. IDLE proceeds, and a harness story
+            # (>1) is handled below exactly as it was — waiting on a gate that
+            # crashed would be waiting for a verdict nobody is computing.
+            [ "$INFLIGHT" -eq 1 ] || break
+
+            BAND_LEFT="$(python3 scripts/heavy_sync_decision.py band-seconds-left)"
+            # A deadline that did not parse is not a licence to keep waiting:
+            # anything but digits becomes 0 and the loop stops. `[` would exit 2
+            # on `-le` against a non-number, which an `if` reads as "false" —
+            # i.e. as permission to sleep again (gotcha #54: read the value).
+            case "${BAND_LEFT}" in ''|*[!0-9]*) BAND_LEFT=0 ;; esac
+            if [ "$BAND_LEFT" -le 30 ]; then
+              echo "The band closes in ${BAND_LEFT}s — holding rather than pushing"
+              echo "past the edge that keeps the next accuracy rebuild whole."
+              break
+            fi
+            echo "Waiting 30s for worker-heavy to finish (${BAND_LEFT}s of band left)."
+            sleep 30
+          done
 
           case "$INFLIGHT" in
             0) echo "In flight: clear to cycle worker-heavy." ;;

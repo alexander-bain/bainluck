@@ -102,6 +102,7 @@ Usage (the workflow gathers facts, this judges, the workflow acts on the code)::
         --heavy-is-ancestor true [--heavy-release-age-min N] [--dispatched]
     python3 scripts/heavy_sync_decision.py inflight \\
         --inspect-json /tmp/inspect.json [--dispatched]
+    python3 scripts/heavy_sync_decision.py band-seconds-left
 
 Exit codes: ``0`` PUSH · ``1`` HOLD (a benign result, not an error — gotcha #124) ·
 ``2`` REFUSE (unsafe; somebody should look) · ``3`` usage. ``inflight`` uses the
@@ -120,7 +121,7 @@ from __future__ import annotations
 import argparse
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 # ── the window, derived from measurements — never typed in ─────────────────────
 
@@ -212,6 +213,44 @@ def inside_window(now: datetime) -> bool:
     """Both bounds inclusive — the margin that makes them safe is in the bounds."""
     opens, closes = window_bounds()
     return opens <= now.astimezone(timezone.utc).minute <= closes
+
+
+#: How often the in-flight read is repeated while worker-heavy is busy.
+#:
+#: NOT a threshold — no verdict turns on its value, only how many chances one run
+#: gets to observe an idle fleet — which is why it is a plain number and the
+#: band's edge, which IS a verdict, stays derived. Its two bounds, so the next
+#: reader does not have to re-derive them: an idle gap SHORTER than the push ->
+#: release lag is not an opportunity at all (the fastest of the four measured
+#: lags is 36.2 s), so sampling much finer than that buys precision this job
+#: cannot spend; and the endpoint is our own production API, which returned HTTP
+#: 500 on two of eight calls when it was measured, so the rate is also a load
+#: choice. 30 s gives <=40 reads across the widest possible band.
+INFLIGHT_POLL_SECONDS = 30
+
+
+def band_seconds_left(now: datetime | None = None) -> int:
+    """Whole seconds until the band's closing edge; ``0`` once it has passed.
+
+    THE WAIT HAS NO DEADLINE OF ITS OWN, AND MUST NOT (#5470). ``window_bounds``
+    already answers "how late may a push be and still clear the next rebuild",
+    so the moment it stops being safe to push is exactly the moment it stops
+    being worth waiting. A second constant here would be a second answer to one
+    question, free to drift from the first
+    (``test_the_wait_deadline_is_the_band_and_never_a_number_of_its_own``).
+
+    ``inside_window`` is minute-INCLUSIVE, so the edge is the end of ``closes``,
+    not its start; ``timedelta`` carries the hour (and the day) when ``closes``
+    is 59. Zero outside the band, which the caller reads as "stop waiting" — so
+    an unreadable or crashed deadline degrades toward not waiting, never toward
+    waiting forever.
+    """
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    if not inside_window(now):
+        return 0
+    _, closes = window_bounds()
+    edge = now.replace(minute=closes, second=0, microsecond=0) + timedelta(minutes=1)
+    return max(0, int((edge - now).total_seconds()))
 
 
 # ── the verdict ────────────────────────────────────────────────────────────────
@@ -705,6 +744,11 @@ def main(argv: list[str] | None = None) -> int:
         help="an attended workflow_dispatch run: bypasses the in-flight veto, "
         "never the never-backwards guard",
     )
+    sub.add_parser(
+        "band-seconds-left",
+        help="print how many seconds of the sync band are left (0 outside it) — "
+        "the deadline for waiting out a busy worker-heavy",
+    )
     a = sub.add_parser(
         "age", help="print minutes since the app's current release (empty if unreadable)"
     )
@@ -760,6 +804,14 @@ def main(argv: list[str] | None = None) -> int:
         decision = inflight_verdict(active=active, heavy=heavy, dispatched=args.dispatched)
         print(f"{decision.verdict}: {decision.reason}")
         return decision.code
+
+    if args.command == "band-seconds-left":
+        # The NUMBER ALONE on stdout, and always exit 0 — `age`'s contract, for
+        # `age`'s reason: the caller captures the string, and a non-zero here
+        # would let the wait's own deadline fail a job that has nothing wrong
+        # with it. The clock is read in this process (there is no `--now`).
+        print(band_seconds_left())
+        return 0
 
     if args.command == "age":
         import os

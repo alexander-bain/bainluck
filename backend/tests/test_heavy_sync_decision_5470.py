@@ -797,6 +797,269 @@ def test_the_workflow_gates_the_push_on_the_in_flight_verdict():
 
 
 # ---------------------------------------------------------------------------
+# #5470 — BUSY IS "NOT YET". The three gates (band, cycle floor, in-flight) each
+# hold for a good reason and composed into a convergence rate of ~zero: heavy
+# sat 299 min / 75 commits behind at 14:53Z on 2026-09-13 with five
+# `backend/app/tasks` files dark, and in those five hours exactly one trigger
+# cleared band AND floor (14:46:23Z, run 34763629805) and held on a busy worker.
+# Sampled on the minute after it: BUSY at :54/:55/:56/:57 and IDLE at :58:02,
+# still inside the band. So the read is repeated until the band closes.
+#
+# The property these pin is that waiting is strictly more chances at the SAME
+# verdict — it can never push in a state one read would not have pushed in, and
+# it can never reach past the band, because its deadline IS the band.
+# ---------------------------------------------------------------------------
+
+
+def test_the_wait_deadline_is_the_band_and_never_a_number_of_its_own():
+    """A second constant here would be a second answer to one question."""
+    opens, closes = sync.window_bounds()
+    # The whole band, asked at its opening second.
+    assert sync.band_seconds_left(_at(opens)) == (closes - opens + 1) * 60
+    # Halfway through, exactly the remainder — no rounding to a whole minute.
+    assert sync.band_seconds_left(_at(50).replace(second=17)) == (closes - 50 + 1) * 60 - 17
+
+
+def test_moving_a_measured_constant_moves_the_deadline(monkeypatch):
+    """The same derivation test the band itself carries — the deadline is not
+    allowed to be a literal that happens to match today's edges."""
+    before = sync.band_seconds_left(_at(50))
+    monkeypatch.setattr(sync, "CLOSE_MARGIN_MIN", sync.CLOSE_MARGIN_MIN + 3)
+    after = sync.band_seconds_left(_at(50))
+    assert after == before - 3 * 60
+
+
+def test_the_deadline_and_the_window_agree_at_every_minute_of_the_hour():
+    """One fact, two readers: "may I push" and "is it worth waiting" must never
+    disagree about where the band is. Every minute, so no edge is assumed."""
+    for minute in range(60):
+        now = _at(minute)
+        assert (sync.band_seconds_left(now) > 0) is sync.inside_window(now), minute
+
+
+def test_the_last_second_of_the_band_is_still_inside_it():
+    """`inside_window` is minute-inclusive, so the edge is the END of `closes`.
+    An off-by-one here would throw away the final minute of every band — which
+    is exactly the minute the 14:58:02Z idle reading landed in."""
+    _, closes = sync.window_bounds()
+    last = _at(closes).replace(second=59)
+    assert sync.inside_window(last)
+    assert sync.band_seconds_left(last) == 1
+    assert sync.band_seconds_left(_at(closes)) == 60
+
+
+def test_the_deadline_carries_the_hour_rather_than_going_negative(monkeypatch):
+    """If a re-measurement ever pushes `closes` to 59, the edge is the NEXT
+    hour's :00 — arithmetic that clamps instead would silently stop waiting a
+    minute early forever."""
+    monkeypatch.setattr(sync, "window_bounds", lambda: (38, 59))
+    monkeypatch.setattr(
+        sync, "inside_window", lambda now: 38 <= now.astimezone(timezone.utc).minute <= 59
+    )
+    assert sync.band_seconds_left(_at(59).replace(second=30)) == 30
+
+
+def test_the_deadline_is_zero_outside_the_band():
+    opens, closes = sync.window_bounds()
+    assert sync.band_seconds_left(_at(opens - 1)) == 0
+    assert sync.band_seconds_left(_at((closes + 1) % 60)) == 0
+
+
+def test_the_deadline_subcommand_prints_the_number_alone_and_exits_zero():
+    """`age`'s contract, for `age`'s reason: the caller captures the string, and
+    a non-zero would let the wait's own deadline fail a healthy job."""
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "band-seconds-left"],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = proc.stdout.strip()
+    assert out.isdigit(), out
+    # Self-consistent at whatever minute it really is — the one clock-reading
+    # assertion that holds at every minute of the day (gotcha #44).
+    assert 0 <= int(out) <= (sync.window_bounds()[1] - sync.window_bounds()[0] + 1) * 60
+
+
+# ── and the loop itself, RUN rather than grepped ───────────────────────────────
+#
+# A `"while true" in body` assertion is a source scan: it passes on a loop that
+# spins forever, on one that never sleeps, and on one that pushes on a stale
+# payload. So the block is lifted out of the YAML and executed, with `curl`,
+# `sleep` and the DEADLINE stubbed and the REAL decision script judging the
+# payloads. The clock never enters: the deadline stub is a scripted sequence,
+# which is the only way to test a module that deliberately has no `--now`.
+
+BUSY_BODY = json.dumps(
+    {"celery@one": {"active": [{"name": "app.tasks.match_prediction_markets"}]}}
+)
+IDLE_BODY = json.dumps({"celery@one": {"active": []}})
+
+
+def _extract_wait_loop() -> str:
+    lines = _workflow_code().splitlines()
+    start = next(i for i, ln in enumerate(lines) if ln.strip() == "while true; do")
+    end = next(i for i in range(start, len(lines)) if lines[i].strip() == "done")
+    return "\n".join(ln[10:] for ln in lines[start:end + 1])
+
+
+def _run_wait_loop(tmp_path, *, bodies, deadlines, dispatched=False, curl_fails=False):
+    """Run the workflow's wait loop against a scripted fleet. Returns
+    (INFLIGHT exit code, curl calls, sleeps)."""
+    stub = tmp_path / "stub"
+    stub.mkdir(parents=True)
+    state = tmp_path / "state"
+    state.mkdir(parents=True)
+    (state / "bodies").write_text("\n".join(bodies))
+    (state / "deadlines").write_text("\n".join(str(d) for d in deadlines))
+
+    (stub / "curl").write_text(
+        "#!/bin/bash\n"
+        f"n=$(cat {state}/curls 2>/dev/null || echo 0); n=$((n+1)); echo $n > {state}/curls\n"
+        + ("exit 22\n" if curl_fails else
+           "out=''\n"
+           'while [ $# -gt 0 ]; do [ "$1" = "-o" ] && out="$2"; shift; done\n'
+           f"body=$(sed -n \"${{n}}p\" {state}/bodies)\n"
+           '[ -n "$body" ] || exit 22\n'
+           'printf %s "$body" > "$out"\n')
+    )
+    (stub / "sleep").write_text(
+        "#!/bin/bash\n"
+        f"n=$(cat {state}/sleeps 2>/dev/null || echo 0); echo $((n+1)) > {state}/sleeps\n"
+    )
+    # One shim for both script calls: the deadline is scripted, everything else
+    # is the real module, so the gate under test is never faked.
+    (stub / "python3").write_text(
+        "#!/bin/bash\n"
+        'case "$*" in\n'
+        "  *band-seconds-left*)\n"
+        f"    n=$(cat {state}/deadline_reads 2>/dev/null || echo 0); n=$((n+1))\n"
+        f"    echo $n > {state}/deadline_reads\n"
+        f"    sed -n \"${{n}}p\" {state}/deadlines\n"
+        "    ;;\n"
+        f'  *) exec "{sys.executable}" "$@" ;;\n'
+        "esac\n"
+    )
+    for name in ("curl", "sleep", "python3"):
+        (stub / name).chmod(0o755)
+
+    script = tmp_path / "loop.sh"
+    script.write_text(
+        "set -uo pipefail\n"
+        f'INSPECT_JSON="{tmp_path}/inspect.json"\n'
+        'ADMIN_TOKEN="token"\n'
+        f'DISPATCH_FLAG="{"--dispatched" if dispatched else ""}"\n'
+        + _extract_wait_loop()
+        + '\necho "INFLIGHT=$INFLIGHT"\n'
+    )
+    proc = subprocess.run(
+        ["bash", str(script)],
+        capture_output=True, text=True, cwd=str(REPO),
+        env={**os.environ, "PATH": f"{stub}{os.pathsep}{os.environ['PATH']}"},
+        timeout=60,
+    )
+    assert "INFLIGHT=" in proc.stdout, proc.stdout + proc.stderr
+    code = int(proc.stdout.rsplit("INFLIGHT=", 1)[1].split()[0])
+    reads = int((state / "curls").read_text()) if (state / "curls").exists() else 0
+    sleeps = int((state / "sleeps").read_text()) if (state / "sleeps").exists() else 0
+    return code, reads, sleeps
+
+
+def test_a_busy_worker_is_waited_out_and_the_idle_moment_is_taken(tmp_path):
+    """The 14:46Z run, replayed: busy, busy, then the :58 idle it never saw."""
+    code, reads, sleeps = _run_wait_loop(
+        tmp_path, bodies=[BUSY_BODY, BUSY_BODY, IDLE_BODY], deadlines=[600, 540]
+    )
+    assert code == 0
+    assert (reads, sleeps) == (3, 2)
+
+
+def test_the_wait_stops_at_the_bands_edge_and_holds(tmp_path):
+    """Waiting may cost the run; it may never cost the rebuild. At the edge the
+    verdict is still BUSY, which the step below turns into a green HOLD."""
+    code, reads, sleeps = _run_wait_loop(
+        tmp_path, bodies=[BUSY_BODY, BUSY_BODY, IDLE_BODY], deadlines=[600, 30]
+    )
+    assert code == 1
+    # It stopped BEFORE the idle payload — the band, not the fleet, ended it.
+    assert (reads, sleeps) == (2, 1)
+
+
+def test_an_unreadable_deadline_stops_the_wait_rather_than_licensing_it(tmp_path):
+    """`[ "" -le 30 ]` exits 2, which an `if` reads as false — i.e. as
+    permission to sleep again. Anything but digits must mean stop."""
+    for bad in ("", "unreadable", "-1"):
+        code, reads, sleeps = _run_wait_loop(
+            tmp_path / bad.replace("-", "neg") if bad else tmp_path / "empty",
+            bodies=[BUSY_BODY, IDLE_BODY], deadlines=[bad],
+        )
+        assert (code, reads, sleeps) == (1, 1, 0), bad
+
+
+def test_the_loop_never_waits_on_a_verdict_that_is_not_busy(tmp_path):
+    """IDLE proceeds on the first read — the wait costs a synced-and-idle fleet
+    nothing at all."""
+    code, reads, sleeps = _run_wait_loop(
+        tmp_path, bodies=[IDLE_BODY], deadlines=[600]
+    )
+    assert (code, reads, sleeps) == (0, 1, 0)
+
+
+def test_an_attended_run_never_waits(tmp_path):
+    """`--dispatched` BYPASSES the veto, so there is nothing to wait for; a wait
+    here would make an attended run slower than the unattended one."""
+    code, reads, sleeps = _run_wait_loop(
+        tmp_path, bodies=[BUSY_BODY], deadlines=[600], dispatched=True
+    )
+    assert (code, reads, sleeps) == (0, 1, 0)
+
+
+def test_a_failed_read_still_proceeds_and_is_never_served_a_stale_payload(tmp_path):
+    """The cost-gate polarity, unchanged by the loop: an unreadable fact
+    PROCEEDS. And because the payload is removed before each read, a read that
+    fails cannot be judged on the previous iteration's fleet."""
+    code, reads, sleeps = _run_wait_loop(
+        tmp_path, bodies=[BUSY_BODY], deadlines=[600], curl_fails=True
+    )
+    assert (code, reads, sleeps) == (0, 1, 0)
+    # And the stale-payload half, directly: a busy read followed by a failed one
+    # must not keep holding on the body that is no longer there.
+    code, reads, sleeps = _run_wait_loop(
+        tmp_path / "second", bodies=[BUSY_BODY], deadlines=[600, 540]
+    )
+    assert code == 0  # iteration 2's curl has no body left, so it fails -> UNKNOWN
+    assert (reads, sleeps) == (2, 1)
+
+
+def test_the_workflow_removes_the_payload_before_every_read():
+    """Source-level companion to the behaviour above: `--fail` writes no body,
+    so without this the gate judges the previous iteration's fleet."""
+    body = _workflow_code()
+    loop = _extract_wait_loop()
+    assert 'rm -f "$INSPECT_JSON"' in loop
+    assert loop.index('rm -f "$INSPECT_JSON"') < loop.index("api/admin/celery/inspect")
+    # and the loop really does wrap the gate the push is judged on
+    assert "heavy_sync_decision.py inflight" in loop
+    assert body.index("INFLIGHT=$?") < body.index("git push heroku-heavy")
+
+
+def test_the_sleep_in_the_workflow_is_the_poll_the_script_documents():
+    """Two copies of one number is how a comment becomes a story about a value
+    nothing enforces."""
+    loop = _extract_wait_loop()
+    assert f"sleep {sync.INFLIGHT_POLL_SECONDS}" in loop
+    assert f'-le {sync.INFLIGHT_POLL_SECONDS} ]' in loop
+    # It is a sample rate, not a threshold — no verdict turns on its value — but
+    # it still has to be a rate that can catch the thing it is watching. Both
+    # bounds come from readings this file already holds: a sampler slower than
+    # the SLOWEST push -> release lag is slower than the event it is trying to be
+    # on time for, and a band that offers only one read is the single read this
+    # loop exists to replace.
+    band_s = (sync.window_bounds()[1] - sync.window_bounds()[0] + 1) * 60
+    assert 0 < sync.INFLIGHT_POLL_SECONDS <= max(OBSERVED_RELEASE_LAGS_MIN) * 60
+    assert sync.INFLIGHT_POLL_SECONDS * 2 <= band_s
+
+
+# ---------------------------------------------------------------------------
 # #5722 — the post-push readback. The first ever sync SUCCEEDED and reported
 # failure, because it asked the git ref instead of the release record.
 # ---------------------------------------------------------------------------
