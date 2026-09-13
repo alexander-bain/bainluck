@@ -270,6 +270,25 @@ class TestEnforcementScope:
             # raised (`measured: false`). Terminals come from
             # `app/tasks/tennis_twin_sweep.py`.
             "tennis_twin_sweep",
+            # #5896: the soccer arm of the same fold, and the place where the
+            # sibling's rule had to be re-derived rather than copied. Ten rows
+            # on 2026-09-13 advertised matches that had already been played —
+            # Sevilla v Valencia shown for tonight's 19:00 when it finished 1-0
+            # on Wednesday — and the read side that hides them had no writer for
+            # the class.
+            #
+            # 🔴 Same trap as the sibling above, one turn further. Its zero-write
+            # steady state is green for the same reason; but soccer ghosts are
+            # EPISODIC, not continuous — ten on one evening, zero in the
+            # preceding thirty days — so an empty PLAN is also green here, where
+            # in tennis it is red. The floor therefore sits on the population the
+            # sweep READ (`rows_read` below `MIN_EXPECTED_ROWS` = the judgement
+            # has lost its population), and the zeros that are not green are that
+            # floor, a plan above its ceiling, tags withheld because
+            # `_build_game_markets` stopped folding, and a population read that
+            # raised (`measured: false`). Terminals come from
+            # `app/tasks/soccer_ghost_twin_sweep.py`.
+            "soccer_ghost_twin_sweep",
             # #1912 (CAL-P065): the two halves of the Polymarket ownership
             # hole, enrolled TOGETHER because separately each one looked fine.
             # The Gamma rail discarded 9,748 markets a run as

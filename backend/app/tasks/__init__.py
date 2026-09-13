@@ -3942,6 +3942,37 @@ def tennis_twin_sweep_task(self, apply: bool = True, lookback: int = 10,
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
+                 name="app.tasks.soccer_ghost_twin_sweep")
+def soccer_ghost_twin_sweep_task(self, apply: bool = True, lookback: int = 5,
+                                 lookahead: int = 5):
+    """#5896 — the same fold, for the class tennis's pairing cannot see.
+
+    Ten soccer rows on 2026-09-13 advertised a match that had already been
+    played: a second copy dated at a round placeholder hour on a later day,
+    carrying no score and no authority fixture id while the real row carried
+    both. `tennis_twin_sweep` cannot reach them (its block key is a surname pair
+    and its anchor test reads `external_id`, which both halves carry here), so
+    this is a sibling and not a parameter.
+
+    APPLY BY DEFAULT, for the same reason the tennis sweep is: this appends a
+    reversible label with no deleter and banks the prior value first (D51). A
+    dry-run schedule would measure the defect every half hour and leave the page
+    advertising Wednesday's game as tonight's kick-off.
+
+    Enrolled in ENFORCED_TASKS from birth (#1884) with a real `terminal`. Its
+    band sits on the POPULATION rather than on the plan — soccer ghosts are
+    episodic, so an empty plan is the healthy majority state and a plan floor
+    would refuse the quiet day. See the module docstring's verdict contract."""
+    from app.tasks.soccer_ghost_twin_sweep import run_soccer_ghost_twin_sweep
+    return _tracked_run(
+        "soccer_ghost_twin_sweep",
+        run_soccer_ghost_twin_sweep(
+            apply=apply, lookback=lookback, lookahead=lookahead
+        ),
+    )
+
+
 # --- Duplicate Event Cleanup ---
 
 
@@ -5114,6 +5145,28 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.tennis_twin_sweep",
         "schedule": crontab(minute="27,57"),
         "kwargs": {"apply": True, "lookback": 10, "lookahead": 5},
+        "options": {"queue": "background"},
+    },
+    # #5896 — the soccer arm of the same fold, twice an hour on `:09/:49`.
+    # Neither minute is occupied by another literal, and neither can be reached
+    # by the `*/2`, `*/5`, `*/10`, `*/15`, `*/20` or `*/30` families: both are
+    # odd and neither is a multiple of five. That keeps it off the `:00`/`:30`
+    # pile-ups and clear of its tennis sibling (`:27/:57`) on the two-slot
+    # background worker, so the two sweeps never contend.
+    #
+    # NOT an evenly spaced pair, and that is deliberate: `:39` sits inside the
+    # settlement sweep's 13-minute run window (`:31`-`:44`), whose co-fire
+    # ceiling `test_settlement_sweep_beat.py` pins at 18 with the instruction to
+    # move the newcomer rather than increment the number. `:49` is the nearest
+    # minute that clears the window and still leaves a half-hour cadence.
+    #
+    # APPLY, unattended, under D51: reversible label, no deleter, prior value
+    # banked into `bak_5896_soccer_ghost_tags` first, and one-command undo via
+    # `scripts/restore_5896_soccer_ghost_tags.py --apply`.
+    "soccer-ghost-twin-sweep": {
+        "task": "app.tasks.soccer_ghost_twin_sweep",
+        "schedule": crontab(minute="9,49"),
+        "kwargs": {"apply": True, "lookback": 5, "lookahead": 5},
         "options": {"queue": "background"},
     },
     "merge-duplicate-events": {

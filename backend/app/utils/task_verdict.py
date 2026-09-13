@@ -289,6 +289,15 @@ ENFORCED_TASKS = frozenset({
     # folding, is `failed`. Enrolling it without that split would have traded
     # one false GREEN for ninety-six false REDs.
     "tennis_twin_sweep",               # terminal + measured + fold_live + written
+    # #5896. The soccer arm of the same fold, enrolled from birth for the same
+    # reason and with ONE difference that matters here: its non-vacuity floor is
+    # on the population it READ, not on the plan it decided. Soccer ghosts are
+    # episodic — ten on 2026-09-13, zero in the preceding thirty days — so
+    # `complete` with `pairs_found: 0` is a healthy quiet matchday, while a
+    # window that yields fewer than 200 soccer rows is the judgement losing its
+    # population and is `failed`. A plan floor copied from the sibling would
+    # have made this task red on most days and taught everyone to ignore it.
+    "soccer_ghost_twin_sweep",         # terminal + measured + fold_live + rows_read
     # #1912 (CAL-P065) — the two halves of the Polymarket ownership hole,
     # enrolled TOGETHER because separately each looked fine. The Gamma rail
     # discarded 9,748 markets a run as `unsupported_lookup` to a CLOB rail

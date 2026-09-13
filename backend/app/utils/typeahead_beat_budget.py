@@ -1581,7 +1581,31 @@ def free_background_slots(
 #: background beat this week writes the IDENTICAL `BACKGROUND_BEAT_COUNT = 122`
 #: and `git merge` sees no conflict while the composed tree is 123. Re-run the
 #: census on the composed tree before merging this.
-BACKGROUND_BEAT_COUNT = 122
+BACKGROUND_BEAT_COUNT = 123
+#: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
+#: 79 → **80**, fall-through UNMOVED at 43. One beat added,
+#: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
+#: `options={"queue": "background"}` — the soccer arm of the #2693 duplicate
+#: fold, which on 2026-09-13 had ten rows advertising matches that had already
+#: been played.
+#:
+#: RE-DERIVED by running the census over the assembled `beat_schedule`, which
+#: printed `explicit 80 implicit 43 total 123`, never by adding one to 122
+#: (#1910). The benign direction again: the fall-through half — the half this
+#: guard exists to watch — is untouched.
+#:
+#: Cost shape, declared because this file is where `background` gets argued
+#: about: two fires an hour, each one paged read of ~1,500 soccer rows and, on
+#: the overwhelming majority of passes, zero writes (measured: ten pairs on one
+#: evening, zero in the preceding thirty days). Its sibling
+#: `tennis-twin-sweep` is the same shape at `:27/:57` and the two minutes are
+#: disjoint, so the two never occupy the queue's two slots together.
+#:
+#: ⚠️ The merge hazard above applies to THIS line: another lane adding a
+#: background beat this week writes the identical `BACKGROUND_BEAT_COUNT = 123`
+#: against a base of 122 while this branch writes 123, and the composed tree is
+#: 124 with no textual conflict. Re-run the census after any rebase.
+#:
 #: 🔴 RE-DERIVED at authority/083 (2026-09-09, #2907): 122 → **120**, explicit
 #: UNMOVED at 77, fall-through **45 → 43**. And this is the FIRST entry in this
 #: whole block that moves the number DOWN — every other re-derivation here adds a
