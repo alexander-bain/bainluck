@@ -59,20 +59,28 @@ describe("the Finished cap note does not claim to be the most recent results", (
     expect(markup).toContain('href="/sport/football/ncaaf"');
     expect(markup).toContain('href="/sport/soccer/mls"');
     expect(markup).toContain('href="/sport/baseball/mlb"');
-    // A sentence a reader finishes: "A, B and C." — not "A, B, C". Read as
-    // TEXT, because that is what the reader gets; the markup between the names
-    // is not the claim.
-    expect(markup.replace(/<[^>]*>/g, "")).toBe(
-      "More results in NCAA Football, MLS and MLB.",
-    );
+    // A sentence a reader finishes: "More results in A, B and C." — commas
+    // between, "and" before the last, a full stop at the end.
+    //
+    // Asserted as markup fragments rather than by stripping the tags: a
+    // `replace(/<[^>]*>/g, "")` here reads to CodeQL as an incomplete HTML
+    // sanitiser (`js/incomplete-multi-character-sanitization`, high severity)
+    // and refuses the sha under notice 32. The rule is right about the shape
+    // even though this one only ever sees its own render.
+    expect(markup).toContain(">More results in ");
+    expect(markup).toContain(">NCAA Football</a>");
+    expect(markup).toContain("<span>, <a ");
+    expect(markup).toContain("<span> and <a ");
+    expect(markup).toContain(">MLB</a></span>.</p>");
   });
 
   test("one league is named without a stray comma or conjunction", () => {
     const markup = render({ cappedMore: true, links: [MLB] });
 
-    expect(markup).toContain("More results in");
-    expect(markup).toContain("MLB");
+    expect(markup).toContain(">More results in ");
+    expect(markup).toContain(">MLB</a></span>.</p>");
     expect(markup).not.toContain(" and ");
+    expect(markup).not.toContain("<span>, ");
   });
 
   test("nothing was capped: no line at all", () => {
