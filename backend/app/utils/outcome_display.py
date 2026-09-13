@@ -203,7 +203,7 @@ def normalize_display_probs(
     outcomes: list[dict],
     key: str = "probability",
     mutually_exclusive: bool = True,
-) -> None:
+) -> bool:
     """#23: normalize the displayed distribution in place when independent binary
     outcomes sum >100%. Reuses the SINGLE politics normalizer (percentage-scale)
     via a 0-1 adapter — do not fork it. Values on ``key`` are 0-1 floats.
@@ -225,9 +225,21 @@ def normalize_display_probs(
     vig) field gets the #23 squeeze; the overrounded field keeps its raw prices.
     This mirrors the event_cycling concept-adapter guard and now also protects the
     raw /api/futures/{id} detail + search surfaces that only had the flag gate.
+
+    #5835: RETURNS WHETHER THE PRINTED COLUMN ACTUALLY MOVED, because a caller that
+    prints a SECOND column of un-squeezed prices beside this one needs to know. The
+    answer is MEASURED — the values before against the values after — never
+    re-derived from the thresholds, and that is the whole point. The squeeze fires
+    only when ``_normalize_outcome_probs`` sees a sum past 105 (``politics.py``), so
+    a caller asking "did it fire?" by re-testing ``raw_sum`` here would need to know
+    a constant that lives in another module and can be changed without this one
+    noticing. Three branches return False for three different real reasons — a
+    non-ME family, an overrounded field left raw, and a coherent field already
+    summing under the threshold — and a caller only has to care that nothing moved.
+    Existing callers ignore the return and are unaffected.
     """
     if not mutually_exclusive:
-        return  # non-ME participation family — raw per-outcome probs are honest
+        return False  # non-ME participation family — raw per-outcome probs are honest
 
     # #1201: strip Kalshi untraded-midpoint placeholders from a CORRUPTED ME field.
     # An illiquid Kalshi independent-binary field (e.g. the 79-way Super Bowl MVP,
@@ -252,14 +264,22 @@ def normalize_display_probs(
 
     raw_sum = sum((o.get(key) or 0) for o in outcomes)
     if raw_sum > _FIELD_SUM_MAX:
-        return  # independent-binary overround — raw YES price is the honest prob
+        return False  # independent-binary overround — raw YES price is the honest prob
     from app.routes.politics import _normalize_outcome_probs  # shared #23 util
 
+    # Snapshotted BEFORE the write-back, so "did it move" is a fact about what the
+    # reader is handed rather than a prediction from the thresholds. Values that
+    # survive the rounding unchanged (a 0.0005 longshot under a factor of 1.06
+    # rounds back to 0.0005 at 4dp) correctly count as NOT moved: the printed
+    # number is the raw price and there is nothing for a second column to disagree
+    # with. `any` is the right quantifier — one moved row is one false comparison.
+    before = [o.get(key) for o in outcomes]
     pct = [{"p": (o.get(key) or 0) * 100} for o in outcomes]
     _normalize_outcome_probs(pct, key="p")
     for o, scaled in zip(outcomes, pct):
         if o.get(key):
             o[key] = round(scaled["p"] / 100, 4)
+    return any(b != o.get(key) for b, o in zip(before, outcomes))
 
 
 def leader_pick_order(

@@ -4642,31 +4642,76 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
     # `OutcomeRow` gates the column on `opening_probability !== null`, and
     # `movementExplanation` falls back to the 24h change — so the key must be
     # present and null, never omitted (`undefined !== null` is true).
-    if not field_openings_publishable(
-        [o["opening_probability"] for o in outcomes],
-        mutually_exclusive=getattr(market, "mutually_exclusive", True),
-    ):
+    def _withhold_openings() -> None:
         for o in outcomes:
             o["opening_probability"] = None
             # The American-odds twin of the same fabricated number. Leaving it
             # would let any consumer reading the odds column reconstruct exactly
             # the price this rule just refused.
             o["opening_american_odds"] = None
-        # Machine-readable so a cert or probe can prove the rule fired and tell
-        # it apart from a market that simply never had an opening. Not a reader
-        # string: notice 34 keeps diagnostics off the page, in a key like this.
-        openings_withheld = True
-    else:
-        openings_withheld = False
+
+    # Machine-readable so a cert or probe can prove a withhold rule fired and tell
+    # it apart from a market that simply never had an opening. Not a reader
+    # string: notice 34 keeps diagnostics off the page, in a key like this.
+    openings_withheld = not field_openings_publishable(
+        [o["opening_probability"] for o in outcomes],
+        mutually_exclusive=getattr(market, "mutually_exclusive", True),
+    )
+    if openings_withheld:
+        _withhold_openings()
 
     # #993: #23-normalize the displayed distribution + demote a generic
     # "Other/Field" from the headline (same rules as search).
     # #199: gate on mutual-exclusivity — golf make-cut/top-N (mutually_exclusive
     # False) are NOT one-winner fields; normalizing them squashed an honest 86%
     # make-cut down to ~1% on The Open's detail/ladder rail.
-    normalize_display_probs(
+    #
+    # 🔴 #5835 — AND THE OPENINGS CANNOT SURVIVE IT. THIS CALL IS THE SECOND CAUSE
+    # OF THE EXACT HARM THE BLOCK ABOVE EXISTS TO PREVENT, and it lands one
+    # statement later.
+    #
+    # WHAT A READER SAW. `/futures/109564` (*2026 Oscar for Best Animated Feature
+    # Film?*) printed `KPop Demon Hunters  OPEN 92%  LATEST 61%`, and the caption
+    # under the hero said so in words. The stored price went 0.915 -> 0.925: it
+    # went UP one point. Every rung on that board read as a fall and not one of
+    # them fell. Same shape on `/futures/57792790`, captioned "Ohio State Buckeyes
+    # down 10.4 pts from opening" over a row that went 0.33 -> 0.34.
+    #
+    # THE CAUSE IS A DENOMINATOR, NOT A PRICE. `normalize_display_probs` takes
+    # `key="probability"` and is never called for `opening_probability`. A field
+    # whose raw YES prices sum into the squeeze band is divided by that sum; the
+    # openings beside it are not. Two columns headed OPEN and LATEST, two scales,
+    # and the reader is invited to subtract one from the other.
+    #
+    # IT CAN ONLY EVER INVENT A FALL. The divisor is greater than 1.05 whenever it
+    # fires, so the printed LATEST is always pushed down relative to the raw price
+    # the opening was captured beside. Measured on production 2026-09-13 (tier 1-2,
+    # open, mutually-exclusive): 805 markets squeezed, 663 of them printing an OPEN
+    # column too, and on 96 the leader's printed direction is the OPPOSITE of its
+    # true move. Zero in the other direction, exactly as the arithmetic predicts.
+    # Worst artifact 37.2 points.
+    #
+    # NOT THE #5539 CLASS, which is why that rule spares all of them: these
+    # openings CAN be a distribution (1.53 is nowhere near `FIELD_SUM_CEILING`) and
+    # are individually honest. They are simply not comparable with the column now
+    # printed beside them.
+    #
+    # WITHHELD AND NOT RESCALED, for #5539's reason and one of its own. Rescaling
+    # the openings by their own sum would assert a price nobody quoted, and
+    # `calibration_probability` coalesces to `opening_probability` (gotcha #144 /
+    # ruling 103). And the opening field is frequently a STAGGERED capture, not a
+    # snapshot — the Big Ten field carries ten legs seeded at exactly 0.04 — so
+    # normalizing it would be arithmetic over a set that never existed at one
+    # instant. That is a second fiction to cover the first.
+    #
+    # ASKED OF THE FUNCTION THAT DID THE SCALING, never re-derived: it reports
+    # whether the printed values actually moved. A copy of the `> 105` test here
+    # would be a second answer to one question, free to drift from the first.
+    if normalize_display_probs(
         outcomes, mutually_exclusive=getattr(market, "mutually_exclusive", True)
-    )
+    ):
+        _withhold_openings()
+        openings_withheld = True
     # UX-P164: concept derivation reads the count this serializer saw BEFORE the
     # display drop, deliberately. `derive_market_concept_key` forwards it to the
     # combat adapters, which gate on `n_outcomes == 2` (`event_combat.py:245`,
