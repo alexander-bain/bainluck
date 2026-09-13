@@ -468,14 +468,23 @@ def _hub_columns() -> dict[str, Any]:
     }
 
 
-def _twin_row(home="Shelton", away="Alcaraz", sources=None):
-    """The 5-tuple the fold's `select()` yields, in its column order."""
+def _twin_row(home="Shelton", away="Alcaraz", sources=None, opening=(None, None)):
+    """The row the fold's `select()` yields, in its column order.
+
+    Seven columns since #5853: the shared gatherer also reads the twin's
+    `opening_*` pair, because the number a SETTLED card prints comes from those
+    columns and not from the JSONB bag. This hub loader asks only for the bag,
+    so the two extra values are carried and ignored here — but the tuple has to
+    match the statement, which is the point of building it by hand.
+    """
     return (
         TWIN_ID,
         home,
         away,
         dict(TWIN_SOURCES) if sources is None else sources,
         [duplicate_tag(CANON_ID)],
+        opening[0],
+        opening[1],
     )
 
 

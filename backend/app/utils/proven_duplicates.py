@@ -93,6 +93,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 
 from sqlalchemy import Boolean, String, func, or_, select
 from sqlalchemy.ext.compiler import compiles
@@ -415,6 +416,61 @@ def merge_probability_sources(
     return merged
 
 
+def merge_opening_line(
+    canonical_home,
+    canonical_away,
+    folded_rows: list[tuple[int, object, object]],
+) -> tuple:
+    """The canonical's own opening line, or a twin's when it has none. #5853.
+
+    ═══ WHY THE SOURCES FOLD DOES NOT ALREADY COVER THIS ═══
+
+    :func:`merge_probability_sources` folds the JSONB bag, and on a LIVE card
+    that bag is the number. On a SETTLED card it is not: the card prints
+    "Pre-match · sportsbooks" from ``opening_odds``, which is served from the
+    ``Event.opening_*`` COLUMNS and has never been in the bag. So the Bundesliga
+    specimen this exists for — canonical 15310934 ``Mainz``, suppressed twin
+    15297803 ``FSV Mainz 05`` holding ``opening_home_probability = 0.6937`` —
+    is not reached by the fold that already shipped, and its card was the only
+    one of nine on that rail printing no percentage at all (measured on
+    production 2026-09-13 09:5xZ, ``GET /api/leagues/soccer_germany_bundesliga``:
+    ``home_win_probability: null``, no ``opening_odds`` key, no ``current_odds``).
+
+    ═══ THE RULE ═══
+
+    GAP-FILL, the same doctrine as the sources fold and for the same reason: a
+    page that prints a correct pair today can never have it replaced, only
+    supplied where there was nothing. Three clauses carry that:
+
+    * **Both halves must be absent** before anything is folded. A canonical
+      holding a home probability keeps its own pair untouched. The stricter
+      "both" — rather than the formatter's own gate, which only reads
+      ``opening_away_probability`` when the home half is set — is what makes
+      this provably additive: with either half present, the return is the
+      canonical's own two values.
+    * **A pair travels as a pair.** Taking the home from one row and the away
+      from another states two rows' openings as one line; they are medians taken
+      at different moments over different sportsbooks (#1841) and need not sum
+      to 1. A twin supplies both of its values or neither.
+    * **Only a twin whose own home half is set** can supply the pair, and twins
+      are consumed in ascending id order, so a card cannot flicker between two
+      twins' readings across two requests.
+
+    Orientation is the caller's job and is already done: an opening line is a
+    HOME probability, so folding one from a row that disagrees about which side
+    is home prints one team's number under the other's name. Both batch callers
+    filter on :func:`orientation_agrees` before a row reaches here — the same
+    gate, for the same hazard, as the sources fold.
+    """
+    if canonical_home is not None or canonical_away is not None:
+        return canonical_home, canonical_away
+
+    for _twin_id, twin_home, twin_away in sorted(folded_rows, key=lambda row: row[0]):
+        if twin_home is not None:
+            return twin_home, twin_away
+    return canonical_home, canonical_away
+
+
 class FoldedBlendView:
     """``event`` with its folded ``win_probability_sources``, nothing else changed.
 
@@ -433,11 +489,21 @@ class FoldedBlendView:
     ``opening_home_probability`` through ``getattr(event, name, None)``: a
     hand-copied shim that missed one would not raise, it would silently drop the
     hero to its next fallback tier. Forwarding everything cannot miss a field.
+
+    ``opening`` is the OPTIONAL second half, added by #5853. It is a
+    ``(home, away)`` pair or ``None``, and when it is ``None`` — every caller
+    that predates the opening fold — both attributes fall through ``__getattr__``
+    to the row, so the view is byte-for-byte the one those callers had. See
+    :func:`merge_opening_line` for why a pair and not two arguments.
     """
 
-    def __init__(self, event, sources: dict | None):
+    def __init__(self, event, sources: dict | None, opening: tuple | None = None):
         self._event = event
         self.win_probability_sources = sources
+        if opening is not None:
+            # Set together or not at all: half an opening line is a home
+            # probability with nothing to state it against.
+            self.opening_home_probability, self.opening_away_probability = opening
 
     def __getattr__(self, name):
         # `_event` is set in `__init__`, so a lookup of it here means the object
@@ -537,6 +603,70 @@ def _tag_elements(tags: object) -> list[str]:
 _FOLD_BATCH_ARMS = 100
 
 
+async def _folded_twins_batch(db, events) -> tuple[dict, dict]:
+    """``(canonicals, twins-by-canonical)`` for a page, in ONE lookup (#3937).
+
+    The shared half of both batch folds: which suppressed row belongs to which
+    canonical, and does its orientation agree. Split out by #5853 so that the
+    sources fold and the opening-line fold cannot answer that question two ways
+    — the attribution is the part with the hazard in it (a twin tagged against
+    two canonicals on one page, an inverted pair), and a second copy of it is
+    how two readings of one card start to drift.
+
+    Twin rows carry everything either fold needs, so adding the opening columns
+    costs no extra round trip: they are two more columns on a row the statement
+    was already returning.
+    """
+    canonicals = {int(event.id): event for event in events}
+    if not canonicals:
+        # `or_()` of nothing compiles to a constant-false WHERE, so this is a
+        # round trip that cannot return a row. Skip it rather than pay it.
+        return {}, {}
+
+    by_tag = {duplicate_tag(cid): cid for cid in canonicals}
+
+    ordered = sorted(canonicals)
+    rows: list[tuple] = []
+    for start in range(0, len(ordered), _FOLD_BATCH_ARMS):
+        chunk = ordered[start : start + _FOLD_BATCH_ARMS]
+        rows.extend(
+            (
+                await db.execute(
+                    select(
+                        Event.id,
+                        Event.home_team_name,
+                        Event.away_team_name,
+                        Event.win_probability_sources,
+                        Event.event_tags,
+                        Event.opening_home_probability,
+                        Event.opening_away_probability,
+                    ).where(or_(*(tagged_duplicate_of(cid) for cid in chunk)))
+                )
+            ).all()
+        )
+
+    folded: dict[int, list[tuple]] = {}
+    for twin_id, home, away, sources, tags, open_home, open_away in rows:
+        # One twin may be tagged against several canonicals on this page. Reading
+        # ITS OWN tags is what attributes it to the right one: the `OR` above
+        # tells us the row matched SOME arm, never which, and guessing would fold
+        # a different match's venue onto the card.
+        for tag in _tag_elements(tags):
+            canonical_id = by_tag.get(tag)
+            if canonical_id is None or canonical_id == twin_id:
+                continue
+            canonical = canonicals[canonical_id]
+            if not orientation_agrees(
+                canonical.home_team_name, canonical.away_team_name, home, away
+            ):
+                continue
+            folded.setdefault(canonical_id, []).append(
+                (twin_id, sources, open_home, open_away)
+            )
+
+    return canonicals, folded
+
+
 async def folded_probability_sources_batch(db, events) -> dict[int, dict]:
     """:func:`folded_probability_sources` for a whole page, in ONE lookup (#3937).
 
@@ -556,52 +686,70 @@ async def folded_probability_sources_batch(db, events) -> dict[int, dict]:
     ``win_probability_sources`` back. Errors are not swallowed, for the reason
     given in :func:`folded_event_ids`.
     """
-    canonicals = {int(event.id): event for event in events}
-    if not canonicals:
-        # `or_()` of nothing compiles to a constant-false WHERE, so this is a
-        # round trip that cannot return a row. Skip it rather than pay it.
-        return {}
-
-    by_tag = {duplicate_tag(cid): cid for cid in canonicals}
-
-    ordered = sorted(canonicals)
-    rows: list[tuple] = []
-    for start in range(0, len(ordered), _FOLD_BATCH_ARMS):
-        chunk = ordered[start : start + _FOLD_BATCH_ARMS]
-        rows.extend(
-            (
-                await db.execute(
-                    select(
-                        Event.id,
-                        Event.home_team_name,
-                        Event.away_team_name,
-                        Event.win_probability_sources,
-                        Event.event_tags,
-                    ).where(or_(*(tagged_duplicate_of(cid) for cid in chunk)))
-                )
-            ).all()
-        )
-
-    folded: dict[int, list[tuple[int, dict | None]]] = {}
-    for twin_id, home, away, sources, tags in rows:
-        # One twin may be tagged against several canonicals on this page. Reading
-        # ITS OWN tags is what attributes it to the right one: the `OR` above
-        # tells us the row matched SOME arm, never which, and guessing would fold
-        # a different match's venue onto the card.
-        for tag in _tag_elements(tags):
-            canonical_id = by_tag.get(tag)
-            if canonical_id is None or canonical_id == twin_id:
-                continue
-            canonical = canonicals[canonical_id]
-            if not orientation_agrees(
-                canonical.home_team_name, canonical.away_team_name, home, away
-            ):
-                continue
-            folded.setdefault(canonical_id, []).append((twin_id, sources))
-
+    canonicals, folded = await _folded_twins_batch(db, events)
     return {
         canonical_id: merge_probability_sources(
-            event.win_probability_sources, folded.get(canonical_id, [])
+            event.win_probability_sources,
+            [
+                (twin_id, sources)
+                for twin_id, sources, _h, _a in folded.get(canonical_id, [])
+            ],
+        )
+        for canonical_id, event in canonicals.items()
+    }
+
+
+@dataclass(frozen=True)
+class FoldedCardNumbers:
+    """Both numbers one card can inherit from the row it suppresses. #5853."""
+
+    win_probability_sources: dict
+    """What :func:`merge_probability_sources` decided — the LIVE card's number."""
+
+    opening: tuple
+    """``(home, away)`` from :func:`merge_opening_line` — the SETTLED card's."""
+
+
+async def folded_card_numbers_batch(db, events) -> dict[int, FoldedCardNumbers]:
+    """Both folds for a whole page, in the SAME lookup the sources fold pays.
+
+    A card prints one of two pre-match numbers depending on where the fixture is
+    in its life — the blend while it is live, the opening line once it is over —
+    and a surface that folds only the first leaves the settled half of its own
+    rail reading blank. That is #5853: the Bundesliga results rail served eight
+    cards with a percentage and one with none, and the one had a suppressed twin
+    holding the opening line the other eight print.
+
+    Returns an entry for EVERY event passed, folded or not, exactly as
+    :func:`folded_probability_sources_batch` does and for the same reason: an
+    untwinned event gets its own two numbers back, so a caller indexes the
+    result unconditionally and a miss degrades to today's card rather than to a
+    blank one.
+
+    Errors are not swallowed here either. A caller that would rather serve an
+    unfolded rail than a 500 catches them at ITS OWN boundary, where it knows
+    what the page is worth (``teams.py`` and ``league_futures.py`` both do).
+    """
+    canonicals, folded = await _folded_twins_batch(db, events)
+    return {
+        canonical_id: FoldedCardNumbers(
+            win_probability_sources=merge_probability_sources(
+                event.win_probability_sources,
+                [
+                    (twin_id, sources)
+                    for twin_id, sources, _h, _a in folded.get(canonical_id, [])
+                ],
+            ),
+            opening=merge_opening_line(
+                event.opening_home_probability,
+                event.opening_away_probability,
+                [
+                    (twin_id, open_home, open_away)
+                    for twin_id, _s, open_home, open_away in folded.get(
+                        canonical_id, []
+                    )
+                ],
+            ),
         )
         for canonical_id, event in canonicals.items()
     }
