@@ -3314,6 +3314,11 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         "status_writes": 0,
         "completions_revoked": 0,
         "commence_writes": 0,
+        # live/203: rows whose #5324 authority marker this pass wrote — stamped
+        # when ESPN says the match has not begun, cleared when it reports play.
+        # Eagerly zeroed like its siblings, so the key APPEARING at all on the
+        # first beat after a release is the deployment proof for this ship.
+        "authority_hold_writes": 0,
         # lane1/064: the score half. `score_writes` counts rows the authority
         # moved; `score_blanks_filled` is the SHIP — a settled row that printed
         # nothing and now prints the result; `score_corrections` is a row whose
@@ -3567,10 +3572,28 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                     our_completed_at=event.completed_at,
                     our_commence_time=event.commence_time,
                     competition=competition,
+                    our_sources=event.win_probability_sources,
+                    our_home_score=event.home_score,
+                    our_away_score=event.away_score,
                 )
                 if "status" in changes:
                     event.status = changes["status"]
                     stats["status_writes"] += 1
+                if "win_probability_sources" in changes:
+                    # THE HOLD THE CLOCK PROMOTER HONOURS (#5324).
+                    #
+                    # A WHOLE new dict, never an in-place edit: a JSONB value
+                    # mutated in place is invisible to the ORM's change tracking
+                    # and is silently dropped (gotcha #4) — the single most
+                    # expensive way for this repair to look like it works. The
+                    # helper returns a fresh object for exactly this reason, and
+                    # plain attribute assignment is what this task uses for
+                    # every other column, so no Core update is mixed in here
+                    # (gotcha #5).
+                    event.win_probability_sources = changes[
+                        "win_probability_sources"
+                    ]
+                    stats["authority_hold_writes"] += 1
                 if "completed_at" in changes:
                     # THE REVOKE — the clause that did not exist anywhere.
                     event.completed_at = changes["completed_at"]

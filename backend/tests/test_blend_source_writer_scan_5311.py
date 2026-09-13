@@ -131,6 +131,16 @@ from app.utils.probability_eligibility import MARKET_DERIVED_SOURCES  # noqa: E4
 #    source, no market and no reading to weight. Both shapes are listed because
 #    the site does what `write_espn_win_prob` does — one Core update, then the
 #    ORM object mirrored so in-session reads agree (gotcha #4/#5).
+#  * `espn_sync.py::_sync_tennis_from_espn` — SIDECAR, the same key and the same
+#    reason as `_process_live_sport` one bullet up, on the tennis path (#5324,
+#    live/203). The marker shipped only in the main ESPN board loop, so tennis —
+#    the sport whose starts slide most — demoted without it and the clock
+#    promoter put the row straight back: the US Open men's final read `live` 0-0
+#    from 18:00:00Z on 2026-09-13 while ESPN said STATUS_SCHEDULED, was demoted
+#    at 18:10:33Z and re-promoted at 18:15:38Z. ONE shape, not two: this task
+#    writes every other column by plain ORM assignment, so a Core update mixed
+#    into it would be gotcha #5 — the helper returns a whole new dict, which is
+#    what makes the assignment visible to change tracking (gotcha #4).
 #  * `prediction_market_matching.py` / `admin_matching.py` / `source_intelligence.py`
 #    — PRUNE. Each REMOVES a source key rather than writing a value: the two
 #    `prune_blend_source` callers, the admin "clear kalshi" repair, and the raw
@@ -158,6 +168,8 @@ KNOWN_NON_READING_WRITES: dict[tuple[str, str, str], str] = {
     ("backend/app/tasks/espn_sync.py", "_process_live_sport", "orm-assign"):
         "sidecar",
     ("backend/app/tasks/espn_sync.py", "_process_live_sport", "update.values"):
+        "sidecar",
+    ("backend/app/tasks/espn_sync.py", "_sync_tennis_from_espn", "orm-assign"):
         "sidecar",
     ("backend/app/tasks/futures_price_refresh.py",
      "_KALSHI_WITHDRAW_EVENT_HERO_SQL", "raw-sql"): "prune",

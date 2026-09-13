@@ -667,7 +667,7 @@ class _Event:
 
     def __init__(self, id, home, away, status, commence_time, completed_at=None,
                  espn_id=None, home_score=None, away_score=None,
-                 box_score_data=None):
+                 box_score_data=None, win_probability_sources=None):
         self.id = id
         self.home_team_name = home
         self.away_team_name = away
@@ -686,6 +686,12 @@ class _Event:
         # and a stub without it turns every row of every test in this file into
         # a row error that the per-row `except` swallows.
         self.box_score_data = box_score_data
+        # live/203: the #5324 authority hold rides in this JSONB, and the task
+        # READS it before deciding — so it is on the stub for the third time
+        # this class has learned the same lesson. Without it every row in this
+        # file becomes an `AttributeError` the per-row `except` swallows, which
+        # reads as a row error rather than as a missing column.
+        self.win_probability_sources = win_probability_sources
 
 
 class _Result:
@@ -1245,3 +1251,202 @@ class TestTheInPlayLineIsStampedByTheTask:
         line = (event.box_score_data or {}).get("tennis")
         assert line is not None, "fixture drifted: this row is supposed to get a line"
         assert "observed_at" not in line
+
+
+# ═══════════ the authority hold reaches tennis (#5324, live/203) ═══════════
+
+
+class TestTennisCarriesTheAuthorityHold:
+    """The US Open men's final read LIVE 0-0 for ten and a half minutes.
+
+    Measured on production 2026-09-13, event 15310688 (Zverev v Shelton),
+    anchored ``espn_id`` 182677, with ESPN's own listing read in the same
+    command as our row:
+
+    ========================  ==========  ==========  ============
+    time (UTC)                ours        ESPN        #5324 hold
+    ========================  ==========  ==========  ============
+    18:00:00 - 18:10:13       live 0-0    SCHEDULED   absent
+    18:10:33 - 18:15:16       scheduled   SCHEDULED   absent
+    18:15:38 - 18:17:09       live 0-0    SCHEDULED   absent
+    ========================  ==========  ==========  ============
+
+    ``#5324`` stamps the authority's statement into ``win_probability_sources``
+    and ``_transition_event_statuses_impl`` honours it, but that stamp lived
+    only in the main ESPN board loop.  Tennis comes through
+    :func:`authority_write`, which wrote the status and nothing else — and a
+    status-only demotion buys one minute, which is why the row above was
+    demoted at 18:10:33 and promoted straight back at 18:15:38.
+
+    The sport whose starts slide most was the one sport the hold could not
+    reach.  These tests are that gap, in both directions.
+    """
+
+    _UPCOMING = {"state": "upcoming", "date": "2026-09-13T18:15Z",
+                 "start_is_tbd": False}
+
+    def test_THE_SPECIMEN_a_live_row_the_authority_says_has_not_begun_is_HELD(self):
+        """The men's final at 18:00Z: demoted AND stamped, not demoted alone."""
+        changes = authority_write(
+            our_status="live", our_completed_at=None,
+            our_commence_time=_utc("2026-09-13T18:00:00+00:00"),
+            competition=self._UPCOMING,
+            now=_utc("2026-09-13T18:05:00+00:00"),
+            our_sources={"kalshi": {"probability": 0.59}},
+            our_home_score=0, our_away_score=0,
+        )
+        assert changes["status"] == "scheduled"
+        assert "espn_not_started_at" in changes["win_probability_sources"]
+        # The demotion must not cost the row its prices.
+        assert changes["win_probability_sources"]["kalshi"] == {"probability": 0.59}
+
+    def test_THE_REACH_the_stamp_this_writes_is_one_the_PROMOTER_honours(self):
+        """The join that makes this a fix rather than a new dict key.
+
+        A stamp the clock promoter does not read would leave the page exactly
+        as it was, so this asserts against
+        :func:`authority_not_started_holds` itself — the predicate
+        ``_transition_event_statuses_impl`` actually calls — rather than
+        against the string we just wrote.
+        """
+        from app.utils.espn_helpers import authority_not_started_holds
+
+        now = _utc("2026-09-13T18:10:33+00:00")
+        changes = authority_write(
+            our_status="live", our_completed_at=None,
+            our_commence_time=_utc("2026-09-13T18:00:00+00:00"),
+            competition=self._UPCOMING, now=now,
+            our_sources={}, our_home_score=0, our_away_score=0,
+        )
+        # 18:15:38Z — the promoter's next pass, the one that re-promoted it.
+        assert authority_not_started_holds(
+            changes["win_probability_sources"],
+            _utc("2026-09-13T18:15:38+00:00"),
+            home_score=0, away_score=0, period=None, game_clock=None,
+        ) is True
+
+    def test_THE_CONTROL_without_the_stamp_the_promoter_does_NOT_hold(self):
+        """Pre-fix behaviour, pinned: this is why the row came back live."""
+        from app.utils.espn_helpers import authority_not_started_holds
+
+        assert authority_not_started_holds(
+            {"kalshi": {"probability": 0.59}},
+            _utc("2026-09-13T18:15:38+00:00"),
+            home_score=0, away_score=0, period=None, game_clock=None,
+        ) is False
+
+    def test_the_SECOND_upcoming_pass_refreshes_rather_than_expires(self):
+        """CERT-2782's lesson, which cost #5324 a whole revision.
+
+        The row is already ``scheduled`` — there is nothing left to demote — so
+        a stamp written only beside a status change would never be renewed, and
+        the hold would lapse at its TTL under an authority still saying the
+        match has not begun.  The start on this specimen slid 18:00 -> 18:05 ->
+        18:15, so the renewal is the thing keeping the hold alive.
+        """
+        first = authority_write(
+            our_status="live", our_completed_at=None,
+            our_commence_time=_utc("2026-09-13T18:00:00+00:00"),
+            competition=self._UPCOMING,
+            now=_utc("2026-09-13T18:05:00+00:00"),
+            our_sources={}, our_home_score=0, our_away_score=0,
+        )
+        second = authority_write(
+            our_status="scheduled", our_completed_at=None,
+            our_commence_time=_utc("2026-09-13T18:15:00+00:00"),
+            competition=self._UPCOMING,
+            now=_utc("2026-09-13T18:11:00+00:00"),
+            our_sources=first["win_probability_sources"],
+            our_home_score=0, our_away_score=0,
+        )
+        assert "status" not in second, "already scheduled; nothing to demote"
+        assert (
+            second["win_probability_sources"]["espn_not_started_at"]
+            != first["win_probability_sources"]["espn_not_started_at"]
+        ), "the repeated observation must REFRESH the stamp, not leave it to rot"
+
+    def test_a_row_that_shows_PLAY_is_never_held(self):
+        """THE ONE DEFINITION (`play_evidence`). A set on the board is play, and
+        a hold stamped over it would be a claim the row itself refutes."""
+        changes = authority_write(
+            our_status="live", our_completed_at=None,
+            our_commence_time=_utc("2026-09-13T18:00:00+00:00"),
+            competition=self._UPCOMING,
+            now=_utc("2026-09-13T18:05:00+00:00"),
+            our_sources={}, our_home_score=1, our_away_score=0,
+        )
+        assert "win_probability_sources" not in changes
+
+    def test_positive_play_RETRACTS_the_hold(self):
+        """Only evidence that the match HAS begun may clear it."""
+        changes = authority_write(
+            our_status="scheduled", our_completed_at=None,
+            our_commence_time=_utc("2026-09-13T18:15:00+00:00"),
+            competition={"state": "in_progress", "date": None,
+                         "start_is_tbd": True},
+            now=_utc("2026-09-13T18:20:00+00:00"),
+            our_sources={"espn_not_started_at": "2026-09-13T18:11:00+00:00",
+                         "kalshi": {"probability": 0.59}},
+        )
+        assert changes["status"] == "live"
+        assert "espn_not_started_at" not in changes["win_probability_sources"]
+        assert changes["win_probability_sources"]["kalshi"] == {"probability": 0.59}
+
+    def test_a_decided_match_does_not_keep_saying_it_has_not_begun(self):
+        changes = authority_write(
+            our_status="live", our_completed_at=None, our_commence_time=None,
+            competition={"state": "decided", "date": None, "start_is_tbd": True},
+            now=_utc("2026-09-13T20:30:00+00:00"),
+            our_sources={"espn_not_started_at": "2026-09-13T18:11:00+00:00"},
+        )
+        assert changes["status"] == "completed"
+        assert "espn_not_started_at" not in changes["win_probability_sources"]
+
+    def test_SILENCE_RETRACTS_NOTHING_an_unknown_state_leaves_the_hold(self):
+        """gotcha #53: an absent answer is not a negative answer."""
+        assert authority_write(
+            our_status="scheduled", our_completed_at=None, our_commence_time=None,
+            competition={"state": None, "date": "2026-09-13T18:15Z",
+                         "start_is_tbd": False},
+            now=_utc("2026-09-13T18:11:00+00:00"),
+            our_sources={"espn_not_started_at": "2026-09-13T18:11:00+00:00"},
+        ) == {}
+
+    def test_a_LAGGING_board_whose_start_has_passed_writes_no_hold(self):
+        """`upcoming` with a start in the PAST is the scoreboard trailing a match
+        already under way — the guard the demotion has always had, and the stamp
+        inherits it rather than restating it."""
+        changes = authority_write(
+            our_status="live", our_completed_at=None,
+            our_commence_time=_utc("2026-09-13T18:15:00+00:00"),
+            competition=self._UPCOMING,
+            now=_utc("2026-09-13T19:00:00+00:00"),
+            our_sources={}, our_home_score=0, our_away_score=0,
+        )
+        assert "win_probability_sources" not in changes
+        assert "status" not in changes
+
+    def test_a_TBD_start_is_not_a_statement_and_writes_no_hold(self):
+        """Midnight ET is ESPN's stand-in for "some time that day"."""
+        changes = authority_write(
+            our_status="live", our_completed_at=None,
+            our_commence_time=_utc("2026-09-13T18:00:00+00:00"),
+            competition={"state": "upcoming", "date": "2026-09-14T04:00Z",
+                         "start_is_tbd": True},
+            now=_utc("2026-09-13T18:05:00+00:00"),
+            our_sources={}, our_home_score=0, our_away_score=0,
+        )
+        assert "win_probability_sources" not in changes
+
+    def test_an_ordinary_playing_row_issues_no_pointless_write(self):
+        """`clear_authority_not_started` returns the ORIGINAL when there is
+        nothing to clear, so a live pass over a live match must not add a
+        `win_probability_sources` key and dirty the row every 60 seconds."""
+        changes = authority_write(
+            our_status="live", our_completed_at=None, our_commence_time=None,
+            competition={"state": "in_progress", "date": None,
+                         "start_is_tbd": True},
+            now=_utc("2026-09-13T19:00:00+00:00"),
+            our_sources={"kalshi": {"probability": 0.59}},
+        )
+        assert "win_probability_sources" not in changes

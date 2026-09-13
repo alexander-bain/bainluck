@@ -86,6 +86,11 @@ from datetime import datetime
 from typing import Any, Iterable, Optional
 
 from app.services.espn_tennis import is_placeholder_pairing, pair_key
+from app.utils.espn_helpers import (
+    clear_authority_not_started,
+    play_evidence,
+    stamp_authority_not_started,
+)
 from app.utils.player_names import names_agree, shares_substantial_token
 
 #: The pass that produced a link, in the order they are tried. Carried on the
@@ -496,6 +501,9 @@ def authority_write(
     our_commence_time: Any,
     competition: dict[str, Any],
     now: Any = None,
+    our_sources: Any = None,
+    our_home_score: Any = None,
+    our_away_score: Any = None,
 ) -> dict[str, Any]:
     """What the authority changes on an anchored tennis row — changes only.
 
@@ -538,6 +546,12 @@ def authority_write(
       Navone v Berrettini) both scheduled for 23:00Z with no games on the board.
     * An unknown ``state`` writes nothing at all (gotcha #53).
 
+    ``win_probability_sources`` carries the #5324 authority marker so the write
+    SURVIVES the 60s clock promoter — a status-only demotion buys one minute.
+    Stamped on the observation rather than on the status change (CERT-2782), so
+    a repeated ``upcoming`` pass refreshes rather than expires it; retracted
+    only by positive play, never by silence.
+
     ``commence_time`` is corrected from ESPN's own clock whenever ESPN has a
     real one — that is the half of #2550 the renderer cannot reach, since a
     stale start time is stale in the database.  Two guards: the TBD placeholder
@@ -554,9 +568,18 @@ def authority_write(
             changes["status"] = "live"
         if our_completed_at is not None:
             changes["completed_at"] = None
+        # POSITIVE PLAY RETRACTS THE HOLD, and only positive play may (#5324).
+        _cleared = clear_authority_not_started(our_sources)
+        if _cleared is not our_sources:
+            changes["win_probability_sources"] = _cleared
     elif state == "decided":
         if our_status not in SETTLED_STATUSES:
             changes["status"] = "completed"
+        # A match with a result began. Leaving "has not begun" on a settled row
+        # would be a claim contradicted by the row beside it.
+        _cleared = clear_authority_not_started(our_sources)
+        if _cleared is not our_sources:
+            changes["win_probability_sources"] = _cleared
     elif state == "upcoming":
         # NOT YET PLAYED, AND ESPN SAYS SO WITH A CLOCK RATHER THAN A SILENCE.
         # Only a real (non-TBD) start still in the future counts; see the
@@ -573,6 +596,44 @@ def authority_write(
                 changes["status"] = "scheduled"
             if our_completed_at is not None:
                 changes["completed_at"] = None
+
+            # ── THE STATUS ALONE DOES NOT SURVIVE HERE EITHER (#5324) ──
+            #
+            # `_transition_event_statuses_impl` runs on the same 60s realtime
+            # beat and promotes `scheduled` + `commence_time <= now` straight
+            # back to `live`, so a demotion that writes only the status buys one
+            # minute. The main ESPN board loop learned this at CERT-2777 and
+            # stamps the authority's statement into the JSONB mirror, where the
+            # promoter honours it (`authority_not_started_holds`). Tennis went
+            # through this function instead and never adopted the marker, so the
+            # sport whose starts slide most was the one sport the hold could not
+            # reach: measured on the 2026-09-13 US Open men's final (event
+            # 15310688, anchored `espn_id` 182677), the row read `live` 0-0 from
+            # 18:00:00Z while ESPN said STATUS_SCHEDULED, was demoted at
+            # 18:10:33Z, and was re-promoted by the clock at 18:15:38Z with ESPN
+            # still saying STATUS_SCHEDULED. The page carried a LIVE badge and a
+            # "Since Start" chart over a match nobody had served in.
+            #
+            # STAMPED ON THE OBSERVATION, NOT ON THE STATUS CHANGE. The second
+            # consecutive `upcoming` pass has nothing left to demote, and
+            # CERT-2782 is on record that treating "no demotion" as "the
+            # authority stopped saying it" is what deletes the marker the first
+            # pass wrote and restores the flicker with a period of two passes.
+            # A repeated positive observation REFRESHES the stamp, which is also
+            # what keeps the hold alive past its TTL for a start that slides a
+            # long way — 18:00 to 18:05 to 18:15 on this very specimen.
+            #
+            # Gated on THE ONE DEFINITION of play (`play_evidence`), the same
+            # question the demotion, the promoter's hold and the clear all ask.
+            # Five sites now, and they agree structurally rather than by
+            # convention: two tasks that disagree by a field is how a row starts
+            # ping-ponging, which is this defect.
+            if now is not None and not play_evidence(
+                our_home_score, our_away_score
+            ):
+                changes["win_probability_sources"] = stamp_authority_not_started(
+                    our_sources, now
+                )
     elif state is None:
         return {}
 
