@@ -91,6 +91,9 @@ def _bucket_row(
         # row exercises the full shared path instead of AttributeError-ing.
         kalshi_included=0,
         kalshi_excluded=0,
+        # #5401 writer-bar disclosure counts.
+        writer_bar_included=0,
+        writer_bar_excluded=0,
         poly_placeholder_excluded=0,
         poly_included=0,
         poly_never_traded_total=0,

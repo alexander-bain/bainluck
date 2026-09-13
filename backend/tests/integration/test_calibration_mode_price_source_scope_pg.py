@@ -143,11 +143,22 @@ async def _seed_leg(session, market_id, *, source, price):
     # matter: if either source's legs were excluded by some OTHER rule, the
     # assertion below would pass for a reason that has nothing to do with the
     # join under test.
+    #
+    # `yes_ask` is here for exactly that reason and is not decoration (#5401,
+    # q270). The Kalshi WRITER BAR requires a two-sided book —
+    # `yes_bid > 0 AND yes_ask IS NOT NULL AND (yes_ask - yes_bid) < 0.50` — and
+    # a NULL ask fails it, so without this column every Kalshi leg here is
+    # excluded before the join under test is ever reached and `published` comes
+    # back EMPTY. That is what this gate caught on the q270 bump: not a defect in
+    # the bar, and not a defect in the join, but a fixture that stopped clearing
+    # an unrelated rule. `yes_ask = yes_bid` is a spread of 0 — the tightest
+    # possible book, so it can only ever be admitted, and it can never be the
+    # reason a future assertion passes.
     await session.execute(
         text(
             "INSERT INTO futures_odds_snapshots (outcome_id, bookmaker, probability, "
-            "reading_count, last_price, yes_bid) VALUES "
-            "(:oid, 'test-2098', :p, 1, :p, :p)"
+            "reading_count, last_price, yes_bid, yes_ask) VALUES "
+            "(:oid, 'test-2098', :p, 1, :p, :p, :p)"
         ),
         {"oid": market_id, "p": price},
     )

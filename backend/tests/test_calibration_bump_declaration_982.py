@@ -40,9 +40,26 @@ from tests.test_calibration_publish_gate_297 import payload
 # The measured q269 batch, from the completed 128-unit rebuild of 2026-09-01
 # (CAL-P211): 930,149 -> 728,641 outcomes, i.e. a 21.66% shrink, of which crypto
 # 4,625 -> 0 (D12) and economics 43,270 -> 10,501 (RULE E).
+#
+# These three stay as they are. Most of this file exercises the GATE against a
+# locally-built ``declared()``, and a real, well-understood transition is the
+# best fixture for that — re-pointing every case at the current ship would cost
+# the twenty cases their worked example and buy nothing. Only the one test that
+# asserts the SHIPPED declaration end to end has to follow the ship; its numbers
+# are below.
 Q268_POPULATION = 930_149
 Q269_POPULATION = 728_641
 Q269_DROP_PCT = 21.66
+
+# The SHIPPED transition (CAL-P1137, 2026-09-12): q269 -> q270, the one recount.
+# ``Q269_PUBLISHED`` is what /api/calibration was actually serving when the
+# declaration was written (read 22:44:48Z, ``generated_at`` 22:16:25Z);
+# ``Q270_CANDIDATE`` is that total less the rows the two new predicates remove,
+# measured event-atomically by ``scripts/calibration_population_move_5401.py``
+# (receipts in ``artifacts/cal-p1137/``).
+Q269_PUBLISHED = 798_292
+Q270_REMOVED = 95_832
+Q270_CANDIDATE = Q269_PUBLISHED - Q270_REMOVED
 
 
 def declared(
@@ -405,27 +422,58 @@ def test_the_producer_declares_the_bump_it_is_currently_shipping():
     )
 
 
-def test_the_shipped_declaration_admits_the_measured_q269_rebuild():
+def test_the_shipped_declaration_admits_the_measured_rebuild():
     """The ship itself, end to end: the real numbers must publish.
 
-    930,149 -> 728,641 is what the completed 128-unit rebuild measured. If the
-    shipped declaration cannot admit it, this branch turns the q269 publish from
-    'refused for not declaring' into 'refused for mis-declaring', which is not
-    an improvement.
+    This is the one test in the file that reads the SHIPPED constant rather than
+    a locally-built declaration, so it is re-aimed at whatever transition is
+    currently on the wire — today q269 -> q270, the one recount. If the shipped
+    declaration cannot admit the move its own branch measured, the bump turns
+    the publish from 'refused for not declaring' into 'refused for
+    mis-declaring', which is not an improvement, and the refusal CLEARS THE
+    CHECKPOINT so every later rebuild is binned too.
     """
     import app.tasks.precompute_calibration as pc
 
     verdict = evaluate_publish(
         candidate(
-            outcomes=Q269_POPULATION,
-            version="q269",
+            outcomes=Q270_CANDIDATE,
+            version=pc.CALIBRATION_POPULATION_VERSION,
             declaration=dict(pc.CALIBRATION_POPULATION_DECLARATION),
         ),
-        published(outcomes=Q268_POPULATION, version="q268"),
+        published(
+            outcomes=Q269_PUBLISHED,
+            version=pc.PREVIOUS_PUBLISHED_POPULATION_VERSION,
+        ),
     )
 
     assert verdict.ok, verdict.summary()
     assert "version_bump_within_declaration" in verdict.observation_codes
+
+
+def test_the_shipped_declaration_still_refuses_a_move_it_did_not_declare():
+    """The re-aim above must not have widened the band into a blank cheque.
+
+    Same shipped declaration, a candidate that removes twice what the branch
+    measured. If this passes, the tolerance is doing nothing and the test above
+    is asserting only that a number is a number.
+    """
+    import app.tasks.precompute_calibration as pc
+
+    verdict = evaluate_publish(
+        candidate(
+            outcomes=Q269_PUBLISHED - (Q270_REMOVED * 2),
+            version=pc.CALIBRATION_POPULATION_VERSION,
+            declaration=dict(pc.CALIBRATION_POPULATION_DECLARATION),
+        ),
+        published(
+            outcomes=Q269_PUBLISHED,
+            version=pc.PREVIOUS_PUBLISHED_POPULATION_VERSION,
+        ),
+    )
+
+    assert not verdict.ok, verdict.summary()
+    assert "version_bump_exceeds_declaration" in verdict.codes
 
 
 def test_the_declaration_is_stamped_before_the_payload_is_serialised():

@@ -301,6 +301,11 @@ AVG_PROB_COLUMN = "avg_prob"
 DEFAULT_CENSUS_COLUMNS: tuple[str, ...] = (
     "kalshi_included",
     "kalshi_excluded",
+    # #5401: the writer bar's disclosure counts. Same shape as the two above —
+    # a FILTER over `normalized`, summed across staged units — so they ride the
+    # same passthrough rather than needing a merge rule of their own.
+    "writer_bar_included",
+    "writer_bar_excluded",
     "poly_placeholder_excluded",
     "poly_included",
     "poly_never_traded_total",

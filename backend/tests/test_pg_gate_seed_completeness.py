@@ -53,6 +53,17 @@ COVERED = (
     "test_census_cap_real_postgres.py",
     "test_calibration_mode_price_source_scope_peers_pg.py",
     "test_calibration_vm_variant_join_pg.py",
+    # #5305 / q270 (CAL-P1137). Added with the gate itself, and worth reading
+    # for what it does NOT claim. The NOT-NULL arm below would not have caught
+    # this gate's real seeding bug: `futures_odds_snapshots.yes_ask` is
+    # NULLABLE, so omitting it is legal DDL — and illegal only against the q270
+    # WRITER BAR, which needs a two-sided book (`yes_ask IS NOT NULL AND
+    # (yes_ask - yes_bid) < 0.50`). A bid-only seed therefore publishes NOTHING
+    # and every assertion reads a vacuous empty set. CI's own PG run is what
+    # found that, in this gate's sibling; the enrolment here is the discovery
+    # arm's, and it is what stops the NEXT raw INSERT added to this file from
+    # reaching a runner unchecked.
+    "test_calibration_threshold_ladder_pg.py",
     # #2927. Added the same night this check would have saved the trip: the
     # containers gate seeded `INSERT INTO sports (key, name)` and died on
     # `NotNullViolation: null value in column "active"` in CI, because

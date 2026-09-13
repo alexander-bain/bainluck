@@ -144,6 +144,11 @@ def _bucket_row(
         # liq_summary). Seed 0 so a fake futures row exercises the full path.
         kalshi_included=0,
         kalshi_excluded=0,
+        # #5401: the writer bar's disclosure counts, read off row 0 the
+        # same way. Seeded here so a fake futures row still exercises the
+        # full payload path rather than raising AttributeError.
+        writer_bar_included=0,
+        writer_bar_excluded=0,
         poly_placeholder_excluded=0,
         poly_included=0,
         poly_never_traded_total=0,
@@ -353,6 +358,14 @@ class TestCalibrationPublicEndpoint:
             "mce_closing_line",
             "mce_opening_price",
             "liquidity_filter",
+            # #5401: the writer bar's disclosure, and a NEW key rather than a
+            # field on `liquidity_filter` because the two rungs are different
+            # claims — that one asks whether a price was ever discovered, this
+            # one whether the Kalshi poller would itself have recorded the
+            # opening we published. A rung that removes rows and names itself
+            # nowhere is the ruling-103 / gotcha-#144 failure, which is what
+            # this whole family exists to prevent.
+            "writer_bar_filter",
             "poly_placeholder_filter",  # L2-76 (#151/#997)
             "exclusion_symmetry",  # Queue #220/221 Item 3
             "malformed_binary_filter",  # L2-79 Item 1 (#997/#1010)

@@ -631,7 +631,38 @@ def _main_payload_is_publishable(response: Any) -> bool:
 # CAL-P982 AMENDMENT: it no longer just "returns". A bump that uses the escape
 # now DECLARES the move it expects — see
 # :data:`CALIBRATION_POPULATION_DECLARATION` directly below.
-CALIBRATION_POPULATION_VERSION = "q269"
+#
+# ---------------------------------------------------------------------------
+# q269 -> q270 (CAL-P1137, 2026-09-12): THE ONE RECOUNT. Two methodology
+# changes, applied together, so the page is scored by the current method with no
+# known-wrong price left in it.
+#
+# Alex, 2026-09-12 2:10PM PT: "metrics being fresh on that page is not
+# important. They just need to demonstrate accuracy. We've known for a while
+# what the right way was to calculate the remaining subcohorts that are stopping
+# us from being done; can we just do it the right way and be done?" — so this is
+# ONE bump carrying every correct method we already knew, not a series of them.
+# Dark or stale for as long as the rebuild takes was accepted in the same breath.
+#
+# WHAT MOVED, both above this line in the builder:
+#
+#   1. #5305 — a cumulative threshold ladder is ONE forecast. A lone quantity
+#      market whose own resolutions prove it is not a partition (>1 winner)
+#      publishes one representative rung instead of all of them. Forty nested
+#      readings of one number were forty rows in one cell's ECE.
+#   2. #5401 — the curve stops publishing an opening the Kalshi writer itself
+#      would have refused to record (`yes_bid > 0` and spread < 0.50 in some
+#      snapshot). These are prices no order book ever stood behind.
+#
+# They are bumped TOGETHER on purpose. A bump discards the 128-unit staged
+# futures bank and takes /calibration dark until the first build under the new
+# version publishes, so two bumps cost that twice for one answer.
+#
+# WHY THIS IS NOT "TIME PASSED" (the q268 warning above still binds): both
+# changes are edits to the population predicate itself and both are visible in
+# `population_predicate_fingerprint`. A build that merely took a long time
+# publishes with no bump at all, and that remains the rule.
+CALIBRATION_POPULATION_VERSION = "q270"
 
 #: What THIS bump expects to do to the population, stated up front so the publish
 #: gate can hold it to its word (CAL-P982, #1978). ``None`` on any build that is
@@ -644,18 +675,53 @@ CALIBRATION_POPULATION_VERSION = "q269"
 #: indistinguishable to the gate. The escape is necessary — a ruled methodology
 #: change legitimately moves the population — but "necessary" is not "unbounded".
 #:
-#: THE NUMBER, and where it comes from: the completed 128-unit rebuild of
-#: 2026-09-01 measured q269 at 930,149 -> 728,641 outcomes against the published
-#: q268 artifact, i.e. a 21.66% drop (crypto 4,625 -> 0 by D12, economics
-#: 43,270 -> 10,501 by RULE E, plus the D5 dedup).
+#: THE NUMBER FOR q270, and where it comes from. Both arms count ``deduped`` —
+#: the published population itself — over the same rows, chunked EVENT-ATOMICALLY
+#: so no event group is ever split (``scripts/calibration_population_move_5401.py``,
+#: receipts in ``artifacts/cal-p1121/`` and ``artifacts/cal-p1137/``):
 #:
-#: THE TOLERANCE, and why 3.0 rather than tighter: the published baseline is
-#: fixed at 930,149 but the CANDIDATE keeps growing — resolution adds outcomes
-#: every hour the drain is not running. ±3.0pp admits a candidate anywhere in
-#: 700,774 .. 756,583 outcomes, i.e. ~28,000 outcomes of organic headroom in
-#: either direction around the measured 728,641. Wide enough that a few days'
-#: ordinary resolution cannot refuse the ship; far tighter than the ~200,000-row
-#: move an unbounded bump used to wave through unexamined.
+#:   master semantics, Kalshi       399,618   (control: the live payload's
+#:                                             by_source Kalshi n was 396,160 at
+#:                                             that read — the rig counts +0.87%,
+#:                                             which is its own offset, not drift)
+#:   q270 semantics, Kalshi         306,369   (1,129 chunks, 0 irreducible)
+#:
+#: The two arms are hours apart and the table grew between them (live Kalshi n
+#: 396,160 -> 401,282), so the move is stated twice rather than once:
+#:
+#:   against the baseline AS MEASURED        93,249 rows = 11.68%
+#:   against the baseline carried forward    98,416 rows = 12.33%
+#:     on the rig's own +0.87% offset
+#:
+#: 12.0% is declared — the midpoint. The first reading understates the move
+#: (a fresh arm against a stale, smaller baseline); the second is a projection.
+#: Naming the midpoint with a band that covers both is the honest form; picking
+#: whichever one flattered the ship would not be.
+#:
+#: Of that move, the writer bar is nearly all of it: CAL-P1121 measured the bar
+#: alone at 94,134 rows / 12.04%, so the ladder collapse removes ~3,000 published
+#: Kalshi rows on top. That is not the ladder failing to bite — most of its rungs
+#: were already refused upstream (esports bundles, non-partition multi pools, the
+#: multi arm's own 0.005 < p < 0.98 band); what it removes is what survived all of
+#: those and was still the same question counted twice.
+#:
+#: The Polymarket half of the ladder rule is bounded rather than folded: its
+#: whole raw candidate cohort — lone ``quantity`` markets whose own resolutions
+#: show >1 winner — is 6,422 suppressible rungs across the entire table before
+#: the population pipeline whittles it, i.e. at most 0.8pp of the published
+#: population and in practice far less. It is inside the tolerance below by an
+#: order of magnitude, and folding it would have cost a second 75-minute
+#: source-wide sweep to move the declaration by a rounding error.
+#:
+#: THE TOLERANCE, and why the 5.0 maximum rather than 3.0: q269's ±3.0 was sized
+#: against a FIXED published baseline. This bump's baseline is a measurement of a
+#: live table taken hours before the deploy, and the two rules interact — the
+#: writer bar removes rows that the ladder rule would also have collapsed, so the
+#: realised move is bounded by the two applied together and not by their sum. A
+#: wrong declaration is not a re-run: ``evaluate_publish`` refuses, and a refusal
+#: CLEARS THE CHECKPOINT, so every later rebuild is binned for the same reason
+#: until another deploy corrects it. The band is therefore sized to survive the
+#: drift and the interaction, not to look tight.
 #:
 #: NOT a fingerprint input, deliberately. This is publish-time metadata about a
 #: version transition; it does not shape WHICH ROWS QUALIFY, so hashing it would
@@ -663,9 +729,9 @@ CALIBRATION_POPULATION_VERSION = "q269"
 #: applied OUTSIDE the four functions ``_main_input_fingerprint`` hashes, for the
 #: same reason (see ``_run_calibration_main_build``).
 CALIBRATION_POPULATION_DECLARATION: "dict | None" = {
-    "from_version": "q268",
-    "expected_drop_pct": 21.66,
-    "tolerance_pct": 3.0,
+    "from_version": "q269",
+    "expected_drop_pct": 12.0,
+    "tolerance_pct": 5.0,
 }
 
 #: The predecessor versions whose PUBLISHED artifacts this build declares
@@ -694,18 +760,27 @@ CALIBRATION_POPULATION_DECLARATION: "dict | None" = {
 #: papering-over this docstring names, not a kindness to the page. The list is
 #: not a dial to be turned down when the dark window is inconvenient — its entry
 #: bar is a proof of methodological identity, and q268 cannot meet it.
+#:
+#: CAL-P1137 (q270) IS THE SAME CASE AGAIN and the list stays empty for the same
+#: reason, not by inertia: the q269 artifact grades tens of thousands of Kalshi
+#: openings that no order book stood behind and counts every rung of a threshold
+#: ladder as its own forecast. Those are the two things q270 exists to stop
+#: publishing, so serving q269 under a q270 label would re-publish exactly what
+#: the bump removes. Alex accepted the dark window in terms on 2026-09-12 —
+#: "dark or stale for as long as it takes is fine".
 COMPATIBLE_PREVIOUS_POPULATION_VERSIONS: tuple[str, ...] = ()
 
 #: The version carried by the artifact /calibration is ACTUALLY serving — the
 #: one a rollover has to keep servable to stay lit. Measured, not assumed:
-#: ``GET /api/calibration`` returned ``population_version: "q268"`` with
-#: ``generated_at 2026-08-31T04:37:36.703361+00:00`` at 2026-09-01 22:51 PT.
+#: ``GET /api/calibration`` returned ``population_version: "q269"`` with
+#: ``generated_at 2026-09-12T22:16:25.849594+00:00`` and ``total_outcomes``
+#: 798,292, read at 2026-09-12 22:44:48Z (3:44PM PT).
 #:
 #: It is separate from :data:`CALIBRATION_POPULATION_VERSION` because the two
 #: genuinely differ during a rollover — that gap IS the dark window — and the
 #: guard that checks the lit path needs to name the outgoing version without
 #: hard-coding a literal that goes stale one bump later.
-PREVIOUS_PUBLISHED_POPULATION_VERSION = "q268"
+PREVIOUS_PUBLISHED_POPULATION_VERSION = "q269"
 
 #: The population version for which an EMPTY
 #: :data:`COMPATIBLE_PREVIOUS_POPULATION_VERSIONS` — and therefore a DELIBERATE,
@@ -720,19 +795,18 @@ PREVIOUS_PUBLISHED_POPULATION_VERSION = "q268"
 #: acceptance expire on its own: bump to q270 without re-declaring and the guard
 #: in ``tests/test_calibration_result_authority_299.py`` fails closed.
 #:
-#: 🔴 STAGED, NOT YET ACCEPTED. As of 2026-09-01 22:5x PT this branch is built
-#: and gated but UNMERGED, and the acceptance it records is Alex's to give (it is
-#: on his desk as ``alex-inbox/calibration-020`` + ``-021``). Do not merge this
-#: branch until he has said go. What the decision buys: the alternative is not
-#: "a lit page" but a page frozen forever at 2026-08-31, because under q268 every
-#: rebuild is refused and binned.
+#: ACCEPTED FOR q270 BY ALEX IN TERMS, 2026-09-12 2:10PM PT, in the ruling that
+#: commissioned the recount: "metrics being fresh on that page is not important.
+#: They just need to demonstrate accuracy … then run the recount — dark or stale
+#: for as long as it takes is fine." The acceptance is not inherited from q269;
+#: it is the same cost, priced again, and granted again by name.
 #:
 #: MEASURED COST (phase ledger ``calibration:main:phase_ledger``, generation
 #: 1788326490717): ``staged:unit_ms_mean`` 91,844 ms over 128 units = ~3.3 h of
 #: build, and the plan's own ``units_per_beat`` 13 puts an UNASSISTED recovery at
 #: ceil(128/13) = 10 hourly beats. The attended one-off drain lands between the
 #: two. It is a window measured in hours, not the ~26 h first estimated.
-POPULATION_VERSION_DARK_WINDOW_ACCEPTED: str | None = "q269"
+POPULATION_VERSION_DARK_WINDOW_ACCEPTED: str | None = "q270"
 
 #: Queue 300D Item 1 — the REPRESENTATIVE TIE AUTHORITY, versioned separately
 #: from the population.
@@ -886,6 +960,40 @@ CALIBRATION_CORRECTIONS = [
                        "and no honest price exists to recover (gotcha #21). "
                        "Read-side only.",
     },
+    {
+        "date": "2026-09-12",
+        "title": "Prices nobody could have traded at",
+        "rows": None,  # live count in payload.writer_bar_filter.excluded
+        "description": "Kalshi records an opening price only when there is a "
+                       "real bid and the gap between buy and sell is under 50 "
+                       "cents. Our scoring was less strict than that, so it was "
+                       "grading opening prices that Kalshi's own rule would "
+                       "never have written down — a number on the screen that "
+                       "no one could have traded at. Those are no longer "
+                       "scored. Golf and entertainment were the worst affected: "
+                       "golf's openings came out 25 percentage points "
+                       "over-confident and now land within 5. Ten of sixteen "
+                       "scored groups move slightly further from perfect, which "
+                       "is what happens when a group was only right because two "
+                       "errors cancelled. We would rather be honestly wrong "
+                       "than accidentally right. No result was re-graded — only "
+                       "which prices we hold ourselves to.",
+    },
+    {
+        "date": "2026-09-12",
+        "title": "A price ladder is one forecast, not forty",
+        "rows": None,  # live count in payload.threshold_ladder.rungs_suppressed
+        "description": "Some markets ask one question in many overlapping "
+                       "steps — 'above $0.77', 'above $0.80', all the way to "
+                       "'above $1.15'. If the answer is $1.20 then most of "
+                       "those steps are right at once. Counting each step as a "
+                       "separate forecast let one question land in our score "
+                       "forty times over. We now score one step per ladder. "
+                       "Markets that really are separate questions — a set of "
+                       "bands where exactly one can happen — still count in "
+                       "full; a ladder is only collapsed once its own results "
+                       "show more than one step came true.",
+    },
 ]
 
 # Horizons: (label, days_before_resolution)
@@ -998,6 +1106,89 @@ def kalshi_liquidity_exists_sql(
 
 
 KALSHI_LIQUIDITY_EXISTS = kalshi_liquidity_exists_sql()
+
+# ---------------------------------------------------------------------------
+# #5401 / CAL-P1119: THE CURVE MAY NOT PUBLISH AN OPENING THE WRITER ITSELF
+# WOULD HAVE REFUSED TO RECORD.
+#
+# ``KALSHI_LIQUIDITY_EXISTS`` above admits a leg that ever showed ``yes_bid > 0``
+# OR ``last_price > 0``. The Kalshi poller will only WRITE an opening when
+# ``yes_bid > 0 AND yes_ask IS NOT NULL AND (yes_ask - yes_bid) < 0.50``
+# (``app/tasks/kalshi.py``, ``has_real_trading``) — a strictly stronger bar,
+# because a lone bid on a market nobody will sell into is not a discovered
+# price. The two bars have never agreed, so the curve has been publishing
+# openings that today's writer would have declined to store.
+#
+# Those legs cannot have come from the current poller path (its own guard
+# implies at least one qualifying snapshot), so they are historical rows or
+# another writer's. That is WHY this is a read-side exclusion and not a writer
+# fix: the writer is already correct, and the rows are already written.
+#
+# MEASURED (CAL-P1119, published rows, `scripts/calibration_fold_opening_source.py
+# --split writer_bar`), winners / implied winners where 1.0 is perfect and the
+# board control is 0.982:
+#
+#   kalshi/golf           0.762 -> 0.954, removing 26.5% of the cell
+#   kalshi/entertainment  0.828 -> 1.089, removing 50.3% of the cell
+#
+# Golf lands next to the control. Entertainment's error halves (0.172 -> 0.089)
+# and FLIPS SIGN: the cell was 0.828 by two errors cancelling, and removing the
+# over-priced below-bar cohort unmasks a genuine under-pricing in the remainder
+# (+2.8 sigma). That residual is a SECOND defect, tracked as #5431 — it is not
+# an argument against this rule, and this rule does not claim to fix it.
+#
+# WHY THIS CUT AND NOT THE PROVENANCE ONE. Splitting the same cells by
+# ``futures_outcomes.opening_source`` finds the same cohort and captures more of
+# the miss, but it removes 58.4% of golf and overshoots to 1.038 — and it keys
+# the curve on a WRITE-PATH BOOKKEEPING artifact (an untagged leg is one whose
+# INSERT arm never named the column, fixed in this same issue) rather than on a
+# property of the row. Two readings of that tag were refuted by measurement
+# before this one was written; see `artifacts/cal-p1119/README.md`.
+#
+# Read-side only (gotcha #21) — never mutates ``is_winner`` or
+# ``calibration_probability``.
+# ---------------------------------------------------------------------------
+#: The spread the Kalshi writer will accept, transcribed from
+#: ``app/tasks/kalshi.py``'s ``has_real_trading``. It is a literal there and a
+#: literal here on purpose — importing the task into the producer would drag a
+#: Celery module into the calibration chain — so
+#: ``tests/test_writer_bar_is_the_writers_own_5401.py`` reads the writer's source
+#: and fails if the two ever drift. A poller that widens its bar must widen this
+#: one in the same commit, or the curve starts refusing rows the writer accepts.
+KALSHI_WRITER_MAX_SPREAD = 0.50
+
+
+def kalshi_writer_bar_met_sql(
+    source: str = "vm.source", outcome_id: str = "fo.id"
+) -> str:
+    """Source-aware "the writer would have stored this opening" predicate.
+
+    TRUE unless ``source`` is Kalshi AND no snapshot ever met the poller's own
+    opening-write condition for ``outcome_id``. Non-Kalshi sources are always
+    TRUE (the bar is transcribed from the Kalshi writer and means nothing
+    elsewhere), so this composes with the other per-source rungs the same way
+    :func:`kalshi_liquidity_exists_sql` does.
+    """
+    return (
+        f"({source} <> 'kalshi' OR EXISTS (\n"
+        f"        SELECT 1 FROM futures_odds_snapshots fos\n"
+        f"        WHERE fos.outcome_id = {outcome_id}\n"
+        f"          AND fos.yes_bid > 0\n"
+        f"          AND fos.yes_ask IS NOT NULL\n"
+        f"          AND (fos.yes_ask - fos.yes_bid) "
+        f"< {KALSHI_WRITER_MAX_SPREAD}))"
+    )
+
+
+KALSHI_WRITER_BAR_MET = kalshi_writer_bar_met_sql()
+
+KALSHI_WRITER_BAR_RULE_TEXT = (
+    "Excludes Kalshi outcomes whose opening price no snapshot ever justified: "
+    "the poller records an opening only when a real bid exists and the bid-ask "
+    "spread is under 0.50, and these rows meet neither in any snapshot. The "
+    "curve does not publish an opening its own writer would have refused. "
+    "Applied to Kalshi only; never mutates resolutions."
+)
 
 KALSHI_LIQUIDITY_RULE_TEXT = (
     "Excludes outcomes that never showed a real bid (yes_bid > 0) or trade "
@@ -2786,6 +2977,28 @@ def outcome_is_calibration_liquid(
     return (ever_yes_bid or 0) > 0 or (ever_last_price or 0) > 0
 
 
+def snapshot_meets_kalshi_writer_bar(
+    yes_bid: float | None, yes_ask: float | None
+) -> bool:
+    """True if ONE snapshot would have let the Kalshi writer store an opening.
+
+    The canonical, unit-testable twin of :data:`KALSHI_WRITER_BAR_MET` (#5401),
+    transcribed from ``app/tasks/kalshi.py``'s ``has_real_trading``. The SQL asks
+    whether ANY of an outcome's snapshots satisfies this; this asks it of one.
+
+    Deliberately NOT ``or 0``-coalescing like its sibling above: a missing
+    ``yes_ask`` is not a zero ask. Treating it as one would make a bookless row
+    look like the tightest possible spread and admit exactly the cohort this
+    rule exists to remove — the sibling can coalesce safely because it only ever
+    compares ``> 0``, and this one subtracts.
+    """
+    if yes_bid is None or yes_ask is None:
+        return False
+    if yes_bid <= 0:
+        return False
+    return (yes_ask - yes_bid) < KALSHI_WRITER_MAX_SPREAD
+
+
 def binary_is_malformed(n_outcomes: int, n_winners: int) -> bool:
     """True if a 2-outcome mutually-exclusive market is malformed (L2-79 Item 1).
 
@@ -3802,9 +4015,68 @@ def _calibration_population_ctes(
                     cv.vm_id, cv.source, cv.category,
                     cv.eligible, cv.is_grouped,
                     (cv.is_grouped OR cv.eligible >= 3) AS is_multi,
+                    -- #5305: a cumulative threshold ladder is ONE forecast.
+                    --
+                    -- ``is_multi`` is true for a LONE market with >=3 eligible
+                    -- outcomes, and ``deduped``'s multi arm then publishes every
+                    -- surviving rung. For a numeric ladder that is one question
+                    -- counted N times: Kalshi ``KXA100MON-26APR30`` ("Price of
+                    -- NVIDIA A100 compute by Apr 30") carries 40 rungs "Above
+                    -- $0.77" .. "Above $1.15" whose opening prices run 0.965 down
+                    -- to 0.06 and SUM TO 19.275, with 38 of the 40 resolving true.
+                    -- They are 40 nested readings of one number, not 40 forecasts,
+                    -- and publishing them puts ~36 correlated rows — most of them
+                    -- winners priced well under 1.0 — into one cell's ECE.
+                    --
+                    -- The ladder can never reach the partition arm above, so this
+                    -- is not a re-route of normalized fields: ``mex_field_candidates``
+                    -- gates on ``exclusivity_proved_sql``, which refuses a
+                    -- cumulative-threshold ladder BY NAME (gotcha #17 co-winners).
+                    -- Ordering this arm AFTER ``is_mex_normalized`` is still
+                    -- deliberate: a quantity market whose bins ARE a proven
+                    -- exclusive partition (a Polymarket temperature band) keeps
+                    -- publishing every member and sums to 1.0.
+                    --
+                    -- CO-WINNERS ARE THE DISCRIMINATOR, and ``market_type`` alone
+                    -- is NOT enough. ``quantity`` covers two different objects:
+                    --
+                    --   cumulative ladder   "Above $0.77" .. "Above $1.15"
+                    --                       nested, many rungs true, prices sum >>1
+                    --                       -> ONE question read N times
+                    --   exclusive bins      "peaks at #1" / "#2-5" / "#6-10"
+                    --                       disjoint, exactly one true, sum ~1
+                    --                       -> a DISTRIBUTION, legitimately N forecasts
+                    --
+                    -- Both are ``market_type='quantity'`` (the classifier checks
+                    -- quantity before field), and both are ineligible for the
+                    -- partition arm, because ``exclusivity_proved_sql`` requires
+                    -- ``market_type = 'field'``. So collapsing on shape alone would
+                    -- delete real, well-formed calibration data. MEASURED on the two
+                    -- cells this ships for: kalshi/entertainment holds 507 co-winner
+                    -- ladders but 651 single-winner bin markets, and kalshi/tech
+                    -- holds 86 against 13. Shape alone would have collapsed the 651.
+                    --
+                    -- ``win_count > 1`` is the gotcha #17 co-winner signature —
+                    -- the same evidence ``exclusivity_proved_sql`` refuses a ladder
+                    -- ON — so a market only collapses once its own resolutions have
+                    -- PROVED it is not a partition. Under-reaches by design on the
+                    -- ladder that happens to settle with a single rung true; that is
+                    -- the conservative direction. win_count = 0 is already withheld
+                    -- upstream as unknown truth (``no_winner_markets``).
+                    --
+                    -- Scoped to a LONE market (NOT is_grouped): a vm spanning 3+
+                    -- grouped quantity markets is plausibly the same defect, but it
+                    -- is unmeasured, so it keeps its behavior (#5305 residual).
+                    (COALESCE(vm.market_type = 'quantity', false)
+                     AND NOT cv.is_grouped
+                     AND COALESCE(mrs_lad.win_count, 0) > 1) AS is_threshold_ladder,
                     -- #940 phase-1: never-bid/never-traded Kalshi placeholders are
                     -- excluded from the published set (read-side only, gotcha #21).
                     {KALSHI_LIQUIDITY_EXISTS} AS is_liquid,
+                    -- #5401: the curve does not publish an opening the Kalshi
+                    -- writer itself would have refused to record. Strictly
+                    -- stronger than is_liquid above; read-side only.
+                    (NOT {KALSHI_WRITER_BAR_MET}) AS is_below_writer_bar,
                     {POLY_PLACEHOLDER_EXCLUDE} AS is_poly_placeholder,
                     -- Queue #220/221 Item 3: all-bands poly never-traded flag (for
                     -- the exclusion-symmetry census; does NOT gate the curve).
@@ -3979,6 +4251,10 @@ def _calibration_population_ctes(
                 LEFT JOIN orphan_partition_markets opm ON opm.market_id = fo.market_id
                 LEFT JOIN nonexclusive_bundle_markets nbm ON nbm.market_id = fo.market_id
                 LEFT JOIN golf_placeholder_markets gpm ON gpm.market_id = fo.market_id
+                -- #5305: per-market winner cardinality for the ladder arm. One row
+                -- per market_id (``market_result_shape`` groups by market_id plus
+                -- two per-market columns), so this cannot multiply outcomes.
+                LEFT JOIN market_result_shape mrs_lad ON mrs_lad.market_id = fo.market_id
                 LEFT JOIN mex_field_candidates mfc ON mfc.market_id = fo.market_id
                 LEFT JOIN mex_field_divisor mfd ON mfd.market_id = fo.market_id
                 WHERE fo.opening_probability IS NOT NULL
@@ -4013,6 +4289,7 @@ def _calibration_population_ctes(
                     MAX(mfc.terminal_eligible_n) AS eligible_n,
                     COUNT(*) FILTER (
                         WHERE ro.is_liquid AND NOT ro.is_poly_placeholder
+                          AND NOT ro.is_below_writer_bar
                           AND NOT ro.is_malformed_binary
                           AND NOT ro.is_esports_bundle
                           -- CAL-P168: K' is a published per-outcome exclusion
@@ -4034,6 +4311,7 @@ def _calibration_population_ctes(
                     COUNT(*) FILTER (
                         WHERE ro.is_winner
                           AND ro.is_liquid AND NOT ro.is_poly_placeholder
+                          AND NOT ro.is_below_writer_bar
                           AND NOT ro.is_malformed_binary
                           AND NOT ro.is_esports_bundle
                           AND NOT ro.is_player_props_placeholder
@@ -4146,6 +4424,10 @@ def _calibration_population_ctes(
                   AND mp.source = ro.source
                   AND mp.mode_price = ro.adj_opening_probability
                 WHERE ro.is_liquid AND NOT ro.is_poly_placeholder
+                    -- #5401: an opening the writer would have refused is not a
+                    -- forecast. Read-side only (gotcha #21) — the row is
+                    -- dropped, never re-graded; `is_winner` is truth and stays.
+                    AND NOT ro.is_below_writer_bar
                     AND NOT ro.is_malformed_binary
                     AND NOT ro.is_esports_bundle
                     -- CAL-P168 (#1978) RANK 1: K' leaves the published curve.
@@ -4179,6 +4461,11 @@ def _calibration_population_ctes(
                         -- (0.99/0.20/0.001 -> tail dropped -> ~99.9%). Publish every
                         -- member of a complete field so the partition still sums to 1.
                         WHEN ro.is_mex_normalized THEN true
+                        -- #5305: one representative per threshold ladder. Same
+                        -- authority the ELSE arm uses (nearest 50%, ties by
+                        -- canonical outcome id), so the rung published is the
+                        -- most informative one and the choice is deterministic.
+                        WHEN ro.is_threshold_ladder THEN ro.rn = 1
                         WHEN ro.is_multi
                             THEN ro.adj_opening_probability > 0.005
                              AND ro.adj_opening_probability < 0.98
@@ -4318,6 +4605,16 @@ _COVERAGE_RUNG_PREDICATES: tuple[tuple[str, str], ...] = (
     (
         "phantom_liquidity",
         "NOT COALESCE(n.is_liquid, false) OR COALESCE(n.is_poly_placeholder, false)",
+    ),
+    # #5401. Its own rung rather than a fourth clause on phantom_liquidity
+    # above: both rungs are "we never really discovered this price", but this
+    # one removes an order of magnitude more rows than that bucket currently
+    # holds, and folding it in would silently restate an established count as a
+    # regression. COALESCE(..., false) like its neighbours — a NULL flag means
+    # the row never reached `normalized`, which an earlier rung already owns.
+    (
+        "opening_below_writer_bar",
+        "COALESCE(n.is_below_writer_bar, false)",
     ),
     (
         "structural_artifact",
@@ -4566,6 +4863,13 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                 SELECT
                     COUNT(*) FILTER (WHERE source = 'kalshi' AND is_liquid) AS kalshi_included,
                     COUNT(*) FILTER (WHERE source = 'kalshi' AND NOT is_liquid) AS kalshi_excluded,
+                    -- #5401: the writer bar's own split, on the same footing as
+                    -- the liquidity bar above it. Counted over `normalized` like
+                    -- every sibling here, so `included + excluded` is the Kalshi
+                    -- candidate pool and NOT the published count — the rungs
+                    -- overlap, and a below-bar row is very often illiquid too.
+                    COUNT(*) FILTER (WHERE source = 'kalshi' AND NOT is_below_writer_bar) AS writer_bar_included,
+                    COUNT(*) FILTER (WHERE source = 'kalshi' AND is_below_writer_bar) AS writer_bar_excluded,
                     COUNT(*) FILTER (WHERE source = 'polymarket' AND is_poly_placeholder) AS poly_placeholder_excluded,
                     COUNT(*) FILTER (WHERE source = 'polymarket' AND NOT is_poly_placeholder) AS poly_included,
                     -- Queue #220/221 Item 3: exclusion-symmetry census. Poly
@@ -4704,6 +5008,8 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                 SUM((adj_opening_probability::float - CASE WHEN is_winner THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err,
                 MAX(ls.kalshi_included) AS kalshi_included,
                 MAX(ls.kalshi_excluded) AS kalshi_excluded,
+                MAX(ls.writer_bar_included) AS writer_bar_included,
+                MAX(ls.writer_bar_excluded) AS writer_bar_excluded,
                 MAX(ls.poly_placeholder_excluded) AS poly_placeholder_excluded,
                 MAX(ls.poly_included) AS poly_included,
                 MAX(ls.poly_never_traded_total) AS poly_never_traded_total,
@@ -5558,6 +5864,17 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         kalshi_excluded = (
             int(rows[0].kalshi_excluded)
             if rows and rows[0].kalshi_excluded is not None
+            else 0
+        )
+        # #5401: the writer bar's own transparency counts, same carry.
+        writer_bar_included = (
+            int(rows[0].writer_bar_included)
+            if rows and rows[0].writer_bar_included is not None
+            else 0
+        )
+        writer_bar_excluded = (
+            int(rows[0].writer_bar_excluded)
+            if rows and rows[0].writer_bar_excluded is not None
             else 0
         )
         # L2-76: Polymarket no-bid placeholder exclusion transparency counts.
@@ -6546,6 +6863,30 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             "kalshi_included": kalshi_included,
             "kalshi_excluded": kalshi_excluded,
         },
+        # #5401. A rung that removes rows from the published curve and says so
+        # NOWHERE in this payload is the ruling-103 / gotcha-#144 failure exactly
+        # — the golf/entertainment openings this drops were themselves invisible
+        # because a COALESCE fallback had no disclosure beside it. The coverage
+        # census carries an `opening_below_writer_bar` rung, but that surface
+        # answers "how much of the population did we account for", not "what did
+        # the curve refuse and why", which is what this family is for.
+        "writer_bar_filter": {
+            "applies_to": "kalshi",
+            "rule": KALSHI_WRITER_BAR_RULE_TEXT,
+            "included": writer_bar_included,
+            "excluded": writer_bar_excluded,
+            # The two Kalshi bars are nested, not disjoint: every row the
+            # liquidity bar drops is also below this one (a leg that never
+            # showed a bid never showed a bid with an ask beside it), so these
+            # counts must not be added to `liquidity_filter`'s to get a total.
+            "relation_to_liquidity_filter": (
+                "Strictly stronger than liquidity_filter: that rung admits an "
+                "outcome that ever showed a bid OR a trade, this one requires a "
+                "two-sided book the Kalshi poller would itself have recorded an "
+                "opening from. The cohorts nest, so the counts overlap and are "
+                "not additive."
+            ),
+        },
         "poly_placeholder_filter": {  # L2-76 (#151/#997)
             "applies_to": "polymarket",
             "rule": POLY_PLACEHOLDER_RULE_TEXT,
@@ -7216,6 +7557,26 @@ def _main_input_fingerprint() -> str:
         f"player_props_name_pattern={PLAYER_PROPS_NAME_PATTERN}",
         f"player_props_band={PLAYER_PROPS_MIDPOINT_BAND_LO},{PLAYER_PROPS_MIDPOINT_BAND_HI}",
         f"player_props_forced_drift={PLAYER_PROPS_FORCED_DRIFT_MIN}",
+        # #5401 (CAL-P1119) — the EIGHTH instance of the hole this docstring
+        # keeps describing, closed on the deploy that opens it, per the standing
+        # discipline: an interpolated value that decides WHICH ROWS THE CURVE
+        # PUBLISHES is hashed by value and by name.
+        #
+        # `KALSHI_WRITER_BAR_MET` is a SQL string interpolated into
+        # `_calibration_population_ctes`, so hashing that function's source
+        # covers the f-string TEMPLATE and never this value. Its spread literal
+        # (`KALSHI_WRITER_MAX_SPREAD`) is transcribed from the Kalshi writer and
+        # is expected to move if the writer's own bar ever moves — so this is
+        # not a hypothetical: the value has a named reason to change, and a
+        # cursor banked under one bar must not stay resumable by code carrying
+        # another.
+        #
+        # Its two nearest siblings — `KALSHI_LIQUIDITY_EXISTS` and
+        # `POLY_PLACEHOLDER_EXCLUDE` — are NOT on this list, and that is a real
+        # gap rather than a precedent to copy. They are static text that has not
+        # moved in months; this one is pinned to another file's constant. The
+        # gap is filed rather than widened here (#5430).
+        f"kalshi_writer_bar={KALSHI_WRITER_BAR_MET}",
         source,
     )
 
@@ -8196,7 +8557,17 @@ def _build_time_horizon_sql(days: int) -> tuple[str, dict]:
                         (SELECT COUNT(*) FROM ranked_outcomes WHERE is_golf_placeholder) AS excl_golf_placeholder,
                         (SELECT COUNT(*) FROM ranked_outcomes WHERE is_kalshi_prop_threshold) AS excl_kalshi_prop_threshold,
                         (SELECT COUNT(*) FROM ranked_outcomes WHERE is_weather_wide_spread) AS excl_weather_wide_spread,
-                        (SELECT COUNT(*) FROM normalized WHERE is_field_incomplete) AS excl_field_incomplete
+                        (SELECT COUNT(*) FROM normalized WHERE is_field_incomplete) AS excl_field_incomplete,
+                        -- #5305: the ladder arm's own receipt. Without it a guard
+                        -- that silently stops matching (a market_type backfill, a
+                        -- classifier change) is indistinguishable from one that had
+                        -- nothing to collapse — gotcha #53, "it returned" is not
+                        -- "it worked". Rungs SUPPRESSED, not rungs seen, so the
+                        -- number is the work the arm actually did.
+                        (SELECT COUNT(DISTINCT vm_id) FROM ranked_outcomes
+                          WHERE is_threshold_ladder) AS ladder_questions,
+                        (SELECT COUNT(*) FROM ranked_outcomes
+                          WHERE is_threshold_ladder AND rn <> 1) AS ladder_rungs_suppressed
                 ),
                 h_buckets AS (
                     SELECT
@@ -8216,7 +8587,8 @@ def _build_time_horizon_sql(days: int) -> tuple[str, dict]:
                     d.excl_illiquid, d.excl_poly_placeholder, d.excl_malformed_binary,
                     d.excl_esports_bundle, d.excl_golf_placeholder,
                     d.excl_kalshi_prop_threshold, d.excl_weather_wide_spread,
-                    d.excl_field_incomplete
+                    d.excl_field_incomplete,
+                    d.ladder_questions, d.ladder_rungs_suppressed
                 FROM h_diag d
                 LEFT JOIN h_buckets b ON true
                 ORDER BY b.bucket_idx, b.source, b.category
@@ -8342,6 +8714,15 @@ async def _compute_time_horizon_calibration():
                             "kalshi_prop_threshold": int(r.excl_kalshi_prop_threshold or 0),
                             "weather_wide_spread": int(r.excl_weather_wide_spread or 0),
                             "field_incomplete": int(r.excl_field_incomplete or 0),
+                        },
+                        # #5305. Deliberately a SIBLING of "excluded", not a rung
+                        # inside it: the coverage bridge treats the exclusion rungs
+                        # as a precedence PARTITION and sums them, and a ladder rung
+                        # is collapsed (one representative survives), not excluded.
+                        # Filed under "excluded" it would double-count the bridge.
+                        "threshold_ladder": {
+                            "questions": int(r.ladder_questions or 0),
+                            "rungs_suppressed": int(r.ladder_rungs_suppressed or 0),
                         },
                     }
                 if r.bucket_idx is None:

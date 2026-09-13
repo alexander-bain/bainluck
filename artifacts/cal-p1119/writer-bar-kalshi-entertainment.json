@@ -1,0 +1,241 @@
+{
+  "cell": "kalshi/entertainment",
+  "split": "writer_bar",
+  "high_band": 0.8,
+  "elapsed_s": 95.3,
+  "irreducible_chunks": 0,
+  "rows": [
+    {
+      "opening_source": "below_writer_bar",
+      "verdict": "kept_complete_field",
+      "band": "lo",
+      "n": 752,
+      "won": 17,
+      "implied": 30.44
+    },
+    {
+      "opening_source": "below_writer_bar",
+      "verdict": "kept_multi",
+      "band": "hi",
+      "n": 65,
+      "won": 10,
+      "implied": 62.04
+    },
+    {
+      "opening_source": "below_writer_bar",
+      "verdict": "kept_multi",
+      "band": "lo",
+      "n": 458,
+      "won": 20,
+      "implied": 40.57
+    },
+    {
+      "opening_source": "below_writer_bar",
+      "verdict": "kept_rn1",
+      "band": "hi",
+      "n": 191,
+      "won": 81,
+      "implied": 186.76
+    },
+    {
+      "opening_source": "below_writer_bar",
+      "verdict": "kept_rn1",
+      "band": "lo",
+      "n": 470,
+      "won": 187,
+      "implied": 224.28
+    },
+    {
+      "opening_source": "below_writer_bar",
+      "verdict": "x01_illiquid",
+      "band": "hi",
+      "n": 361,
+      "won": 6,
+      "implied": 354.07
+    },
+    {
+      "opening_source": "below_writer_bar",
+      "verdict": "x01_illiquid",
+      "band": "lo",
+      "n": 2104,
+      "won": 18,
+      "implied": 114.56
+    },
+    {
+      "opening_source": "below_writer_bar",
+      "verdict": "x04_esports_bundle",
+      "band": "hi",
+      "n": 587,
+      "won": 133,
+      "implied": 563.77
+    },
+    {
+      "opening_source": "below_writer_bar",
+      "verdict": "x04_esports_bundle",
+      "band": "lo",
+      "n": 2135,
+      "won": 509,
+      "implied": 502.11
+    },
+    {
+      "opening_source": "below_writer_bar",
+      "verdict": "x12_field_incomplete",
+      "band": "lo",
+      "n": 7,
+      "won": 0,
+      "implied": 0.8
+    },
+    {
+      "opening_source": "below_writer_bar",
+      "verdict": "x13_multi_extreme_tail",
+      "band": "hi",
+      "n": 8,
+      "won": 8,
+      "implied": 7.89
+    },
+    {
+      "opening_source": "below_writer_bar",
+      "verdict": "x14_multi_modal_price",
+      "band": "hi",
+      "n": 29,
+      "won": 5,
+      "implied": 27.9
+    },
+    {
+      "opening_source": "below_writer_bar",
+      "verdict": "x14_multi_modal_price",
+      "band": "lo",
+      "n": 429,
+      "won": 1,
+      "implied": 5.34
+    },
+    {
+      "opening_source": "below_writer_bar",
+      "verdict": "x15_not_the_rn1_representative",
+      "band": "hi",
+      "n": 11,
+      "won": 3,
+      "implied": 10.46
+    },
+    {
+      "opening_source": "below_writer_bar",
+      "verdict": "x15_not_the_rn1_representative",
+      "band": "lo",
+      "n": 43,
+      "won": 14,
+      "implied": 18.28
+    },
+    {
+      "opening_source": "meets_writer_bar",
+      "verdict": "kept_complete_field",
+      "band": "hi",
+      "n": 7,
+      "won": 7,
+      "implied": 5.69
+    },
+    {
+      "opening_source": "meets_writer_bar",
+      "verdict": "kept_complete_field",
+      "band": "lo",
+      "n": 541,
+      "won": 65,
+      "implied": 52.87
+    },
+    {
+      "opening_source": "meets_writer_bar",
+      "verdict": "kept_multi",
+      "band": "hi",
+      "n": 93,
+      "won": 86,
+      "implied": 85.52
+    },
+    {
+      "opening_source": "meets_writer_bar",
+      "verdict": "kept_multi",
+      "band": "lo",
+      "n": 883,
+      "won": 134,
+      "implied": 135.59
+    },
+    {
+      "opening_source": "meets_writer_bar",
+      "verdict": "kept_rn1",
+      "band": "hi",
+      "n": 123,
+      "won": 120,
+      "implied": 115.84
+    },
+    {
+      "opening_source": "meets_writer_bar",
+      "verdict": "kept_rn1",
+      "band": "lo",
+      "n": 265,
+      "won": 154,
+      "implied": 124.05
+    },
+    {
+      "opening_source": "meets_writer_bar",
+      "verdict": "x04_esports_bundle",
+      "band": "hi",
+      "n": 1858,
+      "won": 1718,
+      "implied": 1756.05
+    },
+    {
+      "opening_source": "meets_writer_bar",
+      "verdict": "x04_esports_bundle",
+      "band": "lo",
+      "n": 3529,
+      "won": 842,
+      "implied": 920.78
+    },
+    {
+      "opening_source": "meets_writer_bar",
+      "verdict": "x12_field_incomplete",
+      "band": "hi",
+      "n": 1,
+      "won": 0,
+      "implied": 0.99
+    },
+    {
+      "opening_source": "meets_writer_bar",
+      "verdict": "x12_field_incomplete",
+      "band": "lo",
+      "n": 4,
+      "won": 0,
+      "implied": 0.42
+    },
+    {
+      "opening_source": "meets_writer_bar",
+      "verdict": "x13_multi_extreme_tail",
+      "band": "hi",
+      "n": 54,
+      "won": 54,
+      "implied": 53.46
+    },
+    {
+      "opening_source": "meets_writer_bar",
+      "verdict": "x14_multi_modal_price",
+      "band": "lo",
+      "n": 221,
+      "won": 6,
+      "implied": 7.1
+    },
+    {
+      "opening_source": "meets_writer_bar",
+      "verdict": "x15_not_the_rn1_representative",
+      "band": "hi",
+      "n": 21,
+      "won": 20,
+      "implied": 20.02
+    },
+    {
+      "opening_source": "meets_writer_bar",
+      "verdict": "x15_not_the_rn1_representative",
+      "band": "lo",
+      "n": 46,
+      "won": 8,
+      "implied": 10.12
+    }
+  ]
+}

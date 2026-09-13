@@ -549,7 +549,21 @@ final class CalibrationViewModel: ObservableObject {
     // order — it is a cost of the bump, not of the ordering — and it is called
     // out in `alex-inbox/calibration-021` so it is decided rather than
     // discovered.
-    static let compatiblePopulationVersions: Set<String> = ["q267", "q268", "q269", "q1530"]
+    // CAL-P1137 2026-09-12: "q270" added (#5401, #5305) — the one recount. Like
+    // q269 and unlike q268 it MOVES the methodology: the Kalshi writer bar stops
+    // grading openings no order book stood behind, and a threshold ladder is
+    // collapsed to one forecast instead of forty. This build's labels survive
+    // both for the q269 reason — they describe how rows are plotted, not which
+    // rows qualify — and no cell changes identity under an unchanged caption.
+    //
+    // The web half of the raw -> published reconciliation gained a new bullet
+    // for the writer bar in the same commit. Native does not render that
+    // exclusions list, so there is no native copy to teach; the correction is
+    // carried in the corrections log this surface already reads.
+    //
+    // The on-device warning above applies unchanged: builds already shipped
+    // carry the old set and read q270 as `.incompatible` until updated.
+    static let compatiblePopulationVersions: Set<String> = ["q267", "q268", "q269", "q270", "q1530"]
 
     var populationVersion: String? { data?.populationVersion }
 

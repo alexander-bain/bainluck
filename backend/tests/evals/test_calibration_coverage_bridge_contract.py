@@ -28,8 +28,8 @@ def _case(case_id: str) -> dict:
 def test_committed_corpus_is_complete_and_matches_oracles() -> None:
     corpus = load_corpus(FIXTURE)
     report = evaluate_corpus(corpus)
-    assert report["total"] == 21
-    assert report["passed"] == 21, [row for row in report["cases"] if not row["ok"]]
+    assert report["total"] == 22
+    assert report["passed"] == 22, [row for row in report["cases"] if not row["ok"]]
     ids = {row["id"] for row in corpus["cases"]}
     # Every class the ruling names has to be represented, or the corpus is
     # asserting reconciliation over a population it never exercised.
@@ -39,6 +39,7 @@ def test_committed_corpus_is_complete_and_matches_oracles() -> None:
         "field-normalization-completeness-rung",
         "sportsbook-treatment-is-a-separate-leg",
         "phantom-liquidity-rung",
+        "opening-below-writer-bar-rung",
         "malformed-and-unknown-truth-rung",
         "checked-zero-is-not-unknown",
     } <= ids
@@ -144,13 +145,54 @@ def test_corpus_schema_is_pinned() -> None:
         )
 
 
+#: Rungs the corpus names in every case but has never given a non-zero count.
+#:
+#: Being listed here is a GAP, not an exemption. ``market_result_unavailable``
+#: is the only one inherited: it is zero in all 22 cases, so nothing in this
+#: corpus would notice it being computed wrongly, and it is left standing rather
+#: than invented a count for by someone who has not measured it.
+#:
+#: The list exists so the gap is explicit. Before it, presence alone satisfied
+#: this test, so a rung added with zeroes everywhere read as "exercised" — which
+#: is exactly how ``opening_below_writer_bar`` (#5401) first arrived. Adding a
+#: rung now forces a choice: give it a real count, or say here, in writing, that
+#: you did not.
+RUNGS_WITH_NO_MEASURED_COUNT = frozenset({"market_result_unavailable"})
+
+
 def test_every_rung_key_is_exercised_by_the_corpus() -> None:
-    """A rung nobody counts is a rung nobody notices going wrong."""
+    """A rung nobody counts is a rung nobody notices going wrong.
+
+    "Exercised" means a NON-ZERO count in at least one case. A key present in
+    every case at zero proves only that the fixture was updated, never that the
+    rung partitions anything: the reconciliation in
+    :func:`test_reference_totals_reconcile_in_both_units` adds it, and adding
+    zero cannot fail.
+    """
     corpus = load_corpus(FIXTURE)
     seen: set[str] = set()
+    counted: set[str] = set()
     for row in corpus["cases"]:
-        seen |= set((row.get("measured") or {}).get("rungs") or {})
+        rungs = (row.get("measured") or {}).get("rungs") or {}
+        seen |= set(rungs)
+        counted |= {k for k, v in rungs.items() if isinstance(v, int) and v > 0}
     assert seen == set(RUNG_KEYS)
+
+    uncounted = (set(RUNG_KEYS) - counted) - RUNGS_WITH_NO_MEASURED_COUNT
+    assert not uncounted, (
+        f"rungs present in the corpus but never given a non-zero count: "
+        f"{sorted(uncounted)}. A rung measured only as zero is never actually "
+        f"reconciled — give it a case with a real count (see "
+        f"'opening-below-writer-bar-rung'), or add it to "
+        f"RUNGS_WITH_NO_MEASURED_COUNT and say why."
+    )
+
+    # The allowlist may not outlive the gap it names, or it becomes a place
+    # rungs go to stop being checked.
+    assert RUNGS_WITH_NO_MEASURED_COUNT <= set(RUNG_KEYS) - counted, (
+        "a rung in RUNGS_WITH_NO_MEASURED_COUNT now has a real count in the "
+        "corpus — delete it from the list"
+    )
 
 
 def _write_tmp(payload: dict) -> Path:

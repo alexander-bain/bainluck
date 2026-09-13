@@ -2431,6 +2431,12 @@ export interface CalibrationData {
     total: number;
   } | null;
   liquidity_filter?: CalibrationLiquidityFilter | null;
+  /**
+   * #5401 (q270). Optional like every other filter block: a payload banked
+   * before the bump carries no writer bar, and absent must read as "this
+   * artifact predates the rule", never as "nothing was excluded".
+   */
+  writer_bar_filter?: CalibrationWriterBarFilter | null;
   // #997: minimum resolved-outcome count for a chartable sub-category, set
   // server-side (Redis-tunable) so web + native gate on the same bar.
   min_category_outcomes?: number;
@@ -2586,6 +2592,30 @@ export interface CalibrationExclusionFilter {
   excluded: number;
   events_excluded?: number;
   bookmaker_excluded?: number;
+}
+
+/**
+ * #5401 (q270): the Kalshi writer bar. The curve no longer grades an opening
+ * that Kalshi's own writer would have refused to record — a price with no bid
+ * behind it, or a book so wide nobody could have traded at the number.
+ *
+ * Separate from `CalibrationExclusionFilter` for one reason that matters to the
+ * page: it publishes `included` beside `excluded`, so the bullet can state a
+ * share of the Kalshi set rather than a bare count, the way the liquidity
+ * filter already does.
+ *
+ * `relation_to_liquidity_filter` exists because the two Kalshi bars NEST — every
+ * row the liquidity bar drops is also below this one — so the counts overlap and
+ * must never be added together to make a total. It is a machine-readable note
+ * for an auditor reading the payload, not page copy (notice 34): the page reads
+ * the counts and writes its own sentence.
+ */
+export interface CalibrationWriterBarFilter {
+  applies_to: string;
+  rule: string;
+  included: number;
+  excluded: number;
+  relation_to_liquidity_filter?: string;
 }
 
 export interface CalibrationNonexclusiveBundleFilter {

@@ -111,10 +111,36 @@
 // re-create it. Note the backend's own
 // COMPATIBLE_PREVIOUS_POPULATION_VERSIONS is EMPTY for q269 — it will never
 // SERVE a q268 artifact again — so these two entries are belt, not braces.
+//
+// CAL-P1137 2026-09-12: "q270" added (#5401, #5305) — the one recount. Two
+// methodology changes, both of which SHRINK the population, so the claim this
+// entry makes had to be paid rather than asserted:
+//
+//   1. The Kalshi writer bar (#5401). The curve stops grading an opening that
+//      Kalshi's own writer would have refused to record. This IS a new
+//      exclusion class with counts, and the rule above is explicit that a bump
+//      introducing one the page has no field for must teach the page FIRST. So
+//      it is taught in this same commit and not in a later one:
+//      `CalibrationWriterBarFilter` in `lib/api.ts`, rendered in the exclusions
+//      list on `/calibration` beside the liquidity filter it nests inside.
+//   2. The threshold-ladder collapse (#5305). This one is deliberately NOT an
+//      exclusion and must not be read as a missing bullet: a ladder's rungs are
+//      collapsed to one representative, so the question is still counted — once
+//      instead of forty. The backend files it as a sibling of `excluded` for
+//      exactly that reason (filed inside it, the coverage bridge would
+//      double-count it as part of an exclusion partition). It reaches a reader
+//      through the corrections log, which this page already renders
+//      generically, so it has copy by construction.
+//
+// The hero copy, the cohort toggle and the category bar survive unchanged for
+// the q269 reason: they describe how rows are plotted, not which qualify. No
+// cell changes identity — golf and entertainment move toward honest and stay on
+// the board rather than being relabelled under an old caption.
 export const COMPATIBLE_POPULATION_VERSIONS: readonly string[] = [
   "q267",
   "q268",
   "q269",
+  "q270",
   "q1530",
 ];
 
