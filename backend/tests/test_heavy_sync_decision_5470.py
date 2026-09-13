@@ -1008,7 +1008,7 @@ def test_one_idle_reading_is_not_enough_to_push(tmp_path):
     """v15, replayed: the gate printed IDLE at 16:57:10Z while
     `matching_reconciliation` had been running since 16:56:59.9Z.
 
-    The reply is a SNAPSHOT of unknown age — 5 s of endpoint cache, an 18.4 s
+    The reply is a SNAPSHOT of unknown age — 5 s of endpoint cache, a 25.6 s
     measured broadcast, two retries — so one reading cannot see a job that
     started inside it. An idle fleet now costs exactly one poll to confirm.
     """
@@ -1071,6 +1071,29 @@ def test_the_workflow_confirms_the_number_of_times_the_script_documents():
     band_s = (sync.window_bounds()[1] - sync.window_bounds()[0] + 1) * 60
     assert sync.IDLE_CONFIRMATIONS >= 2, "one reading cannot confirm itself"
     assert sync.IDLE_CONFIRMATIONS * sync.INFLIGHT_POLL_SECONDS < band_s
+
+
+def test_the_confirm_poll_can_never_be_served_two_copies_of_one_snapshot():
+    """THE ONE CHANGE THAT WOULD MAKE THE CONFIRM UNFALSIFIABLE.
+
+    `/api/admin/celery/inspect` memoises its broadcast set for `_INSPECT_TTL_S`
+    (5 s, and that constant exists because this endpoint took production down —
+    LAT-P071). So if the sleep between confirmations ever drops below the memo,
+    the second reading is not a second reading: it is a byte-for-byte replay of
+    the first, and `IDLE_CONFIRMATIONS = 2` becomes a confirm that cannot fail.
+
+    That is a live temptation rather than a hypothetical one. The confirm's
+    blind window is the SEPARATION of two readings (~25.6 s of broadcast plus
+    this sleep, ~56 s), and the obvious way to narrow it is to poll faster.
+    This is the floor under that instinct; the ceiling is LAT-P071 itself.
+    """
+    from app.routes.admin_celery import _INSPECT_TTL_S
+
+    assert sync.INFLIGHT_POLL_SECONDS > _INSPECT_TTL_S, (
+        f"the confirm sleeps {sync.INFLIGHT_POLL_SECONDS}s but the endpoint "
+        f"serves a cached snapshot for {_INSPECT_TTL_S}s — the two "
+        "confirmations would be one reading counted twice"
+    )
 
 
 def test_an_attended_run_never_waits(tmp_path):
