@@ -5755,6 +5755,80 @@ _LIVE_POLL_MIN_VENUE_FLOOR_SECONDS = 20
 _LIVE_POLL_FETCH_BUDGET_SHARE = 0.6
 
 
+def _polymarket_gamma_event_id(market) -> Optional[str]:
+    """The Gamma **event** id to fetch prices for one Polymarket market row.
+
+    #5823. The live poll used to read ``market.external_id`` here, and for a
+    decomposed sub-market that column holds the **condition id**, not the event
+    id — ``sub_market_metadata`` in ``app/tasks/polymarket.py`` mints it that way
+    on purpose, and stamps the event id beside it. Gamma's ``/events/{id}``
+    answers **422** to a bare hex condition id, so every one of those rows spent
+    a call to be told it had asked the wrong question.
+
+    Nothing was lost by it: the sub-markets of an event are all priced by the
+    ONE successful fetch of their parent row (the loop below matches the
+    returned markets by ``conditionId``, not by the row it fetched for). So the
+    cost was never missing prices — measured 2026-09-13 05:08Z, 0x rows and
+    numeric rows were equally fresh, 1 m 48 s. The cost was:
+
+    * **~59 wasted venue calls a pass**, charged against the fetch window the
+      floor above exists to ration — the second venue's guarantee paid for
+      requests that could not return anything;
+    * **~59 needless recoveries a pass.** A 422 is an HTTP fact and touches no
+      transaction, but it lands in the generic ``except`` and ``_recover`` does
+      the full Postgres dance anyway: rollback, ``expunge_all``, and a complete
+      re-read of the population;
+    * and a **permanently dishonest verdict** — ``terminal`` is ``"complete"``
+      only when ``session_recoveries`` is 0, so every pass reported ``partial``
+      and ``incompletes_24h`` sat at 18 with nothing actually incomplete.
+
+    The cascade, and why each rung is here rather than one of the others.
+    Measured over the 9,165 linked open Polymarket rows on production
+    2026-09-13 05:2xZ, the three rungs partition it exactly:
+
+    1. ``market_metadata->>'polymarket_event_id'`` — **9,006 rows** (all 6,150
+       numeric-``external_id`` parents, where it equals ``external_id`` in
+       6,150 of 6,150 cases and so changes nothing, plus 2,856 sub-markets
+       where it is the whole repair). This is the contract: the minter writes
+       it, and ``backfill_winners``/``repair_polymarket_*`` already address
+       Gamma through it.
+    2. ``group_id``'s second segment when it is all digits — the remaining
+       **159 rows**, every one of which has one. ``polymarket.py``'s own
+       docstring names this the established fallback for a row minted before
+       the key existed, while warning it is "a column that happens to contain
+       the id, not a contract that promises it" — hence the digit test, and
+       hence its position below the contract rather than beside it.
+    3. ``external_id`` — reached by nothing in today's population, kept so the
+       function can never return ``None`` for a row that has any id at all and
+       so the behaviour of a row this code has not seen is the OLD behaviour,
+       not a skip.
+
+    Deduping on the value this returns is what removes the wasted calls: seven
+    sub-markets of Gamma event ``1014623`` now collapse onto their parent's
+    single fetch instead of raising seven 422s beside it.
+    """
+    metadata = getattr(market, "market_metadata", None)
+    if isinstance(metadata, dict):
+        minted = metadata.get("polymarket_event_id")
+        if minted is not None and str(minted).strip():
+            return str(minted).strip()
+
+    group_id = getattr(market, "group_id", None)
+    if group_id:
+        # `polymarket:{event.id}`. Split rather than strip a prefix: a row whose
+        # group_id is some other scheme must fall through, not contribute its
+        # own tail as if it were an event id.
+        _, _, tail = str(group_id).partition(":")
+        tail = tail.strip()
+        if tail.isdigit():
+            return tail
+
+    external_id = getattr(market, "external_id", None)
+    if external_id is not None and str(external_id).strip():
+        return str(external_id).strip()
+    return None
+
+
 @dataclass
 class _LivePollPopulation:
     """One live-poll beat's rows, addressable BY ID (#5682).
@@ -6333,8 +6407,35 @@ async def _poll_live_prediction_market_prices():
             from app.services.polymarket_api import PolymarketAPIService
             poly_service = PolymarketAPIService()
             try:
-                # Group by external_id (Polymarket event ID) to avoid duplicate fetches
-                seen_events = {}
+                # #5823: the fetch is deduped by GAMMA EVENT ID, and the result
+                # is CACHED rather than the later rows SKIPPED. The distinction
+                # is the whole repair, so it is worth being explicit:
+                #
+                # * keying on `external_id` meant a decomposed sub-market keyed
+                #   on its CONDITION id — a key Gamma answers 422 to, and one
+                #   that is distinct per sub-market, so the dedupe this dict was
+                #   written to perform could not fire on the rows that needed
+                #   it. ~59 such calls a pass, each charged to the venue-fetch
+                #   window the #5767 floor exists to ration, each landing in
+                #   `_recover` (a rollback, an `expunge_all` and a full
+                #   population re-read for an error that touched no
+                #   transaction), and each making `terminal` read `partial` on a
+                #   pass where nothing was actually incomplete.
+                # * CACHING, not skipping, is what keeps that safe. The rows
+                #   sharing an event id are NOT interchangeable: the apply loop
+                #   below resolves outcomes as `(market_id, conditionId)`, so it
+                #   can only ever reach the outcomes of the row it is standing
+                #   on. Skipping a repeat — which is what the old dict did to a
+                #   genuine repeat — would have left the parent "More Markets"
+                #   row, the one that actually carries a dozen derivative
+                #   prices under bare-conditionId outcome keys, unpriced
+                #   whenever a sub-market happened to be iterated first. So
+                #   every row still runs its own apply pass; only the HTTP call
+                #   is shared.
+                # * a FAILED fetch is cached too, as None. Otherwise the first
+                #   genuinely dead event would be re-requested once per row it
+                #   owns, which is the same waste arriving by the other road.
+                seen_events: dict = {}
                 for _seen, market_id in enumerate(polymarket_ids):
                     if _out_of_budget(
                         "polymarket_fetch",
@@ -6345,18 +6446,24 @@ async def _poll_live_prediction_market_prices():
                     market = pop.markets_by_id.get(market_id)
                     if market is None:
                         continue
-                    poly_event_id = market.external_id
-                    if poly_event_id in seen_events:
+                    poly_event_id = _polymarket_gamma_event_id(market)
+                    if poly_event_id is None:
                         continue
+                    _fetched_now = poly_event_id not in seen_events
 
                     try:
-                        event_data = await poly_service.get_event_by_id(poly_event_id)
-                        stats["polymarket_fetched"] += 1
+                        if _fetched_now:
+                            seen_events[poly_event_id] = None
+                            event_data = await poly_service.get_event_by_id(
+                                poly_event_id
+                            )
+                            stats["polymarket_fetched"] += 1
+                            seen_events[poly_event_id] = event_data
+                        else:
+                            event_data = seen_events[poly_event_id]
 
                         if not event_data:
                             continue
-
-                        seen_events[poly_event_id] = event_data
 
                         # Parse markets from event data
                         poly_markets = event_data.get("markets", [])
@@ -6476,8 +6583,14 @@ async def _poll_live_prediction_market_prices():
                         # may not un-price the events already read.
                         await _commit_boundary()
 
-                        # Rate limit between Polymarket requests
-                        await asyncio.sleep(0.3)
+                        # Rate limit between Polymarket REQUESTS — and #5823 is
+                        # why that word is load-bearing now. A cache hit made no
+                        # request, so sleeping after it would rate-limit this
+                        # beat against itself: the sibling rows of one event
+                        # would each pay 0.3 s out of the fetch window for a
+                        # courtesy Polymarket is not owed.
+                        if _fetched_now:
+                            await asyncio.sleep(0.3)
 
                     except Exception as e:
                         await _recover(f"polymarket_{poly_event_id}", e)
