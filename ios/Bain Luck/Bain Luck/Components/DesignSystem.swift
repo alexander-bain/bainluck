@@ -89,9 +89,12 @@ struct ProbabilityNumber: View {
     var size: CGFloat = 36
     var color: Color?
 
+    /// `value` is percentage POINTS. The figure goes through `percentNumber` so a
+    /// priced-but-tiny outcome reads `<1%` rather than `0%` (#5899) — the futures
+    /// leader row drew `0%` directly above three `<1%` rows of the same list.
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 1) {
-            Text("\(Int(value.rounded()))")
+            Text(percentNumber(value))
                 .font(.system(size: size, weight: .semibold, design: .monospaced))
                 .foregroundStyle(color ?? DS.probColor(value))
                 .tracking(-0.5)

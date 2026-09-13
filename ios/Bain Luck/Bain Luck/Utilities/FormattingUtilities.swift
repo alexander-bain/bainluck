@@ -17,6 +17,37 @@ func formatProbability(_ value: Double, renderedPercent: Int? = nil) -> String {
     return "\(Int(pct.rounded()))%"
 }
 
+/// The NUMBER half of a printed probability, for the surfaces that draw the "%"
+/// separately (#5899). Input is percentage POINTS, not a 0–1 fraction.
+///
+/// `formatProbability` owns the app's marker rule and ~77 call sites use it. Two
+/// cannot, because they do not draw one string: `ProbabilityNumber` sets the
+/// figure and the "%" as two Texts at different sizes, and the futures hero draws
+/// a 52pt figure. Both interpolated `Int(pct.rounded())` and so printed **0%** for
+/// an outcome the venue was still pricing — "Lowest temperature in Buenos Aires on
+/// September 13?" served five outcomes at 0.0005, and the page said `0%` on the
+/// hero and on `#1` while saying `<1%` on `#2`–`#5`, in one frame, with its own
+/// chart table saying `0.1%`.
+///
+/// ONLY THE LOW END MOVES, and that asymmetry is measured rather than tidy.
+/// `formatProbability` also guards the top with `>99%`, and that half deliberately
+/// does NOT come along: 749,007 outcomes of RESOLVED futures markets sit above
+/// 0.99 and the leader row of each is the settled winner, so `>99%` would hedge a
+/// decided question across that whole population to fix nothing anybody has seen.
+/// `0%` on a priced outcome is a false claim; `100%` on a resolved winner is the
+/// result.
+///
+/// A stored exact zero keeps printing `0`, for the same reason in reverse. #5837
+/// ruled a served `0.0` reads `<1%` because the golf feed quotes on a
+/// three-decimal grid, so its zero was a rounding floor. Here
+/// `futures_outcomes.current_probability` is `numeric` and holds `0.0005`: a zero
+/// that arrives here is a measured zero, and absence is
+/// `formatProbabilityOrDash`'s dash and stays so.
+func percentNumber(_ percent: Double) -> String {
+    if percent > 0 && percent < 1 { return "<1" }
+    return "\(Int(percent.rounded()))"
+}
+
 /// The absent-value marker for a number we do not have. `ladderPercent` already
 /// returns this for a nil rung; the two spellings must not drift, and
 /// `MissingProbabilityRenderTests` fails if they do.
