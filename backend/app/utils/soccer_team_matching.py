@@ -15,6 +15,7 @@ serve, both pinned as `tests/fixtures/statpal_soccer_join_corpus_20260907.json`:
     equality after normalization (the NFL rule)   17 / 90   18.9%
     this module's rule, as first written          67 / 90   74.4%
     with the alias tables (#5829)                 73 / 90   81.1%
+    with the whole-name initialisms (#6022)       74 / 90   82.2%
 
 Neither number is a guess about the remainder: every one of them was read
 against the boards by hand and is accounted for in `THE MISSES` below.
@@ -23,6 +24,12 @@ The same rule was re-measured against a SECOND live population on 2026-09-13 —
 148 of our production soccer rows against the 834 distinct fixtures on offsets
 1, 2 and 3 — and moves 71 -> 78 there. Two populations six days apart, because
 one afternoon is how a vocabulary gets written down wrong.
+
+A THIRD population, and the one that decided #6022: the 3,435 distinct soccer
+team names our own `events` carried over the 20 days to 2026-09-13. That is the
+population this module is judged on when it feeds the twin fold rather than the
+StatPal join, and it is the only one that can show a rule joining two rows a
+reader is looking at.
 
 The reason is one-sided and consistent: **StatPal writes the short name and we
 write the long one.** `Wrexham` / `Wrexham AFC`, `Cardiff` / `Cardiff City`,
@@ -101,16 +108,37 @@ module was written, 17 after the alias tables:
     than two days before it is written down"). The bar was met and the entries
     carry their evidence; see :data:`CLUB_TOKEN_ALIASES`.
 
-    **The 9 still missing are the ones no measured pair supports**: an
-    initialism of a PREFIX (`Go Ahead Eagles`/`G.A. Eagles`), an abbreviation
-    whose expansion is ambiguous on the same board (`Atletico Goianiense`/
-    `Atletico GO`, where `GO` is also the English word in `Go Ahead Eagles`),
-    a genitive plural (`Helsingborgs IF`/`Helsingborg`, `Sandvikens IF`/
-    `Sandviken`), alternative club names (`Sporting Lisbon`/`Sporting CP`,
+    **The 8 still missing are the ones no measured pair supports**: an
+    abbreviation whose expansion is ambiguous on the same board (`Atletico
+    Goianiense`/`Atletico GO`, where `GO` is also the English word in `Go Ahead
+    Eagles`), a genitive plural (`Helsingborgs IF`/`Helsingborg`, `Sandvikens
+    IF`/`Sandviken`), alternative club names (`Sporting Lisbon`/`Sporting CP`,
     `Ulsan Hyundai FC`/`Ulsan HD`), a spelling (`Al-Taawoun`/`Al Taawon`), and
     one real RENAME (`Sangju Sangmu FC`/`Gimcheon Sangmu`, where our side is
     the stale one). Each is a different mechanism, so none of them is this
     table's next entry — they are their own tiers, and none has been measured.
+
+    **The ninth was the PREFIX initialism (`Go Ahead Eagles`/`G.A. Eagles`), and
+    #6022 measured it as a tier and REFUSED it.** The grammar is easy and it
+    works: the number of tokens an initialism stands for is the number of
+    letters in it, so `RC`->`Racing Club` needs no search. Over the 3,435-name
+    third population it fires on five pairs, and the fifth is
+    `AD Cali`/`América de Cali` — `AD` really is the initials of `América de`,
+    and it is also `Asociación Deportivo`, which is what `AD Cali` means and
+    what `AD Pasto` means on the same Polymarket board.
+
+    **They play each other, and our own table holds the fixture**: `AD Cali v
+    América de Cali` on 2026-03-29, the Clásico Vallecaucano, plus six dates
+    carrying a fixture for each of them against different opponents. So this is
+    not an inference from two spellings — it is Deportivo Cali and América de
+    Cali, two clubs in one city in one league: the Manchester United /
+    Manchester City refusal at the top of :data:`CLUB_FORM_TOKENS`, committed by
+    a rule instead of avoided by one. And since the tier answers True in BOTH
+    directions for that pair, it would make the derby match its own REVERSE
+    FIXTURE — the single thing :func:`soccer_pair_matches` keeps orientation to
+    prevent. No grammar can tell the two expansions apart, so the four sound
+    pairs are written down as whole names below and the tier is not written at
+    all. The measurement is `artifacts-lane1-302/measure_prefix_initialism.py`.
 
     **A THIRD mechanism, found on 2026-09-13 and not fixed here:** the shared
     fold drops a Latin letter that NFKD does not decompose instead of folding
@@ -254,7 +282,7 @@ CLUB_TOKEN_ALIASES: dict[str, str] = {
 #: A whole name that is this club under another name. Keyed on the FULL token
 #: tuple, so an entry can never fire on a club that merely shares a word.
 #:
-#: Two entries, and both are the same Bundesliga club, because a one-word alias
+#: The first two entries are the same Bundesliga club, because a one-word alias
 #: cannot reach either of them:
 #:
 #: * `M´gladbach` is ours. It tokenizes to `m gladbach` — the apostrophe splits
@@ -268,9 +296,40 @@ CLUB_TOKEN_ALIASES: dict[str, str] = {
 #:   this particular name is before the guard reads it, not to weaken the guard.
 #:   Until this entry, NO Gladbach fixture could be joined at all, in either
 #:   direction, whatever else was written here.
+#:
+#: **The last three are clubs one writer spells out and another writes as
+#: initials (#6022).** They are here as whole names rather than as the general
+#: prefix-initialism tier for the reason THE MISSES gives above: the grammar
+#: cannot tell `AD Cali` from `América de Cali`. A whole-name key can, because it
+#: is a statement about one name and carries its evidence:
+#:
+#: * `Racing Club De Lens` is ours from a Kalshi ticker and `Racing Club de Lens`
+#:   is ours from Polymarket, both against ESPN's `RC Lens`. Production
+#:   2026-09-13 served event 15310514 `Le Mans FC v Racing Club De Lens` at
+#:   midnight and 15297788 `Le Mans FC v RC Lens` finished 2-2, on the same
+#:   Ligue 1 page. One entry covers both spellings — the fold lowercases `De`.
+#: * `Los Angeles Galaxy` is ours from Polymarket against ESPN's `LA Galaxy`,
+#:   six production rows over the 20 days to 2026-09-13.
+#: * `Go Ahead Eagles` is ours from the Odds API against Kalshi's `GA Eagles`
+#:   (production 2026-08-29 and 2026-09-12) and StatPal's `G.A. Eagles` (the
+#:   pinned 2026-09-07 corpus, where it is the one join this entry adds).
+#:
+#: **Two of them also REMOVE a wrong join that was live when they were written**,
+#: which is not a side effect — it is why a whole name is the right key. The
+#: subset tier had `Los Angeles FC` ⊆ `Los Angeles Galaxy` (drop `fc`, and LAFC
+#: is a subset of the Galaxy) and `Racing Club` ⊆ `Racing Club de Lens` (drop
+#: `club` and `de`, and Racing Club de Avellaneda is a subset of RC Lens). Both
+#: are the city-fallback failure this module refuses by name. Aliasing the long
+#: spelling to the short one takes the shared tokens out of reach, so the three
+#: entries below are +4 pairs and -3 pairs over the third population, with no
+#: correct join lost on any of the three: see
+#: `artifacts-lane1-302/measure_name_aliases.py`.
 CLUB_NAME_ALIASES: dict[tuple[str, ...], tuple[str, ...]] = {
     ("m", "gladbach"): ("borussia", "monchengladbach"),
     ("b", "monchengladbach"): ("borussia", "monchengladbach"),
+    ("racing", "club", "de", "lens"): ("rc", "lens"),
+    ("los", "angeles", "galaxy"): ("la", "galaxy"),
+    ("go", "ahead", "eagles"): ("ga", "eagles"),
 }
 
 #: Tokens that mark a DIFFERENT SQUAD of the same club. Disagreement about any

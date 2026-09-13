@@ -46,6 +46,11 @@ The four date-only rows it does NOT fold are honest misses, recorded so a later
 reader does not mistake them for regressions: `Racing Club De Lens` v `RC Lens`
 is a name the shared matcher does not yet join, and three rows (a Denver–Kansas
 City MLS fixture and two Brazilian ones) have no counterpart row to fold into.
+
+**Update, #6022:** the first of those four is closed. `Racing Club De Lens` is a
+whole-name entry in `soccer_team_matching.CLUB_NAME_ALIASES` now, so the Ligue 1
+pair below folds on the same exception this file tests. The other three stand —
+they have no counterpart row, which no name rule can invent.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -217,6 +222,47 @@ def test_all_three_premier_league_phantoms_fold_in_one_pass():
 
     assert _ids(result) == [15297677, 15297679, 15297680]
     assert result.folded_count == 3
+
+
+def test_the_ligue_one_phantom_folds_now_that_its_club_has_a_name():
+    """The fourth date-only row, and the only one this file listed as a miss (#6022).
+
+    Production 2026-09-13 served both of these on `/sports/soccer_france_ligue_one`:
+    a midnight Kalshi-ticker placeholder and the finished 2-2 eight rows below
+    it. Every part of the #6007 exception already reached them — same sport,
+    same UTC date, `Le Mans FC` matching on the home side — and the away side
+    did not, because `Racing Club De Lens` and `RC Lens` share no token. The
+    whole-name entry in `soccer_team_matching.CLUB_NAME_ALIASES` is what closes
+    it, so this test fails if either half is reverted.
+    """
+    population = [
+        _placeholder(
+            15310514,
+            "Le Mans FC",
+            "Racing Club De Lens",
+            commence_time=datetime(2026, 9, 13, 0, 0, tzinfo=timezone.utc),
+            sport_id=1319,
+            sport_key="soccer_france_ligue_one",
+        ),
+        _played(
+            15297788,
+            "Le Mans FC",
+            "RC Lens",
+            commence_time=datetime(2026, 9, 13, 15, 15, tzinfo=timezone.utc),
+            sport_id=1319,
+            sport_key="soccer_france_ligue_one",
+            espn_id="740283",
+            home_score=2,
+            away_score=2,
+        ),
+    ]
+
+    result = fold_twin_events(population)
+
+    (survivor,) = result.events
+    assert survivor.id == 15297788
+    assert (survivor.home_score, survivor.away_score) == (2, 2)
+    assert result.folded_count == 1
 
 
 # ── the regression this change is most likely to ship inert ────────────────
