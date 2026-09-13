@@ -45,12 +45,65 @@ from app.utils.event_tennis import (
 
 SLUG = "us-open-men-s-singles-winner"
 
+# ═══ THE SPECIMEN'S OWN DATES, AND WHY THEY ARE NOT USED LITERALLY ═══
+#
+# 🔴 These three literals are the MEASURED production values (the docstring
+# above quotes the two rows they came from), and for a year they were used as
+# written. At 2026-09-13 00:00Z they expired, and three tests in
+# `TestTheRailAndThePageCannotDisagree` went red ON MASTER with no code change:
+# `list_tennis_tournament_concepts` filters against the REAL clock and has no
+# `now` parameter, so once wall-clock time passed the men's final the fixture's
+# tournament fell out of the rail and the lister returned `[]`. The same file
+# read 17 passed at 23:46Z and 3 failed at 00:07Z.
+#
+# That is gotcha #44 exactly — "offset FIRST, then truncate; if your anchor
+# contains a date, it has a shelf life" — and `clock_sweep` cannot see it,
+# because the anchor is not branching on the clock, it is AGEING past it.
+#
+# The fix keeps the specimen and removes the shelf life: every anchor is
+# shifted by a whole number of WEEKS, which preserves
+#   * every interval the assertions depend on (FINAL − NOW = 7d; BACKSTOP −
+#     FINAL = 15d 2h; BACKSTOP − NOW = 21.2d, the >21d that made
+#     `proximity_live` call a live Slam UPCOMING), and
+#   * every WEEKDAY (measured: Sun -> Sun for both the shot and the final), so
+#     the day-of-week the header renders is still the one the specimen had.
+#     (The `_SHOT` comment below says "Saturday" while this module's own
+#     docstring says the page was shot on Sunday 2026-09-06, which is the
+#     weekday that date actually falls on. That wording predates this change
+#     and is left alone; the shift does not make it more or less true.)
+# The fourteen tests that pass `NOW` explicitly are therefore unchanged; only
+# the three that reach the real clock are affected.
+
 #: Saturday of the second week — the moment the page was shot.
-NOW = datetime(2026, 9, 6, 20, 35, tzinfo=timezone.utc)
+_SHOT = datetime(2026, 9, 6, 20, 35, tzinfo=timezone.utc)
 #: The day of the men's final, as Polymarket states it.
-FINAL = datetime(2026, 9, 13, 0, 0, tzinfo=timezone.utc)
+_SHOT_FINAL = datetime(2026, 9, 13, 0, 0, tzinfo=timezone.utc)
 #: Kalshi's contract expiration, fifteen days after the trophy.
-BACKSTOP = datetime(2026, 9, 28, 2, 0, tzinfo=timezone.utc)
+_SHOT_BACKSTOP = datetime(2026, 9, 28, 2, 0, tzinfo=timezone.utc)
+
+
+def _weeks_forward(target: datetime, *, margin_days: int = 7) -> timedelta:
+    """Whole weeks needed to keep `target` at least `margin_days` in the future.
+
+    `0` while the specimen's own dates are still ahead of the clock, so this is
+    inert until the day it is needed and the fixture stays literally the
+    measured one for as long as that is possible.
+
+    The margin is a WEEK rather than an hour because the shift is computed once
+    at import: a suite that starts at 23:59 must not have its anchor expire
+    while it is still running (the "green alone, red 11 minutes into CI" shape).
+    """
+    behind = (datetime.now(timezone.utc) + timedelta(days=margin_days)) - target
+    if behind.total_seconds() <= 0:
+        return timedelta(0)
+    return timedelta(weeks=-(-behind.days // 7))  # ceil division
+
+
+_SHIFT = _weeks_forward(_SHOT_FINAL)
+
+NOW = _SHOT + _SHIFT
+FINAL = _SHOT_FINAL + _SHIFT
+BACKSTOP = _SHOT_BACKSTOP + _SHIFT
 
 
 def _market(name, mid, n_outcomes, resolution_date, status="open", volume=0.0):
