@@ -19,7 +19,10 @@ from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
 from app.utils.kalshi_empty_book import KALSHI_BOOKMAKER
 from app.utils.futures_unsupported_price import (
+    POLYMARKET_BOOKMAKER,
     WITHHELD_PRICE_FIELDS,
+    midpoint_refuted_by_last_trade,
+    needs_trade_disconfirmation,
     needs_trade_evidence,
     price_is_unsupported,
 )
@@ -2905,6 +2908,97 @@ async def _unsupported_price_outcome_ids(
     }
 
 
+async def _refuted_midpoint_outcome_ids(
+    db: AsyncSession, market: FuturesMarket
+) -> set[int]:
+    """Which of this market's outcomes serve a midpoint the newest trade refutes.
+
+    #5876, the Polymarket sibling of ``_unsupported_price_outcome_ids``. Same
+    two-step shape for the same reason: the fabricated-midpoint screen is done on
+    the outcome rows first, so a market holding no candidate costs nothing here
+    and never reaches the snapshot table.
+
+    THE NEWEST SNAPSHOT, NOT THE BEST ONE, AND THAT IS THE WHOLE RULE. An
+    aggregate over an outcome's history reads its liquid past: ``max(last_price)``
+    across market 8641774's 2,386 snapshots per outcome returns 0.92–0.96 and
+    would spare every leg on the page, while the newest rows read 0.0040. So the
+    LATERAL takes one row per outcome, ordered by ``captured_at`` — it rides
+    ``ix_futures_odds_snapshots_outcome_bookmaker_captured``, the same index the
+    Kalshi arm uses, one seek per candidate.
+
+    Ties on ``captured_at`` resolve to the trade CLOSEST to the served price,
+    which is the fail-open direction: if two snapshots share a microsecond, the
+    one most likely to support what we print is the one that gets to speak.
+    """
+    candidates = [
+        o
+        for o in market.outcomes
+        if needs_trade_disconfirmation(
+            market.source,
+            o.resolution_source,
+            _as_float(o.current_probability),
+            _as_float(getattr(o, "current_yes_bid", None)),
+            _as_float(getattr(o, "current_yes_ask", None)),
+        )
+    ]
+    if not candidates:
+        return set()
+
+    candidate_ids = [o.id for o in candidates]
+    newest = (
+        select(
+            FuturesOddsSnapshot.outcome_id,
+            func.max(FuturesOddsSnapshot.captured_at).label("captured_at"),
+        )
+        .where(
+            FuturesOddsSnapshot.outcome_id.in_(candidate_ids),
+            FuturesOddsSnapshot.bookmaker == POLYMARKET_BOOKMAKER,
+        )
+        .group_by(FuturesOddsSnapshot.outcome_id)
+        .subquery()
+    )
+    rows = await db.execute(
+        select(
+            FuturesOddsSnapshot.outcome_id,
+            FuturesOddsSnapshot.last_price,
+        )
+        .join(
+            newest,
+            and_(
+                FuturesOddsSnapshot.outcome_id == newest.c.outcome_id,
+                FuturesOddsSnapshot.captured_at == newest.c.captured_at,
+            ),
+        )
+        .where(FuturesOddsSnapshot.bookmaker == POLYMARKET_BOOKMAKER)
+    )
+    served = {o.id: _as_float(o.current_probability) for o in candidates}
+    latest_trade: dict[int, float] = {}
+    for outcome_id, last_price in rows.all():
+        price = _as_float(last_price)
+        if price is None:
+            continue
+        target = served.get(outcome_id)
+        held = latest_trade.get(outcome_id)
+        if held is None or (
+            target is not None and abs(price - target) < abs(held - target)
+        ):
+            latest_trade[outcome_id] = price
+
+    return {
+        o.id
+        for o in candidates
+        if midpoint_refuted_by_last_trade(
+            market.source,
+            o.resolution_source,
+            _as_float(o.current_probability),
+            _as_float(getattr(o, "current_yes_bid", None)),
+            _as_float(getattr(o, "current_yes_ask", None)),
+            latest_trade.get(o.id),
+            has_trade_evidence=o.id in latest_trade,
+        )
+    }
+
+
 @router.get("/{market_id}")
 async def get_futures_market(
     market_id: int,
@@ -2939,7 +3033,14 @@ async def get_futures_market(
             db, market_id, outcome_ids
         )
 
+    # Two venues, two price rules, ONE set of withheld ids. The arms are
+    # mutually exclusive by construction — each screens on `market.source` — so
+    # the union is a union of disjoint sets and never a precedence question.
+    # They stay separate functions because the rules are genuinely different
+    # (gotcha #19): Kalshi's asks whether anything supports the price at all,
+    # Polymarket's asks whether the newest trade refutes it.
     unsupported_price_ids = await _unsupported_price_outcome_ids(db, market)
+    unsupported_price_ids |= await _refuted_midpoint_outcome_ids(db, market)
 
     detail = _format_market_detail(market, bookmakers, unsupported_price_ids)
     if len(bookmakers) > 1 and source_breakdown:
@@ -4728,9 +4829,14 @@ def _format_market_detail(
         }
         for o in sorted_outcomes
     ]
-    # #5611: a price no book and no trade supports is not published. The rule and
-    # everything measured about it are in `app.utils.futures_unsupported_price`;
+    # #5611/#5876: a price no book and no trade supports — and a Polymarket
+    # midpoint the newest trade refutes — are not published. The rules and
+    # everything measured about them are in `app.utils.futures_unsupported_price`;
     # the caller decided WHICH rows, because only it can read the snapshots.
+    #
+    # Both arms land here, in one set, so everything below this line (the
+    # normalize-first ordering, the present-and-null key contract, the withheld
+    # count) is written once and holds for both.
     #
     # HERE, ABOVE `normalize_display_probs`, AND THAT IS LOAD-BEARING. A withheld
     # value left in place until after the squeeze would still sit in the divisor,
