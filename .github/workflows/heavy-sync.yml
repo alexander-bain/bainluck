@@ -286,6 +286,19 @@ jobs:
           # asked again rather than restated. So the accuracy rebuild keeps
           # every protection it had, and `--dispatched` is unaffected (the
           # in-flight verdict is BYPASSED, so the loop breaks on its first read).
+          #
+          # AND ONE IDLE READING IS NOT AN IDLE FLEET (#5886). The reply is a
+          # snapshot of unknown age — 5 s of endpoint cache, an 18.4 s measured
+          # broadcast, two retries — so v15 printed IDLE at 16:57:10Z while
+          # `matching_reconciliation` had been running since 16:56:59.9Z, and
+          # pushed. That job was short enough to survive (success 16:57:26, the
+          # release 16:57:47); the `:50` matcher at 154-552 s would not have.
+          # Two consecutive idle readings cannot both miss a job that outlives
+          # the poll, so the push waits for `IDLE_CONFIRMATIONS` of them. The
+          # confirm can only WAIT, never refuse: at the band's edge it falls
+          # back to the single read the gate used before, so it cannot cost a
+          # cycle — only the band can, exactly as before.
+          IDLE_STREAK=0
           while true; do
             # Removed FIRST: with `--fail` curl writes no body, so a failed read
             # would otherwise leave the PREVIOUS iteration's payload in place and
@@ -304,16 +317,42 @@ jobs:
               -o "$INSPECT_JSON" \
               || echo "the inspect read failed; the gate treats that as UNKNOWN."
 
+            # Stdout is CAPTURED and re-echoed because the confirm turns on the
+            # VERDICT and not on the exit code. `IDLE` and `UNKNOWN` share code
+            # 0 by design — both proceed — but they are opposite facts, and
+            # only one of them is worth a second look. Stderr is left alone so
+            # a real error still reaches the log in place.
             set +e
-            python3 scripts/heavy_sync_decision.py inflight \
+            INFLIGHT_OUT="$(python3 scripts/heavy_sync_decision.py inflight \
               --inspect-json "$INSPECT_JSON" \
-              $DISPATCH_FLAG
+              $DISPATCH_FLAG)"
             INFLIGHT=$?
             set -e
-            # Only BUSY is worth waiting on. IDLE proceeds, and a harness story
-            # (>1) is handled below exactly as it was — waiting on a gate that
-            # crashed would be waiting for a verdict nobody is computing.
-            [ "$INFLIGHT" -eq 1 ] || break
+            printf '%s\n' "$INFLIGHT_OUT"
+            INFLIGHT_VERDICT="${INFLIGHT_OUT%%:*}"
+
+            # BUSY resets the streak; an unconfirmed IDLE waits. EVERYTHING
+            # else breaks at once, and each for its own reason:
+            #   UNKNOWN  — the instrument failed. A second broken reading is
+            #              still broken, so confirming it spends band and buys
+            #              nothing; the cost gate proceeds, as it always has.
+            #   BYPASSED — `--dispatched`, which ignores this veto entirely.
+            #              Confirming a reading nobody consults would make the
+            #              attended run slower than the unattended one.
+            #   exit >1  — a harness story, not a verdict (gotcha #54). Waiting
+            #              on it is waiting for one nobody is computing.
+            if [ "$INFLIGHT" -eq 1 ]; then
+              IDLE_STREAK=0
+            elif [ "$INFLIGHT" -eq 0 ] && [ "$INFLIGHT_VERDICT" = "IDLE" ]; then
+              IDLE_STREAK=$((IDLE_STREAK + 1))
+              # A full `if`, not `[ ... ] && break`: that list returns 1 on the
+              # not-yet-confirmed pass, and a shell run under `set -e` reading
+              # that as a failure is the kind of harness story gotcha #54 is
+              # about. Nothing here is allowed to end the run.
+              if [ "$IDLE_STREAK" -ge 2 ]; then break; fi
+            else
+              break
+            fi
 
             BAND_LEFT="$(python3 scripts/heavy_sync_decision.py band-seconds-left)"
             # A deadline that did not parse is not a licence to keep waiting:
@@ -322,11 +361,24 @@ jobs:
             # i.e. as permission to sleep again (gotcha #54: read the value).
             case "${BAND_LEFT}" in ''|*[!0-9]*) BAND_LEFT=0 ;; esac
             if [ "$BAND_LEFT" -le 30 ]; then
-              echo "The band closes in ${BAND_LEFT}s — holding rather than pushing"
-              echo "past the edge that keeps the next accuracy rebuild whole."
+              if [ "$INFLIGHT" -eq 0 ]; then
+                # An unconfirmed IDLE at the edge pushes. This is the reading
+                # the gate used before the confirm existed, so the confirm has
+                # taken nothing away — it only ever spends band it has.
+                echo "The band closes in ${BAND_LEFT}s — pushing on one idle read"
+                echo "rather than losing the cycle to a confirmation."
+              else
+                echo "The band closes in ${BAND_LEFT}s — holding rather than pushing"
+                echo "past the edge that keeps the next accuracy rebuild whole."
+              fi
               break
             fi
-            echo "Waiting 30s for worker-heavy to finish (${BAND_LEFT}s of band left)."
+            if [ "$INFLIGHT" -eq 0 ]; then
+              echo "Idle once; a snapshot cannot see a job that started inside it."
+              echo "Confirming in 30s (${BAND_LEFT}s of band left)."
+            else
+              echo "Waiting 30s for worker-heavy to finish (${BAND_LEFT}s of band left)."
+            fi
             sleep 30
           done
 

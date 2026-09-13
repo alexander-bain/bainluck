@@ -87,13 +87,30 @@ app's ``/api/admin/celery/inspect`` already broadcasts, and holds while a
 where that answer cannot be read, and a cost gate that cannot read its fact must
 never take the sync down (the polarity rule in :func:`decide`).
 
-What the probe does NOT cover, stated so nobody reads it as a proof: a job that
-STARTS in the 36-118s between the push and the release (the typeahead at ``:53``
-is exactly that case), and a job on ``worker-heavy`` that is not in
-``HEAVY_TASKS`` — the inspect reply is keyed by an opaque ``celery@<uuid>``
-hostname, so membership of that set is the only channel that names the heavy
-fleet. Both residuals are narrower than today's, and neither is silent: the
-verdict names what it saw.
+**AND ONE READING OF THAT PROBE CANNOT SEE ITS OWN BLIND SPOT**, which the first
+sync under it demonstrated rather than risked: at v15 the gate printed IDLE at
+16:57:10Z while ``matching_reconciliation`` had been running since 16:56:59.9Z.
+The reply is a snapshot of unknown age — 5 s of endpoint cache, an 18.4 s
+measured broadcast, two retries — so :data:`IDLE_CONFIRMATIONS` readings are
+required before the push, and the derivation of that number is on the constant.
+
+What is STILL not covered, stated so nobody reads any of this as a proof:
+
+* a job shorter than the poll that both starts and ends inside the confirm.
+  One resident qualifies — ``matching_reconciliation`` at 11-36 s measured —
+  and it is the cheapest to lose and re-fires every 15 min;
+* a job on ``worker-heavy`` that is not in ``HEAVY_TASKS``. This is no longer
+  hypothetical and it has a name: ``app.tasks.build_cohort_market_type``
+  declares ``queue="heavy"`` on its own decorator and
+  ``routes/admin_cohort.py`` sends it there explicitly, while sitting outside
+  the set ruling 110 governs. It has no beat — only an admin call reaches it —
+  so the gate is blind to it exactly when a person triggers it. Widening
+  ``HEAVY_TASKS`` is a change to a ruled set and is not made here (#5886).
+
+The inspect reply is keyed by an opaque ``celery@<uuid>`` hostname, which is why
+membership of a task set, rather than a worker identity, is the only available
+channel. Every residual above is narrower than the one it replaced, and none of
+them is silent: the verdict names what it saw.
 
 Usage (the workflow gathers facts, this judges, the workflow acts on the code)::
 
@@ -227,6 +244,38 @@ def inside_window(now: datetime) -> bool:
 #: 500 on two of eight calls when it was measured, so the rate is also a load
 #: choice. 30 s gives <=40 reads across the widest possible band.
 INFLIGHT_POLL_SECONDS = 30
+
+#: How many CONSECUTIVE idle readings are needed before the push (#5886).
+#:
+#: ONE IDLE READING CANNOT SEE ITS OWN BLIND SPOT, and the v15 sync is the
+#: specimen rather than the worry. `matching_reconciliation` started
+#: 2026-09-13T16:56:59.9Z; the gate printed IDLE at 16:57:10Z and pushed;
+#: heavy released at 16:57:47Z. The job survived only because it is short — it
+#: succeeded at 16:57:26, 21 s ahead of the release — but the gate never saw
+#: it, and the same sequence around the `:50` matcher (154-552 s, measured)
+#: kills a pass.
+#:
+#: The reading is a SNAPSHOT of unknown age, not a live fact: the endpoint
+#: caches for 5 s (`_INSPECT_TTL_S`), the inspect broadcast itself measured
+#: 18.4 s, and the workflow retries twice with a 3 s delay. So "IDLE" honestly
+#: means "no heavy job was running up to ~25 s ago", against a kill window that
+#: runs another 36-118 s past the push.
+#:
+#: A second reading one poll later closes that gap for any job that outlives
+#: the poll, because the two snapshots cannot both miss it. Stated as a bound
+#: rather than a promise: every heavy resident measured on production outlives
+#: 30 s — matcher 154-552 s, `futures_price_refresh` 151-296 s, the rebuild
+#: 4-22 min, `rebuild_typeahead_index` 90 s (its own budget) — EXCEPT
+#: `matching_reconciliation` at 11-36 s, which can still start and finish
+#: inside the confirm. That one is also the cheapest to lose and re-fires
+#: every 15 min.
+#:
+#: 2 and not 3: each extra confirmation costs a poll of the band for a blind
+#: spot that is already covered, and the band is the budget the whole ship
+#: spends. The confirm can only ever WAIT, and only inside the band — at the
+#: edge it degrades to the single read this gate used before, which is why it
+#: cannot cost a cycle (`test_the_confirm_degrades_to_a_single_read_at_the_edge`).
+IDLE_CONFIRMATIONS = 2
 
 
 def band_seconds_left(now: datetime | None = None) -> int:

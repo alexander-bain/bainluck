@@ -897,7 +897,10 @@ IDLE_BODY = json.dumps({"celery@one": {"active": []}})
 
 def _extract_wait_loop() -> str:
     lines = _workflow_code().splitlines()
-    start = next(i for i, ln in enumerate(lines) if ln.strip() == "while true; do")
+    # From the streak's initialiser, not from `while`: the counter is read
+    # inside the loop, so a block that starts one line later runs under `set -u`
+    # against an unset variable and the harness fails for its own reason.
+    start = next(i for i, ln in enumerate(lines) if ln.strip() == "IDLE_STREAK=0")
     end = next(i for i in range(start, len(lines)) if lines[i].strip() == "done")
     return "\n".join(ln[10:] for ln in lines[start:end + 1])
 
@@ -965,12 +968,18 @@ def _run_wait_loop(tmp_path, *, bodies, deadlines, dispatched=False, curl_fails=
 
 
 def test_a_busy_worker_is_waited_out_and_the_idle_moment_is_taken(tmp_path):
-    """The 14:46Z run, replayed: busy, busy, then the :58 idle it never saw."""
+    """The 14:46Z run, replayed: busy, busy, then the :58 idle it never saw.
+
+    The idle now has to be seen TWICE before the push (#5886), so the run that
+    used to end on read 3 ends on read 4 — the same verdict, one poll later.
+    """
     code, reads, sleeps = _run_wait_loop(
-        tmp_path, bodies=[BUSY_BODY, BUSY_BODY, IDLE_BODY], deadlines=[600, 540]
+        tmp_path,
+        bodies=[BUSY_BODY, BUSY_BODY, IDLE_BODY, IDLE_BODY],
+        deadlines=[600, 540, 480],
     )
     assert code == 0
-    assert (reads, sleeps) == (3, 2)
+    assert (reads, sleeps) == (4, 3)
 
 
 def test_the_wait_stops_at_the_bands_edge_and_holds(tmp_path):
@@ -995,13 +1004,73 @@ def test_an_unreadable_deadline_stops_the_wait_rather_than_licensing_it(tmp_path
         assert (code, reads, sleeps) == (1, 1, 0), bad
 
 
-def test_the_loop_never_waits_on_a_verdict_that_is_not_busy(tmp_path):
-    """IDLE proceeds on the first read — the wait costs a synced-and-idle fleet
-    nothing at all."""
+def test_one_idle_reading_is_not_enough_to_push(tmp_path):
+    """v15, replayed: the gate printed IDLE at 16:57:10Z while
+    `matching_reconciliation` had been running since 16:56:59.9Z.
+
+    The reply is a SNAPSHOT of unknown age — 5 s of endpoint cache, an 18.4 s
+    measured broadcast, two retries — so one reading cannot see a job that
+    started inside it. An idle fleet now costs exactly one poll to confirm.
+    """
     code, reads, sleeps = _run_wait_loop(
-        tmp_path, bodies=[IDLE_BODY], deadlines=[600]
+        tmp_path, bodies=[IDLE_BODY, IDLE_BODY], deadlines=[600, 540]
+    )
+    assert (code, reads, sleeps) == (0, 2, 1)
+
+
+def test_a_job_the_first_snapshot_could_not_see_is_caught_by_the_second(tmp_path):
+    """The whole point, stated as the failure it prevents.
+
+    Read 1 is the stale snapshot that says IDLE; read 2 is the one that can see
+    the job. The loop must NOT have pushed on read 1, and having found a busy
+    fleet it goes back to waiting — the streak resets.
+    """
+    code, reads, sleeps = _run_wait_loop(
+        tmp_path,
+        bodies=[IDLE_BODY, BUSY_BODY, IDLE_BODY, IDLE_BODY],
+        deadlines=[600, 540, 480, 420],
+    )
+    assert code == 0
+    # 1 idle, 1 busy (streak reset), then the two that confirm each other.
+    assert (reads, sleeps) == (4, 3)
+
+
+def test_a_busy_reading_resets_the_streak_rather_than_counting_toward_it(tmp_path):
+    """Two idle readings with a busy one between them are not a confirmation —
+    they are two first readings. Only the band may end the wait early."""
+    code, reads, sleeps = _run_wait_loop(
+        tmp_path,
+        bodies=[IDLE_BODY, BUSY_BODY, IDLE_BODY, BUSY_BODY, IDLE_BODY, IDLE_BODY],
+        deadlines=[600, 540, 480, 420, 360, 300],
+    )
+    assert (code, reads, sleeps) == (0, 6, 5)
+
+
+def test_the_confirm_degrades_to_a_single_read_at_the_edge(tmp_path):
+    """THE CONFIRM MAY COST A POLL; IT MAY NEVER COST A CYCLE.
+
+    At the band's edge an unconfirmed IDLE pushes — which is exactly the
+    reading this gate used before the confirm existed. So the confirm is
+    strictly additional safety inside the band and takes nothing away at it.
+    """
+    code, reads, sleeps = _run_wait_loop(
+        tmp_path, bodies=[IDLE_BODY, IDLE_BODY], deadlines=[30]
     )
     assert (code, reads, sleeps) == (0, 1, 0)
+
+
+def test_the_workflow_confirms_the_number_of_times_the_script_documents():
+    """Two copies of one number is how a comment becomes a story about a value
+    nothing enforces — the same rule `INFLIGHT_POLL_SECONDS` is held to."""
+    loop = _extract_wait_loop()
+    assert f'-ge {sync.IDLE_CONFIRMATIONS} ]' in loop
+    # It is a sample COUNT, not a threshold, but it still has to be a count the
+    # band can afford: the confirmations plus the polls between them must fit
+    # inside the band with room to push, or the gate would be spending the
+    # cycle it exists to deliver.
+    band_s = (sync.window_bounds()[1] - sync.window_bounds()[0] + 1) * 60
+    assert sync.IDLE_CONFIRMATIONS >= 2, "one reading cannot confirm itself"
+    assert sync.IDLE_CONFIRMATIONS * sync.INFLIGHT_POLL_SECONDS < band_s
 
 
 def test_an_attended_run_never_waits(tmp_path):
@@ -1009,6 +1078,24 @@ def test_an_attended_run_never_waits(tmp_path):
     here would make an attended run slower than the unattended one."""
     code, reads, sleeps = _run_wait_loop(
         tmp_path, bodies=[BUSY_BODY], deadlines=[600], dispatched=True
+    )
+    assert (code, reads, sleeps) == (0, 1, 0)
+
+
+def test_an_unknown_reading_is_never_confirmed_because_it_is_not_an_idle_one(tmp_path):
+    """`IDLE` and `UNKNOWN` share exit code 0 and are opposite facts.
+
+    Both PROCEED — the cost-gate polarity is untouched — but only `IDLE` is a
+    reading about the fleet, so only `IDLE` is worth a second look. A second
+    reading of a broken instrument is still broken: confirming it would spend
+    band to learn nothing, on exactly the runs where the gate is already blind.
+    This is the shape that makes it a real distinction rather than a tidy one:
+    a body naming NO WORKER is a failed broadcast (gotcha #53), not a quiet
+    fleet, and it is indistinguishable from one by exit code alone.
+    """
+    no_worker = json.dumps({"_cache": {"age": 0.0}})
+    code, reads, sleeps = _run_wait_loop(
+        tmp_path, bodies=[no_worker, IDLE_BODY], deadlines=[600, 540]
     )
     assert (code, reads, sleeps) == (0, 1, 0)
 
