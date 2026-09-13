@@ -27,6 +27,14 @@ MEDIA = {"home_team_data": {"logo_small": "x"}, "away_team_data": {"logo_small":
 
 
 def game(name, status="live", starts_in_hours=None, score=30, media=True, **extra):
+    # A LIVE game defaults to carrying a clock (#4872). Like `MEDIA` above, this
+    # is not a property under test — it is what makes `game(...)` mean "a game
+    # the lead is allowed to promote", which is the premise every ordering
+    # assertion in this file rests on. A test that wants the silent case passes
+    # `game_clock=None` explicitly; `test_a_silent_live_game_does_not_lead_4872`
+    # is where that case is asserted in both directions.
+    if status == "live":
+        extra.setdefault("game_clock", "60'")
     data = {"status": status, "id": name, **({} if not media else MEDIA), **extra}
     if starts_in_hours is not None:
         data["commence_time"] = (NOW + timedelta(hours=starts_in_hours)).isoformat()
