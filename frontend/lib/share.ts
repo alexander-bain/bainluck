@@ -72,6 +72,29 @@ export function truncateShareText(text: string, maxLength = 180): string {
   return `${atBoundary.trim()}...`;
 }
 
+/**
+ * End a share sentence whose last clause is a MARKET NAME, without doubling the
+ * terminator the name already carries.
+ *
+ * A market name is very often itself a question — 136,601 of the 996,337 resolved
+ * markets and 9,684 of the 36,398 open ones end in `?` (production db-query,
+ * 2026-09-13 21:52Z). Appending `.` unconditionally is what printed this on
+ * `/futures/60544511`, read off production the same minute:
+ *
+ *   og:description  "77° or above won Temperature in New York City on Sep 3,
+ *                    2026 at 7pm EDT?. See the full probability board on Bain Luck."
+ *
+ * `?.` is not a typo a reader forgives; it is the first thing under a pasted
+ * link. The rule is punctuation-only and deliberately narrow: it appends a period
+ * when the text ends in none of `.`/`!`/`?`, and otherwise leaves the text exactly
+ * as the market named itself. It never REMOVES a terminator — stripping the `?`
+ * would edit the market's own question, which is the venue's wording and not ours.
+ */
+export function endShareSentence(text: string): string {
+  const trimmed = text.trim();
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
 export type ShareMethod = "native" | "clipboard";
 
 export interface ShareAttempt {
