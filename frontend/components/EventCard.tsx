@@ -309,9 +309,30 @@ export default function EventCard({
   // (#1841), so `books` is exactly what this number has always been. Passing
   // the key explicitly as `undefined` states that absence rather than letting a
   // future `Event` field silently start feeding an unlabelled rung.
-  const prematch = isFinished
-    ? prematchReading({ prematch_odds: undefined, opening_odds: event.opening_odds })
-    : null;
+  //
+  // live/207 (#3016, #4822) — AND ON A SUSPENDED CARD, for the same reason.
+  // CERT-792 was right to drop the live chip, the bar and the footer from a
+  // suspended row: all three assert something about a match nothing is
+  // reporting on. But `isFinished` alone left the row with NO number from any
+  // branch, so a `suspended` card printed "No result reported" and nothing
+  // else — while its payload carried `current_odds`, `opening_odds` and a
+  // hero probability. Measured on production 2026-09-13: `/search?q=Hanwha
+  // Eagles` returned 24 results, 17 of them suspended, and all 17 served an
+  // opening line under a blank card. Across the table, 668 of 2,648 suspended
+  // events carry `opening_home_probability`.
+  //
+  // The pre-match reading is the one number a suspended row can state
+  // honestly, and it is the number the `closed` card sitting beside it on the
+  // same search page already prints: grey, beside each name, labelled
+  // `Pre-match · sportsbooks`. It says what the market thought BEFORE, which
+  // is true whatever happened afterwards — the opposite of the stale live
+  // blend the cert refused. The 820 `scheduled`-past-grace rows carry no
+  // opening line at all, so they keep the bare summary; there is nothing to
+  // print and the card says so by saying nothing.
+  const prematch =
+    isFinished || isSuspended
+      ? prematchReading({ prematch_odds: undefined, opening_odds: event.opening_odds })
+      : null;
 
   // On FINAL the emphasis follows WHO WON, not who was favoured. Everywhere
   // else on this card `homeFavorite` is the right question, but on a settled
@@ -340,14 +361,23 @@ export default function EventCard({
       : won
         ? "font-semibold text-text-primary"
         : "text-text-muted";
+  // live/207 — a SUSPENDED card emphasises neither side, for the same reason a
+  // finished card with no winner and a card with no reading do not. Emphasis
+  // here is `homeFavorite`, which is computed from `current_odds` — the stale
+  // live blend CERT-792 refuses to PRINT. Bolding one name on the strength of
+  // a number we decline to show is that claim made quietly, and once the grey
+  // pre-match pair renders beside the names it can also contradict them
+  // outright: an opening line and a last live blend disagree about the
+  // favourite often enough that the card would bold one side while the number
+  // beside it named the other.
   const homeNameClass = isFinished
     ? finishedNameClass(homeWon)
-    : noReading || homeFavorite
+    : isSuspended || noReading || homeFavorite
       ? "text-text-primary"
       : "text-text-secondary";
   const awayNameClass = isFinished
     ? finishedNameClass(awayWon)
-    : noReading || !homeFavorite
+    : isSuspended || noReading || !homeFavorite
       ? "text-text-primary"
       : "text-text-secondary";
 
