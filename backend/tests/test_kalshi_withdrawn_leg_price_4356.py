@@ -68,11 +68,21 @@ from app.tasks import kalshi as k
 class _Row:
     """One row of the pass's own selector."""
 
-    def __init__(self, id_, series, external_id, name, newest_price=None):
+    def __init__(
+        self, id_, series, external_id, name, newest_price=None, pre_kickoff=True
+    ):
         self.id = id_
         self.series = series
         self.external_id = external_id
         self.name = name
+        #: #5896 added this column to the pass's selector. Defaulted to TRUE —
+        #: the STRICTER setting — on purpose: every leg in this file is quoted
+        #: on a game that has not kicked off, which is the only side of
+        #: kick-off where #5896's branch can act. So each control below now
+        #: also proves that branch stays out of the way when the venue has not
+        #: answered (`_leg` sends no `result`), which is free evidence a
+        #: `pre_kickoff=False` default would have thrown away.
+        self.pre_kickoff = pre_kickoff
         #: `_linked_book_series_order` reads this to put the stalest series
         #: first. Present so the harness exercises the real ordering rather
         #: than a stub of it.

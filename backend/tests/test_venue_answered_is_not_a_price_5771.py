@@ -25,6 +25,10 @@ import pytest
 
 from app.services.kalshi_api import KalshiAPIService
 from app.tasks import futures_price_refresh as fpr
+# #5896 moved the predicate to the shared liveness module when a second writer
+# started asking it. Addressed at its home rather than through `fpr`, so this
+# band keeps proving the function the two writers actually share.
+from app.utils import futures_liveness as liveness
 
 
 # --- the venue's payload, verbatim ------------------------------------------
@@ -148,20 +152,20 @@ class TestTheAnsweredTest:
         `result is not None` is TRUE of every active market on the venue, and a
         refusal written that way blanks the entire book.
         """
-        assert fpr._venue_answered("") is False
-        assert fpr._venue_answered("   ") is False
-        assert fpr._venue_answered(None) is False
+        assert liveness.venue_answered("") is False
+        assert liveness.venue_answered("   ") is False
+        assert liveness.venue_answered(None) is False
 
     def test_the_venues_two_verdicts_are_both_answers(self):
-        assert fpr._venue_answered("yes") is True
-        assert fpr._venue_answered("no") is True
+        assert liveness.venue_answered("yes") is True
+        assert liveness.venue_answered("no") is True
 
     def test_a_losing_verdict_counts_exactly_as_much_as_a_winning_one(self):
         """`no` is the majority of a settled field and the half a `is_winner`
         test would miss — the same asymmetry #5246 was missing."""
         answered = [m["result"] for m in LALIGA_FINALIZED["markets"]]
         assert answered.count("no") == 2
-        assert all(fpr._venue_answered(r) for r in answered)
+        assert all(liveness.venue_answered(r) for r in answered)
 
 
 # --- 2. the control must not move -------------------------------------------
