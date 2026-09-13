@@ -8,14 +8,31 @@ enum APIError: LocalizedError {
     case decodingError(underlying: Error)
     case networkError(underlying: Error)
 
+    /// Reader-facing text for a failure, rendered verbatim by 19 error call sites.
+    ///
+    /// #5849: THESE SENTENCES MAY NOT NAME A GESTURE. This is the transport layer;
+    /// it cannot know which surface it is being drawn on. The 503 case used to end
+    /// "Pull to refresh.", and the screen the accuracy dark window makes reachable —
+    /// `CalibrationView`'s error branch — is a bare `VStack` with no `ScrollView`
+    /// and no `.refreshable` in the file, so the only instruction on that screen was
+    /// the one that does nothing, above a Retry button the copy never mentioned.
+    /// Photographed at 08:09Z 2026-09-13, `artifacts-native-020/cal-503-before.png`.
+    /// Whether a surface can be pulled is the surface's fact; say what happened and
+    /// let the screen offer its own affordance.
+    ///
+    /// AND NO STATUS CODE. The after-shot of that same screen twenty minutes later
+    /// (`cal-503-after.png`) landed on the other branch and read `Request failed
+    /// (429).` — a number a reader cannot act on, which is notice 34 on a screen
+    /// rather than in a log. The code stays in the enum's payload for the caller
+    /// that wants to switch on it, and out of the sentence.
     var errorDescription: String? {
         switch self {
         case .invalidURL:
             return "Invalid URL"
         case .httpError(let code, _):
-            if code == 503 { return "Server is temporarily unavailable. Pull to refresh." }
-            if code >= 500 { return "Server error (\(code)). Try again in a moment." }
-            return "Request failed (\(code))."
+            if code == 503 { return "Server is temporarily unavailable. Try again in a moment." }
+            if code >= 500 { return "Server error. Try again in a moment." }
+            return "We couldn't load that just now. Try again in a moment."
         case .decodingError:
             return "Couldn't read the response. Try again."
         case .networkError:

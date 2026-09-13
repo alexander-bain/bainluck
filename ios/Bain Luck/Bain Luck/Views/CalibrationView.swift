@@ -55,11 +55,19 @@ struct CalibrationSurfaceView: View {
             if viewModel.loading {
                 ProgressView("Loading calibration data...")
             } else if let error = viewModel.error {
+                // #5849: the same margins and centring the two branches below have
+                // carried all along. Photographed at 08:09Z this branch drew its one
+                // sentence edge to edge, which held only because the sentence was
+                // short; the honest 503 copy is longer, and at any Dynamic Type size
+                // above default so is every other failure line that lands here.
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle").font(.largeTitle).foregroundStyle(.secondary)
-                    Text(error).font(.subheadline).foregroundStyle(.secondary)
+                    Text(error)
+                        .font(.subheadline).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                     Button("Retry") { Task { await viewModel.load() } }.buttonStyle(.borderedProminent)
                 }
+                .padding(.horizontal, 24)
             } else if let unavailable = viewModel.unavailableMessage {
                 // L2-231 Item 1: a payload that decoded but carries no curve. Every
                 // metric here divides by a bucket count, so rendering it anyway
