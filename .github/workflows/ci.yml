@@ -887,6 +887,34 @@ jobs:
             exit 1
           fi
 
+      - name: "#5789 the #5621 repair cannot select a real game (real Postgres)"
+        # The repair retires phantom NFL fantasy-points events. Its population
+        # was "every event carrying a kxnflffpts market", which was the right
+        # set only while every one of those markets was mis-linked. Once the
+        # matcher linked twelve of them to the games they belong to, the same
+        # predicate returned 4 phantoms AND 12 real Week 2 games — and because
+        # the counterpart LATERAL had no `e2.id <> ph.id`, each real game was
+        # its own counterpart, so the orphan refusal reported a clean zero.
+        # `--apply` would have voided the Sunday slate an hour before kickoff.
+        #
+        # A text assertion could not have caught this: the broken SQL read
+        # perfectly well. Only a server executing it over the rows production
+        # actually held can tell the two populations apart, which is what this
+        # file seeds — those twenty events and sixteen markets, verbatim.
+        #
+        # Same skip-detection as every gate in this job, for the same reason:
+        # pytest exits 0 when every test skips, so a gate that silently did not
+        # run is indistinguishable from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest \
+            tests/integration/test_repair_5621_population_excludes_real_games_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/repair_5621_population.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/repair_5621_population.txt; then
+            echo "::error::#5621 population gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Pre-match prior equivalence (real Postgres)
         # LAT-P222/#3030. Third instance of the class the two gates above cover:
         # a correlated bound the planner cannot evaluate until it holds the row.

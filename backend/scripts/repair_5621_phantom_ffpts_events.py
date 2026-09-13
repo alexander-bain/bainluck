@@ -54,17 +54,26 @@ WHY RETIRING LOSES NO GAME — the safety proof, measured, 16 of 16
 
 This is the question repair_2871 got the opposite answer to (68% of ITS rows
 were the only record of their fixture, which is why it merges instead of
-deleting). Measured here on 2026-09-12 over the FULL population, no sampling:
+deleting). Measured over the FULL population, no sampling — **2026-09-13
+03:45Z**:
 
-    phantoms: 16   with a real anchored counterpart: 16   without: 0
+    phantoms: 16   distinct real counterparts: 16   orphans: 0   self-matches: 0
+
+Read that alongside what the ATTACHMENT-based predicate said on the same rows
+over 36 hours — 16, then 4 phantoms + 12 real games, then 2 — and the reason
+this script's population is now four properties of the row itself is the whole
+story. See `_POPULATION_SQL`. A population read off a symptom is only the right
+set at the instant it was measured, and a repair script outlives that instant.
 
 Every phantom pairs with an `americanfootball_nfl` row carrying an `espn_id`,
 matched on both team names in EITHER orientation within ±36h — e.g.
 
-    15305032  "Houston @ Buffalo"      -> 14780141  Buffalo Bills @ Houston Texans
-              2026-09-13 00:00Z  (Kalshi close)     2026-09-13 17:00Z  espn=401872660
+    15305031  "Indianapolis @ Baltimore"  -> 14780140  "Baltimore Ravens
+              basketball_other, espn NULL                @ Indianapolis Colts"
+              2026-09-13 20:00Z (Kalshi close)           2026-09-13 17:00Z
+                                                         espn=401872659
 
-The orientation is reversed on all 16 and the time is the Kalshi close, not
+The orientation is reversed on all four and the time is the Kalshi close, not
 kickoff (gotcha #14) — which is exactly why `fold_twin_events` could never have
 folded them: its key is `(sport, away, home, commence MINUTE)` and three of
 those four differ. A serve-time fold was never available for this population.
@@ -159,6 +168,12 @@ TICKER_PREFIX = "kxnflffpts"
 TARGET_SPORT_KEY = "americanfootball_nfl"
 TARGET_CATEGORY = "football"
 
+#: The sport the phantoms were minted INTO — the wrong-sportedness is the
+#: defect, so it is the population's first clause rather than a symptom of it.
+#: `_categorize_kalshi_market` fell through to basketball for `kxnflffpts`
+#: before PR #5624 mapped the ticker, and every phantom wears this key.
+PHANTOM_SPORT_KEY = "basketball_other"
+
 #: The app the PRODUCER runs on — see the header. `poll_kalshi_markets` and
 #: `match_prediction_markets` live in `HEAVY_TASKS`, and since the heavy split
 #: that means `bainluck-heavy`, released separately from the web app. Writing
@@ -170,13 +185,71 @@ PRODUCER_APP = "bainluck-heavy"
 #: shape, not an absence — but the inverse matters more for a WRITER: this
 #: predicate should never match a large population, and if it suddenly does,
 #: something upstream changed and a human should look before 200 rows are
-#: retired. Measured population 2026-09-12 was exactly 16.
+#: retired. Measured population 2026-09-13 03:45Z is exactly 16. The ceiling
+#: stays where it is: it exists to catch a predicate that has gone wide, it did
+#: NOT catch the one that had (16 rows, twelve of them the real Week 2 slate,
+#: sat comfortably under it), and that is precisely why the fix is in the
+#: predicate and never in this number.
 MAX_EXPECTED_POPULATION = 60
 
 #: Every phantom, with its best real counterpart in either orientation. The
 #: LATERAL is the safety gate: a NULL `real_id` aborts the apply.
+#:
+#: THE POPULATION NAMES WHAT IS WRONG WITH A ROW, NEVER WHAT IS ATTACHED TO IT
+#: (#5789). This predicate was rewritten twice, and BOTH first cuts were the
+#: same mistake pointing in opposite directions.
+#:
+#: The original selected "every event wearing a `kxnflffpts` market". That was
+#: the 16 phantoms only for as long as every one of those markets stayed
+#: mis-linked, and the matcher then did its job:
+#:
+#:   2026-09-12        16 rows = 16 phantoms
+#:   2026-09-13 00:00Z 16 rows = 4 phantoms + **12 REAL anchored NFL games**
+#:   2026-09-13 03:45Z  2 rows = 2 phantoms   (14 phantoms had gone SILENT)
+#:
+#: Over-reach first: the props of twelve real Week 2 games got linked to the
+#: games, so the predicate started selecting the games themselves, an hour
+#: before kickoff. Then under-reach: the props of fourteen PHANTOMS got moved
+#: off them, so those rows — still `basketball_other`, still anchorless, still
+#: rendering as fake games in search — silently left the population the repair
+#: was supposed to clean. Same defect, both directions: the predicate asked an
+#: attachment question about an identity problem, and the answer moved under it
+#: every fifteen minutes while the matcher ran.
+#:
+#: So the population is now four properties a phantom HAS, none of which any
+#: other writer can take away (measured on production 2026-09-13 03:45Z):
+#:
+#:   sported `basketball_other`       4,158 anchorless kalshi-minted rows
+#:   + anchorless (no espn_id, no external_id, no team ids)
+#:   + `commence_time_source LIKE 'kalshi%'`  — minted by the Kalshi occurrence
+#:   + BOTH team names are NFL clubs                            -> **16 rows**
+#:
+#: The market join survives only to collect `market_id` for the re-sport, and
+#: is LEFT — 14 of the 16 no longer carry one, and needing one is what lost
+#: them. The team-name clause is what cuts 4,158 to 16, and it is the reason
+#: the counterpart LATERAL is still a REAL gate rather than a tautology: the
+#: population is defined without it, so a phantom whose real game is missing or
+#: outside ±36h shows up as an orphan and refuses the run. Measured: 16 rows,
+#: 16 DISTINCT counterparts, 0 orphans, 0 self-matches.
+#:
+#: `AND e2.id <> ph.id` — without it a real row is its own counterpart
+#: (identical names, delta 0), so `orphans` reads 0, the population ceiling
+#: passes, and `--apply` voids the twelve games it was matching against. That
+#: is the whole Week 2 Sunday slate, on the Sunday, and both refusals let it
+#: through: the only thing standing between the two was a clause that did not
+#: exist. A gate that a row can satisfy by pointing at itself is not a gate.
+#: It is now belt AND braces — `s.key = :phantom_sport` means a correctly
+#: sported NFL game cannot enter the population at all, anchored or not, which
+#: is strictly stronger than the `NOT (... espn_id IS NOT NULL)` clause it
+#: replaces — but it stays, and the gate grades it on its own.
 _POPULATION_SQL = """
-WITH ph AS (
+WITH nfl_club AS (
+    SELECT DISTINCT lower(t.name) AS name
+      FROM teams t
+      JOIN sports s ON s.id = t.sport_id
+     WHERE s.key = :target_sport
+),
+ph AS (
     SELECT e.id,
            e.status,
            e.commence_time,
@@ -188,9 +261,19 @@ WITH ph AS (
            f.llm_sport_category
       FROM events e
       JOIN sports s          ON s.id = e.sport_id
-      JOIN futures_markets f ON f.event_id = e.id
-     WHERE f.source = 'kalshi'
-       AND lower(f.external_id) LIKE :prefix || '%'
+      LEFT JOIN futures_markets f ON f.event_id = e.id
+                                 AND f.source = 'kalshi'
+                                 AND lower(f.external_id) LIKE :prefix || '%'
+     WHERE s.key = :phantom_sport
+       AND e.espn_id IS NULL
+       AND e.external_id IS NULL
+       AND e.home_team_id IS NULL
+       AND e.away_team_id IS NULL
+       AND e.commence_time_source LIKE 'kalshi%'
+       AND EXISTS (SELECT 1 FROM nfl_club c
+                    WHERE c.name LIKE lower(e.home_team_name) || '%')
+       AND EXISTS (SELECT 1 FROM nfl_club c
+                    WHERE c.name LIKE lower(e.away_team_name) || '%')
 )
 SELECT ph.*, r.id AS real_id, r.espn_id, r.commence_time AS real_ct
   FROM ph
@@ -200,6 +283,7 @@ SELECT ph.*, r.id AS real_id, r.espn_id, r.commence_time AS real_ct
           JOIN sports s2 ON s2.id = e2.sport_id
          WHERE s2.key = :target_sport
            AND e2.espn_id IS NOT NULL
+           AND e2.id <> ph.id
            AND (
                  (lower(e2.home_team_name) LIKE lower(ph.a) || '%'
                   AND lower(e2.away_team_name) LIKE lower(ph.h) || '%')
@@ -283,7 +367,11 @@ async def run(args):
         rows = (
             await s.execute(
                 text(_POPULATION_SQL),
-                {"prefix": TICKER_PREFIX, "target_sport": TARGET_SPORT_KEY},
+                {
+                    "prefix": TICKER_PREFIX,
+                    "target_sport": TARGET_SPORT_KEY,
+                    "phantom_sport": PHANTOM_SPORT_KEY,
+                },
             )
         ).all()
 
@@ -322,7 +410,13 @@ async def run(args):
             return 2
 
         event_ids = [r.id for r in rows]
-        market_ids = [r.market_id for r in rows]
+        # LEFT JOIN: 14 of the 16 phantoms no longer carry a `kxnflffpts`
+        # market at all (the matcher moved the props to the real games), so
+        # `market_id` is NULL for most rows and there is simply nothing to
+        # re-sport for them. Filtering here rather than relying on
+        # `id = ANY(ARRAY[NULL])` never matching keeps the printed counts
+        # honest about how many markets the run actually touches.
+        market_ids = [r.market_id for r in rows if r.market_id is not None]
 
         if args.backup:
             print("\n=== backup ===")

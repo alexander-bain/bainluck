@@ -85,6 +85,12 @@ COVERED = (
     "test_polymarket_resolved_candidate_sql_pg.py",
     "test_rekey_statpal_anchors_real_postgres.py",
     "test_repair_3672_bind_contract.py",
+    # #5789. Seeds `sports`, `events` and `futures_markets` by raw INSERT with
+    # production's own 20 events and 16 markets. Two of its NOT NULL columns
+    # (`sports.active`, `futures_markets.mutually_exclusive`) carry Python-side
+    # defaults only, so the seed had to name them — which is this file's whole
+    # point, and it caught them.
+    "test_repair_5621_population_excludes_real_games_pg.py",
     # #4788 (CAL-P1088). Seeds `futures_outcomes` by raw INSERT and names
     # `is_winner` on EVERY row, including the NULL ones — omitting it would let
     # the server default `false` seed this gate's own cohort by accident, so the
