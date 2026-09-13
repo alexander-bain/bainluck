@@ -20772,6 +20772,61 @@ def _search_team_evidence(row: dict) -> "_SearchEvidence":
     )
 
 
+def _served_prices_as_of(
+    market: FuturesMarket, served: list[dict]
+) -> Optional[str]:
+    """When the prices on THIS card were last written, or None if we cannot say.
+
+    #6018. A futures card has one age pip over many numbers, and it has always
+    been fed `FuturesMarket.updated_at` — the moment the ROW was touched, which
+    is not the moment any PRICE moved. Those two columns are written by
+    different passes (metadata/tier/volume vs the pollers), so the pip is wrong
+    in both directions and was measured wrong in both on one screenshot of
+    `?q=WNBA Champion` at 22:47Z 2026-09-13:
+
+      * `WNBA: 2026 Champion` (9413479, tier 1) printed **"Jul 21"** — its row
+        was last touched 2026-07-21 — over five prices every one of which was
+        rewritten that afternoon at 16:50Z. Eight weeks of decay claimed about
+        a six-hour-old ladder.
+      * `WNBA Champion` (55254662, tier 1) had its row touched at 22:16Z, so it
+        printed **"13m ago"** over twelve legs frozen since 2026-08-07. Five
+        weeks of staleness hidden behind a thirteen-minute claim.
+
+    Both cards sat in the same result list, showing the same 48% Minnesota, with
+    ages five weeks apart — the flattering one on the older market.
+
+    THE OLDEST OF THE PRICES THE CARD ACTUALLY DRAWS, not the newest and not the
+    whole ladder's. A reader takes one pip over five rows to cover all five, so
+    the only claim we can make honestly is a floor: nothing you can see here is
+    older than this. Scoping it to `served` rather than `market.outcomes` keeps
+    a long dead tail — a 0.1% leg nobody refreshes, or the `Other` rung 9413479
+    carries from May — from ageing a card whose visible answers are current.
+
+    None when no served row carries a stamp (the lean typeahead shape omits it,
+    and a market can have no outcomes at all). The consumer renders nothing on
+    None rather than falling back to `updated_at`: an empty space is honest and
+    the old pip was not.
+    """
+    served_ids = {o.get("id") for o in served if o.get("id") is not None}
+    if not served_ids:
+        return None
+    # `getattr` with a default, which is this module's house idiom for reading a
+    # row inside the search formatters (`_build_search_top_outcomes` does it for
+    # `mutually_exclusive` and `status`). The attribute is a mapped column and is
+    # always there on a real row; the doubles that reach this path are not, and a
+    # serializer must not be the thing that 500s a search page. A double that
+    # cannot say lands in the None branch, which is the designed answer.
+    stamps = [
+        stamp
+        for o in market.outcomes
+        if o.id in served_ids
+        and (stamp := getattr(o, "last_updated", None)) is not None
+    ]
+    if not stamps:
+        return None
+    return min(stamps).isoformat()
+
+
 def _format_futures_for_search(market: FuturesMarket) -> dict:
     """Format a futures market for search results (answer-first, #23-normalized)."""
     # top_outcomes: top 5 real outcomes, placeholder-filtered + #23-normalized
@@ -20797,4 +20852,8 @@ def _format_futures_for_search(market: FuturesMarket) -> dict:
         "top_outcomes": top_outcomes,
         "outcome_count": real_count,
         "updated_at": market.updated_at.isoformat() if market.updated_at else None,
+        # #6018: the age of the PRICES on this card. `updated_at` above is kept
+        # byte-for-byte (it is the row's write time and other readers key off
+        # it); this is the additive field the age pip reads instead.
+        "prices_updated_at": _served_prices_as_of(market, top_outcomes),
     }
