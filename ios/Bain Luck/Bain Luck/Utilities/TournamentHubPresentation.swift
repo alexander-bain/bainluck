@@ -605,7 +605,21 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
                     name: row.displayName,
                     flagUrl: row.image?.flagUrl,
                     percentText: boardRowValueText(row, renderedPercent: rendered[row.id]),
-                    deltaPoints: movementPoints(row.trendDelta)
+                    // A SETTLED ROW SHOWS NO MOVEMENT (#5945 keeps `trend_delta`
+                    // on settled rows, so this is a live payload, not a
+                    // hypothetical). The column beside this one has already
+                    // withdrawn the percent, because a probability to win a
+                    // title nobody can still win is not a number — and the
+                    // delta is a statement about exactly that withdrawn number.
+                    // Printing `+93` in green next to `Won` says the title race
+                    // is still moving. The web twin has guarded this since
+                    // #5934 (`{!settled && row.trend_delta !== null && …}` in
+                    // `TournamentBoard.tsx`, settled = `probability === null`);
+                    // native had not, so the live women's board shipped `+93`
+                    // on Rybakina and `-21` on Sabalenka. Same test, same word.
+                    deltaPoints: row.probability == nil
+                        ? nil
+                        : movementPoints(row.trendDelta)
                 )
             },
             trimNote: ordered.count > shown.count
