@@ -114,9 +114,21 @@ NULL_RATE = 0.25
 #: future column will not move it by a round number either, and a delta that
 #: does NOT decompose is the drift this assertion exists to catch.
 #:
-#: The budget assertion below is UNCHANGED and still has room: 115,863 against a
+#: It did not move by a round number, exactly as predicted. #5809's
+#: `top_price_observed_at` — the THIRD derived market column — takes it
+#: 115,863 -> 116,527, a delta of +664 that decomposes on the same two terms and
+#: was measured, not copied off the red run:
+#:
+#:   +700  one derived value per market — market row values go 21,700 -> 22,400
+#:         over 700 rows, i.e. exactly one column's worth and nothing else.
+#:    -36  the same RNG-stream shift, in the other direction this time: a 32nd
+#:         market column consumes one more draw per row, and twelve
+#:         `market_metadata` cells flip from a populated dict to `None`
+#:         (536 -> 524) at 4 nodes against 1, i.e. 12 x 3.
+#:
+#: The budget assertion below is UNCHANGED and still has room: 116,527 against a
 #: 200,000 cap is 58%, and the 1.5x alarm sits at 133,333.
-MEASURED_NODES = 115_863
+MEASURED_NODES = 116_527
 
 #: The alarm fires BEFORE breakage, not at it. A guard that goes red at the
 #: moment the share stops working has told us nothing the latency would not
@@ -227,7 +239,15 @@ def _row_at_kinds(
 #: which is the whole reason the loaded kinds are introspected in the first
 #: place. `price_polled_at` is a `datetime`, and a datetime is a TAGGED value on
 #: this wire (~31 bytes of codec around it), so it must be measured as one.
-_DERIVED_KINDS = {"price_polled_at": "dt", "opening_baseline_at": "dt"}
+_DERIVED_KINDS = {
+    "price_polled_at": "dt",
+    "opening_baseline_at": "dt",
+    # #5809. A third tagged datetime per market, and it is here rather than in
+    # the outcome tuple for the reason the module's own note records: the
+    # per-outcome column was measured at +15% of this artifact, one timestamp
+    # repeated across up to 193 legs, to say one thing per market.
+    "top_price_observed_at": "dt",
+}
 
 
 def _production_scale_payload() -> dict:
