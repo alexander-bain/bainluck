@@ -97,6 +97,7 @@ from app.models.models import Base, Event, OddsSnapshot, Sport  # noqa: E402
 from app.routes.events import list_events  # noqa: E402
 from app.services.anchor_channel import duplicate_tag  # noqa: E402
 from app.utils.event_twin_fold import fold_twin_events, twin_fold_key  # noqa: E402
+from app.utils.soccer_team_matching import soccer_pair_matches  # noqa: E402
 
 #: The production pair, verbatim.
 CANONICAL = 15298077  # "Celta Vigo", completed, holds its own opening line
@@ -382,22 +383,84 @@ class TestTheSurvivingCardKeepsWhatTheHiddenRowHeld:
 
 
 class TestWhatMustNotChange:
-    def test_an_untagged_pair_is_still_served_exactly_as_before(self):
+    """TWO licences reach this route now, and this class pins the boundary.
+
+    This file originally asserted that the `duplicate-of:` tag was the WHOLE
+    licence for folding a card, citing ruling 048. That was too strong, and
+    authority/181's `0ccf6e77c` — shipped under this same issue an hour later —
+    made master red by being correct: it added a soccer name-pair pass to
+    `fold_twin_events`, and this file's own fixture (`Celta Vigo` /
+    `RC Celta de Vigo`, `Málaga` / `Malaga CF`) is precisely the exonym family
+    that pass exists to fold.
+
+    Ruling 048 and gotcha #32 govern the REGISTRY's absorb-vs-create at WRITE
+    time: an id-less claim never absorbs, it creates. Neither row here is
+    absorbed, deleted or repointed. Both passes act at SERVE time, both elect a
+    survivor and union its sources rather than dropping a row, and serve-time
+    folding on a non-tag licence predates both of them on this route
+    (`fold_twin_events` since #4100). So the tag is *a* licence, not the only
+    one, and the thing actually worth pinning is that **the tag predicate does
+    not sweep rows no licence reaches** — which is what the test below now says.
+    """
+
+    def test_the_tag_predicate_does_not_sweep_a_pair_no_licence_reaches(self):
         """The predicate removes TAGGED rows and nothing else.
 
-        The same two rows with no `duplicate-of:` tag are two cards, as they are
-        today. A filter that also swept untagged near-misses would be deciding
-        for itself which rows are one game — a second matcher, which ruling 048
-        exists to prevent.
+        The fixture is deliberately a pair BOTH licences refuse: no
+        `duplicate-of:` tag, and a squad qualifier on one side, which
+        `soccer_team_matching` refuses by construction because `Celta Vigo B`
+        is a different squad of the same club. If the tag predicate were ever
+        widened into a matcher of its own, this is the test that fails.
+        """
+        canonical, suppressed = _the_production_pair()
+        suppressed.home_team_name = CANON_HOME + " B"
+        suppressed.away_team_name = CANON_AWAY
+        suppressed.event_tags = ["provenance:source:statpal"]
+
+        assert not soccer_pair_matches(
+            (canonical.home_team_name, canonical.away_team_name),
+            (suppressed.home_team_name, suppressed.away_team_name),
+        ), (
+            "the name pass accepts this pair, so it is no longer a pair 'no "
+            "licence reaches' and this test proves nothing about the tag"
+        )
+
+        served = _by_id(_payload(canonical, suppressed))
+
+        assert sorted(served) == sorted([CANONICAL, SUPPRESSED]), (
+            "a row that neither the tag nor the name pass licenses was "
+            f"suppressed anyway (served: {sorted(served)})"
+        )
+
+    def test_an_untagged_exonym_pair_is_folded_by_the_name_pass_and_keeps_both_sources(
+        self,
+    ):
+        """The other licence, stated so nobody restores the assertion above.
+
+        Strip the tag from the production pair and the rows are STILL one card
+        — folded by authority/181's soccer name pass, not by this ship. That is
+        the intended behaviour and the reason master went red when the two
+        halves of #5918 met.
+
+        The half that makes it safe is asserted here rather than described: the
+        survivor carries the sources of the row it absorbed. This pass merges
+        and unions; it does not filter. On the real pair the priced row and the
+        id-bearing row are different rows, so a filter would have deleted the
+        only priced card — which is the regression #5918 was filed to refuse.
         """
         canonical, suppressed = _the_production_pair()
         suppressed.event_tags = ["provenance:source:statpal"]
 
         served = _by_id(_payload(canonical, suppressed))
 
-        assert sorted(served) == sorted([CANONICAL, SUPPRESSED]), (
-            "an untagged row was suppressed — the tag is the whole licence for "
-            f"hiding a card (served: {sorted(served)})"
+        assert sorted(served) == [CANONICAL], (
+            "the soccer name pass no longer folds the exonym pair this file is "
+            f"built on (served: {sorted(served)})"
+        )
+        card = served[CANONICAL]
+        assert card.get("opening_odds") is not None, (
+            "the survivor lost the pre-match line — a fold that drops a number "
+            "is the filter this ship exists to refuse"
         )
 
     def test_a_lone_untagged_row_is_untouched(self):
