@@ -104,6 +104,11 @@ COVERED = (
     "test_tennis_twin_sweep_pg.py",
     "test_typeahead_played_game_suppression_pg.py",
     "test_typeahead_final_seven_route_control_pg.py",
+    # #5779. Seeds `sports` and `events` by raw INSERT, including rows whose
+    # `statpal_fixture_id` is deliberately NULL — the NOT-NULL arm is what keeps
+    # a future column with a client-side default from making that seed illegal
+    # without anybody noticing until a runner says so.
+    "test_reconcile_lookback_reach_5779_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"

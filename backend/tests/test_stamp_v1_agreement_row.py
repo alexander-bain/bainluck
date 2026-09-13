@@ -114,6 +114,11 @@ class RecordingSession:
         #: one it measures the agreement row over — and a fake that handed both
         #: the same rows is what let CERT-962's defect pass a green suite.
         self.candidate_windows: list[tuple[datetime, datetime]] = []
+        #: The bounds of every #5779 look-back read. Separate from
+        #: `candidate_windows` on purpose: the look-back reaches BACK from now
+        #: while the candidate window is drawn around the fixtures StatPal
+        #: served, and a single list would let one stand in for the other.
+        self.lookback_windows: list[tuple[datetime, datetime]] = []
 
     async def execute(self, statement, params=None):
         sql = str(statement)
@@ -130,6 +135,23 @@ class RecordingSession:
         if sql == task.SET_FIXTURE_ID:
             self.updates.append(dict(params or {}))
             return FakeResult(rowcount=self._update_rowcount)
+        if sql in (
+            reconcile.SHARED_FIXTURE_IDS_BY_SPORT,
+            reconcile.SHARED_FIXTURE_IDS_BY_SPORT_PREFIX,
+        ):
+            # #5779 — the reconciliation's second arm: the contests OUR rows
+            # already double up on, which the pass's StatPal read may no longer
+            # list. Answered off the same inventory and honouring the same
+            # bounds, because a fake that ignored the window could not tell a
+            # fourteen-day look-back from a read of our whole horizon.
+            params = params or {}
+            start, end = params["window_start"], params["window_end"]
+            self.lookback_windows.append((start, end))
+            seen: dict[str, int] = {}
+            for row in self._candidates:
+                if row[4] and row[3] is not None and start <= row[3] <= end:
+                    seen[row[4]] = seen.get(row[4], 0) + 1
+            return FakeResult([(fid,) for fid, n in seen.items() if n > 1])
         if sql == reconcile.SELECT_ROWS_FOR_FIXTURES:
             # #5746 — the duplicate reconciliation the pass runs at the end of
             # this session. Declared here rather than left to the catch-all, and
@@ -810,3 +832,94 @@ async def test_a_one_game_day_is_folded_as_carried_and_advances_no_streak(
     assert streak["meets_flip_gate"] is False
     # Recorded, and recorded as what it was — not dropped, and not a pass.
     assert published[0].payload["days"][0]["state"] == "TOO-FEW-TO-SCORE"
+
+
+# ---------------------------------------------------------------------------
+# #5779 — the duplicate reconciliation reaches contests the pass no longer reads.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_lookback_reads_back_from_now_not_from_the_fixtures_it_read(drive):
+    """The two windows are different windows, and the look-back is the wide one.
+
+    The candidate window is drawn around what StatPal served this minute. The
+    look-back is drawn from NOW backwards, which is the only shape that can see
+    a match that has already kicked off — the #5779 case, where soccer reads
+    future boards and the twin appears at kickoff.
+    """
+    tipoff = NOW + timedelta(hours=3)
+    fixtures = [_fixture("1050110", "Boston Celtics", "Detroit Pistons", tipoff)]
+    rows = [_candidate(1, "Boston Celtics", "Detroit Pistons", tipoff)]
+    _summary, session, _anchors = await drive(fixtures, rows)
+
+    assert len(session.lookback_windows) == 1
+    start, end = session.lookback_windows[0]
+    assert start == NOW - reconcile.DUPLICATE_SCAN_LOOKBACK
+    # Ends where the candidate window ends: a contest StatPal served for later
+    # today may gain its twin before the next pass, so the look-back covers the
+    # read window too rather than stopping at now.
+    assert end == session.candidate_windows[0][1]
+    assert start < session.candidate_windows[0][0], (
+        "the look-back must reach BACK past the fixtures this pass read — if it "
+        "starts inside the candidate window it can only ever see what the read "
+        "already found, which is the defect"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_contest_only_our_own_rows_know_about_still_reaches_the_reconciliation(
+    drive, monkeypatch
+):
+    """The union is the ship. Drop it and #5779's pair is never reconcilable.
+
+    The look-back is stubbed here rather than seeded, because what this test
+    grades is the CALLER: that an id the StatPal read did not return is handed to
+    `reconcile_shared_fixture_ids` all the same, and that an id the read DID
+    return is not counted twice. The query itself is graded against real
+    PostgreSQL in `tests/integration/test_reconcile_lookback_reach_5779_pg.py`.
+    """
+    handed: list[list[str]] = []
+
+    async def _lookback(_session, **_kwargs):
+        # One id the read returns, one it does not.
+        return ["1050110", "9543399"]
+
+    async def _reconcile(_session, fixture_ids, **_kwargs):
+        handed.append(list(fixture_ids))
+        return {
+            "fixtures_examined": len(fixture_ids),
+            "tags_planned": 0,
+            "tags_written": 0,
+            "duplicate_tag_receipts": [],
+            "duplicate_refusal_receipts": [],
+            "failed_event_ids": [],
+        }
+
+    monkeypatch.setattr(task, "shared_fixture_ids_on_our_rows", _lookback)
+    monkeypatch.setattr(task, "reconcile_shared_fixture_ids", _reconcile)
+
+    fixtures = [_fixture("1050110", "Boston Celtics", "Detroit Pistons", TIPOFF)]
+    rows = [_candidate(1, "Boston Celtics", "Detroit Pistons", TIPOFF)]
+    summary, _session, _anchors = await drive(fixtures, rows)
+
+    assert handed, "the pass must still run the reconciliation"
+    assert "9543399" in handed[0], (
+        "a contest our own rows already double up on never reached the "
+        "reconciliation — this is #5779 exactly"
+    )
+    assert handed[0].count("1050110") == 1, (
+        "an id in BOTH arms must be examined once, not twice"
+    )
+    # The metric has to distinguish the two arms, or a reader of task-metrics
+    # cannot tell a pass whose read caught up from one carried by the look-back.
+    assert summary["shared_fixture_duplicates"]["fixtures_from_lookback"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_dark_read_reports_the_lookback_key_it_did_not_run(drive):
+    """Zero fixtures returns the same keys, including the new one (gotcha #53)."""
+    summary, _session, _anchors = await drive([], [])
+    duplicates = summary["shared_fixture_duplicates"]
+    assert duplicates["fixtures_from_lookback"] == 0
+    assert duplicates["fixtures_examined"] == 0

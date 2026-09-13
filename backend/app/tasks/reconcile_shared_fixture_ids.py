@@ -97,6 +97,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any, Callable, Iterable, Optional, Sequence
 
 from sqlalchemy import text
@@ -112,6 +113,73 @@ REFUSAL_SPLIT_SPORT = "SPLIT_SPORT"
 REFUSAL_KICKOFF_DIFFERS = "KICKOFF_DIFFERS"
 REFUSAL_ORIENTATION = "ORIENTATION_DISAGREES"
 REFUSAL_ALREADY_SUPPRESSED = "ALREADY_SUPPRESSED"
+
+#: How far back a pass looks for contests OUR OWN ROWS already share an id on.
+#:
+#: **Why a look-back exists at all (#5779).** The caller hands this module the
+#: fixtures its pass just read from StatPal, and for three of the four league
+#: specs that is the whole story. Soccer reads day offsets `(1, 2, 3)` — boards
+#: in the FUTURE — so a fixture id leaves the pass's list the moment its match
+#: kicks off, while the second row of a twin typically appears at or after
+#: kickoff. The pair becomes provable exactly when the pass stops being able to
+#: see it. Measured on production 2026-09-13 04:5xZ, after #5783 went live: 5 of
+#: 12 shared-id groups tagged, ALL of them MLB (whose season-schedule read spans
+#: played games), and two of the seven untagged were that day's Bundesliga and
+#: Serie A matches, each still printing twice for a reader.
+#:
+#: **The look-back needs no StatPal read.** The contest ids it scans are already
+#: on our rows, written by an earlier pass, so this is not a second afternoon
+#: compared against the first (D46) — it is the same evidence, re-read. The four
+#: refusals below apply to a look-back id exactly as to a freshly-read one, which
+#: is what keeps the three fabricated-id groups (NBA `1027790`, `1027792`, NHL
+#: `637968` — kickoffs days apart) out of the tag set.
+#:
+#: **14 days because that is how far back a reader can still see the pair.**
+#: `league_futures.RESULTS_LOOKBACK_DAYS` is the results rail's own window, and a
+#: duplicate older than the deepest rail that renders it is invisible. The two
+#: constants are tied by `test_the_lookback_covers_the_deepest_rail_a_reader_sees`
+#: rather than by an import: a task reaching into a route module to learn its
+#: window would couple the write side to a serving decision, and the risk being
+#: guarded is that the RAIL widens and this does not notice.
+DUPLICATE_SCAN_LOOKBACK = timedelta(days=14)
+
+#: The contests our own rows already disagree about, for one league, in a window.
+#:
+#: `HAVING count(*) > 1` is the whole selection: a fixture id on ONE row is the
+#: normal anchored state and is not this module's business. Grouping in SQL and
+#: not in Python keeps the wire small — a duplicated contest is a handful of ids
+#: out of a league's whole window — and the `IS NOT NULL` is what lets the index
+#: on `statpal_fixture_id` carry it.
+SHARED_FIXTURE_IDS_BY_SPORT = """
+SELECT e.statpal_fixture_id
+  FROM events e
+  JOIN sports s ON s.id = e.sport_id
+ WHERE s.key = :sport_key
+   AND e.statpal_fixture_id IS NOT NULL
+   AND e.commence_time >= :window_start
+   AND e.commence_time <= :window_end
+ GROUP BY e.statpal_fixture_id
+HAVING count(*) > 1
+"""
+
+#: The same query for a league whose StatPal sport spans a FAMILY of our keys.
+#:
+#: Two statements rather than one `LIKE`, for the reason the stamper's own
+#: `CANDIDATES_BY_SPORT_PREFIX` gives: the three v1 leagues have equality plans
+#: that must not become pattern scans because soccer arrived, and a `LIKE` whose
+#: pattern happens to contain no wildcard still reads as a pattern to the
+#: planner. The `%` rides the bind and is never interpolated (gotcha #45).
+SHARED_FIXTURE_IDS_BY_SPORT_PREFIX = """
+SELECT e.statpal_fixture_id
+  FROM events e
+  JOIN sports s ON s.id = e.sport_id
+ WHERE s.key LIKE :sport_key
+   AND e.statpal_fixture_id IS NOT NULL
+   AND e.commence_time >= :window_start
+   AND e.commence_time <= :window_end
+ GROUP BY e.statpal_fixture_id
+HAVING count(*) > 1
+"""
 
 #: Every row this pass may touch, read in one statement off
 #: `ix_events_statpal_fixture_id`. `commence_time` is compared to the minute, so
@@ -295,6 +363,45 @@ def _refuse(canonical: Any, member: Any) -> Optional[str]:
         # to leave the group for the pass that resolves the outer pair.
         return REFUSAL_ALREADY_SUPPRESSED
     return None
+
+
+async def shared_fixture_ids_on_our_rows(
+    session: Any,
+    *,
+    sport_key: str,
+    sport_key_is_prefix: bool,
+    window_start: datetime,
+    window_end: datetime,
+) -> list[str]:
+    """Contest ids that more than one of OUR rows already carries, in a window.
+
+    The other half of :func:`reconcile_shared_fixture_ids`'s input, and the one
+    that does not expire: the caller's own fixture list is whatever StatPal
+    served this minute, while this is whatever our table has been told since.
+    See :data:`DUPLICATE_SCAN_LOOKBACK` for why a soccer pass cannot find its own
+    duplicates without it.
+
+    Returns ids, never rows — the reconciliation re-reads the members itself off
+    the indexed column, so handing it rows here would be a second population of
+    the same group read a moment apart.
+    """
+    sql = (
+        SHARED_FIXTURE_IDS_BY_SPORT_PREFIX
+        if sport_key_is_prefix
+        else SHARED_FIXTURE_IDS_BY_SPORT
+    )
+    key = f"{sport_key}%" if sport_key_is_prefix else sport_key
+    rows = (
+        await session.execute(
+            text(sql),
+            {
+                "sport_key": key,
+                "window_start": window_start,
+                "window_end": window_end,
+            },
+        )
+    ).fetchall()
+    return [str(r[0]).strip() for r in rows if r[0] and str(r[0]).strip()]
 
 
 async def reconcile_shared_fixture_ids(

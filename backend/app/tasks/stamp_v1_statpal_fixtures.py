@@ -175,7 +175,11 @@ from app.services.statpal_api import (
     StatPalFixture,
     get_statpal_service,
 )
-from app.tasks.reconcile_shared_fixture_ids import reconcile_shared_fixture_ids
+from app.tasks.reconcile_shared_fixture_ids import (
+    DUPLICATE_SCAN_LOOKBACK,
+    reconcile_shared_fixture_ids,
+    shared_fixture_ids_on_our_rows,
+)
 from app.utils.authority_agreement import (
     JoinStrategy,
     Side,
@@ -1549,15 +1553,23 @@ async def _run_stamp_v1_statpal_fixtures(
                 sources_read=run.sources_read,
                 is_anchor_id=is_statpal_contest_id,
             ),
-            # The duplicate reconciliation is keyed on the fixtures this pass
-            # read, so zero fixtures is zero work — stated as the same keys the
-            # normal path returns rather than omitted, because a reader that has
-            # to branch on key presence cannot tell "no contests" from "the
-            # reconciliation did not run at all" (gotcha #53).
+            # Zero fixtures is zero work for BOTH arms of the reconciliation —
+            # stated as the same keys the normal path returns rather than
+            # omitted, because a reader that has to branch on key presence
+            # cannot tell "no contests" from "the reconciliation did not run at
+            # all" (gotcha #53).
+            #
+            # The look-back arm needs no StatPal read and could run here, and
+            # deliberately does not: this return is the DARK-VENUE path, and the
+            # one thing it must keep doing is report a read failure without
+            # taking new actions in the dark. Nothing is lost by waiting —
+            # `DUPLICATE_SCAN_LOOKBACK` is fourteen days wide, so the next pass
+            # that reads anything at all picks up every pair this one skipped.
             "shared_fixture_duplicates": {
                 "fixtures_examined": 0,
                 "tags_planned": 0,
                 "tags_written": 0,
+                "fixtures_from_lookback": 0,
                 "duplicate_tag_receipts": [],
                 "duplicate_refusal_receipts": [],
                 "failed_event_ids": [],
@@ -1859,12 +1871,34 @@ async def _run_stamp_v1_statpal_fixtures(
         # authority's own fixture list for this league, in a session, at one
         # moment: a separate rail would have to re-read StatPal to learn the
         # same ids, an hour later, and compare two different afternoons (D46).
+        #
+        # #5779: the fixture list alone is a REACH bug, not a coverage choice.
+        # Soccer reads future boards, so a match's id drops out of `fixtures` at
+        # kickoff — and the twin that proves the duplicate usually arrives at or
+        # after kickoff. The second arm asks our own rows which contests they
+        # already double up on, which needs no StatPal read and therefore no
+        # second afternoon. Union, not replacement: a contest StatPal served this
+        # minute may have its twin created later in this same pass.
+        lookback_ids = await shared_fixture_ids_on_our_rows(
+            session,
+            sport_key=spec.sport_key,
+            sport_key_is_prefix=spec.sport_key_is_prefix,
+            window_start=now - DUPLICATE_SCAN_LOOKBACK,
+            window_end=window_end,
+        )
+        read_ids = [f.fixture_id for f in fixtures]
+        from_lookback_only = sorted(set(lookback_ids) - set(read_ids))
         duplicates = await reconcile_shared_fixture_ids(
             session,
-            [f.fixture_id for f in fixtures],
+            read_ids + from_lookback_only,
             is_contest_id=is_statpal_contest_id,
             apply=apply,
         )
+        # Named so a reader of the metrics can tell the two arms apart: a pass
+        # whose whole yield came from the look-back is the #5779 case still
+        # happening, and one whose look-back contributes nothing is the read
+        # window having caught up. Both are healthy; only "which" is the answer.
+        duplicates = {**duplicates, "fixtures_from_lookback": len(from_lookback_only)}
 
     agreement = build_agreement_row(
         sport_key=spec.sport_key,

@@ -34,6 +34,7 @@ from app.services.statpal_api import (
     StatPalFixture,
     StatPalUpstreamError,
 )
+from app.tasks import reconcile_shared_fixture_ids as reconcile
 from app.tasks import stamp_v1_statpal_fixtures as task
 from app.utils.authority_agreement import Side, build_agreement_row
 from app.utils.authority_soccer_agreement import (
@@ -44,6 +45,27 @@ from app.utils.authority_soccer_agreement import (
     pair_soccer_sides,
 )
 from app.utils.nfl_team_matching import normalize_team, pair_matches
+
+#: The two statements #5779's look-back arm may run, read from the module that
+#: owns them so a rename cannot leave these drivers silently answering rows to a
+#: query that asks for ids.
+_LOOKBACK_SQL = (
+    reconcile.SHARED_FIXTURE_IDS_BY_SPORT,
+    reconcile.SHARED_FIXTURE_IDS_BY_SPORT_PREFIX,
+)
+
+
+class _EmptyResult:
+    """No contest in these drivers' inventories is held twice."""
+
+    rowcount = 0
+
+    def fetchall(self):
+        return []
+
+    def all(self):
+        return []
+
 
 FIXTURES = Path(__file__).parent / "fixtures"
 DAILY_OFFSET1 = (
@@ -876,6 +898,12 @@ class TestTheSoccerRunnerPlansRatherThanWrites:
             class _Session:
                 async def execute(self, statement, params=None):
                     executed.append(str(statement))
+                    if str(statement) in _LOOKBACK_SQL:
+                        # #5779's look-back arm. Answered EMPTY by name rather
+                        # than through `_Result`, whose `fetchall` hands back
+                        # candidate rows — read as fixture ids those become our
+                        # own event ids, a contest this inventory never holds.
+                        return _EmptyResult()
                     return _Result()
 
                 async def commit(self):
@@ -990,6 +1018,10 @@ class TestTheSoccerRunnerPlansRatherThanWrites:
 
             class _Session:
                 async def execute(self, statement, params=None):
+                    if str(statement) in _LOOKBACK_SQL:
+                        # See the sibling driver above: the look-back reads ids,
+                        # and `_Result` would hand it rows.
+                        return _EmptyResult()
                     return _Result()
 
                 async def commit(self):
