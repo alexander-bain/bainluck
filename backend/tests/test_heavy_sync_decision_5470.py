@@ -297,7 +297,27 @@ def _cron() -> re.Match[str]:
     return cron
 
 
-def test_the_workflows_cron_minute_is_inside_the_derived_band():
+def _cron_minutes() -> list[int]:
+    """Every minute past the hour the schedule nominally fires.
+
+    A comma list, because the minute field stopped being a single number when
+    latency/362 raised the attempt count (16 nominal slots had delivered 4 runs).
+    Deliberately NOT a general cron parser: a step (`*/20`) or a range (`34-50`)
+    is refused here rather than silently accepted, because both forms would put
+    fires outside the derived band and the test below would then be asserting
+    something weaker than it reads.
+    """
+    field = _cron().group(1)
+    assert re.fullmatch(r"\d{1,2}(,\d{1,2})*", field), (
+        f"the cron minute field {field!r} is not a plain comma list. Steps and "
+        "ranges are refused on purpose: they scatter fires outside the derived "
+        "band, and `window_bounds()` — not the cron syntax — is what makes an "
+        "attempt useful"
+    )
+    return [int(m) for m in field.split(",")]
+
+
+def test_the_workflows_cron_minutes_are_inside_the_derived_band():
     """Kept for the punctual case, and NO LONGER the guard against syncing nothing.
 
     #5662: this assertion used to carry the docstring "a cron outside the band
@@ -313,10 +333,19 @@ def test_the_workflows_cron_minute_is_inside_the_derived_band():
     It still earns its place: it is the cross-check that a band moved by a
     corrected measurement did not leave the nominal schedule behind, and it is
     the property we would rely on again if the scheduler ever became punctual.
+
+    EVERY minute is asserted, not the first (latency/362). With more than one
+    nominal fire per hour the difference is the whole point: `*/20` and
+    `34,42,50` are indistinguishable under the scheduler we measured, but under a
+    punctual one the first delivers a single useful attempt an hour and the
+    second delivers three. Checking only the first minute would pass both.
     """
-    minute = int(_cron().group(1))
     opens, closes = sync.window_bounds()
-    assert opens <= minute <= closes
+    outside = [m for m in _cron_minutes() if not (opens <= m <= closes)]
+    assert not outside, (
+        f"cron minutes {outside} are outside the derived band {opens}-{closes}: a "
+        "fire there can only HOLD, so it is an attempt that cannot sync"
+    )
 
 
 def test_enough_attempts_that_a_random_fire_minute_reaches_the_band():
@@ -325,19 +354,38 @@ def test_enough_attempts_that_a_random_fire_minute_reaches_the_band():
     Since the fire minute is effectively uniform (#5662, measured), the only
     lever on whether any run lands inside the band is HOW MANY runs there are.
     At the derived band's width a 3-hourly cron was 8 attempts/day => ~8.3h
-    expected wait, against a design claiming to bound drift to ~3h; this pins
-    the schedule at hourly-or-better so the expected wait stays ~2.5h.
+    expected wait, against a design claiming to bound drift to ~3h.
+
+    HOURLY WAS NOT ENOUGH EITHER, and the floor below is the measurement that
+    says so (latency/362, 2026-09-13 04:44Z). "Hourly => 24 attempts/day" counts
+    SLOTS; in the 16 nominal slots since this workflow landed the scheduler
+    delivered **4 runs**, so the real attempt rate was ~6/day and heavy sat
+    7h06m / 81 commits behind the main app's live commit. Expected in-band
+    deliveries are N x 0.25 x 0.42 => N x 0.104/h, which is why three fires an
+    hour (~3.2h) is the floor and one (~9.6h) is not.
 
     Attempts are near-free by construction and that is asserted, not assumed:
     `decide` HOLDs on `main_live == heavy_live` BEFORE consulting the clock, so
     an extra run against an already-synced app never deploys. If that ordering
     is ever inverted, raising the frequency would start cycling the worker and
     this test should stop licensing it.
+
+    No ceiling is asserted. The cost of one more attempt is one calibration unit
+    (~2 min, measured) and the rate that would price it — the 4-of-16 delivery
+    fraction — is one day old and soft; pinning a maximum here would pin that
+    number. The real bound is the band: every fire must sit inside it, which the
+    test above enforces, so the schedule cannot grow past the band's width.
     """
     hour_field = _cron().group(2)
     assert hour_field == "*", (
         f"heavy-sync must fire at least hourly, got hour field {hour_field!r}: the fire "
         "minute is not controllable (#5662), so attempts are the only lever on the band"
+    )
+    minutes = _cron_minutes()
+    assert len(minutes) >= 3, (
+        f"heavy-sync fires {len(minutes)} time(s) an hour ({minutes}); the measured "
+        "delivery rate was 4 runs in 16 nominal slots, so at fewer than 3 the expected "
+        "wait exceeds the ~3h drift this design claims to bound"
     )
 
     # The ordering that makes hourly attempts cheap. Out-of-band on purpose: if

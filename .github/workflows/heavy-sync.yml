@@ -59,8 +59,46 @@ on:
     # returns HOLD on `main_live == heavy_live` BEFORE it consults the clock, so
     # a run against an already-synced app costs two `ls-remote`s and never
     # deploys. Hourly => 24 attempts/day, ~2.5h expected wait, P(no sync in 12h)
-    # ~0.2%. Raise to `*/20` if the tail proves long; do not narrow the band.
-    - cron: '42 * * * *'
+    # ~0.2%.
+    #
+    # THE TAIL PROVED LONG, FOR A REASON THAT PARAGRAPH DID NOT MODEL
+    # (latency/362, measured 2026-09-13 04:44Z). "Hourly => 24 attempts/day"
+    # counts SLOTS, not RUNS. Since this file landed on master (12:10Z Sat) there
+    # have been 16 nominal hourly slots and **4 delivered runs** — all four
+    # `event=schedule`, none dispatched. Whether the missing twelve were dropped
+    # or are still in flight is undecidable at this horizon (the measured delay
+    # reaches 359m) and it does not change the answer: the attempt rate this
+    # design assumed is 24/day, the attempt rate it is GETTING is ~6/day.
+    # Observed rather than modelled — heavy sat on v12 `a1ba6f34` from 21:38:09Z
+    # to at least 04:44Z: **7h06m, 81 commits and 16 `backend/app` files behind**
+    # the main app's live `731f98cf`, with merged launch fixes among them waiting
+    # on a worker that never got the code. That is this issue, again, wearing a
+    # green schedule.
+    #
+    # So the pre-authorised raise fires — three attempts an hour, not one. Two
+    # deliberate differences from the `*/20` the paragraph above named:
+    #
+    #   * all three minutes are INSIDE the derived band. Under the scheduler we
+    #     measured that buys nothing (the fire minute is uniform either way), but
+    #     `*/20` puts 2 of its 3 nominal fires at :00 and :20, outside it — so a
+    #     punctual scheduler would get ONE useful attempt an hour from `*/20` and
+    #     three from this. Strictly better in the regime we might return to, free
+    #     in the one we are in.
+    #   * three, not six, and the ceiling is the same arithmetic as the floor.
+    #     Expected in-band deliveries at N attempts/hour are N x 0.25 x 0.42 =>
+    #     N x 0.104/h. N=1 is one sync every ~9.6h, which is what we are living;
+    #     N=3 is every ~3.2h — the ~3h this design claimed — for ~7.5 heavy
+    #     cycles a day against today's ~2.5; N=6 is every ~1.6h for ~15/day,
+    #     which is half the per-release rate this file rejects at the top. A
+    #     cycle costs ONE calibration unit (~2 min, measured — see the script's
+    #     header), so N=3 prices at ~15 min/day of recomputation, ~10 more than
+    #     today.
+    #
+    # If the tail is STILL long, go to `34,38,42,46,50,54` (N=6) — but re-measure
+    # the 4-of-16 delivery rate first. It is the only soft number here, it is one
+    # day old, and the wait is more sensitive to it than to N. Do not narrow the
+    # band.
+    - cron: '34,42,50 * * * *'
   workflow_dispatch:
 
 permissions:
