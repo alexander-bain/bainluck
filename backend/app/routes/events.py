@@ -5620,8 +5620,24 @@ async def search_events(
     # blend into `events`. The whole stage is wrapped (gotcha #42 applied to a
     # stage): the fold improves the page, it is never a precondition for having
     # one — if it raises, the unfolded page is served, which is today's bug.
+    #
+    # ONE ROW IS ENOUGH TO RUN THIS, AND `> 1` WAS A LIVE BUG (#5905, measured on
+    # production 2026-09-13 16:20Z, 30 minutes after the fix below it shipped).
+    # The stage no longer only FOLDS: since #5905 `fold_twin_events` first
+    # recovers the kick-off of a row whose hour is Kalshi's expected-expiration
+    # instant, and that correction is PER ROW, not per pair. Under `> 1` a query
+    # matching exactly one event skipped it, so `q=atletico real madrid` served
+    # the Madrid derby at 17:15Z for a 14:15Z kick-off while `q=sevilla
+    # barcelona` — two matches, so the stage ran — served 19:00Z correctly on the
+    # same deploy, from the same column, in the same minute. A reader searching
+    # the marquee fixture by name got the wrong hour precisely BECAUSE the search
+    # was specific enough to return one row.
+    #
+    # Folding a one-row page remains a no-op by construction (a group of one
+    # elects itself and drops nobody), so nothing about the collapse changes;
+    # `test_a_single_row_page_is_untouched` pins that and still passes.
     _twin_duplicates_dropped = 0
-    if len(events) > 1:
+    if events:
         try:
             _fold = fold_twin_events(events)
             if _fold.dropped_ids:

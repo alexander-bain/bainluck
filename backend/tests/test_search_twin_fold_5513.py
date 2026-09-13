@@ -350,7 +350,13 @@ async def test_a_raising_fold_serves_the_unfolded_page():
 
 @pytest.mark.asyncio
 async def test_a_single_row_page_is_untouched():
-    """The stage is skipped below two rows and must not disturb the one row."""
+    """The stage runs on a one-row page and must not disturb the one row.
+
+    It used to be skipped below two rows; #5905 made the stage per-row as well as
+    per-pair, and skipping it was serving the Madrid derby three hours late (see
+    the lone-row section at the end of this file). A group of one elects itself
+    and drops nobody, so the collapse this test is about is unchanged.
+    """
     payload = await _payload([_event(ESPN_ROW, espn_id="401816907")])
 
     assert _ids(payload) == [ESPN_ROW]
@@ -440,3 +446,117 @@ async def test_an_unfolded_page_count_is_unchanged():
     assert payload["pagination"]["total_results"] == 26
     assert payload["pagination"]["total_pages"] == 2
     assert payload["pagination"]["has_next"] is True
+
+
+# ── the lone row: the stage is not only a fold (#5905) ────────────────────────
+#
+# Measured on production 2026-09-13 16:20Z, half an hour after #5905 shipped.
+# `q=sevilla barcelona` (two matches) served 15307701 at **19:00Z**, corrected.
+# `q=atletico real madrid` (one match) served 15307707 at **17:15Z** — the
+# expected-expiration hour, three hours after the 14:15Z kick-off — from the same
+# deploy, the same column and the same minute. The difference was `len(events) > 1`
+# on the stage below: the recovery #5905 put at the top of `fold_twin_events` is
+# PER ROW, and a search specific enough to match one fixture skipped it.
+
+LA_LIGA = Sport(
+    id=1317, key="soccer_spain_la_liga", name="La Liga", group="Soccer", active=True
+)
+
+#: Atletico v Real Madrid, 2026-09-20, exactly as production stores it: the hour
+#: is Kalshi's expected expiration and no schedule provider has anchored it.
+DERBY_ROW = 15307707
+DERBY_STORED = datetime(2026, 9, 20, 17, 15, tzinfo=timezone.utc)
+DERBY_KICKOFF = datetime(2026, 9, 20, 14, 15, tzinfo=timezone.utc)
+
+
+def _derby():
+    row = _event(
+        DERBY_ROW,
+        sport=LA_LIGA,
+        home="Atletico",
+        away="Real Madrid",
+        commence=DERBY_STORED,
+        sources={"kalshi": 0.44},
+    )
+    row.commence_time_source = "kalshi"
+    row.external_id = None
+    return row
+
+
+def _served_time(payload, event_id):
+    row = next(r for r in payload["results"] if r["id"] == event_id)
+    return row["commence_time"]
+
+
+@pytest.mark.asyncio
+async def test_the_marquee_fixture_searched_by_name_is_served_at_its_kickoff():
+    """🔴 THE SHIP. One match matched, and the hour is still the right one.
+
+    This is the exact production request: a reader types the derby's name, the
+    search is specific, one row comes back — and before this change that
+    specificity was the reason they were told the wrong hour.
+    """
+    payload = await _payload([_derby()], q="atletico real madrid")
+
+    assert _ids(payload) == [DERBY_ROW]
+    served = _served_time(payload, DERBY_ROW)
+    assert str(DERBY_KICKOFF.hour).zfill(2) in str(served), served
+    assert "17:15" not in str(served), (
+        "the lone row was served at Kalshi's expected-expiration hour: the stage "
+        "was skipped because the page held one row"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_lone_row_keeps_its_card_and_its_price():
+    """Correcting the hour must not cost the reader the row or its number.
+
+    Kalshi is the only venue holding next weekend's La Liga, so a stage that
+    dropped or blanked this row would trade a wrong hour for no card at all.
+    """
+    payload = await _payload([_derby()], q="atletico real madrid")
+
+    assert len(payload["results"]) == 1
+    assert payload["pagination"]["total_results"] == 1
+    assert "kalshi" in payload["results"][0]["win_probability_sources"], (
+        "the only venue holding this fixture fell off the corrected row"
+    )
+
+
+@pytest.mark.asyncio
+async def test_two_matched_rows_are_corrected_exactly_as_one_is():
+    """The two production queries differed only in how many rows they matched.
+
+    Pins that this change removed a DIFFERENCE rather than adding a second
+    behaviour: the same row, on a page with a neighbour, lands on the same hour.
+    """
+    other = _event(
+        15307701,
+        sport=LA_LIGA,
+        home="Sevilla",
+        away="Barcelona",
+        commence=datetime(2026, 9, 19, 22, 0, tzinfo=timezone.utc),
+        sources={"kalshi": 0.31},
+    )
+    other.commence_time_source = "kalshi"
+    other.external_id = None
+
+    lone = await _payload([_derby()], q="atletico real madrid")
+    paired = await _payload([_derby(), other], q="la liga")
+
+    assert _served_time(lone, DERBY_ROW) == _served_time(paired, DERBY_ROW)
+
+
+@pytest.mark.asyncio
+async def test_a_lone_anchored_row_is_not_moved_by_the_stage_running():
+    """The stage now runs on every page, so its refusals matter on every page.
+
+    A row a schedule provider reported is never this ship's to move, and running
+    the stage where it used to be skipped must not create a new way to move one.
+    """
+    anchored = _event(15310368, espn_id="401816907", sources={"betting": 0.58})
+
+    payload = await _payload([anchored], q="red sox")
+
+    assert _ids(payload) == [15310368]
+    assert "20:10" in str(_served_time(payload, 15310368))
