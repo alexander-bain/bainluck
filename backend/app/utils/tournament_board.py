@@ -297,6 +297,32 @@ def _merge_bucketed_series(
     return points
 
 
+def _trend_for(
+    contributors: list[tuple[str, int]],
+    series_by_outcome: dict[int, list[tuple[str, float]]],
+    fine_series_by_outcome: dict[int, list[tuple[str, float]]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], Optional[float]]:
+    """Both series and the delta beside them, for ONE row (#5934).
+
+    One function because a row's three trend fields are one answer, and the two
+    branches that publish them — a live row and a settled one — must not be two
+    places for that answer to drift.  ``trend_delta`` stays the DAILY series'
+    end-to-end move and is never recomputed from the finer one, for the reason
+    ``_merge_bucketed_series``' caller states: a delta measured over a different
+    window from the line it is printed beside is two spans on one row.
+    """
+    trend = _merge_bucketed_series(series_by_outcome, contributors, key="date")
+    trend_hourly = _merge_bucketed_series(
+        fine_series_by_outcome, contributors, key="at"
+    )
+    trend_delta = (
+        round(trend[-1]["probability"] - trend[0]["probability"], 6)
+        if len(trend) >= 2
+        else None
+    )
+    return trend, trend_hourly, trend_delta
+
+
 def _rank_rows(rows: list[dict[str, Any]]) -> None:
     """Rank by the blend, highest first, stamping ``rank`` in place.
 
@@ -415,6 +441,11 @@ def build_boards(
             blend_rows: list[dict[str, Any]] = []
             source_views: list[dict[str, Any]] = []
             contributors: list[tuple[str, int]] = []
+            # The same identities, for the blocks the VENUE has already settled
+            # (#5934). Kept apart from `contributors` rather than folded into
+            # it: `contributors` is what the blend is taken over, and a settled
+            # block has no price to blend. These carry only history.
+            settled_contributors: list[tuple[str, int]] = []
             # Every contributor's OWN observation time, in blend order. The
             # list — not a running max — is the fix: the verdict needs the
             # oldest, the display needs the newest, and a max destroys one of
@@ -455,6 +486,10 @@ def build_boards(
 
                 if state != "live":
                     settled_result = state
+                    if isinstance(block.get("outcome_id"), int):
+                        settled_contributors.append(
+                            (str(block.get("source")), block["outcome_id"])
+                        )
                     rendered_rows.append(
                         {
                             "entity_key": player.get("entity_key"),
@@ -510,6 +545,16 @@ def build_boards(
                 contributor_times.append(observed_at)
 
             if settled_result is not None and not blend_rows:
+                # THE COMPLETED JOURNEY, WHICH IS NOT A PROBABILITY (#5934).
+                # "Settled means settled" governs the NUMBER — a result, never a
+                # price. The standing ruling it comes from says in the same
+                # breath that charts show the completed journey, so the history
+                # travels: these points are where this question HAS BEEN, which
+                # a finished question has more of than a live one, not less.
+                # What must not travel is a live-reading percent, and none does.
+                settled_trend, settled_trend_hourly, settled_trend_delta = _trend_for(
+                    settled_contributors, series_by_outcome, fine_series_by_outcome
+                )
                 # Settled means settled: a result, never a probability.
                 rows.append(
                     {
@@ -535,9 +580,9 @@ def build_boards(
                         "sources": [],
                         "blend_rule": None,
                         "divergent": False,
-                        "trend": [],
-                        "trend_hourly": [],
-                        "trend_delta": None,
+                        "trend": settled_trend,
+                        "trend_hourly": settled_trend_hourly,
+                        "trend_delta": settled_trend_delta,
                         # Settled means settled: there is no live book behind a
                         # result to grade, and `unknown` draws nothing. Present
                         # rather than absent so every row has one shape.
@@ -568,20 +613,8 @@ def build_boards(
                 for view in source_views
                 if view["price_state"] != "live"
             ]
-            trend = _merge_bucketed_series(
-                series_by_outcome, contributors, key="date"
-            )
-            # `trend_delta` stays the DAILY series' end-to-end move and is not
-            # recomputed from the finer one. It is the number beside the
-            # sparkline it belongs to, and a delta measured over a 14-day window
-            # printed next to a 30-day line would be two spans on one row.
-            trend_hourly = _merge_bucketed_series(
-                fine_series_by_outcome, contributors, key="at"
-            )
-            trend_delta = (
-                round(trend[-1]["probability"] - trend[0]["probability"], 6)
-                if len(trend) >= 2
-                else None
+            trend, trend_hourly, trend_delta = _trend_for(
+                contributors, series_by_outcome, fine_series_by_outcome
             )
 
             rows.append(
@@ -951,10 +984,25 @@ def _settle_row(row: dict[str, Any], state: str) -> None:
 
     Mirrors what ``build_boards`` publishes for a market-settled row
     (``status == "settled"``) field for field, so a board decided by the RESULT
-    and a board decided by the VENUE are one shape to every reader.  That
-    includes emptying the trend: the existing settled row carries none, and a
-    sparkline of title prices under a finished title is the outright market's
-    history presented as if the question were still open.
+    and a board decided by the VENUE are one shape to every reader.
+
+    THE TREND SURVIVES THE SETTLE (#5934, amending this function's own first
+    version).  It emptied the three trend fields to match the venue-settled row,
+    which carried none — a true statement about the shape and the wrong way to
+    reconcile it, now fixed at the other end instead: ``build_boards`` gives the
+    venue-settled row its history too, so both shapes carry the journey and the
+    mirror still holds.
+
+    The reasoning it replaces was that a sparkline under a finished title draws
+    the outright market's history as if the question were still open.  The
+    standing ruling is the other way — "settled means settled: heroes show
+    winners, cards show results, charts show the completed journey" — and the
+    two halves of it are not in tension: what may not survive is a LIVE-reading
+    percent, and none does.  ``probability`` is ``None``, ``price_state`` is
+    ``dark``, and the render half (#5934, ux) prints the terminal state in the
+    legend where a live row prints a number.  Emptying these three fields did
+    not make a settled board honest; it deleted the Women's contender chart
+    outright on 2026-09-13, which is a finished question's best artefact.
     """
     row.update(
         {
@@ -974,9 +1022,8 @@ def _settle_row(row: dict[str, Any], state: str) -> None:
             "sources": [],
             "blend_rule": None,
             "divergent": False,
-            "trend": [],
-            "trend_hourly": [],
-            "trend_delta": None,
+            # `trend`, `trend_hourly` and `trend_delta` are deliberately ABSENT
+            # from this update: the row keeps the journey it arrived with.
             "liquidity": LIQUIDITY_UNKNOWN,
             "liquidity_reasons": [],
         }

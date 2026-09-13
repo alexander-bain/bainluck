@@ -125,6 +125,20 @@ _SERIES = {
     outcome: [("2026-09-11", 0.4), ("2026-09-12", 0.6)] for outcome in (301, 302, 403)
 }
 
+#: An outcome id that is only ever reached through a `missing` leg, carrying a
+#: series far enough from the real one to move any point that wrongly blends it.
+_MISSING_LEG = 599
+_SERIES[_MISSING_LEG] = [("2026-09-11", 0.9), ("2026-09-12", 0.9)]
+
+#: What `_SERIES` looks like once the builder has blended and rounded it. Written
+#: out rather than derived from `_SERIES` by the same expression the code uses:
+#: a fixture that recomputes the answer asserts only that the code is consistent
+#: with itself (#5934).
+_SERIES_AS_POINTS = [
+    {"date": "2026-09-11", "probability": 0.4},
+    {"date": "2026-09-12", "probability": 0.6},
+]
+
 
 def _boards(register=None, prices=None):
     """Real boards, through the real builder — never a hand-written row dict.
@@ -198,6 +212,92 @@ def test_every_row_settles_when_the_draw_has_a_champion():
         assert row["price_state"] == "dark"
 
 
+# ── #5934: THE CHART SURVIVES THE SETTLE ─────────────────────────────────────
+#
+# The defect this covers was live on production: the Women's contender chart
+# vanished from the US Open hub the moment the draw was decided, because every
+# row reached `_settle_row` and `_settle_row` emptied the three fields the
+# chart is drawn from. No frontend change could draw it — the points did not
+# travel. Measured on the 15:05Z payload of 2026-09-13: 44 of 44 women's rows
+# carried `trend: []`, against 36 of 36 men's rows carrying 19 points each.
+
+
+def test_the_journey_survives_the_result_so_a_decided_draw_still_has_a_chart():
+    """The ship. Settled kills the PRICE, not the history behind it."""
+    boards = _boards()
+    apply_final_result(boards, _decided(), now=NOW)
+    board = _womens(boards)
+
+    for row in board["rows"]:
+        assert row["trend"] == _SERIES_AS_POINTS, row["display_name"]
+        assert row["trend_hourly"], row["display_name"]
+        assert row["trend_delta"] == pytest.approx(0.2), row["display_name"]
+        # And the half that "settled means settled" governs is unchanged: the
+        # journey travels, a live-reading percent does not.
+        assert row["probability"] is None
+        assert row["price_state"] == "dark"
+
+
+def test_a_venue_settled_row_draws_its_journey_from_its_own_settled_legs():
+    """The other path, which never had a trend at all — and is the one the
+    Women's board lands on next.
+
+    `futures_markets.status` for the Women's Singles Winner already read
+    `resolved` on 2026-09-13 while the committed register still read `live`, so
+    the next register rebuild moves those rows off `_settle_row` and onto this
+    branch. Fixing only the other path would have been a fix with a fuse on it:
+    the chart would come back tonight and vanish again on the rebuild.
+    """
+    register = _womens_register()
+    register["players"][0]["sources"] = [
+        _source("kalshi", 30, 301, status="settled", terminal_result=TERMINAL_WON)
+    ]
+    row = _row(_womens(_boards(register=register)), RYBAKINA)
+
+    assert row["state"] == TERMINAL_WON
+    assert row["probability"] is None
+    assert row["trend"] == _SERIES_AS_POINTS
+    assert row["trend_hourly"]
+    assert row["trend_delta"] == pytest.approx(0.2)
+
+
+def test_a_registered_leg_with_nothing_behind_it_contributes_no_journey():
+    """`missing` is not a settled leg, and the row must not read its series.
+
+    A missing leg has an id and no observations, so a series keyed on that id
+    is somebody else's reading or a leftover. The two legs here carry
+    DELIBERATELY DIFFERENT series, so including the missing one would move the
+    blended point off `0.4/0.6` and this assertion would catch it — with equal
+    fixtures it could not.
+    """
+    register = _womens_register()
+    register["players"][0]["sources"] = [
+        _source("kalshi", 30, 301, status="settled", terminal_result=TERMINAL_WON),
+        _source("polymarket", 40, _MISSING_LEG, status="missing"),
+    ]
+    row = _row(_womens(_boards(register=register)), RYBAKINA)
+
+    assert row["state"] == TERMINAL_WON
+    assert row["trend"] == _SERIES_AS_POINTS, row["trend"]
+
+
+def test_an_unpriced_settled_row_has_no_journey_to_show():
+    """A settled leg whose outcome has no history publishes nothing — the empty
+    list is a measurement, not a default. Without this the ship reads as "always
+    emit points" and a series lookup that silently missed would look correct.
+    """
+    register = _womens_register()
+    register["players"][0]["sources"] = [
+        _source("kalshi", 30, 999, status="settled", terminal_result=TERMINAL_WON)
+    ]
+    row = _row(_womens(_boards(register=register)), RYBAKINA)
+
+    assert row["state"] == TERMINAL_WON
+    assert row["trend"] == []
+    assert row["trend_hourly"] == []
+    assert row["trend_delta"] is None
+
+
 def test_a_settled_row_matches_the_shape_the_builder_already_publishes():
     """The two ways a board can settle must be one shape, field for field.
 
@@ -215,16 +315,19 @@ def test_a_settled_row_matches_the_shape_the_builder_already_publishes():
     apply_final_result(boards, _decided(), now=NOW)
     ours = _row(_womens(boards), RYBAKINA)
 
-    volatile = {"rank", "trend", "trend_hourly", "trend_delta"}
+    # `rank` alone: the two boards are ranked over different rows. The three
+    # trend fields USED to be exempt here, and #5934 is what that exemption was
+    # hiding — the two paths disagreed about the journey and the mirror could
+    # not see it. They are now compared like every other field.
+    volatile = {"rank"}
     for field, value in reference.items():
         if field in volatile:
             continue
         assert ours[field] == value, field
-    # The trend goes too: a sparkline of title prices under a finished title is
-    # the outright market's history drawn as if the question were still open.
-    assert ours["trend"] == []
-    assert ours["trend_hourly"] == []
-    assert ours["trend_delta"] is None
+    # Named, so the mirror cannot be satisfied by both paths publishing nothing
+    # (which is what it asserted before this ship, on both sides).
+    assert ours["trend"] == _SERIES_AS_POINTS, ours["trend"]
+    assert reference["trend"] == _SERIES_AS_POINTS, reference["trend"]
 
 
 def test_the_champion_is_ranked_first_even_when_they_were_ranked_last():
