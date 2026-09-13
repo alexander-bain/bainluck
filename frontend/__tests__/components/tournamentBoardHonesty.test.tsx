@@ -23,6 +23,7 @@ import TournamentBoard from "@/components/tournament/TournamentBoard";
 import TrendSparkline from "@/components/tournament/TrendSparkline";
 import {
   boardNotice,
+  boardRenderedPercents,
   formatBoardProbability,
   rowFreshnessLabel,
   rowIsPresentedAsLive,
@@ -138,7 +139,9 @@ describe("a stale board says so, visibly", () => {
 
   it("still shows the number — we say we do not know, we do not go blank", () => {
     const html = renderToStaticMarkup(<TournamentBoard board={DARK_BOARD} />);
-    expect(html).toContain("52.0%");
+    // `52.0%` until #5893; the claim this test makes is that the number is on
+    // screen at all, and it is unchanged by how many digits it carries.
+    expect(html).toContain(">52%<");
   });
 
   it("puts the reading's age on the row, not only in the banner", () => {
@@ -551,10 +554,134 @@ describe("board rendering", () => {
   });
 });
 
+/**
+ * ═══ #5893 — THE BOARD AND THE MATCH CARD ARE ONE ANSWER ═══
+ *
+ * Alex's case: NEXT UP said Zverev 58% and the board below said 57.2%, on final
+ * day, three rows apart. live/199 fixed the served halves (both 0.575); these
+ * guard the RENDERING, which was two separate departures from the product's
+ * standing rule and needed both fixed to close it.
+ *
+ * The specimens are the real payload read at 2026-09-13 11:50Z.
+ */
 describe("formatBoardProbability", () => {
-  it("prints one decimal, and an em dash for absent", () => {
-    expect(formatBoardProbability(0.523)).toBe("52.3%");
-    expect(formatBoardProbability(0.0051)).toBe("0.5%");
+  it("prints the product's whole percent, and an em dash for absent", () => {
+    expect(formatBoardProbability(0.523)).toBe("52%");
     expect(formatBoardProbability(null)).toBe("—");
+  });
+
+  it("inherits the boundary rule the decimal never had: possible never prints 0%", () => {
+    // The men's board serves eighteen rows at 0.001 and 0.0005. `toFixed(1)`
+    // printed every one of them `0.1%` — a false precision on the second — and
+    // `Math.round` would print `0%`, which reads as impossible (UX-P046).
+    expect(formatBoardProbability(0.001)).toBe("<1%");
+    expect(formatBoardProbability(0.0005)).toBe("<1%");
+    // Exactly zero IS the boundary. An eliminated contender may say so.
+    expect(formatBoardProbability(0)).toBe("0%");
+  });
+
+  it("takes the field's integer when it is given one, and rounds alone when it is not", () => {
+    expect(formatBoardProbability(0.425, 42)).toBe("42%");
+    expect(formatBoardProbability(0.425)).toBe("43%");
+  });
+});
+
+describe("boardRenderedPercents", () => {
+  const contender = (key: string, probability: number | null, rank: number) =>
+    row({ entity_key: key, display_name: key, probability, rank });
+
+  it("rounds a two-horse field once, so the board cannot print 101", () => {
+    // The exact pair live/199's PR #5902 serves. Rounded per row this is 58/43;
+    // the FINAL card above it prints 58/42 through `renderedDuelPercents`.
+    const percents = boardRenderedPercents([
+      contender("zverev", 0.575, 1),
+      contender("shelton", 0.425, 2),
+      contender("dimitrov", 0.001, 3),
+    ]);
+    expect(percents.zverev).toBe(58);
+    expect(percents.shelton).toBe(42);
+    expect((percents.zverev ?? 0) + (percents.shelton ?? 0)).toBe(100);
+    // The tail is not part of the pair and is not renormalized into one.
+    expect(percents.dimitrov).toBe(0);
+  });
+
+  it("is decided over the whole field, so the women's 99.5/0.5 pair also totals 100", () => {
+    const percents = boardRenderedPercents([
+      contender("leader", 0.99475, 1),
+      contender("other", 0.00525, 2),
+    ]);
+    expect(percents.leader).toBe(99);
+    expect(percents.other).toBe(1);
+  });
+
+  it("leaves a field that is NOT down to two alone", () => {
+    // Four live contenders: no pair rule, every row rounds on its own. Asserted
+    // in this direction because a guard that only proves the final-day case is
+    // satisfied by a component that pair-rounds the top two of every draw.
+    const percents = boardRenderedPercents([
+      contender("a", 0.4, 1),
+      contender("b", 0.3, 2),
+      contender("c", 0.2, 3),
+      contender("d", 0.1, 4),
+    ]);
+    expect(percents).toEqual({ a: 40, b: 30, c: 20, d: 10 });
+  });
+
+  it("leaves two survivors alone when they are not a complement pair", () => {
+    // Summing to 0.80 means a third of the field is unpriced, not that the vig
+    // needs removing — normalizing here would invent twenty points.
+    const percents = boardRenderedPercents([
+      contender("a", 0.45, 1),
+      contender("b", 0.35, 2),
+    ]);
+    expect(percents).toEqual({ a: 45, b: 35 });
+  });
+
+  it("gives a settled row no integer, so it still renders an em dash", () => {
+    const percents = boardRenderedPercents([contender("out", null, 1)]);
+    expect(percents.out).toBeNull();
+    expect(formatBoardProbability(null, percents.out)).toBe("—");
+  });
+});
+
+describe("the rendered board on final day (#5893)", () => {
+  const finalDay = board({
+    rows: [
+      row({ entity_key: "zverev", display_name: "A. Zverev", probability: 0.575, rank: 1 }),
+      row({ entity_key: "shelton", display_name: "B. Shelton", probability: 0.425, rank: 2 }),
+    ],
+    contenders: 2,
+  });
+
+  it("prints the two numbers the FINAL card prints, and no decimal", () => {
+    const html = renderToStaticMarkup(<TournamentBoard board={finalDay} />);
+    const printed = [...html.matchAll(/data-testid="row-probability"[^>]*>([^<]+)</g)].map(
+      (match) => match[1]
+    );
+    expect(printed).toEqual(["58%", "42%"]);
+  });
+
+  it("does not change a number when the reader expands the board", () => {
+    // The pair rule is computed over `board.rows`, not the visible slice. A
+    // number that moved on "show more" would be the same defect one tap deeper.
+    const padded = board({
+      rows: [
+        ...finalDay.rows,
+        ...Array.from({ length: 8 }, (_, index) =>
+          row({
+            entity_key: `out-${index}`,
+            display_name: `Out ${index}`,
+            probability: 0.001,
+            rank: index + 3,
+          })
+        ),
+      ],
+      contenders: 2,
+    });
+    const html = renderToStaticMarkup(<TournamentBoard board={padded} />);
+    const printed = [...html.matchAll(/data-testid="row-probability"[^>]*>([^<]+)</g)].map(
+      (match) => match[1]
+    );
+    expect(printed.slice(0, 2)).toEqual(["58%", "42%"]);
   });
 });

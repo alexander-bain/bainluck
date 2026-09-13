@@ -20,6 +20,8 @@
  *   so, and it is never permitted to upgrade a non-live row.
  */
 
+import { formatProbabilityPercent } from "./probabilityDisplay";
+import { isComplementPair, renderedDuelPercents, renderedPercent } from "./renderedPercent";
 import type { BracketSlot } from "./bracket";
 import type { PlayoffGridPayload } from "./playoffGrid";
 import type { Broadcast, PlayerImage, SlateData } from "./slate";
@@ -380,9 +382,76 @@ export function trendDirection(delta: number | null): "up" | "down" | "flat" {
   return "flat";
 }
 
-export function formatBoardProbability(probability: number | null): string {
+/**
+ * ═══ THE BOARD PRINTS THE SAME PERCENT THE MATCH CARD DOES (#5893) ═══
+ *
+ * Alex, on the hub on men's final day: NEXT UP said Zverev **58%**, and the
+ * board three rows below said **57.2%**. With two players left, "who wins the
+ * final" and "who wins the title" are one question, and the page answered it
+ * twice.
+ *
+ * The served halves of that were live/199's (PR #5902 — the board now carries
+ * the final's blend, 0.575). What survived the payload fix was the RENDERING,
+ * and it was two separate departures from the product's standing rule:
+ *
+ * 1. **A decimal.** `(p * 100).toFixed(1)` was a private copy of the rounding
+ *    rule that UX-P046 made one module's job. The comment in `tournamentResults`
+ *    defended it as precision on a live figure a reader watches move — measured
+ *    against the real payload on 2026-09-13 that defence is empty: the men's
+ *    board's 36 rows print just FOUR distinct strings (`57.2%`, `42.5%`, and
+ *    then `0.1%` eighteen times and `0.0%` sixteen times), so the decimal
+ *    separates nothing and prints `0.1%` over a probability of 0.0005. Going
+ *    through `formatProbabilityPercent` also buys the boundary rule the board
+ *    never had — a live-but-tiny contender reads `<1%`, never `0%`.
+ *
+ * 2. **Per-row rounding on a two-horse field.** Whole percents alone do not
+ *    close it: 0.575 and 0.425 are a complement pair on a half-cent grid, so
+ *    half-up sends BOTH up and the board prints 58/43 under a card printing
+ *    58/42. That is #2452 / #2060 / UX-P114, for the fourth time, and the
+ *    answer is the same one the match card above it already calls —
+ *    `renderedDuelPercents`: round the favourite once, derive the other side.
+ *
+ * So the board decides its integers ONCE, over the whole field, and the row
+ * formatter is handed the answer. A row cannot compute this alone for exactly
+ * the reason `SideLine` cannot: a side does not know its opponent.
+ *
+ * WHEN THE PAIR RULE FIRES: exactly two rows print 1% or more AND those two are
+ * a complement pair. That is "the draw is down to its final" stated in terms of
+ * what the reader can see. A semi-final field of four is not a complement pair
+ * and is left alone; so is a genuinely non-complementary pair, which is
+ * `isComplementPair`'s job and not re-litigated here.
+ */
+export function boardRenderedPercents(
+  rows: readonly TournamentRow[] | null | undefined,
+): Record<string, number | null> {
+  const percents: Record<string, number | null> = {};
+  if (!rows) return percents;
+  for (const row of rows) percents[row.entity_key] = renderedPercent(row.probability);
+
+  const contenders = rows.filter((row) => (percents[row.entity_key] ?? 0) >= 1);
+  if (contenders.length !== 2) return percents;
+  if (!isComplementPair([contenders[0].probability, contenders[1].probability])) return percents;
+
+  const [first, second] = renderedDuelPercents(
+    contenders[0].probability,
+    contenders[1].probability,
+  );
+  percents[contenders[0].entity_key] = first;
+  percents[contenders[1].entity_key] = second;
+  return percents;
+}
+
+/**
+ * One row's number. `rendered` is the field-level integer from
+ * `boardRenderedPercents`; without it the row rounds alone, which is correct for
+ * a caller that genuinely has one probability and no field.
+ */
+export function formatBoardProbability(
+  probability: number | null,
+  rendered?: number | null,
+): string {
   if (probability === null || !Number.isFinite(probability)) return "—";
-  return `${(probability * 100).toFixed(1)}%`;
+  return formatProbabilityPercent(probability, { rendered });
 }
 
 export function formatTrendDelta(delta: number | null): string {

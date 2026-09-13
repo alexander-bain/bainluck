@@ -35,7 +35,11 @@ import {
   type WindowStarts,
 } from "@/lib/contenderChart";
 import { TITLE_COLUMN_LABEL } from "@/lib/bracket";
-import { formatBoardProbability, type TournamentRow } from "@/lib/tournament";
+import {
+  boardRenderedPercents,
+  formatBoardProbability,
+  type TournamentRow,
+} from "@/lib/tournament";
 
 /**
  * Legend + trend chart, now the FIRST thing under the pills (UX-P132 re-skin,
@@ -166,6 +170,12 @@ export default function ContenderChart({
   initialFilter?: string;
 }) {
   const series = useMemo(() => chartSeriesFor(rows, selection), [rows, selection]);
+
+  // #5893: the legend, the picker and the board below all print one field's
+  // integers, decided once over the WHOLE field. The legend draws a subset the
+  // reader chooses, so computing the pair rule from what happens to be selected
+  // would make a contender's number depend on who else is on the chart.
+  const renderedPercents = useMemo(() => boardRenderedPercents(rows), [rows]);
 
   /**
    * `null` means "whatever the default is", NOT a range (ux/1034 A1).
@@ -298,7 +308,7 @@ export default function ContenderChart({
                 }`}
                 data-testid="chart-legend-probability"
               >
-                {formatBoardProbability(entry.probability)}
+                {formatBoardProbability(entry.probability, renderedPercents[entry.entityKey])}
               </span>
               <span aria-hidden="true" className="w-3 shrink-0 text-right text-[13px] text-text-muted">
                 &times;
@@ -683,7 +693,7 @@ export default function ContenderChart({
                       {row.display_name}
                     </span>
                     <span className="text-[12.5px] tabular-nums text-text-muted">
-                      {formatBoardProbability(row.probability)}
+                      {formatBoardProbability(row.probability, renderedPercents[row.entity_key])}
                     </span>
                   </button>
                 </li>
