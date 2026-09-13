@@ -143,10 +143,12 @@ from functools import lru_cache
 from typing import Any, Iterable, Optional
 
 from app.utils.kalshi_occurrence_start import (
+    _is_orm_instance,
     _loaded_sport_key,
     recover_kalshi_occurrence_starts,
 )
 from app.utils.name_normalization import strip_diacritics
+from app.utils.proven_duplicates import merge_opening_line
 from app.utils.soccer_team_matching import soccer_pair_matches
 
 logger = logging.getLogger(__name__)
@@ -271,6 +273,12 @@ class FoldResult:
 
     dropped_ids: list = field(default_factory=list)
     """Row ids the fold removed, for the log line and the guard tests."""
+
+    merged_opening: dict = field(default_factory=dict)
+    """``{survivor_id: (home, away)}`` — survivors that gained a pre-match line
+    from the row they absorbed, and only those. Unlike
+    :attr:`merged_sources`, the fold has ALREADY applied this to the row (see
+    :func:`_elect`); this is the record, for the log line and the guard tests."""
 
     @property
     def folded_count(self) -> int:
@@ -564,6 +572,26 @@ def _name_clusters(bucket_keys: list[tuple], groups: dict[tuple, list]) -> list[
     return out
 
 
+def _set_served_value(event: Any, column: str, value: Any) -> None:
+    """Place a served reading on a row without making it a pending write.
+
+    The same two arms, for the same reason, as
+    `kalshi_occurrence_start._set_served_commence_time`, whose docstring carries
+    the full argument: an ORM row takes `set_committed_value` so it is never
+    marked dirty and no later flush can persist a serve-time reading into
+    `events`; anything else — a test double, a detached object — takes a plain
+    assignment, because `set_committed_value` needs instance state it has not
+    got. Getting the arms backwards is what turns "we read this differently"
+    into "we wrote this down".
+    """
+    if _is_orm_instance(event):
+        from sqlalchemy.orm.attributes import set_committed_value
+
+        set_committed_value(event, column, value)
+        return
+    setattr(event, column, value)
+
+
 def _elect(members: list, keep: set, result: "FoldResult") -> None:
     """Pick the survivor for one group and union the losers' venues onto it."""
     ranked = sorted(members, key=twin_identity_rank, reverse=True)
@@ -582,3 +610,67 @@ def _elect(members: list, keep: set, result: "FoldResult") -> None:
                 added = True
     if added:
         result.merged_sources[survivor.id] = merged
+
+    _carry_opening_line(survivor, losers, result)
+
+
+def _carry_opening_line(survivor: Any, losers: list, result: "FoldResult") -> None:
+    """Give the survivor the pre-match line only an absorbed row held. #5853.
+
+    🔴 WITHOUT THIS, THIS FOLD DELETES A NUMBER, AND IT WAS DOING SO ON
+    PRODUCTION. Measured 2026-09-13 19:3xZ by driving :func:`fold_twin_events`
+    over all 800 soccer rows a reader could reach: of the eighteen rows it
+    folded away, Brest v Paris Saint-Germain's `15297786` held
+    `opening_home_probability = 0.0953` and the survivor it was folded into,
+    `15311919`, holds none. The reader got one card instead of two and lost the
+    "Pre-match · sportsbooks" percentage in the trade. That is precisely the
+    regression #5918 was filed to refuse, arriving by way of its own fix.
+
+    The sources union above cannot reach it: on a SETTLED or pre-match card the
+    printed percentage comes from the `Event.opening_*` COLUMNS, which have
+    never been in the JSONB bag (`merge_opening_line`'s own docstring carries
+    the Bundesliga measurement that established this).
+
+    ONE RULE, NOT A SECOND COPY OF IT. The tag fold answered this question
+    first, in :func:`app.utils.proven_duplicates.merge_opening_line`, and its
+    three clauses are load-bearing — both halves absent before anything is
+    filled, a pair travels as a pair, twins consumed in ascending id order so a
+    card cannot flicker between two readings. Restating them here is how the
+    two rules drift apart, so the function is called rather than imitated.
+    Orientation, which that rule requires of its caller, holds by construction
+    here: the strict key is built from `(away, home)`, and the soccer name pass
+    uses :func:`soccer_pair_matches`, which matches home to home and refuses the
+    swap on purpose.
+
+    APPLIED TO THE ROW, unlike :attr:`FoldResult.merged_sources`, which every
+    caller applies itself. Both shapes exist in this pipeline already —
+    `recover_kalshi_occurrence_starts` writes the corrected kick-off onto the
+    row from inside this same function — and the row is the right place for
+    this one: six call sites in four route files consume this fold, and a
+    number that only arrives when a caller remembers to ask for it is a number
+    that will be missing from the fifth surface somebody adds. The write goes
+    through :func:`_set_served_value`, whose two arms are the safety argument
+    (gotcha #4): `set_committed_value` on an ORM row, so no later flush can
+    persist a served reading back into `events`.
+    """
+    if not losers:
+        return
+    own_home = getattr(survivor, "opening_home_probability", None)
+    home, away = merge_opening_line(
+        own_home,
+        getattr(survivor, "opening_away_probability", None),
+        [
+            (
+                loser.id,
+                getattr(loser, "opening_home_probability", None),
+                getattr(loser, "opening_away_probability", None),
+            )
+            for loser in losers
+        ],
+    )
+    if home is own_home:
+        return
+
+    result.merged_opening[survivor.id] = (home, away)
+    _set_served_value(survivor, "opening_home_probability", home)
+    _set_served_value(survivor, "opening_away_probability", away)
