@@ -124,6 +124,14 @@ from app.utils.probability_eligibility import MARKET_DERIVED_SOURCES  # noqa: E4
 #    `prune_blend_source` callers, the admin "clear kalshi" repair, and the raw
 #    SQL that deletes `stat_model`/`espn`. A deletion mints no reading, so it has
 #    no observation time and no market to name.
+#  * `futures_price_refresh.py::_KALSHI_WITHDRAW_EVENT_HERO_SQL` — PRUNE, #5771.
+#    When the venue has declared a result for a match that has not kicked off,
+#    the leg is withdrawn from `futures_outcomes` AND the `kalshi` key is removed
+#    from this column in the same transaction, because the hero and the chart
+#    read this column and not those rows. It only ever removes a key: a
+#    settlement is not a price, and no value we could write in its place is one
+#    we have. Keyed by the CONSTANT rather than by `<module>` — see
+#    `_module_constant_of` for why the file-wide key would be a hole.
 KNOWN_NON_READING_WRITES: dict[tuple[str, str, str], str] = {
     ("backend/app/routes/admin_matching.py", "sawtooth_fix", "update.values"):
         "prune",
@@ -135,6 +143,8 @@ KNOWN_NON_READING_WRITES: dict[tuple[str, str, str], str] = {
      "_prune_orphaned_blend_source", "update.values"): "prune",
     ("backend/app/tasks/prediction_market_matching.py",
      "_retire_unbacked_blend_source", "update.values"): "prune",
+    ("backend/app/tasks/futures_price_refresh.py",
+     "_KALSHI_WITHDRAW_EVENT_HERO_SQL", "raw-sql"): "prune",
     ("backend/app/tasks/statpal_sync.py", "_set_statpal_id", "orm-assign"):
         "sidecar",
     ("backend/app/tasks/statpal_sync.py", "_sync_statpal_injuries", "update.values"):
@@ -247,6 +257,41 @@ def _function_of(tree: ast.AST) -> dict[int, str]:
             for node in ast.walk(func):
                 owner.setdefault(id(node), func.name)
     return owner
+
+
+def _module_constant_of(tree: ast.AST) -> dict[int, str]:
+    """Node id -> the MODULE-LEVEL constant whose assignment encloses it.
+
+    `_function_of` can only answer for nodes inside a `def`. A raw-SQL statement
+    hoisted to a module constant — `_KALSHI_WITHDRAW_EVENT_HERO_SQL = text(...)`,
+    the shape `futures_price_refresh.py` uses — has no enclosing function, so it
+    would be attributed to `<module>` and its ledger entry would read
+    `(path, "<module>", "raw-sql")`. That key is the whole file: a SECOND
+    module-level statement in the same module, one that did mint a reading,
+    would match an entry written for this one and never be seen. Naming the
+    constant keeps ledger 1 as exact as its docstring claims.
+    """
+    const: dict[int, str] = {}
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.Assign):
+            targets = [t for t in node.targets if isinstance(t, ast.Name)]
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            targets = [node.target]
+        else:
+            continue
+        if not targets:
+            continue
+        for child in ast.walk(node):
+            # Only string constants, which is all `_raw_sql_sites` ever looks
+            # up. Recording every node would put the `ast.Load`/`ast.Store`
+            # CONTEXT SINGLETONS in here — CPython reuses one instance of each
+            # across the whole tree — so this map would appear to own nodes
+            # inside functions and any reasoning about its domain would be
+            # wrong. They are never looked up, but a map that lies about what
+            # it covers is a trap for the next reader.
+            if isinstance(child, ast.Constant) and isinstance(child.value, str):
+                const.setdefault(id(child), targets[0].id)
+    return const
 
 
 def _named_mapping_value(name: str, tree: ast.AST, fn: str,
@@ -389,7 +434,8 @@ def _call_argument_strings(tree: ast.AST) -> set[int]:
     return used
 
 
-def _raw_sql_sites(rel: str, tree: ast.AST, owner: dict[int, str]):
+def _raw_sql_sites(rel: str, tree: ast.AST, owner: dict[int, str],
+                   const: dict[int, str] | None = None):
     """Write sites expressed as SQL text rather than as a builder.
 
     `source_intelligence.py` runs `UPDATE events SET win_probability_sources`
@@ -408,7 +454,8 @@ def _raw_sql_sites(rel: str, tree: ast.AST, owner: dict[int, str]):
             continue
         upper = text_value.upper()
         if "UPDATE" in upper and "SET" in upper:
-            yield (rel, owner.get(id(node), "<module>"), "raw-sql", "other", None)
+            where = owner.get(id(node)) or (const or {}).get(id(node), "<module>")
+            yield (rel, where, "raw-sql", "other", None)
 
 
 def _sites_in_tree(rel: str, tree: ast.AST):
@@ -454,7 +501,7 @@ def _sites_in_tree(rel: str, tree: ast.AST):
                 yield (rel, fn, "orm-assign", derivation, node.value)
 
     # Shape 4: raw SQL.
-    yield from _raw_sql_sites(rel, tree, owner)
+    yield from _raw_sql_sites(rel, tree, owner, _module_constant_of(tree))
 
 
 def _mints_in_tree(rel: str, tree: ast.AST):
@@ -755,6 +802,30 @@ def test_raw_sql_is_a_site() -> None:
         " = :wps WHERE id = :eid'), {'wps': wps, 'eid': eid})\n"
     )
     assert [(x[2], x[3]) for x in sites] == [("raw-sql", "other")]
+
+
+def test_a_module_level_sql_constant_is_keyed_by_its_own_name() -> None:
+    """A hoisted statement must not be ledgered as the whole file.
+
+    `<module>` would let a SECOND module-level writer in the same file — one
+    that did mint a reading — match an entry written for a prune and never be
+    seen. The key is the constant, so the ledger stays exact in both directions.
+    """
+    sites = _writes(
+        "_WITHDRAW_SQL = text('UPDATE events SET win_probability_sources"
+        " = :wps WHERE id = :eid')\n"
+    )
+    assert [(x[1], x[2]) for x in sites] == [("_WITHDRAW_SQL", "raw-sql")]
+
+
+def test_a_constant_inside_a_function_still_names_the_function() -> None:
+    """The module-level attributor must not outrank `_function_of`."""
+    sites = _writes(
+        "async def f(db, wps, eid):\n"
+        "    stmt = text('UPDATE events SET win_probability_sources = :wps')\n"
+        "    await db.execute(stmt, {'wps': wps})\n"
+    )
+    assert [(x[1], x[2]) for x in sites] == [("f", "raw-sql")]
 
 
 def test_a_select_of_the_column_is_not_a_raw_sql_site() -> None:
