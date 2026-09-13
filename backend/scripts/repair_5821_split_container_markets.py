@@ -243,6 +243,50 @@ def elect_survivor(container_event, base_event):
     return ranked[0], ranked[1]
 
 
+def plan_moves(families, events_by_id, markets_by_event):
+    """Which markets move where. Pure: no DB, no clock, no I/O.
+
+    Separated from the statement that executes it for the reason the sibling
+    repair separates `planned_write`: the population query is Postgres-only, CI
+    has no Postgres, and a decision that cannot be executed in a test is a
+    decision nothing guards. Returns `(moves, per_family)` where a move is
+    `(market_id, from_event, to_event)`.
+
+    🔴 ONE MOVE PER MARKET. A fixture can be published with BOTH container
+    suffixes — a `- More Markets` event AND a `- Player Props` event — and those
+    are two families sharing one base. If that base is the row that LOSES, its
+    markets would be collected once per family, and the second copy's
+    compare-and-set would find the link already moved and report rowcount 0.
+    That is indistinguishable in the output from a market another writer moved
+    under us, which is the one signal the SKIPPED count exists to carry. So a
+    market is claimed by the first family that moves it and the rest skip it.
+    """
+    moves = []
+    per_family = []
+    claimed: set[int] = set()
+
+    for family in families:
+        container = events_by_id.get(family.cont_event)
+        base = events_by_id.get(family.base_event)
+        if container is None or base is None:
+            continue
+
+        survivor, loser = elect_survivor(container, base)
+        stranded = [
+            market_id
+            for market_id in markets_by_event.get(loser.id, [])
+            if market_id not in claimed
+        ]
+        if not stranded:
+            continue
+
+        claimed.update(stranded)
+        per_family.append((family.base_name, loser.id, survivor.id, len(stranded)))
+        moves.extend((market_id, loser.id, survivor.id) for market_id in stranded)
+
+    return moves, per_family
+
+
 async def run(args):
     from sqlalchemy import text
 
@@ -268,9 +312,8 @@ async def run(args):
         from app.models.models import Event, FuturesMarket
         from sqlalchemy import select
 
-        # One plan per family: every Polymarket market on the LOSER moves to the
-        # SURVIVOR. Read the two event rows in full, because the election reads
-        # columns the population query has no business projecting.
+        # Read the two event rows in full, because the election reads columns the
+        # population query has no business projecting.
         event_ids = sorted(
             {f.cont_event for f in families} | {f.base_event for f in families}
         )
@@ -279,25 +322,21 @@ async def run(args):
         ).scalars().all()
         by_id = {e.id: e for e in rows}
 
-        moves = []  # (market_id, from_event, to_event)
-        per_family = []
-        for f in families:
-            container, base = by_id.get(f.cont_event), by_id.get(f.base_event)
-            if container is None or base is None:
-                continue
-            survivor, loser = elect_survivor(container, base)
-            stranded = (
-                await s.execute(
-                    select(FuturesMarket.id).where(
-                        FuturesMarket.source == "polymarket",
-                        FuturesMarket.event_id == loser.id,
-                    )
+        # Every Polymarket market on either side of every family, in ONE query.
+        markets_by_event: dict[int, list[int]] = {}
+        for market_id, event_id in (
+            await s.execute(
+                select(FuturesMarket.id, FuturesMarket.event_id)
+                .where(
+                    FuturesMarket.source == "polymarket",
+                    FuturesMarket.event_id.in_(event_ids),
                 )
-            ).scalars().all()
-            if not stranded:
-                continue
-            per_family.append((f.base_name, loser.id, survivor.id, len(stranded)))
-            moves.extend((mid, loser.id, survivor.id) for mid in stranded)
+                .order_by(FuturesMarket.id)
+            )
+        ).all():
+            markets_by_event.setdefault(event_id, []).append(market_id)
+
+        moves, per_family = plan_moves(families, by_id, markets_by_event)
 
         for name, loser, survivor, n in per_family[:40]:
             print(

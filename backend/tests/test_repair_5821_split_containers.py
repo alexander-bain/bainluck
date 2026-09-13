@@ -262,6 +262,110 @@ class TestTheReaderOutcome:
         )
 
 
+class TestThePlanner:
+    """`plan_moves` is pure, which is the only reason any of this is testable —
+    the population query is Postgres-only and CI has no Postgres."""
+
+    class _Family:
+        def __init__(self, base_name, cont_event, base_event):
+            self.base_name = base_name
+            self.cont_event = cont_event
+            self.base_event = base_event
+
+    def test_the_losers_markets_move_and_the_survivors_stay(self, repair):
+        now = datetime.now(timezone.utc)
+        companion, base, _ = _family(now)
+        families = [self._Family("Al Ain FC vs. Al Nassr Club", COMPANION_ID, BASE_ID)]
+
+        moves, per_family = repair.plan_moves(
+            families,
+            {COMPANION_ID: companion, BASE_ID: base},
+            {COMPANION_ID: [9001, 9002], BASE_ID: [9100]},
+        )
+
+        # The base survives, so the COMPANION's two markets move and the base's
+        # moneyline is left exactly where it is.
+        assert sorted(moves) == [
+            (9001, COMPANION_ID, BASE_ID),
+            (9002, COMPANION_ID, BASE_ID),
+        ]
+        assert per_family == [("Al Ain FC vs. Al Nassr Club", COMPANION_ID, BASE_ID, 2)]
+
+    def test_a_market_is_moved_ONCE_when_two_containers_share_one_base(self, repair):
+        """🔴 A fixture can be published with BOTH suffixes — `- More Markets`
+        AND `- Player Props` — which is two families over one base. When the
+        base is the row that loses, its markets would be planned twice, and the
+        duplicate's compare-and-set would report rowcount 0: indistinguishable
+        from the real race the SKIPPED count exists to report.
+        """
+        from app.models.models import Event
+
+        now = datetime.now(timezone.utc)
+        # Both containers carry a source so the BASE loses both elections.
+        rich = dict(
+            sport_id=SPORT,
+            home_team_name=HOME,
+            away_team_name=AWAY,
+            commence_time=now - timedelta(hours=7),
+            status="suspended",
+            win_probability_sources={"polymarket": {"value": 0.4}},
+        )
+        more = Event(id=500, **rich)
+        props = Event(id=501, **rich)
+        base = Event(
+            id=400,
+            sport_id=SPORT,
+            home_team_name=HOME,
+            away_team_name=AWAY,
+            commence_time=now - timedelta(hours=7),
+            status="suspended",
+            win_probability_sources=None,
+        )
+        families = [self._Family("A vs. B", 500, 400), self._Family("A vs. B", 501, 400)]
+
+        moves, per_family = repair.plan_moves(
+            families,
+            {500: more, 501: props, 400: base},
+            {400: [7001, 7002], 500: [], 501: []},
+        )
+
+        moved_ids = [m[0] for m in moves]
+        assert sorted(moved_ids) == [7001, 7002]
+        assert len(moved_ids) == len(set(moved_ids)), (
+            f"a market is planned twice: {moved_ids}"
+        )
+        assert len(per_family) == 1, (
+            "the second family claimed nothing and should not be reported as "
+            "though it moved markets"
+        )
+
+    def test_an_already_collapsed_family_plans_nothing(self, repair):
+        """Idempotence, from the planner's side: a loser with no markets left is
+        not a move, so a re-run after an apply is a no-op that says so."""
+        now = datetime.now(timezone.utc)
+        companion, base, _ = _family(now)
+        families = [self._Family("A vs. B", COMPANION_ID, BASE_ID)]
+
+        moves, per_family = repair.plan_moves(
+            families,
+            {COMPANION_ID: companion, BASE_ID: base},
+            {BASE_ID: [9100]},  # the companion holds nothing any more
+        )
+
+        assert moves == [] and per_family == []
+
+    def test_a_family_whose_event_row_vanished_is_skipped_not_guessed(self, repair):
+        now = datetime.now(timezone.utc)
+        _, base, _ = _family(now)
+        families = [self._Family("A vs. B", COMPANION_ID, BASE_ID)]
+
+        moves, _ = repair.plan_moves(
+            families, {BASE_ID: base}, {COMPANION_ID: [9001]}
+        )
+
+        assert moves == []
+
+
 class TestTheMembershipIsConfirmedNotGuessed:
     def test_the_suffix_list_comes_from_the_matcher(self, repair):
         """One vocabulary, not a copy. A suffix added to the matcher must widen
