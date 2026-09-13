@@ -631,7 +631,38 @@ def _main_payload_is_publishable(response: Any) -> bool:
 # CAL-P982 AMENDMENT: it no longer just "returns". A bump that uses the escape
 # now DECLARES the move it expects — see
 # :data:`CALIBRATION_POPULATION_DECLARATION` directly below.
-CALIBRATION_POPULATION_VERSION = "q269"
+#
+# ---------------------------------------------------------------------------
+# q269 -> q270 (CAL-P1137, 2026-09-12): THE ONE RECOUNT. Two methodology
+# changes, applied together, so the page is scored by the current method with no
+# known-wrong price left in it.
+#
+# Alex, 2026-09-12 2:10PM PT: "metrics being fresh on that page is not
+# important. They just need to demonstrate accuracy. We've known for a while
+# what the right way was to calculate the remaining subcohorts that are stopping
+# us from being done; can we just do it the right way and be done?" — so this is
+# ONE bump carrying every correct method we already knew, not a series of them.
+# Dark or stale for as long as the rebuild takes was accepted in the same breath.
+#
+# WHAT MOVED, both above this line in the builder:
+#
+#   1. #5305 — a cumulative threshold ladder is ONE forecast. A lone quantity
+#      market whose own resolutions prove it is not a partition (>1 winner)
+#      publishes one representative rung instead of all of them. Forty nested
+#      readings of one number were forty rows in one cell's ECE.
+#   2. #5401 — the curve stops publishing an opening the Kalshi writer itself
+#      would have refused to record (`yes_bid > 0` and spread < 0.50 in some
+#      snapshot). These are prices no order book ever stood behind.
+#
+# They are bumped TOGETHER on purpose. A bump discards the 128-unit staged
+# futures bank and takes /calibration dark until the first build under the new
+# version publishes, so two bumps cost that twice for one answer.
+#
+# WHY THIS IS NOT "TIME PASSED" (the q268 warning above still binds): both
+# changes are edits to the population predicate itself and both are visible in
+# `population_predicate_fingerprint`. A build that merely took a long time
+# publishes with no bump at all, and that remains the rule.
+CALIBRATION_POPULATION_VERSION = "q270"
 
 #: What THIS bump expects to do to the population, stated up front so the publish
 #: gate can hold it to its word (CAL-P982, #1978). ``None`` on any build that is
@@ -644,18 +675,53 @@ CALIBRATION_POPULATION_VERSION = "q269"
 #: indistinguishable to the gate. The escape is necessary — a ruled methodology
 #: change legitimately moves the population — but "necessary" is not "unbounded".
 #:
-#: THE NUMBER, and where it comes from: the completed 128-unit rebuild of
-#: 2026-09-01 measured q269 at 930,149 -> 728,641 outcomes against the published
-#: q268 artifact, i.e. a 21.66% drop (crypto 4,625 -> 0 by D12, economics
-#: 43,270 -> 10,501 by RULE E, plus the D5 dedup).
+#: THE NUMBER FOR q270, and where it comes from. Both arms count ``deduped`` —
+#: the published population itself — over the same rows, chunked EVENT-ATOMICALLY
+#: so no event group is ever split (``scripts/calibration_population_move_5401.py``,
+#: receipts in ``artifacts/cal-p1121/`` and ``artifacts/cal-p1137/``):
 #:
-#: THE TOLERANCE, and why 3.0 rather than tighter: the published baseline is
-#: fixed at 930,149 but the CANDIDATE keeps growing — resolution adds outcomes
-#: every hour the drain is not running. ±3.0pp admits a candidate anywhere in
-#: 700,774 .. 756,583 outcomes, i.e. ~28,000 outcomes of organic headroom in
-#: either direction around the measured 728,641. Wide enough that a few days'
-#: ordinary resolution cannot refuse the ship; far tighter than the ~200,000-row
-#: move an unbounded bump used to wave through unexamined.
+#:   master semantics, Kalshi       399,618   (control: the live payload's
+#:                                             by_source Kalshi n was 396,160 at
+#:                                             that read — the rig counts +0.87%,
+#:                                             which is its own offset, not drift)
+#:   q270 semantics, Kalshi         306,369   (1,129 chunks, 0 irreducible)
+#:
+#: The two arms are hours apart and the table grew between them (live Kalshi n
+#: 396,160 -> 401,282), so the move is stated twice rather than once:
+#:
+#:   against the baseline AS MEASURED        93,249 rows = 11.68%
+#:   against the baseline carried forward    98,416 rows = 12.33%
+#:     on the rig's own +0.87% offset
+#:
+#: 12.0% is declared — the midpoint. The first reading understates the move
+#: (a fresh arm against a stale, smaller baseline); the second is a projection.
+#: Naming the midpoint with a band that covers both is the honest form; picking
+#: whichever one flattered the ship would not be.
+#:
+#: Of that move, the writer bar is nearly all of it: CAL-P1121 measured the bar
+#: alone at 94,134 rows / 12.04%, so the ladder collapse removes ~3,000 published
+#: Kalshi rows on top. That is not the ladder failing to bite — most of its rungs
+#: were already refused upstream (esports bundles, non-partition multi pools, the
+#: multi arm's own 0.005 < p < 0.98 band); what it removes is what survived all of
+#: those and was still the same question counted twice.
+#:
+#: The Polymarket half of the ladder rule is bounded rather than folded: its
+#: whole raw candidate cohort — lone ``quantity`` markets whose own resolutions
+#: show >1 winner — is 6,422 suppressible rungs across the entire table before
+#: the population pipeline whittles it, i.e. at most 0.8pp of the published
+#: population and in practice far less. It is inside the tolerance below by an
+#: order of magnitude, and folding it would have cost a second 75-minute
+#: source-wide sweep to move the declaration by a rounding error.
+#:
+#: THE TOLERANCE, and why the 5.0 maximum rather than 3.0: q269's ±3.0 was sized
+#: against a FIXED published baseline. This bump's baseline is a measurement of a
+#: live table taken hours before the deploy, and the two rules interact — the
+#: writer bar removes rows that the ladder rule would also have collapsed, so the
+#: realised move is bounded by the two applied together and not by their sum. A
+#: wrong declaration is not a re-run: ``evaluate_publish`` refuses, and a refusal
+#: CLEARS THE CHECKPOINT, so every later rebuild is binned for the same reason
+#: until another deploy corrects it. The band is therefore sized to survive the
+#: drift and the interaction, not to look tight.
 #:
 #: NOT a fingerprint input, deliberately. This is publish-time metadata about a
 #: version transition; it does not shape WHICH ROWS QUALIFY, so hashing it would
@@ -663,9 +729,9 @@ CALIBRATION_POPULATION_VERSION = "q269"
 #: applied OUTSIDE the four functions ``_main_input_fingerprint`` hashes, for the
 #: same reason (see ``_run_calibration_main_build``).
 CALIBRATION_POPULATION_DECLARATION: "dict | None" = {
-    "from_version": "q268",
-    "expected_drop_pct": 21.66,
-    "tolerance_pct": 3.0,
+    "from_version": "q269",
+    "expected_drop_pct": 12.0,
+    "tolerance_pct": 5.0,
 }
 
 #: The predecessor versions whose PUBLISHED artifacts this build declares
@@ -694,18 +760,27 @@ CALIBRATION_POPULATION_DECLARATION: "dict | None" = {
 #: papering-over this docstring names, not a kindness to the page. The list is
 #: not a dial to be turned down when the dark window is inconvenient — its entry
 #: bar is a proof of methodological identity, and q268 cannot meet it.
+#:
+#: CAL-P1137 (q270) IS THE SAME CASE AGAIN and the list stays empty for the same
+#: reason, not by inertia: the q269 artifact grades tens of thousands of Kalshi
+#: openings that no order book stood behind and counts every rung of a threshold
+#: ladder as its own forecast. Those are the two things q270 exists to stop
+#: publishing, so serving q269 under a q270 label would re-publish exactly what
+#: the bump removes. Alex accepted the dark window in terms on 2026-09-12 —
+#: "dark or stale for as long as it takes is fine".
 COMPATIBLE_PREVIOUS_POPULATION_VERSIONS: tuple[str, ...] = ()
 
 #: The version carried by the artifact /calibration is ACTUALLY serving — the
 #: one a rollover has to keep servable to stay lit. Measured, not assumed:
-#: ``GET /api/calibration`` returned ``population_version: "q268"`` with
-#: ``generated_at 2026-08-31T04:37:36.703361+00:00`` at 2026-09-01 22:51 PT.
+#: ``GET /api/calibration`` returned ``population_version: "q269"`` with
+#: ``generated_at 2026-09-12T22:16:25.849594+00:00`` and ``total_outcomes``
+#: 798,292, read at 2026-09-12 22:44:48Z (3:44PM PT).
 #:
 #: It is separate from :data:`CALIBRATION_POPULATION_VERSION` because the two
 #: genuinely differ during a rollover — that gap IS the dark window — and the
 #: guard that checks the lit path needs to name the outgoing version without
 #: hard-coding a literal that goes stale one bump later.
-PREVIOUS_PUBLISHED_POPULATION_VERSION = "q268"
+PREVIOUS_PUBLISHED_POPULATION_VERSION = "q269"
 
 #: The population version for which an EMPTY
 #: :data:`COMPATIBLE_PREVIOUS_POPULATION_VERSIONS` — and therefore a DELIBERATE,
@@ -720,19 +795,18 @@ PREVIOUS_PUBLISHED_POPULATION_VERSION = "q268"
 #: acceptance expire on its own: bump to q270 without re-declaring and the guard
 #: in ``tests/test_calibration_result_authority_299.py`` fails closed.
 #:
-#: 🔴 STAGED, NOT YET ACCEPTED. As of 2026-09-01 22:5x PT this branch is built
-#: and gated but UNMERGED, and the acceptance it records is Alex's to give (it is
-#: on his desk as ``alex-inbox/calibration-020`` + ``-021``). Do not merge this
-#: branch until he has said go. What the decision buys: the alternative is not
-#: "a lit page" but a page frozen forever at 2026-08-31, because under q268 every
-#: rebuild is refused and binned.
+#: ACCEPTED FOR q270 BY ALEX IN TERMS, 2026-09-12 2:10PM PT, in the ruling that
+#: commissioned the recount: "metrics being fresh on that page is not important.
+#: They just need to demonstrate accuracy … then run the recount — dark or stale
+#: for as long as it takes is fine." The acceptance is not inherited from q269;
+#: it is the same cost, priced again, and granted again by name.
 #:
 #: MEASURED COST (phase ledger ``calibration:main:phase_ledger``, generation
 #: 1788326490717): ``staged:unit_ms_mean`` 91,844 ms over 128 units = ~3.3 h of
 #: build, and the plan's own ``units_per_beat`` 13 puts an UNASSISTED recovery at
 #: ceil(128/13) = 10 hourly beats. The attended one-off drain lands between the
 #: two. It is a window measured in hours, not the ~26 h first estimated.
-POPULATION_VERSION_DARK_WINDOW_ACCEPTED: str | None = "q269"
+POPULATION_VERSION_DARK_WINDOW_ACCEPTED: str | None = "q270"
 
 #: Queue 300D Item 1 — the REPRESENTATIVE TIE AUTHORITY, versioned separately
 #: from the population.
@@ -885,6 +959,40 @@ CALIBRATION_CORRECTIONS = [
                        "MLBKS -2pp). No regrade: the sign-flip premise is disproven "
                        "and no honest price exists to recover (gotcha #21). "
                        "Read-side only.",
+    },
+    {
+        "date": "2026-09-12",
+        "title": "Prices nobody could have traded at",
+        "rows": None,  # live count in payload.writer_bar_filter.excluded
+        "description": "Kalshi records an opening price only when there is a "
+                       "real bid and the gap between buy and sell is under 50 "
+                       "cents. Our scoring was less strict than that, so it was "
+                       "grading opening prices that Kalshi's own rule would "
+                       "never have written down — a number on the screen that "
+                       "no one could have traded at. Those are no longer "
+                       "scored. Golf and entertainment were the worst affected: "
+                       "golf's openings came out 25 percentage points "
+                       "over-confident and now land within 5. Ten of sixteen "
+                       "scored groups move slightly further from perfect, which "
+                       "is what happens when a group was only right because two "
+                       "errors cancelled. We would rather be honestly wrong "
+                       "than accidentally right. No result was re-graded — only "
+                       "which prices we hold ourselves to.",
+    },
+    {
+        "date": "2026-09-12",
+        "title": "A price ladder is one forecast, not forty",
+        "rows": None,  # live count in payload.threshold_ladder.rungs_suppressed
+        "description": "Some markets ask one question in many overlapping "
+                       "steps — 'above $0.77', 'above $0.80', all the way to "
+                       "'above $1.15'. If the answer is $1.20 then most of "
+                       "those steps are right at once. Counting each step as a "
+                       "separate forecast let one question land in our score "
+                       "forty times over. We now score one step per ladder. "
+                       "Markets that really are separate questions — a set of "
+                       "bands where exactly one can happen — still count in "
+                       "full; a ladder is only collapsed once its own results "
+                       "show more than one step came true.",
     },
 ]
 

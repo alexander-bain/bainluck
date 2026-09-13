@@ -524,23 +524,28 @@ class TestPublishOrPark:
         )
 
     def test_the_shipped_bump_is_the_methodology_bump_it_says_it_is(self):
-        """q269 must be a bump that the gate's version escape hatch is FOR.
+        """q270 must be a bump that the gate's version escape hatch is FOR.
 
         ``evaluate_publish`` returns before the population and per-category
         rules when ``version_bumped`` is true, so a bump is the one thing that
-        can wave a -21.7% shrink through. That power is only legitimate for a
-        bump whose predicate really did move — which is why the empty
+        can wave a double-digit shrink through. That power is only legitimate
+        for a bump whose predicate really did move — which is why the empty
         compatibility list and the bump have to travel together. Pinning them
         to each other here means neither can be quietly undone: restoring a
-        compatible predecessor while keeping q269 would claim the methodology
-        did NOT move, and re-adding q268 is exactly the papering-over the
+        compatible predecessor while keeping q270 would claim the methodology
+        did NOT move, and re-adding q269 is exactly the papering-over the
         module docstring forbids.
+
+        CAL-P1137 moved this set from q269/q268 to q270/q269. q270 carries two
+        predicate changes — the Kalshi writer bar (#5401) and the one-forecast-
+        per-threshold-ladder collapse (#5305) — so it meets the same bar q269
+        met, by the same argument, on different rows.
         """
-        assert pc.CALIBRATION_POPULATION_VERSION == "q269"
+        assert pc.CALIBRATION_POPULATION_VERSION == "q270"
         assert pc.COMPATIBLE_PREVIOUS_POPULATION_VERSIONS == ()
-        assert pc.POPULATION_VERSION_DARK_WINDOW_ACCEPTED == "q269"
-        assert pc.PREVIOUS_PUBLISHED_POPULATION_VERSION == "q268", (
-            "q268 is the version the live artifact carries; if this moves, the "
+        assert pc.POPULATION_VERSION_DARK_WINDOW_ACCEPTED == "q270"
+        assert pc.PREVIOUS_PUBLISHED_POPULATION_VERSION == "q269", (
+            "q269 is the version the live artifact carries; if this moves, the "
             "lit-path arm above is checking the wrong predecessor"
         )
 

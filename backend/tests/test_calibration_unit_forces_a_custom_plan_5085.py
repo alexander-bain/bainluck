@@ -92,7 +92,14 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: deliberately conservative one. It costs nothing here: the writer-bar
 #: exclusion in the same commit re-keys the cursor on its own account,
 #: so the rebuild is paid once, not twice.
-LIVE_INPUT_FINGERPRINT = "b1126a29a0dd30eca45ffaf595e9ef99"
+#:
+#: RE-ANCHORED AGAIN for CAL-P1137 (the q270 recount): ``b1126a29…`` ->
+#: ``6ae47375…``. Two of this bump's three edits are meant to land here — the
+#: threshold-ladder arm (#5305) edits ``_calibration_population_ctes`` and
+#: ``CALIBRATION_POPULATION_VERSION`` is itself a hashed input — so an UNMOVED
+#: fingerprint would have been the bug. The rebuild is the one the version bump
+#: already pays for; nothing extra is spent by these two riding along.
+LIVE_INPUT_FINGERPRINT = "6ae473752d0fb502ac0932825eb8e1bc"
 
 
 class _Db:
