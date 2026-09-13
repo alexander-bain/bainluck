@@ -37,6 +37,21 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.tasks import reconcile_shared_fixture_ids as reconcile
+
+
+class _NoSharedFixtures:
+    """#5779's look-back, answered empty: one row per contest in this driver."""
+
+    rowcount = 0
+
+    def fetchall(self):
+        return []
+
+    def all(self):
+        return []
+
+
 _SCRIPT = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "scripts",
@@ -593,6 +608,15 @@ class TestTheWriterRecordsWhatItWrote:
                 # statement, not a claim context, so it is invisible unless the
                 # session records what it was asked to run.
                 executed.append((str(statement), params))
+                if str(statement) in (
+                    reconcile.SHARED_FIXTURE_IDS_BY_SPORT,
+                    reconcile.SHARED_FIXTURE_IDS_BY_SPORT_PREFIX,
+                ):
+                    # #5779's look-back asks for ids; `_Result.fetchall` hands
+                    # back candidate ROWS, whose first column is our event id.
+                    # Empty is the honest answer — this inventory is one row per
+                    # contest, the same reason `.all()` above answers none.
+                    return _NoSharedFixtures()
                 return _Result()
 
             async def commit(self):

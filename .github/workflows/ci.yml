@@ -494,6 +494,31 @@ jobs:
             exit 1
           fi
 
+      - name: "#5779 duplicate-sweep look-back reach (real Postgres)"
+        # The reach fix is a SQL predicate — `GROUP BY statpal_fixture_id HAVING
+        # count(*) > 1` inside a window, an equality plan for a one-key league
+        # and a `LIKE` plan for soccer's ~40 keys. Every way it can be wrong is
+        # invisible to a session double: `>= 1` returns every anchored row,
+        # a dropped bound returns the table, and a `%` that stops being bound
+        # returns nothing — which reads exactly like "no duplicates today".
+        #
+        # It also grades the half that matters more than the reach: widening
+        # what the sweep SEES must not widen what it TAGS. The NBA `1027790`
+        # rows (two real games 24h apart wearing one fabricated id) are handed
+        # over by the look-back and refused by `KICKOFF_DIFFERS`.
+        #
+        # Same skip detection as every gate in this job: pytest exits 0 when
+        # each test skips, and a gate that silently did not run reads exactly
+        # like one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_reconcile_lookback_reach_5779_pg.py \
+            -v -rs 2>&1 | tee /tmp/dupreach.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/dupreach.txt; then
+            echo "::error::#5779 look-back reach gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#3672 repair bind contract (real asyncpg)"
         # #1884's class, recurred. `repair_3672_bare_namespace_event_names.py`
         # shipped with 42 green unit tests, passed CERT-2139, merged and
