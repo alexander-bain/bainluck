@@ -26,6 +26,7 @@ from app.utils.futures_unsupported_price import (
     needs_trade_evidence,
     price_is_unsupported,
 )
+from app.utils.hook_staleness import hook_names_unpriced_outcome, is_hook_stale
 from app.utils.leader_order import leader_first_outcomes
 from app.utils.event_rails import live_scheduled_settled_order
 from app.utils.lifecycle import served_event_status
@@ -5018,6 +5019,80 @@ def _format_market_detail(
     )
     leader_pick_order(outcomes)
 
+    # #5906: THE HOOK GOES THROUGH THE SAME GATE THE DISCOVER CARD HAS ALWAYS
+    # USED. `routes/feed.py` has run every stored hook past `is_hook_stale`
+    # since that module shipped; this serializer published `market.hook_
+    # description` raw. One sentence, one reader, two answers — and nobody chose
+    # that, which is why this is an adoption and not a new policy.
+    #
+    # WHAT A READER SAW. `/futures/8641774` (*Brazil Série B: Winner*) captioned
+    # itself "Novorizontino has surged to the top" under a hero crowning
+    # JUVENTUDE, over a table where Novorizontino's row read "—" because #5876
+    # withheld its refuted midpoint. The stored hook is policy 1, 76 days old,
+    # and names a superseded leader: it trips rules 0, 1 AND 2, and the feed had
+    # been refusing it for months.
+    #
+    # REACH IS THE WHOLE POPULATION, MEASURED NOT ESTIMATED (production,
+    # 2026-09-13): 11,444 open markets carry a hook, **0 are policy 2**, 10,629
+    # are also past the 7-day age gate. So this empties the paragraph on
+    # essentially every futures detail page, and that is the ship rather than a
+    # side effect — every one of those sentences was written by the prompt #5461
+    # retired for inventing developments our data does not support.
+    #
+    # THE COST WAS CHECKED ON THE CLIENTS BEFORE IT WAS TAKEN, and the two share
+    # surfaces get BETTER: `app/futures/[id]/layout.tsx` (meta description) and
+    # `opengraph-image.tsx` (share card) both already read
+    # `market.hook_description || "<leader> leads <market> at <prob>"`, so a null
+    # trades an invented sentence for a derived true one. The page body renders
+    # the paragraph behind `{market.hook_description && ...}`, so nothing is left
+    # to explain (notice 34 — never caption an emptiness).
+    #
+    # THE LEADER IS THE ONE THE HERO PRINTS, AND THAT IS NOT `outcomes[0]`.
+    # Rules 2 and 3 compare the hook against the frontrunner THE READER SEES, so
+    # the question has to be asked of the value the client crowns.
+    #
+    # This list is still in RAW `current_probability` order (the sort at the top
+    # of this function); withholding nulls a price in place and never re-sorts,
+    # so on the Brazil board `outcomes[0]` is Novorizontino — the withheld row,
+    # carrying `probability: None`. Reading position 0 would hand rule 2 the
+    # very leg the page refuses to price and report "no leader change".
+    #
+    # `app/futures/[id]/page.tsx:394` is explicit — *"The leader is always the
+    # outcome with highest probability (independent of sort)"*, over
+    # `(b.probability ?? 0) - (a.probability ?? 0)`. Mirrored here rather than
+    # approximated: a withheld null reads as 0 and sinks, which is exactly the
+    # behaviour the withhold block above already relies on.
+    reader_leader = (
+        max(outcomes, key=lambda o: o.get("probability") or 0) if outcomes else None
+    )
+    leader_name = reader_leader.get("name") if reader_leader else None
+    leader_probability = reader_leader.get("probability") if reader_leader else None
+    hook_description = market.hook_description
+    hook_withheld = bool(hook_description) and (
+        is_hook_stale(
+            hook_description=hook_description,
+            hook_generated_at=getattr(market, "hook_generated_at", None),
+            hook_leader_at_generation=getattr(
+                market, "hook_leader_at_generation", None
+            ),
+            current_leader_name=leader_name,
+            current_leader_probability=leader_probability,
+            market_metadata=getattr(market, "market_metadata", None),
+        )
+        # The caller supplies the names because only it knows which rows this
+        # response refused — the same division of labour as `withheld` above.
+        # Sourced from the FINAL list, so a leg dropped by the display pipeline
+        # is not reported as "unpriced" on the strength of a row nobody serves.
+        or hook_names_unpriced_outcome(
+            hook_description=hook_description,
+            unpriced_outcome_names=[
+                o.get("name") for o in outcomes if o.get("probability") is None
+            ],
+        )
+    )
+    if hook_withheld:
+        hook_description = None
+
     # B7 (L2-91): the up-link mesh. Resolve this market's event-concept key
     # (`event:<domain>:<slug>`, richer per-event page) and its competition hub slug
     # (`/hub/<slug>`) via the shared server-side resolver so the frontend breadcrumb
@@ -5089,7 +5164,12 @@ def _format_market_detail(
         "updated_at": market.updated_at.isoformat() if market.updated_at else None,
         "group_id": market.group_id,
         "canonical_market_key": market.canonical_market_key,
-        "hook_description": market.hook_description,
+        "hook_description": hook_description,
+        # #5906: true when a stored hook existed and this response refused to
+        # publish it, so a probe can tell suppression from a market that never
+        # had prose. Machine-readable only — notice 34 keeps diagnostics off the
+        # page, in a key like this, exactly as `prices_withheld` above.
+        "hook_withheld": hook_withheld,
         "image_url": market.image_url,
         # B7 (L2-91): up-link mesh — concept page + competition hub (null where none).
         "event_concept_key": event_concept_key,
