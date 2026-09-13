@@ -53,6 +53,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
+from app.utils.kalshi_occurrence_start import recover_kalshi_occurrence_starts
 from app.utils.name_normalization import strip_diacritics
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,13 @@ def twin_fold_key(event: Any) -> Optional[tuple]:
     ``None`` means "never fold this row" — a row missing a team name or a
     commence time cannot be proven to be anybody's twin, and the fold's whole
     licence is that the key admits no false positives.
+
+    #5905 — THE MINUTE THIS READS MAY HAVE BEEN RECOVERED BEFORE IT GOT HERE.
+    `recover_kalshi_occurrence_starts` runs at the top of :func:`fold_twin_events`
+    and corrects the one class of row that holds Kalshi's *expected expiration*
+    where a kick-off belongs. This key is unchanged by that — same shape, same
+    strictness, still exact minute equality — it simply now sees the instant the
+    row's twin already holds instead of one three hours later.
     """
     home = _squash(getattr(event, "home_team_name", None))
     away = _squash(getattr(event, "away_team_name", None))
@@ -157,8 +165,25 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
     direction — electing a winner and discarding the loser's sources — deletes a
     whole venue's price for that game, which is what the "blend is the product"
     ruling forbids.
+
+    #5905 — IT RECOVERS KICK-OFFS FIRST, AND THAT IS NOT ONLY IN SERVICE OF THE
+    FOLD. A soccer row whose hour came from Kalshi holds that market's *expected
+    expiration*, exactly three hours after the whistle
+    (`app/utils/kalshi_occurrence_start.py` carries the venue reads). Correcting
+    it here gives every caller of this function — `/api/feed`, `GET /api/events`,
+    search, `/api/teams/{identifier}`, `/api/leagues/{sport_key}` — one honest
+    hour from one place, which matters most for the 16 of 29 such rows that have
+    NO twin and so can never be folded: they are not duplicated, they are simply
+    advertised three hours late, and next weekend's Madrid derby is one of them.
     """
     ordered = list(events)
+
+    # Before keying: a corrected row and its twin share a minute, so the strict
+    # key below needs no widening to see them as one fixture.
+    try:
+        recover_kalshi_occurrence_starts(ordered)
+    except Exception:  # noqa: BLE001 — gotcha #42; an uncorrected page is today's
+        logger.exception("twin fold: kick-off recovery failed; serving stored times")
     groups: dict[tuple, list] = {}
     unkeyed: list = []
 
