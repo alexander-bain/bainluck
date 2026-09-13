@@ -46,9 +46,32 @@ nonisolated struct RaceChartSeries: Equatable, Sendable, Identifiable {
     let colorIndex: Int
     /// The board's current blended number. Nullable — a contender with no price.
     let probability: Double?
+    /// The integer the BOARD decided for this contender, when it decided one
+    /// (#5949). A draw down to its final is one question, so #5893 rounds the
+    /// pair once and derives the second side; the legend sits in the same card
+    /// as those rows and must print their number, not re-round `probability`
+    /// alone and land a point away from it. Nil everywhere else, which is the
+    /// ordinary per-row rendering.
+    let renderedPercent: Int?
     let points: [RaceChartPoint]
 
     var id: String { entityKey }
+
+    init(
+        entityKey: String,
+        displayName: String,
+        colorIndex: Int,
+        probability: Double?,
+        renderedPercent: Int? = nil,
+        points: [RaceChartPoint]
+    ) {
+        self.entityKey = entityKey
+        self.displayName = displayName
+        self.colorIndex = colorIndex
+        self.probability = probability
+        self.renderedPercent = renderedPercent
+        self.points = points
+    }
 }
 
 // MARK: - Ranges
@@ -146,7 +169,15 @@ nonisolated enum RaceChart {
     ///
     /// Rows without a probability are skipped: a result is not a standing, and
     /// a settled contender has no live line to draw. `chartSeries` on the web.
-    static func series(from rows: [TournamentHubBoardRow], limit: Int = seriesCount) -> [RaceChartSeries] {
+    /// `renderedPercents` is the board's own map of what each row PRINTS, keyed
+    /// by `entity_key` (#5949). Passing it is how the legend and the rows under
+    /// it stay one answer; omitting it is the per-row rendering every other
+    /// caller wants.
+    static func series(
+        from rows: [TournamentHubBoardRow],
+        limit: Int = seriesCount,
+        renderedPercents: [String: Int] = [:]
+    ) -> [RaceChartSeries] {
         rows
             .filter { $0.probability != nil }
             .prefix(limit)
@@ -157,6 +188,7 @@ nonisolated enum RaceChart {
                     displayName: row.displayName,
                     colorIndex: index,
                     probability: row.probability,
+                    renderedPercent: renderedPercents[row.entityKey],
                     points: (row.trend ?? []).compactMap(point)
                 )
             }

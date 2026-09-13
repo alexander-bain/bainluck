@@ -103,7 +103,13 @@ struct RaceChartView: View {
                     Text(RaceChart.legendName(entry.displayName))
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(DS.textSecondary)
-                    Text(formatProbabilityOrDash(entry.probability))
+                    // #5949: the percent the BOARD decided, not this view's own
+                    // rounding of the same fraction. `0.585 / 0.415` is the
+                    // complement pair half-up sends both up, so a legend that
+                    // re-rounds prints 42% two centimetres above a row printing
+                    // 41% — #2452 / #2060 / UX-P114 for the sixth time.
+                    Text(formatProbabilityOrDash(
+                        entry.probability, renderedPercent: entry.renderedPercent))
                         .font(.caption2.weight(.bold).monospacedDigit())
                         .foregroundStyle(DS.textPrimary)
                 }
