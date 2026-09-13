@@ -533,10 +533,17 @@ class TestRouteJoin:
         # a subset assertion here would let a future field be dropped onto an
         # unmapped entry unnoticed, and this row is the surface's only report of
         # a beat it cannot grade.
+        # LAT-P242 added the wall-time trio and the queue. On the UNMAPPED row
+        # specifically, and that is the point rather than a side effect: these
+        # entries are the 32, and "this beat is invisible to the health surface"
+        # and "this beat consumes N worker-seconds an hour" are both true of the
+        # same row. Until now only the first was sayable.
         assert out["unmapped"] == [{
             "task": "app.tasks.invisible", "interval_s": 60.0,
             "reason": "no_metric_label_recorded",
             "matched_emitted": None, "matched_delivered": None,
+            "wall_ms_24h": None, "wall_window_s": None,
+            "worker_seconds_per_hour": None, "queues": ["background"],
         }]
 
     def test_a_label_with_no_metrics_is_distinguished_from_no_label(self):
@@ -1085,6 +1092,8 @@ class TestMatchedPairReachesTheGrader:
             "task": "app.tasks.foo", "interval_s": 40.0,
             "reason": "no_metric_label_recorded",
             "matched_emitted": 15, "matched_delivered": 0,
+            "wall_ms_24h": None, "wall_window_s": None,
+            "worker_seconds_per_hour": None, "queues": ["background"],
         }]
 
     def test_a_matched_pair_for_an_unscheduled_task_is_ignored(self):

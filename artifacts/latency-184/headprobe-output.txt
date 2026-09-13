@@ -1,0 +1,37 @@
+probes           : n=68  'stanley cup' .. 'lebron james'
+latency          : p50=2360ms p95=5146ms max=5705ms
+
+warm (<=500ms)   :  25  (36.8%)
+cold (>=2000ms)  :  39  (57.4%)
+in between       :   4  (5.9%)
+  ^ a near-empty middle is the point: a head term is either a cache hit or a full
+    build. There is no gradual degradation to tune away.
+
+warm band p50    : 136ms
+cold band p50    : 2770ms   (#2304 measured 2,000-3,689ms)
+
+per-term slow rate (>= cold floor):
+   3/3  fed
+   3/3  lebron james
+   2/2  carlos alcaraz
+   2/2  ben shelton
+   2/3  masters winner
+   2/3  world series
+   2/3  world cup
+   2/3  red sox
+   2/3  chiefs
+   2/3  nba champion
+   2/3  yankees
+   2/3  grammys
+   2/3  ballon d'or
+   2/3  oscars
+   2/3  pats
+   2/3  us recession 2026
+   1/2  boston red sox
+   1/2  red sox world series
+   1/3  stanley cup
+   1/3  tennis
+   1/3  us open
+   0/3  revs
+   0/3  celtics
+   0/3  lakers

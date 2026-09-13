@@ -1,0 +1,39 @@
+[09:04:01Z] waiting for a deploy at or after 7cb6531d (ancestry, not equality)
+[09:04:02Z] not yet: /api/health commit=02e902d1
+[09:06:04Z] not yet: /api/health commit=02e902d1
+[09:08:06Z] not yet: /api/health commit=02e902d1
+[09:10:07Z] health read failed
+[09:12:07Z] health read failed
+[09:14:08Z] not yet: /api/health commit=02e902d1
+[09:16:19Z] not yet: /api/health commit=1bc885e9
+[09:18:21Z] not yet: /api/health commit=1bc885e9
+[09:20:22Z] not yet: /api/health commit=1bc885e9
+[09:22:24Z] not yet: /api/health commit=1bc885e9
+[09:24:25Z] not yet: /api/health commit=1bc885e9
+[09:26:27Z] not yet: /api/health commit=1bc885e9
+[09:28:28Z] not yet: /api/health commit=1bc885e9
+[09:30:30Z] not yet: /api/health commit=1bc885e9
+[09:32:31Z] not yet: /api/health commit=1bc885e9
+[09:34:32Z] not yet: /api/health commit=1bc885e9
+[09:36:34Z] not yet: /api/health commit=1bc885e9
+[09:38:35Z] not yet: /api/health commit=1bc885e9
+[09:40:37Z] not yet: /api/health commit=1bc885e9
+[09:42:38Z] not yet: /api/health commit=1bc885e9
+[09:44:40Z] not yet: /api/health commit=1bc885e9
+[09:46:41Z] not yet: /api/health commit=1bc885e9
+[09:48:43Z] not yet: /api/health commit=1bc885e9
+[09:50:45Z] not yet: /api/health commit=1bc885e9
+[09:52:46Z] not yet: /api/health commit=1bc885e9
+[09:54:48Z] not yet: /api/health commit=1bc885e9
+[09:56:49Z] not yet: /api/health commit=1bc885e9
+[09:58:50Z] not yet: /api/health commit=1bc885e9
+[10:00:52Z] not yet: /api/health commit=1bc885e9
+[10:02:53Z] not yet: /api/health commit=1bc885e9
+[10:04:54Z] DEPLOYED: /api/health commit=138fc435, and 7cb6531d is an ancestor of it
+[10:05:31Z] q='sta' #1=9.657288s #2=0.132008s #3=0.194722s
+[10:05:44Z] q='red' #1=7.185541s #2=0.129208s #3=0.160571s
+[10:05:51Z] q='stanley cup' #1=0.247459s #2=0.177841s #3=0.131661s
+[10:05:58Z] q='red sox' #1=0.161008s #2=0.154167s #3=0.394138s
+[10:05:58Z] control: /api/health 0.184299s
+[10:05:58Z] warmer no_writes: [] terminal partial 39 / 40
+[10:05:58Z] DONE
