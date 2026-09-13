@@ -38,6 +38,30 @@ from app.utils import task_verdict
 
 NOW = datetime(2026, 9, 3, 22, 0, tzinfo=timezone.utc)
 
+#: 🔴 THE TWO STAMPS THE REAL WALL CLOCK READS. Everything else in this file is
+#: relative to `NOW` above and is frozen on purpose; these two are not, because
+#: `run_sweep` counts `newly_past` as `stored_rd > datetime.now(utc) >=
+#: venue_close`, against the actual clock and not against any anchor a test can
+#: set.
+#:
+#: They used to be the literals `2026-09-13T15:00:00Z` (the sealed backstop) and
+#: `2026-08-28T23:29:00Z` (the venue's real close). That pair encoded "the stored
+#: date is in the FUTURE" — which it was, until 15:00Z on 2026-09-13, at which
+#: point `newly_past` fell to 0 and master's CI went red for every lane with
+#: nothing having changed. Gotcha #44: offset FIRST, then format. The intervals
+#: are the ones the fixture always meant — a backstop ten days out, a close six
+#: days back — so the case under test is unchanged and now cannot expire.
+_REAL_NOW = datetime.now(timezone.utc)
+#: The fabricated future date the row is sealed on (`expiration_time`).
+SEALED_BACKSTOP = _REAL_NOW + timedelta(days=10)
+#: The date the venue actually closed the market on.
+VENUE_CLOSE = _REAL_NOW - timedelta(days=6)
+
+
+def _iso(when: datetime) -> str:
+    """A Kalshi-shaped `...Z` stamp, the way the venue's payload writes one."""
+    return when.strftime("%Y-%m-%dT%H:%M:%SZ")
+
 
 @pytest.fixture(autouse=True)
 def _in_memory_cursor(monkeypatch):
@@ -596,8 +620,8 @@ class _FinalizedVenue:
         return {
             "markets": [
                 {
-                    "close_time": "2026-08-28T23:29:00Z",
-                    "expiration_time": "2026-09-13T15:00:00Z",
+                    "close_time": _iso(VENUE_CLOSE),
+                    "expiration_time": _iso(SEALED_BACKSTOP),
                 }
             ]
         }
@@ -611,7 +635,7 @@ class _FinalizedVenue:
 SEALED_ROW = (
     59700136,
     "KXLPGAR2LEAD-FMC26",
-    datetime(2026, 9, 13, 15, 0, tzinfo=timezone.utc),
+    SEALED_BACKSTOP,
     NOW - timedelta(days=6),
     1,
 )
@@ -643,8 +667,11 @@ def test_the_sealed_card_converges_onto_the_venue_close_time(apply_writes):
     if apply_writes:
         assert len(updates) == 1
         assert updates[0]["id"] == 59700136
-        assert updates[0]["resolution_date"] == datetime(
-            2026, 8, 28, 23, 29, tzinfo=timezone.utc
+        # The venue's own close, to the second — parsed back from the very
+        # string the fixture served, so this pins the round trip rather than
+        # restating the offset and agreeing with itself.
+        assert updates[0]["resolution_date"] == datetime.fromisoformat(
+            _iso(VENUE_CLOSE).replace("Z", "+00:00")
         )
         # Never `is_winner`, never a price — CAL-P061's constraint. A wrong date
         # and a wrong grade are different defects with different blast radii and
@@ -787,8 +814,8 @@ class _VenueThatFinalizesTheJamLater:
         return {
             "markets": [
                 {
-                    "close_time": "2026-08-28T23:29:00Z",
-                    "expiration_time": "2026-09-13T15:00:00Z",
+                    "close_time": _iso(VENUE_CLOSE),
+                    "expiration_time": _iso(SEALED_BACKSTOP),
                 }
             ]
         }
