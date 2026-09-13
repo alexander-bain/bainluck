@@ -6,12 +6,16 @@ import { FreshnessDot } from "../FreshnessDot";
 import TrendSparkline from "./TrendSparkline";
 import PlayerAvatar from "./PlayerAvatar";
 import ShowMore from "./ShowMore";
-import { COLLAPSED_ROW_COUNT, deltaWindowNote } from "@/lib/contenderChart";
+import {
+  COLLAPSED_ROW_COUNT,
+  deltaWindowNote,
+  legendStateLabel,
+  legendValue,
+} from "@/lib/contenderChart";
 import { TITLE_COLUMN_LABEL } from "@/lib/bracket";
 import {
   boardNotice,
   boardRenderedPercents,
-  formatBoardProbability,
   formatTrendDelta,
   rowFreshness,
   rowIsPresentedAsLive,
@@ -56,6 +60,16 @@ function BoardRow({
 }) {
   const isLive = rowIsPresentedAsLive(row);
   const settled = row.probability === null;
+  /* #5934: the word the number column prints instead of an em dash, or `null`
+     for a terminal state we have no word for. Named here rather than computed
+     in the cell because the sub-line below is its complement — exactly one of
+     the two states the row's result, never both and never neither.
+
+     Deliberately NOT guarded on `settled`: it would read the same either way
+     (a live row's `state` is not terminal, so this is `null` regardless), and a
+     guard that cannot change an answer is a line a later reader has to prove
+     harmless. It is only ever read inside the settled branch. */
+  const settledLabel = legendStateLabel(row.state);
   // Names the old leg when only one of them is old (UX-P135), so a row muted
   // by a stale Polymarket price does not read as "nobody has looked at this".
   const freshness = rowFreshness(row);
@@ -114,7 +128,15 @@ function BoardRow({
         </div>
         <div className="mt-px text-[10.5px] text-text-muted">
           {settled ? (
-            <span data-testid="row-settled">{row.state}</span>
+            /* #5934: ONLY when the number column could not say it. `Elena
+               Rybakina · won` over a column already reading `Won`, 20px apart,
+               is one fact printed twice — so the sub-line is the FALLBACK for a
+               state `legendStateLabel` has no word for (`lost`, `withdrawn`),
+               where the column prints an em dash and this is the only place the
+               reader learns anything. */
+            settledLabel === null && (
+              <span data-testid="row-settled">{row.state}</span>
+            )
           ) : (
             <>
               <span>
@@ -176,7 +198,12 @@ function BoardRow({
           }`}
           data-testid="row-probability"
         >
-          {formatBoardProbability(row.probability, renderedPercent)}
+          {/* #5934: a settled row states its RESULT here, the same word and the
+              same rule as the chart legend directly above — the two carry the
+              same column header (`TO WIN THE TITLE`) and were printing `Won`
+              and `—` for one row, two inches apart. Never the last reading: see
+              `legendValue`. */}
+          {legendValue(row, renderedPercent)}
         </div>
         {!settled && row.trend_delta !== null && (
           <div
