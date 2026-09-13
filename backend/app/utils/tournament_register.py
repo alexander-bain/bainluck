@@ -210,6 +210,74 @@ NON_PLAYER_NAMES = frozenset({
     "no winner", "none of the above", "any other man", "any other woman",
 })
 
+#: ═══ A HOOK STATES A FACT ABOUT THE WORLD (standing notice 34, #4334) ═══
+#:
+#: A prop card's ``hook`` is the one line of prose the register may put under a
+#: number, and four of the five committed for the US Open described how the
+#: CARD was built rather than what happened in the tennis — *"The market asks
+#: about the American men as a group, not one at a time."*, *"One market for
+#: the whole American contingent, with a rung for one right through seven."*
+#: They rendered as grey 11.5px body text on the page Alex read at 4pm on
+#: 2026-09-08 when he said *"all the grey text is madness, and shouldn't be
+#: user-facing at all"*.
+#:
+#: 🔴 THE BAN IS ON STRUCTURE, NOT ON THE WORD "MARKET".  What a market SAYS is
+#: legitimate reader content and several surviving hooks are exactly that —
+#: *"the market still calls it close to a coin flip"*, *"Even the market cannot
+#: separate it."*  A ban keyed on "market" would delete those too.  So each
+#: phrase below names a market or a question and then describes its SHAPE: what
+#: it asks, how many of them there are, what its rungs are.  That is the line,
+#: and it is why this is a phrase list and not a word list.
+#:
+#: This is a pure predicate on purpose.  It is NOT wired into
+#: :func:`validate_register`, which the register sentinel runs against live
+#: registers — a new finding class mid-tournament is a bigger change than the
+#: defect.  It is enforced where hooks are AUTHORED
+#: (``scripts/populate_tournament_props.py`` refuses a curation carrying one)
+#: and asserted over the committed register by
+#: ``tests/test_prop_hook_describes_the_world_not_our_market_4334.py``.
+MARKET_CONSTRUCTION_PHRASES: tuple[str, ...] = (
+    "the market asks",
+    "this market asks",
+    "the market is asking",
+    # 🔴 "separate questions" IS DELIBERATELY ABSENT.  It is the phrasing on the
+    # `second-major` card, *"These are two separate questions — they could both
+    # do it, or neither."*, and it is the one hook this ban has NOT been ruled
+    # on: notice 34 reads it as construction, **ruling 143 clause 4** decided
+    # that exact sentence on the merits and calls it *"load-bearing rather than
+    # decorative"*, and Alex's own #4125 item 1 enumeration does not list it.
+    # A lane does not get to settle that by choosing which rule to hold, in
+    # either direction — so this ban covers the phrasings that have been ruled
+    # on, that card is untouched by the #4334 sweep, and the call is with Alex
+    # (default Thu 2026-09-11 6pm PT, ux executing).  Add this phrase the moment
+    # he rules; `test_the_unruled_phrasing_is_deliberately_out_of_the_ban`
+    # exists so the absence is a decision on the record and not an oversight.
+    "separate markets",
+    "one market for",
+    "a single market",
+    "one question for",
+    "with a rung",
+    "a rung for",
+    "each rung",
+    "is now exactly that question",
+    "not one at a time",
+    "as a group, not",
+    "how we built",
+    "how this card",
+    "the way we ask",
+)
+
+
+def describes_our_market(hook: str | None) -> str | None:
+    """Return the offending phrase when a hook describes our market's shape.
+
+    ``None`` — the safe answer — for an absent hook and for every hook that
+    talks about the world, including one that reports what a market *says*.
+    """
+    lowered = (hook or "").lower()
+    return next((p for p in MARKET_CONSTRUCTION_PHRASES if p in lowered), None)
+
+
 #: Drift that means "a number would be shown that must not be" — same posture as
 #: ``grid_register.RENDER_FINDINGS``: the register may be well-formed and the
 #: release still blocked.
