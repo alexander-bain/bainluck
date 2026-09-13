@@ -28,6 +28,7 @@ import {
   CartesianGrid,
   Legend,
 } from "recharts";
+import FleetCodeCard from "@/components/admin/FleetCodeCard";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -1426,6 +1427,12 @@ export default function AdminDashboard() {
               detail={data.worker.tasks.length + " tasks tracked. " + data.worker.tasks.filter((t) => t.successes_24h > 0).length + " ran in last 24h."}
             />
           </div>
+
+          {/* #5470 — the Worker card above says a worker is ALIVE; this one says
+              whether it is alive on the code the site is serving. Notice 48's
+              third read, and the fact YOUR-TURN's attended heavy recovery asks
+              a lane to verify with a curl. */}
+          <FleetCodeCard secret={secret} />
 
           <MetricSection
             question="Is the Odds API budget on track?"
