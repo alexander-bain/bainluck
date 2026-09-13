@@ -68,6 +68,7 @@ const SUBJECT_EYEBROW: Record<UnresolvedSubject, string> = {
   tournament: "Tournament",
   event: "Event",
   hub: "Competition",
+  team: "Team",
 };
 
 /**
@@ -88,6 +89,7 @@ const NOT_FOUND_SUBTITLE: Record<UnresolvedSubject, string> = {
   tournament: "The link may be old, or the hub may not have opened yet.",
   event: "The link may be old, or this may not be an event we cover.",
   hub: "The link may be old, or this may not be a competition we cover.",
+  team: "The link may be old, or this may not be a team we cover.",
 };
 
 /**

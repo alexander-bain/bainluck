@@ -16,7 +16,7 @@ import { sportKeyToGridSlug } from "@/lib/gridSlug";
 import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 import { buildDivisionRace } from "@/lib/teamDivisionRace";
 import { teamTextColor } from "@/lib/teamColors";
-import { pickJourneyFuture } from "@/lib/teamSeasonJourney";
+import { teamHeadline } from "@/lib/teamHeadline";
 import { UpcomingGameCard, RecentGameCard } from "@/components/TeamGameCards";
 import { TeamChampionshipPath } from "@/components/TeamChampionshipPath";
 import { TeamSeasonJourney } from "@/components/TeamSeasonJourney";
@@ -183,34 +183,12 @@ export default function TeamPage() {
   const recentGameNos = assignGameNumbers(recent_events);
 
   // Hero headline number — the team's "price" is its championship probability
-  // (the blend-is-the-product ruling: one number per question). Prefer the
-  // dedicated championship path (tier-1 Championship, else strongest step). When
-  // the backend ships an empty champ-path but the futures payload still carries
-  // the season markets (the live Red Sox case), fall back to the best season
-  // future so the signature number never silently disappears.
-  const headline: { label: string; probability: number; movement: number | null } | null =
-    (() => {
-      const pathEntry =
-        championship_path.find((e) => e.tier === 1) ?? championship_path[0] ?? null;
-      if (pathEntry && pathEntry.probability !== null) {
-        return {
-          label: pathEntry.label,
-          probability: pathEntry.probability,
-          movement: pathEntry.movement,
-        };
-      }
-      const pick = pickJourneyFuture(futures);
-      if (!pick || pick.probability === null) return null;
-      const item = futures.find(
-        (f) => f.market_id === pick.marketId && f.outcome_id === pick.outcomeId,
-      );
-      const tierLabel: Record<number, string> = { 1: "Championship", 2: "Conference", 4: "Division" };
-      return {
-        label: tierLabel[item?.market_tier ?? 1] ?? "Championship",
-        probability: pick.probability,
-        movement: item?.probability_change_24h ?? null,
-      };
-    })();
+  // (the blend-is-the-product ruling: one number per question).
+  //
+  // The rule itself moved to `lib/teamHeadline.ts` unchanged: this page's
+  // `opengraph-image.tsx` has to quote the SAME number, and a rule computed in
+  // an async page component is reachable from neither that route nor a test.
+  const headline = teamHeadline(championship_path, futures);
 
   // Division race (supplementary; null when it can't be shown honestly).
   const race = buildDivisionRace(grid, team.id, team.name);
