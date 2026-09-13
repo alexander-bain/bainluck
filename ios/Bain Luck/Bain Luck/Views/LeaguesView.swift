@@ -26,21 +26,35 @@ private struct LeagueInfo: Identifiable {
     var id: String { slug }
 }
 
+// #5788 — `fullName` is a half-width caption2 under a bold acronym, and the
+// tile allowed it ONE line, so eleven of the sixteen tiles printed a sentence
+// fragment: "National Basket…", "NCAA Women's…", "UEFA Champion…". A truncated
+// expansion is worse than no expansion — it spends a line to tell a reader
+// nothing the acronym above it did not already say.
+//
+// So the subtitle answers the only question the acronym leaves open — what
+// sport is this, or in the Soccer group, whose league is it — in as few words
+// as will fit. The section header carries the rest: under COLLEGE, "Men's
+// basketball" needs no "NCAA"; under SOCCER, "England" is the whole answer.
+// Measured budget from the production screenshot (iPhone 17, 402pt):
+// "Spanish La Liga" (15 characters) fits, everything from 16 up truncated —
+// `BrowseLeagueTileLabelTests` holds that line, and the tile now wraps to two
+// rather than truncating if a future string or text size overruns it anyway.
 private let allLeagues: [LeagueInfo] = [
-    LeagueInfo(slug: "nba", label: "NBA", fullName: "National Basketball Association", icon: "basketball.fill", group: "Major US Leagues"),
-    LeagueInfo(slug: "nfl", label: "NFL", fullName: "National Football League", icon: "football.fill", group: "Major US Leagues"),
-    LeagueInfo(slug: "mlb", label: "MLB", fullName: "Major League Baseball", icon: "baseball.fill", group: "Major US Leagues"),
-    LeagueInfo(slug: "nhl", label: "NHL", fullName: "National Hockey League", icon: "hockey.puck.fill", group: "Major US Leagues"),
-    LeagueInfo(slug: "ncaa-basketball", label: "NCAAB", fullName: "NCAA Men's Basketball", icon: "basketball.fill", group: "College"),
-    LeagueInfo(slug: "ncaa-women-basketball", label: "WNCAAB", fullName: "NCAA Women's Basketball", icon: "basketball.fill", group: "College"),
-    LeagueInfo(slug: "ncaa-football", label: "NCAAF", fullName: "NCAA Football", icon: "football.fill", group: "College"),
+    LeagueInfo(slug: "nba", label: "NBA", fullName: "Basketball", icon: "basketball.fill", group: "Major US Leagues"),
+    LeagueInfo(slug: "nfl", label: "NFL", fullName: "Football", icon: "football.fill", group: "Major US Leagues"),
+    LeagueInfo(slug: "mlb", label: "MLB", fullName: "Baseball", icon: "baseball.fill", group: "Major US Leagues"),
+    LeagueInfo(slug: "nhl", label: "NHL", fullName: "Hockey", icon: "hockey.puck.fill", group: "Major US Leagues"),
+    LeagueInfo(slug: "ncaa-basketball", label: "NCAAB", fullName: "Men's basketball", icon: "basketball.fill", group: "College"),
+    LeagueInfo(slug: "ncaa-women-basketball", label: "WNCAAB", fullName: "Women's basketball", icon: "basketball.fill", group: "College"),
+    LeagueInfo(slug: "ncaa-football", label: "NCAAF", fullName: "Football", icon: "football.fill", group: "College"),
     LeagueInfo(slug: "wnba", label: "WNBA", fullName: "Women's NBA", icon: "basketball.fill", group: "Other US Leagues"),
-    LeagueInfo(slug: "mls", label: "MLS", fullName: "Major League Soccer", icon: "soccerball", group: "Other US Leagues"),
-    LeagueInfo(slug: "epl", label: "EPL", fullName: "English Premier League", icon: "soccerball", group: "Soccer"),
-    LeagueInfo(slug: "la-liga", label: "La Liga", fullName: "Spanish La Liga", icon: "soccerball", group: "Soccer"),
-    LeagueInfo(slug: "champions-league", label: "UCL", fullName: "UEFA Champions League", icon: "soccerball", group: "Soccer"),
-    LeagueInfo(slug: "bundesliga", label: "Bundesliga", fullName: "German Bundesliga", icon: "soccerball", group: "Soccer"),
-    LeagueInfo(slug: "golf", label: "Golf", fullName: "PGA Tour & Majors", icon: "figure.golf", group: "Individual",
+    LeagueInfo(slug: "mls", label: "MLS", fullName: "Soccer", icon: "soccerball", group: "Other US Leagues"),
+    LeagueInfo(slug: "epl", label: "EPL", fullName: "England", icon: "soccerball", group: "Soccer"),
+    LeagueInfo(slug: "la-liga", label: "La Liga", fullName: "Spain", icon: "soccerball", group: "Soccer"),
+    LeagueInfo(slug: "champions-league", label: "UCL", fullName: "Europe", icon: "soccerball", group: "Soccer"),
+    LeagueInfo(slug: "bundesliga", label: "Bundesliga", fullName: "Germany", icon: "soccerball", group: "Soccer"),
+    LeagueInfo(slug: "golf", label: "Golf", fullName: "PGA Tour", icon: "figure.golf", group: "Individual",
                route: .golfCategory),
     // Tennis had NO row here at all, so `/api/leagues/tennis_atp` — 156 markets,
     // 130 of them matches, as served on 2026-09-03 — was unreachable from the app
@@ -50,9 +64,9 @@ private let allLeagues: [LeagueInfo] = [
     // Pointed at the TOUR keys, never the `tennis` umbrella: the umbrella answers
     // 200 with `total_markets: 0`, so a row wired to it would look like a working
     // link to an empty page — the worst of the three outcomes.
-    LeagueInfo(slug: "tennis_atp", label: "ATP", fullName: "Men's Tennis Tour", icon: "figure.tennis",
+    LeagueInfo(slug: "tennis_atp", label: "ATP", fullName: "Men's tennis", icon: "figure.tennis",
                group: "Individual", route: .sportCategory(key: "tennis_atp", name: "ATP Tennis")),
-    LeagueInfo(slug: "tennis_wta", label: "WTA", fullName: "Women's Tennis Tour", icon: "figure.tennis",
+    LeagueInfo(slug: "tennis_wta", label: "WTA", fullName: "Women's tennis", icon: "figure.tennis",
                group: "Individual", route: .sportCategory(key: "tennis_wta", name: "WTA Tennis")),
 ]
 
@@ -345,16 +359,26 @@ private struct BrowseLeagueTile: View {
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
+                    // #5788 — two lines, not one. The strings above are short
+                    // enough to fit on one at the default text size; this is
+                    // the net under the larger accessibility sizes and under
+                    // the iPad, where `.adaptive` buys COLUMNS rather than
+                    // width and a tile can be NARROWER than the iPhone's.
+                    // Truncating here is the failure mode, not wrapping.
                     Text(league.fullName)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(2)
                 }
 
                 Spacer(minLength: 0)
             }
             .padding(11)
-            .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+            // `maxHeight: .infinity` (#5788) so the two tiles in a row are the
+            // same height when one of them wraps to a second line — without it
+            // WNCAAB's "Women's basketball" grew its own card and left NCAAB
+            // beside it visibly shorter.
+            .frame(maxWidth: .infinity, minHeight: 58, maxHeight: .infinity, alignment: .leading)
             .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.barTrack.opacity(0.25), lineWidth: 0.5))
         }
