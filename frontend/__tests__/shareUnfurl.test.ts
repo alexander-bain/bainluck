@@ -346,6 +346,147 @@ describe("a dynamic route does not unfurl as the home page", () => {
   });
 });
 
+/* ───────── an entity route unfurls with its OWN picture, not the site's ───── */
+
+/**
+ * ═══ THE HOLE #5888 CAME THROUGH ═══
+ *
+ * #5813 and #5833 gave `/tournaments/[slug]` and `/event/[domain]/[slug]` their
+ * WORDS. Every rule above was then satisfied: they declared `openGraph`, they
+ * declared `images`, they named themselves as canonical, and they were off the
+ * root-inheritor list. What they declared was the SITE's card.
+ *
+ * So a reader pasting three unrelated links got one picture. Measured with a
+ * crawler UA on 2026-09-13 at 10:13:53Z:
+ *
+ *   /tournaments/us-open                              -> /opengraph-image
+ *   /event/election/2026-midterms                     -> /opengraph-image
+ *   /event/ufc/contender-series-hunt-vs-perea-26sep15 -> /opengraph-image
+ *
+ * all md5 `99618661539802337202ef69dc6595bc`, beside titles as specific as
+ * "US Open 2026: Alexander Zverev 57%, Elena Rybakina 99%".
+ *
+ * The rule above cannot see this by construction: `images: defaultShareCard()`
+ * satisfies "declares its own images". It asks WHETHER a route names a picture.
+ * This asks WHICH.
+ *
+ * ═══ WHY A RATCHET AND NOT A FLAT RULE ═══
+ *
+ * Not every dynamic route should draw a per-entity card: a league index is not
+ * an entity with a probability. Rather than encode a theory of which ones
+ * deserve one — the kind of guess this file has already been wrong about twice —
+ * the list below is the shape `INHERITS_THE_ROOT_IDENTITY` uses. It fails in
+ * BOTH directions, so a route cannot quietly join it and cannot quietly leave
+ * it behind. It can only shrink, and it names the next piece of work out loud.
+ */
+const SHARES_THE_SITE_CARD: readonly string[] = [
+  "/categories/[slug]",
+  "/playoffs/[sport]",
+  "/sport/[sport]",
+  "/sport/[sport]/[league]",
+  "/sport/[sport]/[league]/team/[team]",
+];
+
+/** Dynamic routes that say something about themselves, and so could say this. */
+const selfDescribingDynamicRoutes = dynamicRoutes.filter(({ dir }) =>
+  declaresOwnMetadata(dir)
+);
+
+/** ...of those, the ones with no `opengraph-image.tsx` of their own. */
+const siteCardRoutes = selfDescribingDynamicRoutes
+  .filter(({ dir }) => !fs.existsSync(path.join(dir, "opengraph-image.tsx")))
+  .map(({ route }) => route);
+
+describe("an entity route unfurls with its own picture", () => {
+  it("ships an opengraph-image, or is on the shrinking list", () => {
+    const offenders = siteCardRoutes.filter(
+      (route) => !SHARES_THE_SITE_CARD.includes(route)
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("the list holds nothing that has since been fixed", () => {
+    // The half that makes the list honest. Without it `/tournaments/[slug]`
+    // would sit here forever after #5888 and the next reader would believe the
+    // picture was still generic.
+    const fixed = SHARES_THE_SITE_CARD.filter(
+      (route) => !siteCardRoutes.includes(route)
+    );
+    expect(fixed).toEqual([]);
+  });
+
+  it("the routes #5888 fixed are on the CARD-SHIPPING side, by name", () => {
+    // Both rules above are `.filter()` over a walk, and a walk that found
+    // nothing satisfies both. Assert the denominator, and assert the five
+    // routes that ship a card are not merely absent from the list but actually
+    // present in the population and actually holding the file.
+    const routes = selfDescribingDynamicRoutes.map((r) => r.route);
+    expect(routes).toContain("/tournaments/[slug]");
+    expect(routes).toContain("/event/[domain]/[slug]");
+    expect(routes).toContain("/hub/[competition]");
+    expect(routes.length).toBeGreaterThanOrEqual(8);
+
+    for (const route of [
+      "/tournaments/[slug]",
+      "/event/[domain]/[slug]",
+      "/hub/[competition]",
+      "/events/[id]",
+      "/futures/[id]",
+    ]) {
+      expect(siteCardRoutes).not.toContain(route);
+      expect(
+        fs.existsSync(path.join(APP_DIR, ...route.split("/").filter(Boolean), "opengraph-image.tsx"))
+      ).toBe(true);
+    }
+  });
+
+  it("those routes name their OWN path in openGraph.images, not the site card", () => {
+    // The file convention overrides `og:image` on these segments, so this reads
+    // the source rather than the built HTML — a dynamic route prerenders no
+    // HTML for the layer below to check. What it catches is a layout that
+    // silently goes back to `defaultShareCard()`: the state #5888 started from,
+    // which every other rule in this file scored as a pass.
+    for (const route of [
+      "/tournaments/[slug]",
+      "/event/[domain]/[slug]",
+      "/hub/[competition]",
+    ]) {
+      const layout = path.join(
+        APP_DIR,
+        ...route.split("/").filter(Boolean),
+        "layout.tsx"
+      );
+      const src = read(layout);
+      // Both the resolved and the dead branch, and both built FROM THE ROUTE'S
+      // OWN PATH. Asserting the bare string `/opengraph-image` is not enough —
+      // `buildShareUrl("/opengraph-image")` contains it and is exactly the
+      // regression this rule exists to stop (caught by mutation, 2026-09-13).
+      expect(src).toContain("buildShareUrl(`${path}/opengraph-image`)");
+      expect(src).toContain("buildShareUrl(`${deadPath}/opengraph-image`)");
+      expect(src).not.toContain("defaultShareCard");
+    }
+  });
+
+  it("the rule can actually fail — the file probe is not stuck on true", () => {
+    // Negative control. `fs.existsSync` over a built path has the same silent
+    // failure mode as everything else here: a path that never resolves reports
+    // "no card" for every route, which would empty `siteCardRoutes` in the
+    // other direction and fail loudly — but a path that resolves for EVERY
+    // route would pass both rules with an empty list forever.
+    expect(
+      fs.existsSync(path.join(APP_DIR, "tournaments", "[slug]", "opengraph-image.tsx"))
+    ).toBe(true);
+    expect(
+      fs.existsSync(path.join(APP_DIR, "tournaments", "[slug]", "no-such-file.tsx"))
+    ).toBe(false);
+
+    // And the population is genuinely split — a list that is everything or
+    // nothing is not a ratchet.
+    expect(siteCardRoutes.length).toBeGreaterThan(0);
+    expect(siteCardRoutes.length).toBeLessThan(selfDescribingDynamicRoutes.length);
+  });
+});
+
 /* ──────────────── the layer that reads what actually shipped ──────────── */
 
 /**

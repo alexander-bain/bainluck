@@ -96,7 +96,24 @@ export async function generateMetadata({
     // Next inherited the root's `canonical: "/"` and `og:url: "/"` and a dead
     // game link previewed as the Bain Luck home page. Its title also carried a
     // suffix the root template appends again: `Event Odds - Bain Luck | Bain Luck`.
-    return unresolvedMetadata(unresolvedPath("events", id), "game", lookup.failure);
+    // #5846 — the 4th argument, and why it is not cosmetic. Next's
+    // `opengraph-image.tsx` file convention overrides `og:image` and NOT
+    // `twitter:image`, so with nothing passed here a dead link shipped two
+    // different pictures. Measured on production 2026-09-13 11:49:13Z:
+    //
+    //   og:image       …/events/99999999/opengraph-image?509a39…
+    //   twitter:image  https://www.bainluck.com/opengraph-image
+    //
+    // X reads the `twitter:` namespace, so the same rotted link previewed as
+    // this route's own card in Slack and as the HOME PAGE on X — the split
+    // #5888 closed for `/tournaments` and `/event`, one namespace over.
+    const deadPath = unresolvedPath("events", id);
+    return unresolvedMetadata(
+      deadPath,
+      "game",
+      lookup.failure,
+      buildShareUrl(`${deadPath}/opengraph-image`),
+    );
   }
 
   const event = lookup.event;

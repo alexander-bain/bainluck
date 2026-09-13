@@ -6,7 +6,7 @@ import {
   type EventConceptShareSource,
 } from "@/lib/eventConceptShareMeta";
 import { selfCanonical } from "@/lib/routeMetadata";
-import { defaultShareCard } from "@/lib/shareCard";
+import { buildShareUrl } from "@/lib/share";
 import {
   unresolvedMetadata,
   unresolvedPath,
@@ -119,7 +119,16 @@ export async function generateMetadata({
     // `twitter:title: Bain Luck — Prediction Market Discovery` and the home
     // page's blurb as `twitter:description`. The shared builder states both,
     // splits a 404 from a bad minute, and noindexes only a real 404.
-    return unresolvedMetadata(unresolvedPath("event", domain, slug), "event", lookup.failure);
+    //
+    // #5888 — and it names THIS route's card in both namespaces; see the
+    // matching note in `/tournaments/[slug]/layout.tsx`.
+    const deadPath = unresolvedPath("event", domain, slug);
+    return unresolvedMetadata(
+      deadPath,
+      "event",
+      lookup.failure,
+      buildShareUrl(`${deadPath}/opengraph-image`),
+    );
   }
 
   const concept = lookup.concept;
@@ -129,6 +138,11 @@ export async function generateMetadata({
 
   const { title, description } = buildEventConceptShareCopy(concept);
   const socialTitle = withSiteSuffix(title);
+  // #5888 — this route's OWN card. See the matching note in
+  // `/tournaments/[slug]/layout.tsx`. `path` is built from the payload's
+  // canonical slug and is already encoded, so the image URL names the same one
+  // page the canonical does rather than a second address for it.
+  const image = buildShareUrl(`${path}/opengraph-image`);
 
   return {
     ...identity,
@@ -140,13 +154,13 @@ export async function generateMetadata({
       url: path,
       siteName: "Bain Luck",
       type: "article",
-      images: defaultShareCard(),
+      images: [{ url: image, alt: title, width: 1200, height: 630 }],
     },
     twitter: {
       card: "summary_large_image",
       title: socialTitle,
       description,
-      images: defaultShareCard().map((image) => image.url),
+      images: [image],
     },
   };
 }

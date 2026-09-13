@@ -1,7 +1,10 @@
 /* eslint-disable @next/next/no-img-element */
 import { ImageResponse } from "next/og";
 import type { FuturesMarketDetailResponse, FuturesOutcome } from "@/lib/types";
+import { UnfurlCard } from "@/components/og/UnfurlCard";
 import { formatShareProbability, truncateShareText } from "@/lib/share";
+import { unresolvedCardCopy } from "@/lib/unresolvedCardCopy";
+import type { ResolutionFailure } from "@/lib/unresolvedShareMeta";
 
 export const runtime = "edge";
 export const alt = "Bain Luck market probability";
@@ -14,18 +17,35 @@ type FuturesMarketMetadata = FuturesMarketDetailResponse & {
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || "https://api.bainluck.com").replace(/\/$/, "");
 
-async function fetchMarket(id: string): Promise<FuturesMarketMetadata | null> {
+/** The market, or WHY there is no market — #5846 needs the two apart. */
+type MarketLookup =
+  | { ok: true; market: FuturesMarketMetadata }
+  | { ok: false; failure: ResolutionFailure };
+
+/**
+ * #5846: the 404-vs-anything-else split is `layout.tsx`'s, kept here because
+ * the CARD now makes the same claim the title does.
+ *
+ * "This market isn't on Bain Luck" is a statement about the world. Drawing it
+ * because the API was restarting is the failure `unresolvedShareMeta.ts`
+ * documents at length (gotcha #53) — and a picture is harder to take back than
+ * a sentence, because the unfurler caches it.
+ */
+async function fetchMarket(id: string): Promise<MarketLookup> {
   const marketId = Number.parseInt(id, 10);
-  if (!Number.isFinite(marketId) || marketId <= 0) return null;
+  if (!Number.isFinite(marketId) || marketId <= 0) {
+    return { ok: false, failure: "not-found" };
+  }
 
   try {
     const response = await fetch(`${API_URL}/api/futures/${marketId}`, {
       next: { revalidate: 60 },
     });
-    if (!response.ok) return null;
-    return response.json();
+    if (response.status === 404) return { ok: false, failure: "not-found" };
+    if (!response.ok) return { ok: false, failure: "unavailable" };
+    return { ok: true, market: await response.json() };
   } catch {
-    return null;
+    return { ok: false, failure: "unavailable" };
   }
 }
 
@@ -72,12 +92,35 @@ function getAccent(category: string | null | undefined): string {
 }
 
 export default async function Image({ params }: { params: { id: string } }) {
-  const market = await fetchMarket(params.id);
-  const leader = market ? topOutcome(market) : null;
+  const lookup = await fetchMarket(params.id);
+
+  // #5846 — A DEAD LINK DOES NOT GET A MARKET DRAWN FOR IT.
+  //
+  // This branch used to fall through to the layout below with every field
+  // coalesced, so `/futures/99999999/opengraph-image` answered `200 image/png`
+  // with the headline "Prediction market", a `- -` glyph where the 96px
+  // probability goes, an empty leader line, a 3%-wide bar and "0 outcomes
+  // tracked" — a card with the full authority of the live one and nothing in
+  // it. Narrowing `lookup` is what retires that shape: every `market?.` below
+  // became `market.`, so the defaults it read from cannot be reached again.
+  //
+  // The quiet card is `UnfurlCard`'s empty-`rows` shape — the same picture
+  // `/tournaments/[slug]`, `/event/[domain]/[slug]` and `/hub/[competition]`
+  // already draw for this condition, so the five routes answer a rotted link
+  // as one family.
+  if (!lookup.ok) {
+    return new ImageResponse(
+      <UnfurlCard {...unresolvedCardCopy("market", lookup.failure)} />,
+      size,
+    );
+  }
+
+  const market = lookup.market;
+  const leader = topOutcome(market);
   const probability = formatShareProbability(leader?.probability) || "--";
   const barWidth = Math.max(3, Math.min(97, Math.round((leader?.probability ?? 0) * 100)));
-  const title = market?.name || "Prediction market";
-  const accent = getAccent(market?.llm_sport_category);
+  const title = market.name || "Prediction market";
+  const accent = getAccent(market.llm_sport_category);
 
   const change = leader?.probability_change_24h;
   const hasMovement =
@@ -88,14 +131,14 @@ export default async function Image({ params }: { params: { id: string } }) {
   const changeColor = hasMovement ? (change! > 0 ? COLOR_UP : COLOR_DOWN) : COLOR_MUTED;
 
   const subtitle = truncateShareText(
-    market?.hook_description ||
+    market.hook_description ||
       (leader
-        ? `${leader.name} leads at ${probability} — ${market?.outcome_count ?? "?"} outcomes tracked.`
+        ? `${leader.name} leads at ${probability} — ${market.outcome_count ?? "?"} outcomes tracked.`
         : "Prediction markets translated into intuitive probabilities."),
     130
   );
 
-  const categoryLabel = market?.sport_name || market?.llm_sport_category || "Discover";
+  const categoryLabel = market.sport_name || market.llm_sport_category || "Discover";
 
   return new ImageResponse(
     (
@@ -176,7 +219,7 @@ export default async function Image({ params }: { params: { id: string } }) {
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", color: COLOR_SUBTLE, fontSize: 20 }}>
               <span>
-                {market?.outcome_count ?? 0} outcome{(market?.outcome_count ?? 0) !== 1 ? "s" : ""} tracked
+                {market.outcome_count ?? 0} outcome{(market.outcome_count ?? 0) !== 1 ? "s" : ""} tracked
               </span>
               <span style={{ fontWeight: 600 }}>bainluck.com</span>
             </div>

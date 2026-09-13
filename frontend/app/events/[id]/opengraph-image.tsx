@@ -1,9 +1,12 @@
 import { ImageResponse } from "next/og";
 import type { EventDetailResponse } from "@/lib/types";
+import { UnfurlCard } from "@/components/og/UnfurlCard";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
 import { getSportLabel } from "@/lib/sportCategories";
 import { teamCrestBadge } from "@/lib/teamShortName";
 import { teamTextColor } from "@/lib/teamColors";
+import { unresolvedCardCopy } from "@/lib/unresolvedCardCopy";
+import type { ResolutionFailure } from "@/lib/unresolvedShareMeta";
 
 export const runtime = "edge";
 export const alt = "Bain Luck game probability";
@@ -12,18 +15,35 @@ export const contentType = "image/png";
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || "https://api.bainluck.com").replace(/\/$/, "");
 
-async function fetchEvent(id: string): Promise<EventDetailResponse | null> {
+/** The game, or WHY there is no game — #5846 needs the two apart. */
+type EventLookup =
+  | { ok: true; event: EventDetailResponse }
+  | { ok: false; failure: ResolutionFailure };
+
+/**
+ * #5846: the 404-vs-anything-else split is `layout.tsx`'s, kept here because
+ * the CARD now makes the same claim the title does.
+ *
+ * "This game isn't on Bain Luck" is a statement about the world. Drawing it
+ * because the API was restarting is the failure `unresolvedShareMeta.ts`
+ * documents at length (gotcha #53) — and a picture is harder to take back than
+ * a sentence, because the unfurler caches it.
+ */
+async function fetchEvent(id: string): Promise<EventLookup> {
   const eventId = Number.parseInt(id, 10);
-  if (!Number.isFinite(eventId) || eventId <= 0) return null;
+  if (!Number.isFinite(eventId) || eventId <= 0) {
+    return { ok: false, failure: "not-found" };
+  }
 
   try {
     const response = await fetch(`${API_URL}/api/events/${eventId}`, {
       next: { revalidate: 60 },
     });
-    if (!response.ok) return null;
-    return response.json();
+    if (response.status === 404) return { ok: false, failure: "not-found" };
+    if (!response.ok) return { ok: false, failure: "unavailable" };
+    return { ok: true, event: await response.json() };
   } catch {
-    return null;
+    return { ok: false, failure: "unavailable" };
   }
 }
 
@@ -34,9 +54,33 @@ function eventStatus(event: EventDetailResponse): string {
 }
 
 export default async function Image({ params }: { params: { id: string } }) {
-  const event = await fetchEvent(params.id);
-  const homeProbability = event?.current_odds?.home_probability ?? 0.5;
-  const awayProbability = event?.current_odds?.away_probability ?? 0.5;
+  const lookup = await fetchEvent(params.id);
+
+  // #5846 — A DEAD LINK DOES NOT GET A GAME DRAWN FOR IT.
+  //
+  // This branch used to fall through to the layout below with every field
+  // coalesced, so `/events/99999999/opengraph-image` answered `200 image/png`
+  // with two crests reading `AWA` and `HOM`, the names "Away" and "Home", and
+  // 50% against 50% in 74px type — a fabricated matchup, not a blank one.
+  //
+  // The `?? 0.5` pair below is what produced those numbers and is deliberately
+  // left alone: on a game that DID resolve it is the live card's existing,
+  // certed behaviour for a row with no price, and it is now unreachable from a
+  // missing event. Narrowing `lookup` here is what makes that true — the fields
+  // below are no longer optional, so a future edit cannot quietly re-open the
+  // path by adding one more `?.`.
+  //
+  // The quiet card is `UnfurlCard`'s empty-`rows` shape — the same picture
+  // `/tournaments/[slug]`, `/event/[domain]/[slug]` and `/hub/[competition]`
+  // already draw for this condition, so the five routes answer a rotted link
+  // as one family.
+  if (!lookup.ok) {
+    return new ImageResponse(<UnfurlCard {...unresolvedCardCopy("game", lookup.failure)} />, size);
+  }
+
+  const event = lookup.event;
+  const homeProbability = event.current_odds?.home_probability ?? 0.5;
+  const awayProbability = event.current_odds?.away_probability ?? 0.5;
   // #4963 — THE TWO NUMBERS ON THIS CARD ARE ONE DECISION, AND THE SERVER
   // ALREADY MAKES IT. UX-P114 moved the duel's whole percents to
   // `current_odds.{away,home}_rendered_percent` precisely because a game strip
@@ -57,8 +101,8 @@ export default async function Image({ params }: { params: { id: string } }) {
   const [awayRendered, homeRendered] = servedDuelPercents(
     awayProbability,
     homeProbability,
-    event?.current_odds?.away_rendered_percent,
-    event?.current_odds?.home_rendered_percent,
+    event.current_odds?.away_rendered_percent,
+    event.current_odds?.home_rendered_percent,
   );
   const awayPct = awayRendered != null ? `${awayRendered}%` : "--";
   const homePct = homeRendered != null ? `${homeRendered}%` : "--";
@@ -69,8 +113,8 @@ export default async function Image({ params }: { params: { id: string } }) {
     3,
     Math.min(97, awayRendered ?? Math.round(awayProbability * 100)),
   );
-  const homeColor = event?.home_team_data?.primary_color || "#2563eb";
-  const awayColor = event?.away_team_data?.primary_color || "#dc2626";
+  const homeColor = event.home_team_data?.primary_color || "#2563eb";
+  const awayColor = event.away_team_data?.primary_color || "#dc2626";
   // #5696 — the crest tiles and the split bar keep the raw brand colour as a
   // FILL; the two big percents are TEXT and take #5165's floor. This canvas is
   // `#f8fafc` rather than `--surface-card`'s `#FFFFFF`, so the helper's ratio
@@ -78,16 +122,16 @@ export default async function Image({ params }: { params: { id: string } }) {
   // a white club reads 1.02:1 against slate-50 just as invisibly.
   const homeTextColor = teamTextColor(homeColor) || "#2563eb";
   const awayTextColor = teamTextColor(awayColor) || "#dc2626";
-  const awayTeam = event?.away_team || "Away";
-  const homeTeam = event?.home_team || "Home";
+  const awayTeam = event.away_team || "Away";
+  const homeTeam = event.home_team || "Home";
   // #4839. This card is the first thing anyone sees of Bain Luck — a pasted
   // link in iMessage, Slack or a tweet — and it was printing the raw sport key.
   // Precedence is unchanged (`sport_key` then `sport`) so no row that renders a
   // league today renders "Event" instead; only the WORDS change. `getSportLabel`
   // is the same call `EventCard` makes, which is what keeps the card and the
   // page it links to from naming one league two ways (notice 34 / D102).
-  const sportKey = event?.sport_key || event?.sport || null;
-  const leagueLabel = sportKey ? getSportLabel(sportKey, event?.sport_name) : "Event";
+  const sportKey = event.sport_key || event.sport || null;
+  const leagueLabel = sportKey ? getSportLabel(sportKey, event.sport_name) : "Event";
 
   return new ImageResponse(
     (
@@ -182,7 +226,10 @@ export default async function Image({ params }: { params: { id: string } }) {
             <div style={{ width: `${awayWidth}%`, height: "100%", background: awayColor }} />
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", color: "#64748b", fontSize: 23 }}>
-            <div>{event ? eventStatus(event) : "Probability-first odds"}</div>
+            {/* The "Probability-first odds" arm this used to carry was the
+                missing-event fallback, and it is unreachable now that the miss
+                returns above — a card that reaches here has a status. */}
+            <div>{eventStatus(event)}</div>
             {/* #4957: the bare wordmark, matching the other three share cards. This card is
                 for ONE event, so naming /discover advertised a page other than the picture. */}
             <div>bainluck.com</div>

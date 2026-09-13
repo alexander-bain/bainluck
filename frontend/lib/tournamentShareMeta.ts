@@ -61,10 +61,19 @@ export interface TournamentShareSource {
 }
 
 /** One board's front-runner, once it has a name and a printable probability. */
-interface BoardLeader {
+export interface BoardLeader {
   name: string;
   /** Already formatted, e.g. `"57%"`. */
   probability: string;
+  /**
+   * The raw 0..1 value `probability` was formatted from.
+   *
+   * Carried rather than parsed back out of the string (#5888). The share CARD
+   * needs a bar width, and `Number.parseFloat("57%") / 100` would be a second
+   * derivation of a number this module already has — the seam where a picture
+   * starts disagreeing with the sentence beneath it.
+   */
+  fraction: number;
   /** The draw, e.g. `"Men's Singles"`. Absent when the board is unlabelled. */
   draw: string | null;
 }
@@ -107,7 +116,14 @@ function boardLeader(board: TournamentShareBoard): BoardLeader | null {
   const probability = formatShareProbability(top.probability);
   if (!name || !probability) return null;
 
-  return { name, probability, draw: cleanText(board.label) };
+  // `formatShareProbability` returned a string, so `top.probability` is a
+  // finite non-zero number — that is exactly the condition it rejects on.
+  return {
+    name,
+    probability,
+    fraction: top.probability as number,
+    draw: cleanText(board.label),
+  };
 }
 
 function leaders(source: TournamentShareSource): BoardLeader[] {
@@ -115,6 +131,41 @@ function leaders(source: TournamentShareSource): BoardLeader[] {
     .filter((board): board is TournamentShareBoard => board != null)
     .map(boardLeader)
     .filter((leader): leader is BoardLeader => leader !== null);
+}
+
+/**
+ * The facts the unfurl reads, before anything decides how to say them.
+ *
+ * #5888 — the CARD needs these too. A pasted tournament link unfurls with a
+ * title and a picture, and until this existed only the title was built from the
+ * payload: the picture was the site's house card, identical for the US Open, the
+ * Masters and a slug that does not exist.
+ *
+ * Extracted rather than re-derived, and that is the whole point. A second
+ * "find the leader" in the image route would be a second answer to a question
+ * this module has already answered carefully — `boardLeader` sorts by
+ * probability rather than trusting arrival order, and drops a leader whose price
+ * is null/NaN/0 instead of printing "0%". A picture disagreeing with the words
+ * beneath it is the defect that split implementation produces, so there is one
+ * implementation and both readers take it.
+ */
+export interface TournamentShareFacts {
+  /** The hub's own title, or `"Tournament"` when it has none. */
+  name: string;
+  /** The hub's subtitle ("Flushing Meadows"), or null. */
+  venue: string | null;
+  /** One front-runner per priced board, in board order. */
+  leaders: BoardLeader[];
+}
+
+export function tournamentShareFacts(
+  source: TournamentShareSource
+): TournamentShareFacts {
+  return {
+    name: cleanText(source.title) ?? "Tournament",
+    venue: cleanText(source.subtitle),
+    leaders: leaders(source),
+  };
 }
 
 /**
@@ -131,9 +182,7 @@ export function buildTournamentShareCopy(source: TournamentShareSource): {
   title: string;
   description: string;
 } {
-  const name = cleanText(source.title) ?? "Tournament";
-  const venue = cleanText(source.subtitle);
-  const found = leaders(source);
+  const { name, venue, leaders: found } = tournamentShareFacts(source);
 
   if (found.length === 0) {
     // No priced board — say what the page is, and claim nothing about who is

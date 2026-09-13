@@ -52,7 +52,12 @@
  * that must survive both.
  */
 
+import { accentFor } from "@/components/og/UnfurlCard";
 import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
+import {
+  unresolvedShareCopy,
+  type ResolutionFailure,
+} from "@/lib/unresolvedShareMeta";
 
 /** The fields of `GET /api/hub/{competition}` this copy is built from. */
 export interface HubShareSource {
@@ -124,4 +129,85 @@ export function buildHubShareCopy(
     title: name,
     description: cleanText(payload.blurb) ?? FALLBACK_BLURB,
   };
+}
+
+/** What the hub's `opengraph-image` draws, resolved or not. */
+export type HubCardLookup =
+  | { ok: true; hub: HubShareSource | null | undefined }
+  | { ok: false; failure: ResolutionFailure };
+
+export interface HubCardCopy {
+  /** The pill: the READER's word for the thing, as `SUBJECT_NOUN.hub` has it. */
+  eyebrow: string;
+  title: string;
+  subtitle: string;
+  /** The stripe and the pill's colour — what makes five hubs five pictures. */
+  accent: string;
+  /** Always empty. A hub is a collection; see below. */
+  rows: never[];
+}
+
+/**
+ * THE TWO LINES ON THE HUB'S SHARE CARD (#5877's picture half).
+ *
+ * Pure, and here rather than in `opengraph-image.tsx`, for the reason the whole
+ * family is split this way: a card that decides its own words eventually
+ * decides different ones than the `<title>` printed beside it, and a reader
+ * sees both at once. `tournamentShareFacts` exists for the same reason one
+ * route over.
+ *
+ * ═══ THE RESOLVED BRANCH IS THE PAGE'S OWN TWO FIELDS ═══
+ *
+ * Title and blurb, straight from `buildHubShareCopy` — the same call the
+ * `<title>` makes, so they cannot drift. No leader and no count, for the reason
+ * this module's header gives at length: a hub is a COLLECTION, so there is no
+ * single probability to headline, and the count is a fact about our inventory
+ * rather than about the world (notice 34).
+ *
+ * ═══ THE DEAD BRANCH TAKES ITS HEADLINE, IT DOES NOT RETYPE IT ═══
+ *
+ * `unresolvedShareCopy` is the same function the `<title>` uses, so the card
+ * cannot say "This competition isn't on Bain Luck" while the tab says something
+ * else. The two sibling routes hardcode that sentence in two places; this is
+ * the one place the family's shape is improved rather than copied.
+ *
+ * The SUBTITLE is the card's own, and deliberately not the `description`. A
+ * meta description is written for a tag where length is free — the `not-found`
+ * one runs past 100 characters — while this slot clamps at 90 and would render
+ * a sentence cut mid-word. Both strings below are asserted to fit.
+ *
+ * ═══ WHY IT RETURNS THE WHOLE PROP SET AND NOT JUST THE WORDS ═══
+ *
+ * `accent` and `rows` are decisions too, and leaving them in the route left
+ * them untested: a mutant replacing `accentFor(competition)` with
+ * `accentFor(null)` — which draws all five hubs in the same default green, the
+ * very defect this ship removes — survived the suite. The route is now a spread
+ * with nothing left to get wrong.
+ */
+export function hubCardCopy(
+  lookup: HubCardLookup,
+  requested: string
+): HubCardCopy {
+  const shell = {
+    eyebrow: "Competition",
+    // The segment, not the payload: it is the one signal available before the
+    // fetch, and the only one still available when the fetch fails — so a dead
+    // `/hub/golf` link is still green rather than falling back to the default.
+    accent: accentFor(requested),
+    rows: [] as never[],
+  };
+
+  if (!lookup.ok) {
+    return {
+      ...shell,
+      title: unresolvedShareCopy("hub", lookup.failure).title,
+      subtitle:
+        lookup.failure === "not-found"
+          ? "The link may be old, or this may not be a competition we cover."
+          : "Every market in this competition, as one clean probability.",
+    };
+  }
+
+  const { title, description } = buildHubShareCopy(lookup.hub, requested);
+  return { ...shell, title, subtitle: description };
 }

@@ -243,17 +243,27 @@ describe("#4963 — the event share card prints one decision, not two roundings"
     }
   });
 
-  it("still draws the card when the event cannot be fetched", async () => {
-    // The no-data arm is unchanged by this fix and is the one path with no pair
-    // to reconcile: both sides default to 0.5 and the card reads 50/50. Asserted
-    // so that adopting the contract cannot quietly turn a coin-flip placeholder
-    // into two blanks.
+  it("still draws A card when the event cannot be fetched — and no longer a 50/50 one", async () => {
+    // ⚠️ THIS ASSERTION WAS INVERTED BY #5846, DELIBERATELY.
+    //
+    // It used to require `["50%", "50%"]`, and its comment called that a
+    // "coin-flip placeholder" worth pinning. It was not a placeholder: on
+    // production 2026-09-13 11:49:13Z `/events/99999999/opengraph-image`
+    // answered `200 image/png` with two crests, the names "Away" and "Home",
+    // and 50% against 50% in this very font size — an invented even-money game
+    // on a link that names nothing.
+    //
+    // The half of the old assertion that was right is kept and is what this
+    // still tests: the miss branch must draw SOMETHING. A route that throws or
+    // returns no image gives the unfurler no card at all, which is a worse
+    // outcome than either version of this one.
     mockImageResponseCalls.length = 0;
     global.fetch = jest.fn().mockResolvedValue({ ok: false }) as unknown as typeof fetch;
 
     await OgImage({ params: { id: "15304803" } });
 
-    expect(heroPercents(mockImageResponseCalls[0])).toEqual(["50%", "50%"]);
+    expect(mockImageResponseCalls.length).toBe(1);
+    expect(heroPercents(mockImageResponseCalls[0])).toEqual([]);
   });
 });
 
