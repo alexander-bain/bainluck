@@ -60,6 +60,56 @@ rebuild that accompanied the change, and say so.
 
 ---
 
+## 2026-09-12 — three groups are held back rather than graded on prices nobody quoted
+
+**Method:** `m1` → **`m2`** (fingerprint `d8c2f32561ea` → `eac756bf4cc2`, in force 2026-09-12) ·
+**Population version:** `q269` (unchanged — no forecast is re-priced by this) ·
+**Code:** _pending merge_ (CAL-P1136) · **Issue:** #5401
+**Ruled by:** Alex, 2026-09-12 (klm = A, the accuracy page's launch bar).
+
+**What changed.** Three groups on this page — **Kalshi Golf**, **Polymarket Golf** and **Kalshi
+Entertainment** — are scored on opening prices that were never real prices. They are the residue of
+the defect fixed on 2026-09-10 ("a lone ask on an empty book is not a price"), surviving in a shape
+that fix's predicate could not see: Kalshi openings with no order book behind them, published as
+~0.95 confidence, which then came true between 0.1% and 51% of the time.
+
+From this change those three groups are **held back**: not graded, not counted, and named on the page
+in one line, until the prices underneath them are repaired and the groups recounted. Grading them
+would publish a verdict about our arithmetic that is really a verdict about our data.
+
+**They are held back for a stated reason, and not filed under an existing one.** The page already
+excuses groups that are too small to grade. These are not small — Kalshi Golf carries 22,191
+outcomes. Folding them into that pile would have left the headline number reading the same and
+meaning something false, so held-back is its own disposition, with its own name on the wire
+(`EXEMPT_HELD_BACK_PRICE_REPAIR`) and its own line on the page.
+
+**What it affected.** Measured on the served `q269` payload at 2026-09-12 21:00Z, not estimated.
+
+| | before (`m1`) | after (`m2`) |
+|---|---:|---:|
+| groups at the bar | **43 of 52** | **43 of 49** |
+| groups queued for repair | 9 | 6 |
+| groups held back | 0 | **3** |
+| outcomes behind the held-back groups | — | **30,419** |
+
+The numerator does not move: all three were already failing the bar, so none of them was ever
+counted as passing. What moves is the denominator — the page stops claiming to have graded three
+groups it should not have graded. `done` remains **false** (six groups are still queued), so nothing
+here makes the board look finished.
+
+| group | outcomes | error vs bar |
+|---|---:|---:|
+| Kalshi Golf | 22,191 | 4.89 pp against a 3.0 pp bar |
+| Polymarket Golf | 4,362 | 5.10 pp against a 3.0 pp bar |
+| Kalshi Entertainment | 3,866 | 7.88 pp against a 3.0 pp bar |
+
+**How it comes back.** The set is a deciding constant, so it cannot shrink or grow without moving the
+method fingerprint and forcing an entry in this file. When #5401's repair lands and the affected rows
+are recounted, the set empties, the line disappears from the page on its own, and the groups rejoin
+the denominator under a new method id.
+
+---
+
 ## 2026-09-11 — ten sportsbooks quoting one match are not ten forecasts
 
 **Population version:** `q269` (unchanged — this changes no forecast, only the error bar around a
