@@ -266,14 +266,23 @@ export default function TournamentBoard({
       <div className="mt-3 overflow-hidden rounded-2xl border border-surface-border bg-surface-card">
         {notice && (
           <div
-            className="flex items-start gap-2 border-b border-surface-border bg-accent-warning/10 px-3.5 py-2.5 text-[11.5px] text-text-secondary"
+            className={`flex items-start gap-2 border-b border-surface-border px-3.5 py-2.5 text-[11.5px] text-text-secondary ${
+              // #5917 — A RESULT IS NOT A WARNING. The amber tint and the ⚠ are
+              // the visual grammar of "something is wrong with this number";
+              // over "Rybakina won the title" they would apologise for the
+              // truth. The settled prop two inches below this board wears
+              // neither, and this is the same statement about the same day.
+              notice.tone === "decided" ? "bg-surface-elevated" : "bg-accent-warning/10"
+            }`}
             data-testid="price-state-notice"
             data-tone={notice.tone}
             role="status"
           >
-            <span aria-hidden="true" className="text-accent-warning">
-              &#9888;
-            </span>
+            {notice.tone !== "decided" && (
+              <span aria-hidden="true" className="text-accent-warning">
+                &#9888;
+              </span>
+            )}
             <span>
               <b className="font-bold text-text-primary">{notice.headline}.</b> {notice.detail}
             </span>
