@@ -47,8 +47,8 @@ from app.utils import calibration_sigma as sigma_ledger
 # subject gets updated in the same careless edit that moved the subject, which
 # is the failure it exists to prevent.
 
-EXPECTED_POLICY_VERSION = "m1"
-EXPECTED_POLICY_FINGERPRINT = "d8c2f32561ea"
+EXPECTED_POLICY_VERSION = "m2"
+EXPECTED_POLICY_FINGERPRINT = "eac756bf4cc2"
 
 _BUMP_INSTRUCTIONS = """
 A DECIDING CONSTANT MOVED. That is allowed — it is how the calculations get
@@ -107,6 +107,16 @@ _MUTATIONS = [
     pytest.param(scoring, "SE_CONVENTION_PP", 25.0, id="se-convention"),
     pytest.param(sigma_ledger, "CELL_DRIFT_BAND", (0.80, 1.20), id="cell-drift-band"),
     pytest.param(sigma_ledger, "COVERAGE_BAND", (0.80, 1.20), id="coverage-band"),
+    # #5401 / m2. The replacement is a DIFFERENT non-empty set rather than
+    # `frozenset()`: emptying it would also move the hash, but it would prove
+    # only that "held back nothing" differs from "held back something" — this
+    # case has to fail if the membership itself stops being fingerprinted.
+    pytest.param(
+        scoring,
+        "HELD_BACK_CELLS",
+        frozenset({"kalshi/tech"}),
+        id="held-back-cells",
+    ),
 ]
 
 
@@ -145,6 +155,7 @@ def test_the_named_omissions_are_still_the_only_omissions():
         "se_convention_pp",
         "cell_drift_band",
         "coverage_band",
+        "held_back_cells",
     }
     # Both directions: every material key has a mutation case above, and every
     # case names a real material key. One direction alone lets a new key ship

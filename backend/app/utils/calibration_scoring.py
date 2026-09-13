@@ -134,6 +134,38 @@ SIGMA_GATE = 2.0
 #: regression guard, not a goal — "fixed" is the per-cell table.
 HEADLINE_TARGET_PP = 2.0
 
+#: Cells HELD BACK from the published score because the prices underneath them
+#: are known-bad, not because the cells are small or the sample is thin (#5401,
+#: the #4745 defect surviving in the shape its predicate cannot see: Kalshi
+#: openings with no order book behind them were published as ~0.95 confidence
+#: and won 0.1-51%).
+#:
+#: WHY A SEPARATE SET AND NOT ``MIN_CELL_N``. These are not small — ``kalshi/golf``
+#: carries 22,191 outcomes. Folding them into ``EXEMPT_BELOW_MIN_N`` would file a
+#: data defect under "too small to matter" and make the needle read honest for the
+#: wrong reason. A held-back cell is measured, named on the page and in the
+#: methodology ledger, and excluded from BOTH the numerator and the denominator —
+#: scoring a cell we already know is built on prices nobody quoted would publish a
+#: verdict about our arithmetic that is really a verdict about our data.
+#:
+#: TEMPORARY BY CONSTRUCTION. This set empties when #5401's repair lands and the
+#: affected rows are recounted; it is a deciding constant (it is in
+#: :func:`scoring_policy_material`), so it cannot shrink or grow without moving
+#: the fingerprint and forcing a ledger entry.
+HELD_BACK_CELLS: frozenset[str] = frozenset(
+    {"kalshi/golf", "kalshi/entertainment", "polymarket/golf"}
+)
+
+#: Why :data:`HELD_BACK_CELLS` are held, in the words the page and the payload
+#: both use. One string, so the reader's line and the wire can never disagree.
+HELD_BACK_REASON = (
+    "built on opening prices that no order book stood behind (#5401); "
+    "held back until the prices are repaired and the cells recounted"
+)
+
+#: The issue a held-back cell is waiting on.
+HELD_BACK_ISSUE = "#5401"
+
 
 # ---------------------------------------------------------------------------
 # THE METHOD ID — D134 (Alex, 2026-09-11)
@@ -165,11 +197,13 @@ HEADLINE_TARGET_PP = 2.0
 #: measured sigma decides); changes BEFORE the scheme existed are narrated in the
 #: ledger rather than numbered, because inventing ids for them retroactively
 #: would imply a precision the record does not have.
-SCORING_POLICY_VERSION = "m1"
+#: ``m2`` (2026-09-12) holds back the three #5401 cells — see
+#: :data:`HELD_BACK_CELLS`.
+SCORING_POLICY_VERSION = "m2"
 
 #: When ``SCORING_POLICY_VERSION`` came into force — the D62 deploy, not the day
 #: the id was added. Dated from the ruling so the ledger and the wire agree.
-SCORING_POLICY_IN_FORCE_SINCE = "2026-09-04"
+SCORING_POLICY_IN_FORCE_SINCE = "2026-09-12"
 
 
 def scoring_policy_material() -> dict:
@@ -199,6 +233,12 @@ def scoring_policy_material() -> dict:
         "sigma_gate": SIGMA_GATE,
         "headline_target_pp": HEADLINE_TARGET_PP,
         "se_convention_pp": SE_CONVENTION_PP,
+        # Which cells are held back decides verdicts as directly as any
+        # threshold: a cell in here is removed from the needle's numerator AND
+        # its denominator, so the set cannot move without the published score
+        # moving. `sorted` for the same cross-process stability as the
+        # categories above.
+        "held_back_cells": sorted(HELD_BACK_CELLS),
         # From the sibling leaf, because they decide too: these two bands say
         # which measured entries are allowed to set a cell's sigma at all, so a
         # change to either regrades cells without touching a threshold here.
@@ -314,9 +354,40 @@ VERDICT_QUEUED = "OVER_BAR_ESTABLISHED"
 VERDICT_UNDER_SIGMA = "OVER_BAR_UNESTABLISHED"
 VERDICT_EXEMPT = "EXEMPT_BELOW_MIN_N"
 
+#: A cell whose PRICES are known-bad (:data:`HELD_BACK_CELLS`). Distinct from
+#: ``EXEMPT_BELOW_MIN_N`` for the reason that set is separate: "we are not
+#: grading this because it is tiny" and "we are not grading this because we
+#: should never have stored the prices" are different admissions, and a reader
+#: who cannot tell them apart has been told the wrong thing.
+VERDICT_HELD_BACK = "EXEMPT_HELD_BACK_PRICE_REPAIR"
 
-def verdict_for(n: int, excess_pp: float, sigma: float | None) -> str:
-    """The one place a cell's verdict is decided."""
+#: Verdicts that take a cell OUT of the material set — the needle's denominator.
+#: One tuple, so the three places that compute `material` cannot drift apart;
+#: they did not drift before only because there was one member.
+NON_MATERIAL_VERDICTS = (VERDICT_EXEMPT, VERDICT_HELD_BACK)
+
+
+def is_material(cell: dict) -> bool:
+    """Whether a scored cell counts toward the needle, either way.
+
+    The needle is ``at_bar / material``, so a non-material cell is absent from
+    both halves — this is the one predicate that decides which.
+    """
+    return cell["verdict"] not in NON_MATERIAL_VERDICTS
+
+
+def verdict_for(
+    n: int, excess_pp: float, sigma: float | None, cell: str | None = None
+) -> str:
+    """The one place a cell's verdict is decided.
+
+    ``cell`` is the ``source/category`` key. It is checked FIRST and before
+    ``n``: a held-back cell is held back whatever its size, and passing ``None``
+    (every caller that is not scoring a real cell) keeps the pre-#5401
+    behaviour exactly.
+    """
+    if cell is not None and cell in HELD_BACK_CELLS:
+        return VERDICT_HELD_BACK
     if n < MIN_CELL_N:
         return VERDICT_EXEMPT
     if excess_pp <= 0:
@@ -448,13 +519,14 @@ def score_cells(payload: dict, ledger: dict | None = None) -> list[dict]:
         n, ece = c["n"], c["ece"]
         if ece is None:
             continue
+        cell_key = f"{c['source']}/{c['category']}"
         klass = classify(c["source"], c["category"])
         bar = CLASS_BARS_PP[klass]
         excess = round(ece - bar, 2)
         se = cell_se_pp(n)
         sigma_row = round(excess / se, 2) if se else None
         cell = {
-            "cell": f"{c['source']}/{c['category']}",
+            "cell": cell_key,
             "source": c["source"],
             "category": c["category"],
             "ece": ece,
@@ -476,13 +548,19 @@ def score_cells(payload: dict, ledger: dict | None = None) -> list[dict]:
             # the estimate. It is what `cells_at_bar_row_basis` is summed from,
             # so the published delta is derived from the same rows a reader can
             # check rather than from a second pass nobody sees.
-            "verdict_row_basis": verdict_for(n, excess, sigma_row),
+            "verdict_row_basis": verdict_for(n, excess, sigma_row, cell_key),
         }
         attach_measured_sigma(cell, ledger, pop)
         sigma, basis = deciding_sigma(cell)
         cell["sigma"] = sigma
         cell["sigma_basis"] = basis
-        cell["verdict"] = verdict_for(n, excess, sigma)
+        cell["verdict"] = verdict_for(n, excess, sigma, cell_key)
+        # The reason travels ON the cell, not only in the aggregate list: a
+        # consumer that reads one row must be able to say why it is not graded
+        # without joining back to a set it may not have.
+        if cell["verdict"] == VERDICT_HELD_BACK:
+            cell["held_back_reason"] = HELD_BACK_REASON
+            cell["held_back_issue"] = HELD_BACK_ISSUE
         cells.append(cell)
     cells.sort(key=lambda c: (-c["excess_outcomes"], -c["n"]))
     return cells
@@ -490,7 +568,7 @@ def score_cells(payload: dict, ledger: dict | None = None) -> list[dict]:
 
 def cell_counts(cells: list[dict]) -> dict:
     """The needle's arithmetic, over already-scored cells."""
-    material = [c for c in cells if c["verdict"] != VERDICT_EXEMPT]
+    material = [c for c in cells if is_material(c)]
     queued = [c for c in cells if c["verdict"] == VERDICT_QUEUED]
     unestablished = [c for c in cells if c["verdict"] == VERDICT_UNDER_SIGMA]
     return {
@@ -500,7 +578,17 @@ def cell_counts(cells: list[dict]) -> dict:
         "cells_pass": sum(1 for c in material if c["verdict"] == VERDICT_PASS),
         "cells_queued": len(queued),
         "cells_unestablished": len(unestablished),
+        # `cells_exempt` keeps its meaning — every non-material cell — because
+        # consumers already sum it against `cells_total`. The held-back cells
+        # are a NAMED SUBSET of it, published separately rather than carved out,
+        # so no existing arithmetic changes shape.
         "cells_exempt": len(cells) - len(material),
+        "cells_held_back": sum(
+            1 for c in cells if c["verdict"] == VERDICT_HELD_BACK
+        ),
+        "held_back_outcomes": sum(
+            c["n"] for c in cells if c["verdict"] == VERDICT_HELD_BACK
+        ),
         "queued_excess_outcomes": sum(c["excess_outcomes"] for c in queued),
         # The NEEDLE numerator. A material cell is "at bar" iff it is not queued
         # — the same test ``done`` applies, so the lane's one glanceable number
@@ -518,7 +606,7 @@ def cell_counts(cells: list[dict]) -> dict:
 
 def per_class(cells: list[dict]) -> dict:
     """Cells at bar split by the cohort class whose bar scored them."""
-    material = [c for c in cells if c["verdict"] != VERDICT_EXEMPT]
+    material = [c for c in cells if is_material(c)]
     return {
         klass: {
             "bar_pp": CLASS_BARS_PP[klass],
@@ -570,7 +658,7 @@ def sigma_overlay(
     before the sigma — so it can never move, and including 277 rows that cannot
     move would bury the ones that did.
     """
-    material = [c for c in cells if c["verdict"] != VERDICT_EXEMPT]
+    material = [c for c in cells if is_material(c)]
     by_status: dict[str, int] = defaultdict(int)
     for c in material:
         by_status[c.get("sigma_ledger_status") or sigma_ledger.STATUS_ABSENT] += 1
@@ -703,6 +791,10 @@ def unavailable(reason: str, *, computed_at: str | None = None) -> dict:
         "cells_total": None,
         "categories_at_bar": None,
         "categories_total": None,
+        # `None`, not `[]`: an unscored board does not know what is held back,
+        # and an empty list here would claim it does (gotcha #53).
+        "cells_held_back": None,
+        "held_back_cells": None,
     }
 
 
@@ -777,6 +869,31 @@ def scorecard(
         "cells_total": counts["cells_material"],
         "cells_scored": counts["cells_total"],
         "cells_exempt": counts["cells_exempt"],
+        # #5401 / klm = A (Alex, 2026-09-12). The cells whose prices we should
+        # never have stored, named on the wire so the page can say so in one
+        # line and a probe can prove they are accounted for rather than quietly
+        # gone. Empty list once the repair lands — never absent, so "nothing is
+        # held back" and "this payload predates the field" stay distinguishable
+        # (gotcha #53).
+        "cells_held_back": counts["cells_held_back"],
+        "held_back_outcomes": counts["held_back_outcomes"],
+        "held_back_reason": HELD_BACK_REASON,
+        "held_back_issue": HELD_BACK_ISSUE,
+        "held_back_cells": [
+            {
+                "cell": c["cell"],
+                "source": c["source"],
+                "category": c["category"],
+                "ece": c["ece"],
+                "n": c["n"],
+                "class": c["class"],
+                "bar_pp": c["bar_pp"],
+            }
+            for c in sorted(
+                (c for c in cells if c["verdict"] == VERDICT_HELD_BACK),
+                key=lambda c: -c["n"],
+            )
+        ],
         "cells_queued": counts["cells_queued"],
         "cells_unestablished": counts["cells_unestablished"],
         "cells_material_outcomes": counts["cells_material_outcomes"],

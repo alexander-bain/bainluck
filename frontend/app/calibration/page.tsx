@@ -14,6 +14,7 @@ import CalibrationChart from "@/components/CalibrationChart";
 // than inline — a render defect is not provable by grepping the page source.
 import SourceComparisonRow from "@/components/SourceComparisonRow";
 import { CalibrationCardNote } from "@/components/CalibrationCardNote";
+import CalibrationHeldBackNote from "@/components/CalibrationHeldBackNote";
 import {
   buildSourcePanels,
   compareMatchedBuckets,
@@ -2011,6 +2012,28 @@ export default function CalibrationPage() {
           </section>
         );
       })()}
+
+      {/* CAL-P1136 / #5401 — klm = A (Alex, 2026-09-12). ONE honest line.
+
+          Three source-and-category groups are built on Kalshi opening prices that
+          no order book ever stood behind (#4745's defect in a shape its predicate
+          could not see). They are not graded and not counted while that is true,
+          and the reader is told so in a sentence rather than shown a curve we do
+          not believe.
+
+          Notice 34 / D102: a short line and the group names — no coverage count,
+          no method note, no explanation of the emptiness. The numbers a probe
+          needs (how many, how many outcomes) ride as data attributes.
+
+          Rendered from `scorecard.held_back_cells`, which is the SAME list the
+          score removes from the needle, so the page cannot say one thing while
+          the published figure says another. Absent/empty renders nothing at all
+          — which is what the page should look like the day #5401 lands. */}
+      <CalibrationHeldBackNote
+        cells={data.scorecard?.held_back_cells}
+        sourceLabel={sourceLabel}
+        categoryLabel={nicheCatLabel}
+      />
 
       {/* Data corrections log (L2-74 §E — trust panel; L2-80 Item 3: collapsed into a
           <details> closed by default and clearly labeled technical — too detailed to
