@@ -96,18 +96,30 @@ from datetime import datetime, timezone
 
 #: The accuracy rebuild's beat. Hourly at :15 (beat schedule is the authority).
 REBUILD_START_MIN = 15
-#: MEASURED on production 2026-09-12 (latency/350), NOT notice 29's "~7": the
-#: `precompute_calibration_main` phase ledger read `elapsed_ms = 1,332,567`
-#: (22m13s) with `deferred_rebuild.elapsed_ms = 1,256,026` (20m56s), and
-#: `last_success_at` 11:37:13Z against a :15 start. The sibling guard
+#: MEASURED on production, and this constant is a CEILING on the rebuild, not its
+#: typical length — the band is only safe if no rebuild outlives it. latency/350
+#: read one run at 22m13s (`elapsed_ms = 1,332,567`); latency/372 then read the
+#: task-metrics ring of 30 consecutive runs (2026-09-12T17:14Z .. 09-13T09:15Z)
+#: and the MAX was 22m31s (09-12 19:14:59 -> 19:37:30), i.e. 22 understated the
+#: observed ceiling by 31s. 23 covers every run in that ring. The sibling guard
 #: `push_window_guard.py` still carries 7 — see #5470's note; correcting it there
 #: without also retiring notice 29 would narrow THAT band to three minutes.
-REBUILD_DURATION_MIN = 22
+REBUILD_DURATION_MIN = 23
 #: Push -> heavy release. A Heroku build with NO CI in front of it, so both ends
-#: are well under the main app's CI-queue-dependent lag. ESTIMATES, not
-#: measurements — named as constants precisely so the first real reading can move
-#: the band instead of being argued about. Widen rather than narrow when unsure.
-MIN_RELEASE_LAG_MIN = 3
+#: are well under the main app's CI-queue-dependent lag. These were ESTIMATES —
+#: named as constants precisely so the first real reading could move the band
+#: instead of being argued about. MIN now HAS its first real reading, from the
+#: first unattended convergence (heavy-sync run 34750397765, 2026-09-13): the
+#: workflow logged `PUSH:` at 09:52:01.509Z and Heroku logged `Released v14` at
+#: 09:53:59.010Z — 1m57.5s. So 3 was never a lower bound on the lag, and a lower
+#: bound is the only thing that makes the opening edge safe (`opens` SUBTRACTS
+#: it), so the one reading we have must be ABOVE it, not equal to it: 1, the
+#: measurement floored to the minute the gate actually works in. MAX stays an
+#: estimate; it sits on the closing edge, where over-estimating is the safe
+#: direction. Cost of the move, measured rather than assumed (latency/372): CI
+#: completions on master cluster at :40-:59 with ZERO in :30-:40, so :34 -> :37
+#: loses no triggers at all — 8/13 in band before and after.
+MIN_RELEASE_LAG_MIN = 1
 MAX_RELEASE_LAG_MIN = 12
 #: Slack on the closing edge so a lag at the top of the range still lands clear of
 #: the NEXT hour's rebuild.

@@ -49,6 +49,20 @@ PUSH, HOLD, REFUSE, USAGE = 0, 1, 2, 3
 A = "a" * 40          # a plausible "main live" sha
 B = "b" * 40          # a plausible "heavy live" sha
 
+# ── production readings the band must survive, recorded here so the guards below
+#    can be checked against the WORLD and not only against each other ───────────
+
+#: Worst `precompute_calibration_main` run in the task-metrics ring of 30
+#: consecutive runs, read 2026-09-13T10:02Z (latency/372): 09-12 19:14:59Z ->
+#: 19:37:30Z = 22m31s. The band's REBUILD_DURATION_MIN is a ceiling on this.
+OBSERVED_REBUILD_MAX_MIN = 22.517
+#: The FIRST real push -> heavy-release lag, from the first unattended
+#: convergence (heavy-sync run 34750397765): the workflow logged `PUSH:` at
+#: 2026-09-13T09:52:01.509Z and Heroku logged `Released v14` at 09:53:59.010Z.
+#: 1m57.5s. MIN_RELEASE_LAG_MIN must sit at or below this — see
+#: `test_the_min_lag_is_a_real_lower_bound_and_not_merely_self_consistent`.
+OBSERVED_RELEASE_LAG_MIN = 1.958
+
 
 def _module():
     """Import the script by path — it is not on any package path."""
@@ -96,7 +110,7 @@ def test_the_band_falls_out_of_the_measured_constants():
     together, is the check.
     """
     opens, closes = sync.window_bounds()
-    assert (opens, closes) == (34, 58)
+    assert (opens, closes) == (37, 58)
     assert opens == (
         sync.REBUILD_START_MIN + sync.REBUILD_DURATION_MIN - sync.MIN_RELEASE_LAG_MIN
     )
@@ -112,12 +126,12 @@ def test_moving_a_measured_constant_moves_the_band(monkeypatch):
     would survive the test above and die here.
     """
     monkeypatch.setattr(sync, "REBUILD_DURATION_MIN", 32)
-    assert sync.window_bounds()[0] == 44
-    monkeypatch.setattr(sync, "REBUILD_DURATION_MIN", 22)
+    assert sync.window_bounds()[0] == 46
+    monkeypatch.setattr(sync, "REBUILD_DURATION_MIN", 23)
 
     monkeypatch.setattr(sync, "MIN_RELEASE_LAG_MIN", 8)
-    assert sync.window_bounds()[0] == 29
-    monkeypatch.setattr(sync, "MIN_RELEASE_LAG_MIN", 3)
+    assert sync.window_bounds()[0] == 30
+    monkeypatch.setattr(sync, "MIN_RELEASE_LAG_MIN", 1)
 
     monkeypatch.setattr(sync, "MAX_RELEASE_LAG_MIN", 25)
     assert sync.window_bounds()[1] == 45
@@ -133,10 +147,15 @@ def test_the_rebuild_duration_is_the_measured_one_not_notice_29s_seven():
     `push_window_guard.py`'s REBUILD_DURATION_MIN = 7 predates the production
     read (`elapsed_ms` 1,332,567 = 22m13s). A band built on 7 would open at :19 —
     squarely inside the rebuild it exists to dodge.
+
+    23, not 22: this constant is a CEILING, and latency/372 read the 30-run
+    task-metrics ring (2026-09-12T17:14Z .. 09-13T09:15Z) whose MAX was 22m31s.
     """
-    assert sync.REBUILD_DURATION_MIN == 22
+    assert sync.REBUILD_DURATION_MIN == 23
     stale_open = sync.REBUILD_START_MIN + 7 - sync.MIN_RELEASE_LAG_MIN
     assert stale_open < sync.REBUILD_START_MIN + sync.REBUILD_DURATION_MIN
+    # The ceiling must cover the worst run actually observed, not the typical one.
+    assert sync.REBUILD_DURATION_MIN >= OBSERVED_REBUILD_MAX_MIN
 
 
 def test_the_whole_band_lands_clear_of_the_rebuild():
@@ -148,9 +167,42 @@ def test_the_whole_band_lands_clear_of_the_rebuild():
     opens, closes = sync.window_bounds()
     rebuild_end = sync.REBUILD_START_MIN + sync.REBUILD_DURATION_MIN
     # Earliest cycle a push at `opens` can produce is still after the rebuild.
+    # NOTE: substitute `window_bounds()` and this line reads
+    # `START + DURATION >= START + DURATION`. It is an IDENTITY — true for every
+    # value of MIN_RELEASE_LAG_MIN, including ones no real lag can reach. That is
+    # why it did not notice :34, and why the two tests below exist.
     assert opens + sync.MIN_RELEASE_LAG_MIN >= rebuild_end
     # Latest cycle a push at `closes` can produce is still before the next one.
     assert closes + sync.MAX_RELEASE_LAG_MIN < 60 + sync.REBUILD_START_MIN
+
+
+def test_the_min_lag_is_a_real_lower_bound_and_not_merely_self_consistent():
+    """`opens` SUBTRACTS this constant, so only a LOWER bound makes it safe.
+
+    The sibling above cannot see this: it is an identity in the constants. So a
+    MIN_RELEASE_LAG_MIN larger than any lag that can actually occur passes every
+    other guard in this file while moving `opens` earlier by exactly the size of
+    the error. That is the whole of the :34 defect — 3 was an admitted estimate,
+    and the first real reading came in at 1m57.5s.
+
+    Checked against a recorded production reading rather than another constant.
+    """
+    assert sync.MIN_RELEASE_LAG_MIN <= OBSERVED_RELEASE_LAG_MIN
+
+
+def test_the_opening_edge_clears_the_worst_rebuild_at_the_fastest_real_lag():
+    """The end-to-end safety property, in observed units, not in constants.
+
+    RED on the pre-2026-09-13 band: `opens` :34 + a 1.958-minute lag releases at
+    :35:58, while the worst observed rebuild runs to :37:31. The band opened
+    while the rebuild it exists to dodge was still running, and every guard in
+    this file was green. Today's release survived only because that hour's
+    rebuild happened to finish at :34:14.
+    """
+    opens, _ = sync.window_bounds()
+    earliest_release = opens + OBSERVED_RELEASE_LAG_MIN
+    worst_rebuild_end = sync.REBUILD_START_MIN + OBSERVED_REBUILD_MAX_MIN
+    assert earliest_release >= worst_rebuild_end
 
 
 # ── the clock cannot be handed in ──────────────────────────────────────────────
