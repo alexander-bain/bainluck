@@ -21,6 +21,7 @@ from app.utils import authority_failover as _failover
 from app.utils.event_completion import (
     AUTHORITY_BACKFILL_STATUS_SQL,
     AUTHORITY_BACKFILL_STATUSES,
+    espn_board_date,
 )
 from app.utils.team_binding_invariant import accept_team_binding
 from app.utils.name_normalization import (
@@ -744,35 +745,54 @@ async def _sync_espn_live_events():
             recently_completed_cutoff = datetime.now(timezone.utc) - timedelta(hours=6)
             started_cutoff = datetime.now(timezone.utc) - timedelta(hours=5)
 
-            for sport_key in live_sport_keys:
-                stats["sports_checked"] += 1
+            # #5697. Its own service, and it has to outlive the fetch loop
+            # above — that one closes `espn` in a `finally` before this pass
+            # ever runs, so the second question cannot be asked through it.
+            # Opened here rather than per sport so one connection pool serves
+            # the whole pass, and closed below whatever the loop does.
+            widen_espn = ESPNAPIService()
 
-                if sport_key not in ESPN_SPORT_MAPPING:
-                    continue
+            async def _fetch_dated_board(sport_key: str, board_day: str):
+                return await widen_espn.get_scoreboard(sport_key, date=board_day)
 
-                # `espn_data.get(sport_key, [])` used to stand here, and it is
-                # the line #3473 is about: it mapped "ESPN went dark" and "ESPN
-                # says there are no games" onto one `[]` and one `continue`,
-                # undoing the distinction the fetch loop above had just taken
-                # care to preserve. The reading keeps the two apart; the branch
-                # below is the same for both because there is nothing ESPN can
-                # contribute either way, and what differs — whether anything
-                # fails over — was decided above.
-                if _failover.espn_reading(espn_data, sport_key) != _failover.FIXTURES:
-                    continue
-                espn_events = espn_data[sport_key]
+            try:
+                for sport_key in live_sport_keys:
+                    stats["sports_checked"] += 1
 
-                try:
-                    await _process_live_sport(
-                        session, sport_key, espn_events, stats,
-                        recently_completed_cutoff, started_cutoff,
-                        espn_names_match, upsert_team, register_espn_team_identities,
-                        match_event_to_espn, update_event_fields_from_espn,
-                        write_espn_win_probability, compute_and_write_stat_model,
-                        create_events_from_unmatched_espn,
-                    )
-                except Exception as e:
-                    stats["errors"].append(f"{sport_key}: {str(e)}")
+                    if sport_key not in ESPN_SPORT_MAPPING:
+                        continue
+
+                    # `espn_data.get(sport_key, [])` used to stand here, and it
+                    # is the line #3473 is about: it mapped "ESPN went dark" and
+                    # "ESPN says there are no games" onto one `[]` and one
+                    # `continue`, undoing the distinction the fetch loop above
+                    # had just taken care to preserve. The reading keeps the two
+                    # apart; the branch below is the same for both because there
+                    # is nothing ESPN can contribute either way, and what
+                    # differs — whether anything fails over — was decided above.
+                    if (
+                        _failover.espn_reading(espn_data, sport_key)
+                        != _failover.FIXTURES
+                    ):
+                        continue
+                    espn_events = espn_data[sport_key]
+
+                    try:
+                        await _process_live_sport(
+                            session, sport_key, espn_events, stats,
+                            recently_completed_cutoff, started_cutoff,
+                            espn_names_match, upsert_team,
+                            register_espn_team_identities,
+                            match_event_to_espn, update_event_fields_from_espn,
+                            write_espn_win_probability,
+                            compute_and_write_stat_model,
+                            create_events_from_unmatched_espn,
+                            dated_board_fetcher=_fetch_dated_board,
+                        )
+                    except Exception as e:
+                        stats["errors"].append(f"{sport_key}: {str(e)}")
+            finally:
+                await widen_espn.close()
 
             # ── Second pass: scheduled events (team pre-population) ─
             for sport_key in scheduled_sport_keys:
@@ -1185,18 +1205,32 @@ async def _find_sport_keys_to_sync(session):
     return live_sport_keys, scheduled_sport_keys
 
 
+#: How many distinct board days one sport may ask about in a single pass
+#: (#5697). One is the ordinary answer; the second exists for the fixture still
+#: being played when Eastern midnight passes, which is filed under yesterday's
+#: board while it is live. Anything beyond that is not a live game, and the
+#: cost lands on `sync_espn_live_events`, which already overruns its own 60 s
+#: period (p95 111.5 s) — so the ceiling is deliberate, not defensive.
+MAX_DATED_BOARDS_PER_SPORT = 2
+
+
 async def _process_live_sport(
     session, sport_key, espn_events, stats,
     recently_completed_cutoff, started_cutoff,
     espn_names_match, upsert_team_fn, register_identities_fn,
     match_event_fn, update_fields_fn, write_win_prob_fn,
     compute_stat_model_fn, create_unmatched_fn,
+    dated_board_fetcher=None,
 ):
     """Process all live/recently-completed events for one sport.
 
     Handles event matching, field updates, win probability, stat model,
     team upsert, identity registration, and creation of new events
     from unmatched ESPN games.
+
+    ``dated_board_fetcher`` is ``async (sport_key, "YYYYMMDD") -> list | None``.
+    When supplied, an event the undated board cannot account for gets a second
+    question asked about **its own** board day — see :func:`_widened_pool_for`.
     """
     from app.models.models import Event, Team
     from sqlalchemy import and_, or_
@@ -1247,10 +1281,116 @@ async def _process_live_sport(
         if ev.espn_id:
             claimed_espn_ids.add(ev.espn_id)
 
+    # ── THE UNDATED BOARD IS A CURATED SLICE, NOT THE DAY'S SLATE (#5697) ──
+    #
+    # #4652 found that the undated board answers about *today*, and ends after
+    # Eastern midnight go unread. This is the other half of the same root
+    # cause, and the one that shows on the page while the game is on: even
+    # for today, `GET /scoreboard` with no date is a FEATURED subset.
+    #
+    # MEASURED, ESPN's own API, 2026-09-12 22:25Z (standing notice 26):
+    #
+    #     GET football/college-football/scoreboard                  24 events
+    #     GET football/college-football/scoreboard?limit=200        24 events
+    #     GET football/college-football/scoreboard?dates=20260912   80 events
+    #
+    # `?limit=200` on the undated call also returns 24, so this is not a page
+    # size — it is a different question. All 11 of the NCAAF games that carried
+    # NO SCORE through their entire 3h26m were absent from the 24 and present
+    # in the 80; all five that tracked live were in the 24. The same pass
+    # reported `events_synced: 5, events_unmatched: 23`.
+    #
+    # What a reader got for those 11: `LIVE`, `live · 1m ago`, `⟳ 20s`, a
+    # moving chart and `Projected final: 23 – 31`, over a game the page could
+    # not name the score of — every freshness signal green and correct, which
+    # is the worst shape, because nothing tells them the number is missing
+    # rather than 0–0. Then one ScoreSnapshot at +240 min when a dated path
+    # finally settled it.
+    #
+    # ── WHY THE POOL IS PER-EVENT AND NOT MERGED ──
+    #
+    # #4652's safety case: "LAFC" on the 9/9 board and "LAFC" on the 9/10 board
+    # are the same string, so merging another day's board into the shared pool
+    # would let a finished score and a Final land on a fixture that has not
+    # kicked off (gotcha #32 / CERT-752's class). So the widened pool is built
+    # for ONE event, from the board day of that event's OWN commence_time, and
+    # is never appended to `espn_events` — `create_unmatched_fn` below still
+    # sees exactly the board it saw before, so no event is created off a board
+    # this widening fetched.
+    #
+    # That is the first of two independent guards. The second is already in the
+    # matcher and is measured, not assumed: since #2049 the name arm authorizes
+    # through `select_authorized_espn_candidate`, which refuses any candidate
+    # more than `NAME_ONLY_SAME_GAME_SECONDS` (3 h) from our own
+    # `commence_time`. (#4652's prose predates that and still says the name arm
+    # has no time guard; it has one.)
+    boards_by_day: dict[str, list] = {}
+
+    async def _widened_pool_for(event):
+        """(pool, by_id) for one event's own board day, or ``None``.
+
+        ``None`` means there is nothing new to match against — no fetcher, the
+        per-sport ceiling is spent, the authority went dark, or the dated board
+        added no game the undated one did not already carry.
+        """
+        if dated_board_fetcher is None:
+            return None
+        commence = getattr(event, "commence_time", None)
+        if commence is None:
+            return None
+        day = espn_board_date(commence)
+        if day not in boards_by_day:
+            if len(boards_by_day) >= MAX_DATED_BOARDS_PER_SPORT:
+                stats["dated_board_days_skipped"] = (
+                    stats.get("dated_board_days_skipped", 0) + 1
+                )
+                return None
+            try:
+                board = await dated_board_fetcher(sport_key, day)
+            except Exception as e:
+                stats["errors"].append(f"dated_board_{sport_key}_{day}: {str(e)}")
+                board = None
+            # AUTHORITY DARK (`None`) and a genuinely empty slate (`[]`) are
+            # different facts, and this pass acts on neither: it only ever ADDS
+            # candidates, so it has nothing to say when there are none. The
+            # empty list is cached so one dark board is not re-asked per event.
+            if board is None:
+                stats["dated_board_dark"] = stats.get("dated_board_dark", 0) + 1
+            else:
+                stats["dated_board_fetches"] = (
+                    stats.get("dated_board_fetches", 0) + 1
+                )
+            boards_by_day[day] = board or []
+
+        extra = [
+            ee for ee in boards_by_day[day]
+            if not ee.espn_id or ee.espn_id not in espn_by_id
+        ]
+        if not extra:
+            return None
+        pool = list(espn_events) + extra
+        by_id = dict(espn_by_id)
+        for ee in extra:
+            if ee.espn_id:
+                by_id[ee.espn_id] = ee
+        return pool, by_id
+
     for event in our_events:
         matched_espn, match_method = match_event_fn(
             event, espn_events, espn_by_id, claimed_espn_ids, espn_names_match,
         )
+
+        if not matched_espn:
+            widened = await _widened_pool_for(event)
+            if widened is not None:
+                pool, by_id = widened
+                matched_espn, match_method = match_event_fn(
+                    event, pool, by_id, claimed_espn_ids, espn_names_match,
+                )
+                if matched_espn:
+                    stats["events_matched_on_dated_board"] = (
+                        stats.get("events_matched_on_dated_board", 0) + 1
+                    )
 
         if not matched_espn:
             stats["events_unmatched"] = stats.get("events_unmatched", 0) + 1
