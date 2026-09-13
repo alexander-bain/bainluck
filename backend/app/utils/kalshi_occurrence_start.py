@@ -99,7 +99,9 @@ from typing import Any, Optional
 __all__ = [
     "KALSHI_EXPECTED_EXPIRATION_PAD",
     "KALSHI_OCCURRENCE_TIMED_SOURCES",
+    "KALSHI_RECOVERY_STAMP",
     "kalshi_occurrence_scheduled_start",
+    "loaded_sport_key",
     "recover_kalshi_occurrence_starts",
 ]
 
@@ -126,6 +128,32 @@ KALSHI_EXPECTED_EXPIRATION_PAD = timedelta(hours=3)
 #: three hours after anything, and subtracting a pad from it would move a
 #: stand-in to 21:00 the previous day and call it a kick-off.
 KALSHI_OCCURRENCE_TIMED_SOURCES = frozenset({"kalshi", "kalshi_occurrence"})
+
+#: The unmapped attribute :func:`recover_kalshi_occurrence_starts` stamps on a row
+#: it has already corrected, so a second pass over the same objects leaves them
+#: alone.
+#:
+#: **THIS IS NOT BELT-AND-BRACES — WITHOUT IT THE RECOVERY IS NOT IDEMPOTENT AND
+#: ONE LIVE ROUTE ALREADY FOLDS TWICE.** The function keys on
+#: `commence_time_source`, which it does not change, so on a second pass the row
+#: still looks exactly like one needing a pad subtracted and it subtracts another
+#: (authority/179 measured the ladder: 21:45 → 18:45 → 15:45 → 12:45).
+#: `/api/leagues/{sport_key}` passes the SAME upcoming row objects through
+#: :func:`app.utils.event_twin_fold.fold_twin_events` twice in one request —
+#: `league_futures.py:2483` `_folded_upcoming(_g_events)` and then `:2543`
+#: `_folded_past_rails(..., _g_events)` — with no re-query between them. That
+#: route is latent today only because its `upcoming_games_query` is a bare
+#: `select(Event)` with no `selectinload(Event.sport)`, so
+#: :func:`loaded_sport_key` returns ``None`` there and nothing fires; the day its
+#: owner adds the eager load it wants, a page would advertise a kick-off SIX
+#: hours early and the eager load would look like the innocent change.
+#:
+#: An unmapped attribute is the right sentinel because its lifetime is exactly
+#: the lifetime of the reading it guards: it lives on the hydrated instance, dies
+#: with the request, and is cleared by the same expiry that would reload
+#: `commence_time` from the database. Nothing is written, and the mapper never
+#: sees it — a name it does not map is not a column it can flush (gotcha #4).
+KALSHI_RECOVERY_STAMP = "_bl_kalshi_occurrence_start_recovered"
 
 
 def _soccer(sport_key: Optional[str]) -> bool:
@@ -167,8 +195,12 @@ def kalshi_occurrence_scheduled_start(
     return commence - KALSHI_EXPECTED_EXPIRATION_PAD
 
 
-def _loaded_sport_key(event: Any) -> Optional[str]:
+def loaded_sport_key(event: Any) -> Optional[str]:
     """``event.sport.key`` when it is already in memory, else ``None``.
+
+    Public because it has a second caller: the soccer gate in
+    `#5918`'s name-pair fold (authority/179) needs exactly this answer, and two
+    copies of a lazy-safe relationship read is how one of them rots.
 
     Most serve paths `selectinload(Event.sport)`, but not all of them, and a lazy
     load from here would emit IO inside a stage every caller wraps in a bare
@@ -191,6 +223,11 @@ def _loaded_sport_key(event: Any) -> Optional[str]:
     return key if isinstance(key, str) else None
 
 
+#: The name this function had while it had one caller. Kept so a branch based on
+#: that sha keeps importing successfully; new callers use the public name.
+_loaded_sport_key = loaded_sport_key
+
+
 def recover_kalshi_occurrence_starts(events: Any) -> int:
     """Put the kick-off back on every row holding an expected expiration.
 
@@ -210,15 +247,34 @@ def recover_kalshi_occurrence_starts(events: Any) -> int:
 
     It is best-effort per row (gotcha #42): one row that cannot be read must
     never cost the page its other corrections.
+
+    **It is idempotent, and that is load-bearing rather than tidy.** Callers hand
+    the same row objects to the fold more than once — `/api/leagues` does it
+    twice in one request — and the test this function applies (a
+    `commence_time_source` it does not change) is still true of a row it has
+    already corrected, so an unguarded second pass subtracts a second pad and
+    advertises a kick-off six hours early. :data:`KALSHI_RECOVERY_STAMP` carries
+    the reasoning and the measured ladder. The returned count is corrections
+    MADE, so a second pass over corrected rows returns 0 — a caller reporting
+    "rows fixed" never double-counts one row.
     """
     corrected = 0
     for event in events or ():
         try:
+            if getattr(event, KALSHI_RECOVERY_STAMP, False):
+                continue  # already recovered in this request; see the stamp's note
             recovered = kalshi_occurrence_scheduled_start(
-                event, _loaded_sport_key(event)
+                event, loaded_sport_key(event)
             )
             if recovered is None:
                 continue
+            # Stamp BEFORE correcting, never after. A row that cannot take the
+            # stamp cannot take the correction either (the non-ORM arm of
+            # `_set_served_commence_time` is a plain assignment), so raising here
+            # skips it entirely — which is this function's own refusal rule:
+            # serving the stored hour is today's bug, serving a twice-padded one
+            # would be a new and worse one.
+            setattr(event, KALSHI_RECOVERY_STAMP, True)
             _set_served_commence_time(event, recovered)
             corrected += 1
         except Exception:  # noqa: BLE001 — see the gotcha #42 note above
