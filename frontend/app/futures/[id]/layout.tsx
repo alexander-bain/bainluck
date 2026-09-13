@@ -53,6 +53,41 @@ function topOutcome(market: FuturesMarketMetadata): FuturesOutcome | null {
   return [...outcomes].sort((a, b) => (b.probability ?? -1) - (a.probability ?? -1))[0];
 }
 
+/** How many priced names the description leads with before the standing tail. */
+const BOARD_NAMES = 3;
+
+/**
+ * The board, in words: the leading names and what they are priced at.
+ *
+ * This is the "plain probability copy" half of check 8, and it is the DESCRIPTION
+ * rather than a nicety because the description is the only line a pasted market
+ * link gets that the title does not already carry. The title names the leader and
+ * one number; a reader who pastes "Brazil Presidential election winner?" into a
+ * chat wants to know who ELSE is on the board and by how much.
+ *
+ * Every name after the leader is dropped unless it carries a real price —
+ * `formatShareProbability` returns null for absent/zero, and an unpriced name
+ * beside two priced ones reads as 0% rather than as unknown.
+ */
+function boardSentence(
+  outcomes: FuturesOutcome[],
+  leader: FuturesOutcome,
+  leaderProbability: string,
+): string {
+  const chasers = [...outcomes]
+    .sort((a, b) => (b.probability ?? -1) - (a.probability ?? -1))
+    .filter((o) => o !== leader)
+    .map((o) => ({ name: o.name, label: formatShareProbability(o.probability) }))
+    .filter((o): o is { name: string; label: string } => Boolean(o.label))
+    .slice(0, BOARD_NAMES - 1);
+
+  const parts = [
+    `${leader.name} ${leaderProbability}`,
+    ...chasers.map((o) => `${o.name} ${o.label}`),
+  ];
+  return `${parts.join(", ")}.`;
+}
+
 export async function generateMetadata({
   params,
 }: {
@@ -97,13 +132,30 @@ export async function generateMetadata({
     leaderName: leader?.name,
     probabilityLabel: probability,
   });
+  // ── THE HOOK NO LONGER PRE-EMPTS THE PRICE ─────────────────────────────────
+  // Check 8 is "a pasted game/market link unfurls with plain probability copy".
+  // The game half already did; this half did not, because `hook_description ||`
+  // sat in front of the probability sentence and won on every market that has a
+  // hook — 10,997 of 15,560 tier-1-3 markets (70.7%) per /api/admin/hook-coverage
+  // at 15:28Z, i.e. essentially every market anyone would paste. Measured on
+  // production 2026-09-13 15:31Z, `/futures/60276241`:
+  //
+  //   og:description  "As Texas braces for another scorching summer, the question
+  //                    of rainfall in Dallas for September 2026 has become
+  //                    increasingly pertinent, with shifts in climate patterns
+  //                    raising conc..."
+  //
+  // 180 characters of editorial scene-setting, no probability anywhere in it, cut
+  // mid-word. The hook is not deleted and not wasted: `opengraph-image.tsx` still
+  // draws it as the grey supporting line UNDER the big number, which is where
+  // D102 says small grey type belongs — beside a figure it supports. What changed
+  // is that the text a chat client prints beside the picture now states the board.
   const description = truncateShareText(
-    market.hook_description ||
-      (isResolved && winnerName
-        ? `${winnerName} won ${market.name}. See the full probability board on Bain Luck.`
-        : leader && probability
-          ? `${leader.name} leads ${market.name} at ${probability}. See the full probability board on Bain Luck.`
-          : `See ${market.name} translated into intuitive probabilities on Bain Luck.`)
+    isResolved && winnerName
+      ? `${winnerName} won ${market.name}. See the full probability board on Bain Luck.`
+      : leader && probability
+        ? `${boardSentence(outcomes, leader, probability)} See the full probability board on Bain Luck.`
+        : `See ${market.name} translated into intuitive probabilities on Bain Luck.`
   );
   const url = buildShareUrl(`/futures/${market.id}`);
   const image = buildShareUrl(`/futures/${market.id}/opengraph-image`);
