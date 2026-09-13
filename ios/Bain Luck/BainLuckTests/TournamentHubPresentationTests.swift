@@ -133,6 +133,141 @@ final class TournamentHubPresentationTests: XCTestCase {
             + "rule reached rows that are not two sides of one question")
     }
 
+    // MARK: - #5893: a draw down to its final is ONE question, answered once
+
+    /// The ship, stated as the reader sees it.
+    ///
+    /// ux/1235 closed this on the web hub and pointed the specimen here: whole
+    /// percents do not save the board, because `0.575 / 0.425` is a complement
+    /// pair on a half-cent grid and half-up sends both UP. Rounded per row the
+    /// board prints 58 **and 43** under a card printing 58 / 42 — two answers to
+    /// "who wins the final" in one viewport, which is the #5893 Alex saw.
+    ///
+    /// So the assertion is not "the board prints 42": it is that the two
+    /// surfaces print the SAME STRINGS, compared to each other rather than to a
+    /// literal, because a future rounding change that moved both together would
+    /// still be honest and a change that moved one is the bug.
+    func testTheFinalDayBoardAndTheCardAboveItPrintOneAnswer() throws {
+        let p = TournamentHubPresentation(response: decode(Self.boardJSON(
+            [(key: "zverev", probability: 0.575, rank: 1),
+             (key: "shelton", probability: 0.425, rank: 2),
+             (key: "dimitrov", probability: 0.001, rank: 3)],
+            slateSides: [(key: "zverev", probability: 0.575),
+                         (key: "shelton", probability: 0.425)])))
+
+        let card = try XCTUnwrap(p.liveMatches.first)
+        let board = try XCTUnwrap(p.boards.first)
+        XCTAssertEqual(card.sides.map(\.percentText), ["58%", "42%"])
+        XCTAssertEqual(
+            board.rows.map(\.percentText), card.sides.map(\.percentText) + ["<1%"],
+            "the board and the NEXT UP card answer the same question and must "
+            + "print the same two strings; the tail is not in the pair")
+        XCTAssertEqual(
+            board.rows.prefix(2).compactMap { Int($0.percentText.dropLast()) }.reduce(0, +), 100,
+            "58 + 43 is the per-row rounding this exists to stop")
+    }
+
+    /// The other direction, and the harder half to keep true.
+    ///
+    /// A guard that only proves final day is satisfied by a board that
+    /// pair-rounds the top two of EVERY draw, which would print 40/60 over a
+    /// semi-final field of four.
+    func testAFieldThatIsNotDownToTwoRoundsEveryRowOnItsOwn() throws {
+        let p = TournamentHubPresentation(response: decode(Self.boardJSON(
+            [(key: "a", probability: 0.4, rank: 1), (key: "b", probability: 0.3, rank: 2),
+             (key: "c", probability: 0.2, rank: 3), (key: "d", probability: 0.1, rank: 4)])))
+        let board = try XCTUnwrap(p.boards.first)
+        XCTAssertEqual(board.rows.map(\.percentText), ["40%", "30%", "20%", "10%"])
+    }
+
+    /// The gate is "exactly two", not "the leading two", and only this shape
+    /// says so: the leading pair sums to exactly 1.0, so a `>= 2` gate would
+    /// pair-round them and derive 42 for a row in a THREE-horse field. The
+    /// four-way test above cannot catch that — `renderedDuelPercents` declines
+    /// 0.4 / 0.3 on its own and hands back the same numbers either way.
+    func testTheGateIsExactlyTwoAndNotTheLeadingTwo() throws {
+        let p = TournamentHubPresentation(response: decode(Self.boardJSON(
+            [(key: "zverev", probability: 0.575, rank: 1),
+             (key: "shelton", probability: 0.425, rank: 2),
+             (key: "darkhorse", probability: 0.05, rank: 3)])))
+        let board = try XCTUnwrap(p.boards.first)
+        XCTAssertEqual(board.rows.map(\.percentText), ["58%", "43%", "5%"])
+    }
+
+    /// And the gate is read over the WHOLE FIELD, not over the six rows this
+    /// phone draws.
+    ///
+    /// Nine contenders, of which the third priced one sits at rank 9 and is
+    /// therefore off the bottom of a `boardRowLimit` list. Whether a draw is
+    /// down to its final is a fact about the draw; a gate fed the trimmed list
+    /// would see two contenders here and print 58 / 42 for a field of three,
+    /// and would disagree with the web board, which decides over `board.rows`.
+    func testTheGateReadsTheWholeFieldAndNotTheRowsThisPhoneDraws() throws {
+        var rows: [(key: String, probability: Double?, rank: Int)] = [
+            (key: "zverev", probability: 0.575, rank: 1),
+            (key: "shelton", probability: 0.425, rank: 2)]
+        for rank in 3...8 { rows.append((key: "tail\(rank)", probability: 0.001, rank: rank)) }
+        rows.append((key: "offscreen", probability: 0.05, rank: 9))
+
+        let p = TournamentHubPresentation(response: decode(Self.boardJSON(rows)))
+        let board = try XCTUnwrap(p.boards.first)
+        XCTAssertEqual(board.rows.count, TournamentHubPresentation.boardRowLimit,
+                       "the offscreen contender is genuinely off this list")
+        XCTAssertEqual(board.rows.map(\.percentText).prefix(2).map { $0 }, ["58%", "43%"])
+    }
+
+    /// The derived point lands on the UNDERDOG even when the wire lists the
+    /// underdog first — which is why the call is `renderedDuelPercents` and not
+    /// `renderedCardPercents`.
+    ///
+    /// Both decline a non-complement pair identically, so every test above
+    /// passes with either one: found by a mutation run, and this is the case
+    /// that separates them. `renderedCardPercents` treats index 0 as the
+    /// headline that survives untouched, and the contenders here are filtered
+    /// in WIRE ORDER, which nothing promises is descending — `board.rows` is
+    /// sorted by `rank` only later, and rank comes off the wire too. Handed
+    /// `[0.425, 0.575]` it rounds the underdog to 43 and derives 57 for the
+    /// favourite, so the board prints 57 under a card printing 58: the pair now
+    /// sums to 100 and the page still answers its one question twice.
+    func testTheFavouriteSurvivesRoundingEvenWhenTheWireListsTheUnderdogFirst() throws {
+        let p = TournamentHubPresentation(response: decode(Self.boardJSON(
+            [(key: "shelton", probability: 0.425, rank: 2),
+             (key: "zverev", probability: 0.575, rank: 1)],
+            slateSides: [(key: "zverev", probability: 0.575),
+                         (key: "shelton", probability: 0.425)])))
+
+        let card = try XCTUnwrap(p.liveMatches.first)
+        let board = try XCTUnwrap(p.boards.first)
+        XCTAssertEqual(board.rows.map(\.name), ["zverev", "shelton"], "rank orders the list")
+        XCTAssertEqual(
+            board.rows.map(\.percentText), card.sides.map(\.percentText),
+            "58 / 42 — the favourite keeps its own rounding and the derived "
+            + "point lands on the underdog, whichever way the payload listed them")
+        XCTAssertEqual(board.rows.map(\.percentText), ["58%", "42%"])
+    }
+
+    /// Two survivors summing to 0.80 means a third of the field is unpriced, not
+    /// that a vig needs removing. Normalising here would invent twenty points,
+    /// so `renderedDuelPercents` declines the pair and the rows round alone.
+    func testTwoSurvivorsWhoAreNotAComplementPairAreLeftAlone() throws {
+        let p = TournamentHubPresentation(response: decode(Self.boardJSON(
+            [(key: "a", probability: 0.45, rank: 1), (key: "b", probability: 0.35, rank: 2)])))
+        let board = try XCTUnwrap(p.boards.first)
+        XCTAssertEqual(board.rows.map(\.percentText), ["45%", "35%"])
+    }
+
+    /// A row with no price is not a contender and is not given an integer: it
+    /// keeps the em-dash. `?? 0` here would both print "<1%" over a price that
+    /// never arrived AND make this a three-horse field that declines the pair.
+    func testAnUnpricedBoardRowIsNotAContenderAndStillPrintsTheDash() throws {
+        let p = TournamentHubPresentation(response: decode(Self.boardJSON(
+            [(key: "zverev", probability: 0.575, rank: 1),
+             (key: "shelton", probability: 0.425, rank: 2),
+             (key: "unpriced", probability: nil, rank: 3)])))
+        let board = try XCTUnwrap(p.boards.first)
+        XCTAssertEqual(board.rows.map(\.percentText), ["58%", "42%", absentProbabilityMarker])
+    }
+
     // MARK: - Results
 
     func testResultsAreNewestFirstAndBounded() throws {
@@ -580,6 +715,44 @@ final class TournamentHubPresentationTests: XCTestCase {
                "prematch_probability": \(loser)}]}]},
          "boards": [], "bracket": {},
          "event_links": {"by_espn": {}}, "broadcasts": []}
+        """
+    }
+
+    /// A title board with hand-chosen prices, optionally with the day's card
+    /// above it pairing the same two players (#5893).
+    ///
+    /// The production fixture is a full draw and cannot reach any of this: its
+    /// boards are multi-way fields, which is exactly the case the pair rule must
+    /// NOT touch, so every board case that fires the rule is built here.
+    private static func boardJSON(
+        _ rows: [(key: String, probability: Double?, rank: Int)],
+        slateSides: [(key: String, probability: Double)] = []
+    ) -> String {
+        let boardRows = rows.map { row in
+            """
+            {"entity_key": "\(row.key)", "display_name": "\(row.key)", "state": "live",
+             "probability": \(row.probability.map { "\($0)" } ?? "null"), "rank": \(row.rank)}
+            """
+        }.joined(separator: ", ")
+
+        let sides = slateSides.map {
+            """
+            {"entity_key": "\($0.key)", "display_name": "\($0.key)",
+             "probability": \($0.probability)}
+            """
+        }.joined(separator: ", ")
+        let slate = slateSides.isEmpty ? "" : """
+        {"matchup_key": "espn:1", "priced": true, "live_state": "in_progress",
+         "draw_label": "Men's Singles", "round": "F", "sides": [\(sides)]}
+        """
+
+        return """
+        {"slug": "us-open", "title": "US Open 2026",
+         "slate": {"matches": [\(slate)]},
+         "results": {"matches": []},
+         "boards": [{"draw": "mens-singles", "label": "Men's Singles",
+                     "rows": [\(boardRows)]}],
+         "bracket": {}, "event_links": {"by_espn": {}}, "broadcasts": []}
         """
     }
 

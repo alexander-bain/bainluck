@@ -449,6 +449,64 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
         return formatProbability(probability, renderedPercent: rendered)
     }
 
+    /// ═══ THE BOARD PRINTS THE SAME PERCENT THE MATCH CARD DOES (#5893) ═══
+    ///
+    /// A draw down to its final asks ONE question — "who wins the title" and
+    /// "who wins the final" are the same question — and this screen answered it
+    /// twice: the NEXT UP card said 58% and the title board three rows below
+    /// said 57/43.
+    ///
+    /// Whole percents alone do not close that, and believing they did is why
+    /// this arm was missed when ux closed the web half. `0.575` and `0.425` are
+    /// a complement pair on the venues' half-cent grid, so half-up sends BOTH
+    /// up: rounded per row the board prints 58 **and 43** under a card printing
+    /// 58 / 42. That is #2452 / #2060 / UX-P114 for the fifth time, and the
+    /// answer is the one `matchRow` above already calls — round the pair ONCE,
+    /// derive the other side. A row cannot do this alone for exactly the reason
+    /// `SideLine` cannot: a side does not know its opponent.
+    ///
+    /// **When the pair rule fires: exactly two rows print 1% or more.** That is
+    /// "the draw is down to its final" said in terms of what a reader can see —
+    /// a semi-final field of four still has four numbers to print and is left
+    /// alone, which is what `testTitleBoardRowsAreNotPutThroughTheDuelRule`
+    /// (#2997) pins and which stays true.
+    ///
+    /// **The gate reads `board.rows`, not the six rows this phone draws.** Two
+    /// reasons, and they agree. Whether a draw is down to two is a fact about
+    /// the field, not about a `prefix(6)`; and the web board decides over the
+    /// same whole field, so a payload the two surfaces both render can never
+    /// make them disagree about whether the rule applies. The map is keyed by
+    /// `entityKey` like web's, so trimming the list cannot change a number.
+    ///
+    /// Whether those two are genuinely a complement pair is deliberately NOT
+    /// re-asked here: `renderedDuelPercents` already declines a pair outside
+    /// [0.99, 1.01] and hands back the per-row rounding. A second copy of that
+    /// band is a second place for it to drift.
+    ///
+    /// One native/web divergence is kept on purpose: `formatProbability`'s
+    /// `>99%` marker is a claim about the VALUE, so a 0.99475 leader prints
+    /// `>99%` here where web prints `99%`. The pair still decides the integers
+    /// together; the marker rule then speaks over them, as it does everywhere
+    /// else in this app.
+    private static func boardRenderedPercents(
+        _ rows: [TournamentHubBoardRow]
+    ) -> [String: Int] {
+        var percents: [String: Int] = [:]
+        for row in rows {
+            if let percent = renderedPercent(row.probability) { percents[row.id] = percent }
+        }
+
+        let contenders = rows.filter { (percents[$0.id] ?? 0) >= 1 }
+        guard contenders.count == 2 else { return percents }
+
+        let pair = renderedDuelPercents(
+            away: contenders[0].probability, home: contenders[1].probability)
+        guard pair.count == 2 else { return percents }
+        if let first = pair[0] { percents[contenders[0].id] = first }
+        if let second = pair[1] { percents[contenders[1].id] = second }
+        return percents
+    }
+
     private static func boardSection(
         _ board: TournamentHubBoard,
         starts: RaceChartWindowStarts
@@ -468,6 +526,7 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
             }
         }
         let shown = ordered.prefix(boardRowLimit)
+        let rendered = boardRenderedPercents(board.rows)
 
         return BoardSection(
             id: board.id,
@@ -478,7 +537,8 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
                     rank: row.rank,
                     name: row.displayName,
                     flagUrl: row.image?.flagUrl,
-                    percentText: formatProbabilityOrDash(row.probability),
+                    percentText: formatProbabilityOrDash(
+                        row.probability, renderedPercent: rendered[row.id]),
                     deltaPoints: movementPoints(row.trendDelta)
                 )
             },
