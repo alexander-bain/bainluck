@@ -746,3 +746,223 @@ async def test_the_club_clauses_are_what_stop_this_being_a_sweep(pg_engine):
         "without the club clauses a real basketball fixture enters a "
         "population whose apply sets status='voided'"
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# #5621 — THE DRY RUN MUST SURVIVE THE STATE IT EXISTS TO INSPECT
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Alex ran the runbook's step 0 — the documented no-arg dry run — on
+# `bainluck-heavy` (run.9689, 2026-09-13 15:56Z) and it died:
+#
+#     UndefinedTable: relation "backup_5621_events" does not exist
+#
+# The backup tables are created only under `--backup`, but the reconciliation
+# that reads them ran unconditionally. So on a pristine schema — which is every
+# FIRST run, the only run a pre-flight is for — the step whose whole job is to
+# prove a backup exists crashed instead of reporting that one does not.
+#
+# The sibling `restore_5621_phantom_ffpts_events.py` already probes with
+# `to_regclass` and refuses cleanly; the repair script was the one that missed
+# it. That asymmetry is why this is a plain omission rather than a design
+# question, and why the fix is the sibling's pattern rather than a new one.
+#
+# These drive the script's OWN `run()` against real Postgres rather than
+# re-implementing its flow, because the defect was never in the SQL's text —
+# it was in which statements a real server is asked to execute, in what order,
+# against a schema that does or does not hold two tables.
+#
+# The last test is the one that keeps the other four honest: a gate that
+# refused unconditionally would satisfy every refusal assertion here, so one
+# test proves `--apply` still WRITES when the backup is fresh and exact.
+
+import contextlib  # noqa: E402
+import types  # noqa: E402
+
+BACKUP_TABLES = ("backup_5621_events", "backup_5621_markets")
+
+
+async def _drop_backups(conn):
+    for table in BACKUP_TABLES:
+        await conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
+
+
+async def _backups_exist(conn):
+    return bool(
+        (
+            await conn.execute(
+                text(
+                    "SELECT to_regclass('public.backup_5621_events') IS NOT NULL "
+                    "AND to_regclass('public.backup_5621_markets') IS NOT NULL"
+                )
+            )
+        ).scalar()
+    )
+
+
+async def _run_repair(engine, monkeypatch, *, backup=False, apply=False):
+    """Run the real `run()` with its session bound to the test database.
+
+    `run()` imports `get_task_session` from `app.tasks.base` at call time, so
+    patching the module attribute is enough and no import-order trick is needed.
+    """
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    import app.tasks.base as task_base
+
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+
+    @contextlib.asynccontextmanager
+    async def _session():
+        async with maker() as session:
+            yield session
+
+    monkeypatch.setattr(task_base, "get_task_session", _session)
+    # `wrong_app_refusal` lets a dry run go anywhere and refuses a WRITE that is
+    # not on the producer app. Setting this for the write paths keeps that gate
+    # live for what it is for (notice 47c) instead of stubbing it out.
+    monkeypatch.setenv("HEROKU_APP_NAME", "bainluck-heavy")
+    return await _repair().run(types.SimpleNamespace(backup=backup, apply=apply))
+
+
+async def _statuses(conn, ids):
+    rows = (
+        await conn.execute(
+            text("SELECT id, status FROM events WHERE id = ANY(:ids)"), {"ids": ids}
+        )
+    ).all()
+    return {r.id: r.status for r in rows}
+
+
+@needs_postgres
+async def test_the_no_arg_dry_run_survives_a_pristine_schema(
+    pg_engine, monkeypatch, capsys
+):
+    """RED BEFORE THE FIX — this is Alex's run.9689, reproduced.
+
+    No backup tables, a non-empty population, and the documented no-arg
+    invocation. Before the `to_regclass` probe this raised `UndefinedTable` out
+    of `run()`; the exit code Alex saw was a traceback, not a verdict.
+    """
+    async with pg_engine.begin() as conn:
+        await _seed(conn)
+        await _drop_backups(conn)
+        assert not await _backups_exist(conn), "the schema under test is not pristine"
+
+    code = await _run_repair(pg_engine, monkeypatch)
+    out = capsys.readouterr().out
+
+    assert code == 0, out
+    # Non-vacuity: a dry run over an EMPTY population would also exit 0 without
+    # ever reaching the reconciliation, and would prove nothing at all.
+    assert f"events={len(PHANTOM_IDS)}" in out
+    assert "no backup tables yet" in out
+    assert f"events unbacked-or-stale={len(PHANTOM_IDS)}" in out
+    assert "DRY RUN — nothing written" in out
+
+
+@needs_postgres
+async def test_apply_refuses_and_writes_nothing_when_no_backup_exists(
+    pg_engine, monkeypatch, capsys
+):
+    """The crash was hiding a gate, so the gate is asserted, not assumed.
+
+    Absent tables must read as "every row is unbacked" — the strongest reading —
+    rather than as a clean zero. A reconciliation that reported 0 over a backup
+    that does not exist would be the D51 gate inverted.
+    """
+    async with pg_engine.begin() as conn:
+        await _seed(conn)
+        await _drop_backups(conn)
+        before = await _statuses(conn, PHANTOM_IDS)
+
+    code = await _run_repair(pg_engine, monkeypatch, apply=True)
+    out = capsys.readouterr().out
+
+    assert code == 2, out
+    assert "REFUSING --apply" in out
+    async with pg_engine.begin() as conn:
+        assert await _statuses(conn, PHANTOM_IDS) == before
+        assert "voided" not in set(before.values())
+
+
+@needs_postgres
+async def test_after_a_backup_the_reconciliation_is_clean(
+    pg_engine, monkeypatch, capsys
+):
+    """`--backup` on a pristine schema creates, copies and reconciles to zero."""
+    async with pg_engine.begin() as conn:
+        await _seed(conn)
+        await _drop_backups(conn)
+
+    code = await _run_repair(pg_engine, monkeypatch, backup=True)
+    out = capsys.readouterr().out
+
+    assert code == 0, out
+    assert "no backup tables yet" not in out
+    assert "events unbacked-or-stale=0 markets unbacked-or-stale=0" in out
+    async with pg_engine.begin() as conn:
+        assert await _backups_exist(conn)
+
+
+@needs_postgres
+async def test_a_stale_backup_is_counted_and_still_refuses_apply(
+    pg_engine, monkeypatch, capsys
+):
+    """A backup that exists is not a backup that matches.
+
+    The row moves AFTER the copy, so the undo would restore a value that was
+    never the one overwritten. The reconciliation compares content, so it sees
+    that even though every id is present.
+    """
+    async with pg_engine.begin() as conn:
+        await _seed(conn)
+        await _drop_backups(conn)
+    await _run_repair(pg_engine, monkeypatch, backup=True)
+    capsys.readouterr()
+
+    async with pg_engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE events SET status = 'postponed' WHERE id = :i"),
+            {"i": PHANTOM_IDS[0]},
+        )
+
+    code = await _run_repair(pg_engine, monkeypatch, apply=True)
+    out = capsys.readouterr().out
+
+    assert code == 2, out
+    assert "events unbacked-or-stale=1" in out
+    assert "REFUSING --apply" in out
+    async with pg_engine.begin() as conn:
+        statuses = await _statuses(conn, PHANTOM_IDS)
+    assert "voided" not in set(statuses.values())
+
+
+@needs_postgres
+async def test_apply_still_writes_when_the_backup_is_fresh(
+    pg_engine, monkeypatch, capsys
+):
+    """THE CONTROL. Without this, a gate that refused everything would pass.
+
+    Three of the tests above assert a refusal; a mutant that returns 2 before
+    reading anything satisfies all three. This is the arm that fails for it.
+    """
+    async with pg_engine.begin() as conn:
+        await _seed(conn)
+        await _drop_backups(conn)
+    await _run_repair(pg_engine, monkeypatch, backup=True)
+    capsys.readouterr()
+
+    code = await _run_repair(pg_engine, monkeypatch, backup=True, apply=True)
+    out = capsys.readouterr().out
+
+    assert code == 0, out
+    assert "APPLIED: retired" in out
+    async with pg_engine.begin() as conn:
+        statuses = await _statuses(conn, PHANTOM_IDS)
+        restorable = (
+            await conn.execute(text("SELECT count(*) FROM backup_5621_events"))
+        ).scalar()
+    assert set(statuses.values()) == {"voided"}
+    # The undo can still put every one of them back.
+    assert restorable == len(PHANTOM_IDS)
