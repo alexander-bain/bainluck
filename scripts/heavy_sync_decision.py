@@ -90,15 +90,19 @@ never take the sync down (the polarity rule in :func:`decide`).
 **AND ONE READING OF THAT PROBE CANNOT SEE ITS OWN BLIND SPOT**, which the first
 sync under it demonstrated rather than risked: at v15 the gate printed IDLE at
 16:57:10Z while ``matching_reconciliation`` had been running since 16:56:59.9Z.
-The reply is a snapshot of unknown age — 5 s of endpoint cache, an 18.4 s
+The reply is a snapshot of unknown age — 5 s of endpoint cache, a 25.6 s
 measured broadcast, two retries — so :data:`IDLE_CONFIRMATIONS` readings are
 required before the push, and the derivation of that number is on the constant.
 
 What is STILL not covered, stated so nobody reads any of this as a proof:
 
-* a job shorter than the poll that both starts and ends inside the confirm.
-  One resident qualifies — ``matching_reconciliation`` at 11-36 s measured —
-  and it is the cheapest to lose and re-fires every 15 min;
+* a job shorter than the SEPARATION between two readings — ~56 s, not the 30 s
+  poll; the arithmetic and its measurement are on
+  :data:`INFLIGHT_POLL_SECONDS` — that both starts and ends inside the confirm.
+  One resident still qualifies, and still only one: ``matching_reconciliation``
+  at 11-36 s measured. The next shortest heavy resident is
+  ``rebuild_typeahead_index`` at 90 s, so the wider bound does not widen the
+  set. It is also the cheapest to lose and re-fires every 15 min;
 * a job on ``worker-heavy`` that is not in ``HEAVY_TASKS``. This is no longer
   hypothetical and it has a name: ``app.tasks.build_cohort_market_type``
   declares ``queue="heavy"`` on its own decorator and
@@ -243,6 +247,16 @@ def inside_window(now: datetime) -> bool:
 #: cannot spend; and the endpoint is our own production API, which returned HTTP
 #: 500 on two of eight calls when it was measured, so the rate is also a load
 #: choice. 30 s gives <=40 reads across the widest possible band.
+#:
+#: IT IS A SLEEP, NOT THE SEPARATION. The read itself costs ~25.6 s (five 5 s
+#: broadcasts — see :data:`IDLE_CONFIRMATIONS`), so two consecutive readings
+#: sit ~56 s apart, and 56 s is the width of the confirm's blind window.
+#: Lowering this number is how a later reader will try to narrow that window;
+#: below `_INSPECT_TTL_S` (5 s) it stops being an instrument at all, because
+#: the endpoint's memo would serve ONE snapshot as both confirmations — a
+#: confirm that cannot fail, which is the failure. `test_the_confirm_poll_can
+#: _never_be_served_two_copies_of_one_snapshot` pins that floor; LAT-P071 (on
+#: :data:`IDLE_CONFIRMATIONS`) is why the ceiling is not raised either.
 INFLIGHT_POLL_SECONDS = 30
 
 #: How many CONSECUTIVE idle readings are needed before the push (#5886).
@@ -256,19 +270,37 @@ INFLIGHT_POLL_SECONDS = 30
 #: kills a pass.
 #:
 #: The reading is a SNAPSHOT of unknown age, not a live fact: the endpoint
-#: caches for 5 s (`_INSPECT_TTL_S`), the inspect broadcast itself measured
-#: 18.4 s, and the workflow retries twice with a 3 s delay. So "IDLE" honestly
-#: means "no heavy job was running up to ~25 s ago", against a kill window that
+#: caches for 5 s (`_INSPECT_TTL_S`), the inspect broadcast itself measures
+#: 25.6 s, and the workflow retries twice with a 3 s delay. So "IDLE" honestly
+#: means "no heavy job was running up to ~31 s ago", against a kill window that
 #: runs another 36-118 s past the push.
 #:
+#: 25.6 s, not the 18.4 s this comment carried until latency/381, and the
+#: correction is structural rather than a re-measurement: `_inspect_snapshot`
+#: makes FIVE broadcasts in one handler — ping, active, reserved, registered,
+#: stats — each `inspect(timeout=5)`, and celery's inspect waits out its
+#: timeout whenever it cannot know that every worker has answered. 5 x 5 s is
+#: the floor, and eight production reads on 2026-09-13 21:38-21:43Z landed at
+#: 25.6-29.6 s (the one exception, 0.22 s, was served by the 5 s memo).
+#:
 #: A second reading one poll later closes that gap for any job that outlives
-#: the poll, because the two snapshots cannot both miss it. Stated as a bound
-#: rather than a promise: every heavy resident measured on production outlives
-#: 30 s — matcher 154-552 s, `futures_price_refresh` 151-296 s, the rebuild
-#: 4-22 min, `rebuild_typeahead_index` 90 s (its own budget) — EXCEPT
+#: the SEPARATION of the two readings, because the two snapshots cannot both
+#: miss it. That separation is the read plus the sleep — ~25.6 + 30 = ~56 s —
+#: and NOT the 30 s poll, which is the number the first version of this comment
+#: implied. Stated as a bound rather than a promise: every heavy resident
+#: measured on production outlives 56 s — matcher 154-552 s,
+#: `futures_price_refresh` 151-296 s, the rebuild 4-22 min,
+#: `rebuild_typeahead_index` 90 s (its own budget) — EXCEPT
 #: `matching_reconciliation` at 11-36 s, which can still start and finish
-#: inside the confirm. That one is also the cheapest to lose and re-fires
-#: every 15 min.
+#: inside the confirm. So the wider bound does not widen the residual set: the
+#: one job it covered at 30 s is the same one job it covers at 56 s. That one
+#: is also the cheapest to lose and re-fires every 15 min.
+#:
+#: 🔴 DO NOT CLOSE THE GAP BY POLLING FASTER. It is the obvious fix and it is
+#: the one that took production down: LAT-P071, 2026-08-19 05:00-05:03Z, two
+#: read-only samplers on this same endpoint (20 s and 8 s) drove the whole API
+#: to HTTP 503 at the 30 s H12 ceiling, `/api/health` included, for ~10 min.
+#: The gap is accepted; the poll rate is not the lever (`_INSPECT_TTL_S`).
 #:
 #: 2 and not 3: each extra confirmation costs a poll of the band for a blind
 #: spot that is already covered, and the band is the budget the whole ship

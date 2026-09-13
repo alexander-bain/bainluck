@@ -449,8 +449,12 @@ async def get_task_metrics_endpoint(
 
 #: How long an inspect snapshot may be reused. celery's `inspect` is a BROADCAST:
 #: every call publishes to a control exchange and blocks until every worker
-#: replies or the timeout expires. Four of them in one handler is up to 20s of
-#: blocking work.
+#: replies or the timeout expires. FIVE of them in one handler — ping, active,
+#: reserved, registered, stats — is up to 25s of blocking work, and that is the
+#: normal case rather than the bad one: eight uncached production reads on
+#: 2026-09-13 21:38-21:43Z landed at 25.6-29.6s, because inspect waits out its
+#: timeout whenever it cannot know that every worker has already answered
+#: (latency/381; the count said "four ... 20s" until then).
 #:
 #: 🔴 THIS CONSTANT EXISTS BECAUSE THE ENDPOINT TOOK PRODUCTION DOWN.
 #: LAT-P071, 2026-08-19 05:00–05:03Z: two read-only samplers polling
