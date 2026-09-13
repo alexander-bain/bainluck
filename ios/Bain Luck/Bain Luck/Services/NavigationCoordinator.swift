@@ -167,6 +167,38 @@ final class NavigationCoordinator: ObservableObject {
             navigate(to: .calibration, tab: .leagues)
             return true
 
+        case "about":
+            // `Route.about` and `AboutView` have both existed since L2-144 and
+            // are reached by hand from three places (My Stuff, Preferences,
+            // Browse) — but no link could open them, so the screen could not be
+            // photographed and had never been walked before a submission. Same
+            // shape as the `tournaments` gap above: a real destination with no
+            // case in the one router.
+            //
+            // My Stuff, matching `preferences`: it is the profile hub the row
+            // lives in, and it is a tab that CONSUMES a pushed route
+            // (PendingRouteReachabilityTests is the guard for that pairing).
+            //
+            // The universal link is not a hijack. `AboutView` is an in-app web
+            // view of `https://bainluck.com/about` itself, so opening the app
+            // shows a reader the same page the link named.
+            navigate(to: .about, tab: .myStuff)
+            return true
+
+        case "bug-report":
+            // The rage-shake form. Its two existing triggers are a physical
+            // shake and a macOS menu command — neither of which the headless
+            // LOOK rig can perform, so the app's primary feedback surface was
+            // the one screen no screenshot had ever been taken of.
+            //
+            // No tab change on purpose: this presents as a sheet OVER whatever
+            // the reader is looking at (ContentView observes the flag and
+            // captures a screenshot of that screen to attach), and moving the
+            // tab first would both change the attached screenshot and leave the
+            // reader somewhere new when they dismiss the form.
+            showBugReport = true
+            return true
+
         default:
             break
         }
