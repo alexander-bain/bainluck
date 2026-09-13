@@ -160,6 +160,25 @@ def test_an_event_with_no_commence_time_gets_no_opinion():
     )
 
 
+def test_a_naive_commence_time_is_read_as_utc_and_never_raises():
+    """The gate is asked of EVERY market on EVERY event, so it meets naive rows.
+
+    CI caught this and the unit tests above did not, because they all build
+    aware datetimes. Six tests across `test_proven_duplicate_2263.py` and
+    `test_runs_map_is_made_of_runs_3995.py` raised `can't compare offset-naive
+    and offset-aware datetimes` from inside a page build. Both directions are
+    pinned here so the coercion cannot quietly become an abstention.
+    """
+    naive_past = _event(commence=NOW.replace(tzinfo=None) - timedelta(hours=3))
+    assert not _settled_market_prices_an_unstarted_game(
+        naive_past, _market("resolved"), [_outcome(True)], NOW
+    )
+    naive_future = _event(commence=NOW.replace(tzinfo=None) + timedelta(hours=3))
+    assert _settled_market_prices_an_unstarted_game(
+        naive_future, _market("resolved"), [_outcome(True)], NOW
+    )
+
+
 def test_the_corrupt_completed_with_future_commence_shape_is_withheld():
     """A row claiming `completed` while its kickoff is in the FUTURE (#46 / gotcha #32).
 

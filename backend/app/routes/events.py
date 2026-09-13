@@ -13427,7 +13427,19 @@ def _settled_market_prices_an_unstarted_game(event, market, market_outcomes, now
     if _event_is_really_finished(event, now):
         return False
     commence = getattr(event, "commence_time", None)
-    if commence is None or commence <= now:
+    if commence is None:
+        return False
+    # A NAIVE commence_time is read as UTC, which is what the TIMESTAMPTZ column
+    # means. `_event_is_really_finished` makes the same comparison and never had
+    # to care, because it is only reached on a completed/closed row; this gate is
+    # asked of EVERY market on EVERY event, so it meets the naive datetimes that
+    # older fixtures build — 6 tests across two files raised
+    # `can't compare offset-naive and offset-aware datetimes` before this line
+    # existed. A page build must never throw on a lookup (same rule
+    # `market_assigned_settled` states for a partially-loaded row).
+    if commence.tzinfo is None:
+        commence = commence.replace(tzinfo=timezone.utc)
+    if commence <= now:
         return False
     return market_assigned_settled(market, list(market_outcomes))
 
