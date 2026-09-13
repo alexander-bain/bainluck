@@ -45,12 +45,30 @@ from app.utils.event_tennis import (
 
 SLUG = "us-open-men-s-singles-winner"
 
-#: Saturday of the second week — the moment the page was shot.
-NOW = datetime(2026, 9, 6, 20, 35, tzinfo=timezone.utc)
-#: The day of the men's final, as Polymarket states it.
-FINAL = datetime(2026, 9, 13, 0, 0, tzinfo=timezone.utc)
+#: 🔴 THESE WERE ABSOLUTE DATES AND THEY AGED OUT (#5788).
+#:
+#: `FINAL` was `2026-09-13 00:00Z`. `list_tennis_tournament_concepts` reads the
+#: REAL clock — `now = datetime.now(timezone.utc)` — and drops a group whose
+#: `tennis_status` is `settled`, so the moment that timestamp passed, the rail
+#: went empty and `TestTheRailAndThePageCannotDisagree` began failing its own
+#: vacuity assertion on every branch in the repo. Nobody changed anything; the
+#: calendar did. Master went red at 2026-09-13 00:00Z.
+#:
+#: Gotcha #44: OFFSET FIRST, THEN TRUNCATE. The offset is days, not hours, so an
+#: anchor computed at import cannot age out mid-run — the failure mode where a
+#: suite is green locally and red eleven minutes into CI.
+#:
+#: The RELATIONSHIPS are what the tests are about and they are preserved exactly:
+#: the final is a week out, Kalshi's contract expiration is fifteen days after
+#: the trophy, and `NOW` is the Saturday of the second week, a week before the
+#: final — the moment the page in #3673 was shot.
+FINAL = (datetime.now(timezone.utc) + timedelta(days=7)).replace(
+    hour=0, minute=0, second=0, microsecond=0
+)
 #: Kalshi's contract expiration, fifteen days after the trophy.
-BACKSTOP = datetime(2026, 9, 28, 2, 0, tzinfo=timezone.utc)
+BACKSTOP = FINAL + timedelta(days=15, hours=2)
+#: Saturday of the second week — the moment the page was shot.
+NOW = FINAL - timedelta(days=7) + timedelta(hours=20, minutes=35)
 
 
 def _market(name, mid, n_outcomes, resolution_date, status="open", volume=0.0):
