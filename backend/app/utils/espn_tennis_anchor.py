@@ -86,6 +86,11 @@ from datetime import datetime
 from typing import Any, Iterable, Optional
 
 from app.services.espn_tennis import is_placeholder_pairing, pair_key
+from app.utils.espn_helpers import (
+    clear_authority_not_started,
+    play_evidence,
+    stamp_authority_not_started,
+)
 from app.utils.player_names import names_agree, shares_substantial_token
 
 #: The pass that produced a link, in the order they are tried. Carried on the
@@ -469,6 +474,13 @@ def state_contradiction(
 #: would churn every anchored row on every cycle for no reader-visible gain.
 COMMENCE_DRIFT_TOLERANCE_SECONDS = 300
 
+#: The ``events.commence_time_source`` values this function reads and writes.
+#: Spelled as constants because they are not labels — they are the keys
+#: ``event_registry._SOURCE_PRIORITY`` ranks, and a typo here does not fail, it
+#: silently scores 0 and hands the column back to whoever polls next (#5971).
+COMMENCE_SOURCE_ESPN = "espn"
+COMMENCE_SOURCE_STATPAL = "statpal"
+
 
 def parse_espn_moment(value: Any) -> Optional[Any]:
     """ESPN's ``2026-09-02T15:05Z`` -> an aware datetime, or ``None``.
@@ -496,6 +508,10 @@ def authority_write(
     our_commence_time: Any,
     competition: dict[str, Any],
     now: Any = None,
+    our_commence_time_source: Optional[str] = None,
+    our_sources: Any = None,
+    our_home_score: Any = None,
+    our_away_score: Any = None,
 ) -> dict[str, Any]:
     """What the authority changes on an anchored tennis row — changes only.
 
@@ -538,6 +554,12 @@ def authority_write(
       Navone v Berrettini) both scheduled for 23:00Z with no games on the board.
     * An unknown ``state`` writes nothing at all (gotcha #53).
 
+    ``win_probability_sources`` carries the #5324 authority marker so the write
+    SURVIVES the 60s clock promoter — a status-only demotion buys one minute.
+    Stamped on the observation rather than on the status change (CERT-2782), so
+    a repeated ``upcoming`` pass refreshes rather than expires it; retracted
+    only by positive play, never by silence.
+
     ``commence_time`` is corrected from ESPN's own clock whenever ESPN has a
     real one — that is the half of #2550 the renderer cannot reach, since a
     stale start time is stale in the database.  Two guards: the TBD placeholder
@@ -545,6 +567,42 @@ def authority_write(
     and a correction that would push the start PAST a recorded completion is
     refused, because that inversion is gotcha #46 and manufacturing it here
     would trip the audit that hunts for it.
+
+    ═══ THE CORRECTION CARRIES ITS OWN PROVENANCE (#5971) ═══
+
+    A ``commence_time`` write emits ``commence_time_source='espn'`` WITH the
+    value, and refuses outright when StatPal set the start.  Both halves are
+    what the main ESPN board loop has always done
+    (``espn_helpers._apply_espn_event``, twice); this function wrote the value
+    and left the stamp, which is the #5324 shape on a second column — tennis
+    reaching a different function and never adopting what the board learned.
+
+    THE STAMP IS NOT BOOKKEEPING, IT IS THE WHOLE FIX.
+    ``event_registry.commence_time_write_authorized`` ranks ``espn`` (3) above
+    ``odds_api`` (1), but it reads the ROW's stamp, not the value's real origin.
+    So a row holding ESPN's clock under an ``odds_api`` stamp is one The Odds
+    API is still entitled to revise — ``same_record_revision``, a provider
+    correcting its own record (q066b) — and it does, every poll, back to the
+    session-start default it published before an order of play existed.  Two
+    writers, each individually correct, and the row ping-pongs.
+
+    MEASURED on the 2026-09-13 US Open men's final (event 15310688, anchored
+    ``espn_id`` 182677): ``commence_time`` went 18:00:00 → 18:15:00 → 18:00:00
+    → 18:15:00 → 18:13:40 in seventeen minutes, and the row was read at 19:2xZ
+    holding ESPN's 18:13:40 under ``commence_time_source='odds_api'`` — the
+    value and its provenance disagreeing is the defect, visible from the row
+    alone with no ground truth.  Reader cost: the ``Since Start`` chart filters
+    on ``commence_time``, so the first twelve minutes of a Grand Slam final
+    silently left the window while the match was still being played (#5971,
+    found by ux/1239), and every "before kickoff" guard inherited it.
+
+    The StatPal refusal is currently INERT for tennis — 0 of the 1,102 tennis
+    rows carrying a start in the last three days are stamped ``statpal``
+    (census 2026-09-13 19:2xZ) — and is written anyway because without it this
+    change would newly hand ESPN a column it has never held here: before the
+    stamp, an ESPN correction over a StatPal start left ``statpal`` in place,
+    and after it the stamp would move.  Matching the sibling keeps that
+    decision where it already is rather than making it silently in passing.
     """
     state = competition.get("state")
     changes: dict[str, Any] = {}
@@ -554,9 +612,18 @@ def authority_write(
             changes["status"] = "live"
         if our_completed_at is not None:
             changes["completed_at"] = None
+        # POSITIVE PLAY RETRACTS THE HOLD, and only positive play may (#5324).
+        _cleared = clear_authority_not_started(our_sources)
+        if _cleared is not our_sources:
+            changes["win_probability_sources"] = _cleared
     elif state == "decided":
         if our_status not in SETTLED_STATUSES:
             changes["status"] = "completed"
+        # A match with a result began. Leaving "has not begun" on a settled row
+        # would be a claim contradicted by the row beside it.
+        _cleared = clear_authority_not_started(our_sources)
+        if _cleared is not our_sources:
+            changes["win_probability_sources"] = _cleared
     elif state == "upcoming":
         # NOT YET PLAYED, AND ESPN SAYS SO WITH A CLOCK RATHER THAN A SILENCE.
         # Only a real (non-TBD) start still in the future counts; see the
@@ -573,10 +640,55 @@ def authority_write(
                 changes["status"] = "scheduled"
             if our_completed_at is not None:
                 changes["completed_at"] = None
+
+            # ── THE STATUS ALONE DOES NOT SURVIVE HERE EITHER (#5324) ──
+            #
+            # `_transition_event_statuses_impl` runs on the same 60s realtime
+            # beat and promotes `scheduled` + `commence_time <= now` straight
+            # back to `live`, so a demotion that writes only the status buys one
+            # minute. The main ESPN board loop learned this at CERT-2777 and
+            # stamps the authority's statement into the JSONB mirror, where the
+            # promoter honours it (`authority_not_started_holds`). Tennis went
+            # through this function instead and never adopted the marker, so the
+            # sport whose starts slide most was the one sport the hold could not
+            # reach: measured on the 2026-09-13 US Open men's final (event
+            # 15310688, anchored `espn_id` 182677), the row read `live` 0-0 from
+            # 18:00:00Z while ESPN said STATUS_SCHEDULED, was demoted at
+            # 18:10:33Z, and was re-promoted by the clock at 18:15:38Z with ESPN
+            # still saying STATUS_SCHEDULED. The page carried a LIVE badge and a
+            # "Since Start" chart over a match nobody had served in.
+            #
+            # STAMPED ON THE OBSERVATION, NOT ON THE STATUS CHANGE. The second
+            # consecutive `upcoming` pass has nothing left to demote, and
+            # CERT-2782 is on record that treating "no demotion" as "the
+            # authority stopped saying it" is what deletes the marker the first
+            # pass wrote and restores the flicker with a period of two passes.
+            # A repeated positive observation REFRESHES the stamp, which is also
+            # what keeps the hold alive past its TTL for a start that slides a
+            # long way — 18:00 to 18:05 to 18:15 on this very specimen.
+            #
+            # Gated on THE ONE DEFINITION of play (`play_evidence`), the same
+            # question the demotion, the promoter's hold and the clear all ask.
+            # Five sites now, and they agree structurally rather than by
+            # convention: two tasks that disagree by a field is how a row starts
+            # ping-ponging, which is this defect.
+            if now is not None and not play_evidence(
+                our_home_score, our_away_score
+            ):
+                changes["win_probability_sources"] = stamp_authority_not_started(
+                    our_sources, now
+                )
     elif state is None:
         return {}
 
-    if not competition.get("start_is_tbd"):
+    if (
+        not competition.get("start_is_tbd")
+        # StatPal set this start and owns kickoff times against ESPN — the same
+        # refusal `espn_helpers` makes at both of its write sites and
+        # `anchor_schedule` makes as REFUSED_STATPAL. Asked before the clock so
+        # a refused row is not merely un-stamped but untouched.
+        and our_commence_time_source != COMMENCE_SOURCE_STATPAL
+    ):
         espn_start = parse_espn_moment(competition.get("date"))
         if espn_start is not None:
             moved = (
@@ -591,6 +703,11 @@ def authority_write(
             inverts = completion is not None and espn_start > completion
             if moved and not inverts:
                 changes["commence_time"] = espn_start
+                # NEVER WITHOUT THE VALUE, AND NEVER THE VALUE WITHOUT IT
+                # (#5971). Emitted from the same branch for the same reason
+                # `anchor_schedule` gives: the provenance column is only worth
+                # anything if the thing that sets the value also sets it.
+                changes["commence_time_source"] = COMMENCE_SOURCE_ESPN
 
     return changes
 
