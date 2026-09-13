@@ -804,6 +804,12 @@ class TestTheVenueAnsweredAndThePageHasToStopSayingNinetyNine:
         }
         await db.commit()
 
+        # Ids are read BEFORE the run: `db.expire_all()` below expires every
+        # loaded instance, and touching `event.id` after that fires a SYNC lazy
+        # load inside an async session (`MissingGreenlet`) — the attribute read
+        # looks free and is a query.
+        event_id, market_id = event.id, market.id
+
         before_prob, before_pct = _served_hero(event)
         assert before_pct == 99, (
             f"the seed does not reproduce the defect (served {before_pct}%), so "
@@ -818,7 +824,7 @@ class TestTheVenueAnsweredAndThePageHasToStopSayingNinetyNine:
 
         db.expire_all()
         after = (
-            await db.execute(select(Event).where(Event.id == event.id))
+            await db.execute(select(Event).where(Event.id == event_id))
         ).scalar_one()
         after_prob, after_pct = _served_hero(after)
 
@@ -842,7 +848,7 @@ class TestTheVenueAnsweredAndThePageHasToStopSayingNinetyNine:
                     "SELECT COUNT(*) FROM futures_outcomes "
                     "WHERE market_id = :mid AND current_probability IS NOT NULL"
                 ),
-                {"mid": market.id},
+                {"mid": market_id},
             )
         ).scalar()
         assert priced == 0
@@ -880,6 +886,7 @@ class TestTheVenueAnsweredAndThePageHasToStopSayingNinetyNine:
         )
         event.win_probability_sources = {"kalshi": _kalshi_entry(0.44, live.id)}
         await db.commit()
+        event_id, settled_id, live_id = event.id, settled.id, live.id
 
         stats = await _drive_the_real_task(
             monkeypatch,
@@ -900,7 +907,7 @@ class TestTheVenueAnsweredAndThePageHasToStopSayingNinetyNine:
 
         db.expire_all()
         after = (
-            await db.execute(select(Event).where(Event.id == event.id))
+            await db.execute(select(Event).where(Event.id == event_id))
         ).scalar_one()
         wps = after.win_probability_sources or {}
         assert "kalshi" in wps, (
@@ -912,4 +919,92 @@ class TestTheVenueAnsweredAndThePageHasToStopSayingNinetyNine:
         # The settled market's legs are still withdrawn — the control is about
         # the blend key, not about pricing a settled book.
         assert stats["pre_kickoff_quotes_withdrawn"] == 2
-        assert settled.id != live.id
+        assert settled_id != live_id
+
+    async def test_a_finished_contest_keeps_its_terminal_number_5771(
+        self, db, monkeypatch
+    ):
+        """Settled means settled, and this is the half that could do harm.
+
+        A contest that HAS happened should carry its terminal Kalshi number —
+        that is the result the hero and the card are built to show. The scope is
+        the event's own clock, so this must be inert on a completed event even
+        though the venue says exactly the same thing about the market.
+        """
+        from sqlalchemy import select
+
+        from app.models.models import Event
+        from app.tasks import futures_price_refresh as fpr
+
+        event = await _seed_pre_kickoff_event(db, external_id="already-played")
+        market = await _seed_kalshi_market(
+            db,
+            event,
+            ticker=f"{_SEVILLA_TICKER}-DONE",
+            probabilities={"Sevilla": _SEVILLA_HERO, "Valencia": 0.01},
+        )
+        event.status = "completed"
+        event.commence_time = datetime.now(timezone.utc) - timedelta(hours=4)
+        event.win_probability_sources = {
+            "kalshi": _kalshi_entry(_SEVILLA_HERO, market.id)
+        }
+        await db.commit()
+        event_id = event.id
+
+        stats = await _drive_the_real_task(
+            monkeypatch, db, {f"{_SEVILLA_TICKER}-DONE": fpr.VENUE_SETTLED}
+        )
+
+        db.expire_all()
+        after = (
+            await db.execute(select(Event).where(Event.id == event_id))
+        ).scalar_one()
+        assert (after.win_probability_sources or {}).get("kalshi", {}).get(
+            "value"
+        ) == _SEVILLA_HERO, "a finished game lost the result it is meant to show"
+        assert stats["pre_kickoff_heroes_cleared"] == 0
+        assert stats["pre_kickoff_quotes_withdrawn"] == 0
+
+    async def test_the_pre_attribution_shape_is_cleared_by_the_survivor_arm_5771(
+        self, db, monkeypatch
+    ):
+        """The entries written before attribution existed have no `market_id`.
+
+        Arm 1 cannot read them, so they reach arm 2 — and arm 2's question is
+        the only safe one available: does ANY Kalshi market on this event still
+        hold a readable price? Here none does, so the key goes. Without this
+        test the survivor arm could be deleted and every legacy entry would stay
+        frozen on the page.
+        """
+        from sqlalchemy import select
+
+        from app.models.models import Event
+        from app.tasks import futures_price_refresh as fpr
+
+        event = await _seed_pre_kickoff_event(db, external_id="legacy-entry")
+        await _seed_kalshi_market(
+            db,
+            event,
+            ticker=f"{_SEVILLA_TICKER}-LEGACY",
+            probabilities={"Sevilla": _SEVILLA_HERO, "Valencia": 0.01},
+        )
+        # The pre-#5031 shape: a bare value, no eligibility block at all.
+        event.win_probability_sources = {
+            "kalshi": {
+                "value": _SEVILLA_HERO,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        }
+        await db.commit()
+        event_id = event.id
+
+        stats = await _drive_the_real_task(
+            monkeypatch, db, {f"{_SEVILLA_TICKER}-LEGACY": fpr.VENUE_SETTLED}
+        )
+
+        db.expire_all()
+        after = (
+            await db.execute(select(Event).where(Event.id == event_id))
+        ).scalar_one()
+        assert "kalshi" not in (after.win_probability_sources or {})
+        assert stats["pre_kickoff_heroes_cleared"] == 1
