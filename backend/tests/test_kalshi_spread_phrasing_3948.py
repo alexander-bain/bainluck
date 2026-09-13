@@ -47,7 +47,7 @@ import pytest
 
 from app.routes.events import get_event_odds_history
 from app.utils.binary_spread import (
-    _CONTRADICTION_CONFIDENCE,
+    _RECROSS_CONFIDENCE,
     _threshold_order,
     binary_to_implied_spread,
     extract_spread_threshold,
@@ -328,7 +328,7 @@ def test_sign_only_would_have_shipped_a_confident_wrong_number():
     🔴 The *confidence* half of that sentence stopped being true at #5413. An
     interleaved pool prices above the crossover after pricing below it, which
     `ladder_recrosses` now reads as a pool that names no single value, so the
-    score is `_CONTRADICTION_CONFIDENCE` rather than the 0.85 its accidental
+    score is `_RECROSS_CONFIDENCE` rather than the 0.85 its accidental
     bracket earns on width. Both numbers are asserted below: the width the
     design would have been scored on is unchanged, and the wrong spread — the
     reason sign-and-invert is the design — is unchanged too. #5413 stops this
@@ -361,7 +361,7 @@ def test_sign_only_would_have_shipped_a_confident_wrong_number():
 
     # Since #5413 the interleaving is read off the pool itself, so the score no
     # longer says "confident".
-    assert bad.confidence == _CONTRADICTION_CONFIDENCE
+    assert bad.confidence == _RECROSS_CONFIDENCE
     assert ladder_recrosses(sorted(sign_only, key=_threshold_order), 0.50)
 
 

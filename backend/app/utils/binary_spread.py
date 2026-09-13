@@ -49,6 +49,12 @@ _DEGENERATE_PROB_RANGE = 0.001
 # real bracket — the arm survives to be served, it just stops being preferred.
 _CONTRADICTION_CONFIDENCE = 0.3
 
+# What a RE-CROSSING pool scores. Strictly below _CONTRADICTION_CONFIDENCE
+# because the two faults are not equally bad evidence, and scoring them the same
+# left the choice between them to PROJECTION_SOURCE_ORDER — a tie-break that
+# knows nothing about either ladder (#5413's follow-on; see _bracket_confidence).
+_RECROSS_CONFIDENCE = 0.2
+
 
 def _threshold_order(contract: dict) -> tuple[float, float]:
     """Deterministic sort key for a ladder's rungs: threshold, then price desc.
@@ -124,8 +130,28 @@ def _bracket_confidence(
     about the pool, so a narrow bracket in a contaminated pot scored 0.9 while
     the clean venue beside it scored 0.8 — which is how Sunday's Texans–Bills
     page came to project a **7 – 9** football final off an implied total of 16
-    (#5413). The bracket width says nothing once the pool is not one ladder, so
-    the same constant answers both.
+    (#5413). The bracket width says nothing once the pool is not one ladder.
+
+    🔴 The two faults get DIFFERENT constants, and #5413 shipping them at the
+    same one is why Texans–Bills still read **7 – 9** on production a day later.
+    Demotion is an ordering, not a floor: when every arm lands on the same
+    constant the choice falls through to :data:`PROJECTION_SOURCE_ORDER`, which
+    knows nothing about either ladder. Measured on 2026-09-13, event 14780144
+    (Browns at Jaguars, ~10h to kickoff) served **12 – 4**: Kalshi's total pool
+    re-crossed and was demoted, and Polymarket's clean 40.5 was demoted by the
+    same-line rule above for two rungs priced 0.505/0.485 on one threshold — two
+    arms at 0.3, tie broken by ``order``, and Kalshi's 15.5 won a page it had
+    just been caught contaminating.
+
+    They are not equally bad evidence, so they must not score equally. A
+    same-line disagreement still NAMES a line both ladders agree on and is
+    wrong by the 2¢ between them; a re-crossing pool names no line at all —
+    which of its several crossings the walk returns is decided by
+    :func:`_threshold_order`, so its value is arbitrary, and here it was wrong
+    by 25 points of football. Ordering the worse witness below the better one
+    costs nothing elsewhere: both sit beneath any real bracket, so neither can
+    outrank a clean arm, and a re-crossing arm that is the only one left is
+    still served exactly as before.
 
     🔴 This is a *scoring* rule, not a refusal, and that is what lets it need no
     tolerance for market noise. #3965 made this module refuse to invent a value
@@ -145,7 +171,7 @@ def _bracket_confidence(
     pages change — both NFL, both from a two-digit football score to a real one.
     """
     if pool_recrosses:
-        return _CONTRADICTION_CONFIDENCE
+        return _RECROSS_CONFIDENCE
     if bracket_width < _SAME_LINE_EPSILON and prob_range >= _DEGENERATE_PROB_RANGE:
         return _CONTRADICTION_CONFIDENCE
     return max(0.0, min(1.0, 1.0 - (bracket_width / divisor)))

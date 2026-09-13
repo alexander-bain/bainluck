@@ -26,8 +26,9 @@ THE RULE
 --------
 A pool that prices above the crossover after pricing below it is not one ladder,
 so its bracket width says nothing: :func:`ladder_recrosses` is true and the
-confidence becomes :data:`_CONTRADICTION_CONFIDENCE`. This extends #4035's clause
-— there the two ladders collided on one line, here they sit side by side.
+confidence becomes :data:`_RECROSS_CONFIDENCE`. This extends #4035's clause
+— there the two ladders collided on one line, here they sit side by side — and sits
+BELOW it, because a pool that names no line at all is the worse witness of the two.
 
 **Scoring, not refusal**, and that is what lets the rule carry no noise
 tolerance: a demoted arm is still served, so it only ever loses a page it was
@@ -54,6 +55,7 @@ import pytest
 from app.utils import binary_spread
 from app.utils.binary_spread import (
     _CONTRADICTION_CONFIDENCE,
+    _RECROSS_CONFIDENCE,
     _threshold_order,
     binary_to_implied_spread,
     binary_to_implied_total,
@@ -223,7 +225,7 @@ def test_the_refuting_arm_keeps_its_value_and_loses_only_its_standing():
 
     assert result is not None, "a refuting pool is demoted, never refused"
     assert result.total == 16.0
-    assert result.confidence == _CONTRADICTION_CONFIDENCE
+    assert result.confidence == _RECROSS_CONFIDENCE
 
 
 def test_a_sole_refuting_arm_is_still_served():
@@ -235,7 +237,7 @@ def test_a_sole_refuting_arm_is_still_served():
     spread = binary_to_implied_spread(KALSHI_SPREAD_PACKERS_VIKINGS)
     total = binary_to_implied_total(KALSHI_TOTAL_PACKERS_VIKINGS)
     assert ladder_recrosses(sorted(KALSHI_SPREAD_PACKERS_VIKINGS, key=_threshold_order), 0.50)
-    assert spread.confidence == _CONTRADICTION_CONFIDENCE
+    assert spread.confidence == _RECROSS_CONFIDENCE
 
     spread_source, _, projection = select_projected_final(
         {"kalshi": {"spread": spread.spread, "confidence": spread.confidence}},
@@ -250,7 +252,7 @@ def test_two_refuting_arms_fall_back_to_the_venue_order():
     """Both demoted ⇒ PROJECTION_SOURCE_ORDER decides, which is today's answer."""
     kalshi = binary_to_implied_total(KALSHI_TOTAL_TEXANS_BILLS)
     other = binary_to_implied_total(KALSHI_TOTAL_TEXANS_BILLS)
-    assert kalshi.confidence == other.confidence == _CONTRADICTION_CONFIDENCE
+    assert kalshi.confidence == other.confidence == _RECROSS_CONFIDENCE
 
     _, total_source, _ = select_projected_final(
         {"kalshi": {"spread": -3.0, "confidence": 1.0}},
@@ -377,7 +379,10 @@ def test_a_pool_that_starts_on_the_crossover_and_rises_still_locates_one_value()
 
     assert _naive_straddle_count(pool) == 1
     assert not ladder_recrosses(pool, 0.50)
-    assert binary_to_implied_total(pool).confidence != _CONTRADICTION_CONFIDENCE
+    assert binary_to_implied_total(pool).confidence not in (
+        _CONTRADICTION_CONFIDENCE,
+        _RECROSS_CONFIDENCE,
+    ), "a clean pool carries neither demotion constant"
 
 
 @pytest.mark.parametrize(
@@ -406,7 +411,7 @@ def test_the_derivation_reads_the_pool_in_its_own_sort_order_not_the_rows(order)
     result = binary_to_implied_total(order(list(KALSHI_TOTAL_TEXANS_BILLS)))
 
     assert result.total == 16.0
-    assert result.confidence == _CONTRADICTION_CONFIDENCE
+    assert result.confidence == _RECROSS_CONFIDENCE
 
 
 def test_the_recross_is_read_in_the_walks_own_rung_order():
@@ -427,3 +432,170 @@ def test_the_crossover_argument_is_honoured():
 
     assert not ladder_recrosses(pool, 0.50)
     assert ladder_recrosses(pool, 0.42)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# The tie the demotion could not break (#5413, second half)
+#
+# The rule above shipped on 2026-09-11 and the Texans–Bills page still served
+# 7 – 9 on the 13th. The demotion fired exactly as designed; it just could not
+# DECIDE anything, because the clean arm beside it had been demoted to the same
+# constant by #4035's same-line clause, and a tie falls through to
+# PROJECTION_SOURCE_ORDER — which puts Kalshi first.
+#
+# The arms below are the ones production served at 2026-09-13T06:1xZ, ~10h
+# before kickoff, read off /api/events/{id}/history. They are the discriminating
+# fixture the section above lacks: POLYMARKET_TOTAL_TEXANS_BILLS up there is a
+# clean ladder and scores above 0.3, so its end-to-end test passes on a pool the
+# reader's page did not have. Both pools here carry a duplicate rung.
+# ═════════════════════════════════════════════════════════════════════════════
+
+# 14780144, Browns at Jaguars. Kalshi's pool is two families in one pot: a
+# ~15-20 point family priced around a coin flip, then the real game total
+# walking monotonically down from 37.5. The walk takes the FIRST crossing.
+LIVE_KALSHI_TOTAL_JAGUARS = _pool([
+    (15.5, 0.52), (15.5, 0.485), (16.5, 0.5), (16.5, 0.515), (18.5, 0.52),
+    (19.5, 0.96), (21.5, 0.485), (22.5, 0.945), (25.5, 0.895), (28.5, 0.85),
+    (31.5, 0.775), (34.5, 0.675), (37.5, 0.575), (38.5, 0.545), (39.5, 0.535),
+    (40.5, 0.485), (41.5, 0.435), (42.5, 0.425), (43.5, 0.385), (46.5, 0.295),
+    (49.5, 0.215), (52.5, 0.165), (55.5, 0.125), (58.5, 0.085), (61.5, 0.055),
+])
+# The clean venue — but 40.5 appears twice, priced 0.505/0.485, so #4035's
+# same-line clause demotes it to _CONTRADICTION_CONFIDENCE.
+LIVE_POLYMARKET_TOTAL_JAGUARS = _pool([
+    (38.5, 0.555), (40.5, 0.505), (40.5, 0.485), (41.5, 0.445),
+    (43.5, 0.39), (44.5, 0.36),
+])
+
+# 14780141, Bills at Texans — the page #5413 is named for, as it actually was.
+LIVE_KALSHI_TOTAL_TEXANS = _pool([
+    (15.5, 0.505), (16.5, 0.495), (17.5, 0.5), (18.5, 0.49), (20.5, 0.52),
+    (23.5, 0.955), (23.5, 0.505), (26.5, 0.925), (29.5, 0.9), (32.5, 0.85),
+    (35.5, 0.77), (38.5, 0.675), (41.5, 0.59), (42.5, 0.57), (43.5, 0.53),
+    (44.5, 0.495), (45.5, 0.465), (46.5, 0.445), (47.5, 0.405), (50.5, 0.315),
+    (53.5, 0.24), (56.5, 0.18), (59.5, 0.135), (62.5, 0.105), (65.5, 0.075),
+])
+LIVE_POLYMARKET_TOTAL_TEXANS = _pool([
+    (41.5, 0.585), (43.5, 0.535), (44.5, 0.515), (44.5, 0.495),
+    (46.5, 0.435), (47.5, 0.395),
+])
+
+
+def _live_totals(kalshi_pool, polymarket_pool):
+    kalshi = binary_to_implied_total(kalshi_pool)
+    poly = binary_to_implied_total(polymarket_pool)
+    return {
+        "kalshi": {"total": kalshi.total, "confidence": kalshi.confidence},
+        "polymarket": {"total": poly.total, "confidence": poly.confidence},
+    }
+
+
+def test_both_arms_were_demoted_to_one_constant_which_is_why_the_page_did_not_move():
+    """The premise. Neither arm is trusted, for two different reasons."""
+    kalshi = binary_to_implied_total(LIVE_KALSHI_TOTAL_JAGUARS)
+    poly = binary_to_implied_total(LIVE_POLYMARKET_TOTAL_JAGUARS)
+
+    assert ladder_recrosses(sorted(LIVE_KALSHI_TOTAL_JAGUARS, key=_threshold_order), 0.50)
+    assert not ladder_recrosses(sorted(LIVE_POLYMARKET_TOTAL_JAGUARS, key=_threshold_order), 0.50)
+    # Polymarket is clean as a ladder and still demoted — 40.5 twice, 0.505/0.485.
+    assert poly.confidence == _CONTRADICTION_CONFIDENCE
+    assert poly.total == 40.5
+    # Kalshi's pool contains that same 40.5 rung at 0.485. The walk never reaches
+    # it: the junk family crosses first, and that is the number it names.
+    assert kalshi.total == 15.5
+
+
+def test_the_jaguars_page_stops_projecting_a_twelve_four_football_final():
+    """12 – 4, served ~10h before a 10am kickoff, off an implied total of 15.5."""
+    _, total_source, projection = select_projected_final(
+        LIVE_SPREADS_JAGUARS,
+        _live_totals(LIVE_KALSHI_TOTAL_JAGUARS, LIVE_POLYMARKET_TOTAL_JAGUARS),
+    )
+
+    assert total_source == "polymarket"
+    assert (projection.home_score, projection.away_score) == (24.5, 16.0)
+    assert (round(projection.home_score), round(projection.away_score)) != (12, 4)
+
+
+def test_the_texans_bills_page_stops_projecting_seven_nine_on_the_arms_it_actually_had():
+    """#5413's own end-to-end test passed while this page served 7 – 9.
+
+    Same game, same claim, same assertion — the only difference is that the
+    Polymarket pool here is the one production held, duplicate rung and all.
+    """
+    _, total_source, projection = select_projected_final(
+        LIVE_SPREADS_TEXANS,
+        _live_totals(LIVE_KALSHI_TOTAL_TEXANS, LIVE_POLYMARKET_TOTAL_TEXANS),
+    )
+
+    assert total_source == "polymarket"
+    assert (projection.home_score, projection.away_score) == (21.5, 23.0)
+    assert (round(projection.home_score), round(projection.away_score)) != (7, 9)
+
+
+# Each page's own spread arms, as served — the red check below is worthless if
+# one game is scored with the other's spread (it read 12 - 4 for Texans until
+# these were parametrised too).
+LIVE_SPREADS_JAGUARS = {
+    "polymarket": {"spread": -8.5, "confidence": 0.95},
+    "kalshi": {"spread": 0.2, "confidence": 0.3},
+}
+LIVE_SPREADS_TEXANS = {
+    "kalshi": {"spread": 1.5, "confidence": 0.88},
+    "polymarket": {"spread": -1.5, "confidence": 0.3},
+}
+
+
+@pytest.mark.parametrize(
+    "label, spreads, kalshi_pool, polymarket_pool, defect",
+    [
+        ("jaguars", LIVE_SPREADS_JAGUARS, LIVE_KALSHI_TOTAL_JAGUARS,
+         LIVE_POLYMARKET_TOTAL_JAGUARS, (12, 4)),
+        ("texans", LIVE_SPREADS_TEXANS, LIVE_KALSHI_TOTAL_TEXANS,
+         LIVE_POLYMARKET_TOTAL_TEXANS, (7, 9)),
+    ],
+)
+def test_collapsing_the_two_constants_brings_both_defects_back(
+    monkeypatch, label, spreads, kalshi_pool, polymarket_pool, defect
+):
+    """Red check: the separation is what carries it, not the fixtures.
+
+    Score a re-crossing pool at #4035's constant again — which is what #5413
+    shipped — and each page returns to the exact scoreline a reader saw.
+    """
+    monkeypatch.setattr(binary_spread, "_RECROSS_CONFIDENCE", _CONTRADICTION_CONFIDENCE)
+
+    _, total_source, projection = select_projected_final(
+        spreads, _live_totals(kalshi_pool, polymarket_pool)
+    )
+
+    assert total_source == "kalshi", "the tie fell through to PROJECTION_SOURCE_ORDER"
+    assert (round(projection.home_score), round(projection.away_score)) == defect
+
+
+def test_the_worse_witness_is_ordered_below_the_better_one():
+    """The invariant the two constants exist to state.
+
+    A same-line disagreement still names a line both ladders agree on; a
+    re-crossing pool names no line at all. Both stay beneath any real bracket,
+    so neither can outrank a clean arm.
+    """
+    assert _RECROSS_CONFIDENCE < _CONTRADICTION_CONFIDENCE
+
+    clean = binary_to_implied_total(_pool([(40.5, 0.52), (41.5, 0.48)]))
+    assert clean.confidence > _CONTRADICTION_CONFIDENCE > _RECROSS_CONFIDENCE
+
+
+def test_a_clean_arm_still_beats_a_recrossing_one_as_it_always_did():
+    """Unchanged behaviour, asserted so the demotion cannot be read as a refusal."""
+    totals = {
+        "kalshi": {"total": binary_to_implied_total(LIVE_KALSHI_TOTAL_JAGUARS).total,
+                   "confidence": binary_to_implied_total(LIVE_KALSHI_TOTAL_JAGUARS).confidence},
+        "polymarket": {"total": 40.5, "confidence": 0.9},
+    }
+
+    _, total_source, _ = select_projected_final(
+        {"polymarket": {"spread": -8.5, "confidence": 0.95}}, totals
+    )
+
+    assert total_source == "polymarket"
