@@ -216,6 +216,40 @@ export function liveClaimIsUnbacked(args: {
   return blendAgeMs > (args.maxBlendAgeMs ?? LIVE_CLAIM_MAX_BLEND_AGE_MS);
 }
 
+/**
+ * The EVENT PAGE's answer to the same question — the one the hero, the phase
+ * badge, the age stamp and the refresh ring all read. (#5885)
+ *
+ * ═══ WHY IT IS NOT `liveClaimIsUnbacked` ═══
+ *
+ * A claim of liveness cannot be unbacked on a page that has not made one. The
+ * predicate above is keyed on the blend alone and must stay that way — it is a
+ * statement about our number's age and nothing else — but the page composes it
+ * with `hasNoReportedResult` into `isSuspended`, and a bare age rule reaching
+ * that disjunct put the suspended badge on a game that had not kicked off.
+ *
+ * Measured on production 2026-09-13 10:09Z, /events/14780147: `status
+ * "scheduled"`, kickoff 20:25Z — ten hours away — sources at 08:52:40Z,
+ * 09:06:12Z and 09:08:03Z, so a 61-minute blend, so "No result reported" over a
+ * hero that had read "Starts in 10h 34m" twenty minutes before. It also deleted
+ * `Projected final: 28 – 19`, which the same flag gates under #5257.
+ *
+ * `LIVE_CLAIM_MAX_BLEND_AGE_MS` is not wrong; it was being asked the wrong
+ * question. Its own reasoning is about a live game on a two-minute beat. A
+ * pregame market is polled slowly by design, so an hour-old blend hours before
+ * kickoff is the ordinary state of a healthy page.
+ */
+export function pageLiveClaimIsUnbacked(args: {
+  /** `commence_time` is in the past. The page already computes this. */
+  hasStarted: boolean;
+  pinned: unknown;
+  blendAgeMs: number | null;
+  maxBlendAgeMs?: number;
+}): boolean {
+  if (!args.hasStarted) return false;
+  return liveClaimIsUnbacked(args);
+}
+
 export interface LiveFrame {
   p: number;
   source: string;
