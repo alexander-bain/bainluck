@@ -287,6 +287,12 @@ nonisolated struct TournamentHubBoard: Decodable, Sendable, Identifiable {
     let rows: [TournamentHubBoardRow]
     let priceState: String?
     let contenders: Int?
+    /// Present once the draw's Final has been graded (#5917). The payload's own
+    /// statement that the question is OVER, which is a different fact from
+    /// every price on the board having gone dark — and the only one a client is
+    /// allowed to act on. Adjudicating it from `results` instead would be the
+    /// client deciding state.
+    let decided: TournamentHubBoardDecided?
 
     var id: String { draw }
 
@@ -297,11 +303,29 @@ nonisolated struct TournamentHubBoard: Decodable, Sendable, Identifiable {
         rows = (try? c.decodeIfPresent([TournamentHubBoardRow].self, forKey: .rows)) ?? []
         priceState = try c.decodeIfPresent(String.self, forKey: .priceState)
         contenders = try c.decodeIfPresent(Int.self, forKey: .contenders)
+        decided = try? c.decodeIfPresent(TournamentHubBoardDecided.self, forKey: .decided)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case draw, label, rows, priceState, contenders
+        case draw, label, rows, priceState, contenders, decided
     }
+}
+
+/// `{"winner_entity_key": "elena-rybakina"}` — the whole contract, deliberately
+/// (live/200's 13:52Z correction to its own shape): the score and the time the
+/// title was won live on the result row in `results`, and a second copy here
+/// would be a second place for them to drift.
+nonisolated struct TournamentHubBoardDecided: Decodable, Sendable, Equatable {
+    let winnerEntityKey: String?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        winnerEntityKey = try c.decodeIfPresent(String.self, forKey: .winnerEntityKey)
+    }
+
+    init(winnerEntityKey: String?) { self.winnerEntityKey = winnerEntityKey }
+
+    private enum CodingKeys: String, CodingKey { case winnerEntityKey }
 }
 
 nonisolated struct TournamentHubBoardRow: Decodable, Sendable, Identifiable {
