@@ -417,17 +417,19 @@ describe("an entity route unfurls with its own picture", () => {
 
   it("the routes #5888 fixed are on the CARD-SHIPPING side, by name", () => {
     // Both rules above are `.filter()` over a walk, and a walk that found
-    // nothing satisfies both. Assert the denominator, and assert the four
+    // nothing satisfies both. Assert the denominator, and assert the five
     // routes that ship a card are not merely absent from the list but actually
     // present in the population and actually holding the file.
     const routes = selfDescribingDynamicRoutes.map((r) => r.route);
     expect(routes).toContain("/tournaments/[slug]");
     expect(routes).toContain("/event/[domain]/[slug]");
+    expect(routes).toContain("/hub/[competition]");
     expect(routes.length).toBeGreaterThanOrEqual(8);
 
     for (const route of [
       "/tournaments/[slug]",
       "/event/[domain]/[slug]",
+      "/hub/[competition]",
       "/events/[id]",
       "/futures/[id]",
     ]) {
@@ -444,7 +446,11 @@ describe("an entity route unfurls with its own picture", () => {
     // HTML for the layer below to check. What it catches is a layout that
     // silently goes back to `defaultShareCard()`: the state #5888 started from,
     // which every other rule in this file scored as a pass.
-    for (const route of ["/tournaments/[slug]", "/event/[domain]/[slug]"]) {
+    for (const route of [
+      "/tournaments/[slug]",
+      "/event/[domain]/[slug]",
+      "/hub/[competition]",
+    ]) {
       const layout = path.join(
         APP_DIR,
         ...route.split("/").filter(Boolean),

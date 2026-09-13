@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { withSiteSuffix } from "@/lib/eventShareMeta";
 import { buildHubShareCopy, type HubShareSource } from "@/lib/hubShareMeta";
 import { selfCanonical } from "@/lib/routeMetadata";
-import { defaultShareCard } from "@/lib/shareCard";
+import { buildShareUrl } from "@/lib/share";
 import {
   unresolvedMetadata,
   unresolvedPath,
@@ -119,7 +119,19 @@ export async function generateMetadata({
     // Unresolvable: still say "this page is itself" — a page that cannot name
     // its competition is not thereby the home page — but claim no competition
     // and no probability.
-    return unresolvedMetadata(unresolvedPath("hub", competition), "hub", lookup.failure);
+    //
+    // ...and it names THIS route's card in both namespaces. Next's file
+    // convention overrides `og:image` only, so without the fourth argument a
+    // dead `/hub/<typo>` would preview as the quiet "isn't on Bain Luck" card
+    // in Slack and as the home page on X — the split measured on production for
+    // `/events/[id]` and `/futures/[id]`, which still have it.
+    const deadPath = unresolvedPath("hub", competition);
+    return unresolvedMetadata(
+      deadPath,
+      "hub",
+      lookup.failure,
+      buildShareUrl(`${deadPath}/opengraph-image`),
+    );
   }
 
   const path = `/hub/${encodeURIComponent(competition)}`;
@@ -127,6 +139,13 @@ export async function generateMetadata({
 
   const { title, description } = buildHubShareCopy(lookup.hub, competition);
   const socialTitle = withSiteSuffix(title);
+  // This route's OWN card, not the site's. `opengraph-image.tsx` beside this
+  // file is the picture; Next's file convention would win over `images` anyway
+  // (measured, `lib/unresolvedShareMeta.ts`), but naming it here keeps the
+  // source honest about what ships and satisfies the "a route that declares
+  // openGraph declares its images" rule with the right value rather than the
+  // default card. The other five card-shipping routes state theirs the same way.
+  const image = buildShareUrl(`${path}/opengraph-image`);
 
   return {
     ...identity,
@@ -138,13 +157,13 @@ export async function generateMetadata({
       url: path,
       siteName: "Bain Luck",
       type: "website",
-      images: defaultShareCard(),
+      images: [{ url: image, alt: title, width: 1200, height: 630 }],
     },
     twitter: {
       card: "summary_large_image",
       title: socialTitle,
       description,
-      images: defaultShareCard().map((image) => image.url),
+      images: [image],
     },
   };
 }

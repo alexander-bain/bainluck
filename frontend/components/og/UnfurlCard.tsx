@@ -137,6 +137,46 @@ export function clampText(value: string, maxLength: number): string {
   return `${trimmed.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
+/** The subtitle slot on a card that also draws rows or a verdict. */
+export const SUBTITLE_MAX = 90;
+
+/**
+ * The subtitle slot on a card with nothing under it.
+ *
+ * Measured 2026-09-13 against the rendered 1200x630: a hub card draws a pill, a
+ * name and a sentence, and roughly half the canvas is empty. At 90 characters
+ * `/hub/tennis` read "…matchups, and props — every market…" with that space
+ * still blank underneath — a cut made to fit a card that has rows, on a card
+ * that has none. 150 holds all five production blurbs (99-141 characters)
+ * whole, on two lines, and still leaves the footer clear.
+ */
+export const SUBTITLE_MAX_QUIET = 150;
+
+/**
+ * The subtitle clamp, which stops at a WORD rather than mid-word.
+ *
+ * A title is a name and is chosen to fit; a subtitle is a sentence somebody
+ * else wrote. `/hub/<competition>` is where that stopped being theoretical —
+ * the five product-written blurbs run 99 to 141 characters, and a plain
+ * character cut rendered "…translated into plain prob…", "…every market
+ * translated in…", "…top-finish props, and…" on the most public screen we have.
+ * Mid-word looks like a rendering fault; mid-sentence looks like an elision.
+ *
+ * Falls back to the character cut when there is no space to break at, so a
+ * single 200-character token still fits the canvas rather than overflowing it.
+ */
+export function clampWords(value: string, maxLength: number): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= maxLength) return trimmed;
+
+  const head = trimmed.slice(0, Math.max(0, maxLength - 1));
+  const lastSpace = head.lastIndexOf(" ");
+  if (lastSpace <= 0) return clampText(trimmed, maxLength);
+
+  // Trailing punctuation left dangling by the break reads as a typo, not a cut.
+  return `${head.slice(0, lastSpace).replace(/[\s,;:—–-]+$/, "")}…`;
+}
+
 /** How many rows fit above the footer without the card becoming a table. */
 const MAX_ROWS = 3;
 
@@ -154,6 +194,8 @@ export function UnfurlCard({
   // space evenly. The percentage is the largest thing on the card either way,
   // because it is the thing the reader stopped scrolling for.
   const hero = visible.length === 1;
+  // A card with nothing under the subtitle can spend the empty half on it.
+  const subtitleMax = visible.length === 0 && !verdict ? SUBTITLE_MAX_QUIET : SUBTITLE_MAX;
 
   return (
     <div
@@ -240,7 +282,7 @@ export function UnfurlCard({
 
           {subtitle ? (
             <div style={{ fontSize: 24, color: COLOR_MUTED, lineHeight: 1.3, maxWidth: 960 }}>
-              {clampText(subtitle, 90)}
+              {clampWords(subtitle, subtitleMax)}
             </div>
           ) : null}
 
