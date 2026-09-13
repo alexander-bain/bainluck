@@ -1206,6 +1206,14 @@ async def _write_prices(
     for item in priced:
         prob = item.get("probability")
         if prob is None or not (0 < prob < 1):
+            # #5869. A second silent `continue`, on the other side of the
+            # fetch/write boundary. The fetch already refused `prob <= 0`, so what
+            # reaches here and fails is `prob >= 1` — a certainty arriving down a
+            # price rail — and it left the row's old number standing with nothing
+            # said. Counted for both venues: this function is shared.
+            stats["legs_declined_out_of_range"] = (
+                stats.get("legs_declined_out_of_range", 0) + 1
+            )
             continue
 
         legs = _legs(item)
@@ -1942,7 +1950,34 @@ async def _kalshi_reach_arm(
     await _sweep_unreached_kalshi_frozen(session, service, list(exclude_ids), stats)
 
 
-async def _fetch_polymarket_prices(service, event_ids: list[str]) -> tuple[dict, dict]:
+def _venue_quotes_this_leg(market) -> bool:
+    """Is the venue putting a live number on this leg? (#5869)
+
+    NOT A PRICING RULE AND MUST NEVER BE USED AS ONE. It answers a reporting
+    question only — which of the two buckets a declined leg belongs in — and it
+    is deliberately coarser than :func:`_resolve_market_probability`, which may
+    refuse a leg this returns ``True`` for. That is the point: those are exactly
+    the legs worth reading about.
+
+    The two facts are the two ``_unpriced_leg_external_ids`` excludes a leg from
+    retirement on — "a real bid — we refused it, the venue did not" and "it has
+    traded — that is evidence, not an absence". Same two so the numbers compose:
+    on any pass, the declined legs this calls ``False`` are the population the
+    retirement is entitled to withdraw, and ``legs_retired`` staying flat while
+    that remainder grows is the retirement failing to REACH rather than failing
+    to decide. Adding a third fact here (a sub-max ask, say) would break that
+    correspondence and buy nothing the split is for.
+    """
+    bid = market.best_bid
+    if bid is not None and float(bid) > 0:
+        return True
+    last = market.last_trade_price
+    return last is not None and float(last) > 0
+
+
+async def _fetch_polymarket_prices(
+    service, event_ids: list[str], stats: dict | None = None
+) -> tuple[dict, dict]:
     """Prices for a batch of Polymarket event ids, keyed by event id.
 
     Returns ``(priced_by_event, unpriced_legs_by_event)``. A value in the first
@@ -2009,6 +2044,26 @@ async def _fetch_polymarket_prices(service, event_ids: list[str]) -> tuple[dict,
         for market in event.markets:
             prob = _resolve_market_probability(market)
             if prob is None or prob <= 0:
+                # #5869. The refusal is a fact about this pass and it used to
+                # leave no trace at all: the row keeps its old number, the market
+                # still counts as `markets_priced`, and the run reports
+                # `terminal: "complete"`. Counted here rather than inferred later
+                # because the payload that justified the refusal is gone by the
+                # time anyone asks — the two frozen rungs on 57792790 were
+                # declined against a Gamma response we no longer hold, and
+                # re-reading the venue today answers a different question.
+                #
+                # The two keys move TOGETHER, the second by zero when the venue
+                # is quiet, so a reader never has to tell "no quoted leg was
+                # declined" from "this build does not count them" — the same rule
+                # every other refusal counter in this task is reported under.
+                if stats is not None:
+                    stats["polymarket_legs_declined"] = (
+                        stats.get("polymarket_legs_declined", 0) + 1
+                    )
+                    stats["polymarket_legs_declined_quoted"] = stats.get(
+                        "polymarket_legs_declined_quoted", 0
+                    ) + (1 if _venue_quotes_this_leg(market) else 0)
                 continue
             item = {
                 "external_id": market.condition_id,
@@ -2120,6 +2175,37 @@ async def _refresh_stale_futures_prices(
         # a clean success on every pass while retiring nothing, and a stat that
         # only appears when it fires cannot tell that apart from a quiet cohort.
         "legs_retired": 0,
+        # #5869. THE LEG THIS PASS DECLINED TO PRICE — the third outcome, and the
+        # one the summary could not express. `legs_retired` says "the venue quotes
+        # nothing, so we withdrew ours"; `markets_priced` says "we wrote". A leg
+        # that `_resolve_market_probability` refused is neither: we declined to
+        # write and we left the old number standing, and the pass reported
+        # `terminal: "complete"` with no trace of it. Market 57792790's ladder is
+        # the case — 16 rungs rewritten in one write at 2026-09-13 06:50:44Z, two
+        # left on their 2026-08-01 stamp, and the only instrument that found the
+        # two was a screenshot.
+        #
+        # SPLIT IN TWO BECAUSE THE TWO HALVES ROUTE TO DIFFERENT OWNERS, and the
+        # split is the whole value of the counter. `..._quoted` is a leg the venue
+        # IS quoting — a bid on the book or a trade behind it — that we refused
+        # anyway: that is a judgement of ours to answer for. The remainder is a leg
+        # the venue quotes nothing for, which is `_retire_unpriced_legs`' subject,
+        # and a rise there with `legs_retired` flat means the retirement's reach is
+        # short rather than its rule wrong. One number could say neither.
+        #
+        # Unconditional, including as zero, for the reason `legs_retired` is: a
+        # pass that declined nothing and a pass whose whole cohort was quiet both
+        # arrive as silence otherwise.
+        "polymarket_legs_declined": 0,
+        "polymarket_legs_declined_quoted": 0,
+        # #5869, the write-side half. `_write_prices` applies its own range guard
+        # after the fetch already applied one, so a value that survived
+        # `_resolve_market_probability` can still be dropped here — `prob >= 1` is
+        # the live case, and a settled field arrives that way. Counted apart from
+        # the fetch-side pair because a leg that reached the writer and was refused
+        # there is a different fact from one the venue never priced, and both
+        # venues pass through this function.
+        "legs_declined_out_of_range": 0,
         # #4253. The Kalshi half of the same withdrawal, counted SEPARATELY from
         # `legs_retired` because it answers a different venue question — "the
         # venue no longer lists this contract", not "the venue lists it and
@@ -2411,7 +2497,7 @@ async def _refresh_stale_futures_prices(
                     chunk = ids[i : i + POLYMARKET_ID_BATCH]
                     try:
                         priced_by_event, unpriced_by_event = (
-                            await _fetch_polymarket_prices(poly_service, chunk)
+                            await _fetch_polymarket_prices(poly_service, chunk, stats)
                         )
                     except Exception as exc:  # one bad batch must not wipe the run
                         stats["errors"].append(f"polymarket batch {i}: {exc}")
