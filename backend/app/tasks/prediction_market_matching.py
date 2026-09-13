@@ -5707,6 +5707,54 @@ def _clear_withdrawn_outcome(outcome, now, stats: dict) -> bool:
     return True
 
 
+#: The celery `task_time_limit` that KILLS this beat, mirrored here so the
+#: budget below can be sized off the bound that is actually enforced rather
+#: than off the 120 s cadence, which enforces nothing. The mirror is asserted
+#: against `app.tasks.CELERY_CONFIG` in
+#: `tests/test_live_poll_budget_5767.py` — two records of one capability that
+#: are allowed to drift are how a margin silently becomes negative.
+_LIVE_POLL_HARD_KILL_SECONDS = 300
+
+#: What the beat keeps back for its final commit, its terminal and its log
+#: line — the work that has to happen AFTER the last loop stops.
+_LIVE_POLL_BUDGET_MARGIN_SECONDS = 60
+
+#: What the beat gives itself before it stops cleanly and reports `partial`.
+#: A SIGKILLed fork writes no verdict, so the 300 s kill left `successes`,
+#: `failures`, `consecutive_failures` and `health` frozen at their pre-deploy
+#: values while the poll was in fact running and writing (#5767). DERIVED from
+#: the bound above rather than written out: a budget that has to be re-typed
+#: when the limit moves is a margin that goes negative in silence.
+_LIVE_POLL_BUDGET_SECONDS = (
+    _LIVE_POLL_HARD_KILL_SECONDS - _LIVE_POLL_BUDGET_MARGIN_SECONDS
+)
+
+#: The wall on ONE first-venue call, and the reason the floor below is a floor
+#: rather than an aspiration (CERT-2774). The stage deadline is tested BEFORE a
+#: fetch, so it bounds when a venue stops ADMITTING work, never when it stops
+#: RUNNING: the last item admitted a millisecond inside the boundary then runs
+#: for as long as the venue takes, and the reserve it was supposed to leave is
+#: gone. Bounding the item is the only thing that turns a reserved share into a
+#: guarantee. 20 s against a venue whose calls are normally well under one.
+_LIVE_POLL_VENUE_CALL_TIMEOUT_SECONDS = 20
+
+#: The smallest fetch window a venue with ANY rows is allowed to be left with.
+#: A purely PROPORTIONAL reserve is not a floor either, and CERT-2774's 100:1
+#: population is the proof: one Polymarket key beside a hundred Kalshi ones
+#: reserves 1/101 of the window — about 1.4 s — which is less than a single
+#: call, so the "reserve" could not buy even one fetch. A share is only a floor
+#: once it cannot be smaller than the work it is reserved for.
+_LIVE_POLL_MIN_VENUE_FLOOR_SECONDS = 20
+
+#: The share of the budget the VENUE-FETCH stages may spend. The stages after
+#: them write `win_probability_sources` — the number the reader actually sees
+#: on the page — and they are database-only and quick. Letting ~100 fetches and
+#: their rate-limit sleeps consume the whole budget would refresh the outcome
+#: rows and never stamp the event, which is #5682's exact symptom arriving by a
+#: second road: rows fresh, page stale.
+_LIVE_POLL_FETCH_BUDGET_SHARE = 0.6
+
+
 @dataclass
 class _LivePollPopulation:
     """One live-poll beat's rows, addressable BY ID (#5682).
@@ -5780,6 +5828,27 @@ async def _load_live_poll_population(session, now) -> _LivePollPopulation:
                 ),
             ),
         )
+        # #5767: STALEST FIRST. A pass that cannot finish needs an ordering or
+        # its tail is permanently dark (gotcha #41) — and this one cannot
+        # finish: on 2026-09-12 every beat after the #5682 deploy was killed at
+        # the 300 s hard limit partway through an unordered population, so the
+        # same rows were reached every beat and the same rows were never
+        # reached. The sort key is the very number the ship is about: the
+        # event-level stamp this market's source last wrote.
+        #
+        # TEXT, not a cast. Every writer of this key uses
+        # `datetime.now(timezone.utc).isoformat()`, so the values are
+        # fixed-offset ISO-8601 and sort lexicographically in chronological
+        # order; casting would order identically and would raise the whole
+        # query on one malformed stamp, which is a worse trade for a tiebreak.
+        # A leg never written at all is NULL and sorts FIRST — it is the
+        # stalest thing there is.
+        .order_by(
+            func.jsonb_extract_path_text(
+                Event.win_probability_sources, FuturesMarket.source, "updated_at"
+            ).asc().nullsfirst(),
+            FuturesMarket.id.asc(),
+        )
     )
     rows = list(result.all())
 
@@ -5841,6 +5910,7 @@ async def _poll_live_prediction_market_prices():
     """
     import asyncio
     import json
+    import time
 
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -5889,6 +5959,31 @@ async def _poll_live_prediction_market_prices():
 
     now = datetime.now(timezone.utc)
 
+    # #5767: the beat's two deadlines, taken from a monotonic clock at the top
+    # so nothing downstream can compute a time that only ever drifts ahead.
+    _started_at = time.monotonic()
+    #: The window the VENUE-FETCH stages share. It is a window and not a single
+    #: deadline because the two venues each get a floor of it — see the
+    #: per-venue deadlines derived from it once the populations are known.
+    _venue_fetch_window = (
+        _LIVE_POLL_BUDGET_SECONDS * _LIVE_POLL_FETCH_BUDGET_SHARE
+    )
+    _deadline = _started_at + _LIVE_POLL_BUDGET_SECONDS
+    #: stage -> items the budget cost this beat. Empty means the pass finished.
+    budget_stops: dict[str, int] = {}
+
+    def _out_of_budget(stage: str, deadline: float, remaining: int) -> bool:
+        """True when *stage* must stop now; records what stopping cost.
+
+        The count is the reason this returns rather than raising: a beat that
+        stopped 40 markets short is a different fact from one that stopped 2
+        short, and `terminal: partial` alone cannot say which.
+        """
+        if time.monotonic() < deadline:
+            return False
+        budget_stops[stage] = budget_stops.get(stage, 0) + max(remaining, 0)
+        return True
+
     async with get_task_session() as session:
         pop = await _load_live_poll_population(session, now)
 
@@ -5910,6 +6005,63 @@ async def _poll_live_prediction_market_prices():
         # time the loop reached them (gotcha #6).
         kalshi_ids = [m.id for m, _e in pop.rows if m.source == "kalshi"]
         polymarket_ids = [m.id for m, _e in pop.rows if m.source != "kalshi"]
+
+        # #5767 repair (CERT-2770): EVERY VENUE GETS A FLOOR OF THE FETCH BUDGET.
+        #
+        # The stalest-first ordering is computed over the COMBINED population and
+        # then split into these two lists, which run as two sequential loops. The
+        # first cut gave both loops the same `_fetch_deadline`, so the venue that
+        # runs first could spend all of it: with 1,327 Kalshi keys ahead of 428
+        # Polymarket keys, a slow Kalshi stage ends the fetch window before one
+        # Polymarket call is made, every beat, forever. That is gotcha #41's
+        # permanently-dark tail arriving through the repair for it — and it is
+        # WORSE than an unordered pass, because the starvation is now systematic
+        # rather than random.
+        #
+        # Each venue is reserved its PROPORTIONAL share, and the reserve is
+        # subtracted from whoever runs first rather than added to whoever runs
+        # last. Kalshi may use the whole window minus Polymarket's share;
+        # Polymarket's own deadline is the full window, so anything Kalshi leaves
+        # unspent still falls to it. Nothing is wasted and neither venue can be
+        # zeroed by the other's population.
+        #
+        # Proportional and not a fixed 50/50 on purpose: the two populations are
+        # wildly unequal and a fixed split would hand 428 keys the same seconds as
+        # 1,327, starving the big venue to feed the small one. A share of zero is
+        # correct when a venue has no rows — the loop does not run.
+        # CERT-2774 — AND THE FLOOR IS ENFORCED AT DISPATCH, which a share alone
+        # never was. Two holes, both measured, both closed here:
+        #
+        #   1. a proportional reserve can be smaller than one call. The grader's
+        #      100:1 population reserves Polymarket 1/101 of the window, ~1.4 s.
+        #      `_LIVE_POLL_MIN_VENUE_FLOOR_SECONDS` is the answer: a venue with
+        #      rows is never left less than one call's worth.
+        #   2. the deadline gates ADMISSION, not COMPLETION. The last Kalshi item
+        #      admitted just inside the boundary then runs unbounded, and eats the
+        #      reserve it was supposed to leave. Reproduced 1/1 at 100 Kalshi keys
+        #      x 2 s: Kalshi 72, Polymarket 0. So Kalshi's admission boundary is
+        #      pulled back by the per-item wall as well as the floor, and the wall
+        #      is REAL (`asyncio.wait_for` on the call itself) — subtracting a
+        #      number for an overshoot nothing actually bounds would be arithmetic
+        #      pretending to be a guarantee.
+        _venue_total = len(kalshi_ids) + len(polymarket_ids)
+        _polymarket_reserve = (
+            max(
+                _venue_fetch_window * (len(polymarket_ids) / _venue_total),
+                _LIVE_POLL_MIN_VENUE_FLOOR_SECONDS,
+            )
+            if polymarket_ids
+            else 0.0
+        )
+        # A venue with no rows reserves NOTHING — the single-venue common case
+        # must keep the whole window, or this repair costs every ordinary beat.
+        _kalshi_admission_window = _venue_fetch_window - _polymarket_reserve - (
+            _LIVE_POLL_VENUE_CALL_TIMEOUT_SECONDS if polymarket_ids else 0.0
+        )
+        _kalshi_fetch_deadline = _started_at + max(_kalshi_admission_window, 0.0)
+        # The FULL window, deliberately: Polymarket runs second, so its deadline
+        # is the global one and it inherits every second Kalshi did not use.
+        _polymarket_fetch_deadline = _started_at + _venue_fetch_window
 
         # #5682: the counters that describe WRITES, as opposed to the ones that
         # describe what the venue said. A write counter that survives the
@@ -6001,7 +6153,16 @@ async def _poll_live_prediction_market_prices():
 
             service = KalshiAPIService()
             try:
-                for market_id in kalshi_ids:
+                for _seen, market_id in enumerate(kalshi_ids):
+                    # #5767: the fetch stages stop first and leave the stamping
+                    # stages their share. The population is stalest-first, so
+                    # what is dropped here is the freshest end of it.
+                    if _out_of_budget(
+                        "kalshi_fetch",
+                        _kalshi_fetch_deadline,
+                        len(kalshi_ids) - _seen,
+                    ):
+                        break
                     market = pop.markets_by_id.get(market_id)
                     if market is None:
                         # Unlinked or gone since the plan was made, or dropped
@@ -6011,11 +6172,23 @@ async def _poll_live_prediction_market_prices():
                     # path below cannot read it off an expired instance.
                     event_ticker = market.external_id
                     try:
-                        # Kalshi external_id is the event ticker
-                        markets_data, _ = await service.get_markets(
-                            event_ticker=event_ticker,
-                            status=None,  # Get all statuses
-                            limit=10,
+                        # Kalshi external_id is the event ticker.
+                        #
+                        # CERT-2774: WALLED, because this is the call whose
+                        # overrun ate Polymarket's reserve. The stage deadline
+                        # is checked before the fetch, so without a wall here
+                        # one slow venue call crosses the whole window no matter
+                        # what the arithmetic above reserved. The wall bounds the
+                        # WAIT, which is exactly the quantity the budget is
+                        # about — it makes no claim about the request the venue
+                        # may still be serving, and it does not need to.
+                        markets_data, _ = await asyncio.wait_for(
+                            service.get_markets(
+                                event_ticker=event_ticker,
+                                status=None,  # Get all statuses
+                                limit=10,
+                            ),
+                            timeout=_LIVE_POLL_VENUE_CALL_TIMEOUT_SECONDS,
                         )
                         stats["kalshi_fetched"] += 1
 
@@ -6132,6 +6305,23 @@ async def _poll_live_prediction_market_prices():
                         # Rate limit between Kalshi requests
                         await asyncio.sleep(0.3)
 
+                    except asyncio.TimeoutError:
+                        # CERT-2774: the wall firing is a DIFFERENT FACT from the
+                        # venue erroring, and the generic arm below would have
+                        # filed it as the latter. It is not an error at all — it
+                        # is this beat declining to spend another venue's floor
+                        # on one slow call. Counted, not `_recover`ed: there is
+                        # no transaction to repair, and the next iteration's
+                        # budget check breaks the loop anyway now that the clock
+                        # has passed the boundary.
+                        stats["kalshi_calls_walled"] = (
+                            stats.get("kalshi_calls_walled", 0) + 1
+                        )
+                        logger.warning(
+                            "live poll: kalshi call for %s hit the %ss wall",
+                            event_ticker,
+                            _LIVE_POLL_VENUE_CALL_TIMEOUT_SECONDS,
+                        )
                     except Exception as e:
                         await _recover(f"kalshi_{event_ticker}", e)
 
@@ -6145,7 +6335,13 @@ async def _poll_live_prediction_market_prices():
             try:
                 # Group by external_id (Polymarket event ID) to avoid duplicate fetches
                 seen_events = {}
-                for market_id in polymarket_ids:
+                for _seen, market_id in enumerate(polymarket_ids):
+                    if _out_of_budget(
+                        "polymarket_fetch",
+                        _polymarket_fetch_deadline,
+                        len(polymarket_ids) - _seen,
+                    ):
+                        break
                     market = pop.markets_by_id.get(market_id)
                     if market is None:
                         continue
@@ -6322,7 +6518,13 @@ async def _poll_live_prediction_market_prices():
                 )
             return groups
 
-        for key in list(blend_plan):
+        _blend_keys = list(blend_plan)
+        for _seen, key in enumerate(_blend_keys):
+            # #5767: this is the stage that writes `win_probability_sources` —
+            # the number on the page — so it gets the WHOLE budget, not the
+            # fetch stages' share.
+            if _out_of_budget("blend_stamp", _deadline, len(_blend_keys) - _seen):
+                break
             try:
                 # Primary selection happens INSIDE the per-event try, against
                 # the population as it stands now: a recovery two events ago
@@ -6474,7 +6676,9 @@ async def _poll_live_prediction_market_prices():
         # raw SQL against a live session, so it is as able to meet a deadlock
         # as anything above it.
         pregame_ids = [m.id for m, _e in pop.rows]
-        for market_id in pregame_ids:
+        for _seen, market_id in enumerate(pregame_ids):
+            if _out_of_budget("pregame_mark", _deadline, len(pregame_ids) - _seen):
+                break
             market = pop.markets_by_id.get(market_id)
             event = pop.event_by_market_id.get(market_id)
             if market is None or event is None:
@@ -6556,6 +6760,24 @@ async def _poll_live_prediction_market_prices():
     # that is not a finished run — and it must not read GREEN on the health
     # surfaces while the deadlocks are still happening.
     stats["terminal"] = "complete" if stats["session_recoveries"] == 0 else "partial"
+
+    # #5767: a beat that ran out of wall clock is `partial` whatever else went
+    # right, and it says what the budget cost. Before this, the 300 s celery
+    # kill took the fork down mid-pass and wrote NO terminal at all, so
+    # `successes_24h`, `consecutive_failures` and `health` sat frozen at their
+    # pre-deploy values while the poll was running and writing — the "it
+    # returned is not it worked" failure (gotcha #53) in its silent form, where
+    # nothing returns and nothing reports.
+    if budget_stops:
+        stats["terminal"] = "partial"
+        stats["budget_stops"] = dict(budget_stops)
+        stats["budget_seconds"] = _LIVE_POLL_BUDGET_SECONDS
+        stats["elapsed_seconds"] = round(time.monotonic() - _started_at, 1)
+        logger.warning(
+            "Live prediction market poll stopped on its %ss budget: %s",
+            _LIVE_POLL_BUDGET_SECONDS,
+            budget_stops,
+        )
 
     logger.info(
         "Live prediction market poll: events=%d, markets=%d, "
