@@ -1462,8 +1462,24 @@ export default function EventPage({ params }: EventPageProps) {
               )}
             </div>
 
-            {/* Center: Giant Probability (live/pregame) OR winner treatment (settled) */}
-            <div className="flex flex-col items-center px-2 sm:px-4 flex-shrink-0">
+            {/* Center: Giant Probability (live/pregame) OR winner treatment (settled)
+
+                #5866 — `min-w-0` and NO `flex-shrink-0`, and the phone padding
+                is `px-1`. The three columns are `flex-1` / this / `flex-1`
+                around a non-shrinking `w-14` crest, so while this block refused
+                to shrink its max-content width DICTATED the row and
+                `justify-between` pushed the overflow onto the away column: a
+                live K League hero put the away crest's right edge at 406.4 in a
+                390 viewport, clipped rather than scrollable
+                (`scrollWidth` stayed 390).
+
+                Measured at 390px on today's NFL pregame hero: budget 204.4,
+                used 204.5 — HEADROOM −0.1px BEFORE the game goes live and adds
+                three more lines to this same block. Two different children can
+                be the widest one (the probability pair at 188.5px here; the
+                `+N pts <team> since open` chip on a long club name), which is
+                why the fix bounds the BLOCK rather than any one line. */}
+            <div className="flex flex-col items-center px-1 sm:px-4 min-w-0">
               {isFinished ? (
                 /* Settled: winner name + chip + the result in the sport's own
                    units, no big number (mirrors FuturesHero's resolved rule).
@@ -1550,9 +1566,13 @@ export default function EventPage({ params }: EventPageProps) {
                 const homeShort = heroShortNames.home;
                 const isPositive = deltaPoints > 0;
                 return (
-                  <div className="flex items-center gap-1.5 mt-2">
+                  /* #5866: `min-w-0` so this row may shrink and its caption
+                     wrap, instead of setting the centre block's width from a
+                     club name. The arrow keeps `flex-shrink-0` — a squashed
+                     3.5px glyph is not a saving. */
+                  <div className="flex items-center gap-1.5 mt-2 min-w-0">
                     <svg
-                      className={`w-3.5 h-3.5 ${isPositive ? "text-emerald-500" : "text-red-500"}`}
+                      className={`w-3.5 h-3.5 flex-shrink-0 ${isPositive ? "text-emerald-500" : "text-red-500"}`}
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -1563,7 +1583,7 @@ export default function EventPage({ params }: EventPageProps) {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
                       )}
                     </svg>
-                    <span className={`text-xs font-semibold ${isPositive ? "text-emerald-600" : "text-red-500"}`}>
+                    <span className={`text-xs font-semibold min-w-0 text-center ${isPositive ? "text-emerald-600" : "text-red-500"}`}>
                       {/* `pt` when it is one. Every other surface in the family
                           prints a DECIMAL magnitude, where "1.0 pts" is right
                           and the question never comes up; this caption prints a
@@ -1591,8 +1611,8 @@ export default function EventPage({ params }: EventPageProps) {
 
               {/* Source label — live/pregame only */}
               {!isFinished && probSourceLabel && (
-                <div className="mt-1 flex items-center gap-1.5">
-                  <span className="text-[11px] text-text-muted">
+                <div className="mt-1 flex items-center gap-1.5 min-w-0">
+                  <span className="text-[11px] text-text-muted min-w-0 text-center">
                     {probSourceLabel}
                   </span>
                   {heroConfidence && <SignalBars tier={heroConfidence.tier} />}

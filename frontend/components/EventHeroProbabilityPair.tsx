@@ -182,6 +182,15 @@ export default function EventHeroProbabilityPair({
   // Only the both-null case changes. One side known and the other not still
   // prints the pair with an em-dash, because there the dash sits BESIDE a real
   // number and reads as the comparison it is.
+  // #5866 — the two big numerals carry `text-[34px] min-[360px]:text-[48px]`,
+  // so only viewports NARROWER than 360 see the smaller size; 390 and up are
+  // untouched. That breakpoint exists because the event hero's centre column
+  // became shrinkable in the same ship: it no longer pushes the away crest off
+  // the screen, but a block that may shrink and holds a pair that cannot wrap
+  // will overlap its neighbours instead. Measured on /events/14780147 at 320px:
+  // the centre's budget is 144px and this pair's max-content was 188.5px, and
+  // the shot showed "81" printed across the Chargers bolt. Trading an
+  // off-screen crest for an overlapping numeral is not a fix.
   const noReading = homeProb === null && awayProb === null;
 
   if (noReading) {
@@ -211,7 +220,7 @@ export default function EventHeroProbabilityPair({
       data-probability-source={probSourceLabel ?? ""}
     >
       <span
-        className="text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
+        className="text-[34px] min-[360px]:text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
         style={{ color: home }}
       >
         {homeProb !== null && shownHome !== null ? shownHome : "—"}
@@ -226,7 +235,7 @@ export default function EventHeroProbabilityPair({
         {"–"}
       </span>
       <span
-        className="text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
+        className="text-[34px] min-[360px]:text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
         style={{ color: away }}
       >
         {awayProb !== null && shownAway !== null ? shownAway : "—"}
