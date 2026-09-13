@@ -395,8 +395,25 @@ def calibration_truth_eligible_sql(
     D112, so a site that has no shape join in scope keeps its exact previous
     population rather than silently widening.
 
+    THE SHAPE TERM IS ``COALESCE``-GUARDED, AND THAT IS NOT DEFENSIVE HABIT —
+    it is what makes this predicate safe to NEGATE (CAL-P1138, found by wiring
+    the coverage bridge). The shape column arrives through a LEFT JOIN, so it is
+    NULL for a market with no shape row. Under a bare ``n = 1`` that NULL makes
+    the whole expression three-valued:
+
+        NOT (src IN (...) OR (NULL = 1 AND src IN (...)))   ->  NOT NULL  ->  NULL
+
+    so an ineligible-source row whose market has no shape row stops satisfying
+    its own ``NOT`` and falls through to whatever rung comes next — silently
+    mislabelled, in the one place (``truth_ineligible_source``) where this
+    predicate is used in the negative. ``COALESCE(n, 0)`` makes the shape term
+    two-valued, which leaves every POSITIVE call site byte-identical in effect
+    (a ``WHERE`` treats NULL and FALSE alike) and makes the negative one
+    correct. Fail-closed is preserved either way: an absent shape is not a
+    lone claim.
+
     Returns a self-contained boolean expression, already parenthesised — safe to
-    drop straight after an ``AND``.
+    drop straight after an ``AND``, or after a ``NOT``.
     """
     allowlist = f"{source_col} IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}"
     if n_outcomes_col is None:
@@ -404,7 +421,7 @@ def calibration_truth_eligible_sql(
     return (
         "("
         + allowlist
-        + f" OR ({n_outcomes_col} = {LONE_CLAIM_N_OUTCOMES}"
+        + f" OR (COALESCE({n_outcomes_col}, 0) = {LONE_CLAIM_N_OUTCOMES}"
         + f" AND {source_col} IN {LONE_CLAIM_TRUTH_ELIGIBLE_SOURCES_SQL}))"
     )
 

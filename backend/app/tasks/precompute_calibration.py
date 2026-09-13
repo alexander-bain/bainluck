@@ -31,6 +31,7 @@ from app.utils.resolution_authority import (
     CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL,
     CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL,
     PRICE_DERIVED_SOURCES_SQL,
+    calibration_truth_eligible_sql,
 )
 
 logger = logging.getLogger(__name__)
@@ -662,7 +663,32 @@ def _main_payload_is_publishable(response: Any) -> bool:
 # changes are edits to the population predicate itself and both are visible in
 # `population_predicate_fingerprint`. A build that merely took a long time
 # publishes with no bump at all, and that remains the rule.
-CALIBRATION_POPULATION_VERSION = "q270"
+#
+# ---------------------------------------------------------------------------
+# q270 -> q271 (CAL-P1138, 2026-09-13): D112, THE SYMMETRIC SETTLEMENT CHANNELS.
+# The recount's own ledger says the recount is not done until this lands, so
+# this is the last method item on the accuracy page's acceptance, not a new one.
+#
+# WHAT MOVED: a LONE-CLAIM market — exactly one captured outcome, a single
+# Yes/No question — has no sibling whose price could be grading it, so its
+# `all_losers` / `clean_resolution` settlement is the venue's own answer rather
+# than C20/C21 self-grading leakage. The pair is admitted TOGETHER (measured:
+# `all_losers` alone realises 617/2,097 = 29.4% against a ~50% forecast, which
+# is a censored sample, not a miscalibrated market; both channels together
+# realise 1,566/3,046 = 51.4%) and ONLY at that shape — at >= 2 outcomes a
+# sibling's price does grade the row and the leakage is real again.
+#
+# THIS BUMP WIDENS. Every other bump in this file's history narrowed, and the
+# direction matters to the gate below: the previous curve was not biased by
+# these rows' absence, it was NARROWER than it could be, so q270 published no
+# wrong price for want of them. That is why the order was q270 first.
+#
+# WHY IT COULD NOT HAVE SHIPPED WITH q270, which is a code fact and not a
+# preference: the lone-claim predicate needs a per-market captured-outcome count
+# in scope at the population scan, and the scan acquires one only WITH q270 —
+# `mrs_lad`, the `market_result_shape` join #5305 added for the ladder arm. On
+# q270's parent there was nothing for the shape half to read.
+CALIBRATION_POPULATION_VERSION = "q271"
 
 #: What THIS bump expects to do to the population, stated up front so the publish
 #: gate can hold it to its word (CAL-P982, #1978). ``None`` on any build that is
@@ -728,11 +754,93 @@ CALIBRATION_POPULATION_VERSION = "q270"
 #: discard the staged-futures bank for an edit that changes no SQL. It is also
 #: applied OUTSIDE the four functions ``_main_input_fingerprint`` hashes, for the
 #: same reason (see ``_run_calibration_main_build``).
-CALIBRATION_POPULATION_DECLARATION: "dict | None" = {
-    "from_version": "q269",
-    "expected_drop_pct": 12.0,
-    "tolerance_pct": 5.0,
+#:
+#: ---------------------------------------------------------------------------
+#: CAL-P1138: WHY THIS IS NOW KEYED BY BASELINE AND NOT ONE DICT.
+#:
+#: A declaration is only meaningful against the artifact it replaces — the gate
+#: enforces exactly that (``version_declaration_stale``: "a shrink measured on
+#: one build and applied to another is two unrelated moves read as one"). q271
+#: is the first bump in this file's history written while its PREDECESSOR HAS
+#: NOT PUBLISHED: q270 merged and went live on the web at 04:48Z 2026-09-13, but
+#: ``precompute_calibration_main`` is a HEAVY_TASK and ``bainluck-heavy`` had not
+#: taken the sha, so ``/calibration`` was still dark and the last PUBLISHED
+#: artifact was still q269. Whether q270 publishes before this deploy is a fact
+#: about an attended redeploy on another app, not about this code.
+#:
+#: A single dict cannot be right in both worlds, and the arithmetic says so
+#: rather than the intuition:
+#:
+#:   replacing q270  ->  q271 GROWS the population ~+0.76%  (3,046 lone-claim
+#:                       rows admitted, an upper bound: they must still clear
+#:                       every other q270 filter)
+#:   replacing q269  ->  q271 is q270's ~12.0% shrink LESS that widening, ~11.2%
+#:
+#: Those are 12pp apart. One declaration covering both needs a ±6.0 tolerance,
+#: which exceeds ``DECLARATION_MAX_TOLERANCE_PCT`` (5.0) and would be refused as
+#: malformed — and rightly, because a band that wide authorises an arbitrary
+#: change, which is the hole the declaration closes. Setting ``from_version:
+#: None`` to dodge the staleness check does not help: it skips the NAME test,
+#: not the SIZE test, so the wrong arm still overshoots by ~11pp.
+#:
+#: Guessing is the one thing that must not happen here. A wrong declaration is
+#: NOT a re-run — ``evaluate_publish`` refuses, and a refusal CLEARS THE
+#: CHECKPOINT, binning every later rebuild until another deploy. Getting this
+#: wrong would leave the page dark until someone shipped a fix, on the exact
+#: page the recount exists to repair.
+#:
+#: So both arms are stated, each measured against its own baseline, and the one
+#: that applies is selected at publish time from the baseline actually read.
+#: Nothing is averaged and nothing is guessed; the build declares the move it is
+#: actually making. ``_declaration_for_baseline`` does the selection and is
+#: applied after ``baseline_read`` in ``_run_calibration_main_build``.
+#:
+#: THE q270 ARM IS ``None`` ON PURPOSE, not by omission. +0.76% is inside the
+#: gate's ordinary ±5% population band, so that bump waives no comparative rule
+#: at all and the gate records ``version_bump_used_no_escape``. Declaring is the
+#: price of the escape, not a tax on renaming a version — there is nothing to
+#: state, and stating a number anyway would invite the size test on a move that
+#: never needed it.
+#:
+#: THE q269 ARM re-uses q270's own verified declaration less this widening:
+#: 12.0 - 0.76 = 11.24, rounded to 11.2. Its band is unchanged at ±5.0 and is
+#: sized for the same reasons as q270's (a live-table baseline measured hours
+#: before the deploy, two interacting rules). q270's realised move was
+#: independently measured at 11.88-12.68%, so this arm expects 11.12-11.92 and
+#: has ~5pp of room on either side.
+CALIBRATION_POPULATION_DECLARATIONS: "dict[str, dict | None]" = {
+    "q269": {
+        "from_version": "q269",
+        "expected_drop_pct": 11.2,
+        "tolerance_pct": 5.0,
+    },
+    "q270": None,
 }
+
+#: The arm that applies when the baseline's version is not one this bump
+#: reasoned about. ``None`` means "declare nothing", which is SAFE rather than
+#: permissive: with no declaration the gate falls back to its ordinary ±5% band
+#: and refuses anything outside it (``version_bump_undeclared``). An unforeseen
+#: baseline therefore gets the strict rule, never a borrowed number.
+CALIBRATION_POPULATION_DECLARATION_DEFAULT: "dict | None" = None
+
+
+def _declaration_for_baseline(published_version: "str | None") -> "dict | None":
+    """Pick the population declaration that matches the artifact being replaced.
+
+    ``published_version`` is the ``population_version`` of the baseline the
+    publish gate is about to compare against (``None`` on a cold start, where
+    there is no predecessor and the gate takes its first-publish path).
+
+    Returns a fresh dict so a caller cannot mutate the module constant, or
+    ``None`` for "this transition declares nothing".
+    """
+    if published_version is None:
+        return None
+    arm = CALIBRATION_POPULATION_DECLARATIONS.get(
+        published_version, CALIBRATION_POPULATION_DECLARATION_DEFAULT
+    )
+    return dict(arm) if arm is not None else None
 
 #: The predecessor versions whose PUBLISHED artifacts this build declares
 #: comparable with its own — the explicit, bounded rollover window that the
@@ -768,6 +876,27 @@ CALIBRATION_POPULATION_DECLARATION: "dict | None" = {
 #: publishing, so serving q269 under a q270 label would re-publish exactly what
 #: the bump removes. Alex accepted the dark window in terms on 2026-09-12 —
 #: "dark or stale for as long as it takes is fine".
+#:
+#: CAL-P1138 (q271) IS A GENUINELY DIFFERENT CASE, AND THE LIST STAYS EMPTY
+#: ANYWAY. Every earlier bump NARROWED: the outgoing artifact published prices
+#: the incoming method calls wrong, so serving it under the new label would
+#: re-publish exactly what the bump removed. q271 WIDENS — it admits the
+#: lone-claim pair — so a q270 artifact contains no price q271 considers wrong;
+#: it is the same method with a coverage gap. On the PURPOSE of this list (do
+#: the numbers still mean what the page says they mean?) q270 arguably clears
+#: the bar, and listing it would spare readers a second ~3.3 h dark window on a
+#: page that is dark right now.
+#:
+#: It is still not listed, for the reason written two paragraphs up: the entry
+#: bar is a PROOF OF METHODOLOGICAL IDENTITY, and q271 changes the truth
+#: allowlist, so it does not meet the bar as written. The sentence "the list is
+#: not a dial to be turned down when the dark window is inconvenient" is aimed
+#: precisely at the situation this queue is in, and a lane widening an entry bar
+#: in its own favour, on the page it is repairing, is the thing that sentence
+#: forbids. The argument for admitting a WIDENING predecessor is real and is
+#: recorded in ``docs/calibration-methodology-ledger.md`` as a question for
+#: Alex — it is a reader-visible call about what /calibration shows during a
+#: rollover, which is his, not a builder's.
 COMPATIBLE_PREVIOUS_POPULATION_VERSIONS: tuple[str, ...] = ()
 
 #: The version carried by the artifact /calibration is ACTUALLY serving — the
@@ -795,18 +924,28 @@ PREVIOUS_PUBLISHED_POPULATION_VERSION = "q269"
 #: acceptance expire on its own: bump to q270 without re-declaring and the guard
 #: in ``tests/test_calibration_result_authority_299.py`` fails closed.
 #:
-#: ACCEPTED FOR q270 BY ALEX IN TERMS, 2026-09-12 2:10PM PT, in the ruling that
+#: ACCEPTED FOR q271 BY ALEX IN TERMS, 2026-09-12 2:10PM PT, in the ruling that
 #: commissioned the recount: "metrics being fresh on that page is not important.
 #: They just need to demonstrate accuracy … then run the recount — dark or stale
-#: for as long as it takes is fine." The acceptance is not inherited from q269;
-#: it is the same cost, priced again, and granted again by name.
+#: for as long as it takes is fine." The acceptance is not inherited from q269
+#: or q270; it is the same cost, priced again, and granted again by name.
+#:
+#: CAL-P1138: WHY THAT RULING REACHES q271 AND IS NOT BEING STRETCHED. Alex
+#: commissioned ONE recount — "we have known for a while what the right way was
+#: to calculate the remaining subcohorts that are stopping us from being done;
+#: can we just do it the right way and be done?" — and q270's own ledger entry
+#: records, in writing and before this queue existed, that the recount is NOT
+#: DONE until D112 lands. q271 is the last item of the thing that was priced,
+#: not a new bump asking for the same indulgence twice. If it were fresh scope
+#: it would need its own word from Alex, and this constant is exactly the
+#: mechanism that would force that.
 #:
 #: MEASURED COST (phase ledger ``calibration:main:phase_ledger``, generation
 #: 1788326490717): ``staged:unit_ms_mean`` 91,844 ms over 128 units = ~3.3 h of
 #: build, and the plan's own ``units_per_beat`` 13 puts an UNASSISTED recovery at
 #: ceil(128/13) = 10 hourly beats. The attended one-off drain lands between the
 #: two. It is a window measured in hours, not the ~26 h first estimated.
-POPULATION_VERSION_DARK_WINDOW_ACCEPTED: str | None = "q270"
+POPULATION_VERSION_DARK_WINDOW_ACCEPTED: str | None = "q271"
 
 #: Queue 300D Item 1 — the REPRESENTATIVE TIE AUTHORITY, versioned separately
 #: from the population.
@@ -3577,6 +3716,13 @@ def _calibration_population_ctes(
             -- deliberately and must stay identical to it: the sum has to be over
             -- the rows the curve PUBLISHES, or a market's structure is judged on
             -- a population the reader never sees.
+            -- D112 (#997, CAL-P1138): STAYS SHAPE-BLIND, and that does not break
+            -- the identity above. The lone-claim arm can only admit a market with
+            -- exactly ONE captured outcome, and this CTE's only consumer
+            -- (`esports_multi_bundles`) requires `mrs.n_outcomes >= 3` — so a row
+            -- admitted by shape could never be read out of here. For every market
+            -- this sum can actually reach, the two predicates remain byte-identical.
+            -- Guarded by `test_d112_inert_cte_cardinality_floors`.
             bundle_price_sum AS (
                 SELECT fo.market_id,
                     SUM({curve_price}) AS cp_sum
@@ -3738,6 +3884,11 @@ def _calibration_population_ctes(
                   -- settlement_sync) and unknown sources fail closed. Single
                   -- source of truth = resolution_authority.
                   AND fo.resolution_source IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}
+                  -- D112 (#997, CAL-P1138): shape-blind on purpose. This CTE ends
+                  -- in `HAVING COUNT(*) >= 2` and a lone-claim market contributes
+                  -- at most one row, so the widening is unreachable here by
+                  -- construction rather than by choice. Guarded by
+                  -- `test_d112_inert_cte_cardinality_floors`.
                   -- Queue #267 (C44 #1): evidence-backed liquidity, not the volume
                   -- proxy. A never-bid/never-traded Kalshi placeholder is not a real
                   -- band member, so it must not inflate the >=2 over-subscription
@@ -3805,6 +3956,11 @@ def _calibration_population_ctes(
                   -- identical to the ranked_outcomes / golf-placeholder scans so
                   -- candidate detection matches the published population.
                   AND fo.resolution_source IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}
+                  -- D112 (#997, CAL-P1138): shape-blind on purpose, and the stated
+                  -- identity survives. This CTE needs `HAVING COUNT(*) >= 3`, so a
+                  -- one-outcome market can never qualify; for every market it CAN
+                  -- see, this predicate and `ranked_outcomes`' are byte-identical.
+                  -- Guarded by `test_d112_inert_cte_cardinality_floors`.
                   -- Queue #267 (C44 #1): the field ROSTER counts evidence-bearing
                   -- members only (matching the is_liquid survivor gate), so a
                   -- bid-bearing volume=0 member is part of the partition and a
@@ -3830,6 +3986,11 @@ def _calibration_population_ctes(
                 WHERE fo.opening_probability IS NOT NULL
                   AND fo.opening_probability > 0 AND fo.opening_probability < 1
                   AND fo.resolution_source IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}
+                  -- D112 (#997, CAL-P1138): shape-blind on purpose. The divisor
+                  -- reads only markets that already cleared `mex_field_candidates`
+                  -- (>= 3 members), so a lone-claim market cannot reach it and the
+                  -- divisor still sums exactly the roster the curve publishes.
+                  -- Guarded by `test_d112_inert_cte_cardinality_floors`.
                   -- Queue #267 (C44 #1): the divisor sums the SAME evidence-bearing
                   -- roster as mex_field_candidates / the is_liquid survivors, so for
                   -- a COMPLETE field the divisor equals the survivor sum and the
@@ -4264,7 +4425,17 @@ def _calibration_population_ctes(
                   -- resolution_authority contract: price-derived (clean_resolution
                   -- / settlement_sync) can no longer grade its own forecast, all
                   -- guess-family is excluded, and unknown sources fail closed.
-                  AND fo.resolution_source IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}
+                  --
+                  -- D112 (#997, CAL-P1138): eligibility is source x MARKET SHAPE
+                  -- here, and this is the site the widening exists for -- the
+                  -- published population. ``mrs_lad.n_outcomes`` is the shape join
+                  -- #5305 added for the ladder arm; at exactly one captured outcome
+                  -- no sibling's price can be grading the row, so the venue's own
+                  -- ``all_losers``/``clean_resolution`` answer is independent truth
+                  -- rather than C20/C21 self-grading. The join is LEFT, so a market
+                  -- with no shape row yields NULL, fails ``= 1`` and keeps its
+                  -- previous answer: the shape can only widen, never narrow.
+                  AND {calibration_truth_eligible_sql(n_outcomes_col='mrs_lad.n_outcomes')}
                   -- Queue #267 (C44 #1): NO standalone volume gate here. The Kalshi
                   -- evidence predicate (is_liquid = KALSHI_LIQUIDITY_EXISTS) is
                   -- computed as a per-outcome flag above and filtered in ``deduped``
@@ -4590,9 +4761,21 @@ _COVERAGE_RUNG_PREDICATES: tuple[tuple[str, str], ...] = (
     ("plotted_on_curve", "d.outcome_id IS NOT NULL"),
     ("market_result_unavailable", "mi.market_id IS NULL"),
     ("truth_source_missing", "cu.resolution_source IS NULL"),
+    # D112 (#997, CAL-P1138): THE NEGATION. This is the one rung that states
+    # eligibility backwards, so it is the one a widening sweep silently leaves
+    # lying: widen the population scan without this and the bridge tells a
+    # reader that a row the curve now GRADES has an ineligible truth source.
+    # Rendered by the same helper as the population scan (never hand-written
+    # twice) and read through ``mrs_cov`` — the shape join added to
+    # ``coverage_bridge`` for exactly this rung. NULL-safety is the helper's,
+    # and it is load-bearing here rather than merely tidy: see its docstring.
     (
         "truth_ineligible_source",
-        f"cu.resolution_source NOT IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}",
+        "NOT "
+        + calibration_truth_eligible_sql(
+            source_col="cu.resolution_source",
+            n_outcomes_col="mrs_cov.n_outcomes",
+        ),
     ),
     ("question_ungraded", "n.outcome_id IS NULL"),
     (
@@ -4780,6 +4963,17 @@ def _coverage_bridge_ctes(*, frozen: bool = False, roster_predicate: str = "") -
                 LEFT JOIN market_info mi ON mi.market_id = cu.market_id
                 LEFT JOIN normalized n ON n.outcome_id = cu.outcome_id
                 LEFT JOIN deduped d ON d.outcome_id = cu.outcome_id
+                -- D112 (#997, CAL-P1138): market shape for the
+                -- ``truth_ineligible_source`` rung, so the bridge's negation
+                -- reads the same eligibility the population scan applies.
+                -- LEFT and one-row-per-market, for ruling 125's reason: a join
+                -- added to supply a new column must not be able to change which
+                -- rows the relation carries. ``market_result_shape`` groups by
+                -- market_id (plus two per-market columns), so it cannot
+                -- multiply; LEFT so a market without a shape row keeps its row
+                -- here instead of vanishing from the coverage total.
+                LEFT JOIN market_result_shape mrs_cov
+                    ON mrs_cov.market_id = cu.market_id
             ),
             coverage_bridge_summary AS (
                 SELECT
@@ -7231,8 +7425,29 @@ def _build_truth_evidence(
             "A source may grade a published forecast only if its winner is "
             "established INDEPENDENTLY of the market's own price (venue/API "
             "settlement or deterministic public-data). Price-derived truth "
-            "(clean_resolution / settlement_sync) is excluded — Queue #261."
+            "(clean_resolution / settlement_sync) is excluded — Queue #261 — "
+            "EXCEPT on a lone-claim market (exactly one captured outcome), "
+            "where no sibling's price can be grading the row and the venue's "
+            "own answer is therefore independent (D112, #997)."
         ),
+        # D112 (#997, CAL-P1138): WHAT THIS COUNT IS, now that the two can
+        # differ. ``by_class`` and ``price_derived_excluded`` are a census BY
+        # SOURCE, taken over the census's own documented shape (resolved +
+        # opening-in-(0,1), deliberately pre-liquidity and pre-roster — see the
+        # Queue #267 note on the statement). The published population is
+        # source x SHAPE and is filtered further downstream, so this number has
+        # never equalled the curve's exclusions and does not now. What changed
+        # is that it is no longer even an upper bound described as "excluded":
+        # a subset of these price-derived rows — the lone-claim ones — IS
+        # published. It is NOT re-derived here with a shape join: the only
+        # honest per-market outcome count is the population scan's
+        # ``market_result_shape`` (same roster predicate), and re-deriving it in
+        # this differently-scoped statement would invent a second definition of
+        # "lone claim" AND put an unbounded per-market aggregate into a phase
+        # that is already D22-SOFT and gets cancelled (measured 2026-09-13: that
+        # aggregate does not complete inside a 10 s budget on production).
+        # So the label is made honest instead of the number being made wrong.
+        # Guarded by `test_d112_truth_evidence_rule_states_the_shape_exception`.
         "by_class": truth_by_class,
         "price_derived_excluded": price_derived,
         "unknown_sources": unknown,
@@ -7903,23 +8118,43 @@ async def _run_calibration_main_build(runner=None):
     # staged-futures bank — a ~2.5h rebuild spent on publish metadata that
     # changes no SQL and moves no row. Guarded by
     # `test_the_ledger_rider_did_not_move_the_build_input_fingerprint`.
-    if CALIBRATION_POPULATION_DECLARATION is not None and isinstance(response, dict):
-        from app.utils.calibration_publish_gate import DECLARATION_FIELD
-
-        response[DECLARATION_FIELD] = dict(CALIBRATION_POPULATION_DECLARATION)
+    #
+    # CAL-P1138: the STAMP MOVED DOWN, to just after `baseline_read`. It still
+    # happens in this function, still before `json.dumps`, and still outside the
+    # fingerprinted functions — all three reasons above are untouched. What
+    # changed is that q271 has two declaration arms and the one that applies
+    # depends on which artifact is actually being replaced, which is not known
+    # until the baseline has been read. See `CALIBRATION_POPULATION_DECLARATIONS`.
 
     # PHASE 4 (serialize_gate_publish). Deliberately NOT resumable: it consumes
     # every other phase's output and must run against the run that publishes.
     runner.begin(PHASE_PUBLISH)
 
-    t1 = time.monotonic()
-    with runner.stage("serialize"):
-        payload_json = json.dumps(response)
-    serialize_ms = round((time.monotonic() - t1) * 1000)
-    payload_bytes = len(payload_json)
-
     with runner.stage("redis_client"):
         rc = get_redis_client()
+
+    # Queue 300M Item 0: THIS is the stretch r343's arithmetic could not see.
+    # Its last success ran 1,502.5s total against compute_ms=534.9s,
+    # serialize_ms=6 and publish_ms=113 — leaving 967.5s (64% of the whole
+    # window) in code that no timer covered, of which this baseline read and
+    # gate are the only substantial part. The baseline read pulls up to two
+    # ~376KB Redis values and `json.loads` each (a C-level decode that holds
+    # the GIL for its whole duration — gotcha #38), then the gate builds a
+    # census over BOTH payloads. Timed separately from here on, so the next
+    # organic beat attributes those 967s instead of leaving them a mystery.
+    #
+    # CAL-P1138: THE BASELINE READ AND `serialize` SWAPPED PLACES, and the
+    # ordering is forced by two rules that used to be satisfiable in any order.
+    # q271 ships a declaration ARM PER BASELINE, so (a) the arm cannot be chosen
+    # before the baseline is resolved, and (b) the chosen arm must be in the
+    # BYTES that publish, not only in what the gate saw — `json.dumps(response)`
+    # is what freezes those bytes, and
+    # `test_the_declaration_is_stamped_before_the_payload_is_serialised` exists
+    # because a declaration judged but not published is a number on the page
+    # whose justification is nowhere. Serialising last satisfies both, and is
+    # the stronger form anyway: what publishes is exactly what was judged.
+    with runner.stage("baseline_read"):
+        baseline = _read_published_baseline(rc)
 
     # Queue 297 Item 3: the ATOMIC PUBLISH GATE. Everything above built a
     # *candidate*; nothing published yet. Compare it against the currently
@@ -7931,19 +8166,25 @@ async def _run_calibration_main_build(runner=None):
     # touches neither key, so the last published snapshot keeps serving.
     from app.utils.calibration_publish_gate import evaluate_publish, gate_ledger_record
 
-    # Queue 300M Item 0: THIS is the stretch r343's arithmetic could not see.
-    # Its last success ran 1,502.5s total against compute_ms=534.9s,
-    # serialize_ms=6 and publish_ms=113 — leaving 967.5s (64% of the whole
-    # window) in code that no timer covered, of which this baseline read and
-    # gate are the only substantial part. The baseline read pulls up to two
-    # ~376KB Redis values and `json.loads` each (a C-level decode that holds
-    # the GIL for its whole duration — gotcha #38), then the gate builds a
-    # census over BOTH payloads. Timed separately from here on, so the next
-    # organic beat attributes those 967s instead of leaving them a mystery.
-    with runner.stage("baseline_read"):
-        baseline = _read_published_baseline(rc)
     with runner.stage("publish_gate"):
-        verdict = evaluate_publish(response, baseline)
+        # CAL-P1138: the declaration is chosen BY the gate, from the baseline it
+        # actually resolved. `_declaration_for_baseline` is a pure lookup over
+        # `CALIBRATION_POPULATION_DECLARATIONS`; the gate calls it only on a
+        # bumped build that carries no pre-stamped declaration, and writes the
+        # chosen arm back into `response` so the bytes serialised below carry
+        # the statement the candidate was admitted on.
+        verdict = evaluate_publish(
+            response,
+            baseline,
+            declaration_for_baseline=_declaration_for_baseline,
+        )
+
+    t1 = time.monotonic()
+    with runner.stage("serialize"):
+        payload_json = json.dumps(response)
+    serialize_ms = round((time.monotonic() - t1) * 1000)
+    payload_bytes = len(payload_json)
+
     gate = {
         "ok": verdict.ok,
         "first_publish": verdict.first_publish,

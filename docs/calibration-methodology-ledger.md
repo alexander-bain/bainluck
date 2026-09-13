@@ -9,7 +9,7 @@ Two ids, and they are independent:
 
 | id | what it versions | where it lives |
 |---|---|---|
-| `population_version` (`q270`) | **which rows** are scored | `precompute_calibration.py` |
+| `population_version` (`q271`) | **which rows** are scored | `precompute_calibration.py` |
 | `SCORING_POLICY_VERSION` (`m1`) | **how a cell is judged** — bars, `MIN_CELL_N`, `SIGMA_GATE` | `calibration_scoring.py` |
 
 Entries that CHANGED a published number are in `CALIBRATION_CORRECTIONS`, served on
@@ -132,6 +132,89 @@ What is genuinely open is the floor's **value**, not its quantity, and that is n
 ruling to make: 1,000 follows `min_category_outcomes`, which is tunable at runtime through the Redis
 key `calibration:min_category_outcomes` with no deploy. Move the page's disclosure floor and the
 score follows it by construction.
+
+---
+
+## q271 — D112, the symmetric settlement channels (2026-09-13)
+
+**This is the item q270's own entry said the recount was not done without.** Nothing new was added to
+the scope; this is the last of the five things Alex named on 2026-09-12, and with it the "one
+recount" is complete on the method side.
+
+### Applied
+
+**D112 — lone-claim settlement is independent truth (#997).** A market with exactly ONE captured
+outcome — a single Yes/No question — has no sibling whose price could be grading it, so its
+`all_losers` / `clean_resolution` settlement is the venue's own answer rather than the market's price
+grading its own forecast. The pair is admitted together or not at all, and the reason is measured
+rather than aesthetic: `all_losers` alone realises 617/2,097 = **29.4%** against a ~50% forecast,
+which is a censored sample (every row it admits was pre-selected to be a loss), while both channels
+together realise 1,566/3,046 = **51.4%**. At two or more outcomes a sibling's price does grade the
+row, the leakage is real again, and nothing changes.
+
+**This is the first population bump in the series that WIDENS.** q269 and q270 both removed rows the
+new method called wrong. q271 removes nothing — it admits ~3,046 rows (an upper bound; they must
+still clear every other filter) that the previous curve was simply narrower for. That direction is
+why q270 could publish honestly without it: their absence was a coverage gap, never a wrong number.
+
+### Two things this queue found that change what the q270 entry said
+
+**1. The wiring is seven sites, not eight — and four of the five "population CTEs" must NOT be
+widened.** The q270 entry named "five population CTEs, the Query-11 truth census, and the
+coverage-bridge rung". Measured against the rendered SQL, four of those five cannot see a one-outcome
+market at all: `bundle_price_sum`'s only consumer requires `n_outcomes >= 3`, `golf_placeholder_markets`
+ends in `HAVING COUNT(*) >= 2`, `mex_field_candidates` in `HAVING COUNT(*) >= 3`, and
+`mex_field_divisor` reads only markets that cleared the candidates. A lone claim contributes at most
+one row, so every one of those floors excludes it by construction. Widening them would have meant
+adding shape joins to aggregating CTEs — ruling 125's hazard — for exactly zero published rows. They
+stay shape-blind, the floors are now asserted
+(`test_d112_inert_cte_cardinality_floors`), and the stated identity with `ranked_outcomes` still
+holds where it is load-bearing: for every market those scans can actually see, the two predicates are
+byte-identical. There was also an EIGHTH site the q270 entry did not count — the cross-venue
+fair-fight scan — which is a separate surface over a different population with no shape column in
+scope, and is left alone deliberately.
+
+**2. The renderer was not safe to negate, which is the defect the negation site existed to find.**
+The q270 entry correctly flagged `truth_ineligible_source` as "the one a careless sweep would miss"
+because it is a `NOT IN`. Wiring it found something worse than an omission: the substrate's rendered
+predicate used a bare `n_outcomes = 1`, and the shape column arrives through a LEFT JOIN, so for a
+market with no shape row the expression is NULL — and `NOT NULL` is NULL, not TRUE. An
+ineligible-source row would have stopped satisfying its own rung and fallen through to be
+mislabelled as something else. The shape term is now `COALESCE(n, 0) = 1`, which leaves every
+positive call site answering exactly as before (a `WHERE` cannot tell NULL from FALSE) and makes the
+negative one correct.
+
+### Declared, and why the declaration has two arms
+
+q271 is the first bump written while its own predecessor had not published: q270 merged and went live
+on the web at 04:48Z on 2026-09-13, but the producer is a heavy task and the heavy app had not taken
+the commit, so `/calibration` was dark and the last published artifact was still `q269`. Which
+artifact q271 replaces is therefore a fact about an attended redeploy, not about this code.
+
+The two transitions are ~12pp apart — replacing `q270` the population GROWS ~0.76%; replacing `q269`
+it is q270's ~12% shrink less that widening, ~11.2%. No single declaration covers both: one band
+spanning them needs ±6.0, past the 5.0 maximum, and a band that wide authorises an arbitrary change,
+which is the hole the declaration exists to close. So both arms are stated, each measured against its
+own baseline, and the publish gate selects the one matching the artifact it actually resolved.
+Nothing is averaged and nothing is guessed. This matters more than its size suggests: a wrong
+declaration is not a re-run — the gate refuses, and a refusal CLEARS THE CHECKPOINT, binning every
+later rebuild until another deploy, on the very page the recount exists to repair.
+
+### Open for Alex — one reader-visible call this queue declined to make itself
+
+`COMPATIBLE_PREVIOUS_POPULATION_VERSIONS` is empty again, so `/calibration` goes dark for a second
+rebuild (~3.3 h) while q271 builds. **It arguably need not.** That list exists to stop the page
+serving an artifact whose numbers mean something other than what the page says. For q269 and q270
+the outgoing artifact really did publish prices the incoming method calls wrong. A q270 artifact
+holds no price q271 calls wrong — q271 only adds rows — so serving it dated, degraded and read-only
+during the rollover would mislead nobody.
+
+It is not listed anyway, because the list's stated entry bar is a proof of *methodological identity*
+and q271 changes the truth allowlist, and because the constant's own docstring says it "is not a dial
+to be turned down when the dark window is inconvenient" — which is precisely the situation this queue
+is in. A lane widening an entry bar in its own favour, on the page it is repairing, is what that
+sentence forbids. **The question for Alex is whether a WIDENING predecessor should be admitted to
+that list as a class**, which would mean no dark window on any future bump that only adds rows.
 
 ---
 

@@ -563,7 +563,19 @@ final class CalibrationViewModel: ObservableObject {
     //
     // The on-device warning above applies unchanged: builds already shipped
     // carry the old set and read q270 as `.incompatible` until updated.
-    static let compatiblePopulationVersions: Set<String> = ["q267", "q268", "q269", "q270", "q1530"]
+    //
+    // CAL-P1138 2026-09-13: "q271" added (#997, D112) — the recount's last
+    // method item. It is the first bump in this set that WIDENS rather than
+    // narrows: it admits the lone-claim settlement pair and removes nothing, so
+    // unlike q269 and q270 it introduces no exclusion class at all. Native
+    // renders no exclusions list and decodes no filter block, so — as with
+    // q270 — the only thing this surface needs is the version token. No label
+    // here names a population rule, and no cell changes identity.
+    //
+    // The on-device warning bites here too and is the reason this entry ships
+    // with the backend rather than after it: a build already on a phone carries
+    // the old set and will read q271 as `.incompatible` until it is updated.
+    static let compatiblePopulationVersions: Set<String> = ["q267", "q268", "q269", "q270", "q271", "q1530"]
 
     var populationVersion: String? { data?.populationVersion }
 

@@ -243,7 +243,19 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         uncovered for the same reason; this one is not a new hole in the
         unguarded surface so much as the same hole, one sentence wider.
         """
-        assert artifact["input_count"] == 68
+        # CAL-P1138 (q271, D112 #997): 68 -> 69. The new input is
+        # `calibration_truth_eligible_sql`, the renderer that writes the
+        # eligibility allowlist and the lone-claim shape test as ONE
+        # parenthesised unit. It appears because `_calibration_population_ctes`
+        # now calls it instead of interpolating the bare allowlist constant —
+        # which is the point of the helper: a call site cannot take the
+        # lone-claim pair while forgetting the `= 1` that confines it to markets
+        # where no sibling price can be grading the row.
+        #
+        # It arrives UNCOVERED, like the three eligibility names already in this
+        # census, and that is the same hole rather than a new one — see the
+        # cross-module test below, where it is named.
+        assert artifact["input_count"] == 69
         # CAL-P162: 4 -> 5. `MEX_NORMALIZE_THRESHOLD` joined the by-value set on
         # the deploy that made it decide PUBLICATION rather than only pricing.
         # CAL-P164 added no by-value input, so this stands still.
@@ -259,7 +271,14 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         assert len(artifact["covered_by_value"]) == 13
         # CAL-P1121 (#5401): 54 -> 55, the prose disclosure string. See the
         # docstring — covered_by_value deliberately does NOT move with it.
-        assert artifact["uncovered_count"] == 55
+        # CAL-P1138 (q271, D112 #997): 55 -> 56, `calibration_truth_eligible_sql`.
+        # Unlike the two entries above it this one is a PREDICATE, so the
+        # unguarded surface really did grow by one — said plainly rather than
+        # folded into the prose exemption those two earned. The growth is a call
+        # to a renderer for a constant already on this list, not a second source
+        # of truth; the reasoning and the measured limits are at the cross-module
+        # test below, which is where the name is tracked.
+        assert artifact["uncovered_count"] == 56
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -379,7 +398,18 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         an incidental choice — so choosing the other style is not hiding a name
         from a tripwire, it is not putting a non-input in front of one.
         """
-        assert artifact["uncovered_sql_shaping"] == 22
+        # CAL-P1138 (q271, D112 #997): 22 -> 23, and this one IS a predicate,
+        # not prose — so it is counted without argument. `calibration_truth_
+        # eligible_sql` renders part of the WHERE clause that decides which rows
+        # publish, which is exactly the category the precedent above says must
+        # be visible here. What makes it tolerable rather than a regression is
+        # that it replaces a bare interpolation of
+        # `CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL` — already in this count, from
+        # the same module, with the same exposure — so the unguarded surface
+        # gains a function that renders a constant already on the list, not a
+        # new source of truth. The honest summary is the one used for the
+        # `*_RULE_TEXT` siblings: the same hole, one call wider.
+        assert artifact["uncovered_sql_shaping"] == 23
 
     def test_the_five_hashed_roots_are_derived_not_declared_here(self, artifact):
         # D119 / CAL-P1090 added the fifth: `_roster_pushdown_predicates`, the
@@ -474,6 +504,7 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
             "PRICE_DERIVED_SOURCES_SQL",
             "_COVERAGE_RUNG_KEYS",
             "_build_coverage_census",
+            "calibration_truth_eligible_sql",
         ]
         # The cross-module tier carries a definition digest precisely so that a
         # change to a constant this module does not own still moves the
@@ -483,6 +514,41 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         )
         assert pair_tolerance["definition_sha16"]
         assert pair_tolerance["origin"].startswith("app.utils.pair_opening_coherence")
+
+        # 🔴 CAL-P1138 MAKES IT SEVEN (q271, D112 #997):
+        # `calibration_truth_eligible_sql`, the renderer that emits the
+        # eligibility allowlist and the lone-claim shape test as one unit.
+        #
+        # It is a WEAKER member than PAIR_SUM_TOLERANCE, and the difference is
+        # worth stating rather than letting the list imply parity. That constant
+        # is at least hashed by value in `_main_input_fingerprint`
+        # (`player_props_pair_tolerance=`), so a change to it still invalidates
+        # every banked unit and the detector simply cannot credit the coverage.
+        # Measured here rather than assumed: NOTHING in the truth-eligibility
+        # family is hashed by value — not this function and not the three
+        # constants above it. So an edit to `LONE_CLAIM_TRUTH_ELIGIBLE_SOURCES`
+        # in `resolution_authority` really would change which rows publish while
+        # a carried cursor stayed resumable, and a 128-unit bank could be
+        # finished by code that disagrees with the units already in it.
+        #
+        # That exposure is NOT new — `CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL`
+        # has carried it since it was created, and q271 routes through the same
+        # module rather than adding a second source of truth. It is left as-is
+        # deliberately, in launch week, rather than widening the fingerprint
+        # contract in the same change as a population bump; the definition
+        # digest below is the tripwire that keeps it a tracked hole rather than
+        # a silent one.
+        renderer = next(
+            r
+            for r in artifact["inputs"]
+            if r["name"] == "calibration_truth_eligible_sql"
+        )
+        assert renderer["definition_sha16"], (
+            "the D112 renderer carries no definition digest, so a change to the "
+            "lone-claim predicate in another module would move no artifact here"
+        )
+        assert renderer["origin"].startswith("app.utils.resolution_authority")
+        assert renderer["impact"] == "sql_shaping"
         # 48 -> 49 at CAL-P1121: KALSHI_WRITER_BAR_RULE_TEXT is same-module
         # prose, so it lands in the non-cross tier and the cross list is
         # unchanged -- which is the property this line is really pinning.

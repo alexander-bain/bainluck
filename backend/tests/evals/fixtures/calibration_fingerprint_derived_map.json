@@ -21,7 +21,7 @@
     "_virtual_market_ctes",
     "compute_calibration_payload"
   ],
-  "input_count": 68,
+  "input_count": 69,
   "inputs": [
     {
       "covered_by_value": false,
@@ -804,12 +804,23 @@
       "used_in": [
         "_coverage_census_or_disabled"
       ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": "2fb697d83204f6c7",
+      "impact": "sql_shaping",
+      "name": "calibration_truth_eligible_sql",
+      "origin": "app.utils.resolution_authority:calibration_truth_eligible_sql",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes"
+      ]
     }
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "4ce3bb4014b21dc5ef7f6cd0c4e700fdda6b4abbea7fb7cda9e0a2dc322f14b3",
+  "source_sha256": "4948082d62b806f1641fc5b112e1b78d6844243ee8ece161c0eaa0987bf95f18",
   "uncovered_behavior_or_evidence": 33,
-  "uncovered_count": 55,
-  "uncovered_sql_shaping": 22
+  "uncovered_count": 56,
+  "uncovered_sql_shaping": 23
 }

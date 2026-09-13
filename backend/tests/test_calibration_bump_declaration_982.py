@@ -60,6 +60,13 @@ Q269_DROP_PCT = 21.66
 Q269_PUBLISHED = 798_292
 Q270_REMOVED = 95_832
 Q270_CANDIDATE = Q269_PUBLISHED - Q270_REMOVED
+# CAL-P1138: q271 (D112) WIDENS — the first bump in this file's history that
+# does. It admits the lone-claim pair, measured at 3,046 rows (an upper bound:
+# they must still clear every other q271 filter), so the q269 -> q271 move is
+# q270's shrink LESS that widening. This is the candidate the shipped q269 arm
+# has to admit.
+Q271_ADMITTED = 3_046
+Q271_CANDIDATE = Q270_CANDIDATE + Q271_ADMITTED
 
 
 def declared(
@@ -399,10 +406,19 @@ def test_the_producer_declares_the_bump_it_is_currently_shipping():
     """
     import app.tasks.precompute_calibration as pc
 
-    declaration = pc.CALIBRATION_POPULATION_DECLARATION
+    # CAL-P1138: the producer now ships an ARM PER BASELINE (q271 was written
+    # while its own predecessor q270 had merged but not yet published, so which
+    # artifact it replaces is not knowable at edit time). The bound this test
+    # defends is unchanged — it just has to hold for the arm that will actually
+    # be stamped. The one that matters is the LAST PUBLISHED version: if that
+    # transition declares nothing while moving past the ordinary band, every
+    # rebuild is refused forever, which is the trap this test exists for.
+    declaration = pc._declaration_for_baseline(
+        pc.PREVIOUS_PUBLISHED_POPULATION_VERSION
+    )
     assert declaration is not None, (
-        "the shipped build bumps the population version, so it must declare the "
-        "move it expects"
+        "the shipped build bumps the population version away from the artifact "
+        "that is actually published, so it must declare the move it expects"
     )
     # It has to be a declaration the GATE accepts, not merely a dict.
     from app.utils.calibration_publish_gate import _read_declaration
@@ -437,9 +453,11 @@ def test_the_shipped_declaration_admits_the_measured_rebuild():
 
     verdict = evaluate_publish(
         candidate(
-            outcomes=Q270_CANDIDATE,
+            outcomes=Q271_CANDIDATE,
             version=pc.CALIBRATION_POPULATION_VERSION,
-            declaration=dict(pc.CALIBRATION_POPULATION_DECLARATION),
+            declaration=pc._declaration_for_baseline(
+                pc.PREVIOUS_PUBLISHED_POPULATION_VERSION
+            ),
         ),
         published(
             outcomes=Q269_PUBLISHED,
@@ -464,7 +482,9 @@ def test_the_shipped_declaration_still_refuses_a_move_it_did_not_declare():
         candidate(
             outcomes=Q269_PUBLISHED - (Q270_REMOVED * 2),
             version=pc.CALIBRATION_POPULATION_VERSION,
-            declaration=dict(pc.CALIBRATION_POPULATION_DECLARATION),
+            declaration=pc._declaration_for_baseline(
+                pc.PREVIOUS_PUBLISHED_POPULATION_VERSION
+            ),
         ),
         published(
             outcomes=Q269_PUBLISHED,
@@ -488,7 +508,11 @@ def test_the_declaration_is_stamped_before_the_payload_is_serialised():
     import app.tasks.precompute_calibration as pc
 
     source = inspect.getsource(pc._run_calibration_main_build)
-    stamp = source.index("CALIBRATION_POPULATION_DECLARATION")
+    # CAL-P1138: the stamp is now the call that SELECTS the arm. It moved down,
+    # to just after `baseline_read` (the arm depends on which artifact is being
+    # replaced, which the build does not know until it has read one) — but it
+    # still has to land before serialisation, which is the whole of this test.
+    stamp = source.index("_declaration_for_baseline")
     serialise = source.index("payload_json = json.dumps(response)")
 
     assert stamp < serialise, (
@@ -571,3 +595,205 @@ def test_control_a_first_publish_is_still_granted_on_a_proved_cold_start():
 
     assert verdict.ok, verdict.summary()
     assert verdict.first_publish
+
+
+# ---------------------------------------------------------------------------
+# CAL-P1138: LATE-BOUND DECLARATIONS — an arm per baseline, chosen by the gate.
+# ---------------------------------------------------------------------------
+
+
+class TestTheDeclarationArmMatchesTheBaselineBeingReplaced:
+    """q271 was written while its own predecessor had not published.
+
+    q270 merged and went live on the web at 04:48Z 2026-09-13, but the producer
+    is a HEAVY_TASK and `bainluck-heavy` had not taken the sha, so /calibration
+    was still dark and the last PUBLISHED artifact was still q269. Whether q271
+    replaces q269 or q270 is therefore a fact about an attended redeploy on
+    another app, decided after this code was written.
+
+    The two transitions are ~12pp apart (q271 GROWS ~0.76% over q270; it is
+    q270's ~12% shrink less that widening over q269), so no single declaration
+    covers both: one band spanning them needs +/-6.0, past
+    DECLARATION_MAX_TOLERANCE_PCT. And guessing is the expensive way to be
+    wrong — a mis-declaration is refused, and a refusal CLEARS THE CHECKPOINT,
+    binning every later rebuild until another deploy.
+    """
+
+    def test_replacing_the_version_that_is_actually_published_is_admitted(self):
+        import app.tasks.precompute_calibration as pc
+
+        verdict = evaluate_publish(
+            candidate(
+                outcomes=Q271_CANDIDATE,
+                version=pc.CALIBRATION_POPULATION_VERSION,
+                declaration=None,
+            ),
+            published(outcomes=Q269_PUBLISHED, version="q269"),
+            declaration_for_baseline=pc._declaration_for_baseline,
+        )
+
+        assert verdict.ok, verdict.summary()
+        assert "version_bump_within_declaration" in verdict.observation_codes
+
+    def test_replacing_q270_needs_no_declaration_and_is_still_admitted(self):
+        """The widening is inside the gate's ordinary band, so it waives nothing.
+
+        This is the arm that is deliberately ``None``. Declaring is the price of
+        the escape, not a tax on renaming a version — and stating a number here
+        would invite the size test on a move that never needed it.
+        """
+        import app.tasks.precompute_calibration as pc
+
+        q270_published = Q270_CANDIDATE
+        verdict = evaluate_publish(
+            candidate(
+                outcomes=q270_published + Q271_ADMITTED,
+                version=pc.CALIBRATION_POPULATION_VERSION,
+                declaration=None,
+            ),
+            published(outcomes=q270_published, version="q270"),
+            declaration_for_baseline=pc._declaration_for_baseline,
+        )
+
+        assert verdict.ok, verdict.summary()
+        assert "version_bump_used_no_escape" in verdict.observation_codes
+
+    def test_the_wrong_arm_would_have_been_refused(self):
+        """The pairing that makes the two tests above mean something.
+
+        If either arm could publish against the other's baseline, the whole
+        mechanism is decoration — one constant would have done. Here the q269
+        arm is applied to a q270 baseline explicitly, which is what a single
+        hard-coded declaration would have done on the day q270 published.
+        """
+        import app.tasks.precompute_calibration as pc
+
+        q269_arm = pc._declaration_for_baseline("q269")
+        assert q269_arm is not None
+
+        q270_published = Q270_CANDIDATE
+        verdict = evaluate_publish(
+            candidate(
+                outcomes=q270_published + Q271_ADMITTED,
+                version=pc.CALIBRATION_POPULATION_VERSION,
+                declaration=q269_arm,
+            ),
+            published(outcomes=q270_published, version="q270"),
+        )
+
+        assert not verdict.ok, verdict.summary()
+        assert "version_declaration_stale" in verdict.codes
+
+    def test_an_unforeseen_baseline_gets_the_strict_rule_not_a_borrowed_number(self):
+        """Fail to the strict side.
+
+        A baseline this bump never reasoned about must not inherit whichever arm
+        happens to be lying around — that is the "shrink measured on one build
+        applied to another" failure the gate names. With no arm the ordinary
+        +/-5% band applies, so a large move is refused BY NAME rather than waved
+        through on someone else's measurement.
+        """
+        import app.tasks.precompute_calibration as pc
+
+        assert pc._declaration_for_baseline("q999") is None
+        assert pc._declaration_for_baseline(None) is None
+
+        verdict = evaluate_publish(
+            candidate(
+                outcomes=Q271_CANDIDATE,
+                version=pc.CALIBRATION_POPULATION_VERSION,
+                declaration=None,
+            ),
+            published(outcomes=Q269_PUBLISHED, version="q999"),
+            declaration_for_baseline=pc._declaration_for_baseline,
+        )
+
+        assert not verdict.ok, verdict.summary()
+        assert "version_bump_undeclared" in verdict.codes
+
+    def test_a_pre_stamped_declaration_is_never_overridden(self):
+        """Every existing single-declaration build behaves exactly as before.
+
+        The resolver is consulted ONLY when the candidate carries no declaration
+        of its own. A caller that knows its own transition keeps deciding it.
+        """
+        import app.tasks.precompute_calibration as pc
+
+        sentinel_calls = []
+
+        def _resolver(version):
+            sentinel_calls.append(version)
+            return {"from_version": version, "expected_drop_pct": 0.0, "tolerance_pct": 1.0}
+
+        evaluate_publish(
+            candidate(
+                outcomes=Q271_CANDIDATE,
+                version=pc.CALIBRATION_POPULATION_VERSION,
+                declaration=pc._declaration_for_baseline("q269"),
+            ),
+            published(outcomes=Q269_PUBLISHED, version="q269"),
+            declaration_for_baseline=_resolver,
+        )
+
+        assert sentinel_calls == [], (
+            "the resolver was consulted on a candidate that already declared its "
+            "own move — a pre-stamped declaration must win"
+        )
+
+    def test_the_chosen_arm_lands_in_the_payload_that_publishes(self):
+        """A declaration judged but not published is a number with no warrant.
+
+        The gate writes the arm it used back into the candidate payload, and the
+        producer serialises AFTER the gate for exactly this reason. Without it
+        the page would carry a version bump whose stated expectation exists
+        nowhere in the artifact.
+        """
+        import app.tasks.precompute_calibration as pc
+        from app.utils.calibration_publish_gate import DECLARATION_FIELD
+
+        payload = candidate(
+            outcomes=Q271_CANDIDATE,
+            version=pc.CALIBRATION_POPULATION_VERSION,
+            declaration=None,
+        )
+        assert payload.get(DECLARATION_FIELD) is None
+
+        evaluate_publish(
+            payload,
+            published(outcomes=Q269_PUBLISHED, version="q269"),
+            declaration_for_baseline=pc._declaration_for_baseline,
+        )
+
+        assert payload[DECLARATION_FIELD] == pc._declaration_for_baseline("q269")
+
+    def test_the_resolver_returns_a_copy_so_the_constant_cannot_be_mutated(self):
+        """The arms are module constants shared by every beat in the process."""
+        import app.tasks.precompute_calibration as pc
+
+        first = pc._declaration_for_baseline("q269")
+        first["expected_drop_pct"] = 99.0
+        assert pc._declaration_for_baseline("q269")["expected_drop_pct"] != 99.0
+
+    def test_a_raising_resolver_costs_a_publish_and_never_buys_one(self):
+        """Best-effort must mean strict, not permissive."""
+        import app.tasks.precompute_calibration as pc
+
+        def _boom(_version):
+            raise RuntimeError("durable store unreadable")
+
+        verdict = evaluate_publish(
+            candidate(
+                outcomes=Q271_CANDIDATE,
+                version=pc.CALIBRATION_POPULATION_VERSION,
+                declaration=None,
+            ),
+            published(outcomes=Q269_PUBLISHED, version="q269"),
+            declaration_for_baseline=_boom,
+        )
+
+        assert not verdict.ok
+        assert "version_bump_undeclared" in verdict.codes
+        # And it is NAMED, not swallowed: "the resolver broke" and "this bump
+        # had nothing to declare" reach the same verdict and are different
+        # findings, so the run evidence has to tell them apart.
+        assert "version_declaration_resolver_failed" in verdict.observation_codes
