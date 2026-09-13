@@ -527,6 +527,66 @@ def _terminal_evidence_refutes_hard_kill(result: dict):
     return None
 
 
+def _stamp_refutes_empty_incomplete_counter(result: dict, incompletes_24h, now=None):
+    """``incompletes_24h: 0`` beside a fresh ``last_incomplete_at`` — reason, or ``None``.
+
+    (#6017, launch scoreboard check 2.) The same independently-expiring window that produces a phantom hard kill
+    (see :func:`_terminal_evidence_refutes_hard_kill`) produces the OPPOSITE
+    error one field over, and that one is silent. ``:incompletes`` is stamped
+    ``SET NX EX 86400`` at its first increment and never slides, so an increment
+    landing on a nearly-dead key is counted into a window that expires minutes
+    later. The count then reads **0** while ``last_incomplete_at`` — written in
+    the same pipeline, into a hash with a 48 h TTL — still names the run.
+
+    **Measured on production, 2026-09-13T22:50Z, against a main-app release.**
+    Release v4506 went out at 21:46:19Z. Two price rails on two different
+    workers recorded a torn-down run in the same second, 17 s later:
+
+    * ``poll_odds`` (``poll_all_odds``, the Odds API price poll) —
+      ``last_incomplete_at 21:46:36.070Z``, and ``incompletes_24h: 0`` with
+      ``incompletes_window_s: null`` and ``incomplete_share_basis: "no
+      incompletes in window"``.
+    * ``prediction_market_live`` — ``last_incomplete_at 21:46:36.873Z``, and
+      ``incompletes_24h: 10`` over a 29,065 s window, because ITS window had
+      opened eight hours earlier and was still alive.
+
+    Same event, same second, two opposite readings — the difference is which
+    counter's window happened to be alive, nothing about the tasks. Check 2 of
+    the launch scoreboard asks whether a release preserves incoming prices; the
+    honest answer for v4506 is "it tore down two in-flight price polls and they
+    resumed on the next cycle", and a reader who takes ``incompletes_24h`` at
+    face value gets "no torn-down run in 24 h" instead.
+
+    So this is published, not silently corrected. The counter is NOT adjusted:
+    unlike the hard-kill case there is no derivation to retract — 0 is the true
+    count *for the window the counter still owns* — and inventing a 1 would
+    claim a rate the payload cannot support. What was missing is the sentence
+    saying which question that 0 answers. ``health`` is untouched for the same
+    reason, and because the incomplete band is a rate band (see
+    ``_INCOMPLETE_BAND_MIN_INCOMPLETES``): one stamp is not a rate.
+
+    Doctrine clause 1 in the mirror: "could not compare" must not render as
+    "nothing happened", exactly as it must not render as "hard-killed".
+    """
+    if incompletes_24h:
+        return None
+    stamp = result.get("last_incomplete_at")
+    ended = _parse_iso(stamp)
+    if ended is None:
+        return None
+    now = time.time() if now is None else now
+    age_s = now - ended
+    if age_s < -_TERMINAL_STAMP_TOLERANCE_S or age_s > WINDOW_COUNTER_TTL:
+        return None
+    return (
+        f"counter-window artifact: last_incomplete_at={stamp} is "
+        f"{int(max(0, age_s))}s old, inside the 24h this count is named for, so "
+        "incompletes_24h=0 means 'none in the counter's own window' — which has "
+        "rolled — and NOT 'no run was torn down today'. The count is left alone; "
+        "read the stamp"
+    )
+
+
 def _bump_window_counter(pipe, key: str):
     """Increment a 24h counter WITHOUT sliding its expiry forward.
 
@@ -2800,6 +2860,18 @@ def get_task_metrics(task_name: str) -> dict:
                     result["hard_kills_24h"] = hard_kills_24h
                 result["hard_kills_raw_diff"] = max(0, hard_kills_raw_diff - 1)
                 result["hard_kills_refuted"] = hard_kill_refutation
+
+        # The same rolled window, one field over and in the other direction: a
+        # zero incomplete count beside a stamp from inside the 24h it is named
+        # for. Published as a sentence, never as an adjusted count, and
+        # deliberately BEFORE the health block for the same reason the
+        # hard-kill reconciliation is — a reader reaching the health line should
+        # already have read what the zero means. Nothing below consumes it:
+        # `incompletes_24h` is unchanged, so every band behaves exactly as it
+        # did (pinned by the guard suite's health-identity test).
+        incomplete_note = _stamp_refutes_empty_incomplete_counter(result, incompletes_24h)
+        if incomplete_note:
+            result["incompletes_understated"] = incomplete_note
 
         # Compute health status. Retired tasks report a distinct "retired"
         # health so their stale metrics can't latch the health rollups to
