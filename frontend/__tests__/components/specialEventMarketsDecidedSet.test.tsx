@@ -102,6 +102,11 @@ const visible = (html: string) =>
     .replace(/&#x27;/g, "'")
     .replace(/&quot;/g, '"')
     .replace(/&#x2F;/g, "/")
+    // #5984: the boundary bands print a literal `<` and `>`, which React emits
+    // as entities. Decoded here so the assertions below read as the SCREEN does
+    // — asserting `&lt;1%` would be asserting the encoding, not the output.
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
     .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ");
 
@@ -186,7 +191,12 @@ describe("it refuses rather than guesses", () => {
     const level = payload({ home_score: 1, away_score: 1 });
     const text = visible(renderAsPage(level));
     expect(text).not.toContain("won Set 1");
-    expect(text).toContain(`${SETTLED_QUOTE_PREFIX} 0%`);
+    // #5984 moved this row's number, not its behaviour. The fixture prices it
+    // at 0.0005, and a quote of 0.05% printed as `0%` claimed the market had
+    // quoted zero, which it had not. What this test is ABOUT — that an
+    // unresolvable set keeps a frozen quote instead of naming a winner — is
+    // unchanged, and the prefix is still the assertion carrying it.
+    expect(text).toContain(`${SETTLED_QUOTE_PREFIX} <1%`);
   });
 
   test("sides that do not pair with the two teams name nobody", () => {
@@ -195,7 +205,8 @@ describe("it refuses rather than guesses", () => {
       renderWith({ side: "away", homeTeam: "Coco Gauff", awayTeam: "Naomi Osaka" }),
     );
     expect(text).not.toContain("won Set 1");
-    expect(text).toContain(`${SETTLED_QUOTE_PREFIX} 0%`);
+    // #5984, same row and same reason as the test above.
+    expect(text).toContain(`${SETTLED_QUOTE_PREFIX} <1%`);
   });
 
   test("two competitors sharing a surname name nobody", () => {

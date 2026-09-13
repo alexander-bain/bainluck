@@ -122,9 +122,38 @@ describe("the event page's inline percent sites are pinned, not drifting", () =>
   );
 
   test.each(ROUTED)("%s still routes through the shared rule", (file) => {
-    expect(readFileSync(file, "utf8")).toContain(
-      'from "@/lib/renderedPercent"',
-    );
+    // #5984 — THE SPELLING WIDENS, THE RULE DOES NOT. This asserted one import
+    // path, which was the only way to reach the contract when #3867 wrote it.
+    // `formatProbabilityPercent` is the other way, and it is STRICTER: it rounds
+    // with `renderedPercent` and then applies the boundary rule on top, so a
+    // 0.999 cannot print `100%`. `SpecialEventMarkets` moved to it, and the
+    // narrow assertion would have read that as the file leaving the contract.
+    // The chain is pinned in the test below so this cannot become an escape.
+    const src = readFileSync(file, "utf8");
+    const routes =
+      src.includes('from "@/lib/renderedPercent"') ||
+      src.includes('from "@/lib/probabilityDisplay"');
+    expect(routes).toBe(true);
+  });
+
+  test("the indirect route is the contract's own, not a second copy of it", () => {
+    // Without this, accepting `probabilityDisplay` above would be accepting a
+    // file that could quietly grow its own `Math.round(p * 100)` and still
+    // satisfy every assertion in this suite.
+    const src = readFileSync("lib/probabilityDisplay.ts", "utf8");
+    expect(src).toContain('from "./renderedPercent"');
+    // COMMENT LINES ARE STRIPPED FIRST, and that is not a softening: this file
+    // exists to explain `Math.round(p * 100)`, so it QUOTES the expression twice
+    // in prose — once in the module docblock naming the original defect and once
+    // beside the line that replaced it. A line-based scan that reads prose as
+    // code would fail here forever and teach the next reader to delete the
+    // assertion rather than fix it. The claim is about what the module EXECUTES.
+    const code = src
+      .split("\n")
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line));
+    expect(code.filter((line) => INLINE.test(line))).toEqual([]);
+    // Non-vacuity: the stripper must not have eaten the whole file.
+    expect(code.some((line) => line.includes("export function"))).toBe(true);
   });
 
   test("the filing surface has no inline site left at all", () => {
