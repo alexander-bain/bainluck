@@ -497,6 +497,7 @@ class TestTheSweepReachesTheFrontPage:
             HIGH_VALUE_SQL,
             HIGH_VALUE_VOLUME_FLOOR,
             _scan_candidates,
+            pool_bind_params,
         )
 
         market = await _seed_brazil(db)
@@ -508,7 +509,12 @@ class TestTheSweepReachesTheFrontPage:
                 f"WHERE fm.id = :mid AND ({value_sql})"
             )
 
-        params = {"mid": market.id, "volume_floor": HIGH_VALUE_VOLUME_FLOOR}
+        # #5781: taken WHOLE, never listed. This site is the one no local test
+        # could reach — it is PG-only, so it does not run without a database —
+        # and its hand-built params dict went stale the moment a third value arm
+        # added a third bind. A missing bind does not degrade here: SQLAlchemy
+        # refuses the statement outright. Extra keys are harmless to `text()`.
+        params = {"mid": market.id, **pool_bind_params()}
         before = (await db.execute(_count(_PRE_3315_VALUE_SQL), params)).scalar()
         after = (await db.execute(_count(HIGH_VALUE_SQL), params)).scalar()
 

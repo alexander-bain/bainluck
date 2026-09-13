@@ -575,16 +575,28 @@ class TestTheReachArmSeesWhatTheSelectorCannot:
 
     @staticmethod
     async def _selector_ids(session):
-        from app.tasks.futures_price_refresh import _CANDIDATE_SQL
+        from app.tasks.futures_price_refresh import (
+            _CANDIDATE_SQL,
+            pool_bind_params,
+        )
 
         rows = (
             await session.execute(
                 _CANDIDATE_SQL,
                 {
+                    # #5781: taken WHOLE, then narrowed. The hand-listed dict
+                    # that used to be here went stale the moment a third value
+                    # arm added a third bind, and this file is PG-only so
+                    # nothing local could go red — it failed in CI with
+                    # `InvalidRequestError: ... 'liquidity_floor'`.
+                    **pool_bind_params(),
                     "stale_hours": 6,
-                    "volume_floor": 10000,
+                    # deliberately small: this test is about the selector's
+                    # REACH, not its capacity, and a 500-row pool makes the
+                    # fixture's markets the whole population.
                     "value_pool_limit": 500,
                     "tier1_pool_limit": 500,
+                    "liquid_pool_limit": 500,
                 },
             )
         ).fetchall()

@@ -14,8 +14,8 @@ from app.services import get_db
 from app.tasks.futures_price_refresh import (  # noqa: E402
     ELIGIBLE_POOL_SQL,
     HIGH_VALUE_SQL,
-    TIER1_POOL_LIMIT,
-    VALUE_POOL_LIMIT,
+    POSTED_LIQUIDITY_FLOOR,
+    pool_bind_params,
 )
 from app.utils.futures_liveness import (
     BASE_LIVENESS_SQL,
@@ -353,11 +353,13 @@ async def futures_price_freshness(
     # a bound it chose for itself would be a second definition of eligibility —
     # and the reader of a green verdict would have no way to know which one it
     # meant.
-    pool_params = {
-        "volume_floor": HIGH_VALUE_VOLUME_FLOOR,
-        "value_pool_limit": VALUE_POOL_LIMIT,
-        "tier1_pool_limit": TIER1_POOL_LIMIT,
-    }
+    # #5781: taken WHOLE from the task, never restated. This endpoint asserts
+    # over the set the TASK refreshes, so a bound it spelled out for itself would
+    # be a second definition of eligibility — and a reader of a green verdict
+    # would have no way to know which one it meant. It is a function call rather
+    # than a dict literal because a literal is exactly what went stale when the
+    # third arm landed.
+    pool_params = pool_bind_params()
     params = {**pool_params, "max_age_hours": max_age_hours}
 
     # The curated half. Every market a committed register renders, at any tier.
@@ -386,9 +388,11 @@ async def futures_price_freshness(
         eligible, settled, registered_all = await asyncio.wait_for(
             asyncio.gather(
                 _census_rows(_PRICE_DARK_SQL, params),
-                _census_rows(
-                    _SETTLED_EXCLUDED_SQL, {"volume_floor": HIGH_VALUE_VOLUME_FLOOR}
-                ),
+                # Composes HIGH_VALUE_SQL, whose binds are a subset of the
+                # pool's, so it takes the same set whole (#5781). Extra keys are
+                # harmless to `text()`, and a hand-listed pair here is exactly
+                # the dict that went stale when the third arm landed.
+                _census_rows(_SETTLED_EXCLUDED_SQL, pool_bind_params()),
                 _registered_rows(),
             ),
             timeout=_CENSUS_TOTAL_DEADLINE_S,
@@ -416,6 +420,7 @@ async def futures_price_freshness(
             ),
             "max_age_hours": max_age_hours,
             "volume_floor": HIGH_VALUE_VOLUME_FLOOR,
+            "liquidity_floor": POSTED_LIQUIDITY_FLOOR,
             "checked_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -477,6 +482,7 @@ async def futures_price_freshness(
         },
         "max_age_hours": max_age_hours,
         "volume_floor": HIGH_VALUE_VOLUME_FLOOR,
+        "liquidity_floor": POSTED_LIQUIDITY_FLOOR,
         "eligible_markets": int(total_eligible),
         "price_dark": dark_total,
         # #2222. NEVER drop a population silently: these markets used to be

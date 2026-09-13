@@ -60,9 +60,21 @@ class TestSelectionPredicate:
         assert "market_tier = 1" in fpr.HIGH_VALUE_SQL
         # The value arm names no tier at all: volume alone admits Brazil.
         assert "market_tier" not in fpr.VALUE_MEASURED_SQL
-        # and the two halves are a disjunction, not a conjunction.
+        # and the halves are a disjunction, not a conjunction. #5781's arm
+        # carries an internal AND (`volume IS NULL AND liquidity >= floor`), so
+        # it is stripped with the tier arm before the test — what may never
+        # appear is an AND *between* arms, which is what would turn any one of
+        # them back into a fence.
         assert " OR " in fpr.HIGH_VALUE_SQL
-        assert " AND " not in fpr.HIGH_VALUE_SQL.replace(fpr.VALUE_TIER1_SQL, "")
+        between_arms = (
+            fpr.HIGH_VALUE_SQL
+            .replace(fpr.VALUE_TIER1_SQL, "")
+            .replace(fpr.VALUE_LIQUID_SQL, "")
+        )
+        assert " AND " not in between_arms
+        # #5781: the liquid arm names no tier either. A tier word inside it
+        # would re-fence exactly the tier-2 population it was added to admit.
+        assert "market_tier" not in fpr.VALUE_LIQUID_SQL
         # #5268: the tier arm carries NO volume qualifier of any kind. A volume
         # word inside it is the `IS NULL` fence coming back under another name.
         assert "volume" not in fpr.VALUE_TIER1_SQL
@@ -81,30 +93,48 @@ class TestSelectionPredicate:
 
         con = sqlite3.connect(":memory:")
         con.execute(
-            "CREATE TABLE fm (id INT, market_tier INT, volume INT)"
+            "CREATE TABLE fm (id INT, market_tier INT, volume INT, liquidity REAL)"
         )
         con.executemany(
-            "INSERT INTO fm VALUES (?,?,?)",
+            "INSERT INTO fm VALUES (?,?,?,?)",
             [
-                (1, 1, None),      # tier 1, unmeasured -> admitted
-                (2, 2, 114_137_967),  # Brazil: tier 2, huge -> admitted
-                (3, 2, None),      # tier 2, unmeasured -> not admitted
-                (4, 5, 12),        # measured and small, LOW tier -> not admitted
+                (1, 1, None, None),      # tier 1, unmeasured -> admitted
+                (2, 2, 114_137_967, 0),  # Brazil: tier 2, huge -> admitted
+                # #5781 flipped this row's neighbours, not this row: tier 2 and
+                # unmeasured is STILL not enough. A posted book is what admits.
+                (3, 2, None, None),      # tier 2, unmeasured, no book -> out
+                (4, 5, 12, 50_000),      # measured and small, LOW tier -> out
                 # #5268, the specimen: KXWBCHEAVYWEIGHTTITLE-27, tier 1, volume
                 # 2,814. `>= 10000` false, `IS NULL` false -> it passed NEITHER
                 # arm and was refreshed by nothing, while serving six boxers at
                 # 96% for one belt off a quote last written 35 hours earlier.
-                (5, 1, 2_814),     # tier 1, measured and small -> admitted
+                (5, 1, 2_814, None),   # tier 1, measured and small -> admitted
+                # #5781, the specimen: market 57792790, `NCAA Football 2026 Big
+                # Ten Conference: Winner`. Tier 2, volume NULL, liquidity
+                # 8,930.67 written by the SAME ingest statement that wrote the
+                # NULL. It served Michigan at 4.5% against the venue's 16.5% for
+                # six weeks because no arm could select it.
+                (6, 2, None, 8_930.67),
+                # ...and its control one notch down: same shape, a book too thin
+                # to be worth a venue round trip. The floor is a floor.
+                (7, 2, None, 120.0),
             ],
         )
-        where = fpr.HIGH_VALUE_SQL.replace("fm.", "").replace(
-            ":volume_floor", "10000"
+        where = (
+            fpr.HIGH_VALUE_SQL.replace("fm.", "")
+            .replace(":volume_floor", "10000")
+            .replace(":liquidity_floor", "1000")
         )
         got = {r[0] for r in con.execute(f"SELECT id FROM fm WHERE {where}")}
-        assert got == {1, 2, 5}
+        assert got == {1, 2, 5, 6}
         # Both directions. Tier 1 is an admission, so 5 is in; it is not a
         # licence, so 4 — measured, small and tier 5 — stays out.
         assert 4 not in got
+        # #5781 both directions too. 4 carries 50,000 of liquidity and is still
+        # out, because its volume WAS measured: the liquid arm answers "we never
+        # asked", never "we asked and the answer was small" (that is #5268's
+        # question, and it is answered by tier).
+        assert 4 not in got and 7 not in got and 3 not in got
 
     def test_uses_exists_not_max_captured_at(self):
         """MAX(captured_at) over the 179M-row snapshot table times out at 10s.
@@ -219,15 +249,30 @@ class TestSelectionPredicate:
         # red here, and the number was not touched until the asker was enrolled
         # in the dictionary above.
         enrolled = 9
+        # SITES THAT ARE NOT ASKERS, ACCOUNTED SEPARATELY RATHER THAN FOLDED IN.
+        # An asker is a statement that selects live markets; the dictionary
+        # enrols those by name. Two interpolation sites are neither:
+        #
+        #   1. the task's own `remaining_stale` census, which composes the whole
+        #      pool inline and has no constant to enrol;
+        #   2. #5781's `liquid_pool` — a THIRD BRANCH inside `ELIGIBLE_POOL_SQL`,
+        #      which is already enrolled above. It interpolates the shared
+        #      predicate a third time inside one asker.
+        #
+        # They are named here rather than absorbed into `enrolled` because
+        # `enrolled` is what makes the dictionary honest: inflating it to make
+        # arithmetic work is how a real unenrolled asker would hide.
+        unenrolled_sites = 2
         found = sum(
             inspect.getsource(mod).count("{LIVE_MARKET_SQL}")
             + inspect.getsource(mod).count("{ELIGIBLE_POOL_SQL}")
             for mod in (fpr, _health, _tpr)
         )
-        assert found == enrolled + 1, (
-            f"{found - 1} interpolation sites across the three asker modules but "
-            f"{enrolled} enrolled in the census "
-            f"(the +1 is the task's own remaining_stale census)"
+        assert found == enrolled + unenrolled_sites, (
+            f"{found - unenrolled_sites} interpolation sites across the three "
+            f"asker modules but {enrolled} enrolled in the census (the "
+            f"{unenrolled_sites} unenrolled are the task's remaining_stale "
+            f"census and the pool's liquid_pool branch)"
         )
 
     def test_the_remaining_stale_census_is_an_asker_too(self):
@@ -244,9 +289,10 @@ class TestSelectionPredicate:
         # interpolation and the module carries the result. Assert on the source:
         # there is no module-level constant to read for this one.
         assert "{LIVE_MARKET_SQL}" in _MODULE_SRC
-        assert _MODULE_SRC.count("{LIVE_MARKET_SQL}") == 5, (
-            "both pool branches, the by-id selector, the reachability census, "
-            "and #4253's reach arm (_KALSHI_UNREACHED_FROZEN_SQL)"
+        assert _MODULE_SRC.count("{LIVE_MARKET_SQL}") == 6, (
+            "all THREE pool branches (#5781 added liquid_pool), the by-id "
+            "selector, the reachability census, and #4253's reach arm "
+            "(_KALSHI_UNREACHED_FROZEN_SQL)"
         )
         # #3315: the census now composes the whole ELIGIBLE POOL, not just the
         # liveness clause. A census that kept the liveness bounds but not the
@@ -424,10 +470,13 @@ class TestThePoolReportsWhenTheLimitDecided:
             return TestThePoolReportsWhenTheLimitDecided._PoolResult(self._rows)
 
     @staticmethod
-    def _row(mid, value_size, tier1_size):
+    def _row(mid, value_size, tier1_size, liquid_size=0):
         # id, source, external_id, volume, poly_event_id, venue_settled_since,
-        # value_pool_size, tier1_pool_size
-        return (mid, "kalshi", f"KX{mid}", 2_814, None, None, value_size, tier1_size)
+        # value_pool_size, tier1_pool_size, liquid_pool_size (#5781)
+        return (
+            mid, "kalshi", f"KX{mid}", 2_814, None, None,
+            value_size, tier1_size, liquid_size,
+        )
 
     async def _scan(self, rows, **kw):
         stats: dict = {}
