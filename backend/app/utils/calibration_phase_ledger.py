@@ -740,13 +740,55 @@ def bottleneck_phase(budgets: Iterable[PhaseBudget]) -> Optional[str]:
     plan (``serialize_gate_publish``, floors ~1.7-2.3 s) is already covered by
     :data:`CLEANUP_MARGIN_MS`, which is reserved outside the window for exactly
     that tail.
+
+    **CAL-P1182 (#5963) — a terminal phase's floor is not a fact about itself.**
+    The paragraph above assumed ``serialize_gate_publish`` stays unmeasured and
+    so can never be a candidate. It did not: production's plan at 2026-09-13
+    17:46Z carried ten completions for it, budget ``567 ms``, and a floor of
+    ``1,199,178 ms`` — **3,172x its own measured worst completion of 378 ms**.
+    That floor beat ``futures``'s ``1,196,786`` by 2,392 ms, so the largest-floor
+    rule handed the whole ``1,108,547 ms`` of slack to a phase that completes in
+    a third of a second, while ``futures`` — budget ``124,827``, worst unit
+    ``339,184`` — was left fenced at ``112,345 ms`` and banked nothing for the
+    ninth straight hour. ``/api/calibration`` served 503 throughout.
+
+    The reason is structural and is already declared in this module:
+    :data:`RESUMABLE_PHASES` names the phases a later beat can carry forward,
+    and says of the other two that they "consume every other phase's output and
+    must always run against the run that publishes". A phase like that cannot
+    even START until its upstream completes, so when the upstream truncates, the
+    terminal phase is killed by the BEAT deadline and records a floor that
+    measures the upstream's overrun, not its own cost. Worse, it is a one-way
+    ratchet: every starved beat raises that inherited floor, which keeps it
+    ahead of the phase that is actually starving, which sends it the slack
+    again.
+
+    So a terminal phase qualifies only when **no** resumable phase is also
+    truncating — i.e. only when there is no upstream explanation for its floor.
+    This is deliberately conditional rather than a flat exclusion: a terminal
+    phase that is genuinely slow, on a beat where nothing upstream truncated,
+    still wins the slack and still needs to. It is also why no new constant
+    appears here — the partition is the one :data:`RESUMABLE_PHASES` already
+    draws, for the same stated reason.
+
+    Note this rule engages only when candidates straddle the partition. Among
+    resumable phases alone, or terminal phases alone, the largest floor still
+    wins and the evidence still picks the winner.
     """
+    candidates = [
+        budget
+        for budget in budgets
+        if budget.budget_ms is not None
+        and budget.floor_ms is not None
+        and budget.floor_ms > budget.budget_ms
+    ]
+    # A resumable candidate is upstream of every terminal one, so its truncation
+    # explains their floors. Prefer them as a SET, before ranking by floor.
+    upstream = [b for b in candidates if b.name in RESUMABLE_PHASES]
+    if upstream:
+        candidates = upstream
     best: Optional[PhaseBudget] = None
-    for budget in budgets:
-        if budget.budget_ms is None or budget.floor_ms is None:
-            continue
-        if budget.floor_ms <= budget.budget_ms:
-            continue
+    for budget in candidates:
         if best is None or budget.floor_ms > (best.floor_ms or 0):
             best = budget
     return best.name if best is not None else None
