@@ -1,4 +1,5 @@
 import type {
+  FeedBundleData,
   FeedEventData,
   FeedFuturesData,
   FeedItem,
@@ -179,6 +180,40 @@ export function getDiscoverItemAnalytics(item: FeedItem): DiscoverItemAnalytics 
       // has no outcome structure of its own, so it has no shape — `unshaped` is
       // the honest answer, not `container_member` (which means a member OF a
       // container, the opposite of what these cards are).
+      market_type: SHAPE_UNSHAPED,
+    };
+  }
+
+  // A bundle carries `id`/`title`, never `key`/`name`, so before this branch it
+  // fell through to the tournament shape below and reported `String(undefined)`
+  // — the literal text "undefined" — as its id, a null name, and the hardcoded
+  // "golf" category. Measured on production 2026-09-13: 1,360 such impressions
+  // across 526 distinct sessions since 2026-06-11, every one attributed to golf.
+  // `getItemCategory` in app/discover/page.tsx already grew this branch (#934),
+  // which is what fixed the category-cooldown half; the analytics rail is the
+  // half that was left behind, and it is the half `applyLocalPersonalization`
+  // reads — so a theme bundle's position in the feed moved with how the reader
+  // felt about GOLF.
+  if (item.type === "bundle") {
+    const bundle = item.data as FeedBundleData;
+    const first = (bundle.items || [])[0];
+    return {
+      content_type: "grid",
+      item_id: bundle.id,
+      // The first ranked member's category, matching `getItemCategory`'s rule so
+      // the two rails cannot disagree about what a bundle is about. Reading the
+      // member through this same function rather than re-deriving the vocabulary
+      // is what keeps a futures member on `llm_sport_category` and an event
+      // member on the sport-key root. The `!== "bundle"` test is what bounds the
+      // reuse to one level: a member is never itself a bundle today, and this is
+      // cheaper than trusting that forever inside an IntersectionObserver.
+      category: first && first.type !== "bundle" ? getDiscoverItemAnalytics(first).category : "other",
+      item_name: bundle.title,
+      score: item.score,
+      headline: item.headline || item.reason || undefined,
+      personalized: item.personalized,
+      // Same reasoning as the concept branch above: a container of markets has
+      // no outcome structure of its own.
       market_type: SHAPE_UNSHAPED,
     };
   }
