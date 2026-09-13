@@ -773,15 +773,88 @@ def ladder_report(
 # rather than nest, and a mixed or opposite-signed leg disqualifies the market
 # outright rather than widening the law.
 
-#: ``Above 410M``, ``above $68.25``, ``over 3.5%`` — the direction word LEADS.
-_CUMULATIVE_PRE_RE = re.compile(
-    rf"^\s*(?P<word>{_UP_WORDS}|{_DOWN_WORDS}){_NUM}\s*$", re.I)
+# --- #5777 — the UNIT WORD, on either side of the number. -------------------
+#
+# Both patterns below pinned the number to an END of the string, and a venue
+# does not write it that way. Three live shapes were refused outright, each for
+# a different reason, and the all-legs discriminator in
+# :func:`cumulative_outcome_ladder` then disqualified the whole market on the
+# first of them — so the ladder guards never saw the family at all and reported
+# the silence as health (the same blindness as CAL-P134 above, one layer in):
+#
+#     Above 600,000 bales     the unit word TRAILS the number  (PRE)
+#     Category 3 or above     the label word LEADS   the number (POST, ×33)
+#     26°C or below           a unit SYMBOL is glued to the digits (POST)
+#
+# An AFFIX is that inert text. It is liberal on purpose — an allowlist of units
+# is a census that goes stale the first time a venue lists a new commodity —
+# and it is made safe by what :func:`_affix_is_inert` REFUSES rather than by
+# what the pattern admits, so the refusals are readable and testable on their
+# own. The safety argument of the section above is untouched: a leg that fails
+# here still disqualifies its whole market.
+_AFFIX = r"(?:\s*°[A-Za-z]|\s*[A-Za-z][A-Za-z.\-]*){0,3}"
 
-#: ``7,175 or above``, ``$25,600 or higher``, ``3.0% or less`` — the direction
-#: word TRAILS. This is the single most common leg shape in Kalshi economics and
-#: no grammar in this module saw it before CAL-P134.
+#: What an affix may never contain. The direction words come from the SAME
+#: constants the grammar is built from, so widening those cannot silently widen
+#: this. ``or``/``to``/``and``/``through`` keep a two-sided or RANGE leg from
+#: reading as one rung with a tail; the spelled magnitudes are refused because
+#: `_NUM` knows only the letter suffixes (``410M``), so "Above 3 billion" would
+#: otherwise parse as **3.0** — a rung wrong by 1e9 inside a law whose whole
+#: job is comparing rung values. Refusing it leaves that shape exactly where it
+#: is today (unparsed); reading it wrong would be new damage.
+_AFFIX_REFUSE_RE = re.compile(
+    rf"{_UP_WORDS}|{_DOWN_WORDS}"
+    r"|(?<![a-z])(?:or|to|and|through|thousand|million|billion|trillion)(?![a-z])",
+    re.I)
+
+
+def _affix_is_inert(affix: str | None) -> bool:
+    """True when an affix carries no direction, no range and no magnitude."""
+    if not affix or not affix.strip():
+        return True
+    return _AFFIX_REFUSE_RE.search(affix) is None
+
+
+def _affix_key(*parts: str | None) -> str:
+    """The affixes of one leg, normalised for comparison BETWEEN legs.
+
+    A ladder is rungs on ONE quantity, so the inert text has to be the same
+    inert text on every rung. This is not tidiness — it is the guard that keeps
+    the liberal affix above from inventing a ladder out of a market that has
+    none. ``2028 Electoral College margin of victory?`` is the live case: its
+    ``Democratic by 211 or more`` and ``Republican by 211 or more`` legs both
+    parse, point the same way, and mean OPPOSITE things, so a market holding
+    only those two would otherwise read as a two-rung ladder over a quantity
+    that does not exist. Comparing the labels refuses it on the labels, which is
+    where the difference actually is.
+
+    EMPTY PARTS ARE DROPPED RATHER THAN JOINED, and that is load-bearing: the
+    two grammars hand this function different numbers of parts (the PRE leg has
+    only a trailing affix, the POST leg a leading label AND a trailing one), so
+    a positional join would key the unadorned ``Above 410M`` as ``""`` and the
+    equally unadorned ``420M or above`` as ``"|"`` — the same quantity written
+    two ways, refused for a difference that is an artefact of this function.
+    A ladder is free to mix the two spellings and several live ones do.
+    """
+    return "|".join(
+        cleaned for part in parts
+        if (cleaned := " ".join((part or "").lower().split()))
+    )
+
+
+#: ``Above 410M``, ``above $68.25``, ``over 3.5%``, ``Above 600,000 bales`` —
+#: the direction word LEADS and an inert unit may trail.
+_CUMULATIVE_PRE_RE = re.compile(
+    rf"^\s*(?P<word>{_UP_WORDS}|{_DOWN_WORDS}){_NUM}(?P<affix>{_AFFIX})\s*$", re.I)
+
+#: ``7,175 or above``, ``$25,600 or higher``, ``3.0% or less``,
+#: ``Category 3 or above``, ``26°C or below`` — the direction word TRAILS, and
+#: an inert label may lead the number or a unit may trail it. This is the single
+#: most common leg shape in Kalshi economics and no grammar in this module saw
+#: it before CAL-P134.
 _CUMULATIVE_POST_RE = re.compile(
-    r"^\s*\$?\s*(?P<val>\d[\d,]*(?:\.\d+)?)\s?(?P<unit>bn|[kmbt])?\b%?\s*"
+    rf"^\s*(?P<label>{_AFFIX})\s*\$?\s*(?P<val>\d[\d,]*(?:\.\d+)?)"
+    rf"\s?(?P<unit>bn|[kmbt])?\b%?(?P<affix>{_AFFIX})\s*"
     r"or\s+(?P<word>above|higher|more|greater|over|below|lower|less|under)\s*$", re.I)
 
 _POST_DOWN = {"below", "lower", "less", "under"}
@@ -795,21 +868,39 @@ def parse_cumulative_leg(text: str | None) -> tuple[float, str] | None:
     its guards. Returns ``None`` for a range leg, a tail leg, a ``Yes``/``No``
     or any prose — every one of which must disqualify its market rather than be
     skipped, which is why this returns ``None`` instead of raising.
+
+    A unit or label affix around the number is inert and is ignored (#5777); an
+    affix that is NOT inert refuses the leg rather than being stripped, because
+    the text this grammar cannot account for is exactly the text that decides
+    whether the leg is one-sided.
+    """
+    parts = _cumulative_leg_parts(text)
+    return None if parts is None else (parts[0], parts[1])
+
+
+def _cumulative_leg_parts(text: str | None) -> tuple[float, str, str] | None:
+    """:func:`parse_cumulative_leg` plus the leg's affix key.
+
+    Split out for :func:`cumulative_outcome_ladder`, which needs the affixes to
+    compare legs to each other (see :func:`_affix_key`) and must not re-parse
+    the name to get them. The public entry point keeps its two-value shape.
     """
     if not text:
         return None
     m = _CUMULATIVE_PRE_RE.match(text)
-    if m:
+    if m and _affix_is_inert(m.group("affix")):
         direction = INC if _DOWN_ONLY_RE.match(m.group("word")) else DEC
-        return _magnitude(m.group("val"), m.group("unit")), direction
+        return (_magnitude(m.group("val"), m.group("unit")), direction,
+                _affix_key(m.group("affix")))
     m = _CUMULATIVE_POST_RE.match(text)
-    if m:
+    if m and _affix_is_inert(m.group("label")) and _affix_is_inert(m.group("affix")):
         direction = INC if m.group("word").lower() in _POST_DOWN else DEC
-        return _magnitude(m.group("val"), m.group("unit")), direction
+        return (_magnitude(m.group("val"), m.group("unit")), direction,
+                _affix_key(m.group("label"), m.group("affix")))
     plus = parse_plus_bracket(text)
     if plus is not None:
         _, value, direction = plus
-        return value, direction
+        return value, direction, ""
     return None
 
 
@@ -835,20 +926,28 @@ def cumulative_outcome_ladder(
         return None
     out: list[tuple[float, Mapping[str, object]]] = []
     directions = set()
+    affixes: set[str] = set()
     seen: set[float] = set()
     for row in outcomes:
         name = row.get(name_key)
-        parsed = parse_cumulative_leg(name if isinstance(name, str) else None)
+        parsed = _cumulative_leg_parts(name if isinstance(name, str) else None)
         if parsed is None:
             return None
-        value, direction = parsed
+        value, direction, affix = parsed
         rung = round(float(value), 6)
         if rung in seen:
             return None
         seen.add(rung)
         directions.add(direction)
+        affixes.add(affix)
         out.append((rung, row))
     if len(directions) != 1:
+        return None
+    # #5777: rungs on ONE quantity carry ONE affix. See :func:`_affix_key` — the
+    # liberal affix grammar is what makes this check load-bearing rather than
+    # decorative, and without it two opposite-meaning legs that happen to share
+    # a direction would read as a ladder.
+    if len(affixes) != 1:
         return None
     return sorted(out), directions.pop()
 

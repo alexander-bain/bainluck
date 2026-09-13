@@ -623,12 +623,28 @@ def test_parse_cumulative_leg_refuses_everything_that_is_not_one_rung(text):
 def test_the_measles_defect_cannot_come_back_through_the_new_grammar():
     """``at least 2000 measles cases`` must not read ``m`` as MEGA.
 
-    The name-site parser learned this the expensive way; the leg-site parser is
-    anchored at both ends, so the whole-string match is what refuses it, and
-    this guard asserts the refusal rather than a corrected magnitude.
+    The name-site parser learned this the expensive way.
+
+    ⚠️ THIS GUARD CHANGED SHAPE IN #5777 AND THE DEFECT IT NAMES DID NOT.
+    It used to assert a REFUSAL, because the leg-site parser was anchored at
+    both ends and a trailing unit word therefore failed the whole-string match.
+    That anchor was the very thing #5777 had to remove — it is why
+    ``Above 600,000 bales`` was invisible to every ladder guard — so asserting
+    the refusal would now be asserting the bug. What the test always cared
+    about is the MAGNITUDE, and that is asserted directly here instead: the
+    protection is the load-bearing ``\\b`` on the unit group inside ``_NUM``,
+    which #5777 did not touch, so ``m`` is still not MEGA. Read the value, not
+    the None.
     """
-    assert parse_cumulative_leg("at least 2000 measles cases") is None
+    assert parse_cumulative_leg("at least 2000 measles cases") == (2000.0, DEC)
     assert parse_cumulative_leg("at least 2000") == (2000.0, DEC)
+    # The whole content of the defect, stated as the thing that must never be:
+    assert parse_cumulative_leg("at least 2000 measles cases") != (2000 * 1e6, DEC)
+    # A SPELLED magnitude is refused outright rather than read as a bare noun,
+    # which would value this rung at 3.0 — wrong by 1e9 — inside a law whose
+    # only job is comparing rung values to each other.
+    assert parse_cumulative_leg("Above 3 billion") is None
+    assert parse_cumulative_leg("at least 2000 million") is None
 
 
 def test_cumulative_outcome_ladder_reads_a_real_kalshi_market():
