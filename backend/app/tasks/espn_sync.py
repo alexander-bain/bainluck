@@ -1233,10 +1233,14 @@ async def _process_live_sport(
     question asked about **its own** board day — see :func:`_widened_pool_for`.
     """
     from app.models.models import Event, Team
-    from sqlalchemy import and_, or_
+    from sqlalchemy import and_, or_, update as sql_update
     # Function-local for the same reason every other `espn_helpers` import in
     # this module is: the two modules import each other (header, line 62).
-    from app.utils.espn_helpers import espn_scheduled_demotes_live
+    from app.utils.espn_helpers import (
+        clear_authority_not_started,
+        espn_scheduled_demotes_live,
+        stamp_authority_not_started,
+    )
 
     events_result = await session.execute(
         select(Event)
@@ -1479,11 +1483,57 @@ async def _process_live_sport(
                 event.id, event.home_team_name, event.away_team_name,
                 event.commence_time.isoformat() if event.commence_time else None,
             )
+            # THE STATUS ALONE DOES NOT SURVIVE (CERT-2777's required repair).
+            #
+            # `_transition_event_statuses_impl` runs on the same 60s realtime
+            # beat and promotes `scheduled` + `commence_time <= now` straight
+            # back to `live`, so writing only the status buys one minute. The
+            # authority's statement travels with it, in the JSONB mirror, and
+            # the promoter honours it until positive play evidence supersedes
+            # it (`authority_not_started_holds`).
+            #
+            # ONE Core update for both fields, and the ORM object mirrored
+            # after it — the idiom `write_espn_win_prob` uses six hundred lines
+            # up, and for its reason: an ORM attribute assignment mixed with
+            # Core updates on the same row can fail to flush (gotcha #4/#5),
+            # and a JSONB value mutated in place is not tracked at all.
+            _wps_not_started = stamp_authority_not_started(
+                event.win_probability_sources, datetime.now(timezone.utc)
+            )
+            await session.execute(
+                sql_update(Event)
+                .where(Event.id == event.id)
+                .values(
+                    status="scheduled",
+                    win_probability_sources=_wps_not_started,
+                )
+            )
             event.status = "scheduled"
+            event.win_probability_sources = _wps_not_started
             stats["live_demoted_by_authority"] = (
                 stats.get("live_demoted_by_authority", 0) + 1
             )
             changed = True
+        elif match_method == "espn_id":
+            # THE HOLD IS RELEASED BY THE SAME AUTHORITY THAT SET IT.
+            #
+            # Any anchored pass that is NOT "the authority says not started"
+            # clears the marker — ESPN reporting play, halftime, final, or a
+            # score landing on the row. Without this the hold would expire on
+            # its TTL instead of on evidence, which is slower and, worse, reads
+            # as a timeout rather than as a fact being superseded.
+            _wps_cleared = clear_authority_not_started(event.win_probability_sources)
+            if _wps_cleared is not event.win_probability_sources:
+                await session.execute(
+                    sql_update(Event)
+                    .where(Event.id == event.id)
+                    .values(win_probability_sources=_wps_cleared)
+                )
+                event.win_probability_sources = _wps_cleared
+                stats["authority_not_started_cleared"] = (
+                    stats.get("authority_not_started_cleared", 0) + 1
+                )
+                changed = True
 
         # ESPN win probability + snapshots
         wp_changed = await write_win_prob_fn(session, event, ee, match_method, claimed_espn_ids, stats)
@@ -2471,6 +2521,9 @@ async def _transition_event_statuses_impl() -> dict:
         UNOBSERVED_MAX_HOURS,
         commence_time_is_a_reported_start,
     )
+    # #5324: the authority's "not started" reaches this zero-API-call task
+    # through the row, so honouring it costs an import and no query.
+    from app.utils.espn_helpers import authority_not_started_holds
 
     stats = {"scheduled_to_live": 0, "live_to_suspended": 0, "suspended_to_live": 0}
     # Declared out here because it is RELEASED out here — after the session
@@ -2510,9 +2563,44 @@ async def _transition_event_statuses_impl() -> dict:
         # are unscored. See the predicate for the full census.
         stats["held_derived_start"] = 0
 
+        # #5324 / CERT-2777: A CLOCK DOES NOT OVERRULE THE AUTHORITY.
+        #
+        # The second hold, and the reason the first one is not enough. ESPN's
+        # live sync demotes an anchored row to `scheduled` when the authority
+        # positively reports the game has NOT begun — and this loop, sixty
+        # seconds later on the same realtime beat, would select that row
+        # (`scheduled`, `commence_time <= now`) and promote it straight back.
+        # The two beats would then trade the row between them indefinitely and
+        # the reader would keep seeing `LIVE 0 0` on a game nobody has started.
+        #
+        # `commence_time` is not corrected here, and deliberately: we do not
+        # know the new start time — only that the old one has passed without a
+        # start — and writing a start nobody reported is the manufacture
+        # `commence_time_is_a_reported_start` exists to refuse one field over.
+        # The row keeps its stand-in and stops driving state off it, exactly as
+        # that predicate's own docstring puts it.
+        #
+        # The hold ends on evidence, not on a timeout: any anchored ESPN pass
+        # that is not "not started" clears the marker, and positive play
+        # (a non-zero score, a period, a clock) overrules it inside the
+        # predicate even before the clearing pass lands. Its TTL is only the
+        # backstop for a dead poller. Zero extra queries — the marker rides the
+        # JSONB already loaded on the row.
+        stats["held_authority_not_started"] = 0
+
         for event in started_events:
             if not commence_time_is_a_reported_start(event.commence_time_source):
                 stats["held_derived_start"] += 1
+                continue
+            if authority_not_started_holds(
+                event.win_probability_sources,
+                now,
+                home_score=event.home_score,
+                away_score=event.away_score,
+                period=event.period,
+                game_clock=event.game_clock,
+            ):
+                stats["held_authority_not_started"] += 1
                 continue
             event.status = "live"
             stats["scheduled_to_live"] += 1

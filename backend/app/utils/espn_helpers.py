@@ -162,6 +162,120 @@ def espn_scheduled_demotes_live(
     return True
 
 
+# ───────────────────────────────────────────────────────────────────────────
+# THE DEMOTION HAS TO SURVIVE THE CLOCK (#5324, CERT-2777's required repair)
+# ───────────────────────────────────────────────────────────────────────────
+#
+# `espn_scheduled_demotes_live` above writes `scheduled`. Sixty seconds later
+# `_transition_event_statuses_impl` selects `status == "scheduled" AND
+# commence_time <= now` and promotes the very same row back to `live`. Both
+# tasks run every 60s on the realtime queue, so without the fact below the ship
+# is a one-minute flicker and then nothing — CERT-2777 drove the two real tasks
+# in sequence and got `live` back, while the single-task band passed.
+#
+# The two tasks cannot both be right, and the tie-break is evidence: one of them
+# has read the authority and the other has read a clock. `transition` makes ZERO
+# API calls by design, so the authority's statement has to reach it through the
+# row. It travels in the `win_probability_sources` JSONB — the same mirror
+# `statpal_end_time` already uses for a non-probability fact
+# (`event_completion.statpal_end_time` reads it out of there), so this is an
+# established shape on an existing column and not a migration.
+#
+# IT EXPIRES, and the bound is derived rather than chosen: `sync-espn-live` is
+# a 60s interval beat, so a live stamp is re-written every pass while ESPN keeps
+# saying the game has not begun. The hold therefore only has to outlive a few
+# missed passes, and anything longer is a row frozen by a dead poller rather
+# than by the authority. Fifteen minutes is fifteen consecutive missed passes;
+# past that the clock wins again and the row promotes normally. A test asserts
+# this constant against the beat's own cadence rather than against a literal,
+# because two records of one capability drift.
+ESPN_NOT_STARTED_KEY = "espn_not_started_at"
+_ESPN_LIVE_BEAT_SECONDS = 60
+_AUTHORITY_NOT_STARTED_MISSED_PASSES = 15
+AUTHORITY_NOT_STARTED_TTL = timedelta(
+    seconds=_ESPN_LIVE_BEAT_SECONDS * _AUTHORITY_NOT_STARTED_MISSED_PASSES
+)
+
+
+def stamp_authority_not_started(sources, now):
+    """A NEW sources dict carrying "the authority says this has not begun, at ``now``".
+
+    Returns a fresh object rather than mutating in place: an in-place change to a
+    JSONB value is not seen by the ORM's change tracking and is silently dropped
+    (gotcha #4), which is the single most expensive way for this repair to look
+    like it works.
+    """
+    updated = dict(sources or {})
+    updated[ESPN_NOT_STARTED_KEY] = now.isoformat()
+    return updated
+
+
+def clear_authority_not_started(sources):
+    """A NEW sources dict with the marker removed, or the original when absent.
+
+    Returning the original unchanged when there is nothing to clear matters: the
+    caller writes only when the object differs, so an ordinary live pass over an
+    ordinary game issues no extra UPDATE.
+    """
+    if not sources or ESPN_NOT_STARTED_KEY not in sources:
+        return sources
+    updated = dict(sources)
+    updated.pop(ESPN_NOT_STARTED_KEY, None)
+    return updated
+
+
+def authority_not_started_holds(
+    sources,
+    now,
+    home_score=None,
+    away_score=None,
+    period=None,
+    game_clock=None,
+    ttl=AUTHORITY_NOT_STARTED_TTL,
+) -> bool:
+    """True when the clock may NOT promote this row, because the authority said
+    within :data:`AUTHORITY_NOT_STARTED_TTL` that the game has not begun.
+
+    POSITIVE PLAY EVIDENCE SUPERSEDES THE HOLD, and it is the same evidence
+    :func:`espn_scheduled_demotes_live` refuses a demotion on — a non-zero score,
+    a period, or a game clock. Stated once here and once there deliberately: the
+    two tasks have to agree about what counts as "being played", or a row
+    ping-pongs between them, which is the class of defect this function exists
+    to end rather than to re-create in the other direction.
+
+    A 0-0 with no clock is NOT evidence, for the reason it is not evidence next
+    door: ``COALESCE(home_score,0)=0`` conflates absence with a real nil-nil, and
+    the authority is the tie-break on exactly that shape.
+
+    Fails OPEN on every unreadable input — absent key, ``None``, a non-string, an
+    unparseable stamp, a stamp in the future. A hold is a refusal to act on the
+    clock, so when in doubt the ordinary promotion path must win; the alternative
+    is a row stuck out of `live` on a corrupt string nobody can see.
+    """
+    if period or game_clock:
+        return False
+    for side in (home_score, away_score):
+        if isinstance(side, bool) or not isinstance(side, int):
+            continue
+        if side != 0:
+            return False
+
+    raw = (sources or {}).get(ESPN_NOT_STARTED_KEY)
+    if not isinstance(raw, str):
+        return False
+    try:
+        stamped = datetime.fromisoformat(raw)
+    except (ValueError, TypeError):
+        return False
+    if stamped.tzinfo is None:
+        stamped = stamped.replace(tzinfo=timezone.utc)
+    age = now - stamped
+    if age < timedelta(0):
+        # A stamp from the future is a clock fault, not an authority statement.
+        return False
+    return age <= ttl
+
+
 def espn_terminal_write_is_fold(event_commence, now, slack=_FOLD_GUARD_SLACK) -> bool:
     """True when writing terminal/live ESPN state onto an EXISTING event whose own
     ``commence_time`` is still in the future (beyond ``slack``) — i.e. an ESPN game

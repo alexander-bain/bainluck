@@ -54,13 +54,22 @@ pure helper and calling the feature tested; deleting the call site must turn one
 of these red.
 """
 
+import contextlib
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import pytest
 
+import app.tasks.espn_sync as espn_sync_mod
 from app.services.espn_api import ESPNEvent, ESPNTeam
 from app.tasks.espn_sync import _process_live_sport, espn_team_matches
-from app.utils.espn_helpers import espn_scheduled_demotes_live, match_event_to_espn
+from app.utils.espn_helpers import (
+    AUTHORITY_NOT_STARTED_TTL,
+    ESPN_NOT_STARTED_KEY,
+    authority_not_started_holds,
+    espn_scheduled_demotes_live,
+    match_event_to_espn,
+)
 
 SPORT = "americanfootball_ncaaf"
 
@@ -244,6 +253,9 @@ class _FakeEvent:
         self.broadcast_info = None
         self.completed_at = None
         self.llm_importance = None
+        # CERT-2777's repair rides the JSONB mirror, so the fake has to carry
+        # the column or the wiring tests pass by never reaching the write.
+        self.win_probability_sources = None
 
 
 class _Result:
@@ -376,3 +388,238 @@ def test_a_row_the_authority_never_mentions_is_untouched():
 
     assert ours.status == "live"
     assert stats.get("live_demoted_by_authority", 0) == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CERT-2777's REQUIRED REPAIR: THE DEMOTION HAS TO SURVIVE THE OTHER TASK
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Everything above drives ONE task. The BLOCK was that the ship is spent across
+# TWO: `_process_live_sport` writes `scheduled`, and sixty seconds later
+# `_transition_event_statuses_impl` selects `scheduled AND commence_time <= now`
+# and promotes the same row straight back to `live`. Both beats are 60s on the
+# realtime queue, so a reader sees the demotion for at most one minute and the
+# ship is inert.
+#
+# So these run the two REAL tasks back to back, in production order, over one
+# row. The harness for the second is the one
+# `test_the_shadow_anchor_repair_survives_both_lifecycle_tasks_4075.py` built
+# for the same reason — a predicate returning the right answer into a loop that
+# does not ask it.
+
+
+class _TransitionSession:
+    """The selects `_transition_event_statuses_impl` issues, in order.
+
+    Index 0 is the `scheduled -> live` pool — the one this repair is about.
+    Every later select is empty so nothing else in the task moves, and the
+    assertions below can only be about the promotion arm.
+    """
+
+    def __init__(self, scheduled):
+        self._selects = [scheduled, [], [], [], []]
+
+    async def execute(self, stmt, params=None):
+        sql = str(stmt)
+        if "MAX(x.captured_at)" in sql:
+            return type("R", (), {"all": lambda _s: []})()
+        if sql.startswith("UPDATE"):
+            return None
+        rows = self._selects.pop(0) if self._selects else []
+        return type(
+            "R", (), {"scalars": lambda _s: type("S", (), {"all": lambda _x: rows})()}
+        )()
+
+    async def commit(self):
+        return None
+
+
+def _run_transition(scheduled, now=NOW):
+    """Drive the REAL `_transition_event_statuses_impl` over these rows."""
+    import asyncio
+
+    session = _TransitionSession(scheduled)
+
+    @contextlib.asynccontextmanager
+    async def _fake_session():
+        yield session
+
+    class _FrozenNow(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+
+    async def _go():
+        with patch("app.tasks.base.get_task_session", _fake_session), patch.object(
+            espn_sync_mod, "datetime", _FrozenNow
+        ):
+            return await espn_sync_mod._transition_event_statuses_impl()
+
+    return asyncio.run(_go())
+
+
+def _run_frozen(events, board, now=NOW):
+    """`_run`, with the module clock frozen so the stamp it writes is `now`."""
+
+    class _FrozenNow(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+
+    with patch.object(espn_sync_mod, "datetime", _FrozenNow):
+        return _run(events, board)
+
+
+def test_authority_demotion_survives_transition_cycle_5324():
+    """THE REPAIR, through both real tasks in production order.
+
+    Revert either half — the stamp in `_process_live_sport` or the hold in the
+    promotion loop — and the row comes back `live`, which is precisely the
+    production behaviour CERT-2777 measured.
+    """
+    ours = _FakeEvent(espn_id="401860883", status="live")
+
+    demote_stats = _run_frozen([ours], [_espn_event("401860883", status="scheduled")])
+    assert ours.status == "scheduled"
+    assert demote_stats["live_demoted_by_authority"] == 1
+    # The fact is ON THE ROW, not only in the status — the status alone is what
+    # did not survive.
+    assert ESPN_NOT_STARTED_KEY in (ours.win_probability_sources or {})
+
+    promote_stats = _run_transition([ours], now=NOW + timedelta(seconds=60))
+
+    assert ours.status == "scheduled", "the clock re-promoted the demoted row"
+    assert promote_stats["held_authority_not_started"] == 1
+    assert promote_stats["scheduled_to_live"] == 0
+
+
+def test_THE_CONTROL_positive_play_is_promoted_through_the_same_cycle():
+    """Non-vacuity, and the "until positive play supersedes it" half.
+
+    The identical two-task harness over a row carrying the SAME marker plus a
+    real score. A hold that fires on everything would freeze every scheduled
+    row on the site, so this must promote.
+    """
+    ours = _FakeEvent(espn_id="401860883", status="scheduled",
+                      home_score=21, away_score=14)
+    ours.win_probability_sources = {ESPN_NOT_STARTED_KEY: NOW.isoformat()}
+
+    stats = _run_transition([ours], now=NOW + timedelta(seconds=60))
+
+    assert ours.status == "live"
+    assert stats["scheduled_to_live"] == 1
+    assert stats["held_authority_not_started"] == 0
+
+
+def test_THE_STRAWMAN_without_the_marker_the_clock_re_promotes():
+    """The defect itself, pinned.
+
+    The same row, the same cycle, the marker absent — the promoter takes it
+    back to `live`. This is what the shipped code did to EVERY demoted row, and
+    it is why a single-task band passed while the ship was inert. If this ever
+    goes green with the marker present, the hold has stopped working.
+    """
+    ours = _FakeEvent(espn_id="401860883", status="scheduled")
+    assert ours.win_probability_sources is None
+
+    stats = _run_transition([ours], now=NOW + timedelta(seconds=60))
+
+    assert ours.status == "live"
+    assert stats["scheduled_to_live"] == 1
+
+
+def test_an_anchored_pass_that_reports_play_clears_the_marker():
+    """The hold ends on EVIDENCE, not on a timeout.
+
+    A row still carrying the marker, and an ESPN pass that reports the game in
+    progress: the marker goes, so the very next transition cycle promotes
+    normally instead of waiting out the TTL.
+    """
+    ours = _FakeEvent(espn_id="401860883", status="scheduled")
+    ours.win_probability_sources = {ESPN_NOT_STARTED_KEY: NOW.isoformat()}
+
+    stats = _run_frozen(
+        [ours],
+        [_espn_event("401860883", status="in", hs=7, aws=0, clock="9:14")],
+    )
+
+    assert ESPN_NOT_STARTED_KEY not in (ours.win_probability_sources or {})
+    assert stats.get("authority_not_started_cleared", 0) == 1
+
+    _run_transition([ours], now=NOW + timedelta(seconds=60))
+    assert ours.status == "live"
+
+
+def test_an_ordinary_live_pass_does_not_write_a_clearing_update():
+    """The clearing arm must not add an UPDATE to every anchored pass on the
+    site. No marker, nothing to clear, no write, no counter."""
+    ours = _FakeEvent(espn_id="401860883", status="live")
+
+    stats = _run_frozen(
+        [ours], [_espn_event("401860883", status="in", hs=14, aws=7, clock="2:02")]
+    )
+
+    assert stats.get("authority_not_started_cleared", 0) == 0
+
+
+def test_the_hold_expires_so_a_dead_poller_cannot_freeze_a_row():
+    """The TTL is the backstop for ESPN going dark, not a second policy.
+
+    One second past it, the clock wins again and the row promotes normally.
+    """
+    ours = _FakeEvent(espn_id="401860883", status="scheduled")
+    stale = NOW - AUTHORITY_NOT_STARTED_TTL - timedelta(seconds=1)
+    ours.win_probability_sources = {ESPN_NOT_STARTED_KEY: stale.isoformat()}
+
+    stats = _run_transition([ours], now=NOW)
+
+    assert ours.status == "live"
+    assert stats["scheduled_to_live"] == 1
+    assert stats["held_authority_not_started"] == 0
+
+
+def test_the_hold_still_holds_one_second_INSIDE_the_ttl():
+    """The other side of the same boundary — without this the test above is
+    satisfied by a hold that never holds at all."""
+    ours = _FakeEvent(espn_id="401860883", status="scheduled")
+    fresh = NOW - AUTHORITY_NOT_STARTED_TTL + timedelta(seconds=1)
+    ours.win_probability_sources = {ESPN_NOT_STARTED_KEY: fresh.isoformat()}
+
+    stats = _run_transition([ours], now=NOW)
+
+    assert ours.status == "scheduled"
+    assert stats["held_authority_not_started"] == 1
+
+
+def test_the_ttl_is_derived_from_the_beat_that_refreshes_it():
+    """Two records of one capability drift, so the gap is asserted.
+
+    The marker is re-written by `sync-espn-live`; if that beat ever slows past
+    the TTL a single missed pass releases the hold and the ship flickers again.
+    """
+    from app.tasks import celery_app
+
+    beat = celery_app.conf.beat_schedule["sync-espn-live"]["schedule"]
+    assert AUTHORITY_NOT_STARTED_TTL.total_seconds() >= beat * 10, (
+        "the hold must outlive several missed ESPN passes"
+    )
+
+
+@pytest.mark.parametrize("junk", [None, "", "not-a-timestamp", 12345, {"a": 1}, []])
+def test_an_unreadable_marker_fails_OPEN(junk):
+    """A hold is a REFUSAL to act on the clock, so an unreadable marker must
+    never strand a row out of `live`. Fail open, every time."""
+    assert authority_not_started_holds({ESPN_NOT_STARTED_KEY: junk}, NOW) is False
+
+
+def test_a_marker_from_the_future_is_a_clock_fault_not_a_statement():
+    assert authority_not_started_holds(
+        {ESPN_NOT_STARTED_KEY: (NOW + timedelta(hours=1)).isoformat()}, NOW
+    ) is False
+
+
+def test_a_naive_stamp_is_read_as_utc_rather_than_crashing():
+    """Nothing writes one today, but a JSONB value outlives the writer that
+    made it and a `TypeError` here would take the whole transition task down."""
+    naive = (NOW - timedelta(minutes=1)).replace(tzinfo=None)
+    assert authority_not_started_holds({ESPN_NOT_STARTED_KEY: naive.isoformat()}, NOW) is True
