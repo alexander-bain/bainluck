@@ -10923,6 +10923,64 @@ async def list_events(
     # measurement is stated rather than the invariant assumed.
     conditions.append(not_a_proven_duplicate())
 
+    # #3016 — THE BLANK-CARD BELT, and this route is the last list surface to be
+    # missing it. `not_a_blank_card` shipped for #4794 and search has carried it
+    # since; the league lists never adopted it, so the predicate that made
+    # `/search?q=Galatasaray` readable has been sitting one import away from the
+    # endpoint that draws `/sports/{key}`. That is the whole change: a call site,
+    # not a new rule. The unwidened predicate, exactly as search spends it.
+    #
+    # What a reader sees today, measured on production 2026-09-13 21:4xZ at
+    # 390px: `/sports/soccer_other` opens on `Live & Paused 186` and is 21,792px
+    # of cards carrying two club names, the words "No result reported", and
+    # nothing else — no score, no probability, no kick-off time. The oldest is
+    # two days past its own kickoff. That page has no real content underneath;
+    # it is blank cards top to bottom.
+    #
+    # REACH AND THE CONTROL, over this route's own window and status set (same
+    # instant, `sql_fingerprint` 2e7a5e91df29c41d / c63c79322a1c0cd7):
+    #
+    #     route serves            2,628 rows
+    #     suppressed                932
+    #     of those, carrying an
+    #       opening line              0     <- the control that decides this
+    #     with `completed_at`         0
+    #     with an `espn_id`           0
+    #
+    # The opening-line count is the one that matters and it is the reason this
+    # is safe to spend here. `_has_no_probability_sources` tests the JSONB bag
+    # and nothing else, so a row with an empty bag AND a populated
+    # `opening_home_probability` would render a pre-match percentage and would
+    # still be suppressed — a real card lost. There are zero such rows. The
+    # number is stated rather than the invariant assumed, because it is a
+    # measurement about today's data and not a property of the predicate.
+    #
+    # 🔴 THIS IS NOT THE `_EMPTY_SOURCE_BAGS` WIDENING, WHICH IS REFUTED.
+    # The other half of #3016's remainder is rows whose bag is non-empty but
+    # holds only `statpal_injuries`-style metadata; widening the emptiness test
+    # to reach them blanks 452 of 462 rows that serve a real pre-match line
+    # (recorded on #3016, comment 5655941692). That fix stays unbuilt and this
+    # one does not depend on it. The under-reach is deliberate and is the
+    # module docstring's own argument.
+    #
+    # WHAT THIS DOES NOT REACH, said plainly rather than left to be discovered:
+    # a row still wearing `scheduled` hours past its own kickoff renders blank
+    # too, and the frontend's `startedWithoutResult` files it under the same
+    # "Live & Paused" heading. `TERMINAL_STATUSES` deliberately excludes it — a
+    # scheduled row may yet be played, and suppressing it would empty the front
+    # door instead of cleaning it. Those rows stay, and #3016 stays open for
+    # them.
+    #
+    # A page that empties entirely is the honest outcome and the frontend is
+    # built for it: `buildLeagueSections` omits a section with no members rather
+    # than drawing `Live & Paused 0`, the page has a real empty state
+    # (`data-empty-state-name="league-no-upcoming-events"`), and when a window
+    # comes back empty it retries on the wider off-season horizon. Five small
+    # league pages (cricket_other, esports_other, aussierules_aflw,
+    # rugbyleague_nrlw, cricket_test_match) hold nothing BUT blank cards today
+    # and will take that path.
+    conditions.append(not_a_blank_card(now))
+
     if conditions:
         query = query.where(and_(*conditions))
 
