@@ -54,17 +54,28 @@ WHY RETIRING LOSES NO GAME — the safety proof, measured, 16 of 16
 
 This is the question repair_2871 got the opposite answer to (68% of ITS rows
 were the only record of their fixture, which is why it merges instead of
-deleting). Measured here on 2026-09-12 over the FULL population, no sampling:
+deleting). Measured over the FULL population, no sampling — **2026-09-13
+00:00Z, and the number moved under the script, which is the point**:
 
-    phantoms: 16   with a real anchored counterpart: 16   without: 0
+    phantoms: 4   with a real anchored counterpart: 4   without: 0
+
+It read 16/16 on 2026-09-12 and 4/4 a day later, and nothing was repaired in
+between. The twelve that left were never phantoms: they are the real NFL games,
+and their `kxnflffpts` props had simply been linked to them correctly in the
+meantime. The old predicate kept counting them because it asked what a row had
+ATTACHED rather than what was WRONG with it, and a self-matching counterpart
+then hid the mistake — see `_POPULATION_SQL`. A population read off a symptom
+is only the right set at the instant it was measured.
 
 Every phantom pairs with an `americanfootball_nfl` row carrying an `espn_id`,
 matched on both team names in EITHER orientation within ±36h — e.g.
 
-    15305032  "Houston @ Buffalo"      -> 14780141  Buffalo Bills @ Houston Texans
-              2026-09-13 00:00Z  (Kalshi close)     2026-09-13 17:00Z  espn=401872660
+    15305031  "Indianapolis @ Baltimore"  -> 14780140  "Baltimore Ravens
+              basketball_other, espn NULL                @ Indianapolis Colts"
+              2026-09-13 20:00Z (Kalshi close)           2026-09-13 17:00Z
+                                                         espn=401872659
 
-The orientation is reversed on all 16 and the time is the Kalshi close, not
+The orientation is reversed on all four and the time is the Kalshi close, not
 kickoff (gotcha #14) — which is exactly why `fold_twin_events` could never have
 folded them: its key is `(sport, away, home, commence MINUTE)` and three of
 those four differ. A serve-time fold was never available for this population.
@@ -170,11 +181,33 @@ PRODUCER_APP = "bainluck-heavy"
 #: shape, not an absence — but the inverse matters more for a WRITER: this
 #: predicate should never match a large population, and if it suddenly does,
 #: something upstream changed and a human should look before 200 rows are
-#: retired. Measured population 2026-09-12 was exactly 16.
+#: retired. Measured population 2026-09-13 00:00Z was exactly 4 (it read 16 a
+#: day earlier under a predicate that also matched the real games — see
+#: `_POPULATION_SQL`). The ceiling stays where it is: it exists to catch a
+#: predicate that has gone wide, and it did not catch this one, which is why
+#: the fix is in the predicate and not in the number.
 MAX_EXPECTED_POPULATION = 60
 
 #: Every phantom, with its best real counterpart in either orientation. The
 #: LATERAL is the safety gate: a NULL `real_id` aborts the apply.
+#:
+#: TWO CLAUSES ARE THE POPULATION'S DEFINITION AND NOT DECORATION (#5789).
+#:
+#: `AND NOT (s.key = :target_sport AND e.espn_id IS NOT NULL)` — the population
+#: is PHANTOMS, and a ticker family is not a phantom property. The first cut
+#: selected "every event wearing a `kxnflffpts` market", which was the same set
+#: only for as long as every one of those markets was mis-linked. It stopped
+#: being the same set the moment the matcher did its job: measured 2026-09-13
+#: 00:00Z the 16 rows were **4 phantoms and 12 REAL anchored NFL games**, whose
+#: props had since been linked correctly. A row is in scope because it is
+#: unanchored or wrong-sported, never because of what is attached to it.
+#:
+#: `AND e2.id <> ph.id` — belt to that brace. Without it a real row is its own
+#: counterpart (identical names, delta 0), so `orphans` reads 0, the population
+#: ceiling passes, and `--apply` voids the twelve games it was matching against.
+#: That is the whole Week 2 Sunday slate, on the Sunday, and both refusals let
+#: it through: the ONLY thing standing between the two was a clause that did not
+#: exist. A gate that a row can satisfy by pointing at itself is not a gate.
 _POPULATION_SQL = """
 WITH ph AS (
     SELECT e.id,
@@ -191,6 +224,7 @@ WITH ph AS (
       JOIN futures_markets f ON f.event_id = e.id
      WHERE f.source = 'kalshi'
        AND lower(f.external_id) LIKE :prefix || '%'
+       AND NOT (s.key = :target_sport AND e.espn_id IS NOT NULL)
 )
 SELECT ph.*, r.id AS real_id, r.espn_id, r.commence_time AS real_ct
   FROM ph
@@ -200,6 +234,7 @@ SELECT ph.*, r.id AS real_id, r.espn_id, r.commence_time AS real_ct
           JOIN sports s2 ON s2.id = e2.sport_id
          WHERE s2.key = :target_sport
            AND e2.espn_id IS NOT NULL
+           AND e2.id <> ph.id
            AND (
                  (lower(e2.home_team_name) LIKE lower(ph.a) || '%'
                   AND lower(e2.away_team_name) LIKE lower(ph.h) || '%')
