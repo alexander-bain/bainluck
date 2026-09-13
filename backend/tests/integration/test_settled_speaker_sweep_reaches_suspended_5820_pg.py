@@ -444,3 +444,75 @@ class TestTheRowsThatMustSurvive:
         assert stats["funnel"]["phase2c_events_scanned"] == 3
         assert retired == 2
         assert stats["funnel"]["phase2c_ceiling_hit"] is False
+
+
+class TestOneBadRowCannotPinTheCohortBehindIt:
+    """CERT-2789: an async rollback expires the page, and the page is reused.
+
+    The sweep fetches one page of candidates, then walks it event by event with
+    a per-event `try` around the retirement. `await session.rollback()` in that
+    handler expires EVERY ORM object in the session — gotcha #6 — including the
+    outcome rows the page fetched once and shares across all its events. The
+    next candidate's grade is then read off an expired instance from
+    `_blend_group_for_refs`, which is called OUTSIDE the `try`, so the lazy
+    refresh raises MissingGreenlet and takes the whole page down with it.
+
+    The cost is not one lost retirement. The scan is oldest-first behind a
+    cursor, so a stable bad row sits at the same position every run and pins
+    every later candidate behind it — permanently, and silently, since the one
+    error it does record looks like the ordinary per-event skip the handler was
+    written for.
+    """
+
+    async def test_rollback_does_not_starve_later_graded_candidate_5820(
+        self, pg_session, monkeypatch
+    ):
+        """One event's retirement fails; every other candidate is still retired.
+
+        Deliberately order-independent. `market_rows` is fetched without an
+        ORDER BY, so which of the two admitted events is decided first is the
+        database's choice — the test records whoever raised and asserts about
+        the OTHER one, which is the actual invariant either way.
+
+        The seed is COMMITTED first, because in production these are committed
+        rows and only the in-flight retirement is rolled back. Without the
+        commit the handler's rollback would discard the fixture itself and the
+        test would pass for the wrong reason.
+        """
+        from app.tasks import prediction_market_matching as pmm
+
+        now = datetime.now(UTC)
+        ids = await _seed(pg_session, now)
+        await pg_session.commit()
+
+        real = pmm._retire_unbacked_blend_source
+        raised_for: list[int] = []
+
+        async def _raise_once(session, anchor, blend_group, stats):
+            if not raised_for:
+                raised_for.append(anchor.event_id)
+                raise RuntimeError("simulated retirement failure")
+            return await real(session, anchor, blend_group, stats)
+
+        monkeypatch.setattr(pmm, "_retire_unbacked_blend_source", _raise_once)
+
+        stats, retired = await _sweep(pg_session, now)
+
+        assert len(raised_for) == 1, "the probe must fail exactly one event"
+        admitted = {ids["specimen"], ids["graded_open"]}
+        survivor = (admitted - set(raised_for)).pop()
+
+        assert "kalshi" not in await _sources(pg_session, survivor), (
+            "a candidate AFTER the failed one was never decided — one stable "
+            "bad row pins the rest of the page behind it"
+        )
+        assert retired == 1, "the survivor is retired; the failed one is not"
+        assert len(stats["errors"]) == 1, (
+            "exactly one event is recorded as skipped — a page-wide abort "
+            "records one error too, which is why the assertion above is the "
+            "one that separates them"
+        )
+        assert "kalshi" in await _sources(pg_session, raised_for[0]), (
+            "the failed event keeps its leg: the rollback must undo its own "
+            "half-written retirement"
+        )

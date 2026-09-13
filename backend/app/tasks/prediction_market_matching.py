@@ -4286,14 +4286,41 @@ async def _phase2c_decide_page(
     # `market_assigned_settled` reads these rows, and the admission gate is a
     # pure function that may not touch a lazy relationship on the write path
     # (MissingGreenlet), so they are fetched here and passed.
+    #
+    # 🔴 COLUMNS, NOT ENTITIES — gotcha #6, and CERT-2789 caught it here.
+    #
+    # This page is fetched ONCE and then walked event by event, and one event's
+    # retirement error rolls the session back. An async rollback EXPIRES every
+    # ORM object in the session, so on the shipped entity version the surviving
+    # `FuturesOutcome` instances in this dict went stale mid-page: the very next
+    # candidate's `getattr(o, "is_winner")` would fire a lazy refresh, raise
+    # MissingGreenlet from `_blend_group_for_refs` — which is called OUTSIDE the
+    # per-event `try` — and abort the whole page. One stable bad row would then
+    # pin every later cohort behind it, and the gotcha-#33 `status='open'`
+    # candidates this sweep exists to reach sort late.
+    #
+    # The sibling site in `_phase2_persist_group_reading` has no such exposure
+    # for a reason that does not transfer: it queries per GROUP, inside the
+    # group's own scope, so a rollback is always followed by a fresh fetch. This
+    # one batches a page, which is the whole point of the pager, so the rows
+    # have to outlive a rollback instead.
+    #
+    # Selecting the TABLE hands back read-only `Row`s carrying every column,
+    # detached from the session's identity map and untouched by expiry. A
+    # hand-listed scalar dataclass would have worked today and rotted quietly:
+    # `market_assigned_settled` reads its grade through
+    # `getattr(o, "is_winner", False)` — a DEFAULTED getattr — so a field the
+    # copy forgot reads as "not graded" rather than raising. Every column
+    # travels, so no future clause can be starved by this copy.
     outcomes_by_market: dict[int, list] = {}
+    outcome_columns = FuturesOutcome.__table__.c
     outcome_rows = (
         await session.execute(
-            select(FuturesOutcome)
-            .where(FuturesOutcome.market_id.in_([m.id for m in market_rows]))
-            .order_by(FuturesOutcome.rank)
+            select(FuturesOutcome.__table__)
+            .where(outcome_columns.market_id.in_([m.id for m in market_rows]))
+            .order_by(outcome_columns.rank)
         )
-    ).scalars().all()
+    ).all()
     for outcome_row in outcome_rows:
         outcomes_by_market.setdefault(outcome_row.market_id, []).append(outcome_row)
 
