@@ -25,6 +25,7 @@ from app.utils.futures_unsupported_price import (
     needs_trade_disconfirmation,
     needs_trade_evidence,
     price_is_unsupported,
+    snapshot_price_is_unsupported,
 )
 from app.utils.hook_staleness import hook_names_unpriced_outcome, is_hook_stale
 from app.utils.leader_order import leader_first_outcomes
@@ -2717,7 +2718,16 @@ async def get_multi_market_history(
         .order_by(FuturesOddsSnapshot.captured_at)
     )
     snap_result = await db.execute(snapshot_query)
-    snapshots = list(snap_result.scalars().all())
+    # #5898, and this endpoint is the sharper half of it. It merges outcomes
+    # ACROSS source markets and averages every book's row at one timestamp into
+    # one consensus point, so a refuted Polymarket row here does not just draw a
+    # false line of its own — it pulls the blended line toward a number our own
+    # ladder refuses to print. The filter keys on each row's own `bookmaker`
+    # exactly so the honest contributors at that timestamp survive it.
+    _multi_outcomes = [o for m in markets for o in m.outcomes]
+    snapshots = _drop_unsupported_snapshot_points(
+        list(snap_result.scalars().all()), _multi_outcomes
+    )
 
     # ── UX-1052 item 7 — THE SAME SPARSE-WINDOW WIDENING ITS SIBLING HAS ──
     #
@@ -2750,7 +2760,9 @@ async def get_multi_market_history(
                 )
                 .order_by(FuturesOddsSnapshot.captured_at)
             )
-            extended = list(ext_result.scalars().all())
+            extended = _drop_unsupported_snapshot_points(
+                list(ext_result.scalars().all()), _multi_outcomes
+            )
             if len(extended) > len(snapshots):
                 snapshots = extended
                 hours = extended_hours
@@ -2826,6 +2838,51 @@ def _as_float(value) -> Optional[float]:
     bid nobody recorded and call it nobody bidding.
     """
     return None if value is None else float(value)
+
+
+def _drop_unsupported_snapshot_points(snapshots: list, outcomes) -> list:
+    """Remove the chart points whose own row says nothing supported that price (#5898).
+
+    THE LADDER AND THE CHART MUST NOT DISAGREE. ``/api/futures/{id}`` withholds an
+    outcome's price when no book and no trade supports it (#5611) or when the
+    venue's newest trade refutes the midpoint (#5876). Until this filter existed
+    the chart above that ladder still plotted the refused value as the series'
+    last point, so a reader who ticked a row displaying ``—`` was shown the number
+    the table had just declined to state.
+
+    PER POINT, NOT PER SERIES, and that is the whole design. These series are
+    mixtures: Ceará's 812 served points on 8641774 split 537 honest (0.0045–0.1025,
+    agreeing with a ~0.002 trade) against 275 fabricated (0.1025–0.4930), and the
+    fabricated ones bunch at the right-hand edge. Withholding the series would
+    delete a real curve to remove a false tail; withholding the point leaves the
+    curve and takes the tail. Measured on production 2026-09-13 20:51Z.
+
+    NO EXTRA QUERY. Every column the predicate reads is already on the snapshot
+    rows the handler fetched, and the grade is already on the outcomes it loaded,
+    so this is one pass over data in hand — the reason it can sit on two endpoints
+    without a latency argument.
+
+    AN OUTCOME WE DID NOT LOAD IS LEFT ALONE. ``snapshot_price_is_unsupported``
+    treats a null ``resolution_source`` as "ungraded, therefore a candidate", so
+    defaulting an unknown outcome to ``None`` would make ignorance a reason to
+    drop a reader's point. Unknown ids keep every point instead; the callers below
+    always load the outcomes whose ids they queried, so this is a guard against a
+    future caller, not a live branch.
+    """
+    grades = {o.id: o.resolution_source for o in outcomes}
+    kept = []
+    for snapshot in snapshots:
+        if snapshot.outcome_id in grades and snapshot_price_is_unsupported(
+            snapshot.bookmaker,
+            grades[snapshot.outcome_id],
+            _as_float(snapshot.probability),
+            _as_float(getattr(snapshot, "yes_bid", None)),
+            _as_float(getattr(snapshot, "yes_ask", None)),
+            _as_float(getattr(snapshot, "last_price", None)),
+        ):
+            continue
+        kept.append(snapshot)
+    return kept
 
 
 async def _unsupported_price_outcome_ids(
@@ -3840,7 +3897,14 @@ async def get_probability_timeline(
     )
 
     result = await db.execute(snapshot_query)
-    snapshots = list(result.scalars().all())
+    # #5898. This endpoint takes the MEDIAN across bookmakers per bucket, which
+    # makes an unsupported row worse than one bad line: a demoted source still
+    # decides a median by position, so a refused Polymarket midpoint can BE the
+    # published bucket value. Filtered on the same rule and before the same
+    # sparse decision as `/history`.
+    snapshots = _drop_unsupported_snapshot_points(
+        list(result.scalars().all()), market.outcomes
+    )
 
     # Auto-extend for sparse markets (same logic as /history endpoint). Skipped
     # for in-play markets (#1138): those are pinned to the event start above and
@@ -3862,7 +3926,9 @@ async def get_probability_timeline(
                 .order_by(FuturesOddsSnapshot.captured_at)
             )
             ext_result = await db.execute(ext_query)
-            extended_snapshots = list(ext_result.scalars().all())
+            extended_snapshots = _drop_unsupported_snapshot_points(
+                list(ext_result.scalars().all()), market.outcomes
+            )
             if len(extended_snapshots) > len(snapshots):
                 snapshots = extended_snapshots
                 actual_hours = extended_hours
@@ -4109,7 +4175,15 @@ async def get_cross_source_timeline(
         .order_by(FuturesOddsSnapshot.captured_at)
     )
     result = await db.execute(snapshot_query)
-    snapshots = result.scalars().all()
+    # #5898, and this is the fourth and last chart reader in this file. It is the
+    # explicit cross-source surface, so an unsupported row here is published
+    # BESIDE the honest venue's line as if the two disagreed about the world —
+    # the source-divergence-is-a-data-bug ruling in reverse. Same rule, same
+    # per-row bookmaker key, so the sibling market's point at that timestamp is
+    # untouched.
+    snapshots = _drop_unsupported_snapshot_points(
+        list(result.scalars().all()), [o for m in markets for o in m.outcomes]
+    )
 
     if not snapshots:
         return {
@@ -4343,7 +4417,14 @@ async def get_futures_history(
         .order_by(FuturesOddsSnapshot.captured_at)
     )
     result = await db.execute(snapshot_query)
-    snapshots = list(result.scalars().all())
+    # #5898 — filtered BEFORE the sparse-window decision below, never after. The
+    # tiers ask "does this outcome have enough points to draw", and a refused
+    # point is not a point: counting it can leave a chart thin rather than widen
+    # it. A market whose recent history is entirely fabricated now reaches back
+    # for real history instead of charting the fabrication.
+    snapshots = _drop_unsupported_snapshot_points(
+        list(result.scalars().all()), market.outcomes
+    )
 
     # Auto-extend if sparse
     for threshold, extended_hours in _EXTEND_TIERS:
@@ -4358,7 +4439,9 @@ async def get_futures_history(
                 .order_by(FuturesOddsSnapshot.captured_at)
             )
             ext_result = await db.execute(ext_query)
-            extended_snapshots = list(ext_result.scalars().all())
+            extended_snapshots = _drop_unsupported_snapshot_points(
+                list(ext_result.scalars().all()), market.outcomes
+            )
             if len(extended_snapshots) > len(snapshots):
                 snapshots = extended_snapshots
                 actual_hours = extended_hours

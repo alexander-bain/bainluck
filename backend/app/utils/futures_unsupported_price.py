@@ -118,6 +118,7 @@ __all__ = [
     "needs_trade_disconfirmation",
     "needs_trade_evidence",
     "price_is_unsupported",
+    "snapshot_price_is_unsupported",
 ]
 
 #: Every field that is a restatement of the refused price. They fall together or
@@ -300,3 +301,111 @@ def midpoint_refuted_by_last_trade(
     if not has_trade_evidence or last_price is None or probability is None:
         return False
     return abs(float(last_price) - float(probability)) >= _DISPLAY_ROUNDING
+
+
+def snapshot_price_is_unsupported(
+    bookmaker: Optional[str],
+    resolution_source: Optional[str],
+    probability: Optional[float],
+    yes_bid: Optional[float],
+    yes_ask: Optional[float],
+    last_price: Optional[float],
+) -> bool:
+    """Both arms above, asked of ONE historical ``futures_odds_snapshots`` row (#5898).
+
+    THE CHART IS THE THIRD RAIL AND IT KEPT THE NUMBER THE LADDER REFUSED.
+    ``/futures/8641774`` withholds Ceará's price today — the table prints ``—``.
+    ``/api/futures/8641774/history`` still returns Ceará's series with ``0.4700``
+    as its last point, so checking that row's box draws a line ending at exactly
+    the value the table just declined to state. Nine of the ten charted series on
+    that page end on a refused value. Measured on production 2026-09-13 20:48Z.
+
+    THE PREDICATE PORTS WITHOUT A NEW RULE, AND THAT IS NOT A CONVENIENCE — IT IS
+    WHAT THE MODULE ALREADY ARGUES. ``midpoint_refuted_by_last_trade``'s case
+    rests on the two numbers having been "written in the same microsecond … one
+    write of ours against another field of the same write". That sentence is a
+    statement about a SNAPSHOT ROW: ``probability``, ``yes_bid``, ``yes_ask`` and
+    ``last_price`` are four columns of one insert. The current-price call site is
+    the one that has to assemble them from two places (the outcome row plus a
+    LATERAL into the newest snapshot); here they arrive together, already paired
+    by the writer. So there is no second copy of a price rule and no second
+    constant — the same two functions, handed the row they were reasoning about.
+
+    KEYED ON THE SNAPSHOT'S OWN ``bookmaker``, NEVER ON ``market.source``. Both
+    chart endpoints average every book's row at one timestamp into a single
+    consensus point, and ``/multi-history`` merges outcomes ACROSS source markets
+    on purpose. Screening by the market's source would take an honest sportsbook
+    row down with a refuted Polymarket one at the same instant; screening by the
+    row's own bookmaker drops the refuted contributor and lets the timestamp keep
+    its honest ones. A point survives with a smaller, truer average rather than
+    disappearing.
+
+    ``has_trade_evidence`` IS ``last_price is not None`` HERE, AND THE GOTCHA #53
+    DISTINCTION SURVIVES THE TRANSLATION. At the current-price call site the flag
+    answers "did the snapshot read find a row at all", which is a fact about the
+    query. For one row there is no such question — the row is the read — so the
+    remaining question is the other one: did the venue tell us a trade price at
+    this capture. NULL means it did not and the point is served exactly as it is
+    today; a stored 0.0 means the venue said zero, which both arms already treat
+    as evidence. The two are distinguished upstream by Polymarket's and Kalshi's
+    writers, which is what makes reading them differently safe.
+
+    ``resolution_source`` IS THE OUTCOME'S, NOT THE ROW'S. Snapshots carry no
+    grade, and both arms exempt a graded outcome for the reason they each state
+    at length: once it is set the number is a settlement value and withholding it
+    would delete a result. On this endpoint the exemption is load-bearing twice
+    over — ``_apply_settled_winner_freeze`` resolves the graded champion's line to
+    1.0 AFTER this filter runs, and a settled chart showing the completed journey
+    is the standing ruling (#225 item 3, #232). A graded outcome keeps every
+    point it has.
+
+    MEASURED SERVED REACH, taken through the serving path rather than off the
+    table, because on this defect class the table is an upper bound (the lesson
+    #5968 cost). 30 markets sampled every 33rd from the 1,231 open Polymarket
+    markets holding a fabricated-midpoint leg, each read at the page's own
+    ``hours=168`` and each served point classified by its own row, 2026-09-13
+    20:53Z:
+
+        sampled markets serving a chart                       28
+        ... carrying at least one refused point                7
+        ... with a series ENDING on a refused point            7
+        series: 116 total, 7 end on a refused value, 1 loses every point
+        points:  348 refused of 1,780
+
+    Two further markets were dropped from the sample because the admin
+    db-query's 1,000-row cap truncated their classification; they are not counted
+    either way. ONE series of 116 goes empty, which is the number that matters
+    against this ship: it removes a fabricated segment and leaves a real curve —
+    it does not blank charts. Where a series does lose every point it renders
+    empty, which is notice 34's direction and what #5968 already does one surface
+    over.
+
+    THE KALSHI ARM IS MEASURED INERT ON THIS SURFACE TODAY AND SHIPS ANYWAY. The
+    same sample over 30 open Kalshi markets (21 serving a chart, 57 series, 118
+    points) refused NOTHING: #5611's twelve artists stopped being snapshotted in
+    April, so they fall outside every window the chart serves. It is included
+    because the ladder above the chart applies both arms, and a chart rule that
+    said "Polymarket only" would be exactly the second copy of a price policy
+    this module exists to prevent — the divergence would surface as a bug the
+    first day a fossil gets re-snapshotted, which is how ``/multi-history`` came
+    to lack the sparse-window widening its sibling has.
+    """
+    has_trade_evidence = last_price is not None
+    if price_is_unsupported(
+        bookmaker,
+        resolution_source,
+        yes_bid,
+        yes_ask,
+        last_price,
+        has_trade_evidence=has_trade_evidence,
+    ):
+        return True
+    return midpoint_refuted_by_last_trade(
+        bookmaker,
+        resolution_source,
+        probability,
+        yes_bid,
+        yes_ask,
+        last_price,
+        has_trade_evidence=has_trade_evidence,
+    )
