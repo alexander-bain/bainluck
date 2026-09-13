@@ -11722,8 +11722,17 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         # improves the page and is never a precondition for having one. A row
         # served with the column we stored is worse than a corrected one and far
         # better than a 500 on an event page.
+        #
+        # The ROW's id, never the path parameter — `event_id` is user-provided
+        # and CodeQL grades interpolating it `py/log-injection` at medium
+        # severity, which notice 32 refuses. Measured: it did, on the first push
+        # of this change. `league_futures.py` refuses the same thing for the
+        # same reason and settles on the same substitute ("the dropped ids name
+        # the league more precisely than its key would"); the hydrated row's own
+        # id is the value we actually corrected, so it is also the better log.
         logger.exception(
-            "event detail: kalshi occurrence recovery failed for %s", event_id
+            "event detail: kalshi occurrence recovery failed for %s",
+            getattr(event, "id", None),
         )
 
     # Load only the latest odds snapshot per bookmaker (not ALL snapshots).
