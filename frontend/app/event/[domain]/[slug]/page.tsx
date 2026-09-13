@@ -197,6 +197,10 @@ export default function EventConceptPage() {
         <ErrorMessage
           title="Event not found"
           message="This event may have no markets yet, or the link is incorrect."
+          // #5857: "it may have no markets yet" is the state of the world, not
+          // a malfunction — the same reason the 404 branch of
+          // `describeLoadFailure` is toned `info`.
+          tone="info"
         />
       </div>
     );

@@ -33,6 +33,10 @@ describe("a 404 — and only a 404 — says not found", () => {
       title: "Event not found",
       message: "Event not found",
       retryable: false,
+      // #5857 added the tone. It is asserted whole here on purpose: this is the
+      // one `toEqual` in the file, so a new field silently appearing on the
+      // shape has to come through this line.
+      tone: "info",
     });
   });
 

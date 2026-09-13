@@ -156,6 +156,7 @@ export default function SportHubPage() {
       title: "Sport not found",
       message: `We could not find "${sportSlug}".`,
       retryable: false,
+      tone: "info",
       status: 404,
     };
     return (

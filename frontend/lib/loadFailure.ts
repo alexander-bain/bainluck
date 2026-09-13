@@ -29,11 +29,31 @@ type MaybeApiError = {
   message?: string;
 } | null | undefined;
 
+/**
+ * Whether what happened is a FAILURE or an ANSWER — #5857.
+ *
+ * Every branch below is reached by a load that did not return content, so the
+ * caller reaches for an error card for all of them. Two of them are not errors:
+ * a 404 and a 410 are the server answering the question. "This fixture was
+ * removed from the schedule" is information, and a reader shown it in the same
+ * red as "Rate limit exceeded: 60/minute" is told something went wrong when
+ * nothing did.
+ *
+ * The tone carries that distinction out of this module, which is the only place
+ * that knows it, and into the component that draws the colour.
+ */
+export type LoadFailureTone = "error" | "info";
+
 export interface LoadFailure {
   title: string;
   message: string;
   /** True when a retry is worth offering — i.e. the thing may well be there. */
   retryable: boolean;
+  /**
+   * `info` for the two outcomes that are the server answering rather than
+   * failing (404, 410); `error` for everything else.
+   */
+  tone: LoadFailureTone;
 }
 
 /**
@@ -58,6 +78,9 @@ export function describeLoadFailure(
       // Not retryable: reloading a 404 reloads a 404, and offering the button
       // invites the reader to keep pressing it.
       retryable: false,
+      // Not an error: the server answered, and the answer is that the thing is
+      // not there (#5857).
+      tone: "info",
     };
   }
 
@@ -82,6 +105,9 @@ export function describeLoadFailure(
       // Not retryable, and for a stronger reason than 404's: this is a
       // deliberate, recorded removal, not an absence we are unsure about.
       retryable: false,
+      // And not an error, for the same stronger reason: we did this on
+      // purpose, so nothing went wrong (#5857).
+      tone: "info",
     };
   }
 
@@ -92,6 +118,7 @@ export function describeLoadFailure(
         served ||
         "We are being rate limited right now. Wait a moment and try again.",
       retryable: true,
+      tone: "error",
     };
   }
 
@@ -100,6 +127,7 @@ export function describeLoadFailure(
       title: `Couldn't load this ${subject}`,
       message: served || "The server had a problem. Try again in a moment.",
       retryable: true,
+      tone: "error",
     };
   }
 
@@ -108,6 +136,7 @@ export function describeLoadFailure(
       title: `Couldn't load this ${subject}`,
       message: served || `The server refused the request (${status}).`,
       retryable: true,
+      tone: "error",
     };
   }
 
@@ -118,6 +147,7 @@ export function describeLoadFailure(
     message:
       served || `We could not load this ${subject}. Check your connection and try again.`,
     retryable: true,
+    tone: "error",
   };
 }
 

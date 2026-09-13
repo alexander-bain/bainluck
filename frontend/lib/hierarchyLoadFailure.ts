@@ -77,6 +77,9 @@ export function classifySportResolutionFailure(
     // A 404 reloads as a 404. Offering the button invites the reader to keep
     // pressing it — `loadFailure.ts`'s own rule, applied here.
     retryable: false,
+    // The sport is genuinely not one we cover — an answer, not a malfunction
+    // (#5857).
+    tone: "info",
     sportAbsent: true,
     status: 404,
   };
