@@ -1,6 +1,11 @@
 import type { Metadata } from "next";
 import type { FuturesMarketDetailResponse, FuturesOutcome } from "@/lib/types";
-import { buildShareUrl, formatShareProbability, truncateShareText } from "@/lib/share";
+import {
+  buildShareUrl,
+  endShareSentence,
+  formatShareProbability,
+  truncateShareText,
+} from "@/lib/share";
 import { pickHeroOutcome, leaderLabel, futuresTitleText } from "@/lib/futuresDetailDisplay";
 import {
   unresolvedMetadata,
@@ -150,12 +155,31 @@ export async function generateMetadata({
   // draws it as the grey supporting line UNDER the big number, which is where
   // D102 says small grey type belongs — beside a figure it supports. What changed
   // is that the text a chat client prints beside the picture now states the board.
+  // ── AND THE NAME IS OFTEN A QUESTION ───────────────────────────────────────
+  // Both branches that embed `market.name` in a sentence used to assume it was a
+  // noun phrase. Most market names are not: 136,601 resolved and 9,684 open names
+  // end in `?` (production db-query 2026-09-13 21:52Z). Measured the same minute:
+  //
+  //   /futures/60544511  "77° or above won Temperature in New York City on
+  //                       Sep 3, 2026 at 7pm EDT?. See the full probability…"
+  //
+  // A question mark cannot sit mid-sentence and cannot take a period after it.
+  // The two branches fix it the two different ways the shapes demand, both of
+  // them already house style:
+  //
+  //  - RESOLVED puts the name in PARENTHESES after the result, the pattern
+  //    `buildBundleShareText` adopted for exactly this reason — a question
+  //    reads fine parenthesised, and the terminator then belongs to OUR
+  //    sentence, so the winner still leads (settled means settled, #883 L2-55).
+  //  - The UNPRICED fallback LEADS with the name, where a trailing `?` is
+  //    correct punctuation on its own, and `endShareSentence` supplies the
+  //    period only for the names that end in none.
   const description = truncateShareText(
     isResolved && winnerName
-      ? `${winnerName} won ${market.name}. See the full probability board on Bain Luck.`
+      ? `${winnerName} won (${market.name}). See the full probability board on Bain Luck.`
       : leader && probability
         ? `${boardSentence(outcomes, leader, probability)} See the full probability board on Bain Luck.`
-        : `See ${market.name} translated into intuitive probabilities on Bain Luck.`
+        : `${endShareSentence(market.name)} See this market translated into intuitive probabilities on Bain Luck.`
   );
   const url = buildShareUrl(`/futures/${market.id}`);
   const image = buildShareUrl(`/futures/${market.id}/opengraph-image`);
