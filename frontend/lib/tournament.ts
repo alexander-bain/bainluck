@@ -123,6 +123,17 @@ export interface TournamentBoardData {
   price_state: PriceState;
   newest_observed_at: string | null;
   age_hours: number | null;
+  /**
+   * #5917 — THE DRAW IS OVER AND WE KNOW WHO WON.
+   *
+   * Present (not null) only on a board whose final is complete with a winner;
+   * absent on every undecided board and on every payload served before live's
+   * half of this ship, which is why it is optional. It carries the winner's key
+   * ALONE, resolved into this board's key space: the score and the completion
+   * time live on the result row in `results`, a different fragment, and copying
+   * them here would duplicate a fact across two readers.
+   */
+  decided?: { winner_entity_key: string } | null;
 }
 
 export interface TournamentPayload {
@@ -314,7 +325,7 @@ export function rowFreshness(
 }
 
 export interface BoardNotice {
-  tone: "stale" | "dark";
+  tone: "stale" | "dark" | "decided";
   headline: string;
   detail: string;
 }
@@ -333,6 +344,35 @@ export interface BoardNotice {
  * halves: the banned word absent AND the staleness still stated.
  */
 export function boardNotice(board: TournamentBoardData): BoardNotice | null {
+  // #5917 — STALENESS IS THE WRONG APOLOGY FOR A QUESTION THAT IS OVER.
+  //
+  // The women's board said "Updates paused. Last confirmed reading 7 hours ago.
+  // These are the last probabilities we saw, not live ones" above "Elena
+  // Rybakina 99%", sixteen hours after Rybakina won the title — while two inches
+  // below, on the same screen, a settled prop read "Yes · Settled · last reading
+  // 100%". The prices are not paused because a feed went quiet; they are paused
+  // because the answer exists and it is a name. "Not live ones" invites the
+  // reader to believe a fresher number is coming. None is.
+  //
+  // FIRST, before every freshness branch, because a decided board is ALSO stale
+  // by construction — the staleness is true and it is not the point (Alex's
+  // standing ruling: settled means settled).
+  //
+  // The name comes from the board's own rows, never from the key: an unresolved
+  // key is a board we cannot narrate, and inventing "elena-rybakina" as prose is
+  // worse than the general sentence.
+  if (board.decided) {
+    const champion = board.rows.find(
+      (row) => row.entity_key === board.decided!.winner_entity_key,
+    );
+    return {
+      tone: "decided",
+      headline: "Settled",
+      detail: champion
+        ? `${champion.display_name} won the title.`
+        : "This draw is decided.",
+    };
+  }
   if (board.price_state === "live") return null;
   const when = stalenessLabel(board.age_hours);
   if (board.price_state === "dark" && board.newest_observed_at === null) {
