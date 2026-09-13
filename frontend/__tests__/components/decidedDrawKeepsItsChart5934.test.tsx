@@ -33,12 +33,18 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import ContenderChart from "@/components/tournament/ContenderChart";
+import TournamentBoard from "@/components/tournament/TournamentBoard";
 import {
   chartableRows,
   defaultSelection,
   legendValue,
 } from "@/lib/contenderChart";
-import type { TournamentFinePoint, TournamentRow, TournamentTrendPoint } from "@/lib/tournament";
+import type {
+  TournamentBoardData,
+  TournamentFinePoint,
+  TournamentRow,
+  TournamentTrendPoint,
+} from "@/lib/tournament";
 
 /** Daily keys, as the coarse series carries them. */
 function days(start: string, count: number, from = 0.2): TournamentTrendPoint[] {
@@ -231,5 +237,81 @@ describe("#5934 — a decided draw keeps its chart", () => {
     expect(chartableRows(DECIDED_WITHOUT_HISTORY)).toEqual([]);
     expect(defaultSelection(DECIDED_WITHOUT_HISTORY)).toEqual([]);
     expect(html(DECIDED_WITHOUT_HISTORY)).toBe("");
+  });
+
+  /**
+   * ═══ THE BOARD BELOW IT, WHICH THE CHART'S OWN FIX EXPOSED ═══
+   *
+   * Both surfaces carry the header `TO WIN THE TITLE` and sit two inches apart
+   * on one screen. Once the legend printed `Won`, the board underneath was
+   * still printing `—` for the same row, with a small grey `won` under the
+   * name — three renderings of one fact, two of which read as "we do not know".
+   * Seen on production at 16:49Z the moment the chart came back.
+   */
+  describe("the board states the same result in the same column", () => {
+    function boardOf(rows: TournamentRow[]): TournamentBoardData {
+      return {
+        draw: "womens-singles",
+        label: "Women's Singles",
+        rows,
+        contenders: rows.length,
+        unpriced: 0,
+        rows_not_live: rows.length,
+        mixed_freshness_rows: 0,
+        price_state: "dark",
+        newest_observed_at: "2026-09-13T08:55:00+00:00",
+        age_hours: 8,
+        decided: { winner_entity_key: "rybakina" },
+      } as TournamentBoardData;
+    }
+
+    /** The rendered content of every `row-probability` cell, in row order. */
+    function printed(markup: string): string[] {
+      return [...markup.matchAll(/data-testid="row-probability"[^>]*>([^<]*)</g)].map(
+        (match) => match[1].trim(),
+      );
+    }
+
+    it("ARM 6: prints Won / Out where it printed an em dash, and says it ONCE", () => {
+      const markup = renderToStaticMarkup(<TournamentBoard board={boardOf(DECIDED)} />);
+
+      expect(printed(markup)).toEqual(["Won", "Out", "Out"]);
+      // The duplicate is gone: no small grey `won` under a name whose column
+      // already says Won.
+      expect(markup).not.toContain('data-testid="row-settled"');
+      // And no percent came back with it — same ban as ARM 2.
+      for (const cell of printed(markup)) expect(cell).not.toMatch(/\d/);
+    });
+
+    it("ARM 7: a terminal state we have no word for keeps the dash AND the sub-line", () => {
+      // `lost` / `withdrawn` are not in `legendStateLabel`'s vocabulary. The
+      // column cannot say them, so the sub-line is the only place the reader
+      // learns anything and must survive — this is the arm that fails if
+      // somebody deletes the fallback along with the duplicate.
+      const odd = [
+        { ...DECIDED[0], state: "withdrawn" },
+        { ...DECIDED[1], state: "lost" },
+      ];
+      const markup = renderToStaticMarkup(<TournamentBoard board={boardOf(odd)} />);
+
+      expect(printed(markup)).toEqual(["—", "—"]);
+      expect(markup).toContain('data-testid="row-settled"');
+      expect(markup).toContain("withdrawn");
+      expect(markup).toContain("lost");
+    });
+
+    it("ARM 8: a live row is untouched — its number, and its sources line", () => {
+      const live = [
+        row({ entity_key: "zverev", display_name: "Alexander Zverev", probability: 0.59 }),
+        row({ entity_key: "shelton", display_name: "Ben Shelton", rank: 2, probability: 0.41 }),
+      ];
+      const markup = renderToStaticMarkup(
+        <TournamentBoard board={{ ...boardOf(live), price_state: "live", rows_not_live: 0 }} />,
+      );
+
+      expect(printed(markup)).toEqual(["59%", "41%"]);
+      expect(markup).not.toContain('data-testid="row-settled"');
+      expect(markup).toContain("2 sources");
+    });
   });
 });
