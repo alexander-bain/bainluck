@@ -57,6 +57,7 @@ import { withSiteSuffix } from "@/lib/eventShareMeta";
 import { formatShareProbability } from "@/lib/share";
 import { teamHeadline } from "@/lib/teamHeadline";
 import { teamLeagueLabel } from "@/lib/teamLeagueLabel";
+import { resolveTeamForRoute } from "@/lib/teamRouteResolve";
 import { describeTeamRoute } from "@/lib/teamRouteSport";
 import {
   unresolvedCardCopy,
@@ -137,6 +138,14 @@ const API_URL = (process.env.NEXT_PUBLIC_API_URL || "https://api.bainluck.com").
  * A metadata request must never take a page down over a card, so every failure
  * path returns a `failure` rather than throwing — and only a 404 is allowed to
  * mean "there is no such team" (gotcha #53).
+ *
+ * IT RESOLVES THE SAME WAY THE PAGE DOES (#5852 link half). The classifier
+ * below promises the card and the page "cannot disagree about whether this URL
+ * is a football page" — that promise is only kept if both ASK THE SAME
+ * QUESTION. The page retries the league-qualified slug before refusing, so a
+ * pasted `/sport/football/ncaaf/team/clemson-tigers` must unfurl as Clemson
+ * football too, not as a refusal the reader disproves by tapping it.
+ * `resolveTeamForRoute` owns that rule; this only adapts throw-vs-failure.
  */
 export async function fetchTeamShare(
   sport: string,
@@ -147,16 +156,30 @@ export async function fetchTeamShare(
     return { ok: false, failure: "not-found" };
   }
 
-  try {
+  // Set by whichever fetch threw. Only ever read when the FIRST one did: a
+  // retry that 404s is swallowed by the resolver and the first answer stands.
+  let failure: ResolutionFailure = "unavailable";
+  const fetchOne = async (slug: string): Promise<TeamShareSource> => {
     const response = await fetch(
-      `${API_URL}/api/teams/${encodeURIComponent(team)}`,
+      `${API_URL}/api/teams/${encodeURIComponent(slug)}`,
       { next: { revalidate: 300 } },
     );
-    if (response.status === 404) return { ok: false, failure: "not-found" };
-    if (!response.ok) return { ok: false, failure: "unavailable" };
-    return { ok: true, payload: await response.json() };
+    if (response.status === 404) {
+      failure = "not-found";
+      throw new Error("not-found");
+    }
+    if (!response.ok) {
+      failure = "unavailable";
+      throw new Error("unavailable");
+    }
+    return (await response.json()) as TeamShareSource;
+  };
+
+  try {
+    const resolved = await resolveTeamForRoute(team, sport, league, fetchOne);
+    return { ok: true, payload: resolved.data };
   } catch {
-    return { ok: false, failure: "unavailable" };
+    return { ok: false, failure };
   }
 }
 

@@ -11,6 +11,7 @@ import { getSiteUrl } from "@/lib/siteUrl";
 import LoadingState from "@/components/LoadingState";
 import { teamLeagueLabel } from "@/lib/teamLeagueLabel";
 import { describeTeamRoute } from "@/lib/teamRouteSport";
+import { resolveTeamForRoute } from "@/lib/teamRouteResolve";
 import { isGameLive, assignGameNumbers } from "@/lib/teamGames";
 import { sportKeyToGridSlug } from "@/lib/gridSlug";
 import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
@@ -38,16 +39,31 @@ export default function TeamPage() {
   const [propFamilies, setPropFamilies] = useState<PropFamily[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The slug the page ACTUALLY resolved to (#5852): the URL's, or its
+  // league-qualified form when that is the team the route asked for. Every
+  // follow-up fetch keyed on a team must use this, or it loads a second team's
+  // data onto the first team's page.
+  const [resolvedSlug, setResolvedSlug] = useState(teamSlug);
 
+  // #5852 link half — `/api/teams/{slug}` is never told which sport the reader
+  // is in, so a name-derived slug owned by another sport's row answers instead
+  // (`clemson-tigers` is WNCAAB; the NCAAF row is `clemson-tigers-ncaaf`).
+  // `resolveTeamForRoute` asks again for the league-qualified row before we
+  // tell a reader we have no football page for a team whose football page we
+  // have. Only fires on the already-failing branch; see that file's header.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     setGrid(null);
     setPropFamilies([]);
-    fetchTeamPage(teamSlug)
+    setResolvedSlug(teamSlug);
+    resolveTeamForRoute(teamSlug, sport, league, fetchTeamPage)
       .then((result) => {
-        if (!cancelled) setData(result);
+        if (!cancelled) {
+          setResolvedSlug(result.slug);
+          setData(result.data);
+        }
       })
       .catch(() => {
         if (!cancelled) setError("Team not found");
@@ -58,7 +74,7 @@ export default function TeamPage() {
     return () => {
       cancelled = true;
     };
-  }, [teamSlug]);
+  }, [teamSlug, sport, league]);
 
   // Division-race data source: the league championship grid already carries every
   // rival's per-stage probability + division metadata. Supplementary + best-effort
@@ -86,7 +102,7 @@ export default function TeamPage() {
   // zero families and the card never renders.
   useEffect(() => {
     let cancelled = false;
-    fetchTeamPropFamilies(teamSlug)
+    fetchTeamPropFamilies(resolvedSlug)
       .then((result) => {
         if (!cancelled) setPropFamilies(result.families || []);
       })
@@ -96,7 +112,7 @@ export default function TeamPage() {
     return () => {
       cancelled = true;
     };
-  }, [teamSlug]);
+  }, [resolvedSlug]);
 
   // Document title
   useEffect(() => {
