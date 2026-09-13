@@ -82,6 +82,31 @@ same venue but weeks later.
 :data:`MAX_GHOST_LAG` is therefore three days, and it is a measured bound rather
 than a guess. Widening it is not a free parameter — it is a new measurement.
 
+THE GHOST DOES NOT STOP BEING A GHOST AT ITS OWN FAKE KICK-OFF
+═══════════════════════════════════════════════════════════════
+
+This module's first cut required the ghost's advertised kick-off to be in the
+FUTURE, reasoning that "a row nobody is being shown as upcoming is not this
+defect". That premise is false, and it was refuted by our own screenshot before
+it ever ran: on the league page a ``scheduled`` row with no score whose kick-off
+has passed is not gone, it is PROMOTED — it leaves *Upcoming* and renders under
+**Live & Paused** reading "No result reported", while the real result sits one
+rail below (lane1/288's 17:02Z production shot for #5918, and on 2026-09-13 the
+served La Liga payload carried three such rows: 15310513, 15308732, 15308726).
+
+So the rule cost the ten measured ghosts of 2026-09-13 nothing at 18:00Z and
+everything at 19:01Z, and it did it silently: they would have aged out of the
+selector into a *worse* card and stayed on the page for the rest of the -5d
+population window. What makes a row a ghost is that a scored, fixture-anchored
+twin of it exists within :data:`MAX_GHOST_LAG` — a fact about two rows, not
+about the hour. The clock now buys only :data:`GHOST_KICKOFF_GRACE`, which is
+the one thing it was ever actually protecting.
+
+None of the three gates that keep a real fixture visible moved: the ghost must
+still carry no score and no authority fixture id, the canonical must still carry
+both, the pair must still sit inside the measured three-day window, and a block
+that cannot resolve to exactly one of each is still refused.
+
 THE NAME KEY IS DELIBERATELY THE NARROW ONE
 ════════════════════════════════════════════
 
@@ -121,14 +146,24 @@ NOT_A_TWIN = "NOT_A_TWIN"
 #: days of production soccer.
 MAX_GHOST_LAG = timedelta(days=3)
 
+#: How long after its own advertised kick-off a row is left alone before it may
+#: be judged a ghost. A REAL fixture reads ``scheduled`` with no score for the
+#: first minutes of its first half, until live ingest catches it, and there is
+#: no urgency whatsoever to relabel anything in that window. It is deliberately
+#: generous: the cost of waiting is half an hour of a card nobody has looked at
+#: yet, and the cost of not waiting is a kicked-off match called a duplicate.
+GHOST_KICKOFF_GRACE = timedelta(minutes=30)
+
 #: A row in one of these states has been played and can be a canonical.
 #: ``closed`` is StatPal's definitive completion and ``completed`` is everyone
 #: else's; both mean the same thing to a reader.
 SETTLED_STATUSES = ("completed", "closed")
 
 #: The only state a ghost may be in. Deliberately not ``suspended`` (a live
-#: state, live/048) and not ``voided``/``merged`` (already unprintable): a row
-#: that is not being advertised as an upcoming fixture is not this defect.
+#: state, live/048) and not ``voided``/``merged`` (already unprintable). Note
+#: that ``scheduled`` is a claim the row makes about itself and not a statement
+#: about the clock — a ``scheduled`` row whose hour has passed is still being
+#: printed, which is the whole of the section on the fake kick-off above.
 GHOST_STATUS = "scheduled"
 
 
@@ -222,8 +257,13 @@ def classify_block(
 
     * a CANONICAL is settled, carries a final score AND is fixture-anchored;
     * a GHOST is ``scheduled``, carries no score, is NOT fixture-anchored, and
-      its advertised kick-off is still in the future — because a row nobody is
-      being shown is not the defect this ships against.
+      is not inside :data:`GHOST_KICKOFF_GRACE` of its own advertised kick-off.
+
+    The clock decides ONE thing here and it is not whether the row is a ghost.
+    A row that is refuted by a scored, fixture-anchored twin of its own within
+    :data:`MAX_GHOST_LAG` is a ghost at every hour of the day; the grace exists
+    only so that a real match which has just kicked off, and is briefly still
+    ``scheduled`` with no score, is never the row we stop printing.
 
     Anything other than exactly one of each, among the rows that actually pair
     within ``max_lag``, is :data:`REFUSE_AMBIGUOUS`. Two ghosts and one
@@ -241,7 +281,7 @@ def classify_block(
         if r.status == GHOST_STATUS
         and not r.has_final_score
         and not r.is_fixture_anchored
-        and r.commence_time > now
+        and not (now - GHOST_KICKOFF_GRACE < r.commence_time <= now)
     ]
     if not canonicals or not ghosts:
         return NOT_A_TWIN, None, "no ghost/canonical pair in this block"
