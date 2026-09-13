@@ -41,6 +41,7 @@ asserting a snapshot of a live table, which is worse than not asserting them.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import importlib.util
 import re
 from datetime import datetime, timedelta, timezone
@@ -459,3 +460,117 @@ class TestTheSuspendedPopulation:
         venue = now + timedelta(days=2)
 
         assert repair.planned_write("suspended", venue, venue, now) == {}
+
+
+# ---------------------------------------------------------------------------
+# CERT-2798's two nonblocking follow-ups
+# ---------------------------------------------------------------------------
+
+
+class TestTheUndoTakesTheSameGate:
+    """`5821-RESTORE-WRONG-APP-REFUSAL`.
+
+    The repair refuses to write anywhere but the producer app. The restore said
+    the same thing in prose and then wrote wherever it was run — and an undo is
+    a production write in the opposite direction, typed by someone who has just
+    decided the repair went wrong, which is the worst moment to be lenient.
+    """
+
+    def _args(self, apply=False):
+        return argparse.Namespace(apply=apply)
+
+    def test_the_restore_refuses_to_write_off_the_producer_app(
+        self, repair, restore, monkeypatch
+    ):
+        monkeypatch.setenv("HEROKU_APP_NAME", "bainluck")
+
+        refusal = repair.wrong_app_refusal(self._args(apply=True))
+
+        assert refusal and repair.PRODUCER_APP in refusal
+
+    def test_the_restore_refuses_with_no_app_at_all(self, repair, monkeypatch):
+        monkeypatch.delenv("HEROKU_APP_NAME", raising=False)
+
+        assert repair.wrong_app_refusal(self._args(apply=True))
+
+    def test_a_restore_dry_run_runs_anywhere(self, repair, monkeypatch):
+        monkeypatch.delenv("HEROKU_APP_NAME", raising=False)
+
+        assert repair.wrong_app_refusal(self._args(apply=False)) is None
+
+    def test_the_gate_survives_a_caller_with_no_backup_flag(self, repair):
+        """🔴 THE BUG THIS PAIRING NEARLY INTRODUCED, as a test.
+
+        `wrong_app_refusal` was written for the repair, whose parser has
+        `--backup`. The restore's does not. Reading `args.backup` off the
+        restore's namespace raises `AttributeError` — inside the refusal, before
+        it can refuse anything — so the gate would have failed OPEN on the
+        program it was added to protect. It reads both flags with `getattr`
+        now.
+        """
+        bare = argparse.Namespace(apply=True)
+
+        # No AttributeError, and it still refuses.
+        assert repair.wrong_app_refusal(bare)
+
+    def test_the_restore_ACTUALLY_CALLS_the_gate(self, restore, monkeypatch):
+        """🔴 THE ONE THE OTHERS DO NOT COVER, found by mutating.
+
+        Every test above this one passed with the gate call DELETED from
+        `run()`: they assert what the shared function does and that the restore
+        has not grown its own copy, and neither is a claim that the restore
+        invokes it. A guard that proves a gate exists is not a guard that the
+        program passes through it.
+
+        So this one runs the program. On the wrong app with `--apply` it must
+        exit 2 having touched no database — which it can only do by refusing
+        before it opens a session.
+        """
+        monkeypatch.setenv("HEROKU_APP_NAME", "bainluck")
+
+        assert asyncio.run(restore.run(argparse.Namespace(apply=True))) == 2
+
+    def test_it_is_the_SAME_function_and_not_a_copy(self, restore):
+        """One refusal, two programs. A second implementation of "which app may
+        write" is two answers waiting to disagree, and the disagreement would
+        show up as a write on the wrong dyno.
+
+        Asserted on the code object's FILE, not with `is` against this file's
+        own `repair` fixture: the fixture loads the repair through its own
+        import spec, so the two module objects are different by construction and
+        an identity check would be measuring the harness. Where the function was
+        DEFINED is the fact that matters.
+        """
+        assert restore.wrong_app_refusal.__code__.co_filename == str(REPAIR_PATH)
+        assert (
+            "def wrong_app_refusal" not in RESTORE_PATH.read_text()
+        ), "the restore grew its own copy of the app gate"
+
+
+class TestTheAppliedCountIsTheLandedCount:
+    """`5821-REPORT-ACTUAL-LIFTED-COUNT`.
+
+    The apply printed the PLANNED lift count. A row whose compare-and-set loses
+    a race is skipped, so the printed number could tell an operator that N
+    fixtures read `scheduled` when some of them still read `suspended` — the
+    exact claim the repair exists to make true, made falsely.
+    """
+
+    def test_the_apply_counts_lifts_on_the_landing_not_on_the_plan(self):
+        """Read off the source, because the loop needs a database to run.
+
+        The assertion is narrow and specific: the increment sits INSIDE the
+        `if result.rowcount:` branch (the landing), and the printed line reads
+        the landed counter rather than the planned one.
+        """
+        source = REPAIR_PATH.read_text()
+
+        landing = source.split("if result.rowcount:")[1].split("else:")[0]
+        assert "lifted_written += 1" in landing, (
+            "the lifted counter moved out of the landing branch — it is "
+            "counting intentions again"
+        )
+        assert "{lifted_written} lifted" in source
+        assert (
+            "{lifted} lifted" not in source
+        ), "the APPLIED line still prints the planned lift count"
