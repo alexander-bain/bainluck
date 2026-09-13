@@ -17,6 +17,12 @@ from sqlalchemy.orm import joinedload, selectinload
 from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport, Team
 from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
+from app.utils.kalshi_empty_book import KALSHI_BOOKMAKER
+from app.utils.futures_unsupported_price import (
+    WITHHELD_PRICE_FIELDS,
+    needs_trade_evidence,
+    price_is_unsupported,
+)
 from app.utils.leader_order import leader_first_outcomes
 from app.utils.event_rails import live_scheduled_settled_order
 from app.utils.lifecycle import served_event_status
@@ -2808,6 +2814,97 @@ async def get_multi_market_history(
     }
 
 
+def _as_float(value) -> Optional[float]:
+    """`Numeric` columns arrive as `Decimal`; the price predicates take floats.
+
+    None-preserving on purpose: ``is_lone_ask_on_empty_book`` distinguishes a
+    missing book from a zero bid, and coercing None to 0.0 here would hand it a
+    bid nobody recorded and call it nobody bidding.
+    """
+    return None if value is None else float(value)
+
+
+async def _unsupported_price_outcome_ids(
+    db: AsyncSession, market: FuturesMarket
+) -> set[int]:
+    """Which of this market's outcomes serve a price no book and no trade supports.
+
+    #5611. The screen is done on the outcome rows first — source, grade, bid and
+    ask are all in memory — so a market with no candidate outcomes costs NOTHING
+    here and never reaches the snapshot table. Measured on production
+    2026-09-13, only 47 open Kalshi markets hold a leg this can fire on.
+
+    The trade read is scoped to Kalshi's own snapshots, matching
+    ``lone_ask_on_empty_book_sql``, which carries the same bookmaker term and
+    says why: this is Kalshi's price policy and Polymarket's rule for these
+    columns is a different one (gotcha #19). It rides
+    ``ix_futures_odds_snapshots_outcome_bookmaker_captured``.
+
+    Absence fails OPEN. An outcome with no Kalshi snapshot is left exactly as it
+    is served today — see ``price_is_unsupported`` for why "we never looked" and
+    "we looked and it never traded" may not be collapsed into one answer.
+    """
+    candidates = [
+        o
+        for o in market.outcomes
+        if needs_trade_evidence(
+            market.source,
+            o.resolution_source,
+            _as_float(getattr(o, "current_yes_bid", None)),
+            _as_float(getattr(o, "current_yes_ask", None)),
+        )
+    ]
+    if not candidates:
+        return set()
+
+    candidate_ids = [o.id for o in candidates]
+    newest = (
+        select(
+            FuturesOddsSnapshot.outcome_id,
+            func.max(FuturesOddsSnapshot.captured_at).label("captured_at"),
+        )
+        .where(
+            FuturesOddsSnapshot.outcome_id.in_(candidate_ids),
+            FuturesOddsSnapshot.bookmaker == KALSHI_BOOKMAKER,
+        )
+        .group_by(FuturesOddsSnapshot.outcome_id)
+        .subquery()
+    )
+    rows = await db.execute(
+        select(
+            FuturesOddsSnapshot.outcome_id,
+            func.max(FuturesOddsSnapshot.last_price),
+        )
+        .join(
+            newest,
+            and_(
+                FuturesOddsSnapshot.outcome_id == newest.c.outcome_id,
+                FuturesOddsSnapshot.captured_at == newest.c.captured_at,
+            ),
+        )
+        .where(FuturesOddsSnapshot.bookmaker == KALSHI_BOOKMAKER)
+        .group_by(FuturesOddsSnapshot.outcome_id)
+    )
+    # Two Kalshi snapshots can share one `captured_at`; the aggregate above keeps
+    # the HIGHEST last_price among them, which is the fail-open direction — any
+    # trade evidence at all leaves the price on the page.
+    latest_trade = {outcome_id: price for outcome_id, price in rows.all()}
+
+    return {
+        o.id
+        for o in candidates
+        if price_is_unsupported(
+            market.source,
+            o.resolution_source,
+            _as_float(getattr(o, "current_yes_bid", None)),
+            _as_float(getattr(o, "current_yes_ask", None)),
+            _as_float(latest_trade.get(o.id)),
+            has_trade_evidence=o.id in latest_trade
+            and latest_trade[o.id] is not None,
+        )
+    }
+
+
 @router.get("/{market_id}")
 async def get_futures_market(
     market_id: int,
@@ -2842,7 +2939,9 @@ async def get_futures_market(
             db, market_id, outcome_ids
         )
 
-    detail = _format_market_detail(market, bookmakers)
+    unsupported_price_ids = await _unsupported_price_outcome_ids(db, market)
+
+    detail = _format_market_detail(market, bookmakers, unsupported_price_ids)
     if len(bookmakers) > 1 and source_breakdown:
         detail["source_breakdown"] = source_breakdown
     return detail
@@ -4563,7 +4662,11 @@ async def _get_source_breakdown(
     return sorted(by_bookmaker.values(), key=lambda s: s["source"])
 
 
-def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -> dict:
+def _format_market_detail(
+    market: FuturesMarket,
+    bookmakers: list[str] = None,
+    unsupported_price_outcome_ids: "set[int] | None" = None,
+) -> dict:
     """Format a market for detail view with all outcomes.
 
     #993: the click-through must MATCH the answer search shows. Apply the SAME
@@ -4625,6 +4728,34 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
         }
         for o in sorted_outcomes
     ]
+    # #5611: a price no book and no trade supports is not published. The rule and
+    # everything measured about it are in `app.utils.futures_unsupported_price`;
+    # the caller decided WHICH rows, because only it can read the snapshots.
+    #
+    # HERE, ABOVE `normalize_display_probs`, AND THAT IS LOAD-BEARING. A withheld
+    # value left in place until after the squeeze would still sit in the divisor,
+    # so twelve fabricated 1.0s would go on halving every honest row on the same
+    # board — the exact mechanism UX-P163 documents below for a no-bid `Other`,
+    # which put `Democratic Party 43%` on Discover against a book price of 85.5%.
+    # `normalize_display_probs` reads absent values as 0 (`o.get(key) or 0`) and
+    # writes back only truthy ones, so nulling first removes them from the sum
+    # without touching a surviving row.
+    #
+    # The key stays PRESENT and null, never omitted, for the same reason #5539
+    # states: the clients test `!== null`, and `undefined !== null` is true.
+    # Measured against the shipped client, no render change is needed —
+    # `formatProbability(null)` already prints "-" (`lib/api.ts`), and both the
+    # hero pick and the default sort read `probability ?? 0`, so a withheld row
+    # can never be crowned leader and sinks to the bottom of the board on its own.
+    withheld = unsupported_price_outcome_ids or set()
+    prices_withheld = 0
+    if withheld:
+        for o in outcomes:
+            if o["id"] in withheld:
+                for field in WITHHELD_PRICE_FIELDS:
+                    o[field] = None
+                prices_withheld += 1
+
     # #5539: a one-winner field whose openings cannot be a distribution never
     # had an opening, and this page is where the reader meets it. `/futures/
     # 12337998` printed OPEN 99% against all 35 teams in the Women's 2027
@@ -4795,6 +4926,12 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
         # probe can tell a withheld opening from one that never existed. Always
         # present so its absence means an old build, not a coherent field.
         "openings_withheld": openings_withheld,
+        # #5611: how many outcomes had their price refused as unsupported by any
+        # book or trade. A COUNT rather than a flag, so a probe can tell one
+        # fabricated leg from a whole board of them without re-deriving the rule,
+        # and so the 19 markets where this empties every price are findable.
+        # Machine-readable only — notice 34 keeps diagnostics off the page.
+        "prices_withheld": prices_withheld,
         "bookmakers": bookmakers or [],
         "category_tags": market.category_tags or [],
         "created_at": market.created_at.isoformat() if market.created_at else None,

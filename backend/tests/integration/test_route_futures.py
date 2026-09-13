@@ -229,6 +229,11 @@ class TestFuturesMarketDetail:
             # Always present — its absence would mean an old build, not a
             # coherent field, which is why it belongs in this exhaustive set.
             "openings_withheld",
+            # #5611: how many outcomes had a price refused as unsupported by any
+            # book or trade. Present for the same reason as the line above — a
+            # probe must be able to tell "nothing was withheld" from "this build
+            # cannot withhold".
+            "prices_withheld",
             "bookmakers",
             "category_tags",
             "created_at",
