@@ -30,6 +30,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 import re
 import subprocess
 import sys
@@ -48,6 +49,30 @@ PUSH, HOLD, REFUSE, USAGE = 0, 1, 2, 3
 
 A = "a" * 40          # a plausible "main live" sha
 B = "b" * 40          # a plausible "heavy live" sha
+
+# ── production readings the band must survive, recorded here so the guards below
+#    can be checked against the WORLD and not only against each other ───────────
+
+#: Worst `precompute_calibration_main` run in the task-metrics ring of 30
+#: consecutive runs, read 2026-09-13T10:02Z (latency/372): 09-12 19:14:59Z ->
+#: 19:37:30Z = 22m31s. The band's REBUILD_DURATION_MIN is a ceiling on this.
+OBSERVED_REBUILD_MAX_MIN = 22.517
+#: EVERY push -> heavy-release lag this workflow has ever produced, read from
+#: the run logs (`Pushing ...` -> `remote: Released vN`) and cross-checked
+#: against the release records (latency/374):
+#:
+#:     v14  run 34750397765  09:52:01.518Z -> 09:53:59.010Z   117.5s
+#:     v13  run 34743071282  06:34:38.837Z -> 06:35:15.077Z    36.2s
+#:     v12  run 34720427451  21:37:14.249Z -> 21:38:10.096Z    55.8s
+#:     v11  run 34714692872  19:37:36.353Z -> 19:38:15.612Z    39.3s
+#:
+#: The list is here rather than a single number because the FASTEST is the one
+#: the opening edge is safe against, and the first version of this constant was
+#: set from the 117.5s reading — the SLOWEST of the four, three times the real
+#: floor. MIN_RELEASE_LAG_MIN must sit at or below the fastest; see
+#: `test_the_min_lag_is_a_real_lower_bound_and_not_merely_self_consistent`.
+OBSERVED_RELEASE_LAGS_MIN = (1.958, 0.603, 0.930, 0.655)
+OBSERVED_RELEASE_LAG_MIN = min(OBSERVED_RELEASE_LAGS_MIN)
 
 
 def _module():
@@ -89,14 +114,14 @@ def _workflow_code() -> str:
 
 
 def test_the_band_falls_out_of_the_measured_constants():
-    """:34-:58 must be arithmetic, so a re-measurement moves it.
+    """The band must be arithmetic, so a re-measurement moves it.
 
     Pinning the literals alone would let someone edit a constant and leave the
     band stale; pinning only the derivation would let both drift together. Both,
     together, is the check.
     """
     opens, closes = sync.window_bounds()
-    assert (opens, closes) == (34, 58)
+    assert (opens, closes) == (38, 58)
     assert opens == (
         sync.REBUILD_START_MIN + sync.REBUILD_DURATION_MIN - sync.MIN_RELEASE_LAG_MIN
     )
@@ -112,12 +137,12 @@ def test_moving_a_measured_constant_moves_the_band(monkeypatch):
     would survive the test above and die here.
     """
     monkeypatch.setattr(sync, "REBUILD_DURATION_MIN", 32)
-    assert sync.window_bounds()[0] == 44
-    monkeypatch.setattr(sync, "REBUILD_DURATION_MIN", 22)
+    assert sync.window_bounds()[0] == 47
+    monkeypatch.setattr(sync, "REBUILD_DURATION_MIN", 23)
 
     monkeypatch.setattr(sync, "MIN_RELEASE_LAG_MIN", 8)
-    assert sync.window_bounds()[0] == 29
-    monkeypatch.setattr(sync, "MIN_RELEASE_LAG_MIN", 3)
+    assert sync.window_bounds()[0] == 30
+    monkeypatch.setattr(sync, "MIN_RELEASE_LAG_MIN", 0)
 
     monkeypatch.setattr(sync, "MAX_RELEASE_LAG_MIN", 25)
     assert sync.window_bounds()[1] == 45
@@ -133,10 +158,15 @@ def test_the_rebuild_duration_is_the_measured_one_not_notice_29s_seven():
     `push_window_guard.py`'s REBUILD_DURATION_MIN = 7 predates the production
     read (`elapsed_ms` 1,332,567 = 22m13s). A band built on 7 would open at :19 —
     squarely inside the rebuild it exists to dodge.
+
+    23, not 22: this constant is a CEILING, and latency/372 read the 30-run
+    task-metrics ring (2026-09-12T17:14Z .. 09-13T09:15Z) whose MAX was 22m31s.
     """
-    assert sync.REBUILD_DURATION_MIN == 22
+    assert sync.REBUILD_DURATION_MIN == 23
     stale_open = sync.REBUILD_START_MIN + 7 - sync.MIN_RELEASE_LAG_MIN
     assert stale_open < sync.REBUILD_START_MIN + sync.REBUILD_DURATION_MIN
+    # The ceiling must cover the worst run actually observed, not the typical one.
+    assert sync.REBUILD_DURATION_MIN >= OBSERVED_REBUILD_MAX_MIN
 
 
 def test_the_whole_band_lands_clear_of_the_rebuild():
@@ -148,9 +178,64 @@ def test_the_whole_band_lands_clear_of_the_rebuild():
     opens, closes = sync.window_bounds()
     rebuild_end = sync.REBUILD_START_MIN + sync.REBUILD_DURATION_MIN
     # Earliest cycle a push at `opens` can produce is still after the rebuild.
+    # NOTE: substitute `window_bounds()` and this line reads
+    # `START + DURATION >= START + DURATION`. It is an IDENTITY — true for every
+    # value of MIN_RELEASE_LAG_MIN, including ones no real lag can reach. That is
+    # why it did not notice :34, and why the two tests below exist.
     assert opens + sync.MIN_RELEASE_LAG_MIN >= rebuild_end
     # Latest cycle a push at `closes` can produce is still before the next one.
     assert closes + sync.MAX_RELEASE_LAG_MIN < 60 + sync.REBUILD_START_MIN
+
+
+def test_the_min_lag_is_a_real_lower_bound_and_not_merely_self_consistent():
+    """`opens` SUBTRACTS this constant, so only a LOWER bound makes it safe.
+
+    The sibling above cannot see this: it is an identity in the constants. So a
+    MIN_RELEASE_LAG_MIN larger than any lag that can actually occur passes every
+    other guard in this file while moving `opens` earlier by exactly the size of
+    the error. That is the whole of the :34 defect — 3 was an admitted estimate,
+    and the first real reading came in at 1m57.5s.
+
+    AND IT IS ALSO THE WHOLE OF THE :37 DEFECT, which is why this test is
+    written against a LIST. One reading is not a bound: 1m57.5s was the slowest
+    of the four syncs this workflow has completed, and the fastest was 36.2s. A
+    constant set from the slowest reading is an over-estimate wearing a
+    measurement's clothes, and the gate it feeds moves the wrong way by exactly
+    that much.
+
+    Checked against recorded production readings rather than another constant.
+    """
+    assert sync.MIN_RELEASE_LAG_MIN <= min(OBSERVED_RELEASE_LAGS_MIN)
+    # Not vacuous on the list: the bound must hold against EVERY reading, so a
+    # future sync faster than any of these reddens this line rather than
+    # quietly widening the band it was supposed to close.
+    assert all(sync.MIN_RELEASE_LAG_MIN <= lag for lag in OBSERVED_RELEASE_LAGS_MIN)
+
+
+def test_the_opening_edge_clears_the_worst_rebuild_at_the_fastest_real_lag():
+    """The end-to-end safety property, in observed units, not in constants.
+
+    RED on the pre-2026-09-13 band: `opens` :34 + a 1.958-minute lag releases at
+    :35:58, while the worst observed rebuild runs to :37:31. The band opened
+    while the rebuild it exists to dodge was still running, and every guard in
+    this file was green. Today's release survived only because that hour's
+    rebuild happened to finish at :34:14.
+
+    THE HEADROOM IS THE READING, NOT THE PASS/FAIL. At :37 with the fastest
+    observed lag the release lands at :37:36 against a worst rebuild ending
+    :37:31 — green by **5 seconds**, which is a coin toss dressed as a guard.
+    At :38 it is 1m05s. So the assertion is stated with the margin beside it:
+    a band that passes by seconds is reported, not celebrated.
+    """
+    opens, _ = sync.window_bounds()
+    earliest_release = opens + OBSERVED_RELEASE_LAG_MIN
+    worst_rebuild_end = sync.REBUILD_START_MIN + OBSERVED_REBUILD_MAX_MIN
+    headroom_s = (earliest_release - worst_rebuild_end) * 60
+    assert earliest_release >= worst_rebuild_end, f"headroom {headroom_s:.0f}s"
+    # A minute of slack between the two measured extremes. Below this the band
+    # is decided by which of two production timings happened to be worse that
+    # hour, and the next reading on either constant flips it.
+    assert headroom_s >= 60, f"only {headroom_s:.0f}s of headroom"
 
 
 # ── the clock cannot be handed in ──────────────────────────────────────────────
@@ -169,6 +254,27 @@ def test_the_cli_has_no_now_flag():
         capture_output=True, text=True,
     )
     assert proc.returncode == USAGE
+
+
+@pytest.mark.parametrize("argv", [["--help"], ["decide", "--help"], ["inflight", "--help"]])
+def test_help_exits_clean_while_a_bad_argument_still_exits_usage(argv):
+    """`--help` is an answer, not a usage error — and the two shared code 3.
+
+    `except SystemExit: return USAGE` caught the class instead of reading the
+    value (gotcha #54), so every `--help` exited 3: the code the workflow's own
+    case statement calls "a story about the harness, not a verdict", and the
+    code notice 10's dry-run clause reads as a failed pre-flight. The bad-flag
+    line is the control — the fix must not make the parser permissive.
+    """
+    ok = subprocess.run([sys.executable, str(SCRIPT), *argv], capture_output=True, text=True)
+    assert ok.returncode == 0, ok.stderr[-400:]
+    assert "usage:" in ok.stdout
+
+    bad = subprocess.run(
+        [sys.executable, str(SCRIPT), "inflight", "--no-such-flag"],
+        capture_output=True, text=True,
+    )
+    assert bad.returncode == USAGE
 
 
 def test_the_real_clock_only_has_to_be_self_consistent():
@@ -442,6 +548,252 @@ def test_the_sync_does_not_share_the_main_deploy_concurrency_group():
     body = WORKFLOW.read_text()
     assert "group: heavy-deploy" in body
     assert "group: heroku-deploy" not in body
+
+
+# ---------------------------------------------------------------------------
+# #5886 — the in-flight gate. The band cleared the rebuild by 19m44s and the
+# same release still killed two other heavy jobs, because the band is derived
+# against one of `worker-heavy`'s three scheduled residents.
+# ---------------------------------------------------------------------------
+
+BUSY, CLEAR = 1, 0
+
+#: The inspect reading taken while the incident's own shape was live
+#: (production, 2026-09-13T10:53:13Z): the matcher fired :50 and the typeahead
+#: :53, exactly the two jobs the 09:53:58Z release cycled, with four non-heavy
+#: tasks running beside them on the other two workers. Kept verbatim so the
+#: gate is exercised against a payload the fleet really produced.
+PRODUCTION_ACTIVE_1053Z = [
+    "app.tasks.warm_prop_families",
+    "app.tasks.poll_all_odds",
+    "app.tasks.poll_live_prediction_markets",
+    "app.tasks.prewarm_live_feed_shapes",
+    "app.tasks.match_prediction_markets",
+    "app.tasks.rebuild_typeahead_index",
+]
+#: The same endpoint 4 minutes earlier, when nothing heavy was running on the
+#: realtime worker's side. `poll_live_prediction_markets` is the control: it is
+#: active on almost every reading and must never be mistaken for a heavy job.
+PRODUCTION_ACTIVE_NON_HEAVY = ["app.tasks.poll_live_prediction_markets"]
+
+
+def _inspect_body(names, workers=3):
+    """An `/api/admin/celery/inspect` body carrying `names` across `workers`."""
+    body = {"_cache": {"cached": False, "age_s": 0.0}}
+    for i in range(workers):
+        body[f"celery@worker-{i}"] = {
+            "total_registered": 190,
+            "taxonomy_tasks": [],
+            "active": [],
+            "reserved_count": 0,
+            "reserved_sample": [],
+        }
+    for i, name in enumerate(names):
+        body[f"celery@worker-{i % max(1, workers)}"]["active"].append(
+            {"name": name, "id": f"id-{i}"}
+        )
+    return body
+
+
+def _heavy_set():
+    """The heavy task set as the script parses it out of the app."""
+    source = (REPO / "backend" / "app" / "tasks" / "__init__.py").read_text()
+    return sync.heavy_task_names(source)
+
+
+def test_the_heavy_task_set_is_the_one_the_app_routes_on():
+    """The parse must equal `app.tasks.HEAVY_TASKS`, both directions.
+
+    The script cannot import celery — it runs on a bare runner — so the set has
+    to be read out of the source. A COPY would have been the obvious move and
+    is the one this repo has already paid for twice: #5878 found two drifted
+    copies of a normaliser table, one carrying `ß` and the other `æ`. So the
+    only defence is that the two records are asserted equal, in a test that can
+    import the real one.
+    """
+    from app.tasks import HEAVY_TASKS
+
+    parsed = _heavy_set()
+    assert parsed is not None
+    assert set(parsed) == set(HEAVY_TASKS), {
+        "only in the parse": sorted(set(parsed) - set(HEAVY_TASKS)),
+        "only in the app": sorted(set(HEAVY_TASKS) - set(parsed)),
+    }
+    # The residents this gate exists for, named rather than implied.
+    for resident in (
+        "app.tasks.precompute_calibration_main",
+        "app.tasks.match_prediction_markets",
+        "app.tasks.rebuild_typeahead_index",
+    ):
+        assert resident in parsed
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "",                                   # nothing at all
+        "OTHER = {'app.tasks.x'}",            # a different assignment
+        "HEAVY_TASKS = compute_the_set()",    # not a literal
+        "HEAVY_TASKS = set()",                # a call, not a literal
+        "HEAVY_TASKS = []",                   # a literal that parsed and is empty
+        "HEAVY_TASKS = {A_NAME, ANOTHER}",    # a literal holding no strings
+        "HEAVY_TASKS = {",                    # does not parse
+    ],
+)
+def test_an_unreadable_task_set_is_unknown_and_never_an_empty_one(source):
+    """`frozenset()` would declare the worker idle for every reading.
+
+    This is gotcha #53 as a gate: "I could not tell" and "nothing is running"
+    are opposite facts, and the empty set is the shape that makes them read
+    alike. The caller PROCEEDS on unknown, so the harm is a missed veto — but
+    it must be reported as unknown, not as a clean fleet.
+    """
+    assert sync.heavy_task_names(source) is None
+
+
+def test_a_reply_naming_no_worker_is_unknown_not_an_idle_fleet():
+    """A failed broadcast returns a body with only `_cache` in it.
+
+    `/api/admin/celery/inspect` composes its reply from the inspect maps, so a
+    broker that answered nothing yields no worker keys — the same SHAPE as an
+    idle fleet and the opposite MEANING. Three workers have replied to every
+    reading taken of this endpoint.
+    """
+    assert sync.active_task_names({"_cache": {"cached": False}}) is None
+    assert sync.active_task_names(None) is None
+    assert sync.active_task_names([]) is None
+    # A worker that replied with an empty active list IS idle, and must not be
+    # confused with the case above.
+    assert sync.active_task_names(_inspect_body([])) == []
+
+
+def test_the_incidents_own_reading_holds_the_sync():
+    """The 09:53:58Z release, re-judged against a payload from the same shape."""
+    verdict = sync.inflight_verdict(
+        active=sync.active_task_names(_inspect_body(PRODUCTION_ACTIVE_1053Z)),
+        heavy=_heavy_set(),
+    )
+    assert verdict.code == BUSY
+    assert verdict.verdict == "BUSY"
+    # It names what it saw — a hold nobody can read is a hold nobody trusts.
+    assert "match_prediction_markets" in verdict.reason
+    assert "rebuild_typeahead_index" in verdict.reason
+
+
+def test_a_busy_realtime_worker_is_not_a_busy_heavy_one():
+    """The control. `poll_live_prediction_markets` runs on the 2-minute realtime
+    beat and is active on nearly every reading; a gate that held on it would
+    hold forever, which is #5470 again with a tidier reason.
+    """
+    verdict = sync.inflight_verdict(
+        active=sync.active_task_names(_inspect_body(PRODUCTION_ACTIVE_NON_HEAVY)),
+        heavy=_heavy_set(),
+    )
+    assert verdict.code == CLEAR
+    assert verdict.verdict == "IDLE"
+
+
+def test_an_unreadable_fact_proceeds_because_this_is_a_cost_gate():
+    """Both halves of the fact, each unreadable on its own.
+
+    The polarity is the one `decide` states: a killed heavy job self-heals on
+    its next beat (the 09:53 matcher restarted 10:05 and succeeded 10:09:37),
+    while a sync that cannot happen is silent unbounded drift. So unknown
+    proceeds — and says so, rather than printing IDLE and inviting the reading
+    that the fleet was checked.
+    """
+    no_set = sync.inflight_verdict(active=[], heavy=None)
+    assert (no_set.code, no_set.verdict) == (CLEAR, "UNKNOWN")
+    assert "HEAVY_TASKS" in no_set.reason
+
+    no_reply = sync.inflight_verdict(active=None, heavy=_heavy_set())
+    assert (no_reply.code, no_reply.verdict) == (CLEAR, "UNKNOWN")
+    assert "did not answer" in no_reply.reason
+
+
+def test_an_attended_run_bypasses_the_in_flight_veto():
+    """Same licence as the clock and the floor: a person may accept one lost
+    pass to get the code onto the worker now. It is still not a licence over
+    the never-backwards guard, which `decide` owns and this gate never sees.
+    """
+    verdict = sync.inflight_verdict(
+        active=sync.active_task_names(_inspect_body(PRODUCTION_ACTIVE_1053Z)),
+        heavy=_heavy_set(),
+        dispatched=True,
+    )
+    assert verdict.code == CLEAR
+    assert verdict.verdict == "BYPASSED"
+
+
+def test_the_cli_holds_on_a_busy_fleet_and_proceeds_on_a_missing_file(tmp_path):
+    """Exit codes, because the workflow branches on them and nothing else."""
+    busy = tmp_path / "busy.json"
+    busy.write_text(json.dumps(_inspect_body(PRODUCTION_ACTIVE_1053Z)))
+    assert sync.main(["inflight", "--inspect-json", str(busy)]) == BUSY
+
+    idle = tmp_path / "idle.json"
+    idle.write_text(json.dumps(_inspect_body(PRODUCTION_ACTIVE_NON_HEAVY)))
+    assert sync.main(["inflight", "--inspect-json", str(idle)]) == CLEAR
+
+    # The three ways the workflow's `curl` can leave the file useless. None of
+    # them may raise, because a traceback exits non-zero and the workflow reads
+    # non-zero as a hold.
+    missing = tmp_path / "never-written.json"
+    assert sync.main(["inflight", "--inspect-json", str(missing)]) == CLEAR
+    empty = tmp_path / "empty.json"
+    empty.write_text("")
+    assert sync.main(["inflight", "--inspect-json", str(empty)]) == CLEAR
+    html = tmp_path / "html.json"
+    html.write_text("<html>502 Bad Gateway</html>")
+    assert sync.main(["inflight", "--inspect-json", str(html)]) == CLEAR
+
+
+def test_the_cli_reads_the_apps_real_task_file_by_default(tmp_path, capsys):
+    """The default path resolves from the SCRIPT's location, not the cwd.
+
+    A workflow step runs from the checkout root today, and a relative default
+    would turn into UNKNOWN — a silently disabled veto — the first time anything
+    ran it from anywhere else.
+    """
+    busy = tmp_path / "busy.json"
+    busy.write_text(json.dumps(_inspect_body(["app.tasks.match_prediction_markets"])))
+    cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        assert sync.main(["inflight", "--inspect-json", str(busy)]) == BUSY
+    finally:
+        os.chdir(cwd)
+    assert "match_prediction_markets" in capsys.readouterr().out
+
+
+def test_the_workflow_gates_the_push_on_the_in_flight_verdict():
+    """Not "does it call the gate" — does the PUSH depend on it, and is the
+    read tagged as machine traffic against our own host (notice 39)."""
+    body = _workflow_code()
+    assert "heavy_sync_decision.py inflight" in body
+    assert "INFLIGHT=$?" in body
+    assert body.index("INFLIGHT=$?") < body.index("git push heroku-heavy")
+    # The gate runs AFTER the cheap local verdict, so the ~90% of runs that hold
+    # on "already in sync" never touch the admin API at all.
+    assert body.index("DECISION=$?") < body.index("INFLIGHT=$?")
+    # Our host, so it carries the origin tag; the script cannot import the
+    # carrier, which is why the read lives in the workflow.
+    curl_line = next(
+        ln for ln in body.splitlines() if "api/admin/celery/inspect" in ln
+    )
+    # The WHOLE url, by equality. `"api.bainluck.com" in line` is the substring
+    # check CodeQL calls `py/incomplete-url-substring-sanitization` and it is
+    # right to: the host it matches can sit anywhere, so `evil.test/?r=api.
+    # bainluck.com` satisfies it. Here that would pass a workflow reading the
+    # active fleet off somebody else's box.
+    url = re.search(r'"(https://[^"]+)"', curl_line)
+    assert url and url.group(1) == "https://api.bainluck.com/api/admin/celery/inspect"
+    assert "X-BainLuck-Origin" in body
+    # One read is not a reading: two of eight calls to this endpoint returned
+    # HTTP 500 when it was measured (2026-09-13 11:02-11:03Z). UNKNOWN proceeds,
+    # so a flaky instrument does not break the sync — it quietly turns the veto
+    # off, which is worse than failing, because the gate still reads as present.
+    assert "--retry" in body
 
 
 # ---------------------------------------------------------------------------
