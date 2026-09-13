@@ -226,8 +226,14 @@ describe("a route that declares openGraph declares its image too", () => {
  */
 const INHERITS_THE_ROOT_IDENTITY: readonly string[] = [
   "/challenge/[id]",
+  // A `permanentRedirect` and nothing else — the legacy single-segment key
+  // `/event/event%3A<domain>%3A<slug>`. It renders no HTML, so it cannot unfurl
+  // as anything: measured 2026-09-13, it answers `308 → /event/ufc/26sep15`,
+  // and an unfurler follows that to the route #5833 fixed. It stays listed
+  // because this rule reads SOURCE and it genuinely declares no metadata; the
+  // list would be lying in the other direction if it were removed on a reason
+  // the rule cannot see.
   "/event/[domain]",
-  "/event/[domain]/[slug]",
   "/hub/[competition]",
 ];
 
