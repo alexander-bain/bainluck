@@ -107,6 +107,55 @@ TREND_FINE_DAYS = 14
 # scan is bounded, and the two are deliberately different mechanisms.
 TREND_FINE_MAX_POINTS = TREND_FINE_DAYS * 24
 
+# ── WHEN A DRAW IS DOWN TO TWO, THE BOARD IS NOT A SECOND OPINION (#5893) ────
+#
+# "Who wins the final" and "who wins the title" are the same question once two
+# players are left, and on men's final day the hub answered it twice, three rows
+# apart on one screen: NEXT UP said Zverev 58%, the Men's Singles board below it
+# said 57%.  Both renders were faithful; the payload carried two numbers.
+#
+# THE CAUSE IS NOT ROUNDING AND IT IS NOT THE OVERROUND.  Measured on production
+# 2026-09-13T11:14Z: the board's men's rows are the OUTRIGHT markets blended —
+# kalshi 0.565 + polymarket 0.5795 → 0.57225 — while the slate's final carries
+# the linked EVENT's blend, 0.575 over 3 sources, which is also what
+# `/api/events/15310688` prints.  Renormalising the board does not reconcile
+# them: 0.57225 / 1.00825 is 0.5676, still 57.  They are two different markets
+# priced two different ways, and only one of them is the number the rest of the
+# site answers this question with.
+#
+# So the board DEFERS.  Alex's standing ruling is one number per question and
+# the blend is the product; the event blend is that number, the same one the
+# match page and the card already show, so promoting it here removes a
+# contradiction rather than inventing a third value.
+#
+# IT DEFERS ONLY WHEN THE MATCH NUMBER IS ITSELF LIVE.  Every field this
+# overlay writes on the row — `price_state`, `stale_sources`, `mixed_freshness`
+# — is then true by construction, and no metadata has to be invented for a
+# number whose provenance the board can no longer describe.  A stale final
+# leaves the board exactly as it was: two honestly-labelled numbers beat one
+# confident wrong one, which is this module's whole doctrine.
+#
+# NOT IN SCOPE, STATED SO IT IS NOT MISTAKEN FOR AN OVERSIGHT: the playoff
+# grid's `title` column is the same outright number and still reads 0.57225.
+# It is built in the `rest` fragment, before the slate's blends are applied and
+# on a request that need not build a slate at all, so reconciling it here would
+# make the grid's answer depend on which sections a client asked for.  Recorded
+# on #5893.
+# The register's own key for a draw's last round (`tournament_register.ROUNDS`),
+# which is also the vocabulary the slate publishes: `authority_round` maps
+# ESPN's "Final" through `espn_round_key` before it reaches a card, so this is a
+# compare against one spelling and not against a family of them. Written as a
+# literal rather than as `ROUNDS[-1]` because a round appended after the final
+# would silently redefine a derived one; the two records are held level by a
+# guard test instead.
+FINAL_ROUND = "F"
+
+#: What a row's published probability is an answer to.  Machine-only: no client
+#: renders it, and it exists so a probe (or the guard suite) can tell a deferred
+#: row from an outright one without re-deriving the rule.
+PROBABILITY_BASIS_OUTRIGHT = "outright"
+PROBABILITY_BASIS_FINAL = "final-match"
+
 DRAW_LABELS: dict[str, str] = {
     "mens-singles": "Men's Singles",
     "womens-singles": "Women's Singles",
@@ -237,6 +286,57 @@ def _merge_bucketed_series(
             continue
         points.append({key: bucket, "probability": round(value, 6)})
     return points
+
+
+def _rank_rows(rows: list[dict[str, Any]]) -> None:
+    """Rank by the blend, highest first, stamping ``rank`` in place.
+
+    Rows without a probability (settled) sort last — they are results, not
+    standings.  One function because ``apply_final_match_blend`` can change the
+    number a row is ranked on, and a second copy of this key is a second place
+    for the ordering to drift.
+    """
+    rows.sort(key=lambda r: (r["probability"] is None, -(r["probability"] or 0.0)))
+    for index, row in enumerate(rows, start=1):
+        row["rank"] = index
+
+
+def _board_summary(rows: list[dict[str, Any]], now: datetime) -> dict[str, Any]:
+    """The board-level freshness verdict and its counts, from the rows as served.
+
+    Shared with ``apply_final_match_blend`` rather than recomputed there: an
+    overlay that changed a row's timestamps and left the banner describing the
+    rows it replaced would be exactly the defect #5893's second half reported.
+
+    The BOARD reports the newest thing anyone has seen — the strongest true
+    claim about the page as a whole, and deliberately not an AND.  Rows carry
+    their own verdict; making one 30-day row paint the banner over 43 live ones
+    would retire the banner as a signal (the crying-wolf failure), and every row
+    is individually honest already.  It reads ``freshest_observed_at`` because
+    ``observed_at`` is the governing contributor's, which would make this a
+    max-of-oldest.
+    """
+    observed = [
+        datetime.fromisoformat(r["freshest_observed_at"])
+        for r in rows
+        if r.get("freshest_observed_at")
+    ]
+    board_newest = max(observed) if observed else None
+    board_age = _age_hours(board_newest, now)
+    return {
+        # Quantified rather than described: how much of this board is not a live
+        # number, and how much of it is a blend of legs of different ages. Both
+        # are zero on a healthy board.
+        "rows_not_live": sum(
+            1
+            for r in rows
+            if r["probability"] is not None and not r["probability_is_live"]
+        ),
+        "mixed_freshness_rows": sum(1 for r in rows if r["mixed_freshness"]),
+        "price_state": price_state(board_age),
+        "newest_observed_at": board_newest.isoformat() if board_newest else None,
+        "age_hours": round(board_age, 2) if board_age is not None else None,
+    }
 
 
 def _row_state(block: dict[str, Any]) -> str:
@@ -411,6 +511,9 @@ def build_boards(
                         "image": player_image(player),
                         "state": settled_result,
                         "probability": None,
+                        # No probability, so nothing to be an answer to. Present
+                        # rather than absent so every row has one shape.
+                        "probability_basis": None,
                         "probability_is_live": False,
                         "observed_at": None,
                         "age_hours": None,
@@ -481,6 +584,9 @@ def build_boards(
                     "image": player_image(player),
                     "state": "live",
                     "probability": round(blend, 6),
+                    # "Who wins the title", priced by this draw's outright
+                    # markets — until `apply_final_match_blend` says otherwise.
+                    "probability_basis": PROBABILITY_BASIS_OUTRIGHT,
                     # The field the client cannot round past. See module docstring.
                     "probability_is_live": row_state == "live",
                     # GOVERNING, not newest: "as of when is this whole number
@@ -523,27 +629,7 @@ def build_boards(
                 }
             )
 
-        # Rank by the blend, highest first. Rows without a probability (settled)
-        # sort last — they are results, not standings.
-        rows.sort(key=lambda r: (r["probability"] is None, -(r["probability"] or 0.0)))
-        for index, row in enumerate(rows, start=1):
-            row["rank"] = index
-
-        # The BOARD reports the newest thing anyone has seen — the strongest
-        # true claim about the page as a whole, and deliberately not an AND.
-        # Rows carry their own verdict; making one 30-day row paint the banner
-        # over 43 live ones would retire the banner as a signal (the
-        # crying-wolf failure), and every row is individually honest already.
-        # It reads `freshest_observed_at` because `observed_at` is now the
-        # governing contributor's, which would make this a max-of-oldest.
-        observed = [
-            datetime.fromisoformat(r["freshest_observed_at"])
-            for r in rows
-            if r.get("freshest_observed_at")
-        ]
-        board_newest = max(observed) if observed else None
-        board_age = _age_hours(board_newest, now)
-        board_state = price_state(board_age)
+        _rank_rows(rows)
 
         boards.append(
             {
@@ -552,16 +638,13 @@ def build_boards(
                 "rows": rows,
                 "contenders": len(rows),
                 "unpriced": unpriced,
-                # Quantified rather than described: how much of this board is
-                # not a live number, and how much of it is a blend of legs of
-                # different ages. Both are zero on a healthy board.
-                "rows_not_live": sum(
-                    1 for r in rows if r["probability"] is not None and not r["probability_is_live"]
-                ),
-                "mixed_freshness_rows": sum(1 for r in rows if r["mixed_freshness"]),
-                "price_state": board_state,
-                "newest_observed_at": board_newest.isoformat() if board_newest else None,
-                "age_hours": round(board_age, 2) if board_age is not None else None,
+                # How many rows on this board publish the final's blend instead
+                # of their own outright (#5893). Zero here BY CONSTRUCTION —
+                # `build_boards` has no slate to read — and present rather than
+                # absent so "the overlay ran and promoted nothing" and "the
+                # overlay never ran" are not the same payload (gotcha #53).
+                "final_deferred_rows": 0,
+                **_board_summary(rows, now),
             }
         )
 
@@ -587,3 +670,268 @@ def build_boards(
         "render_findings": findings,
         "generated_at": now.isoformat(),
     }
+
+
+def _aware(stamp: Any) -> Optional[datetime]:
+    """Parse a published ISO-8601 instant, or ``None``.
+
+    A NAIVE stamp is refused rather than assumed to be UTC: the board's own
+    stamps are timezone-aware, and one naive value among them makes ``max()``
+    raise — a 500 on the hub for a payload that merely mislabelled a timestamp.
+    """
+    if not isinstance(stamp, str) or not stamp:
+        return None
+    try:
+        parsed = datetime.fromisoformat(stamp)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def _live_final_sides(
+    match: dict[str, Any],
+) -> Optional[list[tuple[dict[str, Any], float]]]:
+    """``[(side, probability), (side, probability)]``, or ``None`` to refuse.
+
+    Every clause is a refusal, and each one is the difference between promoting
+    a number and fabricating one:
+
+    * ``priced`` / ``price_state`` / ``probability_is_live`` — the match's own
+      published verdict.  An unpriced or stale final has nothing better to
+      offer than the outright the board already shows, and promoting it would
+      hand the row a freshness this overlay cannot describe.
+    * ``observed_at`` present, parseable and timezone-aware — a live verdict
+      with no timestamp behind it is gotcha #53's shape, and the row's stamp is
+      recomputed from it.
+    * exactly two DISTINCT keys, each with a real number — "down to two" is the
+      entire premise.  A one-sided, three-sided or self-paired row is a pairing
+      defect upstream; it is not this overlay's to interpret.  Counted on the
+      keys rather than on ``len(sides)`` so one check does both jobs.
+    """
+    if match.get("priced") is not True:
+        return None
+    if match.get("price_state") != "live" or match.get("probability_is_live") is not True:
+        return None
+    if _aware(match.get("observed_at")) is None:
+        return None
+    sides = match.get("sides")
+    if not isinstance(sides, list):
+        return None
+    priced_sides: list[tuple[dict[str, Any], float]] = []
+    keys: set[str] = set()
+    for side in sides:
+        if not isinstance(side, dict):
+            return None
+        key = side.get("entity_key")
+        probability = side.get("probability")
+        if not isinstance(key, str) or not key:
+            return None
+        # `bool` is an `int`; a True that reached a probability field is a bug
+        # upstream, not a 1.0.
+        if isinstance(probability, bool) or not isinstance(probability, (int, float)):
+            return None
+        keys.add(key)
+        priced_sides.append((side, float(probability)))
+    # One side, three sides, or two sides naming the same player: none of those
+    # is a final, and the distinct-key count refuses all three at once.
+    if len(priced_sides) != 2 or len(keys) != 2:
+        return None
+    return priced_sides
+
+
+def _finals_by_draw(slate: Optional[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """The one final per draw the slate is serving — draws with two are refused.
+
+    A draw cannot have two finals.  When the card shows two rows claiming to be
+    one, that is a pairing defect and there is no tie to break: neither is
+    promoted and the board keeps its own numbers.
+    """
+    finals: dict[str, dict[str, Any]] = {}
+    refused: set[str] = set()
+    for match in (slate or {}).get("matches") or []:
+        if not isinstance(match, dict) or match.get("round") != FINAL_ROUND:
+            continue
+        draw = match.get("draw")
+        if not isinstance(draw, str) or not draw:
+            continue
+        if draw in finals or draw in refused:
+            finals.pop(draw, None)
+            refused.add(draw)
+            continue
+        finals[draw] = match
+    return finals
+
+
+def _resolve_targets(
+    rows: list[dict[str, Any]],
+    sides: list[tuple[dict[str, Any], float]],
+) -> Optional[list[tuple[dict[str, Any], float]]]:
+    """Match the final's two sides to two board rows, or refuse.
+
+    ═══ THE TWO KEY SPACES (measured, and the reason this is not a dict get) ═══
+
+    A board row's ``entity_key`` is the REGISTER's — ``alexander-zverev``.  A
+    slate side's is whatever built that row: the register's key on a
+    register-matchup row, and ESPN's ``espn:athlete:2375`` on a scoreboard row,
+    which is every round the ceremony register never carried — including, on
+    production 2026-09-13, the men's final itself (``pairing_source:
+    "scoreboard"``).  A join on ``entity_key`` alone therefore looks correct,
+    passes a fixture that uses one space for both, and fires on nothing.
+
+    So: the id first, and the register's own normalized name as the fallback —
+    ``espn_tennis.normalize_name``, which is ``tournament_register``'s rule
+    restated, and the same index ``build_progress`` already bridges these two
+    spaces with.  The name arm is deliberately narrow:
+
+    * it only sees the rows of ONE draw's board, which is at most a few dozen
+      players, never the whole tournament;
+    * a normalized name carried by more than one row on that board is dropped
+      from the index rather than resolved to the first — an ambiguous name
+      promotes nothing;
+    * both sides must resolve, to two DIFFERENT rows.  One side resolving is
+      the disagreement moved one row deeper, and both resolving to the same row
+      is a join that has proved itself wrong.
+    """
+    from app.services.espn_tennis import normalize_name
+
+    by_key: dict[str, dict[str, Any]] = {}
+    by_name: dict[str, Optional[dict[str, Any]]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        key = row.get("entity_key")
+        if isinstance(key, str) and key:
+            by_key[key] = row
+        name = normalize_name(row.get("display_name"))
+        if name:
+            # `None` marks an ambiguous name: seen twice, resolvable to neither.
+            by_name[name] = None if name in by_name else row
+
+    targets: list[tuple[dict[str, Any], float]] = []
+    for side, probability in sides:
+        row = by_key.get(str(side.get("entity_key")))
+        if row is None:
+            row = by_name.get(normalize_name(side.get("display_name")))
+        # The two state clauses coincide in every row `build_boards` produces —
+        # a settled row is published with `probability: None` — and both are
+        # written because this overlay must not depend on that invariant
+        # holding in another module. Settled means settled either way.
+        if (
+            row is None
+            or row.get("state") != "live"
+            or row.get("probability") is None
+        ):
+            return None
+        targets.append((row, probability))
+
+    if len({id(row) for row, _ in targets}) != len(targets):
+        return None
+    return targets
+
+
+def apply_final_match_blend(
+    boards: list[dict[str, Any]],
+    slate: Optional[dict[str, Any]],
+    *,
+    now: datetime,
+) -> int:
+    """Promote a live final's blend onto its two board rows, in place (#5893).
+
+    Returns how many rows were changed, and stamps the same count per board as
+    ``final_deferred_rows`` so the zero case is a fact on the payload rather
+    than an absence.
+
+    The whole rationale is at ``FINAL_ROUND`` above.  Three things this does
+    NOT do, each load-bearing:
+
+    * **It never resurrects a settled row.**  Both rows must still be
+      ``state: "live"`` with a probability of their own; settled means settled,
+      and a result may not be overwritten with a price.
+    * **It never promotes onto a board that does not carry both players.**  If
+      either side is missing from the board, or the two resolve to one row,
+      neither side moves — see ``_resolve_targets``, which also explains why
+      the two sides are not in the same key space.
+    * **It leaves the trend lines alone.**  They are the outright series and
+      they remain it: a sparkline is a shape, and redrawing 30 days of one
+      market's history from another market's last reading would be the
+      fabrication this module exists to refuse.  The published number is the
+      match blend; the line under it is where that player's title price has
+      been.
+    """
+    finals = _finals_by_draw(slate)
+    if not finals:
+        return 0
+
+    changed = 0
+    for board in boards:
+        if not isinstance(board, dict):
+            continue
+        match = finals.get(board.get("draw"))
+        if match is None:
+            continue
+        prices = _live_final_sides(match)
+        if prices is None:
+            continue
+
+        rows = board.get("rows") or []
+        targets = _resolve_targets(rows, prices)
+        if targets is None:
+            continue
+
+        # Re-derived from the parsed instants against THIS request's `now`,
+        # never copied from the match's published `age_hours`: the row's age and
+        # the board banner computed over it have to be one clock's answer.
+        governing = _aware(match.get("observed_at"))
+        if governing is None:  # refused by `_live_final_sides`; belt and braces
+            continue
+        freshest = _aware(match.get("freshest_observed_at")) or governing
+        governing_age = _age_hours(governing, now)
+        freshest_age = _age_hours(freshest, now)
+        # THE BOARD'S OWN THRESHOLD, NOT THE SLATE'S VERDICT. The two modules
+        # grade freshness against their own constants, and a row stamped
+        # `price_state: "live"` at an age this module calls stale would be a
+        # contradiction inside one payload — so the match's live verdict is
+        # necessary and this is the sufficient half.
+        if price_state(governing_age) != "live":
+            continue
+
+        for row, probability in targets:
+            row.update(
+                {
+                    "probability": round(probability, 6),
+                    "probability_basis": PROBABILITY_BASIS_FINAL,
+                    # True by construction: `_live_final_sides` refused anything
+                    # the match itself does not call live.
+                    "probability_is_live": True,
+                    "price_state": "live",
+                    "observed_at": governing.isoformat(),
+                    "age_hours": (
+                        round(governing_age, 2) if governing_age is not None else None
+                    ),
+                    "freshest_observed_at": freshest.isoformat() if freshest else None,
+                    "freshest_age_hours": (
+                        round(freshest_age, 2) if freshest_age is not None else None
+                    ),
+                    "stale_sources": [],
+                    "mixed_freshness": False,
+                    # The match's own provenance, because the match's number is
+                    # what is printed. `sources` is emptied rather than left
+                    # behind: the outright legs it lists are no longer what this
+                    # row is showing, and a per-source breakdown that does not
+                    # add up to the headline is #1844's class.
+                    "source_count": match.get("source_count") or 0,
+                    "sources": [],
+                    "liquidity": match.get("liquidity") or LIQUIDITY_UNKNOWN,
+                    "liquidity_reasons": list(match.get("liquidity_reasons") or []),
+                }
+            )
+            changed += 1
+
+        board["final_deferred_rows"] = len(targets)
+        # The promoted rows carry a different number and a different stamp, so
+        # the ranking and the banner are both re-derived from the rows as they
+        # will now be served.
+        _rank_rows(rows)
+        board.update(_board_summary(rows, now))
+
+    return changed

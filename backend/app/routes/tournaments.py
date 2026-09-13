@@ -43,7 +43,12 @@ from app.utils.proven_duplicates import (
     folded_probability_sources_batch,
 )
 from app.utils.tournament_advancement import build_advancement
-from app.utils.tournament_board import TREND_DAYS, TREND_FINE_DAYS, build_boards
+from app.utils.tournament_board import (
+    TREND_DAYS,
+    TREND_FINE_DAYS,
+    apply_final_match_blend,
+    build_boards,
+)
 from app.utils.tournament_event_link import (
     resolve_espn_competition_events,
     resolve_matchup_events,
@@ -2063,6 +2068,20 @@ async def _build_sections(
         apply_event_blend_slate(
             first["slate"], rows_by_event=_slate_events, now=now
         )
+
+        # ═══ #5893: ONE NUMBER FOR THE FINAL, NOT ONE PER SECTION ═══
+        #
+        # LAST, and that is the whole reason it sits here rather than beside
+        # `build_boards`. Everything above is what decides the final's number:
+        # the ESPN link resolves which `events` row the fixture is, the blend
+        # overlay puts that event's aggregate on the card, and the rung above
+        # fills a blank one. Reading the slate before any of that would promote
+        # the pre-link venue price — the exact value #3903 shipped to remove.
+        #
+        # The boards are `base`'s list object, and the grid in `rest` has
+        # already been built from it; see `FINAL_ROUND` in `tournament_board`
+        # for why the grid's `title` column is deliberately not reconciled here.
+        apply_final_match_blend(first["boards"], first["slate"], now=now)
 
     if want_rest:
         # THE BOOKS RUNG OF THE PRE-MATCH LADDER (#2747, ux/1036 Tier A).
