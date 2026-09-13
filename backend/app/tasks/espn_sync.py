@@ -3571,6 +3571,7 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                     our_status=event.status,
                     our_completed_at=event.completed_at,
                     our_commence_time=event.commence_time,
+                    our_commence_time_source=event.commence_time_source,
                     competition=competition,
                     our_sources=event.win_probability_sources,
                     our_home_score=event.home_score,
@@ -3604,6 +3605,22 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                     )
                 if "commence_time" in changes:
                     event.commence_time = changes["commence_time"]
+                    # THE PROVENANCE TRAVELS WITH THE VALUE (#5971).
+                    #
+                    # Without it the row holds ESPN's clock under an
+                    # `odds_api` stamp, and `event_registry`'s authority rule
+                    # — which reads the STAMP, not where the value came from —
+                    # then lets the next Odds poll revise it back as "a
+                    # provider correcting its own record". That is the
+                    # ping-pong measured on the US Open men's final: 18:00 →
+                    # 18:15 → 18:00 → 18:15 → 18:13:40 in seventeen minutes,
+                    # which silently dropped the first twelve minutes of the
+                    # match from the `Since Start` chart.
+                    #
+                    # Read off `changes` rather than assigned as a literal so
+                    # the refusal (StatPal owns this start) can never arrive
+                    # here as a stamp without a value.
+                    event.commence_time_source = changes["commence_time_source"]
                     stats["commence_writes"] += 1
 
                 # ═══ THE SCORE, THROUGH THE SAME ANCHOR AND THE SAME READ ═══

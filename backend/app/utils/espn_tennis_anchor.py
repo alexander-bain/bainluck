@@ -474,6 +474,13 @@ def state_contradiction(
 #: would churn every anchored row on every cycle for no reader-visible gain.
 COMMENCE_DRIFT_TOLERANCE_SECONDS = 300
 
+#: The ``events.commence_time_source`` values this function reads and writes.
+#: Spelled as constants because they are not labels — they are the keys
+#: ``event_registry._SOURCE_PRIORITY`` ranks, and a typo here does not fail, it
+#: silently scores 0 and hands the column back to whoever polls next (#5971).
+COMMENCE_SOURCE_ESPN = "espn"
+COMMENCE_SOURCE_STATPAL = "statpal"
+
 
 def parse_espn_moment(value: Any) -> Optional[Any]:
     """ESPN's ``2026-09-02T15:05Z`` -> an aware datetime, or ``None``.
@@ -501,6 +508,7 @@ def authority_write(
     our_commence_time: Any,
     competition: dict[str, Any],
     now: Any = None,
+    our_commence_time_source: Optional[str] = None,
     our_sources: Any = None,
     our_home_score: Any = None,
     our_away_score: Any = None,
@@ -559,6 +567,42 @@ def authority_write(
     and a correction that would push the start PAST a recorded completion is
     refused, because that inversion is gotcha #46 and manufacturing it here
     would trip the audit that hunts for it.
+
+    ═══ THE CORRECTION CARRIES ITS OWN PROVENANCE (#5971) ═══
+
+    A ``commence_time`` write emits ``commence_time_source='espn'`` WITH the
+    value, and refuses outright when StatPal set the start.  Both halves are
+    what the main ESPN board loop has always done
+    (``espn_helpers._apply_espn_event``, twice); this function wrote the value
+    and left the stamp, which is the #5324 shape on a second column — tennis
+    reaching a different function and never adopting what the board learned.
+
+    THE STAMP IS NOT BOOKKEEPING, IT IS THE WHOLE FIX.
+    ``event_registry.commence_time_write_authorized`` ranks ``espn`` (3) above
+    ``odds_api`` (1), but it reads the ROW's stamp, not the value's real origin.
+    So a row holding ESPN's clock under an ``odds_api`` stamp is one The Odds
+    API is still entitled to revise — ``same_record_revision``, a provider
+    correcting its own record (q066b) — and it does, every poll, back to the
+    session-start default it published before an order of play existed.  Two
+    writers, each individually correct, and the row ping-pongs.
+
+    MEASURED on the 2026-09-13 US Open men's final (event 15310688, anchored
+    ``espn_id`` 182677): ``commence_time`` went 18:00:00 → 18:15:00 → 18:00:00
+    → 18:15:00 → 18:13:40 in seventeen minutes, and the row was read at 19:2xZ
+    holding ESPN's 18:13:40 under ``commence_time_source='odds_api'`` — the
+    value and its provenance disagreeing is the defect, visible from the row
+    alone with no ground truth.  Reader cost: the ``Since Start`` chart filters
+    on ``commence_time``, so the first twelve minutes of a Grand Slam final
+    silently left the window while the match was still being played (#5971,
+    found by ux/1239), and every "before kickoff" guard inherited it.
+
+    The StatPal refusal is currently INERT for tennis — 0 of the 1,102 tennis
+    rows carrying a start in the last three days are stamped ``statpal``
+    (census 2026-09-13 19:2xZ) — and is written anyway because without it this
+    change would newly hand ESPN a column it has never held here: before the
+    stamp, an ESPN correction over a StatPal start left ``statpal`` in place,
+    and after it the stamp would move.  Matching the sibling keeps that
+    decision where it already is rather than making it silently in passing.
     """
     state = competition.get("state")
     changes: dict[str, Any] = {}
@@ -637,7 +681,14 @@ def authority_write(
     elif state is None:
         return {}
 
-    if not competition.get("start_is_tbd"):
+    if (
+        not competition.get("start_is_tbd")
+        # StatPal set this start and owns kickoff times against ESPN — the same
+        # refusal `espn_helpers` makes at both of its write sites and
+        # `anchor_schedule` makes as REFUSED_STATPAL. Asked before the clock so
+        # a refused row is not merely un-stamped but untouched.
+        and our_commence_time_source != COMMENCE_SOURCE_STATPAL
+    ):
         espn_start = parse_espn_moment(competition.get("date"))
         if espn_start is not None:
             moved = (
@@ -652,6 +703,11 @@ def authority_write(
             inverts = completion is not None and espn_start > completion
             if moved and not inverts:
                 changes["commence_time"] = espn_start
+                # NEVER WITHOUT THE VALUE, AND NEVER THE VALUE WITHOUT IT
+                # (#5971). Emitted from the same branch for the same reason
+                # `anchor_schedule` gives: the provenance column is only worth
+                # anything if the thing that sets the value also sets it.
+                changes["commence_time_source"] = COMMENCE_SOURCE_ESPN
 
     return changes
 

@@ -667,7 +667,8 @@ class _Event:
 
     def __init__(self, id, home, away, status, commence_time, completed_at=None,
                  espn_id=None, home_score=None, away_score=None,
-                 box_score_data=None, win_probability_sources=None):
+                 box_score_data=None, win_probability_sources=None,
+                 commence_time_source=None):
         self.id = id
         self.home_team_name = home
         self.away_team_name = away
@@ -692,6 +693,14 @@ class _Event:
         # file becomes an `AttributeError` the per-row `except` swallows, which
         # reads as a row error rather than as a missing column.
         self.win_probability_sources = win_probability_sources
+        # live/204: the FOURTH column this class has learned the same lesson
+        # about (#5971). The task reads it before deciding whether the clock
+        # correction is even allowed, and writes it back beside the value — so
+        # a stub without it makes every row an `AttributeError` the per-row
+        # `except` swallows, which reads as a row error and not as the missing
+        # column it is. That is exactly how it presented: seven tests in this
+        # file went red with "fixture drifted", none of them naming the field.
+        self.commence_time_source = commence_time_source
 
 
 class _Result:
@@ -1450,3 +1459,187 @@ class TestTennisCarriesTheAuthorityHold:
             our_sources={"kalshi": {"probability": 0.59}},
         )
         assert "win_probability_sources" not in changes
+
+
+class TestTheClockCorrectionCarriesItsProvenance:
+    """#5971 — the value and the stamp move together, or the row ping-pongs.
+
+    THE DEFECT IS DECIDABLE FROM THE ROW ALONE. On 2026-09-13 event 15310688
+    (the US Open men's final) was read holding ESPN's ``18:13:40`` under
+    ``commence_time_source = 'odds_api'``. That pair cannot both be true, and
+    it is not cosmetic: ``event_registry.commence_time_write_authorized`` reads
+    the STAMP, so an ESPN value wearing an ``odds_api`` stamp is one The Odds
+    API may still revise as "a provider correcting its own record" (q066b) —
+    back to the session-start default it publishes before an order of play
+    exists. Measured consequence: 18:00 -> 18:15 -> 18:00 -> 18:15 -> 18:13:40
+    in seventeen minutes, and the ``Since Start`` chart, which filters on
+    ``commence_time``, silently dropped the first twelve minutes of the final
+    while it was still being played.
+    """
+
+    def test_the_correction_stamps_espn(self):
+        changes = authority_write(
+            our_status="scheduled", our_completed_at=None,
+            our_commence_time=_utc("2026-09-13T18:00:00+00:00"),
+            our_commence_time_source="odds_api",
+            competition={"state": "upcoming", "date": "2026-09-13T18:15Z",
+                         "start_is_tbd": False},
+            now=_utc("2026-09-13T18:10:00+00:00"),
+        )
+        assert changes["commence_time"] == _utc("2026-09-13T18:15:00+00:00")
+        assert changes["commence_time_source"] == "espn"
+
+    def test_the_stamp_is_what_actually_stops_the_ping_pong(self):
+        """THE MECHANISM, NOT THE FIELD.
+
+        Asserting "a key is present" would pass against a stamp that changed
+        nothing. So this asks the REAL predicate — the registry's own, not a
+        re-implementation of it — whether the next Odds poll may write the
+        start back, and it asks in BOTH states: under the stamp this pass now
+        writes, and under the one the row carried before it.
+        """
+        from app.services.event_registry import commence_time_write_authorized
+
+        # BEFORE: the row holds ESPN's clock stamped `odds_api`, so the Odds
+        # poll is revising its own record and is authorized. This is the
+        # writer that put 18:00 back, five times in seventeen minutes.
+        allowed, why = commence_time_write_authorized(
+            "odds_api", "odds_api", same_record_revision=True,
+        )
+        assert allowed, (
+            "if this is False the ping-pong had some other cause and this "
+            f"whole fix is aimed at the wrong writer ({why})"
+        )
+
+        # AFTER: the same poll, the same claim, against the stamp the
+        # correction now leaves behind. `espn` (3) outranks `odds_api` (1),
+        # and a revision needs the sources to be EQUAL — so both arms refuse.
+        allowed, _why = commence_time_write_authorized(
+            "espn", "odds_api", same_record_revision=True,
+        )
+        assert not allowed
+
+    def test_statpal_owns_the_start_and_is_not_overwritten(self):
+        """The refusal both of ESPN's other write sites already make
+        (`espn_helpers`, twice) and `anchor_schedule` calls REFUSED_STATPAL.
+
+        Inert for tennis today — 0 tennis rows carried a `statpal` stamp in the
+        census this shipped on — and written anyway, because adding the stamp
+        WITHOUT it would newly move a column ESPN has never held here.
+        """
+        changes = authority_write(
+            our_status="scheduled", our_completed_at=None,
+            our_commence_time=_utc("2026-09-13T18:00:00+00:00"),
+            our_commence_time_source="statpal",
+            competition={"state": "upcoming", "date": "2026-09-13T18:15Z",
+                         "start_is_tbd": False},
+            now=_utc("2026-09-13T18:10:00+00:00"),
+        )
+        assert "commence_time" not in changes
+        # Not merely un-stamped — UNTOUCHED. A refusal that left the value and
+        # dropped the stamp would be the defect this file exists about.
+        assert "commence_time_source" not in changes
+
+    @pytest.mark.parametrize(
+        "state,date,tbd,ours,source,completed",
+        [
+            # every branch that reaches the clock block, and several that
+            # must not write at all
+            ("upcoming", "2026-09-13T18:15Z", False, "2026-09-13T18:00:00+00:00", "odds_api", None),
+            ("upcoming", "2026-09-13T18:02Z", False, "2026-09-13T18:00:00+00:00", "odds_api", None),
+            ("upcoming", "2026-09-14T04:00Z", True, "2026-09-13T18:00:00+00:00", "odds_api", None),
+            ("upcoming", "2026-09-13T18:15Z", False, "2026-09-13T18:00:00+00:00", "statpal", None),
+            ("in_progress", "2026-09-13T18:15Z", False, "2026-09-13T18:00:00+00:00", None, None),
+            ("in_progress", "2026-09-13T18:15Z", False, "2026-09-13T18:00:00+00:00", "espn", None),
+            ("decided", "2026-09-13T18:15Z", False, "2026-09-13T18:00:00+00:00", "odds_api",
+             "2026-09-13T21:00:00+00:00"),
+            ("decided", "2026-09-13T22:15Z", False, "2026-09-13T18:00:00+00:00", "odds_api",
+             "2026-09-13T21:00:00+00:00"),
+            (None, "2026-09-13T18:15Z", False, "2026-09-13T18:00:00+00:00", "odds_api", None),
+        ],
+    )
+    def test_neither_column_ever_moves_without_the_other(
+        self, state, date, tbd, ours, source, completed,
+    ):
+        """THE INVARIANT, over every branch rather than the one that broke.
+
+        The caller reads `changes["commence_time_source"]` off the same dict
+        and would `KeyError` on a value without a stamp; a stamp without a
+        value would re-provenance a start nobody moved. Both are the same
+        mistake and this is the assertion that catches either.
+        """
+        changes = authority_write(
+            our_status="scheduled", our_completed_at=_utc(completed) if completed else None,
+            our_commence_time=_utc(ours),
+            our_commence_time_source=source,
+            competition={"state": state, "date": date, "start_is_tbd": tbd},
+            now=_utc("2026-09-13T18:10:00+00:00"),
+        )
+        assert ("commence_time" in changes) == ("commence_time_source" in changes)
+
+
+class TestTheClockCorrectionReachesTheDatabase:
+    """END TO END, for the reason #3242's class above it exists: a pure
+    function that returns the right dict is worth nothing if the pass does not
+    apply it. This drives the real task and reads both columns off the row."""
+
+    async def test_a_slid_start_comes_out_of_the_pass_stamped_espn(self, monkeypatch):
+        from app.tasks.espn_sync import _sync_tennis_from_espn
+
+        event = _Event(
+            15310688, "Carlos Alcaraz", "Jannik Sinner", "scheduled",
+            _at("2026-09-13T18:00Z"), espn_id="182677",
+            home_score=0, away_score=0,
+            # The provenance the live row actually carried.
+            commence_time_source="odds_api",
+        )
+        _install(
+            monkeypatch,
+            payloads=[_payload([_competition(
+                "182677", ["Carlos Alcaraz", "Jannik Sinner"],
+                state="pre", status_name="STATUS_SCHEDULED",
+                date="2026-09-13T18:15Z",
+            )])],
+            errors=[],
+            sport_keys=["tennis_atp_us_open", "tennis_atp"],
+            events=[event],
+        )
+
+        stats = await _sync_tennis_from_espn()
+
+        assert event.commence_time == _at("2026-09-13T18:15Z")
+        assert event.commence_time_source == "espn", (
+            "the pass moved the clock and left the old provenance, so the next "
+            "Odds poll is still entitled to write 18:00 back — which is the "
+            "whole of #5971"
+        )
+        assert stats["commence_writes"] == 1
+
+    async def test_a_statpal_start_survives_the_pass_untouched(self, monkeypatch):
+        """The control. Without it the test above passes just as well against a
+        version that stamps `espn` on every row it can reach."""
+        from app.tasks.espn_sync import _sync_tennis_from_espn
+
+        event = _Event(
+            15310688, "Carlos Alcaraz", "Jannik Sinner", "scheduled",
+            _at("2026-09-13T18:00Z"), espn_id="182677",
+            home_score=0, away_score=0,
+            commence_time_source="statpal",
+        )
+        _install(
+            monkeypatch,
+            payloads=[_payload([_competition(
+                "182677", ["Carlos Alcaraz", "Jannik Sinner"],
+                state="pre", status_name="STATUS_SCHEDULED",
+                date="2026-09-13T18:15Z",
+            )])],
+            errors=[],
+            sport_keys=["tennis_atp_us_open", "tennis_atp"],
+            events=[event],
+        )
+
+        stats = await _sync_tennis_from_espn()
+
+        assert event.commence_time == _at("2026-09-13T18:00Z")
+        assert event.commence_time_source == "statpal"
+        assert stats["commence_writes"] == 0
