@@ -165,9 +165,20 @@ def _event(
 
 
 def _the_production_pair(
-    *, canonical_opening=(OPEN_HOME, OPEN_AWAY), canonical_status="completed"
+    *,
+    canonical_opening=(OPEN_HOME, OPEN_AWAY),
+    canonical_status="completed",
+    twin_minutes_later=0,
 ):
-    """The two La Liga rows as production holds them, canonical first."""
+    """The two La Liga rows as production holds them, canonical first.
+
+    ``twin_minutes_later`` moves the duplicate's stored kick-off off the
+    canonical's. Both folds that reach this route key on the exact MINUTE, so
+    any non-zero offset puts the pair beyond both of them and leaves the
+    `duplicate-of:` tag as the only thing that can still see it. It is not a
+    contrivance: two providers disagreeing about a kick-off is the ordinary
+    case here (#5905's Kalshi rows hold the whistle plus three hours).
+    """
     when = _played()
     canonical = _event(
         CANONICAL,
@@ -183,7 +194,7 @@ def _the_production_pair(
         SUPPRESSED,
         home=DUP_HOME,
         away=DUP_AWAY,
-        when=when,
+        when=when + timedelta(minutes=twin_minutes_later),
         status="suspended",
         sources={"kalshi": _fresh(0.71), "polymarket": _fresh(0.70)},
         tags=["provenance:source:statpal", duplicate_tag(CANONICAL)],
@@ -401,6 +412,13 @@ class TestWhatMustNotChange:
     (`fold_twin_events` since #4100). So the tag is *a* licence, not the only
     one, and the thing actually worth pinning is that **the tag predicate does
     not sweep rows no licence reaches** — which is what the test below now says.
+
+    MEASURED, not argued: delete `conditions.append(not_a_proven_duplicate())`
+    from `list_events` and this file goes red in exactly two places, both in
+    this class — the 40-minutes-apart pair and the orphaned tagged row. Those
+    are the two specimens no fold can reach, so they are what speaks for the
+    predicate now that the name pass answers the same-minute pair the ship
+    tests are built on.
     """
 
     def test_the_tag_predicate_does_not_sweep_a_pair_no_licence_reaches(self):
@@ -430,6 +448,35 @@ class TestWhatMustNotChange:
         assert sorted(served) == sorted([CANONICAL, SUPPRESSED]), (
             "a row that neither the tag nor the name pass licenses was "
             f"suppressed anyway (served: {sorted(served)})"
+        )
+
+    def test_a_tagged_pair_no_fold_can_reach_is_still_one_card(self):
+        """The tag asked on a specimen nothing else in the route can answer.
+
+        Found by authority/183 while the red was being cleared, and adopted
+        here because it is right: once the name pass folds the same-minute
+        exonym pair by itself, `TestOneFixtureOneCard` stays GREEN with
+        `not_a_proven_duplicate()` deleted from `list_events`, so the ship
+        tests at the top of this file no longer speak for the tag predicate.
+
+        Move the same two rows 40 minutes apart — beyond BOTH minute keys,
+        asserted rather than assumed — and the only thing left in this route
+        that can serve one card is the tag. Delete the predicate and this
+        fails. It is the production-shaped half of the proof; the orphan below
+        is the other half, and neither one is reachable by a fold.
+        """
+        canonical, suppressed = _the_production_pair(twin_minutes_later=40)
+
+        assert twin_fold_key(canonical) != twin_fold_key(suppressed), (
+            "the two rows still share a fold key, so a fold can reach this "
+            "pair and it no longer isolates the tag"
+        )
+
+        served = _by_id(_payload(canonical, suppressed))
+
+        assert sorted(served) == [CANONICAL], (
+            "the tagged duplicate was served as its own card on a specimen no "
+            f"fold can reach — the predicate did nothing (served: {sorted(served)})"
         )
 
     def test_an_untagged_exonym_pair_is_folded_by_the_name_pass_and_keeps_both_sources(
