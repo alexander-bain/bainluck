@@ -19,6 +19,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import FuturesMarket
 from app.services import get_db
+from app.utils.hook_staleness import is_hook_stale
 from app.utils.cross_source_matching import (
     clean_outcomes as _clean_outcomes,
     find_cross_source_markets,
@@ -188,7 +189,48 @@ def _market_row(market: FuturesMarket, max_outcomes: int = 3) -> dict | None:
             else None
         ),
         "image_url": market.image_url,
-        "hook": market.hook_description,
+        # #5926: the same gate the Discover card and (since #5906) the futures
+        # detail page run. This route served `market.hook_description` raw, so
+        # /entertainment was the third and last unconverted call site of a rule
+        # `app/utils/hook_staleness.py` has enforced since it shipped.
+        #
+        # WHAT A READER SAW. Every card carried five to seven lines of narrative
+        # ABOVE its probabilities, and the prose was the dominant element:
+        # *"As tensions rise in the Big Brother house, the impending Week 10
+        # elimination has fans on edge, with alliances shifting and strategies
+        # evolving."* Nothing in our data supports any of that. Another named
+        # people — *"emerging favorites like Callum Turner and Edward B…"* —
+        # which is verbatim the shape #5461 retired the prompt for.
+        #
+        # MEASURED, NOT SAMPLED (production 2026-09-13): this endpoint served a
+        # hook on 69 of its 112 cards, and of the 11,444 open markets carrying a
+        # hook, 0 are policy 2 and 10,629 are also past the 7-day age gate — so
+        # all 69 were prose the Discover card already refused.
+        #
+        # NO EMPTY-SPACE QUESTION, AND THAT WAS CHECKED RATHER THAN ASSUMED: 43
+        # of those 112 cards already render with no hook today, so the hookless
+        # card is not a new layout, it is the majority-adjacent one the page
+        # already ships. The frontend gates all six render sites on `m.hook &&`.
+        #
+        # `outcomes[0]` IS the leader here, unlike on the futures detail page:
+        # this list is sorted by `current_probability` immediately above and
+        # this route withholds no prices, so there is no null to sink.
+        "hook": (
+            None
+            if is_hook_stale(
+                hook_description=market.hook_description,
+                hook_generated_at=getattr(market, "hook_generated_at", None),
+                hook_leader_at_generation=getattr(
+                    market, "hook_leader_at_generation", None
+                ),
+                current_leader_name=outcomes[0].name,
+                current_leader_probability=float(
+                    outcomes[0].current_probability or 0
+                ),
+                market_metadata=getattr(market, "market_metadata", None),
+            )
+            else market.hook_description
+        ),
     }
 
 
