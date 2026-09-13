@@ -1042,6 +1042,69 @@ def test_the_workflow_removes_the_payload_before_every_read():
     assert body.index("INFLIGHT=$?") < body.index("git push heroku-heavy")
 
 
+def _extract_final_band_check() -> str:
+    lines = _workflow_code().splitlines()
+    start = next(
+        i for i, ln in enumerate(lines) if ln.strip() == 'if [ -z "$DISPATCH_FLAG" ]; then'
+    )
+    end = next(i for i in range(start + 1, len(lines)) if lines[i] == " " * 10 + "fi")
+    return "\n".join(ln[10:] for ln in lines[start:end + 1])
+
+
+def _run_final_band_check(tmp_path, *, deadline, dispatched=False):
+    """Run the pre-push band re-check. Returns (exit code, reached the push?)."""
+    stub = tmp_path / "stub"
+    stub.mkdir(parents=True)
+    (stub / "python3").write_text(f"#!/bin/bash\nprintf %s {deadline!r}\n")
+    (stub / "python3").chmod(0o755)
+    script = tmp_path / "check.sh"
+    script.write_text(
+        "set -uo pipefail\n"
+        f'DISPATCH_FLAG="{"--dispatched" if dispatched else ""}"\n'
+        + _extract_final_band_check()
+        + '\necho "REACHED THE PUSH"\n'
+    )
+    proc = subprocess.run(
+        ["bash", str(script)], capture_output=True, text=True, cwd=str(REPO),
+        env={**os.environ, "PATH": f"{stub}{os.pathsep}{os.environ['PATH']}"}, timeout=60,
+    )
+    return proc.returncode, "REACHED THE PUSH" in proc.stdout
+
+
+def test_the_band_is_asked_again_after_the_fleet_read_and_before_the_push(tmp_path):
+    """`decide` read the band BEFORE a network read that measured 18.4s and is
+    retried twice — and the wait widens that gap on purpose. A verdict that was
+    true two minutes ago is not permission to push now."""
+    code, pushed = _run_final_band_check(tmp_path / "closed", deadline="0")
+    assert (code, pushed) == (0, False)
+    code, pushed = _run_final_band_check(tmp_path / "open", deadline="240")
+    assert (code, pushed) == (0, True)
+
+
+def test_the_final_band_check_holds_on_an_answer_it_cannot_read(tmp_path):
+    """Its polarity is the OPPOSITE of the cost gates above it: this one keeps
+    the accuracy rebuild whole, and "cannot prove" is never permission."""
+    for bad in ("", "later", "-5"):
+        code, pushed = _run_final_band_check(
+            tmp_path / (bad or "empty"), deadline=bad
+        )
+        assert (code, pushed) == (0, False), bad
+
+
+def test_an_attended_run_is_exempt_from_the_final_band_check(tmp_path):
+    """It is exempt from the band itself — `--dispatched` overrules the clock."""
+    code, pushed = _run_final_band_check(tmp_path, deadline="0", dispatched=True)
+    assert (code, pushed) == (0, True)
+
+
+def test_the_final_band_check_stands_between_the_gate_and_the_push():
+    body = _workflow_code()
+    check = _extract_final_band_check()
+    assert "band-seconds-left" in check
+    assert body.index(check.splitlines()[0].strip()) > body.index("INFLIGHT=$?")
+    assert body.index(check.splitlines()[0].strip()) < body.index("git push heroku-heavy")
+
+
 def test_the_sleep_in_the_workflow_is_the_poll_the_script_documents():
     """Two copies of one number is how a comment becomes a story about a value
     nothing enforces."""

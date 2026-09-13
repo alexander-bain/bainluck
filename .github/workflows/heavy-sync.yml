@@ -340,6 +340,31 @@ jobs:
                ;;
           esac
 
+          # THE LAST WORD IS THE CLOCK, NOT THE VERDICT THAT WAS TRUE WHEN THE
+          # RUN STARTED. `decide` read the band before the fleet was read, and
+          # that read is not instant: one call to /api/admin/celery/inspect
+          # measured 18.4 s (2026-09-13 15:07Z), and it is retried twice, so a
+          # single attempt is bounded at 45 s and the step at ~141 s. Waiting for
+          # an idle worker widens the same gap deliberately. Either way the band
+          # can close between the decision and the push, and a push outside the
+          # band is precisely what the band exists to stop.
+          #
+          # So it is asked once more, here, where the answer still changes
+          # something. Unlike the gates above this is a SAFETY check, and it has
+          # a safety gate's polarity: a deadline that does not parse becomes 0
+          # and HOLDS. `--dispatched` is exempt, because it is exempt from the
+          # band itself — an attended run overrules the clock and never the
+          # never-backwards guard.
+          if [ -z "$DISPATCH_FLAG" ]; then
+            BAND_LEFT="$(python3 scripts/heavy_sync_decision.py band-seconds-left)"
+            case "${BAND_LEFT}" in ''|*[!0-9]*) BAND_LEFT=0 ;; esac
+            if [ "$BAND_LEFT" -eq 0 ]; then
+              echo "Decision: HOLD — the band closed while the fleet was being read."
+              echo "The next trigger re-reads both live refs and re-judges."
+              exit 0
+            fi
+          fi
+
           BEHIND="$(git rev-list --count "${HEAVY_LIVE}..${MAIN_LIVE}" 2>/dev/null || echo '?')"
           echo "Pushing $MAIN_LIVE to bainluck-heavy ($BEHIND commits behind)."
 
