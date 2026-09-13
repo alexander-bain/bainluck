@@ -242,17 +242,32 @@ struct FuturesBrowseMarketRow: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
+                // #5872 — A ROW WITH NO PRICE SAYS NOTHING ABOUT WHY.
+                //
+                // This `if` used to have an `else` that drew "Outcomes update
+                // when market prices are available" in the body of every
+                // unpriced card. That is a sentence explaining an emptiness,
+                // which is notice 34 / D102: "If a number cannot be shown
+                // honestly, leave the space empty; do not explain the emptiness
+                // in a paragraph." Photographed on production 2026-09-13 09:19Z
+                // (`artifacts-native-142/futureslist.png`) directly above a row
+                // that HAD a price and simply showed it — "Christian Langmo
+                // 51%" — which is the contrast that makes the note read as an
+                // apology rather than as information.
+                //
+                // Not rare, either: `GET /api/futures/faceted?page=1&per_page=20`,
+                // the app's own query, returned 20 of 20 rows with no
+                // `top_outcomes` at 09:20Z, so it was most of the first screen.
+                //
+                // The string existed only here — no web twin, no backend copy —
+                // so the web list has always drawn nothing in this slot and this
+                // only brings the phone into line with it.
                 if let outcomes = market.topOutcomes, !outcomes.isEmpty {
                     VStack(spacing: 5) {
                         ForEach(Array(outcomes.prefix(3))) { outcome in
                             FuturesBrowseOutcomeRow(outcome: outcome, tint: category.color)
                         }
                     }
-                } else {
-                    Text("Outcomes update when market prices are available")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
                 }
             }
         }
