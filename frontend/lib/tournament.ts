@@ -21,7 +21,7 @@
  */
 
 import { formatProbabilityPercent } from "./probabilityDisplay";
-import { isComplementPair, renderedDuelPercents, renderedPercent } from "./renderedPercent";
+import { renderedDuelPercents, renderedPercent } from "./renderedPercent";
 import type { BracketSlot } from "./bracket";
 import type { PlayoffGridPayload } from "./playoffGrid";
 import type { Broadcast, PlayerImage, SlateData } from "./slate";
@@ -415,11 +415,15 @@ export function trendDirection(delta: number | null): "up" | "down" | "flat" {
  * formatter is handed the answer. A row cannot compute this alone for exactly
  * the reason `SideLine` cannot: a side does not know its opponent.
  *
- * WHEN THE PAIR RULE FIRES: exactly two rows print 1% or more AND those two are
- * a complement pair. That is "the draw is down to its final" stated in terms of
- * what the reader can see. A semi-final field of four is not a complement pair
- * and is left alone; so is a genuinely non-complementary pair, which is
- * `isComplementPair`'s job and not re-litigated here.
+ * WHEN THE PAIR RULE FIRES: exactly two rows print 1% or more. That is "the
+ * draw is down to its final" stated in terms of what the reader can see — a
+ * semi-final field of four still has four numbers to print and is left alone.
+ *
+ * Whether those two are a COMPLEMENT pair is deliberately not re-asked here.
+ * `renderedDuelPercents` already declines a pair outside [0.99, 1.01] and hands
+ * back the per-row rounding, and a second copy of that test is a second place
+ * for the band to drift. The draft did ask it, and a mutation run is what said
+ * so: removing the duplicate check killed no test, because it could not.
  */
 export function boardRenderedPercents(
   rows: readonly TournamentRow[] | null | undefined,
@@ -430,7 +434,6 @@ export function boardRenderedPercents(
 
   const contenders = rows.filter((row) => (percents[row.entity_key] ?? 0) >= 1);
   if (contenders.length !== 2) return percents;
-  if (!isComplementPair([contenders[0].probability, contenders[1].probability])) return percents;
 
   const [first, second] = renderedDuelPercents(
     contenders[0].probability,

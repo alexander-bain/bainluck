@@ -19,6 +19,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import ContenderChart from "@/components/tournament/ContenderChart";
 import TournamentBoard from "@/components/tournament/TournamentBoard";
 import TrendSparkline from "@/components/tournament/TrendSparkline";
 import {
@@ -627,6 +628,20 @@ describe("boardRenderedPercents", () => {
     expect(percents).toEqual({ a: 40, b: 30, c: 20, d: 10 });
   });
 
+  it("does not fire on the TOP two when a third contender is still priced", () => {
+    // The gate is "exactly two", and this is the fixture that proves it: the
+    // leading pair sums to exactly 1.0, so a `>= 2` gate would pair-round them
+    // and derive 42 for a row that is not in a two-horse field. Found by a
+    // mutation run — the four-way test below could not kill `>= 2`, because
+    // `renderedDuelPercents` declined 0.4/0.3 on its own.
+    const percents = boardRenderedPercents([
+      contender("zverev", 0.575, 1),
+      contender("shelton", 0.425, 2),
+      contender("darkhorse", 0.05, 3),
+    ]);
+    expect(percents).toEqual({ zverev: 58, shelton: 43, darkhorse: 5 });
+  });
+
   it("leaves two survivors alone when they are not a complement pair", () => {
     // Summing to 0.80 means a third of the field is unpriced, not that the vig
     // needs removing — normalizing here would invent twenty points.
@@ -661,9 +676,41 @@ describe("the rendered board on final day (#5893)", () => {
     expect(printed).toEqual(["58%", "42%"]);
   });
 
-  it("does not change a number when the reader expands the board", () => {
-    // The pair rule is computed over `board.rows`, not the visible slice. A
-    // number that moved on "show more" would be the same defect one tap deeper.
+  it("prints the SAME string in the chart legend as in the board", () => {
+    // The cross-surface guard, and the reason this is not a one-line change.
+    // #5893 is "one question, two numbers"; a fix applied to the board alone
+    // moves the disagreement up the page instead of closing it, and every
+    // board-only assertion above would still pass.
+    const legend = renderToStaticMarkup(
+      <ContenderChart
+        rows={finalDay.rows}
+        draw="mens-singles"
+        selection={["zverev", "shelton"]}
+        onToggle={() => {}}
+      />
+    );
+    const legendPercents = [
+      ...legend.matchAll(/data-testid="chart-legend-probability"[^>]*>([^<]+)</g),
+    ].map((match) => match[1]);
+    const boardPercents = [
+      ...renderToStaticMarkup(<TournamentBoard board={finalDay} />).matchAll(
+        /data-testid="row-probability"[^>]*>([^<]+)</g
+      ),
+    ].map((match) => match[1]);
+    expect(legendPercents).toEqual(["58%", "42%"]);
+    expect(legendPercents).toEqual(boardPercents);
+  });
+
+  it("keeps the pair whole under a long tail, collapsed and expanded alike", () => {
+    // The reader-facing invariant: the number must not move on "show more".
+    //
+    // HONEST ABOUT WHAT THIS CANNOT PROVE. The memo reads `board.rows` rather
+    // than the visible slice, and on rank-sorted rows those two CANNOT
+    // disagree — the slice is the top three, so it holds at most as many
+    // contenders as the field and never fewer than the field's first three.
+    // No fixture distinguishes the two implementations, so this does not
+    // pretend to; it holds the invariant a reader can see, and the whole-field
+    // read is the belt for a future rule that is not monotonic in rank.
     const padded = board({
       rows: [
         ...finalDay.rows,
