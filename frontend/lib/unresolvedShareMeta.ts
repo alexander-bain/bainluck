@@ -186,19 +186,41 @@ export function unresolvedShareCopy(
  * the ROOT's, which is the home page's title and the home page's card — the
  * same defect one namespace over.
  *
- * ⚠️ On `/events/[id]` and `/futures/[id]` the `images` supplied here is NOT the
- * picture that ships. Both segments have a file-convention
- * `opengraph-image.tsx`, and Next's file convention WINS over
- * `openGraph.images` — measured on the built app, the rendered tag is
+ * ⚠️ On a segment holding a file-convention `opengraph-image.tsx`, the default
+ * card passed here is NOT the picture that ships: Next's file convention WINS
+ * over `openGraph.images`. Measured on the built app, the rendered tag is
  * `og:image  …/events/99999999/opengraph-image?509a39…`, one tag, not the site
- * card. The value stays because this builder is shared and because
- * `shareUnfurl.test.ts` requires any route declaring `openGraph` to declare its
- * own `images`; on a route with no image file it is the picture. The dead
- * link's PICTURE is therefore still the route's own card rendered empty
- * (`Prediction market`, a `- -` glyph, `0 outcomes tracked`) and is a separate
- * fix — it cannot be verified in this sandbox, because the OG routes fetch
- * their font over the network and egress is blocked, so it needs a Vercel
- * preview to see.
+ * card.
+ *
+ * ═══ WHICH IS WHY `image` EXISTS (#5888) ═══
+ *
+ * The file convention overrides `og:image` and NOT `twitter:image`, so a segment
+ * with its own card used to emit two different pictures on one dead link.
+ * Measured on production 2026-09-13:
+ *
+ *   /events/99999999   og:image       …/events/99999999/opengraph-image?509a39…
+ *                      twitter:image  https://www.bainluck.com/opengraph-image
+ *   /futures/99999999  the same split
+ *
+ * X reads the `twitter:` namespace, so a rotted link previewed there as the home
+ * page while the same link in Slack previewed as the route's own card — the
+ * defect #5861 fixed for the title and description, one tag over. A caller that
+ * ships its own card passes it here and both namespaces name it.
+ *
+ * Callers with no `opengraph-image.tsx` pass nothing and keep the site card,
+ * which is correct for them: on those routes it really is the picture.
+ *
+ * Residue, deliberately not taken here: `/events/[id]` and `/futures/[id]` still
+ * pass nothing, so their dead links keep the split above — and their dead
+ * PICTURE is the live layout rendered empty (`Prediction market`, a `- -` glyph,
+ * `0 outcomes tracked`), a card that looks authoritative and says nothing.
+ * `/tournaments/[slug]` and `/event/[domain]/[slug]` draw a quiet card instead.
+ *
+ * (The older note here said that card "cannot be verified in this sandbox,
+ * because the OG routes fetch their font over the network". Measured false on
+ * 2026-09-13: no OG route fetches a font. What reaches the network is satori's
+ * `loadAdditionalAsset` resolving the 🍀 emoji, so a card with no emoji renders
+ * locally and in CI — which is how #5888's before/after was shot.)
  *
  * `robots` is set only for `"not-found"`. A URL that names nothing should not
  * be indexed, but a page that merely could not be fetched this minute must not
@@ -207,15 +229,20 @@ export function unresolvedShareCopy(
  * @param path Root-relative, already encoded by the caller. `selfCanonical`
  *   refuses an absolute URL (`assertRoutePath`), which is what keeps a
  *   user-supplied segment from becoming an off-site canonical.
+ * @param image Absolute URL of the segment's OWN `opengraph-image`, for callers
+ *   that ship one. Omit it and both namespaces keep the site card.
  */
 export function unresolvedMetadata(
   path: string,
   subject: UnresolvedSubject,
-  failure: ResolutionFailure
+  failure: ResolutionFailure,
+  image?: string
 ): Metadata {
   const { title, description } = unresolvedShareCopy(subject, failure);
   const socialTitle = withSiteSuffix(title);
-  const card = defaultShareCard();
+  const card = image
+    ? [{ url: image, width: 1200, height: 630, alt: title }]
+    : defaultShareCard();
 
   return {
     ...selfCanonical(path),

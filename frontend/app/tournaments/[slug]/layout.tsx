@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 import { withSiteSuffix } from "@/lib/eventShareMeta";
 import { selfCanonical } from "@/lib/routeMetadata";
-import { defaultShareCard } from "@/lib/shareCard";
+import { buildShareUrl } from "@/lib/share";
 import {
   buildTournamentShareCopy,
   type TournamentShareSource,
@@ -107,11 +107,30 @@ export async function generateMetadata({
     // builder states both, splits a 404 from a bad minute, and noindexes only a
     // real 404. `unresolvedPath` also ENCODES the slug, which the line above
     // does not — Next hands this function a decoded segment.
-    return unresolvedMetadata(unresolvedPath("tournaments", slug), "tournament", lookup.failure);
+    //
+    // #5888 — and it names THIS route's card in both namespaces. The file
+    // convention overrides `og:image` only, so without the fourth argument a
+    // dead link previewed as the quiet "isn't on Bain Luck" card in Slack and
+    // as the home page on X. Measured on production for the sibling routes,
+    // which still do this: see `unresolvedShareMeta.ts`.
+    const deadPath = unresolvedPath("tournaments", slug);
+    return unresolvedMetadata(
+      deadPath,
+      "tournament",
+      lookup.failure,
+      buildShareUrl(`${deadPath}/opengraph-image`),
+    );
   }
 
   const { title, description } = buildTournamentShareCopy(lookup.tournament);
   const socialTitle = withSiteSuffix(title);
+  // #5888 — this route's OWN card, not the site's. `opengraph-image.tsx` beside
+  // this file is the picture; Next's file convention would win over `images`
+  // anyway (measured, `lib/unresolvedShareMeta.ts`), but naming it here keeps
+  // the source honest about what ships and satisfies the "a route that declares
+  // openGraph declares its images" rule with the right value rather than the
+  // default card. `/events/[id]` and `/futures/[id]` state theirs the same way.
+  const image = buildShareUrl(`${path}/opengraph-image`);
 
   return {
     ...identity,
@@ -123,13 +142,13 @@ export async function generateMetadata({
       url: path,
       siteName: "Bain Luck",
       type: "article",
-      images: defaultShareCard(),
+      images: [{ url: image, alt: title, width: 1200, height: 630 }],
     },
     twitter: {
       card: "summary_large_image",
       title: socialTitle,
       description,
-      images: defaultShareCard().map((image) => image.url),
+      images: [image],
     },
   };
 }
