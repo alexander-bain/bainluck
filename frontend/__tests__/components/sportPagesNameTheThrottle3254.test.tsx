@@ -192,7 +192,7 @@ describe("what the reader actually sees", () => {
     const html = (retryable: boolean) =>
       renderToStaticMarkup(
         <PageLoadFailureScreen
-          failure={{ title: "t", message: "m", retryable }}
+          failure={{ title: "t", message: "m", retryable, tone: "error" }}
           escape={{ href: "/sports", label: "Browse all sports" }}
         />,
       );

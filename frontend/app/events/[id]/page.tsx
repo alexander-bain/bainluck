@@ -856,6 +856,9 @@ export default function EventPage({ params }: EventPageProps) {
         title={failure.title}
         message={failure.message}
         onRetry={failure.retryable ? () => refreshEvent() : undefined}
+        // #5857: a retired fixture (410) and a missing one (404) are answers,
+        // not failures, and this card used to paint both in danger red.
+        tone={failure.tone}
       />
     );
   }

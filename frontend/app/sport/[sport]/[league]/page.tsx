@@ -247,6 +247,8 @@ export default function LeagueShowcasePage() {
             title: `League "${leagueSlug}" not found in ${h.name}`,
             message: `${h.name} does not list this league.`,
             retryable: false,
+            // An established absence is an answer, not a failure (#5857).
+            tone: "info",
             sportAbsent: false,
             status: 404,
           });
@@ -384,6 +386,7 @@ export default function LeagueShowcasePage() {
       title: "League not found",
       message: `We could not find "${leagueSlug}".`,
       retryable: false,
+      tone: "info",
       sportAbsent: false,
       status: 404,
     };
