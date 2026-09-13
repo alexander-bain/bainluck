@@ -298,6 +298,11 @@ function TabBar<T extends string>({
 // Hero — editorial layout
 // ─────────────────────────────────────────────────────────
 
+/* NOT exported, and deliberately so: a Next page file may export only the
+   allowlisted route names, and adding `TrendingHero` costs a real typecheck
+   error (`OmitWithTag<...> does not satisfy { [x: string]: never }`). The #5953
+   guard mounts the page's DEFAULT export instead and finds this grid in the
+   rendered markup — see `entertainmentHeroLeadFillsItsCard5953.test.tsx`. */
 function TrendingHero({ markets }: { markets: EntMarketRow[] }) {
   if (!markets || markets.length < 2) return null;
   const [lead, ...rest] = markets;
@@ -390,7 +395,44 @@ function HeroCardContent({
   );
 
   if (isLead) {
-    return <Link href={`/futures/${market.market_id}`}>{inner}</Link>;
+    /* ── #5953: THE SPACER ABOVE WAS INERT FOR THIS CARD ALONE ──────────────
+       `inner` opens with a header and then a `<div style={{ flex: 1 }} />`
+       whose whole job is to push `CardBodyByKind` and `MetaRow` to the bottom
+       of the card. That works for the four sibling cards, which hand `inner`
+       straight into `.heroCard` (a flex column) and wrap the Link on the
+       OUTSIDE. The lead card wraps on the inside, so `.heroCardLead`'s flex
+       column had exactly ONE item — this `<a>` — and the spacer was a child of
+       the `<a>`, not of the flex container. A `flex-grow` only grows against
+       the container it is an item of, so it resolved to 0px and the card held
+       whatever `min-height` and the grid's two-row span reserved.
+
+       Measured on production 2026-09-13 22:5xZ at 1280px
+       (`tools/ent-hero-lead-fill-5953.mjs`): card 421px, its single `<a>` item
+       157px with `flex-grow: 0`, spacer **0px**, hole **227px** — against four
+       sibling cards whose spacers grow (16/0/16/0px) and whose holes are 1px.
+       The control is the finding: the same `HeroCardContent` fills in four
+       cards and not in the fifth, so this is structural and not the content's.
+
+       So the Link becomes the flex column it was standing in for, and takes
+       `flex: 1` to fill the item slot it occupies. `gap` matches `.heroCard`'s
+       own 10px, which never applied here before (one item, no gaps) — the
+       lead's children were plain block siblings.
+
+       This is the whole repair at every width. The `min-height: 280px` that
+       survives into the <=900px block is left ALONE deliberately: with the
+       spacer live it is a floor the content now fills rather than a hole, and
+       it is what keeps the lead card reading as the lead on a phone. #5953
+       offered three candidate repairs — release the reservation, fill it with
+       more outcome rungs, or centre the content — and all three treat the
+       reservation as the cause. It is not; it only made the breakage visible. */
+    return (
+      <Link
+        href={`/futures/${market.market_id}`}
+        style={{ display: "flex", flexDirection: "column", gap: 10, flex: 1 }}
+      >
+        {inner}
+      </Link>
+    );
   }
   return inner;
 }
