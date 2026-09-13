@@ -1654,6 +1654,47 @@ KALSHI_FUTURES_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxeplgb": "soccer_epl",
     "kxucl": "soccer_uefa_champions_league",
     "kxlaliga": "soccer_spain_la_liga",
+    # ── #5982: LaLiga 2 is a DIFFERENT COMPETITION, not a La Liga prop ────────
+    # `kxlaliga` above is eight characters and every Kalshi Spanish ticker starts
+    # with it, so until these five lines existed `KXLALIGA2GAME-26SEP12CORALM`
+    # (Córdoba v Almería, Segunda División) resolved to `soccer_spain_la_liga`.
+    # That is not a label error. `_find_matching_event` scopes candidates by this
+    # key, so the real Segunda fixture — which we already held, minted from the
+    # schedule under `soccer_spain_segunda_division` — was never a candidate, the
+    # market minted a twin of it, and the twin rendered in the top-flight page's
+    # "Live & Paused" rail reading "No result reported". 21 such rows on
+    # 2026-09-13; the six the reader could see that day are #5982's specimens.
+    #
+    # THE `2H` FAMILY IS THE TRAP AND IT IS WHY THESE ARE ENUMERATED RATHER THAN
+    # MATCHED BY GRAMMAR. A bare `kxlaliga2` prefix would also swallow
+    # `KXLALIGA2H`, `KXLALIGA2HBTTS`, `KXLALIGA2HSPREAD` and `KXLALIGA2HTOTAL`,
+    # which are La Liga SECOND-HALF markets and belong exactly where they are.
+    # Getting that backwards would put top-flight fixtures on the Segunda page —
+    # the same defect, aimed the other way.
+    #
+    # Every one of the nine was confirmed at the venue, not inferred from its
+    # letters (notice 26): Kalshi's own `/series/<ticker>` read 2026-09-13 20:2xZ
+    # returns `title` "LaLiga 2 Game" for `KXLALIGA2GAME` and "La Liga 2
+    # Promotion" for `KXLALIGA2PROMO`, against "2nd Half Winner" / "2nd Half
+    # BTTS" / "2nd Half Spread" / "2nd Half Total" for the `2H` four. The three
+    # whose venue titles are generic ("Spread", "BTTS", "Point Total") are read
+    # off their own markets instead, which name the clubs: `KXLALIGA2SPREAD-
+    # 26SEP11BURCEU` is "Burgos vs Ceuta: Spread", and Burgos and Ceuta are
+    # Segunda sides. Artifact: `artifacts-lane1-294/kalshi-series-titles.txt`.
+    #
+    # These sit in the FUTURES map, beside `kxlaliga`, deliberately: that is
+    # where La Liga's own game and prop tickers already resolve, so LaLiga 2 gets
+    # the SAME standing as its parent and nothing new becomes game-level. Adding
+    # them to `KALSHI_TICKER_TO_SPORT_KEY` would silently grant Segunda props a
+    # minting authority La Liga's own props do not have — a second change, riding
+    # a competition-identity fix. `is_kalshi_game_level_ticker` is unmoved: it
+    # compares prefix LENGTHS and the game map matches these at length 0 both
+    # before and after.
+    "kxlaliga2game": "soccer_spain_segunda_division",
+    "kxlaliga2spread": "soccer_spain_segunda_division",
+    "kxlaliga2total": "soccer_spain_segunda_division",
+    "kxlaliga2btts": "soccer_spain_segunda_division",
+    "kxlaliga2promo": "soccer_spain_segunda_division",
     "kxbundes": "soccer_germany_bundesliga",
     "kxseriea": "soccer_italy_serie_a",
     "kxligue1": "soccer_france_ligue_one",
@@ -2339,20 +2380,44 @@ def get_sport_prefix_for_category(llm_category: str) -> Optional[str]:
 def get_sport_key_from_ticker(external_id: str) -> Optional[str]:
     """Get the Odds API sport key for a Kalshi ticker (game-level or futures).
 
-    Checks game-level tickers first, then futures tickers.
-    Returns a sport key (e.g., ``"basketball_nba"``) or ``None``.
+    Checks game-level tickers first, then futures tickers. Returns a sport key
+    (e.g., ``"basketball_nba"``) or ``None``.
+
+    **WITHIN each map the LONGEST matching prefix wins, not the first one
+    declared (#5982).** It used to be first-declared, which made the answer a
+    property of where a line sat in a dict literal. That is how ``kxlaliga2game``
+    — Kalshi's LaLiga 2, i.e. the Spanish SECOND division — got answered
+    ``soccer_spain_la_liga`` by the eight-character ``kxlaliga`` entry, and a
+    wrong competition is not a cosmetic error: `_find_matching_event` scopes its
+    candidates by this key, so the real Segunda fixture was never a candidate and
+    the market minted a twin of it on the top-flight page instead of linking.
+    Twenty-one such rows were live on 2026-09-13.
+
+    Longest-prefix-wins is a no-op for every prefix registered today — measured:
+    all 36 prefix-of pairs in the game map and all 293 in the futures map agree
+    on their sport key, so no registered ticker changes its answer. It is here so
+    that the NEXT second-tier league (there are five more in the maps' future,
+    and `kxbundesliga2game` / `kxserieb` / `kxligue2` are all unregistered today)
+    cannot be silently swallowed by its parent's shorter prefix. `test_sport_keys`
+    asserts the property directly: every registered prefix resolves to itself.
+
+    Cross-map precedence is UNCHANGED — the game map still wins over the futures
+    map regardless of length, because that ordering is load-bearing elsewhere and
+    `is_kalshi_game_level_ticker` is the predicate that compares the two lengths.
     """
     if not external_id:
         return None
     ext_lower = external_id.lower()
-    # Check game-level tickers first (more specific prefixes)
-    for prefix, sport in KALSHI_TICKER_TO_SPORT_KEY.items():
-        if ext_lower.startswith(prefix):
-            return sport
-    # Check futures-level tickers
-    for prefix, sport in KALSHI_FUTURES_TICKER_TO_SPORT_KEY.items():
-        if ext_lower.startswith(prefix):
-            return sport
+    # Game-level tickers first, then futures; longest prefix wins within each.
+    for mapping in (KALSHI_TICKER_TO_SPORT_KEY, KALSHI_FUTURES_TICKER_TO_SPORT_KEY):
+        best_prefix: Optional[str] = None
+        for prefix in mapping:
+            if ext_lower.startswith(prefix) and (
+                best_prefix is None or len(prefix) > len(best_prefix)
+            ):
+                best_prefix = prefix
+        if best_prefix is not None:
+            return mapping[best_prefix]
     return None
 
 
