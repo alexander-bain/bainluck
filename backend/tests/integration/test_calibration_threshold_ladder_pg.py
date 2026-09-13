@@ -62,32 +62,68 @@ BINS_MID = 952102
 
 
 async def _seed_market(session, market_id, *, market_type, category="tech"):
+    """One resolved Kalshi market.
+
+    `category` here is the CELL key and travels as ``llm_sport_category``, which
+    is the column the calibration population groups on. ``futures_markets.category``
+    is a different, NOT NULL column with no server default and is seeded with a
+    constant — omitting it does not weaken the gate, it kills it outright with a
+    `NotNullViolation` before any assertion runs, and because this file skips
+    without a Postgres that only shows up on a job `deploy` needs
+    (`tests/test_pg_gate_seed_completeness.py`, which now covers this file).
+    Same for `external_id` and `name`.
+    """
     await session.execute(
         text(
-            "INSERT INTO futures_markets (id, source, status, mutually_exclusive, "
-            "market_type, llm_sport_category, volume) VALUES "
-            "(:id, 'kalshi', 'resolved', true, :mt, :cat, 100)"
+            "INSERT INTO futures_markets (id, external_id, name, source, status, "
+            "category, mutually_exclusive, market_type, llm_sport_category, volume) "
+            "VALUES (:id, :xid, :nm, 'kalshi', 'resolved', 'championship', true, "
+            ":mt, :cat, 100)"
         ),
-        {"id": market_id, "mt": market_type, "cat": category},
+        {
+            "id": market_id,
+            "xid": f"test-5305-{market_id}",
+            "nm": f"market-{market_id}",
+            "mt": market_type,
+            "cat": category,
+        },
     )
 
 
 async def _seed_outcome(session, market_id, idx, name, prob, *, winner):
-    """One resolved outcome plus the bid evidence the Kalshi liquidity predicate
-    keys on (#940: a real yes_bid, not the volume proxy)."""
+    """One resolved outcome plus the book evidence the two Kalshi bars key on.
+
+    BOTH sides are seeded, and the ask is not decoration. #940's liquidity
+    predicate wants a real ``yes_bid``; the q270 WRITER BAR (#5401) wants a
+    two-sided book — ``yes_bid > 0 AND yes_ask IS NOT NULL AND
+    (yes_ask - yes_bid) < 0.50``. A NULL ask fails the second, so a fixture that
+    seeds only a bid publishes NOTHING and every assertion below reads a vacuous
+    empty set. ``yes_ask = yes_bid`` is a spread of 0 — the tightest possible
+    book, admitted by construction — so this file measures the ladder rule and
+    only the ladder rule.
+    """
     oid = market_id * 100 + idx
     await session.execute(
         text(
-            "INSERT INTO futures_outcomes (id, market_id, name, opening_probability, "
-            "calibration_probability, is_winner, resolution_source, volume) VALUES "
-            "(:id, :mid, :nm, :p, :p, :win, 'api_settlement', 10)"
+            "INSERT INTO futures_outcomes (id, market_id, external_id, name, "
+            "opening_probability, calibration_probability, is_winner, "
+            "resolution_source, volume) VALUES "
+            "(:id, :mid, :xid, :nm, :p, :p, :win, 'api_settlement', 10)"
         ),
-        {"id": oid, "mid": market_id, "nm": name, "p": prob, "win": winner},
+        {
+            "id": oid,
+            "mid": market_id,
+            "xid": f"test-5305-out-{oid}",
+            "nm": name,
+            "p": prob,
+            "win": winner,
+        },
     )
     await session.execute(
         text(
-            "INSERT INTO futures_odds_snapshots (outcome_id, last_price, yes_bid) "
-            "VALUES (:oid, :p, :p)"
+            "INSERT INTO futures_odds_snapshots (outcome_id, bookmaker, probability, "
+            "reading_count, last_price, yes_bid, yes_ask) VALUES "
+            "(:oid, 'test-5305', :p, 1, :p, :p, :p)"
         ),
         {"oid": oid, "p": prob},
     )
