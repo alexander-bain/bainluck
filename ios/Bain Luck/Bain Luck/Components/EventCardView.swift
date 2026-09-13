@@ -415,20 +415,78 @@ struct EventCardView: View {
         .clipShape(Capsule())
     }
 
-    private func reasonStyle(_ text: String) -> (String?, Color) {
-        let lower = text.lowercased()
-        if lower.contains("upset") || lower.contains("underdog") {
-            return ("exclamationmark.triangle.fill", .orange)
-        } else if lower.contains("close") || lower.contains("tight") || lower.contains("even") {
-            return ("equal.circle.fill", .blue)
-        } else if lower.contains("line mov") || lower.contains("shifted") || lower.contains("odds") {
-            return ("arrow.up.arrow.down", .purple)
-        } else if lower.contains("starting soon") {
-            return ("clock.fill", .green)
-        } else if lower.contains("lead change") || lower.contains("wild") || lower.contains("exciting") {
-            return ("bolt.fill", .yellow)
+    /// Which badge family a served reason belongs to. (#5749)
+    ///
+    /// 🔴 THE CLASSIFIER READS A SENTENCE THAT HAS A TEAM NAME IN IT. Every
+    /// reason a card carries is a template from `feed_reasons.py` /
+    /// `highlights.py` with a team or market name interpolated into it, so a
+    /// bare-substring test is reading the name too:
+    /// `"kentucky wildcats leading after starting at 24%".contains("wild")` was
+    /// true, and that card drew the yellow "something wild is happening" bolt.
+    /// Measured on production `teams`, 27 of 5,592 distinct names hijack their
+    /// own card — 16 contain "wild", 11 contain "even". The Minnesota Wild
+    /// claimed a lead change in every state it was ever in, and Benevento was
+    /// always "virtually even". `close`, `tight`, `odds` and `upset` measured 0.
+    ///
+    /// Word boundaries alone are NOT the fix, and this is the part worth
+    /// carrying: `\bwild\b` still matches "Minnesota Wild". The keyword has to
+    /// be pinned to the words the TEMPLATE puts around it — "wild game",
+    /// "close matchup" — because that is the part a name cannot forge.
+    /// Boundaries are enough for `upset`/`underdog`/`odds`/`shifted`, which
+    /// measured 0 team names and are not name-shaped; they are used there so the
+    /// family stays legible next to the two that needed phrases.
+    ///
+    /// Byte-for-byte the web's `REASON_STYLES` (`frontend/components/FeedCard.tsx`,
+    /// #5749 / PR #5799) — same families, same patterns, same ORDER, which is
+    /// load-bearing: "Starting soon — close matchup" is a close matchup first.
+    ///
+    /// Split out of the view as a pure decision so the guard test can run the
+    /// whole served reason corpus through it without rendering anything.
+    enum ReasonBadge {
+        case upset
+        case even
+        case movement
+        case startingSoon
+        case wild
+        case plain
+
+        /// Pattern → family, in the order the branches are tried.
+        private static let families: [(pattern: String, family: ReasonBadge)] = [
+            // "Upset result" · "Possible upset" · "Recent upset" · "Upset brewing"
+            // · "Upset underway" · "Won as 24% underdog"
+            (#"\bupsets?\b|\bunderdogs?\b"#, .upset),
+            // "Virtually even" · "Tight game" · "Close matchup" · "Close game"
+            // · "Starting soon — close matchup"
+            (#"\bvirtually even\b|\btight game\b|\bclose (?:matchup|game)\b"#, .even),
+            // "Big odds movement in X" · "Odds shifting in X" · "Odds flipped"
+            // · "X odds shifted 12% since open" · "Shifted since Tuesday" · "Line moving"
+            (#"\bline mov|\bshifted\b|\bodds\b"#, .movement),
+            // "Starting soon"
+            (#"\bstarting soon\b"#, .startingSoon),
+            // "Wild game" — the ONLY served reason this family has; "wild" alone
+            // was the hijack.
+            (#"\bwild game\b|\blead change|\bexciting\b"#, .wild),
+        ]
+
+        static func family(for text: String) -> ReasonBadge {
+            let lower = text.lowercased()
+            for entry in families
+            where lower.range(of: entry.pattern, options: .regularExpression) != nil {
+                return entry.family
+            }
+            return .plain
         }
-        return (nil, .secondary)
+    }
+
+    private func reasonStyle(_ text: String) -> (String?, Color) {
+        switch ReasonBadge.family(for: text) {
+        case .upset: return ("exclamationmark.triangle.fill", .orange)
+        case .even: return ("equal.circle.fill", .blue)
+        case .movement: return ("arrow.up.arrow.down", .purple)
+        case .startingSoon: return ("clock.fill", .green)
+        case .wild: return ("bolt.fill", .yellow)
+        case .plain: return (nil, .secondary)
+        }
     }
 
     // MARK: - Helpers
