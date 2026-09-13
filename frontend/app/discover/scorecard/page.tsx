@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ScorecardAnalytics } from "./ScorecardAnalytics";
 import { getSiteUrl } from "@/lib/siteUrl";
+import { buildScorecardShareSentence, readScorecardStats } from "@/lib/share";
 
 interface ScorecardPageProps {
   searchParams: Promise<{
@@ -15,20 +16,25 @@ interface ScorecardPageProps {
 
 export async function generateMetadata({ searchParams }: ScorecardPageProps): Promise<Metadata> {
   const params = await searchParams;
-  const accuracy = params.accuracy || "0";
-  const total = params.total || "0";
-  const correct = params.correct || "0";
-  const streak = params.streak || "0";
-  const best = params.best || "0";
+  const stats = readScorecardStats(params);
 
-  const ogImageUrl = `${getSiteUrl()}/api/og/stats?accuracy=${accuracy}&total=${total}&correct=${correct}&streak=${streak}&best=${best}`;
-  const description = `${accuracy}% accurate across ${total} predictions on Bain Luck!`;
+  // A link that does not describe a real scorecard gets described in words. The
+  // numbers in the image URL are the sanitized ones for the same reason the
+  // sentence is: an unreadable query must not travel into the renderer either.
+  const title = stats
+    ? `${stats.accuracy}% Prediction Accuracy | Bain Luck`
+    : "Prediction Scorecard | Bain Luck";
+  const description = stats
+    ? buildScorecardShareSentence(stats)
+    : "Call what happens next on Bain Luck, and see how accurate you turn out to be.";
+  const image = stats ?? { accuracy: 0, total: 0, correct: 0, streak: 0, best: 0 };
+  const ogImageUrl = `${getSiteUrl()}/api/og/stats?accuracy=${image.accuracy}&total=${image.total}&correct=${image.correct}&streak=${image.streak}&best=${image.best}`;
 
   return {
-    title: `${accuracy}% Prediction Accuracy | Bain Luck`,
+    title,
     description,
     openGraph: {
-      title: `${accuracy}% Prediction Accuracy | Bain Luck`,
+      title,
       description,
       siteName: "Bain Luck",
       type: "website",
@@ -37,13 +43,15 @@ export async function generateMetadata({ searchParams }: ScorecardPageProps): Pr
           url: ogImageUrl,
           width: 1200,
           height: 630,
-          alt: `Prediction scorecard: ${accuracy}% accuracy`,
+          alt: stats
+            ? `Prediction scorecard: ${stats.accuracy}% accuracy`
+            : "Prediction scorecard on Bain Luck",
         },
       ],
     },
     twitter: {
       card: "summary_large_image",
-      title: `${accuracy}% Prediction Accuracy | Bain Luck`,
+      title,
       description,
       images: [ogImageUrl],
     },
