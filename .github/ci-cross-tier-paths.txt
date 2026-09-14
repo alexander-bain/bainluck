@@ -54,3 +54,14 @@ frontend/__tests__/fixtures/
 # `sanitize.ts` so the server allowlist and the browser's cannot drift, which is
 # exactly a frontend-only edit that can redden a backend shard.
 frontend/lib/analytics/sanitize.ts
+
+# #6219. `test_card_names_an_outcome_it_draws_6219.py` reads the
+# `leaderFirstSlice(distributionRows, 4)` literal out of this component, because
+# the number of rows the card DRAWS is what decides whether a movement sentence
+# may name its subject. The backend's `CARD_DRAWN_OUTCOME_ROWS` and this literal
+# are two records of one capability, and the guard asserts the gap rather than
+# trusting it. That guard is only worth having if it RUNS on the change that can
+# break it — a frontend-only edit widening the slice to five would otherwise be
+# classified `frontend`, skip this shard, and silently leave the backend
+# suppressing sentences about rows the reader can now see.
+frontend/components/discover/FuturesCard.tsx

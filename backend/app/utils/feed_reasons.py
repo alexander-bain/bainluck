@@ -1314,6 +1314,46 @@ def lead_is_printable(
     return int(rendered_leader_percent) > int(rendered_runner_up_percent)
 
 
+def movement_subject_is_printable(
+    subject_name: Optional[str],
+    subject_is_printed: Optional[bool] = None,
+) -> bool:
+    """May a movement sentence take `subject_name` as its subject? (#6219)
+
+    True when the card prints a row for that outcome, i.e. when a reader who
+    follows the sentence can find the thing it is about. A movement sentence is
+    the only copy in this module that names an outcome and then says nothing
+    about where it now stands — it reports a CHANGE, never a LEVEL — so it is
+    the only copy that can be left pointing at a row the card does not draw.
+
+    Measured on production 2026-09-14 (#6219): three of the twenty-one ladder
+    cards serving a movement sentence named an outcome collapsed into the
+    "Field and remaining outcomes" row. `National Rugby League Champion` led
+    with "Canberra Raiders down 46.5 points since Feb 19" above a board of
+    Bulldogs 49 / Cowboys 49 / Rabbitohs 49 / Panthers 41; Canberra is rank 8 at
+    3%. `Korea KBO Champion` named SSG Landers — rank 10 of 10, the single least
+    likely outcome in the market.
+
+    The selector makes this the NORMAL case rather than an edge one:
+    `_biggest_move_from_opening` picks the largest absolute move over every
+    outcome, and in a championship field the biggest lifetime move is almost
+    always a collapsed former favourite — which is near 0% precisely BECAUSE it
+    collapsed, and therefore is exactly the outcome that cannot be in the top
+    four the card draws.
+
+    FAIL TO TODAY'S COPY, the same convention as `lead_is_printable` above and
+    for the same reason: `None` means the caller has not been taught to say
+    which rows it prints, and the unknown case must not become a guess. Only an
+    explicit `False` silences a branch. Because that default is silent, route
+    adoption is asserted structurally in the #6219 guard rather than left latent.
+    """
+    if subject_is_printed is None:
+        return True
+    if not (subject_name or "").strip():
+        return False
+    return bool(subject_is_printed)
+
+
 def leader_standing_clause(
     leader_name: str, pct: int, *, verb: str, lead_is_visible: bool
 ) -> str:
@@ -1342,6 +1382,11 @@ def generate_futures_reason(
     # #6187: the highest percent PRINTED beneath the leader. Defaults None so an
     # uninformed caller keeps the comparative verbatim — see `lead_is_printable`.
     rendered_runner_up_percent: Optional[int] = None,
+    # #6219: does the card DRAW a row for the outcome the movement sentence
+    # names? Defaults None so an uninformed caller keeps its wording verbatim —
+    # see `movement_subject_is_printable`.
+    top_surprise_is_printed: Optional[bool] = None,
+    top_mover_is_printed: Optional[bool] = None,
     # #4700: proven team-ness of `leader_name`, for subject-verb agreement.
     # Defaults False so an uninformed caller keeps the singular verbatim.
     leader_is_team: bool = False,
@@ -1369,6 +1414,14 @@ def generate_futures_reason(
     _lead_visible = lead_is_printable(
         rendered_leader_percent, rendered_runner_up_percent
     )
+    # #6219: and likewise — may a movement template name its subject at all?
+    # Resolved from the names AS RECEIVED, above the `_answering_side_label`
+    # rewrite below, because the caller decided printedness against the raw
+    # outcome rows and a rewritten label would no longer match them.
+    _surprise_sayable = movement_subject_is_printable(
+        top_surprise_name, top_surprise_is_printed
+    )
+    _mover_sayable = movement_subject_is_printable(top_mover_name, top_mover_is_printed)
 
     # A yes/no question never reaches the field templates below — it has no
     # field. See `compose_binary_card_copy`.
@@ -1418,7 +1471,7 @@ def generate_futures_reason(
 
     # Major movement
     if "major_movement_24h" in reasons:
-        if top_mover_name and top_mover_change is not None:
+        if top_mover_name and top_mover_change is not None and _mover_sayable:
             if _weak_outcome_label(top_mover_name):
                 return f"Big odds movement in {market_name}"
             direction = "up" if top_mover_change > 0 else "down"
@@ -1434,7 +1487,7 @@ def generate_futures_reason(
 
     # Moderate movement
     if "moderate_movement_24h" in reasons:
-        if top_mover_name and top_mover_change is not None:
+        if top_mover_name and top_mover_change is not None and _mover_sayable:
             if _weak_outcome_label(top_mover_name):
                 return f"Odds shifting in {market_name}"
             direction = "up" if top_mover_change > 0 else "down"
@@ -1473,10 +1526,21 @@ def generate_futures_reason(
     # signal that is anchored to a time, and it only speaks when it can name the
     # day it is measured from; an outcome with no `opening_captured_at` says
     # nothing here rather than saying "from opening".
+    # #6219 — `_surprise_sayable` gates the WHOLE block, so an unprintable
+    # subject falls through to the leader sentence below rather than taking the
+    # weak-label arm's market-level paraphrase. The two cases look alike and are
+    # not: a WEAK LABEL ("Above 120") is a row the card DOES draw whose name
+    # simply does not read as a subject without the title, so "<market> has
+    # shifted" still points the reader at something they can find. An
+    # UNPRINTABLE subject is not on the board at all, and a market-level "has
+    # shifted since Feb 19" would keep the unfollowable claim and merely drop
+    # the name from it — the shape #4640 and #6187 both refused. Falling through
+    # gives the card a sentence about a row it actually draws.
     since_opening = format_baseline_date(top_surprise_opened_at, now=now)
     if (
         since_opening
         and top_surprise_change is not None
+        and _surprise_sayable
         and ("major_surprise" in reasons or "moderate_surprise" in reasons)
     ):
         if not _weak_outcome_label(top_surprise_name):
@@ -1534,6 +1598,9 @@ def generate_futures_headline(
     rendered_leader_percent: Optional[int] = None,
     # #6187: see `generate_futures_reason`. Defaults None -> comparative kept.
     rendered_runner_up_percent: Optional[int] = None,
+    # #6219: see `generate_futures_reason`. Defaults None -> wording kept.
+    top_surprise_is_printed: Optional[bool] = None,
+    top_mover_is_printed: Optional[bool] = None,
     # #4700: proven team-ness of `leader_name`, for subject-verb agreement.
     # Defaults False so an uninformed caller keeps the singular verbatim.
     leader_is_team: bool = False,
@@ -1556,6 +1623,11 @@ def generate_futures_headline(
     _lead_visible = lead_is_printable(
         rendered_leader_percent, rendered_runner_up_percent
     )
+    # #6219: likewise — see `generate_futures_reason`.
+    _surprise_sayable = movement_subject_is_printable(
+        top_surprise_name, top_surprise_is_printed
+    )
+    _mover_sayable = movement_subject_is_printable(top_mover_name, top_mover_is_printed)
 
     if affirmative_probability is not None:
         return compose_binary_card_copy(
@@ -1594,6 +1666,7 @@ def generate_futures_headline(
         "major_movement_24h" in reasons
         and top_mover_name
         and top_mover_change is not None
+        and _mover_sayable
     ):
         direction = "up" if top_mover_change > 0 else "down"
         if _weak_outcome_label(top_mover_name) and market_name:
@@ -1606,6 +1679,7 @@ def generate_futures_headline(
         "moderate_movement_24h" in reasons
         and top_mover_name
         and top_mover_change is not None
+        and _mover_sayable
     ):
         direction = "up" if top_mover_change > 0 else "down"
         if _weak_outcome_label(top_mover_name) and market_name:
@@ -1640,12 +1714,17 @@ def generate_futures_headline(
         return RESOLVING_WITHIN_MONTH_HEADLINE
 
     # Lifetime move — same demotion and same dating rule as
-    # `generate_futures_reason`; see the comment there.
+    # `generate_futures_reason`; see the comment there. #6219 gates this block
+    # for the same reason and in the same place: this generator produced the
+    # string the reader actually read on the NRL card ("Canberra Raiders down
+    # 46.5 points since Feb 19"), so a fix that reached only the `reason` slot
+    # would have left the defect on screen.
     since_opening = format_baseline_date(top_surprise_opened_at, now=now)
     if (
         since_opening
         and top_surprise_name
         and top_surprise_change is not None
+        and _surprise_sayable
         and ("major_surprise" in reasons or "moderate_surprise" in reasons)
     ):
         direction = "up" if top_surprise_change > 0 else "down"

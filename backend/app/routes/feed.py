@@ -6367,6 +6367,42 @@ def _biggest_move_from_opening(
     return name, change, opened_at
 
 
+# #6219 — THE CARD DRAWS FOUR ROWS AND COLLAPSES THE REST.
+#
+# `FuturesCard.tsx` renders `leaderFirstSlice(distributionRows, 4)` and folds
+# everything below it into "Field and remaining outcomes +N". A movement
+# sentence whose subject falls past that cut names something the reader cannot
+# find anywhere on the card — measured live on 2026-09-14, three of twenty-one
+# ladder cards, worst case `Korea KBO Champion` leading with SSG Landers, rank
+# 10 of 10 at 1.4%.
+#
+# The twin is asserted, not trusted: `test_card_names_an_outcome_it_draws_6219`
+# reads the `leaderFirstSlice(distributionRows, 4)` literal out of the TSX and
+# fails if this constant and that one ever disagree. Two records of one
+# capability must not be allowed to drift silently apart.
+CARD_DRAWN_OUTCOME_ROWS = 4
+
+
+def _outcome_is_drawn_on_card(name: str | None, outcomes_data: list[dict]) -> bool:
+    """Can a reader follow a movement sentence about `name` to a row? (#6219)
+
+    Sorted here rather than trusted from the caller because the client sorts
+    too (`leaderFirstSlice`), so the row set is defined by probability order and
+    not by the order a serving path happened to build its list in.
+    """
+    target = (name or "").strip().casefold()
+    if not target:
+        return False
+    drawn = sorted(
+        outcomes_data,
+        key=lambda o: (
+            o.get("probability") if o.get("probability") is not None else -1.0
+        ),
+        reverse=True,
+    )[:CARD_DRAWN_OUTCOME_ROWS]
+    return any((o.get("name") or "").strip().casefold() == target for o in drawn)
+
+
 def _market_runtime_filter_trace(
     market: FuturesMarket,
     outcomes_data: list[dict],
@@ -6797,6 +6833,12 @@ def _score_market_trace(
         top_surprise_opened_at,
     ) = _biggest_move_from_opening(outcomes_data, market)
 
+    # #6219 — decided on the RAW names, for the same reason the block below is:
+    # the card's rows carry raw outcome names, so a humanized subject would stop
+    # matching the very rows it is being checked against.
+    top_surprise_is_printed = _outcome_is_drawn_on_card(top_surprise_name, outcomes_data)
+    top_mover_is_printed = _outcome_is_drawn_on_card(top_mover_name, outcomes_data)
+
     # D1 clause b (#4066) — computed from the RAW outcome names, before any
     # humanization; a yes/no question has no field and takes no "leads" copy.
     affirmative_probability = binary_affirmative_probability(outcomes_data)
@@ -6808,6 +6850,8 @@ def _score_market_trace(
             top_mover_change=top_mover_change,
             top_surprise_name=top_surprise_name,
             top_surprise_change=top_surprise_change,
+            top_surprise_is_printed=top_surprise_is_printed,
+            top_mover_is_printed=top_mover_is_printed,
             leader_name=leader_name,
             leader_is_team=_leader_outcome_is_team(outcomes_data),
             leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
@@ -6971,6 +7015,8 @@ def _score_market_trace(
                 top_mover_change=top_mover_change,
                 top_surprise_name=top_surprise_name,
                 top_surprise_change=top_surprise_change,
+                top_surprise_is_printed=top_surprise_is_printed,
+                top_mover_is_printed=top_mover_is_printed,
                 leader_name=leader_name,
                 leader_is_team=_leader_outcome_is_team(outcomes_data),
                 leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
@@ -9531,6 +9577,13 @@ async def _score_sports_mode_futures(
             top_surprise_opened_at,
         ) = _biggest_move_from_opening(outcomes_data, market)
 
+        # #6219 — decided on the RAW names, before the humanization below; the
+        # card's rows carry raw outcome names.
+        top_surprise_is_printed = _outcome_is_drawn_on_card(
+            top_surprise_name, outcomes_data
+        )
+        top_mover_is_printed = _outcome_is_drawn_on_card(top_mover_name, outcomes_data)
+
         # #4146 — THE PRINTED PERCENTS ARE COMPUTED BEFORE THE SENTENCES, because
         # the sentences have to state them. This block used to sit below the three
         # composers, so the only percent they could put in a sentence was one they
@@ -9607,6 +9660,8 @@ async def _score_sports_mode_futures(
                 top_mover_change=top_mover_change,
                 top_surprise_name=_h_surprise,
                 top_surprise_change=top_surprise_change,
+                top_surprise_is_printed=top_surprise_is_printed,
+                top_mover_is_printed=top_mover_is_printed,
                 leader_name=_h_leader,
                 leader_is_team=_leader_outcome_is_team(outcomes_data),
                 leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
@@ -9712,6 +9767,8 @@ async def _score_sports_mode_futures(
             top_mover_change=top_mover_change,
             top_surprise_name=_h_surprise,
             top_surprise_change=top_surprise_change,
+            top_surprise_is_printed=top_surprise_is_printed,
+            top_mover_is_printed=top_mover_is_printed,
             leader_name=_h_leader,
             leader_is_team=_leader_outcome_is_team(outcomes_data),
             leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
@@ -10897,6 +10954,15 @@ async def _score_futures(
                 top_surprise_opened_at,
             ) = _biggest_move_from_opening(outcomes_data, market)
 
+            # #6219 — decided on the RAW names, before the humanization below;
+            # the card's rows carry raw outcome names.
+            top_surprise_is_printed = _outcome_is_drawn_on_card(
+                top_surprise_name, outcomes_data
+            )
+            top_mover_is_printed = _outcome_is_drawn_on_card(
+                top_mover_name, outcomes_data
+            )
+
             # D1 clause b (#4066) — read the RAW names, before humanization.
             # #4146 — THE PRINTED PERCENTS ARE COMPUTED BEFORE THE SENTENCES,
             # because the sentences have to state them. This block used to sit
@@ -10994,6 +11060,8 @@ async def _score_futures(
                     top_mover_change=top_mover_change,
                     top_surprise_name=_h_surprise,
                     top_surprise_change=top_surprise_change,
+                    top_surprise_is_printed=top_surprise_is_printed,
+                    top_mover_is_printed=top_mover_is_printed,
                     leader_name=_h_leader,
                     leader_is_team=_leader_outcome_is_team(outcomes_data),
                     leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
@@ -11367,6 +11435,8 @@ async def _score_futures(
                 top_mover_change=top_mover_change,
                 top_surprise_name=_h_surprise,
                 top_surprise_change=top_surprise_change,
+                top_surprise_is_printed=top_surprise_is_printed,
+                top_mover_is_printed=top_mover_is_printed,
                 leader_name=_h_leader,
                 leader_is_team=_leader_outcome_is_team(outcomes_data),
                 leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
