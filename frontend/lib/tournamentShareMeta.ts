@@ -39,6 +39,13 @@
  * Until then a decided draw still reads honestly, because a decided market
  * prices its winner at ~99%: "Elena Rybakina 99%" is true, and is not a claim
  * about a result.
+ *
+ * AMENDED (#6149). That last paragraph held only as far as the rounding. A
+ * price at or above 0.995 prints "100%", and "leads at 100%" is not a forecast
+ * whoever is ahead — so `boardLeader` now withholds such a board entirely. The
+ * refusal above is unchanged and is the reason this is the right shape: the
+ * module still never reads a result out of a price, it just stops narrating a
+ * certainty as a lead. See `PRINTS_AS_CERTAIN`.
  */
 
 import { formatShareProbability, truncateShareText } from "@/lib/share";
@@ -86,6 +93,25 @@ export interface BoardLeader {
  */
 const MAX_TITLE_LEADERS = 2;
 
+/**
+ * The probability at or above which a board stops being a FORECAST (#6149).
+ *
+ * `formatShareProbability` rounds, so the reader-visible claim turns over one
+ * rounding step below 1.0: 0.995 prints "100%" and 0.994 prints "99%". The
+ * constant is the formatter's own boundary rather than a taste judgement about
+ * what counts as nearly certain, and `tournamentCertaintyUnfurl6149.test.tsx`
+ * asserts both sides of it against `formatShareProbability` itself — if the
+ * formatter ever stops rounding, that test fails rather than this drifting.
+ *
+ * Deliberately a second declaration rather than an import of
+ * `eventConceptShareMeta`'s. That module is `/event/[domain]/[slug]`'s copy and
+ * this one is the hub's; nothing else crosses between them, and importing a
+ * private constant through a module boundary that carries no other traffic
+ * would tie two independently-evolving surfaces together for three characters.
+ * The shared thing is `formatShareProbability`, and both are pinned to it.
+ */
+const PRINTS_AS_CERTAIN = 0.995;
+
 function cleanText(value: string | null | undefined): string | null {
   const trimmed = (value ?? "").trim();
   return trimmed.length > 0 ? trimmed : null;
@@ -118,10 +144,45 @@ function boardLeader(board: TournamentShareBoard): BoardLeader | null {
 
   // `formatShareProbability` returned a string, so `top.probability` is a
   // finite non-zero number — that is exactly the condition it rejects on.
+  const fraction = top.probability as number;
+
+  // ═══ "LEADS AT 100%" IS NOT A SENTENCE A LIVE DRAW CAN PRODUCE (#6149) ═══
+  //
+  // Measured on production: the men's singles FINAL (event 15310688, Zverev vs
+  // Shelton, completed 2026-09-13 21:53:36Z) carried four blend readings at or
+  // above 0.995 BEFORE it completed — 0.9950 at 21:47:16Z rising to 0.9990 at
+  // 21:53:20Z. Throughout that ~6.3-minute window the draw was undecided, so
+  // `apply_final_result` had nothing to null, and `apply_final_match_blend` was
+  // correctly promoting the live match blend onto the board. The payload was
+  // right; this line printed "Alexander Zverev leads the Men's Singles at 100%"
+  // over a match still being played. Across the two draws, 102 of 229 match
+  // events have held a reading in that band (363 readings, max 0.9995).
+  //
+  // A second route needs no live match at all. #5917 exists because the board
+  // published "Elena Rybakina 99% TO WIN THE TITLE" seventeen hours after she
+  // won it, and `apply_final_result`'s own docstring concedes "a miss here is a
+  // real miss". At 0.997 rather than 0.99 that same lag prints "100%".
+  //
+  // So this is NOT #6029's stale-read occasion repeated — the payload here is
+  // current and correct, and the branch is the defect. It claims strictly less,
+  // never more: no result is inferred from a price, and the card upgrades
+  // itself the moment `apply_final_result` publishes `decided`.
+  //
+  // THE BOARD IS WITHHELD WHOLE, NOT THE PLAYER. Dropping only the certain
+  // leader would promote the runner-up, so a draw whose title is effectively
+  // decided would be captioned "Ben Shelton leads at 0%" — a top price that is
+  // not a forecast makes the whole ranking meaningless. Returning null is the
+  // trade this function already makes for a leader with no price at all, and it
+  // is per-BOARD, so the other draw still prints.
+  //
+  // The band is one rounding step wide on purpose: 0.994 still prints "99%" and
+  // a genuinely lopsided live draw is untouched.
+  if (fraction >= PRINTS_AS_CERTAIN) return null;
+
   return {
     name,
     probability,
-    fraction: top.probability as number,
+    fraction,
     draw: cleanText(board.label),
   };
 }
@@ -185,9 +246,11 @@ export function buildTournamentShareCopy(source: TournamentShareSource): {
   const { name, venue, leaders: found } = tournamentShareFacts(source);
 
   if (found.length === 0) {
-    // No priced board — say what the page is, and claim nothing about who is
-    // ahead. `venue` is the hub's own subtitle ("Flushing Meadows"), not a
-    // sentence written for a reviewer.
+    // No board this module will put a number on — every one is unpriced, or
+    // settled, or (since #6149) priced at a certainty that is no longer a
+    // forecast. Say what the page is and claim nothing about who is ahead.
+    // `venue` is the hub's own subtitle ("Flushing Meadows"), not a sentence
+    // written for a reviewer.
     return {
       title: name,
       description: truncateShareText(

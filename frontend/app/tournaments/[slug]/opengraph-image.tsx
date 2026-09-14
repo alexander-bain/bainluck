@@ -60,8 +60,10 @@ async function fetchTournament(slug: string): Promise<TournamentShareSource | nu
  *
  * `tournamentShareFacts` is the same call the title makes. That matters more
  * than it looks: `boardLeader` picks by probability rather than by arrival
- * order, and drops a board whose leader prices null/NaN/0 rather than printing
- * "0%". A second implementation here would eventually pick a different leader
+ * order, drops a board whose leader prices null/NaN/0 rather than printing
+ * "0%", and since #6149 drops one whose leader prices at or above 0.995 rather
+ * than captioning a live final "100%". A second implementation here would
+ * eventually pick a different leader
  * than the sentence directly beneath it — which is a worse failure than the one
  * this ship fixes, because the reader can see both at once.
  *
