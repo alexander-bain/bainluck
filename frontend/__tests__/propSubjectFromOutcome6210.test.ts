@@ -26,6 +26,7 @@ import {
   groupPlayerProps,
   type PlayerPropRow,
 } from "../lib/playerPropsGrouping";
+import { divergenceSentence } from "../lib/propDivergence";
 
 const HOME = "Kansas City Chiefs";
 const AWAY = "Denver Broncos";
@@ -272,5 +273,73 @@ describe("#6210 the card list a reader sees", () => {
     for (const invented of ["Team", "Fantasy", "Passing", "Team Field", "Rushing +"]) {
       expect(names).not.toContain(invented);
     }
+  });
+});
+
+/**
+ * The second half of the same sentence. Naming the team correctly is only
+ * useful if the sentence can then SAY the name: the possessive shortens a full
+ * name to a surname, which is right for "Kenneth Walker III" and wrong for
+ * every team it now receives.
+ */
+describe("#6210 a team has no surname", () => {
+  const say = (player: string, stat: string, matchup?: string) =>
+    divergenceSentence(player, `${player}: 4+ ${stat}`, 0.4, 0.09, false, null, matchup);
+
+  it.each([
+    ["Kansas City", "Denver vs Kansas City", "Kansas City's"],
+    ["Ohio St.", "Ohio St. vs Texas", "Ohio St.'s"],
+    ["Ole Miss", "Charlotte vs Ole Miss", "Ole Miss'"],
+    ["Texas A&M", "Arizona St. vs Texas A&M", "Texas A&M's"],
+    ["Notre Dame", "Rice vs Notre Dame", "Notre Dame's"],
+    ["Hull City", "Chelsea vs Hull City", "Hull City's"],
+    ["Crystal Palace", "Crystal Palace vs Ipswich Town", "Crystal Palace's"],
+    ["Real Madrid", "Real Madrid vs Vallecano", "Real Madrid's"],
+  ])("%s is spelled out whole, not shortened", (team, matchup, expected) => {
+    expect(say(team, "team touchdowns", matchup).startsWith(`${expected} `)).toBe(true);
+  });
+
+  /**
+   * The worst of the 34: shortening does not merely read oddly here, it names
+   * the WRONG school. "Eastern Michigan" on an Eastern Michigan vs Michigan St.
+   * page must never become "Michigan's".
+   */
+  // NOTE both assertions anchor at the START of the sentence. `not.toContain`
+  // is useless here: the correct output "Eastern Michigan's 4+ …" CONTAINS the
+  // wrong output "Michigan's 4+ …", so a substring ban passes for the wrong
+  // reason and would go green on the unfixed code.
+  it("Eastern Michigan never becomes Michigan's", () => {
+    const s = say("Eastern Michigan", "team touchdowns", "Eastern Michigan vs Michigan St.");
+    expect(s.startsWith("Eastern Michigan's ")).toBe(true);
+    expect(s.startsWith("Michigan's ")).toBe(false);
+  });
+
+  it("a unit whose last token is not a name is written out — D/ST's cannot say whose", () => {
+    const s = say("KC Chiefs D/ST", "fantasy points", "Denver vs Kansas City");
+    expect(s.startsWith("KC Chiefs D/ST's ")).toBe(true);
+    expect(s.startsWith("D/ST's ")).toBe(false);
+  });
+
+  it("a person is still shortened to a surname, suffixes and all", () => {
+    expect(
+      say("Kenneth Walker III", "receiving yards", "Denver vs Kansas City"),
+    ).toContain("Walker's");
+    expect(
+      say("Lil'Jordan Humphrey", "receptions", "Denver vs Kansas City"),
+    ).toContain("Humphrey's");
+    // A hyphenated surname is a surname.
+    expect(
+      say("Jacory Croskey-Merritt", "rushing yards", "Denver vs Kansas City"),
+    ).toContain("Croskey-Merritt's");
+  });
+
+  it("a surname ending in s keeps the bare apostrophe", () => {
+    expect(say("Patrick Mahomes", "passing touchdowns", "Denver vs Kansas City")).toContain(
+      "Mahomes'",
+    );
+  });
+
+  it("without a matchup the sentence behaves exactly as it always did", () => {
+    expect(say("Kenneth Walker III", "receiving yards")).toContain("Walker's");
   });
 });
