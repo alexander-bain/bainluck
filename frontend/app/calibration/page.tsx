@@ -24,6 +24,7 @@ import {
   MatchedBucketRow,
 } from "@/lib/calibrationMath";
 import { describeCohort, partitionByActivity } from "@/lib/calibrationCohort";
+import { readCoverageAccounting, PLOTTED_RUNG, RUNG_LABELS } from "@/lib/calibrationCoverage";
 import {
   describeCategoryPopulation,
   describeCategoryTablePopulation,
@@ -224,6 +225,14 @@ export default function CalibrationPage() {
   }, [data]);
 
   const overallBrier = useMemo(() => normalized ? brierScore(normalized) : 0, [normalized]);
+
+  // CAL-P1217. `null` until the out-of-band walk has been proved to describe
+  // the payload being served, which is most of the time — the methodology
+  // section simply carries one bullet fewer rather than printing a zero.
+  const coverage = useMemo(
+    () => (data ? readCoverageAccounting(data.calibration_coverage_census) : null),
+    [data]
+  );
 
   const movedBuckets = useMemo(() =>
     normalized ? aggregateBuckets(normalized, b => b.price_moved === true) : [], [normalized]);
@@ -2157,6 +2166,65 @@ export default function CalibrationPage() {
           )}
           <li><strong className="text-text-primary">What&rsquo;s a Brier score?</strong> It measures the average squared error of every prediction. If you predicted 70% and it happened, your error for that prediction is (0.70 - 1.0)&sup2; = 0.09. Average that across all predictions: 0 is perfect, 0.25 is random guessing. Ours is {overallBrier.toFixed(2)}.</li>
           <li><strong className="text-text-primary">What&rsquo;s included?</strong> {data.total_outcomes.toLocaleString()} resolved outcomes{data.date_range?.start && data.date_range?.end ? ` from ${monthYear(data.date_range.start)}–${monthYear(data.date_range.end)}` : ""} across Kalshi, Polymarket, and sportsbook odds (via The Odds API). That published total is lower than the raw resolved-outcome count because we exclude markets that can&rsquo;t form an honest prediction &mdash; see the exclusions below. We only include markets where real trading occurred &mdash; outcomes with zero bids or no trading volume are excluded, because a price without participants isn&rsquo;t a prediction. Data refreshes hourly.</li>
+          {/* CAL-P1217 — the exclusions stop being a handful of named rules and
+              become an accounting a reader can add up.
+              *
+              * The bullets below this one each describe ONE filter, and there
+              * was no line anywhere saying how many outcomes calibration
+              * covered in the first place or where the rest of them went. The
+              * coverage census is a first-match-wins partition of exactly that
+              * population, so these rows sum to the total beside the summary by
+              * construction — `readCoverageAccounting` refuses to return an
+              * accounting whose arithmetic it cannot reproduce.
+              *
+              * FOLDED, and the numbers are on the `<li>` as data-attributes:
+              * notice 34's clause. A reader who does not care sees one line;
+              * one who does opens it; a probe reads the totals either way.
+              *
+              * The labels are this file's own words, via RUNG_LABELS, never the
+              * payload's `rule` strings — those are written for an auditor and
+              * are exactly the grey diagnostic prose notice 34 bans, which is
+              * the same finding #4067 made about the filter bullets below. */}
+          {coverage && (
+            <li
+              data-testid="calibration-coverage-accounting"
+              data-covered={coverage.covered}
+              data-plotted={coverage.plotted}
+              data-excluded={coverage.excluded}
+              data-empty-rules={coverage.emptyRules}
+            >
+              <details>
+                <summary className="cursor-pointer">
+                  <strong className="text-text-primary">Where the prediction-market outcomes went</strong>{" "}
+                  <span className="text-text-muted">
+                    ({coverage.excluded.toLocaleString()} of {coverage.covered.toLocaleString()} set aside)
+                  </span>
+                </summary>
+                <p className="mt-2">
+                  Kalshi and Polymarket outcomes that have resolved and carried a usable price.
+                  Sportsbook rows are counted separately and are not in these figures.
+                </p>
+                <ul className="mt-2 space-y-1">
+                  <li className="flex justify-between gap-4" data-rung={PLOTTED_RUNG}>
+                    <span className="text-text-primary">{RUNG_LABELS[PLOTTED_RUNG]}</span>
+                    <span className="tabular-nums text-text-primary">{coverage.plotted.toLocaleString()}</span>
+                  </li>
+                  {coverage.rows.map(row => (
+                    <li key={row.key} className="flex justify-between gap-4" data-rung={row.key}>
+                      <span>{row.label}</span>
+                      <span className="tabular-nums">{row.outcomes.toLocaleString()}</span>
+                    </li>
+                  ))}
+                </ul>
+                {coverage.emptyRules > 0 && (
+                  <p className="mt-2 text-text-muted">
+                    {coverage.emptyRules} further {coverage.emptyRules === 1 ? "rule" : "rules"} set
+                    aside nothing at all.
+                  </p>
+                )}
+              </details>
+            </li>
+          )}
           {data.liquidity_filter && (data.liquidity_filter.kalshi_included + data.liquidity_filter.kalshi_excluded > 0) && (
             <li>
               {/* ═══ THE SERVER'S PROSE IS NOT THIS PAGE'S COPY (#4067, CERT-2295) ═══
