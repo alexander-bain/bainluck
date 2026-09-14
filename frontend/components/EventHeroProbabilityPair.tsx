@@ -77,6 +77,41 @@ interface EventHeroProbabilityPairProps {
    */
   animate?: boolean;
   /**
+   * #6238 — is the away slot DELIBERATELY not printed?
+   *
+   * Distinct from `awayProb === null`, and the distinction is the whole reason
+   * this is a separate prop rather than an inference:
+   *
+   *   * `awayProb === null` means **we have no reading for this side**. The hero
+   *     prints the em-dash, because the dash sits beside a real number and reads
+   *     as the comparison it is. Unchanged.
+   *   * `awayWithheld` means **we hold a number and it is not a legitimate away
+   *     price**. On a draw-priced sport the served away figure is `1 − home`,
+   *     i.e. "the home team does not win" — away win OR draw — so there is no
+   *     away price to be missing. The SLOT does not apply.
+   *
+   * ── WHY OMIT RATHER THAN DASH, MEASURED ON PIXELS AND NOT ARGUED ──────────
+   *
+   * The first cut of #6238 passed `awayProb={null}` and stopped there, which is
+   * the dash path above. Twelve green tests and a LOOK at 390px
+   * (`artifacts/ux-1266/after-6238-15301234-hero.png`, first cut) showed why
+   * that is wrong HERE: at `text-[48px] font-black` an em-dash is a ~41px solid
+   * rectangle, so the hero drew **`69% – ▬%`** — a grey redaction bar trailed by
+   * a naked `%`. #3459 already wrote that sentence about the both-null case:
+   * *"A `%` with nothing in front of it is not a withheld value, it is a broken
+   * one."* It is just as true of one side, and on a draw-priced sport it is not
+   * an edge case — it is every soccer match, permanently.
+   *
+   * So the away numerals, their `%` and the separator are omitted entirely and
+   * the hero prints ONE named number between the two crests, which is the shape
+   * #6238 asked for ("shows one named number and withholds the second slot").
+   * The crests and names around this component are untouched, so the reader
+   * still sees who the number belongs to.
+   *
+   * Defaults false, so every existing caller renders exactly as before.
+   */
+  awayWithheld?: boolean;
+  /**
    * #5890 — has this match started?
    *
    * Only the no-reading copy reads it. "No price yet" is a promise about the
@@ -185,6 +220,7 @@ export default function EventHeroProbabilityPair({
   awayColor,
   probSourceLabel,
   animate = false,
+  awayWithheld = false,
   started = false,
 }: EventHeroProbabilityPairProps) {
   // #5696 — THE BIGGEST NUMBER ON THE SITE, PAINTED WHITE ON A WHITE CARD.
@@ -295,10 +331,15 @@ export default function EventHeroProbabilityPair({
       >
         %
       </span>
+      {/* #6238 — the separator belongs to the PAIR, so it goes with the slot.
+          Leaving a dangling en-dash after a withheld away side would read as a
+          number that failed to draw, which is the thing being avoided. */}
+      {!awayWithheld && (
       <span className="text-lg font-light text-text-muted mx-1.5 self-center">
         {"–"}
       </span>
-      {awayParts.marker && (
+      )}
+      {!awayWithheld && awayParts.marker && (
         <span
           className="text-lg font-bold leading-none mr-0.5"
           style={{ color: away }}
@@ -306,18 +347,22 @@ export default function EventHeroProbabilityPair({
           {awayParts.marker}
         </span>
       )}
+      {!awayWithheld && (
       <span
         className="text-[34px] min-[360px]:text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
         style={{ color: away }}
       >
         {awayParts.digits}
       </span>
+      )}
+      {!awayWithheld && (
       <span
         className="text-lg font-bold leading-none ml-0.5"
         style={{ color: away }}
       >
         %
       </span>
+      )}
     </div>
   );
 }
