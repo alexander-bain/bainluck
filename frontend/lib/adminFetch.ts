@@ -29,7 +29,44 @@ export async function adminFetch(
   });
 }
 
-/** Convenience: fetch + parse JSON. Throws on non-OK response. */
+/**
+ * The error `adminFetchJSON` throws, carrying the HTTP status it came from.
+ *
+ * #6024: the status was previously readable only by parsing it back out of the
+ * message, so every caller treated "the credential in this tab was rejected"
+ * and "the system is broken" as the same event and rendered both as Critical
+ * system health. A caller that needs to tell them apart uses
+ * `isAdminAuthError`, never a substring of `.message`.
+ *
+ * Extends Error, so existing `error.message` call sites are unaffected.
+ */
+export class AdminApiError extends Error {
+  readonly status: number;
+  readonly body: string;
+
+  constructor(status: number, body: string) {
+    super(`Admin API error ${status}: ${body}`);
+    this.name = "AdminApiError";
+    this.status = status;
+    this.body = body;
+  }
+}
+
+/**
+ * True when the failure is the server refusing this credential (401/403) rather
+ * than a fault in the thing being asked about.
+ *
+ * Deliberately narrow: 404/500/503 are NOT auth failures and must keep reading
+ * as real faults. An unknown error shape is not an auth failure either — the
+ * safe default is to keep showing the error, not to blame the credential.
+ */
+export function isAdminAuthError(err: unknown): boolean {
+  return (
+    err instanceof AdminApiError && (err.status === 401 || err.status === 403)
+  );
+}
+
+/** Convenience: fetch + parse JSON. Throws `AdminApiError` on non-OK response. */
 export async function adminFetchJSON<T = unknown>(
   path: string,
   secret: string,
@@ -39,7 +76,7 @@ export async function adminFetchJSON<T = unknown>(
   const res = await adminFetch(path, secret, options, destructiveToken);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Admin API error ${res.status}: ${text.slice(0, 300)}`);
+    throw new AdminApiError(res.status, text.slice(0, 300));
   }
   return res.json();
 }

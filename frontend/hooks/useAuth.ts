@@ -32,7 +32,8 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // localStorage key indicating user has previously signed in.
 // When absent, Firebase SDK loading is deferred until explicit sign-in.
-const SIGNED_IN_MARKER = "bainluck_previouslySignedIn";
+// Exported for #5952: /admin checks this before pulling the Firebase SDK in.
+export const SIGNED_IN_MARKER = "bainluck_previouslySignedIn";
 
 export interface AuthUser {
   uid: string;

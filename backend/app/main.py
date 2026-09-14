@@ -8,7 +8,7 @@ import os
 import time
 import uuid
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import sentry_sdk
 
@@ -287,6 +287,17 @@ app.add_middleware(
 )
 
 
+# #5952 — the admin account session. Every router that carries an admin route
+# mounts this dependency, which resolves the signed-in Google account to an
+# allowlisted admin identity once per request and leaves it on `request.state`
+# for the synchronous `_check_admin_secret` gate to read. Without it that gate
+# has no way to reach Firebase or the database, and the ~390 admin routes can
+# only ever accept the machine token. It authorizes nothing by itself and never
+# raises; `test_admin_account_auth_5952.py` asserts every admin route has it.
+from app.routes.admin_utils import admin_account_identity  # noqa: E402
+
+ADMIN_ROUTER_DEPENDENCIES = [Depends(admin_account_identity)]
+
 # Include routers
 app.include_router(health.router, tags=["Health"])
 app.include_router(sports.router, prefix="/api/sports", tags=["Sports"])
@@ -295,19 +306,19 @@ app.include_router(events.router, prefix="/api/events", tags=["Events"])
 # client builds one base URL, not two.
 app.include_router(event_stream.router, prefix="/api/events", tags=["Events Live Stream"])
 app.include_router(futures.router, prefix="/api/futures", tags=["Futures"])
-app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
-app.include_router(admin_analytics.router, prefix="/api/admin", tags=["Admin Analytics"])
-app.include_router(admin_backfill_linkage.router, prefix="/api", tags=["Admin Linkage"])
-app.include_router(admin_backfill_odds.router, prefix="/api", tags=["Admin Sparsity"])
-app.include_router(admin_judgments.router, prefix="/api", tags=["Admin Judgments"])
-app.include_router(admin_llm_diagnosis.router, prefix="/api", tags=["Admin LLM"])
-app.include_router(admin_source_health.router, prefix="/api", tags=["Admin Source Health"])
-app.include_router(admin_feed_config.router, prefix="/api/admin", tags=["Admin Feed Config"])
-app.include_router(admin_label_pass.router, prefix="/api/admin", tags=["Admin Label Pass"])
-app.include_router(admin_team_clusters.router, prefix="/api/admin", tags=["Admin Team Clusters"])
-app.include_router(admin_cockpit.router, prefix="/api", tags=["Admin Cockpit"])
-app.include_router(admin_file_issue.router, prefix="/api", tags=["Admin File Issue"])
-app.include_router(admin_cohort.router, prefix="/api", tags=["Admin Cohort"])
+app.include_router(admin.router, prefix="/api/admin", tags=["Admin"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
+app.include_router(admin_analytics.router, prefix="/api/admin", tags=["Admin Analytics"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
+app.include_router(admin_backfill_linkage.router, prefix="/api", tags=["Admin Linkage"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
+app.include_router(admin_backfill_odds.router, prefix="/api", tags=["Admin Sparsity"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
+app.include_router(admin_judgments.router, prefix="/api", tags=["Admin Judgments"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
+app.include_router(admin_llm_diagnosis.router, prefix="/api", tags=["Admin LLM"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
+app.include_router(admin_source_health.router, prefix="/api", tags=["Admin Source Health"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
+app.include_router(admin_feed_config.router, prefix="/api/admin", tags=["Admin Feed Config"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
+app.include_router(admin_label_pass.router, prefix="/api/admin", tags=["Admin Label Pass"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
+app.include_router(admin_team_clusters.router, prefix="/api/admin", tags=["Admin Team Clusters"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
+app.include_router(admin_cockpit.router, prefix="/api", tags=["Admin Cockpit"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
+app.include_router(admin_file_issue.router, prefix="/api", tags=["Admin File Issue"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
+app.include_router(admin_cohort.router, prefix="/api", tags=["Admin Cohort"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(user.router, prefix="/api/me", tags=["User"])
 app.include_router(user.shared_router, prefix="/api/shared", tags=["Shared"])
@@ -338,7 +349,7 @@ app.include_router(source_intelligence.router, prefix="/api", tags=["Source Inte
 app.include_router(predictions.router)
 app.include_router(feedback.router)
 app.include_router(telemetry.router)
-app.include_router(notifications.router)
+app.include_router(notifications.router, dependencies=ADMIN_ROUTER_DEPENDENCIES)
 app.include_router(challenges.router, prefix="/api/challenges", tags=["Challenges"])
 app.include_router(unsubscribe.router)
 app.include_router(og_image.router)

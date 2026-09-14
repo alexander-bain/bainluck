@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, useEffect } from "react";
+
+import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import {
   Activity,
   BarChart3,
@@ -11,6 +13,7 @@ import {
   Database,
   FlaskConical,
   LineChart,
+  Lock,
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
@@ -84,6 +87,7 @@ const COLLAPSE_KEY = "bainluck_admin_sidebar_collapsed";
 
 export default function AdminSidebar() {
   const pathname = usePathname();
+  const { clearSecret, mode, email } = useAdminAuth();
   const [collapsed, setCollapsed] = useState(false);
   const [expandedPillars, setExpandedPillars] = useState<Set<string>>(
     new Set()
@@ -255,6 +259,29 @@ export default function AdminSidebar() {
             <Play className="w-4 h-4" />
             Pipeline Walkthrough
           </Link>
+          {/* #6024: the way back to the secret prompt, from every admin page.
+              A wrong secret used to be unrecoverable without knowing that a
+              reload clears it — and nothing on a 403'd page said so.
+              #5952: on the account path the same control is an escape hatch to
+              the secret, not a way to "change" one that was never entered, and
+              the line above it says which account the SERVER recognised — so a
+              reader who is seeing the wrong data knows whose view it is. */}
+          {mode === "account" && (
+            <p className="px-3 pt-2 text-[11px] leading-snug text-text-muted">
+              Signed in as{" "}
+              <span className="text-text-secondary break-all">
+                {email ?? "your account"}
+              </span>
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => clearSecret()}
+            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-text-muted hover:text-text-primary hover:bg-surface-elevated transition-colors"
+          >
+            <Lock className="w-4 h-4" />
+            {mode === "account" ? "Use the admin secret" : "Change admin secret"}
+          </button>
         </div>
       </nav>
     </aside>

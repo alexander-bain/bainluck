@@ -1,10 +1,11 @@
 "use client";
 
-import { CheckCircle2, AlertTriangle, XCircle, Loader2 } from "lucide-react";
+import { CheckCircle2, AlertTriangle, XCircle, Loader2, Lock } from "lucide-react";
 
 interface PageHeaderProps {
   question: string;
-  status: "good" | "warning" | "critical" | "loading";
+  /** `unauthorized` (#6024) is NOT a health verdict — see STATUS_CONFIG. */
+  status: "good" | "warning" | "critical" | "loading" | "unauthorized";
   summary: string;
   ideal: string;
   subtitle?: string;
@@ -34,6 +35,15 @@ const STATUS_CONFIG = {
     color: "text-text-muted",
     bg: "bg-surface-elevated",
     label: "Loading",
+  },
+  // #6024. The page could not ask the question, so it has no verdict to give.
+  // Neutral on purpose: red would still read as "the system is in trouble",
+  // which is the exact claim a 403 does not support.
+  unauthorized: {
+    icon: Lock,
+    color: "text-text-muted",
+    bg: "bg-surface-elevated",
+    label: "Not authorized",
   },
 };
 

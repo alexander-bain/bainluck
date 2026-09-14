@@ -5,11 +5,48 @@ import {
   useContext,
   useState,
   useEffect,
+  useCallback,
   type ReactNode,
 } from "react";
 
+import AdminSecretPrompt from "@/components/admin/AdminSecretPrompt";
+import {
+  ADMIN_AUTH_INITIAL,
+  adminAuthAccount,
+  adminAuthClear,
+  adminAuthRefreshToken,
+  adminAuthSubmit,
+  type AdminAuthMode,
+} from "@/lib/adminAuthState";
+import {
+  hasStoredAccountSession,
+  probeAdminAccount,
+} from "@/lib/adminAccountSession";
+import { adminFetchJSON } from "@/lib/adminFetch";
+import { BACKEND_AUTH_KEY } from "@/lib/firebase";
+import { SIGNED_IN_MARKER } from "@/hooks/useAuth";
+
+/** How often the account token is re-minted. Firebase ID tokens last an hour. */
+const ACCOUNT_TOKEN_REFRESH_MS = 10 * 60 * 1000;
+
 interface AdminAuthContextValue {
   secret: string;
+  /** Which credential this tab is presenting — `account` since #5952. */
+  mode: AdminAuthMode;
+  /** The signed-in admin's email as the SERVER resolved it, or null. Display only. */
+  email: string | null;
+  /**
+   * #6024: drop the credential this tab is holding and go back to the prompt.
+   *
+   * A secret is accepted into state on nothing but being non-empty — the server
+   * is the only judge, and it judges on the first real request. Until this
+   * existed there was no way back from a wrong one: every page 403'd, the
+   * dashboard called it Critical, and the only recovery was knowing that a
+   * reload clears in-memory state. Now the 403 itself offers the way back.
+   *
+   * `rejected` marks the prompt so it says why it is showing.
+   */
+  clearSecret: (opts?: { rejected?: boolean }) => void;
 }
 
 const AdminAuthContext = createContext<AdminAuthContextValue | null>(null);
@@ -21,9 +58,13 @@ export function useAdminAuth(): AdminAuthContextValue {
 }
 
 export default function AdminAuthProvider({ children }: { children: ReactNode }) {
-  const [secret, setSecret] = useState<string | null>(null);
-  const [input, setInput] = useState("");
+  const [auth, setAuth] = useState(ADMIN_AUTH_INITIAL);
   const [checking, setChecking] = useState(true);
+
+  const clearSecret = useCallback(
+    (opts?: { rejected?: boolean }) => setAuth(adminAuthClear(opts)),
+    []
+  );
 
   useEffect(() => {
     // SECURITY (Queue #252 Item 3, C-ADHOC-4): admin token is in-memory only.
@@ -55,10 +96,74 @@ export default function AdminAuthProvider({ children }: { children: ReactNode })
       // no-op: URL cleanup is best-effort
     }
 
-    // No auto-restore from storage: token must be re-entered each session.
-    // Firebase auth state does NOT restore the admin secret (separate credential).
-    setChecking(false);
+    // #5952: before falling back to the prompt, ask the server whether the
+    // account this browser is already signed in with is an admin. This is the
+    // ship — Alex opens /admin and it opens, with no second password.
+    //
+    // The typed secret is still here and still works: it is what a lane, a
+    // second machine, or Alex-with-no-session uses, and it is the fallback for
+    // every way the account path can say no. Nothing about the account path is
+    // persisted either; the token is minted fresh from the account session on
+    // each load, which is what makes a reload survive without storing anything.
+    let cancelled = false;
+    (async () => {
+      try {
+        if (hasStoredAccountSession(SIGNED_IN_MARKER, BACKEND_AUTH_KEY)) {
+          const session = await probeAdminAccount({
+            getToken: async () => (await import("@/lib/firebase")).getIdToken(),
+            whoami: (token) => adminFetchJSON("/api/admin/whoami", token),
+          });
+          if (!cancelled && session) {
+            setAuth(adminAuthAccount(session.token, session.email));
+          }
+        }
+      } finally {
+        // ALWAYS, on every path. `checking` renders "Loading admin..." and
+        // nothing else clears it, so anything that escapes this block — a
+        // chunk that fails to load, a rejected dynamic import, a future edit
+        // that adds an unguarded await — strands the reader on a spinner with
+        // no prompt and no error. The prompt is the safe resting state; the
+        // account path is an optimisation on top of it, and an optimisation
+        // must never be able to take the fallback down with it.
+        if (!cancelled) setChecking(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  // #5952: keep the account token fresh. A Firebase ID token expires in an
+  // hour and /admin is a tab that stays open all day; without this the
+  // dashboard would start 403ing mid-afternoon and read as a rejected
+  // credential. `getIdToken` returns the cached token until it is near expiry,
+  // so this is almost always free. `adminAuthRefreshToken` is a no-op unless
+  // the tab is actually on the account path.
+  useEffect(() => {
+    if (auth.mode !== "account" || !auth.secret) return;
+    let cancelled = false;
+
+    const refresh = async () => {
+      try {
+        const token = await (await import("@/lib/firebase")).getIdToken();
+        if (!cancelled) setAuth((prev) => adminAuthRefreshToken(prev, token));
+      } catch {
+        // A failed refresh is not a failed session: the current token is still
+        // valid until it is not, and the server is the one that decides.
+      }
+    };
+
+    const timer = setInterval(refresh, ACCOUNT_TOKEN_REFRESH_MS);
+    // Coming back to a tab left open past the token's life is the common case,
+    // so refresh on focus too rather than waiting out the interval.
+    window.addEventListener("focus", refresh);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [auth.mode, auth.secret]);
 
   if (checking) {
     return (
@@ -68,46 +173,24 @@ export default function AdminAuthProvider({ children }: { children: ReactNode })
     );
   }
 
-  if (!secret) {
+  if (!auth.secret) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-surface-deep px-4">
-        <div className="bg-surface-card border border-surface-border rounded-xl p-6 w-full max-w-sm shadow-sm">
-          <h2 className="text-base font-semibold text-text-primary mb-1">
-            Admin Access
-          </h2>
-          <p className="text-xs text-text-muted mb-4">
-            Enter the admin secret to continue. It lives in memory for this tab
-            only and is cleared on reload — re-enter each session by design.
-          </p>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!input.trim()) return;
-              setSecret(input.trim());
-            }}
-          >
-            <input
-              type="password"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Secret"
-              autoFocus
-              className="w-full px-3 py-2 rounded-lg border border-surface-border bg-surface-elevated text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent-brand/40 mb-3"
-            />
-            <button
-              type="submit"
-              className="w-full px-4 py-2 rounded-lg bg-text-primary text-text-inverse text-sm font-medium hover:opacity-90 transition-opacity"
-            >
-              Enter
-            </button>
-          </form>
-        </div>
-      </div>
+      <AdminSecretPrompt
+        rejected={auth.rejected}
+        onSubmit={(value) => setAuth(adminAuthSubmit(value))}
+      />
     );
   }
 
   return (
-    <AdminAuthContext.Provider value={{ secret }}>
+    <AdminAuthContext.Provider
+      value={{
+        secret: auth.secret,
+        mode: auth.mode,
+        email: auth.email,
+        clearSecret,
+      }}
+    >
       {children}
     </AdminAuthContext.Provider>
   );

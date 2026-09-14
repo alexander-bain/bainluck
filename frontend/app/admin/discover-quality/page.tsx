@@ -20,6 +20,7 @@ import {
 } from "@/hooks";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import { adminFetch } from "@/lib/adminFetch";
+import { adminErrorStatus, adminErrorSummary } from "@/lib/adminHealthStatus";
 import PageHeader from "@/components/admin/PageHeader";
 
 
@@ -646,14 +647,15 @@ export default function DiscoverQualityPage() {
           <PageHeader
           question="Is the Discover feed showing good content?"
           status={
-            error ? "critical"
+            // #6024: a rejected credential is not a verdict on the feed.
+            error ? adminErrorStatus(error)
             : isLoading ? "loading"
             : data && data.debug_summary.boring_count > 0 ? "warning"
             : "good"
           }
           summary={
             isLoading ? "Loading feed debug..."
-            : error ? error.message
+            : error ? adminErrorSummary(error)
             : data ? `${data.debug_summary.explanation_ok_count}/${data.debug_summary.items} with explanations · ${data.debug_summary.boring_count} boring`
             : "No data"
           }
