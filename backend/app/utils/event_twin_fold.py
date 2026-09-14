@@ -325,6 +325,33 @@ class FoldResult:
     dropped_ids: list = field(default_factory=list)
     """Row ids the fold removed, for the log line and the guard tests."""
 
+    survivor_of: dict = field(default_factory=dict)
+    """``{dropped_id: survivor_id}`` — which row absorbed each row that went.
+
+    :attr:`dropped_ids` says a row lost. This says what it lost TO, and a caller
+    serving more than one rail needs the difference: "this contest is still on
+    the page, correctly" is a claim about the SURVIVOR, and a bare dropped id
+    cannot make it.
+
+    🔴 IT IS NOT RECONSTRUCTIBLE FROM `twin_fold_key` EQUALITY, AND THAT IS THE
+    WHOLE REASON IT EXISTS. :func:`_merge_soccer_name_variants` folds rows whose
+    strict keys DIFFER — on the NAMES (#5918: `Celta Vigo` / `RC Celta de Vigo`)
+    and on the MINUTE (#5964: the bucket is the kick-off DATE, so 16:30Z and
+    16:32Z cluster). A caller that re-derives "who absorbed this row" by matching
+    keys therefore answers correctly on the exact-name pairs and silently wrongly
+    on precisely the pairs that pass was written for.
+
+    The sibling correction does NOT have this property, and the difference is
+    worth stating so nobody widens the wrong one:
+    :func:`recover_kalshi_occurrence_starts` (#5905) rewrites the row's served
+    `commence_time` in place before the keying, so both members of a Kalshi-timed
+    pair key alike downstream and equality would have been enough there.
+
+    `_folded_past_rails` in `app/routes/league_futures.py` is the caller (#5532):
+    it drops a stuck-`live` row from the upcoming rail only when the row that
+    absorbed it is a Final the same response is already printing.
+    """
+
     merged_opening: dict = field(default_factory=dict)
     """``{survivor_id: (home, away)}`` — survivors that gained a pre-match line
     from the row they absorbed, and only those. Unlike
@@ -671,6 +698,12 @@ def _elect(members: list, keep: set, result: "FoldResult") -> None:
     survivor, losers = ranked[0], ranked[1:]
     keep.add(id(survivor))
     result.dropped_ids.extend(loser.id for loser in losers)
+    # #5532 — recorded HERE, the one place the pair is still in hand. The fold
+    # returns its survivors flattened into one list, so a caller downstream can
+    # see THAT a row went and can never see which of the rows it is holding
+    # took its place.
+    for loser in losers:
+        result.survivor_of[loser.id] = survivor.id
 
     merged = dict(getattr(survivor, "win_probability_sources", None) or {})
     added = False
