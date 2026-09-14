@@ -938,6 +938,35 @@ export interface SportScoringVocab {
    * reads as broken.
    */
   scoreboardUnit: string;
+  /**
+   * Does this sport's match-winner market price a DRAW as a third outcome?
+   *
+   * #6238, the web twin of #5271. Every probability this site draws for a match
+   * comes from one pair, and the pair is `home` and `1 − home` — `routes/feed.py`
+   * derives `current_odds.away_probability` as `round(1.0 - current_home_prob, 6)`,
+   * and `renderedDuelPercents` is built on the two summing to one.
+   *
+   * `1 − P(home)` is **"the home team does not win"**. In soccer that is *away
+   * win **or** draw*, so the figure printed under the away crest silently
+   * absorbs the entire draw probability.
+   *
+   * Photographed on production 2026-09-14 by authority/322, `/events/15301234`
+   * (León v Atlético San Luis, Liga MX, 2h pre-match): the hero printed
+   * **`68% – 32%`** while the page's own correct-score card put 0-0 at 22% and
+   * 1-1 at 10%. The books behind it were nowhere near a two-way split —
+   * draftkings −115/+285 implies 53.5%/26.0%, summing to **79.5%**. We divide by
+   * that sum to strip vig, which is right for a two-way market and wrong here,
+   * because the missing ~20 points are mostly the draw. León was overstated by
+   * ~14pp.
+   *
+   * ⚠️ **THE DEFAULT IS `false`, LIKE `hasDerivedSpread` AND UNLIKE
+   * `scoreboardCountsTheUnit`.** Withholding a number is only right where the
+   * complement is provably wrong, and that has been measured for soccer and
+   * nowhere else. An undeclared sport keeps its two-sided reading, so widening
+   * this rule is one `true` and a test — by someone who has measured the sport,
+   * not by whoever wrote a default.
+   */
+  winnerMarketPricesADraw: boolean;
 }
 
 /**
@@ -951,15 +980,19 @@ export interface SportScoringVocab {
 const SPORT_SCORING: { match: string[]; vocab: SportScoringVocab }[] = [
   {
     match: ["baseball", "mlb"],
-    vocab: { marginTitle: "Run margin map", totalTitle: "Runs map", unit: "runs", unitSingular: "run", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "" },
+    vocab: { marginTitle: "Run margin map", totalTitle: "Runs map", unit: "runs", unitSingular: "run", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false },
   },
   {
     match: ["hockey", "nhl"],
-    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "" },
+    // A regular-season game level after overtime is decided by a shootout, so
+    // the winner market has two outcomes and the complement is honest.
+    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false },
   },
   {
     match: ["soccer", "mls", "epl", "uefa", "fifa"],
-    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "" },
+    // THE ONE ROW THAT SAYS YES (#6238, mirroring native's #5271). A league
+    // draw prices around 20-30% pre-match and the site held no slot for it.
+    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: true },
   },
   {
     // #2441's subject. A tennis match is scored in games inside sets; the
@@ -967,15 +1000,15 @@ const SPORT_SCORING: { match: string[]; vocab: SportScoringVocab }[] = [
     // `hasDerivedSpread: false` is what stops `BER +4.5` being drawn from a
     // points model over a sport with no points.
     match: ["tennis"],
-    vocab: { marginTitle: "Game margin map", totalTitle: "Games map", unit: "games", unitSingular: "game", marginRange: 6, hasDerivedSpread: false, scoreboardCountsTheUnit: false, scoreboardUnit: "sets" },
+    vocab: { marginTitle: "Game margin map", totalTitle: "Games map", unit: "games", unitSingular: "game", marginRange: 6, hasDerivedSpread: false, scoreboardCountsTheUnit: false, scoreboardUnit: "sets", winnerMarketPricesADraw: false },
   },
   {
     match: ["basketball", "nba", "wnba", "ncaab"],
-    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "" },
+    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false },
   },
   {
     match: ["americanfootball", "nfl", "ncaaf"],
-    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "" },
+    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false },
   },
 ];
 
@@ -1000,6 +1033,9 @@ export const UNSCORED_IN_POINTS: SportScoringVocab = {
   // true line from every sport nobody has declared yet.
   scoreboardCountsTheUnit: true,
   scoreboardUnit: "",
+  // An undeclared sport keeps its two-sided reading. See the field's own note:
+  // this default is what makes withholding the away number opt-in.
+  winnerMarketPricesADraw: false,
 };
 
 export function sportVocab(sportKey: string | undefined): SportScoringVocab {

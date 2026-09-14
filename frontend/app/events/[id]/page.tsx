@@ -81,6 +81,7 @@ import {
   tennisSetsWonFor,
 } from "@/lib/otherMarketGroups";
 import { sportVocab, marketMapSectionMounts, totalsMapRenders } from "@/lib/marketMapUtils";
+import { printableAway } from "@/lib/drawPricedWinner";
 import {
   actualScoreSeriesDrawn,
   scoreDifferentialHeading,
@@ -877,16 +878,20 @@ export default function EventPage({ params }: EventPageProps) {
   // Without it this page printed a 21-hour-old 90% directly above its own chart's 1%.
   const {
     homeProb,
-    awayProb,
+    // #6238 — renamed, not consumed. Every one of these four is `1 − home` by
+    // construction, so on a draw-priced sport they are the number this page must
+    // not print. The withheld values are derived immediately below; nothing
+    // downstream may reach the served away side without going past that comment.
+    awayProb: servedAwayProb,
     probSourceLabel,
     openingHomeProb,
-    openingAwayProb,
+    openingAwayProb: servedOpeningAwayProb,
     // #2085 — the whole percents to PRINT for each pair, decided together at
     // the one place that knows which source each pair came from.
     homePct,
-    awayPct,
+    awayPct: servedAwayPct,
     openingHomePct,
-    openingAwayPct,
+    openingAwayPct: servedOpeningAwayPct,
   } = resolveProbability(
     event,
     historyData,
@@ -919,6 +924,40 @@ export default function EventPage({ params }: EventPageProps) {
       liveClaimUnbacked,
     ),
   );
+
+  // ═══ #6238 — THE AWAY NUMBER THIS PAGE IS ALLOWED TO PRINT ═══
+  //
+  // `/events/15301234` (León v Atlético San Luis, Liga MX) printed `68% – 32%`
+  // on a market where the draw is a real outcome, two hours before kickoff,
+  // while its OWN correct-score card one section down put 0-0 at 22% and 1-1 at
+  // 10%. The served away figure is `1 − home` exactly (`0.317 === 1 − 0.683`),
+  // so what sat under the away crest was "León does not win" — away win OR draw
+  // — wearing San Luis's name. Measured against the books behind it, León was
+  // overstated by ~14pp.
+  //
+  // Withheld rather than corrected: there is no away price to read. See
+  // `lib/drawPricedWinner.ts` for the three payloads that were checked and for
+  // why the retained home number is STILL draw-dropped (#1011) — this is the
+  // render half only, exactly as native's #5271 was.
+  //
+  // ── ALL FOUR, AND WHY IT IS NOT JUST THE HERO ─────────────────────────────
+  //
+  // #5696 found the hero and the `Opened 64% – 36%` line disagreeing on one
+  // screen, which is what a partial adoption looks like. The opening pair is the
+  // same complement taken at a different instant, so a fix that withholds the
+  // hero's away number and leaves the opening line printing one moves the false
+  // number three rows down the page instead of deleting it. Both pairs, one
+  // rule, one place.
+  //
+  // `settledWinnerPregameProb` below reads `openingAwayProb` and is null-guarded,
+  // so on a draw-priced sport whose AWAY side won, the settled hero now withholds
+  // the "was priced at N%" line rather than sourcing it to the complement. That
+  // is deliberate and it is the same rule: the number it would have printed is
+  // the one this ship exists to stop printing.
+  const awayProb = printableAway(servedAwayProb, event.sport);
+  const awayPct = printableAway(servedAwayPct, event.sport);
+  const openingAwayProb = printableAway(servedOpeningAwayProb, event.sport);
+  const openingAwayPct = printableAway(servedOpeningAwayPct, event.sport);
 
   // #490: hero confidence signal (1-3 bars), computed client-side from the win-
   // prob sources already on the event + whether the line moved off open. Mirrors
