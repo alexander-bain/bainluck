@@ -95,6 +95,7 @@ import { derivePeriodBoundaries } from "@/lib/periodMarkers";
 import { formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import {
   SUSPENDED_DESCRIPTION,
+  blendCaptionIsStale,
   hasNoReportedResult,
   isFinishedStatus,
   startBadgeLabel,
@@ -900,7 +901,19 @@ export default function EventPage({ params }: EventPageProps) {
     //
     // `heroStampIsStale` is the badge's own predicate, so the caption and the
     // grey age badge above it cross the same boundary at the same instant.
-    heroStampIsStale(freshestSourceStamp, "price"),
+    //
+    // #2800 — OR'd with `liveClaimUnbacked`, because the age is only one of the
+    // two ways this number stops being current. A PINNED price is rewritten on
+    // schedule with an identical value, so it is permanently fresh to the stamp
+    // and permanently frozen in fact (Peliwo v Ziegann, 84 reads over 87
+    // minutes, all 0.99, badge reading `1m ago`). This is the same OR the age
+    // badge itself already takes through `claimWithdrawn` one line below, and
+    // the rule `effectivelyLive` states at :356 — everything that ASSERTS
+    // motion reads the withdrawal, and "Live · Bain Luck blend" asserts motion.
+    blendCaptionIsStale(
+      heroStampIsStale(freshestSourceStamp, "price"),
+      liveClaimUnbacked,
+    ),
   );
 
   // #490: hero confidence signal (1-3 bars), computed client-side from the win-
