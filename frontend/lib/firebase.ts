@@ -32,7 +32,8 @@ const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // localStorage key for backend-only auth fallback (Safari ITP)
-const BACKEND_AUTH_KEY = "bainluck_backendAuth";
+/** Exported for #5952: /admin checks for a stored session before loading the SDK. */
+export const BACKEND_AUTH_KEY = "bainluck_backendAuth";
 
 /**
  * Check if Firebase is configured (env vars are set).

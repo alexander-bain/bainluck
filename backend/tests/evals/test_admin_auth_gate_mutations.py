@@ -42,7 +42,8 @@ def test_every_auth_weakening_mutant_is_killed(mutant, mutation_run):
 def test_no_mutant_is_silently_dropped():
     """The mutant list is the claim. If someone deletes a mutant, the count moves and
     this fails — a security suite that can be quietly shrunk proves nothing."""
-    assert len(harness.MUTANTS) == 7
+    # 7 from Q332, + 3 for the account path (#5952).
+    assert len(harness.MUTANTS) == 10
     assert harness.EQUIVALENT_ON_AUTHORIZATION <= {m["id"] for m in harness.MUTANTS}
 
 

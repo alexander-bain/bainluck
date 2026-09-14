@@ -20,8 +20,38 @@ from app.utils import health_reads, probability_to_american
 from app.utils.sport_keys import KALSHI_GAME_TICKER_PREFIXES
 
 from app.routes.admin_utils import _check_admin_secret, _check_admin_auth, _safe_send_task  # noqa: F401 — re-exported for backward compat
+# Imported separately, and deliberately: appending to the line above puts it in
+# the diff, and CodeQL then reports the long-standing unused `_check_admin_auth`
+# (kept on purpose for the backward-compat re-export, which `noqa` explains to
+# ruff but not to CodeQL) as a NEW note on this PR. A pre-existing intentional
+# import should not become a finding because an unrelated name joined its line.
+from app.routes.admin_utils import account_admin_email
 
 router = APIRouter()
+
+
+@router.get("/whoami")
+async def admin_whoami(request: Request):
+    """Answer "is this caller an admin, and how?" — #5952.
+
+    The admin UI calls this ONCE on load with the Google account token the
+    reader is already signed in with. A 200 means the server recognised the
+    account and the dashboard can open without asking for a second password; a
+    403 means it did not, and the reader gets the secret prompt exactly as
+    before. The browser never decides this — it asks, and this route answers
+    from the same gate that protects every other admin endpoint.
+
+    It deliberately has no side effects, touches no table of its own, and
+    returns no secret: the email it echoes is the one the SERVER resolved from
+    the verified token, which is why it is safe to show and useless to forge.
+    """
+    _check_admin_secret(None, request=request)
+    email = account_admin_email(request)
+    return {
+        "authorized": True,
+        "method": "account" if email else "token",
+        "email": email,
+    }
 
 
 # =============================================================================

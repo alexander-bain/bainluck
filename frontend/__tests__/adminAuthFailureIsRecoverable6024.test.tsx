@@ -158,7 +158,12 @@ describe("#6024 the header stops answering a health question it could not ask", 
 
 describe("#6024 a rejected secret is clearable and re-enterable", () => {
   it("starts with no secret and no accusation", () => {
-    expect(ADMIN_AUTH_INITIAL).toEqual({ secret: null, rejected: false });
+    expect(ADMIN_AUTH_INITIAL).toEqual({
+      secret: null,
+      mode: "secret",
+      email: null,
+      rejected: false,
+    });
   });
 
   it("clearing on a 403 drops the secret AND marks why the prompt is back", () => {
@@ -166,18 +171,23 @@ describe("#6024 a rejected secret is clearable and re-enterable", () => {
     // all: a wrong secret stayed in state until the tab was reloaded.
     expect(adminAuthClear({ rejected: true })).toEqual({
       secret: null,
+      mode: "secret",
+      email: null,
       rejected: true,
     });
   });
 
   it("a deliberate swap accuses nothing", () => {
-    expect(adminAuthClear()).toEqual({ secret: null, rejected: false });
-    expect(adminAuthClear({})).toEqual({ secret: null, rejected: false });
+    const cleared = { secret: null, mode: "secret", email: null, rejected: false };
+    expect(adminAuthClear()).toEqual(cleared);
+    expect(adminAuthClear({})).toEqual(cleared);
   });
 
   it("re-entering clears the rejection and holds the new secret", () => {
     expect(adminAuthSubmit("  s3cret  ")).toEqual({
       secret: "s3cret",
+      mode: "secret",
+      email: null,
       rejected: false,
     });
   });

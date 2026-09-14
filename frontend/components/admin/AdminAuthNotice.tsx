@@ -19,21 +19,28 @@ import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
  * this one.
  */
 export default function AdminAuthNotice() {
-  const { clearSecret } = useAdminAuth();
+  const { clearSecret, mode, email } = useAdminAuth();
+  const onAccount = mode === "account";
 
   return (
     <div className="flex flex-wrap items-center gap-3 text-sm bg-surface-elevated border border-surface-border rounded-lg p-3">
       <Lock className="w-4 h-4 text-text-muted shrink-0" />
+      {/* #5952: on the account path there is no secret to blame, and saying
+          there is sends the reader hunting for a password they never entered.
+          The likeliest cause by far is a sign-in that has expired. */}
       <span className="text-text-secondary">
-        The admin secret entered in this tab was rejected. Nothing here could be
-        loaded, so none of it is a statement about the site.
+        {onAccount
+          ? `The ${email ?? "account"} sign-in was not accepted for admin.`
+          : "The admin secret entered in this tab was rejected."}{" "}
+        Nothing here could be loaded, so none of it is a statement about the
+        site.
       </span>
       <button
         type="button"
         onClick={() => clearSecret({ rejected: true })}
         className="px-3 py-1.5 rounded-lg bg-text-primary text-text-inverse text-xs font-medium hover:opacity-90 transition-opacity"
       >
-        Re-enter admin secret
+        {onAccount ? "Use the admin secret" : "Re-enter admin secret"}
       </button>
     </div>
   );
