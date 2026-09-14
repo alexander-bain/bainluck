@@ -1133,6 +1133,37 @@ CALIBRATION_CORRECTIONS = [
                        "full; a ladder is only collapsed once its own results "
                        "show more than one step came true.",
     },
+    {
+        "date": "2026-09-13",
+        "title": "The one-question markets we were throwing away",
+        # D112 (#997, CAL-P1190). `rows` stays None on purpose: the only number
+        # available before the first rebuild under the new rule is a population
+        # upper bound (~3,046), and this panel states measured published counts
+        # or nothing at all. The method history carries the same row as PENDING
+        # (docs/calibration/METHODOLOGY-LEDGER.md, 2026-09-13) and both are
+        # filled from the same rebuild.
+        "rows": None,
+        "description": "We only score ourselves against an answer that came "
+                       "from somewhere other than the market's own price — "
+                       "otherwise the price is marking its own homework. One "
+                       "way a market settles is by every other answer losing, "
+                       "and we used to throw all of those away as unsafe. But "
+                       "when a market asks exactly one yes-or-no question "
+                       "there is no other answer that could have decided it, "
+                       "so the result comes from the exchange that ran the "
+                       "market and it is safe to score. Those questions are "
+                       "now scored like any other; "
+                       "at two answers or more nothing changes. Admitting only "
+                       "half of this pair was its own distortion: those "
+                       "results came true 29% of the time against forecasts "
+                       "averaging about 50%, because every one we let in had "
+                       "been picked out for having lost. Taken together they "
+                       "come true 51% — the coin flip the prices said they "
+                       "should be. This is the first change on this list that "
+                       "adds questions back rather than removing them, so "
+                       "earlier numbers here were incomplete rather than "
+                       "wrong.",
+    },
 ]
 
 # Horizons: (label, days_before_resolution)
