@@ -15221,10 +15221,55 @@ async def _build_game_markets(
     # Thinly traded Kalshi half-period markets often have non-monotonic prices
     # (e.g., Over 98.5 at 68% but Over 101.5 at 75%). Cap violating points
     # to the previous value instead of dropping them (preserves all thresholds).
-    # Also filter out resolved/stale thresholds with 0% probability.
+    # Also filter out stale thresholds with 0% probability — except where that
+    # 0% is a provable settlement verdict rather than a dead quote (#6196).
     def _enforce_monotonicity(items: list[dict], prob_key: str = "over_probability") -> list[dict]:
         # Filter out 0% (resolved/stale) thresholds
-        items = [i for i in items if i.get(prob_key) is not None and i.get(prob_key, 0) > 0]
+        #
+        # 🔴 #6196: …BUT A SETTLED 0.0 IS A VERDICT, AND THIS IS THE LINE THAT
+        # DELETED IT.
+        #
+        # This is #4845's finding in the totals bucket. There, the deep-OTM
+        # spread floor dropped "Atlanta -1.5 first 5 innings" at 0.01 from a page
+        # already carrying its sibling at 0.99 — one side of the same question,
+        # silently gone — and the rescue was to let a row whose WINDOW IS OVER
+        # reach the reader verdict-only. The totals path never got that rescue,
+        # and it is the harsher of the two: the spreads floor at least routes its
+        # casualties to `_window_closed_items`, whereas this comprehension drops
+        # the row outright, so nothing downstream ever learns it existed.
+        #
+        # The filter is RIGHT while the ladder is live: a 0% rung is a dead quote
+        # and showing it is noise. It is wrong the moment the question is
+        # answered, because then 0.0 has stopped being a price that decayed and
+        # become the ANSWER "this line did not come in" — and a ladder headed
+        # "each line vs the final" that prints only the lines which cleared has
+        # deleted half of what it claims to show. #6169 made this one instance
+        # more visible rather than causing it: it moved `Over 38.5` from a stuck
+        # 0.5 to its true 0.0, at which point this line took the row. A correct
+        # fix walking into an older defect is the fix working.
+        #
+        # MEASURED on the #6169 specimen before building, `/events/14637256`
+        # (Giants 28 Cowboys 20, Final): eleven settled totals markets hold 83
+        # tier-2+ graded losing rungs between them, and ZERO reach the payload —
+        # the served game-total ladder is exactly its 9 winners with all 10
+        # losers dropped, and the same holds for 1Q/2Q/3Q/4Q/1H/2H. Seven ladders
+        # on one page, not one "not cleared" row among them.
+        #
+        # `_verdict_is_provable` and not a bare `is_winner is False` test, for
+        # the reason its own docstring measures: on a VOIDED market the venue
+        # grades every leg a loser and none a winner, so a 0.0 there is not a
+        # verdict about anything and stays dropped. Ungraded rows, tier-1
+        # retractions and genuinely stale quotes are all unaffected — this only
+        # ever readmits a row whose 0.0 was computed BY `_settled_over_probability`
+        # from a grade that recomputes to the same winner from cited data.
+        items = [
+            i for i in items
+            if i.get(prob_key) is not None
+            and (
+                i.get(prob_key, 0) > 0
+                or _verdict_is_provable(i, i.get("_market_id") in markets_with_a_winner)
+            )
+        ]
         if len(items) < 2:
             return items
         result = [items[0]]
@@ -15245,9 +15290,19 @@ async def _build_game_markets(
             # stale rung instead erased the six rows that were right.
             #
             # A settled rung still DONATES: it stays `result[-1]` for the rungs
-            # above it, so a settled 1.0 ceiling caps nothing and a settled 0.0
-            # is gone before this pass (the `> 0` filter above). Only the
-            # rewrite of its own number is refused.
+            # above it, so a settled 1.0 ceiling caps nothing. Only the rewrite
+            # of its own number is refused.
+            #
+            # A settled 0.0 now REACHES this pass (#6196 readmitted it above;
+            # before that it was dropped by the `> 0` filter and this comment
+            # said so). It donates like any other rung, and the donation is
+            # sound in the one direction it can travel: these are rungs of one
+            # ladder, so if `Over 38.5` did not come in then nothing above 38.5
+            # did either, and capping an ungraded neighbour above it to 0.0 is
+            # the arithmetic, not a guess. The row stays visible either way —
+            # the filter has already run by the time anything is capped — and a
+            # rung capped to 0.0 carries no grade, so it prints no verdict
+            # (#4788) and reads as the absent price it is.
             if (
                 cur_prob is not None and prev_prob is not None and cur_prob > prev_prob
                 and not _verdict_is_provable(
