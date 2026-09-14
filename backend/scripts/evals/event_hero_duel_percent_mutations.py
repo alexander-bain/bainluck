@@ -161,8 +161,26 @@ COMPONENT_MUTATIONS: list[dict] = [
         # on a pushed live event. The property under attack is unchanged — the
         # component must refuse to re-derive a percent it was not given — so
         # this is a new anchor for the same mutant, not a new mutant.
-        "needle": """        {homeProb !== null && shownHome !== null ? shownHome : "—"}""",
-        "replacement": """        {homeProb !== null ? (shownHome ?? Math.round(homeProb * 100)) : "—"}""",
+        #
+        # SECOND RE-TARGET, latency/396, after #6064 (`a6ae040a`) reddened
+        # master: the ship moved the marker onto the `%` and routed both sides
+        # through the new pure `sideParts`, so the JSX no longer decides
+        # anything and the old needle anchored on an expression that is gone.
+        # The refusal did not move out of the component, it moved UP into
+        # `sideParts` — one function, both sides — so the mutant follows it
+        # there and stays the same mutant. Anchoring on the whole function body
+        # rather than on the `shown === null` clause alone is deliberate: the
+        # clause is two tokens and would be ambiguous the next time a sibling
+        # helper takes the same shape, and Pass A of the residue scan fails an
+        # ambiguous needle exactly as loudly as a drifted one.
+        "needle": """export function sideParts(prob: number | null, shown: number | null): ProbabilityParts {
+  if (prob === null || shown === null) return { marker: null, digits: NO_READING };
+  return probabilityParts(prob, { rendered: shown });
+}""",
+        "replacement": """export function sideParts(prob: number | null, shown: number | null): ProbabilityParts {
+  if (prob === null) return { marker: null, digits: NO_READING };
+  return probabilityParts(prob, { rendered: shown ?? Math.round(prob * 100) });
+}""",
         "why": "The component quietly re-derives when a caller stops passing the "
         "decided percent. The fix becomes invisible the moment anyone "
         "refactors the page, with no test going red.",
