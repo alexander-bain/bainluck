@@ -288,6 +288,23 @@ function PlayerCard({ player, gameState, showAllStats }: { player: PlayerData; g
   const otherStats = player.stats.filter((s) => !/^points?$/i.test(s.type));
   const visibleStats = isExpanded ? player.stats : pointsStats;
   const statsToShow = visibleStats.length > 0 ? visibleStats : player.stats.slice(0, 1);
+  // #6216 — WHAT THE BUTTON IS ACTUALLY OFFERING: the stats NOT already drawn.
+  //
+  // The button used to count `otherStats` ("everything that is not Points"),
+  // which is only the same thing on a sport that HAS a Points stat. Basketball
+  // does, so `statsToShow` is `[Points]` and the two sets coincide. Football
+  // does not: `pointsStats` is empty, `statsToShow` falls back to
+  // `player.stats.slice(0, 1)`, and `otherStats` still contains that very stat.
+  //
+  // So a Bo Nix card showing "Passing Yards" offered "+3 more stats" and, once
+  // the hardcoded basketball words were replaced with the real ones, would have
+  // led that list with **Passing Yards — the stat already on the card**. The
+  // count and the first example were both wrong, in the same sentence.
+  //
+  // Derived from `statsToShow` by identity, so it cannot drift from what was
+  // rendered. Basketball is unaffected by construction; only the sports that
+  // were already miscounting move.
+  const hiddenStats = player.stats.filter((s) => !statsToShow.includes(s));
   return (
     <div className="bg-surface-card border border-surface-border rounded-xl shadow-sm p-4 flex flex-col">
       <div className="flex items-center gap-3 mb-3">
@@ -324,12 +341,24 @@ function PlayerCard({ player, gameState, showAllStats }: { player: PlayerData; g
           <StatBox key={s.type} stat={s} gameState={gameState} teamColor={player.color} />
         ))}
       </div>
-      {!isExpanded && otherStats.length > 0 && (
+      {!isExpanded && hiddenStats.length > 0 && (
         <button
           onClick={() => setExpanded(true)}
           className="mt-2 text-[11px] font-medium text-blue-600 hover:text-blue-700 transition-colors text-left"
         >
-          +{otherStats.length} more stat{otherStats.length > 1 ? "s" : ""} (rebounds, assists, 3PT...)
+          {/* #6216 — THIS CARD OFFERED A FOOTBALL READER "rebounds, assists, 3PT…".
+              Three hardcoded basketball examples, on every sport, while
+              `hiddenStats` — derived a few lines above — holds the stats this
+              player actually has and this card is not already showing.
+              `stat.type` is already a display string
+              (`STAT_TYPES`: "Passing Yards", "Receptions", "Touchdowns"); it is
+              what `StatBox` prints raw, so there is no label map to reach for.
+              Capped at three so a player with eight hidden stats does not get a
+              sentence longer than the card, and the ellipsis is only drawn when
+              something is actually elided. */}
+          +{hiddenStats.length} more stat{hiddenStats.length > 1 ? "s" : ""} (
+          {hiddenStats.slice(0, 3).map((s) => s.type).join(", ")}
+          {hiddenStats.length > 3 ? "…" : ""})
         </button>
       )}
       {expanded && !showAllStats && otherStats.length > 0 && (
