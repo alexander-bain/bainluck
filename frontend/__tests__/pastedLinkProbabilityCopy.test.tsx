@@ -241,21 +241,37 @@ describe("a pasted game link reads in one order", () => {
     current_odds: { home_probability: 0.65, away_probability: 0.35 },
   };
 
+  /**
+   * #6105 — two hours before this fixture's own tip.
+   *
+   * The literal above was future-dated when written and is not any more, and this
+   * block is about the ORDER of the probability copy, which only exists on a row
+   * still entitled to a forecast. Once `buildEventShareCopy` learned to intercept
+   * a match that started and was never reported on, the fixture had quietly become
+   * one of those and these three tests asserted the ordering of a sentence that is
+   * correctly no longer printed.
+   *
+   * Pinning the clock restores the author's intent exactly and cannot rot again
+   * (gotcha #44). The FOURTH fixture in this repo to need it — the other three are
+   * in `eventShareMeta`, `eventShareMetadataRender` and `finalGameUnfurlForecast6085`.
+   */
+  const BEFORE_TIP = Date.parse("2026-09-02T21:00:00Z");
+
   it("lists the away side first in the title, matching 'AWAY vs HOME'", () => {
-    const { title } = buildEventShareCopy(unsettled);
+    const { title } = buildEventShareCopy(unsettled, null, BEFORE_TIP);
     expectOrder(title, "76ers vs Celtics", "76ers 35%");
     expectOrder(title, "76ers 35%", "Celtics 65%");
   });
 
   it("lists the away side first in the description too", () => {
-    const { description } = buildEventShareCopy(unsettled);
+    const { description } = buildEventShareCopy(unsettled, null, BEFORE_TIP);
     expectOrder(description, "76ers a 35%", "Celtics a 65%");
   });
 
   it("keeps each percentage with its OWN team", () => {
     // The mutant this kills: swapping the two names and leaving the numbers,
     // which orders the sentence correctly and reports both teams wrong.
-    const { title, description } = buildEventShareCopy(unsettled);
+    const { title, description } = buildEventShareCopy(unsettled, null, BEFORE_TIP);
     expect(title).toContain("76ers 35%");
     expect(title).toContain("Celtics 65%");
     expect(title).not.toContain("76ers 65%");

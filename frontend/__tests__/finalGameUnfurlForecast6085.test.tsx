@@ -319,6 +319,19 @@ describe("#6085 — a finished game's share picture leads with the result", () =
     const card = await renderCard({
       ...ZVEREV_SHELTON,
       status: "scheduled",
+      // #6105 — AN OFFSET, BECAUSE "SCHEDULED" IS A RELATION TO THE CLOCK.
+      //
+      // This inherited `ZVEREV_SHELTON`'s `2026-09-13T18:13:40Z`, which was a
+      // future date on the day it was written and is now in the past. Once the
+      // card learned to stop calling a started match "Upcoming", the control
+      // stopped describing a scheduled game at all — it had quietly become one
+      // of #6105's 821 `scheduled`-past-grace rows, and it failed by correctly
+      // drawing the pre-match pair. The assertions below were right; the date
+      // had rotted out from under them.
+      //
+      // An hour from the anchor, so it means "has not started" forever rather
+      // than until the next fixture goes stale (gotcha #44).
+      commence_time: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       home_score: null,
       away_score: null,
       completed_at: null,

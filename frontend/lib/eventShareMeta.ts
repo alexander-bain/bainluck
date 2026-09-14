@@ -56,9 +56,41 @@
  *
  * PURE: no fetch, no DOM. The `SettledOutcome` import is TYPE-ONLY and erases at
  * compile time, so this stays a leaf module the server can render.
+ *
+ * ═══ #6105 — AND "OVER" IS NOT THE ONLY WAY A FORECAST GOES STALE ═══
+ *
+ * Everything above is about a game something SAID was over. The other half of the
+ * same lie is a match that started and that nothing ever reported on at all: it
+ * never reaches `isFinishedForShare`, so it fell all the way through to the
+ * present-tense probability copy at the bottom of this file.
+ *
+ * Measured on production 2026-09-14, `/events/15291351` (NPB), twenty days after
+ * its own first pitch:
+ *
+ *   "Tue, Aug 25. Bain Luck gives Yomiuri Giants a 93% win probability and
+ *    Tokyo Yakult Swallows a 7% win probability."
+ *
+ * 93% is `current_odds` captured 12:58:07Z on the 25th, about four hours into the
+ * match, frozen there since. The pre-match reading on the same row is 54/46.
+ *
+ * `lib/eventState.ts` already owns this state for every card in the app, and its
+ * own docstring names this exact failure — an unrecognised status falling through
+ * to the branch that speaks about a START. So this module asks that owner rather
+ * than growing a third reading of `status`: `hasNoReportedResult` decides, and
+ * `suspendedSummary` words it.
+ *
+ * The import is a VALUE import and not type-only, which is the one thing that
+ * changes about this file's purity: `eventState` is itself a leaf of pure
+ * functions and string constants with no fetch and no DOM, so "the server can
+ * render this" still holds.
  */
 
 import type { SettledOutcome } from "./eventOutcome";
+import {
+  hasNoReportedResult,
+  SUSPENDED_DESCRIPTION,
+  suspendedSummary,
+} from "./eventState";
 
 export interface EventShareMetaInput {
   home_team?: string | null;
@@ -113,6 +145,11 @@ function statusLabel(event: EventShareMetaInput): string {
   if (event.status === "live") return "Live now";
   if (event.status === "completed" || event.status === "closed") return "Final";
   const start = new Date(event.commence_time ?? "");
+  // #6105 — the surviving "Upcoming" is deliberate and is now only reachable for a
+  // row we cannot place on the clock at all. Every started row is intercepted by
+  // the `hasNoReportedResult` branch before this is called, and that predicate
+  // answers FALSE on an absent or unparseable `commence_time` on purpose: a row we
+  // cannot date is one we have no standing to move off the schedule.
   if (Number.isNaN(start.getTime())) return "Upcoming";
   return start.toLocaleDateString("en-US", {
     weekday: "short",
@@ -151,10 +188,17 @@ function truncate(text: string, maxLength = 180): string {
  * `null` from a caller that looked: both fall through to the score rung below, so
  * a caller that cannot reach the tournament payload still gets the score-based fix
  * rather than nothing.
+ *
+ * `now` (#6105) is a parameter for the reason `lib/eventState` makes it one: the
+ * no-result branch below is the only one here that can change answer without the
+ * row changing, because a `scheduled` row crosses `UPCOMING_GRACE_MS` on the clock
+ * alone. A caller that omits it gets render time, which is correct; a test pins it
+ * and is the only way to assert the boundary at all (gotcha #44).
  */
 export function buildEventShareCopy(
   event: EventShareMetaInput,
   outcome?: SettledOutcome | null,
+  now: number = Date.now(),
 ): EventShareCopy {
   const home = event.home_team ?? "";
   const away = event.away_team ?? "";
@@ -264,6 +308,36 @@ export function buildEventShareCopy(
       description: truncate(
         `Final. Bain Luck does not have a confirmed result for ${matchup} yet.`,
       ),
+      settled: false,
+    };
+  }
+
+  // ── STARTED, AND NOTHING EVER REPORTED ON IT ───────────────────────────────
+  // #6105. Sits BELOW every settled branch and ABOVE the probability copy, which
+  // is the whole placement: a `suspended` row that a tournament container later
+  // grades still gets its result from the rungs above, and one nothing has graded
+  // stops here instead of reaching the present tense.
+  //
+  // NOT folded into `isFinishedForShare`. `suspended` is deliberately non-terminal
+  // (live/048, EVENT-GRAPH-DOCTRINE §R) — it can go back to `live` and it can be
+  // settled later by something that actually watched — and CERT-752 is what
+  // happens when it is treated as over: six US Open matches, one of them 1-2 down
+  // in sets, were about to be settled and graded off a partial score. So this
+  // branch withholds the forecast WITHOUT asserting the match is finished, which
+  // is the same asymmetry the `FINISHED_STATUSES` note 150 lines up describes from
+  // the other side.
+  //
+  // `suspendedSummary` and not a local string: it carries the last score when the
+  // row holds one, and that is the substance rather than a decoration — the badge
+  // says what is not known, the score says what is. Away-first, because `matchup`
+  // is away-vs-home and `opengraph-image.tsx` paints the away side on the left,
+  // so the title, the description and the picture stay one order (the same
+  // reasoning as the note on the probability title below).
+  if (hasNoReportedResult(event.status, event.commence_time, now)) {
+    const summary = suspendedSummary(event.away_score, event.home_score, "away-home");
+    return {
+      title: `${matchup}: ${summary}`,
+      description: truncate(`${summary}. ${SUSPENDED_DESCRIPTION}`),
       settled: false,
     };
   }
