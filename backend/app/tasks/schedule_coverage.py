@@ -611,8 +611,27 @@ def frozen_settle_floor() -> timedelta:
     return AUTHORITY_STRAGGLER_LOOKBACK + UNREACHABLE_SUSPENDED_MARGIN
 
 
+def _discriminating_tokens(one, other) -> tuple:
+    """The two names' tokens with the tokens they SHARE between them removed.
+
+    A city is not an identity when both of a game's teams live in it. "New York
+    Mets" and "New York Yankees" share ``{new, york}``, so a bare intersection
+    answers "yes" for BOTH sides of that game and can no longer say which side is
+    which. Dropping the shared tokens leaves ``{mets}`` against ``{yankees}`` —
+    the part of the name that actually names the club.
+
+    Scoped to the PAIR, never to a global stop-list: "new"/"york" are perfectly
+    discriminating in Yankees @ Red Sox and must keep working there. A side whose
+    every token is shared comes back EMPTY, which reads as "cannot discriminate"
+    and refuses — the fail-closed direction for a rail that writes a score.
+    """
+    a, b = _repair_tokens(one), _repair_tokens(other)
+    shared = a & b
+    return a - shared, b - shared
+
+
 def frozen_final_orientation(our_home, our_away, mlb_home, mlb_away) -> str:
-    """``"aligned"`` | ``"swapped"`` | ``"none"`` for one candidate Final.
+    """``"aligned"`` | ``"swapped"`` | ``"ambiguous"`` | ``"none"`` for one Final.
 
     The same two token intersections `_repair_teams_match` is built from, kept
     apart because this arm WRITES A SCORE and therefore has to know which side is
@@ -620,16 +639,46 @@ def frozen_final_orientation(our_home, our_away, mlb_home, mlb_away) -> str:
     to the inverted-row repair's question and the wrong one to this rail's.
     `test_orientation_and_the_boolean_matcher_cannot_drift_5881` pins the two
     together so they can never disagree about membership.
+
+    ── THE SAME-CITY TRAP (CERT-2864) ──────────────────────────────────────────
+    The first cut asked the two raw intersections IN ORDER and returned on the
+    first that held, so `aligned` was preferred whenever both fitted. For a
+    same-city game both ALWAYS fit: Mets @ Yankees intersects Yankees @ Mets on
+    ``{new, york}`` in either direction, and Cubs/White Sox on ``{chicago}``. A
+    genuinely SWAPPED row therefore read `aligned`, and `choose_frozen_final`
+    would settle it — copying the authority's home score onto our away team and
+    baking the side-mapping defect in as a result. That is the one outcome this
+    rail's `orientation` verdict exists to refuse.
+
+    So the raw pair decides MEMBERSHIP only (unchanged, which is what keeps the
+    drift pin above honest), and when both orientations fit, the discriminating
+    tokens — the club names with the shared city removed — break the tie. If they
+    cannot, the answer is `ambiguous` and the row is refused and counted. Two
+    identically-named sides on the authority's side of the comparison reach that
+    leaf; nothing is written on a guess.
     """
-    hh = bool(_repair_tokens(our_home) & _repair_tokens(mlb_home))
-    aa = bool(_repair_tokens(our_away) & _repair_tokens(mlb_away))
-    if hh and aa:
+    raw_aligned = bool(_repair_tokens(our_home) & _repair_tokens(mlb_home)) and bool(
+        _repair_tokens(our_away) & _repair_tokens(mlb_away)
+    )
+    raw_swapped = bool(_repair_tokens(our_home) & _repair_tokens(mlb_away)) and bool(
+        _repair_tokens(our_away) & _repair_tokens(mlb_home)
+    )
+    if not raw_aligned and not raw_swapped:
+        return "none"
+    if raw_aligned and not raw_swapped:
         return "aligned"
-    hswap = bool(_repair_tokens(our_home) & _repair_tokens(mlb_away))
-    aswap = bool(_repair_tokens(our_away) & _repair_tokens(mlb_home))
-    if hswap and aswap:
+    if raw_swapped and not raw_aligned:
         return "swapped"
-    return "none"
+
+    our_h, our_a = _discriminating_tokens(our_home, our_away)
+    mlb_h, mlb_a = _discriminating_tokens(mlb_home, mlb_away)
+    disc_aligned = bool(our_h & mlb_h) and bool(our_a & mlb_a)
+    disc_swapped = bool(our_h & mlb_a) and bool(our_a & mlb_h)
+    if disc_aligned and not disc_swapped:
+        return "aligned"
+    if disc_swapped and not disc_aligned:
+        return "swapped"
+    return "ambiguous"
 
 
 def choose_frozen_final(hs, aws, candidates) -> tuple:
@@ -644,12 +693,22 @@ def choose_frozen_final(hs, aws, candidates) -> tuple:
     * ``orientation``    — the one Final is side-swapped against our row. Refused
       rather than written through: a swapped row is a side-mapping defect and
       writing a score into it would bake the swap in as a result;
+    * ``orientation_ambiguous`` — the one Final fits our row in BOTH directions
+      and the club names cannot break the tie (CERT-2864). Kept apart from
+      ``orientation`` because they are different facts: that one knows the row is
+      swapped, this one knows only that it cannot tell — and a rail that writes a
+      score must never spend a coin-flip. See `frozen_final_orientation`;
     * ``score_conflict`` — we hold a score and the authority's differs. REFUSED
       and counted, not overwritten: this arm's warrant is "say the result we can
       confirm", and a row whose score contradicts the confirmed Final has not been
       confirmed — it may be a different game or a mid-game capture, and #6056 is
       the whole argument against writing a score you cannot justify. Measured 0 of
-      59 today; the counter is what makes the class visible if that ever changes;
+      59 today; the counter is what makes the class visible if that ever changes.
+      Asked PER COMPONENT (CERT-2864's follow-up): a row holding one score and not
+      the other used to skip this test entirely, because `ours_scored` demanded
+      both — so the half we DID hold was never checked against the authority and
+      was then overwritten by the write below. 0 of the 59 are partial today, which
+      is exactly why the shape has to be right before one arrives;
     * ``no_authority_score`` — a Final with no score attached, so there is nothing
       to report.
 
@@ -660,9 +719,9 @@ def choose_frozen_final(hs, aws, candidates) -> tuple:
     """
     if not candidates:
         return ("no_final", None)
-    ours_scored = hs is not None and aws is not None
+    ours_fully_scored = hs is not None and aws is not None
     cands = list(candidates)
-    if len(cands) > 1 and ours_scored:
+    if len(cands) > 1 and ours_fully_scored:
         narrowed = [
             c for c in cands
             if c["orientation"] == "aligned"
@@ -673,11 +732,15 @@ def choose_frozen_final(hs, aws, candidates) -> tuple:
     if len(cands) > 1:
         return ("ambiguous", None)
     cand = cands[0]
+    if cand["orientation"] == "ambiguous":
+        return ("orientation_ambiguous", cand)
     if cand["orientation"] != "aligned":
         return ("orientation", cand)
     if cand["home_score"] is None or cand["away_score"] is None:
         return ("no_authority_score", cand)
-    if ours_scored and (cand["home_score"] != hs or cand["away_score"] != aws):
+    if (hs is not None and cand["home_score"] != hs) or (
+        aws is not None and cand["away_score"] != aws
+    ):
         return ("score_conflict", cand)
     return ("settle", cand)
 
@@ -763,8 +826,9 @@ async def settle_frozen_mlb_suspended(apply: bool = True) -> dict:
     never read the same (gotcha #53).
 
     Returns ``{candidates, settled, ambiguous, no_final, orientation,
-    score_conflict, no_authority_score, refused_row_moved, applied}`` — every key
-    present on every return, including the dry run and the nothing-to-do pass.
+    orientation_ambiguous, score_conflict, no_authority_score, refused_row_moved,
+    applied}`` — every key present on every return, including the dry run and the
+    nothing-to-do pass.
     """
     from types import SimpleNamespace
 
@@ -781,6 +845,7 @@ async def settle_frozen_mlb_suspended(apply: bool = True) -> dict:
         "ambiguous": 0,
         "no_final": 0,
         "orientation": 0,
+        "orientation_ambiguous": 0,
         "score_conflict": 0,
         "no_authority_score": 0,
         "refused_row_moved": 0,
@@ -816,6 +881,16 @@ async def settle_frozen_mlb_suspended(apply: bool = True) -> dict:
                         cand["start"], _repair_as_utc(row.commence_time)
                     ),
                 }
+                # CERT-2864's follow-up is fixed in `choose_frozen_final`, NOT
+                # here. Writing only the missing component reads like the obvious
+                # second half of that repair, and it was written and then deleted:
+                # mutation proved it an equivalence mutant. Anything reaching this
+                # line has already agreed with the authority on every component we
+                # hold — a disagreement is `score_conflict` and never arrives — so
+                # "write both" and "write the gap" put the identical value in the
+                # identical column. Unkillable code that looks like a guard is
+                # worse than no code: the next reader would trust it to be the
+                # protection, and the protection is the verdict above.
                 if row.hs is None or row.aws is None:
                     values["home_score"] = cand["home_score"]
                     values["away_score"] = cand["away_score"]
