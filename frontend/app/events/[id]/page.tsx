@@ -1620,19 +1620,21 @@ export default function EventPage({ params }: EventPageProps) {
                   class of second-rounding defects (#2951, #3051) cannot recur
                   on this line.
 
-                  🔴 TWO FORMATTERS ON ONE SENTENCE, AND IT IS DELIBERATE. The
-                  two levels are rendered by two different things on this page:
-                  the current one by `EventHeroProbabilityPair`, which prints the
-                  bare integer, and the opening one by `formatProbability`, which
-                  clamps the ends to `<1%` / `>99%`. They disagree at the
-                  boundary — a live blowout puts `100%` in the hero while the
-                  line below would say `>99%` for the same value. Each end of
-                  this caption therefore matches ITS OWN neighbour rather than
-                  the other end of itself: the rule is "never contradict the
-                  number printed next to you", and internal symmetry is the
-                  cheaper property to give up. That the two disagree at all is
-                  its own defect and is filed separately; it is not smuggled
-                  into a caption fix.
+                  ONE FORMATTER ON ONE SENTENCE, SINCE #6064. This line used to
+                  run two: the current level was the bare integer
+                  `EventHeroProbabilityPair` printed, the opening level went
+                  through `formatProbability`, and they disagreed at the
+                  boundary — a live blowout put `100%` in the hero while the
+                  line below said `>99%` for the same value. #5995 matched each
+                  end to ITS OWN neighbour, which was right while the hero
+                  refused to clamp, and filed the disagreement as #6064 rather
+                  than smuggling it into a caption fix.
+                  #6064 closed it at the source: the hero now clamps too, so
+                  both ends go through `formatProbability` and "never contradict
+                  the number printed next to you" and "agree with yourself" are
+                  the same requirement. The current end MUST keep passing
+                  `homeProb` — with only `rendered` the clamp has no probability
+                  to test and `100%` comes straight back.
 
                   Defect 3 on this line is NOT fixed here: the up arrow and its
                   caption are `text-emerald-*`, which emits no CSS at all, so
@@ -1663,16 +1665,13 @@ export default function EventPage({ params }: EventPageProps) {
                       )}
                     </svg>
                     <span className={`text-xs font-semibold min-w-0 text-center ${isPositive ? "text-emerald-600" : "text-red-500"}`}>
-                      {/* The two levels, each spelled the way the line it
-                          belongs to spells it — see the 🔴 note above. The
-                          opening end goes through `formatProbability` exactly
-                          as `Opened …` does two lines below; the current end is
-                          the bare integer `EventHeroProbabilityPair` prints
-                          above. */}
+                      {/* The two levels, both through `formatProbability` —
+                          the same call `Opened …` makes two lines below and,
+                          since #6064, the same rule the hero above applies. */}
                       {homeShort}{" "}
                       {formatProbability(openingHomeProb, { rendered: openingHomePct })}
                       {" → "}
-                      {homePct}% since open
+                      {formatProbability(homeProb, { rendered: homePct })} since open
                     </span>
                   </div>
                 );

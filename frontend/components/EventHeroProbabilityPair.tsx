@@ -2,7 +2,37 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+import {
+  NO_READING,
+  probabilityParts,
+  type ProbabilityParts,
+} from '../lib/probabilityDisplay';
 import { teamTextColor } from '../lib/teamColors';
+
+/**
+ * What one side prints this frame — the marker and the digits, separately.
+ *
+ * #6064: the clamp runs on the PROBABILITY and the digits come from whatever
+ * integer THIS FRAME decided, which is what makes it safe mid-tween. At 0.996
+ * the count passes through 97, 98, 99 printing those bare, and lands on `>99` —
+ * the marker appears exactly when the printed integer would claim a boundary
+ * the value is not on, never because the number happens to be large.
+ *
+ * A side with no reading keeps its em dash: `homeProb` null is "we are
+ * withholding this", which is not a probability and has no marker.
+ *
+ * EXPORTED AND PURE for the same reason `shownPair` below is, and the reason is
+ * stated there: the harness renders with `renderToStaticMarkup`, effects never
+ * run, and `useCountTo` seeds its state from the target — so no tween frame is
+ * EVER observable through the DOM. A test that rendered and asserted would only
+ * re-check the settled state. Testing this function across the frames
+ * `shownPair` produces tests the real decision; the call site is then the
+ * one-line read that it passes `shownHome`, not `homePct`.
+ */
+export function sideParts(prob: number | null, shown: number | null): ProbabilityParts {
+  if (prob === null || shown === null) return { marker: null, digits: NO_READING };
+  return probabilityParts(prob, { rendered: shown });
+}
 
 /**
  * The event page hero's two giant percents — #2085.
@@ -186,6 +216,10 @@ export default function EventHeroProbabilityPair({
     homePct, awayPct, countedHome, animate,
   );
 
+  // #6064 — the clamp the whole rest of the site applies, finally applied here.
+  const homeParts = sideParts(homeProb, shownHome);
+  const awayParts = sideParts(awayProb, shownAway);
+
   // #3459 — NEITHER side has a number. Drawing the chrome anyway produced
   // `—%–—%`: at `text-[48px] font-black` an em-dash is a 41px solid rectangle,
   // so the hero photographed as two redaction bars each trailed by a naked `%`,
@@ -233,11 +267,27 @@ export default function EventHeroProbabilityPair({
       data-probability={homeProb ?? ""}
       data-probability-source={probSourceLabel ?? ""}
     >
+      {/* #6064 — THE MARKER RIDES WITH THE `%`, NOT WITH THE NUMERAL.
+          `>` at `text-[48px] font-black` is a ~30px glyph, and the centre
+          column is shrinkable with a 144px budget at 320px (#5866), so putting
+          it in the giant span would buy the clamp by reintroducing the overlap
+          that ship measured. At `text-lg` it matches the sign it qualifies and
+          reads as part of the value rather than as a stray chevron. The
+          numeral spans keep their exact class list, so #5866's guard still
+          sees two of them. */}
+      {homeParts.marker && (
+        <span
+          className="text-lg font-bold leading-none mr-0.5"
+          style={{ color: home }}
+        >
+          {homeParts.marker}
+        </span>
+      )}
       <span
         className="text-[34px] min-[360px]:text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
         style={{ color: home }}
       >
-        {homeProb !== null && shownHome !== null ? shownHome : "—"}
+        {homeParts.digits}
       </span>
       <span
         className="text-lg font-bold leading-none ml-0.5"
@@ -248,11 +298,19 @@ export default function EventHeroProbabilityPair({
       <span className="text-lg font-light text-text-muted mx-1.5 self-center">
         {"–"}
       </span>
+      {awayParts.marker && (
+        <span
+          className="text-lg font-bold leading-none mr-0.5"
+          style={{ color: away }}
+        >
+          {awayParts.marker}
+        </span>
+      )}
       <span
         className="text-[34px] min-[360px]:text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
         style={{ color: away }}
       >
-        {awayProb !== null && shownAway !== null ? shownAway : "—"}
+        {awayParts.digits}
       </span>
       <span
         className="text-lg font-bold leading-none ml-0.5"
