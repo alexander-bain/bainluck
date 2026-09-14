@@ -912,8 +912,9 @@ async def sync_espn_live_events(
 
     from app.services import get_espn_service, llm
     from app.models import Venue
-    from app.utils.game_state import _sanitize_period
+    from app.utils.game_state import _sanitize_period, live_write_would_revert
     from app.utils.espn_id_stamp import REFUSED, STAMPED, stamp_espn_id_if_unheld
+    from app.utils.live_state_write import write_live_state_if_unmoved
 
     espn = get_espn_service()
 
@@ -951,6 +952,14 @@ async def sync_espn_live_events(
     #: separately because it names a collision this rail declined to recreate,
     #: which is the number that says the step-2 repair is holding.
     id_refusals: list[dict] = []
+    #: #6056 — the two live-state refusals, and they are different facts again.
+    #: A REVERTING scoreboard is ESPN being behind the row; a LOST RACE is this
+    #: rail being behind another writer between its decision and its write. Both
+    #: are reported with a count that is always present, so a 0 is a reading and
+    #: not an absence (gotcha #53) — which is the only way an operator can tell
+    #: "nothing to say" from "the guard is not deployed".
+    reverting_skipped: list[dict] = []
+    lost_races: list[dict] = []
 
     def names_match(our_names: list, espn_name: str) -> bool:
         """Check if any of our name variations match the ESPN name."""
@@ -1076,26 +1085,103 @@ async def sync_espn_live_events(
                          "holder_event_id": holder_id}
                     )
 
-                # Update game clock
-                if espn_event.clock and event.game_clock != espn_event.clock:
-                    event.game_clock = espn_event.clock
-                    changed = True
+                # ── #6056: the position the decision below is taken on ───────
+                #
+                # Read ONCE, before any of it, and held — so the compare-and-
+                # write at the end of the block can re-assert in the database
+                # the very state the decision consumed. Reading it again
+                # between the branches would compare the fetch against a row
+                # this call had itself half-updated, which is how a guard
+                # silently stops guarding.
+                _observed_period = getattr(event, "period", None)
+                _observed_clock = getattr(event, "game_clock", None)
+                # Collected here and written as ONE conditional statement
+                # below; never ORM-assigned. A pending assignment to a
+                # predicate column would be flushed ahead of that statement and
+                # make its WHERE compare the row against itself.
+                _live_values: dict = {}
 
-                # Update period — #5390: refuse ESPN's pre-game date, and never
-                # blank a real period another writer already set (same rule as
+                # #5390: refuse ESPN's pre-game date, and never blank a real
+                # period another writer already set (same rule as
                 # `update_event_fields_from_espn`).
                 _new_period = _sanitize_period(espn_event.status_detail)
+
+                # Is this scoreboard OLDER, in game time, than the row already
+                # is? The scheduled ESPN writer has asked this since #6056; this
+                # rail writes the same two columns from the same feed and did
+                # not, so an operator syncing during a live game could put the
+                # clock back with no concurrency involved at all. A garbage or
+                # absent period is unplaceable on both sides, so the guard
+                # stands down and the repair use of this route stays open —
+                # that is `live_write_would_revert`'s whole contract.
+                _live_state_is_stale = live_write_would_revert(
+                    _observed_period,
+                    _observed_clock,
+                    _new_period,
+                    espn_event.clock,
+                )
+                if _live_state_is_stale:
+                    reverting_skipped.append({
+                        "event_id": event.id,
+                        "row_at": [_observed_period, _observed_clock],
+                        "espn_offered": [_new_period, espn_event.clock],
+                    })
+
+                # Update game clock
+                if (
+                    espn_event.clock
+                    and _observed_clock != espn_event.clock
+                    and not _live_state_is_stale
+                ):
+                    _live_values["game_clock"] = espn_event.clock
+
+                # Update period
                 if _new_period:
-                    if event.period != _new_period:
-                        event.period = _new_period
-                        changed = True
+                    if _observed_period != _new_period and not _live_state_is_stale:
+                        _live_values["period"] = _new_period
                 elif (
                     espn_event.status_detail
-                    and event.period is not None
-                    and _sanitize_period(event.period) is None
+                    and _observed_period is not None
+                    and _sanitize_period(_observed_period) is None
                 ):
-                    event.period = None
-                    changed = True
+                    # Both sides are the same class of garbage — drop ours. This
+                    # clear rides the compare-and-write with the rest of the
+                    # block rather than going round it: an ORM assignment here
+                    # would be flushed ahead of the statement below and defeat
+                    # its predicate, and on the merits a failed predicate means
+                    # another writer has just put a REAL period on the row, so
+                    # the garbage this branch clears is already gone.
+                    _live_values["period"] = None
+
+                # ── #6056: THE TWO LIVE-STATE WRITES LAND AS ONE ACT ─────────
+                #
+                # "Attended" bounds who STARTS this route, not what it races.
+                # It runs against the same rows as the SCHEDULED ESPN writer
+                # (`espn_sync._sync_espn_live_events`, realtime, 60s — same
+                # name as this handler, a different function), the 30-second
+                # StatPal livescore writer and the 120-second MLB win-prob
+                # pass. Everything above read the row without a lock and
+                # decided while none of it had reached Postgres — this handler
+                # commits ONCE, at the very end, after every remaining event in
+                # the loop, so the window is the whole pass. Re-asserting the
+                # observed position in the UPDATE's own WHERE makes the
+                # comparison and the write one act; `utils/live_state_write`
+                # carries why that is true under READ COMMITTED.
+                _live_write_landed = await write_live_state_if_unmoved(
+                    db, event, _live_values,
+                    observed_period=_observed_period,
+                    observed_clock=_observed_clock,
+                    what="admin ESPN live state",
+                )
+                if _live_values:
+                    if _live_write_landed:
+                        changed = True
+                    else:
+                        lost_races.append({
+                            "event_id": event.id,
+                            "observed": [_observed_period, _observed_clock],
+                            "offered": _live_values,
+                        })
 
                 # Update broadcast info
                 if espn_event.broadcasts:
@@ -1166,6 +1252,10 @@ async def sync_espn_live_events(
         "refused": refused[:10],
         "espn_id_held_count": len(id_refusals),
         "espn_id_held": id_refusals[:10],
+        "reverting_live_skipped": len(reverting_skipped),
+        "reverting_live": reverting_skipped[:10],
+        "live_write_lost_race": len(lost_races),
+        "live_write_lost": lost_races[:10],
     }
 
 

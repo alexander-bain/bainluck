@@ -2910,7 +2910,405 @@ async def test_tennis_refuses_when_only_the_other_side_of_the_score_moved_6056(
 
 
 # ---------------------------------------------------------------------------
-# 8. THE GUARD THAT SHOULD HAVE EXISTED FIRST (CERT-2833)
+# 8. THE ADMIN RAIL — THE SIXTH WRITER, AND THE ONE "ATTENDED" EXCUSED (live/225)
+#
+# `POST /api/admin/espn/sync-live-events` writes `period` and `game_clock` on
+# live rows from the ESPN scoreboard, and until now did both by plain ORM
+# assignment with no guard of either kind. It carried an exemption in the
+# declared list below whose reason was "only when a person invokes it — it is
+# not on a beat, so it cannot race anything unattended".
+#
+# That reason is half true and the half that is false is the load-bearing half.
+# Attendedness bounds who STARTS the route; it says nothing about what the route
+# RUNS BESIDE. It selects every scheduled/live row of a sport and commits once at
+# the very end, so its decision-to-write window spans the whole loop, and during
+# that window the 60-second realtime ESPN beat, the 30-second StatPal livescore
+# writer and the 120-second MLB pass are all writing these same two columns on
+# these same rows. An operator syncing during a live game is the most likely
+# moment for this route to run, not the least.
+#
+# And it had no sequential guard either: whatever the scoreboard said was copied
+# onto the row, so an ESPN board lagging the row put the clock back with no
+# concurrency involved at all. Both are fixed here, and the tests are kept apart
+# because the causes are different and the counters are different — a reverting
+# scoreboard is ESPN being behind the row, a lost race is this rail being behind
+# another writer.
+# ---------------------------------------------------------------------------
+
+
+class _AdminEspnTeam:
+    def __init__(self, name):
+        self.display_name = name
+        self.name = name
+
+
+class _AdminEspnEvent:
+    """An ESPN board row shaped as the ADMIN route reads it.
+
+    A different surface from `_EspnEvent` above — this rail reads `home_team` /
+    `away_team` / `short_name` / `espn_id` / `venue` — so it is its own class
+    rather than a widened one. Sharing it would make each test's fixture depend
+    on fields the other route never looks at.
+    """
+
+    def __init__(self, *, clock, status_detail, home, away, espn_id, date):
+        self.clock = clock
+        self.status_detail = status_detail
+        self.home_team = _AdminEspnTeam(home)
+        self.away_team = _AdminEspnTeam(away)
+        self.espn_id = espn_id
+        self.short_name = f"{away} @ {home}"
+        # DERIVED from the row's own commence_time by the caller, never a
+        # literal date — the candidate selector gates on the distance between
+        # the two, so a literal here is a test that changes its mind with the
+        # calendar (gotcha #44).
+        self.date = date
+        self.status = "in"
+        self.home_score = None
+        self.away_score = None
+        self.broadcasts = []
+        self.venue = None
+        self.home_win_probability = None
+
+
+async def _drive_admin(
+    *, row_period, row_clock, espn_period, espn_clock, monkeypatch, interloper=None,
+):
+    """Drive the real admin route against a real row, and read the DATABASE back.
+
+    Same rail and same reason as `_drive_espn`: once these columns are written
+    by a conditional UPDATE, a statement that matched ZERO ROWS is
+    indistinguishable from one that landed if the assertions read an in-memory
+    object, because `synchronize_session` mirrors the values onto the instance
+    either way. So the row is re-read through `expire_all()` after the route's
+    own commit, and what is asserted is what the next reader is served.
+
+    `interloper(engine, event_id)` runs in its own session at the one instant
+    that matters — after the route has read the row's position, and before that
+    decision reaches Postgres — by hanging off `_sanitize_period`, which the
+    route imports at call time. Hung on a call in the decision rather than on a
+    sleep, for the reason the sibling rails give: a timing test that passes by
+    luck is not a test.
+
+    ⚠️ IT HANGS OFF `_sanitize_period` AND NOT OFF `live_write_would_revert`,
+    which is the obvious choice and is wrong. The parent does not call
+    `live_write_would_revert` at all — it had no sequential guard — so an
+    interloper hung there never fires on the parent, and the race tests below
+    would fail on it with "the interloper never ran" instead of with a clobbered
+    clock. That is the rail refusing to draw a conclusion, not a witness, and
+    reading it as one would have banked a race test that never raced the defect
+    it names. `_sanitize_period` is called by both versions, in both cases
+    after the position has been read and before anything reaches the database.
+    """
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session
+
+    from app.models.models import Base, Event, ScoreSnapshot, Sport
+    from app.routes import admin_providers
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(
+        engine, tables=[Event.__table__, Sport.__table__, ScoreSnapshot.__table__]
+    )
+    session = Session(engine, expire_on_commit=False)
+
+    @sa_event.listens_for(session, "loaded_as_persistent")
+    def _reattach_utc(_sess, instance):  # pragma: no cover - test rail
+        for attr, value in list(instance.__dict__.items()):
+            if isinstance(value, datetime) and value.tzinfo is None:
+                instance.__dict__[attr] = value.replace(tzinfo=timezone.utc)
+
+    sport = Sport(key="americanfootball_nfl", name="americanfootball_nfl")
+    session.add(sport)
+    session.flush()
+    commence_time = datetime.now(timezone.utc) - timedelta(hours=2)
+    event = Event(
+        sport_id=sport.id,
+        home_team_name="New York Giants",
+        away_team_name="Dallas Cowboys",
+        commence_time=commence_time,
+        status="live",
+        period=row_period,
+        game_clock=row_clock,
+        espn_id="401872930",
+        win_probability_sources={},
+    )
+    session.add(event)
+    session.commit()
+    event_id = event.id
+
+    ee = _AdminEspnEvent(
+        clock=espn_clock,
+        status_detail=espn_period,
+        home="New York Giants",
+        away="Dallas Cowboys",
+        # The same id the row already holds, so the candidate is anchored by
+        # ESPN's own identity rather than by a name and a clock — which is what
+        # a live row being re-synced actually looks like.
+        espn_id="401872930",
+        date=commence_time,
+    )
+
+    class _AsyncShim:
+        """The route is async and this engine is not; nothing else is shimmed."""
+
+        def __init__(self, inner):
+            self._s = inner
+
+        async def execute(self, statement):
+            return self._s.execute(statement)
+
+        def add(self, obj):
+            self._s.add(obj)
+
+        async def flush(self):
+            self._s.flush()
+
+        async def commit(self):
+            self._s.commit()
+
+    class _Espn:
+        async def get_scoreboard(self, sport_key):
+            return [ee]
+
+    import app.services as services
+    import app.utils.game_state as game_state
+
+    monkeypatch.setattr(admin_providers, "_check_admin_secret", lambda *a, **k: True)
+    monkeypatch.setattr(services, "get_espn_service", lambda: _Espn())
+
+    _fired = []
+    if interloper is not None:
+        _real_sanitize = game_state._sanitize_period
+
+        def _sanitize_then_race(*args, **kwargs):
+            verdict = _real_sanitize(*args, **kwargs)
+            if not _fired:
+                _fired.append(True)
+                interloper(engine, event_id)
+            return verdict
+
+        monkeypatch.setattr(game_state, "_sanitize_period", _sanitize_then_race)
+
+    result = await admin_providers.sync_espn_live_events(
+        request=None,
+        secret="unused",
+        sport_key="americanfootball_nfl",
+        dry_run=False,
+        skip_llm=True,
+        db=_AsyncShim(session),
+    )
+    if interloper is not None:
+        assert _fired, (
+            "the interloper never ran — the route did not reach its write "
+            "decision, so this proves nothing about the race"
+        )
+
+    session.expire_all()
+    row = session.execute(select(Event).where(Event.id == event_id)).scalar_one()
+    return row, result
+
+
+@pytest.mark.asyncio
+async def test_the_admin_rail_does_not_write_a_position_from_earlier_in_the_game(
+    monkeypatch,
+):
+    """The row is at 5:21 in the 4th; the scoreboard is still showing 5:26.
+
+    No concurrency here at all — just an ESPN board lagging a row another
+    producer has already moved on, which is the ordinary state of affairs given
+    ESPN is the slowest of the three writers on these columns. The route copied
+    it over regardless, and the reader watched the clock count back up.
+    """
+    row, result = await _drive_admin(
+        row_period="5:21 - 4th Quarter",
+        row_clock="5:21",
+        espn_period="5:26 - 4th Quarter",
+        espn_clock="5:26",
+        monkeypatch=monkeypatch,
+    )
+
+    assert row.game_clock == "5:21", "the clock must not go back up"
+    assert row.period == "5:21 - 4th Quarter"
+    assert result["reverting_live_skipped"] == 1
+    assert result["live_write_lost_race"] == 0, (
+        "nothing raced this — attributing it to a lost race would send the "
+        "next reader of these counters after the wrong cause"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_admin_rail_still_writes_a_position_from_later_in_the_game(
+    monkeypatch,
+):
+    """The twin, because a guard with no accepting branch would pass the test
+    above and would also have broken the route."""
+    row, result = await _drive_admin(
+        row_period="5:26 - 4th Quarter",
+        row_clock="5:26",
+        espn_period="5:21 - 4th Quarter",
+        espn_clock="5:21",
+        monkeypatch=monkeypatch,
+    )
+
+    assert (row.period, row.game_clock) == ("5:21 - 4th Quarter", "5:21")
+    assert result["reverting_live_skipped"] == 0
+    assert result["live_write_lost_race"] == 0
+    assert result["updated"] == 1
+
+
+@pytest.mark.asyncio
+async def test_the_admin_rail_writes_onto_a_row_that_has_no_position_yet(
+    monkeypatch,
+):
+    """Every game's first live write. Both guards must be invisible here, or
+    nothing would ever start — and a compare-and-write against two NULLs is
+    exactly where a predicate spelled with `==` would quietly stop matching."""
+    row, result = await _drive_admin(
+        row_period=None,
+        row_clock=None,
+        espn_period="12:00 - 1st Quarter",
+        espn_clock="12:00",
+        monkeypatch=monkeypatch,
+    )
+
+    assert (row.period, row.game_clock) == ("12:00 - 1st Quarter", "12:00")
+    assert result["reverting_live_skipped"] == 0
+    assert result["live_write_lost_race"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_concurrent_writer_cannot_be_overwritten_by_the_admin_rail_6056(
+    monkeypatch,
+):
+    """🔴 THE RACE. Fails on the parent with the clock two and a half minutes back.
+
+    The route reads the row at 12:00 in the 2nd, decides the scoreboard's 8:30
+    is a legitimate advance, and then — before its own commit, which is at the
+    end of the whole loop — the realtime beat commits 5:00 from another session.
+    The sequential guard is exonerated: it said WRITE, correctly, about the row
+    it was shown. Only re-asserting the observed position inside the UPDATE can
+    refuse this one.
+
+    Note what the interloper commits: a position DIFFERENT from both the row's
+    and the one the route is offering. An interloper that commits the value the
+    producer was about to write proves nothing — the write would be a no-op and
+    the test would pass on the parent.
+    """
+    from sqlalchemy import update
+    from sqlalchemy.orm import Session
+
+    from app.models.models import Event
+
+    def _realtime_writer_commits_a_later_position(engine, event_id):
+        other = Session(engine, expire_on_commit=False)
+        try:
+            other.execute(
+                update(Event)
+                .where(Event.id == event_id)
+                .values(period="5:00 - 2nd Quarter", game_clock="5:00")
+            )
+            other.commit()
+        finally:
+            other.close()
+
+    row, result = await _drive_admin(
+        row_period="12:00 - 2nd Quarter",
+        row_clock="12:00",
+        espn_period="8:30 - 2nd Quarter",
+        espn_clock="8:30",
+        monkeypatch=monkeypatch,
+        interloper=_realtime_writer_commits_a_later_position,
+    )
+
+    assert (row.period, row.game_clock) == ("5:00 - 2nd Quarter", "5:00"), (
+        "the admin write landed on top of a newer position committed by "
+        "another queue — the clock runs backwards for the reader and the "
+        "sequential guard reports nothing, because it was right about the row "
+        "it was shown"
+    )
+    assert result["live_write_lost_race"] == 1
+    assert result["reverting_live_skipped"] == 0, (
+        "the sequential guard is exonerated here and must say so — the two "
+        "causes are counted apart on purpose"
+    )
+    assert result["updated"] == 0, (
+        "a refused write is not an update; counting it as one would tell an "
+        "operator the sync did something it did not do"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_admin_rails_garbage_period_clear_rides_the_compare_and_write(
+    monkeypatch,
+):
+    """The third branch, which is the one easiest to leave behind.
+
+    When ESPN is still serving its pre-game date and the row holds a date too,
+    both sides are the same class of garbage and ours is dropped (#5390). That
+    clear is a write to a predicate column, so it has to go THROUGH the
+    compare-and-write rather than round it: an ORM assignment here would be
+    flushed ahead of the statement and make its WHERE compare the row against a
+    value this same call had just written.
+    """
+    row, result = await _drive_admin(
+        row_period="Sun, September 14th at 1:00 PM EDT",
+        row_clock=None,
+        espn_period="Sun, September 14th at 1:00 PM EDT",
+        espn_clock=None,
+        monkeypatch=monkeypatch,
+    )
+
+    assert row.period is None, "a stored pre-game date must self-heal"
+    assert result["live_write_lost_race"] == 0
+
+
+@pytest.mark.asyncio
+async def test_the_admin_rails_garbage_clear_is_refused_when_the_row_moved(
+    monkeypatch,
+):
+    """The same branch, raced — and the reason the clear must not go round the
+    compare-and-write on the MERITS as well as mechanically.
+
+    If the predicate fails, another writer has just put a REAL period on the
+    row. The garbage this branch exists to clear is therefore already gone, and
+    blanking anyway would replace a correct period with nothing.
+    """
+    from sqlalchemy import update
+    from sqlalchemy.orm import Session
+
+    from app.models.models import Event
+
+    def _realtime_writer_sets_a_real_period(engine, event_id):
+        other = Session(engine, expire_on_commit=False)
+        try:
+            other.execute(
+                update(Event)
+                .where(Event.id == event_id)
+                .values(period="10:42 - 1st Quarter", game_clock="10:42")
+            )
+            other.commit()
+        finally:
+            other.close()
+
+    row, result = await _drive_admin(
+        row_period="Sun, September 14th at 1:00 PM EDT",
+        row_clock=None,
+        espn_period="Sun, September 14th at 1:00 PM EDT",
+        espn_clock=None,
+        monkeypatch=monkeypatch,
+        interloper=_realtime_writer_sets_a_real_period,
+    )
+
+    assert row.period == "10:42 - 1st Quarter", (
+        "the blanking clear erased a real period another writer had just "
+        "committed — the reader loses the quarter entirely"
+    )
+    assert result["live_write_lost_race"] == 1
+
+
+# ---------------------------------------------------------------------------
+# 9. THE GUARD THAT SHOULD HAVE EXISTED FIRST (CERT-2833)
 #
 # Four presentations of this ship each converted the producers someone had
 # thought of, and the guard above asserted that THOSE producers stayed clean. It
@@ -2930,18 +3328,21 @@ async def test_tennis_refuses_when_only_the_other_side_of_the_score_moved_6056(
 #: reason it does not go through `write_live_state_if_unmoved`. An entry here is
 #: a claim someone has to defend; an absence is a build break.
 #:
-#: The first four are REPAIR AND CREATION paths, not live-feed position writes —
-#: there is no concurrent observation of a running game for them to land behind.
-#: The LAST ONE is neither, and is recorded as what it is: a live-state writer of
-#: the same class as the five this ship has converted, still outside the
-#: compare-and-write. It is named rather than quietly absent precisely because
-#: being quietly absent is what cost this ship four presentations.
+#: EVERY REMAINING ENTRY IS A REPAIR OR CREATION PATH, not a live-feed position
+#: write — there is no concurrent observation of a running game for any of them
+#: to land behind. That is a property of the list worth stating, because it was
+#: not true until live/225: this list carried a sixth entry,
+#: `admin_providers.sync_espn_live_events`, which was a live-state writer of
+#: exactly the class this ship converts and was named rather than quietly absent
+#: precisely because being quietly absent is what cost this ship four
+#: presentations. It is gone because it was converted, not because it was
+#: forgiven.
 #:
 #: This list SHRINKS as the ship lands, and the guard below asserts it in both
 #: directions — a declared writer that no longer offends fails just as loudly as
 #: an undeclared one that does, so a spent exemption cannot sit here looking like
-#: a live one. `_sync_tennis_from_espn` left this list in live/224 when it was
-#: converted; it did not leave quietly.
+#: a live one. `_sync_tennis_from_espn` left this list in live/224 and the admin
+#: rail in live/225; neither left quietly, both were evicted by that assertion.
 _DECLARED_UNGUARDED_WRITERS = {
     "espn_sync._backfill_box_scores": (
         "REPAIR. Writes `None` over the 0–0 of a row wrongly marked completed, "
@@ -2965,13 +3366,6 @@ _DECLARED_UNGUARDED_WRITERS = {
     "espn_helpers.backfill_missing_scores": (
         "BACKFILL over FINISHED rows that hold no score at all. Selects on the "
         "absence it fills, and runs against games ESPN has already closed."
-    ),
-    "admin_providers.sync_espn_live_events": (
-        "KNOWN GAP, different exposure (#6056). Writes `period`/`game_clock` "
-        "on live rows, but only when a person invokes the admin route — it is "
-        "not on a beat, so it cannot race anything unattended. Converted after "
-        "the tennis producer, which is scheduled and therefore the larger "
-        "exposure of the two."
     ),
 }
 
@@ -3085,6 +3479,7 @@ def test_the_converted_producers_are_absent_from_the_declared_list_6056():
         _sync_statpal_livescores,
         _sync_statpal_schedules,
     )
+    from app.routes.admin_providers import sync_espn_live_events
     from app.utils.espn_helpers import update_event_fields_from_espn
 
     #: Producer -> the spelling of the compare-and-write it is expected to call.
@@ -3107,6 +3502,12 @@ def test_the_converted_producers_are_absent_from_the_declared_list_6056():
         ),
         "espn_sync._sync_tennis_from_espn": (
             _sync_tennis_from_espn, "write_row_if_unmoved",
+        ),
+        # live/225. Predicates on POSITION like the other four, because unlike
+        # the tennis pass its decision is `live_write_would_revert` — which
+        # reads exactly these two columns — and position is all it writes.
+        "admin_providers.sync_espn_live_events": (
+            sync_espn_live_events, "write_live_state_if_unmoved",
         ),
     }
     for name, (fn, helper) in converted.items():
@@ -3207,6 +3608,7 @@ def test_the_cas_is_given_a_captured_position_never_a_fresh_read_6056():
         _sync_statpal_livescores,
         _sync_statpal_schedules,
     )
+    from app.routes.admin_providers import sync_espn_live_events
     from app.utils.espn_helpers import update_event_fields_from_espn
 
     OBSERVED = ("observed_period", "observed_clock")
@@ -3326,6 +3728,7 @@ def test_the_cas_is_given_a_captured_position_never_a_fresh_read_6056():
         "statpal_sync._sync_statpal_schedules": _sync_statpal_schedules,
         "espn_helpers.update_event_fields_from_espn": update_event_fields_from_espn,
         "mlb_sync._sync_mlb_win_probability": _sync_mlb_win_probability,
+        "admin_providers.sync_espn_live_events": sync_espn_live_events,
     }
     for name, fn in producers.items():
         source = textwrap.dedent(inspect.getsource(fn))
