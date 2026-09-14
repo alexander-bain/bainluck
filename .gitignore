@@ -210,3 +210,13 @@ artifacts/cal-p989/bank-cursor.jsonl
 # Ignoring the directory is what stops the next `git add -A` from re-committing it.
 # Deliberate evidence can still be committed with `git add -f`.
 backend/artifacts/
+
+# Watchman cookies (#1121 follow-up, 2026-09-14). Watchman drops zero-byte
+# `.watchman-cookie-<host>-<pid>-<n>` probe files into whatever directory it is
+# asked to watch, and they live exactly as long as the query. They are NOT
+# repo content, but they are not named like build output either, so nothing
+# here caught them and `git add -A` swept one into a commit
+# (`backend/.watchman-cookie-bain-mac-1607-2384`, 0 bytes, merged-then-removed).
+# The name carries a pid and a counter, so the next one is always a new path —
+# deleting the file is not a fix, the pattern is.
+.watchman-cookie-*
