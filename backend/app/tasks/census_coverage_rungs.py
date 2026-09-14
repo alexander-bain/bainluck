@@ -64,6 +64,49 @@ which patches the flag on and asserts the two texts are character-for-character
 equal. That test is the reason a copy is safe here: if either side moves, it
 reddens, which is strictly louder than a shared helper that silently accepts a
 new argument.
+
+WHAT "BOUNDED" MEANS HERE, AND WHAT IT DID NOT MEAN AT FIRST
+------------------------------------------------------------
+Codex's read of the run plan (2026-09-14) named four things this module called
+bounded and was not. All four are about the same gap: the walk bounded its
+*unit count* and each statement's *own* timeout, and nothing bounded the CALL.
+
+1. **No total wall.** ``max_units`` is a count, not a clock. ``limit=8`` at an
+   unknown per-unit cost is an unknown request length, and this rail runs
+   INLINE on the web dyno behind Heroku's 30s router. The router returns H12 at
+   30s and **does not stop the dyno** — the statement keeps running and the
+   state keeps being written minutes after the operator was told the call
+   failed, which is the one thing a resumable walk must never do, because the
+   operator's retry then races an invisible continuation. So the call now has
+   its own wall (:data:`DEFAULT_CALL_BUDGET_S`) *below* the router's.
+2. **The terminal rung could outlive the router by itself.** The global rung
+   carried a 60s statement timeout — twice the router's wall — so a single
+   statement was licensed to run 30s past the client's H12. Every statement is
+   now sized from what is LEFT of the call, never from a constant alone.
+3. **"Takes no locks" was false.** A ``SELECT`` takes ``ACCESS SHARE``, and
+   ``ACCESS SHARE`` queues behind the ``ACCESS EXCLUSIVE`` a migration or a
+   release-phase DDL holds. Waiting is indistinguishable from being slow until
+   you ask Postgres to stop waiting, so every statement now arms
+   ``lock_timeout`` (:mod:`app.utils.repair_lock_budget`, the primitive #2016
+   built for exactly this) and a contended walk reports ``lock_timeout``
+   instead of spending its whole budget in a lock queue.
+4. **A failing unit threw the call away.** The walk was resumable in principle
+   and not in practice: one aborted statement propagated out of
+   :func:`run_bounded_walk`, the route rolled back, and the seven units already
+   counted were never banked. Now the walk STOPS on a failed unit, banks what
+   it holds, and returns a report naming the unit and the cause. Finalization —
+   bank, publish decision, report — is reserved budget that statements may not
+   spend (:data:`FINALIZE_RESERVE_S`), so it always happens inside the request.
+
+A COMPLETED WALK IS A DISPLAY FOR ONE GENERATION, NOT COVERAGE ACCEPTANCE
+-------------------------------------------------------------------------
+:func:`reconcile` refuses a census whose roster digest is not the current
+cursor's, and the roster digest moves when a single market resolves. That is
+the contract working, and it means a one-off operator walk buys a coverage
+partition for as long as that roster stands and no longer — a TRANSIENT
+DISPLAY. It is not a durable statement that the curve's coverage has been
+measured and accepted, and nothing here should be read as one; the report says
+so in ``expiry`` rather than leaving a reader to infer it.
 """
 
 from __future__ import annotations
@@ -75,6 +118,12 @@ from typing import Any, Iterable, Mapping, Sequence
 from sqlalchemy import text
 
 from app.utils.calibration_coverage_bridge import PLOTTED_RUNG, RUNG_KEYS
+from app.utils.repair_lock_budget import (
+    SET_LOCK_TIMEOUT_SQL,
+    ApplyBudget,
+    is_lock_timeout,
+    lock_timeout_value,
+)
 
 #: This state's OWN version, deliberately separate from
 #: ``STAGED_FUTURES_SCHEMA``. The curve's bank and this walk invalidate on
@@ -102,15 +151,67 @@ PUBLISHED_TTL_SECONDS = 60 * 60 * 30  # 30h — survives a missed refresh, not a
 #: :func:`resume_or_restart` anyway.
 WORKING_TTL_SECONDS = 60 * 60 * 6
 
-#: Per-statement timeout for one chunk. Fail this unit fast and resume it next
-#: call rather than hold a connection open — the walk is resumable precisely so
-#: that a slow unit costs one unit, not the walk.
-DEFAULT_UNIT_TIMEOUT = "20s"
+#: The WHOLE call's wall clock, deliberately below Heroku's 30s router. The
+#: router's H12 stops the client and not the dyno, so a call that can outlast it
+#: has an invisible tail: the statement runs on, the state is banked late, and
+#: the operator's retry races a walk they were told had failed. Every statement
+#: below is sized from what is left of THIS, so the tail cannot exist. 25s
+#: leaves the request its parse, its response and the hop.
+DEFAULT_CALL_BUDGET_S = 25.0
 
-#: Per-statement timeout for the single global rung. It is one pass over the
+#: Reserved out of the budget and never offered to a statement. Banking the
+#: resumable state, deciding the publish and serialising the report all happen
+#: after the last statement returns; a budget spent to zero in the database
+#: finalizes nothing, and an unbanked walk pays for the same units again.
+FINALIZE_RESERVE_S = 3.0
+
+#: Per-statement CEILING for one chunk — the most a unit may ever be given,
+#: however much budget is left. Fail this unit fast and resume it next call
+#: rather than hold a connection open: the walk is resumable precisely so that a
+#: slow unit costs one unit, not the walk.
+UNIT_TIMEOUT_CEILING_S = 20.0
+
+#: Per-statement CEILING for the single global rung. It is one pass over the
 #: coverage universe plus a hash anti-join, but over the UNSCOPED population, so
-#: it is the one statement here that is not chunk-bounded.
-DEFAULT_GLOBAL_TIMEOUT = "60s"
+#: it is the one statement here that is not chunk-bounded — which is the reason
+#: it may not have a ceiling above the call's own wall. It was 60s, i.e. twice
+#: the router's, which licensed one statement to run 30s past the client's H12.
+GLOBAL_TIMEOUT_CEILING_S = 20.0
+
+#: Per-statement CEILING for the roster read. It runs before any unit and was
+#: previously unbounded, so a blocked roster read could spend the entire request
+#: without the walk having counted anything.
+ROSTER_TIMEOUT_CEILING_S = 10.0
+
+#: Do not START a chunk with less than this spendable. A statement begun with
+#: 400ms left is a statement that will abort having paid for its plan — a
+#: loop-boundary check that only asks "is there time left" overruns exactly here
+#: (#2016's finding, one rail over).
+MIN_UNIT_BUDGET_S = 2.0
+
+#: The global rung is the one statement that is not chunk-bounded, so it is the
+#: one worth REFUSING to start on a short budget: an abort spends the rest of
+#: the call and banks nothing new, and the walk cannot publish without it.
+MIN_GLOBAL_BUDGET_S = 10.0
+
+# --- Why a call stopped where it did. A stop is not a failure: this walk is
+# resumable, so the question the report must answer is always WHICH bound bit.
+STOP_UNIT_BUDGET = "unit_budget"
+STOP_TIME_BUDGET = "time_budget"
+STOP_LOCK_TIMEOUT = "lock_timeout"
+STOP_STATEMENT_TIMEOUT = "statement_timeout"
+
+#: Said in the report rather than left to be inferred. A completed walk is
+#: refused by :func:`reconcile` the moment the cursor's roster digest moves, and
+#: one market resolving moves it — so the census a one-off walk publishes is a
+#: display for the generation it walked, never a durable statement that coverage
+#: has been measured and accepted.
+CENSUS_EXPIRY_NOTE = (
+    "transient: a published census is refused as soon as the cursor's roster "
+    "digest moves (one market resolving is enough), so a complete walk buys a "
+    "coverage partition for the generation it walked and no longer. Not "
+    "durable coverage acceptance."
+)
 
 #: The extra columns the summary carries beside the eleven rungs. Named rather
 #: than discovered, so a walk that loses one is a KeyError here and not a
@@ -647,21 +748,85 @@ def reconcile(
 # ---------------------------------------------------------------------------
 
 
+def spendable_s(budget: ApplyBudget) -> float:
+    """What is left of the call AFTER finalization is reserved.
+
+    The honest question a statement must ask. ``remaining_s()`` includes the
+    time the bank write and the report still need, and a statement handed that
+    number returns to a call with nothing left to finalize with.
+    """
+    return budget.remaining_s() - FINALIZE_RESERVE_S
+
+
+def has_room_for(budget: ApplyBudget, *, floor_s: float) -> bool:
+    """Whether a statement may be STARTED, not whether time is left."""
+    return spendable_s(budget) >= floor_s
+
+
+def statement_timeout_ms(budget: ApplyBudget, *, ceiling_s: float) -> int:
+    """The next statement's timeout: the smaller of its ceiling and the budget.
+
+    This is the whole of item 2. A constant ceiling answers "how long is this
+    statement allowed to be", which is not the question the router asks; the
+    router asks "will this call return before 30s", and only the remaining
+    budget can answer it.
+    """
+    return int(max(0.0, min(float(ceiling_s), spendable_s(budget))) * 1000)
+
+
+async def arm_statement(session, budget: ApplyBudget, *, ceiling_s: float) -> dict[str, int]:
+    """Arm ``lock_timeout`` and ``statement_timeout`` for ONE statement.
+
+    Both are transaction-scoped and both are re-issued per statement: the value
+    shrinks as the call is spent, so hoisting either above the loop would arm
+    the first statement correctly and every later one with a budget that no
+    longer exists.
+
+    ``lock_timeout`` is clamped to the statement's own timeout as well as to
+    :mod:`app.utils.repair_lock_budget`'s band — a lock wait longer than the
+    statement is allowed to run cannot fire, and the abort then reports as
+    "slow" when the truth is "contended".
+    """
+    stmt_ms = statement_timeout_ms(budget, ceiling_s=ceiling_s)
+    lock_ms = min(budget.lock_timeout_ms(), stmt_ms) if stmt_ms else budget.lock_timeout_ms()
+    await session.execute(SET_LOCK_TIMEOUT_SQL, {"ms": lock_timeout_value(lock_ms)})
+    await session.execute(text(f"SET LOCAL statement_timeout = '{stmt_ms}ms'"))
+    return {"statement_timeout_ms": stmt_ms, "lock_timeout_ms": lock_ms}
+
+
+def classify_stop(exc: BaseException) -> str:
+    """Which bound bit, named by SQLSTATE/cancellation rather than guessed.
+
+    A lock timeout and a statement timeout are different facts about the
+    database and demand different responses — wait for the migration to finish
+    versus give the unit more room — so they are never collapsed into "the
+    query failed". Anything that is neither is reported under its own exception
+    type instead of being dressed as a timeout (gotcha #36's shape).
+    """
+    from app.tasks.calibration_main_build import is_statement_timeout
+
+    if is_lock_timeout(exc):
+        return STOP_LOCK_TIMEOUT
+    if is_statement_timeout(exc):
+        return STOP_STATEMENT_TIMEOUT
+    return f"error:{type(exc).__name__}"
+
+
 async def walk_one_unit(
     session,
     *,
     chunk,
     assignment: Mapping[int, tuple[str, bool]],
-    statement_timeout: str = DEFAULT_UNIT_TIMEOUT,
+    budget: ApplyBudget,
 ) -> dict[str, int]:
-    """Count one chunk's rungs. One statement, one row, bounded by its own timeout."""
+    """Count one chunk's rungs. One statement, one row, bounded by the CALL."""
     from app.tasks.precompute_calibration import (
         VM_ROSTER_IS_GROUPED_PARAM,
         VM_ROSTER_MARKET_IDS_PARAM,
         VM_ROSTER_VM_IDS_PARAM,
     )
 
-    await session.execute(text(f"SET LOCAL statement_timeout = '{statement_timeout}'"))
+    await arm_statement(session, budget, ceiling_s=UNIT_TIMEOUT_CEILING_S)
     market_ids = list(chunk.market_ids)
     row = (
         await session.execute(
@@ -681,11 +846,9 @@ async def walk_one_unit(
     return dict(row)
 
 
-async def walk_global_rung(
-    session, *, statement_timeout: str = DEFAULT_GLOBAL_TIMEOUT
-) -> dict[str, int]:
+async def walk_global_rung(session, *, budget: ApplyBudget) -> dict[str, int]:
     """Count the out-of-chunk cohort. Once per roster, never per chunk."""
-    await session.execute(text(f"SET LOCAL statement_timeout = '{statement_timeout}'"))
+    await arm_statement(session, budget, ceiling_s=GLOBAL_TIMEOUT_CEILING_S)
     row = (await session.execute(text(global_rung_sql()))).mappings().first()
     if row is None:
         raise ValueError("coverage rung walk: global rung returned no summary row")
@@ -732,6 +895,11 @@ def remaining_units(state: CoverageWalkState, chunks: Iterable[Any]) -> list[Any
 #: knowable cost and a caller can stop at any time; the state is resumable so
 #: that stopping costs nothing. Deliberately conservative — the point is never
 #: to finish in one call, it is to never be the reason something else is late.
+#:
+#: It is the SECOND bound, not the first. A count is not a clock: eight units at
+#: an unmeasured per-unit cost is an unmeasured request, which is why
+#: :data:`DEFAULT_CALL_BUDGET_S` exists and why ``stopped_on`` distinguishes the
+#: two. Whichever bites first stops the call.
 DEFAULT_MAX_UNITS = 8
 
 
@@ -741,8 +909,8 @@ async def run_bounded_walk(
     *,
     buckets: int | None = None,
     max_units: int = DEFAULT_MAX_UNITS,
-    unit_timeout: str = DEFAULT_UNIT_TIMEOUT,
-    global_timeout: str = DEFAULT_GLOBAL_TIMEOUT,
+    call_budget_s: float = DEFAULT_CALL_BUDGET_S,
+    clock=None,
 ) -> dict[str, Any]:
     """Count up to ``max_units`` chunks, bank the progress, publish if complete.
 
@@ -758,7 +926,15 @@ async def run_bounded_walk(
     practice: the curve's continuity is not something this function can affect.
 
     The returned dict is the report — what it resumed, why it restarted if it
-    did, what it counted, and whether the roster is now fully accounted for.
+    did, what it counted, why it stopped where it did, and whether the roster is
+    now fully accounted for.
+
+    **Every exit is through the finalizer.** A unit that aborts stops the walk
+    and is reported; it does not throw the call's earlier units away, and it
+    does not leave a statement running past a response the operator has already
+    read. ``call_budget_s`` and ``clock`` are the bound and its seam — the clock
+    is injectable so a test can prove the bound without the wall clock deciding
+    whether the test passes (gotcha #44).
     """
     # The partition size lives with the build that cuts it, and the population
     # version with the producer. Imported from their own homes rather than
@@ -770,7 +946,14 @@ async def run_bounded_walk(
         _futures_generation_sql,
     )
 
+    # Started HERE and not at the loop, so the roster read and the partition —
+    # the two things that happen before a unit is counted, and the roster read
+    # is the one statement that can block on a release-phase lock — are charged
+    # against the same wall the units spend (#2016's second half).
+    budget = ApplyBudget(call_budget_s, clock=clock)
+
     buckets = int(buckets or STAGED_FUTURES_BUCKETS)
+    await arm_statement(session, budget, ceiling_s=ROSTER_TIMEOUT_CEILING_S)
     roster = (await session.execute(text(_futures_generation_sql()))).all()
     chunks, assignment, roster_digest = plan_from_roster(roster, buckets=buckets)
 
@@ -786,6 +969,11 @@ async def run_bounded_walk(
             "empty_population": True,
             "complete": False,
             "published": False,
+            # Present on every exit, so a consumer can read one key to learn
+            # whether a call stopped early rather than inferring it from a
+            # missing one.
+            "stopped_on": None,
+            "elapsed_s": round(budget.elapsed_s(), 2),
         }
 
     stored = None
@@ -803,26 +991,64 @@ async def run_bounded_walk(
         total_units=len(chunks),
     )
 
+    planned = remaining_units(state, chunks)[: max(0, int(max_units))]
     counted: list[str] = []
-    for chunk in remaining_units(state, chunks)[: max(0, int(max_units))]:
-        row = await walk_one_unit(
-            session,
-            chunk=chunk,
-            assignment=assignment,
-            statement_timeout=unit_timeout,
-        )
+    stopped_on: str | None = None
+    walk_error: dict[str, Any] | None = None
+
+    for chunk in planned:
+        if not has_room_for(budget, floor_s=MIN_UNIT_BUDGET_S):
+            stopped_on = STOP_TIME_BUDGET
+            break
+        try:
+            row = await walk_one_unit(
+                session, chunk=chunk, assignment=assignment, budget=budget
+            )
+        except Exception as exc:  # noqa: BLE001 — classified and reported, never swallowed
+            # The walk STOPS and the call FINALIZES. Before this, one aborted
+            # statement propagated out of here and the units already in hand
+            # were never banked — a walk resumable in principle and not in
+            # practice. The transaction is rolled back first: an aborted
+            # statement poisons it, and everything left to do is in Redis.
+            stopped_on = classify_stop(exc)
+            walk_error = {
+                "unit": chunk.key,
+                "type": type(exc).__name__,
+                "message": str(exc)[:200],
+            }
+            await _rollback_quietly(session)
+            break
         state = absorb_unit(state, unit_key=chunk.key, row=row)
         counted.append(chunk.key)
+    else:
+        if state.units_remaining > 0:
+            stopped_on = STOP_UNIT_BUDGET
 
     # The global rung last, and only once every chunk is in: it is the cohort
     # that belongs to no chunk, so counting it early would bank a rung against a
     # roster the rest of the walk may yet be told has moved.
     global_counted = False
-    if state.units_remaining == 0 and not state.global_done:
-        state = absorb_global(
-            state, row=await walk_global_rung(session, statement_timeout=global_timeout)
-        )
-        global_counted = True
+    if stopped_on is None and state.units_remaining == 0 and not state.global_done:
+        if not has_room_for(budget, floor_s=MIN_GLOBAL_BUDGET_S):
+            # Refused rather than attempted. This is the one unscoped statement
+            # here, so starting it on a short budget spends the rest of the call
+            # and banks nothing — and the walk cannot publish without it, so a
+            # cheap abort is not a cheap outcome.
+            stopped_on = STOP_TIME_BUDGET
+        else:
+            try:
+                row = await walk_global_rung(session, budget=budget)
+            except Exception as exc:  # noqa: BLE001 — classified and reported
+                stopped_on = classify_stop(exc)
+                walk_error = {
+                    "unit": "global_rung",
+                    "type": type(exc).__name__,
+                    "message": str(exc)[:200],
+                }
+                await _rollback_quietly(session)
+            else:
+                state = absorb_global(state, row=row)
+                global_counted = True
 
     published = publish(redis_client, state) if state.complete else False
 
@@ -876,7 +1102,40 @@ async def run_bounded_walk(
         # no cache at all. A caller that sees ``failed`` repeatedly is watching
         # the walk lose its memory, not doing bounded work.
         "state_banked": state_banked,
+        # WHICH BOUND BIT. ``None`` means the call did everything it was asked
+        # to; ``unit_budget`` means ``limit`` stopped it and more time would not
+        # have helped; ``time_budget`` means the call's own wall did, so a
+        # smaller ``limit`` changes nothing and the work simply needs more
+        # calls; ``lock_timeout`` means something held an incompatible lock —
+        # wait, do not retry harder; ``statement_timeout`` means the statement
+        # itself does not fit the budget, which for ``global_rung`` means this
+        # walk cannot complete inline at all and is the one answer worth
+        # escalating.
+        "stopped_on": stopped_on,
+        "walk_error": walk_error,
+        "call_budget_s": round(float(call_budget_s), 1),
+        "elapsed_s": round(budget.elapsed_s(), 2),
+        "spendable_left_s": round(max(0.0, spendable_s(budget)), 2),
+        # Stated in the payload, not only in the docs: a complete walk is a
+        # display for the generation it walked, not durable coverage acceptance.
+        "expiry": CENSUS_EXPIRY_NOTE,
     }
+
+
+async def _rollback_quietly(session) -> None:
+    """Clear an aborted transaction so finalization is not the next casualty.
+
+    A statement that hit ``statement_timeout`` or ``lock_timeout`` leaves the
+    transaction in a failed state, and every later statement on it raises
+    ``InFailedSqlTransaction`` — including, in the route above, whatever the
+    error path itself tries to do. Nothing after this point needs the database,
+    so a failure to roll back is reported by the exception that follows it and
+    must not replace the one the caller is already being told about.
+    """
+    try:
+        await session.rollback()
+    except Exception:  # noqa: BLE001 — the real failure is already in the report
+        pass
 
 
 async def census(session, apply: bool = False, limit: int | None = None) -> dict[str, Any]:
@@ -891,6 +1150,14 @@ async def census(session, apply: bool = False, limit: int | None = None) -> dict
 
     Re-invoke until ``complete`` is true; ``units_remaining`` says how far there
     is to go and the walk resumes from where the last call stopped.
+
+    The call is bounded by a wall clock BELOW the router's 30s as well as by
+    ``limit``, so it returns a report rather than an H12 with a statement still
+    running behind it. Read ``stopped_on`` before choosing the next ``limit``:
+    ``unit_budget`` says raise it, ``time_budget`` says the limit is not what is
+    binding, ``lock_timeout`` says something else holds a lock and the answer is
+    to wait, and ``statement_timeout`` on ``global_rung`` says the terminal
+    statement does not fit an inline call at all.
     """
     from app.tasks.redis_state import get_redis_client
 
