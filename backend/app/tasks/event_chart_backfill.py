@@ -69,6 +69,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, NamedTuple, Optional, Sequence
 
+from app.utils.kalshi_empty_book import is_lone_ask_on_empty_book
+
 logger = logging.getLogger(__name__)
 
 
@@ -406,10 +408,19 @@ def normalize_candle(candle: dict) -> Optional[float]:
         return last
 
     # A one-sided book with no trade behind it. Trust the quote only when it is
-    # a real price rather than the 0.00/1.00 shell a settled market leaves.
+    # a real price rather than the 0.00/1.00 shell a settled market leaves —
+    # and, on the ask side, only up to the bound
+    # `app.utils.kalshi_empty_book.ASK_ONLY_TRUSTED_MAX`. "Not exactly 1.00" was
+    # too loose: Kalshi opens an untraded market at bid 0.0000 / ask 0.9900
+    # (#6126, read at the venue), so the first candle of a market nobody has
+    # traded drew a curve starting at 99%. The twin and its reasoning are in
+    # `app.utils.kalshi_candle_price`; `tests/test_kalshi_candle_price.py`
+    # holds the two to the same answer candle for candle.
     if _usable(bid) and not _usable(ask):
         return bid
     if _usable(ask) and not _usable(bid):
+        if is_lone_ask_on_empty_book(bid, ask, last):
+            return None
         return ask
     if _usable(bid) and _usable(ask):
         return (bid + ask) / 2.0

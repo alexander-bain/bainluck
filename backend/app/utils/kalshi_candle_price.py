@@ -38,15 +38,53 @@ The rule, in order:
    ≤ :data:`WIDE_SPREAD_DOLLARS`) → the midpoint;
 2. else the candle's own trade price → that;
 3. else one side quoted, and only when it is a real price rather than the
-   0.00/1.00 shell a settled market leaves → that side;
+   0.00/1.00 shell a settled market leaves → that side. A lone ASK over
+   :data:`~app.utils.kalshi_empty_book.ASK_ONLY_TRUSTED_MAX` is not a price and
+   is refused here — see the paragraph below;
 4. else ``None`` — there is no honest price in this candle. The caller stores
    nothing, which is the point: an absent row is a gap, a fabricated row is a
    lie a curve then grades.
+
+RULE 3 HAD A HOLE ON THE ASK SIDE, AND THE VENUE'S DEFAULT BOOK DROVE A TRUCK
+THROUGH IT (#6126, measured 2026-09-14). "A real price rather than the shell"
+was read as "anything that is not exactly 1.00", so a lone ask at 0.99 was
+published as a probability. Kalshi opens an untraded market at **bid 0.0000 /
+ask 0.9900** — read at the venue, ``KXWTACHALLENGERMATCH-26SEP14ZELNAJ-NAJ``
+candlesticks, ``yes_bid.open_dollars "0.0000"`` beside ``yes_ask.open_dollars
+"0.9900"`` — so the first candle of every market nobody has traded yet reduces
+to 0.99, and 0.99 is the number that reaches the reader.
+
+What it cost, on production: three eliminated players printed **OPEN 99%** on
+the settled US Open Men's Singles ladder (``/futures/34277822``), each stored at
+exactly 0.99 from the same 18:00 candle. Alexander Bublik's next hourly candle
+is 0.13 — the series refutes its own first point. That page is not alone:
+**234 legs across 53 markets** carry this rail's fingerprint from the last 21
+days, the newest 2026-09-11 20:00Z, so this was a live mint and not a
+historical population.
+
+The fingerprint is the TIMESTAMP, and it is worth stating because the obvious
+count is wrong. A candle's ``end_period_ts`` lands exactly on the hour, where
+the poller's ``now`` carries microseconds. Counting on value-and-source alone
+(``opening_probability = 0.99 AND opening_source IS NULL``) returns 4,611 legs,
+of which 4,275 are Kalshi legs written at poller-shaped instants and 123 are
+Polymarket — populations this branch never wrote and this rule does not speak
+about.
+
+:mod:`app.utils.kalshi_empty_book` had already measured this exact shape and
+priced it — a lone ask on an empty book grades at a 6.2% win rate against a
+0.369 mean stored price — and the poller has refused it since 2026-07-13. The
+bound is imported from there rather than restated: one capability question, one
+constant. (That module's own docstring says the Kalshi half of its population is
+historical, on a census that scored zero. It scored zero because the census
+tests ``yes_bid``, and the candle rails store no book at all — the rows this
+branch writes carry NULL bid/ask and are invisible to it.)
 """
 
 from __future__ import annotations
 
 from typing import Any, Optional
+
+from app.utils.kalshi_empty_book import is_lone_ask_on_empty_book
 
 #: Above this bid/ask gap the mid stops meaning anything and the trade is the
 #: honest number. Same value, and the same reasoning, as
@@ -105,6 +143,11 @@ def candle_yes_price(candle: Any) -> Optional[float]:
     if _usable(bid) and not _usable(ask):
         return bid
     if _usable(ask) and not _usable(bid):
+        # An offer nobody took, on a book nobody is bidding into. Only the ask
+        # side is refused, and only above the measured bound: a lone BID is a
+        # real price (93.7% win rate) and stays.
+        if is_lone_ask_on_empty_book(bid, ask, last):
+            return None
         return ask
     if _usable(bid) and _usable(ask):
         return (bid + ask) / 2.0
