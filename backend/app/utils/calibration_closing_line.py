@@ -102,8 +102,14 @@ def closing_line_lateral_sql(
     outcome_id: str,
     boundary: str,
     extra_and: str = "",
+    order: str = "DESC",
+    columns: str = "fos.probability",
 ) -> str:
-    """The LATERAL that picks one closing line: the last eligible snapshot before ``boundary``.
+    """The LATERAL that picks one eligible snapshot before ``boundary``.
+
+    At the default ``order="DESC"`` that is the CLOSING line — the last eligible
+    quote before the boundary — which is the only thing ``backfill_winners`` asks
+    for and the reason this module exists.
 
     Args:
         outcome_id: SQL expression for the outcome id to seek on. Uses
@@ -114,12 +120,29 @@ def closing_line_lateral_sql(
         extra_and: an extra conjunct for callers with a source-specific rule, e.g.
             Part A's Kalshi ``N+`` threshold guard (#167/#941/#1054). Must begin
             with ``AND``.
+        order: ``"DESC"`` for the last eligible quote (the closing line),
+            ``"ASC"`` for the FIRST — the early leg of a paired pre-start
+            comparison (``app.utils.calibration_paired_prestart``). Parameterised
+            rather than copied so that "which snapshots may be used at all" keeps
+            having exactly one definition: an early leg selected under a laxer
+            eligibility rule than the late leg would manufacture improvement out
+            of the filter, which is the failure the paired work exists to avoid.
+        columns: the select list. The default yields the single ``probability``
+            column every existing caller consumes; a paired caller also needs
+            ``fos.captured_at`` to enforce leg separation.
 
     Returns:
-        A parenthesised sub-SELECT yielding at most one ``probability`` column.
+        A parenthesised sub-SELECT yielding at most one row.
+
+    Raises:
+        ValueError: on an ``order`` that is not ``ASC``/``DESC`` — this string is
+            interpolated into SQL, so it is checked rather than trusted.
     """
+    direction = order.strip().upper()
+    if direction not in ("ASC", "DESC"):
+        raise ValueError(f"order must be ASC or DESC, got {order!r}")
     return f"""(
-                                SELECT fos.probability
+                                SELECT {columns}
                                 FROM futures_odds_snapshots fos
                                 WHERE fos.outcome_id = {outcome_id}
                                   AND fos.captured_at < {boundary}
@@ -128,7 +151,7 @@ def closing_line_lateral_sql(
                                       "fos.probability", "fos.yes_bid", "fos.yes_ask"
                                   )}
                                   {extra_and}
-                                ORDER BY fos.captured_at DESC
+                                ORDER BY fos.captured_at {direction}
                                 LIMIT 1
                             )"""
 
