@@ -24,6 +24,8 @@ from sqlalchemy.orm import selectinload
 from app.models import Event, Sport
 from app.tasks.base import get_task_session
 from app.tasks.snapshots import _create_or_update_win_prob_snapshot
+from app.utils.game_state import live_write_would_revert
+from app.utils.live_state_write import write_live_state_if_unmoved
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,11 @@ async def _sync_mlb_win_probability():
         "snapshots_created": 0,
         "snapshots_updated": 0,
         "match_failures": 0,
+        # #6056: the two live-state refusals, under this task's own names so a
+        # reading of `task-metrics` never has to guess which producer refused.
+        # Always present, so a 0 is a reading and not an absence (gotcha #53).
+        "mlb_reverting_live_skipped": 0,
+        "mlb_live_write_lost_race": 0,
         "errors": [],
     }
 
@@ -109,6 +116,21 @@ async def _sync_mlb_win_probability():
                         continue
 
                     stats["events_matched"] += 1
+
+                    # ── THE POSITION THE DECISION IS TAKEN ON (#6056,
+                    # CERT-2833) ────────────────────────────────────────────
+                    #
+                    # Read ONCE, here, before anything below composes a live-
+                    # state value from it. Every row in this pass was loaded by
+                    # the single SELECT above, and this session has no
+                    # intermediate commit — one `get_task_session()` spans every
+                    # game, MLB API calls included — so the gap between reading
+                    # this position and writing over it is the rest of the pass.
+                    # Re-reading `event.period` down at the write would compare
+                    # the row against whatever it had become in the meantime,
+                    # which is the mistake this whole ship exists to fix.
+                    _observed_period = event.period
+                    _observed_clock = event.game_clock
 
                     # Side-mapping guard (#208/#207): when the match inverted (our home
                     # == MLB's away), MLB's home_* fields describe OUR away team — swap
@@ -185,13 +207,66 @@ async def _sync_mlb_win_probability():
                     # Update Event.period for feed scoring (late-game bonus)
                     # and chart game state display. ESPN sync also sets this,
                     # but MLB API has more reliable inning data for baseball.
-                    if game_state.get("period"):
-                        event.period = game_state["period"]
+                    #
+                    # ── #6056 / CERT-2833: THE FOURTH PRODUCER ──────────────
+                    #
+                    # This is the third task to write these two columns on a
+                    # live baseball row — `_sync_statpal_livescores` (realtime,
+                    # 30 s) and `update_event_fields_from_espn` (realtime) write
+                    # the same games — and until now it was the only one that
+                    # never asked a question before writing. It ORM-assigned
+                    # both columns unconditionally, which is worse than losing a
+                    # race: with MLB's feed a poll behind ESPN's, a row already
+                    # showing `Bottom 6th` was walked back to `Top 5th` with no
+                    # concurrency needed at all.
+                    #
+                    # So both halves of the ship apply here, in order. First the
+                    # sequential guard — is this observation from EARLIER in the
+                    # game than the row already is. Then the compare-and-write,
+                    # which re-asserts that decision in the database against the
+                    # position it was actually taken on; see
+                    # `utils/live_state_write` for why that is one act under
+                    # READ COMMITTED rather than a narrower window.
+                    _incoming_period = game_state.get("period")
+                    _incoming_clock = None
                     if mlb_game.inning is not None:
                         # Baseball doesn't have a running clock — store inning
                         # info as game_clock for the live badge display
                         half = (mlb_game.inning_half or "").capitalize()
-                        event.game_clock = f"{half} {mlb_game.inning}" if half else str(mlb_game.inning)
+                        _incoming_clock = (
+                            f"{half} {mlb_game.inning}" if half
+                            else str(mlb_game.inning)
+                        )
+
+                    # Composed to write exactly the columns the unconditional
+                    # assignments wrote, under exactly the same conditions — the
+                    # position is now guarded, the FIELD SET is not changed.
+                    _live_values = {}
+                    if _incoming_period:
+                        _live_values["period"] = _incoming_period
+                    if _incoming_clock is not None:
+                        _live_values["game_clock"] = _incoming_clock
+
+                    if _live_values and live_write_would_revert(
+                        _observed_period, _observed_clock,
+                        _incoming_period, _incoming_clock,
+                    ):
+                        stats["mlb_reverting_live_skipped"] += 1
+                        logger.warning(
+                            "MLB reversion guard: refused a live write on event "
+                            "%s (%s vs %s) — row is at %r/%r, MLB offered "
+                            "%r/%r (#6056)",
+                            event.id, event.home_team_name, event.away_team_name,
+                            _observed_period, _observed_clock,
+                            _incoming_period, _incoming_clock,
+                        )
+                    elif _live_values and not await write_live_state_if_unmoved(
+                        session, event, _live_values,
+                        observed_period=_observed_period,
+                        observed_clock=_observed_clock,
+                        what="MLB win-probability sync",
+                    ):
+                        stats["mlb_live_write_lost_race"] += 1
 
                 except Exception as e:
                     stats["errors"].append(str(e))

@@ -2104,6 +2104,7 @@ def test_no_realtime_producer_assigns_the_columns_its_cas_compares():
     import inspect
     import textwrap
 
+    from app.tasks.mlb_sync import _sync_mlb_win_probability
     from app.tasks.statpal_sync import _sync_statpal_livescores
     from app.utils.espn_helpers import update_event_fields_from_espn
     from app.utils.live_state_write import LIVE_STATE_COLUMNS
@@ -2138,7 +2139,11 @@ def test_no_realtime_producer_assigns_the_columns_its_cas_compares():
         "if event.home_score != 3:\n    pass\n"
     ) == {"period", "status"}
 
-    for fn in (_sync_statpal_livescores, update_event_fields_from_espn):
+    for fn in (
+        _sync_statpal_livescores,
+        update_event_fields_from_espn,
+        _sync_mlb_win_probability,
+    ):
         source = textwrap.dedent(inspect.getsource(fn))
 
         calls = {
@@ -2243,3 +2248,583 @@ async def test_a_refused_realtime_write_leaves_no_score_snapshot(monkeypatch):
         "overtaken observation the row correctly rejected"
     )
     assert result["score_snapshots_created"] == 0
+
+
+# ---------------------------------------------------------------------------
+# 7. The MLB writer — THE FOURTH PRODUCER (CERT-2833)
+#
+# Four presentations of this ship converted three writers, and a fourth was
+# sitting in plain sight the whole time: `sync_mlb_win_probability`, a 120-second
+# REALTIME task that ORM-assigned `period` and `game_clock` on live baseball rows
+# that StatPal and ESPN also write.
+#
+# It is worth being precise about why this one is not merely a fourth instance
+# of the same race, because the difference decides what the fix has to contain.
+# The other three READ the row, DECIDED, and then lost a race writing. MLB never
+# asked anything at all: two unconditional assignments, whatever the feed last
+# said. So it had both failure modes at once — it could lose a race like its
+# siblings, AND it could walk a row backwards with no concurrency whatever, any
+# minute its feed ran a poll behind ESPN's. Both are tested below, separately,
+# because a fix containing only the compare-and-write would pass the race test
+# and leave a reader watching the innings count down.
+# ---------------------------------------------------------------------------
+
+
+class _MlbGame:
+    """One in-progress game as `MLBAPIService.get_live_games()` returns it."""
+
+    def __init__(
+        self, *, inning, inning_half, home_score, away_score,
+        home_wp=0.61, away_wp=0.39,
+    ):
+        self.game_pk = 776541
+        self.home_team = "Boston Red Sox"
+        self.away_team = "New York Yankees"
+        self.game_datetime = None
+        self.home_win_probability = home_wp
+        self.away_win_probability = away_wp
+        self.home_score = home_score
+        self.away_score = away_score
+        self.inning = inning
+        self.inning_half = inning_half
+
+
+async def _drive_mlb(
+    monkeypatch, *, row_period, row_clock, game, interloper=None, extra_rows=(),
+):
+    """Drive the REAL MLB task against a REAL row and read the DATABASE back.
+
+    Same rail as `_drive_espn`, and for the same reason: once these columns are
+    written by a conditional UPDATE, an assertion that reads an in-memory object
+    cannot tell a write that matched zero rows from one that landed — SQLAlchemy
+    mirrors the values onto the instance either way. So the row is re-read after
+    `expire_all()`, and what the tests assert on is what the next reader is
+    served.
+
+    Two things are substituted and nothing else. The MLB API service, because
+    there is no network here; and `_create_or_update_win_prob_snapshot`, because
+    the win-probability snapshot is a different column family on a different
+    table and keeping the real one would buy this test nothing but a dialect
+    dependency. THE `win_probability_sources` CORE UPDATE IS LEFT REAL AND
+    DELIBERATELY SO: in production that statement is what takes the row lock,
+    just before the live-state write, and it is therefore part of the ordering
+    under test.
+
+    `interloper(engine, event_id)` runs in its own session at the one instant
+    that matters — after the task has loaded the row's position and before it
+    writes over it — and it is hung on the SNAPSHOT CALL, never on a sleep.
+
+    ⚠️ THE CHOICE OF HOOK IS THE WHOLE REASON THIS RAIL CAN BE RUN ON THE
+    PARENT. The obvious hook is `live_write_would_revert`, which is what the
+    ESPN and StatPal rails above use — but this producer does not import that
+    symbol until the commit under test adds it, so a rail hung there raises
+    `AttributeError` on the parent and yields a harness story instead of a
+    witness. `_create_or_update_win_prob_snapshot` is called by BOTH trees, at
+    the same point in the pass, between the load and the live-state write; it
+    is also where the real window lives, since that call and the MLB fetches
+    around it are what the decision-to-write gap is actually made of.
+    """
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session
+
+    import app.tasks.mlb_sync as mlb_sync
+    from app.models.models import Base, Event, Sport
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine, tables=[Event.__table__, Sport.__table__])
+    session = Session(engine, expire_on_commit=False)
+
+    @sa_event.listens_for(session, "loaded_as_persistent")
+    def _reattach_utc(_sess, instance):  # pragma: no cover - test rail
+        for attr, value in list(instance.__dict__.items()):
+            if isinstance(value, datetime) and value.tzinfo is None:
+                instance.__dict__[attr] = value.replace(tzinfo=timezone.utc)
+
+    sport = Sport(key="baseball_mlb", name="baseball_mlb")
+    session.add(sport)
+    session.flush()
+
+    started = datetime.now(timezone.utc) - timedelta(hours=2)
+    specs = [
+        ("Boston Red Sox", "New York Yankees", row_period, row_clock)
+    ] + list(extra_rows)
+    ids = []
+    for home, away, period, clock in specs:
+        ev = Event(
+            sport_id=sport.id,
+            home_team_name=home,
+            away_team_name=away,
+            commence_time=started,
+            status="live",
+            period=period,
+            game_clock=clock,
+            win_probability_sources={},
+        )
+        session.add(ev)
+        session.flush()
+        ids.append(ev.id)
+    session.commit()
+
+    class _AsyncShim:
+        """The task is async and this engine is not; nothing else is shimmed."""
+
+        def __init__(self, inner):
+            self._s = inner
+
+        async def execute(self, statement):
+            return self._s.execute(statement)
+
+        def add(self, obj):
+            self._s.add(obj)
+
+        async def flush(self):
+            self._s.flush()
+
+        async def commit(self):
+            self._s.commit()
+
+    class _SessionCM:
+        async def __aenter__(self):
+            return _AsyncShim(session)
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class _Service:
+        async def get_live_games(self):
+            return [game]
+
+        async def close(self):
+            return None
+
+    import app.services.mlb_api as mlb_api
+
+    monkeypatch.setattr(mlb_api, "MLBAPIService", lambda *a, **k: _Service())
+    monkeypatch.setattr(mlb_sync, "get_task_session", lambda: _SessionCM())
+
+    _fired = []
+
+    async def _no_snapshot(*_a, **_k):
+        if interloper is not None and not _fired:
+            _fired.append(True)
+            interloper(engine, ids[0])
+        return (None, False)
+
+    monkeypatch.setattr(
+        mlb_sync, "_create_or_update_win_prob_snapshot", _no_snapshot
+    )
+
+    stats = await mlb_sync._sync_mlb_win_probability()
+
+    if interloper is not None:
+        assert _fired, (
+            "the interloper never ran — this rail proved nothing about a race"
+        )
+
+    session.expire_all()
+    rows = [
+        session.execute(select(Event).where(Event.id == i)).scalar_one()
+        for i in ids
+    ]
+    return rows, stats
+
+
+@pytest.mark.asyncio
+async def test_mlb_realtime_writer_cannot_commit_older_position_last_6056(
+    monkeypatch,
+):
+    """THE REQUIRED TEST (CERT-2833), with its uncontested twin.
+
+    The row is at `Top 4th` when the MLB task reads it. MLB's feed offers
+    `Top 5th` — LATER, so not a reversion, and the sequential guard correctly
+    says write. Then, in the window between that decision and the write, ESPN
+    commits `Bottom 6th` from its own session: later still.
+
+    Read-newer-commit-older. MLB's pass holds ONE session across every game and
+    commits at the very end, so without a write-time predicate its `Top 5th`
+    reaches Postgres last and the reader watches the sixth inning fall back to
+    the fifth.
+
+    ⚠️ EVERY POSITION DIFFERS FROM THE ONE BESIDE IT, deliberately: an ORM
+    assignment of a value the column already holds does not mark it dirty, so a
+    specimen that reuses one lets the unfixed parent write nothing and pass on
+    the defect. That mistake cost a presentation on the hourly twin of this
+    test.
+    """
+    # ── CONTESTED: ESPN commits underneath MLB's decided-but-unwritten pass ──
+    rows, stats = await _drive_mlb(
+        monkeypatch,
+        row_period="Top 4th",
+        row_clock="Top 4",
+        game=_MlbGame(inning=5, inning_half="top", home_score=2, away_score=1),
+        interloper=_commits_a_later_position("Bottom 6th", "Bottom 6", (4, 3)),
+    )
+
+    assert (rows[0].period, rows[0].game_clock) == ("Bottom 6th", "Bottom 6"), (
+        "the game must not go back an inning — MLB's older write lost the race"
+    )
+    # The sequential guard is exonerated: it said WRITE, correctly, about the
+    # row it was shown. The race is what refused, and the two causes are counted
+    # apart so `task-metrics` can tell them apart.
+    assert stats["mlb_reverting_live_skipped"] == 0
+    assert stats["mlb_live_write_lost_race"] == 1
+
+    # ── THE UNCONTESTED TWIN: nothing races, so the write must LAND ─────────
+    #
+    # Without this, a compare-and-write that refused everything — or one whose
+    # predicate could never match — would pass the assertion above and freeze
+    # every live baseball row at its first position.
+    rows, stats = await _drive_mlb(
+        monkeypatch,
+        row_period="Top 4th",
+        row_clock="Top 4",
+        game=_MlbGame(inning=5, inning_half="top", home_score=2, away_score=1),
+    )
+
+    assert (rows[0].period, rows[0].game_clock) == ("Top 5th", "Top 5"), (
+        "an uncontested MLB write must still reach the row"
+    )
+    assert stats["mlb_live_write_lost_race"] == 0
+    assert stats["mlb_reverting_live_skipped"] == 0
+
+
+@pytest.mark.asyncio
+async def test_mlb_does_not_walk_a_row_back_to_an_earlier_inning_6056(monkeypatch):
+    """The half of this producer's defect that needs no concurrency at all.
+
+    MLB assigned both columns unconditionally, so the ONLY thing that kept a
+    live row moving forwards was MLB's feed happening to be the freshest of the
+    three. The moment it ran a poll behind ESPN's — routine, on a 120-second
+    beat against a feed nobody arbitrates — it wrote the earlier inning straight
+    over the later one, no race required.
+
+    The row is at `Bottom 6th`; MLB offers `Top 5th`. Nothing else is running.
+    """
+    rows, stats = await _drive_mlb(
+        monkeypatch,
+        row_period="Bottom 6th",
+        row_clock="Bottom 6",
+        game=_MlbGame(inning=5, inning_half="top", home_score=2, away_score=1),
+    )
+
+    assert (rows[0].period, rows[0].game_clock) == ("Bottom 6th", "Bottom 6"), (
+        "MLB walked the row back an inning and a half with nothing racing it"
+    )
+    assert stats["mlb_reverting_live_skipped"] == 1
+    assert stats["mlb_live_write_lost_race"] == 0, (
+        "this is the sequential guard's refusal, not a lost race — counting it "
+        "as one would send the next reader of task-metrics after a phantom"
+    )
+
+
+@pytest.mark.asyncio
+async def test_mlb_still_writes_an_inning_the_row_has_not_reached_6056(monkeypatch):
+    """The accepting twin of the refusal above.
+
+    A guard with no accepting branch passes every refusal test ever written and
+    strands every live baseball row at whatever position it happened to hold
+    when this shipped.
+    """
+    rows, stats = await _drive_mlb(
+        monkeypatch,
+        row_period="Top 5th",
+        row_clock="Top 5",
+        game=_MlbGame(inning=6, inning_half="bottom", home_score=4, away_score=3),
+    )
+
+    assert (rows[0].period, rows[0].game_clock) == ("Bottom 6th", "Bottom 6")
+    assert stats["mlb_reverting_live_skipped"] == 0
+    assert stats["mlb_live_write_lost_race"] == 0
+
+
+@pytest.mark.asyncio
+async def test_mlb_writes_normally_onto_a_row_with_no_position_yet_6056(monkeypatch):
+    """Every baseball game's first live write, and the branch a too-strict
+    predicate breaks. The row holds `(NULL, NULL)`; the write must land."""
+    rows, stats = await _drive_mlb(
+        monkeypatch,
+        row_period=None,
+        row_clock=None,
+        game=_MlbGame(inning=1, inning_half="top", home_score=0, away_score=0),
+    )
+
+    assert (rows[0].period, rows[0].game_clock) == ("Top 1st", "Top 1")
+    assert stats["mlb_live_write_lost_race"] == 0
+
+
+@pytest.mark.asyncio
+async def test_the_mlb_write_touches_only_its_own_row_6056(monkeypatch):
+    """The whole-table mutant, on this producer's statement.
+
+    `Event.id == event.id` is the only term separating two rows at the same
+    position, and every unstarted baseball row in the table holds the same
+    `(NULL, NULL)`. A statement missing that term would stamp one game's inning
+    across every other game that had not started yet.
+    """
+    rows, _stats = await _drive_mlb(
+        monkeypatch,
+        row_period=None,
+        row_clock=None,
+        game=_MlbGame(inning=3, inning_half="bottom", home_score=1, away_score=0),
+        extra_rows=[("Chicago Cubs", "St. Louis Cardinals", None, None)],
+    )
+
+    assert (rows[0].period, rows[0].game_clock) == ("Bottom 3rd", "Bottom 3"), (
+        "the row the feed is about must still be written"
+    )
+    assert (rows[1].period, rows[1].game_clock) == (None, None), (
+        "a different game sharing the same empty position was overwritten"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 8. THE GUARD THAT SHOULD HAVE EXISTED FIRST (CERT-2833)
+#
+# Four presentations of this ship each converted the producers someone had
+# thought of, and the guard above asserted that THOSE producers stayed clean. It
+# could never have found MLB, because its population was a hand-written tuple of
+# two names, and a hand-written population can only ever re-check the thing that
+# was already known. The defect was not that MLB was missed once; it was that
+# nothing in the suite was capable of noticing it.
+#
+# So the population is DISCOVERED here instead of declared, and what is declared
+# is the much smaller thing: for each function that writes one of these columns
+# outside the compare-and-write, WHY that is allowed. A new producer — or an old
+# one growing a new assignment — lands in the discovered set, matches no entry,
+# and turns this red with the file and function named.
+# ---------------------------------------------------------------------------
+
+#: Every function that assigns a live-state column as an ORM attribute, with the
+#: reason it does not go through `write_live_state_if_unmoved`. An entry here is
+#: a claim someone has to defend; an absence is a build break.
+#:
+#: The first four are REPAIR AND CREATION paths, not live-feed position writes —
+#: there is no concurrent observation of a running game for them to land behind.
+#: The last two are NEITHER, and are recorded as what they are: live-state
+#: writers of the same class as the four this ship converted, still outside the
+#: compare-and-write. They are named rather than quietly absent precisely
+#: because being quietly absent is what cost this ship four presentations.
+_DECLARED_UNGUARDED_WRITERS = {
+    "espn_sync._backfill_box_scores": (
+        "REPAIR. Writes `None` over the 0–0 of a row wrongly marked completed, "
+        "and over the phantom score of a settled row with a future start "
+        "(gotcha #46). Both populations are rows whose score is already known "
+        "to be fiction; neither is a position in a running game."
+    ),
+    "espn_sync._transition_event_statuses_impl": (
+        "SETTLEMENT. `_corrected_final_score` writes a FINAL score as the game "
+        "closes, not a moment inside it. There is no later observation for it "
+        "to land behind — the game is over."
+    ),
+    "statpal_sync._sync_statpal_schedules": (
+        "CREATION PATH ONLY. Guarded by `if was_created`, which is true only "
+        "for a row this statement just INSERTed, whose position columns are "
+        "therefore unset. Nothing to revert from, and a compare-and-write here "
+        "would read as load-bearing while provably doing nothing. Asserted by "
+        "`test_a_created_row_has_no_position_to_revert_from`, not by comment. "
+        "This function's LIVE writes do go through the compare-and-write."
+    ),
+    "espn_helpers.backfill_missing_scores": (
+        "BACKFILL over FINISHED rows that hold no score at all. Selects on the "
+        "absence it fills, and runs against games ESPN has already closed."
+    ),
+    "espn_sync._sync_tennis_from_espn": (
+        "KNOWN GAP, same class, NOT YET CONVERTED (#6056). A 5-minute "
+        "background beat writing `home_score`/`away_score` on live tennis rows "
+        "that the ESPN and StatPal realtime writers also write, with one "
+        "session and one commit across the whole pass — so it has the same "
+        "decision-to-write window its converted siblings had. It is not in the "
+        "commit that converted MLB because `test_espn_tennis_anchor.py` drives "
+        "it through a fake session that asserts on an in-memory object: a Core "
+        "UPDATE is structurally invisible to that rail, so converting this "
+        "producer means first rebuilding a 107-test rig onto a real engine. "
+        "Stated here so the next session inherits the measurement, not the "
+        "surprise."
+    ),
+    "admin_providers.sync_espn_live_events": (
+        "KNOWN GAP, different exposure (#6056). Writes `period`/`game_clock` "
+        "on live rows, but only when a person invokes the admin route — it is "
+        "not on a beat, so it cannot race anything unattended. Converted after "
+        "the tennis producer, which is scheduled and therefore the larger "
+        "exposure of the two."
+    ),
+}
+
+
+def test_no_undeclared_writer_assigns_a_live_state_column_6056():
+    """THE POPULATION IS DISCOVERED, NOT LISTED — that is the whole point.
+
+    Walked as an AST over every module under `backend/app/`, so a fifth
+    producer cannot arrive by being somewhere nobody thought to look. The
+    detector is self-tested against a synthetic source containing the offence,
+    because "the walk found something" is the wrong non-vacuity check here: a
+    correctly converted tree contains fewer of these every time this ship lands,
+    and a scan asserted on its own yield would start failing for the best
+    possible reason and tempt whoever hit it to delete the safeguard.
+    """
+    import ast
+    import pathlib
+
+    from app.utils.live_state_write import LIVE_STATE_COLUMNS
+
+    def _assigners(source: str) -> dict[str, set[str]]:
+        """{function name: {live-state columns it ORM-assigns}}."""
+        found: dict[str, set[str]] = {}
+        tree = ast.parse(source)
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for node in ast.walk(fn):
+                targets = []
+                if isinstance(node, ast.Assign):
+                    targets = node.targets
+                elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+                    targets = [node.target]
+                flat = []
+                for target in targets:
+                    flat.extend(
+                        target.elts if isinstance(target, ast.Tuple) else [target]
+                    )
+                for target in flat:
+                    if (
+                        isinstance(target, ast.Attribute)
+                        and target.attr in LIVE_STATE_COLUMNS
+                        and isinstance(target.value, ast.Name)
+                    ):
+                        found.setdefault(fn.name, set()).add(target.attr)
+        return found
+
+    # The detector fires on the offence, ignores a COMMENT quoting it (the
+    # mistake that broke the regex draft of the guard above), ignores a READ,
+    # and sees a tuple-unpacked assignment — which is how
+    # `_transition_event_statuses_impl` writes both scores at once and would
+    # otherwise have been missed by a scan that only looked at plain targets.
+    probe = _assigners(
+        "def f():\n"
+        "    # event.game_clock = ee.clock\n"
+        "    event.period = 'x'\n"
+        "    event.status = 'live'\n"
+        "    if event.home_score != 3:\n"
+        "        pass\n"
+        "def g():\n"
+        "    event.home_score, event.away_score = pair\n"
+    )
+    assert probe == {"f": {"period"}, "g": {"home_score", "away_score"}}, probe
+
+    app_root = pathlib.Path(__file__).resolve().parents[1] / "app"
+    assert app_root.is_dir(), app_root
+
+    discovered = {}
+    for path in sorted(app_root.rglob("*.py")):
+        for name, columns in _assigners(path.read_text()).items():
+            discovered[f"{path.stem}.{name}"] = sorted(columns)
+
+    undeclared = sorted(set(discovered) - set(_DECLARED_UNGUARDED_WRITERS))
+    assert not undeclared, (
+        "a live-state column is being ORM-assigned by a writer nothing in this "
+        f"suite knows about: {undeclared}. Every one of "
+        f"{list(LIVE_STATE_COLUMNS)} on a live row must go through "
+        "`write_live_state_if_unmoved`, or the write can land on top of a "
+        "newer observation another producer committed in between (#6056). If "
+        "the writer genuinely cannot race — a repair, a settlement, or a row "
+        "it just created — add it to _DECLARED_UNGUARDED_WRITERS with the "
+        "reason, and say which test holds the claim up."
+    )
+
+    # The other direction, so the declaration cannot rot into a list of
+    # functions that no longer exist and quietly stop meaning anything.
+    stale = sorted(set(_DECLARED_UNGUARDED_WRITERS) - set(discovered))
+    assert not stale, (
+        f"declared as unguarded but no longer assigns a live-state column: "
+        f"{stale} — delete the entry, the exemption it carries is spent"
+    )
+
+
+def test_the_converted_producers_are_absent_from_the_declared_list_6056():
+    """The list must never become the place a converted producer goes back.
+
+    An exemption is easier to write than a compare-and-write, so the producers
+    this ship converted are named here: if one of them ever appears in the
+    declaration, someone has un-converted it and written a reason, and that is
+    exactly the move this test exists to refuse. Each name is checked to be a
+    real caller of the helper first, so a rename cannot turn this into an
+    assertion about three strings that no longer denote anything.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from app.tasks.mlb_sync import _sync_mlb_win_probability
+    from app.tasks.statpal_sync import (
+        _sync_statpal_livescores,
+        _sync_statpal_schedules,
+    )
+    from app.utils.espn_helpers import update_event_fields_from_espn
+
+    converted = {
+        "statpal_sync._sync_statpal_livescores": _sync_statpal_livescores,
+        "statpal_sync._sync_statpal_schedules": _sync_statpal_schedules,
+        "espn_helpers.update_event_fields_from_espn": update_event_fields_from_espn,
+        "mlb_sync._sync_mlb_win_probability": _sync_mlb_win_probability,
+    }
+    for name, fn in converted.items():
+        source = textwrap.dedent(inspect.getsource(fn))
+        calls = {
+            node.func.id
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        assert "write_live_state_if_unmoved" in calls, (
+            f"{name} no longer calls the compare-and-write — this test would "
+            "be asserting about a producer that has stopped being one"
+        )
+
+    # `_sync_statpal_schedules` is in BOTH sets on purpose: its live writes go
+    # through the helper and its creation path does not, which is why its
+    # declaration says "CREATION PATH ONLY" rather than exempting the function.
+    readmitted = sorted(
+        (set(converted) - {"statpal_sync._sync_statpal_schedules"})
+        & set(_DECLARED_UNGUARDED_WRITERS)
+    )
+    assert not readmitted, (
+        f"{readmitted} went through the compare-and-write and now carries an "
+        "exemption instead — that is a regression of #6056, not a declaration"
+    )
+
+
+def test_the_clockless_feed_is_out_of_the_orm_scans_reach_by_construction_6056():
+    """A fact about the scan's BLIND SPOT, recorded so nobody trusts it too far.
+
+    `odds_polling` is the fourth producer this ship arbitrated, and it is the
+    one the AST scan above can never see: it writes through an `update_values`
+    dict and a Core statement, so there is no ORM attribute assignment to find.
+    It is also arbitrated by a different mechanism on purpose — it carries no
+    clock and no period, so it cannot be placed on the game-time scale at all,
+    and it defers to an attached authority instead of being ordered against it.
+
+    Written as a test rather than a comment because the dangerous reading of the
+    guard above is "everything that writes these columns is in that scan", and
+    that is false. A future producer that writes via Core SQL needs its own
+    reasoning, and this is where the next reader finds that out.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from app.tasks import odds_polling
+
+    source = textwrap.dedent(inspect.getsource(odds_polling))
+    calls = {
+        node.func.id
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "clockless_write_defers_to_authority" in calls, (
+        "the clockless feed's precedence rule is gone, and the ORM scan cannot "
+        "see this producer — nothing else in this suite is holding it up"
+    )
+    assert '"home_score"' in source or "'home_score'" in source, (
+        "this producer is supposed to write its score as a Core value, keyed "
+        "by string; if that changed, re-check whether the ORM scan now covers "
+        "it and delete this test if it does"
+    )
