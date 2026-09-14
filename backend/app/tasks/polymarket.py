@@ -29,6 +29,9 @@ from app.utils.content_understanding import (  # CU-1 clause (2), #5273
 )
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
 from app.utils.futures_liveness import preserve_venue_settled  # #2222
+from app.utils.event_completion import (  # #6073
+    POLYMARKET_VENUE_COMMENCE_SOURCE,
+)
 from app.utils.pair_opening_coherence import (
     OK as PAIR_OPENING_OK,
     classify_pair_opening,
@@ -1006,6 +1009,16 @@ async def _poll_polymarket_markets():
     # this must not be weaker than that. `stats` is reported either way.
     stats["sub_markets_linked"] = await link_polymarket_sub_markets()
 
+    # #6073, AFTER the link sweep and for the same reason it sits after the
+    # `finally`: it reads `event_id` on the child rows that sweep has just
+    # written, so running it earlier would scan a corpus missing exactly the rows
+    # this poll repaired. Its own failure must not cost the poll its stats.
+    try:
+        stats["redated_events"] = await redate_polymarket_listing_stamped_events()
+    except Exception as e:  # noqa: BLE001 - one repair must not fail a whole poll
+        stats["errors"].append(f"redate: {e}")
+        logger.exception("Polymarket re-date sweep (#6073) failed")
+
     stats["total_api_events"] = len(seen_ids)
     logger.info(
         "Polymarket poll: %d API events → %d processed, %d markets, %d outcomes, %d snapshots, %d crypto skipped, %d errors | by_category: %s",
@@ -1085,6 +1098,299 @@ async def link_polymarket_sub_markets() -> int:
         result = await session.execute(_text(LINK_SUB_MARKETS_SQL))
         await session.commit()
         return result.rowcount or 0
+
+
+# ── #6073: re-date the fixtures ALREADY minted from the listing stamp ─────────
+#
+# The other two halves of #6073 are PREVENTION and they only reach a mint:
+# `sub_market_metadata` stamps `venue_game_start` on the child row (this module),
+# and `auto_create_commence_time` prefers it when it dates a NEW event (lane1's
+# `a02aca00a`). Neither re-dates a row that already exists, and
+# `commence_time_write_authorized` cannot: `_SOURCE_PRIORITY` ranks
+# `polymarket_venue` and `polymarket` equally (deliberately — same provider, same
+# authority), a tie loses, and the `same_record_revision` path needs
+# `incoming_source == current_source`, which a row stamped plain `polymarket`
+# fails. So the standing population is unreachable by design and needs its own
+# rail. This is it — CERT-2826's named repair.
+#
+# MEASURED ON PRODUCTION, 2026-09-14 (the whole band, not a sample):
+#
+#     events with commence_time_source='polymarket'      25,079
+#       ├─ closed                                        17,633   not touched
+#       ├─ voided                                         6,261   not touched
+#       ├─ suspended                                      1,175 ┐ the reader-visible
+#       └─ live                                              10 ┘ band
+#     of that band, still holding a linked Polymarket market    827
+#       ├─ group carries a venue_game_start                     820
+#       └─ no stamp anywhere in the group                         7   skipped
+#     of the 820, venue start LATER than ours              820  (100 %)
+#     of the 820, venue start EARLIER than ours              0
+#     of the 827, venue start still in the FUTURE          566
+#
+# **Not one of the 25,079 is `scheduled`.** The listing stamp is always in the
+# past, so every row minted from it has already sailed past its invented kickoff
+# — which is why the band is `suspended`, and why the page renders "No result
+# reported" for matches nobody has played. The skew runs +0.33 h to +658 h and is
+# CONTINUOUS (10 / 197 / 200 / 180 / 233 across <6h, 6-24h, 1-3d, 3-7d, >7d), so
+# there is no cliff separating "real skew" from "wrong stamp" and a magnitude cap
+# would be a fiction — worse, it would exclude the 233 rows that are most plainly
+# broken, every one of which has a start still in the future. Polymarket simply
+# lists some fixtures weeks ahead. The guards below are the measured ones instead.
+#
+# WHY THE STATUS MOVES WITH THE DATE, IN ONE TRANSACTION. Re-dating alone is
+# INERT for the reader: nothing in the state machine demotes `suspended`, so the
+# row would carry a correct future start and keep saying "No result reported"
+# forever. Worse, writing the status alone would be undone within a beat —
+# `espn_sync`'s `scheduled → live` arm selects on `commence_time <= now`, so a row
+# set back to `scheduled` while still holding the listing stamp is promoted
+# straight back. The two writes are only correct together, which is why they are
+# one UPDATE.
+#
+# THE EVIDENCE THAT SAYS THESE MATCHES HAVE NOT BEEN PLAYED. Of the 566 rows this
+# moves to `scheduled`: **0 carry a score, 0 a period, 0 a game clock, 0 a
+# `completed_at`.** Not most — the entire population, the same shape and the same
+# argument `commence_time_is_a_reported_start` makes one module over about its own
+# 705 rows. The predicate below still refuses on any of those four signals, so the
+# guard is real rather than decorative the day one of them appears.
+
+#: Candidate rows for the re-date, with their group's venue instant.
+#:
+#: Module scope and public for the same reason ``LINK_SUB_MARKETS_SQL`` is: a
+#: guard can execute it without driving a whole poll.
+#:
+#: Two group-level gates, both measured rather than assumed:
+#:
+#: * ``n_stamps = 1`` — a group must agree with itself about when the fixture is.
+#:   Measured 2026-09-14: no group carries two distinct ``venue_game_start``
+#:   values (max 1 of 895), so this costs nothing today and fails CLOSED if that
+#:   ever stops being true, rather than letting ``min()`` pick a winner by
+#:   collation.
+#: * ``n_events = 1`` — a group must name exactly ONE event. Measured: **21 of
+#:   895 groups link to 2 or 3 different events.** A group holds ONE fixture
+#:   instant, so on those the same instant would be written onto up to three
+#:   different fixtures and at most one could be right. That is a MATCHING defect
+#:   (the twins class, #2693 / lane1's), not a dating one, and re-dating it would
+#:   paper over it with a confident wrong time. They are excluded and counted.
+REDATE_LISTING_STAMPED_SQL = """
+    WITH cand AS (
+        SELECT DISTINCT fm.group_id
+        FROM events e
+        JOIN futures_markets fm ON fm.event_id = e.id
+        WHERE fm.source = 'polymarket'
+          AND fm.group_id IS NOT NULL
+          AND e.commence_time_source = :listing_src
+          AND e.status IN ('live', 'suspended')
+    ),
+    grp AS (
+        SELECT p.group_id,
+               count(DISTINCT p.market_metadata->>'venue_game_start')
+                   FILTER (WHERE p.market_metadata->>'venue_game_start' IS NOT NULL)
+                   AS n_stamps,
+               min(p.market_metadata->>'venue_game_start') AS vgs,
+               count(DISTINCT p.event_id) FILTER (WHERE p.event_id IS NOT NULL)
+                   AS n_events,
+               min(p.event_id) AS only_event_id
+        FROM futures_markets p
+        JOIN cand c ON c.group_id = p.group_id
+        WHERE p.source = 'polymarket'
+        GROUP BY p.group_id
+    )
+    SELECT e.id            AS event_id,
+           e.commence_time AS event_commence,
+           e.completed_at  AS completed_at,
+           e.home_score    AS home_score,
+           e.away_score    AS away_score,
+           e.period        AS period,
+           e.game_clock    AS game_clock,
+           e.status        AS status,
+           g.vgs           AS venue_game_start,
+           g.n_stamps      AS n_stamps,
+           g.n_events      AS n_events
+    FROM grp g
+    JOIN events e ON e.id = g.only_event_id
+    WHERE g.n_stamps = 1
+      AND g.n_events = 1
+      AND e.commence_time_source = :listing_src
+      AND e.status IN ('live', 'suspended')
+    ORDER BY e.id
+"""
+
+
+def redate_target(
+    *,
+    venue_game_start,
+    event_commence,
+    now,
+    completed_at=None,
+    home_score=None,
+    away_score=None,
+    period=None,
+    game_clock=None,
+) -> Optional[tuple]:
+    """What should this row's ``(commence_time, status_or_None)`` become?
+
+    ``None`` ⇒ leave the row alone. A tuple's second element is ``None`` when the
+    date moves but the status is not ours to judge.
+
+    Pure, so every refusal below is provable without a database. The refusals,
+    each one measured against the production band in the block above:
+
+    * **No venue instant, or one that will not parse.** Nothing to write.
+    * **The move must be FORWARD.** Measured 820/820 later, 0 earlier — so this
+      costs nothing today and closes the one hazard that would matter if a later
+      poll ever published an earlier instant: moving a start BACKWARD can only
+      make a match that has not happened read as one that has, which is the exact
+      defect #6073 is about. A tie (the instants already agree) is also nothing to
+      do, and returns ``None`` rather than a no-op write.
+    * **Any evidence of play refuses the whole row.** A score — even ``0`` — a
+      period, or a running clock all mean something reported on this game, and a
+      row something reported on is not a row we may silently re-date and un-start.
+      Measured: 0 of 566 carry any of the four, so this refuses nothing today and
+      is the guard that holds the day one appears.
+    * **Never past ``completed_at`` (gotcha #46).** ``completed_at >=
+      commence_time`` is an invariant whose violation means a cross-event data
+      merge, so a target that would invert it is refused rather than clamped.
+      Measured: 0 of 827 carry ``completed_at`` at all.
+
+    THE STATUS, AND WHY ONLY ONE DIRECTION OF IT. When the corrected start is
+    still in the FUTURE the row's state is positively wrong — it cannot be
+    `suspended`, because a match that has not begun has not gone stale — and the
+    honest state is ``scheduled``; the ordinary promotion gate then takes it live
+    at the real hour, because ``polymarket_venue`` is a reported start and passes
+    ``commence_time_is_a_reported_start``. When the corrected start is in the PAST
+    the date was still wrong and is still worth fixing, but whether the row is
+    live, finished or stale is not something this rail can know — so it writes the
+    date and leaves ``status`` alone, exactly as ``_refine_stand_in_event_starts``
+    does one provider over.
+    """
+    if venue_game_start is None:
+        return None
+    if isinstance(venue_game_start, str):
+        try:
+            target = datetime.fromisoformat(venue_game_start.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        target = venue_game_start
+    if target is None or event_commence is None:
+        return None
+    target = target if target.tzinfo else target.replace(tzinfo=timezone.utc)
+    current = (
+        event_commence
+        if event_commence.tzinfo
+        else event_commence.replace(tzinfo=timezone.utc)
+    )
+    if target <= current:
+        return None
+    if (
+        home_score is not None
+        or away_score is not None
+        or period is not None
+        or game_clock is not None
+    ):
+        return None
+    if completed_at is not None:
+        completed = (
+            completed_at
+            if completed_at.tzinfo
+            else completed_at.replace(tzinfo=timezone.utc)
+        )
+        if target > completed:
+            return None
+    reference = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+    return (target, "scheduled" if target > reference else None)
+
+
+async def redate_polymarket_listing_stamped_events() -> dict:
+    """Give every already-minted Polymarket fixture the venue's own start.
+
+    #6073, the third half. See the block above for the population, the measured
+    guards and why the status rides with the date.
+
+    Returns a stats dict — ``moved``, ``rescheduled``, ``skipped_*`` — so a poll
+    that repairs nothing says so out loud rather than reading as a success
+    (``app/utils/task_verdict.py``: "it returned" is not "it worked").
+    """
+    stats = {
+        "scanned": 0,
+        "moved": 0,
+        "rescheduled": 0,
+        "skipped_multi_event_group": 0,
+        "skipped_ambiguous_stamp": 0,
+        "skipped_no_change": 0,
+    }
+    async with get_task_session() as session:
+        result = await session.execute(
+            text(REDATE_LISTING_STAMPED_SQL),
+            {"listing_src": "polymarket"},
+        )
+        rows = result.fetchall()
+        now = datetime.now(timezone.utc)
+
+        for r in rows:
+            stats["scanned"] += 1
+            # Both gates are in the SQL's WHERE as well; re-asserted here so the
+            # refusal is provable in a unit test and so a future edit to either
+            # place cannot quietly drop one of them.
+            if r.n_events != 1:
+                stats["skipped_multi_event_group"] += 1
+                continue
+            if r.n_stamps != 1:
+                stats["skipped_ambiguous_stamp"] += 1
+                continue
+            decision = redate_target(
+                venue_game_start=r.venue_game_start,
+                event_commence=r.event_commence,
+                now=now,
+                completed_at=r.completed_at,
+                home_score=r.home_score,
+                away_score=r.away_score,
+                period=r.period,
+                game_clock=r.game_clock,
+            )
+            if decision is None:
+                stats["skipped_no_change"] += 1
+                continue
+            target, new_status = decision
+            params = {
+                "dt": target,
+                "src": POLYMARKET_VENUE_COMMENCE_SOURCE,
+                "id": r.event_id,
+            }
+            if new_status is None:
+                sql = """
+                    UPDATE events
+                    SET commence_time = :dt,
+                        commence_time_source = :src
+                    WHERE id = :id
+                """
+            else:
+                # ONE statement, never two: a status written without the date is
+                # promoted straight back by the `commence_time <= now` arm.
+                sql = """
+                    UPDATE events
+                    SET commence_time = :dt,
+                        commence_time_source = :src,
+                        status = :status
+                    WHERE id = :id
+                """
+                params["status"] = new_status
+            await session.execute(text(sql), params)
+            stats["moved"] += 1
+            if new_status is not None:
+                stats["rescheduled"] += 1
+
+        if stats["moved"]:
+            await session.commit()
+        logger.info(
+            "Polymarket re-date (#6073): scanned %d, moved %d (%d back to "
+            "scheduled), skipped %d multi-event group / %d ambiguous stamp / "
+            "%d no change",
+            stats["scanned"], stats["moved"], stats["rescheduled"],
+            stats["skipped_multi_event_group"], stats["skipped_ambiguous_stamp"],
+            stats["skipped_no_change"],
+        )
+        return stats
 
 
 async def _process_event_batch(
