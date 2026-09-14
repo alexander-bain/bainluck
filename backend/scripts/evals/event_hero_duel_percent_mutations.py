@@ -161,8 +161,22 @@ COMPONENT_MUTATIONS: list[dict] = [
         # on a pushed live event. The property under attack is unchanged — the
         # component must refuse to re-derive a percent it was not given — so
         # this is a new anchor for the same mutant, not a new mutant.
-        "needle": """        {homeProb !== null && shownHome !== null ? shownHome : "—"}""",
-        "replacement": """        {homeProb !== null ? (shownHome ?? Math.round(homeProb * 100)) : "—"}""",
+        #
+        # int349 re-target (#6064, 2026-09-14). SAME REASONING, SECOND TIME, and
+        # the reason it keeps happening is worth one line: this needle pins the
+        # RENDER SITE, and the render site is the part of this component that
+        # legitimately changes. #6064 moved the giant numeral behind
+        # `sideParts(homeProb, shownHome)` so the `>99` marker could ride with
+        # the `%` instead of the numeral, and the ternary this needle quoted
+        # stopped existing. The property is unchanged and the decision did not
+        # move — it is now the null guard on line 1 of `sideParts`, which is a
+        # BETTER anchor than the JSX ever was, because it is the single place
+        # the component decides whether it may derive a reading. The mutant does
+        # the same thing it always did: when the decided percent is missing, it
+        # re-rounds from the raw probability instead of refusing to read.
+        "needle": """  if (prob === null || shown === null) return { marker: null, digits: NO_READING };""",
+        "replacement": """  if (prob === null) return { marker: null, digits: NO_READING };
+  if (shown === null) return probabilityParts(prob, { rendered: Math.round(prob * 100) });""",
         "why": "The component quietly re-derives when a caller stops passing the "
         "decided percent. The fix becomes invisible the moment anyone "
         "refactors the page, with no test going red.",
