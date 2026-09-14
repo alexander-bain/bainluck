@@ -128,6 +128,19 @@ one card. The naive version of this change (make the bucket a day and let the
 names decide) folded 226 instead of 46, and is what the drift bound exists to
 refuse.
 
+## AND WHY A LEAGUE ELEMENT IS NOT ENOUGH EITHER (#2866, rung two)
+
+Making element 0 the LEAGUE closed the 47 NFL preseason pairs, and it cannot
+close a pair whose two rows name two leagues that are genuinely different keys —
+which is what `soccer_other` is. `league_identity` falls back to an unmapped key
+ITSELF, precisely so it never splits a group, so `soccer_other` and
+`soccer_netherlands_eredivisie` stay apart and Ajax v Willem II drew two cards on
+2026-09-14 with everything else about the two rows already identical.
+:func:`_merge_catchall_leagues` is the third and last pass: a row whose league is
+simply unmapped folds into the row that names one, guarded by the SPORT (65 of
+the 73 candidate pairs in the table are cross-sport and every one of them must
+stay two cards). Its docstring carries the census and the refusals.
+
 **The venue union is the reason this merges rather than filters, and production
 says so plainly.** Getafe's elected survivor carries NO venues of its own and
 gains `betting` and `kalshi` from the twin it absorbs; two more survivors gain a
@@ -380,18 +393,70 @@ def twin_identity_rank(event: Any) -> tuple:
        all. Serving the scoreless row would be a worse page than serving two.
     2. **An ESPN id**, then **any provider id**. An anchored row is the one the
        event page, the chart and the settlement path can all reach.
-    3. Only then source count, and finally the lower row id, so the election is
-       deterministic across requests and the served `id` does not flicker
-       between two polls.
+    3. Only then source count, then a row that NAMES ITS LEAGUE over a `*_other`
+       catch-all, and finally the lower row id, so the election is deterministic
+       across requests and the served `id` does not flicker between two polls.
+
+    #2866 — WHY THE CATCH-ALL CRITERION SITS SECOND-TO-LAST, AND WHY IT IS
+    INERT EVERYWHERE EXCEPT THE GROUPS :func:`_merge_catchall_leagues` MAKES.
+    The survivor's row is the one whose `sport` labels the card and decides
+    which league page it can be filtered onto, so a group that ties on
+    everything above would otherwise hand the card to whichever row happened to
+    have the lower id and serve a correct fixture that has forgotten its
+    competition. Measured on 2026-09-14, the three `esports_other × esports`
+    pairs are exactly that: `14977192`/`15170329`, `14978751`/`15169745` and
+    `14986830`/`15169671` carry no score, no `espn_id`, no provider id and no
+    venues on either side, and the catch-all row won all three on row id alone.
+    They now elect the row that names its league.
+
+    THE WORLD CUP PAIRS ARE THE CASE WHERE THIS CRITERION CORRECTLY DOES NOT
+    FIRE, and they are worth recording so nobody promotes it later. In
+    `15168069`/`14900527` (AUS v TUR) and `15168074`/`14900526` (CAN v BIH) the
+    `soccer_other` row is the one holding a Polymarket price and the
+    `soccer_fifa_world_cup` row has no venues at all, so source count decides
+    one rung higher and the catch-all row survives. That is the ordering
+    working: a reader keeps the number and loses a label, never the reverse.
+
+    It cannot reach any OTHER group, and that is provable rather than hoped
+    for: before this pass every member of a group shares element 0 of the
+    strict key, which is `league_identity(sport_key)`; `sports.key` is UNIQUE
+    and an unmapped key is its own identity, so two rows can share an identity
+    while spelling their keys differently only through `SPORT_LEAGUE_MAP` —
+    and `aussierules_other` is the ONLY catch-all that map rewrites, with no
+    non-catch-all key sharing its value. So a pre-existing group is all
+    catch-all or none, the criterion ties, and nothing moves.
+
+    THE SECOND CALLER WAS CHECKED, NOT ASSUMED. This function is not private to
+    the fold: `tasks/reconcile_shared_fixture_ids.py` elects a canonical row
+    with it and that task COMMITS, so a new tuple element there is a write-path
+    change rather than a serve-time one. Measured on production 2026-09-14 —
+    of every group of rows sharing a `statpal_fixture_id`, the number holding
+    both a `*_other` key and a real-league key is ZERO, so the criterion cannot
+    reach a tag that task writes. Were such a group ever to appear, this points
+    the same way there as here: the canonical row is the one that names its
+    league.
+
+    A row whose `sport` a caller did not load reads as naming its league, which
+    is the harmless answer rather than the correct-in-principle one: the only
+    way it meets a row we CAN see is inside a pre-existing group, where both
+    share a `sport_id` and therefore the same league, so serving the unseen row
+    instead serves a card with an identical label.
+
+    It is placed BELOW source count deliberately. Everything above it is
+    something a reader loses outright — a score, an anchor, a venue's price —
+    whereas this only decides which of two equally-informative rows gets to
+    keep its league label.
     """
     home_score = getattr(event, "home_score", None)
     away_score = getattr(event, "away_score", None)
     has_score = home_score is not None or away_score is not None
+    names_league = _catchall_sport_prefix(loaded_sport_key(event)) is None
     return (
         1 if has_score else 0,
         1 if getattr(event, "espn_id", None) else 0,
         1 if getattr(event, "external_id", None) else 0,
         _source_count(event),
+        1 if names_league else 0,
         -(getattr(event, "id", 0) or 0),
     )
 
@@ -489,6 +554,7 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
 
     groups: dict[tuple, list] = {}
     unkeyed: list = []
+    row_identities: dict = {}
 
     # Gotcha #42 — one bad item must never wipe a scoring pass. This runs on the
     # `/api/feed` hot path above every other stage, so a single row with a
@@ -509,6 +575,11 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
             unkeyed.append(event)
             continue
         groups.setdefault(key, []).append(event)
+        # Elements 1–3 — WHO and WHEN, with no league in them. Kept here so the
+        # catch-all pass below can ask "same fixture?" without squashing every
+        # club name on the page a second time. Keyed on the PYTHON object for
+        # the reason `keep` is: two hydrated rows can share a primary key.
+        row_identities[id(event)] = key[1:]
 
     # #5918 — the strict key has now grouped every pair that SPELLS its clubs the
     # same way. The soccer pass below is the only thing that can reach a pair
@@ -519,6 +590,15 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
     except Exception:  # noqa: BLE001 — gotcha #42; the strict groups are today's
         logger.exception("twin fold: soccer name merge failed; serving strict groups")
         grouped = list(groups.values())
+
+    # #2866 rung two — the strict key and the soccer pass have both had their
+    # say, and a `*_other` row whose league is simply unmapped is still sitting
+    # beside its twin. This unions whole clusters and never splits one, so on a
+    # failure the groups above are exactly what a reader gets today.
+    try:
+        grouped = _merge_catchall_leagues(grouped, row_identities)
+    except Exception:  # noqa: BLE001 — gotcha #42; the league-keyed groups stand
+        logger.exception("twin fold: catch-all league merge failed; serving groups")
 
     # Keyed on the PYTHON object, not on `.id`: the fold must survive a caller
     # that hands it two hydrated rows carrying the same primary key, and must
@@ -640,6 +720,234 @@ def _merge_soccer_name_variants(groups: dict[tuple, list]) -> list[list]:
             out[position[target]].extend(members)
             continue
         position[target] = len(out)
+        out.append(list(members))
+    return out
+
+
+_CATCHALL_SUFFIX = "_other"
+
+
+def _catchall_sport_prefix(sport_key: Optional[str]) -> Optional[str]:
+    """The SPORT behind a `*_other` catch-all key, or ``None`` for a real league.
+
+    `soccer_other` → `soccer`, `americanfootball_other` → `americanfootball`.
+    The suffix is stripped rather than the key split on its first `_` — the two
+    agree on every key in the table today, since no sport name contains an
+    underscore, but stripping is the exact inverse of how the key is formed and
+    so cannot start disagreeing when one does.
+
+    The returned value is the prefix the MATCHER already scopes candidates with
+    (`event.sport.key.startswith(sport_prefix)` in `_score_candidates`), and
+    `sport_keys.py` carries the reason it is the bare sport: `soccer_other` is
+    itself a real key with 4,752 production events, so using it as a prefix
+    rejects every competition that is not it.
+    """
+    if not sport_key or not sport_key.endswith(_CATCHALL_SUFFIX):
+        return None
+    return sport_key[: -len(_CATCHALL_SUFFIX)]
+
+
+def _merge_catchall_leagues(clusters: list[list], identities: dict) -> list[list]:
+    """Fold a `*_other` group into the real league naming the same fixture. #2866.
+
+    THE SHAPE, PHOTOGRAPHED ON PRODUCTION 2026-09-14 03:44Z AT 390px. Ajax v
+    Willem II on 2026-09-15 was two cards on `/api/events/search` — `15297733`
+    keyed `soccer_netherlands_eredivisie`, priced 91/9, and `15307699` keyed
+    `soccer_other` saying "No price yet". Toluca v Santos Laguna on 2026-09-21
+    is the same shape (`15312342` × `15307702`). Both survive every other guard
+    in this file: after #5905's recovery the two rows agree to the MINUTE and
+    their club names are byte-identical, so elements 1–3 of the strict key
+    already match and element 0 alone keeps them apart.
+
+    `league_identity` — rung one of #2866, which closed the 47 NFL preseason
+    pairs — cannot reach these and it is worth saying why, because the obvious
+    reading is that it should. Its own docstring promises an unmapped key falls
+    back to ITSELF so that it never splits a group, and neither `soccer_other`
+    nor `soccer_netherlands_eredivisie` is in `SPORT_LEAGUE_MAP`: both map to
+    themselves and stay two leagues. Measured, not assumed —
+    `soccer_other → soccer_other`, `soccer_netherlands_eredivisie →
+    soccer_netherlands_eredivisie` (authority/197). `league_family_identity`
+    answers identically. Rung one is right and it is not sufficient.
+
+    WHY A CATCH-ALL MAY BE FOLDED AT ALL. A `*_other` row makes no claim about
+    which competition it is in — the key is where an unmapped Kalshi series
+    lands. The row it is being folded into does make that claim, and the two
+    agree on both clubs and on the minute. One club cannot play two fixtures in
+    one minute, so same sport + same clubs + same minute is one game.
+
+    🔴 THE SAME-SPORT GUARD IS THE WHOLE LICENCE AND IT IS LOAD-BEARING, NOT A
+    RESERVATION. Pairs sharing squashed clubs and the minute across two
+    `sport_id`s where exactly one side is a catch-all number 73 in a 90d/30d
+    window — and 65 of them are CROSS-SPORT: 59 `baseball_other × esports`, 5
+    `americanfootball_other × esports`, 1 `basketball_other × baseball_npb`.
+    Those are a classification defect somebody else owns, they are emphatically
+    not one fixture each, and without the prefix test this pass would fold every
+    one of them onto a single card. The prefix test is the only thing standing
+    between this fold and all 65.
+
+    THE ENTIRE POPULATION IT ACTS ON, MEASURED ALL-TIME AND ROW BY ROW, IS 9
+    FIXTURES — every one of them verified two rows of one game:
+
+        soccer_other × soccer_mexico_ligamx            2   Toluca v Santos,
+                                                           América v Guadalajara
+        soccer_other × soccer_fifa_world_cup           2   AUS v TUR, CAN v BIH
+        soccer_other × soccer_netherlands_eredivisie   1   Ajax v Willem II
+        soccer_other × soccer_korea_kleague1           1   Daejeon v Pohang
+        esports_other × esports                        3
+        baseball / tennis / basketball / american
+        football / cricket / rugby / icehockey / mma
+        / motorsport / aussierules / golf, all time    0
+
+    Both objective false-fold controls are clean over all 9: no pair holds two
+    different scorelines and no pair holds two different `espn_id`s — either
+    would mean two real games merged onto one card. Every pair is exactly two
+    rows.
+
+    TWO WAYS A CENSUS OF THIS SHAPE LIES, BOTH OF WHICH BIT THIS ONE BEFORE THE
+    NUMBER ABOVE SETTLED. Postgres has no `unaccent` here, so a SQL squash that
+    only strips `[^a-z0-9]` turns `América` into `amrica` and silently drops the
+    Liga MX clásico this pass folds — the count read 8 until `translate()` was
+    added, and the DRIVEN run over the real rows is what caught it. And the
+    Kalshi three-hour correction is SOCCER-ONLY
+    (`kalshi_occurrence_start._soccer` gates it), so applying it to every sport
+    in the census manufactured 3 `tennis_other × tennis_atp` pairs that the code
+    can never see; on the clock the fold actually uses, tennis is 0.
+
+    THE MEN'S/WOMEN'S CLASS IS THE ONE THAT WOULD BREAK THIS, and it is excluded
+    by construction rather than by luck. `cricket_the_hundred` and
+    `cricket_the_hundred_womens` field clubs of the SAME NAME and 19 such pairs
+    exist — but neither key is a catch-all, so requiring exactly one side to be
+    `*_other` never admits them. Measured for the residual case (a women's
+    fixture landing in `cricket_other` beside its men's counterpart): zero
+    cricket pairs of this shape have ever existed.
+
+    AMBIGUITY IS REFUSED WHOLE, the way :func:`_name_clusters` refuses a
+    non-clique. If one fixture identity is claimed by two DIFFERENT real-league
+    groups, the catch-all row cannot say which it belongs to and nothing merges
+    — two cards, today's behaviour, rather than a guess.
+
+    Runs AFTER :func:`_merge_soccer_name_variants` and on its output, so it can
+    neither weaken nor reorder that pass: #5918, #5964 and #6007 decide first
+    and this only ever unions whole clusters they have already settled.
+
+    ``identities`` is ``{id(row): key[1:]}`` — elements 1–3 of the strict key,
+    handed in rather than recomputed. Recomputing them here is the obvious way
+    to write this and it costs a second `_squash` of both club names for every
+    row on the page (`strip_diacritics` plus a regex, uncached): +5ms on a
+    1,554-row soccer page, for an answer :func:`twin_fold_key` had already
+    worked out. Every row in ``clusters`` has an entry, because a row the key
+    refused never reaches a group at all.
+    """
+    catchall_at: dict[tuple, list[tuple[int, str]]] = {}
+    league_at: dict[tuple, list[tuple[int, str]]] = {}
+
+    # One key per `sport_id`, resolved once — the same shape as
+    # `_league_identities` and for the same two reasons. Correctness: two rows
+    # of one sport can never disagree about whether their key is a catch-all.
+    # Cost: `loaded_sport_key` runs a SQLAlchemy `inspect()` behind a
+    # try/except, and asking it per ROW rather than per SPORT put +8ms on a
+    # 1,554-row page; per sport it is ~40 calls and the page pays +0.4ms.
+    sport_keys: dict = {}
+    for members in clusters:
+        for member in members:
+            sport_id = getattr(member, "sport_id", None)
+            if sport_id is None or sport_id in sport_keys:
+                continue
+            key = loaded_sport_key(member)
+            if key:
+                sport_keys[sport_id] = key
+
+    for index, members in enumerate(clusters):
+        for member in members:
+            identity = identities.get(id(member))
+            if identity is None:
+                continue
+            sport_key = sport_keys.get(getattr(member, "sport_id", None))
+            if not sport_key:
+                # The caller did not load `Event.sport`. This pass reads the
+                # raw key rather than the key's identity — `aussierules_other`
+                # is the one catch-all `SPORT_LEAGUE_MAP` rewrites — so with no
+                # key it has nothing it is licensed to say (gotcha #42).
+                continue
+            prefix = _catchall_sport_prefix(sport_key)
+            if prefix is None:
+                league_at.setdefault(identity, []).append((index, sport_key))
+            else:
+                catchall_at.setdefault(identity, []).append((index, prefix))
+
+    merges: list[tuple[int, int]] = []
+    for identity, catchall_entries in catchall_at.items():
+        league_entries = league_at.get(identity, ())
+        targets = {index for index, _ in league_entries}
+        if len(targets) != 1:
+            if targets:
+                logger.info(
+                    "twin fold: refused an ambiguous catch-all fixture %s "
+                    "claimed by %d leagues",
+                    identity,
+                    len(targets),
+                )
+            continue
+        target = next(iter(targets))
+        target_keys = {sport_key for index, sport_key in league_entries}
+        for index, prefix in catchall_entries:
+            if index == target:
+                continue  # one cluster already holds both sides
+            if all(key.startswith(prefix) for key in target_keys):
+                merges.append((index, target))
+
+    # A catch-all cluster that would land on TWO different league clusters is
+    # refused whole, the same way an ambiguous identity is above. It is the only
+    # path by which this pass could put two REAL leagues on one card: a cluster
+    # the soccer name pass built spans more than one fixture identity (two
+    # spellings, or two minutes inside the drift bound), and each identity finds
+    # its own league twin in a different cluster — union-find would then join
+    # all three. Measured zero in the whole 9-fixture population, where every
+    # group is exactly two rows; refused anyway, because the docstring's claim
+    # that two real leagues never merge should be true by construction rather
+    # than by the population happening to be small.
+    targets_per_source: dict[int, set] = {}
+    for source, target in merges:
+        targets_per_source.setdefault(source, set()).add(target)
+    for source, found in targets_per_source.items():
+        if len(found) > 1:
+            logger.info(
+                "twin fold: refused a catch-all cluster reaching %d leagues",
+                len(found),
+            )
+    merges = [
+        (source, target)
+        for source, target in merges
+        if len(targets_per_source[source]) == 1
+    ]
+
+    if not merges:
+        return clusters
+
+    parent = list(range(len(clusters)))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    for source, target in merges:
+        left, right = find(source), find(target)
+        if left != right:
+            # The EARLIER cluster is always the root, so a merged cluster takes
+            # the position of its earliest member — the same ordering rule
+            # `_merge_soccer_name_variants` states.
+            parent[max(left, right)] = min(left, right)
+
+    out: list[list] = []
+    position: dict[int, int] = {}
+    for index, members in enumerate(clusters):
+        root = find(index)
+        if root in position:
+            out[position[root]].extend(members)
+            continue
+        position[root] = len(out)
         out.append(list(members))
     return out
 
