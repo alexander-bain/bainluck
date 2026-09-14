@@ -5,7 +5,10 @@ with 53 of 128 units banked. Two facts collided:
 
 * the method history (``docs/calibration/METHODOLOGY-LEDGER.md``) is a REPO file —
   merging it establishes no reader-visible disclosure at all. What a reader sees is
-  the corrections panel, fed by :data:`CALIBRATION_CORRECTIONS` in the payload; and
+  the corrections panel, fed by :data:`CALIBRATION_CORRECTIONS` in the payload — and
+  on the WEB that panel prints the date, the title and the row count only, because
+  #4067 / CERT-2295 took the server's paragraph off the page (the app still prints
+  it). So the title has to carry the change by itself; and
 * ``precompute_calibration.py`` is ruling-009-frozen while a bank is climbing,
   because an edit that moves :func:`_main_input_fingerprint` discards every banked
   unit and costs another dark day.
@@ -82,6 +85,35 @@ class TestDisclosureIsFreeButNotUnwatched:
             "population upper bound, and this panel states measured counts or "
             "nothing — the same rule the method history's 'what it affected' row "
             "is holding to."
+        )
+
+    def test_the_title_carries_the_change_because_the_web_prints_nothing_else(
+        self,
+    ) -> None:
+        """On the web the title IS the disclosure; ``description`` never renders.
+
+        #4067 / CERT-2295 removed this panel's server prose from
+        bainluck.com/calibration — the page renders the date, the title and the
+        row count, and a jest suite renders the whole page to keep it that way
+        (``supplierWordsFromCalibrationPayloadDoNotReachRenderedPage4067``). The
+        app is the only surface that prints ``description``. This row also
+        carries no count, so for a web reader the title is the entire message:
+        it has to say what changed, not just name the class it changed.
+
+        The channel half of this claim — the title reaches a rendered web page
+        and the paragraph does not — is asserted against real markup in
+        ``frontend/__tests__/components/d112DisclosureReachesAWebReader997.test.tsx``;
+        this arm is the content half.
+        """
+        (row,) = [c for c in pc.CALIBRATION_CORRECTIONS if c["date"] == "2026-09-13"]
+        title = row["title"].lower()
+
+        assert "scored" in title, (
+            "The title does not say what changed. A web reader sees this row as "
+            "a date and this one line — no paragraph, and no row count on this "
+            "row — so a title that only names the affected markets leaves the "
+            "method change undisclosed on the surface most people read. Say the "
+            "new state in the title; the paragraph is for the app and the API."
         )
 
     def test_the_disclosure_speaks_to_a_reader_not_to_a_reviewer(self) -> None:

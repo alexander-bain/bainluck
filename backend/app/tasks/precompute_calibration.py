@@ -1135,7 +1135,14 @@ CALIBRATION_CORRECTIONS = [
     },
     {
         "date": "2026-09-13",
-        "title": "The one-question markets we were throwing away",
+        # THE TITLE IS THE WHOLE DISCLOSURE ON THE WEB. #4067 / CERT-2295 took
+        # this panel's server prose OFF the page — bainluck.com/calibration
+        # renders the date, the title and the row count and nothing else, and a
+        # guard suite keeps it that way. Only the app prints `description`. So a
+        # title that merely NAMES the class ("the one-question markets we were
+        # throwing away") discloses nothing to a web reader: it has to say what
+        # changed on its own.
+        "title": "The one-question markets we were throwing away are now scored",
         # D112 (#997, CAL-P1190). `rows` stays None on purpose: the only number
         # available before the first rebuild under the new rule is a population
         # upper bound (~3,046), and this panel states measured published counts
