@@ -642,7 +642,22 @@ async def test_delete_me_unauthenticated(client):
 
 @pytest.mark.asyncio
 async def test_delete_me_authenticated(client, mock_db):
-    """DELETE /me should delete user and return status."""
+    """DELETE /me returns the deleted status for an authenticated caller.
+
+    This is a CONTRACT test and nothing more. It used to assert
+    ``mock_db.delete.assert_called_once_with(user)``, which pinned the one-line
+    ORM delete that could not actually delete an account: three relationships
+    on `User` declare no delete cascade, so the ORM NULLed a NOT NULL
+    ``user_id``, and four foreign keys to ``users.id`` are NO ACTION, so
+    PostgreSQL refused the DELETE. This assertion was green throughout (#678,
+    App Store Guideline 5.1.1(v)) because a mock session records a call and
+    returns.
+
+    Whether the rows actually go is therefore NOT asserted here and cannot be —
+    it is gated against real PostgreSQL in
+    `tests/integration/test_account_deletion_678_pg.py`, and the coverage of
+    the tables involved in `tests/test_account_deletion_678.py`.
+    """
     from app.main import app
 
     user = _make_user()
@@ -655,6 +670,8 @@ async def test_delete_me_authenticated(client, mock_db):
         resp = await client.delete("/api/auth/me")
         assert resp.status_code == 200
         assert resp.json() == {"status": "deleted"}
-        mock_db.delete.assert_called_once_with(user)
+        # Statements were issued rather than the handler returning a cheerful
+        # status having done nothing at all.
+        assert mock_db.execute.await_count > 0
     finally:
         app.dependency_overrides.pop(get_current_user, None)

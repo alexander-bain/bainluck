@@ -33,6 +33,15 @@ struct PreferencesView: View {
     @State private var showOnboarding = false
     @State private var showDeleteConfirmation = false
     @State private var isDeletingAccount = false
+    /// Set when deletion SUCCEEDS. The reader is told in words that the
+    /// account is gone before this screen goes away — a silent dismiss is
+    /// indistinguishable from a tap that did nothing, and App Review has to be
+    /// able to see the flow complete (#678).
+    @State private var showDeletionComplete = false
+    /// Set when deletion FAILS. Nil means no failure to report. This used to
+    /// be swallowed: the catch reset the spinner and said nothing, so a
+    /// server-side failure looked exactly like a successful no-op.
+    @State private var deletionErrorMessage: String?
     /// Mirrors `TelemetryConsent` so the toggle re-renders on change. The
     /// authority remains the source of truth — this is a view cache, seeded in
     /// `onAppear`, never the thing that decides.
@@ -78,6 +87,25 @@ struct PreferencesView: View {
                 Task { await viewModel.load() }
                 Task { await authManager.refreshProfile() }
             }
+        }
+        // Both alerts hang off the whole screen, not off the Delete Account
+        // button: deleting flips `isAuthenticated`, which removes that button
+        // from the hierarchy, and an alert attached to it would go with it.
+        .alert("Account Deleted", isPresented: $showDeletionComplete) {
+            Button("OK") { dismiss() }
+        } message: {
+            Text("Your account and all associated data have been permanently deleted.")
+        }
+        .alert(
+            "Couldn't Delete Account",
+            isPresented: Binding(
+                get: { deletionErrorMessage != nil },
+                set: { if !$0 { deletionErrorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { deletionErrorMessage = nil }
+        } message: {
+            Text(deletionErrorMessage ?? "")
         }
     }
 
@@ -631,6 +659,19 @@ struct PreferencesView: View {
             .buttonStyle(.plain)
             #endif
 
+            accountActions
+        }
+        .padding(.horizontal)
+    }
+
+    // MARK: - Account Actions
+
+    /// Sign Out and Delete Account. Both act on a session, so both are hidden
+    /// when there is no session — a signed-out reader was previously offered a
+    /// Delete Account button whose request could only ever come back 401.
+    @ViewBuilder
+    private var accountActions: some View {
+        if authManager.isAuthenticated {
             Button {
                 authManager.signOut()
                 dismiss()
@@ -694,12 +735,15 @@ struct PreferencesView: View {
             ) {
                 Button("Delete Account", role: .destructive) {
                     isDeletingAccount = true
+                    deletionErrorMessage = nil
                     Task {
                         do {
                             try await authManager.deleteAccount()
-                            dismiss()
+                            isDeletingAccount = false
+                            showDeletionComplete = true
                         } catch {
                             isDeletingAccount = false
+                            deletionErrorMessage = Self.deletionFailureMessage(for: error)
                         }
                     }
                 }
@@ -708,7 +752,24 @@ struct PreferencesView: View {
                 Text("This will permanently delete your account and all your data including predictions, favorites, and preferences. This action cannot be undone.")
             }
         }
-        .padding(.horizontal)
+    }
+
+    /// Turns a deletion failure into one sentence a reader can act on. Kept
+    /// deliberately short and jargon-free (D102): what happened, what to do.
+    static func deletionFailureMessage(for error: Error) -> String {
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .httpError(let statusCode, _) where statusCode == 401 || statusCode == 403:
+                return "Your session has expired. Sign out, sign back in, and try again."
+            case .networkError:
+                return "No connection. Check your network and try again."
+            case .httpError(let statusCode, _) where statusCode >= 500:
+                return "Something went wrong on our end. Your account has not been deleted. Try again in a moment."
+            default:
+                break
+            }
+        }
+        return "We couldn't delete your account. Your account has not been deleted. Try again in a moment."
     }
 
     // MARK: - Notifications
