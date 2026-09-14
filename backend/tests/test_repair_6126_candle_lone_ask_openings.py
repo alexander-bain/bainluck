@@ -54,7 +54,8 @@ def _leg(**kw):
         ts=None,
         opening_source=None,
         sum_refutes=False,
-        market_exclusive=True,
+        venue_exclusive=False,
+        price_exclusive=True,
         next_p=None,
         series_refutes=False,
     )
@@ -233,7 +234,7 @@ def test_series_only_real_099_trade_is_refused_without_venue_proof_6126():
     # ...and it stays refused in an exclusive market, so nobody can read the
     # refusal as gotcha #23 doing the work.
     assert repair.classify(
-        _leg(series_refutes=True, next_p=0.89, market_exclusive=True)
+        _leg(series_refutes=True, next_p=0.89, price_exclusive=True)
     ) is not None
 
     # THE NAMED WITNESS STILL REPAIRS. US Open Men's Singles (market 34277822,
@@ -247,7 +248,7 @@ def test_series_only_real_099_trade_is_refused_without_venue_proof_6126():
                 name=name,
                 market_id=34277822,
                 sum_refutes=True,
-                market_exclusive=True,
+                price_exclusive=True,
                 next_p=0.13,
                 series_refutes=True,
             )
@@ -265,13 +266,13 @@ def test_sum_is_the_only_authority_and_series_never_short_circuits_it():
     assert repair.classify(_leg(series_refutes=True, next_p=0.13)) is not None
     assert (
         repair.classify(
-            _leg(series_refutes=True, next_p=0.13, market_exclusive=False)
+            _leg(series_refutes=True, next_p=0.13, price_exclusive=False)
         )
         is not None
     ), "a non-exclusive market must not become repairable via SERIES"
     assert (
         repair.classify(
-            _leg(sum_refutes=True, market_exclusive=False, series_refutes=True,
+            _leg(sum_refutes=True, price_exclusive=False, series_refutes=True,
                  next_p=0.13)
         )
         is not None
@@ -284,10 +285,10 @@ def test_a_sum_refuted_leg_is_repaired_only_where_the_market_is_exclusive():
     Gotcha #23: a futures market can hold independent binaries that legitimately
     sum well over 100%. So SUM alone is not permission to write.
     """
-    assert classify_ok(_leg(sum_refutes=True, market_exclusive=True, next_p=0.95))
+    assert classify_ok(_leg(sum_refutes=True, price_exclusive=True, next_p=0.95))
 
     why = repair.classify(
-        _leg(sum_refutes=True, market_exclusive=False, next_p=0.95)
+        _leg(sum_refutes=True, price_exclusive=False, next_p=0.95)
     )
     assert why is not None and "gotcha #23" in why
 
@@ -326,14 +327,111 @@ def test_a_refusal_reason_is_a_stable_bucket_not_a_per_row_sentence():
 
 
 def test_a_market_with_no_current_prices_cannot_satisfy_the_sum_test():
-    """`market_exclusive` is NULL when the market has no priced outcomes.
+    """`price_exclusive` is NULL when the market has no priced outcomes.
 
     A NULL must not read as permission: SQL's `BETWEEN` yields NULL, not False,
-    and `if row.market_exclusive` on a NULL is falsey only by luck of the
+    and `row.price_exclusive` on a NULL is falsey only by luck of the
     driver. Pinned so a future refactor cannot turn "unknown" into "yes".
+
+    Both witnesses must be unknown/absent for the leg to be refused, which is
+    the point: `or` short-circuits, so a NULL price screen next to a TRUE venue
+    flag is a REPAIR and is covered by its own test below.
     """
-    why = repair.classify(_leg(sum_refutes=True, market_exclusive=None, next_p=0.95))
+    why = repair.classify(
+        _leg(sum_refutes=True, price_exclusive=None, venue_exclusive=False, next_p=0.95)
+    )
     assert why is not None, "an unknown exclusivity must refuse, not repair"
+
+
+# ---------------------------------------------------------------------------
+# The venue witness (#6126 rung 3)
+# ---------------------------------------------------------------------------
+
+
+def test_the_venue_flag_repairs_the_partitions_the_price_screen_is_blind_to():
+    """The 734 legs the price screen rejects BECAUSE of the defect it screens.
+
+    An untraded market's frozen 0.99 default book is also its current price, so
+    `sum(current_probability)` is enormous and the market screens out as "not
+    exclusive". The witness is the one a reader can open: `/futures/25927225`,
+    *Austrian Alpine Open presented by Kitzbühel Tirol Winner*
+    (`KXDPWORLDTOUR-AUAOPBKT26`), settled, 159 outcomes, current sum 2.76 — so
+    `price_exclusive` is FALSE — while Kalshi's own event payload says
+    `mutually_exclusive: true` (read at the venue 2026-09-14 12:10Z, with all 57
+    markets this arm admits — table in the cert body).
+
+    Photographed on production 12:25Z: the winner Kota Kaneko shows OPEN 12%,
+    the runner-up OPEN 19%, and Gregorio De Leo, Brandon Robinson-Thompson,
+    Alexander Levy, Austin Bautista, Jason Scrivener, Darius Van Driel and Fred
+    Biondi each read OPEN 99% beside "Lost · 0%". A tournament has ONE winner.
+
+    The market is deliberately NOT the widest one: 45 of the 57 already have
+    their whole opening column withheld by #5539's serve-time coherence rule,
+    so a leg count is not a reader count. See the module docstring.
+    """
+    assert classify_ok(
+        _leg(
+            name="Gregorio De Leo",
+            market_id=25927225,
+            sum_refutes=True,
+            venue_exclusive=True,
+            price_exclusive=False,
+        )
+    ), "the venue's own exclusivity flag must be an authority on its own"
+
+    # ...including where the market has no priced outcomes at all, which is the
+    # 8-leg / 4-market corner the price screen can only answer NULL for.
+    assert classify_ok(
+        _leg(sum_refutes=True, venue_exclusive=True, price_exclusive=None)
+    )
+
+
+def test_the_venue_flag_may_never_refuse_and_the_two_witnesses_are_or_not_and():
+    """The mutation this test exists to kill: `and` between the two witnesses.
+
+    Kalshi sets `mutually_exclusive: false` on plain partitions — `KXDJI`
+    price buckets, `KXTEMPAUSH` temperature buckets, and
+    `KXMLBINNINGTOTAL-...-8`, whose TWO outcomes sum to exactly 1.00 (all three
+    read FALSE at the venue 2026-09-14 12:10Z). The flag is therefore sound
+    only in the TRUE direction. An `and` would silently delete the 83 legs the
+    price arm carries — the arm CERT-2857 graded — and would read as a tidy-up.
+    """
+    assert classify_ok(
+        _leg(
+            name="Over 8.5",
+            market_id=1,
+            sum_refutes=True,
+            venue_exclusive=False,
+            price_exclusive=True,
+        )
+    ), "a venue FALSE may never veto a leg the price screen admits"
+
+    # And neither witness is permission on its own without SUM: a single leg at
+    # 0.99 in an exclusive market is just a favourite.
+    assert (
+        repair.classify(
+            _leg(sum_refutes=False, venue_exclusive=True, price_exclusive=True)
+        )
+        is not None
+    ), "exclusivity is a qualifier on SUM, never an authority by itself"
+
+
+def test_the_population_sql_carries_both_witnesses_under_the_names_classify_reads():
+    """A gate is only as wide as the row the query hands it.
+
+    `classify` reads `venue_exclusive` and `price_exclusive`. If the SELECT list
+    stops aliasing either one, every row raises `AttributeError` at apply time
+    rather than repairing — or, worse, a rename drifts and the arm silently
+    stops existing. Asserted against the shipped statement, and paired with the
+    NULL-safety of `IS TRUE` (a market row whose flag was never written is
+    NULL, and NULL must not read as exclusive).
+    """
+    sql = repair._POPULATION_SQL
+    assert "AS venue_exclusive" in sql and "AS price_exclusive" in sql
+    assert "b.mutually_exclusive IS TRUE" in sql, (
+        "`= true` would let a NULL flag through as unknown-is-yes"
+    )
+    assert "m.mutually_exclusive" in sql, "the band must carry the market flag"
 
 
 def classify_ok(row):

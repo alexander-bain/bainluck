@@ -65,8 +65,8 @@ Only the first band is this writer's. But "written by this rail" still is not
 on the fingerprint alone. ONE test, and only one, authorises a write:
 
   SUM    the leg shares its exact opening instant with another leg of the same
-         market, also at exactly 0.99, AND that market's outcomes sum to roughly
-         one. Two exclusive legs at 0.99 is 1.98, which is arithmetically
+         market, also at exactly 0.99, AND that market is mutually exclusive.
+         Two exclusive legs at 0.99 is 1.98, which is arithmetically
          impossible; up to 140 legs share one instant (138.6). This is the venue
          default applied field-wide, and it refutes itself on the row.
 
@@ -85,32 +85,90 @@ opening was bid 0 / no trade / ask 0.99 — a proof this script does not attempt
 and does not fake (see THE 127, below). `series_refutes` is still computed and
 still printed, as a reason a leg was refused. It never writes.
 
-Measured on production 2026-09-14 11:45Z, whole band, no sampling:
+Measured on production 2026-09-14 12:05Z, whole band, no sampling:
 
-    SUM + market sums to ~1   ->  REPAIRED                        219
-    SUM, market does not      ->  refused, gotcha #23           3,973
+    SUM + exclusive           ->  REPAIRED                        953
+    SUM, not exclusive        ->  refused, gotcha #23           3,239
     series only               ->  refused, CERT-2855              127
     nothing refutes it        ->  refused                          87
     ------------------------------------------------------------------
     band                                                        4,406
 
-THAT IS A MUCH SMALLER SHIP THAN THE FIRST PRESENTATION CLAIMED (4,315), AND THE
-SHIP STILL LANDS. The reader-visible defect is the settled US Open Men's Singles
-ladder, market 34277822: 48 outcomes, one winner, `sum(current_probability)`
-exactly 1.000, and its three 99% legs share one instant. It is SUM-backed under
-the strict gate and is repaired.
+953 IS STILL WELL SHORT OF THE 4,315 THE FIRST PRESENTATION CLAIMED, and it is
+reached by adding a second sound witness, never by widening a band. CERT-2857's
+version repaired 219; the venue witness below adds 734 and takes nothing away.
 
-WHY 3,973 LEGS SIT IN THE gotcha #23 BUCKET, WHICH IS NOT WHAT THAT BUCKET
-SOUNDS LIKE. The exclusivity proxy is `sum(current_probability) BETWEEN 0.85 AND
-1.25`, and on this population it is often defeated by the very defect it is
-screening — "Dow Jones price on Jul 28 at 2pm" is 80 mutually-exclusive buckets
-of which 73 STILL read 0.99 today, because the market was never traded and the
-frozen default book is also its current price (sum 72.27). Those legs are almost
-certainly this rail's, and this script still refuses them: the proxy cannot tell
-them from "Top 10 Finishers", where 141 independent binaries legitimately sum to
-18.28. A sounder exclusivity signal is real work and a widening of a gate a cert
-told this lane to keep — it is named here, measured, and deliberately NOT built
-in the same breath as the repair it would enlarge.
+WHAT A READER ACTUALLY SEES TODAY, COUNTED PAGE BY PAGE RATHER THAN LEG BY LEG.
+A stored 0.99 opening is only visible where the page prints it, and #5539's
+serve-time coherence rule (`app/utils/field_opening_coherence.py`) already
+withholds the WHOLE opening column from a mutually exclusive field whose
+openings sum past 3.0 at a mean of 0.4 or more — which is most of this
+population. Measured against the served payload of all 57 markets the venue arm
+admits (`GET /api/futures/{id}`, `openings_withheld`, 2026-09-14 12:20Z):
+
+    45 markets   openings ALREADY withheld — the repair restores a suppressed
+                 column rather than changing a number a reader can see today
+    12 markets   openings PUBLISHED, carrying 93 legs printing OPEN 99% NOW
+                 (3 of them are market 34277822, which CERT-2857 already fixes)
+
+So the venue arm's reader-visible increment today is 90 legs across 11 pages,
+and the honest headline is a page, not a leg count. `/futures/25927225`,
+*Austrian Alpine Open presented by Kitzbühel Tirol Winner*, settled: the winner
+Kota Kaneko shows OPEN 12% and the runner-up OPEN 19%, while Gregorio De Leo,
+Brandon Robinson-Thompson, Alexander Levy, Austin Bautista, Jason Scrivener,
+Darius Van Driel and Fred Biondi each read **OPEN 99% · Lost · 0%** — seven of
+them above the fold, 34 in the market. The original reader-visible defect, the
+settled US Open Men's Singles ladder (market 34277822: 48 outcomes, one winner,
+`sum(current_probability)` exactly 1.000, three 99% legs in one instant), is
+SUM-backed under both witnesses and stays repaired.
+
+THE 45 ARE NOT A SECOND SHIP AND ARE NOT CLAIMED AS ONE. Repairing them makes
+their fields coherent again, which is the condition #5539's rule withholds on,
+so the column should come back — but that is a consequence of another module's
+serve-time verdict, it is not asserted here, and it is not counted in any
+before/after this script prints. The widest of them is the KLM Open End of Round
+1 Leader ladder (market 30782643): 151 of 156 golfers carry a 0.99 opening, 140
+stamped in the same second, and a reader currently sees no opening column at all.
+
+EXCLUSIVITY HAS TWO WITNESSES, AND THE REASON IS THAT EACH IS BLIND WHERE THE
+OTHER SEES. This is what CERT-2857's version named as owed and did not build; it
+is built here, additively, on venue-read proof rather than on a wider band.
+
+  * PRICE (`price_exclusive`): the market's outcomes sum to ~1, i.e.
+    `sum(current_probability) BETWEEN 0.85 AND 1.25`. This is the arm CERT-2857
+    graded and it is unchanged. Its blind spot is that THE DEFECT IS AN INPUT TO
+    THE SCREEN: an untraded market's frozen 0.99 default book is also its
+    current price, so "Dow Jones price on Jul 28 at 2pm" — 80 mutually exclusive
+    buckets, 73 of them still reading 0.99 — sums to 72.27 and screens out as
+    "not exclusive". The rows the screen is most confident about rejecting are
+    the most obviously broken ones.
+  * VENUE (`venue_exclusive`): `futures_markets.mutually_exclusive`, which the
+    Kalshi ingest copies from `mutually_exclusive` on the venue's own event
+    (`tasks/kalshi.py`, `services/kalshi_api.py`). Price-independent, so the
+    frozen book cannot defeat it.
+
+SOUND WHEN TRUE, UNSOUND WHEN FALSE — WHICH IS WHY THE VENUE FLAG ONLY EVER ADDS.
+Kalshi sets it FALSE on plain partitions: `KXDJI-26JUL2316` (70 price buckets),
+`KXTEMPAUSH-26JUL0900` (10 temperature buckets) and
+`KXMLBINNINGTOTAL-26AUG211840STLPHI-8` (2 outcomes summing to 1.00) are all
+FALSE at the venue, read 2026-09-14 12:10Z. So the flag may never be used to
+REFUSE, and `OR` is the only shape it can take. In the TRUE direction it was
+read at the venue for every market this arm admits — not sampled: all 57
+markets / 870 legs were fetched from `GET /trade-api/v2/events/{ticker}`, and
+`mutually_exclusive` is explicitly present in 57/57 payloads and true in 57/57.
+The per-ticker table is in the cert body. Every one is a one-winner contract by
+its own title — round leaders, correct scores, champions, fastest lap, top
+artist, #1 ranked team.
+
+WHAT THE PRICE ARM STILL LETS THROUGH, SAID OUT LOUD. It admits 83 legs in 17
+markets the venue calls non-exclusive, and 16 of those 17 are real partitions
+the venue mislabels. The seventeenth is `KXNFLAWARDFIN-27DPOY` ("Defensive
+Player of the Year Finalists", 40 outcomes, currently summing to 0.95, 9 band
+legs) — genuinely multi-winner, admitted by arithmetic coincidence. It is a
+pre-existing false positive of the arm CERT-2857 graded, it is NOT inherited by
+the venue arm, and no gate is added for it here: the shape classifier records no
+`expected_winners > 1` anywhere in this band, so such a clause would be vacuous
+today and would be a guard that cannot fire.
 
 THE 127, AND WHY NO VENUE FETCH IS ATTEMPTED. Venue proof is not uniformly
 impossible: 59 of the 127 are past Kalshi's measured MARKET-data purge (gotcha
@@ -120,7 +178,7 @@ histories from a one-off dyno to enlarge a repair by 3% is not worth the write
 surface during launch week. They are refused, counted by name in the dry run,
 and recoverable later by anyone who wants to pay for the venue read.
 
-THE REFUSED COHORT IS THE POINT, NOT THE RESIDUE. 4,187 of 4,406 legs are left
+THE REFUSED COHORT IS THE POINT, NOT THE RESIDUE. 3,453 of 4,406 legs are left
 exactly as they are. An absent correction is a gap; a fabricated one is a lie a
 curve then grades.
 
@@ -206,7 +264,8 @@ TRADED_CONTROL_CANDLE = {"price": {"close_dollars": "0.9900"}}
 _POPULATION_SQL = """
 WITH band AS (
     SELECT o.id, o.market_id, o.name,
-           o.opening_probability, o.opening_captured_at AS ts, o.opening_source
+           o.opening_probability, o.opening_captured_at AS ts, o.opening_source,
+           m.mutually_exclusive
       FROM futures_outcomes o
       JOIN futures_markets m ON m.id = o.market_id
      WHERE m.source = 'kalshi'
@@ -235,7 +294,8 @@ SELECT b.id,
        b.ts,
        b.opening_source,
        (g.n > 1)                                         AS sum_refutes,
-       (e.cur_sum BETWEEN 0.85 AND 1.25)                 AS market_exclusive,
+       (b.mutually_exclusive IS TRUE)                    AS venue_exclusive,
+       (e.cur_sum BETWEEN 0.85 AND 1.25)                 AS price_exclusive,
        nxt.p                                             AS next_p,
        (nxt.p = 0.99 OR nxt.p < 0.90)                    AS series_refutes
   FROM band b
@@ -356,9 +416,19 @@ _REDUCER_CALLERS = (
 def classify(row):
     """None to REPAIR, or the reason this leg is refused.
 
-    SUM under exclusivity is the ONLY authority to write. `market_exclusive`
-    is NULL for a market with no priced outcomes, and `and` on a NULL is
-    falsey — unknown refuses, it does not pass.
+    SUM under exclusivity is the ONLY authority to write. Exclusivity now has
+    TWO independent witnesses and either one is enough, because each is blind
+    where the other sees (measured; see EXCLUSIVITY HAS TWO WITNESSES above):
+
+      * `venue_exclusive` — Kalshi's own `mutually_exclusive` on the event.
+        Price-independent, so the frozen default book cannot defeat it.
+        Sound when TRUE, unsound when FALSE, which is why it only ever adds.
+      * `price_exclusive` — the market's outcomes sum to ~1. Catches the
+        partitions Kalshi flags FALSE, and is the arm CERT-2857 graded.
+
+    Both are NULL-safe: `venue_exclusive` is `IS TRUE` in SQL, and
+    `price_exclusive` is NULL for a market with no priced outcomes, where `or`
+    on a NULL is still falsey — unknown refuses, it does not pass.
 
     `series_refutes` deliberately appears only as a refusal REASON below.
     Restoring it as an early `return None` is the defect CERT-2855 named:
@@ -366,10 +436,13 @@ def classify(row):
     default are identical in our data and the later price tells us only that
     the price moved.
     """
-    if row.sum_refutes and row.market_exclusive:
+    if row.sum_refutes and (row.venue_exclusive or row.price_exclusive):
         return None
     if row.sum_refutes:
-        return "sum-refuted leg in a market that does not sum to ~1 (gotcha #23)"
+        return (
+            "sum-refuted leg in a market the venue does not call mutually "
+            "exclusive and whose outcomes do not sum to ~1 (gotcha #23)"
+        )
     if row.series_refutes:
         return (
             "series-only leg — price movement does not refute a prior "
