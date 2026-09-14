@@ -10,6 +10,7 @@ import PinSyncEffect from "@/components/PinSyncEffect";
 import UserMenu from "@/components/UserMenu";
 import SWRProvider from "@/components/SWRProvider";
 import BottomNav from "@/components/BottomNav";
+import EmbedGate from "@/components/EmbedGate";
 import DesktopNav from "@/components/DesktopNav";
 import Footer from "@/components/Footer";
 import { BUILD_META_NAME, frontendCommitSha } from "@/lib/buildInfo";
@@ -150,8 +151,19 @@ export default function RootLayout({
         </Suspense>
         {/* Every CONSENT-GATED telemetry provider (GA/gtag.js, Web Vitals)
             mounts ONLY through the consent gate — see
-            components/Analytics/TelemetryGate.tsx. */}
-        <TelemetryGate />
+            components/Analytics/TelemetryGate.tsx.
+
+            #5914: and not at all inside the native About embed. `fallback={null}`
+            rather than the default, because this is the one wrap whose children
+            have a SIDE EFFECT — mounting the rail in the static shell and
+            unmounting it after hydration would already have loaded gtag.js and
+            set the cookie, which is the outcome codex's directive names as worse
+            than changing nothing. Deferring the mount to hydration costs nothing:
+            this is a client component that reads stored consent and could not
+            have decided anything earlier. */}
+        <EmbedGate fallback={null}>
+          <TelemetryGate />
+        </EmbedGate>
         {/* The two COOKIELESS Vercel providers are mounted OUTSIDE the gate,
             and that is the ruling (Alex D30 / 2026-09-01 for Speed Insights,
             D96 / 2026-09-08 for Analytics), not an oversight.
@@ -183,7 +195,11 @@ export default function RootLayout({
           <AuthProvider>
             <PinSyncEffect />
             <div className="min-h-screen flex flex-col bg-surface-deep">
-              {/* Header */}
+              {/* Header — #5914: absent inside the native About embed. The
+                  element native least wants a reviewer to tap is `UserMenu`,
+                  the "Sign in" button: it starts the WEBSITE's session inside
+                  a webview, unrelated to the app's Apple/Google auth. */}
+              <EmbedGate>
               <header className="bg-surface-card/80 backdrop-blur-lg border-b border-surface-border sticky top-0 z-50">
                 <div className="max-w-content mx-auto px-4 md:px-6 py-3">
                   <div className="flex items-center justify-between gap-4">
@@ -209,6 +225,7 @@ export default function RootLayout({
                   </div>
                 </div>
               </header>
+              </EmbedGate>
 
               {/* Main Content */}
               <main className="flex-1 pb-20 md:pb-0">
@@ -217,15 +234,30 @@ export default function RootLayout({
                 </div>
               </main>
 
-              {/* Site footer (all pages) */}
-              <Footer />
+              {/* Site footer (all pages) — #5914: an app screen has little use
+                  for a site footer, and native/168 left the call to ux. Gated
+                  with the rest: "one coherent page" means the reader reaches
+                  the end of the About story and stops, not that they land on a
+                  second copy of the site's navigation. */}
+              <EmbedGate>
+                <Footer />
+              </EmbedGate>
 
-              {/* Bottom Tab Nav (mobile only) */}
-              <BottomNav />
+              {/* Bottom Tab Nav (mobile only) — #5914: it draws directly above
+                  the NATIVE tab bar, and the two disagree about which tab the
+                  reader is on. */}
+              <EmbedGate>
+                <BottomNav />
+              </EmbedGate>
             </div>
 
-            {/* Consent Banner - shows if user hasn't made a choice */}
-            <ConsentBanner />
+            {/* Consent Banner - shows if user hasn't made a choice.
+                #5914: gated together with `TelemetryGate` above and never
+                apart from it — a hidden banner over a live rail is the failure
+                this pairing exists to make impossible. */}
+            <EmbedGate>
+              <ConsentBanner />
+            </EmbedGate>
           </AuthProvider>
         </AnalyticsProvider>
         </SWRProvider>

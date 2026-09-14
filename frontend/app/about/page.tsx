@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import Link from "next/link";
+import EmbedAwareLink from "@/components/EmbedAwareLink";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { fetchCalibration } from "@/lib/api";
 import {
@@ -202,7 +202,7 @@ export default function AboutPage() {
           </div>
 
           {/* public calibration proof */}
-          <Link
+          <EmbedAwareLink
             href="/calibration"
             className="block bg-surface-card rounded-2xl p-6 border border-surface-border shadow-card hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-300 group"
           >
@@ -243,7 +243,7 @@ export default function AboutPage() {
                 </span>
               </div>
             </div>
-          </Link>
+          </EmbedAwareLink>
         </section>
       </RevealSection>
 
@@ -310,9 +310,9 @@ export default function AboutPage() {
                 bugs@bainluck.com
               </a>{" "}
               &middot;{" "}
-              <Link href="/privacy" className="text-accent-brand hover:underline">
+              <EmbedAwareLink href="/privacy" className="text-accent-brand hover:underline">
                 Privacy Policy
-              </Link>
+              </EmbedAwareLink>
             </p>
           </div>
         </section>
@@ -321,12 +321,12 @@ export default function AboutPage() {
       {/* ── CTA ── */}
       <RevealSection>
         <div className="text-center pt-2 pb-12">
-          <Link
+          <EmbedAwareLink
             href="/discover"
             className="inline-flex items-center gap-2.5 bg-text-primary text-surface-deep px-8 py-3.5 rounded-full text-body-strong hover:bg-text-primary/90 hover:shadow-glow hover:scale-[1.02] transition-all duration-300"
           >
             🍀 Start Exploring
-          </Link>
+          </EmbedAwareLink>
         </div>
       </RevealSection>
     </div>
