@@ -958,6 +958,53 @@ def build_issue_title(cohort: dict) -> str:
     return title[:256]
 
 
+def build_reobservation_comment(cohort: dict) -> str:
+    """The recurrence comment on an ALREADY-OPEN cohort issue.
+
+    #1911 made the filed BODY carry the raw and published numbers together,
+    "always with their n", and left this path alone. So the body of a
+    long-open issue states the pair once, on the day it was filed, and every
+    recurrence after that restated the RAW number by itself — which is the
+    precise line #1911 deleted, reintroduced monthly.
+
+    #1145 is the specimen. Its body predates #1911 and reads "n-weighted MCE:
+    17.42pp"; the 2026-08-31 and 2026-09-07 recurrences read 18.96pp and
+    19.04pp. A triager reading the newest comment sees a P1 whose number is
+    climbing and cannot tell whether users see any of it — while the sweep
+    that wrote the comment had already computed that they do (published
+    18.35pp over n=4,445, disposition ``real_break``) and dropped it on the
+    floor. The dict passed here has carried those fields since #1911; nothing
+    needed measuring to print them.
+
+    The disposition rides every recurrence rather than only the alarming ones:
+    a cohort whose raw number is flat while its published number moved is the
+    thing a reader most needs to see, and it is invisible in a one-number line.
+    """
+    fp = cohort["fingerprint"]
+    published_mce = cohort.get("published_mce")
+    if published_mce is not None:
+        published_line = (
+            f"- **PUBLISHED (what users see):** {published_mce:.2f}pp over "
+            f"{cohort.get('published_n', 0)} outcomes surviving the shipped exclusions"
+        )
+    else:
+        # Mirrors the body: an ABSENT number, never a flattering zero.
+        published_line = (
+            f"- **PUBLISHED (what users see):** not computable — only "
+            f"{cohort.get('published_n', 0)} outcomes survive the shipped exclusions "
+            f"(floor {PUBLISHED_MIN_N}). An ABSENT number, not a clean one."
+        )
+    return "\n".join([
+        f"Sentinel re-observed this cohort (fingerprint `{fp}`). Still open.",
+        "",
+        f"- **RAW (un-excluded):** {cohort['mce']:.2f}pp over "
+        f"{cohort['total_n']} resolved outcomes",
+        published_line,
+        f"- **Disposition:** `{cohort.get('disposition', DISP_PUBLISHED_UNKNOWN)}` — "
+        f"{cohort.get('disposition_why', 'not evaluated')}",
+    ])
+
+
 def build_issue_body(cohort: dict, explained_by: str | None, coverage: float) -> str:
     dims = cohort["dims"]
     fp = cohort["fingerprint"]
@@ -1151,11 +1198,7 @@ def file_cohort_issue(cohort: dict, explained_by: str | None, coverage: float) -
     existing = _find_open_issue_by_fingerprint(fp)
     if existing:
         try:
-            comment_on_issue(
-                existing,
-                f"Sentinel re-observed this cohort: MCE {cohort['mce']:.2f}pp, "
-                f"n={cohort['total_n']} (fingerprint `{fp}`). Still open.",
-            )
+            comment_on_issue(existing, build_reobservation_comment(cohort))
         except Exception as exc:
             logger.warning("Sentinel comment failed on #%d: %s", existing, exc)
         return {"fingerprint": fp, "action": "commented", "issue": existing}
