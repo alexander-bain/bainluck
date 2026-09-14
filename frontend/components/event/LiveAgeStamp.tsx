@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 
 import { STALE_MS } from '@/components/event/FreshnessChip';
 import type { HeroFact } from '@/lib/event/heroFreshness';
+import { formatAgeFromSeconds } from '@/lib/sourceAge';
 
 /**
  * live/034 S2 — "live · Ns ago".
@@ -146,7 +147,27 @@ export default function LiveAgeStamp({
   // says. OR rather than a replacement: an old number is still old when nobody
   // withdrew anything.
   const stale = claimWithdrawn || heroFactIsStale(age, oldestFact);
-  const label = age < 60 ? `${age}s ago` : `${Math.floor(age / 60)}m ago`;
+  // #5761 — MINUTES WERE UNBOUNDED, SO THE BADGE COUNTED PAST THE POINT OF
+  // MEANING. `1166m ago` on a 19-hour-old MiLB page, `818m ago` on a suspended
+  // Serie A one: nobody reads 1,166 minutes as "yesterday", and the string grows
+  // without limit, so a week-old page said `10000m ago`.
+  //
+  // The reach is not a tail. This badge draws for as long as the page exists,
+  // and ~13,500 rows sit `suspended` in production with several hundred joining
+  // them daily — every one of them renders an hours-old stamp.
+  //
+  // The rungs above a minute are NOT restated here; they are
+  // `formatAgeFromSeconds`, the same ladder `formatSourceAge` climbs for the
+  // bookmaker column and the models page. A copy of the thresholds in this file
+  // is how two age marks on one page come to disagree about the same instant —
+  // the argument `heroFactIsStale` was extracted to make, applied to the wording
+  // rather than the boundary.
+  //
+  // The sub-minute branch stays local and stays in SECONDS. It is the whole
+  // point of a live badge (`live · 8s ago`), and it is the one place where the
+  // shared ladder's "just now" would delete the signal rather than round it: the
+  // age going UP is how this component reports that the stream has gone quiet.
+  const label = age < 60 ? `${age}s ago` : formatAgeFromSeconds(age);
 
   return (
     <span
