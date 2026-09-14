@@ -75,6 +75,59 @@ _cache: dict = {"data": None, "timestamp": 0, "source": None}
 _staged_cache: dict = {"data": None, "timestamp": 0.0}
 STAGED_DISCLOSURE_TTL_S = 120.0
 
+#: CAL-P1191 (#997) — WHAT A REFUSAL IS ALLOWED TO PROMISE DEPENDS ON WHICH
+#: REFUSAL IT IS. The 503 used to carry one sentence and one number for both
+#: reasons: *"It is rebuilt hourly — please retry shortly"* with
+#: ``Retry-After: 30``. That is true of ``route_budget_exhausted`` — this
+#: request ran out of its own time budget, a snapshot may well exist, and
+#: coming back in half a minute is exactly the right advice. It is false of
+#: ``no_trustworthy_snapshot``, which is reached only after the over-age
+#: durable tier has already declined: NOTHING servable exists at ANY age, so
+#: the wait is however long the next full rebuild takes to publish — hours,
+#: after a population-version rollover. Measured on production 2026-09-13: the
+#: page told a reader to retry in 30 seconds for the fourth consecutive hour
+#: while the rebuild banked 65 of 128 units.
+#:
+#: So the transient reason keeps the short promise and every other reason gets
+#: copy that promises no timing at all. The DEFAULT is the cautious half on
+#: purpose — a reason added later that nobody maps here says "check back
+#: later", which is never a lie, rather than inheriting "shortly", which is the
+#: lie this exists to stop. 900 s is not a publication forecast: it is the
+#: smallest interval at which advising a machine client to come back is not
+#: itself misleading, and it keeps a well-behaved crawler from re-asking 120
+#: times an hour for a page that cannot change that fast. The reader's own
+#: "Try again" button is unaffected — it is a page reload, not this header.
+#:
+#: THE SENTENCE STOPS AT "not ready yet" BECAUSE RULING 142 SAYS SO — a surface
+#: states what it IS, not what it WILL be. The first draft ended "Please check
+#: back later" and `frontend/lib/copyBans.ts` refused it (`check-back`). That
+#: refusal only fired on the page's own FALLBACK literal, which is compiled
+#: into the bundle the scan reads; the sentence here is composed at runtime and
+#: reaches the same reader's screen where no bundle scan can see it. So the
+#: guard suite re-states those phrases on this side, and the button below the
+#: sentence is what tells a reader they may come back.
+UNAVAILABLE_ADVICE: dict = {
+    "route_budget_exhausted": (
+        30,
+        "Calibration data is temporarily unavailable. Please retry shortly.",
+    ),
+}
+UNAVAILABLE_ADVICE_DEFAULT = (
+    900,
+    "Calibration data is being rebuilt and is not ready yet.",
+)
+
+
+def unavailable_advice(reason: str) -> tuple:
+    """``(retry_after_s, message)`` for a refusal reason.
+
+    A named function rather than an inline ``.get`` so the unknown-reason
+    branch — the one a future reason falls into, and the one no end-to-end
+    request can reach while only two call sites exist — is reachable by a test
+    without re-implementing the lookup in it.
+    """
+    return UNAVAILABLE_ADVICE.get(reason, UNAVAILABLE_ADVICE_DEFAULT)
+
 
 def main_artifact_fingerprint(raw: Any) -> Optional[str]:
     """Identity of a published ``main`` artifact, from its RAW bytes.
@@ -1290,6 +1343,10 @@ async def public_calibration(
         point is that the page must not go dark. New readers use the top level;
         the mirror is compatibility, not a second contract.
         """
+        # CAL-P1191 (#997): the advice is a property of the reason, not of the
+        # status code. See ``UNAVAILABLE_ADVICE`` for why only the transient
+        # reason is allowed to say "shortly".
+        retry_after_s, message = unavailable_advice(reason)
         body = {
             "status": "unavailable",
             # Ruling 025: nothing was served, and the refusal says so in the
@@ -1298,16 +1355,16 @@ async def public_calibration(
             # of a special case for the failure.
             "availability": AVAILABILITY_EMPTY,
             "reason": reason,
-            "retry_after_s": 30,
-            "message": (
-                "Calibration data is temporarily unavailable. It is rebuilt "
-                "hourly — please retry shortly."
-            ),
+            "retry_after_s": retry_after_s,
+            "message": message,
         }
         return JSONResponse(
             status_code=503,
             content={**body, "detail": dict(body)},
-            headers={"Retry-After": "30"},
+            # The header and the field are ONE number read twice — a client
+            # that trusts the header and a client that reads the body must not
+            # be told two different things.
+            headers={"Retry-After": str(retry_after_s)},
         )
 
     now = time.time()

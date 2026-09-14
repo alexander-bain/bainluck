@@ -547,7 +547,14 @@ test.describe("calibration cohort copy", () => {
             detail: {
               status: "unavailable",
               reason: "rebuilding",
-              message: "Calibration data is temporarily unavailable. It is rebuilt hourly — please retry shortly.",
+              // CAL-P1191 (#997): the sentence the server actually sends when
+              // nothing is servable at any age. The retired copy ("rebuilt
+              // hourly — please retry shortly") promised a wait the rebuild
+              // could not keep; a fixture that keeps sending it is exercising
+              // a body production no longer produces. `reason` stays the
+              // arbitrary probe this spec named it — the claim below reads it
+              // as a state NAME, not as a real refusal reason.
+              message: "Calibration data is being rebuilt and is not ready yet.",
             },
           },
           503

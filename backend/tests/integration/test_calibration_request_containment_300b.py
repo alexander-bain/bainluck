@@ -172,9 +172,20 @@ def _assert_typed_unavailable(res) -> dict:
     body = unavailable_body(res)
     assert isinstance(body, dict), "the body must be typed, not a bare string"
     assert body["status"] == "unavailable"
-    assert body["retry_after_s"] == 30
     assert body["reason"]
-    assert res.headers["Retry-After"] == "30"
+    # CAL-P1191 (#997): this helper's question is "is the refusal TYPED", and
+    # every caller below is asking whether a build was started — not what the
+    # advice said. The literal ``30`` it used to pin stopped being one number
+    # when the advice became a property of the reason (a request that ran out
+    # of budget is seconds from an answer; a missing snapshot is a rebuild
+    # away), so pinning it here would make twenty-two containment tests fail on
+    # a copy decision they do not test. What still belongs at this boundary is
+    # that the wait is present, positive, and the SAME in the header as in the
+    # body — the per-reason values are pinned in
+    # ``test_calibration_refusal_advice_p1191.py``.
+    assert isinstance(body["retry_after_s"], int)
+    assert body["retry_after_s"] > 0
+    assert res.headers["Retry-After"] == str(body["retry_after_s"])
     return body
 
 
@@ -219,7 +230,9 @@ async def test_no_query_string_variant_can_reach_the_build(client, monkeypatch, 
     assert resp.status_code == 503, resp.text
     body = resp.json()["detail"]
     assert body["status"] == "unavailable"
-    assert resp.headers["Retry-After"] == "30"
+    # CAL-P1191 (#997): a number here would pin the ADVICE on a test about
+    # whether a query string can buy a build — see ``_assert_typed_unavailable``.
+    assert resp.headers["Retry-After"] == str(body["retry_after_s"])
 
 
 async def test_bust_is_not_an_accepted_parameter_anymore(client, monkeypatch):

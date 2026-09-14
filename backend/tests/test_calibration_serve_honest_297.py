@@ -303,10 +303,17 @@ async def test_nothing_trustworthy_returns_a_typed_unavailable_response(monkeypa
 
     assert isinstance(body, dict), "the body must be typed, not a bare string"
     assert body["status"] == "unavailable"
-    assert body["retry_after_s"] == 30
-    assert body["reason"]
-    assert "retry" in body["message"].lower()
-    assert res.headers["Retry-After"] == "30"
+    assert body["reason"] == "no_trustworthy_snapshot"
+    # CAL-P1191 (#997): this test's own name says nothing trustworthy exists at
+    # any age, so the advice it must carry is the cautious one. It pinned 30 s
+    # and the word "retry" when both reasons shared one sentence; keeping that
+    # pin would now assert the page is allowed to promise a reader a wait it
+    # cannot keep.
+    assert body["retry_after_s"] == 900
+    assert res.headers["Retry-After"] == "900"
+    assert "shortly" not in body["message"].lower()
+    assert "hourly" not in body["message"].lower()
+    assert body["message"].strip()
 
 
 # ---------------------------------------------------------------------------
