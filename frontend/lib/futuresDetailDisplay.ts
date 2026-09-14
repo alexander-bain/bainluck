@@ -199,14 +199,48 @@ export function futuresTitleText(opts: {
  * first place.
  * ─────────────────────────────────────────────────────────────────────────── */
 
+/* ───────────────────────────────────────────────────────────────────────────
+ * #6061 — THE CAPTION CARRIES THE HOOK, OR IT CARRIES NOTHING.
+ *
+ * Filed paying #6049's after-check and fixed here: the card printed "N outcomes
+ * tracked" twice, in this caption and again in the footer 116px below it. The
+ * count was only the half that was literally doubled. Read the two production
+ * cards whole and EVERY token of the fallback captions is already drawn, larger,
+ * on the same 1200×630 canvas:
+ *
+ *   live    `/futures/60276241`  "Above 1 inch leads at 19% — 7 outcomes tracked."
+ *                                 ^^^^^^^^^^^^ 40px   ^^^ 96px   ^^^^^^^^^^^^^^^^ footer
+ *   settled `/futures/60544511`  "77° or above won — 10 outcomes tracked."
+ *                                 ^^^^^^^^^^^^ 64px  ^^^ WON pill  ^^^^^^^^^^^^^^ footer
+ *
+ * So the answer is not "move the count" — it is that these captions were never
+ * sentences. The hook branch already shows the intended division of labour: the
+ * caption is the editorial line about the market, the footer is where a count
+ * belongs as small grey type beside the wordmark (D102). Where there is no hook
+ * there is no sentence, and restating the numerals in grey is the diagnostic
+ * register notice 34 keeps off a reader's screen. Leave the space empty rather
+ * than explain it.
+ *
+ * Retired with them: the count never pluralised here while the footer did, so a
+ * one-outcome market read "1 outcomes tracked" in the caption and "1 outcome
+ * tracked" underneath — two spellings of one fact, in one picture.
+ *
+ * `outcomeCount`/`probabilityLabel` leave this signature for the same reason: the
+ * numbers are the route's to draw, and a parameter kept "just in case" is how the
+ * caption started restating them.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
 export interface FuturesUnfurlCopy {
   /** The outcome the card features — the graded winner once settled. */
   featuredName: string | null;
   isResolved: boolean;
   /** True only when the featured outcome is GRADED a winner. */
   settledWon: boolean;
-  /** The grey supporting line under the headline. */
-  subtitle: string;
+  /**
+   * The grey supporting line under the headline, or `null` when the card already
+   * draws every fact this line would carry (#6061). Never a restatement.
+   */
+  subtitle: string | null;
 }
 
 export function futuresUnfurlCopy<
@@ -216,9 +250,6 @@ export function futuresUnfurlCopy<
   leader: T | null;
   status?: string | null;
   hookDescription?: string | null;
-  outcomeCount?: number | null;
-  /** The already-formatted leader price, e.g. "62%". Live copy only. */
-  probabilityLabel: string;
 }): FuturesUnfurlCopy {
   const isResolved = opts.status === "resolved";
   const featured = pickHeroOutcome(opts.outcomes, opts.leader, isResolved);
@@ -228,21 +259,22 @@ export function futuresUnfurlCopy<
   // leader when nothing is graded, and a fallback must not crown an ungraded row
   // — those say only what `status` proves.
   const settledWon = isResolved && featured?.is_winner === true;
-  const count = opts.outcomeCount ?? "?";
 
-  // The hook leads on a LIVE market only. `hook_description` is pre-settlement
-  // editorial written while the question was open ("...the question of rainfall
-  // in Dallas has become increasingly pertinent"), so under the word "Won" it
-  // reads as though the market were still running. Same call `layout.tsx` made
-  // for the description in #6002, for the same reason: result outranks scene.
+  // A SETTLED CARD GETS NO CAPTION AT ALL (#6061), and that keeps #6032's rule
+  // rather than relaxing it: the hook leads on a LIVE market only, because
+  // `hook_description` is pre-settlement editorial written while the question was
+  // open ("...the question of rainfall in Dallas has become increasingly
+  // pertinent") and under the word "Won" it reads as though the market were still
+  // running — the call `layout.tsx` made for the description in #6002. The
+  // settled card already says the result twice, in the 64px winner and the pill.
+  //
+  // Live: the hook if there is one. If there is not, the leader's name and price
+  // are drawn at 40px and 96px directly above, so the only thing left worth
+  // saying is the standing line for a card with no market story on it at all.
   const subtitle = isResolved
-    ? settledWon && featuredName
-      ? `${featuredName} won — ${count} outcomes tracked.`
-      : `This market has settled — ${count} outcomes tracked.`
+    ? null
     : opts.hookDescription ||
-      (opts.leader
-        ? `${opts.leader.name} leads at ${opts.probabilityLabel} — ${count} outcomes tracked.`
-        : "Prediction markets translated into intuitive probabilities.");
+      (opts.leader ? null : "Prediction markets translated into intuitive probabilities.");
 
   return { featuredName, isResolved, settledWon, subtitle };
 }

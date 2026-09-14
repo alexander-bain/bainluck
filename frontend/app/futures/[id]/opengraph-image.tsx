@@ -133,13 +133,13 @@ export default async function Image({ params }: { params: { id: string } }) {
   // never name two different outcomes. Full measurement + the Havertz case are in
   // that helper's block comment; the rule it enforces here is #883 L2-53: on a
   // settled market the winner is the story and there is NO percentage.
+  // #6061 — the count and the price are NOT passed in any more: the caption is
+  // the hook or it is nothing, and every number on this card is drawn below.
   const { featuredName, isResolved, settledWon, subtitle } = futuresUnfurlCopy({
     outcomes: market.outcomes ?? market.top_outcomes ?? [],
     leader,
     status: market.status,
     hookDescription: market.hook_description,
-    outcomeCount: market.outcome_count,
-    probabilityLabel: probability,
   });
 
   const change = leader?.probability_change_24h;
@@ -150,7 +150,7 @@ export default async function Image({ params }: { params: { id: string } }) {
     : null;
   const changeColor = hasMovement ? (change! > 0 ? COLOR_UP : COLOR_DOWN) : COLOR_MUTED;
 
-  const subtitleText = truncateShareText(subtitle, 130);
+  const subtitleText = subtitle ? truncateShareText(subtitle, 130) : null;
 
   const categoryLabel = market.sport_name || market.llm_sport_category || "Discover";
 
@@ -255,9 +255,15 @@ export default async function Image({ params }: { params: { id: string } }) {
               </div>
             )}
 
-            <div style={{ fontSize: 24, color: COLOR_MUTED, lineHeight: 1.35, maxWidth: 920 }}>
-              {subtitleText}
-            </div>
+            {/* #6061 — no caption rather than a caption that restates the card.
+                The hook earns this line; "Above 1 inch leads at 19% — 7 outcomes
+                tracked." did not, every token of it being drawn larger above and
+                below. Empty space is the honest shape (notice 34 / D102). */}
+            {subtitleText && (
+              <div style={{ fontSize: 24, color: COLOR_MUTED, lineHeight: 1.35, maxWidth: 920 }}>
+                {subtitleText}
+              </div>
+            )}
           </div>
 
           {/* Footer bar + URL */}
