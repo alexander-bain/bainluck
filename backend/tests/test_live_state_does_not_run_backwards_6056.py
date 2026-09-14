@@ -2578,6 +2578,338 @@ async def test_the_mlb_write_touches_only_its_own_row_6056(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# 7b. THE TENNIS AUTHORITY PASS (live/224) — THE FIFTH PRODUCER
+#
+# `_sync_tennis_from_espn` is a `*/5` beat on `background` that writes
+# `home_score`/`away_score` on live tennis rows, while ESPN and StatPal write
+# the same rows from `realtime` at concurrency 4. It holds ONE session across
+# the WHOLE pass — opened before the first row, committed after the last, two
+# blocking HTTP fetches in between — so its decision-to-write window is the
+# widest of the five, not the narrowest.
+#
+# ⚠️ ITS PREDICATE IS NOT POSITION, AND THAT IS THE DESIGN, NOT AN OMISSION.
+# This pass never reads or writes `period`/`game_clock`; its decision
+# (`authority_score_write`) compares ESPN's set score against the row's own
+# `home_score`/`away_score`. On a tennis row the two position columns are
+# routinely NULL, so predicating on them would produce a compare-and-write that
+# is called, green, and arbitrating nothing — the exact failure this suite's
+# structural guard exists to catch, wearing the costume of a fix. So it
+# re-asserts the two columns its decision actually consumed.
+# ---------------------------------------------------------------------------
+
+
+def _tennis_competition(comp_id, names, *, home_sets, away_sets, date):
+    """ESPN's real competition shape, scored by the per-set WINNER flag.
+
+    `date` is passed in rather than fixed: the anchor refuses any competition
+    outside a window around the row's own `commence_time`, so a literal here
+    would silently make every one of these specimens `off-board` the moment the
+    suite was run on a different day (gotcha #44 — an anchor that drifts against
+    the clock is not an anchor).
+    """
+    def _line(games, won):
+        return [{"value": float(g), "winner": w} for g, w in zip(games, won)]
+
+    sets = home_sets + away_sets
+    return {
+        "id": comp_id,
+        "date": date,
+        "status": {
+            "period": sets,
+            "type": {
+                "name": "STATUS_IN_PROGRESS",
+                "state": "in",
+                "detail": "detail",
+                "shortDetail": "",
+            },
+        },
+        "competitors": [
+            {
+                "id": "3203",
+                "type": "athlete",
+                "athlete": {"displayName": names[0], "id": "3203"},
+                "linescores": _line([6] * sets, [True] * home_sets + [False] * away_sets),
+            },
+            {
+                "id": "3204",
+                "type": "athlete",
+                "athlete": {"displayName": names[1], "id": "3204"},
+                "linescores": _line([4] * sets, [False] * home_sets + [True] * away_sets),
+            },
+        ],
+    }
+
+
+async def _drive_tennis(
+    monkeypatch, *, row_home, row_away, espn_home_sets, espn_away_sets,
+    interloper=None,
+):
+    """Drive the REAL tennis task against a REAL row and read the DATABASE back.
+
+    Same rail and same reason as `_drive_espn` / `_drive_mlb`: once the score is
+    written by a conditional UPDATE, an assertion that reads the in-memory object
+    cannot tell a write that matched zero rows from one that landed, because
+    SQLAlchemy mirrors the values onto the instance either way. The row is
+    re-read after `expire_all()`, so what is asserted is what the next reader of
+    the US Open page is served.
+
+    ⚠️ THE HOOK IS `authority_score_write`, AND THE CHOICE IS THE WHOLE REASON
+    THIS RAIL CAN BE RUN ON THE PARENT. It is called by BOTH trees at the same
+    point — after the row's two scores have been read, before either is written
+    — so it is exactly the decision-to-write window, and a rail hung there
+    yields a witness on the unfixed tree instead of an `AttributeError` wearing
+    a harness story. `write_row_if_unmoved` would have been the obvious hook and
+    is the wrong one: the parent does not import it.
+    """
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session
+
+    import app.tasks.espn_sync as espn_sync
+    import app.services.espn_tennis as espn_tennis
+    import app.utils.espn_tennis_anchor as anchor
+    from app.models.models import Base, Event, Sport
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine, tables=[Event.__table__, Sport.__table__])
+    session = Session(engine, expire_on_commit=False)
+
+    @sa_event.listens_for(session, "loaded_as_persistent")
+    def _reattach_utc(_sess, instance):  # pragma: no cover - test rail
+        for attr, value in list(instance.__dict__.items()):
+            if isinstance(value, datetime) and value.tzinfo is None:
+                instance.__dict__[attr] = value.replace(tzinfo=timezone.utc)
+
+    sport = Sport(key="tennis_atp_us_open", name="tennis_atp_us_open")
+    session.add(sport)
+    session.flush()
+
+    started = datetime.now(timezone.utc) - timedelta(hours=2)
+    event = Event(
+        sport_id=sport.id,
+        home_team_name="Carlos Alcaraz",
+        away_team_name="Roman Safiullin",
+        commence_time=started,
+        status="live",
+        espn_id="182705",
+        home_score=row_home,
+        away_score=row_away,
+    )
+    session.add(event)
+    session.flush()
+    event_id = event.id
+    session.commit()
+
+    class _AsyncShim:
+        """The task is async and this engine is not; nothing else is shimmed."""
+
+        def __init__(self, inner):
+            self._s = inner
+
+        async def execute(self, statement):
+            return self._s.execute(statement)
+
+        def add(self, obj):
+            self._s.add(obj)
+
+        async def flush(self):
+            self._s.flush()
+
+        async def commit(self):
+            self._s.commit()
+
+    class _SessionCM:
+        async def __aenter__(self):
+            return _AsyncShim(session)
+
+        async def __aexit__(self, *exc):
+            return False
+
+    board = [{
+        "events": [{
+            "name": "US Open",
+            "groupings": [{
+                "grouping": {"slug": "mens-singles"},
+                "competitions": [_tennis_competition(
+                    "182705", ["Carlos Alcaraz", "Roman Safiullin"],
+                    home_sets=espn_home_sets, away_sets=espn_away_sets,
+                    date=started.strftime("%Y-%m-%dT%H:%MZ"),
+                )],
+            }],
+        }]
+    }]
+
+    monkeypatch.setattr(espn_tennis, "fetch_scoreboards", lambda dates=None: (board, []))
+    monkeypatch.setattr(espn_sync, "get_task_session", lambda: _SessionCM())
+
+    _fired = []
+    _real_decision = anchor.authority_score_write
+
+    def _decide_then_let_the_other_writer_in(**kwargs):
+        verdict = _real_decision(**kwargs)
+        if interloper is not None and not _fired:
+            _fired.append(True)
+            interloper(engine, event_id)
+        return verdict
+
+    monkeypatch.setattr(
+        anchor, "authority_score_write", _decide_then_let_the_other_writer_in
+    )
+
+    stats = await espn_sync._sync_tennis_from_espn()
+
+    if interloper is not None:
+        assert _fired, (
+            "the interloper never ran — this rail proved nothing about a race"
+        )
+
+    session.expire_all()
+    row = session.execute(select(Event).where(Event.id == event_id)).scalar_one()
+    return row, stats
+
+
+def _commits_a_different_score(home_score, away_score):
+    """A realtime writer, in its own session, committing a newer score."""
+
+    def _run(engine, event_id):
+        from sqlalchemy import update
+        from sqlalchemy.orm import Session
+
+        from app.models.models import Event
+
+        other = Session(engine, expire_on_commit=False)
+        try:
+            other.execute(
+                update(Event)
+                .where(Event.id == event_id)
+                .values(home_score=home_score, away_score=away_score)
+            )
+            other.commit()
+        finally:
+            other.close()
+
+    return _run
+
+
+@pytest.mark.asyncio
+async def test_tennis_authority_writer_cannot_commit_an_older_score_last_6056(
+    monkeypatch,
+):
+    """THE FIFTH PRODUCER'S RACE, with its uncontested twin.
+
+    The row reads 1-0 when the tennis pass loads it. ESPN's board says the match
+    is at 2-0, so the authority decides to write 2-0 — correctly, about the row
+    it was shown. Then, in the window between that decision and the write, the
+    realtime writer commits 3-0 from its own session: Alcaraz has closed it out.
+
+    Read-newer-commit-older. The tennis pass holds ONE session across the whole
+    board and commits at the very end, so without a write-time predicate its
+    2-0 reaches Postgres last and the set that won the match disappears off the
+    US Open page until the next beat five minutes later.
+
+    ⚠️ EVERY SCORE DIFFERS FROM THE ONE BESIDE IT — 1, then 2, then 3 — and the
+    interloper's value differs from the one the authority is OFFERING, not just
+    from the one the row held. `authority_score_write` emits only the columns
+    that changed, so an interloper that happens to commit the same `home_score`
+    the authority offers leaves the parent writing a value already in the column:
+    not dirty, not flushed, no reversion, and a test that passes on the unfixed
+    tree while proving nothing. The first draft of this test did exactly that.
+    """
+    # ── CONTESTED: the realtime writer commits under a decided-but-unwritten pass
+    row, stats = await _drive_tennis(
+        monkeypatch,
+        row_home=1, row_away=0,
+        espn_home_sets=2, espn_away_sets=0,
+        interloper=_commits_a_different_score(3, 0),
+    )
+
+    assert (row.home_score, row.away_score) == (3, 0), (
+        "the set that won the match must not vanish — the tennis pass's older "
+        "write lost the race and had to be dropped"
+    )
+    assert stats["score_write_lost_race"] == 1
+    assert stats["score_writes"] == 0, (
+        "a refused write must not also be counted as a write — `score_writes` "
+        "is what tells the next reader the authority moved a row"
+    )
+
+    # ── THE UNCONTESTED TWIN: nothing races, so the write must LAND ─────────
+    #
+    # Without this, a compare-and-write whose predicate could never match would
+    # pass the assertion above and silently freeze every live tennis score.
+    row, stats = await _drive_tennis(
+        monkeypatch,
+        row_home=1, row_away=0,
+        espn_home_sets=2, espn_away_sets=0,
+    )
+
+    assert (row.home_score, row.away_score) == (2, 0), (
+        "an uncontested tennis score write must still reach the row"
+    )
+    assert stats["score_write_lost_race"] == 0
+    assert stats["score_writes"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_compare_and_write_with_nothing_to_compare_is_refused_6056():
+    """An empty predicate is an unconditional UPDATE wearing the name of a CAS.
+
+    The failure this forecloses is the quiet one. `write_row_if_unmoved` takes
+    its predicate as a mapping, so a caller that builds one and gets an empty
+    dict — a column list that filtered to nothing, a rename, a typo'd key —
+    would compile, run, overwrite unconditionally, return True, and be counted
+    as a successful guarded write forever after. There is no symptom to notice.
+
+    Raising is right rather than returning False: an empty predicate is a
+    programming error at the call site, not a lost race, and reporting it as a
+    lost race would send the next reader of `task-metrics` after a phantom.
+    """
+    from app.utils.live_state_write import write_row_if_unmoved
+
+    class _Blowup:
+        async def flush(self):  # pragma: no cover - must never be reached
+            raise AssertionError("the empty predicate was not refused")
+
+        async def execute(self, *a, **k):  # pragma: no cover - same
+            raise AssertionError("the empty predicate was not refused")
+
+    with pytest.raises(ValueError, match="nothing to compare"):
+        await write_row_if_unmoved(
+            _Blowup(), object(), {"home_score": 2}, observed={}, what="test",
+        )
+
+
+@pytest.mark.asyncio
+async def test_tennis_refuses_when_only_the_other_side_of_the_score_moved_6056(
+    monkeypatch,
+):
+    """THE HALF A ONE-COLUMN PREDICATE WOULD MISS.
+
+    `authority_score_write` emits a `changes` dict holding only the columns that
+    differ — so when ESPN moves the home side alone, the statement WRITES one
+    column. Its decision, though, read BOTH: it compared `away_score` too, and
+    concluded it was already correct.
+
+    So the predicate has to cover both columns, not just the written one. Here
+    the home side is what the authority changes (1 -> 2) and the away side is
+    what the interloper moves underneath (0 -> 1). A compare-and-write
+    predicated only on the column it writes would match, land, and quietly erase
+    the set Safiullin just won.
+    """
+    row, stats = await _drive_tennis(
+        monkeypatch,
+        row_home=1, row_away=0,
+        espn_home_sets=2, espn_away_sets=0,
+        interloper=_commits_a_different_score(1, 1),
+    )
+
+    assert (row.home_score, row.away_score) == (1, 1), (
+        "the predicate read only the column it writes: the away set the "
+        "realtime writer had just committed was erased"
+    )
+    assert stats["score_write_lost_race"] == 1
+
+
+# ---------------------------------------------------------------------------
 # 8. THE GUARD THAT SHOULD HAVE EXISTED FIRST (CERT-2833)
 #
 # Four presentations of this ship each converted the producers someone had
@@ -2600,10 +2932,16 @@ async def test_the_mlb_write_touches_only_its_own_row_6056(monkeypatch):
 #:
 #: The first four are REPAIR AND CREATION paths, not live-feed position writes —
 #: there is no concurrent observation of a running game for them to land behind.
-#: The last two are NEITHER, and are recorded as what they are: live-state
-#: writers of the same class as the four this ship converted, still outside the
-#: compare-and-write. They are named rather than quietly absent precisely
-#: because being quietly absent is what cost this ship four presentations.
+#: The LAST ONE is neither, and is recorded as what it is: a live-state writer of
+#: the same class as the five this ship has converted, still outside the
+#: compare-and-write. It is named rather than quietly absent precisely because
+#: being quietly absent is what cost this ship four presentations.
+#:
+#: This list SHRINKS as the ship lands, and the guard below asserts it in both
+#: directions — a declared writer that no longer offends fails just as loudly as
+#: an undeclared one that does, so a spent exemption cannot sit here looking like
+#: a live one. `_sync_tennis_from_espn` left this list in live/224 when it was
+#: converted; it did not leave quietly.
 _DECLARED_UNGUARDED_WRITERS = {
     "espn_sync._backfill_box_scores": (
         "REPAIR. Writes `None` over the 0–0 of a row wrongly marked completed, "
@@ -2627,19 +2965,6 @@ _DECLARED_UNGUARDED_WRITERS = {
     "espn_helpers.backfill_missing_scores": (
         "BACKFILL over FINISHED rows that hold no score at all. Selects on the "
         "absence it fills, and runs against games ESPN has already closed."
-    ),
-    "espn_sync._sync_tennis_from_espn": (
-        "KNOWN GAP, same class, NOT YET CONVERTED (#6056). A 5-minute "
-        "background beat writing `home_score`/`away_score` on live tennis rows "
-        "that the ESPN and StatPal realtime writers also write, with one "
-        "session and one commit across the whole pass — so it has the same "
-        "decision-to-write window its converted siblings had. It is not in the "
-        "commit that converted MLB because `test_espn_tennis_anchor.py` drives "
-        "it through a fake session that asserts on an in-memory object: a Core "
-        "UPDATE is structurally invisible to that rail, so converting this "
-        "producer means first rebuilding a 107-test rig onto a real engine. "
-        "Stated here so the next session inherits the measurement, not the "
-        "surprise."
     ),
     "admin_providers.sync_espn_live_events": (
         "KNOWN GAP, different exposure (#6056). Writes `period`/`game_clock` "
@@ -2754,6 +3079,7 @@ def test_the_converted_producers_are_absent_from_the_declared_list_6056():
     import inspect
     import textwrap
 
+    from app.tasks.espn_sync import _sync_tennis_from_espn
     from app.tasks.mlb_sync import _sync_mlb_win_probability
     from app.tasks.statpal_sync import (
         _sync_statpal_livescores,
@@ -2761,20 +3087,36 @@ def test_the_converted_producers_are_absent_from_the_declared_list_6056():
     )
     from app.utils.espn_helpers import update_event_fields_from_espn
 
+    #: Producer -> the spelling of the compare-and-write it is expected to call.
+    #: The tennis pass predicates on the two SCORE columns its decision read
+    #: rather than on position, so it calls the general form; requiring the
+    #: position-named one here would have forced it back to a predicate that
+    #: cannot refuse on a tennis row.
     converted = {
-        "statpal_sync._sync_statpal_livescores": _sync_statpal_livescores,
-        "statpal_sync._sync_statpal_schedules": _sync_statpal_schedules,
-        "espn_helpers.update_event_fields_from_espn": update_event_fields_from_espn,
-        "mlb_sync._sync_mlb_win_probability": _sync_mlb_win_probability,
+        "statpal_sync._sync_statpal_livescores": (
+            _sync_statpal_livescores, "write_live_state_if_unmoved",
+        ),
+        "statpal_sync._sync_statpal_schedules": (
+            _sync_statpal_schedules, "write_live_state_if_unmoved",
+        ),
+        "espn_helpers.update_event_fields_from_espn": (
+            update_event_fields_from_espn, "write_live_state_if_unmoved",
+        ),
+        "mlb_sync._sync_mlb_win_probability": (
+            _sync_mlb_win_probability, "write_live_state_if_unmoved",
+        ),
+        "espn_sync._sync_tennis_from_espn": (
+            _sync_tennis_from_espn, "write_row_if_unmoved",
+        ),
     }
-    for name, fn in converted.items():
+    for name, (fn, helper) in converted.items():
         source = textwrap.dedent(inspect.getsource(fn))
         calls = {
             node.func.id
             for node in ast.walk(ast.parse(source))
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
         }
-        assert "write_live_state_if_unmoved" in calls, (
+        assert helper in calls, (
             f"{name} no longer calls the compare-and-write — this test would "
             "be asserting about a producer that has stopped being one"
         )
@@ -2859,6 +3201,7 @@ def test_the_cas_is_given_a_captured_position_never_a_fresh_read_6056():
     import inspect
     import textwrap
 
+    from app.tasks.espn_sync import _sync_tennis_from_espn
     from app.tasks.mlb_sync import _sync_mlb_win_probability
     from app.tasks.statpal_sync import (
         _sync_statpal_livescores,
@@ -2911,6 +3254,72 @@ def test_the_cas_is_given_a_captured_position_never_a_fresh_read_6056():
         "write_live_state_if_unmoved(s, e, v, observed_period=_p,\n"
         "                            observed_clock=_c)\n"
     ) == []
+
+    # ── THE SAME MUTANT, IN THE DICT-PREDICATED SPELLING (live/224) ──
+    #
+    # `write_row_if_unmoved` takes its predicate as `observed={column: value}`
+    # rather than as two named arguments, so the kwarg walk above cannot see
+    # into it: the tennis call site would have been structurally unguarded
+    # against exactly the mutant this test exists for. The offence is identical
+    # — a value that reaches through an object is a read taken at write time —
+    # it is just one level deeper.
+    def _fresh_reads_in_observed(source: str) -> list[str]:
+        """Predicate values passed as an attribute read, not a captured local."""
+        offenders = []
+        for node in ast.walk(ast.parse(source)):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "write_row_if_unmoved"
+            ):
+                continue
+            observed = [kw for kw in node.keywords if kw.arg == "observed"]
+            if not observed:
+                offenders.append("observed not passed at all")
+                continue
+            mapping = observed[0].value
+            if not isinstance(mapping, ast.Dict):
+                # A dict built elsewhere and handed in cannot be read here, so
+                # it cannot be certified here either. Refuse it rather than
+                # skip it silently.
+                offenders.append(f"observed={ast.unparse(mapping)} is not a literal")
+                continue
+            if not mapping.keys:
+                offenders.append("observed={} has nothing to compare")
+            for key, value in zip(mapping.keys, mapping.values):
+                if not isinstance(value, ast.Name):
+                    offenders.append(
+                        f"observed[{ast.unparse(key)}]={ast.unparse(value)}"
+                    )
+        return offenders
+
+    assert _fresh_reads_in_observed(
+        "write_row_if_unmoved(s, e, v, observed={'home_score': event.home_score,\n"
+        "                                        'away_score': _away})\n"
+    ) == ["observed['home_score']=event.home_score"]
+    assert _fresh_reads_in_observed(
+        "write_row_if_unmoved(s, e, v, observed=built_elsewhere)\n"
+    ) == ["observed=built_elsewhere is not a literal"]
+    assert _fresh_reads_in_observed(
+        "write_row_if_unmoved(s, e, v, observed={})\n"
+    ) == ["observed={} has nothing to compare"]
+    assert _fresh_reads_in_observed("write_row_if_unmoved(s, e, v)\n") == [
+        "observed not passed at all"
+    ]
+    assert _fresh_reads_in_observed(
+        "write_row_if_unmoved(s, e, v, observed={'home_score': _home,\n"
+        "                                        'away_score': _away})\n"
+    ) == []
+
+    tennis = textwrap.dedent(inspect.getsource(_sync_tennis_from_espn))
+    assert "write_row_if_unmoved(" in tennis, (
+        "the tennis producer no longer calls the compare-and-write — this scan "
+        "would be measuring nothing"
+    )
+    assert _fresh_reads_in_observed(tennis) == [], (
+        "the tennis compare-and-write is being handed a position it read at "
+        "write time, which compares the row against itself"
+    )
 
     producers = {
         "statpal_sync._sync_statpal_livescores": _sync_statpal_livescores,
