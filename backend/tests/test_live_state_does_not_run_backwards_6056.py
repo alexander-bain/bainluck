@@ -3731,6 +3731,18 @@ _DECLARED_CORE_WRITERS = {
         "only because this function ALSO does an unrelated Core write to "
         "`events`, which is exactly the over-inclusion this scan prefers."
     ),
+    "espn_helpers.create_events_from_unmatched_espn": (
+        "NOT AN `events` WRITE. The four names are constructor keywords on an "
+        "`ESPNSnapshot` — a different table and an append. Its own Core "
+        "statement on `events` writes `completed_at`/`status` only."
+    ),
+    "espn_sync._process_live_sport": (
+        "NOT A WRITE AT ALL — these are READS. The names are the parameters of "
+        "`espn_scheduled_marks_not_started` / `espn_scheduled_demotes_live`, "
+        "which are handed the row's current position to decide whether ESPN's "
+        "authority demotes it. The function writes `status` and "
+        "`win_probability_sources`, never a position column."
+    ),
     "espn_helpers.write_espn_win_probability": (
         "NOT AN `events` WRITE, same shape as above: the columns named are "
         "`game_state` keys on the ESPN `win_prob_snapshots` row. Its own Core "
@@ -3807,14 +3819,35 @@ def test_no_undeclared_core_writer_touches_a_live_state_column_6056():
                     return True
         return False
 
-    def _live_strings(fn) -> set:
+    def _live_columns(fn) -> set:
+        """Every way a live-state column name can appear in a function body.
+
+        THREE spellings, because a census that knows two of them is a census
+        that reports a confident zero about the third:
+
+          1. a string key  — `update_values["home_score"] = x`, `{"period": p}`
+          2. a KEYWORD     — `.values(home_score=x)`, `set_={...}` unpacked
+          3. a raw SET     — `text("UPDATE events SET game_clock = NULL ...")`
+
+        (2) is the one worth spelling out. It is the SIMPLEST Core write there
+        is, and it is invisible to a scan that only reads string constants —
+        `home_score=x` is an `ast.keyword`, not an `ast.Constant`. There are no
+        instances of it in `app/` today, which is exactly the condition under
+        which a hole goes unnoticed until something lands in it.
+        """
         out = set()
         for node in ast.walk(fn):
+            # (2) a keyword argument named after the column.
+            if isinstance(node, ast.keyword) and node.arg in live:
+                out.add(node.arg)
+                continue
             if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
                 continue
+            # (1) a string key.
             if node.value in live:
                 out.add(node.value)
                 continue
+            # (3) a raw SET clause.
             flat = " ".join(node.value.split())
             if _UPDATE_EVENTS.search(flat):
                 for column in live:
@@ -3829,7 +3862,7 @@ def test_no_undeclared_core_writer_touches_a_live_state_column_6056():
                 continue
             if not _core_writes_events(fn):
                 continue
-            columns = _live_strings(fn)
+            columns = _live_columns(fn)
             if columns:
                 found[fn.name] = sorted(columns)
         return found
@@ -3859,11 +3892,24 @@ def test_no_undeclared_core_writer_touches_a_live_state_column_6056():
         # (f) a raw UPDATE on a DIFFERENT table that merely starts with 'event'
         "def f():\n"
         "    session.execute(text('UPDATE event_moments SET period = 1'))\n"
+        # (g) THE KEYWORD SPELLING — the simplest Core write, and the one a
+        # string-only scan reports a confident zero about. No instance of this
+        # exists in `app/` today, which is precisely when a hole goes unnoticed.
+        "def g():\n"
+        "    session.execute(update(Event).values(home_score=1, away_score=2))\n"
+        # (h) the same keyword name used as a READ, inside a function that does
+        # a Core write for an unrelated reason. Caught — over-inclusion working
+        # as designed; it costs a declaration, never a miss.
+        "def h():\n"
+        "    ok = predicate(period=event.period)\n"
+        "    session.execute(update(Event).values(status='live'))\n"
     )
     assert probe == {
         "a": ["home_score"],
         "b": ["period"],
         "c": ["game_clock"],
+        "g": ["away_score", "home_score"],
+        "h": ["period"],
     }, probe
 
     app_root = pathlib.Path(__file__).resolve().parents[1] / "app"
