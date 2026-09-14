@@ -115,7 +115,8 @@ and not the seeding path.
 
 ## the corpus, and what each row can fail on
 
-Ten markets. Each one is the ONLY row that fails if a particular clause is
+Ten markets for the two bands above, plus six for the early-settled band added
+in #6012. Each one is the ONLY row that fails if a particular clause is
 deleted, and the two "mutated shape" arms at the bottom execute the deleted
 shapes against the same seeded server so a green run cannot mean "the corpus had
 nothing discriminating in it".
@@ -144,6 +145,37 @@ nothing discriminating in it".
 * **`authoritative`** — settled an hour ago, every leg already carries
   `api_settlement`. The pre-existing authority clause.
 * **`polymarket`** / **`still_open`** — the source and status clauses.
+
+## #6012 — the third band, and the sentence above that is not true
+
+"Those fall to the tail sweep, which does not care what the date says" (the
+`future_dated` note above) holds only for a market we have already flipped to
+`resolved`. BOTH bands require `fm.status = 'resolved'`. The same #2644 field
+mechanism that puts a future `resolution_date` on an already-settled market also
+leaves our row `open` until the settled-events sweep's per-series cursor reaches
+it (gotcha #33), so a market that is future-dated AND open is invisible to band 1
+by date and to band 2 by status — and the `ungradeable_result` retraction that
+`resolution_authority` calls "reversible by evidence" never gets the evidence.
+
+Measured on production 2026-09-14 03:50–04:05Z: Kalshi finalized all 48 legs of
+`KXATP-26USO` (US Open Men's Singles Winner) at 22:00:08Z, `-ZVE` = `result:
+yes`. Six hours later our row was still `open` with a future `resolution_date`
+and Alexander Zverev — the champion — read `current_probability=0.995,
+is_winner=FALSE, resolution_source='ungradeable_result'`. The Exacta
+(`KXATPWTA-26USO`) printed 84% on the winning pair on the men's-final event page.
+**23 tickers** were in the band's window at that moment.
+
+The six rows below are all `status='open'`, so none of them can move
+`EXPECTED_FRESH` or the tail assertions:
+
+* **`early_specimen`** (`NNN`) — the shape above: open, future-dated, one tier-3
+  leg, one retracted leg, no winner. THE SHIP.
+* **`early_later`** (`TTT`) — same shape, due later; the ordering arm.
+* **`early_graded`** (`PPP`) — already holds a tier-3 winner; nothing to ask.
+* **`early_far_future`** (`QQQ`) / **`early_stale`** (`RRR`) — the two bounds.
+* **`early_polymarket`** (`SSS`) — the source clause.
+* **`still_open`** (`JJJ`, reused) — open and in-window but no venue settlement:
+  the clause that keeps this band off ordinary not-yet-played markets.
 """
 
 from __future__ import annotations
@@ -190,6 +222,11 @@ def _corpus() -> list[tuple]:
     two_hours = now - timedelta(hours=2)
     nine_days = now - timedelta(days=9)
     future = now + timedelta(days=20)
+    # #6012's window, two-sided: `soon`/`tomorrow` sit inside the early band's
+    # future reach, `nine_days_ago` below its floor, `future` beyond its reach.
+    soon = now + timedelta(hours=1)
+    tomorrow = now + timedelta(days=1)
+    nine_days_ago = nine_days
     blank = [("leg-a", None, None), ("leg-b", None, None)]
     return [
         ("settled_low", "kalshi", "resolved", "AAA-26SEP10", half_hour, half_hour, blank),
@@ -229,6 +266,48 @@ def _corpus() -> list[tuple]:
         (
             "mixed_default", "kalshi", "resolved", "LLL-26SEP10", fifty, fifty,
             [("leg-a", None, None), ("leg-b", False, "all_losers")],
+        ),
+        # ---- #6012: the early-settled band's corpus -------------------------
+        # Every row below is `status='open'`, so none of them is visible to the
+        # two bands above and none of them can move EXPECTED_FRESH or the tail.
+        #
+        # THE SPECIMEN, in the shape production served it. `KXATP-26USO` (US Open
+        # Men's Singles Winner): Kalshi finalized all 48 legs at 22:00:08Z with
+        # `-ZVE` = `result: yes`; six hours later our row was still `open` with a
+        # FUTURE resolution_date, the champion sat at `is_winner=FALSE,
+        # resolution_source='ungradeable_result'`, and no band could ask.
+        (
+            "early_specimen", "kalshi", "open", "NNN-26SEP14", None, soon,
+            [("zve", False, "ungradeable_result"), ("she", False, "api_settlement")],
+        ),
+        # Ordering arm: same shape, due later. Soonest-due must come first.
+        (
+            "early_later", "kalshi", "open", "TTT-26SEP15", None, tomorrow,
+            [("leg-a", False, "api_settlement"), ("leg-b", False, None)],
+        ),
+        # NOT selected — we already hold the venue's answer, so there is nothing
+        # to ask about. Pins the `NOT EXISTS (is_winner IS TRUE)` clause.
+        (
+            "early_graded", "kalshi", "open", "PPP-26SEP14", None, soon,
+            [("leg-a", True, "api_settlement"), ("leg-b", False, "api_settlement")],
+        ),
+        # NOT selected — beyond the future reach. Pins the upper bound, without
+        # which every open market in the book with one settled leg is in scope.
+        (
+            "early_far_future", "kalshi", "open", "QQQ-26DEC31", None, future,
+            [("leg-a", False, "api_settlement"), ("leg-b", False, None)],
+        ),
+        # NOT selected — below the floor. Pins the lower bound (gotcha #41: a
+        # sweep over an expiring population needs BOTH bounds, not an ordering).
+        (
+            "early_stale", "kalshi", "open", "RRR-26SEP01", None, nine_days_ago,
+            [("leg-a", False, "api_settlement"), ("leg-b", False, None)],
+        ),
+        # NOT selected — not Kalshi. Pins `source='kalshi'`; Polymarket has its
+        # own settlement path and this band must not reach into it.
+        (
+            "early_polymarket", "polymarket", "open", "SSS-26SEP14", None, soon,
+            [("leg-a", False, "api_settlement"), ("leg-b", False, None)],
         ),
     ]
 
@@ -603,3 +682,144 @@ async def test_the_tail_band_ignores_recency_entirely(pg_engine):
     _fresh, tail = await _select(pg_engine, limit=2000, cursor="")
     assert "DDD-26SEP01" in tail
     assert "EEE-26DEC31" in tail
+
+
+# ---------------------------------------------------------------------------
+# #6012 — the early-settled band
+#
+# WHY THIS BAND EXISTS, stated where the next reader will look: the module
+# docstring above says a future-dated settled market "falls to the tail sweep,
+# which does not care what the date says". That is true only for a market whose
+# status we have already flipped. Both bands above require
+# `fm.status = 'resolved'`, and the same #2644 field mechanism that puts a future
+# `resolution_date` on a settled market also leaves our row `open` until the
+# settled-events sweep's per-series cursor reaches it (gotcha #33). A market that
+# is BOTH future-dated AND open is invisible to band 1 by date and to band 2 by
+# status, so the `ungradeable_result` retraction the design calls "reversible by
+# evidence" never gets the evidence.
+#
+# These run against a real server for the same reason the ones above do: delete
+# the floor, the future reach, the winner test, the venue-evidence test or the
+# source test, and a fake session that answers from a canned list still agrees
+# with itself.
+# ---------------------------------------------------------------------------
+
+
+async def _select_early(engine, limit: int = 50):
+    from app.tasks.backfill_winners import _select_kalshi_early_settled_tickers
+
+    async with engine.connect() as conn:
+        return await _select_kalshi_early_settled_tickers(conn, limit)
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_an_open_market_the_venue_has_settled_is_asked_about(pg_engine):
+    """THE SHIP. The champion stops reading 99.5% and "not a winner".
+
+    `NNN` is the production specimen's shape: our row still says `open`, its
+    `resolution_date` is still in the future, one leg carries the venue's own
+    tier-3 settlement and one carries the retraction — and no leg is a winner.
+    Neither band above can see it. This band must.
+    """
+    early = await _select_early(pg_engine)
+
+    assert "NNN-26SEP14" in early
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_the_band_is_ordered_soonest_due_first(pg_engine):
+    """Both bounds AND an ordering (gotcha #41), and the ordering is by due date.
+
+    A reader is looking at the market that just finished, not the one that
+    finishes tomorrow, so the soonest-due ticker is asked about first when the
+    cap binds.
+    """
+    early = await _select_early(pg_engine)
+
+    assert early.index("NNN-26SEP14") < early.index("TTT-26SEP15")
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_a_market_we_already_have_a_winner_for_is_not_asked_about(pg_engine):
+    """`PPP` holds a tier-3 winner already — there is nothing to ask.
+
+    Without this clause the band would re-ask the venue about every settled
+    market in the window forever, which is the cost the cap exists to bound.
+    """
+    early = await _select_early(pg_engine)
+
+    assert "PPP-26SEP14" not in early
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_an_open_market_with_no_venue_settlement_is_left_alone(pg_engine):
+    """`JJJ` is open and in-window, but no leg carries a tier-3 source.
+
+    This is the clause that keeps the band off ordinary open markets: an event
+    that has simply not happened yet is not a settlement we are missing. `JJJ`
+    is the pre-existing `still_open` corpus row, so this also proves the band
+    did not widen to "every open market".
+    """
+    early = await _select_early(pg_engine)
+
+    assert "JJJ-26SEP10" not in early
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_the_window_is_bounded_on_both_sides(pg_engine):
+    """`QQQ` is 20 days out, `RRR` is 9 days stale — both carry venue settlements.
+
+    The future reach stops the band swallowing the whole forward book; the floor
+    stops it starting on the dead tail (gotcha #41: a sweep over an expiring
+    population needs BOTH bounds).
+    """
+    early = await _select_early(pg_engine)
+
+    assert "QQQ-26DEC31" not in early
+    assert "RRR-26SEP01" not in early
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_the_band_is_kalshi_only(pg_engine):
+    """`SSS` is the specimen's shape on Polymarket, which has its own path.
+
+    This band feeds `GET /events/{ticker}` on Kalshi; handing it a Polymarket
+    market would spend a venue call that can never answer.
+    """
+    early = await _select_early(pg_engine)
+
+    assert "SSS-26SEP14" not in early
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_a_resolved_market_is_left_to_the_two_bands_above(pg_engine):
+    """`HHH` is resolved with authoritative legs — band 2's job, not this one.
+
+    The bands must not double-ask: this one is defined by `status <> 'resolved'`
+    precisely so it covers the gap the others cannot reach and nothing else.
+    """
+    early = await _select_early(pg_engine)
+
+    assert "HHH-26SEP10" not in early
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_the_band_respects_its_own_budget(pg_engine):
+    """The cap binds, and it is this band's own — it never borrows from the others.
+
+    gotcha #34: one counter shared across a loop starves the later members. The
+    two bands above are pinned to sum to exactly the cycle budget, so this band
+    has to be additive or it would silently shrink them.
+    """
+    early = await _select_early(pg_engine, limit=1)
+
+    assert early == ["NNN-26SEP14"]
+    assert await _select_early(pg_engine, limit=0) == []
