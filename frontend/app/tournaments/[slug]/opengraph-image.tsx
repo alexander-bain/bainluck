@@ -3,6 +3,7 @@ import { ImageResponse } from "next/og";
 import { UnfurlCard, accentFor } from "@/components/og/UnfurlCard";
 import {
   tournamentShareFacts,
+  TOURNAMENT_SHARE_REVALIDATE_SECONDS,
   type TournamentShareSource,
 } from "@/lib/tournamentShareMeta";
 
@@ -28,8 +29,15 @@ const SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
  * there is no layout render in scope to share state with. `/events/[id]` and
  * `/futures/[id]` fetch twice for the same reason.
  *
- * `revalidate: 300` matches the layout's, so the picture and the words come from
- * the same five-minute window of prices rather than drifting apart.
+ * `TOURNAMENT_SHARE_REVALIDATE_SECONDS` is the layout's own window — one shared
+ * constant since #6161, rather than two `300`s tied together by this sentence —
+ * so the picture and the words come from the same five minutes of prices.
+ *
+ * That alignment was verified and is NOT the reason a stale card shipped on
+ * 2026-09-14 (#6161): both halves fetch an identical url with an identical
+ * window, and the render still drew a body generated the previous day. The
+ * refusal for that lives in `tournamentShareMeta`'s `payloadIsStale`, on the
+ * facts both halves read, not in these options.
  */
 async function fetchTournament(slug: string): Promise<TournamentShareSource | null> {
   if (!SLUG.test(slug)) return null;
@@ -37,7 +45,7 @@ async function fetchTournament(slug: string): Promise<TournamentShareSource | nu
   try {
     const response = await fetch(
       `${API_URL}/api/tournaments/${encodeURIComponent(slug)}?sections=first`,
-      { next: { revalidate: 300 } },
+      { next: { revalidate: TOURNAMENT_SHARE_REVALIDATE_SECONDS } },
     );
     if (!response.ok) return null;
     return await response.json();
@@ -61,9 +69,10 @@ async function fetchTournament(slug: string): Promise<TournamentShareSource | nu
  * `tournamentShareFacts` is the same call the title makes. That matters more
  * than it looks: `boardLeader` picks by probability rather than by arrival
  * order, drops a board whose leader prices null/NaN/0 rather than printing
- * "0%", and since #6149 drops one whose leader prices at or above 0.995 rather
- * than captioning a live final "100%". A second implementation here would
- * eventually pick a different leader
+ * "0%", since #6149 drops one whose leader prices at or above 0.995 rather than
+ * captioning a live final "100%", and since #6161 drops every board on a body
+ * older than an hour rather than publishing yesterday's forecast. A second
+ * implementation here would eventually pick a different leader
  * than the sentence directly beneath it — which is a worse failure than the one
  * this ship fixes, because the reader can see both at once.
  *

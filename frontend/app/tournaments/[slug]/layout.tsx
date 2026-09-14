@@ -5,6 +5,7 @@ import { selfCanonical } from "@/lib/routeMetadata";
 import { buildShareUrl } from "@/lib/share";
 import {
   buildTournamentShareCopy,
+  TOURNAMENT_SHARE_REVALIDATE_SECONDS,
   type TournamentShareSource,
 } from "@/lib/tournamentShareMeta";
 import {
@@ -50,7 +51,9 @@ async function fetchTournament(slug: string): Promise<TournamentLookup> {
   try {
     const response = await fetch(
       `${API_URL}/api/tournaments/${encodeURIComponent(slug)}?sections=first`,
-      { next: { revalidate: 300 } },
+      // #6161 — the window the copy's staleness bound is derived from, so the
+      // two cannot drift apart. Same value as before.
+      { next: { revalidate: TOURNAMENT_SHARE_REVALIDATE_SECONDS } },
     );
     // A slug with no register answers 404, and that is the ONLY honest "this is
     // not a tournament" signal here — the page itself renders client-side and

@@ -46,9 +46,25 @@
  * refusal above is unchanged and is the reason this is the right shape: the
  * module still never reads a result out of a price, it just stops narrating a
  * certainty as a lead. See `PRINTS_AS_CERTAIN`.
+ *
+ * AMENDED AGAIN (#6161). Every rule above decides what to say about a payload.
+ * None of them asks HOW OLD the payload is, and on 2026-09-14 13:29Z that was
+ * the whole defect: the card published a forecast computed the previous day for
+ * a tournament that had since been won. See `payloadIsStale`.
  */
 
 import { formatShareProbability, truncateShareText } from "@/lib/share";
+
+/**
+ * How long both halves cache the payload for, in seconds.
+ *
+ * Declared here rather than twice in the two route files (#6161). They were two
+ * independent `300`s tied together by a comment — "matches the layout's" — and
+ * `STALE_PAYLOAD_MS` below is DERIVED from this number, so a drift between them
+ * would silently move the staleness bound too. The value is unchanged; this is
+ * the pin, not a retune, and the cache window itself is latency's to set.
+ */
+export const TOURNAMENT_SHARE_REVALIDATE_SECONDS = 300;
 
 /** The slice of `GET /api/tournaments/{slug}?sections=first` this copy reads. */
 export interface TournamentShareBoardRow {
@@ -64,6 +80,11 @@ export interface TournamentShareBoard {
 export interface TournamentShareSource {
   title?: string | null;
   subtitle?: string | null;
+  /**
+   * When the API computed this answer — the payload's own `generated_at`, ISO
+   * with an offset. The only field in the body that ages (#6161).
+   */
+  generated_at?: string | null;
   boards?: TournamentShareBoard[] | null;
 }
 
@@ -195,6 +216,96 @@ function leaders(source: TournamentShareSource): BoardLeader[] {
 }
 
 /**
+ * The age past which this payload's numbers are no longer a forecast (#6161).
+ *
+ * DERIVED, not chosen. Both halves fetch with `revalidate:
+ * TOURNAMENT_SHARE_REVALIDATE_SECONDS`, so the oldest body either route MEANS
+ * to draw is one window old, and a stale-while-revalidate serve is a second.
+ * The bound is twelve windows — an hour — which is far outside anything the
+ * fetch options can produce and therefore cannot fire on ordinary operation,
+ * while catching the measured defect with sixteen hours to spare.
+ *
+ * The asymmetry justifies the generous margin. Firing wrongly costs a card with
+ * no numbers on it — the rung this slug already serves. Not firing costs a
+ * published forecast for a tournament somebody has won.
+ */
+const STALE_PAYLOAD_MS = TOURNAMENT_SHARE_REVALIDATE_SECONDS * 12 * 1000;
+
+/**
+ * Is this body too old to put a number in front of a reader? (#6161)
+ *
+ * ═══ THE DEFECT, MEASURED ON PRODUCTION ═══
+ *
+ * 2026-09-14 13:29Z, one minute after an unrelated deploy. The card drew
+ * "Alexander Zverev 59% (Men's Singles) · Elena Rybakina 99% (Women's Singles)
+ * · 2 draws tracked" for a tournament both had already won, while the WORDS on
+ * the same page correctly said nothing numeric. Read in the same minute,
+ * `GET /api/tournaments/us-open?sections=first` (`generated_at`
+ * 2026-09-14T13:27:25Z) served both boards `decided` with zero priced rows:
+ *
+ *   first three fetches   36,415 bytes   HIT    md5 5811b80c…   ❌ the forecast
+ *   fourth, ~3 min later  18,540 bytes   MISS   md5 36f73b50…   ✅ quiet card
+ *
+ * So the render did not mis-read a current payload — it read a DIFFERENT one,
+ * generated while the draws were still open and priced. Nothing in the copy or
+ * the card could tell: every rule in this module reasons about what a payload
+ * SAYS and none about when it was computed.
+ *
+ * ═══ 🔴 WHY `decided` — THE OBVIOUS FIX — IS INERT ═══
+ *
+ * "Refuse a board the payload says is `decided`" is the reading the issue
+ * proposes, and it would change nothing. `apply_final_result`
+ * (`tournament_board.py:1033`) settles EVERY row through `_settle_row`, which
+ * sets `probability: None`, and only then writes `board.decided`. So a board
+ * carrying `decided` carries no prices, and `boardLeader` already withholds it
+ * on the null-price exit it has had since #5888 — measured: both live US Open
+ * boards are `decided` with 0 of 36 and 0 of 44 rows priced. The two states are
+ * mutually exclusive by construction, not by luck.
+ *
+ * And the STALE body is the other side of it: it predates the settle, so it has
+ * no `decided` to read either. A field that is absent on both sides of the
+ * defect cannot decide it.
+ *
+ * ═══ WHY `generated_at` AND NOT THE BOARD'S FRESHNESS FIELDS ═══
+ *
+ * `age_hours` is computed when the payload is built, so it ages WITH the body
+ * and reads 3.81 forever — the staleness guard that a stale payload defeats.
+ * `newest_observed_at` is absolute and does survive, but it answers "when did
+ * we last see a price for this draw", which is true and small for a quiet
+ * market on a perfectly fresh payload. Branching on it would withhold boards
+ * whose only fault is a thin book, and the module header has already declined
+ * to read price freshness for exactly that reason.
+ *
+ * `generated_at` is the one field that is false only when the body is old. It
+ * fires on the defect and on nothing else.
+ *
+ * ═══ WHAT THIS IS NOT ═══
+ *
+ * It is not a cache change. `revalidate` is untouched, no tag or header moves,
+ * and transport is latency's under notice 41 — the two halves were already
+ * verified to fetch an IDENTICAL url with an IDENTICAL window, so there is no
+ * misalignment to correct. This is the data judgement that holds whatever the
+ * cache does, and it is the one that matters on this surface in particular: an
+ * unfurl's bytes are cached by Slack and X on the reader's side, so a card
+ * fetched once while wrong stays wrong in that channel long after production
+ * has healed itself.
+ *
+ * FAIL OPEN, three ways. An absent stamp, an unparseable one, and one in the
+ * future all return `false`: this exists to catch a body we can PROVE is old,
+ * and a card that went quiet because an edge clock ran fast would be a second
+ * defect wearing the first one's clothes.
+ */
+function payloadIsStale(source: TournamentShareSource, now: number): boolean {
+  const stamp = cleanText(source.generated_at);
+  if (!stamp) return false;
+
+  const generated = Date.parse(stamp);
+  if (!Number.isFinite(generated)) return false;
+
+  return now - generated > STALE_PAYLOAD_MS;
+}
+
+/**
  * The facts the unfurl reads, before anything decides how to say them.
  *
  * #5888 — the CARD needs these too. A pasted tournament link unfurls with a
@@ -220,12 +331,19 @@ export interface TournamentShareFacts {
 }
 
 export function tournamentShareFacts(
-  source: TournamentShareSource
+  source: TournamentShareSource,
+  /** Injected so the staleness rule is testable without moving a clock. */
+  now: number = Date.now()
 ): TournamentShareFacts {
   return {
     name: cleanText(source.title) ?? "Tournament",
     venue: cleanText(source.subtitle),
-    leaders: leaders(source),
+    // #6161 — THE LEADERS GO, THE IDENTITY STAYS. A stale body's `title` and
+    // `subtitle` are still true: the hub is still the US Open at Flushing
+    // Meadows, whatever the prices were doing when the body was built. Only the
+    // numbers rot, so only the numbers are withheld, and both halves land on
+    // the rung they already take for an unpriced hub.
+    leaders: payloadIsStale(source, now) ? [] : leaders(source),
   };
 }
 
@@ -239,16 +357,20 @@ export function tournamentShareFacts(
  * the one idempotent implementation, rather than a second spelling of it
  * (#3292 is open about exactly that kind of copy).
  */
-export function buildTournamentShareCopy(source: TournamentShareSource): {
+export function buildTournamentShareCopy(
+  source: TournamentShareSource,
+  now: number = Date.now()
+): {
   title: string;
   description: string;
 } {
-  const { name, venue, leaders: found } = tournamentShareFacts(source);
+  const { name, venue, leaders: found } = tournamentShareFacts(source, now);
 
   if (found.length === 0) {
     // No board this module will put a number on — every one is unpriced, or
     // settled, or (since #6149) priced at a certainty that is no longer a
-    // forecast. Say what the page is and claim nothing about who is ahead.
+    // forecast, or (since #6161) on a body too old to be a forecast at all.
+    // Say what the page is and claim nothing about who is ahead.
     // `venue` is the hub's own subtitle ("Flushing Meadows"), not a sentence
     // written for a reviewer.
     return {
