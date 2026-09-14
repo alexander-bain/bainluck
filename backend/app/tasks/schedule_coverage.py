@@ -621,13 +621,26 @@ def frozen_club(name) -> Optional[str]:
     which is a split this arm's own population carries (#2867 / D50). A second
     table here would be the bug, not the fix.
 
-    The prefix arm exists for one measured production shape: our rows carry the
-    truncated `San Francisco Giant`, which is nobody's exact name. It resolves
-    only when the prefix is UNIQUE across the 30, so `Chicago`, `New York` and
-    `Los Angeles` — the names that would re-open the whole city-token hole —
-    resolve to nothing and refuse. An unknown string (`Sacramento Athletics`)
-    refuses too. Fail-closed is the only safe direction for a rail that writes a
-    score onto a side.
+    EXACT MEMBERSHIP AFTER THE FOLD IS THE WHOLE TEST, and that is a measured
+    claim, not a preference. Both vocabularies this function folds were read
+    WHOLE (live/233, 2026-09-14), not sampled:
+
+      * ours — 33 distinct `teams.name` on MLB-keyed events: 31 resolve exactly
+        (both `St. Louis Cardinals` AND `St.Louis Cardinals`, which is the fold
+        doing its job), and 2 refuse correctly (`American League` /
+        `National League`, the one All-Star row);
+      * the authority's — 30 distinct MLB Stats API names: 30 resolve exactly.
+
+    So 0 of 63 production strings need any fallback. An earlier cut carried a
+    unique-prefix arm justified by a truncated `San Francisco Giant`; that string
+    does not exist in `teams` (the real names are `San Francisco` 13,
+    `San Francisco 49ers` 19, `San Francisco Dons` 18, `San Francisco Giants`
+    20) — it was a one-character suffix clip read off a truncating output. The
+    arm was dead code and is deleted: a widening no measured row needs is pure
+    risk on a rail that writes a score onto a side, and fail-closed is the only
+    safe direction here. `test_no_production_name_needs_a_fallback_arm_5881`
+    pins the vocabulary, so a REAL truncation reddens that test and earns an
+    explicit measured alias rather than a generic prefix match.
     """
     from app.utils.nfl_team_matching import normalize_team
     from app.utils.statpal_league_rosters import MLB_TEAM_NAMES
@@ -635,10 +648,7 @@ def frozen_club(name) -> Optional[str]:
     folded = normalize_team(name)
     if not folded:
         return None
-    if folded in MLB_TEAM_NAMES:
-        return folded
-    hits = [c for c in MLB_TEAM_NAMES if c.startswith(folded) or folded.startswith(c)]
-    return hits[0] if len(hits) == 1 else None
+    return folded if folded in MLB_TEAM_NAMES else None
 
 
 def frozen_final_orientation(our_home, our_away, mlb_home, mlb_away) -> str:
