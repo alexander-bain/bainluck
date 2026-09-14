@@ -221,6 +221,8 @@ def _corpus() -> list[tuple]:
     hour = now - timedelta(hours=1)
     two_hours = now - timedelta(hours=2)
     nine_days = now - timedelta(days=9)
+    ten_days = now - timedelta(days=10)
+    five_minutes = now - timedelta(minutes=5)
     future = now + timedelta(days=20)
     # #6012's window, two-sided: `soon`/`tomorrow` sit inside the early band's
     # future reach, `nine_days_ago` below its floor, `future` beyond its reach.
@@ -267,6 +269,26 @@ def _corpus() -> list[tuple]:
             "mixed_default", "kalshi", "resolved", "LLL-26SEP10", fifty, fifty,
             [("leg-a", None, None), ("leg-b", False, "all_losers")],
         ),
+        # #1121 — THE CATCH-UP ROW, and the reason the ORDER BY is `LEAST` and
+        # not the window's `COALESCE`. The venue settled this TEN DAYS ago; a
+        # backlog sweep only reached it five minutes ago and stamped `settled_at`
+        # with its own clock. `COALESCE(settled_at, resolution_date)` therefore
+        # calls it the freshest market in the book and hands it the head of a
+        # capped band, evicting a game that finished tonight.
+        #
+        # Not hypothetical and not rare: measured on production 2026-09-14 09:25Z,
+        # **214 of the 400 fast-lane slots (53.5%) were held by rows of exactly
+        # this shape** — the head three were Korean-baseball games from 9 August —
+        # while 699 tickers settled inside the last 24 h sat below the cutoff.
+        # Sunday night's Cowboys–Giants player props ranked 1161–1172.
+        #
+        # Its `settled_at` is the NEWEST in the corpus on purpose: under the old
+        # ordering it takes the head, under the ship it takes the tail, and no
+        # other row can produce that difference.
+        (
+            "catchup", "kalshi", "resolved", "AAB-26SEP05", five_minutes, ten_days,
+            blank,
+        ),
         # ---- #6012: the early-settled band's corpus -------------------------
         # Every row below is `status='open'`, so none of them is visible to the
         # two bands above and none of them can move EXPECTED_FRESH or the tail.
@@ -312,14 +334,27 @@ def _corpus() -> list[tuple]:
     ]
 
 
-#: What the recency band must return, newest first, when nothing caps it.
+#: What the recency band must return, VENUE-newest first, when nothing caps it.
+#:
+#: #1121 moved the last two. The ordering key is `LEAST(settled_at,
+#: resolution_date)` — the earlier of "when we noticed" and "when the venue said
+#: it was due" — so the two rows whose venue date is old sink below every row
+#: that genuinely settled in the last hour, however recently we stamped them:
+#:
+#:   * `CCC` observed 45 min ago, venue-dated nine days ago
+#:   * `AAB` observed FIVE MINUTES ago, venue-dated ten days ago
+#:
+#: Both remain MEMBERS — the window is still the `COALESCE` and that is what the
+#: 79% measurement in `backfill_winners`' constant block protects. Only their
+#: place in a capped band changes, which is the whole ship.
 EXPECTED_FRESH = [
     "AAA-26SEP10",
     "KKK-26SEP10",
-    "CCC-26SEP10",
     "LLL-26SEP10",
     "BBB-26SEP10",
     "ZZZ-26SEP10",
+    "CCC-26SEP10",
+    "AAB-26SEP05",
 ]
 
 
@@ -463,11 +498,15 @@ async def test_an_ungraded_market_whose_legs_hold_the_default_false_is_selected(
 @needs_postgres
 @pytest.mark.asyncio
 async def test_the_recency_band_is_ordered_by_settlement_time_not_by_ticker(pg_engine):
-    """Newest first, and by the COALESCE — not by the alphabet, not by schedule.
+    """VENUE-newest first — not by the alphabet, and not by our own clock.
 
-    `CCC` (observed an hour ago, scheduled nine days ago) must outrank `ZZZ`
-    (two hours ago). Under `ORDER BY external_id` or `ORDER BY resolution_date`
-    this list comes back in a different order.
+    `BBB` (schedule-only, an hour ago) must outrank `ZZZ` (two hours ago), so
+    this is not `ORDER BY external_id` and not `ORDER BY settled_at` alone — a
+    row with no `settled_at` still has to find its place.
+
+    And `CCC`/`AAB`, whose venue dates are nine and ten days old, must rank
+    BELOW every genuinely-recent row however recently we stamped them. #1121:
+    `AAB`'s `settled_at` is the newest in the corpus.
     """
     fresh, _tail = await _select(pg_engine, limit=2000)
     assert fresh == EXPECTED_FRESH
@@ -480,9 +519,19 @@ async def test_a_capped_band_spends_its_budget_on_the_newest(pg_engine):
 
     This is the arm that makes the ordering load-bearing rather than cosmetic:
     with a cap, order decides who is graded tonight and who waits.
+
+    #1121 makes it the ship's narrowest statement. `AAB` was stamped `settled_at`
+    five minutes ago — 25 minutes newer than `AAA` — so under the shipped-until-now
+    `COALESCE` ordering this single slot went to a market the venue settled TEN
+    DAYS ago, and the market that settled tonight waited for the alphabetical
+    tail to wrap (~11 days on the production population). The one slot must go to
+    `AAA`.
     """
     fresh, tail = await _select(pg_engine, limit=5)
-    assert fresh == ["AAA-26SEP10"]
+    assert fresh == ["AAA-26SEP10"], (
+        "the one fast-lane slot went to a catch-up row: the band is ordered by "
+        "OUR observation stamp, not by when the venue settled"
+    )
     assert len(tail) <= 4
 
 
@@ -530,9 +579,17 @@ _MUTATED_BASE = """
       {blank}
       {gradeable}
     GROUP BY fm.external_id
-    ORDER BY MAX(COALESCE(fm.settled_at, fm.resolution_date)) DESC
-    LIMIT 2000
+    ORDER BY {order} DESC
+    LIMIT {limit}
 """
+
+#: The shipped ordering key (#1121): the earlier of our observation stamp and the
+#: venue's own date, which is Postgres `LEAST` because `LEAST` IGNORES NULLs —
+#: a row carrying only one of the two keeps exactly the key it had before.
+_ORDER = "MAX(LEAST(fm.settled_at, fm.resolution_date))"
+#: The ordering as it shipped from #4057 until #1121, kept so the regression is
+#: EXECUTED against this server rather than described in a comment.
+_ORDER_OBSERVED = "MAX(COALESCE(fm.settled_at, fm.resolution_date))"
 
 _WINDOW = (
     "AND COALESCE(fm.settled_at, fm.resolution_date) >= NOW() - INTERVAL '3 days' "
@@ -571,8 +628,18 @@ _GRADEABLE_WITHOUT_RETRACTION = (
 )
 
 
-async def _mutated(engine, *, window=_WINDOW, blank=_BLANK, gradeable=_GRADEABLE):
-    sql = _MUTATED_BASE.format(window=window, blank=blank, gradeable=gradeable)
+async def _mutated(
+    engine,
+    *,
+    window=_WINDOW,
+    blank=_BLANK,
+    gradeable=_GRADEABLE,
+    order=_ORDER,
+    limit=2000,
+):
+    sql = _MUTATED_BASE.format(
+        window=window, blank=blank, gradeable=gradeable, order=order, limit=limit
+    )
     async with engine.connect() as conn:
         rows = await conn.execute(text(sql))
     return [r[0] for r in rows.all()]
@@ -651,6 +718,92 @@ async def test_dropping_the_retraction_exclusion_lets_ungradeable_rows_clog_the_
 ):
     got = await _mutated(pg_engine, gradeable=_GRADEABLE_WITHOUT_RETRACTION)
     assert "GGG-26SEP10" in got
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_the_observation_stamp_ordering_hands_the_head_to_a_ten_day_old_market(
+    pg_engine,
+):
+    """#1121's regression, EXECUTED — the one-slot band, both ways.
+
+    The membership clauses are held identical and only the ORDER BY moves, so
+    the difference cannot be anything else. Under the old
+    `COALESCE(settled_at, resolution_date)` the single slot goes to `AAB`, which
+    the venue settled ten days ago and a backlog sweep stamped five minutes ago;
+    under the shipped `LEAST` it goes to `AAA`, which settled half an hour ago.
+
+    This is the production defect in one row: `settled_at` is OUR clock, so a
+    catch-up sweep manufactures freshness and evicts tonight's game from a band
+    whose only purpose is tonight's game.
+    """
+    old = await _mutated(pg_engine, order=_ORDER_OBSERVED, limit=1)
+    new = await _mutated(pg_engine, order=_ORDER, limit=1)
+
+    assert old == ["AAB-26SEP05"], (
+        "the corpus no longer reproduces the defect — if the old ordering does "
+        "not promote the catch-up row, every assertion about the fix is vacuous"
+    )
+    assert new == ["AAA-26SEP10"]
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_the_ordering_change_moves_nobody_in_or_out_of_the_band(pg_engine):
+    """Reach is the window's job; the ORDER BY may only re-rank.
+
+    #1121 is a re-ranking, and the 79% measurement in `backfill_winners`'
+    constant block is why it must stay one: narrowing the WINDOW to the venue's
+    own date would lose four settlements in five. Run both orderings uncapped
+    and the SETS must be equal.
+    """
+    old = await _mutated(pg_engine, order=_ORDER_OBSERVED)
+    new = await _mutated(pg_engine, order=_ORDER)
+
+    assert sorted(old) == sorted(new)
+    assert old != new, (
+        "the two orderings returned the identical LIST, so this file is not "
+        "exercising the change at all"
+    )
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_least_ignores_nulls_so_a_one_column_row_keeps_its_old_key(pg_engine):
+    """The load-bearing Postgres behaviour, asserted against the server.
+
+    `LEAST` ignoring NULLs is a Postgres-specific rule (most dialects propagate
+    the NULL), and the whole safety argument for #1121 rests on it: a row with
+    only ONE of the two columns must keep exactly the key it had before. `BBB`
+    is that row — `settled_at` NULL, `resolution_date` an hour ago — and it
+    stands for the entire pre-`settled_at` cohort, which resolved before the
+    column shipped and will never be backfilled. If NULL propagated, every one
+    of them would sort to the bottom of the band rather than being re-ranked.
+    """
+    async with pg_engine.connect() as conn:
+        row = (
+            await conn.execute(
+                text(
+                    "SELECT LEAST(NULL::timestamptz, NOW()), "
+                    "       LEAST(NOW(), NULL::timestamptz), "
+                    "       LEAST(NULL::timestamptz, NULL::timestamptz)"
+                )
+            )
+        ).one()
+
+    assert row[0] is not None, "LEAST propagated a NULL — the ordering key is unsafe"
+    assert row[1] is not None
+    assert row[2] is None, "LEAST of all-NULL must stay NULL"
+
+    # And the consequence on the real band. `BBB`'s key is identical under both
+    # orderings, so its order against every OTHER row whose key is also
+    # unchanged must be identical too — here `AAA`, `KKK`, `LLL`, `ZZZ`, all of
+    # which carry two agreeing timestamps. Asserted as relative order and not as
+    # an index, because the catch-up rows moving past `BBB` is the ship.
+    unmoved = ["AAA-26SEP10", "KKK-26SEP10", "LLL-26SEP10", "BBB-26SEP10", "ZZZ-26SEP10"]
+    old = await _mutated(pg_engine, order=_ORDER_OBSERVED)
+    new = await _mutated(pg_engine, order=_ORDER)
+    assert [t for t in old if t in unmoved] == [t for t in new if t in unmoved] == unmoved
 
 
 # ---------------------------------------------------------------------------
