@@ -17219,6 +17219,28 @@ def _event_started_long_ago_unsettled(event, now, hours: int) -> bool:
     return event.commence_time < now - timedelta(hours=hours)
 
 
+def _served_point_bounds(win_prob_history: dict, history: list):
+    """(earliest, latest) timestamp across every series this response serves.
+
+    The chart axis has three separate cohorts whose anchor field is untrustworthy
+    (live/035's ticker-derived midnight, live/068's relaxed end cap, live/228's
+    not-yet-started event). Each repairs itself the same way — widen the domain
+    until it contains the data it is the domain for — so the bounds they all need
+    are computed once here rather than inlined three times with three chances to
+    drift. Returns (None, None) when nothing is being served.
+    """
+    served = [pts for pts in list(win_prob_history.values()) + [history] if pts]
+    earliest = min(
+        (datetime.fromisoformat(pts[0]["timestamp"]) for pts in served),
+        default=None,
+    )
+    latest = max(
+        (datetime.fromisoformat(pts[-1]["timestamp"]) for pts in served),
+        default=None,
+    )
+    return earliest, latest
+
+
 def _extend_win_prob_history_to_live_edge(
     win_prob_history: dict,
     win_prob_sources_meta: dict,
@@ -17483,6 +17505,10 @@ async def get_event_odds_history(
     # For live/scheduled events, apply a time window to keep responses focused.
     now = datetime.now(timezone.utc)
     is_finished = _event_is_really_finished(event, now)
+    # Actually in progress — NOT merely "not finished", which is also every game
+    # that has yet to start. Computed once so the three consumers below cannot
+    # drift apart again (#6150: the time domain was the one that had).
+    _is_live_now = not is_finished and (event.status or "").lower() == "live"
     # live/035: a past-start, never-settled event is served whole, not windowed.
     is_stale_open = not is_finished and _event_started_long_ago_unsettled(
         event, now, hours
@@ -18353,7 +18379,7 @@ async def get_event_odds_history(
     _extend_win_prob_history_to_live_edge(
         win_prob_history,
         win_prob_sources_meta,
-        is_live=(not is_finished and (event.status or "").lower() == "live"),
+        is_live=_is_live_now,
         now=now,
     )
 
@@ -18471,7 +18497,7 @@ async def get_event_odds_history(
     blend_edge_pinned = _pin_blend_edge(
         aggregate_line,
         pin_event,
-        is_live=(not is_finished and (event.status or "").lower() == "live"),
+        is_live=_is_live_now,
         is_finished=is_finished,
         now=now,
         served_blend=served_blend,
@@ -18650,17 +18676,7 @@ async def get_event_odds_history(
         # only honest end is the last point served. `history` alone cannot
         # supply it — the specimen is Kalshi-only, so its odds history is empty
         # and the axis would come back null on a chart that finally has a line.
-        _served = [
-            pts for pts in list(win_prob_history.values()) + [history] if pts
-        ]
-        _earliest = min(
-            (datetime.fromisoformat(pts[0]["timestamp"]) for pts in _served),
-            default=None,
-        )
-        _latest = max(
-            (datetime.fromisoformat(pts[-1]["timestamp"]) for pts in _served),
-            default=None,
-        )
+        _earliest, _latest = _served_point_bounds(win_prob_history, history)
         # Widen only — never narrow — so a trustworthy commence_time still opens
         # the axis and only a placeholder that sits after the data is overridden.
         if _earliest is not None and (
@@ -18669,6 +18685,25 @@ async def get_event_odds_history(
             _domain_start = _earliest
         if _latest is not None and (_domain_end is None or _latest > _domain_end):
             _domain_end = _latest
+    if not is_finished and not _is_live_now:
+        # live/228 (#6150): a NOT-YET-STARTED event anchors the axis at a
+        # `commence_time` that lies AFTER every point it serves, while the end is
+        # `now` — so the domain is INVERTED before the floor below ever sees it.
+        # The floor then rewrites it into a 30-minute window sitting entirely in
+        # the future, which is why the inversion never reaches the payload and the
+        # existing `end >= start` contract test passes on it. Measured on
+        # production 2026-09-14: three scheduled specimens served 0 of 287, 0 of
+        # 241 and 0 of 206 of their own points inside their own domain.
+        #
+        # Same repair the two branches above make for their own cohorts: widen to
+        # contain what is actually being served. Pre-match drift IS the story on a
+        # game that has not started, so an axis that excludes all of it is the one
+        # thing the domain must not be.
+        _earliest, _ = _served_point_bounds(win_prob_history, history)
+        if _earliest is not None and (
+            _domain_start is None or _earliest < _domain_start
+        ):
+            _domain_start = _earliest
     time_domain = None
     if _domain_start and _domain_end:
         if not is_finished and (
@@ -18678,7 +18713,11 @@ async def get_event_odds_history(
         time_domain = {
             "start": _domain_start.isoformat(),
             "end": _domain_end.isoformat(),
-            "is_live": not is_finished,
+            # A `scheduled` event is not live. `not is_finished` called it live
+            # and sent it down the live path; the two siblings in this file
+            # (`_extend_win_prob_history_to_live_edge`, `_pin_blend_edge`) already
+            # carry this conjunct and this was the unconverted call site.
+            "is_live": _is_live_now,
             "min_window_seconds": MIN_LIVE_DOMAIN_SECONDS,
         }
 
