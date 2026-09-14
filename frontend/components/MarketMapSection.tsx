@@ -218,6 +218,42 @@ function marginLadderLabel(teamAbbr: string, threshold: number | string): string
   return `${teamAbbr} by ${threshold}+`;
 }
 
+/**
+ * #6203. How a margin rung finished, against the final margin of the scope that
+ * rung belongs to — the game for the full-game rail, the half for a period one.
+ *
+ * #3769 gave the TOTALS ladder this rule: `probability` is read live and
+ * collapses to the RESOLVED price the moment a market settles, so a settled
+ * rung must be graded against the final rather than quoted. The margin rail was
+ * left out of it, so one settled card printed "EACH LINE VS THE FINAL" over its
+ * totals and "LAST QUOTE FOR WINNING BY" over its margins — two tenses, one tap
+ * apart, the second describing settlement values as if they were quotes.
+ * Written once, for both margin rails, because this file's own history is a
+ * list of the three places that came to disagree about one grammar.
+ *
+ * `finalMargin` is signed home-minus-away; `threshold` is a magnitude and
+ * `isHome` names the side, so an away rung grades against the mirror.
+ *
+ * INCLUSIVE, where the totals rule is strict, because the LABEL is inclusive.
+ * Every rung on this rail is written by `marginLadderLabel` as `NYG by 15+`,
+ * and "15+" is true of a 15-point win: grading it "not cleared" would
+ * contradict the FINAL marker the same rail draws at 15. Both spellings that
+ * reach here agree with the label — "wins by 15 or more points" is `>= 15`
+ * outright (#3788/#6199 keeps that shape as a rung precisely because it is
+ * bounded at one end only), and a cover line is quoted at `.5`, where `>` and
+ * `>=` cannot disagree. An integer cover line would be a push, an outcome this
+ * rail cannot draw; it grades the claim the label makes rather than inventing a
+ * third state.
+ */
+export function gradeMarginRung(
+  finalMargin: number | null,
+  isHome: boolean,
+  threshold: number
+): MarketMapLadderRow["outcome"] {
+  if (finalMargin == null) return undefined;
+  return (isHome ? finalMargin : -finalMargin) >= threshold ? "cleared" : "missed";
+}
+
 function deriveAbbr(team: string, provided?: string): string {
   if (provided) return provided;
   const words = team.split(" ");
@@ -584,6 +620,17 @@ export default function MarketMapSection({
       }
     }
 
+    /* #6203: gated on the same `status === "done"` + scoreboard test the title
+       and the FINAL marker are gated on, so the ladder grades exactly when the
+       rail draws the number it grades against — #3769's rule for the totals
+       card, and the reason a card can never promise a comparison it cannot
+       make. Spelled out rather than reusing `hasScoreboard` so the nulls
+       narrow. */
+    const finalMarginGraded =
+      status === "done" && homeScore != null && awayScore != null
+        ? homeScore - awayScore
+        : null;
+
     const ladder: MarketMapLadderRow[] = [];
     const homeSorted = parsed.filter((p) => p.isHome).sort((a, b) => a.threshold - b.threshold);
     const awaySorted = parsed.filter((p) => !p.isHome).sort((a, b) => a.threshold - b.threshold);
@@ -593,6 +640,7 @@ export default function MarketMapSection({
         label: marginLadderLabel(aAbbr, s.threshold),
         probability: Math.round(s.probability * 100),
         side: "left",
+        outcome: gradeMarginRung(finalMarginGraded, false, s.threshold),
       });
     }
     for (const s of homeSorted) {
@@ -600,6 +648,7 @@ export default function MarketMapSection({
         label: marginLadderLabel(hAbbr, s.threshold),
         probability: Math.round(s.probability * 100),
         side: "right",
+        outcome: gradeMarginRung(finalMarginGraded, true, s.threshold),
       });
     }
 
@@ -961,10 +1010,24 @@ export default function MarketMapSection({
         const marginB = b.isHome ? b.threshold : -b.threshold;
         return marginA - marginB;
       });
+      /* #6203, the period half of the same rule. The half TOTALS card already
+         grades (see its `gradeRung` below); leaving the half MARGIN card
+         quoting would reproduce, one card lower, the exact two-tenses defect
+         this ship is closing on the full-game pair. Same gate as this card's
+         own FINAL marker — `isDone && halfScores` — computed ONCE so the marker
+         and the grade cannot disagree about one card. */
+      const halfFinalMargin =
+        isDone && halfScores
+          ? half === "1H"
+            ? halfScores.h1Home - halfScores.h1Away
+            : halfScores.h2Home - halfScores.h2Away
+          : null;
+
       const ladder: MarketMapLadderRow[] = allSorted.map((s) => ({
         label: marginLadderLabel(s.isHome ? hAbbr : aAbbr, s.threshold),
         probability: Math.round(s.probability * 100),
         side: (s.isHome ? "right" : "left") as "left" | "right",
+        outcome: gradeMarginRung(halfFinalMargin, s.isHome, s.threshold),
       }));
 
       // Find the closest-to-50% spread as the projection marker
@@ -1059,7 +1122,21 @@ export default function MarketMapSection({
           title: `${label} margin`,
           // #3210, same rule as the full-game rail above it: a period card with
           // no shape in its band names its rungs instead of promising a curve.
-          subtitle: bandDrawsShape ? `${label} margin distribution` : quotedLinesPhrase(ladder.length),
+          //
+          // #6203 carries #6169's third arm across to the margin rail. A graded
+          // ladder prints no percentage at all, so "Eight lines quoted" over
+          // eight `cleared` rows names a thing the reader cannot see — and the
+          // grading this ship adds is what newly makes that arm reachable here.
+          // The full-game rail above needs no such arm: its `quotedLinesPhrase`
+          // fall-through sits behind the `done && hasScoreboard` branch, which
+          // is the same condition that grades, so a graded ladder can never
+          // arrive there. Decided by the same `ladderGraded` the heading and the
+          // rows are decided by, so the three cannot drift.
+          subtitle: bandDrawsShape
+            ? `${label} margin distribution`
+            : ladderGraded(ladder)
+            ? settledLinesPhrase(ladder.length)
+            : quotedLinesPhrase(ladder.length),
           headline: "",
           rangeMin: -maxM,
           rangeMax: maxM,
