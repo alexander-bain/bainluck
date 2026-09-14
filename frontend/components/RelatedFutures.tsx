@@ -2388,10 +2388,11 @@ export default function RelatedFutures({
     })),
   ].sort((a, b) => (b.future.probability || 0) - (a.future.probability || 0));
 
-  // Merge novelty across teams, filter out stale low-probability markets
-  const mergedNovelty = [...homeCats.novelty, ...awayCats.novelty]
-    .filter((f) => (f.probability || 0) >= 0.05)
-    .sort((a, b) => (b.probability || 0) - (a.probability || 0));
+  // `mergedNovelty` was DELETED here. It merged and sorted the novelty rows for
+  // `NoveltyScroll`, which — like `MatchupGrid` — is declared in this file and
+  // never called, so its only remaining reader was the section count it
+  // inflated. `homeCats.novelty` is left computed, the way `matchups` is:
+  // rebuild the aggregate in the same commit that mounts the component.
 
   // Playoff path: prefer LeagueContextService data (merged multi-source, volume-weighted)
   // over raw ILIKE-matched futures entries
@@ -2472,23 +2473,6 @@ export default function RelatedFutures({
     .sort((a, b) => (b.probability || 0) - (a.probability || 0));
   const hasSeriesData = seriesMarkets.length > 0 || legacySeries.length > 0;
 
-  const hasStandings = !!(homeStandings || awayStandings);
-  // #3775, same defect class as the game counts above: `matchups` was counted
-  // here while `MatchupGrid` — its only renderer — is declared in this file,
-  // never called and never exported (see the note on it, UX-1065 / #2936). It
-  // could only ever open the section over rows that draw nothing, so it is not
-  // counted. Restore this term in the same commit that calls the component.
-  const seasonCount =
-    homePlayoff.length + awayPlayoff.length +
-    homeCats.seasonStats.length + awayCats.seasonStats.length +
-    mergedAwards.length +
-    (seriesMarkets.length || legacySeries.length) +
-    homeCats.trades.length + awayCats.trades.length +
-    mergedNovelty.length +
-    (hasStandings && homeCats.seasonStats.length === 0 && awayCats.seasonStats.length === 0 ? 1 : 0);
-
-  if (gameMarketCount === 0 && seasonCount === 0 && !hasGridProgression) return null;
-
   // Build per-team championship path data for the new layout
   const buildPathEntries = (futures: RelatedFuture[]) => {
     return futures.map((f) => {
@@ -2507,6 +2491,43 @@ export default function RelatedFutures({
   };
   const homePathEntries = buildPathEntries(homePlayoff);
   const awayPathEntries = buildPathEntries(awayPlayoff);
+  const homeAwards = mergedAwards.filter((a) => a.teamColor === hColor);
+  const awayAwards = mergedAwards.filter((a) => a.teamColor === aColor);
+
+  // #3775 again, one level down. The old `seasonCount` was a SUM over both
+  // teams gating a grid of TWO cards, so a game whose season context all
+  // belongs to one side still drew the other side's card: a crest, a name and
+  // an empty record line over nothing. Measured 2026-09-14 on 27 sampled
+  // events whose section opens — 4 drew such a card, in both directions
+  // (Porto–Partizan, Toulouse–Montpellier away; Örebro SK, Dundalk home).
+  //
+  // A card's whole body is AdvancementPath + PLAYER AWARDS, and its header
+  // says something only when standings give it a record — so that is the
+  // predicate, per side. Notice 34 forbids explaining the emptiness in prose,
+  // so the card is not drawn at all rather than captioned.
+  const homeCardDraws =
+    homePathEntries.length > 0 || homeAwards.length > 0 || !!homeStandings;
+  const awayCardDraws =
+    awayPathEntries.length > 0 || awayAwards.length > 0 || !!awayStandings;
+
+  // The section gate is now the OR of the blocks that actually render, not a
+  // count of payload rows. `seasonCount` carried four terms no renderer reads:
+  // `seasonStats` (filtered, counted, passed to nothing), `mergedNovelty`
+  // (`NoveltyScroll` is declared in this file and never called — the
+  // `MatchupGrid` case the note above already caught), the standings term it
+  // bolted on, and `hasGridProgression`, whose only renderer was deleted in
+  // UX-P152. That commit's note says `hasGridProgression` "is a real gate on
+  // other sections"; grep says it gated exactly this return and the team-card
+  // grid, and team-progression data can put no row in those cards. Each term
+  // could open "Bigger Picture" over a header and a footer with nothing
+  // between — the exact thing Alex reported. Restore any of them in the same
+  // commit that renders it.
+  const drawsGameMarkets = !hasGameMarkets && gameMarketCount > 0;
+  const drawsSeries = seriesMarkets.length > 0 || legacySeries.length > 0;
+  const drawsTeamCards = homeCardDraws || awayCardDraws;
+  const drawsTrades = homeCats.trades.length > 0 || awayCats.trades.length > 0;
+
+  if (!drawsGameMarkets && !drawsSeries && !drawsTeamCards && !drawsTrades) return null;
 
   return (
     <div>
@@ -2654,16 +2675,15 @@ export default function RelatedFutures({
       ) : null}
 
       {/* === Two-Column Team Cards === */}
-      {(seasonCount > 0 || hasGridProgression) && (
+      {drawsTeamCards && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Home Team Card */}
-          {(() => {
+          {homeCardDraws && (() => {
             const standings = homeStandings;
             const record = standings ? `${standings.wins ?? 0}-${standings.losses ?? 0}${standings.ties ? `-${standings.ties}` : ""}` : null;
             const seed = standingsSeed(standings);
-            const homeAwards = mergedAwards.filter((a) => a.teamColor === hColor);
             return (
-              <div className="bg-surface-card border border-surface-border rounded-xl shadow-sm p-5">
+              <div className="bg-surface-card border border-surface-border rounded-xl shadow-sm p-5" data-testid="home-team-card">
                 <div className="flex items-center gap-3 mb-4">
                   {homeTeamLogo ? (
                     <img src={homeTeamLogo} alt={homeTeam} className="w-11 h-11 object-contain shrink-0" />
@@ -2723,13 +2743,12 @@ export default function RelatedFutures({
           })()}
 
           {/* Away Team Card */}
-          {(() => {
+          {awayCardDraws && (() => {
             const standings = awayStandings;
             const record = standings ? `${standings.wins ?? 0}-${standings.losses ?? 0}${standings.ties ? `-${standings.ties}` : ""}` : null;
             const seed = standingsSeed(standings);
-            const awayAwards = mergedAwards.filter((a) => a.teamColor === aColor);
             return (
-              <div className="bg-surface-card border border-surface-border rounded-xl shadow-sm p-5">
+              <div className="bg-surface-card border border-surface-border rounded-xl shadow-sm p-5" data-testid="away-team-card">
                 <div className="flex items-center gap-3 mb-4">
                   {awayTeamLogo ? (
                     <img src={awayTeamLogo} alt={awayTeam} className="w-11 h-11 object-contain shrink-0" />
