@@ -168,6 +168,85 @@ export function futuresTitleText(opts: {
   return opts.marketName;
 }
 
+/* ───────────────────────────────────────────────────────────────────────────
+ * #6032 — THE UNFURL CARD SAYS WHAT THE UNFURL TITLE SAYS.
+ *
+ * `futuresTitleText` above (L2-55) and `FuturesHero` (L2-53, Alex ruling) both
+ * know the settled rule: the winner name is the story, and a settled market
+ * carries NO percentage, because "the last-traded price read as a bug". The
+ * third surface describing that same state — the OG image a pasted link draws —
+ * never got it, so one preview carried both claims at once.
+ *
+ * Measured on production 2026-09-13 23:59Z, `/futures/60544511` (the market link
+ * YOUR-TURN asks Alex to paste into a phone preview):
+ *
+ *   og:description  "77° or above won (Temperature in New York City ...)"  ✅
+ *   og:image        96px "100%" over "77° or above leads at 100%
+ *                    — 10 outcomes tracked."                                ❌
+ *
+ * 🔴 THE WORDING IS THE SMALLER HALF. The card featured the PRICE leader while
+ * the title features the GRADED winner. UX-P232 measured why those differ:
+ * settlement freezes every outcome at its last traded price, "routinely NOT the
+ * highest on the board" — its case is "Arsenal vs Coventry: First Goalscorer",
+ * grading Kai Havertz at 21% while two players who did not score sit frozen at
+ * 99%. On that market the card drew a man who did not score, at 99%, over the
+ * word "leads". A picture is the artifact a chat client caches and re-serves.
+ *
+ * So the SUBJECT and the COPY are decided together, here, by the same
+ * `pickHeroOutcome` the title calls — the two cannot name different outcomes.
+ * This is pure so the settled branch is unit-testable: the route it serves is an
+ * edge-runtime `ImageResponse`, which is why the rule went missing there in the
+ * first place.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+export interface FuturesUnfurlCopy {
+  /** The outcome the card features — the graded winner once settled. */
+  featuredName: string | null;
+  isResolved: boolean;
+  /** True only when the featured outcome is GRADED a winner. */
+  settledWon: boolean;
+  /** The grey supporting line under the headline. */
+  subtitle: string;
+}
+
+export function futuresUnfurlCopy<
+  T extends MovementLeader & { is_winner?: boolean | null },
+>(opts: {
+  outcomes: readonly T[];
+  leader: T | null;
+  status?: string | null;
+  hookDescription?: string | null;
+  outcomeCount?: number | null;
+  /** The already-formatted leader price, e.g. "62%". Live copy only. */
+  probabilityLabel: string;
+}): FuturesUnfurlCopy {
+  const isResolved = opts.status === "resolved";
+  const featured = pickHeroOutcome(opts.outcomes, opts.leader, isResolved);
+  const featuredName = isResolved ? leaderLabel(featured) : null;
+  // `is_winner === true` is required before the word "won" is printed, mirroring
+  // `FuturesHero`'s `resolvedWon` chip. `pickHeroOutcome` falls back to the price
+  // leader when nothing is graded, and a fallback must not crown an ungraded row
+  // — those say only what `status` proves.
+  const settledWon = isResolved && featured?.is_winner === true;
+  const count = opts.outcomeCount ?? "?";
+
+  // The hook leads on a LIVE market only. `hook_description` is pre-settlement
+  // editorial written while the question was open ("...the question of rainfall
+  // in Dallas has become increasingly pertinent"), so under the word "Won" it
+  // reads as though the market were still running. Same call `layout.tsx` made
+  // for the description in #6002, for the same reason: result outranks scene.
+  const subtitle = isResolved
+    ? settledWon && featuredName
+      ? `${featuredName} won — ${count} outcomes tracked.`
+      : `This market has settled — ${count} outcomes tracked.`
+    : opts.hookDescription ||
+      (opts.leader
+        ? `${opts.leader.name} leads at ${opts.probabilityLabel} — ${count} outcomes tracked.`
+        : "Prediction markets translated into intuitive probabilities.");
+
+  return { featuredName, isResolved, settledWon, subtitle };
+}
+
 /**
  * The clarification that explains the blend line's movement. Deterministic,
  * blend-only (no per-source detail): prefer opening→current ("up X pts from

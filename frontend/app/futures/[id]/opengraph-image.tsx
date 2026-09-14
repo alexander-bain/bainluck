@@ -3,6 +3,7 @@ import { ImageResponse } from "next/og";
 import type { FuturesMarketDetailResponse, FuturesOutcome } from "@/lib/types";
 import { UnfurlCard } from "@/components/og/UnfurlCard";
 import { formatShareProbability, truncateShareText } from "@/lib/share";
+import { futuresUnfurlCopy } from "@/lib/futuresDetailDisplay";
 import { unresolvedCardCopy } from "@/lib/unresolvedCardCopy";
 import type { ResolutionFailure } from "@/lib/unresolvedShareMeta";
 
@@ -122,6 +123,21 @@ export default async function Image({ params }: { params: { id: string } }) {
   const title = market.name || "Prediction market";
   const accent = getAccent(market.llm_sport_category);
 
+  // #6032 — the settled rule the title and the page hero have and this card did
+  // not. The subject AND the copy come from `futuresUnfurlCopy`, which calls the
+  // same `pickHeroOutcome` the title calls, so the picture and the sentence can
+  // never name two different outcomes. Full measurement + the Havertz case are in
+  // that helper's block comment; the rule it enforces here is #883 L2-53: on a
+  // settled market the winner is the story and there is NO percentage.
+  const { featuredName, isResolved, settledWon, subtitle } = futuresUnfurlCopy({
+    outcomes: market.outcomes ?? market.top_outcomes ?? [],
+    leader,
+    status: market.status,
+    hookDescription: market.hook_description,
+    outcomeCount: market.outcome_count,
+    probabilityLabel: probability,
+  });
+
   const change = leader?.probability_change_24h;
   const hasMovement =
     change !== null && change !== undefined && change !== 0 && Math.abs(change) >= 0.005;
@@ -130,13 +146,7 @@ export default async function Image({ params }: { params: { id: string } }) {
     : null;
   const changeColor = hasMovement ? (change! > 0 ? COLOR_UP : COLOR_DOWN) : COLOR_MUTED;
 
-  const subtitle = truncateShareText(
-    market.hook_description ||
-      (leader
-        ? `${leader.name} leads at ${probability} — ${market.outcome_count ?? "?"} outcomes tracked.`
-        : "Prediction markets translated into intuitive probabilities."),
-    130
-  );
+  const subtitleText = truncateShareText(subtitle, 130);
 
   const categoryLabel = market.sport_name || market.llm_sport_category || "Discover";
 
@@ -192,31 +202,69 @@ export default async function Image({ params }: { params: { id: string } }) {
               {truncateShareText(title, 90)}
             </div>
 
-            <div style={{ display: "flex", alignItems: "baseline", gap: 20 }}>
-              <span style={{ fontSize: 96, fontWeight: 900, letterSpacing: -2, lineHeight: 1, color: COLOR_PRIMARY }}>
-                {probability}
-              </span>
-              {changeLabel && (
-                <span style={{ fontSize: 28, fontWeight: 700, color: changeColor }}>
-                  {change! > 0 ? "↑" : "↓"} {changeLabel}
+            {isResolved ? (
+              // The winner IS the number here. No percentage and no 24h pill: both
+              // describe a price that stopped meaning anything when the market closed.
+              <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
+                <span
+                  style={{
+                    fontSize: 64,
+                    fontWeight: 900,
+                    letterSpacing: -1,
+                    lineHeight: 1.1,
+                    color: COLOR_PRIMARY,
+                    maxWidth: 820,
+                  }}
+                >
+                  {truncateShareText(featuredName || title, 48)}
                 </span>
-              )}
-            </div>
+                <span
+                  style={{
+                    fontSize: 22,
+                    fontWeight: 800,
+                    letterSpacing: 1,
+                    color: COLOR_WHITE,
+                    background: settledWon ? COLOR_UP : COLOR_MUTED,
+                    borderRadius: 999,
+                    padding: "8px 22px",
+                  }}
+                >
+                  {settledWon ? "WON" : "RESOLVED"}
+                </span>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 20 }}>
+                  <span style={{ fontSize: 96, fontWeight: 900, letterSpacing: -2, lineHeight: 1, color: COLOR_PRIMARY }}>
+                    {probability}
+                  </span>
+                  {changeLabel && (
+                    <span style={{ fontSize: 28, fontWeight: 700, color: changeColor }}>
+                      {change! > 0 ? "↑" : "↓"} {changeLabel}
+                    </span>
+                  )}
+                </div>
 
-            <div style={{ fontSize: 40, fontWeight: 800, lineHeight: 1.15, color: COLOR_PRIMARY, maxWidth: 900 }}>
-              {leader?.name || ""}
-            </div>
+                <div style={{ fontSize: 40, fontWeight: 800, lineHeight: 1.15, color: COLOR_PRIMARY, maxWidth: 900 }}>
+                  {leader?.name || ""}
+                </div>
+              </div>
+            )}
 
             <div style={{ fontSize: 24, color: COLOR_MUTED, lineHeight: 1.35, maxWidth: 920 }}>
-              {subtitle}
+              {subtitleText}
             </div>
           </div>
 
           {/* Footer bar + URL */}
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ width: "100%", height: 24, borderRadius: 999, background: COLOR_BAR_BG, overflow: "hidden", display: "flex" }}>
-              <div style={{ width: `${barWidth}%`, height: "100%", borderRadius: 999, background: accent }} />
-            </div>
+            {/* Live only — `FuturesHero`: "a settled market shows no live bar". A
+                frozen last price drawn as a fill is the same claim the numeral was. */}
+            {!isResolved && (
+              <div style={{ width: "100%", height: 24, borderRadius: 999, background: COLOR_BAR_BG, overflow: "hidden", display: "flex" }}>
+                <div style={{ width: `${barWidth}%`, height: "100%", borderRadius: 999, background: accent }} />
+              </div>
+            )}
             <div style={{ display: "flex", justifyContent: "space-between", color: COLOR_SUBTLE, fontSize: 20 }}>
               <span>
                 {market.outcome_count ?? 0} outcome{(market.outcome_count ?? 0) !== 1 ? "s" : ""} tracked
