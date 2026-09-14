@@ -198,7 +198,12 @@ async def _seed(conn) -> None:
             ),
             {
                 "ext": f"cond-{event_id}",
-                "name": f"{key} moneyline",
+                # CERT-2840: the group must NAME the fixture, so the seeded
+                # title is the "A vs. B" form the matcher parses, over this
+                # event's own two team names. A bare "<key> moneyline" names
+                # nobody and every arm in this file would decline for the wrong
+                # reason — which is what the premise arm below is here to catch.
+                "name": f"{key} home vs. {key} away",
                 "gid": group_id,
                 "eid": event_id,
                 "meta": '{"venue_game_start": "%s"}' % VENUE.isoformat(),
@@ -332,6 +337,10 @@ async def test_the_corpus_is_inside_the_repair_band(pg_engine, monkeypatch):
     assert stats["skipped_no_change"] == 0
     assert stats["skipped_multi_event_group"] == 0
     assert stats["skipped_ambiguous_stamp"] == 0
+    # CERT-2840. If the seeded titles stopped naming their own fixtures, every
+    # "declined" arm below would pass for the wrong reason — declined at the
+    # pairing gate rather than by the guard each arm is actually about.
+    assert stats["skipped_unpaired_group"] == 0
 
 
 # --------------------------------------------------------------------------

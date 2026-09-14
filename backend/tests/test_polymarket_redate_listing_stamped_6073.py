@@ -320,6 +320,14 @@ def _row(**kw):
         venue_game_start=_utc(2026, 9, 14, 13, 0).isoformat(),
         n_stamps=1,
         n_events=1,
+        # CERT-2840: the group has to NAME the fixture, and the default row is a
+        # well-paired one — a real production title over the real specimen pair.
+        # The mislink arms override these two and nothing else, so what they
+        # change is exactly what they are about.
+        home_team_name="Alessandra Mazzola",
+        away_team_name="Beatrise Zeltina",
+        linked_names=["Alessandra Mazzola vs. Beatrise Zeltina"],
+        linked_external_ids=["0xabc"],
     )
     base.update(kw)
     return SimpleNamespace(**base)
@@ -443,6 +451,7 @@ class TestTheRailWritesWhatTheShipClaims:
             "rescheduled": 0,
             "skipped_multi_event_group": 0,
             "skipped_ambiguous_stamp": 0,
+            "skipped_unpaired_group": 0,
             "skipped_no_change": 0,
             "skipped_raced": 0,
         }
@@ -460,6 +469,108 @@ class TestTheRailWritesWhatTheShipClaims:
         assert stats["rescheduled"] == 4
         assert {p["id"] for _s, p in session.writes} == {e for e, *_ in SPECIMENS}
         assert session.commits == 1
+
+    @pytest.mark.asyncio
+    async def test_single_event_mislink_cannot_retime_event_6073(self, monkeypatch):
+        """CERT-2840's witness.
+
+        Every gate before this one counts: one event in the group, one stamp,
+        nothing moved underneath. A SINGLE market mislinked to a SINGLE event
+        satisfies all of them — `n_events` is 1 because there is one, and the
+        stamp is unambiguous because there is only one of those too. What none
+        of them ask is whether the market is about this match.
+
+        Here a Serena-Gauff market is linked to the Mazzola-Zeltina fixture: the
+        exact same-sport single-mislink shape CERT-2835 drove against the other
+        rail. Before the pairing gate the sweep wrote Serena-Gauff's kickoff
+        onto it and stamped `polymarket_venue` beside it — a confident wrong
+        time, sourced.
+        """
+        rows = [_row(
+            linked_names=["Serena Williams vs. Coco Gauff"],
+            linked_external_ids=["0xdeadbeef"],
+        )]
+        stats, session = await _run(monkeypatch, rows)
+
+        assert stats["moved"] == 0, (
+            "a market naming another fixture cannot say when this one starts"
+        )
+        assert stats["rescheduled"] == 0
+        assert stats["skipped_unpaired_group"] == 1
+        assert session.writes == [], "no UPDATE may be issued at all"
+
+    @pytest.mark.asyncio
+    async def test_a_well_paired_group_still_moves_6073(self, monkeypatch):
+        """The twin, without which the gate above passes by declining the world.
+
+        Same row, same everything, except the market's title names the event's
+        own two players. It must still be repaired — the ship's whole claim.
+        """
+        stats, session = await _run(monkeypatch, [_row()])
+
+        assert stats["moved"] == 1
+        assert stats["rescheduled"] == 1
+        assert stats["skipped_unpaired_group"] == 0
+        assert len(session.writes) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_non_game_level_market_cannot_retime_a_fixture_6073(
+        self, monkeypatch
+    ):
+        """The non-game-level twin.
+
+        A tournament-winner market can sit in a group and be perfectly VALID as
+        a market — it is simply not evidence about when one fixture starts. It
+        names a player, not a pair, so there is no matchup to map and the rail
+        must decline rather than treat "it parsed to something" as agreement.
+        """
+        rows = [_row(
+            linked_names=["Will Carlos Alcaraz win the US Open?"],
+            linked_external_ids=["0xfeed"],
+        )]
+        stats, session = await _run(monkeypatch, rows)
+
+        assert stats["moved"] == 0
+        assert stats["skipped_unpaired_group"] == 1
+        assert session.writes == []
+
+    @pytest.mark.asyncio
+    async def test_a_group_with_no_linked_market_left_cannot_retime_6073(
+        self, monkeypatch
+    ):
+        """`array_agg ... FILTER` yields NULL, not an empty list, when the group
+        has no linked market — and NULL is what the detach in Phase 1.5 leaves
+        behind. The pairing gate has to read that as "unproven", not crash on it.
+        """
+        rows = [_row(linked_names=None, linked_external_ids=None)]
+        stats, session = await _run(monkeypatch, rows)
+
+        assert stats["moved"] == 0
+        assert stats["skipped_unpaired_group"] == 1
+
+    @pytest.mark.asyncio
+    async def test_an_event_missing_a_team_name_cannot_be_paired_6073(
+        self, monkeypatch
+    ):
+        """Half a pairing is not a pairing, and the helper will not say so.
+
+        `match_teams_to_event(matchup, "Alessandra Mazzola", None, ...)` returns
+        a TRUTHY orientation dict: it is satisfied by ONE side matching, which is
+        the right answer to the question the matcher asks it and the wrong answer
+        to the question this rail asks it. If the event's away team is unknown,
+        nothing distinguishes this fixture from any other involving that player —
+        which on a tour is a great many — so the instant is unproven and must not
+        be written.
+
+        Found by mutation: deleting the `home and away` guard left every arm in
+        this file green, because no other arm has an event with one side missing.
+        """
+        rows = [_row(away_team_name=None)]
+        stats, session = await _run(monkeypatch, rows)
+
+        assert stats["moved"] == 0
+        assert stats["skipped_unpaired_group"] == 1
+        assert session.writes == []
 
     @pytest.mark.asyncio
     async def test_one_bad_row_does_not_cost_the_healthy_siblings(self, monkeypatch):

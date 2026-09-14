@@ -32,6 +32,10 @@ from app.utils.futures_liveness import preserve_venue_settled  # #2222
 from app.utils.event_completion import (  # #6073
     POLYMARKET_VENUE_COMMENCE_SOURCE,
 )
+from app.utils.prediction_market_matching import (  # #6073 CERT-2840
+    extract_matchup_with_ticker_fallback,
+    match_teams_to_event,
+)
 from app.utils.pair_opening_coherence import (
     OK as PAIR_OPENING_OK,
     classify_pair_opening,
@@ -1189,13 +1193,21 @@ REDATE_LISTING_STAMPED_SQL = """
                min(p.market_metadata->>'venue_game_start') AS vgs,
                count(DISTINCT p.event_id) FILTER (WHERE p.event_id IS NOT NULL)
                    AS n_events,
-               min(p.event_id) AS only_event_id
+               min(p.event_id) AS only_event_id,
+               array_agg(p.name) FILTER (WHERE p.event_id IS NOT NULL)
+                   AS linked_names,
+               array_agg(coalesce(p.external_id, ''))
+                   FILTER (WHERE p.event_id IS NOT NULL) AS linked_external_ids
         FROM futures_markets p
         JOIN cand c ON c.group_id = p.group_id
         WHERE p.source = 'polymarket'
         GROUP BY p.group_id
     )
     SELECT e.id            AS event_id,
+           e.home_team_name AS home_team_name,
+           e.away_team_name AS away_team_name,
+           g.linked_names   AS linked_names,
+           g.linked_external_ids AS linked_external_ids,
            e.commence_time AS event_commence,
            e.completed_at  AS completed_at,
            e.home_score    AS home_score,
@@ -1348,6 +1360,66 @@ REDATE_WRITE_WITH_STATUS_SQL = f"""
 """
 
 
+def group_names_this_fixture(
+    *,
+    linked_names,
+    linked_external_ids,
+    home_team_name,
+    away_team_name,
+) -> bool:
+    """Does the group's own evidence NAME the fixture it is about to re-date?
+
+    CERT-2840'S FINDING. Every gate before this one is about COUNTING: one event
+    in the group, one stamp, nothing moved underneath. A group can satisfy all of
+    them and still be wrong about which match it describes — a single market
+    mislinked to a single event has `n_events = 1` and `n_stamps = 1`, so the
+    sweep took a Serena-Gauff market's kickoff and wrote it onto a
+    Mazzola-Zeltina fixture. That is the mislink class (#2693) and it is worse
+    here than elsewhere, because the instant lands with
+    `commence_time_source = 'polymarket_venue'` attached: a confident wrong
+    kickoff, sourced.
+
+    A provenance string says WHERE a value came from. It never proves the value
+    is about the row it is written to. Nothing upstream of this rail establishes
+    that, so the rail has to establish it itself.
+
+    The check is the matcher's own: parse the market title (with the ticker
+    fallback) and require the parsed pair to map onto this event's two teams.
+    `match_teams_to_event` returns the orientation or `None`, and `None` is the
+    whole answer here — the rail does not care which side is home, only that the
+    market is talking about this match.
+
+    ANY of the group's linked markets satisfying it is enough. A Polymarket group
+    is a parent and its children and they carry different titles; requiring all
+    of them to parse would decline legitimate groups over a child whose name is a
+    prop. Requiring none is what shipped and is the defect.
+
+    MEASURED BEFORE ADOPTING, because a validator that cannot read our own titles
+    would silently reduce this rail to repairing nothing while reporting success
+    — the failure this ship has now twice had to design around. Over both ends of
+    the live band on 2026-09-14 (two 500-row slices, head and tail, 204 distinct
+    events across soccer, tennis, rugby, esports, cricket and ice hockey): 204/204
+    validated, 0 declined. The gate costs no reach.
+    """
+    names = list(linked_names or [])
+    ext_ids = list(linked_external_ids or [])
+    if not names or not (home_team_name and away_team_name):
+        # No linked market left to speak for the group, or an event with no teams
+        # to compare against. Either way the pairing is unproven, and unproven is
+        # the one thing this rail must not write on.
+        return False
+    for i, name in enumerate(names):
+        external_id = ext_ids[i] if i < len(ext_ids) else ""
+        matchup = extract_matchup_with_ticker_fallback(name or "", external_id or "")
+        if matchup is None:
+            continue
+        if match_teams_to_event(
+            matchup, home_team_name, away_team_name, external_id or ""
+        ):
+            return True
+    return False
+
+
 def redate_target(
     *,
     venue_game_start,
@@ -1449,6 +1521,7 @@ async def redate_polymarket_listing_stamped_events() -> dict:
         "rescheduled": 0,
         "skipped_multi_event_group": 0,
         "skipped_ambiguous_stamp": 0,
+        "skipped_unpaired_group": 0,
         "skipped_no_change": 0,
         "skipped_raced": 0,
     }
@@ -1470,6 +1543,26 @@ async def redate_polymarket_listing_stamped_events() -> dict:
                 continue
             if r.n_stamps != 1:
                 stats["skipped_ambiguous_stamp"] += 1
+                continue
+            # CERT-2840. Counting the group's rows says nothing about WHICH match
+            # they describe: one market mislinked to one event passes every gate
+            # above. Before this rail attributes an instant to a provider, the
+            # provider's own title has to name this fixture.
+            if not group_names_this_fixture(
+                linked_names=r.linked_names,
+                linked_external_ids=r.linked_external_ids,
+                home_team_name=r.home_team_name,
+                away_team_name=r.away_team_name,
+            ):
+                stats["skipped_unpaired_group"] += 1
+                logger.warning(
+                    "redate: group %s does not name event %s (%s vs %s) — "
+                    "not re-dating on a link this rail cannot verify",
+                    r.group_id,
+                    r.event_id,
+                    r.home_team_name,
+                    r.away_team_name,
+                )
                 continue
             decision = redate_target(
                 venue_game_start=r.venue_game_start,
