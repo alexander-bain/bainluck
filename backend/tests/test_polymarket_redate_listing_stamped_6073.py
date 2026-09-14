@@ -636,6 +636,71 @@ class TestTheRailWritesWhatTheShipClaims:
         assert session.writes == [], "no UPDATE may be issued at all"
 
     @pytest.mark.asyncio
+    async def test_parenthetical_reserve_pair_cannot_retime_first_team_fixture_6073(
+        self, monkeypatch
+    ):
+        """CERT-2847's witness: the same squad, spelled with brackets.
+
+        The previous repair swapped to `normalize_team_name` so the bare `B`
+        suffix survived — and that normalizer strips trailing PARENTHETICALS, so
+        "FC Barcelona (B)" was the senior side instead. One defect, two
+        spellings, two normalizers, each of which discards whatever ITS matcher
+        considers noise.
+
+        `_identity_tokens` now folds form only and drops nothing, so no shared
+        normalizer's opinion can reopen this from a third direction.
+        """
+        rows = [_row(
+            home_team_name="FC Barcelona",
+            away_team_name="Real Madrid",
+            linked_names=["FC Barcelona (B) vs. Real Madrid (B)"],
+            linked_external_ids=["0xparenreserves"],
+        )]
+        stats, session = await _run(monkeypatch, rows)
+
+        assert stats["moved"] == 0, "a bracketed B team is still not the first team"
+        assert stats["rescheduled"] == 0
+        assert stats["skipped_unpaired_group"] == 1
+        assert session.writes == [], "no UPDATE may be issued at all"
+
+    @pytest.mark.asyncio
+    async def test_an_actual_parenthesized_reserve_fixture_still_moves_6073(
+        self, monkeypatch
+    ):
+        """The required positive twin for the bracketed spelling."""
+        rows = [_row(
+            home_team_name="FC Barcelona (B)",
+            away_team_name="Real Madrid (B)",
+            linked_names=["FC Barcelona (B) vs. Real Madrid (B)"],
+            linked_external_ids=["0xrealparen"],
+        )]
+        stats, session = await _run(monkeypatch, rows)
+
+        assert stats["moved"] == 1
+        assert stats["skipped_unpaired_group"] == 0
+        assert len(session.writes) == 1
+
+    @pytest.mark.asyncio
+    async def test_the_two_squad_spellings_are_the_same_team_6073(self, monkeypatch):
+        """Folding form and dropping nothing has to cut both ways.
+
+        A market writing "(B)" against an event stored as "B" is the SAME
+        reserve side and must still be dated. A rule that kept the qualifier by
+        treating the brackets as part of the token would decline this — correct
+        about the senior team and wrong about this one.
+        """
+        rows = [_row(
+            home_team_name="FC Barcelona B",
+            away_team_name="Real Madrid B",
+            linked_names=["FC Barcelona (B) vs. Real Madrid (B)"],
+            linked_external_ids=["0xcrossspelling"],
+        )]
+        stats, session = await _run(monkeypatch, rows)
+
+        assert stats["moved"] == 1
+        assert stats["skipped_unpaired_group"] == 0
+
+    @pytest.mark.asyncio
     async def test_an_actual_reserve_fixture_still_moves_6073(self, monkeypatch):
         """The positive twin: the reserve fixture is a real fixture.
 
@@ -670,6 +735,29 @@ class TestTheRailWritesWhatTheShipClaims:
 
         assert stats["moved"] == 0
         assert stats["skipped_unpaired_group"] == 1
+
+    @pytest.mark.asyncio
+    async def test_accents_do_not_break_a_true_pairing_6073(self, monkeypatch):
+        """The diacritic half of "fold form, drop nothing".
+
+        A venue writes "Bayern München" and our row says "Bayern Munchen"; they
+        are one club and the fixture must still be dated. Soccer is 125 of the
+        204 events in the measured band, so this is the common case rather than
+        an exotic one.
+
+        Found by mutation: removing `strip_diacritics` left every other arm in
+        this file green, because none of them had an accent in it.
+        """
+        rows = [_row(
+            home_team_name="Bayern Munchen",
+            away_team_name="Koln",
+            linked_names=["Bayern München vs. Köln"],
+            linked_external_ids=["0xaccents"],
+        )]
+        stats, session = await _run(monkeypatch, rows)
+
+        assert stats["moved"] == 1
+        assert stats["skipped_unpaired_group"] == 0
 
     @pytest.mark.asyncio
     async def test_punctuation_does_not_break_a_true_pairing_6073(

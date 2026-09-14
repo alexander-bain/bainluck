@@ -32,8 +32,8 @@ from app.utils.futures_liveness import preserve_venue_settled  # #2222
 from app.utils.event_completion import (  # #6073
     POLYMARKET_VENUE_COMMENCE_SOURCE,
 )
-from app.utils.name_normalization import (  # #6073 CERT-2845
-    normalize_team_name,
+from app.utils.name_normalization import (  # #6073 CERT-2847
+    strip_diacritics,
 )
 from app.utils.prediction_market_matching import (  # #6073 CERT-2840
     extract_matchup_with_ticker_fallback,
@@ -1370,12 +1370,38 @@ _IDENTITY_PUNCTUATION = re.compile(r"[^\w\s]")
 
 
 def _identity_tokens(name: str) -> set:
-    """The name's identity-bearing tokens, case- and diacritic-folded.
+    """The name's identity-bearing tokens — built from primitives, on purpose.
 
-    `normalize_team_name` (NOT the matcher's `..._for_matching`) so squad, youth
-    and women's qualifiers survive — CERT-2845.
+    CERT-2845 AND CERT-2847, WHICH ARE ONE DEFECT WITH TWO SPELLINGS. This fold
+    reached for a shared normalizer twice and was wrong twice.
+    `normalize_team_name_for_matching` strips the bare suffixes (`b`, `ii`,
+    `u21`, `women`), so "FC Barcelona B" was the senior side.
+    `normalize_team_name` keeps those and strips trailing PARENTHETICALS, so
+    "FC Barcelona (B)" was the senior side. Each fix closed the spelling in front
+    of it and left the class open.
+
+    The cause is not which normalizer: it is that BOTH are built for a matcher
+    trying to find a home for a market, where discarding a qualifier widens the
+    net helpfully. This rail asks the opposite question — is this the SAME
+    competitor — and for that every discarded token is evidence thrown away
+    before the comparison. Borrowing a normalizer means inheriting its opinion
+    about what does not matter, and that opinion is the bug.
+
+    So the fold is assembled here from primitives that only ever fold FORM, never
+    drop content: diacritics and case (`strip_diacritics` + `lower`), separators
+    to token boundaries, and remaining punctuation deleted rather than spaced.
+    Nothing is stripped, so no qualifier can be silently discarded and no future
+    edit to a shared normalizer can reopen this from a third direction.
+
+    It also makes the two spellings agree with each other, which is right:
+    "FC Barcelona (B)" and "FC Barcelona B" are `{fc, barcelona, b}` both ways,
+    so a market may write either and still date its own fixture, while neither
+    can date the senior one.
+
+    Measured: 204/204 reach on the live band, and correct on all 18 adversarial
+    titles this ship has accumulated.
     """
-    folded = normalize_team_name(name or "")
+    folded = strip_diacritics(name or "").lower()
     folded = _IDENTITY_SEPARATORS.sub(" ", folded)
     folded = _IDENTITY_PUNCTUATION.sub("", folded)
     return set(folded.split())
@@ -1404,20 +1430,10 @@ def _same_participant(market_name: str, event_name: str) -> bool:
     reopen the hole this closes from the other end. Measured: 204/204 reach on
     the live band either way, so nothing is bought by the looser rule.
 
-    AND NOT `normalize_team_name_for_matching`, WHICH IS CERT-2845. That is the
-    matcher's normalizer and it deliberately strips reserve, youth and women's
-    suffixes — `b`, `ii`, `u21`, `women` — so "FC Barcelona B" and "FC Barcelona"
-    are one club to it. For finding a home for a market that is a feature; for
-    dating a fixture it is the same error as the sibling case with a squad in
-    place of a first name, and this repo separately pins that a B team is not its
-    first team. `normalize_team_name` does the case and diacritic folding without
-    the suffix stripping, so the qualifier stays part of the identity.
-
-    Punctuation is folded here rather than inherited: separators (`-`, `_`, `/`)
-    become token boundaries so "Tel-Aviv" is "tel aviv", and remaining marks are
-    DELETED rather than replaced, so "F.C." is "fc" and not "f c". Replacing them
-    with spaces splits an abbreviation into letters and fails a pairing that is
-    plainly the same club.
+    Squad, youth and women's qualifiers are part of the identity — a B team is
+    not its first team, and the two play on different days. Keeping them is the
+    whole point of `_identity_tokens` building its own fold instead of borrowing
+    a matcher's normalizer; CERT-2845 and CERT-2847 are both that mistake.
     """
     market_tokens = _identity_tokens(market_name)
     event_tokens = _identity_tokens(event_name)
