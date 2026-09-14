@@ -25,6 +25,7 @@ import {
   probabilityBarWidth,
 } from "@/lib/entityPageChrome";
 import { fetchHub, formatProbability } from "@/lib/api";
+import { renderedCardPercents } from "@/lib/renderedPercent";
 import type { HubResponse, LeagueMarket, LeagueMarketOutcome } from "@/lib/api";
 import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
 import { outcomeDisplayNames } from "@/lib/outcomeLabels";
@@ -100,7 +101,21 @@ function orderedSections(sections: Record<string, LeagueMarket[]>): [string, Lea
 // Small presentational helpers
 // ---------------------------------------------------------------------------
 
-function OutcomeRow({ o, label }: { o: LeagueMarketOutcome; label: string }) {
+function OutcomeRow({
+  o,
+  label,
+  rendered,
+}: {
+  o: LeagueMarketOutcome;
+  label: string;
+  /**
+   * #6233: the whole percent the CARD decided to print for this row, or null to
+   * format the raw probability exactly as before. Decided by the card and not
+   * here for the same reason `label` is (#3538): the pair rule is a property of
+   * the whole outcome set.
+   */
+  rendered?: number | null;
+}) {
   // UX-P061 (#1742), register E2: this was `width: ${pct ?? 0}%`, which renders a
   // NULL probability as a 0%-wide bar — a claim that we measured this and it is
   // zero, about something we did not measure (doctrine A3, honest or absent).
@@ -152,7 +167,7 @@ function OutcomeRow({ o, label }: { o: LeagueMarketOutcome; label: string }) {
         {settled ? (
           <SettledMark won={o.is_winner === true} />
         ) : (
-          formatProbability(o.probability)
+          formatProbability(o.probability, { rendered })
         )}
       </span>
     </div>
@@ -182,6 +197,31 @@ function MarketCard({ market }: { market: LeagueMarket }) {
   const outcomeLabels = outcomeDisplayNames(
     market.name,
     market.top_outcomes.map((o) => o.name),
+  );
+  // #6233: BOTH SIDES OF ONE QUESTION, ADDING UP TO 101.
+  //
+  // Kalshi quotes a complement pair on a half-cent grid, so `p * 100` lands on
+  // `.5` for both sides at once and half-up rounds both up. Measured across all
+  // three hubs on 2026-09-14: 631 markets, 506 two-outcome, and 50 of those print
+  // a total that is not 100 — four of five consecutive tennis cards on one screen
+  // (56/45, 76/25, 72/29, 89/12). #2831 built the rule and `FuturesCard` uses it;
+  // this file's own card was never converted, which is the live instance of the
+  // open census #3892.
+  //
+  // Computed over the FULL served set and then indexed, NOT over the visible
+  // four — the same reason `outcomeDisplayNames` is, three lines up. The pair
+  // rule is a property of the MARKET, so a display cap must not be able to
+  // invent a pair out of the top two rows of a longer market.
+  //
+  // `renderedCardPercents` self-gates on the [0.99, 1.01] band, so the 32 pairs
+  // measured OUTSIDE it — `Hayu Kinoshita vs Victoria Rodriguez: Set 2 Winner`
+  // totals 1.095 — are left exactly as they render today rather than being forced
+  // to 100 (gotcha #23: independent binaries are not a complement pair). For a
+  // non-pair card it returns each side's own `renderedPercent`, which is the
+  // number `formatProbability` computes internally anyway, so those rows are
+  // byte-identical.
+  const outcomePercents = renderedCardPercents(
+    market.top_outcomes.map((o) => o.probability),
   );
   return (
     <Link
@@ -220,7 +260,12 @@ function MarketCard({ market }: { market: LeagueMarket }) {
       </div>
       <div className="divide-y divide-surface-border">
         {market.top_outcomes.slice(0, outcomeCap.shown).map((o, i) => (
-          <OutcomeRow key={o.id} o={o} label={outcomeLabels[i]} />
+          <OutcomeRow
+            key={o.id}
+            o={o}
+            label={outcomeLabels[i]}
+            rendered={outcomePercents[i] ?? null}
+          />
         ))}
       </div>
       {/* UX-P061 (#1742), register E1: `+{n} more` fired at n=1, which costs the
