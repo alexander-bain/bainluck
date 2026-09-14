@@ -49,6 +49,7 @@ from app.utils.event_completion import (
     EVENT_SUSPENDED,
     SETTLED_STATUSES,
     is_retired_event_status,
+    started_without_result,
 )
 from app.utils.graded_card import rendered_duel_percents
 from app.utils.market_shape import (
@@ -19786,6 +19787,12 @@ def _format_event(
             assigned onto ``event`` because the fold is read-side only — see
             ``FoldedBlendView``.
     """
+    # #6057: ONE clock for every time-derived key in the payload below. Read
+    # here rather than inline at each use so `status` and
+    # `started_without_result` can never be computed from two different
+    # instants — see the note on that key.
+    _served_now = datetime.now(timezone.utc)
+
     # Named once, used by both source blocks below. `is not None` and not `or`:
     # an event whose twins add nothing folds to `{}`, and `{} or x` would fall
     # back to the unfolded column and quietly undo the fold's own refusals.
@@ -19840,7 +19847,43 @@ def _format_event(
         # own start time (app/utils/lifecycle). Four MLB rows were serving
         # live 40-51h early on 2026-08-17.
         "status": served_event_status(
-            event.status, event.commence_time, datetime.now(timezone.utc)
+            event.status, event.commence_time, _served_now
+        ),
+        # 🔴 #6057 — THE STATE HALF OF #6031. `served_event_status` only ever
+        # DOWNGRADES a premature `live`; it has no forward-facing twin, so a
+        # `scheduled` row whose kickoff has passed is returned untouched
+        # whatever clock you hand it. The payload then refutes itself in one
+        # read — measured on production 2026-09-14 03:24:09Z,
+        # `/api/events/15308949`: served `commence_time` 01:15Z and served
+        # `status` "scheduled", **129 minutes apart**, with a live chart under
+        # it. #5905's recovery reaches this serializer (that 01:15Z IS the
+        # recovered kickoff); the state derivation never got the same fix.
+        #
+        # IT IS PUBLISHED ADDITIVELY RATHER THAN BY CHANGING `status`, and the
+        # three alternatives were ruled out on measured consumers, not taste:
+        # `live` re-asserts the unbacked liveness `enforce_live_requires_start`
+        # exists to refuse; `suspended` blanks the probability on web, because
+        # `EventCard` gates every probability branch on `!isSuspended`, and
+        # feeds the stuck-`suspended` population of #4901; and a new word is
+        # unparsed by `EventState.swift`, whose `upcoming` is
+        # `status == "scheduled" || status == nil`, so the row would be neither
+        # upcoming nor live nor finished on iOS. `served_event_status`' own
+        # docstring already warns against emitting a status no client parses.
+        #
+        # `started_without_result` is this repo's canonical predicate for the
+        # question and had ZERO executable callers — the same "a rule with no
+        # consumer is a document" that `served_event_status` records about
+        # `enforce_live_requires_start`. Its SQL half already decides rail
+        # membership (`event_rails.started_without_result_rows`, #6031), so
+        # publishing the Python half is what stops a card's label and its
+        # rail's position being computed from two different definitions.
+        #
+        # ONE `_served_now` FOR BOTH KEYS, deliberately: two `datetime.now()`
+        # calls straddling the grace boundary could serve `scheduled` beside
+        # `started_without_result: false` from clocks microseconds apart, which
+        # is the contradiction this key exists to end.
+        "started_without_result": started_without_result(
+            event.status, event.commence_time, _served_now
         ),
         "home_score": event.home_score,
         "away_score": event.away_score,
