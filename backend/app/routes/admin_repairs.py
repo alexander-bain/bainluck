@@ -14,6 +14,7 @@ transactional session and RETURNS its own before/after census in the response bo
     name ∈ { season-series | inverted-events | tt-retag | team-identity-merge
              | event-final-scores | resolved-shape-census
              | winner-field-coherence | reachability-census
+             | coverage-rung-census
              | prop-threshold-cliff-census | overlap-trading-census
              | winner-field-repair | event-team-binding
              | kalshi-settlement-status | statpal-blank-ids
@@ -159,6 +160,21 @@ _REPAIRS = {
     # ?offset=<next_offset> until ``exhausted``. Accepts ?limit=&offset=.
     # Never writes: ``apply`` is accepted and ignored.
     "reachability-census": ("app.tasks.census_reachability", "census"),
+    # CAL-P1214 (#997, #1544): dry-run-ONLY count of the ELEVEN coverage-bridge
+    # rungs — which resolved, priced futures outcomes reach the published curve
+    # and, for each that does not, the one rule that excluded it. The counts
+    # exist today only as columns fused into the curve's own statement behind
+    # ``COVERAGE_CENSUS_ENABLED``; enabling that flag changes the statement text,
+    # moves ``staged_unit_fingerprint()`` and throws the served bank away, so
+    # this walks the same chunks in a SEPARATE, separately versioned pass that
+    # cannot touch the curve. Bounded to ?limit= chunks per call (default 8) and
+    # resumable from Redis — re-invoke until ``complete``. Publishes only a
+    # COMPLETE walk, stamped with the roster digest it walked, so a consumer can
+    # prove the census and the curve describe one population.
+    # Never writes production data: ``apply`` is accepted and ignored, and the
+    # only write is the census cache (``calibration:coverage_rung_census`` and
+    # its ``:working`` sibling), which nothing on the publish path reads yet.
+    "coverage-rung-census": ("app.tasks.census_coverage_rungs", "census"),
     # CAL-P018 (#1089): dry-run-ONLY per-series cliff census for Kalshi
     # prop-threshold outcomes — predicted vs actual by decile, per series, plus
     # how many rows the CURRENT global bands already exclude. Feeds Alex's
