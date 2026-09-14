@@ -549,6 +549,54 @@ class TestTheRailWritesWhatTheShipClaims:
         assert stats["skipped_unpaired_group"] == 1
 
     @pytest.mark.asyncio
+    async def test_shared_participant_different_opponent_cannot_retime_event_6073(
+        self, monkeypatch
+    ):
+        """CERT-2842's witness, and the sharper half of the mislink class.
+
+        A market reading "Mazzola vs. Serena" shares a participant with the event
+        "Mazzola vs. Zeltina" and is a DIFFERENT MATCH. The first pairing gate
+        accepted it, because it asked the matcher's `match_teams_to_event`, which
+        returns an orientation as soon as ONE side matches — the right answer to
+        the question the matcher asks it, the wrong answer to the question this
+        rail asks it.
+
+        On a tour one player appears in a great many fixtures, so a single
+        matched name is close to no evidence at all. Both participants must map,
+        one-to-one.
+        """
+        rows = [_row(
+            linked_names=["Alessandra Mazzola vs. Serena Williams"],
+            linked_external_ids=["0xshared"],
+        )]
+        stats, session = await _run(monkeypatch, rows)
+
+        assert stats["moved"] == 0, (
+            "sharing one player does not make it the same match"
+        )
+        assert stats["rescheduled"] == 0
+        assert stats["skipped_unpaired_group"] == 1
+        assert session.writes == []
+
+    @pytest.mark.asyncio
+    async def test_the_pair_may_be_named_in_either_order_6073(self, monkeypatch):
+        """The valid twin for the two-sided rule.
+
+        Nothing guarantees the market lists home first, and a rule that demanded
+        it would decline half the band while looking strict. Away-then-home must
+        still repair.
+        """
+        rows = [_row(
+            linked_names=["Beatrise Zeltina vs. Alessandra Mazzola"],
+            linked_external_ids=["0xswapped"],
+        )]
+        stats, session = await _run(monkeypatch, rows)
+
+        assert stats["moved"] == 1
+        assert stats["skipped_unpaired_group"] == 0
+        assert len(session.writes) == 1
+
+    @pytest.mark.asyncio
     async def test_an_event_missing_a_team_name_cannot_be_paired_6073(
         self, monkeypatch
     ):

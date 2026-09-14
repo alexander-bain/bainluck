@@ -32,9 +32,9 @@ from app.utils.futures_liveness import preserve_venue_settled  # #2222
 from app.utils.event_completion import (  # #6073
     POLYMARKET_VENUE_COMMENCE_SOURCE,
 )
+from app.utils.name_normalization import names_match  # #6073 CERT-2842
 from app.utils.prediction_market_matching import (  # #6073 CERT-2840
     extract_matchup_with_ticker_fallback,
-    match_teams_to_event,
 )
 from app.utils.pair_opening_coherence import (
     OK as PAIR_OPENING_OK,
@@ -1383,11 +1383,24 @@ def group_names_this_fixture(
     is about the row it is written to. Nothing upstream of this rail establishes
     that, so the rail has to establish it itself.
 
-    The check is the matcher's own: parse the market title (with the ticker
-    fallback) and require the parsed pair to map onto this event's two teams.
-    `match_teams_to_event` returns the orientation or `None`, and `None` is the
-    whole answer here — the rail does not care which side is home, only that the
-    market is talking about this match.
+    The check parses the market title (with the matcher's ticker fallback) and
+    requires BOTH of the parsed participants to map onto this event's two teams,
+    one-to-one, in either orientation. The rail does not care which side is home,
+    only that the market is talking about this match.
+
+    BOTH SIDES, AND THAT IS CERT-2842. The obvious move is the matcher's own
+    `match_teams_to_event`, and it is the wrong tool here: it returns an
+    orientation as soon as ONE side matches, which is the right answer to the
+    question the matcher asks it — *which way round is this market* — and the
+    wrong answer to the question this rail asks it. A market reading
+    "Mazzola vs. Serena" shares a participant with "Mazzola vs. Zeltina" and is a
+    different match; one-sided agreement accepted it and re-dated the fixture. On
+    a tour a single player appears in a great many fixtures, so one matched name
+    is close to no evidence at all.
+
+    So the comparison is `names_match` applied to both sides and required to pair
+    up one-to-one. Measured at the same 100% reach as the one-sided form (below),
+    which is what makes the stricter rule free.
 
     ANY of the group's linked markets satisfying it is enough. A Polymarket group
     is a parent and its children and they carry different titles; requiring all
@@ -1398,8 +1411,9 @@ def group_names_this_fixture(
     would silently reduce this rail to repairing nothing while reporting success
     — the failure this ship has now twice had to design around. Over both ends of
     the live band on 2026-09-14 (two 500-row slices, head and tail, 204 distinct
-    events across soccer, tennis, rugby, esports, cricket and ice hockey): 204/204
-    validated, 0 declined. The gate costs no reach.
+    events across soccer, tennis, rugby, esports, cricket and ice hockey):
+    204/204 under the one-sided form, and 204/204 again under the two-sided form
+    shipped here. The stricter rule costs no reach.
     """
     names = list(linked_names or [])
     ext_ids = list(linked_external_ids or [])
@@ -1413,9 +1427,20 @@ def group_names_this_fixture(
         matchup = extract_matchup_with_ticker_fallback(name or "", external_id or "")
         if matchup is None:
             continue
-        if match_teams_to_event(
-            matchup, home_team_name, away_team_name, external_id or ""
-        ):
+        market_a = (matchup.team_a or "").strip()
+        market_b = (matchup.team_b or "").strip()
+        if not (market_a and market_b):
+            # A title naming one participant — a tournament-winner or an
+            # outright — is a valid market and no evidence about when one
+            # fixture starts.
+            continue
+        straight = names_match(market_a, home_team_name) and names_match(
+            market_b, away_team_name
+        )
+        swapped = names_match(market_a, away_team_name) and names_match(
+            market_b, home_team_name
+        )
+        if straight or swapped:
             return True
     return False
 
