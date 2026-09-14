@@ -120,16 +120,113 @@ class TestTheNineSpanishSeries:
     def test_segunda_gains_no_minting_authority_its_parent_lacks(self):
         """LaLiga 2 gets the SAME standing as La Liga, not a wider one.
 
-        Both live in the futures map, so `is_kalshi_game_level_ticker` answers
-        False for both — it compares prefix LENGTHS and the game map matches
-        neither. If a later change makes Segunda game-level it must make La Liga
-        game-level in the same breath, or this fires.
+        The invariant is unchanged and so is its purpose; what changed under
+        #3813 is that "La Liga's standing" is no longer one answer for all nine
+        series, so the comparison has to be made against the RIGHT parent.
+
+        When this was written both competitions sat only in the futures map, so
+        `is_kalshi_game_level_ticker` answered False for every Spanish series and
+        a single parent — La Liga's game series — served as the yardstick for all
+        nine. #3813 armed the five biggest domestic leagues game-level (a Kalshi
+        fixture's four markets were each minting their own event, because a
+        non-game ticker anchors on itself and no two markets can share that), and
+        LaLiga 2's four FIXTURE series moved with their parent in the same
+        breath, exactly as this test's original docstring required.
+
+        `KXLALIGA2PROMO` did not, and must not: promotion is a SEASON question,
+        and the old one-parent form asserted it should match a GAME series, which
+        would arm a season-long market to absorb one of its own fixtures
+        (CERT-409's failure mode). That comparison was only ever satisfiable
+        while La Liga's own fixtures were wrongly non-game-level.
+
+        So the assertion is SPLIT rather than relaxed, and both halves are
+        positive: Segunda's fixture series match La Liga's fixture series, and
+        Segunda's season series matches La Liga's season series. A future change
+        that arms Segunda without arming La Liga still fires, and so does one
+        that arms either competition's season markets.
         """
-        for series in VENUE_READ:
-            ticker = f"{series}-26SEP12CORALM"
-            assert is_kalshi_game_level_ticker(ticker) == is_kalshi_game_level_ticker(
-                "KXLALIGAGAME-26SEP13GETDEP"
-            ), f"{series} and La Liga's own game series disagree on game-level"
+        # Each Segunda series against ITS OWN counterpart, which is what "the
+        # same standing as its parent" actually means. The single-yardstick form
+        # this replaces compared a promotion market to a game series; that was
+        # satisfiable only while La Liga's own fixtures were non-game-level too.
+        counterparts = {
+            "KXLALIGA2GAME": "KXLALIGAGAME",
+            "KXLALIGA2SPREAD": "KXLALIGASPREAD",
+            "KXLALIGA2TOTAL": "KXLALIGATOTAL",
+            "KXLALIGA2BTTS": "KXLALIGABTTS",
+            # Promotion is a SEASON question. Its parent is a La Liga season
+            # market, never a fixture one — arming it would let a season-long
+            # market absorb one of its own games (CERT-409's failure mode).
+            "KXLALIGA2PROMO": "KXLALIGATOP4",
+        }
+        segunda = {s for s, (key, _) in VENUE_READ.items() if key == SEGUNDA}
+        assert set(counterparts) == segunda, (
+            "every Segunda series in the venue read needs a named La Liga "
+            "counterpart; VENUE_READ changed and this map did not"
+        )
+
+        for series, parent_series in counterparts.items():
+            child = is_kalshi_game_level_ticker(f"{series}-26SEP12CORALM")
+            parent = is_kalshi_game_level_ticker(f"{parent_series}-26SEP13GETDEP")
+            assert child == parent, (
+                f"{series} and its parent {parent_series} disagree on "
+                f"game-level ({child} vs {parent})"
+            )
+
+        # Non-vacuity: the two kinds must actually give different answers, or
+        # the loop above passes on a map that says the same thing everywhere.
+        assert is_kalshi_game_level_ticker("KXLALIGAGAME-26SEP13GETDEP") is True
+        assert is_kalshi_game_level_ticker("KXLALIGATOP4-26") is False
+
+    def test_the_segunda_fixture_series_all_share_one_game_anchor(self):
+        """#3813's ship, stated on the specimen that paid for it.
+
+        Cádiz v Las Palmas on 2026-09-12 was FOUR events — 15307871, 15312363,
+        15312364, 15312370 — one per Kalshi market, each `external_id IS NULL`
+        with a single `event_provider_anchors` row at `id_kind='market'`. The
+        fixture token `26SEP12CADLPA` was identical in all four tickers and was
+        discarded every time, because a ticker that fails the game-level test
+        anchors on ITSELF and no two markets can ever share that.
+
+        The anchor key is the thing a reader's duplicate rows are made of, so it
+        is what gets asserted here rather than the predicate that feeds it.
+        """
+        from app.utils.provider_anchor_keys import kalshi_anchor_key
+
+        # The four full-match Segunda families are the ones #3813 armed. The 2H
+        # four belong to La Liga and are deliberately NOT armed; they are
+        # asserted below, so this test cannot be made to pass by arming
+        # everything.
+        armed = sorted(
+            s
+            for s, (key, _) in VENUE_READ.items()
+            if key == SEGUNDA and s != "KXLALIGA2PROMO"
+        )
+        assert armed == [
+            "KXLALIGA2BTTS",
+            "KXLALIGA2GAME",
+            "KXLALIGA2SPREAD",
+            "KXLALIGA2TOTAL",
+        ]
+
+        keys = {kalshi_anchor_key(f"{s}-26SEP12CADLPA") for s in armed}
+        assert len(keys) == 1, (
+            "the four markets on one fixture must produce ONE anchor; "
+            f"got {sorted(k.source_id for k in keys)}"
+        )
+        only = keys.pop()
+        assert only.id_kind == "game"
+        assert only.source_id == f"{SEGUNDA}:26SEP12CADLPA"
+
+        # The other direction: the half markets still anchor on themselves, so
+        # four distinct keys, none of them a game.
+        half_keys = {
+            kalshi_anchor_key(f"{s}-26SEP12CADLPA")
+            for s in VENUE_READ
+            if s.startswith("KXLALIGA2H")
+        }
+        assert len(half_keys) == 4
+        assert {k.id_kind for k in half_keys} == {"market"}
 
 
 class TestNoRegisteredPrefixIsShadowed:

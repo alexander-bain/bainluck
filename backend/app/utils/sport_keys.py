@@ -682,6 +682,118 @@ _SOCCER_CUP_GAME_TICKER_TO_SPORT_KEY: dict[str, str] = {
 
 
 # =============================================================================
+# #3813: THE FIVE BIGGEST DOMESTIC LEAGUES WERE NEVER GAME-LEVEL AT ALL
+# =============================================================================
+# The cup dict above armed EFL Cup, FA Cup, DFB-Pokal, Coppa Italia and both
+# UEFA competitions. Nobody ever armed the leagues those cups are played
+# alongside: until these lines existed the game map held `kxmlsgame` and the cup
+# prefixes, and NOT ONE of `kxeplgame`, `kxlaligagame`, `kxserieagame`,
+# `kxbundesligagame`, `kxligue1game`. The five leagues appeared only in the
+# FUTURES map as their bare season prefixes (`kxepl`, `kxlaliga`, `kxbundes`,
+# `kxseriea`, `kxligue1`), which is why every one of the 142 live series across
+# them answered `is_kalshi_game_level_ticker` FALSE — measured, not inferred, by
+# calling it: `KXEPLGAME-…`, `KXSERIEAGAME-…` and `KXLALIGA2GAME-…` all returned
+# False on 2026-09-14.
+#
+# WHAT THAT COSTS, AND WHY IT IS A MATCHING DEFECT RATHER THAN A LABEL ONE.
+# `kalshi_anchor_key` writes `id_kind='game'` with `sport_key:game_id` — a token
+# every market on one fixture SHARES — only when that predicate is true. Fail it
+# and the anchor degrades to `id_kind='market'` keyed on the RAW TICKER, which
+# by construction no two markets can ever share. So each market on a fixture
+# arrives id-less as far as absorption is concerned, ruling 048 correctly refuses
+# to absorb an id-less claim (gotcha #32), and the auto-create fallback mints a
+# SEPARATE EVENT PER MARKET. Not per fixture — per market.
+#
+# Cádiz v Las Palmas, 2026-09-12, is the worked specimen. Four Kalshi markets on
+# one fixture, four events, each with `events.external_id` NULL and one
+# `event_provider_anchors` row at `id_kind='market'`:
+#
+#   15307871  KXLALIGA2GAME-26SEP12CADLPA    created 09-08 14:52Z
+#   15312363  KXLALIGA2TOTAL-26SEP12CADLPA   created 09-14 00:53Z
+#   15312364  KXLALIGA2SPREAD-26SEP12CADLPA  created 09-14 01:05Z
+#   15312370  KXLALIGA2BTTS-26SEP12CADLPA    created 09-14 02:05Z
+#
+# The fixture token `26SEP12CADLPA` is IDENTICAL in all four. That token is
+# exactly what the game anchor is made of, and it was thrown away four times.
+# The same shape is visible in aggregate: La Liga's GAME series links 45 events
+# while its TOTAL series links 91, for one league's worth of fixtures.
+#
+# This is one cause wearing three issue numbers — #3813 (La Liga ghosts),
+# #6047 (Serie A twins) and the soccer half of #5896 — and it is why a ghost is
+# born already carrying a plausible kickoff and no result: nothing is wrong with
+# the row except that it should never have been a row.
+#
+# WHY THE FOUR LALIGA 2 KEYS MOVED HERE RATHER THAN BEING ADDED.
+# #5982 put them in the FUTURES map to fix a competition-identity bug (LaLiga 2
+# is the Spanish second division, not a La Liga prop) and said in terms that
+# arming them game-level was "a second change, riding a competition-identity
+# fix". This is that second change. They could not simply be ADDED, because
+# `is_kalshi_game_level_ticker` requires the game prefix to be strictly LONGER
+# than the futures one and A TIE IS NOT GAME-LEVEL — the same key in both maps
+# scores 13 against 13 and stays false. Moving preserves the sport key exactly:
+# `get_sport_key_from_ticker` checks the game map FIRST and cross-map precedence
+# is unchanged, so `KXLALIGA2GAME-…` still answers
+# `soccer_spain_segunda_division`. `kxlaliga2promo` deliberately STAYS in the
+# futures map: La Liga 2 Promotion is a season market, not a fixture.
+#
+# THE `2H` FAMILY IS STILL THE TRAP AND IT IS STILL HANDLED BY ENUMERATION.
+# `KXLALIGA2H`, `KXLALIGA2HBTTS`, `KXLALIGA2HSPREAD` and `KXLALIGA2HTOTAL` are La
+# Liga SECOND-HALF markets. No key below is a prefix of any of them — they
+# diverge at the character after `kxlaliga2` (`h` against `g`/`s`/`t`/`b`) — so
+# they keep resolving to `soccer_spain_la_liga` through the bare `kxlaliga`
+# futures prefix and stay non-game-level, exactly as before.
+#
+# SCOPE, STATED SO THE NEXT SESSION DOES NOT RE-DERIVE IT. Four families per
+# league: the full-match moneyline, spread, total and BTTS. The HALF families
+# (`…1H*`, `…2H*`) are per-fixture too and are a real follow-up, but they are a
+# larger population with their own grading question and they are not needed to
+# stop the duplication — a false negative here leaves a market unlinked, which
+# is visible and reversible, while a false positive is an absorption. Second-tier
+# `kxbundesliga2game` ("Bundesliga 2 Game", 153 live markets) is NOT armed here:
+# it needs the competition-identity half first, the way #5982 did for LaLiga 2,
+# and there is no `soccer_germany_bundesliga2` key today.
+#
+# Every title below was read at the venue on 2026-09-14, not inferred from its
+# letters (notice 26): `/trade-api/v2/series/<ticker>` returns "La Liga Game",
+# "English Premier League Spread", "Serie A Total", "Bundesliga BTTS",
+# "Ligue 1 Game", "LaLiga 2 Game" — all `category: Sports`, `tags: ['Soccer']`.
+# =============================================================================
+
+_SOCCER_TOP_LEAGUE_GAME_TICKER_TO_SPORT_KEY: dict[str, str] = {
+    # England — Premier League
+    "kxeplgame": "soccer_epl",
+    "kxeplspread": "soccer_epl",
+    "kxepltotal": "soccer_epl",
+    "kxeplbtts": "soccer_epl",
+    # Spain — La Liga
+    "kxlaligagame": "soccer_spain_la_liga",
+    "kxlaligaspread": "soccer_spain_la_liga",
+    "kxlaligatotal": "soccer_spain_la_liga",
+    "kxlaligabtts": "soccer_spain_la_liga",
+    # Spain — LaLiga 2 (moved out of the futures map; see header)
+    "kxlaliga2game": "soccer_spain_segunda_division",
+    "kxlaliga2spread": "soccer_spain_segunda_division",
+    "kxlaliga2total": "soccer_spain_segunda_division",
+    "kxlaliga2btts": "soccer_spain_segunda_division",
+    # Italy — Serie A
+    "kxserieagame": "soccer_italy_serie_a",
+    "kxserieaspread": "soccer_italy_serie_a",
+    "kxserieatotal": "soccer_italy_serie_a",
+    "kxserieabtts": "soccer_italy_serie_a",
+    # Germany — Bundesliga
+    "kxbundesligagame": "soccer_germany_bundesliga",
+    "kxbundesligaspread": "soccer_germany_bundesliga",
+    "kxbundesligatotal": "soccer_germany_bundesliga",
+    "kxbundesligabtts": "soccer_germany_bundesliga",
+    # France — Ligue 1
+    "kxligue1game": "soccer_france_ligue_one",
+    "kxligue1spread": "soccer_france_ligue_one",
+    "kxligue1total": "soccer_france_ligue_one",
+    "kxligue1btts": "soccer_france_ligue_one",
+}
+
+
+# =============================================================================
 # 7. KALSHI_TICKER_TO_SPORT_KEY — Kalshi ticker prefix → Odds API sport key
 # =============================================================================
 
@@ -1095,6 +1207,10 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     # league key, and the held Leagues Cup prefix, are absent by measurement;
     # see the dict's header.
     **_SOCCER_CUP_GAME_TICKER_TO_SPORT_KEY,
+    **_SOCCER_TOP_LEAGUE_GAME_TICKER_TO_SPORT_KEY,
+    # ── #3813: the full-match legs of the five biggest domestic leagues, whose
+    # absence meant every Kalshi market on one fixture minted its own event.
+    # See that dict's header for the specimen and for why LaLiga 2 MOVED here.
     # Asian basketball
     "kxcbagame": "basketball_other",          # Chinese CBA
     "kxjbleaguegame": "basketball_other",     # Japanese B.League
@@ -1690,10 +1806,19 @@ KALSHI_FUTURES_TICKER_TO_SPORT_KEY: dict[str, str] = {
     # a competition-identity fix. `is_kalshi_game_level_ticker` is unmoved: it
     # compares prefix LENGTHS and the game map matches these at length 0 both
     # before and after.
-    "kxlaliga2game": "soccer_spain_segunda_division",
-    "kxlaliga2spread": "soccer_spain_segunda_division",
-    "kxlaliga2total": "soccer_spain_segunda_division",
-    "kxlaliga2btts": "soccer_spain_segunda_division",
+    # ── #3813 MOVED FOUR OF THESE FIVE TO THE GAME MAP ───────────────────────
+    # `kxlaliga2game`, `kxlaliga2spread`, `kxlaliga2total` and `kxlaliga2btts`
+    # now live in `_SOCCER_TOP_LEAGUE_GAME_TICKER_TO_SPORT_KEY`. They are not
+    # duplicated here, and that is load-bearing rather than tidiness: the game
+    # prefix must be strictly LONGER than the futures one for
+    # `is_kalshi_game_level_ticker` to say yes, and the same key in both maps is
+    # a TIE, which that predicate defines as not-game-level. Leaving a copy here
+    # would silently undo the fix. The sport key is unchanged either way —
+    # `get_sport_key_from_ticker` reads the game map first.
+    #
+    # `kxlaliga2promo` stays: La Liga 2 Promotion is a season market, not a
+    # fixture, and arming it game-level would let a season-long question absorb
+    # one of its own fixtures (the CERT-409 failure mode).
     "kxlaliga2promo": "soccer_spain_segunda_division",
     "kxbundes": "soccer_germany_bundesliga",
     "kxseriea": "soccer_italy_serie_a",

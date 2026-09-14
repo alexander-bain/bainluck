@@ -1189,6 +1189,43 @@ def _writes_token_as_an_acronym(token: str, source: str) -> bool:
     return False
 
 
+def _build_club_synonym_pairs() -> frozenset[tuple[str, str]]:
+    """``AUTHORITY_SYNONYMS`` as normalized, BIDIRECTIONAL full-name pairs.
+
+    Three properties, each load-bearing:
+
+    * **Exact and whole-name.** A pair enters as the two complete names, both
+      run through this module's own normalizer, and is consulted by equality
+      only. Nothing here lets a sub-token stand for a name, which is the
+      property that keeps a lookup from behaving like a rule.
+    * **Bidirectional.** The source table is directional because it answers "what
+      does the AUTHORITY call this" — an asymmetric question. Ours is symmetric:
+      a market name and an event name meet here in either order, and which side
+      holds which spelling is an accident of the ticker.
+    * **The sport key is dropped, and that is the one thing given up.**
+      :func:`_fuzzy_team_match` takes two strings and no sport, and threading one
+      through every call site is a wider change than #3813. Sound because each
+      pair is two COMPLETE club names: for the key to matter, some other sport
+      would need a team literally named "Athletic Bilbao" meaning something else.
+      The 709-pair golden replay is what proves it fuses nothing.
+    """
+    from app.utils.authority_name_forms import AUTHORITY_SYNONYMS
+
+    pairs: set[tuple[str, str]] = set()
+    for (_sport, ours), theirs in AUTHORITY_SYNONYMS.items():
+        a = _normalize_for_matching(ours)
+        b = _normalize_for_matching(theirs)
+        if a and b and a != b:
+            pairs.add((a, b))
+            pairs.add((b, a))
+    return frozenset(pairs)
+
+
+#: Built once at import. The table it reads is a module-level literal, so this
+#: cannot go stale against it.
+_CLUB_SYNONYM_PAIRS: frozenset[tuple[str, str]] = _build_club_synonym_pairs()
+
+
 def _fuzzy_team_match(market_team: str, event_team: str) -> bool:
     """
     Check if a team name from a prediction market matches an event team name.
@@ -1212,6 +1249,16 @@ def _fuzzy_team_match(market_team: str, event_team: str) -> bool:
 
     # Exact match
     if mt == et:
+        return True
+
+    # One club, two names, both of them ours (#3813). Everything below this line
+    # is a STRUCTURAL rule — containment, word-subset, acronym — and no
+    # structural rule reaches "Athletic Club" from "Athletic Bilbao": they share
+    # one word, and a rule that accepted that would also accept Ohio State from
+    # Texas State. `authority_name_forms` makes exactly this argument at length
+    # and answers it with an exact lookup; this consults THAT table rather than
+    # starting a second one, so a club is named in one place and swept once.
+    if (mt, et) in _CLUB_SYNONYM_PAIRS:
         return True
 
     # One contains the other (for short-form vs full-form)
