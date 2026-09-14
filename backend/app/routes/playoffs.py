@@ -1174,6 +1174,42 @@ async def _get_team_metadata(
 
     Returns {normalized_name: metadata_dict}.
     Conference/division labels come from Team.standings_data.
+
+    THE NAME IS NOT A KEY, AND THIS LOOKUP NEVER PRETENDED OTHERWISE (#6230).
+    The match is `Team.name ILIKE '%name%'` and the write below is last-one-wins,
+    so when a club owns more than one `teams` row the record, logo and colours a
+    grid shows are decided by the order Postgres happened to return — nothing
+    else. That is not a hypothetical: every MLB club has two rows, one under
+    `baseball_mlb` and one under `baseball_mlb_preseason`, and the preseason row
+    carries a SPRING TRAINING record. Measured on production 2026-09-14:
+
+        855  Minnesota Twins  10-18-1  baseball_mlb_preseason
+        10739 Minnesota Twins 70-79    baseball_mlb
+
+    `10-18-1` cannot be an MLB record — MLB has no ties — and spring training is
+    where the W-L-D shape and the ~30-game sum come from. 19 of 24 sampled clubs
+    served the preseason row; the five that did not (Yankees among them) differ in
+    nothing but row order. The reader saw it as one event page printing two
+    different records for one team, hero vs Championship Path, on the same iPad
+    screen.
+
+    So the scope key goes in. `LeagueConfig.sport_keys` is exactly it — `mlb` is
+    `["baseball_mlb"]`, which does not contain `baseball_mlb_preseason`.
+
+    IT IS A PREFERENCE, NOT A FILTER, AND THAT IS DELIBERATE. A hard
+    `sport.key IN (...)` would drop every row whose sport key the config does not
+    list, taking the logo, colours, conference and record with it — one wrong
+    number traded for many missing ones, on leagues nobody measured here. So an
+    in-scope row WINS over an out-of-scope one, and an out-of-scope row is still
+    used when it is all there is. Ordering does the choosing: rows are processed
+    out-of-scope first, in-scope last, and `id` ascending within each group, so
+    the existing last-one-wins write lands on the in-scope row. Within one scope
+    the highest `id` wins — the same rule this function always had, now stated and
+    reproducible instead of planner-dependent.
+
+    The duplicate rows themselves are not this function's business and are not
+    touched: whether `baseball_mlb_preseason` clubs should exist at all is a
+    matching question (#2693), and a read path is the wrong place to answer it.
     """
     if not team_names:
         return {}
@@ -1184,14 +1220,31 @@ async def _get_team_metadata(
         escaped = name.replace("%", "\\%").replace("_", "\\_")
         conditions.append(Team.name.ilike(f"%{escaped}%"))
 
-    stmt = select(Team).where(*[] if not conditions else [conditions[0]])
+    stmt = select(Team).options(selectinload(Team.sport))
     if len(conditions) > 1:
-        stmt = select(Team).where(or_(*conditions))
+        stmt = stmt.where(or_(*conditions))
     elif conditions:
-        stmt = select(Team).where(conditions[0])
+        stmt = stmt.where(conditions[0])
 
     result = await session.execute(stmt)
-    teams = result.scalars().all()
+    loaded = list(result.scalars().all())
+
+    config = get_league_config(league_slug) if league_slug else None
+    scope_keys = {k for k in (config.sport_keys if config else []) if k}
+
+    def _rank(team) -> tuple[int, int]:
+        """Sort key: out-of-scope first, in-scope last, `id` ascending inside.
+
+        `getattr` rather than `team.sport.key` because a row whose sport did not
+        load must rank as out-of-scope, not raise: the grid degrading to today's
+        behaviour is survivable, the grid 500ing is not.
+        """
+        sport_key = getattr(getattr(team, "sport", None), "key", None)
+        in_scope = 1 if (scope_keys and sport_key in scope_keys) else 0
+        team_id = getattr(team, "id", 0)
+        return (in_scope, team_id if isinstance(team_id, int) else 0)
+
+    teams = sorted(loaded, key=_rank)
 
     # Build lookup by normalized name
     team_lookup: dict[str, dict] = {}
