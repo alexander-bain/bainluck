@@ -241,6 +241,46 @@ async def _select_kalshi_settlement_tickers(
     # venue's answer lands as `api_settlement` (tier 3, an upgrade over the
     # `all_losers` tier-1 heuristic that dominates this cohort), after which the
     # authority clause below excludes the market.
+    #
+    # #1121 — MEMBERSHIP AND ORDERING ARE DIFFERENT QUESTIONS, SO THEY ARE
+    # DIFFERENT EXPRESSIONS. The window above asks "could this be recent?" and
+    # must stay `COALESCE`: the constant block's 79% measurement is exactly why,
+    # and narrowing it would lose four settlements in five. The ORDER BY asks a
+    # second question the COALESCE answers wrongly — "of the members, which did
+    # the VENUE settle most recently?" — because `settled_at` is OUR OBSERVATION
+    # STAMP. A catch-up sweep that finally reaches a five-week-old market writes
+    # `settled_at = now` and thereby promotes that market to the head of a band
+    # whose entire purpose is what a reader is looking at RIGHT NOW.
+    #
+    # MEASURED on production 2026-09-14 09:25Z, running both orderings over the
+    # identical membership set (3,945 tickers, all with both columns set):
+    #
+    #   * under `COALESCE`, **214 of the 400 fast-lane slots (53.5%) went to
+    #     markets the venue settled more than SEVEN DAYS ago**, and **699 tickers
+    #     settled inside the last 24 h were evicted below the cutoff**;
+    #   * under `LEAST`, 400/400 slots go to markets settled inside 24 h and 0 go
+    #     to anything older than seven days.
+    #
+    # Venue-confirmed at the time: Sunday night's Cowboys–Giants (`…-26SEP13DALNYG`)
+    # had seven player-prop event tickers — Receiving Yards, Receptions, Rushing
+    # Yards, Touchdowns, Passing Yards, Fantasy Points, Team Sacks, 334 legs — that
+    # Kalshi had FINALIZED with real yes/no results (read live off
+    # `/markets?event_ticker=…`: 101/101, 82/82, 48/54 declared) while every stored
+    # leg sat at `resolution_source = NULL`. They ranked **1161–1172** under
+    # `COALESCE`, i.e. ~770 places past the cutoff, behind Korean-baseball games
+    # from 9 August whose `settled_at` had been stamped that morning. Under `LEAST`
+    # the same tickers rank 36–120. The reader-visible cost was the most-read
+    # settled page in the product printing "Resolved · grading unavailable" over
+    # 85 of 85 props eight hours after the whistle.
+    #
+    # `LEAST` and not another COALESCE because Postgres `LEAST` IGNORES NULLs
+    # (unlike most dialects): a row with only one of the two columns keeps exactly
+    # its old key, so the 51 future-dated rows (#2644's field mechanism, where
+    # `resolution_date > settled_at`) correctly order on `settled_at` and the
+    # pre-`settled_at` cohort correctly orders on `resolution_date`. The key moves
+    # only where BOTH are set AND the venue's own date is the earlier one — 3,894
+    # of 3,945 today. Rows that sink are not stranded: they fall to band 2, which
+    # is where they lived before this band existed.
     fresh_tickers: list[str] = []
     if fresh_limit > 0:
         fresh_rows = await session.execute(
@@ -264,7 +304,7 @@ async def _select_kalshi_settlement_tickers(
                         AND COALESCE(fo.resolution_source, '') <> 'ungradeable_result'
                   )
                 GROUP BY fm.external_id
-                ORDER BY MAX(COALESCE(fm.settled_at, fm.resolution_date)) DESC
+                ORDER BY MAX(LEAST(fm.settled_at, fm.resolution_date)) DESC
                 LIMIT :fresh_limit
             """),
             {"fresh_limit": fresh_limit, "floor_days": _FRESH_SETTLEMENT_FLOOR_DAYS},
