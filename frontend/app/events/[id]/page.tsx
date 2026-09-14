@@ -81,7 +81,7 @@ import {
   tennisSetsWonFor,
 } from "@/lib/otherMarketGroups";
 import { sportVocab, marketMapSectionMounts, totalsMapRenders } from "@/lib/marketMapUtils";
-import { printableAway } from "@/lib/drawPricedWinner";
+import { printableAway, sportPricesADraw } from "@/lib/drawPricedWinner";
 import {
   actualScoreSeriesDrawn,
   scoreDifferentialHeading,
@@ -954,6 +954,7 @@ export default function EventPage({ params }: EventPageProps) {
   // the "was priced at N%" line rather than sourcing it to the complement. That
   // is deliberate and it is the same rule: the number it would have printed is
   // the one this ship exists to stop printing.
+  const awaySlotWithheld = sportPricesADraw(event.sport);
   const awayProb = printableAway(servedAwayProb, event.sport);
   const awayPct = printableAway(servedAwayPct, event.sport);
   const openingAwayProb = printableAway(servedOpeningAwayProb, event.sport);
@@ -1619,6 +1620,10 @@ export default function EventPage({ params }: EventPageProps) {
                 awayProb={awayProb}
                 homePct={homePct}
                 awayPct={awayPct}
+                // #6238 — OMIT the away slot, do not dash it. At 48px an
+                // em-dash is a solid rectangle and `–  ▬%` reads as a number
+                // that failed to draw. See the prop's own note.
+                awayWithheld={awaySlotWithheld}
                 homeColor={event.home_team_data?.primary_color}
                 awayColor={event.away_team_data?.primary_color}
                 probSourceLabel={probSourceLabel}
@@ -1760,7 +1765,12 @@ export default function EventPage({ params }: EventPageProps) {
                     {/* #2085 — same pair, same rule. `opening_odds` derives its
                         away side as `1 - home` on the backend too, so this line
                         printed 101 for exactly the same reason the hero did. */}
-                    Opened {formatProbability(openingHomeProb, { rendered: openingHomePct })} {"–"} {formatProbability(openingAwayProb, { rendered: openingAwayPct })}
+                    {/* #6238 — the separator and the away figure go together.
+                        `formatProbability(null)` is "-", so leaving this pair
+                        intact printed `Opened 64% – -`, which reads as a
+                        missing number rather than an inapplicable one. */}
+                    Opened {formatProbability(openingHomeProb, { rendered: openingHomePct })}
+                    {!awaySlotWithheld && <>{" "}{"–"} {formatProbability(openingAwayProb, { rendered: openingAwayPct })}</>}
                   </span>
                 </div>
               )}

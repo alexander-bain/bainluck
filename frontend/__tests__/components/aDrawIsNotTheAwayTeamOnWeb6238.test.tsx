@@ -127,49 +127,84 @@ describe("#6238 printableAway withholds on a draw-priced sport and passes throug
 });
 
 describe("#6238 what the hero actually renders", () => {
-  const render = (homeProb: number | null, awayProb: number | null, homePct: number | null, awayPct: number | null) =>
+  /** Exactly the shape `page.tsx` now passes, so this tests the call site's decision. */
+  const renderFor = (sport: string, homeProb: number, homePct: number, away: number, awayPct: number) =>
     renderToStaticMarkup(
       <EventHeroProbabilityPair
         homeProb={homeProb}
-        awayProb={awayProb}
+        awayProb={printableAway(away, sport)}
         homePct={homePct}
-        awayPct={awayPct}
+        awayPct={printableAway(awayPct, sport)}
+        awayWithheld={sportPricesADraw(sport)}
       />,
     );
 
+  const raw = (props: Partial<React.ComponentProps<typeof EventHeroProbabilityPair>>) =>
+    renderToStaticMarkup(
+      <EventHeroProbabilityPair homeProb={null} awayProb={null} homePct={null} awayPct={null} {...props} />,
+    );
+
   /**
-   * The served pair from production on the specimen, run through the rule the
-   * page now applies. 32 must not appear; the em-dash must.
+   * 🔴 THE FIRST CUT OF THIS SHIP PASSED ITS TESTS AND LOOKED BROKEN.
+   *
+   * Nulling the away side alone is the em-dash path, and at `text-[48px]
+   * font-black` an em-dash is a ~41px solid rectangle: the 390px LOOK showed
+   * `69% – ▬%`, a grey redaction bar trailed by a naked `%`. Twelve green tests
+   * did not see it. These assertions are what that LOOK bought — the slot is
+   * OMITTED, so there is no dash and no orphan `%` to draw.
    */
-  it("the León specimen draws 68 and withholds 32", () => {
-    const html = render(0.683, printableAway(0.317, LIGA_MX), 68, printableAway(32, LIGA_MX));
+  it("the León specimen draws one number and omits the away slot entirely", () => {
+    const html = renderFor(LIGA_MX, 0.683, 68, 0.317, 32);
     expect(html).toContain(">68<");
     expect(html).not.toContain(">32<");
-    expect(html).toContain("—");
+    // No redaction bar, and no separator left dangling after it.
+    expect(html).not.toContain("—");
+    expect(html).not.toContain("–");
+    // Exactly one `%` survives — the home one. Two would mean an orphan.
+    expect(html.match(/>%</g) ?? []).toHaveLength(1);
   });
 
   it("the same numbers on an NFL page still print BOTH — the control", () => {
-    const html = render(0.683, printableAway(0.317, "americanfootball_nfl"), 68, printableAway(32, "americanfootball_nfl"));
+    const html = renderFor("americanfootball_nfl", 0.683, 68, 0.317, 32);
     expect(html).toContain(">68<");
     expect(html).toContain(">32<");
-    expect(html).not.toContain("—");
+    expect(html).toContain("–");
+    expect(html.match(/>%</g) ?? []).toHaveLength(2);
   });
 
   it("a two-way page renders byte-identically to a page with no rule at all", () => {
-    // The strongest form of "nothing else moved": not a word-ban, an equivalence.
-    expect(render(0.683, printableAway(0.317, "basketball_nba"), 68, printableAway(32, "basketball_nba")))
-      .toBe(render(0.683, 0.317, 68, 32));
+    // The strongest form of "nothing else moved": an equivalence, not a word-ban.
+    // A ranking or a relabelling cannot survive a byte comparison.
+    expect(renderFor("basketball_nba", 0.683, 68, 0.317, 32)).toBe(
+      raw({ homeProb: 0.683, awayProb: 0.317, homePct: 68, awayPct: 32 }),
+    );
   });
 
   /**
-   * The home side keeps its reading, which is the difference between
-   * "we withheld one number" and "this hero has no numbers" (#3459: both-null
-   * draws the words instead of two 48px em-dash bars trailed by naked `%`).
+   * THE OTHER DIRECTION, AND THE REASON `awayWithheld` IS A SEPARATE PROP.
+   * A genuinely ABSENT away reading on a two-way sport still draws the em-dash,
+   * because there it means "we have no number for this side" — which is a true
+   * statement and a different one. Inferring the omission from `awayProb ===
+   * null` would have silently changed that case too.
    */
+  it("an absent away reading on a two-way sport still dashes — unchanged", () => {
+    const html = raw({ homeProb: 0.683, awayProb: null, homePct: 68, awayPct: null });
+    expect(html).toContain("—");
+    expect(html).toContain(">68<");
+  });
+
   it("withholding away does NOT collapse the hero into the no-price copy", () => {
-    const html = render(0.683, null, 68, null);
+    // #3459's both-null case draws words instead of two redaction bars; one
+    // withheld side must not be mistaken for that.
+    const html = renderFor(LIGA_MX, 0.683, 68, 0.317, 32);
     expect(html).not.toContain("No price");
     expect(html).toContain(">68<");
+  });
+
+  it("the home probability still reaches the rail that cross-checks the card", () => {
+    // UX-P003: `data-probability` is the PROBABILITY and is asserted against the
+    // Discover card linking here. Withholding the away slot must not disturb it.
+    expect(renderFor(LIGA_MX, 0.683, 68, 0.317, 32)).toContain('data-probability="0.683"');
   });
 });
 
@@ -244,10 +279,18 @@ describe("#6238 the event page is actually wired to the rule", () => {
     expect(PAGE).not.toMatch(/awayPct=\{servedAwayPct\}/);
   });
 
+  it("the hero is told to OMIT the slot, not just handed a null", () => {
+    // Without this the page renders the redaction bar the LOOK caught.
+    expect(PAGE).toMatch(/awayWithheld=\{awaySlotWithheld\}/);
+    expect(PAGE).toMatch(/const awaySlotWithheld = sportPricesADraw\(event\.sport\)/);
+  });
+
   it("the opening line is covered too, not just the hero", () => {
     // #5696's lesson: a hero that withholds above an `Opened 64% – 36%` line that
     // does not has moved the false number three rows down, not deleted it.
-    expect(PAGE).toMatch(/Opened \{formatProbability\(openingHomeProb[\s\S]{0,120}openingAwayProb/);
+    expect(PAGE).toMatch(/Opened \{formatProbability\(openingHomeProb/);
+    // …and its separator is gated with it, or the line reads `Opened 64% – -`.
+    expect(PAGE).toMatch(/!awaySlotWithheld && <>[\s\S]{0,80}openingAwayProb/);
   });
 });
 
