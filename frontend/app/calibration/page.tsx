@@ -129,13 +129,18 @@ function CohortTag({ cohort, scope }: {
   cohort: { key: string; shortLabel: string };
   scope?: "comparison";
 }) {
-  // The traded-vs-untraded section draws from BOTH sides — that comparison is
-  // its entire subject — so labelling it with the active cohort would be a lie
-  // in the one place the distinction is being explained.
-  const text = scope === "comparison" ? "Traded vs untraded" : cohort.shortLabel;
+  // The price-changed-vs-unchanged section draws from BOTH sides — that
+  // comparison is its entire subject — so labelling it with the active cohort
+  // would be a lie in the one place the distinction is being explained.
+  const text = scope === "comparison" ? "Price changed vs unchanged" : cohort.shortLabel;
+  // #6176: `whitespace-nowrap` because the honest default-cohort name is three
+  // words ("Price changed + sportsbooks"), and without it the pill BROKE
+  // MID-LABEL at 390px — the border closed after "PRICE CHANGED +" and reopened
+  // around "SPORTSBOOKS" on the next line, reading as two tags. Seen on this
+  // change's own LOOK. The pill now moves to the next line whole.
   return (
     <span
-      className="ml-2 align-middle text-[10px] uppercase tracking-wide text-text-muted border border-surface-border rounded px-1.5 py-0.5"
+      className="ml-2 align-middle inline-block whitespace-nowrap text-[10px] uppercase tracking-wide text-text-muted border border-surface-border rounded px-1.5 py-0.5"
       data-testid="calibration-cohort-tag"
       data-cohort-key={scope === "comparison" ? "comparison" : cohort.key}
     >
@@ -1021,11 +1026,12 @@ export default function CalibrationPage() {
             picking a side; he ruled DELETE.
 
             What the reader keeps: the cohort banner's own sentence, which says
-            in plain words what is shown and what is excluded, and the "What
-            'traded' means here" fold in the price-moved section below, which is
-            a different and shorter explanation of the same proxy. What the code
-            keeps: the ban, in calibrationCohort.test.ts, on any label that
-            upgrades the cohort NAME into a claim about activity. */}
+            in plain words what is shown and what is excluded, and the "How the
+            two groups are compared" fold in the price-moved section below.
+            What the code keeps: the ban, in calibrationCohort.test.ts, on any
+            label that upgrades the cohort NAME into a claim about activity —
+            which #6176 has since extended to the bare words "traded" and
+            "untraded", the two the footnote was written to qualify. */}
       </div>
 
       {/* Source Comparison */}
@@ -1186,11 +1192,17 @@ export default function CalibrationPage() {
           <p className="text-xs text-text-muted mb-3">
             Same-probability rows only, so the two groups are compared like with like.
           </p>
-          <CalibrationCardNote label="What “traded” means here">
+          {/* #6176: the note used to be headed "What 'traded' means here" and
+              spent its first sentence explaining that the word above it meant
+              something else. The labels now say what was measured, so the note
+              is free to be about the comparison itself — and the sentence that
+              had to warn a reader off the trading reading is simply gone, along
+              with the reading. */}
+          <CalibrationCardNote label="How the two groups are compared">
             <p className="text-xs text-text-muted">
-              We don&rsquo;t receive trading volume for most of these markets, so we use{" "}
-              <strong>whether the price changed at all</strong> as the stand-in for whether anyone was
-              actively trading. It is a proxy, not a measurement of activity. Compared{" "}
+              The split is <strong>whether the price ever moved off its opening line</strong> — we
+              don&rsquo;t receive trading volume for most of these markets, so that is what we can
+              observe and it is what these two groups are. Compared{" "}
               <strong>bucket for bucket</strong>, so both groups are judged on outcomes we priced the
               same. That matters: the two groups have different predicted-probability mixes, so any
               gap between their overall figures is partly a difference in what they contain rather
@@ -1215,9 +1227,11 @@ export default function CalibrationPage() {
                       {/* UX-P075 item (c): one vocabulary. These columns said
                           "Price moved"/"Price unchanged" while the toggle above
                           them said something else again — same two cohorts,
-                          three namings on one page. */}
-                      <th className="py-2 pr-4 font-medium text-right">Traded</th>
-                      <th className="py-2 pr-4 font-medium text-right">Untraded</th>
+                          three namings on one page. #6176 keeps the one
+                          vocabulary and makes it the honest one: these two
+                          columns ARE `price_moved === true` and `=== false`. */}
+                      <th className="py-2 pr-4 font-medium text-right">Price changed</th>
+                      <th className="py-2 pr-4 font-medium text-right">Price unchanged</th>
                       <th className="py-2 font-medium text-right">Difference</th>
                     </tr>
                   </thead>
@@ -1286,14 +1300,14 @@ export default function CalibrationPage() {
               than predicted, below = <em>less</em>. Shaded band = &plusmn;5pp and point size
               reflects sample count. Because the two cohorts differ in source, category and
               market-shape mix, whichever side lands lower here is an observed ordering &mdash; not
-              evidence that trading caused it. <strong className="text-text-secondary">The table
+              evidence that the price moving caused it. <strong className="text-text-secondary">The table
               above is the version that controls for that</strong>, which is why this one is folded
               away rather than shown beside it.
             </p>
             <CalibrationChart
               series={[
-                { data: movedBuckets, color: "#16a34a", label: `Traded (${movedN.toLocaleString()})` },
-                { data: unchangedBuckets, color: "#dc2626", label: `Untraded (${unchangedN.toLocaleString()})` },
+                { data: movedBuckets, color: "#16a34a", label: `Price changed (${movedN.toLocaleString()})` },
+                { data: unchangedBuckets, color: "#dc2626", label: `Price unchanged (${unchangedN.toLocaleString()})` },
               ]}
               width={700}
               height={400}
@@ -1305,8 +1319,10 @@ export default function CalibrationPage() {
               so it follows the same direction the sentence below does. */}
           <div className="grid grid-cols-2 gap-3 mt-4">
             {/* UX-P075 item (c): "Active Trading" / "Opening Price Only" were a
-                fourth and fifth name for the same two cohorts. */}
-            <StatCard label="Traded"
+                fourth and fifth name for the same two cohorts. #6176: and the
+                name they all collapsed to asserted trading, which is not what
+                either card counts. */}
+            <StatCard label="Price changed"
               testId="calibration-activity-moved"
               value={`${movedECE.toFixed(1)}pp`}
               detail={`${movedN.toLocaleString()} outcomes`}
@@ -1315,7 +1331,7 @@ export default function CalibrationPage() {
                   : activity.direction === "unchanged_higher" ? "text-green-600"
                     : "text-text-primary"
               } />
-            <StatCard label="Untraded"
+            <StatCard label="Price unchanged"
               testId="calibration-activity-unchanged"
               value={`${unchangedECE.toFixed(1)}pp`}
               detail={`${unchangedN.toLocaleString()} outcomes`}
@@ -1353,8 +1369,8 @@ export default function CalibrationPage() {
 
                 moved      = [data-testid=calibration-cohort-toggle]     data-moved-n
                 sportsbook = [data-testid=calibration-cohort-toggle]     data-not-applicable-n
-                untraded   = [data-testid=calibration-cohort-toggle]     data-unchanged-n
-                traded     = moved + sportsbook  ( = data-cohort-n on the default view)
+                unchanged  = [data-testid=calibration-cohort-toggle]     data-unchanged-n
+                shown      = moved + sportsbook  ( = data-cohort-n on the default view)
                 total      = [data-testid=calibration-population-count]  data-full-n
 
               So no attribute was added: a second copy of a count is a drift

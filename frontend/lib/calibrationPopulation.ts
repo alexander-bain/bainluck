@@ -85,7 +85,12 @@ import type { CohortKey } from "./calibrationCohort";
  */
 const COHORT_PHRASE: Record<CohortKey, string> = {
   all: "all resolved outcomes",
-  excluding_never_moved: "traded outcomes only",
+  // #6176: the noun follows `describeCohort`'s. This phrase reads inside a
+  // sentence ("measured over …"), so it stays a phrase rather than borrowing
+  // the tag's `shortLabel`. It names the exclusion rather than the inclusion
+  // because the cohort also contains sportsbook lines, which carry no
+  // price-moved flag — see `calibrationCohort.ts`.
+  excluding_never_moved: "all resolved outcomes except the price-unchanged ones",
 };
 
 export function cohortPhrase(key: CohortKey): string {
