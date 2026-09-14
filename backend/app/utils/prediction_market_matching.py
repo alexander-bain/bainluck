@@ -1207,7 +1207,17 @@ def _build_club_synonym_pairs() -> frozenset[tuple[str, str]]:
       through every call site is a wider change than #3813. Sound because each
       pair is two COMPLETE club names: for the key to matter, some other sport
       would need a team literally named "Athletic Bilbao" meaning something else.
-      The 709-pair golden replay is what proves it fuses nothing.
+
+    The proof that it fuses nothing is
+    ``tests/test_club_synonym_pairs_cannot_fuse_6215.py``, which asserts the
+    derivation's own invariants — no normalized name has two different partners,
+    the relation is symmetric, and nothing shorter than a whole name is ever a
+    key. This docstring used to cite lane1b's 709-pair golden replay for that,
+    and lane1b/255 was right to refuse the credit: **a frozen corpus is a
+    ratchet, not a guard.** It says nothing about the thirteenth entry someone
+    adds to ``AUTHORITY_SYNONYMS`` tomorrow, which is exactly when this would
+    break. The replay remains real corroboration on today's table (709 pairs,
+    666 passing) and is no longer asked to be more.
     """
     from app.utils.authority_name_forms import AUTHORITY_SYNONYMS
 
