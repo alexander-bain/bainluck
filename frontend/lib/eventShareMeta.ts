@@ -183,6 +183,111 @@ export function isFinishedForShare(event: EventShareMetaInput): boolean {
   return FINISHED_STATUSES.has((event.status ?? "").trim().toLowerCase());
 }
 
+/**
+ * ═══ #6119 — THE PAIR THIS PREVIEW IS ALLOWED TO PRINT, OR NOTHING ═══
+ *
+ * The three predicates above are about a forecast that went STALE. This one is
+ * about a forecast we never had.
+ *
+ * Measured on production 2026-09-14, `/events/15310840` (Bayern Munich vs Bayer
+ * Leverkusen, Frauen-Bundesliga) — `current_odds`, `opening_odds` and
+ * `win_probability_sources` all null. The words below read it correctly and said
+ * nothing numeric ("Follow Bayern Munich vs Bayer Leverkusen with
+ * probability-first odds"); the PICTURE drew `50%` against `50%` in 96px over a
+ * dead-even bar, off the `?? 0.5` pair at the top of `opengraph-image.tsx`.
+ * Same on `/events/15312491` (Saracens vs Leicester Tigers), `live` rather than
+ * scheduled. One preview, two claims — and the numeric half was inventing a coin
+ * flip out of an absence.
+ *
+ * This is NOT #5846. That ship found the same `?? 0.5` pair producing 50/50 for a
+ * link to a game that does not exist, and fixed it by narrowing `lookup`; its
+ * comment says in as many words that the coalesce was left standing for "a row
+ * with no price". That was a deferral, and this is the deferred case: a game that
+ * really exists and that nobody has quoted.
+ *
+ * ── WHY THE RULE LIVES HERE AND NOT IN THE PICTURE ──
+ *
+ * Because the words already had it. `buildEventShareCopy` has always asked
+ * `formatProbability` for both sides and fallen back to the non-numeric copy when
+ * either came back null. Re-deriving that in the image route is how the two halves
+ * of one preview drift, which is the whole of #6049 → #6113. So the rule is lifted
+ * out WHOLE and both halves call it — the fourth adoption in this chain rather
+ * than a fifth reading of the payload.
+ *
+ * ── REACH ──
+ *
+ * A straight random sample of 80 of the 2,329 rows sitting `live` or `scheduled`
+ * at 09:30Z: 49 served no price at all — 61%, or roughly 1,400 previews. Note the
+ * issue's own figure (1,097, off `win_probability_sources`) was a PROXY and is
+ * loose in both directions: 3 of 40 sampled no-source rows do serve a price, and
+ * 22 of 40 sampled with-source rows serve none. This predicate reads
+ * `current_odds` itself, which is the column the card actually draws from, so
+ * neither error reaches it.
+ *
+ * Returns the two formatted percents TOGETHER or `null`, rather than a boolean
+ * beside two locals, so the copy below cannot print one side of a pair this
+ * function has already judged unprintable.
+ */
+export function shareForecastPercents(
+  event: EventShareMetaInput,
+): { away: string; home: string } | null {
+  const away = formatProbability(event.current_odds?.away_probability);
+  const home = formatProbability(event.current_odds?.home_probability);
+  if (away === null || home === null) return null;
+  return { away, home };
+}
+
+/**
+ * #6119 — the picture's half, named like its three siblings.
+ *
+ * ═══ DELIBERATELY NARROWER THAN `shareForecastPercents`, AND THE GAP IS A
+ *     STANDING DISAGREEMENT BETWEEN TWO SHIPPED RULINGS ═══
+ *
+ * The obvious form of this function is `shareForecastPercents(event) === null`,
+ * so that the picture withholds on precisely the rows the words go quiet on. I
+ * wrote that first. It is wrong, and the suite caught it.
+ *
+ * `formatProbability` treats an exact 0 as "no number" — inherited from #1495,
+ * where it was about a bare 0.5 and never argued for a zero. #4963 then ruled the
+ * OPPOSITE for this very card, by name: *"A finished game's loser is 0%, and 0%
+ * is a fact, not a missing value."* Its fixture at 1.0/0.0 exists because the
+ * card used to print `--` for that loser, and printing `--` was the defect.
+ *
+ * So the two halves already disagree about an exact zero, and they have since
+ * #4963 landed. Resolving that is NOT this ship:
+ *
+ *   · it has no measured members — of 157 distinct live/scheduled rows read on
+ *     2026-09-14, 45 served a `current_odds` object and ZERO carried an exact-0
+ *     or a null probability inside it, so there is no specimen to reason from;
+ *   · the defect that IS measured (61% of 2,329 rows) is the key being ABSENT;
+ *   · and adopting the wider rule would silently reverse #4963 on the strength of
+ *     a fixture, which is how a repair becomes a regression.
+ *
+ * This predicate therefore asks the narrow question it can answer from the
+ * measurement — IS THERE A NUMBER HERE AT ALL — and leaves the zero exactly as
+ * both surfaces treat it today. The containment is asserted in
+ * `__tests__/noPriceUnfurl6119.test.tsx` in BOTH directions, so the gap stays
+ * visible and a later edit cannot close it by accident: every no-price row is
+ * also quiet in the words, and the rows in between are exactly the zeroes.
+ *
+ * ═══ WITHHOLDS ONLY ═══
+ *
+ * Like the `suspended` and pinned-live branches: a price can arrive on the next
+ * poll, so this licenses a card to stay QUIET and never licenses it to assert
+ * anything. It does not touch the status word, it crowns nobody, and no cache
+ * window reads it.
+ */
+export function hasNoPriceForShare(event: EventShareMetaInput): boolean {
+  const away = event.current_odds?.away_probability;
+  const home = event.current_odds?.home_probability;
+  return (
+    typeof away !== "number" ||
+    typeof home !== "number" ||
+    Number.isNaN(away) ||
+    Number.isNaN(home)
+  );
+}
+
 export interface EventShareCopy {
   /** Page `<title>` WITHOUT a site suffix — the root layout's `%s | Bain Luck`
    * template adds it. Appending one here is what produced the doubled
@@ -409,8 +514,12 @@ export function buildEventShareCopy(
     };
   }
 
-  const homeProbability = formatProbability(event.current_odds?.home_probability);
-  const awayProbability = formatProbability(event.current_odds?.away_probability);
+  // #6119 — the pair, from the owner the PICTURE now asks too. This was two
+  // `formatProbability` locals and a `&&` between them; lifting it into
+  // `shareForecastPercents` is what lets the image route withhold on exactly the
+  // rows this copy already goes quiet on. The branch below is unchanged in
+  // behaviour — both sides present, or neither is printed.
+  const forecast = shareForecastPercents(event);
 
   // ── ONE ORDER, THREE SURFACES ──────────────────────────────────────────────
   // `matchup` is AWAY vs HOME (line 161) and `opengraph-image.tsx` draws the away
@@ -428,14 +537,13 @@ export function buildEventShareCopy(
   // through. Away-first here makes the matchup, the title, the description and
   // the picture one order. The settled branches above are unaffected: they name
   // the winner outright, so they never depend on side order.
-  const title =
-    homeProbability && awayProbability
-      ? `${matchup}: ${away} ${awayProbability}, ${home} ${homeProbability}`
-      : `${matchup} Odds`;
+  const title = forecast
+    ? `${matchup}: ${away} ${forecast.away}, ${home} ${forecast.home}`
+    : `${matchup} Odds`;
 
   const description = truncate(
-    homeProbability && awayProbability
-      ? `${statusLabel(event)}. Bain Luck gives ${away} a ${awayProbability} win probability and ${home} a ${homeProbability} win probability.`
+    forecast
+      ? `${statusLabel(event)}. Bain Luck gives ${away} a ${forecast.away} win probability and ${home} a ${forecast.home} win probability.`
       : `${statusLabel(event)}. Follow ${matchup} with probability-first odds on Bain Luck.`,
   );
 
