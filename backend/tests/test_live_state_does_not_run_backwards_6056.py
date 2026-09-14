@@ -747,3 +747,469 @@ def test_the_odds_feed_actually_consults_the_predicate():
     assert odds_polling.clockless_write_defers_to_authority is (
         clockless_write_defers_to_authority
     )
+
+
+# ---------------------------------------------------------------------------
+# 6. The HOURLY writer nobody had counted (CERT-2824)
+#
+# The guard above covers `_sync_statpal_livescores`, the 30-second writer. It is
+# not the only StatPal live-score writer: `_sync_statpal_schedules` fetches
+# `get_live_scores(sport)` at the top of its sport loop "to get current game
+# state" and assigns `event.home_score` / `away_score` from it — and FOUR beats
+# reach that function every hour (NBA `:00`, NHL `:01`, MLB `:02`, NFL `:03`,
+# `app/tasks/__init__.py`). So once an hour, on a live row, the same reversion
+# could still land at a slower cadence. Found by an independent reviewer's AST
+# probe of the real function, not by reading.
+#
+# These drive the REAL hourly task, not the predicate: the predicate is already
+# covered above, and what was wrong here was the wiring.
+# ---------------------------------------------------------------------------
+
+
+class _ScheduleFixture:
+    """A season-schedule row. Separate from `_Fixture` because the schedule and
+    livescore boards are different payloads and this path reads `fixture_id` to
+    find the row it will enrich."""
+
+    def __init__(self, start_time, home, away, *, fixture_id, status="scheduled"):
+        self.fixture_id = fixture_id
+        self.home_team = home
+        self.away_team = away
+        self.start_time = start_time
+        self.end_time = None
+        self.status = status
+        self.raw_status = None
+        self.game_clock = None
+        self.clock_field_served = True
+
+
+class _LiveFixture:
+    """A live-board row as the hourly pass consumes it."""
+
+    def __init__(self, start_time, home, away, *, raw_status, game_clock, scores):
+        self.fixture_id = "280459"
+        self.home_team = home
+        self.away_team = away
+        self.start_time = start_time
+        self.end_time = None
+        self.status = "live"
+        self.raw_status = raw_status
+        self.game_clock = game_clock
+        self.home_score, self.away_score = scores
+        self.clock_field_served = True
+
+
+class _FixtureFetch:
+    def __init__(self, fixtures):
+        self.fixtures = fixtures
+        self.reason = "ok"
+        self.sport = "nfl"
+        self.endpoint = "/v1/nfl/schedule"
+        self.asked = True
+        self.is_alarm = False
+
+
+async def _run_schedules(monkeypatch, *, schedule, live, events):
+    """Drive the real `_sync_statpal_schedules` for NFL and return the rows.
+
+    Same rail as `_run_livescores` above, plus the two collaborators this path
+    reaches that the livescore path does not: team identity resolution and the
+    event registry. Both are stubbed to no-ops — this is a test about which
+    score lands on a row, and a real `resolve_team` would only add a second
+    source of failure to a question it has no part in.
+    """
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session
+
+    import app.services.statpal_api as statpal_api
+    import app.tasks.base as task_base
+    import app.tasks.statpal_sync as statpal_sync
+    from app.models.models import Base, Event, ScoreSnapshot, Sport
+    from app.tasks.statpal_sync import _sync_statpal_schedules
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(
+        engine, tables=[Event.__table__, Sport.__table__, ScoreSnapshot.__table__]
+    )
+    sync_session = Session(engine, expire_on_commit=False)
+
+    @sa_event.listens_for(sync_session, "loaded_as_persistent")
+    def _reattach_utc(_sess, instance):  # pragma: no cover - test rail
+        for attr, value in list(instance.__dict__.items()):
+            if isinstance(value, datetime) and value.tzinfo is None:
+                instance.__dict__[attr] = value.replace(tzinfo=timezone.utc)
+
+    now = datetime.now(timezone.utc)
+    sport = Sport(key="americanfootball_nfl", name="americanfootball_nfl")
+    sync_session.add(sport)
+    sync_session.flush()
+    ids = []
+    for home, away, clock, period, scores, fixture_id in events:
+        row = Event(
+            sport_id=sport.id,
+            home_team_name=home,
+            away_team_name=away,
+            commence_time=now - timedelta(hours=3),
+            status="live",
+            game_clock=clock,
+            period=period,
+            home_score=scores[0],
+            away_score=scores[1],
+            statpal_fixture_id=fixture_id,
+            home_team_id=1,
+            away_team_id=2,
+        )
+        sync_session.add(row)
+        sync_session.flush()
+        ids.append(row.id)
+    sync_session.commit()
+
+    class _AsyncShim:
+        def __init__(self, session):
+            self._s = session
+
+        async def execute(self, statement):
+            return self._s.execute(statement)
+
+        def add(self, obj):
+            self._s.add(obj)
+
+        async def commit(self):
+            self._s.commit()
+
+        async def flush(self):
+            self._s.flush()
+
+    class _Ctx:
+        async def __aenter__(self_inner):
+            return _AsyncShim(sync_session)
+
+        async def __aexit__(self_inner, *exc):
+            sync_session.commit()
+            return False
+
+    monkeypatch.setattr(task_base, "get_task_session", lambda: _Ctx())
+    monkeypatch.setattr(
+        "app.tasks.statpal_sync.get_task_session", lambda: _Ctx(), raising=False
+    )
+    monkeypatch.setattr(statpal_api, "is_available", lambda: True)
+
+    class _Service:
+        async def get_fixtures_result(self, sport):
+            return _FixtureFetch(list(schedule))
+
+        async def get_live_scores(self, sport):
+            return list(live)
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(statpal_api, "StatPalAPIService", _Service)
+
+    class _Team:
+        id = 1
+
+    async def _resolve_team(session, source, sport_key, source_name=None):
+        return _Team()
+
+    from app.services import team_identity
+
+    monkeypatch.setattr(
+        team_identity.team_identity_service, "resolve_team", _resolve_team
+    )
+    # Every row in these fixtures is pre-bound (`home_team_id` set), so the
+    # binder is never consulted for a decision; stubbed only so a real one
+    # cannot introduce a second failure mode.
+    monkeypatch.setattr(
+        statpal_sync, "accept_team_binding", lambda **kw: False, raising=False
+    )
+
+    result = await _sync_statpal_schedules("americanfootball_nfl")
+    rows = [
+        sync_session.execute(select(Event).where(Event.id == i)).scalar_one()
+        for i in ids
+    ]
+    return rows, result
+
+
+@pytest.mark.asyncio
+async def test_schedule_sync_cannot_restore_an_earlier_live_score_6056(monkeypatch):
+    """THE REQUIRED TEST (CERT-2824).
+
+    The row is at `28-20 @ 5:21 Q4`. The hourly board offers `28-14 @ 5:26 Q4` —
+    the same touchdown #6056 watched leave the page, arriving an hour later
+    through a writer the first fix did not cover. `5:26` remaining is EARLIER in
+    a countdown quarter than `5:21`, so it cannot be news.
+    """
+    now = datetime.now(timezone.utc)
+    rows, result = await _run_schedules(
+        monkeypatch,
+        schedule=[
+            _ScheduleFixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                fixture_id="280459",
+            )
+        ],
+        live=[
+            _LiveFixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                raw_status="4th Quarter",
+                game_clock="5:26",
+                scores=(28, 14),
+            )
+        ],
+        events=[
+            (
+                "New York Giants",
+                "Dallas Cowboys",
+                "5:21",
+                "5:21 - 4th Quarter",
+                (28, 20),
+                "280459",
+            )
+        ],
+    )
+
+    assert rows[0].away_score == 20, "the touchdown must not leave the page"
+    assert rows[0].home_score == 28
+    assert result["schedule_reverting_live_skipped"] == 1
+
+
+@pytest.mark.asyncio
+async def test_schedule_sync_refusal_covers_the_home_side_too(monkeypatch):
+    """The specimen above differs only on the AWAY score, so deleting the
+    home-side assignment would survive it. This one moves the other column."""
+    now = datetime.now(timezone.utc)
+    rows, result = await _run_schedules(
+        monkeypatch,
+        schedule=[
+            _ScheduleFixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                fixture_id="280459",
+            )
+        ],
+        live=[
+            _LiveFixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                raw_status="4th Quarter",
+                game_clock="9:01",
+                scores=(21, 7),
+            )
+        ],
+        events=[
+            (
+                "New York Giants",
+                "Dallas Cowboys",
+                "7:26",
+                "7:26 - 4th Quarter",
+                (28, 14),
+                "280459",
+            )
+        ],
+    )
+
+    assert rows[0].home_score == 28
+    assert rows[0].away_score == 14
+    assert result["schedule_reverting_live_skipped"] == 1
+
+
+@pytest.mark.asyncio
+async def test_schedule_sync_still_writes_a_later_observation(monkeypatch):
+    """THE CONTROL, and the one that matters most: without it every assertion
+    above passes with the hourly score write deleted outright. A LOWER score
+    from a LATER moment — a touchdown reversed on review — must still land."""
+    now = datetime.now(timezone.utc)
+    rows, result = await _run_schedules(
+        monkeypatch,
+        schedule=[
+            _ScheduleFixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                fixture_id="280459",
+            )
+        ],
+        live=[
+            _LiveFixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                raw_status="4th Quarter",
+                game_clock="3:04",
+                scores=(28, 14),
+            )
+        ],
+        events=[
+            (
+                "New York Giants",
+                "Dallas Cowboys",
+                "5:21",
+                "5:21 - 4th Quarter",
+                (28, 20),
+                "280459",
+            )
+        ],
+    )
+
+    assert rows[0].away_score == 14, "a later correction must still land"
+    assert result["schedule_reverting_live_skipped"] == 0
+
+
+@pytest.mark.asyncio
+async def test_schedule_sync_accepts_a_same_position_correction(monkeypatch):
+    """An exact tie is accepted — the guard refuses proven reversions, it does
+    not gatekeep live updates. Same moment, corrected number."""
+    now = datetime.now(timezone.utc)
+    rows, result = await _run_schedules(
+        monkeypatch,
+        schedule=[
+            _ScheduleFixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                fixture_id="280459",
+            )
+        ],
+        live=[
+            _LiveFixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                raw_status="4th Quarter",
+                game_clock="5:21",
+                scores=(28, 19),
+            )
+        ],
+        events=[
+            (
+                "New York Giants",
+                "Dallas Cowboys",
+                "5:21",
+                "5:21 - 4th Quarter",
+                (28, 20),
+                "280459",
+            )
+        ],
+    )
+
+    assert rows[0].away_score == 19
+    assert result["schedule_reverting_live_skipped"] == 0
+
+
+@pytest.mark.asyncio
+async def test_schedule_sync_writes_when_the_row_has_no_position(monkeypatch):
+    """A row with no stored period is the common case on this path, and it must
+    stay writable: "cannot place it" is not evidence of staleness, and a guard
+    that froze those rows would be worse than the flicker."""
+    now = datetime.now(timezone.utc)
+    rows, result = await _run_schedules(
+        monkeypatch,
+        schedule=[
+            _ScheduleFixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                fixture_id="280459",
+            )
+        ],
+        live=[
+            _LiveFixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                raw_status="4th Quarter",
+                game_clock="5:26",
+                scores=(28, 14),
+            )
+        ],
+        events=[
+            (
+                "New York Giants",
+                "Dallas Cowboys",
+                None,
+                None,
+                (0, 0),
+                "280459",
+            )
+        ],
+    )
+
+    assert (rows[0].home_score, rows[0].away_score) == (28, 14)
+    assert result["schedule_reverting_live_skipped"] == 0
+
+
+def test_the_hourly_writer_actually_consults_the_guard():
+    """The AST claim CERT-2824 made, asserted as a test so it cannot regress
+    silently: the real `_sync_statpal_schedules` reaches `live_write_would_revert`
+    on the path to its `home_score` / `away_score` assignments. The behavioural
+    tests above carry the meaning; this one catches a refactor that keeps them
+    passing by accident (e.g. the write moving into a helper the stub shadows)."""
+    import ast
+    import inspect
+    import textwrap
+
+    import app.tasks.statpal_sync as statpal_sync
+
+    tree = ast.parse(
+        textwrap.dedent(inspect.getsource(statpal_sync._sync_statpal_schedules))
+    )
+    called = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "live_write_would_revert" in called
+    assert "statpal_live_position" in called
+    assert statpal_sync.live_write_would_revert is live_write_would_revert
+
+
+def test_the_position_helper_composes_what_the_writers_store():
+    """`statpal_live_position` must compose the SAME string the live writers
+    store, or the comparison is against a label no row ever holds."""
+    from app.tasks.statpal_sync import statpal_live_position
+
+    clocked = _LiveFixture(
+        None, "h", "a", raw_status="4th Quarter", game_clock="5:26", scores=(0, 0)
+    )
+    assert statpal_live_position(clocked) == ("5:26 - 4th Quarter", "5:26")
+
+    clockless = _LiveFixture(
+        None, "h", "a", raw_status="Halftime", game_clock=None, scores=(0, 0)
+    )
+    assert statpal_live_position(clockless) == ("Halftime", None)
+
+    # A bare `live` carries no position at all — it must not be composed into
+    # one, or every such fixture would compare as an unplaceable string that
+    # happens to parse.
+    bare = _LiveFixture(
+        None, "h", "a", raw_status="live", game_clock="5:26", scores=(0, 0)
+    )
+    assert statpal_live_position(bare) == (None, "5:26")
+
+
+def test_a_created_row_has_no_position_to_revert_from():
+    """Why the creation-path score write in `_sync_statpal_schedules` carries no
+    reversion guard, asserted rather than claimed in a comment.
+
+    That write is inside `if was_created`, which `find_or_create_event` returns
+    only for a row it has just inserted — and `EventIdentity` carries neither
+    `period` nor `game_clock`, so there is nothing stored to run backwards from.
+    A guard there could only ever return False. If a future creation path starts
+    pre-filling a position, this reddens and the guard becomes real work."""
+    import inspect
+
+    from app.services.event_registry import EventIdentity
+
+    fields = set(inspect.signature(EventIdentity).parameters)
+    assert "period" not in fields
+    assert "game_clock" not in fields
+    # And the decision itself, on the state such a row actually has:
+    assert live_write_would_revert(None, None, "5:26 - 4th Quarter", "5:26") is False

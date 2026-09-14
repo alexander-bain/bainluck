@@ -147,6 +147,28 @@ def row_for_statpal_id(
     return (own[0] if own else None), False, foreign
 
 
+def statpal_live_position(fixture) -> tuple[Optional[str], Optional[str]]:
+    """The ``(period, game_clock)`` pair a StatPal fixture is claiming.
+
+    Composed the way this module's live writers *store* those columns — #5017
+    made StatPal's `period` byte-identical to ESPN's `f"{clock} - {label}"` on
+    purpose — because the whole point is to compare an incoming observation
+    against the stored one on the same scale. Comparing a half-built label
+    against the row would be comparing something no writer ever writes.
+
+    ``getattr``: the fixtures reaching these call sites are duck-typed and come
+    from several construction paths, the same reason the livescores writer reads
+    ``raw_status`` defensively.
+    """
+    clock = getattr(fixture, "game_clock", None)
+    raw_status = getattr(fixture, "raw_status", None)
+    if raw_status and raw_status not in ("live", "Live"):
+        return (f"{clock} - {raw_status}" if clock else raw_status), clock
+    # A bare "live" says the game is running and says nothing about WHERE — the
+    # unplaceable case, which `live_write_would_revert` treats as no evidence.
+    return None, clock
+
+
 async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     """Sync fixture schedules from StatPal for all mapped sports.
 
@@ -214,6 +236,14 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     # game that has not been played yet.
     live_pair_refused = 0
     premature_live_skipped = 0
+    # #6056. Live score writes this HOURLY path refused because the fixture was
+    # positioned earlier in the game than the row already was. Its own counter,
+    # not shared with the 30-second livescore writer's `reverting_live_skipped`:
+    # two writers on two cadences, and one number could not tell them apart.
+    # Always present; 0 is a reading, not an absence (gotcha #53), and a
+    # non-zero here names an hour in which this pass would have run a live score
+    # backwards under a reader.
+    schedule_reverting_live_skipped = 0
     # Q438: creations this path DOWNGRADED to 'scheduled' because the game had
     # not started. Always present; 0 is a reading, not an absence (gotcha #53).
     premature_live_created_as_scheduled = 0
@@ -648,7 +678,32 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                     # it is describing a different game. This is the guard ESPN has
                     # carried since #1207 and StatPal did not; same predicate, one
                     # implementation (`app/utils/game_pairing.py`).
+                    #
+                    # #6056, SECOND WRITER ON THE SAME COLUMNS. This hourly pass
+                    # is a live-score writer in its own right and nobody had
+                    # noticed: it fetches `get_live_scores(sport)` at the top of
+                    # the sport loop for "current game state" and assigns the
+                    # score here. Four beats reach it every hour — NBA `:00`,
+                    # NHL `:01`, MLB `:02`, NFL `:03` — so the 30-second
+                    # livescore writer being guarded is not enough. Once an hour
+                    # this path could still restore a StatPal score from earlier
+                    # in the game over a newer one, which is exactly the reader-
+                    # visible defect #6056 is about, just at a slower cadence.
+                    #
+                    # Same decision as the livescores writer, on the same scale
+                    # (`statpal_live_position`), and deliberately NOT a
+                    # score comparison — see `live_write_would_revert`'s module
+                    # note for why ordering is by position in game time and a
+                    # falling score is a legitimate correction.
+                    #
+                    # Counted under its OWN name rather than folded into
+                    # `reverting_live_skipped`: these are two writers on two
+                    # cadences, and a single number could not tell an hourly
+                    # refusal from a 30-second one. 0 is a reading (gotcha #53).
                     if live_data and live_data.status == "live":
+                        _incoming_period, _incoming_clock = statpal_live_position(
+                            live_data
+                        )
                         if live_write_is_premature(event.commence_time, now):
                             premature_live_skipped += 1
                             logger.warning(
@@ -658,6 +713,20 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                                 event.id, event.home_team_name, event.away_team_name,
                                 event.commence_time.isoformat() if event.commence_time else None,
                                 now.isoformat(),
+                            )
+                        elif live_write_would_revert(
+                            event.period, event.game_clock,
+                            _incoming_period, _incoming_clock,
+                        ):
+                            schedule_reverting_live_skipped += 1
+                            logger.warning(
+                                "StatPal schedule-sync reversion guard: refused a "
+                                "live score on event %d (%s vs %s) — row is at "
+                                "%r/%r, hourly fixture offered %r/%r (%s-%s) (#6056)",
+                                event.id, event.home_team_name, event.away_team_name,
+                                event.period, event.game_clock,
+                                _incoming_period, _incoming_clock,
+                                live_data.home_score, live_data.away_score,
                             )
                         else:
                             if live_data.home_score is not None:
@@ -801,6 +870,21 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                         # contradiction (`scheduled` + a live score) one field
                         # over. The sibling score path 100 lines up refuses on
                         # this predicate; so does this one.
+                        #
+                        # #6056: this one deliberately carries NO reversion
+                        # guard, and that is not an oversight. It is inside
+                        # `if was_created`, and `find_or_create_event` returns
+                        # `True` only for a row it has just INSERTED — a row
+                        # whose `period` and `game_clock` are unset, because
+                        # nothing has written them yet and `EventIdentity`
+                        # carries neither. There is no stored position to run
+                        # backwards from, so `live_write_would_revert` could
+                        # only ever return False here; adding the call would be
+                        # a guard that reads as load-bearing and provably is
+                        # not. The claim is asserted rather than asserted-by-
+                        # comment: see
+                        # `test_the_creation_path_still_writes_the_first_score`
+                        # and `test_a_created_row_has_no_position_to_revert_from`.
                         if not premature_create:
                             if live_fix.home_score is not None:
                                 event.home_score = live_fix.home_score
@@ -927,6 +1011,10 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
         "live_pair_refused": live_pair_refused,
         "premature_live_skipped": premature_live_skipped,
         "premature_live_created_as_scheduled": premature_live_created_as_scheduled,
+        # #6056 — same rule: always present, 0 is a reading. Counted apart from
+        # the 30-second writer's `reverting_live_skipped` so the hourly path's
+        # refusals stay attributable to the hourly path.
+        "schedule_reverting_live_skipped": schedule_reverting_live_skipped,
         # #2963 — same rule again: always present, and 0 is the reading that says
         # the fabricator is unreachable rather than merely unobserved.
         "live_created_refused_no_provider_id": live_created_refused_no_provider_id,
