@@ -2300,12 +2300,136 @@ def test_the_floor_is_asked_about_the_age_at_the_EDGE_not_the_age_now():
     floor = sync.min_cycle_interval_min()
     gap = opens - 10
     assert _wait(10, age=floor - gap) == gap * 60
-    assert _wait(10, age=floor - gap - 1) == 0
+    # One minute younger does not lose the opportunity — it moves the target one
+    # minute later, to the floor's own clear, which is still inside this band.
+    assert _wait(10, age=floor - gap - 1) == (gap + 1) * 60
     # The projection is the wait, in whole minutes, and nothing else.
     assert sync.decide(
         main_live=A, heavy_live=B, heavy_is_ancestor=True,
         heavy_release_age_min=floor - gap, now=_at(10),
     ).code == HOLD
+
+
+def test_a_trigger_before_a_floor_that_clears_inside_this_band_sleeps_to_the_clear():
+    """The residual this ship is named for, in the shape it had on the day.
+
+    heavy v20 released 11:43:49Z, so its 180-min floor cleared at 14:43:49 —
+    INSIDE the 14:38-14:58 band, which is not a coincidence but a property (a
+    push may only happen in band and the floor is a whole number of hours). A
+    trigger at 14:20 is 156 min old at the opening edge: asking only about :38
+    projects 174 min, HOLDs, and throws away a window it was four minutes short
+    of. The target is the LATER of the two edges."""
+    floor = sync.min_cycle_interval_min()
+    clears_at = 44
+    assert _wait(20, age=floor - (clears_at - 20)) == (clears_at - 20) * 60
+    # and the same run, asked only about the band's opening edge, would not have
+    # pushed there at all — which is what makes this a closed gap and not a
+    # re-statement of the edge above.
+    opens, _ = sync.window_bounds()
+    assert sync.decide(
+        main_live=A, heavy_live=B, heavy_is_ancestor=True,
+        heavy_release_age_min=floor - (clears_at - 20) + (opens - 20),
+        now=_at(opens),
+    ).code == HOLD
+
+
+def test_a_run_already_inside_the_band_waits_out_a_floor_that_clears_before_the_close():
+    """`seconds_until_window_opens` is 0 inside the band, so the opening edge
+    has nothing left to say — and this is the commonest arrival of all, because
+    the band is where the triggers that matter land."""
+    floor = sync.min_cycle_interval_min()
+    assert _wait(40, age=floor - 4) == 4 * 60
+    assert _wait(40, age=floor) == 0
+
+
+def test_a_floor_clearing_after_this_bands_close_never_sleeps():
+    """The bound that keeps a 3-hour floor from buying a 3-hour runner: a target
+    past the closing edge is not a longer sleep, it is a sleep into a different
+    hour's band. Asked from inside the band and from outside it."""
+    _, closes = sync.window_bounds()
+    floor = sync.min_cycle_interval_min()
+    # Inside the band at :50, clearing at :00 — one minute past the edge.
+    assert _wait(50, age=floor - (closes + 1 - 50) - 1) == 0
+    assert _wait(50, age=floor - (closes + 1 - 50)) == 0
+    assert _wait(50, age=floor - (closes - 50)) == (closes - 50) * 60
+    # Outside it at :10, with a floor that clears two hours from now.
+    assert _wait(10, age=floor - 120) == 0
+
+
+def test_no_wait_ever_lands_outside_the_band_it_is_waiting_for():
+    """The property behind both edges, swept rather than sampled: whenever this
+    function sleeps, the instant it wakes on is inside the band — never the next
+    hour's, never past the close."""
+    floor = sync.min_cycle_interval_min()
+    for minute in range(60):
+        for age in [None, 0, 5, floor - 30, floor - 5, floor - 1, floor, floor + 90]:
+            secs = _wait(minute, age=age)
+            if not secs:
+                continue
+            target = _at(minute) + timedelta(seconds=secs)
+            assert sync.inside_window(target), (minute, age, secs)
+            # …and inside THIS occurrence of it: the next band to open, never a
+            # later one. `inside_window` reads only the minute, so it cannot
+            # tell a 24-minute wait from one 24 hours longer; the deadline can.
+            assert secs <= sync.band_seconds_left_at_open(_at(minute)), (minute, age)
+
+
+def test_the_projection_can_never_land_under_the_floor_so_its_rounding_cannot_bite():
+    """Why the projected age's round-UP is belt over braces here, stated as the
+    property rather than left as a comment.
+
+    Rounding the projection up was load-bearing when the only target was the
+    band's opening edge: a ragged real `now` made the wait 17m40s, `int()` wrote
+    17, and a run one minute short of the floor declined a wait it should have
+    taken. Now that the target is the LATER of the two edges, any wait taken
+    while the floor still binds is at least the floor's own remainder, which is
+    a whole number of minutes — so ceiling and truncation agree, and no rounding
+    of this term can change a verdict. Swept over every minute and every age
+    either side of the floor.
+
+    (A mutant that truncates instead therefore SURVIVES, and is equivalent by
+    this construction rather than untested — the honest report of it.)"""
+    floor = sync.min_cycle_interval_min()
+    for minute in range(60):
+        for age in [0, 5, floor - 30, floor - 18, floor - 1, floor, floor + 90]:
+            secs = _wait(minute, age=age)
+            if not secs:
+                continue
+            assert age + secs // 60 >= floor, (minute, age, secs)
+            assert age + (secs + 59) // 60 == age + secs // 60 or age >= floor, (
+                minute, age, secs
+            )
+
+
+def test_the_deadline_for_a_wait_is_this_bands_close_read_from_either_side():
+    """`band_seconds_left_at_open` is the deadline, and it is the SAME band the
+    rest of the file reads — inside the band it is what is left, outside it is
+    the wait plus the whole band, and it is derived so a moved band moves it."""
+    opens, closes = sync.window_bounds()
+    band = (closes - opens + 1) * 60
+    assert sync.band_seconds_left_at_open(_at(opens)) == band
+    assert sync.band_seconds_left_at_open(_at(50)) == sync.band_seconds_left(_at(50))
+    assert sync.band_seconds_left_at_open(_at(10)) == (opens - 10) * 60 + band
+    # A ragged real second outside the band still lands on the whole band, never
+    # a second of it lost to the rounding that gets the sleeper there.
+    ragged = _at(10).replace(second=20, microsecond=842205)
+    assert sync.band_seconds_left_at_open(ragged) == sync.seconds_until_window_opens(
+        ragged
+    ) + band
+
+
+def test_the_floors_own_clock_is_read_from_the_budget_and_not_from_a_number(monkeypatch):
+    """`seconds_until_floor_clears` may not become a second opinion about the
+    floor, and its polarity on an unreadable age is `decide`'s: proceed."""
+    floor = sync.min_cycle_interval_min()
+    assert sync.seconds_until_floor_clears(None) == 0
+    assert sync.seconds_until_floor_clears(floor) == 0
+    assert sync.seconds_until_floor_clears(floor + 500) == 0
+    assert sync.seconds_until_floor_clears(floor - 24) == 24 * 60
+    monkeypatch.setattr(sync, "ACCEPTED_CYCLES_PER_DAY", 6)
+    assert sync.seconds_until_floor_clears(floor - 24) == (
+        sync.min_cycle_interval_min() - floor + 24
+    ) * 60
 
 
 def test_an_unreadable_age_does_not_stop_the_wait_any_more_than_it_stops_the_push():
