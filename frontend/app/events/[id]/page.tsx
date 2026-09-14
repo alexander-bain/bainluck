@@ -1599,6 +1599,41 @@ export default function EventPage({ params }: EventPageProps) {
                   a move the levels cannot express is a move this line may not
                   claim.
 
+                  #5995 — THE JOURNEY, BECAUSE ON A SCORING SPORT THERE IS NO
+                  SAFE WORD FOR THE UNIT. #5719 left this line printing
+                  `+49 pts Giants since open` directly above a 21–14 scoreline:
+                  three numbers in one block, one of them a score, and `pts` is
+                  the word for the other two. `+7 pts Eagles` over a 7–3 game
+                  was the filed specimen; the marquee frame at `+49` is worse,
+                  because a number larger than either team's score reads as a
+                  running total rather than a delta. `pp` is jargon (D102) and a
+                  hero-only unit word would break the family `pts` belongs to
+                  (#5623 / #5669 / #5686), so the repair is to stop naming a
+                  unit: print the two LEVELS and let the arrow carry direction.
+                  The reader no longer has to trust a unit, or subtract at all.
+
+                  This keeps #5719's rule rather than replacing it. "Difference
+                  of the printed levels" was only ever a way to make
+                  `shown − caption = opened` hold on screen; printing the levels
+                  themselves is that same invariant with the arithmetic removed,
+                  so the caption is now correct BY CONSTRUCTION and the whole
+                  class of second-rounding defects (#2951, #3051) cannot recur
+                  on this line.
+
+                  🔴 TWO FORMATTERS ON ONE SENTENCE, AND IT IS DELIBERATE. The
+                  two levels are rendered by two different things on this page:
+                  the current one by `EventHeroProbabilityPair`, which prints the
+                  bare integer, and the opening one by `formatProbability`, which
+                  clamps the ends to `<1%` / `>99%`. They disagree at the
+                  boundary — a live blowout puts `100%` in the hero while the
+                  line below would say `>99%` for the same value. Each end of
+                  this caption therefore matches ITS OWN neighbour rather than
+                  the other end of itself: the rule is "never contradict the
+                  number printed next to you", and internal symmetry is the
+                  cheaper property to give up. That the two disagree at all is
+                  its own defect and is filed separately; it is not smuggled
+                  into a caption fix.
+
                   Defect 3 on this line is NOT fixed here: the up arrow and its
                   caption are `text-emerald-*`, which emits no CSS at all, so
                   green-up has never rendered while red-down always has. That is
@@ -1628,14 +1663,16 @@ export default function EventPage({ params }: EventPageProps) {
                       )}
                     </svg>
                     <span className={`text-xs font-semibold min-w-0 text-center ${isPositive ? "text-emerald-600" : "text-red-500"}`}>
-                      {/* `pt` when it is one. Every other surface in the family
-                          prints a DECIMAL magnitude, where "1.0 pts" is right
-                          and the question never comes up; this caption prints a
-                          whole number, so the plural is visible and "+1 pts"
-                          would be the reader's first hint that a machine wrote
-                          the line. */}
-                      {isPositive ? "+" : ""}{deltaPoints}{" "}
-                      {Math.abs(deltaPoints) === 1 ? "pt" : "pts"} {homeShort} since open
+                      {/* The two levels, each spelled the way the line it
+                          belongs to spells it — see the 🔴 note above. The
+                          opening end goes through `formatProbability` exactly
+                          as `Opened …` does two lines below; the current end is
+                          the bare integer `EventHeroProbabilityPair` prints
+                          above. */}
+                      {homeShort}{" "}
+                      {formatProbability(openingHomeProb, { rendered: openingHomePct })}
+                      {" → "}
+                      {homePct}% since open
                     </span>
                   </div>
                 );

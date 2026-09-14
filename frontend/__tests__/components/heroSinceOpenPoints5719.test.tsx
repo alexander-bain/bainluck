@@ -48,6 +48,32 @@
  * hero prints differ by a point on screen, so the caption that explains them
  * must exist, even though the raw move is two ten-thousandths. Under the old
  * gate it printed nothing.
+ *
+ * ═══ #5995 CHANGED THE WORDING AND KEPT EVERY RULE ABOVE ═══
+ *
+ * #5719's answer to defect 1 was the word `pts`. On a SCORING sport that word
+ * is the score's unit: `+49 pts Giants since open` printed directly above a
+ * 21–14 scoreline, and 49 is larger than either team's points, so the wrong
+ * reading is the likelier one. `pp` is jargon (D102) and a hero-only unit word
+ * would break the family `pts` belongs to, so the caption stopped naming a unit
+ * and now prints the JOURNEY between the two levels:
+ *
+ *       Wolverines 34% → 76% since open
+ *
+ * This is #5719's invariant with the arithmetic removed. "Difference of the
+ * printed levels" existed so that `shown − caption = opened` held on screen;
+ * printing the levels themselves makes that true by construction, so the
+ * second-rounding class (#2951, #3051) cannot recur on this line at all. Every
+ * specimen below is therefore kept, including the DISAGREE pair whose whole
+ * purpose was to separate the two arithmetics — under the new wording it proves
+ * the caption quotes the printed integers (34 and 76) and invents neither the
+ * raw-derived 41 nor the integer-derived 42.
+ *
+ * The `pts`/`%` assertions are inverted rather than deleted: the caption must
+ * now print NO delta in any unit. A `%` DOES appear, attached to each level,
+ * which is the correct use of the sign and the thing #5719 was never objecting
+ * to — so the old blanket "no percent sign before this sentence" guard is
+ * replaced by a narrower one that still catches the defect it was aimed at.
  */
 
 import React from "react";
@@ -55,7 +81,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 /** The home team's compact name, which is what the caption names. */
 const HOME_SHORT = "Wolverines";
-const CAPTION_TAIL = `${HOME_SHORT} since open`;
+/** The caption's invariant tail — the only part of it no wording has changed. */
+const SINCE_OPEN = "since open";
 
 let eventPayload: unknown;
 
@@ -159,6 +186,32 @@ function heroPrints(percent: number): string {
   return `>${percent}</span>`;
 }
 
+/**
+ * 🔴 THE CAPTION IS READ OUT, NOT MATCHED AGAINST A TAIL.
+ *
+ * #5995 moved the team name from the END of this sentence to the FRONT, which
+ * quietly turns every `not.toContain("… Wolverines since open")` guard vacuous:
+ * the string it forbids can no longer occur under ANY wording, right or wrong,
+ * so the assertion passes without examining anything. The negative guards here
+ * are the ones that catch the defect, so they are pointed at the caption's own
+ * text instead of at a substring of the document.
+ *
+ * Returns the caption span's contents, and THROWS if the page drew no caption —
+ * an extractor that returns "" on a missing element turns the same guards
+ * vacuous a second way.
+ */
+function captionText(html: string): string {
+  const span = html.match(
+    /<span class="text-xs font-semibold[^"]*">([\s\S]*?)<\/span>/,
+  );
+  if (!span) throw new Error("no since-open caption in the rendered page");
+  // React separates adjacent text children with empty comments; they are not
+  // part of what the reader sees.
+  const text = span[1].replace(/<!---->/g, "");
+  expect(text).toContain(SINCE_OPEN);
+  return text;
+}
+
 function draw(homeProb: number, openingHomeProb: number): string {
   eventPayload = liveEvent(homeProb, openingHomeProb);
   const html = renderToStaticMarkup(
@@ -174,17 +227,23 @@ function draw(homeProb: number, openingHomeProb: number): string {
   return html;
 }
 
-describe("#5719 the hero's since-open caption is in points", () => {
-  it("says pts, and never a percent sign, on the filed specimen's shape", () => {
+describe("#5719/#5995 the hero's since-open caption prints the journey", () => {
+  it("names no unit at all on the filed specimen's shape", () => {
     const html = draw(0.755, 0.344);
 
-    expect(html).toContain(`pts ${CAPTION_TAIL}`);
-    // The defect's exact spelling, and the general one beside it: any percent
-    // sign immediately before this sentence is this bug whatever its value.
-    expect(html).not.toContain(`% ${CAPTION_TAIL}`);
+    expect(html).toContain(`Wolverines 34% → 76% ${SINCE_OPEN}`);
+
+    const text = captionText(html);
+    // #5995: the score's own word, which is what a reader on a scoring sport
+    // reads it as. `\bpts?\b` catches both spellings, because "+1 pt" was a
+    // real branch of the line this replaces.
+    expect(text).not.toMatch(/\bpts?\b/);
+    // #5719's defect, still refused: a DELTA, in any unit or none. Each level
+    // may carry a `%`; a difference may not appear at all.
+    expect(text).not.toMatch(/[+−-]\s*\d/);
   });
 
-  it("prints the difference of the two INTEGERS the hero shows, not of the two probabilities", () => {
+  it("quotes the two INTEGERS the hero shows, and invents neither arithmetic's delta", () => {
     const html = draw(0.755, 0.344);
 
     // The levels this page printed. Asserted first: without them the caption
@@ -192,12 +251,18 @@ describe("#5719 the hero's since-open caption is in points", () => {
     expect(html).toContain(heroPrints(76));
     expect(html).toContain("Opened 34%");
 
-    // 76 − 34. The raw difference rounds to 41, which is what shipped.
-    expect(html).toContain(`+42 pts ${CAPTION_TAIL}`);
-    expect(html).not.toContain("+41");
+    // The caption is those same two integers, in order.
+    expect(html).toContain(`Wolverines 34% → 76% ${SINCE_OPEN}`);
+
+    // Under #5719 this pair was chosen because the two arithmetics disagree:
+    // 76 − 34 = 42, while the raw difference rounds to 41. The caption now
+    // performs neither subtraction, so NEITHER number may appear in it.
+    const text = captionText(html);
+    expect(text).not.toContain("42");
+    expect(text).not.toContain("41");
   });
 
-  it("claims a one-point move the printed levels show even when the raw move rounds to nothing", () => {
+  it("shows a one-point journey the printed levels show even when the raw move rounds to nothing", () => {
     // .7551 prints 76, .7549 prints 75 — a point apart on screen, two
     // ten-thousandths apart on the wire. The old gate (raw < 0.01) printed
     // nothing here and left the reader two visibly different numbers with no
@@ -206,28 +271,69 @@ describe("#5719 the hero's since-open caption is in points", () => {
 
     expect(html).toContain(heroPrints(76));
     expect(html).toContain("Opened 75%");
-    expect(html).toContain(`+1 pt ${CAPTION_TAIL}`);
-    // Singular, because this caption prints a whole number. "1 pts" is the
-    // tell that nobody read the sentence.
-    expect(html).not.toContain("+1 pts");
+    expect(html).toContain(`Wolverines 75% → 76% ${SINCE_OPEN}`);
   });
 
   it("says nothing at all when the two printed levels are the same number", () => {
     // .755 and .758 both print 76. A caption over two identical numbers can
-    // only contradict them.
+    // only contradict them — and as a journey it would read "76% → 76%",
+    // which is the same objection in the new wording.
     const html = draw(0.755, 0.758);
 
     expect(html).toContain(heroPrints(76));
     expect(html).toContain("Opened 76%");
-    expect(html).not.toContain(CAPTION_TAIL);
+    expect(html).not.toContain(SINCE_OPEN);
   });
 
-  it("prints one minus sign on a fall, and still in points", () => {
+  it("reads the journey backwards on a fall, with no sign to get wrong", () => {
     // Opening 76, current 34 — the Yankees' direction on the second production
-    // frame. The sign travels on the number; a `-` prefix would print `--42`.
+    // frame. A journey carries its direction in the order of its two numbers,
+    // so the whole family of sign defects ("--42") cannot arise.
     const html = draw(0.344, 0.755);
 
-    expect(html).toContain(`-42 pts ${CAPTION_TAIL}`);
-    expect(html).not.toContain("--42");
+    expect(html).toContain(`Wolverines 76% → 34% ${SINCE_OPEN}`);
+    expect(html).not.toContain("-42");
+  });
+});
+
+/**
+ * #5995 — THE BOUNDARY, WHICH IS WHERE THIS CAPTION IS ACTUALLY LOOKED AT.
+ *
+ * The two levels are rendered by two different things. The current one comes
+ * from `EventHeroProbabilityPair`, which prints the bare integer; the opening
+ * one comes from `formatProbability`, which clamps the ends to `<1%` / `>99%`.
+ * They disagree above 99.5%, so a caption that used ONE formatter for both ends
+ * would contradict one of its two neighbours on exactly the blowout frames the
+ * issue says the fix has to survive ("any fix has to read correctly at +49").
+ *
+ * Each arm below pins the caption to the neighbour that end belongs to.
+ */
+describe("#5995 each end of the caption matches the line that prints it", () => {
+  it("says 100% when the hero says 100%, not the >99% of the line below", () => {
+    // .996 renders 100. The hero prints a bare `100`; `formatProbability`
+    // would print `>99%` for the same value.
+    const html = draw(0.996, 0.344);
+
+    expect(html).toContain(heroPrints(100));
+    expect(html).toContain(`Wolverines 34% → 100% ${SINCE_OPEN}`);
+  });
+
+  it("spells the OPENING end exactly as the Opened line spells it", () => {
+    // An opening above the clamp: the line below prints `>99%`, so the caption
+    // must too. Printing a bare `100%` here would contradict the sentence
+    // directly beneath it.
+    const html = draw(0.344, 0.996);
+
+    expect(html).toContain("Opened &gt;99%");
+    expect(html).toContain(`Wolverines &gt;99% → 34% ${SINCE_OPEN}`);
+  });
+
+  it("carries the low clamp the same way", () => {
+    // .004 renders 0, which `formatProbability` prints as `<1%` rather than a
+    // `0%` that reads as impossible (UX-P046).
+    const html = draw(0.344, 0.004);
+
+    expect(html).toContain("Opened &lt;1%");
+    expect(html).toContain(`Wolverines &lt;1% → 34% ${SINCE_OPEN}`);
   });
 });
