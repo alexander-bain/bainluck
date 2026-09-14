@@ -41,16 +41,13 @@ function priceLeader(outcomes: Outcome[]): Outcome | null {
 function copyFor(
   outcomes: Outcome[],
   status: string | null,
-  extra: { hookDescription?: string | null; outcomeCount?: number | null } = {},
+  extra: { hookDescription?: string | null } = {},
 ) {
-  const leader = priceLeader(outcomes);
   return futuresUnfurlCopy({
     outcomes,
-    leader,
+    leader: priceLeader(outcomes),
     status,
     hookDescription: extra.hookDescription ?? null,
-    outcomeCount: extra.outcomeCount ?? outcomes.length,
-    probabilityLabel: leader?.probability != null ? `${Math.round(leader.probability * 100)}%` : "--",
   });
 }
 
@@ -72,19 +69,26 @@ const FIRST_GOALSCORER: Outcome[] = [
 ];
 
 describe("the settled card never speaks in the present tense", () => {
-  it("says the winner WON instead of leading — the reported defect", () => {
-    const copy = copyFor(SPECIMEN, "resolved", { outcomeCount: 10 });
+  it("names the winner as the subject, and never as 'leading' — the reported defect", () => {
+    // #6061 retired the settled caption (the 64px name and the WON pill already
+    // said this twice), so the guard now rides `featuredName`/`settledWon` —
+    // the fields the picture is actually built from. Asserting `not.toContain`
+    // against a null caption would pass for the wrong reason.
+    const copy = copyFor(SPECIMEN, "resolved");
 
-    expect(copy.subtitle).toBe("77° or above won — 10 outcomes tracked.");
-    expect(copy.subtitle).not.toContain("leads");
+    expect(copy.featuredName).toBe("77° or above");
+    expect(copy.settledWon).toBe(true);
+    expect(copy.subtitle).toBeNull();
   });
 
   it("prints no percentage anywhere in the settled copy (#883 L2-53)", () => {
     // The rule is about the PRICE, so assert no digit-percent survives at all
     // rather than spot-checking "100%": the frozen value differs per market and
     // an assertion naming one number would pass on every other settled card.
-    const copy = copyFor(SPECIMEN, "resolved", { outcomeCount: 10 });
-    expect(copy.subtitle).not.toMatch(/\d+%/);
+    // `featuredName` is the string the card now draws, so it is what to read.
+    const copy = copyFor(SPECIMEN, "resolved");
+    expect(copy.featuredName).not.toMatch(/\d+%/);
+    expect(copy.subtitle ?? "").not.toMatch(/\d+%/);
     expect(copy.isResolved).toBe(true);
   });
 
@@ -103,15 +107,14 @@ describe("the winner, not the frozen price leader (UX-P232)", () => {
 
     expect(copy.featuredName).toBe("Kai Havertz");
     expect(copy.settledWon).toBe(true);
-    expect(copy.subtitle).toBe("Kai Havertz won — 3 outcomes tracked.");
   });
 
   it("never names a loser in the settled copy", () => {
     // The literal shape of the production defect: a man who did not score,
     // captioned as the story of the market.
     const copy = copyFor(FIRST_GOALSCORER, "resolved");
-    expect(copy.subtitle).not.toContain("Did Not Score");
     expect(copy.featuredName).not.toContain("Did Not Score");
+    expect(copy.subtitle ?? "").not.toContain("Did Not Score");
   });
 });
 
@@ -127,10 +130,12 @@ describe("a fallback never crowns an ungraded row", () => {
   it("says settled, not won, when no outcome is graded", () => {
     const copy = copyFor(UNGRADED, "resolved");
 
+    // `settledWon: false` is what swaps the card's green WON pill for the grey
+    // RESOLVED one — the whole claim, now that the caption is gone. It is also
+    // the assertion that cannot go vacuous: it is read, not searched.
+    expect(copy.isResolved).toBe(true);
     expect(copy.settledWon).toBe(false);
-    expect(copy.subtitle).toBe("This market has settled — 2 outcomes tracked.");
-    expect(copy.subtitle).not.toContain("won");
-    expect(copy.subtitle).not.toContain("leads");
+    expect(copy.subtitle).toBeNull();
   });
 
   it("does not let is_winner: false be read as a grade either", () => {
@@ -150,7 +155,7 @@ describe("a fallback never crowns an ungraded row", () => {
 
     expect(copy.isResolved).toBe(false);
     expect(copy.settledWon).toBe(false);
-    expect(copy.subtitle).toBe("Alpha leads at 62% — 1 outcomes tracked.");
+    expect(copy.featuredName).toBeNull();
   });
 });
 
@@ -163,8 +168,16 @@ describe("THE CONTROL — the live card is untouched (gotcha #43)", () => {
     { name: "Beta", probability: 0.38, is_winner: null },
   ];
 
-  it("still leads with the price on an open market", () => {
-    expect(copyFor(LIVE, "open").subtitle).toBe("Alpha leads at 62% — 2 outcomes tracked.");
+  it("still draws the live market as a live market", () => {
+    // The live card's price copy moved OUT of the caption in #6061 — the route
+    // draws 96px "62%" over 40px "Alpha" from the leader directly. What this
+    // control still has to catch is a settled rule leaking onto an open market:
+    // no featured winner, no WON pill, and the numeral/bar left switched on.
+    const copy = copyFor(LIVE, "open");
+
+    expect(copy.isResolved).toBe(false);
+    expect(copy.settledWon).toBe(false);
+    expect(copy.featuredName).toBeNull();
   });
 
   it("still lets the hook lead on an open market", () => {
@@ -175,15 +188,83 @@ describe("THE CONTROL — the live card is untouched (gotcha #43)", () => {
   it("but the hook never pre-empts a settled RESULT", () => {
     // `hook_description` is pre-settlement editorial; under the word "Won" it
     // reads as though the market were still running. Same call `layout.tsx`
-    // made for the description in #6002.
+    // made for the description in #6002. #6061 empties the settled caption, so
+    // the way to prove the hook is still refused is that the line is null WHILE
+    // a hook was supplied — and the winner is still the subject beside it.
     const copy = copyFor(SPECIMEN, "resolved", {
       hookDescription: "Texas braces for another scorching summer...",
-      outcomeCount: 10,
     });
-    expect(copy.subtitle).toBe("77° or above won — 10 outcomes tracked.");
+
+    expect(copy.subtitle).toBeNull();
+    expect(copy.featuredName).toBe("77° or above");
+    expect(copy.settledWon).toBe(true);
   });
 
   it("keeps the standing fallback when there is nothing priced at all", () => {
+    // The one card with no story of its own: no leader to draw at 96px, so the
+    // caption is the only line on it and must survive #6061's emptying.
+    expect(copyFor([], "open").subtitle).toBe(
+      "Prediction markets translated into intuitive probabilities.",
+    );
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * #6061 — THE CARD SAYS EACH THING ONCE.
+ *
+ * Filed paying #6049's after-check, fixed here. The caption printed "N outcomes
+ * tracked" while the footer printed it again 116px below; read whole, the whole
+ * caption was a restatement of type drawn larger on the same canvas.
+ * ─────────────────────────────────────────────────────────────────────────── */
+describe("the caption carries the hook or it carries nothing", () => {
+  const LIVE: Outcome[] = [
+    { name: "Alpha", probability: 0.62, is_winner: null },
+    { name: "Beta", probability: 0.38, is_winner: null },
+  ];
+  const SINGLE: Outcome[] = [{ name: "Alpha", probability: 0.62, is_winner: null }];
+
+  // Every shape the route can hand the helper. The count lives in the footer, so
+  // NO branch may spell it — a partial fix that cleaned only the settled line is
+  // exactly what this table is here to fail.
+  const BRANCHES: Array<[string, ReturnType<typeof copyFor>]> = [
+    ["settled + graded winner", copyFor(SPECIMEN, "resolved")],
+    ["settled, nothing graded", copyFor(FIRST_GOALSCORER.map((o) => ({ ...o, is_winner: null })), "resolved")],
+    ["settled + a hook", copyFor(SPECIMEN, "resolved", { hookDescription: "Editorial." })],
+    ["live, no hook", copyFor(LIVE, "open")],
+    ["live, one outcome", copyFor(SINGLE, "open")],
+    ["live + hook", copyFor(LIVE, "open", { hookDescription: "Editorial." })],
+    ["nothing priced", copyFor([], "open")],
+  ];
+
+  it.each(BRANCHES)("%s: the caption never counts the outcomes", (_name, copy) => {
+    expect(copy.subtitle ?? "").not.toMatch(/outcomes? tracked/);
+  });
+
+  it.each(BRANCHES)("%s: the caption never restates the drawn price", (_name, copy) => {
+    expect(copy.subtitle ?? "").not.toMatch(/\d+%/);
+  });
+
+  it("drops the caption entirely rather than trimming it to a restatement", () => {
+    // The narrow fix — delete "— N outcomes tracked" and keep the sentence —
+    // would leave "Alpha leads at 62%." over a 96px "62%" and a 40px "Alpha",
+    // and would pass both matrices above. Only `toBeNull` refuses it.
+    expect(copyFor(LIVE, "open").subtitle).toBeNull();
+    expect(copyFor(SPECIMEN, "resolved").subtitle).toBeNull();
+  });
+
+  it("a one-outcome market can no longer disagree with itself about plurals", () => {
+    // The caption never pluralised while the footer did, so a single-outcome
+    // market read "1 outcomes tracked" above "1 outcome tracked".
+    expect(copyFor(SINGLE, "open").subtitle).toBeNull();
+  });
+
+  it("the hook is the one line that still earns the space", () => {
+    // The positive control for the two matrices: they are satisfiable by a
+    // helper that returns null for everything, which would silence the editorial
+    // line on every market that has one.
+    expect(copyFor(LIVE, "open", { hookDescription: "A hook worth reading." }).subtitle).toBe(
+      "A hook worth reading.",
+    );
     expect(copyFor([], "open").subtitle).toBe(
       "Prediction markets translated into intuitive probabilities.",
     );
