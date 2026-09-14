@@ -5,6 +5,7 @@ import {
   eventConceptShareFacts,
   type EventConceptShareSource,
 } from "@/lib/eventConceptShareMeta";
+import { unfurlImageOptions } from "@/lib/unfurlImageCache";
 
 export const runtime = "edge";
 export const alt = "Bain Luck event probabilities";
@@ -108,7 +109,11 @@ export default async function Image({
           accent={accent}
         />
       ),
-      size,
+      // #6166 — MOVING, because this is the retractable card. A dead slug and a
+      // restarting API are the same 5xx here, so the picture that says "isn't on
+      // Bain Luck" may be wrong about a live event; `unfurlImageCache`'s header
+      // makes exactly this case moving.
+      unfurlImageOptions(size, "moving"),
     );
   }
 
@@ -130,7 +135,14 @@ export default async function Image({
           accent={accent}
         />
       ),
-      size,
+      // #6166 — `settled` alone is NOT enough to cache this as settled. The
+      // no-winner arm draws "Result not yet confirmed", which is a statement
+      // that our RECORD is incomplete and is expected to change the moment
+      // resolution writes the `won` flag. Freezing that for a day would leave a
+      // graded event captioned "Final / Result not yet confirmed" long after the
+      // winner was known — `/events/[id]` declined the same trade for
+      // `suspended`. Only the authoritative winner is terminal.
+      unfurlImageOptions(size, winner ? "settled" : "moving"),
     );
   }
 
@@ -158,6 +170,7 @@ export default async function Image({
         accent={accent}
       />
     ),
-    size,
+    // #6166 — live prices under a URL that cannot change. This is the defect.
+    unfurlImageOptions(size, "moving"),
   );
 }
