@@ -1957,18 +1957,42 @@ async def trigger_backfill_winners(
 async def trigger_backfill_kalshi_settled(
     request: Request, secret: str = Query(None),
     limit: int = Query(5000, description="Max snapshots to backfill this run"),
+    only_series: list[str] | None = Query(
+        None,
+        description=(
+            "Optional Kalshi series prefixes to pin the scan to, repeatable "
+            "(e.g. only_series=KXATP&only_series=KXATPWTA). Bypasses the #230 "
+            "boost cap and the rotating cursor so an already-concluded event "
+            "settles now instead of waiting out the rotation. Omit it and the "
+            "scan is the scheduled full sweep, unchanged."
+        ),
+    ),
 ):
     """Trigger the Kalshi settled-events backfill task (status/is_winner/cal_prob
     capture from the settled-events API). #969: bounded by an inner deadline so it
-    stays under its 900s soft limit. Use to fast-loop verify, not the 6h cron."""
+    stays under its 900s soft limit. Use to fast-loop verify, not the 6h cron.
+
+    #227 Item 2: the task has always accepted ``only_series``; this route did not
+    pass it, so the targeted trigger was unreachable from the API and a starved
+    series needed an attended ``heroku run`` one-off."""
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
+    # Drop blanks so `?only_series=` cannot become a targeting request; an
+    # all-blank value degrades to the scheduled full sweep rather than to a
+    # scan pinned on nothing.
+    _series = [s.strip() for s in (only_series or []) if s and s.strip()]
+    kwargs: dict = {"limit": limit}
+    if _series:
+        kwargs["only_series"] = _series
     result = _safe_send_task(
         "app.tasks.backfill_kalshi_settled",
-        kwargs={"limit": limit},
+        kwargs=kwargs,
         queue="background",
     )
-    return {"status": "queued", "task_id": result.id, "limit": limit}
+    return {
+        "status": "queued", "task_id": result.id, "limit": limit,
+        "only_series": _series or None,
+    }
 
 
 @router.post("/calibration/recompute")
@@ -3066,16 +3090,14 @@ async def debug_kalshi_settled(
         await service.close()
 
 
-@router.post("/backfill-kalshi-settled")
-async def trigger_backfill_kalshi_settled(
-    request: Request, secret: str = Query(None),
-    limit: int = Query(5000, description="Max outcomes to process"),
-):
-    """Recover full price history from Kalshi settled events API."""
-    _check_admin_secret(secret, request=request)
-    from app.tasks import celery_app
-    result = _safe_send_task("app.tasks.backfill_kalshi_settled", args=[limit])
-    return {"status": "queued", "task_id": str(result.id), "limit": limit}
+# NOTE: a second `@router.post("/backfill-kalshi-settled")` used to live here. It
+# was dead code — Starlette matches routes in registration order, so the handler
+# above (registered first) has always served every request — but it was NOT inert:
+# FastAPI builds the OpenAPI dict by iterating all routes, so the LATER duplicate
+# won the schema and `/docs` documented a signature nobody could reach (it also
+# omitted `queue="background"`, so it would have misrouted had it ever won).
+# Removed with #227 Item 2's `only_series`, which would otherwise have been
+# invisible in `/docs` to the operator who needs it.
 
 
 @router.post("/precompute-category-pages")
