@@ -93,7 +93,11 @@ unlike #5982, whose runbook opens with one.
 
 ``CREATE TABLE IF NOT EXISTS backup_6215_borrowed_espn_identity`` is runtime DDL
 behind ``--backup``, invoked by a person, on a named app. Notice 47(c): the
-invocation is the attended step, so this is not migration-class.
+invocation is the attended step, so this is not migration-class. It is written
+``CREATE TABLE ... AS SELECT ... WHERE false`` so Postgres derives every column
+type from ``teams`` itself — see the comment at that statement; the first cut
+declared them by hand and got ``alternate_names`` wrong, which made the whole
+script unrunnable.
 """
 
 from __future__ import annotations
@@ -284,20 +288,35 @@ async def run(args) -> int:
         ids = [r.id for r in borrowed]
 
         if args.backup:
+            # 🔴 THE TYPES ARE DERIVED FROM `teams`, NOT DECLARED (CERT-2880).
+            # The first cut hand-wrote this DDL and got one column wrong:
+            # `alternate_names` is **JSONB** in the model and the migration, and
+            # the declaration said `text[]`. The uncast `INSERT ... SELECT` then
+            # raises before the commit, so `--backup` fails, `--apply` refuses
+            # without a backup, and the repair can never reach a single row —
+            # a script that is dead on arrival and looks fine in review.
+            #
+            # `CREATE TABLE AS SELECT ... WHERE false` makes Postgres copy every
+            # column type from the source table, so the backup cannot disagree
+            # with what it is backing up, today or after the next migration.
+            # That is why this is not simply "fix text[] to jsonb": the fix for
+            # a hand-typed schema is to stop hand-typing it.
             await s.execute(
                 text(
-                    f"CREATE TABLE IF NOT EXISTS {BACKUP_TABLE} ("
-                    "  team_id integer PRIMARY KEY,"
-                    "  abbreviation text,"
-                    "  current_record text,"
-                    "  location text,"
-                    "  logo_url_small text,"
-                    "  logo_url_large text,"
-                    "  primary_color text,"
-                    "  secondary_color text,"
-                    "  alternate_names text[],"
-                    "  taken_at timestamptz NOT NULL DEFAULT now()"
-                    ")"
+                    f"CREATE TABLE IF NOT EXISTS {BACKUP_TABLE} AS "
+                    "SELECT id AS team_id, abbreviation, current_record,"
+                    " location, logo_url_small, logo_url_large, primary_color,"
+                    " secondary_color, alternate_names,"
+                    " now() AS taken_at "
+                    "FROM teams WHERE false"
+                )
+            )
+            # `ON CONFLICT (team_id)` needs a unique index; CTAS carries no
+            # constraints. Idempotent, so a re-run of `--backup` is safe.
+            await s.execute(
+                text(
+                    f"CREATE UNIQUE INDEX IF NOT EXISTS {BACKUP_TABLE}_pk "
+                    f"ON {BACKUP_TABLE} (team_id)"
                 )
             )
             await s.execute(
