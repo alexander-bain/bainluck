@@ -330,6 +330,11 @@ EXPECTED_FRESH = [
     "CCC-26SEP10",
     "LLL-26SEP10",
     "BBB-26SEP10",
+    # #6012 amendment's control row. It is resolved with one ordinary ungraded
+    # leg, so band 1 genuinely owns it — that is the whole point of adding it,
+    # and `test_a_resolved_market_band_one_can_see_is_left_to_band_one` asserts
+    # both halves (absent from the early band, present here).
+    "RRR-26SEP10",
     "ZZZ-26SEP10",
 ]
 
@@ -648,7 +653,17 @@ async def test_the_pre_5146_grade_test_hides_the_default_false_rows(pg_engine):
 
     assert "KKK-26SEP10" not in got
     assert "LLL-26SEP10" not in got
-    assert got == [t for t in EXPECTED_FRESH if t not in {"KKK-26SEP10", "LLL-26SEP10"}], (
+    # `RRR` joined the corpus with the #6012 amendment and is a default-FALSE row
+    # too (`leg-b` is explicitly `False`, the shape 70% of production is in), so
+    # the old clause drops it for exactly the reason this arm is about. Seeding it
+    # NULL instead would keep this list shorter and make the control less like
+    # production, which is the trade #5146 already ruled on.
+    assert "RRR-26SEP10" not in got
+    assert got == [
+        t
+        for t in EXPECTED_FRESH
+        if t not in {"KKK-26SEP10", "LLL-26SEP10", "RRR-26SEP10"}
+    ], (
         "the old clause must differ from the shipped one on the default-FALSE "
         "rows and on NOTHING else — otherwise this arm is measuring some other "
         "change and the 2,416-vs-7,927 production split is not what it explains"
@@ -673,12 +688,15 @@ async def test_dropping_the_retraction_exclusion_lets_ungradeable_rows_clog_the_
 async def test_the_tail_band_still_walks_the_alphabet_from_the_cursor(pg_engine):
     """The pre-existing sweep keeps its shape, its cursor and its own budget.
 
-    `ZZZ` is the only corpus ticker above the cursor that carries a
+    `RRR` and `ZZZ` are the corpus tickers above the cursor that carry a
     non-authoritative outcome, so this also proves the recency band did not
-    quietly become the whole selection.
+    quietly become the whole selection. `RRR` joined the corpus with the #6012
+    amendment and belongs here for the same reason it belongs in
+    `EXPECTED_FRESH`: an ordinary ungraded leg is exactly what these two bands
+    are for, and the early band's whole job is the markets that have none.
     """
     _fresh, tail = await _select(pg_engine, limit=2000)
-    assert tail == ["ZZZ-26SEP10"]
+    assert tail == ["RRR-26SEP10", "ZZZ-26SEP10"]
 
 
 @needs_postgres
