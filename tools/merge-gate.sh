@@ -7,8 +7,8 @@
 # ── WHY THIS IS A FILE AND NOT A PARAGRAPH ───────────────────────────────────
 #
 # Notices 13, 18, 28, 31 and 32 are five hand-typed commands that a lane runs
-# before every merge, from memory, at the end of a session, usually inside an
-# eighteen-minute push window. Each has already been got wrong in production:
+# before every merge, from memory, at the end of a session, historically inside
+# an eighteen-minute push window. Each has already been got wrong in production:
 #
 #   notice 28  `?head_sha=` with an abbreviated sha returns a valid EMPTY result
 #              at exit 0 — indistinguishable from "CI never ran" (lane1/221).
@@ -39,10 +39,10 @@
 #
 # ── WHAT IT CANNOT DO ────────────────────────────────────────────────────────
 #
-# A GO is true at the instant it is printed and not one second longer. Ancestry,
-# PR mergeability and the push window all move under you (notice 29's amendment
-# exists because a window was computed from elapsed sleeps and could never say
-# "outside"). Run this again INSIDE the push, and read the clock there too.
+# A GO is true at the instant it is printed and not one second longer: ancestry
+# and PR mergeability both move under you. Run this again INSIDE the push. (The
+# push window that used to be the third such thing is retired — see the note
+# where it used to print, at the bottom of this file.)
 #
 # It also does not grade. A GO means the paperwork is in order for a sha someone
 # else already certed; it is never a substitute for the cert.
@@ -1358,6 +1358,35 @@ FIXEOF
   check "check(): a producer's SIGPIPE is not the assertion's answer" \
     "yes 'window clamped to' | /usr/bin/grep -q 'window clamped to'"
 
+  # The retired push window, with teeth. Notice 29's :32-:50 restriction was
+  # retired 2026-09-13 16:55 PDT and this gate advised it for two hours after,
+  # which cost the desk two consecutive notes telling lanes to ignore a line
+  # their own merge tool prints. The comment where it used to print says "do not
+  # re-add"; a comment is not a guard, so this is that sentence enforced.
+  #
+  # THE NEEDLE IS ASSEMBLED, NEVER WRITTEN WHOLE. `sed 's/#.*//'` strips
+  # comments and not code, so a literal window string in this very line would be
+  # found by its own check and the negative assertion would fail forever, about
+  # itself. Splitting it also keeps the retirement note above readable, since
+  # that note MUST quote the window it is retiring.
+  _pw=':32'; _pw="$_pw-:50"
+  check "the retired push window is advised nowhere in this gate's code" \
+    "! sed -e 's/#.*//' '$self' | /usr/bin/grep -q -- \"\$_pw\""
+
+  # A negative assertion passes when its subject is gone AND when its needle is
+  # broken, and those are not the same result. So the needle gets a positive
+  # control — but NOT a haystack built from `$_pw` itself, which is the obvious
+  # form and is worthless: it would match its own construction however wrong
+  # that construction got. The control is the one place the forbidden text still
+  # legitimately appears, the retirement note above, read from the RAW source
+  # with comments left in. Break the split and this fails first, naming the
+  # mechanism, instead of letting the check above read as a clean absence.
+  #
+  # It also binds the two together on purpose: the note that explains why the
+  # window is gone must keep naming the window it retired, or the guard says so.
+  check "…and that needle is real: the retirement note above still names it" \
+    "/usr/bin/grep -q -- \"\$_pw\" '$self'"
+
   # ── The fetch hang, and the silence it produced (#5428). Every check below is
   # behavioural and offline: the remotes are real git repos on disk, or a path
   # that does not exist, so none of this depends on GitHub being reachable or on
@@ -2268,18 +2297,28 @@ if [ -x "$rr_script" ] || [ -r "$rr_script" ]; then
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# notice 29 — the push window binds the RELEASE, not the push: the accuracy
-# rebuild starts at :15 UTC and a push reaches production 10-20 minutes later.
-# Advisory only, and true only at this instant: read the clock again IN the
-# push, because a window computed from elapsed sleeps only drifts ahead and can
-# never report "outside".
+# THE PUSH WINDOW IS GONE, AND THIS IS WHERE IT USED TO PRINT.
+#
+# Notice 29's :32-:50 main-app restriction was retired by the coordinator at
+# 2026-09-13 16:55 PDT, and this gate went on advising it — int345 spent two
+# consecutive desk notes telling lanes to ignore a line their own merge tool
+# prints ("a stale warning, not a gate"). An advisory nobody may act on is
+# worse than no advisory: the desk merges hourly, and "OUTSIDE at 01:2xZ — next
+# window :32-:50" invites a wait that buys nothing. Removed, not reworded.
+#
+# The mechanism is measured gone rather than relayed. The window existed only
+# because a main-app release cycled the celery beat that drives the accuracy
+# rebuild, and beat now runs as the `scheduler` dyno on `bainluck-heavy`. Read
+# 2026-09-14 02:05Z: `bainluck` runs web + worker-background + worker-realtime +
+# worker-ws and NO scheduler, all four restarted 18:48:0xPT by release v4509;
+# `bainluck-heavy` carries scheduler.1 and worker-heavy.1, both up since
+# 16:50:2xPT — i.e. straight THROUGH that release, untouched by it. There is no
+# longer anything a main-app deploy can interrupt.
+#
+# Do not re-add this arm because an older notice still reads like a live rule.
+# A `bainluck-heavy` deploy is a different question with a different answer: it
+# is attended, and notice 48 governs it.
 # ─────────────────────────────────────────────────────────────────────────────
-now_min=$((10#$(date -u +%M)))
-if [ "$now_min" -ge 32 ] && [ "$now_min" -le 50 ]; then
-  echo "  ----  push window (notice 29)    IN WINDOW at $(date -u +%H:%M)Z (:32-:50) — re-read the clock in the push"
-else
-  echo "  ----  push window (notice 29)    OUTSIDE at $(date -u +%H:%M)Z — next window :32-:50 (matters only if it releases)"
-fi
 
 echo
 # An inconclusive never turns a STOP into a GO, but it must never be lost inside
