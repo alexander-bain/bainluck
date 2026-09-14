@@ -167,8 +167,14 @@ _REPAIRS = {
     # ``COVERAGE_CENSUS_ENABLED``; enabling that flag changes the statement text,
     # moves ``staged_unit_fingerprint()`` and throws the served bank away, so
     # this walks the same chunks in a SEPARATE, separately versioned pass that
-    # cannot touch the curve. Bounded to ?limit= chunks per call (default 8) and
-    # resumable from Redis — re-invoke until ``complete``. Publishes only a
+    # cannot touch the curve. Bounded TWICE — by ?limit= chunks per call
+    # (default 8) and by a wall clock BELOW the router's 30s, because a count is
+    # not a clock and an H12 stops the client, not the dyno. Every statement is
+    # sized from what is left of that wall and arms ``lock_timeout`` (a SELECT
+    # takes ACCESS SHARE and can queue behind a release-phase lock), and a unit
+    # that aborts stops the walk, banks what it holds and is named in
+    # ``stopped_on`` rather than discarding the call. Resumable from Redis —
+    # re-invoke until ``complete``. Publishes only a
     # COMPLETE walk, stamped with the roster digest it walked, so a consumer can
     # prove the census and the curve describe one population.
     # Never writes production data: ``apply`` is accepted and ignored, and the

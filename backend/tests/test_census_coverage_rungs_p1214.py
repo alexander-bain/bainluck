@@ -14,6 +14,14 @@ Four rules these defend, each of which has a named way of going wrong:
 4. **Never join today's coverage to yesterday's curve.** The reconciliation is
    a chain of three identities and every broken link must produce a REASON, not
    a number.
+5. **The CALL is bounded, not just the unit count** (added 2026-09-14 on
+   Codex's read of the run plan). The rail runs inline behind Heroku's 30s
+   router, which stops the client and not the dyno, so a call that can outlast
+   it leaves a statement running and a state banked behind a response the
+   operator has already read as a failure. Four bounds, four ways of going
+   wrong: no total wall; a terminal statement licensed 60s; ``SELECT`` waiting
+   on ``ACCESS SHARE`` with no ``lock_timeout``; and a failing unit that threw
+   the call's earlier units away instead of banking them.
 """
 
 from unittest.mock import patch
@@ -701,19 +709,63 @@ class _FakeSession:
     walk does not silently make the fixture answer the wrong question.
     """
 
-    def __init__(self, roster, unit_row, global_row, fail_on_unit=None):
+    def __init__(
+        self,
+        roster,
+        unit_row,
+        global_row,
+        fail_on_unit=None,
+        fail_on_global=None,
+        clock=None,
+    ):
         self.roster = roster
         self.unit_row = unit_row
         self.global_row = global_row
         self.fail_on_unit = fail_on_unit
+        self.fail_on_global = fail_on_global
+        # A statement costs wall-clock time in production; a fake that costs
+        # none cannot exercise a wall clock. ``clock`` is the module's injected
+        # clock, advanced by ``cost_s`` per counted statement.
+        self.clock = clock
+        self.unit_cost_s = 0.0
+        self.global_cost_s = 0.0
         self.unit_calls = 0
         self.global_calls = 0
+        self.rollbacks = 0
         self.timeouts = []
+        self.lock_timeouts = []
+        self.armed_ms = None
+
+    def _spend(self, seconds):
+        """Charge a statement to the clock, and let its ARMED timeout cut it.
+
+        A double that ignores the timeout it was just handed cannot show that
+        the timeout bounds anything: the walk would appear to overrun a wall
+        Postgres would in fact have enforced. So a statement that costs more
+        than it was armed for burns exactly its allowance and then raises the
+        cancellation Postgres raises.
+        """
+        if self.clock is None or not seconds:
+            return
+        allowance = (self.armed_ms or 0) / 1000
+        if seconds > allowance:
+            self.clock.advance(allowance)
+            raise RuntimeError(
+                "canceling statement due to statement timeout"
+            )
+        self.clock.advance(seconds)
+
+    async def rollback(self):
+        self.rollbacks += 1
 
     async def execute(self, statement, params=None):
         sql = str(statement)
+        if "set_config('lock_timeout'" in sql:
+            self.lock_timeouts.append((params or {}).get("ms"))
+            return _FakeResult()
         if sql.startswith("SET LOCAL statement_timeout"):
             self.timeouts.append(sql)
+            self.armed_ms = int(sql.split("'")[1].removesuffix("ms"))
             return _FakeResult()
         # Matched on each statement's own TERMINAL select, not on a CTE name:
         # all three name ``virtual_market`` in their population chain, so a
@@ -722,11 +774,15 @@ class _FakeSession:
             return _FakeResult(rows=self.roster)
         if "SELECT * FROM coverage_bridge_summary" in sql:
             self.unit_calls += 1
+            self._spend(self.unit_cost_s)
             if self.fail_on_unit == self.unit_calls:
                 raise RuntimeError("statement timeout")
             return _FakeResult(mapping=dict(self.unit_row))
         if "FROM coverage_universe cu" in sql and "WHERE mi.market_id IS NULL" in sql:
             self.global_calls += 1
+            self._spend(self.global_cost_s)
+            if self.fail_on_global:
+                raise self.fail_on_global
             return _FakeResult(mapping=dict(self.global_row))
         raise AssertionError(f"unexpected statement: {sql[:120]}")
 
@@ -850,19 +906,34 @@ async def test_the_walk_never_touches_the_published_key_until_it_is_complete():
 
 
 async def test_a_failing_unit_leaves_the_earlier_units_banked():
-    """The walk is resumable precisely so a slow or failing unit costs one unit."""
-    session = _FakeSession(_roster(16), _unit_row(), _global_row(), fail_on_unit=3)
+    """The walk is resumable precisely so a slow or failing unit costs one unit.
+
+    Until 2026-09-14 this test's NAME was true and its BODY was not: the raise
+    propagated out of ``run_bounded_walk``, the route rolled the session back,
+    and the two units already counted were discarded with it — resumable in
+    principle, not in practice. The walk now stops, banks what it holds, and
+    reports which unit failed and why.
+    """
+    roster = _roster(16)
+    chunks, _assignment, _digest = ccr.plan_from_roster(roster, buckets=8)
+    session = _FakeSession(roster, _unit_row(), _global_row(), fail_on_unit=3)
     redis = _FakeRedis()
 
-    with pytest.raises(RuntimeError, match="statement timeout"):
-        await ccr.run_bounded_walk(session, redis, buckets=8, max_units=5)
+    report = await ccr.run_bounded_walk(session, redis, buckets=8, max_units=5)
 
-    # Nothing was banked by the raising call, so the next call redoes those
-    # units — correct, because a unit is banked only after its row is in hand.
-    session2 = _FakeSession(_roster(16), _unit_row(), _global_row())
-    report = await ccr.run_bounded_walk(session2, redis, buckets=8, max_units=100)
-    assert report["complete"] and report["published"]
-    assert report["counts"][PLOTTED_RUNG] == 10 * report["units_total"]
+    assert report["units_done"] == 2, "the two units before the failure survived"
+    assert report["state_banked"] == "working"
+    assert report["stopped_on"] == "error:RuntimeError"
+    assert report["walk_error"]["unit"] == chunks[2].key
+    assert session.rollbacks == 1, "an aborted statement poisons the transaction"
+
+    # And the resume picks up from unit three rather than from zero.
+    session2 = _FakeSession(roster, _unit_row(), _global_row())
+    resumed = await ccr.run_bounded_walk(session2, redis, buckets=8, max_units=100)
+    assert resumed["restart_reason"] is None
+    assert len(resumed["units_counted_this_call"]) == len(chunks) - 2
+    assert resumed["complete"] and resumed["published"]
+    assert resumed["counts"][PLOTTED_RUNG] == 10 * resumed["units_total"]
 
 
 async def test_a_complete_walk_whose_publish_fails_is_banked_and_retried():
@@ -947,11 +1018,275 @@ async def test_the_walk_runs_with_no_redis_at_all():
     assert report["counts"] is not None
 
 
-async def test_every_statement_is_bounded_by_its_own_timeout():
+# ---------------------------------------------------------------------------
+# 5. The CALL is bounded (Codex, 2026-09-14): a count is not a clock
+# ---------------------------------------------------------------------------
+
+
+class _Clock:
+    """A monotonic clock a test drives, so a bound is proved and not timed.
+
+    Gotcha #44: a guard whose evidence depends on how fast the suite runs is
+    not a guard. Every bound below is asserted against advances this clock was
+    told to make.
+    """
+
+    def __init__(self, start=1000.0):
+        self.now = float(start)
+
+    def advance(self, seconds):
+        self.now += float(seconds)
+
+    def __call__(self):
+        return self.now
+
+
+def _issued_ms(session):
+    """The statement_timeout values, in ms, in the order they were issued."""
+    return [int(t.split("'")[1].removesuffix("ms")) for t in session.timeouts]
+
+
+#: What the call may actually spend in the database: its wall, less the
+#: finalization it may not spend. Derived from the module's own constants so a
+#: change to either moves the tests with it rather than silently past them.
+_SPENDABLE_S = ccr.DEFAULT_CALL_BUDGET_S - ccr.FINALIZE_RESERVE_S
+
+
+async def test_every_statement_is_bounded_by_what_is_left_of_the_call():
+    """Not by a constant. A ceiling answers a question the router never asks."""
+    clock = _Clock()
+    session = _FakeSession(_roster(8), _unit_row(), _global_row(), clock=clock)
+    session.unit_cost_s = 3.0
+
+    report = await ccr.run_bounded_walk(
+        session, _FakeRedis(), buckets=4, max_units=100, clock=clock
+    )
+
+    issued = _issued_ms(session)
+    assert issued, "no statement was armed"
+    # Every statement, including the terminal one, fits inside the call's own
+    # wall with the finalization reserve still unspent.
+    assert max(issued) <= int(_SPENDABLE_S * 1000)
+    # And after the roster read, each is smaller than the last, because each is
+    # sized from a budget the one before it spent.
+    assert issued[1:] == sorted(issued[1:], reverse=True)
+    assert report["complete"] is True
+    assert report["stopped_on"] is None
+
+
+async def test_the_terminal_global_rung_can_never_outlive_the_router():
+    """It carried 60s — twice the router's wall — against a 30s H12.
+
+    The ceiling is the visible half; the load-bearing half is that the value
+    ISSUED is the remaining budget whenever the ceiling is larger than it.
+    """
+    assert ccr.GLOBAL_TIMEOUT_CEILING_S <= ccr.DEFAULT_CALL_BUDGET_S
+
+    clock = _Clock()
+    session = _FakeSession(_roster(4), _unit_row(), _global_row(), clock=clock)
+    session.unit_cost_s = 4.0
+    await ccr.run_bounded_walk(
+        session, _FakeRedis(), buckets=2, max_units=100, clock=clock
+    )
+
+    assert session.global_calls == 1
+    spent_on_units = 4.0 * session.unit_calls
+    global_ms = _issued_ms(session)[-1]
+    assert global_ms == int((_SPENDABLE_S - spent_on_units) * 1000)
+    assert global_ms < int(ccr.GLOBAL_TIMEOUT_CEILING_S * 1000), (
+        "the budget, not the ceiling, is what bounded it"
+    )
+
+
+async def test_a_select_arms_lock_timeout_because_access_share_can_wait():
+    """"It takes no locks" is false: ACCESS SHARE queues behind a migration.
+
+    Asked per statement, not once: both settings are transaction-scoped and
+    both are sized from a budget that shrinks, so a hoisted arm protects the
+    first statement and silently nothing after it (#2016).
+    """
+    clock = _Clock()
+    session = _FakeSession(_roster(8), _unit_row(), _global_row(), clock=clock)
+    session.unit_cost_s = 1.0
+
+    await ccr.run_bounded_walk(
+        session, _FakeRedis(), buckets=4, max_units=100, clock=clock
+    )
+
+    assert len(session.lock_timeouts) == len(session.timeouts), (
+        "every statement arms both, or one of them is decoration"
+    )
+    assert all(v.endswith("ms") for v in session.lock_timeouts)
+    # Never longer than the statement it guards: a lock wait that cannot fire
+    # before the statement aborts reports contention as slowness.
+    for lock_value, stmt_ms in zip(session.lock_timeouts, _issued_ms(session)):
+        assert int(lock_value.removesuffix("ms")) <= stmt_ms
+
+
+async def test_a_contended_statement_is_named_contention_not_slowness():
+    class _Contended(Exception):
+        sqlstate = "55P03"
+
+    session = _FakeSession(
+        _roster(4), _unit_row(), _global_row(), fail_on_global=_Contended("blocked")
+    )
+    report = await ccr.run_bounded_walk(session, _FakeRedis(), buckets=2, max_units=100)
+
+    assert report["stopped_on"] == ccr.STOP_LOCK_TIMEOUT
+    assert report["walk_error"]["unit"] == "global_rung"
+    # The chunks it DID count are banked, so waiting out the lock costs the
+    # lock's duration and not the walk.
+    assert report["units_done"] == report["units_total"]
+    assert report["state_banked"] == "working"
+    assert report["published"] is False, "an ungathered global rung is not a total"
+
+
+async def test_the_walk_stops_on_the_clock_and_says_so():
+    """``time_budget``, not ``unit_budget``: a smaller limit would not help."""
+    clock = _Clock()
+    session = _FakeSession(_roster(64), _unit_row(), _global_row(), clock=clock)
+    # Three of these fit inside the spendable budget and a fourth cannot be
+    # started, so the loop's own floor is what stops the call.
+    session.unit_cost_s = 6.9
+
+    report = await ccr.run_bounded_walk(
+        session, _FakeRedis(), buckets=32, max_units=100, clock=clock
+    )
+
+    assert report["stopped_on"] == ccr.STOP_TIME_BUDGET
+    assert report["units_done"] == 3, "three at 6.9s fit; a fourth is not started"
+    assert session.unit_calls == 3, "the fourth statement was never issued"
+    assert report["elapsed_s"] <= ccr.DEFAULT_CALL_BUDGET_S
+    assert report["state_banked"] == "working", "finalization is reserved, not hoped for"
+    assert session.global_calls == 0
+
+
+async def test_a_unit_that_would_outrun_the_wall_is_cut_by_its_own_timeout():
+    """The floor cannot know a unit's cost; the armed timeout does not need to.
+
+    This is what makes the router-tail impossible rather than unlikely: a unit
+    started with 4s left is ARMED with 4s, so the worst case is an abort inside
+    the budget, not a statement still running behind an H12 the operator has
+    already read as a failure.
+    """
+    clock = _Clock()
+    session = _FakeSession(_roster(64), _unit_row(), _global_row(), clock=clock)
+    session.unit_cost_s = 6.0
+
+    report = await ccr.run_bounded_walk(
+        session, _FakeRedis(), buckets=32, max_units=100, clock=clock
+    )
+
+    assert report["stopped_on"] == ccr.STOP_STATEMENT_TIMEOUT
+    assert report["units_done"] == 3, "the three that completed are banked"
+    assert report["walk_error"]["type"] == "RuntimeError"
+    assert session.rollbacks == 1
+    # The reserve survived: the call has room to bank and answer.
+    assert report["elapsed_s"] <= _SPENDABLE_S
+    assert report["state_banked"] == "working"
+
+
+async def test_a_limit_stop_and_a_clock_stop_are_different_answers():
+    session = _FakeSession(_roster(64), _unit_row(), _global_row())
+    report = await ccr.run_bounded_walk(session, _FakeRedis(), buckets=32, max_units=2)
+    assert report["stopped_on"] == ccr.STOP_UNIT_BUDGET
+    assert report["units_remaining"] > 0
+
+
+async def test_the_unscoped_global_rung_is_refused_rather_than_started_short():
+    """An abort there spends the rest of the call and banks nothing new.
+
+    The two runs differ only in what the units left behind: a budget a hair
+    over :data:`MIN_GLOBAL_BUDGET_S` starts the rung, a hair under refuses it.
+    Both costs are derived from the floor rather than chosen, so the test
+    cannot pass by arithmetic that only happens to work at today's constants.
+    """
+    roster = _roster(4)
+    chunks, _assignment, _digest = ccr.plan_from_roster(roster, buckets=2)
+    floor = ccr.MIN_GLOBAL_BUDGET_S
+
+    clock = _Clock()
+    session = _FakeSession(roster, _unit_row(), _global_row(), clock=clock)
+    session.unit_cost_s = (_SPENDABLE_S - floor - 0.5) / len(chunks)
+    report = await ccr.run_bounded_walk(
+        session, _FakeRedis(), buckets=2, max_units=100, clock=clock
+    )
+    assert report["units_remaining"] == 0
+    assert session.global_calls == 1, "half a second of room over the floor"
+    assert report["complete"] is True
+
+    clock2 = _Clock()
+    short = _FakeSession(roster, _unit_row(), _global_row(), clock=clock2)
+    short.unit_cost_s = (_SPENDABLE_S - floor + 0.5) / len(chunks)
+    report2 = await ccr.run_bounded_walk(
+        short, _FakeRedis(), buckets=2, max_units=100, clock=clock2
+    )
+    assert short.global_calls == 0, "started on a budget it could not finish in"
+    assert report2["units_remaining"] == 0, "the chunks were all counted"
+    assert report2["stopped_on"] == ccr.STOP_TIME_BUDGET
+    assert report2["complete"] is False
+    assert report2["state_banked"] == "working", "the units it did count survive"
+
+
+#: Heroku's router, which is not ours to choose. The assertion that matters is
+#: against THIS, not against the budget being checked — a test written only in
+#: terms of the constant it is testing moves with any value that constant takes.
+_ROUTER_WALL_S = 30.0
+
+
+async def test_the_finalization_reserve_is_what_makes_the_bank_fit():
+    """A budget spendable to zero finalizes nothing.
+
+    The bank write is not free and it happens AFTER the last statement, so a
+    call that spends its whole wall in the database banks its progress past the
+    wall it was sized to fit. The operator's H12 then lands while the state is
+    still being written — the invisible tail this module's resumability depends
+    on not existing.
+    """
+    clock = _Clock()
+
+    class _CostlyRedis(_FakeRedis):
+        def setex(self, key, ttl, value):
+            clock.advance(0.4)
+            return super().setex(key, ttl, value)
+
+    session = _FakeSession(_roster(64), _unit_row(), _global_row(), clock=clock)
+    session.unit_cost_s = 5.0
+
+    report = await ccr.run_bounded_walk(
+        session, _CostlyRedis(), buckets=32, max_units=100, clock=clock
+    )
+
+    assert ccr.DEFAULT_CALL_BUDGET_S < _ROUTER_WALL_S, "our wall is below the router's"
+    assert report["state_banked"] == "working"
+    assert report["elapsed_s"] < ccr.DEFAULT_CALL_BUDGET_S, (
+        "the walk banked its progress outside the wall it was sized to fit"
+    )
+
+
+async def test_the_report_says_the_census_is_transient_not_acceptance():
+    """A complete walk buys a display for one generation, and says so.
+
+    ``reconcile`` refuses a census whose roster digest is not the cursor's, and
+    one market resolving moves that digest — so a reader of this report must
+    not be left to infer that a green ``complete`` means coverage has been
+    measured and accepted.
+    """
     session = _FakeSession(_roster(8), _unit_row(), _global_row())
-    await ccr.run_bounded_walk(session, _FakeRedis(), buckets=4, max_units=100)
-    assert any(ccr.DEFAULT_UNIT_TIMEOUT in t for t in session.timeouts)
-    assert any(ccr.DEFAULT_GLOBAL_TIMEOUT in t for t in session.timeouts)
+    report = await ccr.run_bounded_walk(session, _FakeRedis(), buckets=4, max_units=100)
+
+    assert report["complete"] and report["published"]
+    assert "transient" in report["expiry"]
+    assert "roster digest" in report["expiry"]
+    assert "Not durable coverage acceptance." in report["expiry"]
+
+
+async def test_the_roster_read_is_bounded_too():
+    """It runs before any unit and can block on a release-phase lock."""
+    session = _FakeSession(_roster(4), _unit_row(), _global_row())
+    await ccr.run_bounded_walk(session, _FakeRedis(), buckets=2, max_units=0)
+    assert session.timeouts, "the roster read was armed"
+    assert _issued_ms(session)[0] == int(ccr.ROSTER_TIMEOUT_CEILING_S * 1000)
 
 
 async def test_the_walk_uses_the_curves_partition_size_by_default():
