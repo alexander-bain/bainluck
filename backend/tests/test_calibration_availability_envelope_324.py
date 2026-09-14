@@ -746,11 +746,14 @@ class TestOneWirePath:
             body = refused.json()
 
             assert refused.status_code == 503
-            assert refused.headers["Retry-After"] == "30"
             assert body["status"] == "unavailable"
             assert body["reason"] == "no_trustworthy_snapshot"
-            assert body["retry_after_s"] == 30
-            assert "retry" in body["message"].lower()
+            # CAL-P1191 (#997): the header and the field are one number, and on
+            # THIS reason it is the cautious one — see the sibling assertion in
+            # test_calibration_serve_honest_297.py.
+            assert refused.headers["Retry-After"] == "900"
+            assert body["retry_after_s"] == 900
+            assert "shortly" not in body["message"].lower()
 
             mirror = body["detail"]
             assert mirror["status"] == "unavailable"

@@ -491,7 +491,11 @@ export default function CalibrationPage() {
   if (error) {
     // Queue 297 Item 1: the backend now answers a genuine outage with a TYPED
     // unavailable body instead of an opaque failure, so say what is actually
-    // happening — the curve is rebuilt hourly and a retry is worth making.
+    // happening. The served `message` is the copy — CAL-P1191 (#997) made it a
+    // property of WHICH refusal it is, because "please retry shortly" is true
+    // of a request that ran out of budget and false of a curve that is hours
+    // into a full rebuild, and this page printed the second as the first for
+    // four hours on 2026-09-13.
     // Anything else still falls through to the generic error state.
     const detail = (error as ApiError).detail as
       | { status?: string; message?: string; reason?: string }
@@ -532,7 +536,11 @@ export default function CalibrationPage() {
         message={
           unavailable
             ? detail?.message ||
-              "Calibration data is temporarily unavailable. It is rebuilt hourly — please retry shortly."
+              /* The fallback is the CAUTIOUS half of CAL-P1191's pair, for the
+                 same reason the backend's default is: this branch runs when the
+                 body did not say, and a sentence that promises no timing is
+                 never the wrong one to print when we do not know. */
+              "Calibration data is being rebuilt and is not ready yet."
             : failure.message
         }
         onRetry={
