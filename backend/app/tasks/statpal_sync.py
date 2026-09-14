@@ -713,6 +713,21 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                         _incoming_period, _incoming_clock = statpal_live_position(
                             live_data
                         )
+                        # ── THE POSITION THE DECISION IS TAKEN ON (#6056,
+                        # CERT-2833) ────────────────────────────────────────
+                        #
+                        # Captured ONCE, here, and handed to both the guard
+                        # below and the compare-and-write ninety lines further
+                        # down. Those two used to read `event.period` off the
+                        # row separately, which is two reads of a moving value
+                        # standing in for one decision: whatever the write
+                        # re-asserted, it was not necessarily what the guard
+                        # approved. Found by
+                        # `test_the_cas_is_given_a_captured_position_never_a_fresh_read_6056`,
+                        # which exists because no behavioural test in this
+                        # suite can separate the two spellings today.
+                        _observed_period = event.period
+                        _observed_clock = event.game_clock
                         if live_write_is_premature(event.commence_time, now):
                             premature_live_skipped += 1
                             logger.warning(
@@ -724,7 +739,7 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                                 now.isoformat(),
                             )
                         elif live_write_would_revert(
-                            event.period, event.game_clock,
+                            _observed_period, _observed_clock,
                             _incoming_period, _incoming_clock,
                         ):
                             schedule_reverting_live_skipped += 1
@@ -733,7 +748,7 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                                 "live score on event %d (%s vs %s) — row is at "
                                 "%r/%r, hourly fixture offered %r/%r (%s-%s) (#6056)",
                                 event.id, event.home_team_name, event.away_team_name,
-                                event.period, event.game_clock,
+                                _observed_period, _observed_clock,
                                 _incoming_period, _incoming_clock,
                                 live_data.home_score, live_data.away_score,
                             )
@@ -820,8 +835,8 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                                 # `test_the_loaded_row_agrees_with_the_database_after_a_compare_and_write`.
                                 if await write_live_state_if_unmoved(
                                     session, event, _new_scores,
-                                    observed_period=event.period,
-                                    observed_clock=event.game_clock,
+                                    observed_period=_observed_period,
+                                    observed_clock=_observed_clock,
                                     what="StatPal schedule-sync live score",
                                 ):
                                     updated = True

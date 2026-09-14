@@ -2828,3 +2828,107 @@ def test_the_clockless_feed_is_out_of_the_orm_scans_reach_by_construction_6056()
         "by string; if that changed, re-check whether the ORM scan now covers "
         "it and delete this test if it does"
     )
+
+
+def test_the_cas_is_given_a_captured_position_never_a_fresh_read_6056():
+    """🔴 FOUND BY MUTATION, and the reason it needs a STRUCTURAL guard.
+
+    Replacing `observed_period=_observed_period` with `observed_period=
+    event.period` at the call site leaves a LIVE mutant: every behavioural test
+    in this file still passes. It has to, and the reason is worth writing down.
+    A concurrent writer commits from its own session, so it moves the DATABASE
+    row and not this session's instance — and nothing between the capture and
+    the write refreshes that instance today. The two spellings therefore read
+    the same value, and no specimen can separate them.
+
+    What separates them is a change nobody has made yet. The moment one of these
+    passes grows an intermediate commit — the standard remedy for holding a row
+    lock too long (gotcha #13), and the remedy this ship's own watch item names
+    for these very tasks — a default `expire_on_commit` session re-reads
+    `event.period` from the database on next access. The compare-and-write would
+    then be handed the row's CURRENT position as the position its decision was
+    taken on, compare the row against itself, and match every time. The guard
+    would still be there, still be called, still be green, and would arbitrate
+    nothing whatsoever.
+
+    That is not a hypothetical worth a comment; it is a silent, total regression
+    of the ship that no behavioural test in this file can see. So the invariant
+    is asserted where it lives — in the shape of the call.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from app.tasks.mlb_sync import _sync_mlb_win_probability
+    from app.tasks.statpal_sync import (
+        _sync_statpal_livescores,
+        _sync_statpal_schedules,
+    )
+    from app.utils.espn_helpers import update_event_fields_from_espn
+
+    OBSERVED = ("observed_period", "observed_clock")
+
+    def _fresh_reads(source: str) -> list[str]:
+        """Names of `observed_*` arguments passed as an attribute read."""
+        offenders = []
+        for node in ast.walk(ast.parse(source)):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "write_live_state_if_unmoved"
+            ):
+                continue
+            seen = set()
+            for kw in node.keywords:
+                if kw.arg not in OBSERVED:
+                    continue
+                seen.add(kw.arg)
+                # A captured local is a bare Name. Anything that reaches
+                # through an object — `event.period`, `row.game_clock` — is a
+                # read taken at write time, which is the defect.
+                if not isinstance(kw.value, ast.Name):
+                    offenders.append(f"{kw.arg}={ast.unparse(kw.value)}")
+            missing = [name for name in OBSERVED if name not in seen]
+            offenders.extend(f"{name} not passed at all" for name in missing)
+        return offenders
+
+    # The detector is self-tested against a synthetic source carrying the
+    # offence, both spellings, rather than against whatever the subjects happen
+    # to contain — a scan asserted on its own yield goes quiet for the best
+    # possible reason.
+    assert _fresh_reads(
+        "write_live_state_if_unmoved(s, e, v, observed_period=event.period,\n"
+        "                            observed_clock=_observed_clock)\n"
+    ) == ["observed_period=event.period"]
+    assert _fresh_reads(
+        "write_live_state_if_unmoved(s, e, v, observed_period=_p,\n"
+        "                            observed_clock=e.game_clock)\n"
+    ) == ["observed_clock=e.game_clock"]
+    assert _fresh_reads(
+        "write_live_state_if_unmoved(s, e, v, observed_period=_p)\n"
+    ) == ["observed_clock not passed at all"]
+    assert _fresh_reads(
+        "write_live_state_if_unmoved(s, e, v, observed_period=_p,\n"
+        "                            observed_clock=_c)\n"
+    ) == []
+
+    producers = {
+        "statpal_sync._sync_statpal_livescores": _sync_statpal_livescores,
+        "statpal_sync._sync_statpal_schedules": _sync_statpal_schedules,
+        "espn_helpers.update_event_fields_from_espn": update_event_fields_from_espn,
+        "mlb_sync._sync_mlb_win_probability": _sync_mlb_win_probability,
+    }
+    for name, fn in producers.items():
+        source = textwrap.dedent(inspect.getsource(fn))
+        assert "write_live_state_if_unmoved(" in source, (
+            f"{name} no longer calls the compare-and-write — this scan would "
+            "be measuring nothing"
+        )
+        offenders = _fresh_reads(source)
+        assert not offenders, (
+            f"{name} hands the compare-and-write {offenders}. The two "
+            "`observed_*` arguments are the position the decision was taken "
+            "on, and must be locals captured BEFORE the decision — reading "
+            "them off the row at the call site compares the row against "
+            "itself and the predicate matches every time (#6056)."
+        )
