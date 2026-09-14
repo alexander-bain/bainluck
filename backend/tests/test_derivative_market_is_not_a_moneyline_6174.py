@@ -45,6 +45,17 @@ MONEYLINES = [
         "SaiPa Lappeenranta Win",
         "Kiekko-Espoo Win",
     ),
+    # A COLON IN THE PREFIX IS A CARD, NOT A DERIVATIVE.
+    # The first cut of this fix banned colons on both sides and broke this — it is
+    # a real fight, and CI caught it (test_dark_polymarket_selector_real_postgres,
+    # "the venue's price is on the page"). Position is the whole distinction:
+    # "<card>: A vs. B" is a moneyline, "A vs. B: <subject>" is not.
+    (
+        "UFC 331: Ozzy Diaz vs. Ryan Gandra (Middleweight, Early Prelims)",
+        "UFC 331: Ozzy Diaz Win",
+        "Ryan Gandra (Middleweight, Early Prelims) Win",
+    ),
+    ("Premier League: Arsenal vs. Chelsea", "Premier League: Arsenal Win", "Chelsea Win"),
 ]
 
 # Derivative markets: these share the matchup prefix but are NOT the moneyline.
@@ -58,7 +69,6 @@ DERIVATIVES = [
     "Al Ain FC vs. Al Nassr Club: Both Teams to Score in First Half",
     "Denver vs Kansas City: D/ST Touchdown",
     "Denver vs Kansas City: Safety",
-    "T20 India vs Afghanistan: Afghanistan vs India",
 ]
 
 
@@ -96,6 +106,25 @@ def test_the_production_specimen():
     name = "CD Tenerife vs. Cádiz CF: Both Teams to Score"
     assert resolve("No", name) == "No", "served 'Cádiz CF Win' before #6174"
     assert resolve("Yes", name) == "Yes", "served 'CD Tenerife Win' before #6174"
+
+
+def test_a_competition_prefix_whose_tail_is_the_matchup_picks_the_right_side():
+    """Two real cricket names where the colon separates series from fixture.
+
+    These are not derivatives — the text after the colon IS the matchup — and the
+    old pattern read the sides off the SERIES title instead, so it named the wrong
+    team. "T20 India vs Afghanistan: Afghanistan vs India" parsed as
+    "T20 India" vs "Afghanistan" and served "Afghanistan Win" for No; the fixture
+    says No is India. Allowing a colon in the prefix fixes the side as a
+    by-product, which is why these are pinned rather than left to drift.
+    """
+    assert resolve("No", "T20 India vs Afghanistan: Afghanistan vs India") == "India Win"
+    assert (
+        resolve(
+            "No", "T20 Series Zimbabwe vs South Africa, Women: Zimbabwe vs South Africa"
+        )
+        == "South Africa Win"
+    ), "old pattern said 'South Africa, Women Win' — it took the side from the series"
 
 
 def test_non_binary_outcomes_are_untouched():
