@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import MarketMap from "./MarketMap";
+import MarketMap, { ladderGraded } from "./MarketMap";
 import type { MarketMapMarker, MarketMapLadderRow } from "./MarketMap";
 import type { GameMarketsResponse } from "@/lib/api";
 import type { PlayedLinescore } from "@/lib/marketMapUtils";
@@ -22,6 +22,7 @@ import {
   collapseDuplicateRungs,
   densityDrawsShape,
   quotedLinesPhrase,
+  settledLinesPhrase,
   derivePeriod,
   selectGameTotalRungs,
   selectHalfTotalRungs,
@@ -1134,10 +1135,40 @@ export default function MarketMapSection({
       const rangeMax = Math.ceil(dataMax + pad);
       const density = buildDensityFromThresholds(cleaned, rangeMin, rangeMax, 12);
 
-      const ladder = cleaned.map((t) => ({
+      /* #6169: THE HALF CARD GRADES TOO — it was the unbuilt half of #3769.
+         That rule ("a done ladder grades against the final instead of quoting
+         it") is implemented for the full-game total card at `gradeRung` above
+         and was never implemented here, so this ladder carried no `outcome`,
+         `ladderGraded()` was false for every half card ever rendered, and a
+         finished half could only ever quote a price.
+
+         Photographed on production 2026-09-14, `/events/14637256` (Giants 28
+         Cowboys 20, SNF, Final): this card printed `FINAL 27 points` and, two
+         inches below, `Over 7.5 … Over 24.5 — 50%` — seven lines a 27-point
+         half had cleared, each called a coin flip, while the 1st half card
+         beside it read correctly. The price is separately wrong there (#6169's
+         serving half, `routes/events.py`), but the grade does not consult the
+         price: it is decided by the score, so this card reads honestly whatever
+         the ladder is quoting.
+
+         Gated on the same `isDone && halfScores` the FINAL marker below is
+         gated on — #3769's own rule that the ladder grades exactly when the
+         card draws the number it grades against — and computed ONCE so the
+         marker and the grade can never disagree about one card. */
+      const halfFinalTotal =
+        isDone && halfScores
+          ? halfKey === "1H"
+            ? halfScores.h1Home + halfScores.h1Away
+            : halfScores.h2Home + halfScores.h2Away
+          : null;
+      const gradeRung = (threshold: number): MarketMapLadderRow["outcome"] =>
+        halfFinalTotal == null ? undefined : halfFinalTotal > threshold ? "cleared" : "missed";
+
+      const ladder: MarketMapLadderRow[] = cleaned.map((t) => ({
         label: `Over ${t.threshold}`,
         probability: Math.round(t.overProbability * 100),
         side: "right" as const,
+        outcome: gradeRung(t.threshold),
       }));
 
       const midLabel = String(Math.round((rangeMin + rangeMax) / 2));
@@ -1178,17 +1209,15 @@ export default function MarketMapSection({
         });
       }
 
-      // Final actual for completed games
-      if (isDone && halfScores) {
-        const ht = halfKey === "1H"
-          ? halfScores.h1Home + halfScores.h1Away
-          : halfScores.h2Home + halfScores.h2Away;
+      // Final actual for completed games — the same number the ladder grades
+      // against (#6169), read from the one binding above rather than recomputed.
+      if (halfFinalTotal != null) {
         halfTotalMarkers.push({
           key: "final",
-          value: ht,
+          value: halfFinalTotal,
           type: "final",
           label: "Final",
-          displayValue: withUnit(ht, vocab),
+          displayValue: withUnit(halfFinalTotal, vocab),
         });
       }
 
@@ -1210,8 +1239,16 @@ export default function MarketMapSection({
         data: {
           variant: "total" as const,
           title: `${label} ${vocab.totalTitle.toLowerCase()}`,
+          // #6169: and the sentence over the ladder moves with it. A graded
+          // ladder prints no percentage at all, so "Eight lines quoted" over
+          // eight `cleared` rows named a thing the reader cannot see — the same
+          // one-card-two-tenses defect #3210 fixed above, arriving through the
+          // grading this ship adds. Decided by the same `ladderGraded` the
+          // heading and the rows are decided by, so the three cannot drift.
           subtitle: bandDrawsShape
             ? unitPhrase(label, vocab, "distribution")
+            : ladderGraded(ladder)
+            ? settledLinesPhrase(ladder.length)
             : quotedLinesPhrase(ladder.length),
           headline: headlineVal,
           rangeMin: effectiveMin,
