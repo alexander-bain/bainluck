@@ -8,6 +8,9 @@ import { teamTextColor } from "@/lib/teamColors";
 import { unresolvedCardCopy } from "@/lib/unresolvedCardCopy";
 import type { ResolutionFailure } from "@/lib/unresolvedShareMeta";
 import { unfurlImageOptions } from "@/lib/unfurlImageCache";
+import { isFinishedForShare } from "@/lib/eventShareMeta";
+import { resolveEventOutcome } from "@/lib/eventOutcome";
+import { prematchReading } from "@/lib/prematchReading";
 
 export const runtime = "edge";
 export const alt = "Bain Luck game probability";
@@ -52,9 +55,17 @@ async function fetchEvent(id: string): Promise<EventLookup> {
  * #6049 — the one predicate behind both the word this card prints and how long
  * the card may be cached, so "Final" and a settled cache window can never be
  * decided from two different readings of `status`.
+ *
+ * #6085 — and now behind the third thing too: whether the card may print a
+ * forecast at all. It delegates to `eventShareMeta`'s `isFinishedForShare`
+ * rather than keeping its own `===` pair, because that is the SAME question the
+ * title beside this picture already asks, and the whole defect was the two
+ * halves of one preview answering it apart. The set is unchanged
+ * (`completed` | `closed`); the owner is now shared, and the delegate also
+ * trims and lower-cases, so this predicate can only get harder to fool.
  */
 function isFinal(event: EventDetailResponse): boolean {
-  return event.status === "completed" || event.status === "closed";
+  return isFinishedForShare(event);
 }
 
 function eventStatus(event: EventDetailResponse): string {
@@ -121,13 +132,104 @@ export default async function Image({ params }: { params: { id: string } }) {
   );
   const awayPct = awayRendered != null ? `${awayRendered}%` : "--";
   const homePct = homeRendered != null ? `${homeRendered}%` : "--";
+
+  const awayTeam = event.away_team || "Away";
+  const homeTeam = event.home_team || "Home";
+  const final = isFinal(event);
+
+  // ═══ #6085 — A FINISHED GAME DOES NOT GET A FORECAST DRAWN ON IT ═══
+  //
+  // Measured on production 2026-09-14, `/events/15310688` (US Open semi-final):
+  // this card drew `3%` and `97%` in 74px type with no score on it, while the
+  // `og:title` and `og:description` rendered from the SAME payload, by
+  // `layout.tsx`, two files away, read "Alexander Zverev won 3-1" and "Final:
+  // Alexander Zverev beat Ben Shelton 3-1." One preview, two claims.
+  //
+  // 97% is not the pre-match number a settled card is allowed to print. It is
+  // `current_odds`, captured at 21:51:16Z against a `completed_at` of
+  // 21:53:36Z — the last in-game blend, two minutes and twenty seconds before
+  // the final whistle, frozen. The honest pre-match reading (58/42) and the
+  // score (3-1) were both in the same payload, unread.
+  //
+  // THIS IS THE DEFECT THE TEXT HALF OF THIS ROUTE ALREADY CLOSED. Q441/#1495
+  // wrote `lib/eventShareMeta.ts` because the metadata "printed the last
+  // captured win probability next to the word 'Final.', so a game that turned
+  // late published the losing team as the favorite". That repair reached the
+  // title and the description and stopped at the picture, so the picture went
+  // on printing the forecast beside its own "Final" label for another fortnight.
+  //
+  // Nothing here is a new rule. Three modules already own these three
+  // decisions and this card is simply the surface that never asked them — the
+  // same shape as the `servedDuelPercents` note 40 lines up, which is the last
+  // time this card was found deciding on its own something four surfaces share.
+  const scoresAreTrusted = event.hero_probability_source === "settled";
+  // Fed STRICTLY, copied from `layout.tsx`'s call and for its reason: handing
+  // the ladder `event.home_score` unconditionally re-admits `closed`'s frozen
+  // mid-game scores, measured there to INVERT the winner in 2 of 8 sampled
+  // rows. `closed` is trusted to withhold a claim, never to make one.
+  //
+  // Rung 2 (the tournament container) is deliberately NOT asked here, and the
+  // omission is safe in the one direction that matters: this card can end up
+  // QUIETER than the title beside it, never in contradiction with it. Asking it
+  // means a second network call on the edge image path — `layout.tsx` can
+  // afford that for a string; a picture that crawlers time out on is a blank
+  // preview. A finished row with no trusted score gets the withholding
+  // treatment below, which is correct on its own terms.
+  const outcome = resolveEventOutcome({
+    isFinished: final,
+    homeTeam,
+    awayTeam,
+    homeScore: scoresAreTrusted ? event.home_score ?? null : null,
+    awayScore: scoresAreTrusted ? event.away_score ?? null : null,
+    linescore: event.linescore,
+  });
+  const showScore =
+    scoresAreTrusted &&
+    typeof event.home_score === "number" &&
+    typeof event.away_score === "number";
+
+  // The number a settled card IS allowed to print, from the module that owns
+  // which number that is for the other three surfaces. The detail payload
+  // carries no `prematch_odds` key at all, so this always lands on the
+  // documented `opening_odds` fallback — which is exactly the case that helper
+  // exists for, and it labels the reading as the sportsbook median it is.
+  //
+  // `null` is a real answer here and licenses the empty space: a finished card
+  // with no pre-match reading prints nothing rather than a number about a
+  // different question.
+  const prematch = final ? prematchReading({ opening_odds: event.opening_odds }) : null;
+
+  // THE BIG SLOT. On a live or scheduled game it is the probability, unchanged.
+  // On a finished one it is the SCORE — "the score + bold winner tell the
+  // story" is the settled treatment CERT-786 named and `FeedCard` has rendered
+  // since L2-112, where the live probability is DROPPED rather than shrunk.
+  const awayHero = final ? (showScore ? `${event.away_score}` : null) : awayPct;
+  const homeHero = final ? (showScore ? `${event.home_score}` : null) : homePct;
+
   // The bar under the two numbers is the SAME pair drawn as a width, so it
   // reads off the same rounding instead of being a third one that can disagree
   // with the percentages printed directly above it.
+  //
+  // #6085: on a finished game that pair is the pre-match one, matching
+  // `FeedCard`'s `barHomeProb` ("finished events show opening odds"). A bar
+  // still split 97/3 under a settled score would be the forecast surviving as
+  // a shape after being removed as a number.
+  const barAwayPercent = final ? prematch?.awayPercent ?? null : awayRendered;
+  const showBar = !final || barAwayPercent != null;
   const awayWidth = Math.max(
     3,
-    Math.min(97, awayRendered ?? Math.round(awayProbability * 100)),
+    Math.min(97, barAwayPercent ?? Math.round(awayProbability * 100)),
   );
+
+  // The settled card's emphasis: the winner reads as what happened and the
+  // loser recedes, which is the half of `FeedCard`'s treatment that carries the
+  // result once the probability is gone.
+  //
+  // Gated on `winnerSide` and not on `final`, because a finished game we cannot
+  // crown must not mute BOTH names — "we do not know who won" would render as
+  // "nobody won". A tie reaches here the same way: `resolveEventOutcome`
+  // returns `null` on equal scores rather than crowning the home side.
+  const decided = final && outcome?.winnerSide != null;
   const homeColor = event.home_team_data?.primary_color || "#2563eb";
   const awayColor = event.away_team_data?.primary_color || "#dc2626";
   // #5696 — the crest tiles and the split bar keep the raw brand colour as a
@@ -137,8 +239,17 @@ export default async function Image({ params }: { params: { id: string } }) {
   // a white club reads 1.02:1 against slate-50 just as invisibly.
   const homeTextColor = teamTextColor(homeColor) || "#2563eb";
   const awayTextColor = teamTextColor(awayColor) || "#dc2626";
-  const awayTeam = event.away_team || "Away";
-  const homeTeam = event.home_team || "Home";
+  // Declared here and not beside `decided`, which is 60 lines up: these two
+  // read the brand colours above, and a settled card's emphasis has to fall
+  // back to the exact colour a live card would have used.
+  const awayNameColor = decided ? (outcome?.winnerSide === "away" ? "#111827" : "#64748b") : "#111827";
+  const homeNameColor = decided ? (outcome?.winnerSide === "home" ? "#111827" : "#64748b") : "#111827";
+  const awayHeroColor = decided
+    ? (outcome?.winnerSide === "away" ? "#111827" : "#94a3b8")
+    : awayTextColor;
+  const homeHeroColor = decided
+    ? (outcome?.winnerSide === "home" ? "#111827" : "#94a3b8")
+    : homeTextColor;
   // #4839. This card is the first thing anyone sees of Bain Luck — a pasted
   // link in iMessage, Slack or a tweet — and it was printing the raw sport key.
   // Precedence is unchanged (`sport_key` then `sport`) so no row that renders a
@@ -199,8 +310,20 @@ export default async function Image({ params }: { params: { id: string } }) {
             >
               {teamCrestBadge(awayTeam)}
             </div>
-            <div style={{ fontSize: 44, fontWeight: 850, lineHeight: 1.05 }}>{awayTeam}</div>
-            <div style={{ fontSize: 74, fontWeight: 950, color: awayTextColor }}>{awayPct}</div>
+            <div style={{ fontSize: 44, fontWeight: 850, lineHeight: 1.05, color: awayNameColor }}>{awayTeam}</div>
+            {awayHero !== null && (
+              <div style={{ fontSize: 74, fontWeight: 950, color: awayHeroColor }}>{awayHero}</div>
+            )}
+            {/* #6085 — the prior, beside the name it is about, in the grey the
+                card family gives it on BOTH rows. Never rendered on a live or
+                scheduled game: there the big number IS the current reading and
+                a second percentage under it would be two answers to one
+                question, which is the defect this block exists to close. */}
+            {final && prematch?.awayPercent != null && (
+              <div style={{ fontSize: 28, fontWeight: 700, color: "#64748b" }}>
+                {`${prematch.awayPercent}%`}
+              </div>
+            )}
           </div>
 
           <div style={{ color: "#94a3b8", fontSize: 38, fontWeight: 800 }}>vs</div>
@@ -222,29 +345,60 @@ export default async function Image({ params }: { params: { id: string } }) {
             >
               {teamCrestBadge(homeTeam)}
             </div>
-            <div style={{ fontSize: 44, fontWeight: 850, lineHeight: 1.05, textAlign: "right" }}>{homeTeam}</div>
-            <div style={{ fontSize: 74, fontWeight: 950, color: homeTextColor }}>{homePct}</div>
+            <div style={{ fontSize: 44, fontWeight: 850, lineHeight: 1.05, textAlign: "right", color: homeNameColor }}>{homeTeam}</div>
+            {homeHero !== null && (
+              <div style={{ fontSize: 74, fontWeight: 950, color: homeHeroColor }}>{homeHero}</div>
+            )}
+            {final && prematch?.homePercent != null && (
+              <div style={{ fontSize: 28, fontWeight: 700, color: "#64748b" }}>
+                {`${prematch.homePercent}%`}
+              </div>
+            )}
           </div>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-          <div
-            style={{
-              width: "100%",
-              height: 30,
-              borderRadius: 999,
-              background: homeColor,
-              overflow: "hidden",
-              display: "flex",
-            }}
-          >
-            <div style={{ width: `${awayWidth}%`, height: "100%", background: awayColor }} />
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", color: "#64748b", fontSize: 23 }}>
-            {/* The "Probability-first odds" arm this used to carry was the
-                missing-event fallback, and it is unreachable now that the miss
-                returns above — a card that reaches here has a status. */}
-            <div>{eventStatus(event)}</div>
+          {showBar && (
+            <div
+              style={{
+                width: "100%",
+                height: 30,
+                borderRadius: 999,
+                background: homeColor,
+                overflow: "hidden",
+                display: "flex",
+              }}
+            >
+              <div style={{ width: `${awayWidth}%`, height: "100%", background: awayColor }} />
+            </div>
+          )}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", color: "#64748b", fontSize: 23 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {/* The "Probability-first odds" arm this used to carry was the
+                  missing-event fallback, and it is unreachable now that the miss
+                  returns above — a card that reaches here has a status. */}
+              {/* #6085 — the result in the sport's own units, from the same
+                  `resolveEventOutcome` line the title prints, so the two halves
+                  of the preview cannot word one scoreline two ways. `null` on
+                  every sport whose numbers are already the two big figures
+                  above (a basketball card does not repeat "112-108"), so this
+                  reads "Final" alone exactly as it did before. */}
+              {/* One string and not two children: satori lays out adjacent text
+                  nodes as separate boxes, and a reader would see the gap. */}
+              <div>
+                {outcome?.resultLine
+                  ? `${eventStatus(event)} · ${outcome.resultLine}`
+                  : eventStatus(event)}
+              </div>
+              {/* The rung, named once. `prematchReading` only ever sets this for
+                  a non-prediction-market reading, and Alex's rule is that such a
+                  number says so ("labelled when not a prediction market") — an
+                  unlabelled sportsbook median is the old footnote in a new
+                  shape. `sportsbooks` and never a venue name (notice 33). */}
+              {final && prematch?.label && prematch.awayPercent != null && (
+                <div style={{ fontSize: 20 }}>{`Pre-match · ${prematch.label}`}</div>
+              )}
+            </div>
             {/* #4957: the bare wordmark, matching the other three share cards. This card is
                 for ONE event, so naming /discover advertised a page other than the picture. */}
             <div>bainluck.com</div>
