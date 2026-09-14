@@ -115,6 +115,9 @@ d("a draw is not the away team on iOS", () => {
     readFileSync(join(IOS_ROOT, "Components/GamePlayCardView.swift"), "utf8");
   const vocab = () =>
     readFileSync(join(IOS_ROOT, "Utilities/SportVocab.swift"), "utf8");
+  // #3051 moved the since-open caption's whole decision out of the view.
+  const sinceOpen = () =>
+    readFileSync(join(IOS_ROOT, "Utilities/SinceOpenCaption.swift"), "utf8");
 
   /** The tell has to actually fire on the code that shipped the bug. */
   it("the complement tell matches the four pre-fix lines", () => {
@@ -218,14 +221,42 @@ d("a draw is not the away team on iOS", () => {
    * who to name is the rule's call and the sign survives.
    */
   it("the since-open caption asks the rule who moved", () => {
+    // #3051 MOVED THIS DECISION, AND THE GUARD FOLLOWED IT RATHER THAN BEING
+    // DELETED. The caption used to be built inline in the view, so this test
+    // read the view. It now lives in `Utilities/SinceOpenCaption.swift`,
+    // because the caption stopped printing a delta and started printing the
+    // two LEVELS ("Sabalenka 91% → 95% since open") — the raw-vs-rendered
+    // double rounding this file's sibling defect is made of. #5271's claim is
+    // unchanged and is asserted at its new address: WHO the caption names is
+    // still the rule's call, never the view's, and never `1 − home`.
+    const helper = stripComments(sinceOpen());
     const code = stripComments(detail());
 
-    expect(code).toMatch(
-      /DrawPricedWinner\.trendSubject\(\s*homeDelta: home - openingHome, sport: event\.sport\s*\)/
+    expect(helper).toMatch(
+      /DrawPricedWinner\.trendSubject\(\s*homeDelta: pair\.home - openingHome, sport: sport\)/
     );
-    // The old unconditional "+" is gone: the caption can print a minus.
-    expect(code).not.toMatch(/Text\("\\\(subject\) \+\\\(points\)% since open"\)/);
-    expect(code).toMatch(/trend\.signedPoints < 0/);
+    // Both pairs — the live one and the opening one — go through the rule, so
+    // the withheld slot is withheld at both ends of the journey.
+    expect(helper).toMatch(
+      /DrawPricedWinner\.printablePair\(\s*away: away, home: home, sport: sport\)/
+    );
+    expect(helper).toMatch(
+      /DrawPricedWinner\.printablePair\(\s*away: openingAway, home: openingHome, sport: sport\)/
+    );
+
+    // The view delegates and does not keep a second copy of the decision.
+    expect(code).toMatch(/SinceOpenCaption\.caption\(/);
+    expect(code).not.toMatch(/DrawPricedWinner\.trendSubject\(/);
+
+    // Neither the shipped defect nor the `pts`/`pp` repair #5995 withdrew: the
+    // caption names no unit and prints no difference. Asserted on the TEMPLATE
+    // rather than on rendered output, which is `SinceOpenCaptionTests`' job.
+    expect(code).not.toMatch(/\\\(subject\) \+\\\(points\)% since open/);
+    expect(helper).not.toMatch(/signedPoints/);
+    expect(helper).not.toMatch(/\b(pts?|pp)\b since open/);
+    expect(helper).toMatch(
+      /"\\\(subject\) \\\(from\) \\u\{2192\} \\\(to\) since open"/
+    );
   });
 
   /** THE SOURCES CARD — the per-source rows, and the column they are sized in. */
@@ -321,6 +352,11 @@ d("a draw is not the away team on iOS", () => {
       "MarketMapView.swift": [],
       "OddsChartView.swift": [],
       "GamePlayCardView.swift": [],
+      // #3051 — the caption's decision moved here, so the sweep did too. Its
+      // own mutation battery has a mutant (M11) that fills the deliberate
+      // "no served away opening" gap with `1 − openingHome`; this is the same
+      // refusal asserted from the other target, in the suite that runs in CI.
+      "SinceOpenCaption.swift": [],
     };
 
     for (const [name, source] of [
@@ -328,6 +364,7 @@ d("a draw is not the away team on iOS", () => {
       ["MarketMapView.swift", map()],
       ["OddsChartView.swift", chart()],
       ["GamePlayCardView.swift", playCard()],
+      ["SinceOpenCaption.swift", sinceOpen()],
     ] as const) {
       const offenders = withoutRuleCalls(stripComments(source))
         .split("\n")
