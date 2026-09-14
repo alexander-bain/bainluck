@@ -503,9 +503,11 @@ def _mock_team(name, *, sport_id=1, primary="#BD3039", logo="redsox.png",
     )
 
 
-def _league_db(mock_db, markets, games=(), results=(), unreported=(), teams=()):
-    """Sequence the route's FIVE queries: markets, games, results, unreported,
-    team media.
+def _league_db(
+    mock_db, markets, games=(), results=(), unreported=(), teams=(), finals=()
+):
+    """Sequence the route's queries: markets, games, results, unreported,
+    [off-page Finals], team media.
 
     The existing seeded tests set a single `return_value`, so every query — including
     the two rail queries this queue added — receives the MARKET rows. That silently
@@ -539,19 +541,37 @@ def _league_db(mock_db, markets, games=(), results=(), unreported=(), teams=()):
     `unreported` defaults to empty, so every existing caller keeps its meaning
     — the new rail is simply empty for them, which is what it should be for a
     league whose fixtures all settled.
+
+    🔴 #5802 ADDED A SIXTH, AND IT IS CONDITIONAL — the only one here that is.
+    `finals_behind_the_results_cap_query` asks the settled rail for the Finals
+    sitting at the unreported rail's own kickoff instants, because those are the
+    twins the results rail's ROW CAP hides and the past-rail fold therefore never
+    sees (six false "No result reported" cards on production MLB, 2026-09-14).
+    It is skipped entirely when the unreported rail is empty, since there are no
+    instants to ask about — so the queue below grows only for the callers that
+    pass `unreported`, and every existing caller keeps its five. That is also the
+    honest statement of the cost: one extra indexed `IN` over at most
+    `UNREPORTED_LIMIT + 1` values, on the pages that have a result-less row, and
+    nothing at all on the pages that do not.
+
+    It arrived the way point 1 predicts, and with the same misleading symptom
+    #3211 left behind: a missing `home_team_data`, not "you added a query".
     """
     import app.routes.events as _events_module
 
     _events_module._team_cache = {}
     _events_module._team_cache_time = 0.0
 
-    mock_db.execute.side_effect = [
+    _calls = [
         _scalars_result(list(markets)),
         _scalars_result(list(games)),
         _scalars_result(list(results)),
         _scalars_result(list(unreported)),
-        _team_rows_result(list(teams)),
     ]
+    if unreported:
+        _calls.append(_scalars_result(list(finals)))
+    _calls.append(_team_rows_result(list(teams)))
+    mock_db.execute.side_effect = _calls
 
 
 class TestLeagueEntityEnvelope:
@@ -858,6 +878,71 @@ class TestTheRailsServeTheSharedCard:
         # `test_a_league_of_only_unreported_matches_is_not_empty` below, which
         # seeds NO markets so the rail is the only thing that can carry it.
         assert body["availability"] == "fresh"
+
+    async def test_a_ghost_whose_final_is_behind_the_results_cap_is_not_served(
+        self, client, mock_db
+    ):
+        """#5802, end to end — the wiring, not just the fold.
+
+        The production shape: a `suspended` StatPal row on the unreported rail
+        whose completed ESPN twin exists but is NOT on the results rail, because
+        that rail's eight slots went to more recent games. `results=[]` here is
+        that cap, exactly: the Final is reachable by query and absent from the
+        payload. It is handed to the route through `finals`, which is the queue
+        slot the new conditional query consumes.
+
+        The two rows share ONE pinned `commence_time` rather than two
+        `hours_from_now` values. `twin_fold_key` compares to the MINUTE, and two
+        `datetime.now()` calls a millisecond apart can straddle a minute
+        boundary — gotcha #44: an anchor that can disagree with itself is not an
+        anchor.
+        """
+        when = datetime.now(timezone.utc) - timedelta(hours=48)
+        ghost = _mock_event(event_id=15298326, status="suspended",
+                            home="Boston Red Sox", away="New York Yankees")
+        final = _mock_event(event_id=15305472, status="completed",
+                            home="Boston Red Sox", away="New York Yankees",
+                            home_score=8, away_score=10)
+        ghost.commence_time = final.commence_time = when
+        # `twin_fold_key`'s element 0 is the league, resolved from the loaded
+        # `sport` and falling back to `sport_id`. `_mock_event` carries NEITHER,
+        # so an unmodified mock cannot be keyed and no fold in this file can
+        # touch it — set here rather than on the shared fixture, which would
+        # switch folding on underneath every other test that uses it.
+        ghost.sport_id = final.sport_id = 1
+
+        _league_db(
+            mock_db,
+            [_mock_market(market_id=1, market_tier=3)],
+            games=[], results=[], unreported=[ghost], finals=[final],
+            teams=[_mock_team("Boston Red Sox"), _mock_team("New York Yankees")],
+        )
+        body = (await client.get("/api/leagues/baseball_mlb")).json()
+
+        assert body["unreported_games"] == []
+        # And the Final it was suppressed on is CONTEXT — asking the question
+        # must not put an eight-day-old game on the results rail.
+        assert [r["id"] for r in body["recent_results"]] == []
+
+    async def test_an_unreported_row_with_no_final_behind_the_cap_still_serves(
+        self, client, mock_db
+    ):
+        """The other half, through the route: #3211's rail still reports.
+
+        Same seeding, empty `finals` — the query runs and finds nothing. Without
+        this, the test above is satisfied by a route that serves an empty
+        unreported rail for any reason at all.
+        """
+        ghost = _mock_event(event_id=15298326, status="suspended")
+        _league_db(
+            mock_db,
+            [_mock_market(market_id=1, market_tier=3)],
+            games=[], results=[], unreported=[ghost], finals=[],
+            teams=[_mock_team("Boston Red Sox"), _mock_team("New York Yankees")],
+        )
+        body = (await client.get("/api/leagues/baseball_mlb")).json()
+
+        assert [r["id"] for r in body["unreported_games"]] == [15298326]
 
     async def test_a_league_of_only_unreported_matches_is_not_empty(
         self, client, mock_db

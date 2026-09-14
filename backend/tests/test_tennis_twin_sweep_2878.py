@@ -472,15 +472,32 @@ class TestEveryLeagueRailConsumesTheProof:
     """
 
     def test_all_three_league_rails_carry_the_predicate(self):
+        """Each RAIL carries it — asked of the three builders, one at a time.
+
+        🔴 This was `source.count("not_a_proven_duplicate()") == 3` over the
+        whole module, and #5802 is the day that shape cost a session. It added
+        `finals_behind_the_results_cap_query` — a fourth, non-rail query that
+        carries the predicate for the same reason the rails do — and the guard
+        failed with `4 == 3`, reporting "a league rail has lost the #2263
+        predicate" about a change that took nothing away from any rail.
+
+        A file-wide count is the wrong instrument twice over: it reddens on an
+        addition that is not a loss, and it stays GREEN on the loss it exists to
+        catch as long as some other line in the module gains an occurrence. The
+        three named builders are what the docstring above is about, so ask them.
+        """
         import inspect
 
-        from app.routes import league_futures
-
-        source = inspect.getsource(league_futures)
-        assert source.count("not_a_proven_duplicate()") == 3, (
-            "a league rail has lost the #2263 predicate — the tennis ghosts "
-            "(#2878) live on the unreported rail and keep their card without it"
-        )
+        for build in (
+            upcoming_games_query,
+            recent_results_query,
+            unreported_games_query,
+        ):
+            assert "not_a_proven_duplicate()" in inspect.getsource(build), (
+                f"the league rail {build.__name__} has lost the #2263 predicate "
+                "— the tennis ghosts (#2878) live on the unreported rail and "
+                "keep their card without it"
+            )
 
     @pytest.mark.parametrize(
         "build", [upcoming_games_query, recent_results_query, unreported_games_query]
