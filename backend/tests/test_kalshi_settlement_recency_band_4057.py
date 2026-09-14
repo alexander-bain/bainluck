@@ -309,7 +309,7 @@ async def test_the_fast_lane_never_touches_the_tail_cursor(monkeypatch):
     The fast lane's tail is empty on EVERY run by construction. The wrap branch
     directly above reads an empty tail as "the alphabet is exhausted, start over"
     and DELETEs the cursor — a reading that is correct for the 6-hourly omnibus
-    and catastrophic here: at `:23` and `:53` it would reset the 71k-ticker walk
+    and catastrophic here: at `:09` and `:39` it would reset the 71k-ticker walk
     to 'A' forever, starving band 2 through the one band the fast lane was
     supposed to leave alone (gotcha #34).
 
@@ -440,3 +440,137 @@ async def test_the_selection_is_handed_the_whole_cycle_budget_not_a_pre_split_on
     # that must ask for BOTH bands, and it is the only one that advances the
     # cursor. #1121's fast lane is the other side of this pair.
     assert sel.seen == {"limit": 2000, "cursor": "", "include_tail": True}
+
+
+# ---------------------------------------------------------------------------
+# #1121 residual — the TASK CONTRACT, asserted directly.
+#
+# CERT-2851 granted the ship's token and named this gap: every arm above proves
+# what `_backfill_kalshi_winners(fast_lane_only=True)` DOES, and the wiring
+# suite proves the beat NAME is registered, but nothing asserted that the
+# registered beat actually reaches that argument. Those are two different
+# claims, and only the second one is what a reader waits on. A wrapper that
+# dropped the keyword, or a beat re-pointed at `background` or re-timed onto a
+# multiple of five, would leave this whole file green while the half-hour
+# grading cadence quietly stopped existing.
+#
+# Asserted behaviourally — the call is driven and its kwargs captured — rather
+# than by scanning the source for the literal `fast_lane_only=True`. A grep
+# guard passes on a commented-out line and on a second call site that overrides
+# it, so it is a test of the file's text and not of the task.
+# ---------------------------------------------------------------------------
+
+
+def test_the_fast_lane_beat_reaches_the_fast_lane_argument(monkeypatch):
+    """The registered task passes `fast_lane_only=True`, and nothing else does.
+
+    The omnibus is the control: the SAME assertion run against
+    `backfill_winners` must see the flag absent or False, otherwise this arm
+    would pass on a build where `fast_lane_only` defaulted to True and band 2
+    had stopped being walked at all.
+    """
+    import app.tasks as tasks
+
+    seen: dict[str, object] = {}
+
+    async def _noop():
+        return {}
+
+    def _capture(**kwargs):
+        seen.update(kwargs)
+        return _noop()
+
+    monkeypatch.setattr(bw, "_backfill_kalshi_winners", _capture)
+    monkeypatch.setattr(tasks, "_tracked_run", lambda _label, coro: coro.close())
+
+    tasks.grade_fresh_kalshi_settlements.run(limit=2000)
+
+    assert seen == {"limit": 2000, "fast_lane_only": True}
+
+
+def test_the_omnibus_still_asks_for_both_bands(monkeypatch):
+    """The control for the arm above — the pair is what makes either falsifiable.
+
+    If `fast_lane_only` ever became True by default, the fast-lane assertion
+    would still pass and band 2 — the 71k-ticker alphabetical tail — would stop
+    being walked with no test anywhere going red.
+
+    Resolved through the CELERY REGISTRY, and that is not a stylistic choice.
+    `app.tasks.backfill_winners` is BOTH a submodule and a task defined in the
+    package `__init__`, and the submodule wins the attribute lookup — so the
+    obvious `app.tasks.backfill_winners.run()` raises `AttributeError: module
+    ... has no attribute 'run'`. A future arm that reached for the task by
+    attribute would silently be testing the wrong object if the module ever
+    grew a callable of that name.
+
+    THE EFFECTIVE VALUE, NOT THE PASSED ONE, and the first version of this arm
+    got that wrong. It read `seen.get("fast_lane_only", False)` — which asks
+    what the omnibus PASSES. The omnibus passes nothing, so the arm could not
+    see the one mutation it exists to catch: flipping the DEFAULT on
+    `_backfill_kalshi_winners` to True survived it (mutation run, exit 0, 25
+    passed) while band 2 stopped being walked everywhere. Binding the captured
+    kwargs against the real signature materialises the default, so the arm now
+    asserts what the callee will actually do rather than what the caller
+    happened to spell out.
+    """
+    import inspect
+
+    import app.tasks as tasks
+
+    original = bw._backfill_kalshi_winners
+    seen: dict[str, object] = {}
+
+    async def _noop():
+        return {}
+
+    def _capture(**kwargs):
+        seen.update(kwargs)
+        return _noop()
+
+    monkeypatch.setattr(bw, "_backfill_kalshi_winners", _capture)
+    monkeypatch.setattr(tasks, "_tracked_run", lambda _label, coro: coro.close())
+
+    tasks.celery_app.tasks["app.tasks.backfill_winners"].run()
+
+    bound = inspect.signature(original).bind(**seen)
+    bound.apply_defaults()
+    assert bound.arguments["fast_lane_only"] is False
+
+
+def test_the_fast_lane_beat_keeps_its_minutes_queue_and_expiry():
+    """`:09/:39`, `realtime`, `expires` at exactly one period.
+
+    Each of the three is load-bearing and each was chosen against a measurement
+    recorded beside the entry, so each is worth a red line rather than a silent
+    drift:
+
+    * the MINUTES avoid both every `*/5`-family beat and the `:45`-`:59` window
+      `backfill_winners` actually occupies (818s measured, not the instant its
+      crontab names);
+    * the QUEUE is `realtime` because `background` runs `task_acks_late=False`,
+      so a release destroys a reserved message leaving no trace — a failure mode
+      a latency bar cannot survive;
+    * `expires` is one period, so a run the lane could not serve is dropped
+      rather than queued behind its own successor.
+    """
+    from app.tasks import celery_app
+
+    entry = celery_app.conf.beat_schedule["grade-fresh-kalshi-settlements"]
+
+    assert entry["task"] == "app.tasks.grade_fresh_kalshi_settlements"
+    assert entry["schedule"].minute == {9, 39}
+    assert entry["options"]["queue"] == "realtime"
+    assert entry["options"]["expires"] == 1800
+
+    # The minutes are not merely "these two": they must miss the omnibus window.
+    # `backfill_winners` starts at :45 and ran 818s on 2026-09-14, so :45-:59 is
+    # occupied, and the fast lane's own 240s soft limit extends each fire by 4.
+    for minute in entry["schedule"].minute:
+        assert minute + 4 < 45, (
+            f"a :{minute:02d} fire can still be running when the omnibus starts "
+            "at :45 and writes is_winner across every source"
+        )
+        assert minute % 5 != 0, (
+            f":{minute:02d} is a multiple of five, where every */5, */10, */15 "
+            "and */30 beat in this schedule fires"
+        )

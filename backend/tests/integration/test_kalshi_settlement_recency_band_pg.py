@@ -564,7 +564,7 @@ async def test_the_two_bands_never_exceed_the_cycle_budget(pg_engine):
 async def test_the_fast_lane_returns_the_same_band_1_and_no_band_2(pg_engine):
     """#1121 residual, against the server: the SAME rows, sooner.
 
-    `grade_fresh_kalshi_settlements` runs at `:23/:53` and its entire claim is
+    `grade_fresh_kalshi_settlements` runs at `:09/:39` and its entire claim is
     that it asks about exactly what the `:45` omnibus would have asked about in
     band 1 — so the two calls must agree on band 1 EXACTLY, ordering included,
     while band 2 comes back empty.

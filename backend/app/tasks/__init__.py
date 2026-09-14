@@ -1741,11 +1741,11 @@ def grade_fresh_kalshi_settlements(self, limit: int = 2000):
     left strictly untouched (see `fast_lane_only` in `backfill_winners.py` for
     the delete-branch trap that costs).
 
-    BOUNDED: 400 recency tickers + at most `_EARLY_SETTLED_MAX_TICKERS` (50)
+    BOUNDED: 400 recency tickers + at most `_EARLY_SETTLED_MAX_TICKERS` (100)
     early-settled ones, one `GET /events/{ticker}` each at concurrency 5. The
     whole three-band phase measured 110.7s on production 2026-09-14 09:45Z at
-    2,050 tickers, so this ~450-ticker slice is ~25s against a 240s soft limit.
-    Half-hourly, that is ~21,600 venue reads a day where the omnibus made ~8,200
+    2,050 tickers, so this ~500-ticker slice is ~27s against a 240s soft limit.
+    Half-hourly, that is ~24,000 venue reads a day where the omnibus made ~8,200
     — Kalshi is key-authenticated with no monthly quota (unlike The Odds API,
     whose 5M budget this never touches), and concurrency is unchanged, so the
     cost is calls, not contention. It also self-drains: a graded market leaves
