@@ -356,6 +356,54 @@ def espn_terminal_write_is_fold(event_commence, now, slack=_FOLD_GUARD_SLACK) ->
 # Team upsert
 # ---------------------------------------------------------------------------
 
+#: The ESPN fields that can name the club this payload is about. `abbreviation`
+#: is deliberately absent: a three-letter code carries no name to compare, and
+#: feeding it to a token-overlap matcher buys nothing but false agreement.
+_ESPN_IDENTITY_NAME_FIELDS = (
+    "display_name",
+    "name",
+    "short_name",
+    "nickname",
+    "location",
+)
+
+
+def espn_identity_corresponds(team_name, existing_alternate_names, espn_team) -> bool:
+    """Does this ESPN payload name the club we are about to stamp it onto?
+
+    The question ``upsert_team``'s own guard has always meant to ask and could
+    never reach (#6215): that guard is written ``if team.espn_id and ...``, so
+    it is unreachable for a row with no ESPN id — which is precisely the
+    wrong-event-match case its comment names, because a brand-new row is created
+    without one twelve lines earlier.
+
+    Measured on production 2026-09-14: **1,077 team rows carry ESPN identity
+    fields with no ESPN id, and ~1,010 of them are wearing another club's
+    identity** — MLS 581, NCAAB 168, EPL 162, WNCAAB 26. Fluminense is stored as
+    ``ARS · 19-7-3 · Arsenal`` under ``soccer_epl``; Marist Red Foxes wears
+    ``OSU · 18-11 · Ohio State``. 143 of the EPL cohort are bound to real events
+    by FK, so the borrowed badge travels to every surface that resolves a team
+    off ``home_team_id``.
+
+    Both sides are plural on purpose. Ours is the name we were handed plus any
+    alias the row already carries, so the answer is RECOVERABLE: once
+    ``Internazionale`` is a known alternate of ``Inter Milan``, ESPN's spelling
+    corresponds and enrichment resumes. Theirs is every field ESPN uses to name
+    a club, because which one is populated varies by endpoint.
+
+    FAIL-CLOSED, INCLUDING ON SILENCE: a payload carrying no name at all cannot
+    be shown to be about this club, so it does not get to rewrite its identity.
+    The cost of a wrong refusal is a missing crest — visible and reversible. The
+    cost of a wrong acceptance is a lie on an event-bound row, which is what
+    #6215 is.
+    """
+    ours = [team_name, *(existing_alternate_names or [])]
+    theirs = [getattr(espn_team, f, None) for f in _ESPN_IDENTITY_NAME_FIELDS]
+    return any(
+        _canonical_names_match(o, t) for o in ours if o for t in theirs if t
+    )
+
+
 async def upsert_team(session, team_name, espn_team, sport_id, team_cache=None, stats=None):
     """Create or update a Team record with ESPN enrichment data.
 
@@ -418,6 +466,31 @@ async def upsert_team(session, team_name, espn_team, sport_id, team_cache=None, 
     if team.espn_id and team.espn_id != espn_team.espn_id:
         # ESPN ID mismatch — skip all ESPN data updates
         if stats is not None:
+            stats["teams_upserted"] = stats.get("teams_upserted", 0) + 1
+        return team
+
+    # The same guard for a row that has no ESPN id to disagree with (#6215).
+    # Above, the id is the witness; here there is none, so the NAMES are —
+    # see `espn_identity_corresponds`. Only this arm can reach a row created
+    # moments ago, which is the wrong-event-match case both arms exist for.
+    if not team.espn_id and not espn_identity_corresponds(
+        team_name, team.alternate_names, espn_team
+    ):
+        logger.warning(
+            "ESPN identity refused for team %r (sport_id=%s): payload names "
+            "%r/%r/%r (abbr %r, record %r) do not correspond",
+            team_name,
+            sport_id,
+            espn_team.display_name,
+            espn_team.name,
+            espn_team.location,
+            espn_team.abbreviation,
+            espn_team.record,
+        )
+        if stats is not None:
+            stats["teams_espn_identity_refused"] = (
+                stats.get("teams_espn_identity_refused", 0) + 1
+            )
             stats["teams_upserted"] = stats.get("teams_upserted", 0) + 1
         return team
 
