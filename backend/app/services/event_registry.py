@@ -78,10 +78,19 @@ _SOURCE_PRIORITY = {
     # would stop odds_api/ESPN/StatPal correcting the row, and a venue's own
     # fixture time is a good start, not a better one than the schedule's.
     #
-    # Present in this dict rather than left unknown so a later poll of the same
-    # market can still revise its OWN reading (q066b, `same_record_revision`
-    # below, which requires membership). An unlisted string would silently lose
-    # that path while reading as a no-op change.
+    # CORRECTED (#6073 rung 2). The first version of this comment said the entry
+    # was here "so a later poll of the same market can still revise its OWN
+    # reading (q066b, `same_record_revision`, which requires membership)". That
+    # was wrong about its own mechanism and the entry was therefore a no-op:
+    # `claim_is_same_record` returns False for `polymarket` UNCONDITIONALLY (no
+    # id column on `events`), so `same_record_revision` can never be True for a
+    # Polymarket claim whatever this dict says — and even if it were, that clause
+    # tests `incoming_source == current_source`, which `polymarket_venue` against
+    # `polymarket` fails. Membership at rank 0 buys nothing on its own.
+    #
+    # What actually carries the revision is the named third clause in
+    # `commence_time_write_authorized` below. The entry stays because that clause
+    # reads the same table and an unlisted incoming source is refused there too.
     POLYMARKET_VENUE_COMMENCE_SOURCE: 0,
     "odds_api": 1,
     "statpal": 2,
@@ -94,6 +103,49 @@ _SOURCE_PRIORITY = {
     # different games, so it is not the last word on MLB timing.
     "mlb_schedule_repair": 4,
 }
+
+
+def polymarket_venue_corrects_its_own_listing(
+    current_source: Optional[str], incoming_source: Optional[str],
+) -> bool:
+    """Is this Gamma's fixture instant replacing Gamma's listing stamp? (#6073)
+
+    ONE provider, TWO fields of ONE payload, and one of them is simply the wrong
+    field to have read. `commence_time` for a Polymarket row is Gamma's
+    ``startDate``, the moment the market was PUBLISHED; ``venue_game_start`` is
+    its ``startTime``, the fixture instant. Four ITF fixtures on production
+    2026-09-14 were minted 11.0h, 12.8h, 12.8h and 17.8h early because the mint
+    read the first — event 15312412 badged ``LIVE`` at 04:55Z for a 13:00Z match.
+
+    **DIRECTIONAL, and that is the whole design.** The venue instant may correct
+    the listing stamp; the listing stamp may never come back over the venue
+    instant. That asymmetry is why this is not expressible as either of the two
+    clauses above:
+
+    * it is not a PRIORITY bump — ranking ``polymarket_venue`` above
+      ``polymarket`` would also put it level with ``odds_api`` and, under the
+      strict ``>``, would stop The Odds API, ESPN and StatPal correcting the row.
+      A venue's own fixture time is a good start, not a better one than a
+      schedule's, and the rank must keep saying so;
+    * it is not ``same_record_revision`` — that clause is symmetric by
+      construction (``incoming_source == current_source``) and is gated on
+      ``claim_is_same_record``, which is False for Polymarket by definition
+      (no id column on ``events``).
+
+    ``current_source`` may also already BE ``polymarket_venue``: Gamma moves a
+    fixture time, and the tie rule would otherwise freeze whichever reading we
+    happened to see first — the same argument q066b makes for The Odds API.
+
+    ``None`` is deliberately NOT accepted as a current source. Unknown provenance
+    is most of the table and much of it predates ``commence_time_source``
+    entirely; a row whose start we cannot attribute to Polymarket is not a row
+    Polymarket is correcting, and the general "unknown confers no immunity" rule
+    above is about OUTRANKING, which this is not.
+    """
+    return (
+        incoming_source == POLYMARKET_VENUE_COMMENCE_SOURCE
+        and current_source in ("polymarket", POLYMARKET_VENUE_COMMENCE_SOURCE)
+    )
 
 
 def commence_time_write_authorized(
@@ -150,8 +202,15 @@ def commence_time_write_authorized(
     This does not widen absorption by one row. Step 1 is exact-id and was never
     the absorber; ``ODDS_LISTING_IS_NOT_A_DEREFERENCE`` closed that route through
     the ±28h structured matcher and is untouched here. Nor does it override the
-    #46 inversion guard in ``_update_fields_by_priority``, which still refuses to
-    move a completed event's start past its own ``completed_at``.
+    #46 inversion guard in ``apply_authorized_commence_time``, which still
+    refuses to move a completed event's start past its own ``completed_at``.
+
+    ── The third clause: one provider's WRONG FIELD, corrected (#6073 rung 2) ──
+
+    See :func:`polymarket_venue_corrects_its_own_listing`. Unlike the two rules
+    above it is DIRECTIONAL — Gamma's fixture instant may replace Gamma's listing
+    stamp and never the reverse — which is exactly why it is its own named
+    predicate rather than a rank bump or a widening of ``same_record_revision``.
     """
     incoming = _SOURCE_PRIORITY.get(incoming_source or "", 0)
     current = _SOURCE_PRIORITY.get(current_source or "", 0)
@@ -164,6 +223,8 @@ def commence_time_write_authorized(
         and incoming_source in _SOURCE_PRIORITY
     ):
         return (True, f"revision: {incoming_source} correcting its own record")
+    if polymarket_venue_corrects_its_own_listing(current_source, incoming_source):
+        return (True, "revision: polymarket's fixture instant over its listing stamp")
     return (
         False,
         f"priority: {incoming_source or '<none>'}({incoming}) does not outrank "
@@ -1212,56 +1273,132 @@ def _update_fields_by_priority(
         same_record_revision=same_record,
     )
     if identity.commence_time and outranks:
-        # Guard (#46 invariant; gotcha #32 family): refuse to move
-        # commence_time to a value AFTER an already-completed event's
-        # completed_at. That inversion (completed_at < commence_time) means we
-        # folded a higher-priority source's forward commence_time onto the
-        # WRONG sibling (series row-reuse / doubleheader). The ESPN write path
-        # already guards this; the registry did not. Only the commence_time
-        # move is refused — team-name updates above still apply.
-        #
-        # UNLESS the settlement it would invert is itself a staleness artifact —
-        # an unscored row a wall-clock net closed for a game that had not been
-        # played. Then the inversion is evidence ABOUT THE COMPLETION, not about
-        # the start, and refusing the correction is what keeps an unplayed match
-        # wearing a FINAL badge. The scored case is untouched, so a real result
-        # still wins every argument (gotcha #21).
-        #
-        # Asked only of a row that HAS a completion. An unsettled row cannot
-        # carry an artifact settlement, so the score columns are never read on
-        # the overwhelmingly common path.
-        inverts = event.completed_at is not None and commence_correction_inverts_completion(
-            identity.commence_time, event.completed_at
+        apply_authorized_commence_time(
+            event,
+            identity.commence_time,
+            identity.commence_time_source or identity.claim.source,
+            attributed_to=identity.claim.source,
         )
-        artifact = inverts and settlement_is_a_staleness_artifact(
-            event.status, event.home_score, event.away_score,
-            identity.commence_time, event.completed_at,
+
+
+def apply_authorized_commence_time(
+    event: Event,
+    new_commence: datetime,
+    new_source: Optional[str],
+    *,
+    attributed_to: Optional[str] = None,
+) -> str:
+    """Apply :func:`authorized_commence_time_write`'s decision to ``event``.
+
+    The ORM-mutating form, and the one the registry has always used: it decides
+    and writes in one breath, which is correct for ``_update_fields_by_priority``
+    because that caller is already holding the row it is building.
+
+    A caller that must write ATOMICALLY — Phase 1.5, which decided minutes before
+    it writes and cannot let a score landing in between be overwritten — asks
+    :func:`authorized_commence_time_write` for the same decision as a dict of
+    column writes and issues its own conditional UPDATE. Both go through the one
+    decision function, so the #46 guard still exists exactly once.
+
+    Returns what happened, for the caller's counters: ``"refused_inversion"``,
+    ``"corrected_and_voided"``, or ``"corrected"``.
+    """
+    outcome, writes = authorized_commence_time_write(
+        event, new_commence, new_source, attributed_to=attributed_to,
+    )
+    for column, value in writes.items():
+        setattr(event, column, value)
+    return outcome
+
+
+def authorized_commence_time_write(
+    event: Event,
+    new_commence: datetime,
+    new_source: Optional[str],
+    *,
+    attributed_to: Optional[str] = None,
+) -> tuple[str, dict]:
+    """Decide an ALREADY-AUTHORIZED ``commence_time`` write, WITHOUT applying it.
+
+    Extracted from ``_update_fields_by_priority`` for #6073 rung 2, for the same
+    reason ``commence_time_write_authorized`` was extracted for #2018: the
+    authority question now has a second caller (Phase 1.5's Polymarket venue
+    redate, which reaches an ALREADY-LINKED row the registry never re-sees
+    because every mint/link phase selects ``event_id IS NULL``), and the #46
+    inversion guard must not be restated at the new call site. A guard that
+    exists twice is a guard that will disagree with itself.
+
+    **Authorization is the CALLER's job and is not re-asked here** — the name
+    says so. Every caller asks ``commence_time_write_authorized`` first; this
+    function is only the decision and the invariant that constrains it.
+
+    SEPARATED FROM THE WRITE FOR CERT-2836. The #46 guard reads four volatile
+    columns off ``event``, and a caller that decided minutes ago must be able to
+    put those same four in the WHERE clause of an atomic UPDATE rather than
+    trusting them. Returning the writes instead of performing them is what lets
+    Phase 1.5 do that without a second copy of the invariant — a guard that
+    exists twice is a guard that will disagree with itself, which is the whole
+    reason this was extracted from ``_update_fields_by_priority`` for #6073.
+
+    Returns ``(outcome, writes)``: the outcome for the caller's counters
+    (``"refused_inversion"``, ``"corrected_and_voided"``, ``"corrected"``) and the
+    exact ``{column: value}`` map to apply. A refusal returns an EMPTY map, so
+    "apply the writes" is always the right thing for a caller to do with it.
+    """
+    # Guard (#46 invariant; gotcha #32 family): refuse to move
+    # commence_time to a value AFTER an already-completed event's
+    # completed_at. That inversion (completed_at < commence_time) means we
+    # folded a higher-priority source's forward commence_time onto the
+    # WRONG sibling (series row-reuse / doubleheader). The ESPN write path
+    # already guards this; the registry did not. Only the commence_time
+    # move is refused — team-name updates at the caller still apply.
+    #
+    # UNLESS the settlement it would invert is itself a staleness artifact —
+    # an unscored row a wall-clock net closed for a game that had not been
+    # played. Then the inversion is evidence ABOUT THE COMPLETION, not about
+    # the start, and refusing the correction is what keeps an unplayed match
+    # wearing a FINAL badge. The scored case is untouched, so a real result
+    # still wins every argument (gotcha #21).
+    #
+    # Asked only of a row that HAS a completion. An unsettled row cannot
+    # carry an artifact settlement, so the score columns are never read on
+    # the overwhelmingly common path.
+    label = attributed_to or new_source
+    inverts = event.completed_at is not None and commence_correction_inverts_completion(
+        new_commence, event.completed_at
+    )
+    artifact = inverts and settlement_is_a_staleness_artifact(
+        event.status, event.home_score, event.away_score,
+        new_commence, event.completed_at,
+    )
+    if inverts and not artifact:
+        logger.warning(
+            "Refusing commence_time move on completed event %s: incoming "
+            "commence=%s is AFTER completed_at=%s (would invert #46 "
+            "invariant — likely wrong-sibling match from source %s)",
+            event.id, new_commence, event.completed_at, label,
         )
-        if inverts and not artifact:
-            logger.warning(
-                "Refusing commence_time move on completed event %s: incoming "
-                "commence=%s is AFTER completed_at=%s (would invert #46 "
-                "invariant — likely wrong-sibling match from source %s)",
-                event.id, identity.commence_time, event.completed_at,
-                identity.claim.source,
-            )
-        else:
-            event.commence_time = identity.commence_time
-            event.commence_time_source = identity.commence_time_source or identity.claim.source
-            if artifact:
-                # Void the artifact, exactly as `repair_inverted_mlb_events`
-                # voids its own: back to `scheduled` with no completion. The
-                # 60-second `transition_event_statuses` re-promotes it to `live`
-                # off the CORRECTED start, so this un-settles without asserting
-                # anything about when the match will actually be played.
-                logger.info(
-                    "Voiding staleness-artifact settlement on event %s: %s->scheduled, "
-                    "completed_at %s cleared (unscored, and %s moved the start to %s)",
-                    event.id, event.status, event.completed_at,
-                    identity.claim.source, identity.commence_time,
-                )
-                event.status = "scheduled"
-                event.completed_at = None
+        return "refused_inversion", {}
+
+    writes = {
+        "commence_time": new_commence,
+        "commence_time_source": new_source,
+    }
+    if artifact:
+        # Void the artifact, exactly as `repair_inverted_mlb_events`
+        # voids its own: back to `scheduled` with no completion. The
+        # 60-second `transition_event_statuses` re-promotes it to `live`
+        # off the CORRECTED start, so this un-settles without asserting
+        # anything about when the match will actually be played.
+        logger.info(
+            "Voiding staleness-artifact settlement on event %s: %s->scheduled, "
+            "completed_at %s cleared (unscored, and %s moved the start to %s)",
+            event.id, event.status, event.completed_at, label, new_commence,
+        )
+        writes["status"] = "scheduled"
+        writes["completed_at"] = None
+        return "corrected_and_voided", writes
+    return "corrected", writes
 
 
 # ── Sport resolution cache ──────────────────────────────────────────

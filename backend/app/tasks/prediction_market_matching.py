@@ -17,6 +17,7 @@ from typing import Optional
 
 from sqlalchemy import select, or_, and_, func, delete, case, update, text, bindparam
 from sqlalchemy.orm import joinedload
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.tasks.base import get_task_session
 from app.utils.event_completion import (
@@ -897,8 +898,15 @@ def venue_game_start(market):
     fail OPEN. A market that has not yet been re-polled is indistinguishable
     here from one the venue gives no fixture time for, and neither is grounds to
     refuse a link.
+
+    The parse is :func:`_parse_venue_game_start` so the group-wide reader can ask
+    the same question of a PARENT row's metadata without a second spelling of it.
     """
-    meta = getattr(market, "market_metadata", None)
+    return _parse_venue_game_start(getattr(market, "market_metadata", None))
+
+
+def _parse_venue_game_start(meta):
+    """``venue_game_start`` out of one row's ``market_metadata``, or None."""
     if not isinstance(meta, dict):
         return None
     raw = meta.get("venue_game_start")
@@ -3216,6 +3224,506 @@ def _phase15_rotation_query(
     ).limit(limit)
 
 
+#: How far an event's recorded start must sit from the venue's own fixture
+#: instant before Phase 1.5 rewrites it. NOT a "close enough" tolerance — it is
+#: the floor under a no-op write. Gamma reports whole minutes and the measured
+#: defect is 11.0-17.8 HOURS, so anything inside a minute is one instant read
+#: twice, and rewriting it would churn `commence_time` on every linked
+#: Polymarket row every 15 minutes for nothing a reader could see.
+_PM_VENUE_REDATE_MIN_DRIFT = timedelta(minutes=1)
+
+
+def polymarket_redate_is_authorized(market, event) -> bool:
+    """The two cheap, pure preconditions on a #6073 re-date. No DB, no clock.
+
+    Split out of :func:`polymarket_venue_redate` so the caller can ask them
+    BEFORE paying for :func:`polymarket_group_venue_start`'s query: a Polymarket
+    row whose event was dated by ESPN can never be re-dated however the group is
+    stamped, so reading the group for it is work with no possible outcome.
+    """
+    from app.services.event_registry import commence_time_write_authorized
+
+    if getattr(market, "source", None) != "polymarket":
+        return False
+    if getattr(event, "commence_time", None) is None:
+        return False
+    authorized, _why = commence_time_write_authorized(
+        getattr(event, "commence_time_source", None),
+        POLYMARKET_VENUE_COMMENCE_SOURCE,
+    )
+    return bool(authorized)
+
+
+async def polymarket_group_venue_start(session, market, cache=None):
+    """The GAMMA EVENT's fixture instant, read across the whole group.
+
+    THE STAMP IS ON THE PARENT, AND THE PARENT IS NEVER ITERATED HERE
+    (lane1b/237, measured on production 07:30Z). ``_phase15_eligible_where``
+    requires ``event_id IS NOT NULL``; a Polymarket group's PARENT row carries
+    ``event_id IS NULL`` by construction — the children hold the link. Both of
+    #6073's repairable specimens are stamped on the parent and on none of their
+    children:
+
+        polymarket:1019271 -> event 15312442   parent 09:00:00Z   6 children, 0 stamped
+        polymarket:1020508 -> event 15312412   parent 13:00:00Z   1 child,   0 stamped
+
+    So a rail reading only the iterated row's own metadata corrects neither, and
+    corrects them only if and when Gamma happens to re-serve the group — while
+    the STALE group is exactly the population #6073 is about (these two were last
+    touched 05:16Z, before the ingest half released; 338 other children were
+    stamped by the 07:15Z poll).
+
+    The instant is a property of the Gamma EVENT, identical on every row of the
+    group, so reading it group-wide is not a widening — it is reading the value
+    where the venue actually put it. Own row first (cheapest, and the forward
+    path stamps children now), parent second.
+
+    ``cache`` is a caller-owned dict keyed by ``group_id``, so a six-child group
+    costs one query per pass rather than six. A ``None`` answer is cached too:
+    "this group has no fixture instant" is the common case and re-asking it per
+    sibling is the same query with the same answer.
+    """
+    own = venue_game_start(market)
+    if own is not None:
+        return own
+    group_id = getattr(market, "group_id", None)
+    if not group_id or getattr(market, "source", None) != "polymarket":
+        return None
+    if cache is not None and group_id in cache:
+        return cache[group_id]
+
+    from app.models.models import FuturesMarket as _FuturesMarket
+
+    rows = (
+        await session.execute(
+            select(_FuturesMarket.market_metadata).where(
+                _FuturesMarket.group_id == group_id,
+                _FuturesMarket.group_type == "polymarket_event",
+                _FuturesMarket.source == "polymarket",
+            )
+        )
+    ).all()
+    parent_start = None
+    for (meta,) in rows:
+        parent_start = _parse_venue_game_start(meta)
+        if parent_start is not None:
+            break
+    if cache is not None:
+        cache[group_id] = parent_start
+    return parent_start
+
+
+def polymarket_venue_redate(market, event, fixture=None) -> Optional[datetime]:
+    """The corrected ``commence_time`` for an ALREADY-LINKED Polymarket row, or None.
+
+    #6073 rung 2, and the half neither of the first two shas could reach.
+    `a02aca00a` made the MINT read Gamma's fixture instant; lane1b's `f4a2830a5`
+    put that instant on the child row the mint actually sees. Both are forward
+    only. An event that was already minted from the LISTING stamp is corrected by
+    nothing at all, because every mint/link phase selects
+    ``FuturesMarket.event_id IS NULL`` — a linked market never re-enters the
+    registry — and ``claim_is_same_record`` is False for Polymarket by definition,
+    so even a re-offer could not revise the row.
+
+    Phase 1.5 is the one rail that already reads this population:
+    ``_phase15_eligible_where`` selects ``source IN (kalshi, polymarket) AND
+    event_id IS NOT NULL AND status == 'open'`` every 15 minutes. So the
+    correction belongs here rather than in a one-shot script over the four ids we
+    happen to have named — the same beat then heals every row that joins the
+    class later, including the ones Gamma re-times.
+
+    **NECESSARY, NOT SUFFICIENT (CERT-2835).** Every condition below is about the
+    DATE. None of them is about the PAIRING, and condition 3 must not be misread
+    as covering it: ``commence_time_source == 'polymarket'`` says A Polymarket row
+    wrote this start, never that THIS market did. The caller asks
+    :func:`phase15_link_is_valid_for_redate` before writing this answer anywhere.
+
+    Pure: no DB, no clock. Four conditions, all necessary:
+
+    1. **A Polymarket row.** `venue_game_start` is stamped by `tasks.polymarket`
+       and nobody else, and the source gate mirrors
+       :func:`_check_polymarket_fixture_reason` one guard over.
+    2. **The venue published a fixture instant.** None is the overwhelmingly
+       common answer (a row not yet re-polled since lane1b's stamp shipped is
+       indistinguishable here from one the venue gives no time for) and it means
+       CHANGE NOTHING, exactly as it does for the linkage guard.
+    3. **The event's start is attributable to Polymarket** — asked through
+       :func:`commence_time_write_authorized`, the one authority door (#2018),
+       never re-derived here. Its directional #6073 clause authorizes the fixture
+       instant over the listing stamp and refuses the reverse; an event whose
+       start came from The Odds API, ESPN, StatPal, or from a provenance we
+       cannot attribute at all, is left alone. **This is the guard that keeps a
+       Polymarket prop from re-timing a SCHEDULE-SOURCED game** — and only that;
+       a Polymarket-sourced event mislinked to a different Polymarket market is
+       the hole it does not cover, which is the caller's validation above.
+    4. **They actually disagree** — see ``_PM_VENUE_REDATE_MIN_DRIFT``.
+
+    Deliberately NOT bounded above by ``_PM_FIXTURE_MAX_DIFF_HOURS`` (3h). That
+    constant refuses a LINK between a market and an event that are hours apart,
+    on the reasoning that they must be different games. It cannot be reused as a
+    ceiling here, and reusing it would have been the quiet way to ship nothing:
+    the four production specimens are 11.0h, 12.8h, 12.8h and 17.8h out, so a 3h
+    cap refuses precisely the population this exists for. The two numbers do not
+    transfer because the LINK is not in question. Condition 3 has already
+    established that Polymarket wrote this event's start, so market and event
+    come from one Gamma event, and a large gap is evidence about the DATE — the
+    thing being corrected — not about the pairing.
+
+    That attribution is condition 3's job and NOT ``is_auto_created``'s, which
+    reads ``external_id LIKE 'pm_%'`` and is MEASURED False on the specimens
+    (event 15312442 carries ``external_id IS NULL``). Two different questions:
+    that flag asks how the row was created, condition 3 asks who owns its start.
+    """
+    if not polymarket_redate_is_authorized(market, event):
+        return None
+    if fixture is None:
+        fixture = venue_game_start(market)
+    if fixture is None:
+        return None
+    current = event.commence_time
+
+    current = current if current.tzinfo else current.replace(tzinfo=timezone.utc)
+    if abs(fixture - current) < _PM_VENUE_REDATE_MIN_DRIFT:
+        return None
+    return fixture
+
+
+def _as_utc(value):
+    """A datetime normalised to tz-aware UTC, or the value untouched."""
+    if isinstance(value, datetime) and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+async def phase15_event_row_is_unmoved(session, event):
+    """Does the DB still hold the event state this pass decided on?
+
+    Returns ``(unmoved, observed)``. ``observed`` is the RAW row the database just
+    served — not the ORM object's copy of it — because it is what the conditional
+    UPDATE compares against, and only a value read in the storage layer's own form
+    can be compared to one. (Concretely: this project's in-memory rows are
+    normalised to tz-aware UTC; SQLite stores naive strings. A WHERE built from the
+    ORM copy would never match there and the write would silently never happen.)
+
+    CERT-2834's finding, carried over here before a grader has to find it twice.
+    ``apply_authorized_commence_time`` reads ``status``, ``home_score``,
+    ``away_score`` and ``completed_at`` OFF THE IN-MEMORY ROW, and on its
+    artifact branch writes ``status='scheduled'`` + ``completed_at=None``. In
+    this pass the ``(market, event)`` pairs are loaded in ONE batch before the
+    loop and there is a single commit at the end, so the load-to-write window is
+    the whole beat, not a statement pair: a row that acquires a real score
+    mid-pass could be flushed back to ``scheduled``, un-settling a game that had
+    just finished. ("Only dirty columns are written" saves the SCORES; it does
+    not save the two columns this branch does dirty.)
+
+    So the decision is re-asserted against committed state immediately before
+    the write, by column select rather than ORM refresh — a column select
+    bypasses the identity map and, under READ COMMITTED, sees a fresh snapshot,
+    which is the whole point. A row that moved is LEFT ALONE and counted; Phase
+    1.5 runs every 15 minutes and re-reads it with the new state, so the
+    conservative answer costs one beat and never a wrong write.
+
+    ``commence_time`` is in the tuple as well: if something else re-dated the
+    event mid-pass, this beat's answer was computed against a start that no
+    longer exists and must be recomputed rather than applied.
+
+    **THIS CHECK IS NOT THE PROTECTION — IT IS THE PREMISE (CERT-2836).** A SELECT
+    followed by a separate write is still a race, however small the gap: the
+    grader committed a real 2-1 result between them and the stale write landed
+    last. What protects the row is :func:`phase15_redate_compare_and_write`, which
+    carries this exact ``observed`` tuple into the UPDATE's own WHERE clause so the
+    database itself decides, in one statement, whether the row it is about to
+    change is still the row that was reasoned about. This function's job is to
+    establish that the DECISION is still valid and to hand over the tuple that
+    makes the WRITE conditional.
+    """
+    from app.models.models import Event as _Event
+
+    row = (
+        await session.execute(
+            select(
+                _Event.status, _Event.home_score, _Event.away_score,
+                _Event.completed_at, _Event.commence_time,
+                _Event.commence_time_source,
+            ).where(_Event.id == event.id)
+        )
+    ).first()
+    if row is None:
+        return False, None
+    unmoved = (
+        row.status == event.status
+        and row.home_score == event.home_score
+        and row.away_score == event.away_score
+        and _as_utc(row.completed_at) == _as_utc(event.completed_at)
+        and _as_utc(row.commence_time) == _as_utc(event.commence_time)
+        # CERT-2849's required repair, `6073-ATOMIC-PHASE15-REDATE-INCLUDES-
+        # AUTHORITY-SOURCE`. The AUTHORITY column has to be in the premise for
+        # the same reason its value is read at all: it is what decides whether
+        # Polymarket may write here. A pass that authorized itself against
+        # `polymarket` and then found `espn` in the row is reasoning about a row
+        # that no longer exists, exactly as it would be for a changed score.
+        and row.commence_time_source == event.commence_time_source
+    )
+    return unmoved, row
+
+
+def _unmoved_clause(column, value):
+    """``column`` still holds ``value``, NULL-safely and with a typed bind.
+
+    Two hazards, one per branch, and both are the kind that pass every test in
+    this sandbox and kill the rail in production.
+
+    NULL -> ``IS NULL``. ``= NULL`` is never true, and `completed_at`,
+    `home_score` and `away_score` are NULL across the entire specimen population,
+    so the ``=`` form would decline every row the repair exists for while its
+    counters reported perfect success.
+
+    A value -> ``IS NOT DISTINCT FROM`` with the bind anchored to the COLUMN, so
+    SQLAlchemy types it from the column rather than from the Python value.
+
+    An explicit ``CAST`` was tried here and REVERTED, and the reason is worth
+    keeping: lane1b measured on the ingest side (#6073) that a bare
+    ``IS NOT DISTINCT FROM $1`` in hand-written SQL gives Postgres nothing to infer
+    from and asyncpg raises. But ``CAST(? AS DATETIME)`` on SQLite has NUMERIC
+    affinity, silently converts the timestamp to 0, and the WHERE then matches
+    nothing — the same dead-rail failure, moved to the other dialect and invisible
+    in a suite that is green because nothing wrote. A column-anchored comparison
+    gives Postgres the operator's own type context and leaves SQLite alone; the
+    residual risk of a driver rejecting one anyway is answered by MAKING IT LOUD
+    at the call site rather than by a cast that breaks the tests' dialect.
+    """
+    if value is None:
+        return column.is_(None)
+    return column.is_not_distinct_from(value)
+
+
+#: Every column Phase 1.5's conditional re-date is allowed to persist. The
+#: registry decides the VALUES (``authorized_commence_time_write``); this site
+#: decides the COLUMNS, and it is a closed list rather than whatever the map
+#: happens to hold, for two reasons that are the same reason twice.
+#:
+#: A conditional UPDATE built straight off a caller's mapping persists whatever
+#: that mapping grows. This one bypasses ``_update_fields_by_priority`` by
+#: design — that is the whole point of the extraction — so nothing else stands
+#: between the registry's return value and the row; a column added there for a
+#: different caller would arrive here silently and be written under a WHERE that
+#: was never reasoned about for it.
+#:
+#: And the blend column is the case where that is not hypothetical.
+#: ``test_blend_source_writer_scan_5311`` reads every ``update(Event).values()``
+#: in ``app/`` and asks whether it can persist ``win_probability_sources``
+#: without the stamper — a reading written around ``stamp_source_reading`` keeps
+#: full weight in the hero average forever, silently (#1829). A ``**mapping``
+#: splat of a PARAMETER is unanswerable to that scan by construction, and the
+#: scan's own doctrine is that a shape it cannot read is a failure and never a
+#: pass. Naming the columns here makes the answer structural: this statement can
+#: write these four and nothing else, provably, from the statement alone.
+PHASE15_REDATE_COLUMNS = (
+    "commence_time",
+    "commence_time_source",
+    "status",
+    "completed_at",
+)
+
+
+async def phase15_redate_compare_and_write(session, event, writes, observed) -> bool:
+    """Write ``writes`` onto ``event`` ONLY IF the row is still ``observed``.
+
+    CERT-2836's required repair. The read-then-write pair it replaces was honest
+    about a stale DECISION and blind to a stale WRITE: between the freshness
+    SELECT and the ORM flush there is a window, and the grader drove a real 2-1
+    result through it — the flush landed last and persisted `scheduled`, the
+    score, and the venue start together. Narrowing that window is not closing it.
+
+    So the comparison moves INTO the statement. Every column the decision read
+    (`status`, `home_score`, `away_score`, `completed_at`) plus `commence_time`
+    itself is repeated in the WHERE, against the value the database served for it
+    moments ago; the database then decides, atomically and under its own row lock,
+    whether the row being changed is still the row that was reasoned about. A
+    concurrent writer either commits first — and this statement matches zero rows
+    and writes nothing — or commits after, onto a row whose state it can see.
+
+    NULL-SAFE, NEVER ``=``: `completed_at`, `home_score` and `away_score` are NULL
+    on the whole specimen population, and an `=` form declines every one of them
+    while reporting perfect success — a rail that is dead in production and green
+    in every test that does not count rows. See :func:`_unmoved_clause` for why a
+    NULL compares as `IS NULL` and a value carries an explicit CAST.
+
+    ``synchronize_session=False`` is deliberate: the ORM must not try to reconcile
+    this statement's WHERE against its identity map. The caller applies the same
+    values to the in-memory row with ``set_committed_value``, which updates it
+    WITHOUT marking it dirty — so nothing re-writes these columns unconditionally
+    at the pass's end commit, which would reintroduce exactly the defect this
+    function exists to remove.
+
+    THE COLUMNS ARE NAMED, THE VALUES ARE THE REGISTRY'S. See
+    :data:`PHASE15_REDATE_COLUMNS` for why this statement does not splat the
+    caller's mapping. A column outside that list raises here rather than being
+    written: the wrapper turns it into a named, counted funnel entry, which is
+    the loud end of the same argument — an unexpected column is a structural
+    fault in the pair, not a bad row to skip.
+
+    Returns True when the row was written, False when the race was lost.
+    """
+    from app.models.models import Event as _Event
+
+    unexpected = sorted(set(writes) - set(PHASE15_REDATE_COLUMNS))
+    if unexpected:
+        raise ValueError(
+            f"phase15 re-date refuses columns it was not written for: "
+            f"{unexpected} (allowed: {list(PHASE15_REDATE_COLUMNS)}, #6073)"
+        )
+
+    statement = (
+        update(_Event)
+        .where(
+            _Event.id == event.id,
+            _unmoved_clause(_Event.status, observed.status),
+            _unmoved_clause(_Event.home_score, observed.home_score),
+            _unmoved_clause(_Event.away_score, observed.away_score),
+            _unmoved_clause(_Event.completed_at, observed.completed_at),
+            _unmoved_clause(_Event.commence_time, observed.commence_time),
+            # CERT-2849's required repair. `commence_time_source` was READ to
+            # authorize this write and omitted from the predicate, which left the
+            # ship raceable in the one way that matters: a HIGHER authority
+            # committing between the read and the write. The grader drove it —
+            # an independent interleave committed `espn` at the same instant, the
+            # five-column CAS still matched (no score, no status, no clock moved;
+            # only the authority did), and this statement overwrote it with
+            # `polymarket_venue` and the venue time. A source the row no longer
+            # holds now declines the row, so the later authority stands.
+            _unmoved_clause(
+                _Event.commence_time_source, observed.commence_time_source
+            ),
+        )
+        .values(
+            commence_time=writes["commence_time"],
+            commence_time_source=writes["commence_time_source"],
+        )
+    )
+    # The artifact void (`corrected_and_voided`) carries two more; a plain
+    # correction carries neither. Chained `.values()` merges into the one
+    # statement, so the write stays atomic with the comparison above.
+    if "status" in writes:
+        statement = statement.values(status=writes["status"])
+    if "completed_at" in writes:
+        statement = statement.values(completed_at=writes["completed_at"])
+
+    result = await session.execute(
+        statement.execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        return False
+    for column, value in writes.items():
+        set_committed_value(event, column, value)
+    return True
+
+
+async def _phase15_redate_write_or_shout(session, event, writes, observed, stats):
+    """:func:`phase15_redate_compare_and_write`, with its failures made LOUD.
+
+    Tri-state on purpose: ``True`` written, ``False`` the race was lost, ``None``
+    the statement itself faulted — already counted and logged here. A lost race is
+    a HEALTHY outcome of a correct rail; a fault is a broken one. Collapsing them
+    into one boolean is how the second hides inside the first's counter.
+
+    Phase 1.5's loop body ends in ``except Exception: logger.debug(...)``. That is
+    right for one bad row and wrong for a rail that cannot execute at all: a
+    statement the driver refuses would be a debug line per row, every 15 minutes,
+    forever — dead in production, green in CI, and invisible in the funnel, which
+    is the precise shape lane1b hit on the ingest side of this same issue.
+
+    So the one statement that could fail for a STRUCTURAL reason rather than a
+    row reason answers for itself: `logger.exception` plus a counter with the
+    exception's class in its name, so the funnel says which statement and why
+    without anyone having to reproduce it. The row is then left exactly as the
+    lost-race branch leaves it — nothing written, next beat tries again.
+    """
+    try:
+        return await phase15_redate_compare_and_write(
+            session, event, writes, observed,
+        )
+    # (This comment is load bearing for `scan_mutation_residue.py` Pass B —
+    # without a line here, the closing paren above plus the `noqa` below are,
+    # byte for byte, `typeahead_outcome_arm_mutations:M2-NO-LIMIT`'s replacement
+    # literal, and this file reads as mutation residue. Do not delete it. Same
+    # shape and same reason as `repair_polymarket_leg_label.py`,
+    # `polymarket_condition_refresh.py`, `matcher_pass_runs.py` and
+    # `authority_ledger.py`, which each carry one.)
+    except Exception as exc:  # noqa: BLE001 — see the docstring: this is the alarm
+        key = f"phase15_pm_venue_redate_write_error_{type(exc).__name__}"
+        stats["funnel"].setdefault(key, 0)
+        stats["funnel"][key] += 1
+        logger.exception(
+            "Conditional re-date UPDATE failed on event %s — the #6073 rail is "
+            "not writing; this is a statement fault, not a bad row",
+            getattr(event, "id", None),
+        )
+        return None
+
+
+async def phase15_link_is_valid_for_redate(session, market, event) -> tuple[bool, str]:
+    """May :func:`polymarket_venue_redate`'s answer be written onto ``event``?
+
+    CERT-2835's finding, and it is a real one:
+    ``commence_time_source == 'polymarket'`` says a Polymarket row wrote this
+    event's start. It does NOT say THIS market wrote it, and Phase 1.5 exists
+    precisely because some of the links it walks are wrong. A same-sport
+    mislinked market — Kalshi's own reproduction drove a Serena-Gauff row sitting
+    on the Mazzola-Zeltina event — passes every condition in
+    ``polymarket_venue_redate``, because all four are about the DATE and none is
+    about the PAIRING. The pass then detaches it correctly, one arm later, having
+    already persisted the wrong fixture's instant onto the event it was leaving.
+    A detach that leaves the damage behind is not a detach.
+
+    So the link is validated BEFORE the write, against the same two predicates
+    the pass itself uses to decide a link is wrong:
+
+    1. **Both of the event's teams are named by the market.** Asked as
+       ``_fuzzy_team_match(market.name, team)`` on the RAW name rather than
+       through ``extract_matchup_with_ticker_fallback``, and that difference is
+       measured, not stylistic: the grammar returns ``None`` for BOTH production
+       specimen names ("W50 Pazardzhik: Alessandra Mazzola vs Beatrise Zeltina"
+       and "Set 1 Winner: …"), so a matchup-gated check would refuse the two rows
+       this ship is for and leave the correction reachable only through the O/U
+       sibling — the luck-of-the-shard outcome the arm's placement exists to
+       avoid. Containment answers both: the surnames are in the prop's name, and
+       they are not in a market about two other players.
+    2. **Not a cross-sport link** — ``_is_cross_sport_link`` over the same
+       ``_market_sport_prefix`` / ``Sport.key`` pair the mislink arm reads below,
+       because two teams whose names collide across sports (the "Royals" case
+       that check was written for) would otherwise clear condition 1.
+
+    Both refusals are CHANGE NOTHING, never a detach: this function's job is to
+    withhold a write, and the arms below remain the only thing that moves a link.
+    An event with a team name missing is refused for the same reason — there is
+    nothing to agree with.
+
+    Returns ``(ok, reason)``; ``reason`` names the refusal for the funnel so a
+    silently-withheld correction is still countable.
+    """
+    home = (getattr(event, "home_team_name", None) or "").strip()
+    away = (getattr(event, "away_team_name", None) or "").strip()
+    name = (getattr(market, "name", None) or "").strip()
+    if not home or not away or not name:
+        return False, "unnamed"
+    if not (_fuzzy_team_match(name, home) and _fuzzy_team_match(name, away)):
+        return False, "teams_absent"
+
+    market_sport = _market_sport_prefix(market)
+    if market_sport and getattr(event, "sport_id", None):
+        from app.models.models import Sport as _Sport
+
+        event_sport_key = (
+            await session.execute(
+                select(_Sport.key).where(_Sport.id == event.sport_id)
+            )
+        ).scalar_one_or_none()
+        if _is_cross_sport_link(market_sport, event_sport_key):
+            return False, "cross_sport"
+    return True, "ok"
+
+
 async def _phase15_revalidate(
     session, stats: dict, now: datetime, _time_remaining,
     link_changes: Optional[list[MatchReceipt]] = None,
@@ -3331,6 +3839,9 @@ async def _phase15_revalidate(
             _seen_market_ids.add(market.id)
             all_linked_rows.append((market, linked_event))
 
+    # #6073: one parent read per Polymarket GROUP per beat, not per sibling.
+    _venue_start_by_group: dict = {}
+
     for market, linked_event in all_linked_rows:
         if _time_remaining() < 60:
             logger.info("Phase 1.5 time budget exhausted after %d/%d markets",
@@ -3349,6 +3860,131 @@ async def _phase15_revalidate(
                 market.llm_sport_category = ticker_cat
                 stats["funnel"].setdefault("sport_category_fixed", 0)
                 stats["funnel"]["sport_category_fixed"] += 1
+
+            # #6073 rung 2: the event this Polymarket group minted was dated from
+            # Gamma's LISTING stamp, and nothing else in the pipeline can ever
+            # re-date it (see `polymarket_venue_redate` for why the mint-time and
+            # ingest halves cannot reach an already-linked row).
+            #
+            # PLACED ABOVE THE THREE GATES BELOW, EACH OF WHICH WOULD SKIP THE
+            # MEASURED SPECIMEN, and that is the whole reason for the position:
+            #
+            # * `is_game_level_market` — MEASURED False on the production rows.
+            #   Group `polymarket:1019271` serves "W50 Pazardzhik: Alessandra
+            #   Mazzola vs Beatrise Zeltina" and "Set 1 Winner: …", both
+            #   `category='game_prop'` and both False; only the O/U sibling reads
+            #   True. Below that gate this arm would have fixed the specimen by
+            #   luck of which sibling the shard happened to hold;
+            # * the matchup `continue` — the correction needs no matchup, and a
+            #   row whose name the grammar cannot read is not a row that deserves
+            #   to keep a wrong start;
+            # * `is_auto_created` — also False here: these events carry
+            #   `external_id IS NULL`, not `pm_…`.
+            #
+            # The date is a property of the GAMMA EVENT, identical on every child
+            # of the group, so a prop row carries exactly the same truth as the
+            # moneyline. What keeps a stray prop from re-timing someone else's
+            # game is the authority check inside the helper, not this position.
+            #
+            # It also runs before the venue-fixture refusal arm further down,
+            # which asks `_check_polymarket_fixture_reason` about the CURRENT
+            # link. That ordering is the safe direction: correcting the date
+            # first means the guard is asked about an event that now carries the
+            # same instant the market does, so a corrected row stops presenting
+            # to it as a mismatch at all.
+            #
+            # THE PLACEMENT IS NOT A LICENCE TO TRUST THE LINK (CERT-2835).
+            # Running above the gates buys reach over rows this pass would
+            # otherwise skip; it buys nothing about whether the row belongs here,
+            # and the mislink arms that would answer that are a hundred lines
+            # below. So the pairing is validated HERE, explicitly, before the
+            # write — see `phase15_link_is_valid_for_redate`. A refusal changes
+            # nothing and detaches nothing; the arms below still own every link.
+            #
+            # The fixture instant is read GROUP-WIDE, because the venue puts it
+            # on the PARENT row and the parent is never iterated here — see
+            # `polymarket_group_venue_start`. The cheap authority test runs
+            # first so only a row that could actually be re-dated pays for that
+            # query.
+            redated = None
+            if polymarket_redate_is_authorized(market, linked_event):
+                redated = polymarket_venue_redate(
+                    market, linked_event,
+                    fixture=await polymarket_group_venue_start(
+                        session, market, _venue_start_by_group,
+                    ),
+                )
+            if redated is not None:
+                link_ok, _link_why = await phase15_link_is_valid_for_redate(
+                    session, market, linked_event,
+                )
+                if not link_ok:
+                    key = f"phase15_pm_venue_redate_refused_{_link_why}"
+                    stats["funnel"].setdefault(key, 0)
+                    stats["funnel"][key] += 1
+                    logger.info(
+                        "Not re-dating event %d from Polymarket %s (%s) — "
+                        "%s; the link itself is in question (#6073)",
+                        linked_event.id, market.external_id, market.name,
+                        _link_why,
+                    )
+                    redated = None
+            _observed = None
+            if redated is not None:
+                # The decision this beat made was made against the row as it was
+                # LOADED, and the batch load is minutes behind the write. Ask the
+                # database what it holds now — and keep the answer, because it is
+                # what makes the write below conditional (CERT-2836).
+                _unmoved, _observed = await phase15_event_row_is_unmoved(
+                    session, linked_event,
+                )
+                if not _unmoved:
+                    stats["funnel"].setdefault("phase15_pm_venue_redate_refused_row_moved", 0)
+                    stats["funnel"]["phase15_pm_venue_redate_refused_row_moved"] += 1
+                    logger.info(
+                        "Not re-dating event %d this beat — the row changed under "
+                        "the pass since it was loaded; next beat re-reads it (#6073)",
+                        linked_event.id,
+                    )
+                    redated = None
+            if redated is not None:
+                from app.services.event_registry import (
+                    authorized_commence_time_write,
+                )
+                _was = linked_event.commence_time
+                outcome, _writes = authorized_commence_time_write(
+                    linked_event, redated, POLYMARKET_VENUE_COMMENCE_SOURCE,
+                )
+                if outcome == "refused_inversion":
+                    stats["funnel"].setdefault("phase15_pm_venue_refused_inversion", 0)
+                    stats["funnel"]["phase15_pm_venue_refused_inversion"] += 1
+                else:
+                    _wrote = await _phase15_redate_write_or_shout(
+                        session, linked_event, _writes, _observed, stats,
+                    )
+                    if _wrote:
+                        stats["funnel"].setdefault(f"phase15_pm_venue_{outcome}", 0)
+                        stats["funnel"][f"phase15_pm_venue_{outcome}"] += 1
+                        logger.info(
+                            "Re-dated event %d from Polymarket %s: %s -> %s "
+                            "(listing stamp -> venue fixture instant, #6073)",
+                            linked_event.id, market.external_id, _was, redated,
+                        )
+                    elif _wrote is False:
+                        # The statement's own WHERE declined: something committed
+                        # between the read above and this write. Never silent —
+                        # a lost race and a no-op look identical in a counter that
+                        # only counts successes. `is False`, not `else`, because
+                        # None means the statement FAULTED and is already counted
+                        # under its own name; a healthy declined write and a
+                        # broken rail must never share a counter.
+                        stats["funnel"].setdefault("phase15_pm_venue_redate_lost_race", 0)
+                        stats["funnel"]["phase15_pm_venue_redate_lost_race"] += 1
+                        logger.info(
+                            "Re-date of event %d declined by its own WHERE — the "
+                            "row moved between the read and the write (#6073)",
+                            linked_event.id,
+                        )
 
             if not is_game_level_market(
                 market.name, market.category, external_id=market.external_id,
