@@ -976,6 +976,48 @@ jobs:
             exit 1
           fi
 
+      - name: "#6073 the stuck-status rescue declines a row that moved under it (real Postgres)"
+        # The sibling gate above guards the sweep that writes a fixture's date
+        # AND its status. This one guards the rail that writes ONLY the status —
+        # #6073's last gap, where a fixture whose kickoff was corrected by the
+        # OTHER writer (Phase 1.5, in the registry, on the heavy app) keeps the
+        # `live`/`suspended` badge it had when the date was wrong, and no
+        # deployed rail can drain it: the sweep's band excludes the row by
+        # source, and `transition_event_statuses` has no suspended→scheduled
+        # edge.
+        #
+        # It inherits CERT-2834's finding whole, and the stakes are higher here
+        # than in the sibling: writing only the status means the single column
+        # this rail touches is the single column that would be wrong. A score
+        # landing between the band SELECT and the write must decline the row,
+        # and only the write's own WHERE can do that — both the band and the
+        # pure function ran BEFORE the score arrived.
+        #
+        # A session double cannot grade it, for the sibling's reasons: under a
+        # fake, `IS NOT DISTINCT FROM` and `=` are the same characters in a
+        # recorded string, and six of the eight compared columns are NULL on
+        # every production row — the shape where that difference is the
+        # difference between a working rail and one that repairs nothing while
+        # reporting success.
+        #
+        # The corpus is seeded from the SERVER's own `now()`, never a literal
+        # date, because the band's WHERE says `commence_time > now()`: a
+        # hardcoded timestamp would drift into the past within days, empty the
+        # band, and leave every "declined" arm passing because nothing was ever
+        # selected (gotcha #44). The premise arm runs first and is what makes
+        # the rest non-vacuous.
+        #
+        # Same skip-detection as every gate in this job, for the same reason.
+        run: |
+          set -o pipefail
+          python -m pytest \
+            tests/integration/test_polymarket_stuck_status_atomicity_6073_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/stuck_status_6073.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/stuck_status_6073.txt; then
+            echo "::error::#6073 stuck-status atomicity gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#5918 the league rail loads the sport the fold reads (real Postgres)"
         # CERT-2805's finding, and it is a reach defect rather than a logic one:
         # the soccer name-pair fold worked and never fired on the page. All three

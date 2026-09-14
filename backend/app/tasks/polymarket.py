@@ -1025,6 +1025,18 @@ async def _poll_polymarket_markets():
         stats["errors"].append(f"redate: {e}")
         logger.exception("Polymarket re-date sweep (#6073) failed")
 
+    # #6073's last gap, and it runs AFTER the sweep above deliberately. The two
+    # are independent — this one is keyed on the row's own contradiction, not on
+    # either writer — but the sweep can itself produce a row this band covers if
+    # its status arm is ever skipped, and a drain that runs BEFORE its likeliest
+    # producer waits a whole poll to see the row. Its own try/except for the same
+    # reason the sweep has one: one repair must not cost the poll its stats.
+    try:
+        stats["stuck_future_status"] = await rescue_stuck_future_status_events()
+    except Exception as e:  # noqa: BLE001 - one repair must not fail a whole poll
+        stats["errors"].append(f"stuck_status: {e}")
+        logger.exception("Stuck-status rescue (#6073) failed")
+
     stats["total_api_events"] = len(seen_ids)
     logger.info(
         "Polymarket poll: %d API events → %d processed, %d markets, %d outcomes, %d snapshots, %d crypto skipped, %d errors | by_category: %s",
@@ -1359,6 +1371,133 @@ REDATE_WRITE_WITH_STATUS_SQL = f"""
         commence_time_source = :src,
         status = :status
     {_REDATE_UNCHANGED_WHERE}
+"""
+
+
+#: The rows whose own two columns contradict each other: a venue-dated fixture
+#: standing `live` or `suspended` over a kickoff that has not happened yet.
+#:
+#: WHY THIS BAND EXISTS SEPARATELY FROM THE ONE ABOVE, which is the whole point.
+#: The sweep above repairs `commence_time_source = 'polymarket'` and its write
+#: sets that column to `polymarket_venue` — so **every row it repairs leaves its
+#: population permanently**, and it can never re-select one. Phase 1.5 in the
+#: registry (#6073's other half, lane1's) writes the same corrected date onto
+#: already-linked rows the group-keyed sweep above structurally cannot reach —
+#: measured 2026-09-14: **47 events in 26 multi-event groups**, excluded by the
+#: sweep's `n_events = 1` gate because a group-level aggregate cannot tell a twin
+#: from a different fixture. Of those 47, **12 have a venue start still in the
+#: future**. Phase 1.5 writes the DATE and not the STATUS, and
+#: `transition_event_statuses` has no `suspended → scheduled` edge (its four are
+#: scheduled→live, live→suspended, suspended→live, suspended→retired). So the
+#: moment `bainluck-heavy` carries that writer, ~12 rows enter a state **no
+#: deployed rail can drain**: an honest date reading "No result reported".
+#:
+#: This band is keyed on neither rail, which is what makes it order-independent.
+#: It asks the row a question the row alone can answer — *you say you are live or
+#: stale, and you say you start next week; which is it?* — so it drains the class
+#: whichever writer produced it, in either execution order, and keeps draining it
+#: if a third writer appears. `poll_polymarket_markets` is NOT in `HEAVY_TASKS`,
+#: so this ships with the ordinary web release and is live BEFORE the attended
+#: heavy deploy that arms the writer producing the population.
+#:
+#: Scoped to `polymarket_venue` ON PURPOSE, and the other branch was counted
+#: before the scope was chosen. The self-contradiction is decidable for any
+#: source, and the whole class is **0 rows across every source** today (measured
+#: 2026-09-14 11:52Z). Widening to all sources would adopt other providers'
+#: status semantics — a postponed ESPN fixture carrying a future rescheduled date
+#: may mean `suspended` honestly — on a population this lane has never measured
+#: over time. `polymarket_venue` is the one value that means "we positively
+#: established this kickoff from the venue's own listing", so it is the one date
+#: a status may be asserted against. Rows still stamped `polymarket` carry the
+#: listing stamp this ship exists to distrust and are deliberately left to the
+#: sweep above, which fixes their date and status in ONE statement.
+STUCK_FUTURE_STATUS_SQL = """
+    SELECT e.id            AS event_id,
+           e.commence_time AS event_commence,
+           e.completed_at  AS completed_at,
+           e.home_score    AS home_score,
+           e.away_score    AS away_score,
+           e.period        AS period,
+           e.game_clock    AS game_clock,
+           e.status        AS status
+    FROM events e
+    WHERE e.commence_time_source = :venue_src
+      AND e.status IN ('live', 'suspended')
+      AND e.commence_time > now()
+      AND e.completed_at IS NULL
+      AND e.home_score IS NULL
+      AND e.away_score IS NULL
+      AND e.period IS NULL
+      AND e.game_clock IS NULL
+    ORDER BY e.id
+"""
+
+
+#: The same compare-and-write discipline CERT-2834 required of the sweep above,
+#: for the same reason: selecting a row into a repair band is not permission to
+#: write over it. The realtime score poll writes into exactly this band, and a
+#: score landing between the select and the write means the game HAS started —
+#: at which point `scheduled` is the lie, not `live`.
+#:
+#: Every column the decision read is re-asserted, and `IS NOT DISTINCT FROM`
+#: rather than `=` because six of the seven are nullable and NULL is their common
+#: value — an `=` form would match nothing and the rail would repair zero rows
+#: while reporting success.
+#:
+#: The casts are belt-and-braces here, and that is a MEASUREMENT rather than the
+#: sibling's inherited claim. `_REDATE_UNCHANGED_WHERE` above says every bind must
+#: be CAST because `IS NOT DISTINCT FROM $1` leaves asyncpg no parameter type to
+#: infer; true there, where binds meet `jsonb->>` expressions. Measured against a
+#: real server 2026-09-14, removing all eight casts from THIS statement changes
+#: nothing — every bind sits opposite a typed column and Postgres infers it. They
+#: stay for symmetry and cost nothing, but nobody should believe they are what
+#: keeps this rail alive. `commence_time` and
+#: `commence_time_source` are both here even though this statement writes
+#: neither: they are the premise ("a venue-established kickoff, in the future"),
+#: and a repair that reconciles exactly while a column it never looked at moves
+#: underneath is a failure this codebase has already had once.
+#: CERT-2858'S FOLLOW-UP, AND WHY IT IS SPELLED `clock_timestamp()`. The review
+#: asked for `e.commence_time > now()` here: the tuple guard below preserves the
+#: SELECTED kickoff, but nothing re-evaluated that the kickoff is STILL in the
+#: future if wall time crossed it between the select and the write. Real, and
+#: worth closing — a long lock wait, or simply a large band, and the rail commits
+#: `scheduled` onto a match that started while it worked.
+#:
+#: But `now()` is `transaction_timestamp()`, and this pass runs its SELECT and
+#: every one of its UPDATEs inside ONE transaction. Measured on a real server
+#: 2026-09-14, in one transaction across a 1-second sleep: `now()` returned
+#: `05:18:00.183978` before AND after, while `clock_timestamp()` moved
+#: `05:18:00.191642` → `05:18:01.204789`. So the recommended form compares the
+#: kickoff against the same instant the band already compared it against, can
+#: never decline anything, and would sit here reading exactly like a guard.
+#: `clock_timestamp()` is statement-time and is the one that fires.
+_STUCK_STATUS_UNCHANGED_WHERE = """
+    WHERE e.id = :id
+      AND e.commence_time > clock_timestamp()
+      AND e.commence_time IS NOT DISTINCT FROM CAST(:was_commence AS timestamptz)
+      AND e.commence_time_source IS NOT DISTINCT FROM CAST(:venue_src AS text)
+      AND e.status IS NOT DISTINCT FROM CAST(:was_status AS text)
+      AND e.home_score IS NOT DISTINCT FROM CAST(:was_home_score AS integer)
+      AND e.away_score IS NOT DISTINCT FROM CAST(:was_away_score AS integer)
+      AND e.period IS NOT DISTINCT FROM CAST(:was_period AS text)
+      AND e.game_clock IS NOT DISTINCT FROM CAST(:was_game_clock AS text)
+      AND e.completed_at IS NOT DISTINCT FROM CAST(:was_completed_at AS timestamptz)
+"""
+
+#: The status alone. The date is correct by this band's own premise — that is
+#: what `commence_time > now()` on a `polymarket_venue` row MEANS — so there is
+#: nothing to move, and moving it would overwrite the venue's own statement.
+#:
+#: This is not the hazard `REDATE_WRITE_WITH_STATUS_SQL` warns about, and the
+#: difference is worth stating because the two comments look contradictory. There,
+#: a status written without the date leaves a start in the PAST, and
+#: `espn_sync`'s `commence_time <= now` arm promotes the row straight back to
+#: `live` within a beat. Here the start is in the FUTURE, so that arm does not
+#: fire until the real hour — which is precisely the behaviour wanted.
+STUCK_STATUS_WRITE_SQL = f"""
+    UPDATE events AS e
+    SET status = :status
+    {_STUCK_STATUS_UNCHANGED_WHERE}
 """
 
 
@@ -1741,6 +1880,157 @@ async def redate_polymarket_listing_stamped_events() -> dict:
             stats["scanned"], stats["moved"], stats["rescheduled"],
             stats["skipped_multi_event_group"], stats["skipped_ambiguous_stamp"],
             stats["skipped_no_change"], stats["skipped_raced"],
+        )
+        return stats
+
+
+def stuck_status_target(
+    *,
+    status,
+    event_commence,
+    now,
+    completed_at=None,
+    home_score=None,
+    away_score=None,
+    period=None,
+    game_clock=None,
+) -> Optional[str]:
+    """Is this row's status refuted by its own kickoff, and what should it be?
+
+    ``None`` ⇒ leave the row alone. Pure, so every refusal is provable without a
+    database — and deliberately built from the SAME four refusals as
+    ``redate_target`` so the two rails cannot drift into disagreeing about what
+    "nothing has been reported on this game" means.
+
+    The refusals:
+
+    * **Only ``live`` and ``suspended`` are refutable.** Those two both assert the
+      match has begun. ``scheduled`` already agrees with a future start; a
+      settled/closed/retired row is a state this rail has no standing to reopen.
+    * **The start must be in the FUTURE.** This is the entire evidence. A start in
+      the past makes ``live`` or ``suspended`` perfectly honest, and a rail that
+      rewrote those would un-start real games — the mirror image of the defect
+      #6073 is about.
+    * **Any evidence of play refuses the row.** A score — even ``0`` — a period or
+      a running clock all mean something was reported on this game, and a row
+      something was reported on is not one we may badge as not yet begun. This is
+      the guard that matters most here: it is what stands between this rail and
+      the race the compare-and-write also covers, and it is asserted in the band,
+      in this function, and in the write's own ``WHERE``.
+    * **``completed_at`` refuses the row.** A finished match dated into the future
+      is a violated invariant (gotcha #46) and a cross-event merge symptom — a
+      MATCHING defect to be reported, never something to tidy away by re-badging
+      the row as upcoming.
+
+    Nothing here reads a provider, a market, a group or a stamp. That is the
+    design: the contradiction is decidable from the row alone, so the repair is
+    independent of which writer produced it and of the order the writers ran in.
+    """
+    if status not in ("live", "suspended"):
+        return None
+    if event_commence is None:
+        return None
+    if (
+        home_score is not None
+        or away_score is not None
+        or period is not None
+        or game_clock is not None
+    ):
+        return None
+    if completed_at is not None:
+        return None
+    start = (
+        event_commence
+        if event_commence.tzinfo
+        else event_commence.replace(tzinfo=timezone.utc)
+    )
+    reference = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+    if start <= reference:
+        return None
+    return "scheduled"
+
+
+async def rescue_stuck_future_status_events() -> dict:
+    """Un-stick venue-dated fixtures badged live/stale over a future kickoff.
+
+    #6073's last gap. See ``STUCK_FUTURE_STATUS_SQL`` for the population, why it
+    is keyed on the row rather than on either writer, and the measured 12 rows
+    that enter it when `bainluck-heavy` carries the registry's Phase 1.5.
+
+    Returns a stats dict so a sweep that repairs nothing says so out loud rather
+    than reading as a success (``app/utils/task_verdict.py``). **A zero here is
+    the expected reading today** — the class is measured empty until the heavy
+    deploy lands — and that is exactly why it is counted rather than logged only
+    when non-zero: the number going from 0 to 12 and back to 0 is the evidence
+    this rail works.
+    """
+    stats = {
+        "scanned": 0,
+        "rescheduled": 0,
+        "skipped_not_refuted": 0,
+        "skipped_raced": 0,
+    }
+    async with get_task_session() as session:
+        result = await session.execute(
+            text(STUCK_FUTURE_STATUS_SQL),
+            {"venue_src": POLYMARKET_VENUE_COMMENCE_SOURCE},
+        )
+        rows = result.fetchall()
+        now = datetime.now(timezone.utc)
+
+        for r in rows:
+            stats["scanned"] += 1
+            # Re-asserted here as well as in the band so every refusal is
+            # provable in a unit test, and so an edit to either place cannot
+            # quietly drop one of them.
+            new_status = stuck_status_target(
+                status=r.status,
+                event_commence=r.event_commence,
+                now=now,
+                completed_at=r.completed_at,
+                home_score=r.home_score,
+                away_score=r.away_score,
+                period=r.period,
+                game_clock=r.game_clock,
+            )
+            if new_status is None:
+                stats["skipped_not_refuted"] += 1
+                continue
+            written = await session.execute(
+                text(STUCK_STATUS_WRITE_SQL),
+                {
+                    "status": new_status,
+                    "id": r.event_id,
+                    "venue_src": POLYMARKET_VENUE_COMMENCE_SOURCE,
+                    "was_commence": r.event_commence,
+                    "was_status": r.status,
+                    "was_home_score": r.home_score,
+                    "was_away_score": r.away_score,
+                    "was_period": r.period,
+                    "was_game_clock": r.game_clock,
+                    "was_completed_at": r.completed_at,
+                },
+            )
+            if (written.rowcount or 0) == 0:
+                # The row moved under us — most likely a score landed, which
+                # means the game really has started and `scheduled` would have
+                # been the lie. Counted and named, never silent.
+                stats["skipped_raced"] += 1
+                logger.info(
+                    "Stuck-status rescue (#6073): event %s changed between "
+                    "selection and write — left alone",
+                    r.event_id,
+                )
+                continue
+            stats["rescheduled"] += 1
+
+        if stats["rescheduled"]:
+            await session.commit()
+        logger.info(
+            "Stuck-status rescue (#6073): scanned %d, rescheduled %d, "
+            "skipped %d not refuted / %d raced",
+            stats["scanned"], stats["rescheduled"],
+            stats["skipped_not_refuted"], stats["skipped_raced"],
         )
         return stats
 
