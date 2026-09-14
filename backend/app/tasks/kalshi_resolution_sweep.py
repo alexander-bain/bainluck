@@ -111,6 +111,52 @@ RECENT_FINAL_WINDOW_HOURS = 6
 #: not a claim about how long games last.
 LIVE_EVENT_WINDOW_HOURS = 12
 
+#: How far back the SUSPENDED arm's band reaches, in hours — #5596.
+#:
+#: 14 days, and the number is a leash rather than a claim. A `suspended` event
+#: never reaches a terminal status on its own (#5881: 59 finished MLB games have
+#: been frozen there since Sep 2), so unlike `completed_at` there is no clock
+#: ticking that would retire a row from this band by itself — without a floor a
+#: stuck event would be re-asked at the venue every 10 minutes forever. 14 days
+#: covers the whole live population with slack: measured on production
+#: 2026-09-14 05:17Z the OLDEST suspended open KX market commenced 2026-09-03
+#: 18:50Z, ten days back.
+SUSPENDED_EVENT_WINDOW_HOURS = 336
+
+#: How far a leg's stored probability may sit from the midpoint of its OWN
+#: two-sided book before the row is treated as frozen — #5596.
+#:
+#: This is the second freeze signature, and it is the complement of #5024's
+#: empty book rather than a variation on it. When Kalshi finalizes a market the
+#: book can be left behind in either of two states, and which one we keep is an
+#: accident of when the last poll landed: BOTH sides gone (`yes_bid = 0 AND
+#: yes_ask = 1`, #5024's screen), or the last live two-sided quote frozen in
+#: place while `current_probability` has already run to the settlement tail. The
+#: second is invisible to every existing screen precisely because it looks
+#: healthy — a tight, plausible book.
+#:
+#: The row REFUTES ITSELF, so no ground truth is needed to select it: market
+#: 60790861 leg `KXEPLSCORE-26SEP12SUNARS-SUN0ARS2` served `current_probability`
+#: 0.99 against its own `0.1300 / 0.1400` book, whose midpoint agrees with both
+#: `opening_probability` 0.135 and `current_american_odds` +641. One of those two
+#: numbers is a lie and the row says so unaided.
+#:
+#: AND THE LIE IS THE BOOK, NOT THE 0.99 — worth stating, because the obvious
+#: reading of "99% against a 13% book" is that the 99% must be withdrawn. Asked at
+#: the venue, that leg (`Arsenal wins 2-0`) settled **`result='yes'`**, and #5596's
+#: own headline specimen settled the same way (`KXJLEAGUEGAME-26SEP12MACMAR-TIE`,
+#: `result='yes'` — the J-League match really did end a draw). The probability had
+#: converged on the truth; the two-sided quote beside it is the relic, frozen by
+#: the last poll before close. So this arm exists to stop the pair being presented
+#: as a LIVE price, not to suppress the number — which is also why it is safe for
+#: the write to leave every price exactly where it is.
+#:
+#: 0.10 measured, not chosen: over the 30 sampled suspended markets carrying this
+#: signature on 2026-09-14 05:16Z, 26 (87%) were `finalized` at the venue. It is a
+#: SCREEN, NOT A VERDICT — `derive_venue_settlement` still decides, and the other
+#: 4 cost one question and no write (`UPDATE_SQL`'s `ELSE status`).
+FROZEN_BOOK_GAP = 0.10
+
 #: What ONE run of the event-driven arm may touch.
 #:
 #: 200 against a measured 603-leg six-hour population, ordered freshest-final
@@ -184,6 +230,32 @@ RECENT_FINAL_BATCH_LIMIT = 200
 #: FINALS STILL WIN THE BATCH. `completed_at DESC NULLS LAST` sorts every
 #: finished game ahead of every live one, so the live arm can only ever consume
 #: batch capacity a final did not want. #4655's 30-minute bar is unchanged.
+#:
+#: THE SUSPENDED ARM — #5596, and the reason the two arms above reach NONE of it.
+#: Both are keyed on our own event reaching a terminal-ish status, and a
+#: `suspended` event never does. Measured over #5596's whole Kalshi population on
+#: 2026-09-14 05:16Z — 51 markets / 114 legs, every one of them `finalized` at the
+#: venue (114/114, asked by ticker) — the linked events read `suspended` (44) or
+#: `scheduled` (7), `completed_at` NULL on all 51. Run against those ids the
+#: completed arm selects 0, the live arm selects 0, and PR #5913's pre-kick-off
+#: scope selects 0. Not late: unreachable.
+#:
+#: WHAT THE READER SEES WITHOUT IT. `Machida Z vs Marinos`, a J-League game that
+#: had already been played: `Tie` served at **99%** with both teams at **1%**,
+#: over a coherent book naming Marinos the ~70% favourite — three numbers summing
+#: to 101% on a page presenting a finished match as live (#5596, filed by ux/1213).
+#:
+#: WHY `suspended` AND NOT ALSO `scheduled` OR THE UNLINKED ROWS. Precision,
+#: measured the same minute by asking Kalshi about 30 markets per bucket carrying
+#: the frozen signature: `suspended` **26/30 finalized (87%)**, `scheduled` 7/28
+#: (25%), and markets with NO linked event **1/26 (4%)** — 485 of them, nearly all
+#: genuinely trading. Widening past `suspended` would spend a venue read every 10
+#: minutes, forever, on markets that are perfectly healthy, because a row that is
+#: never settled never leaves the selection. The unlinked rows are a real gap
+#: (`JOIN events` cannot see them at all) and they are NOT this ship.
+#:
+#: FINALS STILL WIN, unchanged: a suspended event has `completed_at` NULL, so
+#: `NULLS LAST` keeps every one of these behind every genuine final.
 RECENT_FINAL_SELECT_SQL = """
     SELECT fm.id, fm.external_id, fm.resolution_date, fm.commence_time,
            fm.market_tier
@@ -208,6 +280,32 @@ RECENT_FINAL_SELECT_SQL = """
                      WHERE fo.market_id = fm.id
                        AND fo.current_yes_bid = 0
                        AND fo.current_yes_ask = 1
+              )
+            )
+         OR (
+              e.status = 'suspended'
+              AND e.commence_time IS NOT NULL
+              AND e.commence_time >= :suspended_floor
+              AND EXISTS (
+                    SELECT 1
+                      FROM futures_outcomes fo
+                     WHERE fo.market_id = fm.id
+                       AND (
+                             -- #5024's signature: both sides gone.
+                             (fo.current_yes_bid = 0 AND fo.current_yes_ask = 1)
+                             -- #5596's: a tight two-sided book frozen beside a
+                             -- probability that has already run to the tail.
+                             -- The row refutes itself; see FROZEN_BOOK_GAP.
+                          OR (
+                               fo.current_yes_bid > 0
+                               AND fo.current_yes_ask < 1
+                               AND fo.current_probability IS NOT NULL
+                               AND ABS(
+                                     fo.current_probability
+                                     - (fo.current_yes_bid + fo.current_yes_ask) / 2
+                                   ) > CAST(:frozen_gap AS numeric)
+                             )
+                           )
               )
             )
       )
@@ -1148,6 +1246,8 @@ async def run_recent_finals(
     apply: bool = True,
     window_hours: int = RECENT_FINAL_WINDOW_HOURS,
     live_window_hours: int = LIVE_EVENT_WINDOW_HOURS,
+    suspended_window_hours: int = SUSPENDED_EVENT_WINDOW_HOURS,
+    frozen_gap: float = FROZEN_BOOK_GAP,
     session_maker: Optional[Callable] = None,
     client_factory: Optional[Callable[[], object]] = None,
     now: Optional[datetime] = None,
@@ -1185,6 +1285,18 @@ async def run_recent_finals(
     book so a normally-trading market is never asked about, and ordered so a
     finished game still takes the batch first.
 
+    AND THE SUSPENDED ARM — #5596. Both arms above key on our own event reaching
+    `completed` or `live`, and a `suspended` event reaches neither, ever. Over
+    #5596's entire Kalshi population (51 markets / 114 legs, 114/114 `finalized`
+    at the venue on 2026-09-14 05:16Z) the linked events read `suspended` or
+    `scheduled` with `completed_at` NULL, so both arms select ZERO of them and the
+    rows sat `status='open'` serving a played J-League game as `Tie 99%` over a
+    book naming the other side. Screened by the two freeze signatures — #5024's
+    empty book, or a two-sided book that contradicts its own stored probability by
+    more than `FROZEN_BOOK_GAP` — at a measured 87% precision, and leashed to
+    `SUSPENDED_EVENT_WINDOW_HOURS` because nothing else would ever retire a stuck
+    event from the band.
+
     WHAT IT DOES NOT DO. It writes no grade — never ``is_winner``, never a price.
     That constraint is CAL-P061's and #1852's and it is inherited unchanged,
     because it belongs to the shared write (``UPDATE_SQL``) rather than to any
@@ -1196,6 +1308,7 @@ async def run_recent_finals(
     now = now or datetime.now(timezone.utc)
     final_floor = now - timedelta(hours=window_hours)
     live_floor = now - timedelta(hours=live_window_hours)
+    suspended_floor = now - timedelta(hours=suspended_window_hours)
     maker = session_maker or default_session_maker()
 
     async with maker() as session:
@@ -1205,6 +1318,8 @@ async def run_recent_finals(
                 {
                     "final_floor": final_floor,
                     "live_floor": live_floor,
+                    "suspended_floor": suspended_floor,
+                    "frozen_gap": frozen_gap,
                     "limit": limit,
                 },
             )
@@ -1229,6 +1344,9 @@ async def run_recent_finals(
     report["final_floor"] = final_floor.isoformat()
     report["live_window_hours"] = live_window_hours
     report["live_floor"] = live_floor.isoformat()
+    report["suspended_window_hours"] = suspended_window_hours
+    report["suspended_floor"] = suspended_floor.isoformat()
+    report["frozen_gap"] = frozen_gap
     report["batch_limit"] = limit
     # A full batch means finals are arriving faster than one run drains them, so
     # the NEXT run still has a backlog and the 30-minute bar is at risk. Named on
