@@ -2064,6 +2064,31 @@ jobs:
             exit 1
           fi
 
+      - name: "#678 account deletion actually deletes (real Postgres)"
+        # App Store Guideline 5.1.1(v). `DELETE /api/auth/me` was
+        # `await db.delete(user)`, which 500s for any account carrying
+        # preferences, a pin or a device token — i.e. every signed-in iOS
+        # account — because three relationships declare no delete cascade and
+        # four foreign keys to `users.id` are NO ACTION.
+        #
+        # Real Postgres because every way it was broken is a constraint the
+        # database enforces and a mock session cannot: a NOT NULL violation
+        # from the ORM's cascade NULLing `user_id`, and a foreign key refusing
+        # the DELETE outright. The existing unit test asserts
+        # `mock_db.delete.assert_called_once_with(user)` and was green for the
+        # whole time deletion was impossible.
+        #
+        # Same skip-detection as every gate in this job: a rejected submission
+        # is an expensive way to find out the gate never ran.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_account_deletion_678_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/delete678.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/delete678.txt; then
+            echo "::error::#678 account-deletion gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

@@ -27,6 +27,21 @@ struct MyStuffView: View {
     @Environment(\.openWindow) private var openWindow
     #endif
 
+    /// Whether the gear that leads to Preferences — and so to Delete Account —
+    /// is offered. Being signed in is the whole test.
+    ///
+    /// This used to also require `onboardingCompleted`, and on iPhone the gear
+    /// is the ONLY route to Preferences (there is no Preferences tab; iPad has
+    /// a sidebar item instead). So a freshly created account that had not
+    /// finished onboarding could not reach account deletion at all — which is
+    /// what App Review found on 2026-05-25 under Guideline 5.1.1(v) (#678).
+    /// `onboardingCompleted` is taken as a parameter deliberately: it is the
+    /// thing that must NOT matter, and a caller passing either value gets the
+    /// same answer.
+    static func showsSettingsEntry(isAuthenticated: Bool, onboardingCompleted: Bool) -> Bool {
+        isAuthenticated
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             Group {
@@ -45,11 +60,22 @@ struct MyStuffView: View {
             .navigationBarTitleDisplayMode(.large)
             #endif
             .toolbar {
-                if authManager.isAuthenticated && authManager.user?.onboardingCompleted == true {
+                // Gated on being SIGNED IN and nothing else. It used to also
+                // require `onboardingCompleted`, which on iPhone hid the only
+                // route to Preferences — and so the only route to Delete
+                // Account — from exactly the account App Review creates: a
+                // brand-new sign-in that has not finished onboarding. That is
+                // the "no option to initiate account deletion was found" of
+                // the May 25 rejection (Guideline 5.1.1(v), #678).
+                if Self.showsSettingsEntry(
+                    isAuthenticated: authManager.isAuthenticated,
+                    onboardingCompleted: authManager.user?.onboardingCompleted == true
+                ) {
                     ToolbarItem(placement: .confirmationAction) {
                         NavigationLink(value: Route.preferences) {
                             Image(systemName: "gearshape")
                                 .font(.body)
+                                .accessibilityLabel("Settings")
                         }
                     }
                 }

@@ -174,10 +174,20 @@ final class AuthManager: ObservableObject {
     // MARK: - Delete Account
 
     /// Deletes the user's account on the backend, then clears all local state.
+    ///
+    /// The session identity is rotated, not merely signed out of. The server
+    /// keeps three de-identified rows — a prediction challenge another person
+    /// joined, a filed bug report, the search-quality log — and blanks the
+    /// account id on each. They also carry a `session_id`, and this device's
+    /// is persistent, so continuing to send it would keep those rows tied to
+    /// this installation and to everything it did afterwards (#678,
+    /// Guideline 5.1.1(v), CERT-2870). Ordered after the request so a failed
+    /// deletion does not throw away an identity the account still uses.
     func deleteAccount() async throws {
         let _: [String: String] = try await APIClient.shared.deleteAccount()
+        await APIClient.shared.rotateSessionIdentity()
         signOut()
-        logger.info("Account deleted and signed out")
+        logger.info("Account deleted, session identity rotated, and signed out")
     }
 
     // MARK: - Sign Out

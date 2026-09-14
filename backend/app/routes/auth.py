@@ -11,18 +11,89 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import delete as sa_delete, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import get_current_user
-from app.models.models import User, UserPreference
+from app.models.models import (
+    BugReport,
+    DeviceToken,
+    DiscoverInteraction,
+    OscarsPoolMember,
+    PredictionChallenge,
+    SearchQueryLog,
+    User,
+    UserFavorite,
+    UserPin,
+    UserPrediction,
+    UserPreference,
+    UserSeenMarket,
+)
 from app.services.database import get_db, get_db_rw
 from app.services.firebase_auth import verify_id_token, is_configured, get_or_create_firebase_user, create_custom_token, verify_apple_id_token
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# --- Account deletion: what "and all associated data" means ---------------
+#
+# Every column in the schema that points at ``users.id`` appears in exactly one
+# of the two lists below, and `test_account_deletion_678.py` fails if a new one
+# is added to the models without being placed here. That guard is the point:
+# the failure mode this endpoint had is silent — a table nobody remembered
+# either blocks the delete with a foreign key or keeps a person's rows after
+# their account is gone.
+
+#: Rows that ARE the user's own data. Ordered children-first so the foreign
+#: keys that have no ON DELETE CASCADE (user_favorites, device_tokens,
+#: oscars_pool_members) are gone before the user row is removed.
+_ACCOUNT_OWNED_ROWS = [
+    (UserPreference, UserPreference.user_id),
+    (UserPin, UserPin.user_id),
+    (UserFavorite, UserFavorite.user_id),
+    (DeviceToken, DeviceToken.user_id),
+    (OscarsPoolMember, OscarsPoolMember.user_id),
+    (UserPrediction, UserPrediction.user_id),
+    (UserSeenMarket, UserSeenMarket.user_id),
+    (DiscoverInteraction, DiscoverInteraction.user_id),
+]
+
+#: Rows that belong to something other than the account and would damage
+#: another user or Alex's operational record if they vanished — a challenge
+#: other people joined, a filed bug, the search-quality corpus. The row stays;
+#: every field that identifies the person is blanked.
+#:
+#: "Identifies the person" is wider than ``user_id``, and getting that wrong is
+#: how a row survives de-identification still pointing at someone:
+#:
+#: * ``bug_reports.user_email`` is the profile address copied out at submission
+#:   time — a direct identifier that clearing ``user_id`` leaves untouched;
+#: * ``session_id`` (``creator_session_id`` on a challenge) is the device's
+#:   persistent anonymous identity, which the app stores in `UserDefaults` and
+#:   reuses forever. Left in place it re-links these rows to the installation
+#:   AND to everything that installation does next. The client rotates its
+#:   session identity on a successful deletion for the same reason; both halves
+#:   are needed, because this one cannot reach rows the account never owned.
+#:
+#: ``prediction_challenges.friend_session_id`` is deliberately NOT blanked: it
+#: identifies the OTHER participant, and erasing it would delete a third
+#: party's data in the name of protecting this one.
+_ACCOUNT_DEIDENTIFIED_ROWS = [
+    (
+        PredictionChallenge,
+        PredictionChallenge.creator_user_id,
+        {"creator_user_id": None, "creator_session_id": None},
+    ),
+    (
+        BugReport,
+        BugReport.user_id,
+        {"user_id": None, "user_email": None, "session_id": None},
+    ),
+    (SearchQueryLog, SearchQueryLog.user_id, {"user_id": None, "session_id": None}),
+]
 
 
 # --- Request/Response schemas ---
@@ -653,7 +724,41 @@ async def delete_account(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_rw),
 ):
-    """Delete the current user's account and all associated data."""
-    await db.delete(user)
-    logger.info(f"User account deleted: id={user.id}")
+    """Permanently delete the current user's account and all associated data.
+
+    App Store Guideline 5.1.1(v): the account and the data associated with it
+    must actually go, not be deactivated.
+
+    This does NOT go through ``db.delete(user)``. ``User.favorites``,
+    ``.preferences`` and ``.pins`` declare no delete cascade, so the ORM's
+    delete cascade NULLs a NOT NULL ``user_id`` and the request 500s; and
+    ``device_tokens`` / ``oscars_pool_members`` / ``prediction_challenges``
+    hold a NO ACTION foreign key the ORM never sees, which blocks the DELETE at
+    the database. Measured on real Postgres: an account carrying preferences, a
+    pin or a device token — which is every signed-in iOS account — could not be
+    deleted at all. Every row is therefore removed with Core, children first
+    (gotcha #5), and the user row last.
+    """
+    user_id = user.id
+
+    # The user's own data: removed outright.
+    for model, column in _ACCOUNT_OWNED_ROWS:
+        await db.execute(sa_delete(model).where(column == user_id))
+
+    # Shared or operational artifacts that outlive the account: the row stays,
+    # every link back to the person is erased.
+    for model, column, blanked in _ACCOUNT_DEIDENTIFIED_ROWS:
+        await db.execute(
+            sa_update(model).where(column == user_id).values(**blanked)
+        )
+
+    # The ORM object is now stale. `expunge` RAISES on an instance that is not
+    # in this session, and whether it is depends on FastAPI handing
+    # `get_current_user` and this handler the same cached session — true today,
+    # but a 500 on "delete my account" is not a thing to leave resting on that.
+    if user in db:
+        db.expunge(user)
+    await db.execute(sa_delete(User).where(User.id == user_id))
+
+    logger.info(f"User account deleted: id={user_id}")
     return {"status": "deleted"}
