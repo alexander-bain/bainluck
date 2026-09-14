@@ -4602,3 +4602,148 @@ def test_the_mlb_void_repair_is_given_a_captured_decision_never_a_fresh_read_605
     )
     written = {k.value for k in values_arg.keys if isinstance(k, ast.Constant)}
     assert written == {"status", "completed_at", "home_score", "away_score"}, written
+
+
+# ---------------------------------------------------------------------------
+# 10. THE THIRD POPULATION — THE CHART, WHICH DOES NOT HEAL
+#
+# The two censuses above ask one question: can a writer put an overtaken
+# position on the ROW. This asks the other one: can a writer put an overtaken
+# position in `score_snapshots`. They are not the same question, and the second
+# answer is the worse one, because the two tables fail differently:
+#
+#   the row      is a CURRENT value. A reversion on it lasts until the next
+#                write, which is seconds away, and the next correct observation
+#                erases the evidence along with the defect.
+#   a snapshot   is an APPEND. A reversion written here is served by
+#                `/api/events/{id}/history` — the Score Differential chart —
+#                for as long as the row exists. Nothing later overwrites it and
+#                no repair runs over it.
+#
+# So a gate that keeps a refused score off the row and lets it reach this table
+# has converted a flicker into a permanent artefact, which is a WORSE outcome
+# than not having guarded at all.
+#
+# MEASURED, production 2026-09-14, event 14637256 (Giants v Cowboys, the marquee
+# Sunday-night game and the specimen #6056 was filed on): 49 snapshots, **20 of
+# them lower than the snapshot before**, including `0-0` twice AFTER `7-0` — a
+# state that game never held. Still drawn on the page today, because these rows
+# predate the writer conversions (the last of which reached production at
+# release v4521, 09:39Z) and nothing removes them.
+#
+# WHY A CENSUS AND NOT JUST THE THREE BEHAVIOURAL TESTS. Each appender's gate
+# already has a test that drives it (named per entry below). What no test had
+# was the POPULATION: a fourth appender — or an existing one growing a second
+# `session.add` on a different branch — lands in no test at all and this suite
+# stays green. That is the exact failure that hid `repair_inverted_mlb_events`
+# through four presentations of this ship, and the fix is the same one: discover
+# the population, declare the reason, assert both directions.
+# ---------------------------------------------------------------------------
+
+#: Every function that constructs a `ScoreSnapshot`, with the gate that stops it
+#: appending an observation the row-write refused. All three are functions the
+#: censuses above already track, which is not a coincidence: an appender is a
+#: live-state writer that also writes down what it saw, so the gate it needs is
+#: the one it already computed for the row.
+_DECLARED_SNAPSHOT_APPENDERS = {
+    "espn_helpers.update_event_fields_from_espn": (
+        "GATED ON `_live_write_landed` — the return of "
+        "`write_live_state_if_unmoved`, so the append is dead whenever the "
+        "compare-and-write refused. Held up by "
+        "`test_a_refused_realtime_write_leaves_no_score_snapshot`."
+    ),
+    "statpal_sync._sync_statpal_livescores": (
+        "GATED ON `updated`, which nothing before that point sets except the "
+        "compare-and-write, so it is false exactly when the write was refused. "
+        "Deliberately NOT spelled `_live_write_landed and updated`: the extra "
+        "term is implied by the one beside it, so no mutant can kill it, and a "
+        "redundant clause that reads as load-bearing is worse than none."
+    ),
+    "odds_polling._poll_all_odds": (
+        "GATED ON `not _clockless_write_would_fight`, the same condition that "
+        "decides whether the score reaches `update_values` at all. This feed "
+        "carries no clock, so it cannot be ordered in game time and defers to "
+        "an attached authority instead; a snapshot it declined to store on the "
+        "row would put a number in the chart the row never held."
+    ),
+}
+
+
+def test_no_undeclared_appender_writes_a_score_snapshot_6056():
+    """THE POPULATION IS DISCOVERED, NOT LISTED — same contract as the two above.
+
+    Walked as an AST over every module under `backend/app/`, so a fourth
+    appender cannot arrive by being somewhere nobody thought to look. The
+    detector is self-tested against a synthetic source, because asserting the
+    walk's own yield is the wrong non-vacuity check: the yield here is three and
+    shrinks only if an appender is deleted, so a scan gated on "found something"
+    would keep passing while meaning nothing.
+    """
+    import ast
+    import pathlib
+
+    def _appenders(source: str) -> set[str]:
+        """{function name} for every function constructing a ScoreSnapshot."""
+        found: set[str] = set()
+        for fn in ast.walk(ast.parse(source)):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for node in ast.walk(fn):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                # BOTH spellings: the bare name after a `from … import`, and
+                # the attribute form after a module import. `espn_helpers`
+                # imports the class inside the function body and the tasks
+                # import it at module scope, so a scan that knew only one of
+                # them would report a confident, wrong two.
+                name = (
+                    func.id
+                    if isinstance(func, ast.Name)
+                    else func.attr
+                    if isinstance(func, ast.Attribute)
+                    else None
+                )
+                if name == "ScoreSnapshot":
+                    found.add(fn.name)
+        return found
+
+    # The detector fires on both call spellings, ignores a COMMENT quoting the
+    # name, ignores a bare type ANNOTATION, and ignores a SELECT against the
+    # class — which is how the history route reads the table and is emphatically
+    # not an append.
+    probe = _appenders(
+        "def f():\n"
+        "    session.add(ScoreSnapshot(event_id=1))\n"
+        "def g():\n"
+        "    session.add(models.ScoreSnapshot(event_id=2))\n"
+        "def h():\n"
+        "    # session.add(ScoreSnapshot(event_id=3))\n"
+        "    rows: list[ScoreSnapshot] = []\n"
+        "    return select(ScoreSnapshot.home_score)\n"
+    )
+    assert probe == {"f", "g"}, probe
+
+    app_root = pathlib.Path(__file__).resolve().parents[1] / "app"
+    assert app_root.is_dir(), app_root
+
+    discovered = set()
+    for path in sorted(app_root.rglob("*.py")):
+        for name in _appenders(path.read_text()):
+            discovered.add(f"{path.stem}.{name}")
+
+    undeclared = sorted(discovered - set(_DECLARED_SNAPSHOT_APPENDERS))
+    assert not undeclared, (
+        "a `score_snapshots` row is being appended by a writer nothing in this "
+        f"suite knows about: {undeclared}. An append must be gated on its own "
+        "row-write having LANDED — otherwise an observation the compare-and-"
+        "write refused still reaches the Score Differential chart, where "
+        "nothing overwrites it and no repair removes it (#6056). Add the "
+        "entry naming the gate and the test that drives it."
+    )
+
+    stale = sorted(set(_DECLARED_SNAPSHOT_APPENDERS) - discovered)
+    assert not stale, (
+        f"declared as a snapshot appender but no longer constructs one: "
+        f"{stale} — delete the entry, the claim it carries is spent"
+    )
