@@ -285,6 +285,7 @@ class TestBeatScheduleCompleteness:
         "merge-duplicate-events",
         "reconcile-unanchored-events",
         "tennis-twin-sweep",
+        "soccer-ghost-twin-sweep",
         "merge-degenerate-combat-events",
         "canonicalize-entities-daily",
         "precompute-interestingness",
