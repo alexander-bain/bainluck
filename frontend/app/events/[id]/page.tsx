@@ -2157,7 +2157,7 @@ export default function EventPage({ params }: EventPageProps) {
                second reading of the same payload. `/events/15304382` held a
                fresh 2-1 games line and no game-total market, so the note sent
                the reader to a card that was not on the page. */
-            totalsMapPresent={totalsMapRenders(gameMarkets)}
+            totalsMapPresent={totalsMapRenders(gameMarkets, event.status)}
             pmSpreadData={historyData?.pm_spread_data}
           />
         </div>

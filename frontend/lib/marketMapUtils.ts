@@ -480,8 +480,24 @@ export function derivePeriod(item: {
  * (highest bookmaker count wins), resolved thresholds dropped, then forced
  * monotonic. Empty means the card does not render.
  */
+/**
+ * The lifecycle the market-map cards GRADE on, in one place.
+ *
+ * #6218. `MarketMapSection` graded on `eventStatus === "completed" || "closed"`
+ * while the selector below had no idea what the status was, and the moment the
+ * selector needed the same answer that expression had to exist twice. It is
+ * deliberately NOT `isSettledStatus`, which also accepts "settled", "final" and
+ * "resolved": a card whose selector kept its 0% rungs on a status the component
+ * does not grade would print a bare "0%" with no verdict beside it. One
+ * predicate, so the two halves of one card cannot disagree about which it is.
+ */
+export function marketMapIsGraded(eventStatus?: string | null): boolean {
+  return eventStatus === "completed" || eventStatus === "closed";
+}
+
 export function selectGameTotalRungs<T extends GameTotalRow>(
-  totals: T[] | null | undefined
+  totals: T[] | null | undefined,
+  eventStatus?: string | null
 ): T[] {
   const rawTotals = (totals || [])
     .filter((t) => t.market_type === "game_total" && isGameTotal(t.outcome_name))
@@ -496,9 +512,25 @@ export function selectGameTotalRungs<T extends GameTotalRow>(
       byThresh.set(t.threshold, t);
     }
   }
-  // Filter out resolved/stale thresholds (0% over probability)
+  // Filter out resolved/stale thresholds (0% over probability) — but ONLY while
+  // the card is still quoting.
+  //
+  // #6218, the render half of #6196. On a SETTLED card the 0% rungs are not
+  // stale, they are the authoritative losing half of the answer: /events/14637256
+  // finished 28-20 and the payload serves nine rungs at 1.0 (27.5 through 47.5)
+  // and eleven at 0.0 (48.5 through 69.5). Dropping the zeros left a card headed
+  // "EACH LINE VS THE FINAL" that listed only the lines that CLEARED — a ladder
+  // that is a highlight reel, and an axis that stopped at 47.5 so the FINAL 48
+  // marker pinned to the right edge of its own band.
+  //
+  // lane1b's backend half (#6196) is what makes this safe: the payload now
+  // suppresses live, ungraded, tier-1 and void zeroes and lets only authoritative
+  // ones through. The filter is kept for every non-graded card anyway, because a
+  // dead quote rendering as "Over 60.5 — 0%" on a live game is the defect this
+  // line was written for and defence in depth costs nothing here.
+  const graded = marketMapIsGraded(eventStatus);
   const deduped = [...byThresh.values()]
-    .filter((t) => t.over_probability > 0)
+    .filter((t) => graded || t.over_probability > 0)
     .sort((a, b) => a.threshold - b.threshold);
 
   // Over probability must decrease as threshold increases. Use a loop so each
@@ -694,11 +726,18 @@ export function totalsMapRenders(
         period_markets?: PeriodTotalRow[] | null;
       }
     | null
-    | undefined
+    | undefined,
+  /**
+   * #6218: the selector's answer now depends on the lifecycle, so this one must
+   * ask the same question with the same argument. Without it a settled card
+   * whose rungs are ALL 0% — a final below every line — would render while this
+   * said it did not, which is exactly the divergence #3240 exists to prevent.
+   */
+  eventStatus?: string | null
 ): boolean {
   if (!gameMarkets) return false;
   if (!marketMapSectionMounts(gameMarkets)) return false;
-  if (selectGameTotalRungs(gameMarkets.totals).length > 0) return true;
+  if (selectGameTotalRungs(gameMarkets.totals, eventStatus).length > 0) return true;
   return TOTAL_MAP_HALVES.some(
     (half) => selectHalfTotalRungs(gameMarkets.period_markets, half).length > 0
   );
