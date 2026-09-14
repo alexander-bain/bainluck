@@ -6,6 +6,7 @@ import {
   TOURNAMENT_SHARE_REVALIDATE_SECONDS,
   type TournamentShareSource,
 } from "@/lib/tournamentShareMeta";
+import { unfurlImageOptions } from "@/lib/unfurlImageCache";
 
 export const runtime = "edge";
 export const alt = "Bain Luck tournament probabilities";
@@ -99,7 +100,8 @@ export default async function Image({ params }: { params: Promise<{ slug: string
           accent={accentFor(null)}
         />
       ),
-      size,
+      // #6166 — moving, for the reason below: an unresolved slug is retractable.
+      unfurlImageOptions(size, "moving"),
     );
   }
 
@@ -128,6 +130,25 @@ export default async function Image({ params }: { params: Promise<{ slug: string
         accent={accentFor(null)}
       />
     ),
-    size,
+    // #6166 — THIS ROUTE HAS NO "settled" ARM, AND THAT IS A FINDING RATHER THAN
+    // AN OMISSION.
+    //
+    // `TournamentShareFacts` exposes `name`, `venue` and `leaders` — no terminal
+    // signal, and there is nowhere honest to read one from. A hub is a
+    // COLLECTION of boards: the US Open's men's draw can be decided while the
+    // women's is still being played, so "the tournament is settled" is not a
+    // property any single board carries.
+    //
+    // The tempting proxy — empty `leaders` — is the trap, because THREE
+    // different causes land on it and only one is terminal: every board decided
+    // (#6161 measured that `_settle_row` nulls `probability` before
+    // `apply_final_result` writes `decided`, so a decided board is an unpriced
+    // one), no board priced yet, and #6161's own staleness refusal. Caching the
+    // last two as settled would freeze a card we are deliberately withholding
+    // until it can be trusted — the withholding would outlive the reason for it.
+    //
+    // Moving costs one revalidation per minute on a one-slug population
+    // (`routes/tournaments.py:86`) and cannot freeze anything.
+    unfurlImageOptions(size, "moving"),
   );
 }

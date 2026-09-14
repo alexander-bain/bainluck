@@ -2,6 +2,7 @@ import { ImageResponse } from "next/og";
 
 import { UnfurlCard } from "@/components/og/UnfurlCard";
 import { hubCardCopy, type HubShareSource } from "@/lib/hubShareMeta";
+import { unfurlImageOptions } from "@/lib/unfurlImageCache";
 import type { ResolutionFailure } from "@/lib/unresolvedShareMeta";
 
 export const runtime = "edge";
@@ -100,6 +101,26 @@ export default async function Image({
   // `- -` glyph and "0 outcomes tracked".
   return new ImageResponse(
     <UnfurlCard {...hubCardCopy(lookup, competition)} />,
-    size,
+    // #6166 — MOVING, AND THE "IT DRAWS NO NUMBER" ARGUMENT FOR SKIPPING IT IS
+    // THE WRONG TEST.
+    //
+    // #6166 was filed listing three routes and calling this one immune, because
+    // a hub quotes no probability (see the rows note above, and notice 34). But
+    // the window a picture earns is not set by whether it holds a number — it is
+    // set by whether what it says can turn out to be WRONG and need taking back.
+    //
+    // This card's own `fetchHubMeta` header already says so: the 404-vs-5xx
+    // split exists because "this competition isn't on Bain Luck" is a claim
+    // about the world, and making it because the API was restarting is gotcha
+    // #53. `unfurlImageCache`'s header names exactly that card as moving. Under
+    // the default header, a hub crawled during one bad minute would have shown
+    // every reader "isn't on Bain Luck" for a year, unretractable without a
+    // deploy — the more damaging half of #6049's defect, not the exempt half.
+    //
+    // No settled arm: a hub is a collection that gains and loses markets, so it
+    // has no terminal state, and its product-written blurb is served by the API
+    // rather than compiled in — an edit to it could not reach this picture
+    // either.
+    unfurlImageOptions(size, "moving"),
   );
 }
