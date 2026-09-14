@@ -27,6 +27,44 @@ export function pickHeroOutcome<T extends { is_winner?: boolean | null }>(
   return outcomes.find((o) => o.is_winner === true) ?? leader;
 }
 
+/* ───────────────────────────────────────────────────────────────────────────
+ * #6079 — THE WORD "won" HAS ONE SOURCE, AND IT IS THE GRADE.
+ *
+ * `pickHeroOutcome` answers "which row does this surface feature", and on a
+ * resolved market with nothing graded it answers with the PRICE LEADER. That is
+ * the right answer to its question — a settled page still has to show something
+ * — and it is the wrong thing to put the word "won" in front of.
+ *
+ * Three surfaces describe that state and two of them already knew: `FuturesHero`
+ * gates its chip on `resolvedWon={resolvedWinner?.is_winner === true}` and prints
+ * grey "Resolved", and `futuresUnfurlCopy` gates `settledWon` the same way (#6032).
+ * The unfurl TITLE and DESCRIPTION took the bare fallback, so one preview made two
+ * claims at once. Measured on production 2026-09-14 05:36Z, `/futures/61000391`:
+ *
+ *   og:title    "No won - Overwatch: Sweden vs France - Game 4 Winner"   ❌
+ *   og:image    64px "No" beside a grey RESOLVED pill                    ✅
+ *
+ * 🔴 "No won" IS THE READING, and the generic-binary substitution is what makes
+ * it that: `leaderLabel` turns an ungraded `No` row into a sentence subject. The
+ * frozen price is 0.91, so the fallback crowns a row for being expensive at the
+ * moment trading stopped — UX-P232 measured that settlement freezes prices
+ * "routinely NOT the highest on the board", which is why #6032 refused to read a
+ * winner out of one.
+ *
+ * So the grade is asked for by name, in one place, and every surface that wants
+ * to print "won" calls it. `pickHeroOutcome` is untouched: the subject and the
+ * verdict are two different questions and collapsing them is the bug.
+ * ─────────────────────────────────────────────────────────────────────────── */
+export function gradedWinner<T extends { is_winner?: boolean | null }>(
+  outcomes: readonly T[],
+  leader: T | null,
+  status: string | null | undefined,
+): T | null {
+  if (status !== "resolved") return null;
+  const featured = pickHeroOutcome(outcomes, leader, true);
+  return featured?.is_winner === true ? featured : null;
+}
+
 /** Generic binary-style outcome names that read better as "Yes" in a headline. */
 export function isGenericOutcomeLabel(name: string | null | undefined): boolean {
   const n = (name || "").trim().toLowerCase();
@@ -159,8 +197,15 @@ export function futuresTitleText(opts: {
   leaderName?: string | null;
   probabilityLabel?: string | null;
 }): string {
-  if (opts.isResolved && opts.winnerName) {
-    return `${opts.winnerName} won - ${opts.marketName}`;
+  // #6079 — RESOLVED IS A TERMINAL BRANCH, not a preference for the winner form.
+  // It used to fall through when nothing was graded, so narrowing the "won" test
+  // alone would have moved this title from "No won - …" to "No 91% - …" — a LIVE
+  // shape on a closed market, which is the percentage L2-55 exists to keep out of
+  // settled titles and the same claim the card refuses to draw (no 96px numeral,
+  // no bar, once `isResolved`). With no grade there is nothing to crown, so the
+  // name stands alone; the RESOLVED pill in the picture carries the state.
+  if (opts.isResolved) {
+    return opts.winnerName ? `${opts.winnerName} won - ${opts.marketName}` : opts.marketName;
   }
   if (opts.leaderName && opts.probabilityLabel) {
     return `${opts.leaderName} ${opts.probabilityLabel} - ${opts.marketName}`;
@@ -258,7 +303,10 @@ export function futuresUnfurlCopy<
   // `FuturesHero`'s `resolvedWon` chip. `pickHeroOutcome` falls back to the price
   // leader when nothing is graded, and a fallback must not crown an ungraded row
   // — those say only what `status` proves.
-  const settledWon = isResolved && featured?.is_winner === true;
+  // #6079 — asked through `gradedWinner` rather than re-derived here, because the
+  // unfurl TITLE needs the identical answer and the copy of this test that lived
+  // in `layout.tsx` is exactly the one that went missing.
+  const settledWon = gradedWinner(opts.outcomes, opts.leader, opts.status) !== null;
 
   // A SETTLED CARD GETS NO CAPTION AT ALL (#6061), and that keeps #6032's rule
   // rather than relaxing it: the hook leads on a LIVE market only, because

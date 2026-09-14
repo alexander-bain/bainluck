@@ -6,7 +6,7 @@ import {
   formatShareProbability,
   truncateShareText,
 } from "@/lib/share";
-import { pickHeroOutcome, leaderLabel, futuresTitleText } from "@/lib/futuresDetailDisplay";
+import { gradedWinner, leaderLabel, futuresTitleText } from "@/lib/futuresDetailDisplay";
 import {
   unresolvedMetadata,
   unresolvedPath,
@@ -128,7 +128,12 @@ export async function generateMetadata({
   // "<winner> won", mirroring the L2-53 hero. Same winner selection as the page.
   const isResolved = market.status === "resolved";
   const outcomes = market.outcomes ?? market.top_outcomes ?? [];
-  const winnerName = isResolved ? leaderLabel(pickHeroOutcome(outcomes, leader, true)) : null;
+  // #6079 — the GRADE, not the hero. This line used to call `pickHeroOutcome`,
+  // whose ungraded fallback is the price leader, so the title crowned whichever
+  // row happened to be expensive when trading stopped: production 05:36Z,
+  // `/futures/61000391` served "No won - … Game 4 Winner" beside its own picture's
+  // grey RESOLVED pill. `gradedWinner` is the one test all three surfaces use.
+  const winnerName = leaderLabel(gradedWinner(outcomes, leader, market.status));
 
   const titleText = futuresTitleText({
     marketName: market.name,
@@ -174,12 +179,20 @@ export async function generateMetadata({
   //  - The UNPRICED fallback LEADS with the name, where a trailing `?` is
   //    correct punctuation on its own, and `endShareSentence` supplies the
   //    period only for the names that end in none.
+  //  - #6079 adds the third shape the first two were hiding between. A resolved
+  //    market with nothing graded is neither: it has no winner to name, and its
+  //    prices are the frozen last trades that L2-55 keeps out of settled copy, so
+  //    letting it fall into the board branch would have swapped "No won" for
+  //    "No 91%, Yes 9%." — a live-looking board on a closed market. It states the
+  //    market and its state, in the picture's own word, and stops there.
   const description = truncateShareText(
-    isResolved && winnerName
+    winnerName
       ? `${winnerName} won (${market.name}). See the full probability board on Bain Luck.`
-      : leader && probability
-        ? `${boardSentence(outcomes, leader, probability)} See the full probability board on Bain Luck.`
-        : `${endShareSentence(market.name)} See this market translated into intuitive probabilities on Bain Luck.`
+      : isResolved
+        ? `${endShareSentence(market.name)} This market has resolved. See the full probability board on Bain Luck.`
+        : leader && probability
+          ? `${boardSentence(outcomes, leader, probability)} See the full probability board on Bain Luck.`
+          : `${endShareSentence(market.name)} See this market translated into intuitive probabilities on Bain Luck.`
   );
   const url = buildShareUrl(`/futures/${market.id}`);
   const image = buildShareUrl(`/futures/${market.id}/opengraph-image`);
