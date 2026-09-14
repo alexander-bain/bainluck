@@ -936,6 +936,62 @@ def _clean_esports_matchup(result: MatchupInfo, market_name: str) -> MatchupInfo
     return MatchupInfo(team_a, team_b, yes_team, result.format_type)
 
 
+def matchup_for_link_search(
+    matchup: Optional[MatchupInfo], market_name: str
+) -> Optional[MatchupInfo]:
+    """A derivative's matchup with the market type off team_b — SEARCH ONLY (#6134).
+
+    THE SECOND HALF OF `is_derivative_market_name`'s CONTRACT HAS NEVER BEEN
+    REACHABLE. That docstring says such a row "may link to a fixture we already
+    hold, but it must never mint one". Only the refusal was ever built. Because
+    `extract_matchup` splits on " vs. ", the market type stays glued to team_b —
+    `"UD Las Palmas - Exact Score"` — and every team comparison in the search
+    (`_find_matching_event`'s ILIKE terms and the `_fuzzy_team_match` verify
+    gate) is made against a string no event row carries. So the away side never
+    verifies and the market stays unattached for good.
+
+    Measured on production 2026-09-14 10:15Z, one fixture of many: Polymarket
+    publishes `SD Eibar vs. UD Las Palmas` (market 61019304, linked to event
+    15312462) beside five sibling parents for the SAME match — Exact Score,
+    Halftime Result, First Team to Score, Second Half Result, Total Corners —
+    each with its OWN `polymarket_event_id`, so #5821's container-sibling
+    channel (which keys on a SHARED provider event id) cannot reach them either.
+    All five sit at `event_id IS NULL`.
+
+    APPLIED TO THE SEARCH COPY, NEVER TO THE ONE AUTO-CREATE SEES. The caller
+    keeps the original matchup for `_create_event_from_prediction_market`, where
+    the suffix is still load-bearing: #2871 exists because that function stamps
+    `matchup.team_b` as the away team's name, and one fixture minted one phantom
+    event per prop type. That path is also gated on the RAW name, so this helper
+    cannot re-open it from either direction.
+
+    The parsed NAME is untouched, which is what keeps the other two guards
+    intact — `is_game_level_market` still reads "winner" out of
+    "- First 5 Innings Winner" (the G3 kill, pinned by
+    `test_the_suffix_is_left_on_the_parsed_name`), and `_class_says_game_winner`
+    still refuses every one of these rows as a blend speaker, so attaching them
+    cannot put an Exact Score price in the hero (#5031).
+
+    Examples:
+        "SD Eibar vs. UD Las Palmas - Exact Score"  → team_b "UD Las Palmas"
+        "FC Thun vs. Lausanne-Sport"                → unchanged (not a derivative)
+        "Mets vs. Dodgers - Game 4"                 → unchanged (a distinct real game)
+    """
+    if matchup is None or not matchup.team_b:
+        return matchup
+    if not is_derivative_market_name(market_name):
+        return matchup
+
+    team_b = _DERIVATIVE_SUFFIX_RE.sub("", matchup.team_b).strip()
+    if not team_b or team_b == matchup.team_b:
+        return matchup  # never trade a real name for an empty one
+
+    yes_team = matchup.yes_team
+    if yes_team == matchup.team_b:
+        yes_team = team_b
+    return MatchupInfo(matchup.team_a, team_b, yes_team, matchup.format_type)
+
+
 def extract_matchup(market_name: str, external_id: Optional[str] = None) -> Optional[MatchupInfo]:
     """
     Extract team names and determine "Yes" team from a game-level market name.

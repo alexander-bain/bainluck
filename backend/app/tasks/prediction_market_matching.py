@@ -32,6 +32,7 @@ from app.utils.prediction_market_matching import (
     _TICKER_TO_SPORT_PREFIX,
     extract_matchup,
     extract_matchup_with_ticker_fallback,
+    matchup_for_link_search,
     extract_teams_from_ticker,
     extract_game_date_from_ticker,
     extract_ticker_fragments,
@@ -2355,8 +2356,14 @@ async def _run_one_attempt(
         if market.source == "kalshi" else None
     )
 
+    # #6134: a derivative SEARCHES on the fixture's real away team and MINTS on
+    # nothing. `matchup` below is the raw one — `_try_link_market` hands it to
+    # `_create_event_from_prediction_market`, which stamps team_b as the away
+    # team's name, and that is the hole #2871 closed. Only the search copy is
+    # cleaned, which is the half `is_derivative_market_name`'s own docstring
+    # promised ("may link to a fixture we already hold") and never had.
     matched_event = await _find_matching_event(
-        session, matchup, market, now,
+        session, matchup_for_link_search(matchup, market.name), market, now,
         game_date_override=game_date,
         receipt=receipt,
         probe_allowed=_time_remaining() > _PROBE_MIN_SECONDS_REMAINING,
