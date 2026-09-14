@@ -29,6 +29,7 @@ from app.dependencies.auth import get_optional_user
 from app.services import get_db, get_db_rw, OddsAPIService, fetch_current_odds
 from app.services.anchor_channel import (
     is_drain_candidate_row,
+    market_born_duplicates_on_page,
     resolve_market_born_duplicate,
 )
 from app.utils.agent_origin import ORIGIN_HEADER, ORIGIN_USER
@@ -5668,6 +5669,45 @@ async def search_events(
             logger.exception("search twin fold failed; serving the unfolded page")
     _mark("event_twin_fold")
 
+    # ── #6231: the fold above is structurally blind to a market-born ghost ────
+    #
+    # `fold_twin_events` needs BOTH rows on the page. `market_born_duplicates_
+    # on_page` needs neither — it is the id-keyed Q050 verdict the event page
+    # has trusted since 2026-09-02, asked of a set. Measured on production
+    # 2026-09-14 23:5xZ: `q=Celta Fortuna` served the ghost `15308951` (`live`,
+    # no score, no price, `soccer_spain_la_liga`) beside the real `15306978`
+    # (`completed`, 0–4, Segunda) — and the twin fold had already run and
+    # correctly declined, because the two rows agree on neither name (`Eibar` /
+    # `SD Eibar`), league, nor minute (21:30Z is Kalshi's expected expiration,
+    # 18:30Z the kick-off).
+    #
+    # AFTER the fold, deliberately. The fold may recover a Kalshi row's kick-off
+    # and elect a survivor; this then removes what is left over, and running it
+    # first would hand the fold a page it had not finished reasoning about.
+    #
+    # It suppresses and does not fold, and refusal 5 is why that loses nothing:
+    # a row only qualifies if it holds no markets, no score and no
+    # `completed_at`. See the helper's docstring.
+    #
+    # Gotcha #42 applied to a stage, exactly as above: a suppression that raises
+    # serves the unsuppressed page, which is today's behaviour.
+    if events:
+        try:
+            _drained = await market_born_duplicates_on_page(db, events)
+            if _drained:
+                events = [e for e in events if e.id not in _drained]
+                logger.info(
+                    "search market-born drain: %d ghost row(s) suppressed "
+                    "(%s)",
+                    len(_drained),
+                    list(_drained.items())[:20],
+                )
+        except Exception:  # noqa: BLE001 — see the gotcha #42 note above
+            logger.exception(
+                "search market-born drain failed; serving the undrained page"
+            )
+    _mark("market_born_drain")
+
     # Get latest aggregated odds for each event
     event_ids = [e.id for e in events]
     aggregated_odds_map = {}
@@ -11044,6 +11084,39 @@ async def list_events(
             events = _fold.events
     except Exception:
         logger.exception("events list twin fold failed; serving the unfolded page")
+
+    # ── #6231: this rail is where the reader actually met the ghost ───────────
+    #
+    # `GET /api/events?status=live` backs the Sports tab's "Live Now", and on
+    # 2026-09-14 22:07Z it served exactly one row: `15308951`, Celta Fortuna v
+    # Eibar, a red LIVE chip with no score, no clock and no probability, 1h40m
+    # after the real match finished 0–4 on `15306978`. The most prominent card
+    # on the tab was the only one with nothing in it.
+    #
+    # THE TWIN FOLD ABOVE CANNOT REACH A STATUS-FILTERED RAIL, and that is a
+    # property of the filter rather than of its key: the canonical is
+    # `completed`, so `status=live` excludes it from the page, and an in-page
+    # fold has nothing to fold against. Widening `twin_fold_key` would not have
+    # helped on any reading. The Q050 verdict asks the database by id, so the
+    # canonical does not need to be on the page — or to be renderable at all.
+    #
+    # Same ordering, same no-loss argument and same gotcha #42 belt as the
+    # sibling stage in `search_events`; `market_born_duplicates_on_page` carries
+    # both. `count` reports what is actually in `events`, as it already does for
+    # the fold, and for the same pagination reason spelled out above.
+    try:
+        _drained = await market_born_duplicates_on_page(db, events)
+        if _drained:
+            events = [e for e in events if e.id not in _drained]
+            logger.info(
+                "events list market-born drain: %d ghost row(s) suppressed (%s)",
+                len(_drained),
+                list(_drained.items())[:20],
+            )
+    except Exception:
+        logger.exception(
+            "events list market-born drain failed; serving the undrained page"
+        )
 
     # Get the latest odds snapshots for each event, aggregated across bookmakers
     event_ids = [e.id for e in events]

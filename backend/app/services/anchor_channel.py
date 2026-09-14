@@ -88,10 +88,11 @@ be a steady stream of no-op writes bought for no information.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.utils.event_completion import TICKER_DERIVED_COMMENCE_SOURCE
@@ -673,19 +674,39 @@ MARKET_BORN_COMMENCE_SOURCES = frozenset(
     {SOURCE_KALSHI, SOURCE_POLYMARKET, TICKER_DERIVED_COMMENCE_SOURCE}
 )
 
-#: One statement, one round trip: every fact the drain verdict turns on.
+#: One statement, one round trip: every fact the drain verdict turns on, for
+#: EVERY id asked about at once.
 #:
-#: `mkt` resolves each of this event's MARKET anchors back through the market it
-#: names — `(source, external_id)` is `uq_futures_source_external`, a UNIQUE
-#: index, so each anchor yields at most one row and the LEFT JOIN cannot fan out.
+#: `mkt` resolves each event's MARKET anchors back through the market they name
+#: — `(source, external_id)` is `uq_futures_source_external`, a UNIQUE index, so
+#: each anchor yields at most one row and the LEFT JOIN cannot fan out.
+#:
+#: 🔴 THIS IS THE ONLY DRAIN VERDICT. #6231 needed the same seven refusals over a
+#: PAGE of rows rather than one id, and the obvious shape — a second, batched
+#: SQL beside this one — is the shape that goes wrong: two statements encoding
+#: one rule drift, and the drift direction that matters is the one that ADMITS a
+#: row this refuses, which serves a reader the wrong match. So the set form is
+#: the only form, `resolve_market_born_duplicate` calls it with one id, and the
+#: single-id battery in `test_market_born_duplicate_reads_as_canonical_q050.py`
+#: — which pins all seven refusals — grades this statement unchanged.
 _DRAIN_VERDICT_SQL = """
-WITH anch AS (
-    SELECT source, source_id, id_kind
-      FROM event_provider_anchors
-     WHERE event_id = :event_id
+WITH cand AS (
+    SELECT e.id AS event_id,
+           e.commence_time_source AS provenance,
+           s.key AS sport_key,
+           (e.home_score IS NOT NULL OR e.away_score IS NOT NULL
+            OR e.completed_at IS NOT NULL) AS carries_truth
+      FROM events e
+      LEFT JOIN sports s ON s.id = e.sport_id
+     WHERE e.id IN :event_ids
+),
+anch AS (
+    SELECT a.event_id, a.source, a.source_id, a.id_kind
+      FROM event_provider_anchors a
+      JOIN cand ON cand.event_id = a.event_id
 ),
 mkt AS (
-    SELECT fm.event_id AS target
+    SELECT anch.event_id, fm.event_id AS target
       FROM anch
       LEFT JOIN futures_markets fm
              ON fm.source = anch.source
@@ -693,26 +714,58 @@ mkt AS (
      WHERE anch.id_kind = :market_kind
 )
 SELECT
-    e.commence_time_source AS provenance,
-    s.key AS sport_key,
-    (e.home_score IS NOT NULL OR e.away_score IS NOT NULL
-     OR e.completed_at IS NOT NULL) AS carries_truth,
-    (SELECT count(*) FROM anch WHERE id_kind = :game_kind) AS game_anchors,
-    (SELECT count(*) FROM mkt) AS market_anchors,
-    (SELECT count(*) FROM mkt WHERE target IS NULL) AS unresolved,
-    (SELECT count(DISTINCT target) FROM mkt
-      WHERE target IS NOT NULL AND target <> e.id) AS other_targets,
-    (SELECT min(target) FROM mkt
-      WHERE target IS NOT NULL AND target <> e.id) AS candidate_id,
-    EXISTS (SELECT 1 FROM futures_markets WHERE event_id = e.id) AS holds_markets
-  FROM events e
-  LEFT JOIN sports s ON s.id = e.sport_id
- WHERE e.id = :event_id
+    cand.event_id,
+    cand.provenance,
+    cand.sport_key,
+    cand.carries_truth,
+    (SELECT count(*) FROM anch
+      WHERE anch.event_id = cand.event_id AND anch.id_kind = :game_kind)
+        AS game_anchors,
+    (SELECT count(*) FROM mkt WHERE mkt.event_id = cand.event_id)
+        AS market_anchors,
+    (SELECT count(*) FROM mkt
+      WHERE mkt.event_id = cand.event_id AND mkt.target IS NULL) AS unresolved,
+    (SELECT count(DISTINCT mkt.target) FROM mkt
+      WHERE mkt.event_id = cand.event_id
+        AND mkt.target IS NOT NULL AND mkt.target <> cand.event_id)
+        AS other_targets,
+    (SELECT min(mkt.target) FROM mkt
+      WHERE mkt.event_id = cand.event_id
+        AND mkt.target IS NOT NULL AND mkt.target <> cand.event_id)
+        AS candidate_id,
+    EXISTS (SELECT 1 FROM futures_markets f WHERE f.event_id = cand.event_id)
+        AS holds_markets
+  FROM cand
 """
 
-_CANONICAL_SPORT_SQL = (
-    "SELECT s.key FROM events e LEFT JOIN sports s ON s.id = e.sport_id "
-    "WHERE e.id = :event_id"
+#: The sport key of each id named — the canonical side of refusal 6.
+#:
+#: One statement for the whole page, for the same reason the verdict is: the
+#: family check is not decoration. Measured on production 2026-09-14 23:5xZ it
+#: fires on 3 of the 36 rows that clear the other six refusals
+#: (`basketball_other` and `soccer_other` ghosts whose markets moved onto NFL
+#: rows), so a batch path that quietly dropped it would serve a reader a
+#: football game under a basketball card.
+_SPORT_KEY_BY_ID_SQL = (
+    "SELECT e.id, s.key FROM events e LEFT JOIN sports s ON s.id = e.sport_id "
+    "WHERE e.id IN :event_ids"
+)
+
+#: The two statements above as executable clauses, built ONCE.
+#:
+#: `expanding=True` is what turns `IN :event_ids` into an id list at execution
+#: time, with every value still a bound parameter — the set form adds no string
+#: interpolation anywhere, which is the property that matters for a statement
+#: taking a caller-supplied page of ids.
+#:
+#: Built at import rather than per call so that "the module's statement" is an
+#: OBJECT a test can compare against, not a string a test has to re-derive; the
+#: paraphrase guard in the Q050 battery asserts identity against these.
+_DRAIN_VERDICT = text(_DRAIN_VERDICT_SQL).bindparams(
+    bindparam("event_ids", expanding=True)
+)
+_SPORT_KEY_BY_ID = text(_SPORT_KEY_BY_ID_SQL).bindparams(
+    bindparam("event_ids", expanding=True)
 )
 
 
@@ -765,6 +818,25 @@ async def resolve_market_born_duplicate(
     session: AsyncSession, event_id: int
 ) -> Optional[int]:
     """The event a market-born duplicate row should be READ AS, or ``None``.
+
+    One id. :func:`resolve_market_born_duplicates` is the implementation and
+    carries the whole argument — the proof, the seven refusals and what this
+    deliberately does not claim. Read it there; there is only one of it.
+    """
+    resolved = await resolve_market_born_duplicates(session, [event_id])
+    return resolved.get(int(event_id))
+
+
+async def resolve_market_born_duplicates(
+    session: AsyncSession, event_ids: Sequence[int]
+) -> dict[int, int]:
+    """``{ghost id: canonical id}`` for every market-born duplicate among these.
+
+    Ids that are not market-born duplicates are simply absent from the result,
+    so a caller can treat the mapping as "what this page must not print" without
+    checking anything twice. An empty input, or any error, is ``{}`` — this
+    decorates a read, and a read that cannot decide serves the rows it was asked
+    for.
 
     Q050. Ruling 048's bounding clause — *"id-keyed reconciliation drains the
     duplicate when an id arrives"* — has two halves, and only the first was ever
@@ -846,67 +918,159 @@ async def resolve_market_born_duplicate(
     the day containers start being written. The table holds none today; the
     key module already produces them.
 
-    Returns the canonical event id, or ``None`` for every refusal. ``None`` is
-    the answer on any error as well: this decorates a read, and a read that
-    cannot decide must serve the row it was asked for.
+    ═══ WHY THIS IS THE SET FORM AND THE SINGLE-ID ONE IS THE WRAPPER ═══
+
+    #6231. The event page has folded a market-born ghost onto its canonical
+    since Q050, and no LIST surface has. A reader on the Sports tab therefore
+    saw `Celta Fortuna v Eibar` topping "Live Now" — scoreless, priceless, under
+    a red LIVE chip, 1h40m after the real match went 0–4 final on another row —
+    and tapping it landed them on the right game. The tab that sent them there
+    was advertising a row the detail endpoint already knew was not a fixture.
+
+    **The list rails' own instrument cannot reach this, whatever its key does.**
+    `fold_twin_events` is a pure IN-PAGE fold: it needs both rows in the same
+    result set. On `GET /api/events?status=live` the canonical is `completed`,
+    so the very filter that selects the ghost excludes its twin, and no widening
+    of `twin_fold_key` — names, minute, league — can close that. The verdict
+    below has no such limit: it is id-keyed and asks the database, so the
+    canonical does not have to be on the page, or be renderable at all.
+
+    So a page-shaped caller needs this per ROW, and doing that one id at a time
+    is a round trip per candidate. Hence the set form — and the set form is the
+    ONLY form. See `_DRAIN_VERDICT_SQL` for why there is not a second batched
+    statement beside the single-id one.
+
+    Returns ``{}`` for a page with nothing to drain — which is nearly every page,
+    because callers apply :func:`is_drain_candidate_row` first and the query is
+    never issued when it excludes everything.
     """
+    ids = sorted({int(e) for e in event_ids if e is not None})
+    if not ids:
+        return {}
+
+    params = {
+        "event_ids": ids,
+        "market_kind": ANCHOR_KIND_MARKET,
+        "game_kind": ANCHOR_KIND_GAME,
+    }
     try:
-        row = (
-            await session.execute(
-                text(_DRAIN_VERDICT_SQL),
-                {
-                    "event_id": int(event_id),
-                    "market_kind": ANCHOR_KIND_MARKET,
-                    "game_kind": ANCHOR_KIND_GAME,
-                },
-            )
-        ).first()
+        rows = (await session.execute(_DRAIN_VERDICT, params)).fetchall()
     except Exception:  # pragma: no cover - defensive, see docstring
         logger.exception(
-            "Drain verdict query failed for event %s — serving the row as asked",
-            event_id,
+            "Drain verdict query failed for %d event(s) — serving them as asked",
+            len(ids),
         )
-        return None
+        return {}
 
-    if row is None:
-        return None
+    # Refusals 1-5, all answerable from the verdict row itself. An id that is
+    # absent from `rows` (no such event) simply never reaches this loop.
+    passed: dict[int, int] = {}
+    ghost_families: dict[int, Optional[str]] = {}
+    for row in rows:
+        verdict = row._mapping
+        candidate = verdict["candidate_id"]
+        if (
+            verdict["game_anchors"]
+            or verdict["provenance"] not in MARKET_BORN_COMMENCE_SOURCES
+            or not verdict["market_anchors"]
+            or verdict["unresolved"]
+            or verdict["other_targets"] != 1
+            or verdict["carries_truth"]
+            or verdict["holds_markets"]
+            or candidate is None
+        ):
+            continue
+        ghost_id = int(verdict["event_id"])
+        passed[ghost_id] = int(candidate)
+        ghost_families[ghost_id] = _sport_family(verdict["sport_key"])
 
-    verdict = row._mapping
-    candidate = verdict["candidate_id"]
+    if not passed:
+        return {}
 
-    if (
-        verdict["game_anchors"]
-        or verdict["provenance"] not in MARKET_BORN_COMMENCE_SOURCES
-        or not verdict["market_anchors"]
-        or verdict["unresolved"]
-        or verdict["other_targets"] != 1
-        or verdict["carries_truth"]
-        or verdict["holds_markets"]
-        or candidate is None
-    ):
-        return None
-
-    canonical = (
-        await session.execute(
-            text(_CANONICAL_SPORT_SQL), {"event_id": int(candidate)}
+    # Refusal 6, the canonical's half. One statement for every candidate.
+    try:
+        canonical_rows = (
+            await session.execute(
+                _SPORT_KEY_BY_ID, {"event_ids": sorted(set(passed.values()))}
+            )
+        ).fetchall()
+    except Exception:  # pragma: no cover - defensive, see docstring
+        logger.exception(
+            "Canonical sport lookup failed for %d candidate(s) — serving the "
+            "rows as asked",
+            len(passed),
         )
-    ).first()
-    if canonical is None:
-        return None
+        return {}
 
-    ghost_family = _sport_family(verdict["sport_key"])
-    canonical_family = _sport_family(canonical[0])
-    if ghost_family is None or ghost_family != canonical_family:
-        logger.warning(
-            "Refusing to resolve event %s to %s: sport families %r vs %r "
-            "(Q050) — a cross-sport read is the one outcome worth refusing",
-            event_id, candidate, ghost_family, canonical_family,
+    # A candidate missing from this map is a row that vanished between the two
+    # reads. It is a refusal, not a resolution: `.get` yields `None`, whose
+    # family is `None`, which never equals the ghost's.
+    canonical_sports = {int(r[0]): r[1] for r in canonical_rows}
+
+    resolved: dict[int, int] = {}
+    for ghost_id, candidate in passed.items():
+        ghost_family = ghost_families[ghost_id]
+        canonical_family = _sport_family(canonical_sports.get(candidate))
+        if ghost_family is None or ghost_family != canonical_family:
+            logger.warning(
+                "Refusing to resolve event %s to %s: sport families %r vs %r "
+                "(Q050) — a cross-sport read is the one outcome worth refusing",
+                ghost_id, candidate, ghost_family, canonical_family,
+            )
+            continue
+        logger.info(
+            "Event %s is a market-born duplicate of %s — reading as the "
+            "canonical row (Q050, ruling 048 drain clause)",
+            ghost_id, candidate,
         )
-        return None
+        resolved[ghost_id] = candidate
 
-    logger.info(
-        "Event %s is a market-born duplicate of %s — reading as the canonical "
-        "row (Q050, ruling 048 drain clause)",
-        event_id, candidate,
-    )
-    return int(candidate)
+    return resolved
+
+
+async def market_born_duplicates_on_page(
+    session: AsyncSession, events: Sequence[Any]
+) -> dict[int, int]:
+    """``{ghost id: canonical id}`` for the rows on this page that must not print.
+
+    The list-surface entry point. Hand it the hydrated rows a rail is about to
+    serve and it names the ones the event page has already been declining to
+    render since Q050 (#6231).
+
+    **It costs nothing on a page with no candidates, and that is the whole
+    reason it exists rather than the routes calling the resolver directly.**
+    :func:`is_drain_candidate_row` is pure and answers from columns the rows are
+    already holding, and it excludes every scored row, every completed row and
+    everything a real schedule timed — so on the overwhelming majority of pages
+    the candidate set is empty and NO query is issued. A rail whose rows all
+    carry scores never touches the database for this.
+
+    🔴 **SUPPRESS, DO NOT FOLD — and here that is a proof rather than a
+    preference.** The usual hazard in hiding a ghost is that the ghost was the
+    row holding the markets, so hiding it empties the fixture. It cannot happen
+    here: refusal 5 admits a row only if it holds NO markets of its own, no
+    score and no `completed_at`. The rows this names are empty by construction,
+    which is exactly what the reader was complaining about — a card that could
+    never be filled in. There is nothing on them to carry anywhere.
+
+    Nothing is written. The rows stay in the table, addressable, visible to the
+    sentinels and to #2693, and the verdict is recomputed from live state on
+    every request — so a market that moves back un-suppresses its row for free.
+
+    Never raises: a page is better unsuppressed than 500, and the caller's own
+    `except` is the belt (gotcha #42 applied to a stage).
+    """
+    candidates = [
+        int(e.id)
+        for e in events
+        if getattr(e, "id", None) is not None
+        and is_drain_candidate_row(
+            commence_time_source=getattr(e, "commence_time_source", None),
+            home_score=getattr(e, "home_score", None),
+            away_score=getattr(e, "away_score", None),
+            completed_at=getattr(e, "completed_at", None),
+        )
+    ]
+    if not candidates:
+        return {}
+    return await resolve_market_born_duplicates(session, candidates)
