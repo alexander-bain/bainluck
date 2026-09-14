@@ -45,9 +45,7 @@ from __future__ import annotations
 import os
 
 import pytest
-from sqlalchemy import delete as sa_delete, select, text, update as sa_update
-
-from app.routes.auth import _ACCOUNT_DEIDENTIFIED_ROWS, _ACCOUNT_OWNED_ROWS
+from sqlalchemy import select, text
 
 DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
 
@@ -123,6 +121,35 @@ async def db():
     tables = [Base.metadata.tables[name] for name in _TABLES]
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all, tables=tables, checkfirst=True)
+
+        # Sharing the database has a second edge, and it is not hypothetical:
+        # a sibling gate that inserts rows with EXPLICIT ids does not advance
+        # the identity sequence, so the next INSERT that lets Postgres pick an
+        # id collides on the primary key. In CI this produced
+        # `UniqueViolationError: duplicate key value violates unique constraint
+        # "sports_pkey" ... Key (id)=(1) already exists` on the FIRST test only
+        # — the failed statement consumes the sequence value, so everything
+        # after it passed, which is exactly the shape that reads as a flake.
+        #
+        # Reproduced locally by seeding `sports` with an explicit id and
+        # leaving the sequence alone (1 failed / 14 passed, same error), then
+        # fixed by this loop. Idempotent, scoped to the tables this gate
+        # inserts into, and it never lowers a sequence.
+        for name in _TABLES:
+            sequence = (
+                await conn.execute(
+                    text("SELECT pg_get_serial_sequence(:t, 'id')"), {"t": name}
+                )
+            ).scalar()
+            if sequence is None:
+                continue
+            await conn.execute(
+                text(
+                    f"SELECT setval('{sequence}', "
+                    f"GREATEST((SELECT COALESCE(MAX(id), 0) FROM {name}), "
+                    f"(SELECT last_value FROM {sequence})))"
+                )
+            )
 
     maker = async_sessionmaker(engine, expire_on_commit=False)
     async with maker() as session:
