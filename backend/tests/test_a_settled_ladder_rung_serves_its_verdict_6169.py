@@ -280,22 +280,36 @@ class TestTheSettledLadderReadsAsSettled:
                   if r.get("observed_at_basis") == "capped_to_sibling"}
         assert capped == {}, f"a verdict was rewritten to a sibling's price: {sorted(capped)}"
 
-    def test_a_settled_loser_stops_being_a_coin_flip(self):
-        """`Over 38.5` lost and was served 50%.
+    def test_a_settled_loser_reads_as_a_loser(self):
+        """`Over 38.5` lost and was served 50%. It now reads 0.0, ON the ladder.
 
-        It leaves the ladder rather than printing "0%", which is what the two
-        `api_settlement` losers at 0.0 already do — the `> 0` filter is
-        untouched by this change, so the served population of a settled ladder
-        is decided by one rule for all of its rungs instead of by which rail
-        happened to snap the price.
+        🔴 AMENDED BY #6196, AND THE ORIGINAL ASSERTION WAS THE DEFECT.
+
+        This test shipped asserting `38.5 not in rungs` — that a line the game
+        did not clear LEAVES the ladder — on the reasoning that the two
+        `api_settlement` losers at 0.0 already did so and one rule should govern
+        all the rungs. The rule was right and the branch was wrong: the shared
+        behaviour it harmonised on was `_enforce_monotonicity`'s `> 0` filter
+        deleting the losing half of every settled ladder, which #6196 measured at
+        83 dropped rungs across eleven markets on this very event. So the
+        assertion did not merely tolerate the defect, it PINNED it.
+
+        Corrected to the claim the test name always made: a settled loser stops
+        being a coin flip. 0.0 is the answer "this line did not come in", and a
+        card headed "each line vs the final" has to be able to say it.
         """
         rungs = _half_total_rungs(
             _payload([_market()], _ladder_outcomes(SPECIMEN_LADDER))
         )
-        assert 38.5 not in rungs, (
-            f"a line the game did not clear is still priced: {rungs.get(38.5)}"
+        assert 38.5 in rungs, "a line the game did not clear was dropped (#6196)"
+        assert rungs[38.5]["over_probability"] == 0.0, (
+            f"a line the game did not clear is served "
+            f"{rungs[38.5]['over_probability']} (production served 0.5)"
         )
-        assert 28.5 not in rungs and 31.5 not in rungs, "the 0.0 rungs changed behaviour"
+        assert rungs[38.5]["is_winner"] is False
+        for threshold in (28.5, 31.5):
+            assert threshold in rungs, f"Over {threshold} was dropped (#6196)"
+            assert rungs[threshold]["over_probability"] == 0.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -476,8 +490,16 @@ class TestTheAxisIsTheRowsOwn:
         """🔴 The inversion, and getting it wrong prints the opposite answer.
 
         These rows are normalised onto the OVER axis before they are served, so
-        a winning `Under 45.5` must land at 0.0 — and therefore leave the ladder
-        — rather than at the 1.0 its own `is_winner` says.
+        a winning `Under 45.5` must land at 0.0 rather than at the 1.0 its own
+        `is_winner` says.
+
+        🔴 STRENGTHENED BY #6196. This asserted `45.5 not in rungs`, because the
+        `> 0` filter took the row before anything could look at it — the axis
+        was proved by an ABSENCE, which is the weakest evidence available: a
+        dropped row and a row inverted to 0.0 were indistinguishable here, and
+        so were a dropped row and one never built. Now the 0.0 survives to the
+        payload, the inversion is directly observable and this test asserts the
+        number instead of the hole.
         """
         market = _market(id=602, name="DAL Cowboys vs NY Giants: 2nd Half Total")
         outcomes = [
@@ -488,9 +510,10 @@ class TestTheAxisIsTheRowsOwn:
         ]
         rungs = _half_total_rungs(_payload([market], outcomes))
 
-        assert 45.5 not in rungs, (
+        assert 45.5 in rungs, "the winning Under's rung was dropped (#6196)"
+        assert rungs[45.5]["over_probability"] == 0.0, (
             "a winning UNDER was published as a certain OVER: "
-            f"{rungs.get(45.5, {}).get('over_probability')}"
+            f"{rungs[45.5]['over_probability']}"
         )
         assert rungs[10.5]["over_probability"] == 1.0
 
@@ -573,7 +596,17 @@ class TestAVoidedMarketDecidesNothing:
 
     def test_a_market_that_produced_a_winner_still_snaps_its_losers(self):
         """The reverse population, so the repair cannot be satisfied by simply
-        refusing to serve every loss."""
+        refusing to serve every loss.
+
+        🔴 STRENGTHENED BY #6196, and this test is the reason that matters. Its
+        whole job is to prove a loss on a SETTLED market is snapped to 0.0 while
+        a loss on a VOIDED one keeps its price — and it used to discharge that
+        with `24.5 not in rungs`, i.e. by observing that the row vanished.
+        Absence cannot tell "snapped to 0.0 and then dropped" from "never
+        served", so the void/settled distinction this class exists to guard was
+        only half-observable. The 0.0 is now on the ladder and asserted by value,
+        against its twin above which asserts the voided row keeps 0.40.
+        """
         market = _market(id=607, name="DAL Cowboys vs NY Giants: 2nd Half Total")
         outcomes = [
             _outcome(id=860, market_id=607, name="Over 10.5 2H points scored",
@@ -583,7 +616,9 @@ class TestAVoidedMarketDecidesNothing:
         ]
         rungs = _half_total_rungs(_payload([market], outcomes))
         assert rungs[10.5]["over_probability"] == 1.0
-        assert 24.5 not in rungs, "a graded loser must leave the ladder at 0.0"
+        assert 24.5 in rungs, "a graded loser was dropped (#6196)"
+        assert rungs[24.5]["over_probability"] == 0.0, "a graded loser must snap to 0.0"
+        assert rungs[24.5]["is_winner"] is False
 
 
 class TestTheTierBoundaryIsTheDocumentedOne:
