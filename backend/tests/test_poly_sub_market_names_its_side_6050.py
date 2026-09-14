@@ -248,3 +248,231 @@ def test_each_side_reads_its_own_index():
         assert isinstance(arg, ast.Constant) and arg.value == index, (
             f"{name} reads index {ast.dump(arg)}, expected {index}"
         )
+
+
+# ── CERT-2820's required repair: the rows the defect is ABOUT already exist ──
+#
+# `6050-RENAME-EXISTING-OUTCOMES-ON-CONFLICT`. Everything above proves the two
+# sides are named correctly when the row is CREATED. The 20 measured
+# bare-matchup markets were created long ago, so the only statement that ever
+# reaches them is the ON CONFLICT DO UPDATE arm — and its set dict omitted
+# `name`. Every one of them would have gone on reading "Yes" for as long as the
+# market existed while this file reported success: a rename inert on exactly its
+# own population.
+#
+# 🔴 SO THESE TWO DRIVE THE REAL WRITER AND READ THE STATEMENT POSTGRESQL WOULD
+# RECEIVE, not the helper and not the AST. The compiled `ON CONFLICT ... DO
+# UPDATE SET` is the artifact that either carries the rename or does not.
+
+import contextlib  # noqa: E402
+from collections import defaultdict  # noqa: E402
+from datetime import datetime, timezone  # noqa: E402
+
+from app.services.polymarket_api import PolymarketEvent, PolymarketMarket  # noqa: E402
+from sqlalchemy.dialects import postgresql  # noqa: E402
+
+
+class _Result:
+    """Permissive stand-in — see `test_polymarket_under_snapshot_book_p097`."""
+
+    def __init__(self, ident):
+        self._ident = ident
+
+    def scalar_one(self):
+        return self._ident
+
+    def scalar_one_or_none(self):
+        return None
+
+    def scalar(self):
+        return None
+
+    def first(self):
+        return None
+
+    def all(self):
+        return []
+
+    def fetchall(self):
+        return []
+
+    def scalars(self):
+        return self
+
+    @property
+    def rowcount(self):
+        return 0
+
+    def __iter__(self):
+        return iter(())
+
+
+class _RecordingSession:
+    def __init__(self):
+        self.statements = []
+        self._next_id = 5000
+
+    async def execute(self, stmt, *a, **k):
+        self.statements.append(stmt)
+        self._next_id += 1
+        return _Result(self._next_id)
+
+    async def commit(self):
+        return None
+
+    async def rollback(self):
+        return None
+
+    async def flush(self):
+        return None
+
+    def add(self, *a, **k):
+        return None
+
+
+#: A real NFL Sunday event: one decomposed team moneyline whose venue outcomes
+#: NAME the two sides, and one genuine Yes/No question on the same event. Both
+#: must be written by one pass, because the control is only a control if the
+#: same statement builder produced it.
+def _sunday_event() -> PolymarketEvent:
+    return PolymarketEvent(
+        id="evt-6050-repair",
+        title="Broncos vs. Chiefs",
+        slug="broncos-chiefs",
+        active=True,
+        closed=False,
+        neg_risk=False,
+        tags=["Sports", "NFL", "Football"],
+        start_date=datetime(2026, 9, 14, 20, 25, tzinfo=timezone.utc),
+        markets=[
+            PolymarketMarket(
+                condition_id="0xmoneyline",
+                question="Broncos vs. Chiefs",
+                outcomes=["Broncos", "Chiefs"],
+                outcome_prices=[0.435, 0.565],
+                best_bid=0.43,
+                best_ask=0.44,
+                last_trade_price=0.435,
+                volume=310_000.0,
+                active=True,
+            ),
+            PolymarketMarket(
+                condition_id="0xbtts",
+                question="Broncos vs. Chiefs: D/ST Touchdown",
+                outcomes=["Yes", "No"],
+                outcome_prices=[0.12, 0.88],
+                best_bid=0.11,
+                best_ask=0.13,
+                last_trade_price=0.12,
+                volume=40_000.0,
+                active=True,
+            ),
+        ],
+    )
+
+
+async def _run_writer(monkeypatch) -> _RecordingSession:
+    from app.models.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
+    from app.tasks import polymarket as poly
+    from app.utils.market_label_normalization import compute_market_tier
+    from app.utils.odds_math import probability_to_american
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    session = _RecordingSession()
+
+    @contextlib.asynccontextmanager
+    async def _fake_session():
+        yield session
+
+    monkeypatch.setattr(poly, "get_task_session", _fake_session)
+
+    stats: dict = defaultdict(int)
+    stats["errors"] = []
+    await poly._process_event_batch(
+        [_sunday_event()],
+        stats,
+        FuturesMarket,
+        FuturesOutcome,
+        FuturesOddsSnapshot,
+        pg_insert,
+        probability_to_american,
+        compute_market_tier,
+    )
+    assert not stats["errors"], f"writer raised: {stats['errors']}"
+    return session
+
+
+def _outcome_conflict_updates(session) -> dict[str, dict]:
+    """`external_id -> the ON CONFLICT DO UPDATE set, by column name`.
+
+    Keyed on the row's own `external_id`, never positionally: the writer emits
+    the two sub-markets' legs AND the parent market's, and a refused sub-market
+    drops out of the sequence entirely — the trap `_snapshots_by_outcome` in
+    `test_polymarket_under_snapshot_book_p097` was written to record.
+    """
+    out: dict[str, dict] = {}
+    for stmt in session.statements:
+        table = getattr(stmt, "table", None)
+        if table is None or table.name != "futures_outcomes":
+            continue
+        clause = getattr(stmt, "_post_values_clause", None)
+        if clause is None:
+            continue
+        external_id = stmt.compile(dialect=postgresql.dialect()).params.get(
+            "external_id"
+        )
+        if external_id is None:
+            continue
+        out[external_id] = {
+            (getattr(col, "name", None) or str(col)): value
+            for col, value in dict(clause.update_values_to_set).items()
+        }
+    return out
+
+
+@pytest.mark.asyncio
+async def test_existing_polymarket_moneyline_outcomes_are_renamed_on_repoll_6050(
+    monkeypatch,
+):
+    """The ship for rows that already exist: a re-poll must carry the names.
+
+    Without this, market 58284287's two legs stay "Yes"/"No" on the page for as
+    long as the market lives, because nothing ever inserts them again.
+    """
+    updates = _outcome_conflict_updates(await _run_writer(monkeypatch))
+
+    yes_leg = updates.get("0xmoneyline_yes")
+    no_leg = updates.get("0xmoneyline_no")
+    assert yes_leg is not None and no_leg is not None, (
+        f"the writer emitted no conflict arm for the moneyline legs: {sorted(updates)}"
+    )
+    assert yes_leg.get("name") == "Broncos", (
+        "an existing Yes-named row would not be renamed on re-poll; the conflict "
+        f"arm sets {sorted(yes_leg)}"
+    )
+    assert no_leg.get("name") == "Chiefs", (
+        "the No side keeps its old label on re-poll; the conflict arm sets "
+        f"{sorted(no_leg)}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_genuine_yes_no_market_is_not_renamed_on_repoll_6050(monkeypatch):
+    """The control, and the reason the rename is conditional.
+
+    `_sub_market_side_label` hands back the fallback for every degenerate shape,
+    so an UNCONDITIONAL `name` in the set would let one malformed payload —
+    outcomes missing for a single beat — rename a correctly stored "Broncos"
+    back to "Yes". A real Yes/No question needs no write at all: its stored name
+    is already the fallback.
+    """
+    updates = _outcome_conflict_updates(await _run_writer(monkeypatch))
+
+    control = updates.get("0xbtts_yes")
+    assert control is not None, f"fixture built {sorted(updates)}"
+    assert "name" not in control, (
+        "a genuine Yes/No leg's conflict arm now rewrites `name`; one degenerate "
+        "payload could then overwrite a real team name with the fallback"
+    )
+    # Not vacuous: the same pass DID carry a rename two statements earlier.
+    assert updates["0xmoneyline_yes"].get("name") == "Broncos"

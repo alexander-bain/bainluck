@@ -1470,11 +1470,12 @@ async def _process_event_batch(
                         sub_market_id = sub_result.scalar_one()
 
                         # Create Over/Yes outcome
+                        over_fallback = "Over" if "o/u" in sub_name.lower() else "Yes"
                         over_name = _sub_market_side_label(
                             market,
                             0,
                             sub_name,
-                            "Over" if "o/u" in sub_name.lower() else "Yes",
+                            over_fallback,
                         )
                         over_american = probability_to_american(prob) if 0 < prob < 1 else None
 
@@ -1549,6 +1550,7 @@ async def _process_event_batch(
                             over_update["opening_probability"] = func.coalesce(
                                 FuturesOutcome.opening_probability, prob
                             )
+                        _carry_venue_side_name(over_update, over_name, over_fallback)
 
                         over_stmt = pg_insert(FuturesOutcome).values(
                             market_id=sub_market_id,
@@ -1592,11 +1594,12 @@ async def _process_event_batch(
                         # Create Under/No outcome if available
                         if len(market.outcome_prices) > 1:
                             under_prob = market.outcome_prices[1]
+                            under_fallback = "Under" if "o/u" in sub_name.lower() else "No"
                             under_name = _sub_market_side_label(
                                 market,
                                 1,
                                 sub_name,
-                                "Under" if "o/u" in sub_name.lower() else "No",
+                                under_fallback,
                             )
                             under_american = probability_to_american(under_prob) if 0 < under_prob < 1 else None
 
@@ -1676,6 +1679,9 @@ async def _process_event_batch(
                                 under_update["opening_probability"] = func.coalesce(
                                     FuturesOutcome.opening_probability, under_prob
                                 )
+                            _carry_venue_side_name(
+                                under_update, under_name, under_fallback
+                            )
 
                             under_stmt = pg_insert(FuturesOutcome).values(
                                 market_id=sub_market_id,
@@ -3011,6 +3017,38 @@ def _sub_market_side_label(market, index: int, sub_name: str, fallback: str) -> 
     if _label_key(token) == _label_key(sub_name):
         return fallback
     return token
+
+
+def _carry_venue_side_name(update: dict, label: str, fallback: str) -> dict:
+    """Add ``name`` to an ON CONFLICT DO UPDATE set — but only when it is news.
+
+    CERT-2820's required repair, ``6050-RENAME-EXISTING-OUTCOMES-ON-CONFLICT``.
+    #6050 named the two sides correctly at INSERT, and every row the defect is
+    ABOUT already exists: the 20 measured bare-matchup markets are reached only
+    by the conflict arm, whose set dicts omitted ``name``. So each one would have
+    gone on reading "Yes" forever while the fix reported success — inert on
+    exactly its own population, which is the one place a rename cannot afford to
+    be.
+
+    🔴 **ONLY WHEN THE VENUE NAMED THE SIDE, AND THAT IS WHAT ``!= fallback``
+    MEANS.** :func:`_sub_market_side_label` returns the caller's fallback for
+    every degenerate shape — outcomes absent, token blank, token itself a bare
+    Yes/No, token echoing the sub-market's own name. An unconditional write would
+    therefore let ONE malformed payload rename a correctly stored "Broncos" back
+    to "Yes", turning a poll hiccup into a visible regression on the very card
+    this repairs. The comparison keeps the helper's fallbacks doing their job
+    instead of overwriting the row with them.
+
+    A genuine Yes/No sub-market — the large majority — takes the same branch and
+    needs no write at all: its stored name is already the fallback, so skipping
+    is not a compromise there, it is a no-op. That is also what keeps this
+    statement byte-identical for every market that was never wrong.
+
+    Returns the same dict, mutated, so a call site reads as one line.
+    """
+    if label != fallback:
+        update["name"] = label
+    return update
 
 
 def _extract_outcome_name(question: str, event_title: str) -> str:
