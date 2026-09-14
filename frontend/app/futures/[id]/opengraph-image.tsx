@@ -2,8 +2,8 @@
 import { ImageResponse } from "next/og";
 import type { FuturesMarketDetailResponse, FuturesOutcome } from "@/lib/types";
 import { UnfurlCard } from "@/components/og/UnfurlCard";
-import { formatShareProbability, truncateShareText } from "@/lib/share";
-import { futuresUnfurlCopy } from "@/lib/futuresDetailDisplay";
+import { truncateShareText } from "@/lib/share";
+import { futuresBoardPrice, futuresUnfurlCopy } from "@/lib/futuresDetailDisplay";
 import { unresolvedCardCopy } from "@/lib/unresolvedCardCopy";
 import type { ResolutionFailure } from "@/lib/unresolvedShareMeta";
 import { unfurlImageOptions } from "@/lib/unfurlImageCache";
@@ -122,7 +122,45 @@ export default async function Image({ params }: { params: { id: string } }) {
 
   const market = lookup.market;
   const leader = topOutcome(market);
-  const probability = formatShareProbability(leader?.probability) || "--";
+
+  // ═══ #6127 — A MARKET NOBODY HAS PRICED DOES NOT GET A NUMBER, A LEADER OR A
+  //     BAR DRAWN FOR IT ═══
+  //
+  // Measured on production 2026-09-14 10:05Z, `/futures/59698973` — *2027 Men's
+  // College Basketball National Champion*, `status='open'`, both outcomes served
+  // with `probability: null`:
+  //
+  //   og:description  "2027 Men's College Basketball National Champion. See this
+  //                    market translated into intuitive probabilities on Bain
+  //                    Luck."                                              ✅
+  //   og:image        "- -" in 96px, "Ohio State" in 40px under it, a 3%-wide
+  //                    orange bar stub beneath that                        ❌
+  //
+  // The words, from the same payload one file away, say nothing numeric — they
+  // are `layout.tsx`'s unpriced fallback and they have always been there. The
+  // picture asserted three things the row does not contain.
+  //
+  // 🔴 AND THE NAME IS THE WORSE HALF OF IT. `topOutcome` sorts on
+  // `(b.probability ?? -1) - (a.probability ?? -1)`. With every probability null
+  // that comparator returns 0 for every pair, so the "leader" is ARRAY ORDER —
+  // whatever the API happened to serialise first. "Ohio State" was crowned the
+  // favourite for a 2027 title on no evidence whatsoever, and the bar stub beside
+  // it reads as a real, tiny price rather than as an absence. A dash at least
+  // looks like a rendering fault; a name looks like a finding.
+  //
+  // Reach: 12,099 `open` markets carry no outcome with a non-null, non-zero
+  // `current_probability` (single db-query, 2026-09-14 10:15Z — no fetch loop,
+  // so not exposed to #6119's rate-limit contamination). The 72,143 `resolved`
+  // rows are NOT this defect: they take the `isResolved` branch below, which
+  // draws the winner and deliberately prints no percentage.
+  //
+  // The rule is `futuresBoardPrice` and it is an ADOPTION, the sixth consecutive
+  // one in this chain (#6061, #6079, #6085, #6105, #6113, #6119): the defect is
+  // never that a rule is missing, it is that one of the two surfaces never asked
+  // for it. Withholding only — a price can arrive on the next poll, so the status
+  // word, the settled branch and the cache window are all untouched.
+  const probability = futuresBoardPrice(leader);
+  const priceWithheld = probability === null;
   const barWidth = Math.max(3, Math.min(97, Math.round((leader?.probability ?? 0) * 100)));
   const title = market.name || "Prediction market";
   const accent = getAccent(market.llm_sport_category);
@@ -236,7 +274,11 @@ export default async function Image({ params }: { params: { id: string } }) {
                   {settledWon ? "WON" : "RESOLVED"}
                 </span>
               </div>
-            ) : (
+            ) : priceWithheld ? null : (
+              // #6127 — the number, the 24h pill and the leader's name leave
+              // TOGETHER, because each of the three is a claim about a price the
+              // row does not carry. The market name above and the outcome count
+              // below are facts and stay.
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 <div style={{ display: "flex", alignItems: "baseline", gap: 20 }}>
                   <span style={{ fontSize: 96, fontWeight: 900, letterSpacing: -2, lineHeight: 1, color: COLOR_PRIMARY }}>
@@ -269,8 +311,12 @@ export default async function Image({ params }: { params: { id: string } }) {
           {/* Footer bar + URL */}
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {/* Live only — `FuturesHero`: "a settled market shows no live bar". A
-                frozen last price drawn as a fill is the same claim the numeral was. */}
-            {!isResolved && (
+                frozen last price drawn as a fill is the same claim the numeral was.
+                #6127 — and an ABSENT price is the same claim again: with every
+                outcome null the fill clamps to its 3% floor, which draws as a real
+                long shot rather than as nothing. The bar is the one place a price
+                survives as a SHAPE after being removed as a number. */}
+            {!isResolved && !priceWithheld && (
               <div style={{ width: "100%", height: 24, borderRadius: 999, background: COLOR_BAR_BG, overflow: "hidden", display: "flex" }}>
                 <div style={{ width: `${barWidth}%`, height: "100%", borderRadius: 999, background: accent }} />
               </div>
