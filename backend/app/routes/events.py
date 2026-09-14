@@ -15391,17 +15391,90 @@ async def _build_game_markets(
 
     game_totals = _enforce_monotonicity(game_totals)
 
-    # Also apply sport-range guard to period totals (use team_total range
-    # as a generous proxy — half/quarter totals are never larger than a
-    # team's full-game total).
-    if team_range:
-        lo, hi = team_range
-        period_markets = [
-            pm for pm in period_markets
-            if pm.get("market_type") not in ("half_total", "quarter_total")
-            or pm.get("threshold") is None
-            or lo <= pm["threshold"] <= hi
-        ]
+    # PERIOD-TOTAL GUARD — TWO BOUNDS, AND THEY ARE NOT THE SAME KIND OF TEST
+    # (#6205). Measured over EVERY linked period-total market in production —
+    # 1,619 markets / 16,369 outcome rows, 2026-09-14, the whole population and
+    # not a sample.
+    #
+    # CEILING — unchanged, and the team-total proxy is sound for it: a half or
+    # quarter total is never larger than a team's full-game total. Before this
+    # change it was the only bound catching anything: the population holds
+    # exactly ONE cross-sport contaminant — an NBA first-half total,
+    # `KXNBA1HTOTAL-26MAR09NYKLAC`, thresholds 102.5–126.5, linked to an MLS
+    # fixture — and the soccer ceiling of 7 rejects all 9 of its rows.
+    #
+    # It is kept, but be honest about what it is now worth: the foreign-ticker
+    # test below rejects that same row, so on today's data the ceiling is
+    # redundant — the mutant sweep found the measured specimen could not tell
+    # them apart. What only the ceiling catches is a SAME-SPORT row carrying a
+    # game-scope number in a period slot, which no production row does today.
+    # That case is pinned by a deliberately manufactured test, and the ceiling
+    # stays because removing pre-existing protection is not this ship.
+    #
+    # FLOOR — the borrowed team-total floor was the bug, and it was never
+    # derived for a period. `americanfootball` is 5, a number about a team's
+    # FULL GAME, applied to a quarter: it ate 648 rows, 578 of them graded
+    # WINNERS, including the `Over 3.5` that six ladders on event 14637256 each
+    # carry at is_winner=true. `basketball` is worse, because its floor of 60
+    # sits ABOVE most of the ladder — Kalshi's own NBA quarter rungs
+    # (`KXNBA1QTOTAL-…`, 3.5 … 57.5) and every NCAAB/WNBA half line below 60
+    # went with it, 824 rows and 588 more winners. Total cost 1,472 rows, 1,166
+    # of them winners, against zero contaminants caught. A settled ladder that
+    # drops a rung that WON is #6196 from the other side: there the filter hid
+    # the losers, here it hides a winner.
+    #
+    # AND THE FLOOR CANNOT BE RE-DERIVED, ONLY REPLACED. At the low end a period
+    # total's magnitude carries no sport information: a legitimate NFL quarter
+    # line (2.5) and a foreign soccer half line (2.5) are THE SAME NUMBER, so
+    # any floor high enough to reject the second rejects the first. Lowering
+    # `_SPORT_TEAM_TOTAL_RANGE` is not the fix either — that constant is also the
+    # full-game team-total floor, and dragging it down reopens the cross-game
+    # contamination 7a exists to catch. So the magnitude floor goes entirely and
+    # NO replacement floor is written: `_extract_threshold` matches
+    # `(\d+(?:\.\d+)?)` with no sign group, so a total's threshold cannot BE
+    # negative and a `>= 0` here would be unreachable. The first cut of this fix
+    # carried one; the mutant sweep proved it dead and it was deleted rather than
+    # kept as decoration. `test_a_total_threshold_can_never_be_negative` pins
+    # that reason, so adding a sign group to that regex fails loudly here instead
+    # of quietly reopening the question.
+    #
+    # The protection the old floor CLAIMED is replaced by an exact test rather
+    # than a magnitude one: if the market's Kalshi ticker names a league, that
+    # league's SPORT must be this event's sport. Over the same 16,369 rows that
+    # is 1-for-1 on the contaminant with zero false positives, where the floor
+    # was 0-for-1. Rows with no resolvable ticker — every Polymarket period
+    # total — are untouched, so the test only ever adds information and never
+    # guesses from its absence. Cross-LEAGUE is deliberately not its business
+    # (an NCAAF ticker on an NFL event passes): that is the matcher's, #2693.
+    #
+    # Scope is the two total types the old filter named. Period SPREADS and
+    # WINNERS never had a guard here and do not get one in this ship; #6205
+    # carries that as its own note.
+    _period_ticker_by_market_id = {m.id: m.external_id for m in markets}
+
+    def _period_total_is_foreign(pm: dict) -> bool:
+        """True when this row's ticker names a league of ANOTHER sport."""
+        if not sport_prefix:
+            return False
+        ticker = _period_ticker_by_market_id.get(pm.get("_market_id"))
+        ticker_key = _get_sport_key_from_ticker(ticker) if ticker else None
+        if not ticker_key:
+            return False
+        return ticker_key.split("_")[0] != sport_prefix
+
+    period_ceiling = team_range[1] if team_range else None
+    period_markets = [
+        pm for pm in period_markets
+        if pm.get("market_type") not in ("half_total", "quarter_total")
+        or (
+            not _period_total_is_foreign(pm)
+            and (
+                pm.get("threshold") is None
+                or period_ceiling is None
+                or pm["threshold"] <= period_ceiling
+            )
+        )
+    ]
 
     # Also enforce on period totals within each market group
     period_total_groups: dict[str, list[dict]] = {}
