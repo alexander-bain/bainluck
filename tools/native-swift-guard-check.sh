@@ -71,11 +71,22 @@ echo
 # A guard is coupled if it contains the basename literally. Prose-only mentions in a
 # docstring match too: that is deliberate. A false positive costs one test run; a
 # false negative costs a red master.
+#
+# THE FRONTEND HALF WAS MISSING AND IT COST A RED CI (native/165, #3051,
+# 2026-09-13). `frontend/__tests__/ios/*.test.ts` reads the Swift tree as source
+# text for exactly the reason this script's own docstring gives — "CI compiles no
+# Swift at all" — so those suites are the LARGEST population of Swift-text guards
+# in the repo, and scanning only `backend/` reported "No pytest files among them,
+# exit 0" on a diff that reddened `aDrawIsNotTheAwayTeam5271.test.ts`. A script
+# that answers "which guards will your iOS diff redden?" with two thirds of the
+# guards unexamined is worse than no script, because its exit 0 is believed.
 RAW=/tmp/native-swift-guard-hits.$$.txt
 : > "$RAW"
 for base in "${SWIFT[@]}"; do
     grep -rl --fixed-strings "$base" backend/tests backend/scripts 2>/dev/null \
         | grep -E '\.py$' >> "$RAW"
+    grep -rl --fixed-strings "$base" frontend/__tests__ frontend/e2e 2>/dev/null \
+        | grep -E '\.(ts|tsx|js|mjs)$' >> "$RAW"
 done
 
 GUARDS=()
@@ -89,45 +100,79 @@ if [ ${#GUARDS[@]} -eq 0 ]; then
     exit 0
 fi
 
-echo "Backend files that read those Swift sources (${#GUARDS[@]}):"
+echo "Files that read those Swift sources (${#GUARDS[@]}):"
 printf '  %s\n' "${GUARDS[@]}"
 echo
 
 TESTS=()
+JESTS=()
 for g in "${GUARDS[@]}"; do
     case "$g" in
         backend/tests/*) TESTS[${#TESTS[@]}]="${g#backend/}" ;;
-        *) echo "NOTE: $g is not a pytest file — read it yourself, it is not run below." ;;
+        frontend/__tests__/*|frontend/e2e/*) JESTS[${#JESTS[@]}]="${g#frontend/}" ;;
+        *) echo "NOTE: $g is not a pytest or jest file — read it yourself, it is not run below." ;;
     esac
 done
 
-if [ ${#TESTS[@]} -eq 0 ]; then
-    echo "No pytest files among them."
+if [ ${#TESTS[@]} -eq 0 ] && [ ${#JESTS[@]} -eq 0 ]; then
+    echo "No runnable test files among them."
     exit 0
 fi
+
+# `--testPathPatterns` is PLURAL: jest 30 exits 1 on the singular, which reads as
+# a test failure rather than a bad flag (CLAUDE.md, frontend tests).
+JARGS=()
+for j in "${JESTS[@]}"; do
+    JARGS[${#JARGS[@]}]="--testPathPatterns"
+    JARGS[${#JARGS[@]}]="$j"
+done
 
 if [ "$LIST_ONLY" -eq 1 ]; then
-    echo "Run:  cd backend && python3 -m pytest ${TESTS[*]} -q"
+    [ ${#TESTS[@]} -gt 0 ] && echo "Run:  cd backend && python3 -m pytest ${TESTS[*]} -q"
+    [ ${#JESTS[@]} -gt 0 ] && echo "Run:  cd frontend && npx jest ${JARGS[*]}"
     exit 0
 fi
 
-echo "Running: cd backend && python3 -m pytest ${TESTS[*]} -q"
-echo
-cd "$REPO/backend" || exit 1
-OUT=/tmp/native-swift-guard-check.$$.txt
-python3 -m pytest "${TESTS[@]}" -q > "$OUT" 2>&1
-CODE=$?
-echo "EXIT CODE: $CODE"
-tail -15 "$OUT"
-echo
-echo "(full output: $OUT)"
+CODE=0
+
+if [ ${#TESTS[@]} -gt 0 ]; then
+    echo "Running: cd backend && python3 -m pytest ${TESTS[*]} -q"
+    echo
+    OUT=/tmp/native-swift-guard-check.$$.txt
+    ( cd "$REPO/backend" && python3 -m pytest "${TESTS[@]}" -q ) > "$OUT" 2>&1
+    PY_CODE=$?
+    echo "PYTEST EXIT CODE: $PY_CODE"
+    tail -15 "$OUT"
+    echo "(full output: $OUT)"
+    echo
+    [ "$PY_CODE" -ne 0 ] && CODE="$PY_CODE"
+fi
+
+if [ ${#JESTS[@]} -gt 0 ]; then
+    echo "Running: cd frontend && npx jest ${JARGS[*]}"
+    echo
+    JOUT=/tmp/native-swift-guard-check-jest.$$.txt
+    ( cd "$REPO/frontend" && npx jest "${JARGS[@]}" ) > "$JOUT" 2>&1
+    JS_CODE=$?
+    echo "JEST EXIT CODE: $JS_CODE"
+    tail -15 "$JOUT"
+    echo "(full output: $JOUT)"
+    echo
+    # A jest invocation that matched NO suite exits 0 having run nothing, which
+    # is the vacuous pass this script exists to refuse. Demand the suites back.
+    if [ "$JS_CODE" -eq 0 ] && ! grep -qE "Tests: +[0-9]+ passed|Tests: +[0-9]+ skipped" "$JOUT"; then
+        echo "JEST MATCHED NO SUITE — that is not a pass. Check the patterns above."
+        JS_CODE=1
+    fi
+    [ "$JS_CODE" -ne 0 ] && CODE="$JS_CODE"
+fi
 
 # Gotcha #124: 1 is a result; anything else is a story about the harness.
 if [ "$CODE" -eq 0 ]; then
     echo "GREEN — your iOS diff does not move a line these guards pin."
 elif [ "$CODE" -eq 1 ]; then
-    echo "RED — a backend guard pins a line your Swift diff moved. Fix before handover."
+    echo "RED — a guard pins a line your Swift diff moved. Fix before handover."
 else
-    echo "EXIT $CODE is not a test result — the gate did not run. Read $OUT."
+    echo "EXIT $CODE is not a test result — the gate did not run. Read the output above."
 fi
 exit "$CODE"
