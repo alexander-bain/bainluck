@@ -36,7 +36,7 @@ import subprocess
 import sys
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -2160,3 +2160,324 @@ def test_the_workflow_hands_the_decision_the_age_it_read():
     assert "--heavy-release-age-min" in decide_call[:400], (
         "the age is read but never passed to the decision"
     )
+
+
+# ---------------------------------------------------------------------------
+# #5470 — THE WAIT TO THE BAND. Heavy's own release record, v15..v20: 3h47 /
+# 3h06 / 4h01 / 4h06 / 3h47, mean 3h45 against a 3h00 cycle floor. The
+# 45-minute residual is the wait for a trigger to arrive while the band is open
+# after the floor has cleared — one arrives every ~22 min and 47% of them are
+# in band (34/73 measured), which is 45 min of expected wait. The tail is the
+# part that hurt: with no deploys the only trigger is a cron measured 19-359
+# min late, in band 2 of 11 times, which is the 7h06m episodes in the
+# workflow's header. A run that HOLDs at :10 and a run that sleeps to :38
+# differ only in whether the opportunity is taken, so the tests below are about
+# one thing: the sleep must buy an opportunity WITHOUT buying a weaker verdict.
+# ---------------------------------------------------------------------------
+
+
+def test_the_two_edges_are_one_band_read_from_both_sides():
+    """`seconds_until_window_opens` and `band_seconds_left` must not be two
+    independent opinions about where the band is — at every minute of the hour
+    exactly one of them is non-zero."""
+    opens, closes = sync.window_bounds()
+    for minute in range(60):
+        now = _at(minute)
+        inside = sync.inside_window(now)
+        assert inside == (opens <= minute <= closes), minute
+        assert (sync.seconds_until_window_opens(now) == 0) is inside, minute
+        assert (sync.band_seconds_left(now) > 0) is inside, minute
+
+
+def test_the_wait_lands_on_the_opening_edge_and_never_past_it():
+    """Not "about half an hour" — the exact second the band opens, from any
+    starting second, carrying the hour when the wait wraps midnight."""
+    opens, _ = sync.window_bounds()
+    for minute, second in ((0, 0), (10, 31), (36, 59), (opens - 1, 1), (59, 45)):
+        now = _at(minute).replace(second=second)
+        landed = now + timedelta(seconds=sync.seconds_until_window_opens(now))
+        assert (landed.minute, landed.second) == (opens, 0), (minute, second)
+        assert sync.inside_window(landed), (minute, second)
+    # A real clock carries microseconds, and truncating them lands the sleeper
+    # one second SHORT of the edge — outside the band it just waited to reach.
+    ragged = _at(30).replace(second=20, microsecond=842205)
+    landed = ragged + timedelta(seconds=sync.seconds_until_window_opens(ragged))
+    assert sync.inside_window(landed), landed
+    assert landed.minute == opens
+    # The wrap is a real hour later, not a negative number of seconds.
+    late = datetime(2026, 9, 12, 23, 59, 30, tzinfo=timezone.utc)
+    assert late + timedelta(seconds=sync.seconds_until_window_opens(late)) == datetime(
+        2026, 9, 13, 0, opens, 0, tzinfo=timezone.utc
+    )
+
+
+def test_a_wait_computed_from_a_real_clock_lands_inside_the_band():
+    """The one assertion here that reads the WALL clock, and the reason this
+    function rounds up: every `now=` anchor in this file is microsecond-zero,
+    so the truncation bug was invisible to all of them and showed up the first
+    time the subcommand was run against the real clock (gotcha #44 is satisfied
+    — the assertion is self-consistent at every minute of the day)."""
+    now = datetime.now(timezone.utc)
+    secs = sync.seconds_until_window_opens(now)
+    assert sync.inside_window(now + timedelta(seconds=secs)), (now, secs)
+
+
+def test_no_wait_is_ever_longer_than_the_hour_minus_the_band():
+    """The only bound the job timeout has to cover."""
+    opens, closes = sync.window_bounds()
+    worst = max(sync.seconds_until_window_opens(_at(m)) for m in range(60))
+    assert worst == (60 - (closes - opens + 1)) * 60
+
+
+def _wait(minute, *, main=A, heavy=B, ancestor=True, age=None, dispatched=False):
+    return sync.wait_seconds(
+        main_live=main,
+        heavy_live=heavy,
+        heavy_is_ancestor=ancestor,
+        dispatched=dispatched,
+        heavy_release_age_min=age,
+        now=_at(minute),
+    )
+
+
+def test_a_run_with_work_to_do_sleeps_to_the_band_and_one_inside_it_does_not():
+    opens, closes = sync.window_bounds()
+    assert _wait(10) == (opens - 10) * 60
+    for minute in (opens, 42, closes):
+        assert _wait(minute) == 0, minute
+
+
+def test_the_wait_is_authorised_by_the_SAME_judge_and_never_a_second_one():
+    """The property that makes the sleep safe to add: it answers no question of
+    its own. Whenever it waits, `decide` asked about the moment it will wake —
+    with the release age it will have by then — says PUSH."""
+    for minute in range(60):
+        for age in (None, 0, 100, 179, 180, 10_000):
+            secs = _wait(minute, age=age)
+            if not secs:
+                continue
+            now = _at(minute)
+            projected = None if age is None else age + (secs + 59) // 60
+            verdict = sync.decide(
+                main_live=A,
+                heavy_live=B,
+                heavy_is_ancestor=True,
+                heavy_release_age_min=projected,
+                now=now + timedelta(seconds=secs),
+            )
+            assert verdict.code == PUSH, (minute, age, verdict.reason)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"main": A, "heavy": A},          # already in sync — nothing to wait for
+        {"ancestor": False},              # a diverged heavy refuses on arrival
+        {"ancestor": None},               # and so does an ancestry we cannot prove
+        {"main": ""},                     # an unreadable fact is not a pending one
+        {"heavy": "b" * 7},
+    ],
+)
+def test_a_run_that_would_not_push_when_the_band_opens_never_sleeps(kwargs):
+    """Sleeping 28 minutes to print the verdict we already hold is the pure
+    cost of this change with none of its benefit."""
+    assert _wait(10, **kwargs) == 0
+
+
+def test_a_run_inside_the_cycle_floor_never_sleeps():
+    """The floor is what bounds the waits at ~8 a day rather than one per
+    deploy: a heavy released minutes ago is not made pushable by the clock."""
+    assert _wait(10, age=5) == 0
+    assert _wait(10, age=0) == 0
+
+
+def test_the_floor_is_asked_about_the_age_at_the_EDGE_not_the_age_now():
+    """A heavy 160 min old at :10 is past the 180-min floor by :38. Asking the
+    floor about NOW would refuse a wait the floor itself is about to permit —
+    and projecting is safe in the only direction that matters, because the real
+    age at the push is at or above the projection."""
+    opens, _ = sync.window_bounds()
+    floor = sync.min_cycle_interval_min()
+    gap = opens - 10
+    assert _wait(10, age=floor - gap) == gap * 60
+    assert _wait(10, age=floor - gap - 1) == 0
+    # The projection is the wait, in whole minutes, and nothing else.
+    assert sync.decide(
+        main_live=A, heavy_live=B, heavy_is_ancestor=True,
+        heavy_release_age_min=floor - gap, now=_at(10),
+    ).code == HOLD
+
+
+def test_an_unreadable_age_does_not_stop_the_wait_any_more_than_it_stops_the_push():
+    """The cost gate's polarity, carried through the projection unchanged."""
+    assert _wait(10, age=None) > 0
+
+
+def test_an_attended_run_never_sleeps_because_it_is_exempt_from_the_band():
+    """`--dispatched` overrules the clock, so waiting for it is waiting for a
+    gate that is not being applied."""
+    assert _wait(10, dispatched=True) == 0
+    assert _wait(10, dispatched=True, age=0) == 0
+
+
+def test_the_wait_plan_subcommand_prints_the_number_alone_and_exits_zero():
+    """`age`'s contract, for a reason of its own: a wait that cannot compute
+    itself must degrade to NOT waiting, never to a code the workflow reads."""
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "wait-plan", "--main-live", A,
+         "--heavy-live", B, "--heavy-is-ancestor", "true"],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = proc.stdout.strip()
+    assert out.isdigit(), out
+    opens, closes = sync.window_bounds()
+    assert 0 <= int(out) <= (60 - (closes - opens + 1)) * 60
+    # The WHY reaches the log without becoming the number the shell captures.
+    assert proc.stderr.strip()
+    assert "\n" not in proc.stdout.strip()
+
+
+def test_the_wait_plan_is_handed_the_same_facts_the_decision_gets():
+    """A gate fed a subset of the facts is a different gate."""
+    code = _workflow_code()
+    plan = code[code.index("heavy_sync_decision.py wait-plan"):][:600]
+    for flag in ("--main-live", "--heavy-live", "--heavy-is-ancestor",
+                 "--heavy-release-age-min", "$DISPATCH_FLAG"):
+        assert flag in plan, flag
+    # and it is asked BEFORE the decision it exists to make reachable
+    assert code.index("heavy_sync_decision.py wait-plan") < code.index(
+        "heavy_sync_decision.py decide"
+    )
+
+
+def test_the_job_timeout_covers_the_longest_run_the_band_permits():
+    """It is a ceiling on a job that now sleeps, and the thing it protects is
+    the `heavy-deploy` group — GitHub's default would hold it six hours."""
+    timeout = re.search(r"(?m)^\s*timeout-minutes:\s*(\d+)\s*$", WORKFLOW.read_text())
+    assert timeout, "the sleeping job has no timeout"
+    opens, closes = sync.window_bounds()
+    longest_wait_min = 60 - (closes - opens + 1)
+    band_min = closes - opens + 1
+    assert int(timeout.group(1)) >= longest_wait_min + band_min, (
+        f"timeout-minutes={timeout.group(1)} is under the {longest_wait_min}-min wait "
+        f"plus the {band_min}-min band the in-flight loop may spend"
+    )
+
+
+# ── and the prologue itself, RUN rather than grepped ───────────────────────────
+#
+# Same discipline as the wait loop above: `"read_facts" in body` passes on a
+# block that defines the function and never calls it twice, which is the only
+# property that makes sleeping safe. So the block is lifted out of the YAML and
+# executed with `git`, `sleep` and the two script reads stubbed.
+
+
+def _extract_prologue() -> str:
+    lines = _workflow_code().splitlines()
+    start = next(i for i, ln in enumerate(lines) if ln.strip() == "read_facts() {")
+    gate = next(
+        i for i in range(start, len(lines))
+        if lines[i].strip() == 'if [ "$WAIT_S" -gt 0 ]; then'
+    )
+    end = next(i for i in range(gate + 1, len(lines)) if lines[i] == " " * 10 + "fi")
+    return "\n".join(ln[10:] for ln in lines[start:end + 1])
+
+
+def _run_prologue(tmp_path, *, wait_s, shas, dispatched=False):
+    """Run the workflow's prologue against a scripted world.
+
+    Returns (MAIN_LIVE it ended up with, number of ls-remote reads, sleeps).
+    `shas` is the sequence of main-live shas `git ls-remote` serves, one per
+    read_facts call — so a second, different sha proves the re-read happened
+    and that the run did not keep the one it went to sleep on.
+    """
+    stub = tmp_path / "stub"
+    stub.mkdir(parents=True)
+    state = tmp_path / "state"
+    state.mkdir(parents=True)
+    (state / "shas").write_text("\n".join(shas))
+
+    (stub / "git").write_text(
+        "#!/bin/bash\n"
+        'case "$*" in\n'
+        "  *ls-remote*heroku-main*)\n"
+        f"    n=$(cat {state}/mains 2>/dev/null || echo 0); n=$((n+1)); echo $n > {state}/mains\n"
+        f"    sed -n \"${{n}}p\" {state}/shas; echo '\trefs/heads/master'\n"
+        "    ;;\n"
+        "  *ls-remote*heroku-heavy*)\n"
+        f"    n=$(cat {state}/heavies 2>/dev/null || echo 0)\n"
+        f"    echo $((n+1)) > {state}/heavies\n"
+        f"    printf '%s\\trefs/heads/master\\n' '{B}'\n"
+        "    ;;\n"
+        "esac\n"
+        "exit 0\n"
+    )
+    (stub / "sleep").write_text(
+        "#!/bin/bash\n"
+        f"echo \"$1\" >> {state}/sleeps\n"
+    )
+    (stub / "python3").write_text(
+        "#!/bin/bash\n"
+        'case "$*" in\n'
+        # `wait-plan` FIRST: its own command line carries
+        # `--heavy-release-age-min`, so an `*age*` arm above it would answer the
+        # wait with the age and the harness would be testing itself.
+        f"  *wait-plan*) echo {wait_s} ;;\n"
+        "  *age*) echo 9999 ;;\n"
+        f'  *) exec "{sys.executable}" "$@" ;;\n'
+        "esac\n"
+    )
+    for name in ("git", "sleep", "python3"):
+        (stub / name).chmod(0o755)
+
+    script = tmp_path / "prologue.sh"
+    script.write_text(
+        "set -uo pipefail\n"
+        + (f'DISPATCHED="{"1" if dispatched else ""}"\n')
+        + _extract_prologue()
+        + '\necho "ENDED_ON=$MAIN_LIVE"\n'
+    )
+    proc = subprocess.run(
+        ["bash", str(script)], capture_output=True, text=True, cwd=str(REPO),
+        env={**os.environ, "PATH": f"{stub}{os.pathsep}{os.environ['PATH']}"}, timeout=60,
+    )
+    assert "ENDED_ON=" in proc.stdout, proc.stdout + proc.stderr
+    ended = proc.stdout.rsplit("ENDED_ON=", 1)[1].split()[0]
+    reads = int((state / "mains").read_text()) if (state / "mains").exists() else 0
+    sleeps = (state / "sleeps").read_text().split() if (state / "sleeps").exists() else []
+    return ended, reads, sleeps, proc.stderr
+
+
+def test_a_zero_wait_is_the_run_this_file_has_always_been(tmp_path):
+    ended, reads, sleeps, _ = _run_prologue(tmp_path, wait_s=0, shas=[A, "c" * 40])
+    assert (ended, reads, sleeps) == (A, 1, [])
+
+
+def test_the_sleep_happens_and_every_fact_is_read_again_after_it(tmp_path):
+    """The whole safety of sleeping: the sha pushed is the one main is serving
+    when it is pushed, not the one it was serving when the run started."""
+    ended, reads, sleeps, _ = _run_prologue(tmp_path, wait_s=1680, shas=[A, "c" * 40])
+    assert sleeps == ["1680"]
+    assert reads == 2
+    assert ended == "c" * 40, "the run pushed the sha it went to sleep on"
+
+
+@pytest.mark.parametrize("answer", ["", "later", "-5", "30s"])
+def test_a_wait_that_did_not_parse_is_not_a_licence_to_sleep(tmp_path, answer):
+    """Gotcha #54 on the value, not the exit code — and the degraded state is
+    the old behaviour, which is the only safe direction for a new gate.
+
+    The stderr assertion is what makes the `case` guard load-bearing rather
+    than decorative, and it was written because the mutant that deletes the
+    guard SURVIVED without it: `[ later -gt 0 ]` already fails closed, so the
+    run happens not to sleep either way. What changes is that the log fills
+    with a bash `integer expression expected` — an instrument declining to
+    parse must say so in its own words, not by tripping over the answer, or
+    the next reader debugs the shell instead of the gate.
+    """
+    ended, reads, sleeps, stderr = _run_prologue(
+        tmp_path / answer.replace(" ", "_") or "empty", wait_s=f"'{answer}'", shas=[A, "c" * 40]
+    )
+    assert (ended, reads, sleeps) == (A, 1, [])
+    assert "integer expression" not in stderr, stderr
