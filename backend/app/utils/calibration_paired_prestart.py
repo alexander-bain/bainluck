@@ -120,6 +120,8 @@ __all__ = [
     "PAIR_NO_LEG",
     "PAIR_SINGLE_LEG",
     "PAIR_TOO_CLOSE",
+    "PAIR_UNANCHORED_BOUNDARY",
+    "boundary_is_anchored",
     "brier",
     "classify_pair",
     "log_loss",
@@ -139,16 +141,43 @@ __all__ = [
 DEFAULT_MIN_SEPARATION_SECONDS = 6 * 3600
 
 #: Why an outcome did or did not yield a pair. Reported separately because
-#: "no pair" has three different causes and only one of them is about liquidity.
+#: "no pair" has four different causes and only one of them is about liquidity.
 PAIR_PAIRED = "paired"
 PAIR_NO_LEG = "no_eligible_leg"
 PAIR_SINGLE_LEG = "single_eligible_leg"
 PAIR_TOO_CLOSE = "legs_too_close"
+
+#: CAL-P1216b, on codex's 17:11Z finding: *"LEAST of two timestamps alone does
+#: not prove real event start"*, and so a leg drawn before it may not be a
+#: **pre-event** forecast at all.
+#:
+#: The boundary is ``LEAST(e.commence_time, fm.resolution_date)`` over a LEFT
+#: JOIN, so it has two provenances and only one of them is a start:
+#:
+#: * ``e.commence_time`` present — the market is linked to an event that states
+#:   when play begins. The LEAST can only move the boundary EARLIER, so every
+#:   admitted snapshot is provably before the start. Usable.
+#: * ``e.commence_time`` NULL — no linked event, and the boundary silently
+#:   becomes ``resolution_date`` alone. That is a SETTLEMENT date: it is at or
+#:   after the end of the thing, so a "final pre-event" leg drawn before it can
+#:   sit anywhere inside the event, including after the result was effectively
+#:   known. A pair built on it would make late forecasts look brilliant for the
+#:   reason that they were not forecasts.
+#:
+#: This is a FOURTH reason an outcome yields no usable pair, not a filter applied
+#: elsewhere, and it is deliberately decided FIRST. Only :data:`PAIR_PAIRED`
+#: returns probabilities, so the score cannot include an outcome whose boundary
+#: nobody can vouch for — the guarantee is structural rather than a rule a caller
+#: has to remember. Counted separately so the feasibility walk reports what the
+#: requirement COSTS instead of hiding it inside ``no_eligible_leg``.
+PAIR_UNANCHORED_BOUNDARY = "unanchored_boundary"
+
 PAIR_CLASSES: tuple[str, ...] = (
     PAIR_PAIRED,
     PAIR_NO_LEG,
     PAIR_SINGLE_LEG,
     PAIR_TOO_CLOSE,
+    PAIR_UNANCHORED_BOUNDARY,
 )
 
 
@@ -231,6 +260,7 @@ SELECT fo.id AS outcome_id,
        late.probability AS late_probability,
        late.captured_at AS late_captured_at,
        CASE
+           WHEN e.commence_time IS NULL THEN '{PAIR_UNANCHORED_BOUNDARY}'
            WHEN early.captured_at IS NULL THEN '{PAIR_NO_LEG}'
            WHEN late.captured_at <= early.captured_at THEN '{PAIR_SINGLE_LEG}'
            WHEN EXTRACT(EPOCH FROM (late.captured_at - early.captured_at))
@@ -296,13 +326,39 @@ ORDER BY source, pair_class
 # ---------------------------------------------------------------------------
 
 
+def boundary_is_anchored(event_commence: Any) -> bool:
+    """Whether this outcome's boundary is a real event start.
+
+    The whole test is "is there a linked event with a start time", and it is a
+    named function rather than an inline ``is not None`` so that the SQL branch,
+    the Python mirror and every caller are demonstrably asking one question.
+    See :data:`PAIR_UNANCHORED_BOUNDARY` for why the answer decides eligibility.
+    """
+    return event_commence is not None
+
+
 def classify_pair(
     early_captured_at: Any,
     late_captured_at: Any,
     *,
+    event_commence: Any = None,
+    boundary_anchored: Optional[bool] = None,
     min_separation_seconds: int = DEFAULT_MIN_SEPARATION_SECONDS,
 ) -> str:
-    """The ``pair_class`` CASE above, in Python. Mirrors it branch for branch."""
+    """The ``pair_class`` CASE above, in Python. Mirrors it branch for branch.
+
+    ``boundary_anchored`` is derived from ``event_commence`` unless passed
+    explicitly. It is a separate argument because a caller that has already
+    resolved provenance (the row carries ``boundary_class``) should not have to
+    re-supply a timestamp to say so — and because the unanchored branch is
+    testable in isolation that way.
+    """
+    if boundary_anchored is None:
+        boundary_anchored = boundary_is_anchored(event_commence)
+    # FIRST, exactly as in the SQL: an outcome whose boundary cannot be proved to
+    # precede the event is not a thin pair, it is not a pair at all.
+    if not boundary_anchored:
+        return PAIR_UNANCHORED_BOUNDARY
     if early_captured_at is None or late_captured_at is None:
         return PAIR_NO_LEG
     if late_captured_at <= early_captured_at:
@@ -334,16 +390,15 @@ def select_paired_legs(
         probabilities are ``None`` for every class except ``paired`` — a caller
         must not be able to score a pair this function refused.
     """
-    boundary = event_commence
-    if resolution_date is not None and (boundary is None or resolution_date < boundary):
-        boundary = resolution_date
+    # Provenance first, before any snapshot is looked at — the SQL's first CASE
+    # branch. Without a linked event start the boundary is a settlement date, and
+    # a "final pre-event" leg drawn before THAT may sit inside the event.
+    if not boundary_is_anchored(event_commence):
+        return PAIR_UNANCHORED_BOUNDARY, None, None
 
-    # A NULL boundary admits NOTHING, matching the SQL: `captured_at < NULL` is
-    # NULL, so the LATERAL returns no row. Treating "we do not know when this
-    # started" as "everything counts as pre-start" would let settled prices in
-    # through the one branch nobody looks at.
-    if boundary is None:
-        return PAIR_NO_LEG, None, None
+    boundary = event_commence
+    if resolution_date is not None and resolution_date < boundary:
+        boundary = resolution_date
 
     eligible = []
     for captured_at, probability, yes_bid, yes_ask in snapshots:
@@ -358,7 +413,12 @@ def select_paired_legs(
     eligible.sort(key=lambda row: row[0])
     early, late = eligible[0], eligible[-1]
     klass = classify_pair(
-        early[0], late[0], min_separation_seconds=min_separation_seconds
+        early[0],
+        late[0],
+        # Anchoring was decided above; stated rather than re-derived so this
+        # cannot drift from the branch that already returned for it.
+        boundary_anchored=True,
+        min_separation_seconds=min_separation_seconds,
     )
     if klass != PAIR_PAIRED:
         return klass, None, None

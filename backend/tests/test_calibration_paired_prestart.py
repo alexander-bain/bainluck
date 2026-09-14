@@ -16,13 +16,19 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.utils.calibration_closing_line import closing_line_lateral_sql
+from app.utils.calibration_closing_line import (
+    closing_line_boundary_sql,
+    closing_line_lateral_sql,
+)
 from app.utils.calibration_paired_prestart import (
     DEFAULT_MIN_SEPARATION_SECONDS,
     PAIR_NO_LEG,
     PAIR_PAIRED,
     PAIR_SINGLE_LEG,
+    PAIR_CLASSES,
     PAIR_TOO_CLOSE,
+    PAIR_UNANCHORED_BOUNDARY,
+    boundary_is_anchored,
     brier,
     classify_pair,
     leg_calibration,
@@ -135,11 +141,56 @@ def test_feasibility_carries_the_cursor_forward_for_the_next_window():
 
 
 def test_feasibility_reports_the_failure_classes_separately():
-    """"We never looked twice" and "the market is illiquid" are different findings."""
+    """"We never looked twice" and "the market is illiquid" are different findings.
+
+    Iterates :data:`PAIR_CLASSES` rather than a hand-written tuple: a class added
+    to the module and not to the statement is exactly the drift this catches, and
+    a literal list here would have to be remembered instead.
+    """
     sql = paired_feasibility_sql()
     assert "GROUP BY source, pair_class" in sql
-    for klass in (PAIR_PAIRED, PAIR_NO_LEG, PAIR_SINGLE_LEG, PAIR_TOO_CLOSE):
-        assert f"'{klass}'" in sql
+    for klass in PAIR_CLASSES:
+        assert f"'{klass}'" in sql, f"{klass} is unreachable in the walk's own SQL"
+
+
+def test_least_ignores_a_null_commence_so_the_boundary_becomes_the_settlement_date():
+    """The witness that ``unanchored_boundary`` closes a LIVE hole, not a theoretical one.
+
+    ``closing_line_boundary_sql`` emits
+    ``LEAST(e.commence_time, COALESCE(fm.resolution_date, e.commence_time))``, and
+    its own docstring records that **Postgres LEAST ignores NULL arguments** — the
+    COALESCE is for the reader. So with no linked event the boundary does NOT go
+    NULL and drop the row: it quietly becomes ``resolution_date``, a settlement
+    stamp, and the outcome scored as though that were its kick-off.
+
+    Asserted from the shipped emission rather than from memory, because the whole
+    finding rests on this one operator's NULL semantics. If that expression is
+    ever changed to null out instead, this test should fail and the class can be
+    revisited.
+    """
+    boundary = closing_line_boundary_sql("e.commence_time", "fm.resolution_date")
+    assert boundary == "LEAST(e.commence_time, COALESCE(fm.resolution_date, e.commence_time))"
+    assert "COALESCE(fm.resolution_date, e.commence_time)" in boundary
+
+
+def test_the_unanchored_branch_is_first_in_the_sql_case():
+    """Order is the guarantee: it must win over every leg-shaped reason.
+
+    A row with no event start can also have no snapshots. If the branches were
+    the other way round it would be reported as ``no_eligible_leg`` and the
+    provenance requirement would look free — the feasibility walk would
+    under-count what it costs, which is the number the decision rests on.
+    """
+    sql = paired_legs_sql()
+    case = sql[sql.index("CASE") : sql.index("END AS pair_class")]
+    assert case.index(f"'{PAIR_UNANCHORED_BOUNDARY}'") < case.index(f"'{PAIR_NO_LEG}'")
+    assert "WHEN e.commence_time IS NULL" in case
+
+
+def test_boundary_is_anchored_is_the_single_provenance_question():
+    """One function, so the SQL branch, the mirror and the callers cannot diverge."""
+    assert boundary_is_anchored(COMMENCE) is True
+    assert boundary_is_anchored(None) is False
 
 
 # ---------------------------------------------------------------------------
@@ -207,12 +258,51 @@ def test_boundary_clamps_to_the_earlier_of_commence_and_resolution():
 
 
 def test_null_boundary_admits_nothing():
-    """`captured_at < NULL` is NULL in SQL — the Python half must not be laxer."""
+    """`captured_at < NULL` is NULL in SQL — the Python half must not be laxer.
+
+    CAL-P1216b refines the CLASS without weakening the guarantee: a missing event
+    start is now reported as ``unanchored_boundary`` rather than folded into
+    ``no_eligible_leg``, because "nobody told us when this started" and "nobody
+    quoted it twice" are different findings. What must never change is the part
+    this test was written for — no probabilities come back.
+    """
     klass, early, late = select_paired_legs(
         [snap(1, 0.40), snap(30, 0.55)], event_commence=None, resolution_date=None
     )
-    assert klass == PAIR_NO_LEG
+    assert klass == PAIR_UNANCHORED_BOUNDARY
     assert early is None and late is None
+
+
+def test_a_settlement_date_alone_never_anchors_a_pre_event_leg():
+    """codex 17:11Z: *LEAST of two timestamps alone does not prove real event start.*
+
+    The dangerous shape, and the reason the class exists: there IS a boundary
+    here — a resolution date 30 hours out — and two well-separated, perfectly
+    eligible quotes sit before it. Under the old rule that is a clean ``paired``
+    row. But ``resolution_date`` is a SETTLEMENT stamp, at or after the end of
+    the thing, so the "final pre-event forecast" could have been taken while the
+    event was being decided. A pair like that makes late forecasts look brilliant
+    precisely because they were no longer forecasts.
+
+    Refused, and refused with its own name so the feasibility walk can report
+    what the requirement costs instead of burying it in ``no_eligible_leg``.
+    """
+    klass, early, late = select_paired_legs(
+        [snap(1, 0.40), snap(25, 0.93)],
+        event_commence=None,
+        resolution_date=T0 + timedelta(hours=30),
+    )
+    assert klass == PAIR_UNANCHORED_BOUNDARY
+    assert early is None and late is None, "an unvouched boundary must score nothing"
+
+    # ...and the SAME two snapshots ARE a pair once a real start anchors them.
+    anchored, early_p, late_p = select_paired_legs(
+        [snap(1, 0.40), snap(25, 0.93)],
+        event_commence=T0 + timedelta(hours=30),
+        resolution_date=T0 + timedelta(hours=30),
+    )
+    assert anchored == PAIR_PAIRED
+    assert (early_p, late_p) == (0.40, 0.93)
 
 
 def test_fabricated_midpoint_legs_are_rejected():
@@ -225,11 +315,33 @@ def test_fabricated_midpoint_legs_are_rejected():
 
 
 def test_classify_pair_matches_the_sql_case_order():
-    assert classify_pair(None, None) == PAIR_NO_LEG
-    assert classify_pair(T0, T0) == PAIR_SINGLE_LEG
-    assert classify_pair(T0, T0 - timedelta(hours=1)) == PAIR_SINGLE_LEG
-    assert classify_pair(T0, T0 + timedelta(seconds=DEFAULT_MIN_SEPARATION_SECONDS - 1)) == PAIR_TOO_CLOSE
-    assert classify_pair(T0, T0 + timedelta(seconds=DEFAULT_MIN_SEPARATION_SECONDS)) == PAIR_PAIRED
+    # The FIRST branch, and it wins over every other reason — an outcome with no
+    # provable start is not a thin pair, it is not a pair at all. Asserted with
+    # timestamps that would otherwise classify `paired`, so this cannot pass by
+    # landing on some other branch.
+    assert (
+        classify_pair(
+            T0,
+            T0 + timedelta(seconds=DEFAULT_MIN_SEPARATION_SECONDS),
+            boundary_anchored=False,
+        )
+        == PAIR_UNANCHORED_BOUNDARY
+    )
+    # Unstated provenance is REFUSED, not assumed: the fail-closed default is the
+    # whole protection, since a caller that forgets to say is exactly the caller
+    # that has not checked.
+    assert classify_pair(T0, T0 + timedelta(hours=9)) == PAIR_UNANCHORED_BOUNDARY
+    # `event_commence` derives it, so a caller holding the timestamp need not
+    # also hold the boolean.
+    assert (
+        classify_pair(T0, T0 + timedelta(hours=9), event_commence=COMMENCE) == PAIR_PAIRED
+    )
+
+    assert classify_pair(None, None, boundary_anchored=True) == PAIR_NO_LEG
+    assert classify_pair(T0, T0, boundary_anchored=True) == PAIR_SINGLE_LEG
+    assert classify_pair(T0, T0 - timedelta(hours=1), boundary_anchored=True) == PAIR_SINGLE_LEG
+    assert classify_pair(T0, T0 + timedelta(seconds=DEFAULT_MIN_SEPARATION_SECONDS - 1), boundary_anchored=True) == PAIR_TOO_CLOSE
+    assert classify_pair(T0, T0 + timedelta(seconds=DEFAULT_MIN_SEPARATION_SECONDS), boundary_anchored=True) == PAIR_PAIRED
 
 
 # ---------------------------------------------------------------------------
