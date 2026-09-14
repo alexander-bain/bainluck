@@ -582,11 +582,19 @@ def wait_seconds(
     RESIDUAL ACTUALLY LIVES. Sleeping only to the band's opening edge fixes the
     quiet-night tail and leaves the 45-minute residual almost untouched, because
     of a property of this system the first version of this function did not use:
-    **the cycle floor always clears INSIDE the band.** A push may only happen
-    between :38 and :58, the floor is exactly 3 h, so the floor clears at the
-    same minute past the hour as the release that started it — heavy's own
-    record, v17..v20, clears at :49, :50, :56 and :43. So in the one hour that
-    matters — the hour the floor clears — asking only about :38 refuses every
+    **the cycle floor USUALLY clears INSIDE the band — 9 of heavy's last 12
+    releases, and not a law.** A push may only happen between :38 and :58 and
+    the floor is exactly 3 h, so the floor clears at the same minute past the
+    hour as the RELEASE that started it — and the release completes ~12 min
+    after the push that triggered it, so the clear minute is in band for a push
+    before ~:46 and past :58 for a later one. Heavy's own record: v17..v20
+    clear at :49, :50, :56 and :43, and **v21 at :59 — one minute past the
+    band's close**, which is the case this function's own first production run
+    met and correctly declined (v13 :35 and v10 :10 are the other two). The
+    tendency is what the sleep is FOR; the exceptions are what the deadline in
+    the next paragraph is for, and a reader who takes the tendency for a law
+    will mis-derive which runs are even eligible to sleep. So in the one hour
+    that matters — the hour the floor clears — asking only about :38 refuses every
     trigger that arrives before the clear: at 14:20 with a floor clearing at
     14:43:49, the projected age at :38 is 174 min and the run HOLDs, having been
     eight minutes short of a window it could have slept into. The measured
