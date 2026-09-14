@@ -1,0 +1,197 @@
+{
+ "event_id": 14780142,
+ "home_team": "Carolina Panthers",
+ "away_team": "Chicago Bears",
+ "commence_time": "2026-09-13T17:00:00+00:00",
+ "completed_at": "2026-09-13T20:37:30.709297+00:00",
+ "status": "completed",
+ "pm_spread_data": {
+  "implied_spreads": {
+   "sportsbook": {
+    "spread": 2.6,
+    "home_margin": -2.6,
+    "confidence": 1.0,
+    "contracts": []
+   }
+  },
+  "implied_totals": {
+   "sportsbook": {
+    "total": 47.5,
+    "confidence": 1.0,
+    "contracts": []
+   }
+  },
+  "projected_final": null
+ },
+ "bookmaker_count": 18,
+ "snapshot_count": 3000,
+ "espn_snapshot_count": 175,
+ "history": [
+  {
+   "timestamp": "2026-08-26T18:00:00+00:00",
+   "home_probability": 0.4219,
+   "away_probability": 0.5781,
+   "over_under": 47.5,
+   "projected_home_score": 22.4,
+   "projected_away_score": 25.0,
+   "bookmaker_count": 15,
+   "probability_range": {
+    "min": 0.4088,
+    "max": 0.4365
+   }
+  },
+  {
+   "timestamp": "2026-08-26T18:07:00+00:00",
+   "home_probability": 0.4223,
+   "away_probability": 0.5777,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 10,
+   "probability_range": {
+    "min": 0.4088,
+    "max": 0.4365
+   }
+  },
+  {
+   "timestamp": "2026-08-26T18:08:00+00:00",
+   "home_probability": 0.4223,
+   "away_probability": 0.5777,
+   "over_under": 47.5,
+   "projected_home_score": 22.4,
+   "projected_away_score": 25.0,
+   "bookmaker_count": 10,
+   "probability_range": {
+    "min": 0.4088,
+    "max": 0.4365
+   }
+  },
+  {
+   "timestamp": "2026-08-26T18:40:00+00:00",
+   "home_probability": 0.4223,
+   "away_probability": 0.5777,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 10,
+   "probability_range": {
+    "min": 0.4088,
+    "max": 0.4365
+   }
+  },
+  {
+   "timestamp": "2026-08-26T18:41:00+00:00",
+   "home_probability": 0.4223,
+   "away_probability": 0.5777,
+   "over_under": 47.5,
+   "projected_home_score": 22.4,
+   "projected_away_score": 25.0,
+   "bookmaker_count": 6,
+   "probability_range": {
+    "min": 0.4176,
+    "max": 0.4365
+   }
+  },
+  {
+   "timestamp": "2026-09-13T20:37:00+00:00",
+   "home_probability": 0.0,
+   "away_probability": 1.0,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 0,
+   "probability_range": {
+    "min": 0.0,
+    "max": 0.0
+   }
+  }
+ ],
+ "score_history": [
+  {
+   "timestamp": "2026-09-13T20:21:22.110436+00:00",
+   "home_score": 37,
+   "away_score": 52
+  },
+  {
+   "timestamp": "2026-09-13T20:27:13.651805+00:00",
+   "home_score": 37,
+   "away_score": 59
+  },
+  {
+   "timestamp": "2026-09-13T20:27:44.440371+00:00",
+   "home_score": 37,
+   "away_score": 52
+  },
+  {
+   "timestamp": "2026-09-13T20:28:13.427776+00:00",
+   "home_score": 37,
+   "away_score": 59
+  },
+  {
+   "timestamp": "2026-09-13T20:28:44.525878+00:00",
+   "home_score": 37,
+   "away_score": 52
+  },
+  {
+   "timestamp": "2026-09-13T20:29:14.239072+00:00",
+   "home_score": 37,
+   "away_score": 59
+  }
+ ],
+ "espn_history": [
+  {
+   "timestamp": "2026-09-13T20:32:13.354087+00:00",
+   "home_probability": 0.5954,
+   "away_probability": 0.4046,
+   "home_score": 37,
+   "away_score": 59,
+   "game_clock": "2:00",
+   "period": "2:00 - 4th Quarter"
+  },
+  {
+   "timestamp": "2026-09-13T20:33:13.425189+00:00",
+   "home_probability": 0.001,
+   "away_probability": 0.999,
+   "home_score": 37,
+   "away_score": 59,
+   "game_clock": "2:00",
+   "period": "2:00 - 4th Quarter"
+  },
+  {
+   "timestamp": "2026-09-13T20:34:13.354865+00:00",
+   "home_probability": 0.001,
+   "away_probability": 0.999,
+   "home_score": 37,
+   "away_score": 59,
+   "game_clock": "1:57",
+   "period": "1:57 - 4th Quarter"
+  },
+  {
+   "timestamp": "2026-09-13T20:35:13.292778+00:00",
+   "home_probability": 0.001,
+   "away_probability": 0.999,
+   "home_score": 37,
+   "away_score": 59,
+   "game_clock": "0:34",
+   "period": "0:34 - 4th Quarter"
+  },
+  {
+   "timestamp": "2026-09-13T20:36:13.334614+00:00",
+   "home_probability": 0.001,
+   "away_probability": 0.999,
+   "home_score": 37,
+   "away_score": 59,
+   "game_clock": "0:34",
+   "period": "0:34 - 4th Quarter"
+  },
+  {
+   "timestamp": "2026-09-13T20:37:00+00:00",
+   "home_probability": 0.0,
+   "away_probability": 1.0,
+   "home_score": 37,
+   "away_score": 59,
+   "game_clock": "Final",
+   "period": "Final"
+  }
+ ]
+}

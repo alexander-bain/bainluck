@@ -81,6 +81,10 @@ import {
   tennisSetsWonFor,
 } from "@/lib/otherMarketGroups";
 import { sportVocab, marketMapSectionMounts, totalsMapRenders } from "@/lib/marketMapUtils";
+import {
+  actualScoreSeriesDrawn,
+  scoreDifferentialHeading,
+} from "@/lib/scoreDifferentialHeading";
 import { espnTeamLogoByName } from "@/lib/images";
 import {
   useAnalytics,
@@ -1112,19 +1116,39 @@ export default function EventPage({ params }: EventPageProps) {
   // actual line from it — and a gate that still admitted it would open the
   // card on an event with nothing but a suppressed series inside it, which is
   // the empty-chrome failure the L2-157 note above exists to prevent.
-  const scoreboardCountsTheUnit = sportVocab(event?.sport || undefined)
-    .scoreboardCountsTheUnit;
+  //
+  // #6144 — AND THE CARD IS NAMED AFTER WHAT IS INSIDE IT. The note above
+  // suppresses the masquerade PREGAME only, on the assumption that in-game
+  // implies we hold an actual score. For every sport our live-score door
+  // cannot read — all 36 of today's live rows, tennis/NPB/esports/soccer, each
+  // with NULL score, period and clock — in-game never brings one, so the card
+  // opened in-game on a projection alone and headed itself "Score
+  // Differential" over a line that is the sportsbooks' projected margin. The
+  // reader prices the heading: `/events/15311956` said LIVE, showed no score
+  // anywhere, and drew a line falling to −5.5, which reads as Dragons by 5.
+  //
+  // The gate is deliberately NOT narrowed — in-game that projection is the
+  // only read this page has on how the game is going, and ux/1034 B5 ruled
+  // exactly that for tennis. What changes is the name: the heading is the
+  // series it is drawn over. The decision is `lib/scoreDifferentialHeading`'s
+  // and the actual-series half of THIS gate now calls it too, so the card's
+  // name, the card's gate and the chart's orange line answer one question
+  // once.
+  const drawsActualScore = actualScoreSeriesDrawn({
+    sportKey: event?.sport || undefined,
+    scoreHistory: historyData?.score_history,
+    espnHistory: historyData?.espn_history,
+  });
   const hasScoreDiffData = (effectivelyLive || isFinished || hasStarted) && !!historyData && (
     (historyData.history ?? []).some(
       (p) => p.projected_home_score != null && p.projected_away_score != null
     ) ||
-    (scoreboardCountsTheUnit && (
-      (historyData.score_history?.length ?? 0) > 0 ||
-      (historyData.espn_history ?? []).some(
-        (p) => p.home_score != null && p.away_score != null
-      )
-    ))
+    drawsActualScore
   );
+  const scoreDiffHeading = scoreDifferentialHeading({
+    sportKey: event?.sport || undefined,
+    actualSeriesDrawn: drawsActualScore,
+  });
 
   return (
     <ErrorBoundary fallback={
@@ -2087,8 +2111,12 @@ export default function EventPage({ params }: EventPageProps) {
       {hasScoreDiffData && (
         <SectionErrorBoundary label="The score differential chart" resetKey={historyData}>
         <div className="bg-surface-card rounded-card shadow-card p-3 sm:p-4">
+          {/* #6144: the card is named after the series it draws — see
+              `scoreDiffHeading`. "Score Differential" where the played score is
+              on the chart, "Projected Run Margin" (the unit is the one the
+              margin map below uses) where the only line is the market's. */}
           <h3 className="text-sm font-semibold text-text-secondary mb-2 flex items-center gap-2">
-            Score Differential
+            {scoreDiffHeading}
           </h3>
           <ScoreDifferentialChart
             history={historyData.history || []}

@@ -21,6 +21,7 @@ import {
 } from "@/lib/chartTimeline";
 import { sourceLabel } from "@/lib/sourceColors";
 import { impliedSpreadHomeMargin, drawnImpliedSpreadSources } from "@/lib/impliedSpreadAxis";
+import { actualScoreSeriesDrawn } from "@/lib/scoreDifferentialHeading";
 import { sportVocab, playedCountAbsence, playedUnits, withUnit } from "@/lib/marketMapUtils";
 import { teamShortNames } from "@/lib/teamShortName";
 import { teamTextColor } from "@/lib/teamColors";
@@ -325,10 +326,17 @@ export default function ScoreDifferentialChart({
    */
   const scoreboardCountsTheUnit = sportVocab(sportKey).scoreboardCountsTheUnit;
 
-  const hasActualScoreData =
-    scoreboardCountsTheUnit &&
-    (filteredScoreHistory.length > 0 ||
-      filteredEspnHistory.some((p) => p.home_score != null && p.away_score != null));
+  /* #6144: the rule above is now STATED in `lib/scoreDifferentialHeading` and
+     called from here, because the card's heading is gated on the same question
+     — a card headed "Score Differential" that draws no score is #6144 — and
+     two spellings of one predicate is how the heading and the series come to
+     disagree. The inputs are this component's FILTERED ones, the page's are
+     unfiltered; see the helper's note on why that is the right asymmetry. */
+  const hasActualScoreData = actualScoreSeriesDrawn({
+    sportKey,
+    scoreHistory: filteredScoreHistory,
+    espnHistory: filteredEspnHistory,
+  });
 
   /**
    * The sentence the chart owes a reader whose actual line is missing.
