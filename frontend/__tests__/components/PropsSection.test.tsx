@@ -76,7 +76,15 @@ describe("PropsSection rendering", () => {
     // UX-P044 (#1650): this asserted "grading pending" — the SECOND of the three
     // vocabularies one settled state wore on one screen. It is now the same
     // phrase the Player Props card uses, imported from the module that decides.
-    expect(graded).toContain(SETTLED_NO_GRADE_LABEL);
+    //
+    // #6129: and on a list where NOTHING is graded — which is this fixture — the
+    // phrase is now owed once, by the blurb, not once per row. The honesty this
+    // test is about is unchanged and still asserted: one backend state, one
+    // vocabulary, never "grading pending". Both directions live in
+    // PropsSection6129.test.tsx; the mixed-list control there is what keeps
+    // `SETTLED_NO_GRADE_LABEL` reachable on a row.
+    expect(graded).toContain("No grades published");
+    expect(graded).not.toContain(SETTLED_NO_GRADE_LABEL);
     expect(graded).not.toContain("grading pending");
   });
 

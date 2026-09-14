@@ -582,10 +582,18 @@ export default function PropsSection({
   const baseMeta = STATE_META[activeState];
   // #1650: never claim "graded" over a list on which nothing is.
   const anyGraded = items.some((i) => i.graded_result != null);
-  const meta =
-    activeState === "graded" && !anyGraded
-      ? { ...baseMeta, blurb: GRADED_BLURB_UNGRADED }
-      : baseMeta;
+  /**
+   * #6129 — and when the blurb states it, the ROW has nothing left to add.
+   *
+   * This is the same boolean #1650 already computed to choose the blurb; naming
+   * it is the whole change. `GRADED_BLURB_UNGRADED` says "No grades published
+   * for these props." once, for the section, and every row underneath then
+   * repeated the same fact in a 198px monospace chip — see `GradedValue`.
+   */
+  const blurbStatesNoGrades = activeState === "graded" && !anyGraded;
+  const meta = blurbStatesNoGrades
+    ? { ...baseMeta, blurb: GRADED_BLURB_UNGRADED }
+    : baseMeta;
   // L2-147 Item 2: the field cards name real competitors → give them headshots
   // for a person-field domain (golf today). Ladders ("Under 63.5") never do.
   const withAvatars = isPersonFieldDomain(domain);
@@ -630,6 +638,7 @@ export default function PropsSection({
         item={item}
         state={activeState}
         displayLabel={labelOverrides.get(item.key)}
+        blurbStatesNoGrades={blurbStatesNoGrades}
       />
     ) : (
       <PropRow
@@ -639,6 +648,7 @@ export default function PropsSection({
         pairedPercent={pairPercents.get(item.key)}
         pairedDivergence={divergencePairs.get(item.key)}
         displayLabel={labelOverrides.get(item.key)}
+        blurbStatesNoGrades={blurbStatesNoGrades}
       />
     );
 
@@ -833,6 +843,7 @@ function PropRow({
   pairedPercent,
   pairedDivergence,
   displayLabel,
+  blurbStatesNoGrades = false,
 }: {
   item: PropMark;
   state: PropsState;
@@ -845,6 +856,10 @@ function PropRow({
   /** #5191: the label with the words its own header already says removed. Absent
    *  whenever the family rule refuses, and absence means "print `item.label`". */
   displayLabel?: string;
+  /** #6129: the section's own blurb already states that nothing here is graded,
+   *  so `GradedValue` owes the reader no sentence. Defaults false — a row is only
+   *  quiet when the thing it would have said is written above it. */
+  blurbStatesNoGrades?: boolean;
 }) {
   // L2-123 / #199: a family with no honest price renders one quiet pending label
   // ("Opens after Round N" / "No market yet") in every state — never a fabricated
@@ -869,7 +884,9 @@ function PropRow({
           {rowState === "divergence" && (
             <DivergenceValue item={item} paired={pairedDivergence} />
           )}
-          {rowState === "graded" && <GradedValue item={item} />}
+          {rowState === "graded" && (
+            <GradedValue item={item} blurbStatesNoGrades={blurbStatesNoGrades} />
+          )}
         </>
       )}
     </div>
@@ -880,6 +897,23 @@ function PropRow({
 function Pending({ note }: { note: string }) {
   return (
     <span className="font-mono text-[11px] text-text-muted tabular-nums shrink-0">{note}</span>
+  );
+}
+
+/**
+ * This file's ONE mark for a value slot with nothing true to put in it.
+ *
+ * Was a literal inside `ScriptValue` (D102 / #4530). #6129 gives `GradedValue`
+ * the same slot for the same reason, and notice 35's rule — a second problem of
+ * the same shape does not get a second component — applies to a second copy of
+ * one span just as much. See `pct`: "no number" and "0%" are different
+ * statements, and only one of them is a probability.
+ */
+function AbsentValue() {
+  return (
+    <span className="font-mono text-sm font-semibold text-text-muted tabular-nums shrink-0">
+      —
+    </span>
   );
 }
 
@@ -901,11 +935,7 @@ function ScriptValue({
     // row is the diagnostic prose the notice is about. The value slot gets this
     // file's existing mark for absent data — see `pct`, where "no number" and
     // "0%" are deliberately different statements.
-    return (
-      <span className="font-mono text-sm font-semibold text-text-muted tabular-nums shrink-0">
-        —
-      </span>
-    );
+    return <AbsentValue />;
   }
   return (
     <span className="font-mono text-sm font-semibold text-text-primary tabular-nums shrink-0">
@@ -993,8 +1023,53 @@ function DivergenceValue({
   );
 }
 
-function GradedValue({ item }: { item: PropMark }) {
+function GradedValue({
+  item,
+  blurbStatesNoGrades = false,
+}: {
+  item: PropMark;
+  /** #6129: the section's blurb has already said it, once. */
+  blurbStatesNoGrades?: boolean;
+}) {
   if (item.graded_result == null) {
+    /**
+     * ── #6129 — 85 ROWS PAYING 198px EACH TO REPEAT THE HEADER'S OWN SENTENCE ──
+     *
+     * Measured on `/events/14637256` (Giants 28 — Cowboys 20, SNF) at 390px, in
+     * the live DOM on 2026-09-14: the backend graded 0 of 85 player props, so the
+     * blurb read `The pregame script. No grades published for these props.` and
+     * then **85 of 85 rows** carried this chip, each **198px wide on a 390px
+     * phone**. That left the label span **108px**, and:
+     *
+     *   · **77 of 85 labels (91%) were clipped**;
+     *   · the 85 rows collapsed to **35 distinct visible strings** — ten rows
+     *     reading `Malachi Fields:…`, nine `Jake Ferguson…`, seven `CeeDee
+     *     Lamb:…` — with **63 rows sharing their visible text with a sibling**.
+     *
+     * Every one of these labels ends in the number that distinguishes it
+     * (`Najee Harris: 10+` … `: 80+`), so the clip lands exactly on the only
+     * part a reader needs. The section therefore said one thing 85 times and
+     * its 85 questions zero times.
+     *
+     * D102 / #4530 already ruled this for the sibling branch one function up —
+     * `pregame mark pending`, on 89 of 298 rows of an NFL page: *"the summary
+     * states the reason ONCE for the whole group; repeating it per row is the
+     * diagnostic prose the notice is about."* That ruling reaches this branch
+     * unchanged; it was only ever applied to THE SCRIPT's half.
+     *
+     * NARROW, both directions (gotcha #43). The chip is dropped ONLY when the
+     * blurb above it makes the statement — `activeState === "graded" &&
+     * !anyGraded`, the same boolean #1650 computes to choose that blurb. On a
+     * MIXED list the header claims grades, so an ungraded row is the only place
+     * the reader can learn this one was not graded and the chip stays; the same
+     * goes for a settled row inside a live section (`item.settled`), whose
+     * section blurb is THE DIVERGENCE's and says nothing about grading.
+     *
+     * #1650's own fix is untouched: `SETTLED_NO_GRADE_LABEL` remains the single
+     * phrase for this backend state wherever the phrase is still owed, still
+     * imported from the module that decides it.
+     */
+    if (blurbStatesNoGrades) return <AbsentValue />;
     // #1650: this used to say "grading pending" while the Player Props card
     // above it said "Resolved · grading unavailable" about the SAME prop, under
     // a header asserting the list was graded. Those say opposite things to a
@@ -1042,12 +1117,15 @@ function BinaryBarRow({
   item,
   state,
   displayLabel,
+  blurbStatesNoGrades = false,
 }: {
   item: PropMark;
   state: PropsState;
   /** #5191, as PropRow. `question` still wins where a mark carries one — that row
    *  never printed its label, so the family rule has nothing to say about it. */
   displayLabel?: string;
+  /** #6129, as PropRow. */
+  blurbStatesNoGrades?: boolean;
 }) {
   const cur = item.current;
   const mark = item.pregame_mark;
@@ -1061,7 +1139,7 @@ function BinaryBarRow({
           {item.question ?? displayLabel ?? item.label}
         </span>
         {state === "graded" ? (
-          <GradedValue item={item} />
+          <GradedValue item={item} blurbStatesNoGrades={blurbStatesNoGrades} />
         ) : (
           <DivergenceValue item={item} />
         )}
