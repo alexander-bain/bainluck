@@ -23,7 +23,12 @@ WHAT THIS SUITE PINS, in order:
 3. every way the pair can be a REAL rematch is refused rather than guessed —
    outside the measured 3-day window, orientation swapped, two candidates on
    either side;
-4. the falsy-zero trap: a 0-0 draw is a final score.
+4. the falsy-zero trap: a 0-0 draw is a final score;
+5. the status gate admits the ghost both BEFORE its invented kick-off
+   (``scheduled``) and after it (``suspended``), and never a ``live`` row. An
+   earlier cut read only ``scheduled``, which is the clock gate this module had
+   already deleted restated as a word, and the sweep shipped inert on all 11
+   pairs in its own window.
 """
 
 import os
@@ -34,6 +39,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.utils.soccer_ghost_twins import (  # noqa: E402
     GHOST_KICKOFF_GRACE,
+    GHOST_STATUSES,
     MAX_GHOST_LAG,
     NOT_A_TWIN,
     REFUSE_AMBIGUOUS,
@@ -457,24 +463,84 @@ def test_a_live_match_can_never_be_the_canonical_that_condemns_another_row():
     assert tag is None
 
 
-def test_a_suspended_row_is_a_live_state_and_never_a_ghost():
-    """`suspended` is a match that has started and stopped (live/048), not a
-    row being advertised — and it reads unscored and unanchored exactly like a
-    ghost does, so only the status gate separates them. Five such rows sat in
-    the production window while this was written.
+def test_a_suspended_ghost_is_the_state_the_shipped_predicate_could_not_see():
+    """The specimen again, two days later — which is where it actually lived.
+
+    This assertion is inverted from the one it replaces, and the row is the
+    reason: an earlier cut read `suspended` as "a match that started and
+    stopped" and excluded it, noting that five such rows sat in the production
+    window. Those five were not live matches. They were these ghosts, already
+    promoted out of `scheduled` by their own invented kick-off passing, and
+    excluding them made the sweep inert on its entire named population —
+    enabled 2026-09-14, 1,184 rows read, 0 written, 11 pairs sitting in the
+    window meeting every predicate except this one.
+
+    So the clock is moved and nothing else is: the same ghost `15298125`
+    against the same canonical `15298233`, judged at an hour by which
+    `backfill_winners` Phase 0 has written `suspended` on it (it fires two days
+    past a row's own kick-off). The pair is still 2 days apart, still inside
+    `MAX_GHOST_LAG`, and still exactly one ghost against one scored,
+    fixture-anchored real row.
     """
-    suspended = row(
-        15400022,
+    two_days_after_the_fake_kickoff = datetime(
+        2026, 9, 15, 20, 0, tzinfo=timezone.utc
+    )
+    suspended_ghost = row(
+        15298125,
         "Sevilla",
         "Valencia",
         datetime(2026, 9, 13, 19, 0, tzinfo=timezone.utc),
         status="suspended",
     )
 
-    outcome, tag, _ = classify_block([suspended, SEVILLA_REAL], now=NOW)
+    outcome, tag, _ = classify_block(
+        [suspended_ghost, SEVILLA_REAL], now=two_days_after_the_fake_kickoff
+    )
+
+    assert outcome == TWIN_FOUND
+    assert tag is not None
+    assert tag.ghost_id == 15298125
+    assert tag.canonical_id == 15298233
+
+
+def test_a_live_row_is_never_the_ghost_we_stop_printing():
+    """`live` is the one state that does mean "being played", so it stays out.
+
+    A ghost passes through `live` on its way to `suspended`, so this costs us
+    tags on rows that really are ghosts. That is the intended direction: a
+    genuinely in-progress match reads unscored and unanchored in its opening
+    minutes exactly as a ghost does, nothing in the row separates the two, and
+    the sweep will see the same pair again in `suspended` within the hour.
+    """
+    live_ghost = row(
+        15400024,
+        "Sevilla",
+        "Valencia",
+        datetime(2026, 9, 13, 19, 0, tzinfo=timezone.utc),
+        status="live",
+    )
+
+    outcome, tag, _ = classify_block(
+        [live_ghost, SEVILLA_REAL],
+        now=datetime(2026, 9, 13, 19, 40, tzinfo=timezone.utc),
+    )
 
     assert outcome == NOT_A_TWIN
     assert tag is None
+
+
+def test_the_admitted_ghost_states_are_exactly_scheduled_and_suspended():
+    """The membership itself, so widening it again is a deliberate act.
+
+    Every other state has a row that must never be tagged behind it: `live` is
+    a match in progress, `completed`/`closed` carry results, `voided`/`merged`
+    are already unprintable. A constant is the whole of this module's status
+    gate, so it is pinned here rather than inferred from the cases above.
+    """
+    assert GHOST_STATUSES == ("scheduled", "suspended")
+
+    for never_a_ghost in ("live", "completed", "closed", "voided", "merged"):
+        assert never_a_ghost not in GHOST_STATUSES
 
 
 def test_the_ghost_must_be_advertised_AFTER_the_row_that_was_played():

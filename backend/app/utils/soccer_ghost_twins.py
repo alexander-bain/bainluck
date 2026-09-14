@@ -107,6 +107,45 @@ still carry no score and no authority fixture id, the canonical must still carry
 both, the pair must still sit inside the measured three-day window, and a block
 that cannot resolve to exactly one of each is still refused.
 
+…AND THE STATUS GATE WAS THE SAME CLOCK, WEARING A DIFFERENT NAME
+══════════════════════════════════════════════════════════════════
+
+The section above removed the clock gate. The status gate then re-imposed the
+identical boundary, and the sweep shipped INERT: enabled 2026-09-14, two healthy
+passes, ``rows_read`` 1,184, ``written`` 0.
+
+``scheduled`` is not a state a ghost stays in. ``espn_sync``'s promotion arm
+selects on ``commence_time <= now``, so the invented kick-off passing moves the
+row ``scheduled`` → ``live``; ``backfill_winners`` Phase 0 then writes
+``suspended`` on anything still unreported two days past its own hour. **Nothing
+in the state machine demotes ``suspended``** (the measurement is in
+``tasks/polymarket.py``'s re-dating rail), so that is where the row stops. A
+gate reading ``status == 'scheduled'`` is therefore a gate reading *before its
+advertised kick-off* — the exact predicate the section above deleted for being
+false, restated as a word instead of a comparison.
+
+Measured on production 2026-09-14 over the sweep's own window (−5d/+5d) with
+this module's own predicates, whole population, no sampling::
+
+    pairs meeting every predicate EXCEPT status         11
+      ├─ ghost status 'scheduled'  (what we admitted)    0
+      └─ ghost status 'suspended'  (where they went)    11
+    blocks resolving to exactly 1 ghost + 1 canonical  11 / 11
+
+Headline specimen is this module's own: ghost ``15298125`` Sevilla v Valencia
+against canonical ``15298233``, 09-11 19:00Z, 1-0, espn ``401882878`` — the pair
+the docstring opens with, which the shipped predicate could not see.
+
+WHY THIS IS NOT THE WIDENING IT LOOKS LIKE. ``suspended`` renders as "No result
+reported", which is a statement that nothing was reported, not a statement that
+a match is being played — and the page prints these rows on the same rail as the
+real result, which is the duplicate this module exists to remove. The state that
+does mean "in progress" is ``live``, and it stays out. Precision is unchanged
+either way: what condemns a row is still a scored, fixture-anchored twin of it
+inside :data:`MAX_GHOST_LAG`, and the measurement that bounds THAT — zero
+genuine same-orientation rematches in 365 days — is what a wrongly-tagged
+``suspended`` row would have to defeat.
+
 THE NAME KEY IS DELIBERATELY THE NARROW ONE
 ════════════════════════════════════════════
 
@@ -159,12 +198,17 @@ GHOST_KICKOFF_GRACE = timedelta(minutes=30)
 #: else's; both mean the same thing to a reader.
 SETTLED_STATUSES = ("completed", "closed")
 
-#: The only state a ghost may be in. Deliberately not ``suspended`` (a live
-#: state, live/048) and not ``voided``/``merged`` (already unprintable). Note
-#: that ``scheduled`` is a claim the row makes about itself and not a statement
-#: about the clock — a ``scheduled`` row whose hour has passed is still being
-#: printed, which is the whole of the section on the fake kick-off above.
-GHOST_STATUS = "scheduled"
+#: The states a ghost may be in. ``scheduled`` is the row before its invented
+#: kick-off and ``suspended`` is the same row afterwards — see the section on
+#: the status gate above for why both are one population and why reading only
+#: the first made this module inert.
+#:
+#: Still excluded, and for three different reasons: ``live`` because a match
+#: genuinely in progress is indistinguishable from a ghost mid-promotion and
+#: under-tagging is the intended failure direction; ``voided``/``merged``
+#: because they are already unprintable; the settled pair because a row with a
+#: result is not being advertised as a fixture.
+GHOST_STATUSES = ("scheduled", "suspended")
 
 
 def row_is_fixture_anchored(
@@ -256,8 +300,9 @@ def classify_block(
     The two roles are read off the row, never off the clock alone:
 
     * a CANONICAL is settled, carries a final score AND is fixture-anchored;
-    * a GHOST is ``scheduled``, carries no score, is NOT fixture-anchored, and
-      is not inside :data:`GHOST_KICKOFF_GRACE` of its own advertised kick-off.
+    * a GHOST is in one of :data:`GHOST_STATUSES`, carries no score, is NOT
+      fixture-anchored, and is not inside :data:`GHOST_KICKOFF_GRACE` of its own
+      advertised kick-off.
 
     The clock decides ONE thing here and it is not whether the row is a ghost.
     A row that is refuted by a scored, fixture-anchored twin of its own within
@@ -278,7 +323,7 @@ def classify_block(
     ghosts = [
         r
         for r in rows
-        if r.status == GHOST_STATUS
+        if r.status in GHOST_STATUSES
         and not r.has_final_score
         and not r.is_fixture_anchored
         and not (now - GHOST_KICKOFF_GRACE < r.commence_time <= now)
