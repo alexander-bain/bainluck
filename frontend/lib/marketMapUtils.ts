@@ -179,6 +179,26 @@ export function quotedLinesPhrase(rungCount: number): string {
 }
 
 /**
+ * `"Eight lines settled"` — the same sentence for a ladder that has stopped
+ * quoting and started grading (#6169).
+ *
+ * The docstring above is the reason this exists: the count "is not a substitute
+ * for the content, it is the heading over it". Once #3769's grading reaches a
+ * card, the content underneath is `cleared` / `not cleared` with no percentage
+ * anywhere on it, so a heading that calls those eight rows quotes describes
+ * something the reader cannot see. One card, one tense — the same rule that
+ * makes `ladderGraded` all-or-nothing.
+ *
+ * "Settled" and not "graded": the house word for this state is settled
+ * (CLAUDE.md, *settled means settled*), and it is already what the rest of the
+ * page says about a finished market.
+ */
+export function settledLinesPhrase(rungCount: number): string {
+  const word = COUNT_WORDS[rungCount] ?? String(rungCount);
+  return `${word} ${rungCount === 1 ? "line" : "lines"} settled`;
+}
+
+/**
  * The tense a band's own sentence is in — `"Final"` once the game is over,
  * `"Expected"` while it still has not been played.
  *
