@@ -153,6 +153,19 @@ private/
 # a 272 MiB full-repo snapshot tarball sat here untracked-and-un-ignored (INT-042), one
 # `git add -A` away from permanent history bloat.
 _to_delete/
+# Same section, same hazard, measured again 2026-09-14: the cert bus builds its
+# scratch tree at the repo root as `cert-scratch-<id>/`, and `cert-scratch-593/`
+# was sitting in `~/bainluck` — the tree the desk pushes master from — holding
+# 4,798 untracked files, a whole second copy of `backend/app/**` and `ios/**`,
+# and NOT ignored. Two costs, both already paid: one `git add -A` stages all of
+# it, and anything enumerating by filesystem or by an unscoped pathspec counts
+# it. `native-gates.sh` claimed 226 scratch `*.swift` copies as changed files
+# awaiting proof, and the iOS concept-admission registry read 585 scratch
+# deciders and reddened a green sha at the desk. Both readers were repaired at
+# their own end; this is the root, so the next reader does not have to be.
+# Note it is the tracked/untracked split that covers this, not `.claude/` —
+# unlike the stale cert WORKTREES, this root sits outside it.
+cert-scratch-*/
 
 # Lane-lock flock sidecars written by scripts/claim_lane_lock.py. They are
 # per-machine runtime state, and a stray one at the repo root has now shown up
