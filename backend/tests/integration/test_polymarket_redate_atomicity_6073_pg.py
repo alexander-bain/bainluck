@@ -122,6 +122,8 @@ _CORPUS = [
     ("uncontested", 71002, "polymarket:71002"),
     ("raced_relink", 71003, "polymarket:71003"),
     ("raced_second_stamp", 71004, "polymarket:71004"),
+    ("raced_unlink", 71005, "polymarket:71005"),
+    ("raced_stamp_withdrawn", 71006, "polymarket:71006"),
 ]
 
 #: The event the relink arm's matcher pulls into the group. Deliberately NOT in
@@ -471,6 +473,94 @@ async def test_a_group_that_gains_a_disagreeing_stamp_inside_the_window_is_decli
     after = await _read(pg_engine, 71004)
     assert after["commence_time"] == LISTED, (
         "a group disagreeing with itself about when the fixture is cannot date it"
+    )
+    assert after["status"] == "suspended"
+    assert stats["skipped_raced"] >= 1
+
+
+# --------------------------------------------------------------------------
+# the matcher's OTHER window: the evidence is withdrawn, not contradicted
+# --------------------------------------------------------------------------
+# CERT-2837. The two arms above prove the negative clauses fire when the group
+# gains something. Neither can fire when the group LOSES everything, because
+# `NOT EXISTS` over an empty set is true — so before the two positive `EXISTS`
+# these two arms both wrote the venue instant onto an event whose Polymarket
+# evidence had just been withdrawn.
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_group_unlinked_after_redate_selection_cannot_retime_event_6073(
+    pg_engine, monkeypatch
+):
+    """CERT-2837's witness, as a gate.
+
+    Phase 1.5 detaches a mislinked market by committing `event_id = NULL`. It
+    does so on a SEPARATE connection after the repair selected the row and
+    before it writes. Both `NOT EXISTS` clauses then pass vacuously — there is
+    no second event and no disagreeing stamp, because there is nothing left at
+    all — and only a POSITIVE assertion can decline the write.
+
+    The detach is the signal that this group never owned this fixture, so the
+    instant it was about to supply is not merely unproven, it is withdrawn. The
+    event must keep the row it had.
+    """
+    async with pg_engine.begin() as conn:
+        await _seed(conn)
+
+    async def _phase15_detaches(conn):
+        await conn.execute(
+            text(
+                "UPDATE futures_markets SET event_id = NULL "
+                "WHERE group_id = :gid AND source = 'polymarket'"
+            ),
+            {"gid": "polymarket:71005"},
+        )
+
+    stats = await _run_sweep(pg_engine, monkeypatch, interfere=_phase15_detaches)
+
+    after = await _read(pg_engine, 71005)
+    assert after["commence_time"] == LISTED, (
+        "a group that no longer links this event cannot say when it starts"
+    )
+    assert after["commence_time_source"] == "polymarket"
+    assert after["status"] == "suspended"
+    assert stats["skipped_raced"] >= 1
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_a_stamp_withdrawn_inside_the_window_cannot_retime_event_6073(
+    pg_engine, monkeypatch
+):
+    """The second positive clause, evaluated.
+
+    A re-ingest rewrites `market_metadata`, and the `venue_game_start` this
+    repair was about to trust is no longer there. The group still links the
+    event, so the first `EXISTS` is satisfied and only the stamp clause can
+    decline it. Writing a remembered instant the venue has stopped publishing is
+    the same defect as writing a contradicted one.
+    """
+    async with pg_engine.begin() as conn:
+        await _seed(conn)
+
+    async def _reingest_drops_the_stamp(conn):
+        await conn.execute(
+            text(
+                "UPDATE futures_markets "
+                "SET market_metadata = CAST('{}' AS jsonb) "
+                "WHERE group_id = :gid AND source = 'polymarket'"
+            ),
+            {"gid": "polymarket:71006"},
+        )
+
+    stats = await _run_sweep(
+        pg_engine, monkeypatch, interfere=_reingest_drops_the_stamp
+    )
+
+    after = await _read(pg_engine, 71006)
+    assert after["commence_time"] == LISTED, (
+        "an instant the venue has stopped publishing cannot date the fixture"
     )
     assert after["status"] == "suspended"
     assert stats["skipped_raced"] >= 1

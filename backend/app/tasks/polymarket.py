@@ -1252,6 +1252,34 @@ LISTING_COMMENCE_SOURCE = "polymarket"
 #:   casts are the column's own types, so a schema change that renames or retypes
 #:   one fails loudly here instead of quietly widening the match.
 #:
+#: CERT-2837'S FINDING, WHICH IS ALSO REAL, AND IS WHY THE TWO ``EXISTS`` ARE
+#: HERE. The first cut re-asserted the group gates only NEGATIVELY: no second
+#: event, no disagreeing stamp. Both are satisfied by a group that has no rows
+#: left at all. Phase 1.5 detaches a mislinked market by committing
+#: ``event_id = NULL``, and when it does so to every market in this group inside
+#: the window, both ``NOT EXISTS`` pass VACUOUSLY — nothing to find — and the
+#: stale repair retimes and reschedules an event whose Polymarket evidence has
+#: just been withdrawn. The withdrawal is precisely the signal that this group
+#: never owned this fixture (CERT-2835's class), so writing its instant is the
+#: worst available outcome: a confident wrong kickoff, sourced to a provider that
+#: has stopped saying it.
+#:
+#: An absence cannot be asserted with a negative. So the write also states the
+#: two things positively — this group still links THIS event, and this group
+#: still carries the stamp about to be written. Together with the two negatives
+#: they reconstruct exactly the SELECT's own premise (``n_events = 1`` and it is
+#: this event; ``n_stamps = 1`` and it is this stamp).
+#:
+#: They are two clauses and not one deliberately. It is tempting to require a
+#: single row carrying BOTH the link and the stamp, which is stronger — and
+#: wrong: a Polymarket group is a parent and its children, the child row carries
+#: the venue kickoff (the ingest half of #6073) and the link need not sit on that
+#: same row. A combined form would decline rows whose evidence is entirely
+#: intact, which is the `= NULL` failure of the first cut wearing the other face:
+#: a rail that repairs nothing and reports success. The SELECT derives the two
+#: facts by separate aggregates over the group; the guard re-asserts them the
+#: same way.
+#:
 #: The two ``NOT EXISTS`` re-assert the GROUP gates for the same reason. Their
 #: window is not the score poll but the matcher: `match_prediction_markets` runs
 #: every 15 minutes and can link another market into this group, or relink one
@@ -1270,6 +1298,19 @@ _REDATE_UNCHANGED_WHERE = """
       AND e.period IS NOT DISTINCT FROM CAST(:was_period AS text)
       AND e.game_clock IS NOT DISTINCT FROM CAST(:was_game_clock AS text)
       AND e.completed_at IS NOT DISTINCT FROM CAST(:was_completed_at AS timestamptz)
+      AND EXISTS (
+          SELECT 1 FROM futures_markets fm1
+          WHERE fm1.group_id = CAST(:group_id AS text)
+            AND fm1.source = 'polymarket'
+            AND fm1.event_id = :id
+      )
+      AND EXISTS (
+          SELECT 1 FROM futures_markets fm1s
+          WHERE fm1s.group_id = CAST(:group_id AS text)
+            AND fm1s.source = 'polymarket'
+            AND fm1s.market_metadata->>'venue_game_start'
+                IS NOT DISTINCT FROM CAST(:was_venue_game_start AS text)
+      )
       AND NOT EXISTS (
           SELECT 1 FROM futures_markets fm2
           WHERE fm2.group_id = CAST(:group_id AS text)

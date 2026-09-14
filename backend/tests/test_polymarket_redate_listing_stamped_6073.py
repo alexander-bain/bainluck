@@ -21,6 +21,7 @@ that selects correctly and writes the wrong column reads identical from a count.
 
 import ast
 import inspect
+import re
 import textwrap
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -570,9 +571,49 @@ class TestTheWriteRefusesARowThatMoved:
     ])
     def test_neither_write_matches_on_the_id_alone(self, sql_name):
         # The defect itself, as a shape: `WHERE id = :id` and nothing else.
+        #
+        # Counted over the EVENT columns only, with the column name in the
+        # pattern. The guard also carries a null-safe comparison on the group's
+        # stamp (CERT-2837), which is not an `events` column and must not be
+        # able to stand in for one: a bare `IS NOT DISTINCT FROM` count would
+        # let a dropped column guard be masked by an added group clause, which
+        # is exactly the substitution this arm exists to notice.
         sql = getattr(poly, sql_name)
         where = sql.split("WHERE", 1)[1]
-        assert where.count("IS NOT DISTINCT FROM") == len(self.GUARDED)
+        assert len(re.findall(r"\be\.\w+ IS NOT DISTINCT FROM", where)) == len(
+            self.GUARDED
+        )
+
+    #: CERT-2837. An absence cannot be asserted with a negative: `NOT EXISTS`
+    #: over a group whose rows have all been detached is true, so the two
+    #: negative clauses pass vacuously at the exact moment Phase 1.5 withdraws
+    #: this group's claim on the event. These are the positive halves.
+    REQUIRED_EXISTS = [
+        ("still links this event", "fm1.event_id = :id"),
+        (
+            "still carries the stamp being written",
+            "fm1s.market_metadata->>'venue_game_start'",
+        ),
+    ]
+
+    @pytest.mark.parametrize("sql_name", [
+        "REDATE_WRITE_DATE_ONLY_SQL",
+        "REDATE_WRITE_WITH_STATUS_SQL",
+    ])
+    @pytest.mark.parametrize("what,clause", REQUIRED_EXISTS)
+    def test_both_writes_require_the_group_evidence_to_still_be_there(
+        self, sql_name, what, clause
+    ):
+        sql = getattr(poly, sql_name)
+        assert clause in sql, f"{sql_name} does not assert the group {what}"
+        # Positively. A `NOT EXISTS` carrying the same body would read as a
+        # guard and mean the opposite.
+        body = sql.split(clause, 1)[0]
+        opener = body.rfind("EXISTS (")
+        assert not body[:opener].rstrip().endswith("NOT"), (
+            f"{sql_name} asserts '{what}' as a NOT EXISTS — that is the "
+            "vacuous-pass defect CERT-2837 found, inverted"
+        )
 
     @pytest.mark.parametrize("sql_name", [
         "REDATE_WRITE_DATE_ONLY_SQL",
