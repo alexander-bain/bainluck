@@ -14551,6 +14551,16 @@ async def _build_game_markets(
     # event of the last two days), one top-1 index probe each: 102 ms measured
     # on that event, on the REBUILD path only. See `utils/latest_observation.py`
     # for why this shape and not `max() ... GROUP BY`.
+    #
+    # 🔴 THE CONVERSE IS FALSE, AND #6051 IS THE MEASUREMENT: a price can be READ
+    # without a snapshot being written. Some writers move `current_probability`
+    # and record no observation, so `max(captured_at)` answers "when did we last
+    # write a snapshot", and on 2026-09-14 this route served every Kalshi leg of
+    # event 15311956 as 5.15 h old while the moneyline's price had moved 100
+    # seconds earlier. `load_latest_observed_at` therefore floors its answer with
+    # `price_changed_at` — a price cannot change without being observed — under
+    # the three refusals named in `price_movement_floor`. `last_updated` is still
+    # the wrong field and is still not read.
     from app.utils.latest_observation import (
         blended_observed_at,
         load_latest_observed_at,
