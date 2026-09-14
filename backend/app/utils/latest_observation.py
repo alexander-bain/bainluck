@@ -209,16 +209,121 @@ def latest_observed_at_subquery():
     )
 
 
+def _aware(stamp: object) -> Optional[datetime]:
+    """Any stamp this module might be handed, as an aware datetime, or ``None``.
+
+    Both columns compared here are ``timezone=True`` in the model and asyncpg
+    returns them aware, so the naive branch is belt-and-braces against a caller
+    — a test double, a SQLite gate — that hands over a naive one: ``max()`` over
+    a mixed naive/aware pair raises ``TypeError``, and this runs on the request
+    path.
+
+    🔴 **AND THE TYPE IS NOT ASSUMED EITHER.** The first cut of this took
+    ``Optional[datetime]`` and read ``.tzinfo`` off it, which is true of every
+    production row and not of every caller: `test_latest_observation_lat_p147`
+    hands `observed_at` in as an ISO STRING, so a freshness floor would have
+    raised `AttributeError` on the request path — the 500-over-a-timestamp this
+    module's own docstring refuses two functions up. A string is parsed (that is
+    what :func:`_as_aware` is for) and anything else is UNKNOWN, which the
+    caller must treat as "no comparison available" rather than as a date.
+    """
+    if isinstance(stamp, datetime):
+        return stamp if stamp.tzinfo is not None else stamp.replace(tzinfo=timezone.utc)
+    if isinstance(stamp, str):
+        return _as_aware(stamp)
+    return None
+
+
+def price_movement_floor(
+    price_changed_at: Optional[datetime],
+    resolution_source: Optional[str],
+    current_probability: object,
+) -> Optional[datetime]:
+    """The observation a MOVED PRICE proves happened, or ``None`` (#6051).
+
+    🔴 **A PRICE CANNOT CHANGE WITHOUT BEING OBSERVED.** That is the whole
+    argument, and it is what lets this be a floor rather than a guess.
+    ``price_changed_at`` is written by one shared expression
+    (``utils/price_change_stamp.price_changed_at_value``) which returns
+    ``now()`` only when the write would change the STORED six-decimal price and
+    the row's existing stamp otherwise. So the column is a *lower bound* on the
+    last time somebody read this market and got a different number.
+
+    ## the defect this exists for, measured on production 2026-09-14 03:37Z
+
+    ``/api/events/15311956/game-markets`` (Chunichi Dragons @ Hanshin Tigers,
+    upcoming) served **every** Kalshi leg with ``observed_at`` of
+    ``2026-09-13T22:28:27Z`` — 5.15 h before the read — while those same rows'
+    ``price_changed_at`` read ``03:35:49Z``, ``03:34:12Z``, ``03:26:16Z``. The
+    moneyline's price had moved **100 seconds** before the request that called
+    it five hours old. The snapshot series had simply stopped: some writers move
+    a price without recording an observation, so ``max(captured_at)`` answers
+    *when we last WROTE A SNAPSHOT*, which is not the question the field asks.
+
+    Not one row. On events within ±1 day, legs whose price provably moved after
+    their newest snapshot: **polymarket 1,123 of 6,366** (mean gap 13.8 h) and
+    **kalshi 3,067 of 14,035** (mean 2.05 h) — ``sql_fingerprint
+    5f30865196b29997``.
+
+    🔴 **AND THE CONSEQUENCE IS NOT A MISPRINTED NUMBER.**
+    ``components/event/PriceAgeMark`` returns ``null`` unless the stamp is
+    already stale, so a too-old ``observed_at`` does not merely misstate an age
+    — it MANUFACTURES a "this price has gone quiet" warning over a card whose
+    prices are moving every minute, which is the one thing that mark exists to
+    say.
+
+    ## the three refusals, each of which has a row that needs it
+
+    * **``resolution_source`` must be absent.** ``tasks/backfill_winners.py``
+      stamps ``price_changed_at`` in the same statement that CROWNS a leg
+      ``1.0``/``0.0`` and sets ``resolution_source='api_settlement'``. The
+      number did change then, but our grader's certainty is not a reading of a
+      venue, and this field's callers ask the second question. Excluding graded
+      rows removes exactly that write and nothing else.
+    * **There must be a price for an age to be about.** ``tasks/datagolf.py``
+      clears a withdrawn leg (``current_probability = None``) and stamps the
+      change. Honouring that would date the disappearance of a price as an
+      observation of one — and it is the row ``routes/tournaments.py`` already
+      refuses under "no price, no observation".
+    * **``price_changed_at`` itself may be absent**, on a row no write has ever
+      moved.
+
+    Returns a floor to be compared, never a stamp to be served on its own — see
+    :func:`load_latest_observed_at` for why it can only ever move the answer
+    NEWER, and only for ids that already have a real snapshot behind them.
+    """
+    if price_changed_at is None:
+        return None
+    if resolution_source is not None:
+        return None
+    if current_probability is None:
+        return None
+    return _aware(price_changed_at)
+
+
 async def load_latest_observed_at(
     session: AsyncSession, outcome_ids: Iterable[int]
 ) -> dict[int, datetime]:
-    """``{outcome_id: newest captured_at}`` for the ids given.
+    """``{outcome_id: when this price was last observed}`` for the ids given.
 
     An outcome with no priced observation is **absent from the mapping**, not
     present with ``None``. That is the aggregate form's shape and callers depend
     on it: ``.get(id)`` yields ``None`` either way, but a caller that iterates or
     counts the mapping would silently start seeing rows that have never been
-    observed.
+    observed. ``routes/tournaments.py`` states that dependence out loud — "no
+    price, no observation … ``load_latest_observed_at`` only returns ids that
+    have a PRICED snapshot, so its presence is itself the evidence".
+
+    🔴 **WHICH IS WHY #6051's FLOOR NEVER ADDS A KEY.** A moved price
+    (:func:`price_movement_floor`) can only make an EXISTING answer newer; an id
+    with no snapshot stays out of the mapping even when its price demonstrably
+    moved, because that caller reads membership as evidence and this module does
+    not get to redefine the word underneath it. The population that forgoes:
+    118 of 20,401 legs on ±1-day events have never been snapshotted at all, and
+    showing them no age is the conservative answer they already get.
+
+    The three extra columns ride the SELECT that was already visiting these
+    rows, so the floor costs no second round trip.
     """
     ids = list(outcome_ids)
     if not ids:
@@ -229,8 +334,28 @@ async def load_latest_observed_at(
             select(
                 FuturesOutcome.id,
                 latest_observed_at_subquery().label("observed_at"),
+                FuturesOutcome.price_changed_at,
+                FuturesOutcome.resolution_source,
+                FuturesOutcome.current_probability,
             ).where(FuturesOutcome.id.in_(ids))
         )
     ).all()
 
-    return {row.id: row.observed_at for row in rows if row.observed_at is not None}
+    observed: dict[int, datetime] = {}
+    for row in rows:
+        if row.observed_at is None:
+            continue
+        floor = price_movement_floor(
+            row.price_changed_at, row.resolution_source, row.current_probability
+        )
+        snapshot_at = _aware(row.observed_at)
+        # The snapshot is returned VERBATIM unless the floor actually wins, so
+        # every row this rule does not touch serves the same bytes it served
+        # before — the normalisation above exists for the comparison, not for
+        # the payload.
+        if floor is not None and snapshot_at is not None and floor > snapshot_at:
+            observed[row.id] = floor
+        else:
+            observed[row.id] = row.observed_at
+
+    return observed

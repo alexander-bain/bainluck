@@ -157,16 +157,28 @@ def _the_page():
     return markets, outcomes
 
 
-def _db(markets, outcomes, observations):
+def _db(markets, outcomes, observations, moved=None):
     """`observations` is `{outcome_id: datetime | None}`.
 
     A `None` reaches the loader as a row whose `observed_at` is NULL, which is
     how "this outcome has never been priced" arrives from PostgreSQL; the loader
     drops it, so the page serves `None`. An id absent from the dict entirely is
     the same state by the other route.
+
+    `moved` is `{outcome_id: price_changed_at}` — #6051. The loader's SELECT now
+    also carries the row's price-movement floor, so the double has to hold those
+    columns or it is not the shape the code reads. Defaulting them to "no floor"
+    keeps every case in this file snapshot-only, which is what it is about.
     """
+    moved = moved or {}
     rows = [
-        SimpleNamespace(id=oid, observed_at=seen)
+        SimpleNamespace(
+            id=oid,
+            observed_at=seen,
+            price_changed_at=moved.get(oid),
+            resolution_source=None,
+            current_probability=0.5 if oid in moved else None,
+        )
         for oid, seen in observations.items()
     ]
     db = AsyncMock()
@@ -184,7 +196,7 @@ def _db(markets, outcomes, observations):
     return db
 
 
-def _payload(*, observations=None, markets=None, outcomes=None):
+def _payload(*, observations=None, markets=None, outcomes=None, moved=None):
     fixture_markets, fixture_outcomes = _the_page()
     markets = fixture_markets if markets is None else markets
     outcomes = fixture_outcomes if outcomes is None else outcomes
@@ -193,7 +205,7 @@ def _payload(*, observations=None, markets=None, outcomes=None):
         # rather than accidentally right.
         observations = {o.id: NOW - timedelta(minutes=o.id) for o in outcomes}
     response, _status, _ids = asyncio.run(
-        events_route._build_game_markets(42, _db(markets, outcomes, observations))
+        events_route._build_game_markets(42, _db(markets, outcomes, observations, moved))
     )
     return response
 
@@ -714,4 +726,63 @@ class TestATransformNeverReadsItsOwnOutput:
         assert "observed_at_by_source" not in donor, "fixture donor is not single-source"
         assert "observed_at_by_source" not in capped, (
             "a single-source donor left the capped rung's discarded source map standing"
+        )
+
+
+class TestAMovedPriceIsNotServedAsHoursOld:
+    """#6051 — the same field, one route further down than
+    `test_a_moving_price_is_not_hours_old_6051.py` can reach.
+
+    That file pins the RULE on the loader. This one asks whether the rule
+    survives the trip to the payload a reader's card is built from, because a
+    floor that the serializer overwrote on its way out would pass every test
+    there and change nothing on the page.
+
+    Production shape, 2026-09-14 03:37Z: the snapshot series for event 15311956
+    stopped at 22:28Z while the prices kept moving, so every Kalshi leg was
+    published 5.15 h old and `PriceAgeMark` drew a "gone quiet" warning over a
+    card whose moneyline had moved 100 seconds earlier.
+    """
+
+    def test_the_payload_carries_the_move_not_the_last_snapshot(self):
+        stopped = NOW - timedelta(hours=5, minutes=9)
+        moved_at = NOW - timedelta(minutes=2)
+
+        # BOTH legs of the totals row, because a merged row is only as fresh
+        # as its oldest contributor (`blended_observed_at`) and moving one of
+        # two would be testing the blend, not the floor. Outcome 3 — a
+        # single-leg spread — is left un-moved as the control below.
+        payload = _payload(
+            observations={1: stopped, 2: stopped, 3: stopped},
+            moved={1: moved_at, 2: moved_at},
+        )
+
+        legs = {
+            leg["observed_at"]
+            for _path, leg in _priced_legs(payload)
+            if leg.get("observed_at") is not None
+        }
+        assert moved_at.isoformat() in legs, (
+            "the leg whose price moved two minutes ago is still published as "
+            f"five hours old; payload carried {sorted(legs)}"
+        )
+
+    def test_a_leg_that_did_not_move_still_says_so(self):
+        """The negative control in the same response: without it, a serializer
+        that stamped every row `now` would pass the test above."""
+        stopped = NOW - timedelta(hours=5, minutes=9)
+
+        payload = _payload(
+            observations={1: stopped, 2: stopped, 3: stopped},
+            moved={1: NOW - timedelta(minutes=2), 2: NOW - timedelta(minutes=2)},
+        )
+
+        legs = {
+            leg["observed_at"]
+            for _path, leg in _priced_legs(payload)
+            if leg.get("observed_at") is not None
+        }
+        assert stopped.isoformat() in legs, (
+            "the leg whose price never moved lost its real age; the floor is "
+            f"being applied to rows it has no evidence for. Payload: {sorted(legs)}"
         )

@@ -53,6 +53,12 @@ LOADER = ROOT / "app" / "utils" / "latest_observation.py"
 ROUTE = ROOT / "app" / "routes" / "tournaments.py"
 SUITE = ROOT / "tests" / "test_latest_observation_lat_p147.py"
 ROUTE_SUITE = ROOT / "tests" / "integration" / "test_route_tournaments.py"
+#: #6051's floor lives in the same loader, and its mutants (M16-M18) are killed
+#: only here. A battery that applies a mutant no suite in its own run can kill
+#: reports it as SURVIVED and reads as a hole in the code rather than a hole in
+#: the run — which is the same false statement `scan_mutation_residue` exists to
+#: stop, arriving by the other road.
+FLOOR_SUITE = ROOT / "tests" / "test_a_moving_price_is_not_hours_old_6051.py"
 
 #: (id, description, target, old, new). `old` must appear EXACTLY once in
 #: `target` — a mutation that matches zero or many places is a harness bug
@@ -133,19 +139,26 @@ MUTANTS: list[tuple[str, str, pathlib.Path, str, str]] = [
         "        .correlate(FuturesOutcome)",
         "        .correlate(None)",
     ),
+    # 🔴 M9/M10 RE-TARGETED BY #6051, AND THE SCAN IS WHY THEY ARE HONEST.
+    # Both used to needle the single-line dict comprehension the loader returned.
+    # #6051 replaced it with a loop (the price-movement floor is decided per row),
+    # so both needles went ABSENT — and `scan_mutation_residue` caught it in CI
+    # rather than letting a later session quote "12/12 killed" from a battery in
+    # which two mutants could not be applied at all. The INTENT of each is
+    # unchanged; only the line it lands on moved.
     (
         "M9",
         "keep the unobserved outcomes — present with None instead of absent",
         LOADER,
-        "    return {row.id: row.observed_at for row in rows if row.observed_at is not None}",
-        "    return {row.id: row.observed_at for row in rows}",
+        "        if row.observed_at is None:\n            continue\n",
+        "",
     ),
     (
         "M10",
         "key the mapping by the time instead of the outcome",
         LOADER,
-        "    return {row.id: row.observed_at for row in rows if row.observed_at is not None}",
-        "    return {row.observed_at: row.id for row in rows if row.observed_at is not None}",
+        "            observed[row.id] = row.observed_at",
+        "            observed[row.observed_at] = row.id",
     ),
     (
         "M11",
@@ -182,6 +195,33 @@ MUTANTS: list[tuple[str, str, pathlib.Path, str, str]] = [
         "    observed_by_id = await load_latest_observed_at(session, outcome_ids)",
         "    observed_by_id = await load_latest_observed_at(session, [])",
     ),
+
+    # #6051's own branch. A floor that can only be wrong in two directions, and
+    # both of them are silent: too old re-creates the defect, too new invents
+    # freshness nobody observed.
+    (
+        "M16",
+        "let the floor REPLACE the snapshot instead of raising it — a just-polled "
+        "price reads as old as its last MOVE",
+        LOADER,
+        "        if floor is not None and snapshot_at is not None and floor > snapshot_at:",
+        "        if floor is not None and snapshot_at is not None:",
+    ),
+    (
+        "M17",
+        "drop the graded refusal — a settlement crown poses as a venue reading",
+        LOADER,
+        "    if resolution_source is not None:\n        return None\n",
+        "",
+    ),
+    (
+        "M18",
+        "drop the priced refusal — the clearing of a withdrawn leg becomes an "
+        "observation of a price that no longer exists",
+        LOADER,
+        "    if current_probability is None:\n        return None\n",
+        "",
+    ),
 ]
 
 
@@ -193,6 +233,7 @@ def _run_suite() -> int:
             "pytest",
             str(SUITE),
             str(ROUTE_SUITE),
+            str(FLOOR_SUITE),
             "-q",
             "--no-header",
             "-x",
