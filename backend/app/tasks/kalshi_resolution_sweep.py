@@ -141,6 +141,16 @@ SUSPENDED_EVENT_WINDOW_HOURS = 336
 #: `opening_probability` 0.135 and `current_american_odds` +641. One of those two
 #: numbers is a lie and the row says so unaided.
 #:
+#: AND THE LIE IS THE BOOK, NOT THE 0.99 — worth stating, because the obvious
+#: reading of "99% against a 13% book" is that the 99% must be withdrawn. Asked at
+#: the venue, that leg (`Arsenal wins 2-0`) settled **`result='yes'`**, and #5596's
+#: own headline specimen settled the same way (`KXJLEAGUEGAME-26SEP12MACMAR-TIE`,
+#: `result='yes'` — the J-League match really did end a draw). The probability had
+#: converged on the truth; the two-sided quote beside it is the relic, frozen by
+#: the last poll before close. So this arm exists to stop the pair being presented
+#: as a LIVE price, not to suppress the number — which is also why it is safe for
+#: the write to leave every price exactly where it is.
+#:
 #: 0.10 measured, not chosen: over the 30 sampled suspended markets carrying this
 #: signature on 2026-09-14 05:16Z, 26 (87%) were `finalized` at the venue. It is a
 #: SCREEN, NOT A VERDICT — `derive_venue_settlement` still decides, and the other

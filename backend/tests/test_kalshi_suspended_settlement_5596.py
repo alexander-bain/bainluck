@@ -16,6 +16,16 @@ been played. The 0.99 sits on the leg the book puts at 15.5%, so it is not a
 mis-derivation from the book and not "the winner written early" either — it is
 the settlement tail frozen beside a two-sided quote that stopped updating.
 
+WHICH HALF IS LYING, because the obvious reading is the wrong one. `99% against
+a 15.5% book` invites withdrawing the 99%. Asked at the venue,
+`KXJLEAGUEGAME-26SEP12MACMAR-TIE` settled **`result='yes'`** — the match really
+did end a draw — and the Sunderland specimen's 0.99 leg (`Arsenal wins 2-0`)
+settled `result='yes'` too. **The probability is the honest half in both; the
+frozen two-sided quote is the relic.** So the defect is not a wrong number, it
+is a finished market presented as a live one, and the fix must not suppress a
+price: `UPDATE_SQL` leaves every price exactly where it is
+(`test_the_write_carries_no_grade`).
+
 WHY NO EXISTING ARM REACHES IT, measured over #5596's WHOLE Kalshi population on
 production 2026-09-14 05:16Z — 51 markets / 114 legs, and **114/114 `finalized`
 at Kalshi**, asked by ticker through `GET /trade-api/v2/markets?tickers=…`:
@@ -375,8 +385,10 @@ class TestThePredicateOnRealRows:
             markets=[_market(60489099, 1)],
             events=[_suspended_event(1)],
             outcomes=[
-                (1, 60489099, 0.15, 0.16, 0.99),   # Tie      — the lie
-                (2, 60489099, 0.69, 0.70, 0.01),   # Marinos  — the favourite
+                # The venue settled TIE `result='yes'`: the 0.99 is the honest
+                # half and the 0.15/0.16 quote beside it is the frozen relic.
+                (1, 60489099, 0.15, 0.16, 0.99),   # Tie      — the real result
+                (2, 60489099, 0.69, 0.70, 0.01),   # Marinos  — the stale favourite
                 (3, 60489099, 0.10, 0.13, 0.01),   # Machida Z
             ],
         )
