@@ -117,6 +117,32 @@ const CHART_SOURCE = readFileSync(
   "utf8"
 );
 
+/** `GET /api/events/15310688/history`, 14:25Z — Alexander Zverev 3, Ben
+ *  Shelton 1, US Open, `status: "completed"`. The composition specimen int356
+ *  asked for at 13:29Z: a SETTLED game with no drawn score, where #6142's
+ *  withholding rule and #6144's naming rule are both live on one payload.
+ *
+ *  Same 14 keys as the NPB fixture, verbatim — nothing the chart reads is
+ *  trimmed, sampled or rounded; only the page-level keys the component is never
+ *  handed (`win_prob_history`, `aggregate_line`, …) are dropped. */
+const SETTLED_TENNIS = JSON.parse(
+  readFileSync(
+    join(__dirname, "fixtures/scoreDiffHeading.15310688.tennis-settled.json"),
+    "utf8"
+  )
+);
+
+/** #6142's own settled wire, reused rather than re-captured: the same
+ *  Panthers–Bears game, captured while its `implied_spreads` still carried a
+ *  `kalshi` arm — the arm #6142 withholds on a final. The tail-6 fixture above
+ *  was captured later, after that arm had gone, so it cannot stand in here. */
+const SETTLED_WITH_KALSHI_ARM = JSON.parse(
+  readFileSync(
+    join(__dirname, "fixtures/impliedSpread.14780142.settled.json"),
+    "utf8"
+  )
+);
+
 /** Event 15293830's `score_history` (ux/1034 B5's subject): four points, and
  *  they are SETS, under a chart whose axis is in games. */
 const TENNIS_SET_SCORE_HISTORY = [
@@ -338,6 +364,117 @@ describe("#6144 — on the production wire", () => {
       headingFor(NPB, "tennis_wta", { scoreHistory: TENNIS_SET_SCORE_HISTORY })
     ).toBe("Projected Game Margin");
     expect(seriesAttr(markup, "data-actual-series")).toBe("false");
+  });
+});
+
+// ── #6144 × #6142, THE COMBINATION int356 ASKED FOR ─────────────────────────
+//
+// Both rules now speak about this one component from opposite directions:
+// #6142 WITHHOLDS a series on a final, #6144 NAMES the card after the series it
+// draws. A settled game with no drawn score hits both at once, and the failure
+// they could compose into is a specific one — a card headed "Projected Game
+// Margin" with every projection withheld from inside it, which is #6144 again
+// with the words rearranged.
+//
+// It does not happen, and the reason is asserted rather than argued: the two
+// rules speak about different series. #6142 withholds the venues' implied-spread
+// SNAPSHOT; the projected-margin LINE that the heading names is the sportsbook
+// series, which that rule has always and in every game state left alone.
+describe("#6144 × #6142 — a settled game with no drawn score", () => {
+  it("THE COMBINATION, on real settled wire: named for its projection, still drawing it", () => {
+    // Strawman guard first: a settled game (not a live one), whose score IS
+    // held — three sets to one, on the wire — and is still not drawable.
+    expect(SETTLED_TENNIS.event_id).toBe(15310688);
+    expect(SETTLED_TENNIS.status).toBe("completed");
+    expect(SETTLED_TENNIS.score_history.length).toBe(4);
+    expect(SETTLED_TENNIS.score_history[3]).toMatchObject({ home_score: 3, away_score: 1 });
+    expect(
+      SETTLED_TENNIS.history.filter(
+        (p: { projected_home_score: number | null }) => p.projected_home_score != null
+      ).length
+    ).toBe(107);
+
+    const markup = renderChart(SETTLED_TENNIS, "tennis_atp_us_open");
+
+    // Settled, and still named for the projection — the rule is keyed on the
+    // series that is drawn, not on whether the game is running. A heading that
+    // read "Score Differential" on a finished match because it is finished
+    // would put the 3–1 in sets over an axis of games.
+    expect(headingFor(SETTLED_TENNIS, "tennis_atp_us_open")).toBe("Projected Game Margin");
+    expect(seriesAttr(markup, "data-actual-series")).toBe("false");
+    expect(seriesAttr(markup, "data-projected-series")).toBe("true");
+    expect(markup).not.toContain("Score data is not available");
+
+    // And the projection survives the range this page opens on. A settled game
+    // with post-start data defaults to "Since Start", so that — not "All" — is
+    // the mode a reader lands in, and the card the heading names would be an
+    // empty frame if the projections all sat before the first ball. 93 of the
+    // wire's 107 projected points fall after the 18:13:40Z start; the filter is
+    // the component's own, so this is measured rather than asserted.
+    expect(
+      seriesAttr(
+        renderChart(SETTLED_TENNIS, "tennis_atp_us_open", { externalTimeRange: "live" }),
+        "data-projected-series"
+      )
+    ).toBe("true");
+  });
+
+  it("the heading never names a series #6142 has withheld", () => {
+    // #6142's own settled wire, which still carries the `kalshi` arm — the one
+    // a final withholds. Strawman guard: the arm has to BE there, or the
+    // "none" below is the absence of a rule rather than the rule.
+    expect(SETTLED_WITH_KALSHI_ARM.status).toBe("completed");
+    expect(Object.keys(SETTLED_WITH_KALSHI_ARM.pm_spread_data.implied_spreads)).toEqual([
+      "kalshi",
+      "sportsbook",
+    ]);
+
+    // Under its own sport the two rules do not meet: the played score is drawn,
+    // so the card keeps its name while #6142 withholds the snapshot.
+    const asNfl = renderChart(SETTLED_WITH_KALSHI_ARM, "americanfootball_nfl");
+    expect(headingFor(SETTLED_WITH_KALSHI_ARM, "americanfootball_nfl")).toBe("Score Differential");
+    expect(seriesAttr(asNfl, "data-implied-spread-series")).toBe("none");
+
+    // The intersection itself. Identical bytes under a sport whose scoreboard
+    // does not count the chart's unit — a settled game, a withheld kalshi arm,
+    // and no actual line. The card is renamed AND the projected series it is
+    // renamed after is still on the chart; the withholding takes the snapshot,
+    // never the line the heading names.
+    const asTennis = renderChart(SETTLED_WITH_KALSHI_ARM, "tennis_wta");
+    expect(headingFor(SETTLED_WITH_KALSHI_ARM, "tennis_wta")).toBe("Projected Game Margin");
+    expect(seriesAttr(asTennis, "data-actual-series")).toBe("false");
+    expect(seriesAttr(asTennis, "data-implied-spread-series")).toBe("none");
+    expect(seriesAttr(asTennis, "data-projected-series")).toBe("true");
+
+    // NON-VACUITY of the withholding half: the same bytes before the whistle
+    // draw the arm. Without this row the three "none"s above would pass on a
+    // payload that simply had nothing to draw.
+    const beforeTheWhistle = renderChart(SETTLED_WITH_KALSHI_ARM, "tennis_wta", {
+      eventStatus: "scheduled",
+    });
+    expect(seriesAttr(beforeTheWhistle, "data-implied-spread-series")).toBe("kalshi");
+    // …and the name does not move with it. The two rules are orthogonal: one
+    // reads `status`, the other reads the drawn score.
+    expect(headingFor(SETTLED_WITH_KALSHI_ARM, "tennis_wta")).toBe("Projected Game Margin");
+  });
+
+  it("and #6142 is INERT on the real tennis specimen — so the row above is not it", () => {
+    // Measured 14:25Z on both settled US Open matches served today (15310688
+    // Zverev–Shelton, 15310026 Sabalenka–Rybakina): the implied_spreads map
+    // carries `sportsbook` and nothing else. That arm is excluded in EVERY game
+    // state on its own long-standing grounds — it is already the projected
+    // line — so a "none" on real tennis wire says nothing about #6142, and
+    // reading it as a settled-game assertion would be reading an absence.
+    expect(Object.keys(SETTLED_TENNIS.pm_spread_data.implied_spreads)).toEqual(["sportsbook"]);
+    expect(
+      seriesAttr(renderChart(SETTLED_TENNIS, "tennis_atp_us_open"), "data-implied-spread-series")
+    ).toBe("none");
+    expect(
+      seriesAttr(
+        renderChart(SETTLED_TENNIS, "tennis_atp_us_open", { eventStatus: "live" }),
+        "data-implied-spread-series"
+      )
+    ).toBe("none");
   });
 });
 
