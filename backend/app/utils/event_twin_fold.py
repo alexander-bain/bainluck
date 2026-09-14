@@ -29,8 +29,11 @@ to whatever eventually lands #2693 / #4100. Hiding a card is not fixing a bug an
 this file does not claim to; it stops the bug reaching a reader while the durable
 repair is built.
 
-THE KEY IS DELIBERATELY STRICTER THAN A MATCHER'S. `(sport_id, normalised away,
-normalised home, commence MINUTE)`. Two distinct fixtures cannot share it: an MLB
+THE KEY IS DELIBERATELY STRICTER THAN A MATCHER'S. `(league, normalised away,
+normalised home, commence MINUTE)` — the league because `sport_id` is not one
+(#2866: `americanfootball_nfl` and `americanfootball_nfl_preseason` are two rows
+for one competition, and every August this fold was blind to 47 duplicate NFL
+cards because of it). Two distinct fixtures cannot share it: an MLB
 doubleheader is the same teams on the same DAY but never the same minute, and two
 different matches between one pair of players at one instant do not exist. A
 matcher's helper is permissive on purpose — wrong here — so the key is built from
@@ -144,12 +147,13 @@ from typing import Any, Iterable, Optional
 
 from app.utils.kalshi_occurrence_start import (
     _is_orm_instance,
-    _loaded_sport_key,
+    loaded_sport_key,
     recover_kalshi_occurrence_starts,
 )
 from app.utils.name_normalization import strip_diacritics
 from app.utils.proven_duplicates import merge_opening_line
 from app.utils.soccer_team_matching import soccer_pair_matches
+from app.utils.sport_keys import league_identity
 
 logger = logging.getLogger(__name__)
 
@@ -254,12 +258,81 @@ def is_kalshi_date_only(event: Any) -> bool:
         return False
 
 
-def twin_fold_key(event: Any) -> Optional[tuple]:
+def _league_identities(events: Iterable[Any]) -> dict:
+    """``{sport_id: league identity}`` for every row whose sport is in memory. #2866.
+
+    Built once per fold and handed to :func:`twin_fold_key` so that element 0 of
+    the key is a property of the SPORT ROW rather than of the individual event
+    object. Without it the key would answer `football/nfl` for a row whose
+    `Event.sport` a caller happened to eager-load and `1` for a row in the same
+    league that a different query in the same request did not — two values for
+    one league, and a pair that folds on master today would stop folding. With
+    it, two rows sharing a `sport_id` can never disagree about element 0, so
+    this change can only ever MERGE groups the old key made and never SPLIT one.
+
+    Only rows that answer are recorded: :func:`loaded_sport_key` returns `None`
+    for an unloaded relationship rather than emitting IO (gotcha #42), and a
+    `sport_id` no row in the batch could name is simply absent from the map,
+    which lands on the `sport_id` fallback — master's behaviour exactly.
+    """
+    identities: dict = {}
+    for event in events:
+        sport_id = getattr(event, "sport_id", None)
+        if sport_id is None or sport_id in identities:
+            continue
+        identity = league_identity(loaded_sport_key(event))
+        if identity:
+            identities[sport_id] = identity
+    return identities
+
+
+def twin_fold_key(event: Any, identities: Optional[dict] = None) -> Optional[tuple]:
     """The key two rows must share to be the same fixture, or ``None``.
 
     ``None`` means "never fold this row" — a row missing a team name or a
     commence time cannot be proven to be anybody's twin, and the fold's whole
     licence is that the key admits no false positives.
+
+    #2866 — ELEMENT 0 IS THE LEAGUE, NOT `sport_id`, AND THAT IS A REPAIR RATHER
+    THAN A RELAXATION. `sport_id` is not a league: `americanfootball_nfl` and
+    `americanfootball_nfl_preseason` are two `sports` rows for one competition
+    (#1798), so every August the Chiefs–Seahawks preseason game exists once
+    under each and this key put the two rows in different groups. Measured on
+    production 2026-09-14: `bainluck.com/search?q=Chiefs` returned three such
+    pairs adjacent on ONE 390px screen, same date, same `9–9` / `16–15` /
+    `12–20` scores, one card labelled NFL and one NFL PRESEASON (authority/196
+    on #2866; the fold was returning `dropped_ids: []` for all of them).
+
+    :func:`app.utils.sport_keys.league_identity` is the repo's existing answer to
+    "which league is this key", built for #1798/#4945, and it only ever collapses
+    keys the map or a season suffix already says are one league — an unmapped key
+    falls back to itself, and `sports.key` is UNIQUE, so an unknown key stays
+    exactly as discriminating as `sport_id` was.
+
+    THE WIDENING WAS MEASURED, NOT REASONED ABOUT (production, 2026-09-14).
+    Of every pair of rows in the table sharing both squashed club names and the
+    same minute across two different `sport_id`s — 1,085 fixtures in 90 days,
+    32 key combinations — exactly ONE combination collapses under
+    `league_identity`: `americanfootball_nfl | americanfootball_nfl_preseason`,
+    47 fixtures, 2026-08-07 → 2026-08-29. The other 31 combinations (1,038
+    fixtures, overwhelmingly `*_other` catch-all keys pairing rows from genuinely
+    different sports) key exactly as they do today. Over ALL time and every
+    season-variant family in the `sports` table — the only ones that can collapse
+    are `*_preseason`, `*_summer_league` and `mma_mixed_martial_arts` — the total
+    is 48: those 47 plus one MLB pair on 2026-05-23 (`14787332` / `9016349`,
+    both `4–9`). No soccer key collapses at all, so every soccer bucket below
+    holds exactly the rows it held before this change.
+
+    TWO FALSE-FOLD CONTROLS OVER THE 47, both objective and both clean: no group
+    holds two different scorelines and no group holds two different `espn_id`s —
+    either would mean two real games merged onto one card. Every group is exactly
+    two rows with exactly one ESPN-anchored row, so :func:`twin_identity_rank`
+    elects the anchored row on all 47.
+
+    A DOUBLEHEADER IS NOT REACHED BY THIS, and that is the key's own strictness
+    rather than a promise: element 3 is still exact-minute equality, so two real
+    games between one pair on one day remain two groups. Nothing about the clock
+    moves here.
 
     #5905 — THE MINUTE THIS READS MAY HAVE BEEN RECOVERED BEFORE IT GOT HERE.
     `recover_kalshi_occurrence_starts` runs at the top of :func:`fold_twin_events`
@@ -274,7 +347,19 @@ def twin_fold_key(event: Any) -> Optional[tuple]:
     sport_id = getattr(event, "sport_id", None)
     if not home or not away or commence is None or sport_id is None:
         return None
-    return (sport_id, away, home, commence.replace(second=0, microsecond=0))
+    # The batch map first (it is the one answer every row of this `sport_id`
+    # gets), then this row's own sport for a standalone caller such as
+    # `league_futures._twin_key_or_none`, then `sport_id` — never a constant,
+    # which would equate every league whose sport a caller did not load.
+    league = (identities or {}).get(sport_id) or league_identity(
+        loaded_sport_key(event)
+    )
+    return (
+        league or sport_id,
+        away,
+        home,
+        commence.replace(second=0, microsecond=0),
+    )
 
 
 def _source_count(event: Any) -> int:
@@ -392,6 +477,16 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
         recover_kalshi_occurrence_starts(ordered)
     except Exception:  # noqa: BLE001 — gotcha #42; an uncorrected page is today's
         logger.exception("twin fold: kick-off recovery failed; serving stored times")
+
+    # #2866 — one league answer per `sport_id`, read once. See
+    # `_league_identities`: this is what makes the league element of the key
+    # unable to SPLIT a group that `sport_id` alone would have made.
+    try:
+        identities = _league_identities(ordered)
+    except Exception:  # noqa: BLE001 — gotcha #42; `sport_id` is master's key
+        logger.exception("twin fold: league identities failed; keying on sport_id")
+        identities = {}
+
     groups: dict[tuple, list] = {}
     unkeyed: list = []
 
@@ -402,7 +497,7 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
     # which is already the "leave it alone" branch.
     for event in ordered:
         try:
-            key = twin_fold_key(event)
+            key = twin_fold_key(event, identities)
         except Exception:  # noqa: BLE001 — see above; the fallback is inaction
             logger.warning(
                 "twin fold: could not key event %s; left unfolded",
@@ -452,7 +547,12 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
 
 
 def _soccer_bucket_key(key: tuple) -> tuple:
-    """`(sport_id, commence DATE)` — the CANDIDATE bucket, not the licence.
+    """`(league, commence DATE)` — the CANDIDATE bucket, not the licence.
+
+    Element 0 is whatever :func:`twin_fold_key` put there — since #2866 the
+    LEAGUE, with `sport_id` as the fallback — and this helper simply carries it
+    through. No soccer key has a season variant or a map collision, so every
+    soccer bucket holds exactly the rows it held before that change.
 
     #5964 — THE BUCKET STOPPED BEING THE CLOCK TEST. Until today this returned
     `(sport_id, minute)` and exact-minute equality was the whole clock rule.
@@ -480,8 +580,8 @@ def _soccer_bucket_key(key: tuple) -> tuple:
     fails CLOSED — two cards, which is today's behaviour — and no observed pair
     needs it.
     """
-    sport_id, _away, _home, minute = key
-    return (sport_id, minute.date())
+    league, _away, _home, minute = key
+    return (league, minute.date())
 
 
 def _group_representative(members: list) -> Any:
@@ -519,7 +619,7 @@ def _merge_soccer_name_variants(groups: dict[tuple, list]) -> list[list]:
     for bucket_keys in buckets.values():
         if len(bucket_keys) < 2:
             continue
-        sport_key = _loaded_sport_key(_group_representative(groups[bucket_keys[0]]))
+        sport_key = loaded_sport_key(_group_representative(groups[bucket_keys[0]]))
         if not sport_key or not sport_key.startswith("soccer"):
             # Not soccer, or the caller did not load `Event.sport` — either way
             # this pass has nothing it is licensed to say about these rows.
