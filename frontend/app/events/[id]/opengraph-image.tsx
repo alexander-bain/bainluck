@@ -7,6 +7,7 @@ import { teamCrestBadge } from "@/lib/teamShortName";
 import { teamTextColor } from "@/lib/teamColors";
 import { unresolvedCardCopy } from "@/lib/unresolvedCardCopy";
 import type { ResolutionFailure } from "@/lib/unresolvedShareMeta";
+import { unfurlImageOptions } from "@/lib/unfurlImageCache";
 
 export const runtime = "edge";
 export const alt = "Bain Luck game probability";
@@ -47,9 +48,18 @@ async function fetchEvent(id: string): Promise<EventLookup> {
   }
 }
 
+/**
+ * #6049 — the one predicate behind both the word this card prints and how long
+ * the card may be cached, so "Final" and a settled cache window can never be
+ * decided from two different readings of `status`.
+ */
+function isFinal(event: EventDetailResponse): boolean {
+  return event.status === "completed" || event.status === "closed";
+}
+
 function eventStatus(event: EventDetailResponse): string {
   if (event.status === "live") return "Live now";
-  if (event.status === "completed" || event.status === "closed") return "Final";
+  if (isFinal(event)) return "Final";
   return "Upcoming";
 }
 
@@ -74,8 +84,13 @@ export default async function Image({ params }: { params: { id: string } }) {
   // `/tournaments/[slug]`, `/event/[domain]/[slug]` and `/hub/[competition]`
   // already draw for this condition, so the five routes answer a rotted link
   // as one family.
+  // #6049 — "moving" because this card is a claim we may need to retract, not
+  // because it carries a number; see the block above on `unavailable`.
   if (!lookup.ok) {
-    return new ImageResponse(<UnfurlCard {...unresolvedCardCopy("game", lookup.failure)} />, size);
+    return new ImageResponse(
+      <UnfurlCard {...unresolvedCardCopy("game", lookup.failure)} />,
+      unfurlImageOptions(size, "moving"),
+    );
   }
 
   const event = lookup.event;
@@ -237,6 +252,8 @@ export default async function Image({ params }: { params: { id: string } }) {
         </div>
       </div>
     ),
-    size
+    // #6049 — a finished game's score is settled; a scheduled or live game's
+    // win probability is the number that moved under a frozen picture.
+    unfurlImageOptions(size, isFinal(event) ? "settled" : "moving")
   );
 }
