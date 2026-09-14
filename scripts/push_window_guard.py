@@ -1,13 +1,48 @@
 #!/usr/bin/env python3
-"""Refuse a master push that would land a Heroku release on the rebuild — #4997.
+"""Read the clock in the same command as a master push — #4997, #6044.
 
-Standing notice 29, amended Thu 2026-09-10: the window check is the clock read
-in the SAME command as the push, never computed from sleeps or an opening stamp.
-This is that rule as a program, for the same reason
-``scripts/cert_merge_eligibility.py`` is a program: a paragraph is not a check.
+**THE PUSH WINDOW IS RETIRED. THIS SCRIPT NO LONGER REFUSES ANYTHING ON THE
+CLOCK.** What is left is the half of it that was never about the window: the
+stamps come from one measurement taken immediately before the push, and ``exec``
+hands the push straight to ``execvp`` so that stays true.
 
-WHY IT EXISTS
-=============
+WHY THE WINDOW IS GONE, MEASURED RATHER THAN RELAYED
+====================================================
+Notice 29's :32–:50 restriction was retired by the coordinator on 2026-09-13 at
+16:55 PT, after the attended scheduler move. The band existed for exactly one
+mechanism: a main-app release cycled the celery beat that dispatches the :15
+accuracy-page rebuild, so a release landing on the rebuild killed it. Beat no
+longer runs on the main app.
+
+Read from the deployed apps at 2026-09-14 02:41Z, one read, both apps:
+
+  * ``bainluck`` runs web + worker-background + worker-realtime + worker-ws and
+    **no scheduler dyno at all**. All four came up 02:35:2xZ under release
+    **v4510** (``631384d0``, 02:34:57Z).
+  * ``bainluck-heavy`` carries ``scheduler.1`` (``celery … beat``) beside
+    ``worker-heavy.1``, **both up since 23:50:2xZ** — straight through that
+    release, and through v4509 before it.
+
+So the dispatcher and the executor of the thing this band protected both sit on
+the app that main-app releases do not touch. The collision the guard refuses to
+risk can no longer occur, and refusing costs the desk — which merges hourly — up
+to 41 minutes of every hour for nothing.
+
+Removed rather than left switchable: a band behind a flag is a band someone
+re-enables from an old notice. The derivation is kept below as history, and
+``test_push_window_guard_4997.py`` pins that it never comes back by accident.
+
+WHAT THE RETIRED BAND WAS, FOR THE RECORD
+=========================================
+Derived, never asserted — rebuild start :15, min deploy lag 10, rebuild duration
+~7 ⇒ opens :32; :15 + 60 − max deploy lag 20 − 5 margin ⇒ closes :50. Notice 29's
+"(preferred :40–:52)" ran two minutes past its own hard band; that was residue
+from the pre-amendment sentence, reported by authority/116. None of these numbers
+is load-bearing any more. **If beat is ever moved back onto the main app, this is
+the arithmetic to restore — with a fresh dyno census beside it, not from memory.**
+
+WHY IT EXISTED
+==============
 authority/114 pushed master at **23:03:21Z** believing it was 23:39Z. CI finished
 at 23:17:24Z, so the release cycled the dynos on top of the 23:15Z accuracy-page
 rebuild — the exact collision notice 29 exists to prevent.
@@ -19,8 +54,10 @@ every tool call's own latency — so a window check computed that way **can neve
 tell you that you are outside the window**. It is a self-confirming instrument,
 and it feels like diligence the whole time it is running.
 
-So the design constraint is not "check the clock". It is: **make it structurally
-impossible to act on a time you did not just measure.**
+That reasoning outlives the band it was written for. A stamp quoted into a ledger
+or a merge message is navigated by later sessions (notice 24), so the constraint
+is still: **make it structurally impossible to report a time you did not just
+measure.**
 
   * ``exec`` reads the clock and then ``execvp``s the push itself. "Same command"
     becomes a property of the program instead of the operator's discipline.
@@ -28,31 +65,16 @@ impossible to act on a time you did not just measure.**
     every branch through is a keyword argument on :func:`run`, unreachable from
     ``argv``. A ``--now`` flag would put back exactly the hole this closes.
 
-WHY IT DOES NOT REFUSE EVERY PUSH
-=================================
-Notice 29 binds the **release**, not the push, and a frontend-only merge releases
-nothing (#4456; ``.github/scripts/heroku-release-required.sh``). Those are ~13 of
-the day's pushes. A guard that refuses them is a guard lanes learn to skip, and a
-skipped guard protects nothing — so given ``--before/--after`` this asks that
-script and passes a no-release range at any minute of the hour.
+WHAT IT STILL TELLS YOU
+=======================
+Whether the range forces a Heroku release — the deploy path's own answer
+(``.github/scripts/heroku-release-required.sh``, #4456), not a guess from the
+file list. That is no longer a gate, but it is what a desk wants to know: a
+release-forcing merge owes a production check on the release line that carries
+it, and a heavy-task change owes a ``bainluck-heavy`` line (notice 48).
 
-Given no range it **assumes a release**, which is the same asymmetry that script
-documents about itself: a missed refusal kills a two-hour rebuild, a redundant one
-costs a wait.
-
-THE NUMBERS, AND THE ONE THAT IS RESIDUE
-========================================
-Notice 29 derives the band rather than asserting it, so this file derives it too —
-change a constant, not a literal, when the deploy lag moves:
-
-    earliest = rebuild start :15 + min deploy lag 10 + rebuild duration ~7 = :32
-    latest   = rebuild start :15 + 60 - max deploy lag 20 = :55, - 5 margin = :50
-
-Notice 29's own text then adds "(preferred :40–:52)", which runs two minutes past
-its own hard band. That is residue from the pre-amendment sentence, where :40–:52
-described when to take a *merge* slot; the amendment redefined the band as a
-*push* window. **:32–:50 is the operative sentence.** Reported to Fable-5 by
-authority/116 — recorded here so nobody restores the wider band from the notice.
+Given no ``--before/--after`` it reports "assuming a release", the same asymmetry
+that script documents about itself. It is now the cautious *label*, not a refusal.
 
 USAGE
 =====
@@ -62,11 +84,11 @@ USAGE
     python3 scripts/push_window_guard.py exec --before "$BEFORE" --after "$AFTER" \
         -- git -c push.default=simple push origin master
 
-    # just the verdict (exit 0 inside / 1 outside), e.g. to decide how long to sleep
-    python3 scripts/push_window_guard.py check --after "$SHA"
+    # just the report, without pushing
+    python3 scripts/push_window_guard.py check --before "$BEFORE" --after "$AFTER"
 
-Exit codes: ``0`` inside the window (``exec`` then becomes the pushed command's
-own code), ``1`` outside — a RESULT, not an error (gotcha #124), ``2`` usage.
+Exit codes: ``0`` always for the report itself — there is no clock-based refusal
+left (``exec`` then becomes the pushed command's own code); ``2`` usage.
 """
 
 from __future__ import annotations
@@ -75,62 +97,23 @@ import argparse
 import os
 import subprocess
 import sys
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
-
-# The accuracy-page rebuild this guard is protecting: starts :15 past the hour and
-# runs about 7 minutes (integrator/291, measured 3-for-3 on 2026-09-10).
-REBUILD_START_MIN = 15
-REBUILD_DURATION_MIN = 7
-# Push -> production, CI-queue dependent. Never assume the low end: integrator/291's
-# own batch G took 19.5 minutes.
-MIN_DEPLOY_LAG_MIN = 10
-MAX_DEPLOY_LAG_MIN = 20
-# Slack on the closing edge, so a lag at the top of the measured range still lands
-# clear of the next hour's rebuild.
-CLOSE_MARGIN_MIN = 5
 
 RELEASE_REQUIRED_SCRIPT = ".github/scripts/heroku-release-required.sh"
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
 
-
-def window_bounds() -> tuple[int, int]:
-    """The (open, close) minutes past the hour, derived — never asserted."""
-    opens = REBUILD_START_MIN + MIN_DEPLOY_LAG_MIN + REBUILD_DURATION_MIN
-    closes = REBUILD_START_MIN + 60 - MAX_DEPLOY_LAG_MIN - CLOSE_MARGIN_MIN
-    return opens, closes
-
-
-@dataclass(frozen=True)
-class Verdict:
-    """One window reading. ``minutes_to_open`` is 0 when already inside."""
-
-    inside: bool
-    minute: int
-    opens: int
-    closes: int
-    minutes_to_open: int
-    minutes_left: int
-
-
-def window_verdict(now: datetime) -> Verdict:
-    """Is ``now`` inside the push window? Both bounds inclusive.
-
-    Inclusive on purpose: :32 and :50 are the derived edges themselves, and the
-    margin that makes the closing edge safe is already inside ``window_bounds``.
-    A second layer of caution here would silently narrow a band two other
-    documents quote by its endpoints.
-    """
-    opens, closes = window_bounds()
-    minute = now.astimezone(timezone.utc).minute
-    inside = opens <= minute <= closes
-    if inside:
-        return Verdict(True, minute, opens, closes, 0, closes - minute)
-    # Outside: how long until the NEXT opening, which may be in the next hour.
-    to_open = (opens - minute) if minute < opens else (60 - minute + opens)
-    return Verdict(False, minute, opens, closes, to_open, 0)
+# The retirement this file enforces by having no band left to evaluate. Printed,
+# so a desk that runs this out of muscle memory reads why it was not stopped —
+# and dated, so the next reader can check it against the notice rather than
+# trusting this line.
+WINDOW_RETIRED_NOTE = (
+    "push window: RETIRED 2026-09-13 16:55 PT (#6044). Notice 29's :32-:50 band "
+    "protected the :15 accuracy rebuild from main-app releases cycling celery "
+    "beat; beat now runs on bainluck-heavy, which those releases do not touch. "
+    "Nothing here gates on the minute."
+)
 
 
 def _short(ref: str) -> str:
@@ -147,7 +130,11 @@ def release_required(before: str | None, after: str | None, repo: str = ".") -> 
     Returns ``(required, why)``. Every uncertain path returns ``True``: no range
     given, the script missing, a non-zero exit, an unparseable answer. This
     mirrors ``heroku-release-required.sh``'s own stated asymmetry — it fails
-    toward releasing, so a guard built on it must fail toward refusing.
+    toward releasing, so a reader built on it says "assume a release" rather than
+    "no release" when it cannot tell. Since the window retired this decides a
+    LABEL, not a refusal, and the asymmetry still points the safe way: being told
+    to expect a release you do not get costs a glance at `heroku releases`, while
+    the reverse leaves a production check unpaid.
     """
     if not before or not after:
         return True, "no --before/--after range given — assuming a release"
@@ -184,13 +171,15 @@ def run(argv: list[str] | None = None, now: datetime | None = None) -> int:
     """Library entry point. ``now`` is the test seam and is NOT reachable from argv."""
     parser = argparse.ArgumentParser(
         prog="push_window_guard.py",
-        description="Refuse a master push that would land a release on the :15 rebuild.",
+        description="Read the clock in the same command as a master push, and report "
+        "whether the range forces a Heroku release. The :32-:50 push window is retired; "
+        "this refuses nothing on the clock.",
     )
     parser.add_argument("mode", choices=["check", "exec"])
     parser.add_argument("--before", help="base sha of the range being pushed")
     parser.add_argument("--after", help="head sha of the range being pushed")
     parser.add_argument("--repo", default=".")
-    parser.epilog = "for `exec`: -- followed by the push command to run inside the window"
+    parser.epilog = "for `exec`: -- followed by the push command to run"
 
     # Split on `--` by hand rather than with argparse.REMAINDER. REMAINDER starts
     # collecting at the first token it does not recognise as belonging to a
@@ -209,34 +198,22 @@ def run(argv: list[str] | None = None, now: datetime | None = None) -> int:
         parser.error("exec needs a command: ... exec -- git push origin master")
 
     # 🔴 The clock is read HERE, after argument parsing and immediately before the
-    # decision that gates the push. Not at import, not by the caller, not passed in.
+    # push it is reported beside. Not at import, not by the caller, not passed in.
     now = now or datetime.now(timezone.utc)
 
     required, why = release_required(args.before, args.after, args.repo)
-    verdict = window_verdict(now)
 
     print(f"push window guard — clock read now: {stamps(now)}")
     print(f"  release required: {'yes' if required else 'NO'} — {why}")
-    print(f"  window: :{verdict.opens:02d}–:{verdict.closes:02d} UTC (notice 29, derived)")
-
-    if not required:
-        print("🟢 PASS — this range releases nothing, so there is no rebuild to collide with.")
-    elif verdict.inside:
+    print(f"  {WINDOW_RETIRED_NOTE}")
+    if required:
         print(
-            f"🟢 PASS — :{verdict.minute:02d} is inside the window, "
-            f"{verdict.minutes_left} min of it left."
+            "🟢 GO — this range forces a release, so a production check is owed on the "
+            "release line that carries it (and a bainluck-heavy line if it touches a "
+            "heavy task, notice 48)."
         )
     else:
-        print(
-            f"🔴 REFUSE — :{verdict.minute:02d} is outside :{verdict.opens:02d}–:{verdict.closes:02d}. "
-            f"The window opens in {verdict.minutes_to_open} min."
-        )
-        print(
-            "   Do NOT compute the new time by adding a sleep to this reading — that is the "
-            "bug this guard exists for. Sleep, then run this command again."
-        )
-        sys.stdout.flush()
-        return 1
+        print("🟢 GO — this range changes nothing Heroku serves, so no release follows.")
 
     if args.mode == "check":
         return 0
