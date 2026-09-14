@@ -324,15 +324,51 @@ async def repair_inverted_mlb_events(
                 scored = (r.hs is not None and r.aws is not None
                           and not (r.hs == 0 and r.aws == 0))
                 if not scored:
-                    # #6056: the void arm carries the THREE columns its decision
-                    # read, not just the id. "This row is settled with no real
-                    # score" is a statement about `status`, `home_score` and
-                    # `away_score` AT SELECT TIME, and the write below re-asserts
-                    # it — so the values have to survive the minutes of MLB
+                    # #6056: the void arm carries the columns its decision read,
+                    # not just the id. The write below re-asserts every one of
+                    # them, so they have to survive the minutes of MLB
                     # ground-truth fetching that happen in between.
+                    #
+                    # ALL FIVE, not the three about the score. The reason to
+                    # void is two claims, not one: "settled with no real score"
+                    # (`status`, `home_score`, `away_score`) AND "settled around
+                    # a schedule that cannot be true" — and the second claim is
+                    # `_INVARIANT_ARM`, which is written in terms of
+                    # `commence_time` and `completed_at` and nothing else. A
+                    # predicate over the score half alone re-asserts three of
+                    # the five columns the SELECT consumed and lets the other
+                    # two move underneath it.
+                    #
+                    # That gap is not symmetric, which is why it is worth the
+                    # two extra binds: this write CLEARS `completed_at`. A
+                    # column that is written but never arbitrated is the one
+                    # place a compare-and-write still destroys another writer's
+                    # work while reporting that it refused nothing. And the
+                    # mover is real and now routine — `reconcile_anchor_schedule`
+                    # and the #6073 kickoff sweep both re-date settled rows
+                    # without touching status or score, so a row can stop being
+                    # inverted (the whole reason it was diagnosed) in the
+                    # window, and the score-only predicate would still match and
+                    # still void it.
                     void.append((
                         r.id, "empty/0-0 score, settled before a real result",
-                        r.status, r.hs, r.aws,
+                        {
+                            "status": r.status,
+                            "home_score": r.hs,
+                            "away_score": r.aws,
+                            # Coerced the way the scored branch below coerces the
+                            # same two columns: identity on the tz-aware UTC that
+                            # Postgres returns, so the predicate compares the row
+                            # against the value the DB actually holds.
+                            "commence_time": (
+                                _repair_as_utc(r.commence_time)
+                                if r.commence_time is not None else None
+                            ),
+                            "completed_at": (
+                                _repair_as_utc(r.completed_at)
+                                if r.completed_at is not None else None
+                            ),
+                        },
                     ))
                     continue
 
@@ -429,7 +465,7 @@ async def repair_inverted_mlb_events(
                 # played and drops it off every live surface — #6056's symptom,
                 # produced by a repair that was right when it looked.
                 #
-                # So the decision is re-asserted at write time on the three
+                # So the decision is re-asserted at write time on all five
                 # columns it consumed. A row that moved is left alone: it is no
                 # longer the row this repair diagnosed, and the next daily pass
                 # re-diagnoses it from scratch.
@@ -437,7 +473,7 @@ async def repair_inverted_mlb_events(
 
                 from app.utils.live_state_write import write_row_if_unmoved
 
-                for eid, _reason, _obs_status, _obs_home, _obs_away in void:
+                for eid, _reason, _observed in void:
                     landed = await write_row_if_unmoved(
                         s,
                         SimpleNamespace(id=eid),
@@ -447,11 +483,10 @@ async def repair_inverted_mlb_events(
                             "home_score": None,
                             "away_score": None,
                         },
-                        observed={
-                            "status": _obs_status,
-                            "home_score": _obs_home,
-                            "away_score": _obs_away,
-                        },
+                        # Built at diagnosis time, above — passed through rather
+                        # than re-derived here, so this statement cannot read a
+                        # column fresher than the decision it is re-asserting.
+                        observed=_observed,
                         what="repair_inverted_mlb void",
                     )
                     if not landed:
