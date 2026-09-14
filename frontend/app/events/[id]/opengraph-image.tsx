@@ -8,7 +8,11 @@ import { teamTextColor } from "@/lib/teamColors";
 import { unresolvedCardCopy } from "@/lib/unresolvedCardCopy";
 import type { ResolutionFailure } from "@/lib/unresolvedShareMeta";
 import { unfurlImageOptions } from "@/lib/unfurlImageCache";
-import { hasNoReportedResultForShare, isFinishedForShare } from "@/lib/eventShareMeta";
+import {
+  hasNoPriceForShare,
+  hasNoReportedResultForShare,
+  isFinishedForShare,
+} from "@/lib/eventShareMeta";
 import { resolveEventOutcome } from "@/lib/eventOutcome";
 import { prematchReading } from "@/lib/prematchReading";
 import { suspendedSummary } from "@/lib/eventState";
@@ -172,6 +176,13 @@ export default async function Image({ params }: { params: { id: string } }) {
     event.current_odds?.away_rendered_percent,
     event.current_odds?.home_rendered_percent,
   );
+  // #6119 — these two are now only ever read on the branch where
+  // `hasNoPriceForShare` is FALSE, i.e. where both probabilities are real, so the
+  // `"--"` arm is unreachable from this route. Left in place rather than deleted:
+  // it is `servedDuelPercents`' contract showing through, not this card's copy,
+  // and notice 34's "leave the space empty" is now enforced a rung above by
+  // `forecastWithheld` dropping the slot entirely instead of filling it with a
+  // dash.
   const awayPct = awayRendered != null ? `${awayRendered}%` : "--";
   const homePct = homeRendered != null ? `${homeRendered}%` : "--";
 
@@ -179,6 +190,10 @@ export default async function Image({ params }: { params: { id: string } }) {
   const homeTeam = event.home_team || "Home";
   const final = isFinal(event);
   const noResult = noReportedResult(event);
+  // #6119 — the third reason, and the only one of the three that is not about
+  // time. See `hasNoPriceForShare`: the words beside this picture have always
+  // gone quiet on these rows and the picture drew 50/50 off `?? 0.5`.
+  const noPrice = hasNoPriceForShare(event);
 
   // ═══ #6105 — THE ONE QUESTION THE BIG NUMBER, THE BAR AND THE FOOTER SHARE ══
   //
@@ -204,7 +219,15 @@ export default async function Image({ params }: { params: { id: string } }) {
   // they share is a withholding and nothing else. Every rung that CROWNS someone
   // — `scoresAreTrusted`, `outcome`, `decided`, the settled cache window — reads
   // `final` and is untouched by this.
-  const forecastWithheld = final || noResult;
+  //
+  // #6119 — and a THIRD reason joins them, which is why this is a list and not a
+  // pair. `final` and `noResult` both say "the number we hold is out of date";
+  // `noPrice` says "there is no number". The card's response to all three is the
+  // same single act — withhold the pair, the bar and the footnote together — and
+  // that sameness is the only reason they share a name here. They stay separate
+  // above, because what they license differs: only `final` may crown anyone, and
+  // only `final` may freeze the cache.
+  const forecastWithheld = final || noResult || noPrice;
 
   // ═══ #6085 — A FINISHED GAME DOES NOT GET A FORECAST DRAWN ON IT ═══
   //
@@ -288,11 +311,22 @@ export default async function Image({ params }: { params: { id: string } }) {
   // holds the fact on a settled card holds the only honest number here, which is
   // exactly where `EventCard` puts it for this state: beside each name, labelled
   // below. The live blend never reaches it.
+  //
+  // #6119 — the middle rung reads `forecastWithheld` and no longer `noResult`.
+  // `final` is tested first and is disjoint from neither, so this is the same
+  // branch it always was for the two stale-forecast states, plus the no-price
+  // one. On a no-price row `prematch` is null too (measured: of the ~1,400 rows
+  // in this state, ZERO carry an opening line — `opening_odds` is withheld until
+  // the pre-game consensus freezes, #3922, and it is composed from the same
+  // sportsbook snapshots that would have produced a current price), so both of
+  // these land on `null` and the 96px slot is simply not rendered. If an opening
+  // ever does arrive without a current price, this prints it labelled
+  // "Pre-match · sportsbooks" — which is the honest card, not a special case.
   const awayHero = final
     ? showScore
       ? `${event.away_score}`
       : null
-    : noResult
+    : forecastWithheld
       ? prematch?.awayPercent != null
         ? `${prematch.awayPercent}%`
         : null
@@ -301,7 +335,7 @@ export default async function Image({ params }: { params: { id: string } }) {
     ? showScore
       ? `${event.home_score}`
       : null
-    : noResult
+    : forecastWithheld
       ? prematch?.homePercent != null
         ? `${prematch.homePercent}%`
         : null
