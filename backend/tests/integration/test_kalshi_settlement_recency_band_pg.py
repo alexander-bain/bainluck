@@ -247,6 +247,17 @@ def _corpus() -> list[tuple]:
             "authoritative", "kalshi", "resolved", "HHH-26SEP10", hour, hour,
             [("leg-a", None, "api_settlement"), ("leg-b", None, "api_settlement")],
         ),
+        # #6012 amendment — the early-settled band's ONLY exclusion, and the
+        # control that keeps it honest. Resolved, no winner, ONE tier-3 leg (so
+        # the band's venue-evidence clause passes) and ONE ordinary ungraded leg
+        # (so band 1's own EXISTS passes too). Band 1 has this ticker; the early
+        # band must not spend a second venue call on it. Distinguished from
+        # `HHH`, which has the tier-3 leg but NO ordinary one and is therefore
+        # invisible to every band.
+        (
+            "band_one_visible", "kalshi", "resolved", "RRR-26SEP10", hour, hour,
+            [("leg-a", None, "api_settlement"), ("leg-b", False, None)],
+        ),
         ("polymarket", "polymarket", "resolved", "III-26SEP10", hour, hour, blank),
         ("still_open", "kalshi", "open", "JJJ-26SEP10", hour, hour, blank),
         # #5146 — the shape 70% of production is actually in. Every leg carries
@@ -698,10 +709,19 @@ async def test_the_tail_band_ignores_recency_entirely(pg_engine):
 # status, so the `ungradeable_result` retraction the design calls "reversible by
 # evidence" never gets the evidence.
 #
+# AMENDED (#6012, 2026-09-14 08:45Z). "Open" was never the property. At 08:15:13Z
+# an unrelated sweep flipped BOTH founding specimens to `status='resolved'` —
+# status only, no grade — and the band lost them five hours after it was written,
+# with the champion still `is_winner=false` against a venue reading `result='yes'`.
+# The property is "NO OTHER BAND WILL ASK", and the only exclusion is band 1's two
+# gates together: resolved status AND a leg that is neither authoritative nor
+# `ungradeable_result`. Testing only the leg half drops every OPEN market with an
+# ordinary ungraded leg into the same gap — `TTT-26SEP15` is that guard.
+#
 # These run against a real server for the same reason the ones above do: delete
-# the floor, the future reach, the winner test, the venue-evidence test or the
-# source test, and a fake session that answers from a canned list still agrees
-# with itself.
+# the floor, the future reach, the winner test, the venue-evidence test, the
+# source test or either half of the band-1 exclusion, and a fake session that
+# answers from a canned list still agrees with itself.
 # ---------------------------------------------------------------------------
 
 
@@ -799,15 +819,65 @@ async def test_the_band_is_kalshi_only(pg_engine):
 
 @needs_postgres
 @pytest.mark.asyncio
-async def test_a_resolved_market_is_left_to_the_two_bands_above(pg_engine):
-    """`HHH` is resolved with authoritative legs — band 2's job, not this one.
+async def test_a_resolved_market_band_one_can_see_is_left_to_band_one(pg_engine):
+    """`RRR` is resolved AND carries an ordinary ungraded leg — band 1 has it.
 
-    The bands must not double-ask: this one is defined by `status <> 'resolved'`
-    precisely so it covers the gap the others cannot reach and nothing else.
+    The bands must not double-ask. This is the only exclusion this band applies,
+    and it takes BOTH of band 1's gates, because band 1 needs both: resolved
+    status AND a leg that is neither authoritative nor `ungradeable_result`.
     """
     early = await _select_early(pg_engine)
 
-    assert "HHH-26SEP10" not in early
+    assert "RRR-26SEP10" not in early
+    # …and band 1 really does have it, so nothing is dropped on the floor.
+    fresh, _tail = await _select(pg_engine, limit=200, cursor="")
+    assert "RRR-26SEP10" in fresh
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_a_resolved_market_NO_band_can_see_is_asked_about(pg_engine):
+    """`HHH` is resolved, every leg authoritative, and NOT ONE BAND CAN SEE IT.
+
+    This assertion is the inverse of the one it replaces, and the inversion is
+    the #6012 amendment. The old test read "resolved ⇒ band 2's job"; band 2's
+    own `EXISTS` needs a NON-authoritative leg, which `HHH` does not have, so
+    band 2 never had it either and the comment was simply wrong. A market with
+    no winner that every band skips is precisely what this band is for.
+
+    Production made the point at 08:15:13Z on 2026-09-14: an unrelated sweep
+    flipped `KXATP-26USO` from `open` to `resolved` — status only, no grade —
+    and under the old clause the champion fell out of the one band written for
+    him, five hours after it was written, still `is_winner=false` against a
+    venue reading `result='yes'`.
+    """
+    early = await _select_early(pg_engine)
+
+    assert "HHH-26SEP10" in early
+    # Nobody else is coming: neither band above qualifies it.
+    fresh, tail = await _select(pg_engine, limit=200, cursor="")
+    assert "HHH-26SEP10" not in fresh
+    assert "HHH-26SEP10" not in tail
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_an_open_market_with_an_ordinary_ungraded_leg_is_still_asked_about(
+    pg_engine,
+):
+    """The half-fix guard. `TTT` is OPEN and carries a null-source leg.
+
+    Excluding on the leg clause ALONE — "band 1 could qualify on that leg" —
+    reads correct and silently drops this row into the very gap the band exists
+    to close, because band 1 also requires `status = 'resolved'` and `TTT` is
+    open. Measured on production before shipping: the leg-only clause selected
+    45 tickers, the both-gates clause 53, and the 8 rows between them are this
+    shape. The exclusion must test BOTH of band 1's gates or it is not an
+    exclusion, it is a new hole.
+    """
+    early = await _select_early(pg_engine)
+
+    assert "TTT-26SEP15" in early
 
 
 @needs_postgres
@@ -821,5 +891,12 @@ async def test_the_band_respects_its_own_budget(pg_engine):
     """
     early = await _select_early(pg_engine, limit=1)
 
-    assert early == ["NNN-26SEP14"]
+    # Soonest-due first, so the one ticket goes to `HHH` (an hour ago), not to
+    # the ship specimen `NNN` (an hour from now). Asserting the ORDER rather
+    # than the name keeps this a budget test: it was `== ["NNN-26SEP14"]` while
+    # `HHH` was excluded by status, and that made it quietly double as an
+    # ordering test that the #6012 amendment would have reddened for the wrong
+    # reason.
+    assert len(early) == 1
+    assert early == (await _select_early(pg_engine))[:1]
     assert await _select_early(pg_engine, limit=0) == []
