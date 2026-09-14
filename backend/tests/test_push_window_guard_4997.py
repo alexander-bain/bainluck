@@ -1,23 +1,34 @@
-"""#4997 — the push-window guard, pinned on the property that makes it worth having.
+"""#4997, #6044 — the push wrapper, pinned on what survived the window's retirement.
 
-The bug this guard replaces was not "someone forgot notice 29". authority/114
+The bug this script replaces was not "someone forgot notice 29". authority/114
 checked the window **three times**, got "inside" every time, and pushed 29 minutes
 early — because it was computing the time by adding its own ``sleep`` durations to
 the session's opening stamp instead of reading a clock. That arithmetic only ever
 drifts ahead, so it can never report "outside".
 
-So the tests that matter are not "does :40 pass". They are:
+**The window itself is retired** (#6044; coordinator 2026-09-13 16:55 PT). Beat
+moved to ``bainluck-heavy``, so a main-app release can no longer cycle the :15
+rebuild the band protected, and a band that refuses 41 minutes of every hour now
+costs a desk that merges hourly and buys nothing. The clock discipline outlives
+it: the stamps this prints get quoted into ledgers and merge messages.
 
+So the tests that matter are:
+
+* the retirement is **structural, not switchable** — at every one of the 60
+  minutes a releasing push is dispatched, and the band symbols are gone;
+* nothing it prints **advises a wait**. That is the #6044 defect class itself:
+  the desk spent two consecutive notes telling lanes to ignore a stale line
+  their own merge tool printed;
 * the CLI **cannot be handed a time** (a ``--now`` flag would rebuild the hole);
-* it **refuses toward safety** on every uncertain release answer;
-* it **does not refuse a push that cannot collide**, because a guard that
-  over-refuses the 13 frontend-only pushes a day is a guard lanes route around;
-* the ``exec`` dispatch is gated on the verdict, not merely reported beside it.
+* it labels **toward assuming a release** on every uncertain answer, so a
+  production check is never silently dropped;
+* ``exec`` dispatches through ``execvp``, so the clock read and the push stay one
+  command whatever the caller intends.
 
 Every case drives a **fixed** ``now`` through :func:`run`'s keyword seam — gotcha
 #44: a test anchor that reads the clock is a test that branches on the clock. The
-one test that does read the real clock asserts only self-consistency, which is
-true at every minute of the day.
+one test that reads the real clock asserts exit 0 at whatever minute it runs,
+which IS the retirement and is true at every minute of the day.
 """
 
 from __future__ import annotations
@@ -33,6 +44,8 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "push_window_guard.py"
 
+# 1 is the code the clock can no longer produce — kept named so the assertions
+# that forbid it read as a forbidden value rather than a bare literal.
 PASS, REFUSE, USAGE = 0, 1, 2
 
 
@@ -40,9 +53,12 @@ def _module():
     """Import the script by path — it is not on any package path."""
     spec = importlib.util.spec_from_file_location("push_window_guard", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
-    # Registered BEFORE exec: the guard's `from __future__ import annotations` makes
-    # its dataclass fields strings, and `@dataclass` resolves them through
-    # `sys.modules[cls.__module__]`. An unregistered module raises at import.
+    # Registered BEFORE exec. This mattered when the module defined a dataclass
+    # (`from __future__ import annotations` stringifies its fields, and
+    # `@dataclass` resolves them through `sys.modules[cls.__module__]`, which
+    # raises if the module is not there yet). The dataclass went with the band;
+    # the registration stays so re-adding any annotated class cannot resurrect a
+    # failure whose cause lives in this file rather than in the script.
     sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
     return mod
@@ -56,68 +72,83 @@ def _at(minute: int, second: int = 0) -> datetime:
     return datetime(2026, 9, 10, 23, minute, second, tzinfo=timezone.utc)
 
 
-# ── the band, and where its numbers come from ──────────────────────────────────
+# ── the retirement: structural, not switchable ────────────────────────────
 
 
-def test_the_band_is_derived_from_the_notice_29_constants_not_typed_in():
-    """:32–:50 must fall OUT of the arithmetic, so a lag change moves it.
+def test_a_releasing_push_is_dispatched_at_every_minute_of_the_hour(no_exec):
+    """The sweep that replaces the band sweep, and the one that matters now.
 
-    Pinning the literals alone would let someone edit a constant and leave the
-    band stale; pinning only the derivation would let both drift together away
-    from the number two other documents quote. Both, together, is the check.
+    The retired band refused :51 through :31 — 41 of 60 minutes, every hour, on a
+    desk that merges hourly. Samples would let an edge survive, so this walks all
+    60 and requires a dispatch at each. ``--before/--after`` is deliberately
+    omitted so every iteration takes the *assume a release* branch: that is the
+    branch the band used to gate, and a no-release range would pass this test
+    even with the window fully restored.
     """
-    opens, closes = guard.window_bounds()
-    assert (opens, closes) == (32, 50)
-    assert opens == (
-        guard.REBUILD_START_MIN + guard.MIN_DEPLOY_LAG_MIN + guard.REBUILD_DURATION_MIN
-    )
-    assert closes == (
-        guard.REBUILD_START_MIN + 60 - guard.MAX_DEPLOY_LAG_MIN - guard.CLOSE_MARGIN_MIN
-    )
+    for minute in range(60):
+        no_exec.clear()
+        with pytest.raises(Execed):
+            guard.run(
+                ["exec", "--repo", str(REPO), "--", "git", "push", "origin", "master"],
+                now=_at(minute),
+            )
+        assert no_exec == [("git", ["git", "push", "origin", "master"])], (
+            f"a releasing push was not dispatched at :{minute:02d} — the window is back"
+        )
 
 
-def test_moving_a_measured_constant_moves_the_band(monkeypatch):
-    """The equality above is satisfied by a hardcoded 32 — this is not.
+def test_nothing_it_prints_advises_a_wait(capsys):
+    """#6044's defect class, keyed on what a reader sees rather than on source.
 
-    Notice 29 tells the next lane to *re-derive when the lag changes*. That
-    instruction is only true if the constants are load-bearing, so the check is
-    that a changed lag actually moves the edge, in the direction it should.
+    The merge gate's crime was not refusing — it was *printing* "OUTSIDE at
+    02:10Z — next window :32-:50" while the desk merged hourly, so int345 spent
+    two consecutive notes telling lanes to ignore their own tool. Advice with no
+    teeth still costs a wait, so the assertion is over the program's OUTPUT at
+    the minutes the band used to reject, not over its source: a source scan would
+    have to exempt this file's own history section and would go stale the moment
+    someone reworded the refusal.
     """
-    monkeypatch.setattr(guard, "MIN_DEPLOY_LAG_MIN", guard.MIN_DEPLOY_LAG_MIN + 4)
-    assert guard.window_bounds()[0] == 36
-    monkeypatch.setattr(guard, "MAX_DEPLOY_LAG_MIN", guard.MAX_DEPLOY_LAG_MIN + 6)
-    assert guard.window_bounds()[1] == 44
-    monkeypatch.setattr(guard, "REBUILD_DURATION_MIN", 0)
-    assert guard.window_bounds()[0] == 29
+    for minute in (0, 31, 51, 59):
+        guard.run(["check", "--repo", str(REPO)], now=_at(minute))
+        out = capsys.readouterr().out
+        lowered = out.lower()
+        for advice in ("refuse", "outside", "opens in", "next window", "wait"):
+            assert advice not in lowered, f"at :{minute:02d} it printed {advice!r}:\n{out}"
+        # ... and it is not silent about why it did not stop you.
+        assert "RETIRED" in out, out
 
 
-def test_every_minute_of_the_hour_is_classified_and_only_nineteen_are_inside():
-    """A sweep, not samples: an off-by-one at either edge shows up as a count."""
-    inside = [m for m in range(60) if guard.window_verdict(_at(m)).inside]
-    assert inside == list(range(32, 51))
-    assert len(inside) == 19
+def test_the_band_symbols_are_gone_rather_than_left_for_a_flag_to_restore():
+    """A band behind a switch is a band an old notice talks someone into flipping.
+
+    Named one by one: a survivor would be the thing a later reader rebuilds the
+    refusal from, and ``hasattr`` over a list is the only form that names which.
+    """
+    for symbol in (
+        "window_bounds",
+        "window_verdict",
+        "Verdict",
+        "REBUILD_START_MIN",
+        "REBUILD_DURATION_MIN",
+        "MIN_DEPLOY_LAG_MIN",
+        "MAX_DEPLOY_LAG_MIN",
+        "CLOSE_MARGIN_MIN",
+    ):
+        assert not hasattr(guard, symbol), f"{symbol} survived the retirement"
 
 
-@pytest.mark.parametrize(
-    "minute,expected",
-    [(31, False), (32, True), (50, True), (51, False)],
-)
-def test_both_edges_are_inclusive(minute, expected):
-    assert guard.window_verdict(_at(minute)).inside is expected
+def test_the_retirement_note_says_when_and_why_and_names_the_replacement_app():
+    """Dated and mechanised, so the next reader can check it instead of trusting it.
 
-
-def test_the_wait_wraps_the_hour_rather_than_going_negative():
-    """:51 must be told to wait 41 minutes, not -19."""
-    assert guard.window_verdict(_at(51)).minutes_to_open == 41
-    assert guard.window_verdict(_at(0)).minutes_to_open == 32
-    assert guard.window_verdict(_at(31)).minutes_to_open == 1
-    assert all(guard.window_verdict(_at(m)).minutes_to_open >= 0 for m in range(60))
-
-
-def test_seconds_never_move_a_minute_across_an_edge():
-    """:50:59 is still inside; the band is minutes past the hour, as notice 29 writes it."""
-    assert guard.window_verdict(_at(50, 59)).inside is True
-    assert guard.window_verdict(_at(31, 59)).inside is False
+    A bare "retired" leaves nothing to verify against; the date lets a reader find
+    the coordinator's note, and ``bainluck-heavy`` names the fact that must be
+    re-measured (a dyno census) before anyone restores the band.
+    """
+    note = guard.WINDOW_RETIRED_NOTE
+    assert "2026-09-13" in note
+    assert "6044" in note
+    assert "bainluck-heavy" in note
+    assert "beat" in note.lower()
 
 
 # ── the release question: every uncertain answer must refuse ───────────────────
@@ -245,28 +276,30 @@ def no_exec(monkeypatch):
     return calls
 
 
-def test_outside_the_window_a_releasing_push_is_refused_and_nothing_is_dispatched(no_exec):
-    code = guard.run(
-        ["exec", "--repo", str(REPO), "--", "git", "push", "origin", "master"],
-        now=_at(3),
-    )
-    assert code == REFUSE
-    assert no_exec == [], "a refused push must not dispatch anything"
+def test_the_push_is_dispatched_verbatim_at_the_minute_the_band_used_to_refuse(no_exec):
+    """:03 was the deepest part of the old refusal; the command still goes through whole.
 
-
-def test_inside_the_window_the_push_is_dispatched_verbatim(no_exec):
+    "Verbatim" is the assertion: ``execvp`` receives the exact argv it was handed,
+    so the wrapper cannot quietly add, drop or reorder a git flag.
+    """
     with pytest.raises(Execed):
         guard.run(
-            ["exec", "--repo", str(REPO), "--", "git", "push", "origin", "master"],
-            now=_at(40),
+            ["exec", "--repo", str(REPO), "--", "git", "-c", "push.default=simple",
+             "push", "origin", "master"],
+            now=_at(3),
         )
-    assert no_exec == [("git", ["git", "push", "origin", "master"])]
+    assert no_exec == [
+        ("git", ["git", "-c", "push.default=simple", "push", "origin", "master"])
+    ]
 
 
-def test_a_push_that_releases_nothing_passes_at_the_worst_minute_of_the_hour(
-    no_exec, docs_only_repo
-):
-    """The over-refusal failure mode: 13 frontend-only pushes a day must not wait."""
+def test_a_push_that_releases_nothing_is_dispatched_too(no_exec, docs_only_repo):
+    """The no-release branch still reaches the dispatch, by its own route.
+
+    Kept from the pre-retirement suite because it exercises the *other* label
+    path: with a real docs-only range the deploy script answers "false", so this
+    would still pass if that branch were broken into a refusal.
+    """
     repo, before, after = docs_only_repo
     with pytest.raises(Execed):
         guard.run(
@@ -277,9 +310,16 @@ def test_a_push_that_releases_nothing_passes_at_the_worst_minute_of_the_hour(
     assert no_exec == [("git", ["git", "push", "origin", "master"])]
 
 
-def test_check_mode_reports_without_dispatching(no_exec):
-    assert guard.run(["check", "--repo", str(REPO)], now=_at(40)) == PASS
-    assert guard.run(["check", "--repo", str(REPO)], now=_at(3)) == REFUSE
+def test_check_mode_reports_at_every_minute_without_ever_dispatching(no_exec, capsys):
+    """`check` is the mode a desk runs to decide whether to wait, so it must never say wait.
+
+    Swept rather than sampled for the same reason as the dispatch sweep, and it
+    pins the second half of the mode's contract at the same time: reporting is
+    all it does — no minute of the hour turns `check` into a push.
+    """
+    codes = {guard.run(["check", "--repo", str(REPO)], now=_at(m)) for m in range(60)}
+    capsys.readouterr()
+    assert codes == {PASS}, f"check returned {codes - {PASS}} — REFUSE is {REFUSE}"
     assert no_exec == []
 
 
@@ -306,12 +346,18 @@ def test_the_cli_offers_no_way_to_supply_a_time():
         assert exc.value.code == USAGE, flag
 
 
-def test_the_script_reads_its_own_clock_when_none_is_given():
-    """Self-consistency, so this arm is true at every minute of the day.
+def test_the_script_reads_its_own_clock_and_passes_at_whatever_minute_that_is():
+    """The retirement, proved against the real clock rather than the seam.
 
-    Run for real as a lane runs it, and require the verdict it prints to agree
-    with the band evaluated at the timestamp it printed. This is the only test
-    here that touches the real clock, and it asserts no particular time.
+    Run for real, as a desk runs it, with no time supplied anywhere. Before
+    #6044 the expected exit code depended on the minute this happened to execute;
+    now it is 0 at all 60, so this asserts the property directly. The stamp is
+    still parsed and reported, so a failure says WHICH minute refused instead of
+    just "exit 1".
+
+    The FIRST line only. A greedy ``split("/")[-1]`` over the whole output finds
+    the slash in "--before/--after" on the next line instead — which is how the
+    first draft of this test failed, and it would have read as a script bug.
     """
     proc = subprocess.run(
         [sys.executable, str(SCRIPT), "check", "--repo", str(REPO)],
@@ -320,28 +366,13 @@ def test_the_script_reads_its_own_clock_when_none_is_given():
         cwd=str(REPO),
     )
     assert "clock read now:" in proc.stdout, proc.stdout + proc.stderr
-    # The FIRST line only. A greedy `split("/")[-1]` over the whole output finds
-    # the slash in "--before/--after" on the next line instead — which is how the
-    # first draft of this test failed, and it would have read as a guard bug.
     first = proc.stdout.splitlines()[0]
     stamp = first.split("  /  ")[-1].strip()
     minute = int(stamp.split(":")[1])
-    expected = PASS if guard.window_verdict(_at(minute)).inside else REFUSE
-    assert proc.returncode == expected, (
-        f"printed {stamp} (minute {minute}) but exited {proc.returncode}\n{proc.stdout}"
+    assert proc.returncode == PASS, (
+        f"printed {stamp} (minute :{minute:02d}) and exited {proc.returncode} — "
+        f"the retired window is refusing again\n{proc.stdout}"
     )
-
-
-def test_the_refusal_says_not_to_add_a_sleep_to_the_reading(capsys):
-    """The refusal has to name the bug, because the bug is what a lane does next."""
-    guard.run(["check", "--repo", str(REPO)], now=_at(3))
-    out = capsys.readouterr().out
-    assert "REFUSE" in out
-    assert "opens in 29 min" in out
-    # The instruction, not just the word: a refusal that merely says "outside the
-    # window" leaves the lane's next move — add 29 minutes to this reading — intact.
-    assert "Do NOT compute" in out
-    assert "run this command again" in out
 
 
 def test_both_stamps_come_from_one_measurement(capsys):
