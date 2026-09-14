@@ -183,6 +183,14 @@ def authorize_redate(current_source, incoming_source) -> tuple[bool, str]:
 #: it claims. Named rather than inlined so the gate and the stamp cannot drift.
 REPAIR_SOURCE = "mlb_schedule_repair"
 
+#: How long after first pitch a nine-inning game is taken to have ended, when the
+#: authority confirms the Final but hands us no end time (the MLB schedule never
+#: carries one). Named rather than inlined because TWO rails now spend it — the
+#: ``fix_end`` arm above and the frozen-settle arm below — and a completed_at that
+#: two rails compute from two different literals is a row whose end time depends on
+#: which pass reached it first.
+MLB_NOMINAL_GAME_LENGTH = timedelta(hours=3, minutes=15)
+
 
 def _repair_tokens(s) -> set:
     return set((s or "").lower().replace(".", "").split())
@@ -412,7 +420,7 @@ async def repair_inverted_mlb_events(
                     # is the corrupt pre-first-pitch field. Move completed_at to the
                     # game end (start + nominal 9-inning duration). Score / is_winner
                     # untouched (gotcha #21).
-                    new_end = new_start + timedelta(hours=3, minutes=15)
+                    new_end = new_start + MLB_NOMINAL_GAME_LENGTH
                     fix_end.append((r.id, r.completed_at.isoformat(), new_end.isoformat(),
                                     f"{ev}; commence correct, completed_at was pre-start"))
                 else:
@@ -504,17 +512,389 @@ async def repair_inverted_mlb_events(
         await service.close()
 
 
+# ---------------------------------------------------------------------------
+# #5881 — THE SETTLED EDGE FOR AN MLB ROW FROZEN AT `suspended`.
+#
+# 59 finished MLB games print "No result reported" over a COMPLETE win-probability
+# curve, a score-differential chart and a run-margin map that all know the game is
+# over. `/events/15298127` (Red Sox @ Orioles, Sep 6) is the filed specimen.
+#
+# The cause is dated and is not a matching symptom. `odds_polling`'s wall-clock
+# staleness arm used to write `closed`; `0ee26b711` (Sep 2, CERT-752) correctly
+# changed it to `suspended` — *a quiet book is not a finished game* — and left no
+# replacement writer for the settled edge on a row with no `espn_id`. Every other
+# door is shut on this population, which #5881 measured door by door:
+#
+#   * `odds_polling`'s own `closed` arm needs `get_statpal_end_time()`, which
+#     StatPal supplied for 0 of 116 finished events — widening its status filter
+#     is INERT, and #5881 says so explicitly so nobody builds it;
+#   * `statpal_sync`'s terminal arm needs that same end time AND `status='live'`;
+#   * `espn_sync._settle_authority_stragglers` needs an `espn_id` (0 of 59 carry
+#     one) and is bounded by `AUTHORITY_STRAGGLER_LOOKBACK`;
+#   * the `suspended → live` resume arm is bounded by the same 48h;
+#   * #5532's retirement door refuses them twice over — it requires every provider
+#     id to be absent (all 59 carry a `statpal_fixture_id`) and no score (49 hold
+#     one). That refusal is CORRECT: a row with a result is a row something
+#     reached, and retiring it would hide a game we can still tell the truth about.
+#
+# So this arm supplies the missing edge from the one authority that is free, has no
+# quota and IS the truth for this sport: the MLB Stats API, already the ground truth
+# the inverted-row repair above runs on.
+#
+# 🔴 MEASURED ON THE REAL 59 BEFORE IT WAS WRITTEN (production ids, 2026-09-14
+# 14:5xZ, statsapi.mlb.com read directly): **58 of 59 confirm a unique Final** —
+# 48 where our score already equals MLB's final and 10 where we hold no score at
+# all — and every one matched at the SAME MINUTE as our own kickoff (d=0m). Zero
+# rows disagree with the authority's score; zero are side-swapped. The 59th is a
+# doubleheader (`15294597`, Tigers @ Guardians, two Finals 305 minutes apart) and
+# is refused as ambiguous, which is the behaviour this arm wants on that shape.
+# ---------------------------------------------------------------------------
+
+#: How close an MLB Final's first pitch must sit to our own kickoff before it can
+#: be this row's game. The discriminator that matters: a ±1-day team match alone
+#: cannot separate the games of a SERIES (the same two clubs play three days
+#: running, all Final, all matching), which is why the first cut of this arm read
+#: 57 of 59 as ambiguous. Anchored on the clock instead, 58 of 59 resolve to one
+#: game. Sized off `_classify_scored_inverted`'s own 6h tolerance so this file
+#: holds one notion of "the same game's start", not two.
+FROZEN_FINAL_MATCH_WINDOW = timedelta(hours=6)
+
+#: How far back the arm reaches. Bounds the work, not the truth: a row older than
+#: this is not settled by any pass and stays exactly as it is.
+FROZEN_SETTLE_HORIZON = timedelta(days=30)
+
+#: Rows per pass. The population is a standing backlog that drains once and then
+#: arrives at ~2/day, so the cap exists to bound a single beat (one MLB schedule
+#: fetch per distinct game DATE, cached within the pass — 59 rows over 8 dates
+#: cost 10 fetches, not 177), never to ration the repair.
+FROZEN_SETTLE_CAP = 150
+
+#: What the frozen-settle arm selects. `status = 'suspended'` and MLB only; the
+#: floor and horizon arrive as bind parameters so the rail computes its own clock
+#: in Python (and so a test can drive it without a Postgres `now()`).
+#:
+#: NO `espn_id IS NULL` PREDICATE, DELIBERATELY, even though 0 of the measured 59
+#: carry one. Past the floor below, the ESPN door cannot select the row either —
+#: so keying on the column that names that door would make the arm's reach depend
+#: on a value that can be BACKFILLED LATER, and a row that acquired an `espn_id`
+#: on Tuesday would silently leave this arm on Tuesday and re-strand itself.
+_FROZEN_SUSPENDED_SQL = """
+    SELECT e.id, e.status, e.commence_time, e.completed_at,
+           e.home_score AS hs, e.away_score AS aws,
+           e.home_team_name AS home_team, e.away_team_name AS away_team
+    FROM events e
+    JOIN sports s ON s.id = e.sport_id
+    WHERE s.key IN ('baseball_mlb', 'baseball_mlb_preseason')
+      AND e.status = 'suspended'
+      AND e.commence_time < :floor_ts
+      AND e.commence_time > :horizon_ts
+    ORDER BY e.commence_time DESC
+    LIMIT :cap
+"""
+
+
+def frozen_settle_floor() -> timedelta:
+    """How old a `suspended` MLB row must be before this arm may end it.
+
+    DERIVED FROM THE TWO DOORS, NEVER RESTATED. Both ways out of `suspended` are
+    bounded by the same 48h — `_settle_authority_stragglers`
+    (`AUTHORITY_STRAGGLER_LOOKBACK`) and the `suspended → live` resume window — and
+    `event_completion` already owns the day of slack on top of them
+    (`UNREACHABLE_SUSPENDED_MARGIN`: a stalled beat, a long release, a queue
+    backlog can all still land a late pass inside it). Spending those two names
+    instead of writing `timedelta(hours=72)` is what stops this arm racing a door
+    that is still open if either number ever moves.
+    """
+    from app.tasks.espn_sync import AUTHORITY_STRAGGLER_LOOKBACK
+    from app.utils.event_completion import UNREACHABLE_SUSPENDED_MARGIN
+
+    return AUTHORITY_STRAGGLER_LOOKBACK + UNREACHABLE_SUSPENDED_MARGIN
+
+
+def frozen_final_orientation(our_home, our_away, mlb_home, mlb_away) -> str:
+    """``"aligned"`` | ``"swapped"`` | ``"none"`` for one candidate Final.
+
+    The same two token intersections `_repair_teams_match` is built from, kept
+    apart because this arm WRITES A SCORE and therefore has to know which side is
+    which — a matcher that answers "yes, in some orientation" is the right answer
+    to the inverted-row repair's question and the wrong one to this rail's.
+    `test_orientation_and_the_boolean_matcher_cannot_drift_5881` pins the two
+    together so they can never disagree about membership.
+    """
+    hh = bool(_repair_tokens(our_home) & _repair_tokens(mlb_home))
+    aa = bool(_repair_tokens(our_away) & _repair_tokens(mlb_away))
+    if hh and aa:
+        return "aligned"
+    hswap = bool(_repair_tokens(our_home) & _repair_tokens(mlb_away))
+    aswap = bool(_repair_tokens(our_away) & _repair_tokens(mlb_home))
+    if hswap and aswap:
+        return "swapped"
+    return "none"
+
+
+def choose_frozen_final(hs, aws, candidates) -> tuple:
+    """Decide this row's fate from the Finals the authority offers. Pure.
+
+    Returns ``(verdict, candidate_or_None)``:
+
+    * ``settle``         — exactly one Final, our orientation, and the score
+      either agrees with the authority or is absent on our side;
+    * ``ambiguous``      — more than one Final survives (a doubleheader);
+    * ``no_final``       — the authority reports no finished game here;
+    * ``orientation``    — the one Final is side-swapped against our row. Refused
+      rather than written through: a swapped row is a side-mapping defect and
+      writing a score into it would bake the swap in as a result;
+    * ``score_conflict`` — we hold a score and the authority's differs. REFUSED
+      and counted, not overwritten: this arm's warrant is "say the result we can
+      confirm", and a row whose score contradicts the confirmed Final has not been
+      confirmed — it may be a different game or a mid-game capture, and #6056 is
+      the whole argument against writing a score you cannot justify. Measured 0 of
+      59 today; the counter is what makes the class visible if that ever changes;
+    * ``no_authority_score`` — a Final with no score attached, so there is nothing
+      to report.
+
+    The score tie-break runs BEFORE the uniqueness test, not after: on the one
+    doubleheader in the measured population both games match the teams and only
+    the score separates them, and a row that holds no score cannot be separated at
+    all — which is exactly when refusing is right.
+    """
+    if not candidates:
+        return ("no_final", None)
+    ours_scored = hs is not None and aws is not None
+    cands = list(candidates)
+    if len(cands) > 1 and ours_scored:
+        narrowed = [
+            c for c in cands
+            if c["orientation"] == "aligned"
+            and c["home_score"] == hs and c["away_score"] == aws
+        ]
+        if len(narrowed) == 1:
+            cands = narrowed
+    if len(cands) > 1:
+        return ("ambiguous", None)
+    cand = cands[0]
+    if cand["orientation"] != "aligned":
+        return ("orientation", cand)
+    if cand["home_score"] is None or cand["away_score"] is None:
+        return ("no_authority_score", cand)
+    if ours_scored and (cand["home_score"] != hs or cand["away_score"] != aws):
+        return ("score_conflict", cand)
+    return ("settle", cand)
+
+
+def frozen_completed_at(final_start, commence_time):
+    """The end time to stamp on a row the authority confirms is over.
+
+    ``max(...)`` of the two starts rather than the authority's alone, because
+    `completed_at >= commence_time` is an INVARIANT (gotcha #46) and the two
+    starts are only guaranteed to sit inside `FROZEN_FINAL_MATCH_WINDOW` of each
+    other — a row whose own kickoff is the later of the two would otherwise be
+    stamped as finishing before it started, which is the very rot the repair arm
+    above exists to heal.
+    """
+    anchor = final_start
+    if commence_time is not None and commence_time > anchor:
+        anchor = commence_time
+    return anchor + MLB_NOMINAL_GAME_LENGTH
+
+
+async def _frozen_final_candidates(service, row, schedule_cache) -> list:
+    """Every MLB Final that could be this row's game, deduped by ``gamePk``.
+
+    ``schedule_cache`` is per-PASS, not per-row: a slate's worth of frozen rows
+    share one game date, so the cache turns "one fetch per row per delta" into one
+    fetch per distinct date. A date that fails to fetch is cached as empty for the
+    pass — the row then reads `no_final` and is left exactly as it was, which is
+    the same outcome as the arm never running.
+    """
+    commence = _repair_as_utc(row.commence_time)
+    out: dict = {}
+    for delta in (0, -1, 1):
+        day = (commence + timedelta(days=delta)).strftime("%Y-%m-%d")
+        if day not in schedule_cache:
+            try:
+                schedule_cache[day] = await service.get_todays_games(date=day)
+            except Exception:
+                schedule_cache[day] = []
+        for game in schedule_cache[day] or []:
+            state = (game.get("status", {}) or {}).get("detailedState", "")
+            if state not in ("Final", "Game Over", "Completed Early"):
+                continue
+            raw_start = game.get("gameDate")
+            if not raw_start:
+                continue
+            try:
+                start = datetime.fromisoformat(str(raw_start).replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if abs(start - commence) > FROZEN_FINAL_MATCH_WINDOW:
+                continue
+            teams = game.get("teams", {}) or {}
+            home = (teams.get("home", {}) or {}).get("team", {}).get("name", "")
+            away = (teams.get("away", {}) or {}).get("team", {}).get("name", "")
+            orientation = frozen_final_orientation(
+                row.home_team, row.away_team, home, away
+            )
+            if orientation == "none":
+                continue
+            pk = game.get("gamePk")
+            out[pk if pk is not None else f"{day}:{raw_start}:{home}"] = {
+                "start": start,
+                "home": home,
+                "away": away,
+                "home_score": (teams.get("home", {}) or {}).get("score"),
+                "away_score": (teams.get("away", {}) or {}).get("score"),
+                "orientation": orientation,
+            }
+    return list(out.values())
+
+
+async def settle_frozen_mlb_suspended(apply: bool = True) -> dict:
+    """End an MLB game the authority finished and no writer of ours can reach (#5881).
+
+    Writes, per confirmed row: ``status='completed'``, ``completed_at``, and — only
+    where we hold no score at all — the authority's score. Never `is_winner`
+    (gotcha #21), never `commence_time`, never a score over a different one.
+
+    Compare-and-write on all five columns the decision consumed (#6056): this pass
+    makes an HTTP call per distinct game date between reading a row and writing it,
+    and a row that moved in that window is no longer the row that was diagnosed.
+    A refusal is counted under its own name so a quiet pass and a lost race can
+    never read the same (gotcha #53).
+
+    Returns ``{candidates, settled, ambiguous, no_final, orientation,
+    score_conflict, no_authority_score, refused_row_moved, applied}`` — every key
+    present on every return, including the dry run and the nothing-to-do pass.
+    """
+    from types import SimpleNamespace
+
+    from sqlalchemy import text
+
+    from app.services.mlb_api import MLBAPIService
+    from app.tasks.base import get_task_session
+    from app.utils.live_state_write import write_row_if_unmoved
+
+    now = datetime.now(timezone.utc)
+    ledger = {
+        "candidates": 0,
+        "settled": 0,
+        "ambiguous": 0,
+        "no_final": 0,
+        "orientation": 0,
+        "score_conflict": 0,
+        "no_authority_score": 0,
+        "refused_row_moved": 0,
+        "applied": False,
+    }
+    service = MLBAPIService()
+    try:
+        async with get_task_session() as session:
+            rows = (await session.execute(
+                text(_FROZEN_SUSPENDED_SQL),
+                {
+                    "floor_ts": now - frozen_settle_floor(),
+                    "horizon_ts": now - FROZEN_SETTLE_HORIZON,
+                    "cap": FROZEN_SETTLE_CAP,
+                },
+            )).all()
+            ledger["candidates"] = len(rows)
+            logger.info(
+                "settle_frozen_mlb: %d suspended MLB rows past the floor", len(rows)
+            )
+
+            schedule_cache: dict = {}
+            writes: list = []
+            for row in rows:
+                cands = await _frozen_final_candidates(service, row, schedule_cache)
+                verdict, cand = choose_frozen_final(row.hs, row.aws, cands)
+                if verdict != "settle":
+                    ledger[verdict] += 1
+                    continue
+                values = {
+                    "status": "completed",
+                    "completed_at": frozen_completed_at(
+                        cand["start"], _repair_as_utc(row.commence_time)
+                    ),
+                }
+                if row.hs is None or row.aws is None:
+                    values["home_score"] = cand["home_score"]
+                    values["away_score"] = cand["away_score"]
+                # EVERY COLUMN THE DECISION CONSUMED, built here at diagnosis
+                # time — the lesson the void arm above learned the hard way
+                # (`312737099`). The score half is not the whole decision:
+                # `commence_time` is what chose this Final out of a series AND
+                # what computes the `completed_at` being written, and
+                # `completed_at` is a column this write SETS, so a row someone
+                # else settled in the window would have their end time
+                # overwritten by a pass that reported refusing nothing.
+                # `reconcile_anchor_schedule` and the #6073 kickoff sweep both
+                # re-date settled rows without touching status or score, so the
+                # mover is routine.
+                observed = {
+                    "status": row.status,
+                    "home_score": row.hs,
+                    "away_score": row.aws,
+                    "commence_time": (
+                        _repair_as_utc(row.commence_time)
+                        if row.commence_time is not None else None
+                    ),
+                    "completed_at": (
+                        _repair_as_utc(row.completed_at)
+                        if row.completed_at is not None else None
+                    ),
+                }
+                writes.append((row, values, observed, cand))
+
+            if apply and writes:
+                for row, values, observed, cand in writes:
+                    landed = await write_row_if_unmoved(
+                        session,
+                        SimpleNamespace(id=row.id),
+                        values,
+                        observed=observed,
+                        what="settle_frozen_mlb",
+                    )
+                    if landed:
+                        ledger["settled"] += 1
+                        logger.info(
+                            "settle_frozen_mlb: %s -> completed on MLB Final "
+                            "%s %s @ %s %s (%s)",
+                            row.id, cand["away"], cand["away_score"],
+                            cand["home"], cand["home_score"],
+                            cand["start"].isoformat(),
+                        )
+                    else:
+                        ledger["refused_row_moved"] += 1
+                await session.commit()
+                ledger["applied"] = True
+            else:
+                # A dry run reports what it WOULD end, under the same name the
+                # applied pass uses — a plan whose count lives under a different
+                # key is a plan nobody can compare to the run.
+                ledger["settled"] = len(writes)
+            logger.info("settle_frozen_mlb: %s", ledger)
+            return ledger
+    finally:
+        await service.close()
+
+
 async def run_mlb_schedule_coverage_and_repair() -> dict:
-    """Daily beat entry point (#1201/#1193/#1202): self-heal the standing inverted
-    MLB rows, then run the read-only coverage check so the 07:10 Flow Sentinel and
-    the cockpit read a clean, freshly-reconciled slate. Both halves are best-effort
-    and independent; a failure in one never suppresses the other."""
+    """Daily beat entry point (#1201/#1193/#1202/#5881): self-heal the standing
+    inverted MLB rows, end the games frozen at `suspended` that no other writer can
+    reach, then run the read-only coverage check so the 07:10 Flow Sentinel and the
+    cockpit read a clean, freshly-reconciled slate. All three halves are
+    best-effort and independent; a failure in one never suppresses the others."""
     result: dict = {}
     try:
         result["repair"] = await repair_inverted_mlb_events(apply=True)
     except Exception as exc:  # heal is best-effort; still run detection
         logger.warning("repair_inverted_mlb_events failed: %s", exc)
         result["repair"] = {"error": str(exc)[:200]}
+    try:
+        result["frozen_settle"] = await settle_frozen_mlb_suspended(apply=True)
+    except Exception as exc:  # #5881: best-effort, like its two siblings
+        logger.warning("settle_frozen_mlb_suspended failed: %s", exc)
+        result["frozen_settle"] = {"error": str(exc)[:200]}
     try:
         result["coverage"] = await run_mlb_schedule_coverage()
     except Exception as exc:
