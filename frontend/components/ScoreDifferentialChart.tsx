@@ -20,7 +20,7 @@ import {
   CATEGORY_LABEL_FORMAT,
 } from "@/lib/chartTimeline";
 import { sourceLabel } from "@/lib/sourceColors";
-import { impliedSpreadHomeMargin } from "@/lib/impliedSpreadAxis";
+import { impliedSpreadHomeMargin, drawnImpliedSpreadSources } from "@/lib/impliedSpreadAxis";
 import { sportVocab, playedCountAbsence, playedUnits, withUnit } from "@/lib/marketMapUtils";
 import { teamShortNames } from "@/lib/teamShortName";
 import { teamTextColor } from "@/lib/teamColors";
@@ -163,6 +163,22 @@ export default function ScoreDifferentialChart({
   // #3419: must match the spelling the parent used for `sharedTicks`.
   const labelFormat = chartLabelFormat ?? CATEGORY_LABEL_FORMAT;
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
+
+  /**
+   * #6142. The implied-spread snapshot sources this chart draws — computed
+   * once here and read by all three draw sites below (the data build, the
+   * legend payload, the lines themselves), so a source cannot be painted into
+   * the data by one of them and withheld by another.
+   *
+   * `isClosed` is the same predicate the producer uses for the sibling half of
+   * this rule (#5078, `routes/events.py`), which is why the withholding is
+   * stated in `impliedSpreadAxis` rather than inline: the two halves read one
+   * definition of "final".
+   */
+  const impliedSpreadSources = useMemo(
+    () => drawnImpliedSpreadSources(pmSpreadData?.implied_spreads, isClosed),
+    [pmSpreadData, isClosed]
+  );
 
   const hasPostStartData = useMemo(() => {
     if (!commenceTime) return false;
@@ -515,10 +531,16 @@ export default function ScoreDifferentialChart({
 
     // Add prediction market implied spread as a constant line at current value
     // (This is a snapshot, not a time series — we only have the current implied spread)
+    //
+    // #6142: which sources those are is `impliedSpreadSources`, not this loop.
+    // A finished game draws none of them — a snapshot of what the ladder
+    // implies *now* has nothing to say about a game whose real margin is
+    // already on this axis. The `sportsbook` skip that used to live here is
+    // the same rule's other clause and moved with it.
     if (pmSpreadData?.implied_spreads) {
       const allPts = Array.from(dataMap.values());
       for (const [source, data] of Object.entries(pmSpreadData.implied_spreads)) {
-        if (source === "sportsbook") continue; // Already shown as projected spread
+        if (!impliedSpreadSources.includes(source)) continue;
         const key = `pm_${source}_spread`;
         for (const pt of allPts) {
           // Show the implied spread as a flat line across all timestamps.
@@ -581,7 +603,7 @@ export default function ScoreDifferentialChart({
       scoreFrom === null ? null : { from: scoreFrom, to: scoreTo as number };
 
     return { points, scoreSpan };
-  }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory, filteredEspnHistory, chartStartTime, chartEndTime, pmSpreadData, periodBoundaries, hasProjectedScoreData, hasActualScoreData, labelFormat]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory, filteredEspnHistory, chartStartTime, chartEndTime, pmSpreadData, impliedSpreadSources, periodBoundaries, hasProjectedScoreData, hasActualScoreData, labelFormat]);
 
   const chartData = chartBuild.points;
   /** Where this chart's score lines actually start and end — see the build. */
@@ -760,6 +782,12 @@ export default function ScoreDifferentialChart({
          somebody debugging this will look first. */
       data-actual-series={hasActualScoreData ? "true" : "false"}
       data-projected-series={hasProjectedScoreData ? "true" : "false"}
+      /* #6142, and the same reason verbatim: the implied-spread snapshot is a
+         `<Line>` inside `ResponsiveContainer`, so its absence on a finished
+         game is invisible to a server render. This is the list the legend and
+         the lines are both built from, so it cannot report a suppression the
+         chart did not perform. */
+      data-implied-spread-series={impliedSpreadSources.join(",") || "none"}
       /* How many period chips this chart will draw, for the same reason as the
          two attributes above and as OddsChart's (CERT-1989): recharts renders
          no `<ReferenceLine>` inside `ResponsiveContainer` without a viewport,
@@ -914,10 +942,10 @@ export default function ScoreDifferentialChart({
                       },
                     ]
                   : []),
-                ...(pmSpreadData?.implied_spreads?.kalshi
+                ...(impliedSpreadSources.includes("kalshi")
                   ? [{ value: "Kalshi Implied" as string, type: "circle" as const, color: "#7c3aed" }]
                   : []),
-                ...(pmSpreadData?.implied_spreads?.polymarket
+                ...(impliedSpreadSources.includes("polymarket")
                   ? [{ value: "Polymarket Implied" as string, type: "circle" as const, color: "#db2777" }]
                   : []),
               ]}
@@ -966,8 +994,9 @@ export default function ScoreDifferentialChart({
               />
             )}
 
-            {/* Prediction market implied spread lines */}
-            {pmSpreadData?.implied_spreads?.kalshi && (
+            {/* Prediction market implied spread lines (#6142: never on a
+                finished game — see `impliedSpreadSources`) */}
+            {impliedSpreadSources.includes("kalshi") && (
               <Line
                 type="linear"
                 dataKey="pm_kalshi_spread"
@@ -980,7 +1009,7 @@ export default function ScoreDifferentialChart({
                 connectNulls
               />
             )}
-            {pmSpreadData?.implied_spreads?.polymarket && (
+            {impliedSpreadSources.includes("polymarket") && (
               <Line
                 type="linear"
                 dataKey="pm_polymarket_spread"

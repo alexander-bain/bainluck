@@ -1,0 +1,187 @@
+{
+  "event_id": 14780142,
+  "status": "completed",
+  "commence_time": "2026-09-13T17:00:00+00:00",
+  "completed_at": "2026-09-13T20:37:30.709297+00:00",
+  "home_team": "Carolina Panthers",
+  "away_team": "Chicago Bears",
+  "pm_spread_data": {
+    "implied_spreads": {
+      "kalshi": {
+        "spread": -15.0,
+        "home_margin": 15.0,
+        "confidence": 0.2,
+        "contracts": [
+          {
+            "threshold": -20.5,
+            "probability": 0.0
+          },
+          {
+            "threshold": -17.5,
+            "probability": 0.0
+          },
+          {
+            "threshold": -16.5,
+            "probability": 0.0
+          },
+          {
+            "threshold": -14.5,
+            "probability": 0.0
+          },
+          {
+            "threshold": -13.5,
+            "probability": 0.0
+          },
+          {
+            "threshold": -10.5,
+            "probability": 0.0
+          },
+          {
+            "threshold": -9.5,
+            "probability": 0.0
+          },
+          {
+            "threshold": -7.5,
+            "probability": 0.0
+          },
+          {
+            "threshold": -6.5,
+            "probability": 0.0
+          },
+          {
+            "threshold": -5.5,
+            "probability": 0.0
+          },
+          {
+            "threshold": -4.5,
+            "probability": 0.0
+          },
+          {
+            "threshold": -3.5,
+            "probability": 0.0
+          },
+          {
+            "threshold": -2.5,
+            "probability": 0.0
+          },
+          {
+            "threshold": -1.5,
+            "probability": 0.0
+          },
+          {
+            "threshold": 1.0,
+            "probability": 0.01
+          },
+          {
+            "threshold": 1.0,
+            "probability": 0.41
+          },
+          {
+            "threshold": 7.0,
+            "probability": 0.01
+          },
+          {
+            "threshold": 7.0,
+            "probability": 0.03
+          },
+          {
+            "threshold": 15.0,
+            "probability": 0.98
+          },
+          {
+            "threshold": 15.0,
+            "probability": 0.03
+          }
+        ]
+      },
+      "sportsbook": {
+        "spread": 2.6,
+        "home_margin": -2.6,
+        "confidence": 1.0,
+        "contracts": []
+      }
+    },
+    "implied_totals": {
+      "sportsbook": {
+        "total": 47.5,
+        "confidence": 1.0,
+        "contracts": []
+      }
+    },
+    "projected_final": null
+  },
+  "score_history": [
+    {
+      "timestamp": "2026-09-13T20:27:13.651805+00:00",
+      "home_score": 37,
+      "away_score": 59
+    },
+    {
+      "timestamp": "2026-09-13T20:27:44.440371+00:00",
+      "home_score": 37,
+      "away_score": 52
+    },
+    {
+      "timestamp": "2026-09-13T20:28:13.427776+00:00",
+      "home_score": 37,
+      "away_score": 59
+    },
+    {
+      "timestamp": "2026-09-13T20:28:44.525878+00:00",
+      "home_score": 37,
+      "away_score": 52
+    },
+    {
+      "timestamp": "2026-09-13T20:29:14.239072+00:00",
+      "home_score": 37,
+      "away_score": 59
+    }
+  ],
+  "history": [
+    {
+      "timestamp": "2026-07-24T13:32:00+00:00",
+      "home_probability": 0.4424,
+      "away_probability": 0.5576,
+      "over_under": 45.3,
+      "projected_home_score": 21.4,
+      "projected_away_score": 23.9,
+      "bookmaker_count": 19
+    },
+    {
+      "timestamp": "2026-08-06T22:00:00+00:00",
+      "home_probability": 0.4291,
+      "away_probability": 0.5709,
+      "over_under": 45.7,
+      "projected_home_score": 21.5,
+      "projected_away_score": 24.2,
+      "bookmaker_count": 17
+    },
+    {
+      "timestamp": "2026-08-26T18:08:00+00:00",
+      "home_probability": 0.4223,
+      "away_probability": 0.5777,
+      "over_under": 47.5,
+      "projected_home_score": 22.4,
+      "projected_away_score": 25.0,
+      "bookmaker_count": 10
+    },
+    {
+      "timestamp": "2026-08-26T18:41:00+00:00",
+      "home_probability": 0.4223,
+      "away_probability": 0.5777,
+      "over_under": 47.5,
+      "projected_home_score": 22.4,
+      "projected_away_score": 25.0,
+      "bookmaker_count": 6
+    },
+    {
+      "timestamp": "2026-09-13T20:37:00+00:00",
+      "home_probability": 0.0,
+      "away_probability": 1.0,
+      "over_under": null,
+      "projected_home_score": null,
+      "projected_away_score": null,
+      "bookmaker_count": 0
+    }
+  ]
+}
