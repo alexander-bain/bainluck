@@ -369,6 +369,41 @@ def seconds_until_window_opens(now: datetime | None = None) -> int:
     return max(0, math.ceil((edge - now).total_seconds()))
 
 
+def band_seconds_left_at_open(now: datetime | None = None) -> int:
+    """Seconds from ``now`` to the closing edge of the band we would push in.
+
+    The band occurrence meant is the one we are standing in, or — outside it —
+    the next one to open. It is the DEADLINE for any wait: a target beyond it is
+    not a longer sleep, it is a sleep into a different hour, which is how a
+    3-hour cycle floor could otherwise buy a 2h50m runner (:func:`wait_seconds`).
+
+    Derived from the two edges the rest of the file already reads rather than
+    from a duration of its own, so a moved band moves it
+    (``test_the_wait_deadline_is_the_band_and_never_a_number_of_its_own``).
+    """
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    opens_in = seconds_until_window_opens(now)
+    if opens_in == 0:
+        return band_seconds_left(now)
+    return opens_in + band_seconds_left(
+        (now + timedelta(seconds=opens_in)).replace(second=0, microsecond=0)
+    )
+
+
+def seconds_until_floor_clears(heavy_release_age_min: int | None) -> int:
+    """Seconds until the cycle floor stops forbidding a push; ``0`` when it does not.
+
+    ``None`` — the age could not be read — is ZERO and not "wait", for the reason
+    :func:`decide` gives for proceeding on an unreadable age: a gate that cannot
+    read its fact must not become a gate of its own. Whole minutes in, because
+    ``age`` reports whole floored minutes, so the wait this returns lands at or
+    after the true clear and never before it.
+    """
+    if heavy_release_age_min is None:
+        return 0
+    return max(0, (min_cycle_interval_min() - heavy_release_age_min) * 60)
+
+
 # ── the verdict ────────────────────────────────────────────────────────────────
 
 PUSH, HOLD, REFUSE, USAGE = 0, 1, 2, 3
@@ -540,16 +575,48 @@ def wait_seconds(
     released 160 min ago at :00 is past the 180-min floor by :38, so asking the
     floor about NOW would refuse a wait the floor itself will permit. Projecting
     is safe in the direction that matters — the real age at the push is at or
-    ABOVE the projection, because the push happens at or after the band opens.
+    ABOVE the projection, because the push happens at or after the target, and
+    ``age`` floors its minutes (so the reported age understates the real one).
+
+    THE TARGET IS THE LATER OF TWO EDGES, AND THE SECOND ONE IS WHERE THE
+    RESIDUAL ACTUALLY LIVES. Sleeping only to the band's opening edge fixes the
+    quiet-night tail and leaves the 45-minute residual almost untouched, because
+    of a property of this system the first version of this function did not use:
+    **the cycle floor always clears INSIDE the band.** A push may only happen
+    between :38 and :58, the floor is exactly 3 h, so the floor clears at the
+    same minute past the hour as the release that started it — heavy's own
+    record, v17..v20, clears at :49, :50, :56 and :43. So in the one hour that
+    matters — the hour the floor clears — asking only about :38 refuses every
+    trigger that arrives before the clear: at 14:20 with a floor clearing at
+    14:43:49, the projected age at :38 is 174 min and the run HOLDs, having been
+    eight minutes short of a window it could have slept into. The measured
+    trigger rate is ~1 per 22 min, so that hour is where most of the residual is
+    (``test_a_trigger_before_a_floor_that_clears_inside_this_band_sleeps_to_the_clear``).
+
+    Waiting past the CLOSING edge of the band occurrence we are aiming at is the
+    one thing this must never do: a floor clearing 2 h 50 m from now is not a
+    long sleep, it is a sleep into a different hour's band, and it would hold a
+    runner for the length of a cycle. The deadline is the band's own closing edge
+    — the same "how late may a push be" the rest of the file reads, never a
+    second number (``test_a_floor_clearing_after_this_bands_close_never_sleeps``).
+
+    The cycle budget is untouched by either edge: the target is never EARLIER
+    than the floor permits, so a sleeping run pushes at the first instant an
+    awake one could have.
     """
     now = now or datetime.now(timezone.utc)
-    secs = seconds_until_window_opens(now)
-    if dispatched or secs <= 0:
+    if dispatched:
+        return 0
+    opens_in = seconds_until_window_opens(now)
+    secs = max(opens_in, seconds_until_floor_clears(heavy_release_age_min))
+    if secs <= 0:
+        return 0
+    if secs > band_seconds_left_at_open(now):
         return 0
     projected_age = (
         None if heavy_release_age_min is None else heavy_release_age_min + (secs + 59) // 60
     )
-    at_open = decide(
+    at_target = decide(
         main_live=main_live,
         heavy_live=heavy_live,
         heavy_is_ancestor=heavy_is_ancestor,
@@ -557,7 +624,7 @@ def wait_seconds(
         heavy_release_age_min=projected_age,
         now=now + timedelta(seconds=secs),
     )
-    return secs if at_open.code == PUSH else 0
+    return secs if at_target.code == PUSH else 0
 
 
 # ---------------------------------------------------------------------------
@@ -1167,8 +1234,20 @@ def main(argv: list[str] | None = None) -> int:
         )
         opens, closes = window_bounds()
         if secs:
+            # WHICH EDGE IT IS WAITING FOR, because the two have different
+            # remedies if this ever looks wrong in a run log: the band is a
+            # clock fact, the floor is a fact about heavy's last release.
+            # The floor's remainder is arithmetic on an age and carries no clock
+            # of its own, so comparing against IT cannot be raced by the second
+            # that passes between two readings the way re-asking the band would.
+            edge = (
+                f"the {min_cycle_interval_min()}-min cycle floor to clear inside "
+                f"the :{opens}-:{closes} band"
+                if secs == seconds_until_floor_clears(_age_arg(args.heavy_release_age_min))
+                else f"the :{opens}-:{closes} band"
+            )
             print(
-                f"waiting {secs // 60}m{secs % 60:02d}s for the :{opens}-:{closes} band "
+                f"waiting {secs // 60}m{secs % 60:02d}s for {edge} "
                 "rather than losing this opportunity to a scheduler measured 19-359 min "
                 "late — the facts are all re-read after the sleep",
                 file=sys.stderr,

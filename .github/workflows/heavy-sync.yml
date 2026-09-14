@@ -255,7 +255,20 @@ jobs:
           # only trigger is a cron measured 19-359 min late that landed in band
           # 2 of 11 times, which is the 7h06m and 7h33m episodes in the header.
           #
-          # Sleeping to the opening edge takes NOTHING away. The alternative was
+          # THE TARGET IS THE LATER OF TWO EDGES, and the second one is where
+          # that 45-minute residual actually lives. A push may only happen
+          # between the band's edges and the floor is a whole number of hours,
+          # so the floor always clears INSIDE the band, at the same minute past
+          # the hour as the release that started it (heavy v17..v20: :49, :50,
+          # :56, :43). Sleeping only to the opening edge therefore does nothing
+          # at all in the one hour that matters: at 14:07:15Z today, with v20's
+          # floor clearing at 14:43:49Z, the opening edge is :38, the projected
+          # age there is 174 min, and the run HOLDs six minutes short of a
+          # window it could have slept into. Waiting to the LATER of the two
+          # takes that hour; the deadline for any wait is the band's own closing
+          # edge, so a floor clearing 2h50m out is refused rather than bought.
+          #
+          # Sleeping to an edge takes NOTHING away. The alternative was
           # never "push at :10" — it was "push at nothing" — and every gate is
           # re-asked for real after the sleep, against facts re-read then. The
           # script answers only "would this run push when the band opens",
