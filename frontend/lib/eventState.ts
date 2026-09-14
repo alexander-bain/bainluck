@@ -239,6 +239,56 @@ export function startBadgeLabel(
 }
 
 /**
+ * Whether the hero's blend caption must drop the word "Live" (#2800).
+ *
+ * ── WHY AN AGE TEST ALONE CANNOT ANSWER THIS ──
+ *
+ * #5069 removed "Live" from a blend past its own freshness boundary, and the
+ * boundary it spends is an AGE (`heroStampIsStale(stamp, "price")`, 120s). That
+ * is the right test for a source that went dark. It cannot see the other way a
+ * number stops being current: a price that is rewritten punctually with an
+ * IDENTICAL value.
+ *
+ * Measured on production 2026-09-14 07:26Z, `/events/15312054` (Peliwo v
+ * Ziegann, ATP): `live_probability_pinned` read `{pinned: true, probability:
+ * 0.99, observations: 84, span_seconds: 5247}` — 84 reads over 87 minutes, all
+ * 0.99, over a chart flat at 99% for the whole match. The page's own age badge
+ * said `1m ago`, so `heroStampIsStale` was FALSE and the caption said
+ * "Live · Bain Luck blend" — one line under a phase badge that already said
+ * "No result reported". A frozen price that is refreshed on schedule is new and
+ * unchanging at once, so it is permanently fresh to an age test.
+ *
+ * ── THE RULE IS ALREADY WRITTEN, ONE CONSUMER OVER ──
+ *
+ * `LiveAgeStamp` takes `claimWithdrawn` and comments it "#5459 — a withdrawn
+ * claim takes the stale presentation whatever the age says. OR rather than a
+ * replacement: an old number is still old when nobody withdrew anything." This
+ * is that same OR, for the caption, which `page.tsx:356` should already have
+ * covered: `effectivelyLive` exists so that "everything on this page that
+ * ASSERTS motion reads this", and "Live · Bain Luck blend" asserts motion. The
+ * caption was simply not on that list.
+ *
+ * ── WHAT THIS DELIBERATELY DOES NOT DO ──
+ *
+ * It does not withdraw the number. Standing notice 34 and #5069 both say the
+ * repair is removing a word rather than adding a sentence, and a pinned match
+ * is not the same state as a `suspended` one: the venue still lists it and the
+ * book is still quoted at 0.99, so blanking the hero would assert LESS than we
+ * know. `status='suspended'` keeps its own `No price` answer, reached through
+ * `isLive === false`, and is untouched here.
+ *
+ * Lives here rather than inline for the same reason as {@link startBadgeLabel}:
+ * a Next.js page carries no named exports, so a conjunction spelled in the call
+ * is a decision no test can hold.
+ */
+export function blendCaptionIsStale(
+  stampIsStale: boolean,
+  liveClaimUnbacked: boolean,
+): boolean {
+  return stampIsStale || liveClaimUnbacked;
+}
+
+/**
  * The section a status belongs to on every grid surface that groups events.
  *
  * `suspended` returns "live" — NOT because a suspended match is being played,
