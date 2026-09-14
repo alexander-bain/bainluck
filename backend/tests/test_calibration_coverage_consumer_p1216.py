@@ -358,12 +358,15 @@ def test_attach_returns_the_same_object_when_it_declines():
 
 def test_attach_never_raises_into_the_serve_path(monkeypatch):
     """A supporting census must not be able to break the payload it supports."""
-    import app.utils.calibration_coverage_consumer as consumer
-
     def _boom(*_a, **_k):
         raise RuntimeError("census exploded")
 
-    monkeypatch.setattr(consumer, "build_coverage_census", _boom)
+    # Patched by dotted path rather than by re-importing the module under a
+    # second name: the module is already imported `from`-style at the top of
+    # this file, and doing both is what CodeQL's py/import-and-import-from flags.
+    monkeypatch.setattr(
+        "app.utils.calibration_coverage_consumer.build_coverage_census", _boom
+    )
     payload = _payload()
     assert attach_coverage_census(payload, published=_published(), cursor=_cursor()) is payload
 
