@@ -90,6 +90,18 @@ COVERED = (
     "test_link_tennis_statpal_real_postgres.py",
     "test_null_statpal_live_space_3094_real_postgres.py",
     "test_polymarket_resolved_candidate_sql_pg.py",
+    # #6073's stuck-status rescue. Seeds `sports` and four `events` by raw
+    # INSERT, and `sports.active` plus `events.status` are both the Python-side
+    # default this file is named after — the seed names them.
+    #
+    # It also carries a second seeding hazard this file's NOT-NULL arm cannot
+    # see, so it is written down here rather than left to be rediscovered: the
+    # rows are dated `now() + interval`, from the SERVER's clock, because the
+    # band under test says `commence_time > now()`. A literal timestamp would be
+    # a correct seed on the day it was written and an empty band a week later,
+    # at which point every "declined" arm passes because nothing was selected.
+    # A seed can be legal DDL and still be vacuous.
+    "test_polymarket_stuck_status_atomicity_6073_pg.py",
     "test_rekey_statpal_anchors_real_postgres.py",
     "test_repair_3672_bind_contract.py",
     # #5789. Seeds `sports`, `events` and `futures_markets` by raw INSERT with

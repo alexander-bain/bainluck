@@ -582,6 +582,22 @@ def _resolved_writes(text: str) -> list[tuple[int, str]]:
             if sql_set.group(1) != "resolved":
                 continue
         elif "SET status" in stripped:
+            # The literal branch above reads the table before it judges, for the
+            # reason `_sql_update_target` states: `events` has a `status` column
+            # too and gets bulk transitions, and it has no `settled_at` to
+            # demand. This branch did not, so the first `events` status write to
+            # reach a bind value — #6073's stuck-status rescue,
+            # `UPDATE events AS e SET status = :status` — failed this guard for
+            # belonging to the wrong table rather than for anything about
+            # settlement.
+            #
+            # Fail-closed is preserved on both of the shapes that matter: a
+            # `futures_markets` status written through a bind still raises (the
+            # scan genuinely cannot tell whether that one settles a market), and
+            # so does a write whose table the scan cannot read at all.
+            target = _sql_update_target(lines, i)
+            if target is not None and target != "futures_markets":
+                continue
             raise AssertionError(
                 f"line {i + 1} sets a status to a non-literal the scan cannot "
                 f"read:\n  {stripped}"
@@ -636,6 +652,57 @@ def test_every_settlement_writer_stamps_settled_at(path):
             f"Use app.utils.market_settlement (settled_values / "
             f"settled_at_sql), or add the site to _STAMP_EXEMPT with a reason."
         )
+
+
+@pytest.mark.parametrize(
+    "sql,raises,why",
+    [
+        (
+            "UPDATE futures_markets AS m\nSET status = :status\nWHERE m.id = :id",
+            True,
+            "a MARKET status written through a bind is exactly the shape the "
+            "scan cannot classify, and it may be a settlement",
+        ),
+        (
+            "SET status = :status\nWHERE e.id = :id",
+            True,
+            "a status write whose table the scan cannot read must fail closed, "
+            "or an UPDATE moved more than eight lines from its SET escapes",
+        ),
+        (
+            "UPDATE events AS e\nSET status = :status\nWHERE e.id = :id",
+            False,
+            "`events` has no `settled_at` to demand — #6073's stuck-status "
+            "rescue lives here",
+        ),
+        (
+            "UPDATE score_snapshots\nSET status = :status",
+            False,
+            "no other table in reach carries a settlement stamp either",
+        ),
+    ],
+)
+def test_the_non_literal_branch_only_exempts_tables_that_cannot_settle(
+    sql, raises, why
+):
+    """The exemption added for #6073 must not become a hole.
+
+    `_resolved_writes` refuses any `SET status` it cannot read, which is what
+    makes a green scan mean something. That refusal was table-blind, so the first
+    `events` status write with a bind value tripped it — for belonging to the
+    wrong table, not for anything about settlement.
+
+    Narrowing a fail-closed guard is the move most likely to quietly delete it,
+    so the narrowing gets its own arm. The two shapes that must still raise are
+    asserted BESIDE the two that must now pass; an exemption that widened to
+    `futures_markets`, or that started treating an unreadable target as safe,
+    reddens here.
+    """
+    if raises:
+        with pytest.raises(AssertionError, match="non-literal"):
+            _resolved_writes(sql)
+    else:
+        assert _resolved_writes(sql) == [], why
 
 
 def test_the_kalshi_poll_upsert_couples_the_stamp_to_the_status():
