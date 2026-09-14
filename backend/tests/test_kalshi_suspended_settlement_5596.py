@@ -65,8 +65,11 @@ here rather than deferred to a production read. Both directions are asserted
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import inspect
 import sqlite3
+import textwrap
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -188,6 +191,37 @@ def _drive(*, rows=(SPECIMEN_ROW,), statuses=("finalized",) * 3, apply=True):
     return report, selects, updates, venue
 
 
+def _params_the_runner_supplies() -> set[str]:
+    """The keys of the dict `run_recent_finals` hands to `session.execute`.
+
+    Read from the source rather than by driving the task, because the driver
+    above records the parameters the runner BUILT, which is the same side of the
+    question. This reads the call site itself, so the bind-set test compares two
+    independent halves.
+    """
+    tree = ast.parse(textwrap.dedent(inspect.getsource(sweep.run_recent_finals)))
+    dicts = [
+        node.args[1]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "execute"
+        and len(node.args) == 2
+        and isinstance(node.args[1], ast.Dict)
+    ]
+    assert len(dicts) == 1, (
+        f"expected exactly one parameterised `session.execute` in "
+        f"`run_recent_finals`, found {len(dicts)}; this helper cannot tell you "
+        f"which one the bind-set test means"
+    )
+    keys = [k.value for k in dicts[0].keys if isinstance(k, ast.Constant)]
+    assert len(keys) == len(dicts[0].keys), (
+        "a non-literal key (a `**spread`, a variable) is in the parameter dict; "
+        "the bind-set test cannot read it statically"
+    )
+    return set(keys)
+
+
 class TestTheStatement:
     """The suspended branch exists, binds its own parameters, and is additive."""
 
@@ -269,6 +303,52 @@ class TestTheStatement:
         floor is the ONLY thing that retires a stuck row from this band."""
         assert sweep.SUSPENDED_EVENT_WINDOW_HOURS > 0
         assert "e.commence_time IS NOT NULL" in sweep.RECENT_FINAL_SELECT_SQL
+
+    def test_the_statement_binds_exactly_the_parameters_the_runner_supplies(self):
+        """#5596 gave this statement its first SQL comments, and `text()` scans
+        for `:word` ANYWHERE in the string — comments included.
+
+        So a sentence like "see :frozen_gap" mints a SIXTH bind that nothing
+        supplies, and `StatementError: A value is required for bind parameter`
+        is raised at EXECUTE time, on a 10-minute beat, in production. Nothing
+        else in this file can see it: every test above drives a fake session
+        that records the statement and never binds it, and the sqlite tests
+        below pass their own parameter dict.
+
+        Both sides are read from the code, so the assertion moves with a
+        legitimate change — but a bind that appears on ONE side only (which is
+        exactly what a comment does) breaks the equality. The literal set is
+        pinned too, so deleting both sides cannot pass.
+        """
+        sqlalchemy_text = pytest.importorskip("sqlalchemy").text
+        bound = set(sqlalchemy_text(sweep.RECENT_FINAL_SELECT_SQL)._bindparams)
+        supplied = _params_the_runner_supplies()
+
+        assert supplied == {
+            "final_floor",
+            "live_floor",
+            "suspended_floor",
+            "frozen_gap",
+            "limit",
+        }
+        assert bound == supplied, (
+            f"the statement binds {sorted(bound)} and `run_recent_finals` supplies "
+            f"{sorted(supplied)}; a `:word` in a COMMENT is the usual cause"
+        )
+
+    def test_that_guard_can_actually_see_a_bind_hidden_in_a_comment(self):
+        """The positive control for the test above, which would otherwise be
+        unfalsifiable: if `text()` ignored comments, it would pass forever."""
+        sqlalchemy_text = pytest.importorskip("sqlalchemy").text
+        marker = "-- #5024's signature: both sides gone."
+        assert marker in sweep.RECENT_FINAL_SELECT_SQL, (
+            "the comment this control poisons has been reworded; repoint it"
+        )
+        poisoned = sweep.RECENT_FINAL_SELECT_SQL.replace(
+            marker, "-- #5024's signature: both sides of :oops gone."
+        )
+
+        assert "oops" in set(sqlalchemy_text(poisoned)._bindparams)
 
 
 # --------------------------------------------------------------------------
