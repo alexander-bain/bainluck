@@ -57,7 +57,10 @@ from app.services.anchor_channel import (
 )
 from app.utils.espn_helpers import commence_correction_inverts_completion
 from app.utils.espn_id_stamp import espn_id_holder
-from app.utils.event_completion import settlement_is_a_staleness_artifact
+from app.utils.event_completion import (
+    POLYMARKET_VENUE_COMMENCE_SOURCE,
+    settlement_is_a_staleness_artifact,
+)
 from app.utils.name_normalization import names_match
 from app.utils.provider_anchor_keys import SCALAR_DERIVED_ID_COLUMNS
 
@@ -67,6 +70,19 @@ logger = logging.getLogger(__name__)
 _SOURCE_PRIORITY = {
     "kalshi": 0,
     "polymarket": 0,
+    # #6073. The SAME authority as `polymarket` — same provider, same row — and
+    # ranked identically on purpose. The string differs only to record which of
+    # Gamma's two time fields answered (`startTime`, the fixture instant, rather
+    # than `startDate`, the listing stamp), so the reach of that fix is
+    # countable. Ranking it above `polymarket` would be a different change: it
+    # would stop odds_api/ESPN/StatPal correcting the row, and a venue's own
+    # fixture time is a good start, not a better one than the schedule's.
+    #
+    # Present in this dict rather than left unknown so a later poll of the same
+    # market can still revise its OWN reading (q066b, `same_record_revision`
+    # below, which requires membership). An unlisted string would silently lose
+    # that path while reading as a no-op change.
+    POLYMARKET_VENUE_COMMENCE_SOURCE: 0,
     "odds_api": 1,
     "statpal": 2,
     "espn": 3,
