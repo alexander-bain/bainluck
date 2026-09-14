@@ -16173,6 +16173,44 @@ async def _count_bookmakers_per_outcome(
     return {row.outcome_id: row.bm_count for row in result.all()}
 
 
+# What disqualifies a moneyline is a colon AFTER the matchup, not a colon anywhere:
+# position is the whole distinction.
+#
+#   "<A> vs. <B>: Both Teams to Score"   colon in the TAIL — a derivative's subject
+#   "UFC 331: <A> vs. <B>"               colon in the PREFIX — a card/competition
+#
+# So the second side may not contain one and must reach end-of-string, while the
+# first side may. Hyphens are NOT separators in this population (no market uses
+# " - "); they occur inside team names ("Kiekko-Espoo").
+_MONEYLINE_MATCHUP_RE = re.compile(r'^(.+?)\s+(?:vs\.?|at|@)\s+([^:]+?)\s*$')
+
+
+def resolve_binary_matchup_outcome_name(outcome_name: str, market_name: str) -> str:
+    """Name the side a "Yes"/"No" outcome refers to, for game moneylines only.
+
+    Polymarket publishes game moneylines as "Yes"/"No" over a market named
+    "Celtics vs. 76ers", where "Yes" is the first-named team winning. Naming the
+    team is a real improvement on a bare "Yes" — but ONLY when the market is that
+    moneyline.
+
+    Derivative markets share the matchup prefix and add their subject after a
+    colon. Reading those as moneylines printed "Cádiz CF Win" on a *Both Teams to
+    Score* row — a fabricated label contradicting the market's own name, on 217 of
+    the 299 rows this relabel touched. Such names are declined here and keep their
+    truthful "Yes"/"No", which reads correctly beneath the market's own heading.
+
+    A colon is only disqualifying in the TAIL. "UFC 331: Ozzy Diaz vs. Ryan Gandra"
+    is a real moneyline wearing a card prefix, so the first side may contain one.
+    """
+    if outcome_name not in ("Yes", "No") or not market_name:
+        return outcome_name
+    matchup = _MONEYLINE_MATCHUP_RE.match(market_name)
+    if not matchup:
+        return outcome_name
+    side = matchup.group(1) if outcome_name == "Yes" else matchup.group(2)
+    return f"{side.strip()} Win"
+
+
 async def _build_related_futures(
     event_id: int,
     db: AsyncSession,
@@ -16858,17 +16896,9 @@ async def _build_related_futures(
             clean_label, raw_name=market.name or "",
         )
 
-        # Resolve "Yes"/"No" outcome names for binary matchup markets.
-        # Polymarket uses "Yes"/"No" for game moneylines like "Celtics vs. 76ers".
-        # "Yes" = first team wins, "No" = first team loses.
-        resolved_name = outcome.name
-        if outcome.name in ("Yes", "No") and market.name:
-            matchup = re.match(r'^(.+?)\s+(?:vs\.?|at|@)\s+(.+?)(?:\s*[-:]|$)', market.name)
-            if matchup:
-                if outcome.name == "Yes":
-                    resolved_name = f"{matchup.group(1).strip()} Win"
-                else:
-                    resolved_name = f"{matchup.group(2).strip()} Win"
+        resolved_name = resolve_binary_matchup_outcome_name(
+            outcome.name, market.name or ""
+        )
 
         entry = {
             "market_id": market.id,
