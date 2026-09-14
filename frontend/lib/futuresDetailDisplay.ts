@@ -1,3 +1,5 @@
+import { formatShareProbability } from "./share";
+
 // #883 futures-detail blend-only redesign — pure display helpers.
 //
 // The detail page shows ONE blended number and a plain-language clarification of
@@ -211,6 +213,49 @@ export function futuresTitleText(opts: {
     return `${opts.leaderName} ${opts.probabilityLabel} - ${opts.marketName}`;
   }
   return opts.marketName;
+}
+
+/**
+ * #6127 — THE ONE PLACE THAT ANSWERS "IS THERE A PRICE ON THIS BOARD AT ALL?"
+ *
+ * The leader's label, or `null` — never a dash, and never a name without a
+ * number behind it. Named and shared for the same reason `shareForecastPercents`
+ * is: `layout.tsx` and `opengraph-image.tsx` describe the same market from the
+ * same payload, and until this function existed they asked the question in two
+ * places and answered it two different ways.
+ *
+ * The WORDS already had the rule three lines up — `leaderName &&
+ * probabilityLabel`, else the market name alone — and they have had it since
+ * L2-55. The PICTURE wrote `formatShareProbability(...) || "--"`, so on a market
+ * nobody has quoted it drew a dash in 96px type, crowned a name beside it and
+ * laid a bar stub under it. This returns the label or nothing, so the slot is
+ * dropped rather than filled (notice 34 / D102: leave the space empty, do not
+ * explain the emptiness).
+ *
+ * THE LEADER ALONE DECIDES, and that is a property of `topOutcome`, not an
+ * assumption: it sorts on `probability ?? -1`, so an unpriced row can never
+ * outrank a priced one. A `null` at the top means the whole board is `null`.
+ *
+ * ═══ THE EXACT ZERO IS NOT THE OPEN QUESTION IT IS ON THE GAME CARD ═══
+ *
+ * `formatShareProbability` counts an exact 0 as "no number", and on `/events/[id]`
+ * that clause collides with #4963 — *"a finished game's loser is 0%, and 0% is a
+ * fact"* — which is why #6119 had to keep its picture-side predicate narrower
+ * than its words. There is no such collision here. A settled futures market takes
+ * the `isResolved` branch on BOTH surfaces, which draws the winner and prints no
+ * percentage at all (L2-53/L2-55), so a graded 0% never reaches this rule. The
+ * only rows it can see are unresolved boards, where the words have always been
+ * quiet about a zero too — so this predicate is the words' rule whole, with no
+ * gap to assert. `futuresNoPriceUnfurl6127.test.tsx` pins the equivalence in both
+ * directions so a later edit to either surface cannot open one.
+ *
+ * WITHHOLDS ONLY. A price can arrive on the next poll, so a quiet card is all
+ * this licenses: it crowns nobody, it does not touch the status word or the
+ * settled branch, and no cache window reads it.
+ */
+export function futuresBoardPrice(leader: MovementLeader | null | undefined): string | null {
+  if (!leader) return null;
+  return formatShareProbability(leader.probability);
 }
 
 /* ───────────────────────────────────────────────────────────────────────────

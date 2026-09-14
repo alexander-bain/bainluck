@@ -6,7 +6,12 @@ import {
   formatShareProbability,
   truncateShareText,
 } from "@/lib/share";
-import { gradedWinner, leaderLabel, futuresTitleText } from "@/lib/futuresDetailDisplay";
+import {
+  gradedWinner,
+  leaderLabel,
+  futuresBoardPrice,
+  futuresTitleText,
+} from "@/lib/futuresDetailDisplay";
 import {
   unresolvedMetadata,
   unresolvedPath,
@@ -123,7 +128,11 @@ export async function generateMetadata({
 
   const market = lookup.market;
   const leader = topOutcome(market);
-  const probability = formatShareProbability(leader?.probability);
+  // #6127 — the same call, now made through the shared name. The condition below
+  // (`leader && probability`, else the market name alone) is unchanged and is the
+  // rule the PICTURE was missing; it lives in `futuresDetailDisplay` so the two
+  // surfaces cannot answer "is there a price here" differently again.
+  const probability = futuresBoardPrice(leader);
   // #883 L2-55: a settled market's title must NOT carry the last-traded % — it's
   // "<winner> won", mirroring the L2-53 hero. Same winner selection as the page.
   const isResolved = market.status === "resolved";
