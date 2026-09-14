@@ -128,7 +128,49 @@ _FRESH_SETTLEMENT_MAX_SHARE = 0.2
 #: is two-sided per gotcha #41 — the same floor as the recency band, plus a short
 #: future reach for markets closing early. Measured population inside that window
 #: on 2026-09-14 04:05Z: **23 tickers**, so the cap is headroom, not a throttle.
-_EARLY_SETTLED_MAX_TICKERS = 50
+#:
+#: AMENDED 2026-09-14 08:45Z, AND THE AMENDMENT IS THE INTERESTING PART. The band
+#: shipped keyed on `fm.status <> 'resolved'`, and **at 08:15:13Z it aged out of
+#: the two specimens it was written for, five hours after it was written.** The
+#: resolution-window sweep (CAL-P1019 / #2722) flipped BOTH `KXATP-26USO` and
+#: `KXATPWTA-26USO` to `status='resolved'` in one statement — identical
+#: `settled_at` on both rows — writing status and no grade, exactly as designed.
+#: So the status half of the diagnosis fixed itself while the GRADE half, which is
+#: what a reader sees, did not: 48 legs, 0 winners, and Alexander Zverev still
+#: `is_winner=false / ungradeable_result` against a venue that reads
+#: `status=finalized, result='yes'` (read at Kalshi 08:35Z, notice 26/27).
+#:
+#: `status` was never the property this band is about. The property is **"no other
+#: band will ask"**, and that is decidable from the legs alone: the recency band
+#: needs a leg that is neither authoritative NOR `ungradeable_result`, so a market
+#: whose every leg is one or the other is invisible to it whatever its status says.
+#: That is now the clause. It is complementary BY CONSTRUCTION rather than by
+#: coincidence, so the two bands cannot both spend a venue call on one ticker
+#: (gotcha #34 again), and the trapdoor cannot reopen from a status write.
+#:
+#: MEASURED ON PRODUCTION 2026-09-14 08:38-08:44Z, every variant of the predicate,
+#: because the first correction was wrong in an instructive way:
+#:
+#:   * as shipped (`status <> 'resolved'`)            — **21** tickers
+#:   * status clause simply DELETED                   — **59**
+#:   * leg clause alone ("band 1 has a leg for it")   — **45**, and BROKEN: band 1
+#:     also requires `status = 'resolved'`, so every OPEN market carrying an
+#:     ordinary ungraded leg fell out of this band without falling into that one.
+#:     Caught on the corpus row `TTT-26SEP15`, which is exactly that shape.
+#:   * BOTH of band 1's gates, which is what shipped — **53**: the original 21 open
+#:     rows unchanged, plus 32 resolved rows no band could see. Strictly additive.
+#:
+#: `KXATP-26USO` is rank **31 of 53** by `resolution_date ASC`, so the ship is
+#: inside the budget either way. `KXATPWTA-26USO` correctly drops OUT: it carries
+#: one null-source leg (`KXATPWTA-26USO-KHAGAU`), so the recency band can see it
+#: and will.
+#:
+#: The cap moves 50 → 100 for one reason: at 53 it had started to BIND, and three
+#: real reader-facing markets (`KXEMMY*`, `KXENDORSEMAMDANI-26SEP15`) were the ones
+#: being dropped. "Headroom, not a throttle" is a claim this constant has to keep
+#: earning; the cost of keeping it is at most 100 `GET /events/{ticker}` on a band
+#: that only ever fires for markets nobody else asks about.
+_EARLY_SETTLED_MAX_TICKERS = 100
 _EARLY_SETTLED_FUTURE_DAYS = 2
 
 
@@ -254,7 +296,7 @@ async def _select_kalshi_settlement_tickers(
 
 
 async def _select_kalshi_early_settled_tickers(session, limit: int) -> list[str]:
-    """Pick tickers the VENUE has been settling while our row still says open.
+    """Pick tickers the VENUE has settled that NO OTHER BAND WILL EVER ASK ABOUT.
 
     #6012. A THIRD band, deliberately a separate function with a separate budget
     rather than a third return value from `_select_kalshi_settlement_tickers`:
@@ -268,14 +310,26 @@ async def _select_kalshi_early_settled_tickers(session, limit: int) -> list[str]
       * at least one leg carries a TIER-3 settlement, i.e. the venue has
         demonstrably already settled part of this market; and
       * NO leg is a winner, so we hold no answer for it; and
-      * our market row nevertheless says it is not resolved.
+      * NO leg is one the recency band could qualify on — every leg is either
+        authoritative or `ungradeable_result` — so that band's own `EXISTS`
+        clause excludes this market and nobody else is coming.
+
+    That third bullet used to read "our market row nevertheless says it is not
+    resolved", and the constant block above records what that cost: a status
+    write from an unrelated sweep took both founding specimens out of the band
+    five hours after it shipped. Status is a thing that changes under us;
+    "which band can see these legs" is a property of the legs, and the recency
+    band's clause is the one place to read it from. Complementary by
+    construction, so the trapdoor cannot reopen.
 
     A market whose legs the venue is settling is a market the venue has decided
     or is deciding. Asking costs one `GET /events/{ticker}`; the grader then
     writes only what the venue actually says.
 
     `AUTHORITATIVE_SOURCES_SQL` is imported rather than retyped so this band can
-    never drift from the tier-3 set the two bands above test against.
+    never drift from the tier-3 set the two bands above test against — and the
+    exclusion clause below is the recency band's own `EXISTS` inverted, for the
+    same reason.
     """
     if limit <= 0:
         return []
@@ -284,7 +338,6 @@ async def _select_kalshi_early_settled_tickers(session, limit: int) -> list[str]
             SELECT fm.external_id
             FROM futures_markets fm
             WHERE fm.source = 'kalshi'
-              AND fm.status <> 'resolved'
               AND fm.resolution_date IS NOT NULL
               AND fm.resolution_date <= NOW() + make_interval(days => :future_days)
               AND fm.resolution_date >= NOW() - make_interval(days => :floor_days)
@@ -297,6 +350,25 @@ async def _select_kalshi_early_settled_tickers(session, limit: int) -> list[str]
                   SELECT 1 FROM futures_outcomes fo
                   WHERE fo.market_id = fm.id
                     AND COALESCE(fo.resolution_source, '') IN """ + AUTHORITATIVE_SOURCES_SQL + """
+              )
+              -- "Will band 1 actually take this ticker?" — BOTH of its gates,
+              -- not just the leg one. Band 1 needs `status = 'resolved'` AND a
+              -- leg that is neither authoritative nor `ungradeable_result`. A
+              -- market failing EITHER is one nobody else asks about, and is
+              -- this band's whole reason to exist.
+              --
+              -- Writing only the leg half here is the bug this clause replaced,
+              -- wearing different clothes: it would have dropped every OPEN
+              -- market carrying an ordinary ungraded leg — visible to band 1 by
+              -- legs but not by status — straight back into the same gap.
+              AND NOT (
+                  fm.status = 'resolved'
+                  AND EXISTS (
+                      SELECT 1 FROM futures_outcomes fo
+                      WHERE fo.market_id = fm.id
+                        AND COALESCE(fo.resolution_source, '') NOT IN """ + AUTHORITATIVE_SOURCES_SQL + """
+                        AND COALESCE(fo.resolution_source, '') <> 'ungradeable_result'
+                  )
               )
             GROUP BY fm.external_id
             ORDER BY MIN(fm.resolution_date) ASC
