@@ -581,7 +581,7 @@ def _movers_payload(outcomes, hours: int) -> dict:
                 "name": o.name,
                 "market_id": o.market_id,
                 "market_name": o.market.name if o.market else None,
-                "current_probability": float(o.current_probability) if o.current_probability else None,
+                "current_probability": float(o.current_probability) if o.current_probability is not None else None,
                 "probability_change_24h": float(o.probability_change_24h) if o.probability_change_24h else None,
                 # ANNOTATED — queue 333, C272/B4 zero-read census (#1620).
                 # Deliberately present and deliberately unrendered. The standing
@@ -877,6 +877,15 @@ async def browse_futures(
         # Applied to the ORM rows rather than the dicts below because the browse
         # payload does not carry `is_winner`, and the crowned-leg exemption is not
         # optional — without it this deletes the result from a settled market.
+        # #6081 CHANGED THE NINE SERVED SITES IN THIS FILE AND DELIBERATELY NOT
+        # THIS ONE. Every other `float(...) if o.current_probability else None`
+        # built a value a client renders, where a falsy 0 became a false "no
+        # price". This one is an INPUT TO A PREDICATE: what
+        # `drop_incoherent_near_certain` sees decides which rows it deletes, and
+        # the comment four lines up says what is at stake when it deletes the
+        # wrong one. Feeding it 0.0 where it has always seen None is a behaviour
+        # change to the dropper, not a serialization fix, and it needs its own
+        # argument and its own guard. Left as-is on purpose, not missed.
         sorted_outcomes = drop_incoherent_near_certain(
             sorted_outcomes,
             lambda o: float(o.current_probability) if o.current_probability else None,
@@ -888,7 +897,7 @@ async def browse_futures(
             {
                 "id": o.id,
                 "name": o.name,
-                "probability": float(o.current_probability) if o.current_probability else None,
+                "probability": float(o.current_probability) if o.current_probability is not None else None,
                 "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
             }
             for o in sorted_outcomes
@@ -1197,7 +1206,7 @@ async def faceted_futures_search(
             {
                 "id": o.id,
                 "name": o.name,
-                "probability": float(o.current_probability) if o.current_probability else None,
+                "probability": float(o.current_probability) if o.current_probability is not None else None,
                 "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
             }
             for o in sorted_outcomes[:3]
@@ -1779,7 +1788,7 @@ async def get_playoff_grid(
                     }
 
                 p = participants[merge_key]
-                prob = float(o.current_probability) if o.current_probability else None
+                prob = float(o.current_probability) if o.current_probability is not None else None
 
                 # Update team info if resolved in this iteration but not before
                 effective_team_id = resolved_team_id or o.team_id
@@ -3163,7 +3172,7 @@ async def get_related_events(
         if o.team_id:
             team_outcome_map[o.team_id] = {
                 "outcome_name": o.name,
-                "probability": float(o.current_probability) if o.current_probability else None,
+                "probability": float(o.current_probability) if o.current_probability is not None else None,
                 "american_odds": o.current_american_odds,
                 "rank": o.rank,
             }
@@ -3630,7 +3639,7 @@ async def get_progression(
                     "status": {},
                 }
             p = participants[merge_key]
-            prob = float(o.current_probability) if o.current_probability else None
+            prob = float(o.current_probability) if o.current_probability is not None else None
             p["probabilities"][stage_key] = prob
             if o.probability_change_24h:
                 p["changes_24h"][stage_key] = float(o.probability_change_24h)
@@ -4109,7 +4118,7 @@ async def get_probability_timeline(
         meta: dict = {
             "id": o.id,
             "name": o.name,
-            "current_probability": float(o.current_probability) if o.current_probability else None,
+            "current_probability": float(o.current_probability) if o.current_probability is not None else None,
             "rank": o.rank,
             "probability_change_24h": float(o.probability_change_24h) if o.probability_change_24h else None,
             "opening_probability": float(o.opening_probability) if o.opening_probability else None,
@@ -4635,7 +4644,7 @@ def _format_market_summary(market: FuturesMarket, source_count_map: dict = None)
         {
             "id": o.id,
             "name": o.name,
-            "probability": float(o.current_probability) if o.current_probability else None,
+            "probability": float(o.current_probability) if o.current_probability is not None else None,
             "american_odds": o.current_american_odds,
             "rank": o.rank,
             "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
@@ -4979,11 +4988,33 @@ def _format_market_detail(
         reverse=True
     )
 
+    # `is not None`, NOT a truth test, and this is #6081's whole fix (nine served
+    # sites in this file carried the falsy form; only the predicate input at
+    # `drop_incoherent_near_certain` still does, deliberately — see there).
+    #
+    # `Decimal('0.000000')` is falsy, so `if o.current_probability` served a
+    # genuine 0% as `null` — the SAME value this payload uses for "withheld, we
+    # cannot say". `/futures/261` ("Boston pro baseball wins this season?") is the
+    # specimen: `100+ wins` and `105+ wins` store 0.000000 with
+    # `resolution_source='api_settlement'`, `is_winner=false` and a
+    # `yes_bid 0.0000 / yes_ask 1.0000` book — Kalshi has settled them NO. The
+    # page's `#+ WINS` block printed **0%** and its `All Outcomes` table printed
+    # **–** for the same rung, and the payload refuted itself in one object:
+    # `prices_withheld: 0` beside two null prices. Nothing withheld them.
+    #
+    # THE DELIBERATE WITHHOLDING RAIL IS NOT THIS AND IS NOT WEAKENED.
+    # `app.utils.futures_unsupported_price` (#5611/#5876) reads bid/ask and
+    # snapshots, nulls `WITHHELD_PRICE_FIELDS` further down, and counts the row in
+    # `prices_withheld`. That rule is evidence-based. The falsy test was an
+    # accidental SECOND withholding rule whose only evidence was that the number
+    # happened to be zero — which is exactly the value a settled-NO leg must have.
+    # 3,738 of the 4,200 zero-priced legs on still-open markets are a definite
+    # venue NO (measured 2026-09-14).
     outcomes = [
         {
             "id": o.id,
             "name": o.name,
-            "probability": float(o.current_probability) if o.current_probability else None,
+            "probability": float(o.current_probability) if o.current_probability is not None else None,
             "american_odds": o.current_american_odds,
             "rank": o.rank,
             "rank_change_24h": o.rank_change_24h,
