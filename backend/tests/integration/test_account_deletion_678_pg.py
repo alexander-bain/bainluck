@@ -187,14 +187,23 @@ async def _account_with_everything(session, label: str) -> tuple[int, str]:
             pool_id=pool.id, user_id=user.id, display_name=tag,
             member_token=f"member-{tag}",
         ),
-        m.SearchQueryLog(user_id=user.id, query=f"query-{tag}"),
+        # The session fields are populated deliberately and are NOT incidental
+        # fixture noise: they are the device's persistent anonymous identity,
+        # and a retained row that keeps one stays linkable to this
+        # installation after deletion (CERT-2870). A fixture leaving them NULL
+        # would let the repair pass without doing anything.
+        m.SearchQueryLog(
+            user_id=user.id, query=f"query-{tag}", session_id=f"session-{tag}",
+        ),
         m.BugReport(
             user_id=user.id, user_email=f"{tag}@example.com",
-            description=f"bug-{tag}",
+            description=f"bug-{tag}", session_id=f"session-{tag}",
         ),
         m.PredictionChallenge(
             creator_user_id=user.id, challenge_code=uuid.uuid4().hex[:20],
             market_id=market.id, creator_guess="over", creator_threshold=50,
+            creator_session_id=f"session-{tag}",
+            friend_session_id=f"friend-session-{tag}",
         ),
     ])
     await session.commit()
@@ -303,6 +312,87 @@ async def test_kept_rows_keep_nothing_that_names_the_person(db):
         )
     ).scalar()
     assert kept_query == 1, "the de-identified row should survive, not be deleted"
+
+
+async def test_deidentified_rows_drop_persistent_session_identity_678(db):
+    """CERT-2870's required test. Run through the REAL handler.
+
+    The three rows that survive deletion each carry a `session_id` (the
+    challenge calls it `creator_session_id`). That id is the device's, it lives
+    in `UserDefaults`, and the app reuses it forever — so clearing `user_id`
+    while leaving it behind keeps the row tied to the installation AND to
+    everything the installation does next, moments after the app has told the
+    reader that all associated data was permanently deleted.
+
+    The fixture populates every one of those fields with a non-NULL value, so
+    this cannot pass on an empty column.
+    """
+    user_id, tag = await _account_with_everything(db, "session")
+    session_value = f"session-{tag}"
+
+    # Strawman guard: the columns must actually be populated before deletion,
+    # or "IS NULL afterwards" proves nothing at all.
+    before = (
+        await db.execute(
+            text(
+                "SELECT (SELECT count(*) FROM search_query_logs WHERE session_id = :s)"
+                "     + (SELECT count(*) FROM bug_reports WHERE session_id = :s)"
+                "     + (SELECT count(*) FROM prediction_challenges WHERE creator_session_id = :s)"
+            ),
+            {"s": session_value},
+        )
+    ).scalar()
+    assert before == 3, f"fixture seeded {before} session-carrying rows, expected 3"
+
+    await _delete_account(db, user_id)
+
+    after = (
+        await db.execute(
+            text(
+                "SELECT (SELECT count(*) FROM search_query_logs WHERE session_id = :s)"
+                "     + (SELECT count(*) FROM bug_reports WHERE session_id = :s)"
+                "     + (SELECT count(*) FROM prediction_challenges WHERE creator_session_id = :s)"
+            ),
+            {"s": session_value},
+        )
+    ).scalar()
+    assert after == 0, (
+        f"{after} retained row(s) still carry the deleted account's session id — "
+        "they remain linkable to this installation and to its later activity"
+    )
+
+    # ...and the rows themselves are still there. De-identification keeps the
+    # operational record; it does not quietly become a delete.
+    kept = (
+        await db.execute(
+            text("SELECT count(*) FROM bug_reports WHERE description = :d"),
+            {"d": f"bug-{tag}"},
+        )
+    ).scalar()
+    assert kept == 1
+
+
+async def test_the_other_participants_session_survives_deletion(db):
+    """The refusal half, on real rows.
+
+    A challenge has two sides. `friend_session_id` identifies the OTHER person,
+    and a de-identification that reached it would be deleting a third party's
+    data while satisfying this account's request.
+    """
+    user_id, tag = await _account_with_everything(db, "friend")
+
+    await _delete_account(db, user_id)
+
+    friend = (
+        await db.execute(
+            text(
+                "SELECT count(*) FROM prediction_challenges "
+                "WHERE friend_session_id = :f"
+            ),
+            {"f": f"friend-session-{tag}"},
+        )
+    ).scalar()
+    assert friend == 1, "the other participant's session id was erased"
 
 
 async def test_a_second_account_is_untouched(db):

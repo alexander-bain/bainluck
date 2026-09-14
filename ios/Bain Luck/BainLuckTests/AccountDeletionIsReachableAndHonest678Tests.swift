@@ -173,3 +173,70 @@ final class AccountDeletionIsReachableAndHonest678Tests: XCTestCase {
         }
     }
 }
+
+// MARK: - 3. Deletion ends the device's anonymous identity (CERT-2870)
+
+/// The server blanks `session_id` on the three rows it keeps after a deletion.
+/// That closes the past. This closes the future: if the app kept sending the
+/// same persistent session id, everything done next would be joinable to what
+/// came before, and the retained rows would be re-linkable to this
+/// installation — moments after the app said all associated data was
+/// permanently deleted.
+final class AccountDeletionRotatesSessionIdentity678Tests: XCTestCase {
+
+    private var savedSessionId: String?
+
+    override func setUp() {
+        super.setUp()
+        savedSessionId = UserDefaults.standard.string(forKey: APIClient.sessionIdDefaultsKey)
+    }
+
+    override func tearDown() {
+        if let savedSessionId {
+            UserDefaults.standard.set(savedSessionId, forKey: APIClient.sessionIdDefaultsKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: APIClient.sessionIdDefaultsKey)
+        }
+        super.tearDown()
+    }
+
+    func testRotationReplacesThePersistedSessionIdentity() async {
+        UserDefaults.standard.set("the-old-identity", forKey: APIClient.sessionIdDefaultsKey)
+
+        await APIClient.shared.rotateSessionIdentity()
+
+        let stored = UserDefaults.standard.string(forKey: APIClient.sessionIdDefaultsKey)
+        XCTAssertNotNil(stored, "rotation must leave a usable identity behind, not nothing")
+        XCTAssertNotEqual(
+            stored, "the-old-identity",
+            "the deleted account's session id is still persisted — the retained rows stay linkable to this installation"
+        )
+    }
+
+    /// The replacement must be a fresh identity each time, not a constant the
+    /// rotation happens to write. A fixed replacement would make every deleted
+    /// account on every device share one id, which is worse than not rotating.
+    func testRotationProducesADifferentIdentityEachTime() async {
+        await APIClient.shared.rotateSessionIdentity()
+        let first = UserDefaults.standard.string(forKey: APIClient.sessionIdDefaultsKey)
+
+        await APIClient.shared.rotateSessionIdentity()
+        let second = UserDefaults.standard.string(forKey: APIClient.sessionIdDefaultsKey)
+
+        XCTAssertNotNil(first)
+        XCTAssertNotNil(second)
+        XCTAssertNotEqual(first, second)
+    }
+
+    /// Rotation must work from a cold state too — deleting an account on an
+    /// install whose id was never written must not crash or leave it empty.
+    func testRotationFromNoStoredIdentityStillYieldsOne() async {
+        UserDefaults.standard.removeObject(forKey: APIClient.sessionIdDefaultsKey)
+
+        await APIClient.shared.rotateSessionIdentity()
+
+        let stored = UserDefaults.standard.string(forKey: APIClient.sessionIdDefaultsKey)
+        XCTAssertNotNil(stored)
+        XCTAssertFalse(stored?.isEmpty ?? true)
+    }
+}

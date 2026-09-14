@@ -64,16 +64,35 @@ _ACCOUNT_OWNED_ROWS = [
 #: Rows that belong to something other than the account and would damage
 #: another user or Alex's operational record if they vanished — a challenge
 #: other people joined, a filed bug, the search-quality corpus. The row stays;
-#: every field that identifies the person is blanked, including the email
-#: bug reports copy out of the profile.
+#: every field that identifies the person is blanked.
+#:
+#: "Identifies the person" is wider than ``user_id``, and getting that wrong is
+#: how a row survives de-identification still pointing at someone:
+#:
+#: * ``bug_reports.user_email`` is the profile address copied out at submission
+#:   time — a direct identifier that clearing ``user_id`` leaves untouched;
+#: * ``session_id`` (``creator_session_id`` on a challenge) is the device's
+#:   persistent anonymous identity, which the app stores in `UserDefaults` and
+#:   reuses forever. Left in place it re-links these rows to the installation
+#:   AND to everything that installation does next. The client rotates its
+#:   session identity on a successful deletion for the same reason; both halves
+#:   are needed, because this one cannot reach rows the account never owned.
+#:
+#: ``prediction_challenges.friend_session_id`` is deliberately NOT blanked: it
+#: identifies the OTHER participant, and erasing it would delete a third
+#: party's data in the name of protecting this one.
 _ACCOUNT_DEIDENTIFIED_ROWS = [
     (
         PredictionChallenge,
         PredictionChallenge.creator_user_id,
-        {"creator_user_id": None},
+        {"creator_user_id": None, "creator_session_id": None},
     ),
-    (BugReport, BugReport.user_id, {"user_id": None, "user_email": None}),
-    (SearchQueryLog, SearchQueryLog.user_id, {"user_id": None}),
+    (
+        BugReport,
+        BugReport.user_id,
+        {"user_id": None, "user_email": None, "session_id": None},
+    ),
+    (SearchQueryLog, SearchQueryLog.user_id, {"user_id": None, "session_id": None}),
 ]
 
 

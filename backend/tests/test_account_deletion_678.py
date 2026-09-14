@@ -45,11 +45,10 @@ from sqlalchemy import inspect
 from app.models.models import Base, User
 from app.routes.auth import _ACCOUNT_DEIDENTIFIED_ROWS, _ACCOUNT_OWNED_ROWS
 
-# Columns that name a user but are NOT a link to `users.id`: free-text session
-# identifiers, and the friend side of a challenge, which belongs to whoever
-# holds the link and is not this user's row.
-_NOT_A_USER_LINK = {
-    ("prediction_challenges", "creator_session_id"),
+#: Session columns that identify someone OTHER than the account being deleted.
+#: `friend_session_id` is the other participant in a challenge; blanking it
+#: would erase a third party's data in the name of protecting this one.
+_SOMEONE_ELSES_SESSION = {
     ("prediction_challenges", "friend_session_id"),
 }
 
@@ -72,8 +71,6 @@ def _user_linked_columns():
         if table.name == "users":
             continue
         for column in table.columns:
-            if (table.name, column.name) in _NOT_A_USER_LINK:
-                continue
             points_at_users = any(
                 fk.column.table.name == "users" for fk in column.foreign_keys
             )
@@ -188,6 +185,53 @@ def test_deidentification_blanks_every_identifying_field_not_just_the_link():
                 "fields, it does not write a placeholder that still groups rows "
                 "by former account"
             )
+
+
+def test_retained_rows_blank_every_session_column_they_carry():
+    """CERT-2870's required repair, derived from the schema rather than listed.
+
+    A row kept after deletion must not keep the identity of the device that
+    made it. `session_id` is not a per-visit token — the app stores it in
+    `UserDefaults` and reuses it forever — so a retained row that keeps it is
+    still linkable to that installation, and to everything the installation
+    does afterwards, immediately after the app has said all associated data was
+    permanently deleted.
+
+    Derived, so a session column added to one of these tables later fails here
+    instead of quietly re-opening the hole. Rows on the OWNED tables are
+    deleted outright, so their session columns need no handling.
+    """
+    for model, _column, blanked in _ACCOUNT_DEIDENTIFIED_ROWS:
+        table = inspect(model).local_table
+        session_columns = {
+            c.name
+            for c in table.columns
+            if "session_id" in c.name
+            and (table.name, c.name) not in _SOMEONE_ELSES_SESSION
+        }
+        for name in session_columns:
+            assert name in blanked, (
+                f"{table.name}.{name} survives account deletion still carrying "
+                "the device's persistent session identity"
+            )
+            assert blanked[name] is None
+
+
+def test_another_participants_session_is_left_alone():
+    """The refusal half. De-identification must not reach a third party.
+
+    A challenge has two sides. Blanking the friend's session id would destroy
+    someone else's row while deleting this account — the same overreach the
+    de-identified list exists to avoid in the first place.
+    """
+    by_table = {
+        inspect(model).local_table.name: blanked
+        for model, _column, blanked in _ACCOUNT_DEIDENTIFIED_ROWS
+    }
+    for table, column in _SOMEONE_ELSES_SESSION:
+        assert column not in by_table.get(table, {}), (
+            f"{table}.{column} belongs to the other participant and must not be blanked"
+        )
 
 
 def test_the_user_row_itself_is_not_in_either_list():

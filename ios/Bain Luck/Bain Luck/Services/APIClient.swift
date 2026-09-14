@@ -210,16 +210,43 @@ actor APIClient {
     /// Set by the auth module later. Returns a Firebase ID token or backend session token.
     var authTokenProvider: (() async -> String?)?
 
-    /// Persistent session ID for anonymous prediction tracking
-    private let sessionId: String = {
-        let key = "bainluck_session_id"
-        if let existing = UserDefaults.standard.string(forKey: key) {
+    /// The `UserDefaults` key holding the anonymous session identity.
+    static let sessionIdDefaultsKey = "bainluck_session_id"
+
+    /// Persistent session ID for anonymous prediction tracking.
+    ///
+    /// `var`, not `let`, because it must be rotatable: deleting an account
+    /// leaves three de-identified rows behind — a prediction challenge someone
+    /// else joined, a filed bug report, the search-quality log — and each of
+    /// those also carries a `session_id`. Clearing `user_id` while this device
+    /// kept sending the same session id would leave those rows linkable to the
+    /// same installation and to everything it did next, after the app had said
+    /// all associated data was permanently deleted (#678, CERT-2870).
+    private var sessionId: String = APIClient.loadOrCreateSessionId()
+
+    private static func loadOrCreateSessionId() -> String {
+        if let existing = UserDefaults.standard.string(forKey: sessionIdDefaultsKey) {
             return existing
         }
         let id = UUID().uuidString
-        UserDefaults.standard.set(id, forKey: key)
+        UserDefaults.standard.set(id, forKey: sessionIdDefaultsKey)
         return id
-    }()
+    }
+
+    /// Discard the anonymous session identity and start a fresh one.
+    ///
+    /// Called after a successful account deletion. The server blanks the
+    /// session id on the rows it keeps; this ends the identity's future, so
+    /// nothing recorded from here on can be joined to anything recorded
+    /// before. Caches keyed on the old identity go with it.
+    func rotateSessionIdentity() {
+        let previous = sessionId
+        UserDefaults.standard.removeObject(forKey: Self.sessionIdDefaultsKey)
+        sessionId = Self.loadOrCreateSessionId()
+        guard sessionId != previous else { return }
+        responseCache.removeAll()
+        feedCache.evict(keepingOnly: currentFeedIdentity())
+    }
 
     /// Installs the auth token source used to attach Bearer credentials to API requests.
     func setAuthTokenProvider(_ provider: (() async -> String?)?) {
