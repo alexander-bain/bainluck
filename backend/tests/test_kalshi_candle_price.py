@@ -36,6 +36,18 @@ def _candle(bid=None, ask=None, close=None, mean=None, previous=None):
     return out
 
 
+@pytest.fixture(params=["calibration", "chart"])
+def reducer(request):
+    """Both call sites of the one policy, so a fix cannot land on only one.
+
+    The corpus test below pins the two to the same answer, but it can only
+    compare them on candles somebody remembered to add. Running the #6126 cases
+    through both directly means a reducer that keeps the old ask rule fails on
+    its own name, not on a shared-corpus diff.
+    """
+    return {"calibration": candle_yes_price, "chart": normalize_candle}[request.param]
+
+
 #: (label, candle, expected). Values are the venue's, to the cent.
 REAL_CANDLES = [
     # The headline: Sam Burns lost, and the book at this candle was
@@ -70,10 +82,72 @@ def test_the_settled_shell_yields_no_price_at_all():
     assert candle_yes_price(_candle(bid="0.0000", ask="1.0000")) is None
 
 
+def test_the_venues_untraded_opening_book_yields_no_price(reducer):
+    """#6126: bid 0.0000 / ask 0.9900, nothing traded — Kalshi's default book.
+
+    Read at the venue on 2026-09-14, ``KXWTACHALLENGERMATCH-26SEP14ZELNAJ-NAJ``
+    hourly candlesticks: the first candle carries ``yes_bid.open_dollars
+    "0.0000"`` beside ``yes_ask.open_dollars "0.9900"``. So this is not an edge
+    case — it is the shape EVERY Kalshi market wears before anybody trades it,
+    and "not exactly 1.00" let all of it through as a 99% probability.
+
+    What it cost: three eliminated players printed OPEN 99% on the settled US
+    Open Men's Singles ladder (`/futures/34277822`), all three stored at 0.99
+    from one 18:00 candle. Bublik's next candle is 0.13.
+    """
+    assert reducer(_candle(bid="0.0000", ask="0.9900")) is None
+
+
 def test_a_one_sided_book_with_no_trade_falls_back_to_the_one_real_side():
     """Not every one-sided book is a shell — a 0.03 ask is a real quote."""
     assert candle_yes_price(_candle(bid="0.0000", ask="0.0300")) == pytest.approx(0.03)
     assert candle_yes_price(_candle(bid="0.9600")) == pytest.approx(0.96)
+
+
+def test_a_lone_ask_is_refused_only_above_the_bound_and_a_lone_bid_never_is(reducer):
+    """The asymmetry is the policy, and both halves are load-bearing.
+
+    ``app.utils.kalshi_empty_book`` measured both directions on production: a
+    lone ASK on an empty book grades at a 6.2% win rate against a 0.369 mean
+    stored price, while a lone BID grades at 93.7%. Somebody willing to PAY is
+    a price; an offer nobody took is not. So the bid side keeps its quote at
+    any height, and only the ask side is bounded.
+    """
+    # Ask side: refused above the bound, kept at and below it.
+    assert reducer(_candle(bid="0.0000", ask="0.5100")) is None
+    assert reducer(_candle(bid="0.0000", ask="0.5000")) == pytest.approx(0.50)
+    assert reducer(_candle(bid="0.0000", ask="0.0300")) == pytest.approx(0.03)
+    # Bid side at the same heights: untouched.
+    assert reducer(_candle(bid="0.9900", ask="0.0000")) == pytest.approx(0.99)
+    assert reducer(_candle(bid="0.5100")) == pytest.approx(0.51)
+
+
+def test_a_trade_still_beats_the_bound_and_an_absent_bid_is_not_a_zero_bid(reducer):
+    """Two populations the refusal must NOT take.
+
+    A candle that TRADED at 0.99 is a price however the book looks — rule 2
+    runs first and the refusal never sees it. And a candle with no bid field at
+    all is not evidence of an empty book: ``None`` means the venue reported no
+    side, which is the distinction ``is_lone_ask_on_empty_book`` exists to
+    keep, so that candle keeps its old answer rather than being widened into
+    the refusal.
+    """
+    assert reducer(_candle(bid="0.0000", ask="0.9900", close="0.9900")) == pytest.approx(0.99)
+    assert reducer(_candle(ask="0.9900")) == pytest.approx(0.99)
+
+
+def test_the_ask_bound_is_the_one_the_poller_already_enforces():
+    """The constant, not just the behaviour — one capability, one number.
+
+    Written as a literal beside an identity assertion rather than as
+    ``ASK_ONLY_TRUSTED_MAX + 0.01`` in the case above: a boundary computed from
+    the constant it pins moves with it and asserts nothing (this file's own
+    M4 mutation finding, one test up).
+    """
+    from app.utils.kalshi_empty_book import ASK_ONLY_TRUSTED_MAX
+
+    assert ASK_ONLY_TRUSTED_MAX == 0.50
+    assert candle_yes_price(_candle(bid="0.0000", ask="0.5100")) is None
 
 
 def test_a_bid_pinned_against_the_ceiling_is_a_tight_book_not_a_shell():
@@ -136,6 +210,11 @@ def test_the_policy_does_not_drift_from_the_chart_reducer():
     corpus = [c for _, c, _ in REAL_CANDLES] + [
         _candle(bid="0.0000", ask="1.0000"),
         _candle(bid="0.0000", ask="0.0300"),
+        # #6126, both sides of the ask bound and the venue's opening book.
+        _candle(bid="0.0000", ask="0.9900"),
+        _candle(bid="0.0000", ask="0.5100"),
+        _candle(bid="0.0000", ask="0.5000"),
+        _candle(ask="0.9900"),
         _candle(bid="0.4400", ask="0.4600", previous="0.2000"),
         _candle(bid="0.9900", ask="1.0000", close="0.9900"),
         _candle(previous="0.5000"),
