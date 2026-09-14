@@ -449,6 +449,36 @@ async def upsert_team(session, team_name, espn_team, sport_id, team_cache=None, 
                     break
 
     if not team:
+        # REFUSE THE MINT, not just the enrichment (#6215, CERT-2877). The
+        # caller's `sport_id` is the EVENT's, so a wrong event-level match does
+        # not merely borrow a badge — it creates the club under the wrong
+        # league, and THAT is what the reader sees: `Deportivo Achuapa · EPL`
+        # is `teams.sport_id`, not `abbreviation`. Clearing the badge on a row
+        # minted under `soccer_epl` leaves the caption exactly as wrong.
+        #
+        # The payload not corresponding is the only evidence available at this
+        # point that the caller's sport is not this club's, so it has to stop
+        # the row from existing rather than stop it from being decorated.
+        # Refusing here cannot strand an event: both call sites already write
+        # the FK behind `if home_team and ...`, because this function has
+        # always been able to return None.
+        if not espn_identity_corresponds(team_name, None, espn_team):
+            logger.warning(
+                "ESPN mint refused for %r under sport_id=%s: payload names "
+                "%r/%r/%r do not correspond, so this is a wrong event-level "
+                "match and the club would be created under the wrong league",
+                team_name,
+                sport_id,
+                espn_team.display_name,
+                espn_team.name,
+                espn_team.location,
+            )
+            if stats is not None:
+                stats["teams_espn_mint_refused"] = (
+                    stats.get("teams_espn_mint_refused", 0) + 1
+                )
+            return None
+
         team = Team(
             name=team_name,
             sport_id=sport_id,

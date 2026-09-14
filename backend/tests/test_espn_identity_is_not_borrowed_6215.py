@@ -315,7 +315,16 @@ class TestTheGuardIsWiredIntoTheWriter:
     """
 
     @pytest.mark.asyncio
-    async def test_a_new_row_does_not_take_another_clubs_badge(self):
+    async def test_a_new_row_is_not_minted_at_all(self):
+        """CERT-2877: refusing the BADGE was not enough, because the caption
+        is the SPORT.
+
+        `sport_id` is the caller's — the EVENT's — so a wrong event-level match
+        creates the club under the wrong league, and `Deportivo Achuapa · EPL`
+        is `teams.sport_id`, not `abbreviation`. Clearing the badge on a row
+        minted under `soccer_epl` leaves the caption exactly as wrong, which is
+        the false ship the grader caught. So the row is not created.
+        """
         from app.utils.espn_helpers import upsert_team
 
         session = _FakeSession()
@@ -324,15 +333,39 @@ class TestTheGuardIsWiredIntoTheWriter:
             session, "Fluminense", ARSENAL, sport_id=1298, stats=stats
         )
 
-        assert team.name == "Fluminense"
-        assert team.sport_id == 1298
+        assert team is None
+        assert session.added == [], "a club was created under the wrong league"
+        assert session.flushes == 0
+        assert stats["teams_espn_mint_refused"] == 1
+
+    @pytest.mark.asyncio
+    async def test_an_existing_row_survives_un_enriched(self):
+        """Refusing the mint must not become refusing the row.
+
+        A club we already hold keeps its id, its name and its sport; only the
+        payload is declined. This is the arm that would be lost if "refuse"
+        were implemented as a bare early return before the lookup.
+        """
+        from app.models.models import Team
+        from app.utils.espn_helpers import upsert_team
+
+        flu = Team(name="Fluminense", sport_id=1298)
+        flu.id = 4513
+        session = _FakeSession([flu])
+        stats = {}
+
+        team = await upsert_team(
+            session, "Fluminense", ARSENAL, sport_id=1298, stats=stats
+        )
+
+        assert team is flu
         assert team.espn_id is None
         assert team.abbreviation is None
         assert team.current_record is None
         assert team.location is None
-        assert team.logo_url_small is None
         assert not team.alternate_names
         assert stats["teams_espn_identity_refused"] == 1
+        assert "teams_espn_mint_refused" not in stats
 
     @pytest.mark.asyncio
     async def test_the_real_club_still_gets_everything(self):
