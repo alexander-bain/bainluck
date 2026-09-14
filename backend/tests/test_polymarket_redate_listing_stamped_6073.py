@@ -608,6 +608,92 @@ class TestTheRailWritesWhatTheShipClaims:
         assert session.writes == [], "no UPDATE may be issued at all"
 
     @pytest.mark.asyncio
+    async def test_reserve_pair_cannot_retime_first_team_fixture_6073(
+        self, monkeypatch
+    ):
+        """CERT-2845's witness: the B teams.
+
+        `normalize_team_name_for_matching` is the MATCHER's normalizer and it
+        deliberately strips reserve, youth and women's suffixes — `b`, `ii`,
+        `u21`, `women` — so "FC Barcelona B" and "FC Barcelona" are one club to
+        it. For finding a home for a market that is a feature. For dating a
+        fixture it is the sibling error with a squad in place of a first name,
+        and the two matches are on different days.
+
+        The refusal must be a refusal: no UPDATE at all, and counted.
+        """
+        rows = [_row(
+            home_team_name="FC Barcelona",
+            away_team_name="Real Madrid",
+            linked_names=["FC Barcelona B vs. Real Madrid B"],
+            linked_external_ids=["0xreserves"],
+        )]
+        stats, session = await _run(monkeypatch, rows)
+
+        assert stats["moved"] == 0, "a B team is not its first team"
+        assert stats["rescheduled"] == 0
+        assert stats["skipped_unpaired_group"] == 1
+        assert session.writes == [], "no UPDATE may be issued at all"
+
+    @pytest.mark.asyncio
+    async def test_an_actual_reserve_fixture_still_moves_6073(self, monkeypatch):
+        """The positive twin: the reserve fixture is a real fixture.
+
+        The rule must keep the qualifier as part of the identity in BOTH
+        directions. A B-team match re-dates on a B-team market — otherwise the
+        hole is closed by refusing every reserve league we carry.
+        """
+        rows = [_row(
+            home_team_name="FC Barcelona B",
+            away_team_name="Real Madrid B",
+            linked_names=["FC Barcelona B vs. Real Madrid B"],
+            linked_external_ids=["0xrealreserves"],
+        )]
+        stats, session = await _run(monkeypatch, rows)
+
+        assert stats["moved"] == 1
+        assert stats["skipped_unpaired_group"] == 0
+        assert len(session.writes) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_womens_side_cannot_retime_the_mens_fixture_6073(
+        self, monkeypatch
+    ):
+        """The same stripping, the other suffix. `women` is in the same list."""
+        rows = [_row(
+            home_team_name="Barcelona",
+            away_team_name="Chelsea",
+            linked_names=["Barcelona Women vs. Chelsea Women"],
+            linked_external_ids=["0xwomens"],
+        )]
+        stats, session = await _run(monkeypatch, rows)
+
+        assert stats["moved"] == 0
+        assert stats["skipped_unpaired_group"] == 1
+
+    @pytest.mark.asyncio
+    async def test_punctuation_does_not_break_a_true_pairing_6073(
+        self, monkeypatch
+    ):
+        """CERT-2845's FOLLOW-UP, `6073-PUNCTUATION-SAFE-PARTICIPANT-IDENTITY`.
+
+        "Hapoel Tel-Aviv F.C." and "Hapoel Tel Aviv FC" are one club. The fold
+        has to split on the hyphen and DELETE the periods: replacing them with
+        spaces turns "F.C." into two tokens `f` and `c`, which no longer equal
+        `fc`, and a plainly correct pairing is declined.
+        """
+        rows = [_row(
+            home_team_name="Hapoel Tel Aviv FC",
+            away_team_name="Hapoel Petah Tikva FC",
+            linked_names=["Hapoel Tel-Aviv F.C. vs. Hapoel Petah Tikva FC"],
+            linked_external_ids=["0xpunct"],
+        )]
+        stats, session = await _run(monkeypatch, rows)
+
+        assert stats["moved"] == 1
+        assert stats["skipped_unpaired_group"] == 0
+
+    @pytest.mark.asyncio
     async def test_a_surname_only_title_cannot_retime_a_sibling_fixture_6073(
         self, monkeypatch
     ):

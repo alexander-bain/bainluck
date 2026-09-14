@@ -32,8 +32,8 @@ from app.utils.futures_liveness import preserve_venue_settled  # #2222
 from app.utils.event_completion import (  # #6073
     POLYMARKET_VENUE_COMMENCE_SOURCE,
 )
-from app.utils.name_normalization import (  # #6073 CERT-2843
-    normalize_team_name_for_matching,
+from app.utils.name_normalization import (  # #6073 CERT-2845
+    normalize_team_name,
 )
 from app.utils.prediction_market_matching import (  # #6073 CERT-2840
     extract_matchup_with_ticker_fallback,
@@ -1362,6 +1362,25 @@ REDATE_WRITE_WITH_STATUS_SQL = f"""
 """
 
 
+#: Separators that mean "token boundary" inside a competitor's name.
+_IDENTITY_SEPARATORS = re.compile(r"[-_/]+")
+#: Everything else non-word is noise and is DELETED, not spaced — see
+#: `_same_participant` for why "F.C." must fold to `fc` and never to `f c`.
+_IDENTITY_PUNCTUATION = re.compile(r"[^\w\s]")
+
+
+def _identity_tokens(name: str) -> set:
+    """The name's identity-bearing tokens, case- and diacritic-folded.
+
+    `normalize_team_name` (NOT the matcher's `..._for_matching`) so squad, youth
+    and women's qualifiers survive — CERT-2845.
+    """
+    folded = normalize_team_name(name or "")
+    folded = _IDENTITY_SEPARATORS.sub(" ", folded)
+    folded = _IDENTITY_PUNCTUATION.sub("", folded)
+    return set(folded.split())
+
+
 def _same_participant(market_name: str, event_name: str) -> bool:
     """One competitor, named twice — or two competitors who share a surname?
 
@@ -1384,9 +1403,24 @@ def _same_participant(market_name: str, event_name: str) -> bool:
     "Alexander Zverev" and identifies neither brother, so allowing subsets would
     reopen the hole this closes from the other end. Measured: 204/204 reach on
     the live band either way, so nothing is bought by the looser rule.
+
+    AND NOT `normalize_team_name_for_matching`, WHICH IS CERT-2845. That is the
+    matcher's normalizer and it deliberately strips reserve, youth and women's
+    suffixes — `b`, `ii`, `u21`, `women` — so "FC Barcelona B" and "FC Barcelona"
+    are one club to it. For finding a home for a market that is a feature; for
+    dating a fixture it is the same error as the sibling case with a squad in
+    place of a first name, and this repo separately pins that a B team is not its
+    first team. `normalize_team_name` does the case and diacritic folding without
+    the suffix stripping, so the qualifier stays part of the identity.
+
+    Punctuation is folded here rather than inherited: separators (`-`, `_`, `/`)
+    become token boundaries so "Tel-Aviv" is "tel aviv", and remaining marks are
+    DELETED rather than replaced, so "F.C." is "fc" and not "f c". Replacing them
+    with spaces splits an abbreviation into letters and fails a pairing that is
+    plainly the same club.
     """
-    market_tokens = set(normalize_team_name_for_matching(market_name or "").split())
-    event_tokens = set(normalize_team_name_for_matching(event_name or "").split())
+    market_tokens = _identity_tokens(market_name)
+    event_tokens = _identity_tokens(event_name)
     return bool(market_tokens) and market_tokens == event_tokens
 
 
