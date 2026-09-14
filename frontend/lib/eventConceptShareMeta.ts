@@ -179,6 +179,67 @@ function pricedCompetitors(
     .filter((competitor): competitor is PricedCompetitor => competitor !== null);
 }
 
+/**
+ * The lowest price that PRINTS as "100%" (#6029).
+ *
+ * `formatShareProbability` rounds, so the reader-visible claim turns over one
+ * rounding step below 1.0: 0.995 prints "100%" and 0.994 prints "99%". The
+ * constant is therefore the formatter's own boundary rather than a taste
+ * judgement about what counts as "nearly certain", and
+ * `eventConceptCertaintyUnfurl6029.test.tsx` asserts both sides of it against
+ * `formatShareProbability` itself — if the formatter ever stops rounding, that
+ * test fails rather than this silently drifting.
+ */
+const PRINTS_AS_CERTAIN = 0.995;
+
+/**
+ * Is this board still a FORECAST?
+ *
+ * ═══ "LEADS AT 100%" IS NOT A SENTENCE A LIVE MARKET CAN PRODUCE ═══
+ *
+ * #6029 — `/event/golf/amgen-irish-open` unfurled "Amgen Irish Open: Shane
+ * Lowry 100%" over "Final: Shane Lowry won." Measured on production
+ * 2026-09-14 11:17Z, the two halves of one card disagreed in the same minute:
+ * the picture had the settled payload and said "won", the words had a
+ * pre-settlement one and said "leads at 100%".
+ *
+ * The stale read is the OCCASION, not the defect. The defect is that the copy
+ * had no answer for a price of 1.0 other than to narrate it as a lead, so ANY
+ * lag between a contest deciding and `event.status` flipping prints the same
+ * sentence. That lag is structural, not a blip: `_golf_status` only date-settles
+ * a tournament at `end_date < today - 1 day`, so a card that finished on Sunday
+ * is still non-settled on Monday unless DataGolf's `schedule_status` flips
+ * first, and the Irish Open's flip is the only reason production reads
+ * "settled" today.
+ *
+ * Nor is the fuel scarce. Measured against production the same morning, open
+ * futures markets carry 2,259 outcomes at exactly 1.000 and 1,711 more in
+ * [0.995, 1.0) — every one of which prints "100%".
+ *
+ * ═══ WITHHOLD THE BOARD, NOT THE COMPETITOR ═══
+ *
+ * Dropping only the certain competitor would promote the next one, so a field
+ * whose leader is decided would crown a 3% longshot as its new "leader". A top
+ * price that is not a forecast makes the whole ranking meaningless, so the
+ * board says nothing numeric at all — the same trade `boardLeader` already
+ * makes in `tournamentShareMeta` for a leader with no price.
+ *
+ * ═══ WHY THIS IS NOT "THE WINNER BRANCH BY ANOTHER ROUTE" ═══
+ *
+ * It deliberately does NOT claim a result. The header's refusal stands: a
+ * winner is read from the authoritative `won` flag and never inferred from a
+ * price, because `event:ufc:26sep12` sat `live` at 0.99. This branch is the
+ * opposite move — it claims LESS, not more. A reader gets the event's name and
+ * no number, and the card upgrades itself to "X won" the moment settlement
+ * lands.
+ *
+ * The band is one rounding step wide on purpose: 0.994 still prints "99%" and
+ * is left alone, so a genuinely lopsided live market is untouched.
+ */
+function isForecast(priced: PricedCompetitor[]): boolean {
+  return priced.length === 0 || priced[0].fraction < PRINTS_AS_CERTAIN;
+}
+
 /** The flagged winner's name, or null. Never inferred from a price. */
 function flaggedWinner(source: EventConceptShareSource): string | null {
   if (cleanText(source.event?.status)?.toLowerCase() !== "settled") return null;
@@ -220,7 +281,14 @@ export interface EventConceptShareFacts {
   label: string | null;
   /** Venue and location as one phrase, or null. */
   where: string | null;
-  /** Priced competitors, best first. Empty when nothing is priced. */
+  /**
+   * Priced competitors, best first.
+   *
+   * Empty when nothing is priced — and ALSO when the top price prints "100%",
+   * which is a certainty rather than a forecast (#6029, see `isForecast`). Both
+   * readers already draw the empty case as a quiet card, so neither needed a
+   * new branch to honour it.
+   */
   priced: PricedCompetitor[];
   /** `event.status === "settled"`. */
   settled: boolean;
@@ -231,11 +299,17 @@ export interface EventConceptShareFacts {
 export function eventConceptShareFacts(
   source: EventConceptShareSource
 ): EventConceptShareFacts {
+  const priced = pricedCompetitors(source);
   return {
     name: cleanText(source.event?.name) ?? "Event",
     label: contestLabel(source),
     where: place(source),
-    priced: pricedCompetitors(source),
+    // #6029 — a board whose top price prints "100%" is not a forecast, so it is
+    // withheld WHOLE rather than narrated as a lead. Cleared here, in the facts
+    // both readers share, so the picture and the sentence cannot take different
+    // views of it: the card's `rows` and the copy's branch are the same
+    // emptiness. See `isForecast`.
+    priced: isForecast(priced) ? priced : [],
     settled: cleanText(source.event?.status)?.toLowerCase() === "settled",
     winner: flaggedWinner(source),
   };
