@@ -6163,6 +6163,32 @@ def _printed_leader_percent(top_outcomes_data: list[dict]) -> int | None:
     return None if percent is None else int(percent)
 
 
+def _printed_runner_up_percent(top_outcomes_data: list[dict]) -> int | None:
+    """The highest percent the card prints BENEATH its top row (#6187).
+
+    The operand `lead_is_printable` compares the leader against, so that a
+    caption only says "leads" when the printed board can show a lead.
+
+    ** MAX OVER THE OTHERS, NOT `[1]`. ** Index 1 is the second-highest
+    probability (all three builders append from one descending `sorted_outcomes`
+    — see `_leader_outcome_is_team`), and half-up rounding is monotonic, so on
+    today's data the two are the same number. Taking the max anyway costs one
+    pass and removes the dependency entirely: a card is mis-captioned if ANY
+    printed row matches the leader, whichever slot it lands in, and this then
+    stays correct if `rendered_card_percents` ever renders a card's rows on a
+    shared basis rather than one at a time.
+
+    `None` when there is nothing beneath the leader or nothing beneath it is
+    priced — a one-row card has no runner-up to tie with, and `lead_is_printable`
+    reads `None` as "keep today's copy".
+    """
+    others = [
+        outcome.get("rendered_percent") for outcome in (top_outcomes_data or [])[1:]
+    ]
+    priced = [int(percent) for percent in others if percent is not None]
+    return max(priced) if priced else None
+
+
 def _printed_affirmative_percent(
     top_outcomes_data: list[dict],
     raw_names: list[str],
@@ -9553,6 +9579,7 @@ async def _score_sports_mode_futures(
         # D1 clause b (#4066) — read the RAW names, before humanization.
         affirmative_probability = binary_affirmative_probability(outcomes_data)
         _printed_leader = _printed_leader_percent(top_outcomes_data)
+        _printed_runner_up = _printed_runner_up_percent(top_outcomes_data)
         _printed_affirmative = _printed_affirmative_percent(
             top_outcomes_data, _raw_card_names
         )
@@ -9585,6 +9612,7 @@ async def _score_sports_mode_futures(
                 leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
                 leader_probability=display_leader_prob,
                 rendered_leader_percent=_printed_leader,
+                rendered_runner_up_percent=_printed_runner_up,
                 source_count=source_count,
                 market_name=market.name,
                 affirmative_probability=affirmative_probability,
@@ -9603,6 +9631,7 @@ async def _score_sports_mode_futures(
             leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
             leader_probability=display_leader_prob,
             rendered_leader_percent=_printed_leader,
+            rendered_runner_up_percent=_printed_runner_up,
             source_count=source_count,
             affirmative_probability=affirmative_probability,
             rendered_affirmative_percent=_printed_affirmative,
@@ -9688,6 +9717,7 @@ async def _score_sports_mode_futures(
             leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
             leader_probability=display_leader_prob,
             rendered_leader_percent=_printed_leader,
+            rendered_runner_up_percent=_printed_runner_up,
             source_count=source_count,
             affirmative_probability=affirmative_probability,
             rendered_affirmative_percent=_printed_affirmative,
@@ -10932,6 +10962,7 @@ async def _score_futures(
 
             affirmative_probability = binary_affirmative_probability(outcomes_data)
             _printed_leader = _printed_leader_percent(top_outcomes_data)
+            _printed_runner_up = _printed_runner_up_percent(top_outcomes_data)
             _printed_affirmative = _printed_affirmative_percent(
                 top_outcomes_data, _raw_card_names
             )
@@ -10968,6 +10999,7 @@ async def _score_futures(
                     leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
                     leader_probability=display_leader_prob,
                     rendered_leader_percent=_printed_leader,
+                    rendered_runner_up_percent=_printed_runner_up,
                     source_count=source_count,
                     market_name=market.name,
                     affirmative_probability=affirmative_probability,
@@ -10986,6 +11018,7 @@ async def _score_futures(
                 leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
                 leader_probability=display_leader_prob,
                 rendered_leader_percent=_printed_leader,
+                rendered_runner_up_percent=_printed_runner_up,
                 source_count=source_count,
                 affirmative_probability=affirmative_probability,
                 rendered_affirmative_percent=_printed_affirmative,
@@ -11339,6 +11372,7 @@ async def _score_futures(
                 leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
                 leader_probability=display_leader_prob,
                 rendered_leader_percent=_printed_leader,
+                rendered_runner_up_percent=_printed_runner_up,
                 source_count=source_count,
                 affirmative_probability=affirmative_probability,
                 rendered_affirmative_percent=_printed_affirmative,
