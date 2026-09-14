@@ -7154,10 +7154,52 @@ async def _load_live_poll_population(session, now) -> _LivePollPopulation:
         # query on one malformed stamp, which is a worse trade for a tiebreak.
         # A leg never written at all is NULL and sorts FIRST — it is the
         # stalest thing there is.
+        #
+        # #6179 — AND THE SECOND TERM IS WHAT KEEPS THAT NULL GROUP FROM BEING
+        # A LIVELOCK. The key above is one an entire CLASS of rows can never
+        # advance: a derivative market has no home-team win probability to
+        # blend, so `Torino vs Roma: Total Goals`, `… : Spread`, `… : BTTS` and
+        # single tennis matches have no `kalshi` key on their event and never
+        # will. They are NULL, they sort first, and — with `id` as the only
+        # tiebreak — they sort in the SAME order every beat. Measured on
+        # production 2026-09-14 16:26Z: 17 such Kalshi markets held the head of
+        # a 107-row order, the beat reached 11 of them, and position 12
+        # (`60949849`, a LIVE tennis match) had not been fetched in 15 h 36 m.
+        # A work queue whose priority key the work cannot advance starves at
+        # the head, which is gotcha #41 arriving through the repair for it.
+        #
+        # So: when the blended stamp cannot tell two rows apart, prefer the one
+        # THIS LOOP has not touched in longest. `FuturesOutcome.last_updated` is
+        # the touch-stamp the fetch below writes unconditionally (models.py:957
+        # — "when did the poller last SEE this row", explicitly not "when did
+        # the price move"), so it is a quantity the work does advance, on every
+        # class of row, including the ones that can never own a blended stamp.
+        #
+        # A SECOND TERM AND NOT A COALESCE, deliberately: the two quantities are
+        # not the same thing and must not be blended into one. Rows that DO
+        # carry a blended stamp keep the primary ordering #5767 reasoned about,
+        # byte for byte; this only orders within a tie. Correlated rather than
+        # joined so the population read stays two statements — measured against
+        # today's ordering on production, 9.8/8.2 ms -> 25.5/20.3 ms on 676
+        # rows, which buys back a 2.8-second admission window.
+        #
+        # No explicit `.correlate(FuturesMarket)`: it was written, and the
+        # mutant that deletes it compiles BYTE-IDENTICAL SQL because
+        # `FuturesMarket` is already in the enclosing FROM and SQLAlchemy
+        # correlates it on its own. An equivalence mutant is code to delete,
+        # not a guard to add a test for — and the correlation predicate itself
+        # is pinned by `test_live_poll_fetch_share_6179.py`, which reads the
+        # compiled statement, so the protection is the assertion and never the
+        # call.
         .order_by(
             func.jsonb_extract_path_text(
                 Event.win_probability_sources, FuturesMarket.source, "updated_at"
             ).asc().nullsfirst(),
+            select(func.max(FuturesOutcome.last_updated))
+            .where(FuturesOutcome.market_id == FuturesMarket.id)
+            .scalar_subquery()
+            .asc()
+            .nullsfirst(),
             FuturesMarket.id.asc(),
         )
     )
@@ -7355,19 +7397,50 @@ async def _poll_live_prediction_market_prices():
         #      is REAL (`asyncio.wait_for` on the call itself) — subtracting a
         #      number for an overshoot nothing actually bounds would be arithmetic
         #      pretending to be a guarantee.
-        _venue_total = len(kalshi_ids) + len(polymarket_ids)
+        #
+        # #6179 — AND THE SHARE IS COUNTED IN CALLS, NOT IN ROWS, because calls
+        # are the thing the FETCH window pays for. Polymarket's loop caches by
+        # Gamma event id: every sub-market of an event is priced by the one
+        # fetch of its parent, so its rows and its requests are different
+        # numbers by a wide margin. Measured on production 2026-09-14 16:26Z:
+        # 569 Polymarket rows resolve to 153 distinct fetch keys against
+        # Kalshi's 107 rows / 107 keys, so a row-counted reserve took
+        # 144 x 569/676 = 121.2 s and left Kalshi 144 - 121.2 - 20 = **2.8 s**
+        # of a 144-second window — 11 of 107 markets fetched, the same 11 every
+        # beat, while the pass as a whole finished in 60 s of its 240 s budget.
+        # A reserve that over-counts its own work by 3.7x is not a floor for the
+        # venue it protects, it is a ceiling on the other one. Counted in keys
+        # the same population reserves 144 x 153/260 = 84.7 s and Kalshi's
+        # window is 39.3 s, which fits all 107.
+        #
+        # Rows with no fetch key are excluded on the same principle: the loop
+        # `continue`s past them without a request, so they are not work this
+        # window has to buy.
+        _polymarket_fetch_keys = {
+            _key
+            for _mid in polymarket_ids
+            if (_market := pop.markets_by_id.get(_mid)) is not None
+            and (_key := _polymarket_gamma_event_id(_market)) is not None
+        }
+        _kalshi_calls = len(kalshi_ids)
+        _polymarket_calls = len(_polymarket_fetch_keys)
+        # Both venues can be call-less while `pop.rows` is non-empty (every
+        # Polymarket row missing its event id, no Kalshi rows), so this total
+        # is NOT the row count's guaranteed-positive one — guard the divide.
+        _venue_total = _kalshi_calls + _polymarket_calls
         _polymarket_reserve = (
             max(
-                _venue_fetch_window * (len(polymarket_ids) / _venue_total),
+                _venue_fetch_window * (_polymarket_calls / _venue_total),
                 _LIVE_POLL_MIN_VENUE_FLOOR_SECONDS,
             )
-            if polymarket_ids
+            if _polymarket_calls
             else 0.0
         )
-        # A venue with no rows reserves NOTHING — the single-venue common case
-        # must keep the whole window, or this repair costs every ordinary beat.
+        # A venue with no CALLS TO MAKE reserves NOTHING — the single-venue
+        # common case must keep the whole window, or this repair costs every
+        # ordinary beat.
         _kalshi_admission_window = _venue_fetch_window - _polymarket_reserve - (
-            _LIVE_POLL_VENUE_CALL_TIMEOUT_SECONDS if polymarket_ids else 0.0
+            _LIVE_POLL_VENUE_CALL_TIMEOUT_SECONDS if _polymarket_calls else 0.0
         )
         _kalshi_fetch_deadline = _started_at + max(_kalshi_admission_window, 0.0)
         # The FULL window, deliberately: Polymarket runs second, so its deadline
