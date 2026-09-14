@@ -46,15 +46,26 @@
  * ═══ REACH, AND WHY THE ISSUE'S OWN NUMBER IS NOT THE ONE USED HERE ═══
  *
  * A straight random sample (`ORDER BY md5(id::text)`) of 80 of the 2,329 rows
- * sitting `live` or `scheduled` at 09:30Z: **49 served no price at all — 61%**,
- * or roughly 1,400 previews currently drawing this card.
+ * sitting `live` or `scheduled` at 09:30Z: **35 served no price at all — 44%**,
+ * or roughly 1,020 previews currently drawing this card.
+ *
+ * 🔴 THAT IS A CORRECTED NUMBER AND THE CORRECTION IS THE LESSON. The first pass
+ * read 49 of 80 — 61% — because it fetched the payloads in a tight loop, and
+ * `/api/events/{id}` rate-limits at 60/minute. A throttled body is
+ * `{"detail": "Rate limit exceeded: 60/minute"}`, which carries no `current_odds`
+ * key, so every throttled row was scored as a row with no price. A census that
+ * asks "is this field absent?" cannot tell an absent field from a response that
+ * was never a row, and it always errs toward "absent". Re-measured at 1.05s
+ * spacing with every response validated by `id` first: 80 of 80 resolved, 35
+ * priceless.
  *
  * #6119 filed the reach as 1,097 off `win_probability_sources IS NULL`. That is a
- * PROXY for the column the card actually draws from, and measuring it showed it
- * is loose in BOTH directions: 3 of 40 sampled no-source rows do serve a
- * `current_odds` object, and 22 of 40 sampled WITH-source rows serve none. The
- * predicate this ship adds reads `current_odds` itself, so neither error reaches
- * it — and the honest reach is larger than the issue claimed, not smaller.
+ * proxy for the column the card draws from, and re-measured it is a GOOD proxy,
+ * not the loose one the contaminated pass claimed: of 40 no-source rows 37 serve
+ * no price and 3 do; of 40 with-source rows 39 are priced and 1 is not. Weighted,
+ * ~45% — agreeing with the direct sample. The predicate still reads `current_odds`
+ * because that is what the card draws from, but the proxy was never the thing
+ * that was wrong; the fetch was.
  *
  * ═══ WHAT THE RULE IS, AND WHY IT WAS NOT WRITTEN HERE ═══
  *
@@ -78,7 +89,8 @@
  * very card: *"a finished game's loser is 0%, and 0% is a fact, not a missing
  * value"* — the `--` it used to print there was the defect. The two surfaces have
  * disagreed about a zero ever since, and settling that is not this ship: it has
- * no measured members (0 of 45 `current_odds` objects across 157 rows), the
+ * no measured members (0 of 87 `current_odds` objects across the throttled
+ * samples), the
  * measured defect is the key being ABSENT, and flipping it would reverse a
  * shipped ruling on the authority of a fixture.
  *
@@ -188,7 +200,7 @@ const SARACENS_LEICESTER = {
  * Without this, a mutant that withholds the forecast on EVERY scheduled row
  * passes every other assertion in this file, and that mutant is not hypothetical:
  * "scheduled games have no settled number, just draw the quiet card" is the
- * obvious over-reach. 39 of the 80 sampled rows are priced and must be untouched.
+ * obvious over-reach. 45 of the 80 sampled rows are priced and must be untouched.
  */
 const PRICED = {
   ...BAYERN_LEVERKUSEN,
@@ -204,7 +216,7 @@ const PRICED = {
 /**
  * `current_odds` present as an OBJECT, with one side missing.
  *
- * Not observed on production (0 of 45 priced objects), and pinned anyway: the
+ * Not observed on production (0 of 87 priced objects), and pinned anyway: the
  * type permits it, the pair must be taken whole or not at all (#2279), and a
  * per-side coalesce here is exactly how `servedDuelPercents` came to exist.
  */
@@ -227,8 +239,8 @@ const HALF_PRICED = {
  * bare 0.5) says the opposite, so the two halves have disagreed about a zero
  * since #4963 landed.
  *
- * Not resolved here. It has no measured members (0 of 45 `current_odds` objects
- * across 157 rows), the measured defect is the key being ABSENT, and flipping it
+ * Not resolved here. It has no measured members (0 of 87 `current_odds` objects
+ * across the throttled samples), the measured defect is the key being ABSENT, and flipping it
  * would reverse a shipped ruling on the strength of a fixture. The zero keeps
  * today's behaviour on both surfaces and the disagreement is pinned below rather
  * than quietly closed.
@@ -467,7 +479,7 @@ describe("#6119 — no price withholds, and never asserts", () => {
     // The whole defect was the picture making a claim the row does not support.
     // "No price" is not evidence about the clock, and a fix that reached
     // `eventStatus` would be the same over-reach pointing the other way — it
-    // would print "No result reported" over 1,400 games, most of which have not
+    // would print "No result reported" over ~1,020 games, most of which have not
     // kicked off. #6113 moved that branch to the TOP of `eventStatus` and the
     // order is load-bearing, so this is the assertion that keeps `noPrice` out.
     expect(allText(await renderCard(BAYERN_LEVERKUSEN))).toContain("Upcoming");
@@ -597,7 +609,7 @@ describe("#6119 — shareForecastPercents, the one owner", () => {
 
   it("reads current_odds and NOT win_probability_sources", () => {
     // The issue's reach came off `win_probability_sources`, which is a proxy and
-    // is wrong in both directions (3 of 40 / 22 of 40 on production). A row with
+    // errs slightly both ways (3 of 40 / 1 of 40 on production). A row with
     // no sources but a real served price must keep its number.
     expect(hasNoPriceForShare(PRICED)).toBe(false);
   });
