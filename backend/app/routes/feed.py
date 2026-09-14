@@ -5712,6 +5712,14 @@ _SPORT_LABEL_MAP: dict[str, str] = {
     "tennis_atp": "ATP",
     "tennis_wta": "WTA",
     "mma_mixed_martial_arts": "MMA",
+    # #2621 — the four below are brands a reader knows by one name, where the
+    # derived "COUNTRY LEAGUE" form below reads as a description instead
+    # ("SPAIN LA LIGA"). Every other key is served by the derivation; this map
+    # is for brands, never for patching the derivation's output.
+    "soccer_spain_la_liga": "LA LIGA",
+    "soccer_italy_serie_a": "SERIE A",
+    "soccer_france_ligue_one": "LIGUE 1",
+    "soccer_germany_bundesliga": "BUNDESLIGA",
 }
 
 
@@ -5794,13 +5802,35 @@ def _outcomes_have_closing_line(outcomes) -> bool:
 
 
 def _get_sport_label(sport_key: str | None) -> str | None:
+    """The competition chip a Discover card prints (EventCard.tsx renders it
+    verbatim, so whatever this returns is what a reader sees).
+
+    #2621: this used to fall back to ``parts[-1].upper()`` — the LAST
+    underscore-delimited segment — which is a fragment of a name, not a name.
+    An allowlist whose default is a plausible real word does not fail on a miss;
+    it ships a confident wrong one. Measured over the 95 sport keys carrying
+    events in a 10-day window, 83 miss the map and 58 of those clipped to a
+    different word than the key supports: ``soccer_spain_la_liga`` printed
+    ``LIGA`` (photographed on the landing page), Serie A printed ``A``, Ligue 1
+    printed ``ONE``. Worse than wrong, the clip COLLIDES — ten competitions
+    printed the single chip ``LEAGUE`` (UEFA Nations, Europa, Japan's J League,
+    Sweden's hockey league…), three printed ``OPEN``, three ``BUNDESLIGA``
+    across two different sports — so the chip was information-free exactly where
+    a reader needs it to disambiguate.
+
+    Keeping every segment but the leading sport family is honest for any key,
+    including ones nobody has enumerated: a new ``tennis_wta_<tournament>_open``
+    reads ``WTA <TOURNAMENT> OPEN`` the first time it ranks, with no map edit.
+    It also beats naming the tournament alone, which would print one ``US OPEN``
+    chip for both the ATP and the WTA draw.
+    """
     if not sport_key:
         return None
     if sport_key in _SPORT_LABEL_MAP:
         return _SPORT_LABEL_MAP[sport_key]
-    parts = sport_key.split("_")
+    parts = [p for p in sport_key.split("_") if p]
     if len(parts) >= 2:
-        return parts[-1].upper()
+        return " ".join(p.upper() for p in parts[1:])
     return sport_key.upper()
 
 
