@@ -1284,46 +1284,67 @@ export default function CalibrationPage() {
               The same data without the bucket matching, which is how this section used to lead.
               Points on the diagonal = perfect calibration; above = outcomes happened <em>more</em>{" "}
               than predicted, below = <em>less</em>. Shaded band = &plusmn;5pp and point size
-              reflects sample count. Because the two cohorts differ in source, category and
-              market-shape mix, whichever side lands lower here is an observed ordering &mdash; not
-              evidence that trading caused it. <strong className="text-text-secondary">The table
-              above is the version that controls for that</strong>, which is why this one is folded
-              away rather than shown beside it.
+              reflects sample count. The two cohorts are different sets of outcomes &mdash; different
+              sources, categories and market shapes &mdash; so the distance between them here is not
+              evidence about what trading does to a forecast.{" "}
+              <strong className="text-text-secondary">The table above is the version that holds the
+              probability mix fixed</strong>, which is why this one is folded away rather than shown
+              beside it.
             </p>
+            {/* #6176: these two series were `#16a34a` green and `#dc2626` red —
+                the good/bad pair. On a chart whose whole subject is which cohort
+                sits closer to the diagonal, that is L2-230's "the colour is part
+                of the claim" in its loudest form, and it was asserting an
+                ordering the prose beside it has now withdrawn. Swapped for two
+                CATEGORICAL entries from this page's own `COLORS` palette, so the
+                series stay tellable apart without either one being the winner.
+                Indexed rather than re-spelled so no new hex enters the file.
+
+                Blue + PINK, not blue + violet: the first attempt used COLORS[4]
+                (#7c3aed), only ~42 degrees of hue from COLORS[0], and the LOOK
+                showed the two curves blending into a single purple mass on a
+                chart whose entire job is separating them. The test that passed
+                it asserted only that the two indices DIFFER. It now asserts a
+                minimum hue separation, computed from the palette's own hexes. */}
             <CalibrationChart
               series={[
-                { data: movedBuckets, color: "#16a34a", label: `Traded (${movedN.toLocaleString()})` },
-                { data: unchangedBuckets, color: "#dc2626", label: `Untraded (${unchangedN.toLocaleString()})` },
+                { data: movedBuckets, color: COLORS[0], label: `Traded (${movedN.toLocaleString()})` },
+                { data: unchangedBuckets, color: COLORS[5], label: `Untraded (${unchangedN.toLocaleString()})` },
               ]}
               width={700}
               height={400}
               thinFloor={MIN_CHART_BUCKET_N}
             />
-          {/* L2-230: the value colour is part of the claim. Hard-coding moved
-              green and unchanged orange asserted "moved is better" in pixels
-              even on the day moved measured 1.7pp against unchanged's 1.0pp,
-              so it follows the same direction the sentence below does. */}
+          {/* L2-230 found that the value colour is part of the claim: hard-coding
+              moved green and unchanged orange asserted "moved is better" in
+              pixels even on the day moved measured 1.7pp against unchanged's
+              1.0pp. Its fix was to make the colour FOLLOW the observed ordering
+              instead of contradicting it.
+
+              #6176 (Alex, 2026-09-14) withdraws the ordering itself, so the
+              colour has nothing honest left to follow. A green figure beside an
+              orange one is a verdict on which cohort did better — the same claim
+              the sentence below no longer makes, rendered in a form no
+              disclaimer reaches. These are different populations; neither one
+              "wins". Both figures are now neutral, and `activity.direction`
+              reaches the page only as a data attribute for the audit rail.
+
+              The numbers themselves are untouched: Alex's instruction forbids
+              hiding contrary evidence as explicitly as it forbids the claim. */}
           <div className="grid grid-cols-2 gap-3 mt-4">
             {/* UX-P075 item (c): "Active Trading" / "Opening Price Only" were a
-                fourth and fifth name for the same two cohorts. */}
+                fourth and fifth name for the same two cohorts. The nouns stay —
+                #6176 moved the claim, not the vocabulary. */}
             <StatCard label="Traded"
               testId="calibration-activity-moved"
               value={`${movedECE.toFixed(1)}pp`}
               detail={`${movedN.toLocaleString()} outcomes`}
-              valueClass={
-                activity.direction === "moved_higher" ? "text-orange-600"
-                  : activity.direction === "unchanged_higher" ? "text-green-600"
-                    : "text-text-primary"
-              } />
+              valueClass="text-text-primary" />
             <StatCard label="Untraded"
               testId="calibration-activity-unchanged"
               value={`${unchangedECE.toFixed(1)}pp`}
               detail={`${unchangedN.toLocaleString()} outcomes`}
-              valueClass={
-                activity.direction === "unchanged_higher" ? "text-orange-600"
-                  : activity.direction === "moved_higher" ? "text-green-600"
-                    : "text-text-primary"
-              } />
+              valueClass="text-text-primary" />
           </div>
           {activity.sentence && (
             <p

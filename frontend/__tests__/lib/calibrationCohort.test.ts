@@ -399,41 +399,54 @@ describe("every cohort label names the predicate it actually selects", () => {
 // 3. The direction grammar
 // ===========================================================================
 
-describe("the activity comparison states the observed ordering and nothing more", () => {
-  test("production: moved 1.7pp vs unchanged 1.0pp reads as moved-worse", () => {
+// #6176 (Alex, 2026-09-14) retitled this block. It used to assert that the
+// section stated the observed ordering; the ordering is withdrawn, so every
+// assertion that demanded it now forbids it. The cohort NOUNS are untouched —
+// Alex refused the rename as the fix — so this suite still pins "traded" and
+// "untraded" everywhere else, and only the CLAIM moves.
+describe("the activity comparison states both figures and ranks neither", () => {
+  test("production: moved 1.7pp vs unchanged 1.0pp states both and ranks neither", () => {
     const a = describeActivityComparison(
       { ece: PROD.movedECE, n: PROD.movedN },
       { ece: PROD.unchangedECE, n: PROD.unchangedN }
     );
+    // The ordering survives as a machine fact for the audit rail...
     expect(a.direction).toBe("moved_higher");
     expect(a.movedText).toBe("1.7");
     expect(a.unchangedText).toBe("1.0");
-    expect(a.ratioText).toBe("1.7");
-    expect(a.sentence).toContain("traded cohort carries the higher calibration error");
+    // ...and reaches the reader in neither prose nor ratio.
+    expect("ratioText" in a).toBe(false);
+    expect(a.sentence).not.toMatch(/carries the higher|carries the lower/);
+    expect(a.sentence).toContain("1.7pp");
+    expect(a.sentence).toContain("1.0pp");
+    expect(a.sentence).toMatch(/different sets of outcomes/);
     // The shipped bug, in one line: 1.0/1.7 = 0.6 printed as "more accurately".
     expect(a.sentence).not.toMatch(/more accurately calibrated/i);
     expect(a.sentence).not.toContain("0.6x");
   });
 
-  test("the reversed ordering names the other cohort", () => {
+  test("the reversed ordering names no cohort either", () => {
     const a = describeActivityComparison({ ece: 1.0, n: 10 }, { ece: 1.7, n: 10 });
     expect(a.direction).toBe("unchanged_higher");
-    expect(a.sentence).toContain("untraded cohort carries the higher calibration error");
+    expect(a.sentence).not.toMatch(/carries the higher|carries the lower/);
+    expect(a.sentence).not.toMatch(/\buntraded cohort\b/);
   });
 
-  test("a tie at display precision is stated as a tie", () => {
+  test("a tie is not singled out as a finding either", () => {
     const a = describeActivityComparison({ ece: 1.04, n: 10 }, { ece: 1.02, n: 10 });
     expect(a.direction).toBe("tied");
-    expect(a.ratioText).toBeNull();
-    expect(a.sentence).toContain("effectively the same calibration error");
+    // "effectively the same calibration error" was itself a conclusion drawn
+    // from a cross-cohort comparison — a weaker one, but the same shape.
+    expect(a.sentence).not.toMatch(/effectively the same/);
+    expect(a.sentence).toContain("1.0pp");
   });
 
-  test("a zero denominator suppresses the ratio rather than dividing by it", () => {
+  test("a zero side divides by nothing, because nothing is divided", () => {
     const a = describeActivityComparison({ ece: 1.2, n: 10 }, { ece: 0.04, n: 10 });
     expect(a.direction).toBe("moved_higher");
-    expect(a.ratioText).toBeNull();
     expect(a.sentence).not.toContain("Infinity");
     expect(a.sentence).not.toContain("NaN");
+    expect(a.sentence).toContain("0.0pp");
   });
 
   test.each([
