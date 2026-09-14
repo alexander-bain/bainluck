@@ -149,6 +149,7 @@ def _new_rail():
 def _event(
     session, sport, *, commence=LISTING_STAMP, source="polymarket",
     status="suspended", completed_at=None, home_score=None, away_score=None,
+    period=None, game_clock=None,
 ):
     """The minted row. `external_id` is NULL, exactly as production has it."""
     from app.models.models import Event
@@ -158,6 +159,7 @@ def _event(
         commence_time=commence, commence_time_source=source, status=status,
         external_id=None, completed_at=completed_at,
         home_score=home_score, away_score=away_score,
+        period=period, game_clock=game_clock,
     )
     session.add(e)
     session.flush()
@@ -221,7 +223,11 @@ async def test_phase15_redates_the_production_specimen_from_listing_stamp_to_ven
     session.refresh(event)
     assert event.commence_time.replace(tzinfo=timezone.utc) == VENUE_KICKOFF
     assert event.commence_time_source == POLYMARKET_VENUE_COMMENCE_SOURCE
-    assert stats["funnel"]["phase15_pm_venue_corrected"] == 1
+    # The venue kickoff is AHEAD of this pass's `NOW`, so the specimen is also
+    # un-started: a match that has not begun cannot be `suspended`, which the
+    # event page renders as "No result reported".
+    assert event.status == "scheduled"
+    assert stats["funnel"]["phase15_pm_venue_corrected_and_unstarted"] == 1
 
 
 @pytest.mark.asyncio
@@ -296,7 +302,11 @@ async def test_the_specimen_is_repaired_from_the_parents_stamp_not_the_childs_60
     session.refresh(event)
     assert event.commence_time.replace(tzinfo=timezone.utc) == VENUE_KICKOFF
     assert event.commence_time_source == POLYMARKET_VENUE_COMMENCE_SOURCE
-    assert stats["funnel"]["phase15_pm_venue_corrected"] == 1
+    # The venue kickoff is AHEAD of this pass's `NOW`, so the specimen is also
+    # un-started: a match that has not begun cannot be `suspended`, which the
+    # event page renders as "No result reported".
+    assert event.status == "scheduled"
+    assert stats["funnel"]["phase15_pm_venue_corrected_and_unstarted"] == 1
 
 
 @pytest.mark.asyncio
@@ -740,6 +750,9 @@ def test_the_redate_write_is_conditional_in_the_statement_not_in_python_6073():
         commence_time=LISTING_STAMP,
         # CERT-2849's required repair: the AUTHORITY column joined the tuple.
         commence_time_source="polymarket",
+        # The status arm reads these two to decide the row has not been played,
+        # so they join the tuple for the same reason the authority column did.
+        period=None, game_clock=None,
     )
     wrote = asyncio.run(phase15_redate_compare_and_write(
         _Recorder(), SimpleNamespace(id=15312442),
@@ -758,11 +771,16 @@ def test_the_redate_write_is_conditional_in_the_statement_not_in_python_6073():
         # statement is conditional on, or a higher authority can be overwritten
         # without any other column moving.
         "events.commence_time_source",
+        # The status arm's two: read to decide the match has not been played, so
+        # a period or a clock landing mid-flight must decline the row rather than
+        # be overwritten with `status='scheduled'`.
+        "events.period", "events.game_clock",
     ):
         assert column in where, f"{column} is not in the shipped WHERE"
     assert "= NULL" not in where
-    assert where.count("IS NULL") == 2, (
-        "the two NULL scores must compare NULL-safely, as IS NULL"
+    assert where.count("IS NULL") == 4, (
+        "the two NULL scores and the two NULL play signals must compare "
+        "NULL-safely, as IS NULL"
     )
     for valued in ("events.status", "events.completed_at", "events.commence_time"):
         clause = where.split(valued + " ", 1)[1].split(" AND ")[0]
@@ -843,7 +861,8 @@ async def test_the_validation_admits_the_non_game_level_specimen_rows_6073(name)
     stats = await _run_phase15(session)
     session.refresh(event)
     assert event.commence_time.replace(tzinfo=timezone.utc) == VENUE_KICKOFF
-    assert stats["funnel"]["phase15_pm_venue_corrected"] == 1
+    assert event.status == "scheduled"
+    assert stats["funnel"]["phase15_pm_venue_corrected_and_unstarted"] == 1
 
 
 @pytest.mark.asyncio
@@ -1303,3 +1322,388 @@ async def test_the_uncontested_redate_still_lands_with_the_authority_in_the_pred
     assert event.commence_time.replace(tzinfo=timezone.utc) == VENUE_KICKOFF
     assert event.commence_time_source == POLYMARKET_VENUE_COMMENCE_SOURCE
     assert stats["funnel"].get("phase15_pm_venue_redate_lost_race", 0) == 0
+
+
+# ── The status arm (lane1b/239's finding) ────────────────────────────────────
+#
+# WHY THIS ARM EXISTS AND WHY IT IS NOT COSMETIC. Re-dating alone is INERT for a
+# reader. The event page renders `suspended` as "No result reported", and
+# `transition_event_statuses` has no `suspended -> scheduled` edge — its four are
+# `scheduled->live`, `live->suspended`, `suspended->live`, `suspended->retired`.
+# So a date-only write leaves an honest kickoff under a badge nothing can ever
+# drain: "No result reported" over a match starting in nine days, forever.
+#
+# And on the rows this rail shares with `redate_polymarket_listing_stamped_events`
+# it is worse than a miss. That sweep's band is `commence_time_source =
+# 'polymarket'`; this write sets the column to `polymarket_venue`, so the sweep
+# can never re-select the row and supply the status itself. This pass runs every
+# 15 minutes against that sweep's hourly poll, so a date-only Phase 1.5 does not
+# merely fail to set the status — it TAKES the row from the writer that would
+# have. lane1b measured the class at 0 rows after its sweep drained it; a
+# date-only writer arming on the next heavy deploy starts re-creating it.
+#
+# The refusals below mirror `app.tasks.polymarket.redate_target`'s deliberately,
+# because two writers that disagree about the same row are worse than one.
+
+
+@pytest.mark.asyncio
+async def test_a_corrected_start_in_the_past_moves_the_date_and_leaves_the_status_6073():
+    """THE CONTROL THAT STOPS "ALWAYS SCHEDULED" PASSING.
+
+    The un-start is justified by ONE fact: the corrected kickoff has not arrived.
+    When it has already passed, the date was still wrong and is still worth
+    fixing, but whether the row is live, finished or genuinely stale is not
+    something this rail can know — so it writes the date and leaves `status`
+    alone, exactly as `redate_target` does one provider over.
+
+    Without this test an arm that writes `scheduled` unconditionally passes every
+    other test in this section.
+    """
+    past_kickoff = NOW - timedelta(hours=2)
+    session, tennis = _new_rail()
+    event = _event(session, tennis, commence=NOW - timedelta(hours=14))
+    _market(session, event, venue_start=past_kickoff)
+
+    stats = await _run_phase15(session)
+
+    session.refresh(event)
+    assert event.commence_time.replace(tzinfo=timezone.utc) == past_kickoff, (
+        "the date is still wrong and still worth correcting"
+    )
+    assert event.status == "suspended", (
+        "a kickoff already in the past says nothing about whether the match is "
+        "under way, finished or stale — this rail must not guess"
+    )
+    assert stats["funnel"]["phase15_pm_venue_corrected"] == 1
+    assert "phase15_pm_venue_corrected_and_unstarted" not in stats["funnel"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "column,value",
+    [
+        ("home_score", 0),
+        ("away_score", 2),
+        ("period", "Set 2"),
+        ("game_clock", "4:32"),
+    ],
+    ids=["home_score_zero", "away_score", "period", "game_clock"],
+)
+async def test_any_evidence_of_play_refuses_the_un_start_but_not_the_date_6073(
+    column, value,
+):
+    """A row something reported on is not a row we may silently un-start.
+
+    `home_score=0` is in the list on purpose: a nil-nil first set is a REPORTED
+    score, and a truthiness test on it reads as "no score" — which is how a match
+    visibly under way gets badged as not yet begun. Measured 0 of 566 production
+    rows carry any of the four, so every one of these refuses nothing today and
+    is the guard that holds the day one appears.
+
+    The DATE still lands in each case: the evidence is about whether the match
+    has started, not about whether the listing stamp was wrong.
+    """
+    session, tennis = _new_rail()
+    event = _event(session, tennis, **{column: value})
+    _market(session, event)
+
+    stats = await _run_phase15(session)
+
+    session.refresh(event)
+    assert event.commence_time.replace(tzinfo=timezone.utc) == VENUE_KICKOFF, (
+        "evidence of play is about the STATUS, not about the wrong date"
+    )
+    assert event.status == "suspended"
+    assert stats["funnel"]["phase15_pm_venue_corrected"] == 1
+    assert "phase15_pm_venue_corrected_and_unstarted" not in stats["funnel"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["scheduled", "closed", "voided", "retired"])
+async def test_only_live_and_suspended_are_un_started_6073(status):
+    """The band, and it is the half of the agreement `redate_target` holds in SQL.
+
+    A future kickoff contradicts exactly two states: `live` and `suspended`. It
+    contradicts nothing about a row that is already `scheduled` (no-op), and a
+    `closed`, `voided` or `retired` row was put there by a judgement this rail has
+    no part in — re-opening one on the strength of a Polymarket stamp is a louder
+    claim than the evidence supports.
+    """
+    session, tennis = _new_rail()
+    event = _event(session, tennis, status=status)
+    _market(session, event)
+
+    stats = await _run_phase15(session)
+
+    session.refresh(event)
+    assert event.commence_time.replace(tzinfo=timezone.utc) == VENUE_KICKOFF
+    assert event.status == status
+    assert stats["funnel"]["phase15_pm_venue_corrected"] == 1
+    assert "phase15_pm_venue_corrected_and_unstarted" not in stats["funnel"]
+
+
+@pytest.mark.asyncio
+async def test_a_live_row_with_a_future_kickoff_is_un_started_too_6073():
+    """The other half of the band, and the badge #6073 opens on.
+
+    `/events/15312412` was badged **LIVE** at 04:55Z for a match the venue starts
+    at 13:00Z. `live` is the state the row passes through on its way to
+    `suspended`, so a rail that only catches the second one leaves the first
+    rendering a live hero over a match nobody has begun.
+    """
+    session, tennis = _new_rail()
+    event = _event(session, tennis, status="live")
+    _market(session, event)
+
+    stats = await _run_phase15(session)
+
+    session.refresh(event)
+    assert event.commence_time.replace(tzinfo=timezone.utc) == VENUE_KICKOFF
+    assert event.status == "scheduled"
+    assert stats["funnel"]["phase15_pm_venue_corrected_and_unstarted"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_period_committed_after_the_freshness_check_cannot_be_un_started_6073():
+    """CERT-2849's lesson, applied to the two columns the status arm added.
+
+    `period` and `game_clock` are now READ to decide the match has not been
+    played, so they are in the same class as `commence_time_source`: a column the
+    decision depends on, which the conditional UPDATE must repeat or the decision
+    can be made about a row that no longer exists.
+
+    THE INTERLOPER MOVES ONLY `period`. No score, no status, no clock, no
+    `commence_time`, no authority — so the six-column CAS this rail shipped with
+    matches happily, and without the two new clauses the statement commits
+    `status='scheduled'` over a match whose second set has visibly started. A
+    witness that also moved the score would have been declined by the existing
+    predicate and would have proved nothing about these two.
+
+    The producer's offer differs from the interloper's write on both the status
+    and the clock (`scheduled` vs `suspended`, VENUE_KICKOFF vs the listing
+    stamp), so a no-op write cannot masquerade as a successful one.
+    """
+    from sqlalchemy import text
+
+    from app.tasks import prediction_market_matching as task_mod
+
+    session, tennis = _new_rail()
+    event = _event(session, tennis)
+    _market(session, event)
+    event_id = event.id
+
+    real_check = task_mod.phase15_event_row_is_unmoved
+
+    async def _check_then_play_is_reported(inner_session, inner_event):
+        answer = await real_check(inner_session, inner_event)
+        # ONLY the period moves. Nothing else in the tuple does.
+        inner_session._s.execute(
+            text("UPDATE events SET period = 'Set 2' WHERE id = :i"),
+            {"i": event_id},
+        )
+        inner_session._s.commit()
+        return answer
+
+    with patch.object(
+        task_mod, "phase15_event_row_is_unmoved", new=_check_then_play_is_reported,
+    ):
+        stats = await _run_phase15(session)
+
+    row = session.execute(
+        text("SELECT commence_time, status, period FROM events WHERE id = :i"),
+        {"i": event_id},
+    ).one()
+    assert row.period == "Set 2"
+    assert row.status == "suspended", (
+        "a match whose second set had started was badged as not yet begun — the "
+        "un-start was decided against a row that no longer existed"
+    )
+    assert str(row.commence_time).startswith("2026-09-13 20:14:27"), (
+        "the venue time landed anyway, so the date and the status are not in "
+        "one statement"
+    )
+    assert stats["funnel"]["phase15_pm_venue_redate_lost_race"] == 1
+    assert "phase15_pm_venue_corrected_and_unstarted" not in stats["funnel"]
+
+
+def test_the_registry_path_is_not_newly_un_starting_anything_6073():
+    """THE BLAST-RADIUS CONTROL, and the reason the arm is a flag.
+
+    `authorized_commence_time_write` is shared with
+    `_update_fields_by_priority` — every mint and link in the registry. If the
+    un-start were the new default, any schedule source moving a live row's start
+    forward would newly reset it to `scheduled`, across every provider, which is
+    a widening nobody has measured and #6073 never asked for.
+
+    Same row, same correction, two calls. The default must produce exactly the
+    two columns it produced before this arm existed; only the caller that opts in
+    gets the third. This is the test that reddens if the default is ever flipped
+    "for consistency".
+    """
+    from app.services.event_registry import authorized_commence_time_write
+
+    session, tennis = _new_rail()
+    event = _event(session, tennis)
+
+    default_outcome, default_writes = authorized_commence_time_write(
+        event, VENUE_KICKOFF, POLYMARKET_VENUE_COMMENCE_SOURCE, now=NOW,
+    )
+    assert default_outcome == "corrected"
+    assert set(default_writes) == {"commence_time", "commence_time_source"}, (
+        "the registry's own mint/link path must not have gained a status write"
+    )
+
+    opted_in_outcome, opted_in_writes = authorized_commence_time_write(
+        event, VENUE_KICKOFF, POLYMARKET_VENUE_COMMENCE_SOURCE,
+        unstart_when_future=True, now=NOW,
+    )
+    assert opted_in_outcome == "corrected_and_unstarted"
+    assert opted_in_writes["status"] == "scheduled"
+    assert "completed_at" not in opted_in_writes, (
+        "the un-start is not the artifact void — it clears no completion, "
+        "because it refuses any row that has one"
+    )
+
+
+def test_the_un_start_reads_the_injected_clock_and_never_the_wall_clock_6073():
+    """gotcha #44: the future/past branch is pinned by an argument.
+
+    The same row and the same correction, decided against two instants. If the
+    decision read `datetime.now()` internally the second call would answer the
+    same as the first, and every test above would be pinned to whatever day the
+    suite runs on.
+    """
+    from app.services.event_registry import authorized_commence_time_write
+
+    session, tennis = _new_rail()
+    event = _event(session, tennis)
+
+    before, _ = authorized_commence_time_write(
+        event, VENUE_KICKOFF, POLYMARKET_VENUE_COMMENCE_SOURCE,
+        unstart_when_future=True, now=VENUE_KICKOFF - timedelta(minutes=1),
+    )
+    after, after_writes = authorized_commence_time_write(
+        event, VENUE_KICKOFF, POLYMARKET_VENUE_COMMENCE_SOURCE,
+        unstart_when_future=True, now=VENUE_KICKOFF + timedelta(minutes=1),
+    )
+    assert before == "corrected_and_unstarted"
+    assert after == "corrected", (
+        "once the corrected kickoff has passed there is nothing to un-start"
+    )
+    assert "status" not in after_writes
+
+
+def test_the_two_writers_agree_on_every_row_they_can_both_reach_6073():
+    """lane1b's `redate_target` and this arm must not disagree about one row.
+
+    The deployed sweep and Phase 1.5 overlap, and either can reach a shared row
+    first. If they answered differently the row's badge would depend on which
+    beat won a race — the worst kind of defect to reproduce. So the two
+    predicates are driven over the same grid and required to agree on the status
+    they would write.
+
+    `redate_target` carries its band in SQL rather than in the function, so the
+    grid is the band both share: `live` and `suspended` rows, which is where the
+    reader-visible symptom lives.
+    """
+    from app.services.event_registry import authorized_commence_time_write
+    from app.tasks.polymarket import redate_target
+
+    session, tennis = _new_rail()
+    grid = [
+        {},
+        {"home_score": 0},
+        {"away_score": 2},
+        {"period": "Set 2"},
+        {"game_clock": "4:32"},
+        {"status": "live"},
+    ]
+    for kickoff in (VENUE_KICKOFF, NOW - timedelta(hours=2)):
+        for overrides in grid:
+            event = _event(session, tennis, **overrides)
+            theirs = redate_target(
+                venue_game_start=kickoff,
+                event_commence=event.commence_time,
+                now=NOW,
+                completed_at=event.completed_at,
+                home_score=event.home_score,
+                away_score=event.away_score,
+                period=event.period,
+                game_clock=event.game_clock,
+            )
+            _outcome, mine = authorized_commence_time_write(
+                event, kickoff, POLYMARKET_VENUE_COMMENCE_SOURCE,
+                unstart_when_future=True, now=NOW,
+            )
+            their_status = theirs[1] if theirs else None
+            assert their_status == mine.get("status"), (
+                f"the two #6073 writers disagree on {overrides} at {kickoff}: "
+                f"the sweep would write {their_status!r}, Phase 1.5 "
+                f"{mine.get('status')!r}"
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "column,value", [("period", "Set 2"), ("game_clock", "4:32")],
+)
+async def test_a_play_signal_already_committed_is_caught_by_the_premise_not_the_write_6073(
+    column, value,
+):
+    """The premise's OWN job, and the witness that separates it from the CAS.
+
+    The arm above drives the interloper AFTER the freshness check, which is the
+    hazard only the conditional UPDATE can answer. This one drives it BEFORE:
+    the pass loads its `(market, event)` pairs in one batch minutes before it
+    writes, so by the time the decision is made the ORM row can already be stale.
+
+    Both paths decline the write, which is why this matters and why it is a
+    separate test — WITHOUT the column in the freshness tuple the two are
+    indistinguishable in the funnel. Parametrized over BOTH new columns: one
+    witness proves nothing about the other, and a tuple missing either is the
+    same defect. A row that was stale before we looked is
+    `refused_row_moved`, a healthy skip re-read next beat; a row that moved under
+    the statement is `lost_race`, which is a contention signal. Collapsing the
+    first into the second is how a permanently stale batch load reads as a busy
+    database, and it costs a pointless write attempt every beat forever.
+    """
+    from sqlalchemy import text
+
+    from app.tasks import prediction_market_matching as task_mod
+
+    session, tennis = _new_rail()
+    event = _event(session, tennis)
+    _market(session, event)
+    event_id = event.id
+
+    real_check = task_mod.phase15_event_row_is_unmoved
+
+    async def _play_is_reported_then_check(inner_session, inner_event):
+        # The row moved BEFORE the decision — the ORM copy still says None.
+        inner_session._s.execute(
+            text(f"UPDATE events SET {column} = :v WHERE id = :i"),
+            {"v": value, "i": event_id},
+        )
+        inner_session._s.commit()
+        assert getattr(inner_event, column) is None, (
+            "the in-memory row already sees the change, so this witness is not "
+            "reproducing a stale batch load"
+        )
+        return await real_check(inner_session, inner_event)
+
+    with patch.object(
+        task_mod, "phase15_event_row_is_unmoved", new=_play_is_reported_then_check,
+    ):
+        stats = await _run_phase15(session)
+
+    row = session.execute(
+        text("SELECT commence_time, status FROM events WHERE id = :i"),
+        {"i": event_id},
+    ).one()
+    assert row.status == "suspended"
+    assert str(row.commence_time).startswith("2026-09-13 20:14:27")
+    assert stats["funnel"]["phase15_pm_venue_redate_refused_row_moved"] == 1, (
+        "a row that was already stale when the decision was made must be "
+        "refused by the premise, not discovered by the write"
+    )
+    assert "phase15_pm_venue_redate_lost_race" not in stats["funnel"]

@@ -3445,6 +3445,7 @@ async def phase15_event_row_is_unmoved(session, event):
                 _Event.status, _Event.home_score, _Event.away_score,
                 _Event.completed_at, _Event.commence_time,
                 _Event.commence_time_source,
+                _Event.period, _Event.game_clock,
             ).where(_Event.id == event.id)
         )
     ).first()
@@ -3463,6 +3464,15 @@ async def phase15_event_row_is_unmoved(session, event):
         # `polymarket` and then found `espn` in the row is reasoning about a row
         # that no longer exists, exactly as it would be for a changed score.
         and row.commence_time_source == event.commence_time_source
+        # #6073 rung 2's status arm, and it is CERT-2849's lesson applied before
+        # a grader has to teach it twice: `period` and `game_clock` are now READ
+        # to decide whether the row may be un-started, so they belong in the
+        # premise for exactly the reason the authority column does. A period
+        # landing between the decision and the write means something has
+        # reported on this game, and a pass that reasoned about a row with no
+        # period is reasoning about a row that no longer exists.
+        and row.period == event.period
+        and row.game_clock == event.game_clock
     )
     return unmoved, row
 
@@ -3595,6 +3605,14 @@ async def phase15_redate_compare_and_write(session, event, writes, observed) -> 
             _unmoved_clause(
                 _Event.commence_time_source, observed.commence_time_source
             ),
+            # The status arm reads these two to decide whether the match has been
+            # played, so the database re-asserts them under its own lock. Without
+            # them a period or a clock committing between the freshness read and
+            # this statement is overwritten with `status='scheduled'` — a game
+            # visibly under way, badged as not yet begun. Same hazard the
+            # authority column above was added for, same answer.
+            _unmoved_clause(_Event.period, observed.period),
+            _unmoved_clause(_Event.game_clock, observed.game_clock),
         )
         .values(
             commence_time=writes["commence_time"],
@@ -3952,8 +3970,28 @@ async def _phase15_revalidate(
                     authorized_commence_time_write,
                 )
                 _was = linked_event.commence_time
+                # `unstart_when_future=True` — the status arm, and the half that
+                # makes this rail reader-visible rather than merely correct.
+                #
+                # lane1b measured it on the deployed sweep's own band: a date-only
+                # write leaves `suspended` standing, the event page renders that
+                # as "No result reported", and `transition_event_statuses` has no
+                # `suspended -> scheduled` edge, so nothing ever drains the row.
+                # Worse on the rows both rails can reach: this write flips
+                # `commence_time_source` to `polymarket_venue`, which is outside
+                # `REDATE_LISTING_STAMPED_SQL`'s band, so the sweep can never
+                # re-select the row and apply the status itself. This pass runs
+                # every 15 minutes against that sweep's hourly poll, so a
+                # date-only Phase 1.5 does not merely miss the status — it TAKES
+                # the row from the writer that would have set it.
+                #
+                # `now` is passed explicitly from the pass's own clock rather than
+                # read inside the decision, so the future/past branch is pinned by
+                # the same instant everything else in this beat was decided
+                # against (gotcha #44).
                 outcome, _writes = authorized_commence_time_write(
                     linked_event, redated, POLYMARKET_VENUE_COMMENCE_SOURCE,
+                    unstart_when_future=True, now=now,
                 )
                 if outcome == "refused_inversion":
                     stats["funnel"].setdefault("phase15_pm_venue_refused_inversion", 0)
