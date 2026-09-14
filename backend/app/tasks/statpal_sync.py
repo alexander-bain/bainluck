@@ -41,6 +41,8 @@ from app.tasks.config import STATPAL_SPORT_MAPPING
 from app.utils.sport_keys import STATPAL_LIVE_ANCHOR_FIELD
 from app.utils.team_binding_invariant import accept_team_binding
 from app.utils.game_pairing import Pairing, live_write_is_premature, pair_verdict
+from app.utils.game_state import live_write_would_revert
+from app.utils.live_state_write import write_live_state_if_unmoved
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +148,28 @@ def row_for_statpal_id(
     return (own[0] if own else None), False, foreign
 
 
+def statpal_live_position(fixture) -> tuple[Optional[str], Optional[str]]:
+    """The ``(period, game_clock)`` pair a StatPal fixture is claiming.
+
+    Composed the way this module's live writers *store* those columns — #5017
+    made StatPal's `period` byte-identical to ESPN's `f"{clock} - {label}"` on
+    purpose — because the whole point is to compare an incoming observation
+    against the stored one on the same scale. Comparing a half-built label
+    against the row would be comparing something no writer ever writes.
+
+    ``getattr``: the fixtures reaching these call sites are duck-typed and come
+    from several construction paths, the same reason the livescores writer reads
+    ``raw_status`` defensively.
+    """
+    clock = getattr(fixture, "game_clock", None)
+    raw_status = getattr(fixture, "raw_status", None)
+    if raw_status and raw_status not in ("live", "Live"):
+        return (f"{clock} - {raw_status}" if clock else raw_status), clock
+    # A bare "live" says the game is running and says nothing about WHERE — the
+    # unplaceable case, which `live_write_would_revert` treats as no evidence.
+    return None, clock
+
+
 async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     """Sync fixture schedules from StatPal for all mapped sports.
 
@@ -213,6 +237,22 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     # game that has not been played yet.
     live_pair_refused = 0
     premature_live_skipped = 0
+    # #6056. Live score writes this HOURLY path refused because the fixture was
+    # positioned earlier in the game than the row already was. Its own counter,
+    # not shared with the 30-second livescore writer's `reverting_live_skipped`:
+    # two writers on two cadences, and one number could not tell them apart.
+    # Always present; 0 is a reading, not an absence (gotcha #53), and a
+    # non-zero here names an hour in which this pass would have run a live score
+    # backwards under a reader.
+    schedule_reverting_live_skipped = 0
+    # #6056. Live score writes this path decided to make and then could NOT,
+    # because the row's position had moved between the decision and the write —
+    # the background/realtime race the compare-and-write below refuses. Kept
+    # apart from the counter above because the two say different things: that
+    # one is "the hourly feed was behind", this one is "the hourly feed was
+    # current when we looked and stale by the time we wrote". Always present;
+    # 0 is a reading (gotcha #53).
+    schedule_live_write_lost_race = 0
     # Q438: creations this path DOWNGRADED to 'scheduled' because the game had
     # not started. Always present; 0 is a reading, not an absence (gotcha #53).
     premature_live_created_as_scheduled = 0
@@ -647,7 +687,47 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                     # it is describing a different game. This is the guard ESPN has
                     # carried since #1207 and StatPal did not; same predicate, one
                     # implementation (`app/utils/game_pairing.py`).
+                    #
+                    # #6056, SECOND WRITER ON THE SAME COLUMNS. This hourly pass
+                    # is a live-score writer in its own right and nobody had
+                    # noticed: it fetches `get_live_scores(sport)` at the top of
+                    # the sport loop for "current game state" and assigns the
+                    # score here. Four beats reach it every hour — NBA `:00`,
+                    # NHL `:01`, MLB `:02`, NFL `:03` — so the 30-second
+                    # livescore writer being guarded is not enough. Once an hour
+                    # this path could still restore a StatPal score from earlier
+                    # in the game over a newer one, which is exactly the reader-
+                    # visible defect #6056 is about, just at a slower cadence.
+                    #
+                    # Same decision as the livescores writer, on the same scale
+                    # (`statpal_live_position`), and deliberately NOT a
+                    # score comparison — see `live_write_would_revert`'s module
+                    # note for why ordering is by position in game time and a
+                    # falling score is a legitimate correction.
+                    #
+                    # Counted under its OWN name rather than folded into
+                    # `reverting_live_skipped`: these are two writers on two
+                    # cadences, and a single number could not tell an hourly
+                    # refusal from a 30-second one. 0 is a reading (gotcha #53).
                     if live_data and live_data.status == "live":
+                        _incoming_period, _incoming_clock = statpal_live_position(
+                            live_data
+                        )
+                        # ── THE POSITION THE DECISION IS TAKEN ON (#6056,
+                        # CERT-2833) ────────────────────────────────────────
+                        #
+                        # Captured ONCE, here, and handed to both the guard
+                        # below and the compare-and-write ninety lines further
+                        # down. Those two used to read `event.period` off the
+                        # row separately, which is two reads of a moving value
+                        # standing in for one decision: whatever the write
+                        # re-asserted, it was not necessarily what the guard
+                        # approved. Found by
+                        # `test_the_cas_is_given_a_captured_position_never_a_fresh_read_6056`,
+                        # which exists because no behavioural test in this
+                        # suite can separate the two spellings today.
+                        _observed_period = event.period
+                        _observed_clock = event.game_clock
                         if live_write_is_premature(event.commence_time, now):
                             premature_live_skipped += 1
                             logger.warning(
@@ -658,12 +738,116 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                                 event.commence_time.isoformat() if event.commence_time else None,
                                 now.isoformat(),
                             )
+                        elif live_write_would_revert(
+                            _observed_period, _observed_clock,
+                            _incoming_period, _incoming_clock,
+                        ):
+                            schedule_reverting_live_skipped += 1
+                            logger.warning(
+                                "StatPal schedule-sync reversion guard: refused a "
+                                "live score on event %d (%s vs %s) — row is at "
+                                "%r/%r, hourly fixture offered %r/%r (%s-%s) (#6056)",
+                                event.id, event.home_team_name, event.away_team_name,
+                                _observed_period, _observed_clock,
+                                _incoming_period, _incoming_clock,
+                                live_data.home_score, live_data.away_score,
+                            )
                         else:
+                            # ── #6056, THE SECOND HALF OF THE SAME DEFECT: the
+                            # decision above and the write below are not one
+                            # act. ──────────────────────────────────────────
+                            #
+                            # The guard four lines up reads `event.period` /
+                            # `event.game_clock` off a row this session
+                            # plain-SELECTed, with no lock and no version
+                            # column. This hourly pass runs on the BACKGROUND
+                            # queue; the 30-second StatPal livescore writer and
+                            # the ESPN writer run on REALTIME at concurrency 4.
+                            # So between "the row is at 5:26 Q4, this fixture is
+                            # not behind it" and the score actually reaching
+                            # Postgres, a realtime writer can commit 5:21 Q4 —
+                            # and an ORM attribute assignment here would not
+                            # reach the database until the session commits, then
+                            # overwrite it. The reader sees the touchdown leave
+                            # the page again, for the same reason, one layer
+                            # down. Found by an independent reviewer
+                            # (CERT-2825), not by us.
+                            #
+                            # WHY THE WINDOW IS LONG ENOUGH TO MATTER, measured
+                            # rather than assumed: `_sync_statpal_schedules` has
+                            # NO intermediate commit — the #4307 note in this
+                            # file says so in as many words, and it is why one
+                            # ambiguous fixture used to discard a whole sport's
+                            # pass. The gap between the read and the commit
+                            # therefore spans every REMAINING fixture in the
+                            # sport, network calls included, not a few
+                            # microseconds.
+                            #
+                            # So the write is a conditional UPDATE that
+                            # re-asserts, IN THE DATABASE, that the position the
+                            # decision was taken on is still the position on the
+                            # row (optimistic compare-and-write — the same Core
+                            # `update(Event)` idiom this module already uses for
+                            # the injuries JSONB). `is_not_distinct_from` rather
+                            # than `==` STATES the null-safety instead of
+                            # inheriting it: a row with no position yet is the
+                            # common case on this path, and `==` survives it
+                            # only because SQLAlchemy rewrites a literal `None`
+                            # to `IS NULL` at compile time — a property of the
+                            # value happening to be None here, not of the
+                            # predicate. The two spellings are therefore
+                            # equivalent as written (recorded as an equivalent
+                            # mutant, not claimed as a kill) and only this one
+                            # stays correct if the comparison is ever built from
+                            # a bindparam.
+                            #
+                            # GOTCHA #5 — MIXING ORM ASSIGNMENT WITH CORE SQL.
+                            # This loop does assign `commence_time`, `status`,
+                            # `statpal_end_time`, the team ids and the
+                            # `win_probability_sources` JSONB as ORM attributes,
+                            # and flush ordering would decide whether the
+                            # predicate below saw the pre- or post-assignment
+                            # row. It is safe here for a reason that is asserted
+                            # by test, not left to a comment: this function
+                            # never ASSIGNS `period` or `game_clock` on any
+                            # path, so no pending ORM state can perturb the two
+                            # columns the predicate reads
+                            # (`test_the_schedule_path_never_assigns_the_columns_its_cas_compares`).
+                            # The flush is made explicit anyway, so the
+                            # statement's position relative to this row's other
+                            # writes is stated here rather than left to
+                            # autoflush.
+                            _new_scores = {}
                             if live_data.home_score is not None:
-                                event.home_score = live_data.home_score
+                                _new_scores["home_score"] = live_data.home_score
                             if live_data.away_score is not None:
-                                event.away_score = live_data.away_score
-                            updated = True
+                                _new_scores["away_score"] = live_data.away_score
+                            if _new_scores:
+                                # One implementation of the predicate for all
+                                # three writers (CERT-2829). This path used to
+                                # spell the UPDATE out inline; the realtime
+                                # writers needed the identical statement, and
+                                # two copies of a compare-and-write is precisely
+                                # how one of them drifts off the other. The
+                                # loaded row needs no hand mirroring — an
+                                # ORM-enabled UPDATE synchronizes the session
+                                # itself, asserted by
+                                # `test_the_loaded_row_agrees_with_the_database_after_a_compare_and_write`.
+                                if await write_live_state_if_unmoved(
+                                    session, event, _new_scores,
+                                    observed_period=_observed_period,
+                                    observed_clock=_observed_clock,
+                                    what="StatPal schedule-sync live score",
+                                ):
+                                    updated = True
+                                else:
+                                    # The row moved under us: something with a
+                                    # newer observation got there first. Refuse,
+                                    # and say so. 0 is a reading (gotcha #53) —
+                                    # a non-zero here names an hour in which the
+                                    # two queues raced and the newer state won,
+                                    # which is the outcome we want.
+                                    schedule_live_write_lost_race += 1
 
                     if updated:
                         sport_updated += 1
@@ -800,6 +984,21 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                         # contradiction (`scheduled` + a live score) one field
                         # over. The sibling score path 100 lines up refuses on
                         # this predicate; so does this one.
+                        #
+                        # #6056: this one deliberately carries NO reversion
+                        # guard, and that is not an oversight. It is inside
+                        # `if was_created`, and `find_or_create_event` returns
+                        # `True` only for a row it has just INSERTED — a row
+                        # whose `period` and `game_clock` are unset, because
+                        # nothing has written them yet and `EventIdentity`
+                        # carries neither. There is no stored position to run
+                        # backwards from, so `live_write_would_revert` could
+                        # only ever return False here; adding the call would be
+                        # a guard that reads as load-bearing and provably is
+                        # not. The claim is asserted rather than asserted-by-
+                        # comment: see
+                        # `test_the_creation_path_still_writes_the_first_score`
+                        # and `test_a_created_row_has_no_position_to_revert_from`.
                         if not premature_create:
                             if live_fix.home_score is not None:
                                 event.home_score = live_fix.home_score
@@ -926,6 +1125,14 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
         "live_pair_refused": live_pair_refused,
         "premature_live_skipped": premature_live_skipped,
         "premature_live_created_as_scheduled": premature_live_created_as_scheduled,
+        # #6056 — same rule: always present, 0 is a reading. Counted apart from
+        # the 30-second writer's `reverting_live_skipped` so the hourly path's
+        # refusals stay attributable to the hourly path.
+        "schedule_reverting_live_skipped": schedule_reverting_live_skipped,
+        # #6056 — same rule again. A non-zero here is the background/realtime
+        # race actually happening in production, which is the thing CERT-2825
+        # said was unmeasured as well as unguarded.
+        "schedule_live_write_lost_race": schedule_live_write_lost_race,
         # #2963 — same rule again: always present, and 0 is the reading that says
         # the fabricator is unreachable rather than merely unobserved.
         "live_created_refused_no_provider_id": live_created_refused_no_provider_id,
@@ -1268,6 +1475,17 @@ async def _sync_statpal_livescores() -> dict:
     details = []
     # #1945: a refusal that only logs is a refusal nobody measures.
     premature_live_skipped = 0
+    # #6056: live writes refused because this fixture is BEHIND the row it would
+    # overwrite. Same rule as the counter above, and this one is also the
+    # measurement of how often the live feeds disagree about where a game is.
+    reverting_live_skipped = 0
+    # #6056 / CERT-2829: live writes this pass DECIDED to make and then could
+    # not, because another queue moved the row's position between the decision
+    # and the write. Kept apart from the counter above because the two name
+    # different causes: that one is "this feed was behind", this one is "this
+    # feed was current when we looked and stale by the time we wrote". Always
+    # present; 0 is a reading, not an absence (gotcha #53).
+    livescore_live_write_lost_race = 0
     _now = datetime.now(timezone.utc)
 
     # Only poll sports that are likely to have live games right now.
@@ -1363,6 +1581,11 @@ async def _sync_statpal_livescores() -> dict:
                         continue
 
                     updated = False
+                    # #6056: the four live-state columns are collected here and
+                    # written as one conditional statement at the end of the
+                    # block, never assigned onto the ORM row — see the
+                    # compare-and-write below, and the gotcha-#5 note on it.
+                    _live_values: dict = {}
 
                     # Update period/clock from StatPal raw_status (e.g., "Q3", "1H", "HT")
                     #
@@ -1384,7 +1607,71 @@ async def _sync_statpal_livescores() -> dict:
                     # several construction paths, and the line below already
                     # reads `raw_status` defensively for the same reason.
                     fixture_clock = getattr(fixture, "game_clock", None)
+
+                    # ── #6056: is this fixture BEHIND the row it is about to
+                    # overwrite? ────────────────────────────────────────────
+                    #
+                    # StatPal and `espn_helpers.update_event_fields_from_espn`
+                    # both write `period`, `game_clock`, `home_score` and
+                    # `away_score` on a live row on their own cadence, and
+                    # neither has ever asked whether the state it is replacing
+                    # came from a LATER moment of the game. Our own
+                    # `score_snapshots` caught the two of them alternating on
+                    # the 2026-09-14 Giants–Cowboys game — full evidence and
+                    # the reasoning for ordering by game time rather than by
+                    # score in `live_write_would_revert`'s module note.
+                    #
+                    # This is the same shape as the `live_write_is_premature`
+                    # refusal above — a guard, a counter and a log line — but
+                    # it sets a flag instead of `continue`ing, because the
+                    # fixture-id link further down is not a live-state write
+                    # and a stale clock is no reason to withhold it.
+                    #
+                    # Composed here, before the first assignment, and composed
+                    # the SAME way the write below composes it: comparing a
+                    # half-built label against the row would be comparing
+                    # something this task never stores.
+                    _incoming_period = None
                     if fixture.raw_status and fixture.raw_status not in ("live", "Live"):
+                        _incoming_period = (
+                            f"{fixture_clock} - {fixture.raw_status}"
+                            if fixture_clock
+                            else fixture.raw_status
+                        )
+                    #
+                    # ── THE POSITION THE DECISION IS TAKEN ON (#6056,
+                    # CERT-2829) ────────────────────────────────────────────
+                    #
+                    # Held so the compare-and-write below can re-assert it in
+                    # the database. Read ONCE, here, before any of the four
+                    # live-state values are composed: re-reading `event.period`
+                    # at write time would compare the row against whatever it
+                    # had become in the meantime, which is the same class of
+                    # mistake as recomputing the guard between assignments.
+                    _observed_period = event.period
+                    _observed_clock = event.game_clock
+
+                    live_state_is_stale = live_write_would_revert(
+                        _observed_period, _observed_clock,
+                        _incoming_period, fixture_clock,
+                    )
+                    if live_state_is_stale:
+                        reverting_live_skipped += 1
+                        logger.warning(
+                            "StatPal reversion guard: refused a live write on "
+                            "event %d (%s vs %s) — row is at %r/%r, fixture "
+                            "offered %r/%r (%s-%s) (#6056)",
+                            event.id, event.home_team_name, event.away_team_name,
+                            event.period, event.game_clock,
+                            _incoming_period, fixture_clock,
+                            fixture.home_score, fixture.away_score,
+                        )
+
+                    if (
+                        fixture.raw_status
+                        and fixture.raw_status not in ("live", "Live")
+                        and not live_state_is_stale
+                    ):
                         # Guard on the clock being non-empty, not on liveness:
                         # halftime is genuinely live and genuinely has no clock,
                         # so one guard is not enough (#5017).
@@ -1394,8 +1681,7 @@ async def _sync_statpal_livescores() -> dict:
                             else fixture.raw_status
                         )
                         if event.period != new_period:
-                            event.period = new_period
-                            updated = True
+                            _live_values["period"] = new_period
 
                         # CLEAR THE CLOCK WHEN THE VENUE CLEARS IT (CERT-2569),
                         # BUT ONLY WHERE THE VENUE KEEPS A CLOCK AT ALL.
@@ -1432,18 +1718,74 @@ async def _sync_statpal_livescores() -> dict:
                         # make no claim about the clock.
                         if getattr(fixture, "clock_field_served", False):
                             if event.game_clock != fixture_clock:
-                                event.game_clock = fixture_clock
-                                updated = True
+                                _live_values["game_clock"] = fixture_clock
 
-                    # Update scores
-                    if fixture.home_score is not None and fixture.home_score != event.home_score:
-                        event.home_score = fixture.home_score
-                        updated = True
-                    if fixture.away_score is not None and fixture.away_score != event.away_score:
-                        event.away_score = fixture.away_score
-                        updated = True
+                    # Update scores (#6056: not from a fixture the guard above
+                    # positioned earlier in the game than the row already is)
+                    if (
+                        fixture.home_score is not None
+                        and fixture.home_score != event.home_score
+                        and not live_state_is_stale
+                    ):
+                        _live_values["home_score"] = fixture.home_score
+                    if (
+                        fixture.away_score is not None
+                        and fixture.away_score != event.away_score
+                        and not live_state_is_stale
+                    ):
+                        _live_values["away_score"] = fixture.away_score
 
-                    # Write ScoreSnapshot for score enrichment (feeds Score Differential chart)
+                    # ── #6056 / CERT-2829: THE FOUR WRITES ABOVE LAND AS ONE
+                    # ACT, OR NOT AT ALL. ───────────────────────────────────
+                    #
+                    # This task runs on the REALTIME queue at concurrency 4 on
+                    # a 30-second beat, beside the ESPN writer on its own beat,
+                    # and `_sync_statpal_schedules` runs the same columns from
+                    # BACKGROUND. Nothing above took a lock, and this function
+                    # has no intermediate commit — one `get_task_session()`
+                    # spans every sport and every fixture in the pass — so an
+                    # ORM assignment here would sit in the session until the
+                    # very end and could overwrite a newer observation another
+                    # queue committed in between. The sequential guard cannot
+                    # see that happen: it was right about the row it was shown.
+                    #
+                    # So the decision is re-asserted at write time against the
+                    # position it was actually taken on. See
+                    # `utils/live_state_write` for why the compare and the write
+                    # are genuinely one act under READ COMMITTED rather than a
+                    # narrower window.
+                    _live_write_landed = await write_live_state_if_unmoved(
+                        session, event, _live_values,
+                        observed_period=_observed_period,
+                        observed_clock=_observed_clock,
+                        what="StatPal livescore",
+                    )
+                    if _live_values and not _live_write_landed:
+                        livescore_live_write_lost_race += 1
+                    updated = updated or bool(_live_values and _live_write_landed)
+
+                    # Write ScoreSnapshot for score enrichment (feeds Score
+                    # Differential chart).
+                    #
+                    # Gated on the live write having LANDED, not merely on
+                    # having been attempted: a snapshot is a claim that the game
+                    # stood at this score at this moment, and writing one for a
+                    # score the compare-and-write just refused would put the
+                    # stale observation into the Score Differential chart — the
+                    # very table this defect was diagnosed from — after keeping
+                    # it out of the row.
+                    #
+                    # `updated` IS that gate here, and saying so is the whole
+                    # comment: nothing before this point sets it except the
+                    # compare-and-write, so it is false whenever the write was
+                    # refused. A first draft spelled the condition
+                    # `_live_write_landed and updated`; no mutant could kill the
+                    # extra term, because it is implied by the one beside it,
+                    # and a redundant clause that reads as load-bearing is worse
+                    # than none (the same call as the `set_committed_value`
+                    # mirror dropped from the hourly path). The implication is
+                    # asserted by
+                    # `test_a_refused_realtime_write_leaves_no_score_snapshot`.
                     if updated and fixture.home_score is not None and fixture.away_score is not None:
                         # Check if this score is different from the last snapshot
                         last_snap_result = await session.execute(
@@ -1526,6 +1868,13 @@ async def _sync_statpal_livescores() -> dict:
         "sports_polled": len(details),
         "sports": details,
         "premature_live_skipped": premature_live_skipped,
+        # #6056 — rides out with the run so a spike is legible from
+        # `task-metrics` without reading logs, exactly like the line above.
+        "reverting_live_skipped": reverting_live_skipped,
+        # #6056 / CERT-2829. A non-zero here names a beat on which this writer
+        # was overtaken mid-pass by another queue — the race the sequential
+        # guard above is structurally unable to see.
+        "livescore_live_write_lost_race": livescore_live_write_lost_race,
     }
 
 

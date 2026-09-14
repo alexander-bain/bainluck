@@ -1040,6 +1040,12 @@ class TestSyncHelpers:
             id = 1
 
         class FakeResult:
+            #: #6056 / CERT-2829: the live-state compare-and-write reads
+            #: `rowcount` off its result. Uncontested is the right default —
+            #: this test is not about a race, and a 0 would silently refuse the
+            #: very write it is asserting.
+            rowcount = 1
+
             def __init__(self, *, rows=None, scalars=None, first=None):
                 self._rows = rows or []
                 self._scalars = scalars or []
@@ -1061,14 +1067,19 @@ class TestSyncHelpers:
                 self.event = event
                 self.execute_calls = 0
                 self.added = []
+                self.statements = []
 
             async def execute(self, _stmt):
                 self.execute_calls += 1
+                self.statements.append(_stmt)
                 if self.execute_calls == 1:
                     return FakeResult(rows=[FakeSportRow()])
                 if self.execute_calls == 2:
                     return FakeResult(scalars=[self.event])
                 return FakeResult(first=None)
+
+            async def flush(self):
+                pass
 
             def add(self, obj):
                 self.added.append(obj)
@@ -1113,9 +1124,21 @@ class TestSyncHelpers:
 
         result = await statpal_sync._sync_statpal_livescores()
 
-        assert event.period == "Q3"
-        assert event.home_score == 90
-        assert event.away_score == 87
+        # Read off the statement the task SENT, not off the fake row. Since
+        # #6056 / CERT-2829 the four live-state columns are written by a
+        # conditional UPDATE whose predicate re-asserts the row's position, so
+        # nothing is assigned onto the object any more — and on a fake session
+        # an assertion against the object would pass whether or not the write
+        # was ever issued.
+        written: dict = {}
+        for statement in session.statements:
+            try:
+                written.update(statement.compile().params)
+            except Exception:  # pragma: no cover - SELECTs carry no values
+                pass
+        assert written["period"] == "Q3"
+        assert written["home_score"] == 90
+        assert written["away_score"] == 87
         assert result["events_updated"] == 1
         assert result["score_snapshots_created"] == 1
 

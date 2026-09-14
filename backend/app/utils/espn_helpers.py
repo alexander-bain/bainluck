@@ -15,7 +15,8 @@ from sqlalchemy import select, update as _sql_update
 from app.utils.event_completion import authority_may_settle, play_resumes
 # #5390: the period-string predicate lives in a leaf module, so this is a
 # plain module-level import rather than five function-local ones dodging a cycle.
-from app.utils.game_state import _sanitize_period
+from app.utils.game_state import _sanitize_period, live_write_would_revert
+from app.utils.live_state_write import write_live_state_if_unmoved
 from app.utils.name_normalization import names_match as _canonical_names_match
 from app.utils.espn_candidate_selection import (
     select_authorized_espn_candidate as _select_authorized_espn_candidate,
@@ -595,10 +596,54 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
             event.commence_time_source = "espn"
             changed = True
 
+    # ── #6056: is this fetch OLDER, in game time, than the row already is? ────
+    #
+    # ESPN is one of at least two unarbitrated writers on `game_clock`,
+    # `period`, `home_score` and `away_score` (`statpal_sync` is the other), and
+    # neither checks whether the state it is about to overwrite came from a
+    # LATER moment of the same game. On 2026-09-14 that served a reader a
+    # disappearing touchdown and a clock running backwards; the evidence and the
+    # reasoning are in `live_write_would_revert`'s module note.
+    #
+    # Computed ONCE, here, from the row as it stands BEFORE any of the four
+    # assignments below — reading it again between them would compare the fetch
+    # against a row it had itself half-updated, which is how a guard silently
+    # stops guarding.
+    #
+    # It gates exactly the four live-state fields. `commence_time` above, the
+    # broadcast/importance fields and the settle transition below are all
+    # deliberately outside it: none of them is positioned in game time, and a
+    # stale-looking clock must never be allowed to block a game from ending.
+    # The position the decision is taken on, read once and held so the
+    # compare-and-write at the end of the block can re-assert it in the database
+    # (#6056 / CERT-2829).
+    _observed_period = getattr(event, "period", None)
+    _observed_clock = getattr(event, "game_clock", None)
+    # Collected here and written as ONE conditional statement below; never
+    # assigned onto the ORM row. See the compare-and-write note.
+    _live_values: dict = {}
+
+    _new_period = _sanitize_period(ee.status_detail)
+    _live_state_is_stale = live_write_would_revert(
+        _observed_period,
+        _observed_clock,
+        _new_period,
+        ee.clock,
+    )
+    if _live_state_is_stale:
+        logger.info(
+            "#6056: refused a reverting live write on event %s — row is at "
+            "%r/%r, ESPN offered %r/%r (%s-%s)",
+            event.id, _observed_period, _observed_clock, _new_period, ee.clock,
+            ee.home_score, ee.away_score,
+        )
+        stats["live_state_reversions_refused"] = (
+            stats.get("live_state_reversions_refused", 0) + 1
+        )
+
     # Update game clock
-    if ee.clock and event.game_clock != ee.clock:
-        event.game_clock = ee.clock
-        changed = True
+    if ee.clock and event.game_clock != ee.clock and not _live_state_is_stale:
+        _live_values["game_clock"] = ee.clock
 
     # Update period.
     #
@@ -619,27 +664,81 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
     #     answer for a missing one.
     # A date already stored is cleared rather than frozen, so the column
     # self-heals on the next sync and needs no migration.
-    _new_period = _sanitize_period(ee.status_detail)
+    # `_new_period` is computed above, with the staleness check that reads it.
     if _new_period:
-        if event.period != _new_period:
-            event.period = _new_period
-            changed = True
+        if event.period != _new_period and not _live_state_is_stale:
+            _live_values["period"] = _new_period
     elif ee.status_detail and event.period is not None and _sanitize_period(event.period) is None:
         # Both sides are the same class of garbage — drop ours.
-        event.period = None
-        changed = True
+        #
+        # This clear rides the compare-and-write with the rest of the block
+        # rather than going round it, and that is deliberate twice over. It has
+        # to, mechanically: an ORM assignment to `period` here would be flushed
+        # ahead of the statement below and make its predicate compare the row
+        # against a value this same call had just written, which is a guard that
+        # has stopped guarding. And it is also right on the merits — if the
+        # predicate fails, another writer has just put a REAL period on the row,
+        # so the garbage this branch exists to clear is already gone.
+        _live_values["period"] = None
 
     # Update scores + capture ScoreSnapshot for score differential chart
     score_changed = False
-    if ee.home_score is not None and event.home_score != ee.home_score:
-        event.home_score = ee.home_score
-        changed = True
+    if (
+        ee.home_score is not None
+        and event.home_score != ee.home_score
+        and not _live_state_is_stale
+    ):
+        _live_values["home_score"] = ee.home_score
         score_changed = True
-    if ee.away_score is not None and event.away_score != ee.away_score:
-        event.away_score = ee.away_score
-        changed = True
+    if (
+        ee.away_score is not None
+        and event.away_score != ee.away_score
+        and not _live_state_is_stale
+    ):
+        _live_values["away_score"] = ee.away_score
         score_changed = True
-    if score_changed and ee.home_score is not None and ee.away_score is not None:
+
+    # ── #6056 / CERT-2829: THE FOUR LIVE-STATE WRITES LAND AS ONE ACT ────────
+    #
+    # ESPN runs on the REALTIME queue at concurrency 4 beside the 30-second
+    # StatPal livescore writer, and the hourly schedule pass writes the same
+    # four columns from BACKGROUND. Everything above read the row without a lock
+    # and decided; nothing above has reached Postgres, and this helper is called
+    # inside a caller-owned transaction that commits well after it returns. An
+    # ORM assignment would therefore let a decision taken on a current row land
+    # on top of a newer one committed by another queue in between — the reader
+    # sees the touchdown leave the page, with the sequential guard reporting
+    # nothing because it was right about the row it was shown.
+    #
+    # Re-asserting the observed position in the UPDATE's own WHERE makes the
+    # comparison and the write one act; `utils/live_state_write` carries the
+    # reasoning for why that is true under READ COMMITTED and not just a
+    # narrower window.
+    _live_write_landed = await write_live_state_if_unmoved(
+        session, event, _live_values,
+        observed_period=_observed_period,
+        observed_clock=_observed_clock,
+        what="ESPN live state",
+    )
+    if _live_values:
+        if _live_write_landed:
+            changed = True
+        else:
+            stats["live_state_write_lost_race"] = (
+                stats.get("live_state_write_lost_race", 0) + 1
+            )
+
+    # Gated on the write having LANDED. A snapshot is a claim that the game
+    # stood at this score at this moment; writing one for a score the
+    # compare-and-write just refused would put the overtaken observation into
+    # the Score Differential chart — the table this whole defect was diagnosed
+    # from — after successfully keeping it off the row.
+    if (
+        score_changed
+        and _live_write_landed
+        and ee.home_score is not None
+        and ee.away_score is not None
+    ):
         from app.models.models import ScoreSnapshot
         session.add(ScoreSnapshot(
             event_id=event.id,

@@ -143,3 +143,36 @@ def live_write_is_premature(
     if event_commence is None or now is None:
         return False
     return event_commence > now + grace
+
+
+def clockless_write_defers_to_authority(
+    event_status: str | None, espn_id: str | int | None
+) -> bool:
+    """Should the Odds API scores feed stand down from writing this live score?
+
+    #6056, and a sibling of :func:`live_write_is_premature` above in both shape
+    and purpose: a small statement about whether a writer may touch a row, kept
+    out of the thousand-line polling loop so it can be argued with and tested.
+
+    `events.home_score` has at least three unarbitrated writers and the Odds API
+    scores feed is the only one carrying no clock and no period, so it cannot be
+    ordered against the others by game time the way `game_state`'s
+    `live_write_would_revert` orders ESPN and StatPal. What it CAN be given is a
+    precedence: while a game is running and an authority feed is attached to the
+    row, the feed that cannot say where the game is does not move the score.
+
+    `odds_polling` already refuses to run the stat model on exactly this
+    population, for exactly this reason ("Running both paths causes
+    oscillation... they fight") — this is that judgement applied to the score
+    write it sits beside.
+
+    Both conditions are load-bearing and neither is a proxy for the other:
+
+    * **`live` only.** A settled or scheduled row is not being fought over, and
+      the write that lands a FINAL score must never be withheld — that is the
+      one case where this feed noticing first matters more than the flicker.
+    * **`espn_id` only.** A row ESPN does not cover — most college football,
+      handball, the smaller soccer leagues — has no other score writer at all,
+      and deferring there would mean deferring to nobody.
+    """
+    return event_status == "live" and bool(espn_id)

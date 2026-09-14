@@ -17,7 +17,11 @@ from app.utils.event_completion import (
     statpal_end_time,
     venue_live_write_is_a_resurrection,
 )
-from app.utils.game_pairing import IdCurrency, external_id_currency
+from app.utils.game_pairing import (
+    IdCurrency,
+    clockless_write_defers_to_authority,
+    external_id_currency,
+)
 from app.utils.odds_math import moneyline_to_probability, project_scores
 from app.utils.polling_config import compute_effective_interval
 from app.tasks.base import get_task_session, run_async
@@ -1107,6 +1111,11 @@ async def _poll_all_odds():
         scores_refused_unverifiable = 0
         scores_unbound_id = 0
         scores_refused_resurrection = 0
+        # #6056: live score writes this clockless feed stood down on because an
+        # authority feed owns the running game. Same rule as the counters above —
+        # an invisible refusal reads as "there was nothing to refuse" — and this
+        # one doubles as the measurement of how often the two feeds were fighting.
+        scores_deferred_to_authority = 0
         # #2368: score fetches the quota breaker refused. Same rule as the
         # `scores_refused_*` counters above — a guard whose refusals are
         # invisible is indistinguishable from a guard that is off, and this
@@ -1907,13 +1916,70 @@ async def _poll_all_odds():
                             if event_status == "completed" and not event_obj.completed_at:
                                 update_values["completed_at"] = now
 
-                            if home_score is not None:
+                            # ── #6056: THE CLOCKLESS FEED DOES NOT OVERWRITE A
+                            # RUNNING GAME ────────────────────────────────────
+                            #
+                            # The block ~40 lines below already refuses to run
+                            # the stat model on a row with an `espn_id`, and
+                            # says why in as many words: "Running both paths
+                            # causes oscillation: ESPN sync writes from ESPN
+                            # scores, odds_polling writes from Odds API scores
+                            # with stale ESPN clock data, and they fight." That
+                            # judgement was never applied to the SCORE write
+                            # three lines up, so the two feeds have gone on
+                            # fighting over `home_score` itself — measured on
+                            # production 2026-09-14 (#6056), a reader watching
+                            # the Giants–Cowboys page saw a point un-score
+                            # itself and a touchdown vanish for a minute.
+                            #
+                            # The sibling guard in `game_state.py` orders the
+                            # two feeds that DO carry a clock (ESPN, StatPal) by
+                            # position in game time and refuses the one that is
+                            # behind. This feed carries no clock and no period,
+                            # so it cannot be placed on that scale at all —
+                            # there is no observation to compare, only a number.
+                            # Hence a precedence rule rather than an ordering:
+                            # while a game is running and an authority feed is
+                            # attached to the row, the clockless feed does not
+                            # get to move the score.
+                            #
+                            # SCOPED AS TIGHTLY AS THE DEFECT. It holds only
+                            # while `event_status == "live"` and only on rows
+                            # that HAVE an `espn_id`. A row ESPN does not cover
+                            # (most college football, handball, the smaller
+                            # soccer leagues — where this feed is the only score
+                            # writer there is) is untouched, and so is the write
+                            # that lands a FINAL score, which is the one case
+                            # where this feed being the only one to notice
+                            # matters more than the flicker.
+                            _clockless_write_would_fight = (
+                                clockless_write_defers_to_authority(
+                                    event_status, event_obj.espn_id
+                                )
+                            )
+                            if _clockless_write_would_fight and (
+                                home_score is not None or away_score is not None
+                            ):
+                                scores_deferred_to_authority += 1
+                            if home_score is not None and not _clockless_write_would_fight:
                                 update_values["home_score"] = home_score
-                            if away_score is not None:
+                            if away_score is not None and not _clockless_write_would_fight:
                                 update_values["away_score"] = away_score
 
-                            # Record score snapshot if scores changed
-                            if home_score is not None and away_score is not None:
+                            # Record score snapshot if scores changed.
+                            #
+                            # #6056: and only if we actually wrote it. A snapshot
+                            # of a score this pass declined to store would put a
+                            # number in the Score Differential chart that the
+                            # event row never held — and `score_snapshots` is the
+                            # table the reversion was DIAGNOSED from, so a
+                            # deferred write leaving a row here would poison the
+                            # only record of who writes what.
+                            if (
+                                home_score is not None
+                                and away_score is not None
+                                and not _clockless_write_would_fight
+                            ):
                                 old_home = event_obj.home_score
                                 old_away = event_obj.away_score
                                 if old_home != home_score or old_away != away_score:
@@ -2075,6 +2141,10 @@ async def _poll_all_odds():
             # reports nothing reads as "there was nothing to refuse". This one
             # should trend to zero once the settled rows stop being re-quoted.
             "scores_refused_resurrection": scores_refused_resurrection,
+            # #6056 — expected NON-zero on any evening with live ESPN-covered
+            # games; zero on a night of college football means the guard is off,
+            # not that the feeds agreed.
+            "scores_deferred_to_authority": scores_deferred_to_authority,
             "scores_skipped_quota": scores_skipped_quota,
             "stat_model_from_poll": stat_model_from_poll,
             "events_closed": events_closed,
