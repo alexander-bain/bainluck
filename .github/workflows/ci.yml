@@ -541,6 +541,35 @@ jobs:
             exit 1
           fi
 
+      - name: "#6215 backup/restore round trip (real Postgres)"
+        # #3672's class, recurred one column over. CERT-2880 caught
+        # `repair_6215_borrowed_espn_identity.py` declaring its backup table's
+        # `alternate_names` as `text[]` when `teams.alternate_names` is JSONB.
+        # The uncast `INSERT ... SELECT` raises before the commit, so `--backup`
+        # fails, `--apply` refuses without a backup, and the repair reaches none
+        # of the 1,014 rows — dead on arrival, and perfectly readable in review.
+        #
+        # The unit suite could not see it for the reason #3672's step gives: the
+        # SQL is a string until a server parses it, and `text[]` and `jsonb` are
+        # the same characters to a double. The DDL is now
+        # `CREATE TABLE ... AS SELECT ... WHERE false`, so Postgres derives every
+        # type from `teams` and the two cannot desynchronise; these arms are what
+        # hold that, including after a migration changes a column.
+        #
+        # THIS STEP IS THE WHOLE REACH. The job names each PG file explicitly, so
+        # a `*_pg.py` nobody adds here runs nowhere: it skips locally, is absent
+        # from CI, and reads green in both places.
+        #
+        # Same skip detection as every gate in this job.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_backup_round_trip_jsonb_6215_pg.py \
+            -v -rs 2>&1 | tee /tmp/backup6215.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/backup6215.txt; then
+            echo "::error::#6215 backup/restore round trip SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Provenance enum contract (real Postgres)
         # C-ADHOC-PROV-CORE. The receiver accepted `play` while the migration's
         # enum declared six values without it, and the route specimen STORED it
