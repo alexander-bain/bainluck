@@ -99,6 +99,38 @@ _FRESH_SETTLEMENT_FLOOR_DAYS = 3
 _FRESH_SETTLEMENT_MAX_TICKERS = 400
 _FRESH_SETTLEMENT_MAX_SHARE = 0.2
 
+#: #6012 — THE SENTENCE ABOVE ("those fall to the tail sweep") IS NOT TRUE FOR AN
+#: OPEN MARKET, AND THAT IS THIS BAND'S WHOLE REASON TO EXIST. Both bands below
+#: require `fm.status = 'resolved'`. The same #2644 field mechanism that puts a
+#: future `resolution_date` on an already-settled market ALSO leaves our row at
+#: `status='open'` until the settled-events sweep's per-series cursor (gotcha #33,
+#: `kalshi.py` Phase 1) happens to reach that series. A market that is BOTH
+#: future-dated AND still open is therefore invisible to the recency band (by
+#: date) and to the tail band (by status) — the retraction the design calls
+#: "reversible by evidence" never gets the evidence, because nobody asks.
+#:
+#: MEASURED ON PRODUCTION 2026-09-14 03:50-04:05Z, the specimen that named it:
+#: Kalshi finalized all 48 legs of `KXATP-26USO` (US Open Men's Singles Winner) at
+#: 22:00:08Z with `KXATP-26USO-ZVE` = `result: yes`. Six hours later our row still
+#: read `status='open'`, and Alexander Zverev — the champion — sat at
+#: `current_probability=0.995, is_winner=FALSE, resolution_source='ungradeable_result'`.
+#: Same story on `KXATPWTA-26USO` (the Exacta), where the winning pair printed 84%
+#: on the men's-final event page (#6012, seen by ux/1243).
+#:
+#: Licensed by the invariant that is already in the tree, not a new one:
+#: `can_write_winner()` lets a TIER-3 source assert a winner "regardless of market
+#: status … self-justifying (the venue said so)", and `api_settlement` over
+#: `ungradeable_result` is tier 3 over tier 1 — an UPGRADE, so `is_downgrade()` is
+#: False. Nothing here writes a grade; this picks WHICH tickers get asked.
+#:
+#: Its budget is its OWN and is never taken from the two bands below (gotcha #34:
+#: one counter shared across a series loop starves the later members). The window
+#: is two-sided per gotcha #41 — the same floor as the recency band, plus a short
+#: future reach for markets closing early. Measured population inside that window
+#: on 2026-09-14 04:05Z: **23 tickers**, so the cap is headroom, not a throttle.
+_EARLY_SETTLED_MAX_TICKERS = 50
+_EARLY_SETTLED_FUTURE_DAYS = 2
+
 
 def _fresh_settlement_budget(limit: int) -> tuple[int, int]:
     """Split a cycle's ticker budget into (recency band, alphabetical tail band).
@@ -220,6 +252,65 @@ async def _select_kalshi_settlement_tickers(
     )
     return fresh_tickers, [r[0] for r in tail_rows.all()]
 
+
+async def _select_kalshi_early_settled_tickers(session, limit: int) -> list[str]:
+    """Pick tickers the VENUE has been settling while our row still says open.
+
+    #6012. A THIRD band, deliberately a separate function with a separate budget
+    rather than a third return value from `_select_kalshi_settlement_tickers`:
+    that function's two bands are pinned to sum to exactly `limit`
+    (`_fresh_settlement_budget`), and this band must not take a ticker from
+    either of them (gotcha #34).
+
+    The population is defined by a contradiction inside our OWN rows, so it needs
+    no venue read to find and no ground truth to justify:
+
+      * at least one leg carries a TIER-3 settlement, i.e. the venue has
+        demonstrably already settled part of this market; and
+      * NO leg is a winner, so we hold no answer for it; and
+      * our market row nevertheless says it is not resolved.
+
+    A market whose legs the venue is settling is a market the venue has decided
+    or is deciding. Asking costs one `GET /events/{ticker}`; the grader then
+    writes only what the venue actually says.
+
+    `AUTHORITATIVE_SOURCES_SQL` is imported rather than retyped so this band can
+    never drift from the tier-3 set the two bands above test against.
+    """
+    if limit <= 0:
+        return []
+    rows = await session.execute(
+        text("""
+            SELECT fm.external_id
+            FROM futures_markets fm
+            WHERE fm.source = 'kalshi'
+              AND fm.status <> 'resolved'
+              AND fm.resolution_date IS NOT NULL
+              AND fm.resolution_date <= NOW() + make_interval(days => :future_days)
+              AND fm.resolution_date >= NOW() - make_interval(days => :floor_days)
+              AND NOT EXISTS (
+                  SELECT 1 FROM futures_outcomes fo
+                  WHERE fo.market_id = fm.id
+                    AND fo.is_winner IS TRUE
+              )
+              AND EXISTS (
+                  SELECT 1 FROM futures_outcomes fo
+                  WHERE fo.market_id = fm.id
+                    AND COALESCE(fo.resolution_source, '') IN """ + AUTHORITATIVE_SOURCES_SQL + """
+              )
+            GROUP BY fm.external_id
+            ORDER BY MIN(fm.resolution_date) ASC
+            LIMIT :limit
+        """),
+        {
+            "limit": limit,
+            "floor_days": _FRESH_SETTLEMENT_FLOOR_DAYS,
+            "future_days": _EARLY_SETTLED_FUTURE_DAYS,
+        },
+    )
+    return [r[0] for r in rows.all()]
+
+
 #: Phase 0c-repair's promotion, hoisted to module level so a test can execute
 #: THE SHIPPED STATEMENT (#4745, CAL-P1086).
 #:
@@ -284,6 +375,7 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
         "fresh_selected": 0,
         "fresh_graded": 0,
         "tail_selected": 0,
+        "early_selected": 0,
         "errors": [],
     }
 
@@ -297,6 +389,14 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
     async with get_task_session() as session:
         fresh_tickers, tail_tickers = await _select_kalshi_settlement_tickers(
             session, limit, _last_cursor
+        )
+        # #6012 — the early-settled band. Its own budget, so it can never take a
+        # ticker from the two above (gotcha #34), and it does NOT move the tail
+        # cursor for the same reason the recency band does not: these tickers
+        # sort anywhere in the alphabet, and letting one set the cursor would
+        # skip every tail ticker between here and there.
+        early_tickers = await _select_kalshi_early_settled_tickers(
+            session, _EARLY_SETTLED_MAX_TICKERS
         )
     fresh_set = set(fresh_tickers)
 
@@ -312,18 +412,23 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
 
     stats["fresh_selected"] = len(fresh_tickers)
     stats["tail_selected"] = len(tail_tickers)
+    stats["early_selected"] = len(early_tickers)
 
     tickers = fresh_tickers + [t for t in tail_tickers if t not in fresh_set]
+    _selected = set(tickers)
+    tickers += [t for t in early_tickers if t not in _selected]
 
     if not tickers:
         logger.info("Kalshi winner backfill: nothing to do")
         return stats
 
     logger.info(
-        "Kalshi winner backfill: %d tickers to look up (%d just-settled, %d tail)",
+        "Kalshi winner backfill: %d tickers to look up "
+        "(%d just-settled, %d tail, %d early-settled)",
         len(tickers),
         len(fresh_tickers),
         len(tail_tickers),
+        len(early_tickers),
     )
 
     service = KalshiAPIService()
