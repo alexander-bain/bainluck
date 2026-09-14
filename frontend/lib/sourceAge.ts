@@ -109,6 +109,36 @@ export function sourceAgeMs(
 }
 
 /**
+ * THE LADDER ITSELF, reached from an age a caller already holds (#5761).
+ *
+ * `formatSourceAge` below takes a stamp and dates it against a clock. A ticking
+ * badge does not have that shape: `LiveAgeStamp` holds its own age in seconds,
+ * ticked once a second from the stamped write time, and dating the same stamp a
+ * second time there would put two clocks on one number. So the rungs live here
+ * and both entry points climb them.
+ *
+ * Written as seconds because that is what the ticking caller has, and because
+ * flooring to seconds first cannot move a rung: `sourceAgeMs` clamps at zero, so
+ * `floor(floor(ms/1000)/60) === floor(ms/60000)` for every value either caller
+ * can produce.
+ *
+ * There is no seconds rung. A caller that wants one ("live · 8s ago") owns that
+ * branch itself, because it is the only caller for whom a number under a minute
+ * is worth a word — everywhere else "just now" is the honest reading.
+ */
+export function formatAgeFromSeconds(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const hours = Math.floor(seconds / (60 * 60));
+  const days = Math.floor(seconds / (60 * 60 * 24));
+
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days === 1) return "yesterday";
+  return `${days}d ago`;
+}
+
+/**
  * "just now" / "3m ago" / "2h ago" / "yesterday" / "5d ago", or `null` when the
  * stamp is absent or unreadable.
  *
@@ -122,15 +152,7 @@ export function formatSourceAge(
   const ms = sourceAgeMs(iso, nowMs);
   if (ms === null) return null;
 
-  const mins = Math.floor(ms / (1000 * 60));
-  const hours = Math.floor(ms / (1000 * 60 * 60));
-  const days = Math.floor(ms / (1000 * 60 * 60 * 24));
-
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days === 1) return "yesterday";
-  return `${days}d ago`;
+  return formatAgeFromSeconds(Math.floor(ms / 1000));
 }
 
 /**
