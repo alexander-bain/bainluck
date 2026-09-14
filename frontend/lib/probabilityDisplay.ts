@@ -28,10 +28,57 @@ import { renderedPercent } from "./renderedPercent";
  * PURE: no I/O, no clock, no ambient state.
  */
 
-/** Printed when a value is possible but rounds to nothing. */
-export const BELOW_ONE_PERCENT = "<1%";
+/** Printed when there is no usable number. NOT a hyphen — see `formatProbability`. */
+export const NO_READING = "—";
+
+/**
+ * A percentage split into the marker and the integer, for callers that cannot
+ * take a finished string.
+ *
+ * #6064 — THE EVENT HERO COULD NOT CALL `formatProbabilityPercent`, SO IT DID
+ * NOT CALL ANYTHING. Its two giant percents print the integer and the `%` as
+ * SEPARATE spans (48px numeral, 18px sign) for layout, so `">99%"` is not a
+ * drop-in: handed that string the hero would have rendered `>99%` at 48px with
+ * a second `%` glued after it. The component therefore printed the bare
+ * `renderedPercent` and the clamp never ran on the biggest element of the page
+ * — a live underdog at 0.004 read `0%`, the exact "impossible" render UX-P046
+ * exists to refuse, and 0.999 read `100%` over a game nobody had won.
+ *
+ * Splitting the value is the fix, NOT re-implementing the bands in the
+ * component: `probabilityParts` is the one place the boundary rule lives and
+ * `formatProbabilityPercent` is now composed from it, so a string caller and a
+ * span caller cannot drift. The alternative — the hero stripping the `%` off
+ * this module's output — would have made the marker rule depend on parsing a
+ * sentence, which is the class of defect UX-P275 two functions below exists to
+ * delete ("ask the string, not the number" is right for a PREDICATE and wrong
+ * for a decomposition).
+ */
+export interface ProbabilityParts {
+  /** `<` or `>` when rounding would claim a boundary the value is not on. */
+  marker: "<" | ">" | null;
+  /** The integer to print, or `NO_READING` when there is none. */
+  digits: string;
+}
+
+const BELOW_ONE_PARTS: ProbabilityParts = { marker: "<", digits: "1" };
+const ABOVE_NINETY_NINE_PARTS: ProbabilityParts = { marker: ">", digits: "99" };
+
+/** The one place parts become a string, so the two forms cannot disagree. */
+function joinParts({ marker, digits }: ProbabilityParts): string {
+  if (digits === NO_READING) return NO_READING;
+  return `${marker ?? ""}${digits}%`;
+}
+
+/**
+ * Printed when a value is possible but rounds to nothing.
+ *
+ * DERIVED from the parts rather than written twice: these constants are what
+ * several suites assert against, so a literal here could go on agreeing with a
+ * test while disagreeing with what the hero draws.
+ */
+export const BELOW_ONE_PERCENT = joinParts(BELOW_ONE_PARTS);
 /** Printed when a value is uncertain but rounds to certainty. */
-export const ABOVE_NINETY_NINE_PERCENT = ">99%";
+export const ABOVE_NINETY_NINE_PERCENT = joinParts(ABOVE_NINETY_NINE_PARTS);
 
 /**
  * The percentage string for a probability in [0, 1].
@@ -68,11 +115,11 @@ export interface ProbabilityFormatOptions {
   rendered?: number | null;
 }
 
-export function formatProbabilityPercent(
+export function probabilityParts(
   prob: number,
   options?: ProbabilityFormatOptions,
-): string {
-  if (!Number.isFinite(prob)) return "—";
+): ProbabilityParts {
+  if (!Number.isFinite(prob)) return { marker: null, digits: NO_READING };
 
   const override = options?.rendered;
   // #3867: the rounding rule is `renderedPercent`'s, not a second copy of it.
@@ -86,10 +133,17 @@ export function formatProbabilityPercent(
       : (renderedPercent(prob) as number);
 
   // Strictly inside the interval, but rounding would claim a boundary.
-  if (rounded <= 0 && prob > 0) return BELOW_ONE_PERCENT;
-  if (rounded >= 100 && prob < 1) return ABOVE_NINETY_NINE_PERCENT;
+  if (rounded <= 0 && prob > 0) return BELOW_ONE_PARTS;
+  if (rounded >= 100 && prob < 1) return ABOVE_NINETY_NINE_PARTS;
 
-  return `${rounded}%`;
+  return { marker: null, digits: `${rounded}` };
+}
+
+export function formatProbabilityPercent(
+  prob: number,
+  options?: ProbabilityFormatOptions,
+): string {
+  return joinParts(probabilityParts(prob, options));
 }
 
 /**

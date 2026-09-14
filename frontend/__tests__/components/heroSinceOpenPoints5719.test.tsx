@@ -187,6 +187,39 @@ function heroPrints(percent: number): string {
 }
 
 /**
+ * The hero pair's visible text — `"76%–34%"` — with tags and entities resolved.
+ *
+ * #6064 needs the hero's OWN text, not a substring of the document. The
+ * boundary arms assert what the giant pair does and does NOT print, and
+ * `not.toContain(">0</span>")` over the whole page is satisfied by any span
+ * holding a zero — a scoreline, a period, a snapshot count — so it would go
+ * green on a hero still printing `0%`. Scoped here, it cannot.
+ *
+ * THROWS when the hero did not draw, for the reason `captionText` does: an
+ * extractor returning "" turns every negative assertion vacuous.
+ *
+ * The text is COLLECTED from between the tags rather than produced by stripping
+ * tags out. `replace(/<[^>]*>/g, "")` is the same shape as a broken HTML
+ * sanitizer — CodeQL flags it `js/incomplete-multi-character-sanitization`, high
+ * severity, and it is right to: removing one pass of tag-shaped text can leave
+ * tag-shaped text behind. Matching the text nodes is not a sanitizer at all, so
+ * there is nothing to do incompletely.
+ */
+function heroText(html: string): string {
+  const block = html.match(
+    /<div class="flex items-baseline" data-testid="event-hero-probability"[\s\S]*?<\/div>/,
+  );
+  if (!block) throw new Error("no hero probability pair in the rendered page");
+  return [...block[0].matchAll(/>([^<>]*)</g)]
+    .map((m) => m[1])
+    .join("")
+    .replace(/&gt;/g, ">")
+    .replace(/&lt;/g, "<")
+    .replace(/\s+/g, "")
+    .trim();
+}
+
+/**
  * 🔴 THE CAPTION IS READ OUT, NOT MATCHED AGAINST A TAIL.
  *
  * #5995 moved the team name from the END of this sentence to the FRONT, which
@@ -299,23 +332,43 @@ describe("#5719/#5995 the hero's since-open caption prints the journey", () => {
 /**
  * #5995 — THE BOUNDARY, WHICH IS WHERE THIS CAPTION IS ACTUALLY LOOKED AT.
  *
- * The two levels are rendered by two different things. The current one comes
- * from `EventHeroProbabilityPair`, which prints the bare integer; the opening
- * one comes from `formatProbability`, which clamps the ends to `<1%` / `>99%`.
- * They disagree above 99.5%, so a caption that used ONE formatter for both ends
- * would contradict one of its two neighbours on exactly the blowout frames the
- * issue says the fix has to survive ("any fix has to read correctly at +49").
+ * THE RULE IS UNCHANGED AND ITS ANSWER MOVED, WHICH IS WHY THESE ARMS ARE
+ * RE-DERIVED RATHER THAN RE-RUN. #5995's rule was "each end matches the line
+ * that prints it" — chosen because the hero printed a bare integer while
+ * `formatProbability` clamped to `<1%` / `>99%`, so a caption using one
+ * formatter for both ends had to contradict one of its two neighbours on
+ * exactly the blowout frames the issue says a fix must survive.
  *
- * Each arm below pins the caption to the neighbour that end belongs to.
+ * #6064 deleted the disagreement at its source: the hero clamps too. So the
+ * arm below that USED to demand a bare `100%` — correct then, and the honest
+ * record of what the neighbour printed — now demands `>99%`, and it does so
+ * for the same reason it demanded `100%` before. Re-running it would only have
+ * asked whether the page still contradicts itself.
+ *
+ * The arm is kept rather than deleted because it is the one that fails if a
+ * later change un-clamps either end: it asserts the hero and the caption print
+ * the SAME spelling of one value, which is the property #6064 bought.
  */
-describe("#5995 each end of the caption matches the line that prints it", () => {
-  it("says 100% when the hero says 100%, not the >99% of the line below", () => {
-    // .996 renders 100. The hero prints a bare `100`; `formatProbability`
-    // would print `>99%` for the same value.
+describe("#5995/#6064 each end of the caption matches the line that prints it", () => {
+  it("says >99% because the hero now says >99% too", () => {
+    // .996 renders 100, which is not a probability of 1 — UX-P046 refuses to
+    // print it as certainty. Before #6064 this line read `100%` in both the
+    // hero and the caption while `Opened >99%` sat beneath it.
     const html = draw(0.996, 0.344);
 
-    expect(html).toContain(heroPrints(100));
-    expect(html).toContain(`Wolverines 34% → 100% ${SINCE_OPEN}`);
+    // The hero itself, read out: the marker is a sibling span, so the giant
+    // numeral still holds a bare 99 and the pair reads `>99%` to a person.
+    expect(heroText(html)).toBe(">99%–<1%");
+    expect(html).toContain(`Wolverines 34% → &gt;99% ${SINCE_OPEN}`);
+  });
+
+  it("clamps the CURRENT end at the low boundary, where 0% reads as impossible", () => {
+    // The half UX-P046 was written for and the half #6064 called the stronger
+    // one: a live underdog the market still prices. `0%` says "cannot win".
+    const html = draw(0.004, 0.344);
+
+    expect(heroText(html)).toBe("<1%–>99%");
+    expect(html).toContain(`Wolverines 34% → &lt;1% ${SINCE_OPEN}`);
   });
 
   it("spells the OPENING end exactly as the Opened line spells it", () => {

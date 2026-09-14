@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import {
   formatProbabilityPercent,
+  probabilityParts,
   BELOW_ONE_PERCENT,
   ABOVE_NINETY_NINE_PERCENT,
 } from "@/lib/probabilityDisplay";
@@ -155,8 +156,26 @@ describe("anti-drift: one home for the percentage boundary", () => {
     }
   });
 
-  test("the boundary strings live in exactly one module", () => {
+  /**
+   * #6064 RE-DERIVED THIS GUARD RATHER THAN RE-RUNNING IT, AND THE REASON IS
+   * THE POINT. It searched for the literal `"<1%"` and required exactly one
+   * file to hold it. #6064 split the boundary into `{ marker, digits }` so the
+   * hero could print `>` in its own span, and `"<1%"` is now COMPOSED — so the
+   * literal was in zero files and the guard went red while pointing at nothing
+   * wrong. Its intent ("a second copy cannot quietly appear") was untouched;
+   * only the shape a copy would take had changed.
+   *
+   * So it now looks for BOTH spellings a drifting copy could use: the finished
+   * string, and a hand-built part. Searching only the old one would have left
+   * the guard green over a component that wrote `{ marker: ">", digits: "99" }`
+   * for itself — which is precisely the copy #6064 made possible.
+   */
+  test("the boundary spelling lives in exactly one module", () => {
     const roots = ["lib", "components"];
+    const SPELLINGS = [
+      /["'](?:<1%|>99%)["']/, // the finished string
+      /marker:\s*["'][<>]["']/, // a hand-built part
+    ];
     const hits: string[] = [];
     const walk = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -164,11 +183,29 @@ describe("anti-drift: one home for the percentage boundary", () => {
         if (entry.isDirectory()) walk(full);
         else if (/\.tsx?$/.test(entry.name)) {
           const src = fs.readFileSync(full, "utf8");
-          if (src.includes('"<1%"') || src.includes("'<1%'")) hits.push(full);
+          if (SPELLINGS.some((re) => re.test(src))) hits.push(full);
         }
       }
     };
     for (const r of roots) walk(path.join(__dirname, "..", "..", r));
+    // Exactly one, and it is the owner: an empty result would mean the rule had
+    // left the module altogether, which is a failure and not a pass.
     expect(hits.map((h) => path.basename(h))).toEqual(["probabilityDisplay.ts"]);
+  });
+
+  /**
+   * The guard above reads source text, so it cannot tell a module that OWNS the
+   * rule from one that merely mentions it. This one asserts the owner still
+   * behaves like the owner, so the pair cannot both be satisfied by a file that
+   * spells the strings and computes nothing.
+   */
+  test("the owner still decides the boundary, not just spells it", () => {
+    expect(formatProbabilityPercent(0.996)).toBe(ABOVE_NINETY_NINE_PERCENT);
+    expect(formatProbabilityPercent(0.004)).toBe(BELOW_ONE_PERCENT);
+    // Composed, not two independent literals: the parts and the string are the
+    // same decision, which is what lets the hero render them in two spans.
+    expect(probabilityParts(0.996)).toEqual({ marker: ">", digits: "99" });
+    expect(probabilityParts(0.004)).toEqual({ marker: "<", digits: "1" });
+    expect(probabilityParts(0.62)).toEqual({ marker: null, digits: "62" });
   });
 });
