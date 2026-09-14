@@ -216,13 +216,27 @@ export function isFinishedForShare(event: EventShareMetaInput): boolean {
  *
  * ── REACH ──
  *
- * A straight random sample of 80 of the 2,329 rows sitting `live` or `scheduled`
- * at 09:30Z: 49 served no price at all — 61%, or roughly 1,400 previews. Note the
- * issue's own figure (1,097, off `win_probability_sources`) was a PROXY and is
- * loose in both directions: 3 of 40 sampled no-source rows do serve a price, and
- * 22 of 40 sampled with-source rows serve none. This predicate reads
- * `current_odds` itself, which is the column the card actually draws from, so
- * neither error reaches it.
+ * A straight random sample (`ORDER BY md5(id::text)`) of 80 of the 2,329 rows
+ * sitting `live` or `scheduled` at 09:30Z: **35 served no price at all — 44%, or
+ * roughly 1,020 previews.**
+ *
+ * 🔴 THAT NUMBER IS A CORRECTION, AND THE WAY IT WAS WRONG IS WORTH MORE THAN THE
+ * NUMBER. The first pass read 49 of 80 — 61% — because it fetched 80 payloads in
+ * a tight loop and `/api/events/{id}` rate-limits at 60/minute. A throttled body
+ * is `{"detail": "Rate limit exceeded: 60/minute"}`, which has no `current_odds`
+ * key, so every throttled row was counted as a row with no price. The census
+ * asked "is this field absent?" of a response that was never a row. Re-measured
+ * with a 1.05s spacing and every response validated by `id` before it was
+ * counted: 80 of 80 resolved, 35 priceless. Anything that reads a FIELD off a
+ * bulk fetch has this failure mode, and it always biases toward "absent".
+ *
+ * The issue's own figure (1,097, off `win_probability_sources`) was a proxy, and
+ * re-measured it is a GOOD one — not the loose one the first pass claimed. Of 40
+ * sampled no-source rows, 37 serve no price and 3 do; of 40 sampled with-source
+ * rows, 39 are priced and 1 is not. That weights to ~45%, which agrees with the
+ * direct sample. The predicate still reads `current_odds` rather than the proxy,
+ * because that is the column the card actually draws from — but the proxy was
+ * never the thing that was wrong here; the fetch was.
  *
  * Returns the two formatted percents TOGETHER or `null`, rather than a boolean
  * beside two locals, so the copy below cannot print one side of a pair this
@@ -256,9 +270,13 @@ export function shareForecastPercents(
  * So the two halves already disagree about an exact zero, and they have since
  * #4963 landed. Resolving that is NOT this ship:
  *
- *   · it has no measured members — of 157 distinct live/scheduled rows read on
- *     2026-09-14, 45 served a `current_odds` object and ZERO carried an exact-0
- *     or a null probability inside it, so there is no specimen to reason from;
+ *   · it has no measured members — across the throttled live/scheduled samples of
+ *     2026-09-14, 87 rows served a `current_odds` object and ZERO carried an
+ *     exact-0 or a null probability inside it, so there is no specimen to reason
+ *     from (and unlike the reach figure, this count was never at risk from the
+ *     rate-limit contamination described above: a throttled body has no
+ *     `current_odds` object, so it could only ever be skipped, never miscounted
+ *     as a priced one);
  *   · the defect that IS measured (61% of 2,329 rows) is the key being ABSENT;
  *   · and adopting the wider rule would silently reverse #4963 on the strength of
  *     a fixture, which is how a repair becomes a regression.
