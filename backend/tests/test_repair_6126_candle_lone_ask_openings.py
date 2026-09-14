@@ -15,6 +15,10 @@ corresponding mistake is cheap to make and expensive to find:
   green-lights a write against a deploy that re-mints it an hour later
 * a leg being repaired on the SUM test in a market whose outcomes are not
   mutually exclusive (gotcha #23), where two legs at 0.99 is legal
+* SERIES coming back as an authority to write (CERT-2855's required repair).
+  The candle rail stores no book, so a real 0.99 trade and the venue's
+  untraded default are identical in our data and "its next point is 0.89"
+  reports only that the price moved
 * the refusal cohort quietly becoming repairable, which is how a
   "withhold and count" gate turns into a "guess and write" one
 * the delete running past the leading run, taking a genuine later move to 99%
@@ -201,21 +205,77 @@ def test_the_bad_shape_requires_an_absent_book_not_merely_a_099():
 # ---------------------------------------------------------------------------
 
 
-def test_a_leg_whose_own_series_refutes_it_is_repaired_without_any_assumption():
-    """Bublik: 0.99 then 0.13 an hour later. No sibling needed."""
-    assert classify_ok(_leg(series_refutes=True, next_p=0.13))
-    # ...including in a market that is NOT mutually exclusive: SERIES does not
-    # rest on exclusivity, so gotcha #23 cannot reach it.
-    assert classify_ok(_leg(series_refutes=True, next_p=0.13, market_exclusive=False))
+def test_series_only_real_099_trade_is_refused_without_venue_proof_6126():
+    """CERT-2855's required repair. SERIES IS NOT AN AUTHORITY TO WRITE.
 
+    The candle rail stores a price and a time and NO book, so a genuine 0.99
+    trade and Kalshi's untraded bid-0.00/ask-0.99 default are byte-identical in
+    our data. "Its next point is 0.89" says only that the price moved, and
+    price movement does not refute a prior probability — the first version of
+    this script deleted a real trade followed by 0.89 while refusing the same
+    trade followed by 0.95, on a cliff at 0.90 that nothing at the venue puts
+    there. 127 live legs sat in that cohort when this was written.
 
-def test_the_persisting_default_book_counts_as_self_refutation():
-    """1,768 of these legs have next == exactly 0.99 — nobody has traded yet.
-
-    Repairing only the opening point would leave the curve starting at 99% one
-    hour later, so this cohort has to be in scope, not out of it.
+    Both arms of the withdrawn test are pinned here, because the persisting
+    arm (next == exactly 0.99) is the same inference wearing a different face.
     """
-    assert classify_ok(_leg(series_refutes=True, next_p=0.99))
+    real_trade_then_stable = _leg(series_refutes=True, next_p=0.99)
+    real_trade_then_drop = _leg(series_refutes=True, next_p=0.89)
+
+    for row in (real_trade_then_stable, real_trade_then_drop):
+        why = repair.classify(row)
+        assert why is not None, (
+            "a series-only leg has no venue proof and must be refused, not "
+            f"repaired (next_p={row.next_p})"
+        )
+        assert "series-only" in why, "the refusal must be countable by name"
+
+    # ...and it stays refused in an exclusive market, so nobody can read the
+    # refusal as gotcha #23 doing the work.
+    assert repair.classify(
+        _leg(series_refutes=True, next_p=0.89, market_exclusive=True)
+    ) is not None
+
+    # THE NAMED WITNESS STILL REPAIRS. US Open Men's Singles (market 34277822,
+    # `/futures/34277822`): 48 outcomes, one winner, current probabilities
+    # summing to exactly 1.000 — and Bublik, Norrie and Prizmic share one
+    # opening instant at 0.99. Three exclusive legs at 0.99 is 2.97. That is
+    # SUM, it refutes itself on the row, and it is the reader-visible ship.
+    for name in ("Alexander Bublik", "Cameron Norrie", "Dino Prizmic"):
+        assert classify_ok(
+            _leg(
+                name=name,
+                market_id=34277822,
+                sum_refutes=True,
+                market_exclusive=True,
+                next_p=0.13,
+                series_refutes=True,
+            )
+        ), f"the ship's own witness ({name}) must survive the strict gate"
+
+
+def test_sum_is_the_only_authority_and_series_never_short_circuits_it():
+    """The mutation this file exists to kill: `if row.series_refutes: return None`.
+
+    Restoring that line — anywhere ahead of the SUM branch — would repair every
+    leg below on price movement alone. Each of these is refused for a DIFFERENT
+    reason, so a partial restoration cannot slip through on one of them.
+    """
+    assert repair.classify(_leg(series_refutes=True, next_p=0.99)) is not None
+    assert repair.classify(_leg(series_refutes=True, next_p=0.13)) is not None
+    assert (
+        repair.classify(
+            _leg(series_refutes=True, next_p=0.13, market_exclusive=False)
+        )
+        is not None
+    ), "a non-exclusive market must not become repairable via SERIES"
+    assert (
+        repair.classify(
+            _leg(sum_refutes=True, market_exclusive=False, series_refutes=True,
+                 next_p=0.13)
+        )
+        is not None
+    ), "SERIES must not rescue a SUM leg that failed exclusivity"
 
 
 def test_a_sum_refuted_leg_is_repaired_only_where_the_market_is_exclusive():
@@ -241,10 +301,28 @@ def test_a_singleton_with_nothing_refuting_it_is_refused_and_named():
     choice the shipped reducer makes.
     """
     why = repair.classify(_leg(next_p=0.95))
-    assert why is not None and "0.95" in why
+    assert why is not None and "[0.90, 0.99)" in why
 
     why_none = repair.classify(_leg(next_p=None))
     assert why_none is not None and "no later point" in why_none
+
+
+def test_a_refusal_reason_is_a_stable_bucket_not_a_per_row_sentence():
+    """The dry run tallies refusals BY REASON, and that tally is the proof.
+
+    An attended operator authorises `--apply` off four numbers. Interpolating
+    `next_p` into the reason — which the first version did — shatters one
+    cohort of 87 into eighty-odd buckets of 1 and the split stops being
+    readable at exactly the moment it is being relied on.
+    """
+    reasons = {repair.classify(_leg(next_p=p)) for p in (0.91, 0.95, 0.98)}
+    assert len(reasons) == 1, f"one cohort must be one bucket, got {reasons}"
+
+    series = {
+        repair.classify(_leg(series_refutes=True, next_p=p))
+        for p in (0.99, 0.89, 0.13)
+    }
+    assert len(series) == 1, f"one cohort must be one bucket, got {series}"
 
 
 def test_a_market_with_no_current_prices_cannot_satisfy_the_sum_test():

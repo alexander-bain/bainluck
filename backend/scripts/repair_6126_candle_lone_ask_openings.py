@@ -62,37 +62,67 @@ microseconds. Splitting the 0.99 Kalshi legs four ways:
 
 Only the first band is this writer's. But "written by this rail" still is not
 "wrong" — a market really can be at 99c on the hour. So NOTHING here is repaired
-on the fingerprint alone. Every leg must additionally REFUTE ITSELF, by one of
-two independent tests:
+on the fingerprint alone. ONE test, and only one, authorises a write:
 
   SUM    the leg shares its exact opening instant with another leg of the same
-         market, also at exactly 0.99. Two legs at 0.99 is 1.98. Up to 140 legs
-         share one instant (138.6). This is the venue default applied field-wide.
+         market, also at exactly 0.99, AND that market's outcomes sum to roughly
+         one. Two exclusive legs at 0.99 is 1.98, which is arithmetically
+         impossible; up to 140 legs share one instant (138.6). This is the venue
+         default applied field-wide, and it refutes itself on the row.
 
-  SERIES the leg's own next stored point is either exactly 0.99 (the default
-         book persisting, because nobody has traded yet) or below 0.90 (the
-         series refuting its first point, as Bublik's 0.99 -> 0.13 does).
+SERIES IS NO LONGER AN AUTHORITY — CERT-2855's required repair, and it was right.
+The earlier version of this script also repaired a leg whose own next stored
+point was exactly 0.99 or below 0.90 ("the series refutes its first point", as
+Bublik's 0.99 -> 0.13 does). That test does not survive contact with what the
+candle rail actually stores. The rail records a price and a time and NO book, so
+a genuine 0.99 trade and the untraded default book are byte-identical in our
+data; the only thing "next point 0.89" adds is that the price moved, and PRICE
+MOVEMENT DOES NOT REFUTE A PRIOR PROBABILITY. It also cut arbitrarily: the same
+real trade followed by 0.89 was deleted and followed by 0.95 was refused, on a
+cliff at 0.90 that nothing in the venue's behaviour puts there. A series-only
+leg is therefore excluded unless immutable venue candle history proves its
+opening was bid 0 / no trade / ask 0.99 — a proof this script does not attempt
+and does not fake (see THE 127, below). `series_refutes` is still computed and
+still printed, as a reason a leg was refused. It never writes.
 
-How the band splits on the two tests:
+Measured on production 2026-09-14 11:45Z, whole band, no sampling:
 
-    sum + series      2,901      |  sum only (no later point)    754
-    sum only           534       |  series only                  126
+    SUM + market sums to ~1   ->  REPAIRED                        219
+    SUM, market does not      ->  refused, gotcha #23           3,973
+    series only               ->  refused, CERT-2855              127
+    nothing refutes it        ->  refused                          87
     ------------------------------------------------------------------
-    REPAIRED                                                   4,315
-    NEITHER TEST FIRES — REFUSED AND COUNTED, NEVER WRITTEN        87
+    band                                                        4,406
 
-The 87 are legs with no sibling at that instant whose next point sits in
-[0.90, 0.99). Nothing in our own data distinguishes those from a genuine heavy
-favourite, so this script withholds a correction and counts it rather than
-writing a value it cannot prove. That is the same choice the shipped reducer
-makes: an absent number is a gap, a fabricated one is a lie a curve then grades.
+THAT IS A MUCH SMALLER SHIP THAN THE FIRST PRESENTATION CLAIMED (4,315), AND THE
+SHIP STILL LANDS. The reader-visible defect is the settled US Open Men's Singles
+ladder, market 34277822: 48 outcomes, one winner, `sum(current_probability)`
+exactly 1.000, and its three 99% legs share one instant. It is SUM-backed under
+the strict gate and is repaired.
 
-SUM IS THE WEAKER TEST AND IS TREATED AS SUCH. Futures outcomes are not always
-mutually exclusive (gotcha #23: independent binaries can sum well over 100%), so
-`--apply` does not take SUM on faith either — `_EXCLUSIVITY_SQL` checks that the
-market's own outcomes sum to roughly one before a SUM-only leg is eligible, and
-a leg that fails it falls back to needing SERIES. Legs that satisfy SERIES need
-no exclusivity assumption at all.
+WHY 3,973 LEGS SIT IN THE gotcha #23 BUCKET, WHICH IS NOT WHAT THAT BUCKET
+SOUNDS LIKE. The exclusivity proxy is `sum(current_probability) BETWEEN 0.85 AND
+1.25`, and on this population it is often defeated by the very defect it is
+screening — "Dow Jones price on Jul 28 at 2pm" is 80 mutually-exclusive buckets
+of which 73 STILL read 0.99 today, because the market was never traded and the
+frozen default book is also its current price (sum 72.27). Those legs are almost
+certainly this rail's, and this script still refuses them: the proxy cannot tell
+them from "Top 10 Finishers", where 141 independent binaries legitimately sum to
+18.28. A sounder exclusivity signal is real work and a widening of a gate a cert
+told this lane to keep — it is named here, measured, and deliberately NOT built
+in the same breath as the repair it would enlarge.
+
+THE 127, AND WHY NO VENUE FETCH IS ATTEMPTED. Venue proof is not uniformly
+impossible: 59 of the 127 are past Kalshi's measured MARKET-data purge (gotcha
+#35, >=74/<86 days — `app/utils/kalshi_retention.py`), 66 are still inside it,
+2 sit in the grey band. So this is a choice, not a wall: fetching 127 candle
+histories from a one-off dyno to enlarge a repair by 3% is not worth the write
+surface during launch week. They are refused, counted by name in the dry run,
+and recoverable later by anyone who wants to pay for the venue read.
+
+THE REFUSED COHORT IS THE POINT, NOT THE RESIDUE. 4,187 of 4,406 legs are left
+exactly as they are. An absent correction is a gap; a fabricated one is a lie a
+curve then grades.
 
 SCOPED TO 0.99 ON PURPOSE. The reducer refuses any lone ask above 0.50, so in
 principle other values were mintable. They are NOT repaired here: the candle
@@ -113,8 +143,8 @@ Per repaired leg, in this order:
                                                    (both NULL if none survives)
 
 THE LEADING RUN, NOT JUST THE FIRST ROW — this is the correction the measurement
-forced. For 1,768 of these legs the next point is ALSO exactly 0.99, because an
-untraded market keeps serving the same default book hour after hour. Deleting
+forced. For 1,768 legs in the band the next point is ALSO exactly 0.99, because
+an untraded market keeps serving the same default book hour after hour. Deleting
 only the opening point would leave the curve starting at 99% anyway, one hour
 later, and the repair would read as done while the reader saw no change. So the
 run is deleted up to the first row that is not this shape, and never past it: a
@@ -324,21 +354,33 @@ _REDUCER_CALLERS = (
 
 
 def classify(row):
-    """REPAIR or the reason this leg is refused.
+    """None to REPAIR, or the reason this leg is refused.
 
-    SERIES needs no assumption about the market. SUM needs the market's
-    outcomes to be mutually exclusive, so a SUM-only leg in a market that does
-    not sum to roughly one is refused rather than repaired.
+    SUM under exclusivity is the ONLY authority to write. `market_exclusive`
+    is NULL for a market with no priced outcomes, and `and` on a NULL is
+    falsey — unknown refuses, it does not pass.
+
+    `series_refutes` deliberately appears only as a refusal REASON below.
+    Restoring it as an early `return None` is the defect CERT-2855 named:
+    the candle rail stores no book, so a real 0.99 trade and the untraded
+    default are identical in our data and the later price tells us only that
+    the price moved.
     """
-    if row.series_refutes:
-        return None
     if row.sum_refutes and row.market_exclusive:
         return None
     if row.sum_refutes:
-        return "sum-only leg in a market that does not sum to ~1 (gotcha #23)"
+        return "sum-refuted leg in a market that does not sum to ~1 (gotcha #23)"
+    if row.series_refutes:
+        return (
+            "series-only leg — price movement does not refute a prior "
+            "probability, and no venue candle proves an empty book"
+        )
     if row.next_p is None:
         return "singleton with no later point — nothing refutes it"
-    return f"singleton whose next point is {row.next_p} — consistent with a real favourite"
+    return (
+        "singleton whose next point sits in [0.90, 0.99) — consistent with a "
+        "real favourite"
+    )
 
 
 async def run(args):
