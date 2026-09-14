@@ -22,6 +22,7 @@ from app.tasks.schedule_coverage import (
     MLB_NOMINAL_GAME_LENGTH,
     _repair_teams_match,
     choose_frozen_final,
+    frozen_club,
     frozen_completed_at,
     frozen_final_orientation,
     frozen_settle_floor,
@@ -258,69 +259,111 @@ class TestOrientation:
             "New York Yankees", "Boston Red Sox",
         ) == "swapped"
 
-    def test_a_half_matched_row_is_refused_not_called_swapped_cert2864(self):
-        """Our away name is truncated to the bare city — the shape this suite
-        already carries for "San Francisco Giant". Our HOME matches the
-        authority's away exactly, so a swap test that asked only about the home
-        side would call this `swapped` and hand a confident side-mapping to a row
-        where one of the two teams is not identified at all."""
+    def test_a_side_that_names_no_club_is_refused_cert2864(self):
+        """Our away name is the bare city. `frozen_club` refuses it — `New York`
+        is a prefix of two franchises — so the row identifies only one of its two
+        teams and nothing may be written onto it, even though our HOME matches
+        the authority's away exactly."""
+        assert frozen_club("New York") is None
         assert frozen_final_orientation(
             "New York Mets", "New York",
             "New York Yankees", "New York Mets",
-        ) == "ambiguous"
+        ) == "different_clubs"
 
-    def test_a_single_possible_orientation_is_never_second_guessed_cert2864(self):
-        """The repair is a STRICT REFINEMENT: the discriminating tokens may only
-        speak where the raw pair fits both ways. Wherever exactly one orientation
-        is possible at all, the answer must be that orientation, unchanged from
-        before the repair — which is what keeps this change off the measured
-        population (0 of the 59 frozen rows have two teams sharing a token).
+    def test_two_city_only_names_are_not_a_club_match_cert2867(self):
+        """\U0001F534 THE MUTANT THAT SURVIVED ITS FIRST BATTERY. Without the
+        explicit `None` refusal, two unresolvable names compare equal — `None ==
+        None` is True — so a row and a Final that BOTH name nothing but cities
+        would read `aligned` and settle on no identity whatsoever.
 
-        The list carries a cross-sport decoy on purpose: without one, every
-        pairing that reaches a single orientation also survives the discriminating
-        pass, and the assertion would hold for a version that ran the
-        discriminating pass on everything.
+        Not hypothetical: `statpal_league_rosters` documents a dead city-only
+        vocabulary still present in production (`Toronto`, `Los Angeles C`,
+        `New York I`), 242 rows of it. This is the one shape where the roster
+        lookup failing on BOTH sides looks like agreement.
         """
-        from app.tasks.schedule_coverage import _repair_tokens
+        assert frozen_club("New York") is None and frozen_club("Chicago") is None
+        assert frozen_final_orientation(
+            "New York", "Chicago", "New York", "Chicago",
+        ) == "different_clubs"
 
-        names = ["Boston Red Sox", "Baltimore Orioles", "Chicago Cubs",
-                 "Chicago White Sox", "New York Yankees", "New York Mets",
-                 "Chicago Fire", "Athletics"]
-        checked = 0
+    def test_city_tokens_alone_never_settle_two_different_games_cert2867(self):
+        """\U0001F534 CERT-2867's merits BLOCK. Mets @ Cubs and a same-hour
+        Yankees @ White Sox are TWO GAMES that share a city on each side, so the
+        raw pair fits in exactly ONE direction — and the previous cut only
+        consulted club names when it fitted in BOTH. It therefore never reached
+        the tie-break at all and settled one game with the other's score.
+
+        This is the proof that no rule over these four strings can do the job:
+        nothing in the letters of "New York Mets" and "New York Yankees" says they
+        are different clubs. Only a roster says that.
+        """
+        assert frozen_final_orientation(
+            "New York Mets", "Chicago Cubs",
+            "New York Yankees", "Chicago White Sox",
+        ) == "different_clubs"
+        assert frozen_final_orientation(
+            "New York Yankees", "Chicago White Sox",
+            "New York Mets", "Chicago Cubs",
+        ) == "different_clubs"
+
+    def test_club_identity_is_required_for_every_settleable_answer_cert2867(self):
+        """THE PROPERTY, over every pairing: an answer this arm will act on
+        (`aligned`/`swapped`) may only be returned when the ROSTER agrees, and it
+        must then agree in the direction returned. Written as a property rather
+        than a case list because the two BLOCKs were both "a pairing nobody
+        thought to enumerate".
+        """
+        names = ["Boston Red Sox", "Baltimore Orioles", "St.Louis Cardinals",
+                 "San Francisco Giant", "Chicago Cubs", "Chicago White Sox",
+                 "New York Yankees", "New York Mets", "Athletics"]
+        settleable = 0
         for our_home in names:
             for our_away in names:
                 for mlb_home in names:
                     for mlb_away in names:
-                        raw_aligned = bool(
-                            _repair_tokens(our_home) & _repair_tokens(mlb_home)
-                        ) and bool(_repair_tokens(our_away) & _repair_tokens(mlb_away))
-                        raw_swapped = bool(
-                            _repair_tokens(our_home) & _repair_tokens(mlb_away)
-                        ) and bool(_repair_tokens(our_away) & _repair_tokens(mlb_home))
-                        if raw_aligned == raw_swapped:
-                            continue  # both or neither: the repair's own ground
-                        checked += 1
-                        expected = "aligned" if raw_aligned else "swapped"
-                        assert frozen_final_orientation(
+                        verdict = frozen_final_orientation(
                             our_home, our_away, mlb_home, mlb_away
-                        ) == expected, (
-                            f"{our_home}/{our_away} vs {mlb_home}/{mlb_away}: only "
-                            f"{expected} was possible, so the repair must not "
-                            "second-guess it"
                         )
-        assert checked > 100, (
-            f"only {checked} single-orientation pairings — the population this "
-            "asserts over is too thin to mean anything"
+                        if verdict not in ("aligned", "swapped"):
+                            continue
+                        settleable += 1
+                        oh, oa = frozen_club(our_home), frozen_club(our_away)
+                        mh, ma = frozen_club(mlb_home), frozen_club(mlb_away)
+                        assert None not in (oh, oa, mh, ma), (
+                            f"{our_home}/{our_away} vs {mlb_home}/{mlb_away}: "
+                            f"{verdict} on a name that names no club"
+                        )
+                        if verdict == "aligned":
+                            assert (oh, oa) == (mh, ma), (
+                                f"{our_home}/{our_away} vs {mlb_home}/{mlb_away}: "
+                                "aligned but the clubs do not line up"
+                            )
+                        else:
+                            assert (oh, oa) == (ma, mh), (
+                                f"{our_home}/{our_away} vs {mlb_home}/{mlb_away}: "
+                                "swapped but the clubs do not cross over"
+                            )
+        assert settleable > 50, (
+            f"only {settleable} settleable pairings — the repair would be passing "
+            "this by refusing everything, which is not a fix"
         )
 
     def test_an_unbreakable_tie_is_named_not_guessed_cert2864(self):
-        """When the authority names both its sides identically nothing can break
-        the tie, so the answer is `ambiguous` — a refusal — and never a coin-flip
-        in favour of `aligned`."""
+        """All four names resolving to ONE club leaves no side to choose, so the
+        answer is `ambiguous` — a refusal — never a coin-flip for `aligned`."""
+        assert frozen_final_orientation(
+            "New York Mets", "New York Mets",
+            "New York Mets", "New York Mets",
+        ) == "ambiguous"
+
+    def test_a_degenerate_authority_pair_is_refused_cert2867(self):
+        """The authority naming both its sides "Mets" against our Mets/Yankees row
+        is not a tie — it is a roster mismatch on the away side, and it is named
+        as one."""
         assert frozen_final_orientation(
             "New York Mets", "New York Yankees",
             "New York Mets", "New York Mets",
-        ) == "ambiguous"
+        ) == "different_clubs"
 
     def test_orientation_and_the_boolean_matcher_cannot_drift_5881(self):
         """`frozen_final_orientation` is `_repair_teams_match` decomposed, and the
@@ -608,13 +651,56 @@ async def test_a_swapped_same_city_final_writes_nothing_and_is_counted_cert2864(
 
 
 @pytest.mark.asyncio
+async def test_different_same_city_clubs_cannot_settle_each_other_5881(monkeypatch):
+    """\U0001F534 CERT-2867's merits BLOCK, end to end, and the test it named.
+
+    Our row is Mets @ Cubs. The authority's Final on the same date and hour is
+    Yankees @ White Sox — a DIFFERENT GAME that shares a city on each side. The
+    previous cut matched it on `{new, york}` + `{chicago}`, in one direction only
+    so the club tie-break never ran, and stamped our row `completed` with the
+    other game's 7-2. Nothing may move, and the refusal must be counted.
+    """
+    start = datetime.now(timezone.utc) - timedelta(days=8)
+    rows = [("New York Mets", "Chicago Cubs", start, (None, None), "suspended")]
+    games = _slate(start, _mlb_game(12, start, "New York Yankees",
+                                    "Chicago White Sox", 7, 2))
+    out, ledger = await _run_frozen_settle(monkeypatch, rows=rows, games=games)
+
+    assert ledger["different_clubs"] == 1, ledger
+    assert ledger["settled"] == 0
+    assert ledger["no_final"] == 0, (
+        "a roster mismatch reported as `no_final` would say the authority had "
+        "nothing finished on a date where it reported a Final"
+    )
+    assert out[0].status == "suspended", "a different game must not end this row"
+    assert (out[0].home_score, out[0].away_score) == (None, None)
+    assert out[0].completed_at is None
+
+
+@pytest.mark.asyncio
+async def test_a_degenerate_authority_pair_writes_nothing_and_is_counted_cert2867(
+    monkeypatch,
+):
+    """The authority names both its sides "New York Mets" against our Mets/Yankees
+    row: a roster mismatch on the away side, refused and counted."""
+    start = datetime.now(timezone.utc) - timedelta(days=8)
+    rows = [("New York Mets", "New York Yankees", start, (None, None), "suspended")]
+    games = _slate(start, _mlb_game(8, start, "New York Mets", "New York Mets", 5, 4))
+    out, ledger = await _run_frozen_settle(monkeypatch, rows=rows, games=games)
+
+    assert ledger["different_clubs"] == 1, ledger
+    assert ledger["settled"] == 0
+    assert out[0].status == "suspended"
+    assert (out[0].home_score, out[0].away_score) == (None, None)
+
+
+@pytest.mark.asyncio
 async def test_an_unresolvable_orientation_writes_nothing_and_is_counted_cert2864(
     monkeypatch,
 ):
-    """The tie the club names cannot break: the authority names both its sides
-    "New York Mets". Refused under `orientation_ambiguous`, never guessed."""
+    """All four names one club: no side to choose, so `orientation_ambiguous`."""
     start = datetime.now(timezone.utc) - timedelta(days=8)
-    rows = [("New York Mets", "New York Yankees", start, (None, None), "suspended")]
+    rows = [("New York Mets", "New York Mets", start, (None, None), "suspended")]
     games = _slate(start, _mlb_game(8, start, "New York Mets", "New York Mets", 5, 4))
     out, ledger = await _run_frozen_settle(monkeypatch, rows=rows, games=games)
 
@@ -887,8 +973,8 @@ async def test_every_ledger_key_is_present_on_a_nothing_to_do_pass_5881(
     _out, ledger = await _run_frozen_settle(monkeypatch, rows=[], games={})
     assert set(ledger) == {
         "candidates", "settled", "ambiguous", "no_final", "orientation",
-        "orientation_ambiguous", "score_conflict", "no_authority_score",
-        "refused_row_moved", "applied",
+        "orientation_ambiguous", "different_clubs", "score_conflict",
+        "no_authority_score", "refused_row_moved", "applied",
     }
     assert ledger["candidates"] == 0
 

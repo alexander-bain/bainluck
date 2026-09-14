@@ -611,51 +611,72 @@ def frozen_settle_floor() -> timedelta:
     return AUTHORITY_STRAGGLER_LOOKBACK + UNREACHABLE_SUSPENDED_MARGIN
 
 
-def _discriminating_tokens(one, other) -> tuple:
-    """The two names' tokens with the tokens they SHARE between them removed.
+def frozen_club(name) -> Optional[str]:
+    """The MLB franchise ``name`` names, or ``None`` when it cannot be pinned.
 
-    A city is not an identity when both of a game's teams live in it. "New York
-    Mets" and "New York Yankees" share ``{new, york}``, so a bare intersection
-    answers "yes" for BOTH sides of that game and can no longer say which side is
-    which. Dropping the shared tokens leaves ``{mets}`` against ``{yankees}`` —
-    the part of the name that actually names the club.
+    THE ROSTER IS NOT WRITTEN HERE. `statpal_league_rosters.MLB_TEAM_NAMES` is the
+    30 franchises as measured across BOTH vocabularies — ours and a provider's —
+    and `normalize_team` is the fold that was measured with it: it is why
+    `St.Louis Cardinals` and `St. Louis Cardinals` are one club rather than two,
+    which is a split this arm's own population carries (#2867 / D50). A second
+    table here would be the bug, not the fix.
 
-    Scoped to the PAIR, never to a global stop-list: "new"/"york" are perfectly
-    discriminating in Yankees @ Red Sox and must keep working there. A side whose
-    every token is shared comes back EMPTY, which reads as "cannot discriminate"
-    and refuses — the fail-closed direction for a rail that writes a score.
+    The prefix arm exists for one measured production shape: our rows carry the
+    truncated `San Francisco Giant`, which is nobody's exact name. It resolves
+    only when the prefix is UNIQUE across the 30, so `Chicago`, `New York` and
+    `Los Angeles` — the names that would re-open the whole city-token hole —
+    resolve to nothing and refuse. An unknown string (`Sacramento Athletics`)
+    refuses too. Fail-closed is the only safe direction for a rail that writes a
+    score onto a side.
     """
-    a, b = _repair_tokens(one), _repair_tokens(other)
-    shared = a & b
-    return a - shared, b - shared
+    from app.utils.nfl_team_matching import normalize_team
+    from app.utils.statpal_league_rosters import MLB_TEAM_NAMES
+
+    folded = normalize_team(name)
+    if not folded:
+        return None
+    if folded in MLB_TEAM_NAMES:
+        return folded
+    hits = [c for c in MLB_TEAM_NAMES if c.startswith(folded) or folded.startswith(c)]
+    return hits[0] if len(hits) == 1 else None
 
 
 def frozen_final_orientation(our_home, our_away, mlb_home, mlb_away) -> str:
-    """``"aligned"`` | ``"swapped"`` | ``"ambiguous"`` | ``"none"`` for one Final.
+    """``"aligned"`` | ``"swapped"`` | ``"ambiguous"`` | ``"different_clubs"`` |
+    ``"none"`` for one candidate Final.
 
-    The same two token intersections `_repair_teams_match` is built from, kept
-    apart because this arm WRITES A SCORE and therefore has to know which side is
-    which — a matcher that answers "yes, in some orientation" is the right answer
-    to the inverted-row repair's question and the wrong one to this rail's.
-    `test_orientation_and_the_boolean_matcher_cannot_drift_5881` pins the two
-    together so they can never disagree about membership.
+    This arm WRITES A SCORE and therefore has to know which side is which — a
+    matcher that answers "yes, in some orientation" is the right answer to the
+    inverted-row repair's question and the wrong one to this rail's.
 
-    ── THE SAME-CITY TRAP (CERT-2864) ──────────────────────────────────────────
-    The first cut asked the two raw intersections IN ORDER and returned on the
-    first that held, so `aligned` was preferred whenever both fitted. For a
-    same-city game both ALWAYS fit: Mets @ Yankees intersects Yankees @ Mets on
-    ``{new, york}`` in either direction, and Cubs/White Sox on ``{chicago}``. A
-    genuinely SWAPPED row therefore read `aligned`, and `choose_frozen_final`
-    would settle it — copying the authority's home score onto our away team and
-    baking the side-mapping defect in as a result. That is the one outcome this
-    rail's `orientation` verdict exists to refuse.
+    ── WHY A TOKEN INTERSECTION CANNOT ANSWER THIS (CERT-2864, CERT-2867) ───────
+    Two cuts of this function tried to decide club identity lexically and both
+    were wrong in the same direction — they said YES to a game that was not ours.
 
-    So the raw pair decides MEMBERSHIP only (unchanged, which is what keeps the
-    drift pin above honest), and when both orientations fit, the discriminating
-    tokens — the club names with the shared city removed — break the tie. If they
-    cannot, the answer is `ambiguous` and the row is refused and counted. Two
-    identically-named sides on the authority's side of the comparison reach that
-    leaf; nothing is written on a guess.
+    1. Asking the two raw intersections IN ORDER preferred `aligned` whenever both
+       fitted, and for a same-city game both ALWAYS fit: Mets @ Yankees intersects
+       Yankees @ Mets on ``{new, york}``. A genuinely SWAPPED row read `aligned`,
+       and the real task then wrote `New York Mets 7 - New York Yankees 2` for a
+       game the Yankees won 7-2.
+    2. Breaking that tie on the tokens the two names do NOT share fixed the swap
+       and left the wider hole open, because it only ran when both orientations
+       fitted. **Mets @ Cubs against a same-hour Yankees @ White Sox fits exactly
+       ONE way** — ``{new, york}`` on the home side, ``{chicago}`` on the away
+       side — so it never reached the tie-break and settled one game with the
+       other's score.
+
+    The second case is not a harder version of the first; it is the proof that no
+    local rule over these four strings can do it. Nothing in the letters of
+    "New York Mets" and "New York Yankees" says they are different clubs. Only a
+    ROSTER says that. So club identity is now REQUIRED — resolved through
+    :func:`frozen_club` — and the token pair is kept for one job only: deciding
+    whether this Final is even a candidate worth asking about.
+
+    `different_clubs` is deliberately distinct from `none`. `none` means the
+    authority's Final is some other game entirely and is dropped; `different_clubs`
+    means it LOOKED like ours on names and the roster refutes it, which is a fact
+    worth a counter (gotcha #53) rather than a silent skip that would be reported
+    as "the authority reports no finished game here".
     """
     raw_aligned = bool(_repair_tokens(our_home) & _repair_tokens(mlb_home)) and bool(
         _repair_tokens(our_away) & _repair_tokens(mlb_away)
@@ -665,20 +686,22 @@ def frozen_final_orientation(our_home, our_away, mlb_home, mlb_away) -> str:
     )
     if not raw_aligned and not raw_swapped:
         return "none"
-    if raw_aligned and not raw_swapped:
-        return "aligned"
-    if raw_swapped and not raw_aligned:
-        return "swapped"
 
-    our_h, our_a = _discriminating_tokens(our_home, our_away)
-    mlb_h, mlb_a = _discriminating_tokens(mlb_home, mlb_away)
-    disc_aligned = bool(our_h & mlb_h) and bool(our_a & mlb_a)
-    disc_swapped = bool(our_h & mlb_a) and bool(our_a & mlb_h)
-    if disc_aligned and not disc_swapped:
+    our_h, our_a = frozen_club(our_home), frozen_club(our_away)
+    mlb_h, mlb_a = frozen_club(mlb_home), frozen_club(mlb_away)
+    if None in (our_h, our_a, mlb_h, mlb_a):
+        return "different_clubs"
+    club_aligned = our_h == mlb_h and our_a == mlb_a
+    club_swapped = our_h == mlb_a and our_a == mlb_h
+    if club_aligned and club_swapped:
+        # All four names are one club, so there is no side to choose. Refused
+        # under its own name rather than guessed at.
+        return "ambiguous"
+    if club_aligned:
         return "aligned"
-    if disc_swapped and not disc_aligned:
+    if club_swapped:
         return "swapped"
-    return "ambiguous"
+    return "different_clubs"
 
 
 def choose_frozen_final(hs, aws, candidates) -> tuple:
@@ -698,6 +721,12 @@ def choose_frozen_final(hs, aws, candidates) -> tuple:
       ``orientation`` because they are different facts: that one knows the row is
       swapped, this one knows only that it cannot tell — and a rail that writes a
       score must never spend a coin-flip. See `frozen_final_orientation`;
+    * ``different_clubs`` — every Final the authority offers looked like our game
+      on team-name tokens and the ROSTER refutes it (CERT-2867): Mets @ Cubs
+      against a same-hour Yankees @ White Sox shares a city on each side and is
+      not the same game. Counted rather than reported as ``no_final``, which
+      would have said "the authority reports no finished game here" about a date
+      on which it reported one;
     * ``score_conflict`` — we hold a score and the authority's differs. REFUSED
       and counted, not overwritten: this arm's warrant is "say the result we can
       confirm", and a row whose score contradicts the confirmed Final has not been
@@ -719,8 +748,13 @@ def choose_frozen_final(hs, aws, candidates) -> tuple:
     """
     if not candidates:
         return ("no_final", None)
+    # CERT-2867. Asked FIRST and over the whole offer, so a date carrying several
+    # city-lookalike Finals is one honest refusal rather than an `ambiguous` that
+    # blames a doubleheader for a roster mismatch.
+    cands = [c for c in candidates if c["orientation"] != "different_clubs"]
+    if not cands:
+        return ("different_clubs", None)
     ours_fully_scored = hs is not None and aws is not None
-    cands = list(candidates)
     if len(cands) > 1 and ours_fully_scored:
         narrowed = [
             c for c in cands
@@ -826,8 +860,8 @@ async def settle_frozen_mlb_suspended(apply: bool = True) -> dict:
     never read the same (gotcha #53).
 
     Returns ``{candidates, settled, ambiguous, no_final, orientation,
-    orientation_ambiguous, score_conflict, no_authority_score, refused_row_moved,
-    applied}`` — every key present on every return, including the dry run and the
+    orientation_ambiguous, different_clubs, score_conflict, no_authority_score,
+    refused_row_moved, applied}`` — every key present on every return, including the dry run and the
     nothing-to-do pass.
     """
     from types import SimpleNamespace
@@ -846,6 +880,7 @@ async def settle_frozen_mlb_suspended(apply: bool = True) -> dict:
         "no_final": 0,
         "orientation": 0,
         "orientation_ambiguous": 0,
+        "different_clubs": 0,
         "score_conflict": 0,
         "no_authority_score": 0,
         "refused_row_moved": 0,
