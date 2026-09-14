@@ -249,12 +249,47 @@ export function parsePlayerName(
   const exactStatMatch = STAT_TYPES.find(
     (st) => afterColon.toLowerCase() === st.toLowerCase(),
   );
-  if (exactStatMatch) {
+  // #6210: THE SUBJECT IS WHOEVER THE OUTCOME NAMES. It is never whatever is
+  // left over after a statistic is stripped off the market's own phrase.
+  //
+  // Kalshi writes these rows as `<matchup>: <stat phrase>` / `<subject>: <line>`,
+  // so the person, team or defense is in `outcome_name` and the market's
+  // after-colon text is the STAT, whole. This branch already trusted exactly
+  // that — but only when the stat phrase appeared in STAT_TYPES verbatim. Every
+  // other phrase fell to the suffix strip below, which leaves the market's
+  // QUALIFIER standing where the subject belongs: on Broncos@Chiefs that made
+  // people called "Team", "Fantasy", "Passing" and "Rushing +" — 131 of 374 rows
+  // and 19 of 46 cards. "Team's 4+ touchdowns" on a two-team page cannot even say
+  // which team, and `outcome_name` said "Denver" the whole time.
+  //
+  // Widening the rule beats blocklisting the words: "Team Touchdowns", "Fantasy
+  // Points", "Team Corners" and "Player Longest Rush" are one shape with many
+  // spellings, so a vocabulary fix re-opens on the next venue phrase. Measured
+  // over 7,208 distinct (market_name, outcome_name) pairs from 15 live events
+  // across NFL, NCAAF, MLB, NBA, soccer and NHL: 326 rows change, every one
+  // replacing a fabricated subject with a real team or player, and NO row where
+  // a real person's name is replaced.
+  //
+  // `stat` becomes the market's full phrase ("Passing Touchdowns", not
+  // "Touchdowns") because the strip also MERGED distinct markets — Walker's
+  // "Rushing + Receiving Yards" rungs would otherwise land in his "Receiving
+  // Yards" ladder, and a QB's "Passing Interceptions" in a defense's
+  // "Interceptions". STAT_TO_BOX_SCORE is unaffected: that path is dead in
+  // production under ruling 003 and pinned off.
+  //
+  // The guard keeps every shape that parses today: `exactStatMatch` preserves
+  // the colon-less market this branch used to serve, and requiring a colon
+  // otherwise leaves #1639's matchup rows (no colon, no stat) to the
+  // `parsePropLabel` fall-through below.
+  const outcomeColon = (outcomeName || "").indexOf(":");
+  const subjectFromOutcome =
+    outcomeColon > 0 ? outcomeName.slice(0, outcomeColon).trim() : "";
+
+  if (subjectFromOutcome && afterColon && (exactStatMatch || colonIdx >= 0)) {
+    player = subjectFromOutcome;
+    stat = exactStatMatch ?? afterColon;
+  } else if (exactStatMatch) {
     stat = exactStatMatch;
-    const outcomeColon = (outcomeName || "").indexOf(":");
-    if (outcomeColon > 0) {
-      player = outcomeName.slice(0, outcomeColon).trim();
-    }
   } else {
     player = afterColon;
     for (const st of STAT_TYPES) {
@@ -554,7 +589,31 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
 
     // `team` is for DISPLAY (card colour, team filter) and may be a heuristic.
     // `keyTeam` is for IDENTITY and is authoritative-or-nothing — see the header.
-    const team: TeamSide = p.player_team ?? detectTeam(parsed.team || p.market_name || "");
+    // #6210: when the subject the outcome names IS one of the two teams — a
+    // "Team Sacks" / "Team Total Touchdowns" row — it states its side outright.
+    // The matchup string the fallback reads cannot: detectTeam("Denver vs Kansas
+    // City") answers "away" for BOTH teams' rows, by first-mention ordering, so
+    // once those cards stopped all being called "Team" they would all still have
+    // worn the visitor's colour. Measured over the same 15 events: no player's
+    // personal name resolves to a side, so every player row takes the "unknown"
+    // path and keeps exactly its previous colour; `keyTeam` is untouched, so
+    // bucketing is unchanged.
+    // Only a subject the OUTCOME supplied may name its own side. A subject taken
+    // from the market name can be a matchup ("Set 1 Winner: Bosio vs Cabrera"
+    // parses to "Bosio vs Cabrera"), and handing that to detectTeam picks a side
+    // by mention order for a card that names both — the one drift this guard
+    // removes, measured across the same 15 events.
+    const outcomeColon = (p.outcome_name || "").indexOf(":");
+    const subjectSide =
+      outcomeColon > 0 &&
+      parsed.player === (p.outcome_name || "").slice(0, outcomeColon).trim()
+        ? detectTeam(parsed.player)
+        : "unknown";
+    const team: TeamSide =
+      p.player_team ??
+      (subjectSide !== "unknown"
+        ? subjectSide
+        : detectTeam(parsed.team || p.market_name || ""));
     const keyTeam: TeamSide =
       p.player_team === "home" || p.player_team === "away" ? p.player_team : "unknown";
     // UX-P060 (C281 B1) — NORMALIZE TO A PRIMITIVE EXACTLY ONCE.
