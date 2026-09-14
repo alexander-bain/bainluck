@@ -156,7 +156,14 @@ const NOT_YET_STARTED = {
   commence_time: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
 };
 
-/** Being played right now. `live` short-circuits above the new branch. */
+/**
+ * Being played right now, and carrying no `live_probability_pinned`.
+ *
+ * #6113 moved the `live` test BELOW the no-result test, so this fixture no longer
+ * passes because `live` short-circuits — it passes because a live row the server
+ * has not flagged as frozen is genuinely live. That is the stronger reason, and
+ * the two controls below are what hold #6113 to its measured population.
+ */
 const IN_PROGRESS = { ...GIANTS_SWALLOWS, status: "live" };
 
 /* ────────────────────────────── the harness ────────────────────────────── */
