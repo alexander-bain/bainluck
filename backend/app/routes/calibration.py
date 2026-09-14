@@ -75,6 +75,16 @@ _cache: dict = {"data": None, "timestamp": 0, "source": None}
 _staged_cache: dict = {"data": None, "timestamp": 0.0}
 STAGED_DISCLOSURE_TTL_S = 120.0
 
+#: CAL-P1216 — the out-of-band coverage census, memoised beside the staged
+#: disclosure and on the same clock. Read here rather than inside ``_serve``
+#: because every tier ends in ``_serve``, including the process-memory memo whose
+#: defining property is that it does no network work; a Redis GET per request
+#: would quietly spend that. ``data`` is the published census or ``None``, and
+#: ``None`` is a real cached answer (the census is absent most of the time) —
+#: which is why freshness is carried by ``timestamp`` and not by truthiness.
+_coverage_cache: dict = {"data": None, "timestamp": 0.0, "read": False}
+COVERAGE_CENSUS_TTL_S = 120.0
+
 #: CAL-P1191 (#997) — WHAT A REFUSAL IS ALLOWED TO PROMISE DEPENDS ON WHICH
 #: REFUSAL IT IS. The 503 used to carry one sentence and one number for both
 #: reasons: *"It is rebuilt hourly — please retry shortly"* with
@@ -1013,11 +1023,23 @@ async def _read_staged_disclosure(db: AsyncSession, *, now: float) -> dict:
     if isinstance(cached, dict) and (now - _staged_cache["timestamp"]) < STAGED_DISCLOSURE_TTL_S:
         return cached
 
+    # CAL-P1216. The cursor's IDENTITY (generation + roster digest) is captured
+    # on this same read and stashed beside the disclosure, never fetched
+    # separately: it is two fields of the envelope already in hand, and a second
+    # read of the same row to get them would double this function's database
+    # cost for nothing. Cleared first so a read that fails cannot leave the
+    # previous generation's identity behind it — a stale identity is the one
+    # input that could attach a census to the wrong build.
+    _staged_cache["identity"] = None
+
     try:
         from app.services.durable_snapshots import read_snapshot
         from app.tasks.calibration_main_build import (
             LEDGER_IDENTITY,
             STAGED_FUTURES_IDENTITY,
+        )
+        from app.utils.calibration_coverage_consumer import (
+            cursor_identity as _cursor_identity,
         )
         from app.utils.calibration_phase_ledger import PHASE_LEDGER_SCHEMA
         from app.utils.calibration_staged_futures import STAGED_FUTURES_SCHEMA
@@ -1048,6 +1070,11 @@ async def _read_staged_disclosure(db: AsyncSession, *, now: float) -> dict:
                 ledger_stages=ledger.envelope.payload.get("stages"),
                 staged_generated_at=bank.envelope.generated_at,
             )
+            # Only from a bank that passed the ``ok`` test above. A
+            # ``wrong_version`` read still carries an envelope, and taking an
+            # identity off one would name a generation from some other
+            # artifact's row — the same trap the ``ok`` check exists for.
+            _staged_cache["identity"] = _cursor_identity(bank.envelope.payload)
     except Exception as exc:  # noqa: BLE001 — reported, never swallowed (Q297)
         logger.warning("calibration: staged disclosure read failed", exc_info=True)
         disclosure = unmeasured(f"read_raised: {type(exc).__name__}")
@@ -1055,6 +1082,54 @@ async def _read_staged_disclosure(db: AsyncSession, *, now: float) -> dict:
     _staged_cache["data"] = disclosure
     _staged_cache["timestamp"] = now
     return disclosure
+
+
+async def _read_published_coverage_census(*, now: float) -> Optional[dict]:
+    """The out-of-band coverage census, memoised per dyno. Never raises (CAL-P1216).
+
+    One bounded Redis GET at most every :data:`COVERAGE_CENSUS_TTL_S`, taken once
+    per request at step 0 rather than inside ``_serve`` — see the note on
+    :data:`_coverage_cache`.
+
+    Async and bounded, through the same shared client the main tier uses: Queue
+    271 removed synchronous ``get_redis_client().get()`` from this handler
+    because it blocked the event loop for the whole read (gotcha #39), and a
+    supporting census is the last thing entitled to put it back. The VALIDATION
+    still belongs to the producer's own ``read_published`` — see
+    :class:`~app.utils.calibration_coverage_consumer._PrefetchedRedis`.
+
+    ``None`` is the expected answer, not a failure: the walk is operator-invoked
+    (``POST /api/admin/repairs/coverage-rung-census``) and publishes only a
+    COMPLETE roster-stamped pass, so for most of the census's life there is
+    nothing here.
+    """
+    if _coverage_cache["read"] and (now - _coverage_cache["timestamp"]) < COVERAGE_CENSUS_TTL_S:
+        return _coverage_cache["data"]
+
+    published = None
+    try:
+        # The key from its own home — the module that publishes it — so the
+        # reader and the writer cannot name two different keys.
+        from app.tasks.census_coverage_rungs import PUBLISHED_KEY
+        from app.utils import request_cache as _rc
+        from app.utils.calibration_coverage_consumer import parse_published
+
+        rc = await _rc.get_shared_async_redis()
+        res = await _rc.bounded_redis_call(lambda: rc.get(PUBLISHED_KEY))
+        # ``res.value`` unguarded, deliberately. A MISS and a FAILURE both carry
+        # ``value=None`` and ``parse_published`` refuses ``None`` — so an
+        # ``is_ok`` branch here is one no test can distinguish from its absence
+        # (measured: the mutant survived). The validation lives in one place
+        # rather than being half-restated as a status check.
+        published = parse_published(res.value)
+    except Exception as exc:  # noqa: BLE001 — a supporting census never breaks the page
+        logger.warning("coverage census read failed: %s", exc)
+        published = None
+
+    _coverage_cache["data"] = published
+    _coverage_cache["timestamp"] = now
+    _coverage_cache["read"] = True
+    return published
 
 
 @router.get("/calibration")
@@ -1102,6 +1177,7 @@ async def public_calibration(
         never_stronger as _never_stronger,
     )
     from app.utils.calibration_coverage_bridge import ensure_census as _ensure_census
+    from app.utils.calibration_coverage_consumer import attach_coverage_census
     from app.utils.calibration_publish_gate import (
         SERVE_MAX_AGE_S,
         payload_age_s,
@@ -1244,6 +1320,27 @@ async def public_calibration(
         #    into the dated fallback tiers unchanged — so this touches no
         #    fingerprint and forces no rebuild.
         out[SOURCE_LABELS_FIELD] = _source_label_map(out.get("by_source"))
+        # 6. **The census the build could not take** (CAL-P1216, #1544/#997).
+        #    `COVERAGE_CENSUS_ENABLED` is False and must stay False — flipping it
+        #    fuses the rung columns into the staged unit statement whose TEXT
+        #    `staged_unit_fingerprint()` hashes, invalidating every banked unit
+        #    and freezing publication until all 128 rebuild (ruling 009). So the
+        #    eleven rungs are walked out of band and reconciled onto the payload
+        #    HERE, which is also where they belong on the merits: whether a
+        #    published census may be attached depends on which tier answered and
+        #    which generation its copy came from, and a builder knows neither.
+        #
+        #    The SIXTH key, and unlike its five siblings it is not a new one —
+        #    it REPLACES a value the builder wrote. That is the stronger claim,
+        #    so it carries the stronger guard: the replacement happens only when
+        #    the builder's own census is the explicit `unavailable` placeholder
+        #    AND `reconcile()` has proved the published walk describes this
+        #    payload's generation and roster. Every other case returns the
+        #    payload object unchanged, byte for byte. A payload that cannot be
+        #    vouched for keeps saying so.
+        out = attach_coverage_census(
+            out, published=coverage_published, cursor=coverage_cursor
+        )
         return _declare(out, _never_stronger(out.get(AVAILABILITY_FIELD), availability))
 
     def _degraded(
@@ -1375,6 +1472,13 @@ async def public_calibration(
     #    keeps that property. Cannot raise; a failed read becomes an unmeasured
     #    disclosure, which refuses ``fresh``.
     staged_block = await _read_staged_disclosure(db, now=now)
+    # 0a. CAL-P1216 — the coverage census and the cursor identity it must
+    #     reconcile against, both read BEFORE any tier answers and for the same
+    #     reason ``staged_block`` is: every tier ends in ``_serve``. The identity
+    #     is a by-product of the read above, so this costs one memoised Redis GET
+    #     and no extra database work.
+    coverage_published = await _read_published_coverage_census(now=now)
+    coverage_cursor = _staged_cache.get("identity")
 
     # 0b. The shared store's CURRENT ``main`` bytes, read ONCE and used twice:
     #     by the memo gate immediately below, and by the main tier at step 2.
