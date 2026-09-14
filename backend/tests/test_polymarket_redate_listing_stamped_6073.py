@@ -21,6 +21,7 @@ that selects correctly and writes the wrong column reads identical from a count.
 
 import ast
 import inspect
+import textwrap
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -254,18 +255,29 @@ class TestTheStatusRidesOnlyWhenTheStartIsStillAhead:
 
 
 class _RecordingResult:
-    def __init__(self, rows):
+    def __init__(self, rows, rowcount=0):
         self._rows = rows
+        self.rowcount = rowcount
 
     def fetchall(self):
         return self._rows
 
 
 class _RecordingSession:
-    """Returns canned SELECT rows, then records every statement written."""
+    """Returns canned SELECT rows, then records every statement written.
 
-    def __init__(self, rows):
+    ``write_rowcount`` is what the UPDATE reports back. It defaults to ``1`` —
+    the row was still there — and a test sets it to ``0`` to stand for the row
+    having moved under the pass. That models the ACCOUNTING only: whether the
+    shipped WHERE actually declines a changed row is a question about what a
+    server decides, and is answered by
+    ``tests/integration/test_polymarket_redate_atomicity_6073_pg.py``. A fake
+    cannot answer it, which is the whole reason that gate exists.
+    """
+
+    def __init__(self, rows, write_rowcount=1):
         self._rows = rows
+        self.write_rowcount = write_rowcount
         self.selected_params = None
         self.writes = []
         self.commits = 0
@@ -274,7 +286,7 @@ class _RecordingSession:
         sql = str(stmt)
         if "UPDATE events" in sql:
             self.writes.append((sql, params))
-            return _RecordingResult([])
+            return _RecordingResult([], rowcount=self.write_rowcount)
         self.selected_params = params
         return _RecordingResult(self._rows)
 
@@ -303,6 +315,7 @@ def _row(**kw):
         period=None,
         game_clock=None,
         status="suspended",
+        group_id="polymarket:99",
         venue_game_start=_utc(2026, 9, 14, 13, 0).isoformat(),
         n_stamps=1,
         n_events=1,
@@ -311,8 +324,8 @@ def _row(**kw):
     return SimpleNamespace(**base)
 
 
-async def _run(monkeypatch, rows):
-    session = _RecordingSession(rows)
+async def _run(monkeypatch, rows, write_rowcount=1):
+    session = _RecordingSession(rows, write_rowcount=write_rowcount)
     monkeypatch.setattr(poly, "get_task_session", lambda: _Ctx(session))
     stats = await redate_polymarket_listing_stamped_events()
     return stats, session
@@ -349,8 +362,13 @@ class TestTheRailWritesWhatTheShipClaims:
         assert stats["moved"] == 1
         assert stats["rescheduled"] == 0
         sql, params = session.writes[0]
-        assert "status" not in sql
+        # The SET clause only. Since CERT-2834 the WHERE names `status` too — it
+        # re-asserts the value it read — and the claim here is that the status is
+        # never WRITTEN, which is a statement about what is before the WHERE.
+        set_clause, where_clause = sql.split("WHERE", 1)
+        assert "status" not in set_clause
         assert "status" not in params
+        assert "e.status IS NOT DISTINCT FROM" in where_clause
 
     @pytest.mark.asyncio
     async def test_it_selects_on_the_listing_stamp_and_nothing_else(
@@ -401,6 +419,7 @@ class TestTheRailWritesWhatTheShipClaims:
             "skipped_multi_event_group": 0,
             "skipped_ambiguous_stamp": 0,
             "skipped_no_change": 0,
+            "skipped_raced": 0,
         }
         assert session.commits == 0
 
@@ -458,3 +477,182 @@ class TestItIsWiredAndTheGatesAreInTheQuery:
 
     def test_the_listing_source_is_a_bind_not_a_literal(self):
         assert ":listing_src" in REDATE_LISTING_STAMPED_SQL
+
+    def test_the_query_projects_every_column_the_pass_reads_off_the_row(self):
+        """The join between the SELECT and the loop, asserted from both ends.
+
+        🔴 THIS ARM EXISTS BECAUSE ITS ABSENCE WAS MEASURED. Deleting
+        ``g.group_id AS group_id`` from the query left all 72 tests green: the
+        loop's rows are `SimpleNamespace`s the test built, and a hand-built
+        object carries every attribute regardless of what the SQL projected. In
+        production the same edit is ``AttributeError: 'Row' object has no
+        attribute 'group_id'`` on the first row — swallowed by the ``except``
+        the poll wraps this sweep in, so the rail would be dead and the suite
+        green forever.
+
+        Neither end is written by hand. The attributes come from the AST of the
+        shipped function, so a column read tomorrow is covered without anyone
+        remembering this file; the output names come from a real Postgres parser
+        rather than a regex, so the CTEs' internal aliases cannot satisfy it by
+        accident.
+        """
+        import sqlglot
+
+        tree = ast.parse(
+            textwrap.dedent(
+                inspect.getsource(poly.redate_polymarket_listing_stamped_events)
+            )
+        )
+        read = {
+            node.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "r"
+        }
+        assert read, "the AST walk found nothing — this arm would be vacuous"
+
+        projected = set(
+            sqlglot.parse_one(
+                REDATE_LISTING_STAMPED_SQL, read="postgres"
+            ).named_selects
+        )
+        assert read <= projected, (
+            f"the loop reads {sorted(read - projected)} off each row and the "
+            f"query does not project it"
+        )
+
+
+# ── CERT-2834: the write re-asserts what the select decided on ───────────────
+#
+# Selecting a row into a repair band is not permission to write over it. These
+# arms hold the SHAPE of the guard — that every decision column is restated,
+# null-safely, and that the pass counts a declined write instead of reporting a
+# move it did not make. Whether a real server then declines a changed row is a
+# different question and it is answered by
+# `tests/integration/test_polymarket_redate_atomicity_6073_pg.py`; nothing here
+# can answer it, because the session is a double.
+
+
+class TestTheWriteRefusesARowThatMoved:
+
+    #: Column → the cast the WHERE must carry. Every one of these is either an
+    #: input `redate_target` refuses on or a column this statement WRITES, and
+    #: the cast is the column's own type: `IS NOT DISTINCT FROM $1` gives
+    #: Postgres nothing to infer from, so an uncast bind raises at runtime and
+    #: the whole rail dies in the `except` around it, silently, forever.
+    GUARDED = [
+        ("e.commence_time", ":was_commence", "timestamptz"),
+        ("e.commence_time_source", ":listing_src", "text"),
+        ("e.status", ":was_status", "text"),
+        ("e.home_score", ":was_home_score", "integer"),
+        ("e.away_score", ":was_away_score", "integer"),
+        ("e.period", ":was_period", "text"),
+        ("e.game_clock", ":was_game_clock", "text"),
+        ("e.completed_at", ":was_completed_at", "timestamptz"),
+    ]
+
+    @pytest.mark.parametrize("sql_name", [
+        "REDATE_WRITE_DATE_ONLY_SQL",
+        "REDATE_WRITE_WITH_STATUS_SQL",
+    ])
+    @pytest.mark.parametrize("column,bind,cast", GUARDED)
+    def test_both_writes_restate_every_decision_column(
+        self, sql_name, column, bind, cast
+    ):
+        sql = getattr(poly, sql_name)
+        clause = f"{column} IS NOT DISTINCT FROM CAST({bind} AS {cast})"
+        assert clause in sql, f"{sql_name} does not re-assert {column}"
+
+    @pytest.mark.parametrize("sql_name", [
+        "REDATE_WRITE_DATE_ONLY_SQL",
+        "REDATE_WRITE_WITH_STATUS_SQL",
+    ])
+    def test_neither_write_matches_on_the_id_alone(self, sql_name):
+        # The defect itself, as a shape: `WHERE id = :id` and nothing else.
+        sql = getattr(poly, sql_name)
+        where = sql.split("WHERE", 1)[1]
+        assert where.count("IS NOT DISTINCT FROM") == len(self.GUARDED)
+
+    @pytest.mark.parametrize("sql_name", [
+        "REDATE_WRITE_DATE_ONLY_SQL",
+        "REDATE_WRITE_WITH_STATUS_SQL",
+    ])
+    def test_no_nullable_column_is_compared_with_plain_equality(self, sql_name):
+        # `= NULL` is never true. Six of the eight are NULL on the whole
+        # production band, so an `=` form would decline every row and this rail
+        # would repair nothing while reporting success.
+        sql = getattr(poly, sql_name)
+        for _, bind, _cast in self.GUARDED:
+            assert f"= {bind}" not in sql, bind
+
+    @pytest.mark.parametrize("sql_name", [
+        "REDATE_WRITE_DATE_ONLY_SQL",
+        "REDATE_WRITE_WITH_STATUS_SQL",
+    ])
+    def test_both_writes_re_assert_the_two_group_gates(self, sql_name):
+        # The matcher's window, not the score poll's: a group that gained a
+        # second event no longer names one fixture, and a group that gained a
+        # second stamp no longer agrees with itself about when it is.
+        sql = getattr(poly, sql_name)
+        assert sql.count("NOT EXISTS") == 2
+        assert "fm2.event_id <> :id" in sql
+        assert "<> CAST(:was_venue_game_start AS text)" in sql
+
+    def test_both_writes_share_one_where(self):
+        # Two copies drift; the one that is not read in review is the one that
+        # loses a clause. They are the same string by construction.
+        assert poly._REDATE_UNCHANGED_WHERE in poly.REDATE_WRITE_DATE_ONLY_SQL
+        assert poly._REDATE_UNCHANGED_WHERE in poly.REDATE_WRITE_WITH_STATUS_SQL
+
+    @pytest.mark.asyncio
+    async def test_the_pass_binds_the_values_it_read(self, monkeypatch):
+        # A guard whose binds come from anywhere but the selected row is a
+        # guard comparing the row against itself.
+        row = _row(
+            event_commence=_utc(2026, 9, 13, 19, 12),
+            status="suspended",
+            group_id="polymarket:4242",
+        )
+        _stats, session = await _run(monkeypatch, [row])
+        (_sql, params), = session.writes
+        assert params["was_commence"] == row.event_commence
+        assert params["was_status"] == "suspended"
+        assert params["was_home_score"] is None
+        assert params["was_away_score"] is None
+        assert params["was_period"] is None
+        assert params["was_game_clock"] is None
+        assert params["was_completed_at"] is None
+        assert params["group_id"] == "polymarket:4242"
+        assert params["was_venue_game_start"] == row.venue_game_start
+        assert params["listing_src"] == poly.LISTING_COMMENCE_SOURCE
+
+    @pytest.mark.asyncio
+    async def test_a_declined_write_is_counted_and_never_reported_as_a_move(
+        self, monkeypatch
+    ):
+        stats, session = await _run(monkeypatch, [_row()], write_rowcount=0)
+        assert len(session.writes) == 1, "it must still attempt the write"
+        assert stats["skipped_raced"] == 1
+        assert stats["moved"] == 0
+        assert stats["rescheduled"] == 0
+        assert session.commits == 0, "nothing moved, so there is nothing to commit"
+
+    @pytest.mark.asyncio
+    async def test_a_declined_row_does_not_cost_its_healthy_siblings(
+        self, monkeypatch
+    ):
+        # The `continue` must skip the accounting, not the loop.
+        stats, _session = await _run(
+            monkeypatch, [_row(event_id=1), _row(event_id=2)], write_rowcount=0
+        )
+        assert stats["scanned"] == 2
+        assert stats["skipped_raced"] == 2
+
+    @pytest.mark.asyncio
+    async def test_the_counter_exists_even_when_nothing_races(self, monkeypatch):
+        # A key that only appears on the unhappy path is a key no dashboard can
+        # chart and no reader of a healthy log can tell from a missing rail.
+        stats, _session = await _run(monkeypatch, [_row()])
+        assert stats["skipped_raced"] == 0
+        assert stats["moved"] == 1
