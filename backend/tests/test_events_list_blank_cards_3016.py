@@ -99,6 +99,7 @@ def _array_on_sqlite(type_, compiler, **kw):  # pragma: no cover - DDL shim
 
 from app.models.models import Base, Event, OddsSnapshot, Sport  # noqa: E402
 from app.routes.events import list_events  # noqa: E402
+from app.utils.blank_event_cards import FINISHED_MARGIN  # noqa: E402
 
 S_OTHER = 1401
 SPORT_KEY = "soccer_other"
@@ -121,13 +122,37 @@ def _fresh(value: float) -> dict:
     return {"value": value, "updated_at": datetime.now(timezone.utc).isoformat()}
 
 
-def _played(hours_ago=45):
-    """A kick-off far enough back to clear `FINISHED_MARGIN` (6h).
+def _played():
+    """A kick-off the finished arm must reach: past `FINISHED_MARGIN`, and inside
+    the route's recent window at every instant of the UTC day.
 
-    45 hours is the real gap the specimens wear: `15309432` commences
-    2026-09-12 00:30Z and was still on the page at 21:3xZ on the 13th.
+    GOTCHA #44'S OTHER HALF, and this file is the case. The offset used to be a
+    literal 45 hours — honestly clock-derived, no branch, exactly what #44 asks
+    for — chosen because 45h is the real gap the specimens wear (`15309432`
+    commences 2026-09-12 00:30Z and was still on the page at 21:3xZ on the 13th).
+    It still took this file red at 2026-09-14 00:00Z with no commit behind it,
+    because an anchor is only half of a pair: the WINDOW it is measured against
+    breathes too. `list_events` floors the finished arm at `(now - 1 day)`
+    truncated to UTC midnight, which truncates AFTER subtracting, so the window
+    is 24h wide at 00:00Z and 48h wide at 23:59Z. A 45h row is inside only once
+    the clock has passed 21:00Z — green for the last three hours of every UTC
+    day, red for the first twenty-one. `clock_sweep` cannot see it: the anchor it
+    inspects is blameless.
+
+    THE SPECIMEN IS ANCHORED ON THE BOUND THAT DOES NOT MOVE. Two bounds hold it:
+    older than `FINISHED_MARGIN`, newer than the window floor. The margin is a
+    constant and the floor is never nearer than 24h, so an offset just past the
+    margin satisfies the moving bound by construction, at every instant and at
+    every window width — and it is read from the app rather than restated, so a
+    change to the margin cannot leave a stale 6 behind in this file.
+
+    Anchoring on the FLOOR instead would also read green today and would keep one
+    grain of the same bug: between computing the floor here and the route
+    computing its own, the clock can cross UTC midnight, the floor jumps 24h and
+    the specimen falls out of a window it was built one hour inside. Sub-second
+    and rare is still a fuse.
     """
-    return datetime.now(timezone.utc) - timedelta(hours=hours_ago)
+    return datetime.now(timezone.utc) - (FINISHED_MARGIN + timedelta(hours=1))
 
 
 def _event(

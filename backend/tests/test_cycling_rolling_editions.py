@@ -36,6 +36,12 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import app.utils.event_cycling as ec
+from tests.lib_race_window import pin_race_window
+
+#: How far ahead of the clock the specimen's GC market closes. Named because the
+#: edition year is DERIVED from it, so the race window pinned below and the row
+#: built by `_vuelta_rows` have to agree about which edition they are describing.
+RESOLUTION_LEAD = timedelta(days=13)
 
 # Instants the guards are evaluated at. `+0` is the control that separates a real
 # clock bomb from a specimen that is simply broken (LAT-P181's oracle: a bomb is
@@ -61,7 +67,11 @@ class _FrozenDateTime(_real_datetime_module.datetime):
 
     @classmethod
     def now(cls, tz=None):
-        return cls._fake.astimezone(tz) if tz is not None else cls._fake.replace(tzinfo=None)
+        return (
+            cls._fake.astimezone(tz)
+            if tz is not None
+            else cls._fake.replace(tzinfo=None)
+        )
 
 
 @pytest.fixture
@@ -78,12 +88,36 @@ def at_clock(monkeypatch):
     return _set
 
 
+@pytest.fixture
+def racing_at(monkeypatch):
+    """Give the specimen's own edition a race window around the instant tested.
+
+    Moving the clock is not enough on its own. `cycling_status` asks
+    `majors_calendar.yaml` where the edition sits (#4449), and the yaml knows the
+    REAL races: the Vuelta 2026 was ridden 2026-08-22 → 2026-09-13, so from
+    2026-09-14 the `+0` control described a race the product correctly called
+    settled and this file went red with no commit behind it. The specimen has to
+    carry its own window — see `tests/lib_race_window`.
+
+    Only the edition the specimen derives is pinned, so
+    `test_two_editions_in_flight_stay_two_cards` and the finished-race guard keep
+    the real calendar and keep meaning what they meant.
+    """
+
+    def _set(when: datetime) -> str:
+        key = f"event:cycling:vuelta-{(when + RESOLUTION_LEAD).year}"
+        pin_race_window(monkeypatch, key, when=when)
+        return key
+
+    return _set
+
+
 def _vuelta_rows(now: datetime):
     """Production-shaped `(name, status, resolution_date)` rows — the real open
     Kalshi/Polymarket titles measured on 2026-09-01, with the resolution carried
     RELATIVE to the clock so the specimen describes a Grand Tour in progress at
     whatever instant it is asked about. A literal date here would be the bomb."""
-    res = now + timedelta(days=13)
+    res = now + RESOLUTION_LEAD
     return [
         ("Vuelta a Espana Winner", "open", res),
         ("Vuelta a Espana: Stage 14 Winner", "open", res),
@@ -99,22 +133,30 @@ def _vuelta_rows(now: datetime):
 class TestConceptsSurviveTheYearTurning:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("when", CLOCKS, ids=lambda d: d.date().isoformat())
-    async def test_a_race_in_progress_surfaces_at_every_instant(self, at_clock, when):
+    async def test_a_race_in_progress_surfaces_at_every_instant(
+        self, at_clock, racing_at, when
+    ):
         """The arm that read 0 from 2026-12-31 onward. This is the ship."""
         at_clock(when)
+        racing_at(when)
         got = await ec.list_cycling_concepts(
             None, statuses=("upcoming", "live"), limit=10, rows=_vuelta_rows(when)
         )
-        assert got, f"no cycling concept surfaced at {when.isoformat()} — Discover is empty"
+        assert (
+            got
+        ), f"no cycling concept surfaced at {when.isoformat()} — Discover is empty"
         assert got[0]["domain"] == "cycling"
         assert got[0]["entry_count"] == 3
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("when", CLOCKS, ids=lambda d: d.date().isoformat())
-    async def test_the_concept_key_names_the_markets_own_edition(self, at_clock, when):
+    async def test_the_concept_key_names_the_markets_own_edition(
+        self, at_clock, racing_at, when
+    ):
         """The edition is DERIVED from the market's resolution year, so the card
         links to a page that can actually resolve those markets."""
         at_clock(when)
+        racing_at(when)
         rows = _vuelta_rows(when)
         expected_year = rows[0][2].year
         got = await ec.list_cycling_concepts(
@@ -130,8 +172,16 @@ class TestConceptsSurviveTheYearTurning:
         when = datetime(2027, 12, 20, 12, 0, tzinfo=timezone.utc)
         at_clock(when)
         rows = [
-            ("Vuelta a Espana Winner", "open", datetime(2027, 12, 28, tzinfo=timezone.utc)),
-            ("Vuelta a Espana Winner", "open", datetime(2028, 1, 3, tzinfo=timezone.utc)),
+            (
+                "Vuelta a Espana Winner",
+                "open",
+                datetime(2027, 12, 28, tzinfo=timezone.utc),
+            ),
+            (
+                "Vuelta a Espana Winner",
+                "open",
+                datetime(2028, 1, 3, tzinfo=timezone.utc),
+            ),
         ]
         got = await ec.list_cycling_concepts(
             None, statuses=("upcoming", "live"), limit=10, rows=rows
@@ -193,7 +243,8 @@ class TestSlugResolutionIsRolling:
         )
 
     @pytest.mark.parametrize(
-        "bad", ("nope-2099", "", "  ", "tour-de-france-99", "2027", "-2027", "tourdefrance")
+        "bad",
+        ("nope-2099", "", "  ", "tour-de-france-99", "2027", "-2027", "tourdefrance"),
     )
     def test_unknown_stems_are_still_rejected(self, bad):
         """The rolling lookup must not become a slug that matches anything."""
@@ -243,7 +294,9 @@ class TestDeriveConceptIsRolling:
 
     def test_now_seam(self):
         got = ec.derive_cycling_concept(
-            "x", "Vuelta a Espana Winner", "cycling",
+            "x",
+            "Vuelta a Espana Winner",
+            "cycling",
             now=datetime(2030, 8, 1, tzinfo=timezone.utc),
         )
         assert got["key"] == "event:cycling:vuelta-2030"
@@ -325,10 +378,15 @@ class TestTheRegistryCarriesNoYear:
         import pathlib
 
         yaml_path = (
-            pathlib.Path(__file__).resolve().parents[1] / "app" / "config" / "majors_calendar.yaml"
+            pathlib.Path(__file__).resolve().parents[1]
+            / "app"
+            / "config"
+            / "majors_calendar.yaml"
         )
         assert yaml_path.is_file(), f"the horizon calendar moved: {yaml_path}"
-        declared = sorted(set(re.findall(r"event:cycling:([a-z0-9-]+)", yaml_path.read_text())))
+        declared = sorted(
+            set(re.findall(r"event:cycling:([a-z0-9-]+)", yaml_path.read_text()))
+        )
         # RAISE rather than pass vacuously if the scan finds nothing — a renamed
         # key prefix would otherwise turn this guard green by finding zero work.
         assert len(declared) >= 4, (
