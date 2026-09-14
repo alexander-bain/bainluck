@@ -280,7 +280,15 @@ async def repair_inverted_mlb_events(
       scores->NULL). The normal pipeline re-settles it once it actually plays.
     * Anything unverifiable vs MLB ground truth is LOGGED and SKIPPED.
 
-    Returns ``{candidates, redate, fix_end, void, review, applied}``. Idempotent.
+    Returns ``{candidates, redate, fix_end, void, review, applied,
+    void_refused_row_moved}``. Idempotent.
+
+    #6056: ``void`` counts the rows DIAGNOSED as voidable;
+    ``void_refused_row_moved`` counts how many of those the compare-and-write
+    declined because another writer moved the row between the diagnosis and the
+    write. The two are reported separately on purpose — a refusal is this rail
+    working, not this rail failing, and folding it into ``void`` would make a
+    correctly-declined write look like a completed one.
     """
     from sqlalchemy import text
 
@@ -292,9 +300,13 @@ async def repair_inverted_mlb_events(
 
     redate: list = []   # (id, old_commence_iso, new_commence_iso, evidence)
     fix_end: list = []  # (id, old_completed_iso, new_completed_iso, evidence)
-    void: list = []     # (id, reason)
+    void: list = []     # (id, reason, observed_status, observed_home, observed_away)
     review: list = []    # (id, reason)
     candidates = 0
+    #: #6056. Always reported, never conditional — a refusal that nobody counts
+    #: is indistinguishable from a pass with nothing to do, and that is how this
+    #: class of defect stays invisible (gotcha #53).
+    void_refused = 0
 
     try:
         async with get_task_session() as s:
@@ -312,7 +324,16 @@ async def repair_inverted_mlb_events(
                 scored = (r.hs is not None and r.aws is not None
                           and not (r.hs == 0 and r.aws == 0))
                 if not scored:
-                    void.append((r.id, "empty/0-0 score, settled before a real result"))
+                    # #6056: the void arm carries the THREE columns its decision
+                    # read, not just the id. "This row is settled with no real
+                    # score" is a statement about `status`, `home_score` and
+                    # `away_score` AT SELECT TIME, and the write below re-asserts
+                    # it — so the values have to survive the minutes of MLB
+                    # ground-truth fetching that happen in between.
+                    void.append((
+                        r.id, "empty/0-0 score, settled before a real result",
+                        r.status, r.hs, r.aws,
+                    ))
                     continue
 
                 # Find the real MLB Final for this matchup+score. Anchor on
@@ -369,6 +390,10 @@ async def repair_inverted_mlb_events(
                 "void": len(void),
                 "review": len(review),
                 "applied": False,
+                # #6056. Present on every return, including the dry-run and the
+                # nothing-to-do pass, so a reader can tell "no void lost a race"
+                # from "this build does not count them".
+                "void_refused_row_moved": 0,
             }
 
             if apply and (redate or fix_end or void):
@@ -384,18 +409,61 @@ async def repair_inverted_mlb_events(
                         text("UPDATE events SET completed_at = :c WHERE id = :id"),
                         {"c": datetime.fromisoformat(new_iso.replace("Z", "+00:00")), "id": eid},
                     )
-                for eid, _reason in void:
-                    await s.execute(
-                        text("UPDATE events SET status = 'scheduled', completed_at = NULL, "
-                             "home_score = NULL, away_score = NULL WHERE id = :id"),
-                        {"id": eid},
+                # #6056: THE ONE WRITE ON THIS RAIL THAT CAN LAND ON A LIVE GAME.
+                #
+                # The other two arms move `commence_time`/`completed_at` — a
+                # schedule correction, and nothing on a realtime queue competes
+                # for those. This arm clears the SCORE and knocks `status` back
+                # to `scheduled`, and it selects on `status IN ('completed',
+                # 'closed')` — which is character-for-character the population
+                # `espn_replay_unsettles` fires on (ESPN reports "in" on a row we
+                # hold settled → un-settle to live and write the real score).
+                # Two rails, two queues, one set of rows, by design.
+                #
+                # The gap is not incidental either: this loop makes an MLB
+                # ground-truth HTTP call per SCORED row before it reaches here
+                # (soft_time_limit 240s), so the distance between "I read 0-0 and
+                # completed" and "I write NULL and scheduled" is minutes, and the
+                # realtime ESPN pass runs every 60 seconds inside it. Losing that
+                # race erases a real score off a game that is actually being
+                # played and drops it off every live surface — #6056's symptom,
+                # produced by a repair that was right when it looked.
+                #
+                # So the decision is re-asserted at write time on the three
+                # columns it consumed. A row that moved is left alone: it is no
+                # longer the row this repair diagnosed, and the next daily pass
+                # re-diagnoses it from scratch.
+                from types import SimpleNamespace
+
+                from app.utils.live_state_write import write_row_if_unmoved
+
+                for eid, _reason, _obs_status, _obs_home, _obs_away in void:
+                    landed = await write_row_if_unmoved(
+                        s,
+                        SimpleNamespace(id=eid),
+                        {
+                            "status": "scheduled",
+                            "completed_at": None,
+                            "home_score": None,
+                            "away_score": None,
+                        },
+                        observed={
+                            "status": _obs_status,
+                            "home_score": _obs_home,
+                            "away_score": _obs_away,
+                        },
+                        what="repair_inverted_mlb void",
                     )
+                    if not landed:
+                        void_refused += 1
                 await s.commit()
                 ledger["applied"] = True
+                ledger["void_refused_row_moved"] = void_refused
                 logger.info(
                     "repair_inverted_mlb: APPLIED re-date %d, fix-completed_at %d, void %d "
-                    "(%d review, is_winner untouched)",
-                    len(redate), len(fix_end), len(void), len(review))
+                    "(%d refused as moved, %d review, is_winner untouched)",
+                    len(redate), len(fix_end), len(void) - void_refused,
+                    void_refused, len(review))
             return ledger
     finally:
         await service.close()

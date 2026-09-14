@@ -3341,3 +3341,620 @@ def test_the_cas_is_given_a_captured_position_never_a_fresh_read_6056():
             "them off the row at the call site compares the row against "
             "itself and the predicate matches every time (#6056)."
         )
+
+
+# ---------------------------------------------------------------------------
+# 9. THE CORE-SQL WRITERS — the population the ORM scan structurally cannot see
+#
+# `test_no_undeclared_writer_assigns_a_live_state_column_6056` walks every module
+# under `app/` for `event.home_score = x`. That is a complete census of ONE
+# spelling. A Core write — `update(Event).values(**d)`, or a `text("UPDATE
+# events SET ...")` — contains no ORM attribute assignment, so the scan returns
+# a clean, confident, wrong answer about it.
+#
+# `test_the_clockless_feed_is_out_of_the_orm_scans_reach_by_construction_6056`
+# recorded that blind spot for the one producer we already knew lived in it
+# (`odds_polling`). Recording a blind spot is not the same as measuring what is
+# inside it, and the difference turned out to matter: walking `app/` for the
+# Core spellings — `.values()`, `.values(**d)`, `set_={...}`, and raw SQL SET
+# clauses — found a SECOND live-state writer that nothing in this suite knew
+# about, `schedule_coverage.repair_inverted_mlb_events`.
+#
+# It reads as a repair, and the other two arms of it are. The void arm is not:
+# it clears `home_score`/`away_score` and puts `status` back to `scheduled` on
+# rows selected by `status IN ('completed', 'closed')` — which is, character for
+# character, the population `espn_replay_unsettles` fires on from the realtime
+# queue (ESPN reports "in" on a row we hold settled → un-settle to live and
+# write the real score). Two rails, two queues, one set of rows, by design; and
+# the repair makes an MLB ground-truth HTTP call per SCORED row between reading
+# that population and writing to it, so the window is minutes wide while the
+# realtime pass runs every 60 seconds inside it.
+#
+# Losing that race does not corrupt a number quietly — it erases a real score
+# off a game that is being played and knocks it off every live surface. That is
+# #6056's own symptom, produced by a repair that was correct when it looked.
+# ---------------------------------------------------------------------------
+
+
+#: The production candidate SQL uses `now() at time zone 'utc'`, which sqlite
+#: has no answer for. So the rail substitutes ONLY the selector, and only with
+#: the OTHER half of the production predicate, used verbatim: the inversion arm
+#: (`completed_at < commence_time`, the gotcha #46 violation). The SELECT list,
+#: the joins, the sport filter and the `status IN ('completed','closed')` filter
+#: are the production string, unedited — a rewritten query would let this rail
+#: certify a population the task does not actually select.
+_SQLITE_INVERSION_ARM = (
+    "          e.completed_at IS NOT NULL AND e.completed_at < e.commence_time\n"
+)
+
+
+def _commits_a_live_score(target_index, scores, status="live"):
+    """A realtime writer un-settling a row and scoring it, in its OWN session.
+
+    This is `espn_replay_unsettles` + `update_event_fields_from_espn` in
+    miniature: ESPN reports the game in progress on a row we hold settled, so
+    the row goes back to `live` and gets the score it actually has. Nothing
+    about the commit is visible to the repair's session or its candidate list.
+    """
+
+    def _run(engine, ids):
+        from sqlalchemy import update
+        from sqlalchemy.orm import Session
+
+        from app.models.models import Event
+
+        other = Session(engine, expire_on_commit=False)
+        try:
+            other.execute(
+                update(Event)
+                .where(Event.id == ids[target_index])
+                .values(
+                    status=status,
+                    home_score=scores[0],
+                    away_score=scores[1],
+                    completed_at=None,
+                )
+            )
+            other.commit()
+        finally:
+            other.close()
+
+    return _run
+
+
+async def _run_mlb_repair(monkeypatch, *, rows, interloper=None):
+    """Drive the real `repair_inverted_mlb_events` and return (rows, ledger).
+
+    `interloper(engine, ids)` is hung on `_mlb_final_for` — the MLB ground-truth
+    fetch the loop makes for each SCORED candidate. That hook is deliberate and
+    it is the whole reason this rail can witness anything: `_mlb_final_for` is a
+    call the UNFIXED parent makes too, at exactly the same point, so the race is
+    staged identically against both versions. Hanging it on the compare-and-write
+    instead would have produced a test that fails on the parent because the
+    interloper never ran — a rail refusing to draw a conclusion, wearing the
+    costume of a witness.
+    """
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session
+
+    import app.services.mlb_api as mlb_api
+    import app.tasks.base as task_base
+    import app.tasks.schedule_coverage as schedule_coverage
+    from app.models.models import Base, Event, Sport, Team
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(
+        engine, tables=[Event.__table__, Sport.__table__, Team.__table__]
+    )
+    sync_session = Session(engine, expire_on_commit=False)
+
+    sport = Sport(key="baseball_mlb", name="baseball_mlb")
+    sync_session.add(sport)
+    sync_session.flush()
+
+    ids = []
+    for home, away, commence, completed, scores, status in rows:
+        row = Event(
+            sport_id=sport.id,
+            home_team_name=home,
+            away_team_name=away,
+            commence_time=commence,
+            completed_at=completed,
+            status=status,
+            home_score=scores[0],
+            away_score=scores[1],
+        )
+        sync_session.add(row)
+        sync_session.flush()
+        ids.append(row.id)
+    sync_session.commit()
+
+    class _AsyncShim:
+        def __init__(self, session):
+            self._s = session
+
+        async def execute(self, statement, params=None):
+            if params is None:
+                return self._s.execute(statement)
+            return self._s.execute(statement, params)
+
+        def add(self, obj):
+            self._s.add(obj)
+
+        async def commit(self):
+            self._s.commit()
+
+        async def flush(self):
+            self._s.flush()
+
+    class _Ctx:
+        async def __aenter__(self_inner):
+            return _AsyncShim(sync_session)
+
+        async def __aexit__(self_inner, *exc):
+            sync_session.commit()
+            return False
+
+    monkeypatch.setattr(task_base, "get_task_session", lambda: _Ctx())
+    monkeypatch.setattr(
+        schedule_coverage,
+        "build_candidate_sql",
+        lambda **kw: schedule_coverage._INVERTED_CANDIDATE_SQL.format(
+            selector=_SQLITE_INVERSION_ARM
+        ),
+    )
+
+    class _Service:
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(mlb_api, "MLBAPIService", _Service)
+
+    # A raw `text()` SELECT carries no type information, so sqlite hands back
+    # `completed_at` as a STRING where Postgres hands back a datetime. Rail
+    # fidelity gap, not a production shape — the real coercion still runs, it is
+    # just given something it can work with first.
+    _real_as_utc = schedule_coverage._repair_as_utc
+    monkeypatch.setattr(
+        schedule_coverage,
+        "_repair_as_utc",
+        lambda dt: _real_as_utc(
+            datetime.fromisoformat(dt) if isinstance(dt, str) else dt
+        ),
+    )
+
+    _fired = []
+
+    async def _final_for(*args, **kwargs):
+        # The scored candidate's ground-truth lookup. Returning None routes it
+        # to `review`, which keeps this rail's subject to the VOID arm alone.
+        if interloper is not None and not _fired:
+            _fired.append(True)
+            interloper(engine, ids)
+        return None
+
+    monkeypatch.setattr(schedule_coverage, "_mlb_final_for", _final_for)
+
+    ledger = await schedule_coverage.repair_inverted_mlb_events(apply=True)
+
+    # EXPIRE BEFORE READING (#6056): a conditional UPDATE that matched zero rows
+    # reads identically to one that landed, because `synchronize_session`
+    # mirrors the values onto any loaded instance either way.
+    sync_session.expire_all()
+    out = [
+        sync_session.execute(select(Event).where(Event.id == i)).scalar_one()
+        for i in ids
+    ]
+    if interloper is not None:
+        assert _fired, (
+            "the interloper never ran — this rail proved nothing about either "
+            "version, and a red here is not a witness"
+        )
+    return out, ledger
+
+
+@pytest.mark.asyncio
+async def test_the_mlb_void_repair_cannot_erase_a_score_written_under_it_6056(
+    monkeypatch,
+):
+    """🔴 THE WITNESS. Fails on the parent by ERASING A LIVE GAME'S SCORE.
+
+    Two inverted MLB rows. The first (earlier `commence_time`, so it is
+    diagnosed first) is settled at NULL–NULL — the void arm's population, and a
+    correct diagnosis at the instant it is taken. The second is scored, so the
+    loop goes out to MLB ground truth for it; in that window ESPN un-settles the
+    FIRST row and writes the real 4–2 it has been playing to.
+
+    Unfixed, the repair then writes `status='scheduled', home_score=NULL,
+    away_score=NULL` over it: a live game loses its score and drops off every
+    live surface. Fixed, the compare-and-write finds the row is no longer the
+    row that was diagnosed and declines — and says so under its own counter.
+    """
+    now = datetime.now(timezone.utc)
+
+    rows, ledger = await _run_mlb_repair(
+        monkeypatch,
+        rows=[
+            # Diagnosed first (earlier commence_time → ORDER BY puts it first),
+            # and inverted: completed_at sits before the first pitch.
+            (
+                "Boston Red Sox", "New York Yankees",
+                now - timedelta(hours=2), now - timedelta(hours=5),
+                (None, None), "completed",
+            ),
+            # Scored, so the loop makes its ground-truth call — the window.
+            (
+                "Chicago Cubs", "St. Louis Cardinals",
+                now - timedelta(hours=1), now - timedelta(hours=4),
+                (7, 3), "completed",
+            ),
+        ],
+        interloper=_commits_a_live_score(0, (4, 2)),
+    )
+
+    assert (rows[0].home_score, rows[0].away_score) == (4, 2), (
+        "the void repair erased a score that a realtime writer had put on a "
+        "game actually in progress — #6056's symptom, produced by the repair"
+    )
+    assert rows[0].status == "live", (
+        "the void repair knocked a live game back to `scheduled`, which takes "
+        "it off every live surface"
+    )
+    assert ledger["void"] == 1, "the row was correctly DIAGNOSED as voidable"
+    assert ledger["void_refused_row_moved"] == 1, (
+        "the refusal must be counted under its own name — an uncounted refusal "
+        "is indistinguishable from a pass with nothing to do (gotcha #53)"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("settled_status", ["completed", "closed"])
+@pytest.mark.parametrize("settled_scores", [(None, None), (0, 0)])
+async def test_an_uncontested_mlb_void_repair_still_lands_6056(
+    monkeypatch, settled_status, settled_scores,
+):
+    """THE OTHER DIRECTION (gotcha #43) — the repair must still repair.
+
+    Nobody racing. A guard that froze this rail would leave the standing
+    inverted rows inverted forever, which is a worse bug than the one it
+    replaced and is exactly what a refusal-only suite would pass with.
+
+    ⚠️ BOTH SETTLED STATUSES AND BOTH EMPTY-SCORE SHAPES, deliberately. The
+    selection is `status IN ('completed','closed')` and `scored` is false for a
+    0-0 as well as a NULL, so all four combinations are real members of this
+    population. A single `('completed', NULL–NULL)` specimen let a mutant that
+    HARD-CODES the predicate values — `observed={'status': 'completed',
+    'home_score': None, 'away_score': None}` instead of the values actually read
+    off the row — survive the whole suite, because on that one row the constants
+    happen to be correct. Varying the input is what separates a compare-and-write
+    from three literals that match by luck.
+    """
+    now = datetime.now(timezone.utc)
+
+    rows, ledger = await _run_mlb_repair(
+        monkeypatch,
+        rows=[
+            (
+                "Boston Red Sox", "New York Yankees",
+                now - timedelta(hours=2), now - timedelta(hours=5),
+                settled_scores, settled_status,
+            ),
+        ],
+    )
+
+    assert rows[0].status == "scheduled", (
+        f"the uncontested void must still land (settled as {settled_status!r} "
+        f"at {settled_scores}) — a compare-and-write that cannot WRITE leaves "
+        "every standing inverted row inverted forever"
+    )
+    assert rows[0].completed_at is None
+    assert (rows[0].home_score, rows[0].away_score) == (None, None)
+    assert ledger["void"] == 1
+    assert ledger["void_refused_row_moved"] == 0, (
+        "nothing raced, so nothing may be reported as having lost a race"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_zero_zero_mlb_void_is_refused_once_the_game_is_under_way_6056(
+    monkeypatch,
+):
+    """The 0–0 half of the void population, which is the nastier one.
+
+    `scored` is false for a 0–0 row as well as a NULL one, so a real baseball
+    game sitting 0–0 in the first inning is voidable by diagnosis. If it goes
+    live under the repair and is STILL 0–0, only `status` has moved — and a
+    predicate on the two score columns alone would match and write. That is why
+    the compare-and-write here re-asserts `status` as well: it is one of the
+    three columns the decision consumed, not incidental context.
+    """
+    now = datetime.now(timezone.utc)
+
+    rows, ledger = await _run_mlb_repair(
+        monkeypatch,
+        rows=[
+            (
+                "Boston Red Sox", "New York Yankees",
+                now - timedelta(hours=2), now - timedelta(hours=5),
+                (0, 0), "completed",
+            ),
+            (
+                "Chicago Cubs", "St. Louis Cardinals",
+                now - timedelta(hours=1), now - timedelta(hours=4),
+                (7, 3), "completed",
+            ),
+        ],
+        # Scores UNCHANGED at 0–0; only the status moves. A score-only predicate
+        # cannot see this, and would write.
+        interloper=_commits_a_live_score(0, (0, 0)),
+    )
+
+    assert rows[0].status == "live", (
+        "a game that went live at 0–0 was knocked back to `scheduled` — the "
+        "compare-and-write must predicate on `status`, not on the scores alone"
+    )
+    assert ledger["void_refused_row_moved"] == 1
+
+
+# ---------------------------------------------------------------------------
+# 10. THE CORE-WRITE CENSUS — the ORM scan's blind spot, measured
+#
+# `test_the_clockless_feed_is_out_of_the_orm_scans_reach_by_construction_6056`
+# says the blind spot exists. This says what is IN it, and keeps saying it.
+#
+# The detector is deliberately over-inclusive: a function qualifies if it issues
+# a Core write against `events` AT ALL and mentions a live-state column as a
+# string ANYWHERE in its body — it does not attempt to prove the string reaches
+# the statement. Resolving `.values(**update_values)` properly needs dataflow,
+# and a guard that gets dataflow subtly wrong fails SILENT, which is the one
+# failure mode this whole ship exists to remove. Over-inclusive costs a
+# declaration for `compute_and_write_stat_model`, which puts those column names
+# in a `win_prob_snapshots` JSON blob and never in an `events` UPDATE. That is
+# the right trade: a spurious entry is an annoyance, a missed one is #6056.
+# ---------------------------------------------------------------------------
+
+#: Every function that issues a Core write against `events` while a live-state
+#: column name appears in its body, and why that is not an unarbitrated write.
+#: Same contract as `_DECLARED_UNGUARDED_WRITERS`: an entry is a claim someone
+#: has to defend, an absence is a build break, and a STALE entry is also a build
+#: break so the list cannot rot into decoration.
+_DECLARED_CORE_WRITERS = {
+    "espn_helpers.update_event_fields_from_espn": (
+        "CONVERTED. Goes through `write_live_state_if_unmoved`; its Core "
+        "statement IS the compare-and-write. Held up by "
+        "`test_the_cas_is_given_a_captured_position_never_a_fresh_read_6056`."
+    ),
+    "espn_helpers.compute_and_write_stat_model": (
+        "NOT AN `events` WRITE. The four names appear as keys of the "
+        "`game_state` JSON blob on a `win_prob_snapshots` row — a different "
+        "table, an append, and no position on `events` is touched. Caught here "
+        "only because this function ALSO does an unrelated Core write to "
+        "`events`, which is exactly the over-inclusion this scan prefers."
+    ),
+    "espn_helpers.write_espn_win_probability": (
+        "NOT AN `events` WRITE, same shape as above: the columns named are "
+        "`game_state` keys on the ESPN `win_prob_snapshots` row. Its own Core "
+        "statement writes `win_probability_sources` and `espn_win_prob_home`."
+    ),
+    "odds_polling._poll_all_odds": (
+        "ARBITRATED BY A DIFFERENT MECHANISM, on purpose. This feed carries no "
+        "clock and no period, so its observation cannot be placed on the "
+        "game-time scale at all and ordering it is meaningless; it defers to an "
+        "attached authority instead (`clockless_write_defers_to_authority`). "
+        "The ORM scan can never see it — it writes through an `update_values` "
+        "dict — which is the whole reason this census exists."
+    ),
+    "schedule_coverage.repair_inverted_mlb_events": (
+        "CONVERTED (live/226). Two of its three arms move `commence_time` / "
+        "`completed_at` and nothing on a realtime queue competes for those. The "
+        "VOID arm clears the score and resets `status` on rows selected by "
+        "`status IN ('completed','closed')` — the same population "
+        "`espn_replay_unsettles` acts on from the realtime queue — across a "
+        "window held open by a per-row MLB ground-truth fetch. It now goes "
+        "through `write_row_if_unmoved`, predicated on the three columns its "
+        "decision read, and counts refusals under `void_refused_row_moved`."
+    ),
+}
+
+
+def test_no_undeclared_core_writer_touches_a_live_state_column_6056():
+    """THE SECOND POPULATION, discovered the same way the first one was.
+
+    A Core write contains no ORM attribute assignment, so
+    `test_no_undeclared_writer_assigns_a_live_state_column_6056` returns a
+    clean, confident, WRONG answer about every function below. Finding that out
+    by walking `app/` rather than by remembering is what turned up
+    `repair_inverted_mlb_events`, which had been able to erase a live game's
+    score since it was written.
+    """
+    import ast
+    import pathlib
+    import re
+
+    from app.utils.live_state_write import LIVE_STATE_COLUMNS
+
+    live = set(LIVE_STATE_COLUMNS)
+    _UPDATE_EVENTS = re.compile(r"\bupdate\s+events\b", re.I)
+
+    def _core_writes_events(fn) -> bool:
+        for node in ast.walk(fn):
+            # `update(Event)`, `sql_update(Event)`, `_sql_update(Event)`, …
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                stem = node.func.id.lstrip("_")
+                for prefix in ("sql_", "sa_"):
+                    if stem.startswith(prefix):
+                        stem = stem[len(prefix) :]
+                if stem in ("update", "insert"):
+                    for arg in node.args:
+                        if isinstance(arg, ast.Name) and arg.id == "Event":
+                            return True
+                        if isinstance(arg, ast.Attribute) and arg.attr == "Event":
+                            return True
+            # `Event.__table__.update()`
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                if node.func.attr in ("update", "insert"):
+                    owner = node.func.value
+                    if (
+                        isinstance(owner, ast.Attribute)
+                        and owner.attr == "__table__"
+                        and isinstance(owner.value, ast.Name)
+                        and owner.value.id == "Event"
+                    ):
+                        return True
+            # Raw SQL.
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if _UPDATE_EVENTS.search(" ".join(node.value.split())):
+                    return True
+        return False
+
+    def _live_strings(fn) -> set:
+        out = set()
+        for node in ast.walk(fn):
+            if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                continue
+            if node.value in live:
+                out.add(node.value)
+                continue
+            flat = " ".join(node.value.split())
+            if _UPDATE_EVENTS.search(flat):
+                for column in live:
+                    if re.search(rf"\b{column}\s*=", flat, re.I):
+                        out.add(column)
+        return out
+
+    def _census(source: str) -> dict:
+        found = {}
+        for fn in ast.walk(ast.parse(source)):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not _core_writes_events(fn):
+                continue
+            columns = _live_strings(fn)
+            if columns:
+                found[fn.name] = sorted(columns)
+        return found
+
+    # ── THE DETECTOR IS SELF-TESTED, not asserted on its own yield ──
+    # A correctly converted tree yields FEWER of these every time this ship
+    # lands, so "the walk found something" would start failing for the best
+    # possible reason and tempt the next reader to delete the safeguard.
+    probe = _census(
+        # (a) the dict-routed Core write the ORM scan cannot see
+        "def a():\n"
+        "    vals = {'home_score': 1}\n"
+        "    session.execute(update(Event).where(x).values(**vals))\n"
+        # (b) the __table__ spelling
+        "def b():\n"
+        "    session.execute(Event.__table__.update().values(**{'period': p}))\n"
+        # (c) raw SQL naming the column in its SET clause
+        "def c():\n"
+        "    session.execute(text('UPDATE events SET game_clock = NULL WHERE id=:i'))\n"
+        # (d) a Core write to events with no live column — not our business
+        "def d():\n"
+        "    session.execute(update(Event).values(status='live'))\n"
+        # (e) live columns but no write to events — a read, or another table
+        "def e():\n"
+        "    snap = {'home_score': 1, 'period': 'Q1'}\n"
+        "    session.add(ScoreSnapshot(**snap))\n"
+        # (f) a raw UPDATE on a DIFFERENT table that merely starts with 'event'
+        "def f():\n"
+        "    session.execute(text('UPDATE event_moments SET period = 1'))\n"
+    )
+    assert probe == {
+        "a": ["home_score"],
+        "b": ["period"],
+        "c": ["game_clock"],
+    }, probe
+
+    app_root = pathlib.Path(__file__).resolve().parents[1] / "app"
+    assert app_root.is_dir(), app_root
+
+    discovered = {}
+    for path in sorted(app_root.rglob("*.py")):
+        for name, columns in _census(path.read_text()).items():
+            discovered[f"{path.stem}.{name}"] = columns
+
+    undeclared = sorted(set(discovered) - set(_DECLARED_CORE_WRITERS))
+    assert not undeclared, (
+        "a function issues a Core write against `events` and names a "
+        f"live-state column, and nothing in this suite knows about it: "
+        f"{undeclared}. The ORM scan CANNOT see this class — "
+        "`update(Event).values(**d)` and `text('UPDATE events SET ...')` "
+        "contain no attribute assignment — so being absent from that scan is "
+        "not evidence of anything. Either route the write through "
+        "`write_row_if_unmoved`, or add it to _DECLARED_CORE_WRITERS with the "
+        "reason it cannot land on top of a newer observation (#6056)."
+    )
+
+    stale = sorted(set(_DECLARED_CORE_WRITERS) - set(discovered))
+    assert not stale, (
+        f"declared as a Core live-state writer but no longer one: {stale} — "
+        "delete the entry, the claim it carries is spent"
+    )
+
+
+def test_the_mlb_void_repair_is_given_a_captured_decision_never_a_fresh_read_6056():
+    """The live/226 call site, held to the same structural rule as the rest.
+
+    `repair_inverted_mlb_events` is the one converted producer whose decision
+    and write are separated by an HTTP call per row, which makes it the one most
+    likely to be "simplified" later into reading the row again at write time.
+    That mutation leaves every behavioural test above green — the predicate
+    would compare the row against itself and match every time — so the
+    invariant is asserted in the shape of the call, where it lives.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from app.tasks.schedule_coverage import repair_inverted_mlb_events
+
+    source = textwrap.dedent(inspect.getsource(repair_inverted_mlb_events))
+    tree = ast.parse(source)
+
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "write_row_if_unmoved"
+    ]
+    assert len(calls) == 1, (
+        "the void arm no longer makes exactly one compare-and-write — this "
+        "test would be measuring nothing"
+    )
+
+    observed = [kw for kw in calls[0].keywords if kw.arg == "observed"]
+    assert observed, "the void write lost its predicate"
+    mapping = observed[0].value
+    assert isinstance(mapping, ast.Dict), (
+        "the predicate is built elsewhere and cannot be certified here"
+    )
+
+    keys = {k.value for k in mapping.keys if isinstance(k, ast.Constant)}
+    assert keys == {"status", "home_score", "away_score"}, (
+        f"the void write predicates on {sorted(keys)}. It must re-assert all "
+        "THREE columns its decision read: the scores, and `status` — a game "
+        "that goes live while still 0-0 moves only `status`, and a score-only "
+        "predicate would match it and knock it back to `scheduled`."
+    )
+    offenders = [
+        ast.unparse(value)
+        for value in mapping.values
+        if not isinstance(value, ast.Name)
+    ]
+    assert not offenders, (
+        f"the void write is handed {offenders} — values read at write time. "
+        "They must be locals captured when the row was DIAGNOSED, which is "
+        "minutes and one HTTP call per row earlier (#6056)."
+    )
+
+    # And the values it WRITES must not include a predicate column's new value
+    # being read back off the row either.
+    values_arg = calls[0].args[2] if len(calls[0].args) > 2 else None
+    assert isinstance(values_arg, ast.Dict), (
+        "the void write's values are not a literal, so the write cannot be "
+        "read here"
+    )
+    written = {k.value for k in values_arg.keys if isinstance(k, ast.Constant)}
+    assert written == {"status", "completed_at", "home_score", "away_score"}, written
