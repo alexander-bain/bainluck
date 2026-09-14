@@ -60,6 +60,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.ext.compiler import compiles
 
 from app.services.espn_api import ESPNAPIService
 from app.tasks.espn_sync import _sanitize_period as _sanitize_period_reexport
@@ -134,25 +136,77 @@ class _Event:
         self.llm_importance = None
 
 
-class _Session:
-    def __init__(self):
-        self.statements = []
-        self.added = []
+@compiles(JSONB, "sqlite")
+def _jsonb_sqlite(type_, compiler, **kw):  # pragma: no cover - test rail
+    return "JSON"
+
+
+@compiles(ARRAY, "sqlite")
+def _array_sqlite(type_, compiler, **kw):  # pragma: no cover - test rail
+    return "JSON"
+
+
+class _AsyncShim:
+    """The writer is async and a sqlite engine is not. Nothing else is faked."""
+
+    def __init__(self, inner):
+        self._s = inner
 
     async def execute(self, statement):
-        self.statements.append(statement)
-        return None
+        return self._s.execute(statement)
+
+    async def flush(self):
+        self._s.flush()
 
     def add(self, obj):
-        self.added.append(obj)
+        self._s.add(obj)
 
 
 async def _sync(payload, *, stored_period=None):
-    """Run the real writer and hand back the row it wrote."""
+    """Run the real writer against a real row and hand back what the DB holds.
+
+    ⚠️ This rail used to be a fake session and a plain object. Since #6056 /
+    CERT-2829 the writer sends `period` by conditional UPDATE rather than
+    assigning it, so a fake session could not carry the write at all — and,
+    worse, an assertion against the in-memory object would have been satisfiable
+    with the database untouched. The row is re-read through `expire_all()` after
+    the commit, so what these tests assert is what the next reader is served.
+    """
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session as _SASession
+
+    from app.models.models import Base, Event, ScoreSnapshot, Sport
+
     ee = ESPNAPIService()._parse_event(payload)
-    event = _Event(period=stored_period)
-    await update_event_fields_from_espn(_Session(), event, ee, set(), {})
-    return event
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(
+        engine, tables=[Event.__table__, Sport.__table__, ScoreSnapshot.__table__]
+    )
+    session = _SASession(engine, expire_on_commit=False)
+    sport = Sport(key="americanfootball_nfl", name="americanfootball_nfl")
+    session.add(sport)
+    session.flush()
+    spec = _Event(period=stored_period)
+    event = Event(
+        sport_id=sport.id,
+        home_team_name=spec.home_team_name,
+        away_team_name=spec.away_team_name,
+        commence_time=spec.commence_time,
+        commence_time_source=spec.commence_time_source,
+        status=spec.status,
+        period=spec.period,
+        win_probability_sources={},
+    )
+    session.add(event)
+    session.commit()
+
+    await update_event_fields_from_espn(_AsyncShim(session), event, ee, set(), {})
+    session.commit()
+    session.expire_all()
+    return session.execute(
+        select(Event).where(Event.id == event.id)
+    ).scalar_one()
 
 
 # --------------------------------------------------------------------------

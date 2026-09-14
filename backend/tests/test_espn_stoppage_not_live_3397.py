@@ -139,6 +139,15 @@ class _Event:
         self.llm_importance = None
 
 
+class _Result:
+    """`update_event_fields_from_espn` reads `rowcount` off its compare-and-write
+    (#6056 / CERT-2829). Uncontested is the right default for this file: nothing
+    here is testing a race, and a 0 would make every live-state write in it
+    silently refuse."""
+
+    rowcount = 1
+
+
 class _Session:
     def __init__(self):
         self.statements = []
@@ -146,7 +155,10 @@ class _Session:
 
     async def execute(self, statement):
         self.statements.append(statement)
-        return None
+        return _Result()
+
+    async def flush(self):
+        pass
 
     def add(self, obj):
         self.added.append(obj)
@@ -328,7 +340,10 @@ class TestALiveRowLeavesTheRailWhenEspnSaysItStopped:
 
         assert event.status == "live", "a match at 63' was taken off the rail"
         assert stats.get("espn_stopped_without_result") is None
-        assert event.period == "63'"
+        # Read off the statement, not the object: since #6056 / CERT-2829 the
+        # four live-state columns are sent by a conditional UPDATE rather than
+        # assigned, and `_written` is this file's own reader for exactly that.
+        assert _written(session)["period"] == "63'"
 
     async def test_a_delayed_match_is_left_alone(self, client):
         """Scope, pinned. ESPN reports a delay as ``state="in"``, so the

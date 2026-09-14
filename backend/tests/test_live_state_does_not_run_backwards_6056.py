@@ -310,24 +310,111 @@ class _EspnEvent:
         self.status_type = "STATUS_IN_PROGRESS"
 
 
-class _NullSession:
-    """`update_event_fields_from_espn` only ever `add`s a ScoreSnapshot on this
-    path; nothing in these tests reads it back."""
+async def _drive_espn(spec, ee, *, interloper=None, monkeypatch=None):
+    """Drive the real ESPN writer against a real row, and read the DATABASE back.
 
-    def __init__(self):
-        self.added = []
+    ⚠️ THIS RAIL USED TO BE A FAKE SESSION AND A PLAIN OBJECT, and that was a
+    hole, not a shortcut. Once the four live-state columns are written by a
+    conditional UPDATE rather than by ORM assignment (#6056 / CERT-2829), a
+    write that matched ZERO ROWS is indistinguishable from one that landed if
+    the assertions read an in-memory object — SQLAlchemy's `synchronize_session`
+    mirrors the values onto the instance either way, and a fake session cannot
+    execute the statement at all. Every assertion in this section would have
+    been satisfiable with the database untouched. So the row is re-read through
+    `expire_all()` after the commit, and what the tests assert on is what the
+    next reader would actually be served.
 
-    def add(self, obj):
-        self.added.append(obj)
+    `interloper(engine, event_id)` runs in its OWN session at the one instant
+    that matters — after the real writer has read the row's position and decided
+    the fetch is not a reversion, and before it writes. Hung on
+    `live_write_would_revert` rather than on a sleep, for the same reason the
+    schedule rail does it: a timing test that passes by luck is not a test.
+    """
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session
 
-
-async def _drive_espn(row, ee):
+    from app.models.models import Base, Event, ScoreSnapshot, Sport
     from app.utils.espn_helpers import update_event_fields_from_espn
 
-    session = _NullSession()
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(
+        engine, tables=[Event.__table__, Sport.__table__, ScoreSnapshot.__table__]
+    )
+    session = Session(engine, expire_on_commit=False)
+
+    @sa_event.listens_for(session, "loaded_as_persistent")
+    def _reattach_utc(_sess, instance):  # pragma: no cover - test rail
+        for attr, value in list(instance.__dict__.items()):
+            if isinstance(value, datetime) and value.tzinfo is None:
+                instance.__dict__[attr] = value.replace(tzinfo=timezone.utc)
+
+    sport = Sport(key="americanfootball_nfl", name="americanfootball_nfl")
+    session.add(sport)
+    session.flush()
+    event = Event(
+        sport_id=sport.id,
+        home_team_name=spec.home_team_name,
+        away_team_name=spec.away_team_name,
+        commence_time=spec.commence_time,
+        status=spec.status,
+        period=spec.period,
+        game_clock=spec.game_clock,
+        home_score=spec.home_score,
+        away_score=spec.away_score,
+        espn_id=spec.espn_id,
+        commence_time_source=spec.commence_time_source,
+        win_probability_sources={},
+    )
+    session.add(event)
+    session.commit()
+    event_id = event.id
+
+    class _AsyncShim:
+        """The writer is async and this engine is not; nothing else is shimmed."""
+
+        def __init__(self, inner):
+            self._s = inner
+
+        async def execute(self, statement):
+            return self._s.execute(statement)
+
+        def add(self, obj):
+            self._s.add(obj)
+
+        async def flush(self):
+            self._s.flush()
+
+        async def commit(self):
+            self._s.commit()
+
     stats: dict = {}
-    await update_event_fields_from_espn(session, row, ee, set(), stats)
-    return session, stats
+    if interloper is not None:
+        import app.utils.espn_helpers as espn_helpers
+
+        _real_would_revert = espn_helpers.live_write_would_revert
+        _fired = []
+
+        def _revert_then_race(*args, **kwargs):
+            verdict = _real_would_revert(*args, **kwargs)
+            # Only race the branch that is about to WRITE — racing a refusal
+            # would prove nothing, there being no write to overtake.
+            if not verdict and not _fired:
+                _fired.append(True)
+                interloper(engine, event_id)
+            return verdict
+
+        monkeypatch.setattr(
+            espn_helpers, "live_write_would_revert", _revert_then_race
+        )
+
+    await update_event_fields_from_espn(_AsyncShim(session), event, ee, set(), stats)
+    session.commit()
+
+    # The whole point of the rail: drop every cached value and ask the database.
+    session.expire_all()
+    row = session.execute(select(Event).where(Event.id == event_id)).scalar_one()
+    snaps = session.execute(select(ScoreSnapshot)).scalars().all()
+    return row, snaps, stats
 
 
 class _Row:
@@ -364,13 +451,13 @@ async def test_espn_does_not_write_an_observation_from_earlier_in_the_game():
         home_score=28,
         away_score=14,
     )
-    session, stats = await _drive_espn(row, ee)
+    row, snaps, stats = await _drive_espn(row, ee)
 
     assert row.home_score == 28
     assert row.away_score == 20, "the touchdown must not leave the page"
     assert row.game_clock == "5:21", "the clock must not go up"
     assert row.period == "5:21 - 4th Quarter"
-    assert session.added == [], "a refused write must leave no ScoreSnapshot either"
+    assert snaps == [], "a refused write must leave no ScoreSnapshot either"
     assert stats["live_state_reversions_refused"] == 1
 
 
@@ -390,12 +477,12 @@ async def test_the_refusal_covers_the_home_side_too():
         home_score=21,
         away_score=14,
     )
-    session, stats = await _drive_espn(row, ee)
+    row, snaps, stats = await _drive_espn(row, ee)
 
     assert row.home_score == 28, "the extra point must not un-score itself"
     assert row.away_score == 14
     assert row.game_clock == "7:26"
-    assert session.added == []
+    assert snaps == []
     assert stats["live_state_reversions_refused"] == 1
 
 
@@ -411,12 +498,12 @@ async def test_espn_still_writes_an_observation_from_later_in_the_game():
         home_score=28,
         away_score=20,
     )
-    session, stats = await _drive_espn(row, ee)
+    row, snaps, stats = await _drive_espn(row, ee)
 
     assert (row.home_score, row.away_score) == (28, 20)
     assert row.game_clock == "5:21"
     assert row.period == "5:21 - 4th Quarter"
-    assert len(session.added) == 1, "an accepted score change still snapshots"
+    assert len(snaps) == 1, "an accepted score change still snapshots"
     assert "live_state_reversions_refused" not in stats
 
 
@@ -431,7 +518,7 @@ async def test_espn_writes_normally_onto_a_row_it_cannot_be_placed_against():
         home_score=0,
         away_score=7,
     )
-    await _drive_espn(row, ee)
+    row, _snaps, _stats = await _drive_espn(row, ee)
 
     assert (row.home_score, row.away_score) == (0, 7)
     assert row.period == "12:00 - 1st Quarter"
@@ -450,7 +537,7 @@ async def test_a_lower_score_from_a_later_moment_still_lands_from_espn():
         home_score=27,
         away_score=20,
     )
-    await _drive_espn(row, ee)
+    row, _snaps, _stats = await _drive_espn(row, ee)
 
     assert row.home_score == 27, "a reviewed-away point must still come off"
 
@@ -476,8 +563,16 @@ class _Fixture:
         self.clock_field_served = True
 
 
-async def _run_livescores(monkeypatch, *, fixtures, events):
-    """Drive the real `_sync_statpal_livescores` and return the rows."""
+async def _run_livescores(monkeypatch, *, fixtures, events, interloper=None):
+    """Drive the real `_sync_statpal_livescores` and return the rows.
+
+    `interloper(engine, event_ids)` makes the realtime/realtime race
+    deterministic (#6056, CERT-2829): it is called exactly once, from a SECOND
+    `Session`, at the instant the real task has read the row's position, decided
+    the fixture is not a reversion, and has not yet written — the only window in
+    which a newer writer can be overtaken. Hung on `live_write_would_revert`,
+    not on a sleep.
+    """
     from sqlalchemy import create_engine, select
     from sqlalchemy.orm import Session
 
@@ -561,7 +656,28 @@ async def _run_livescores(monkeypatch, *, fixtures, events):
 
     monkeypatch.setattr(statpal_api, "StatPalAPIService", _Service)
 
+    if interloper is not None:
+        import app.tasks.statpal_sync as statpal_sync
+
+        _real_would_revert = statpal_sync.live_write_would_revert
+        _fired = []
+
+        def _revert_then_race(*args, **kwargs):
+            verdict = _real_would_revert(*args, **kwargs)
+            if not verdict and not _fired:
+                _fired.append(True)
+                interloper(engine, ids)
+            return verdict
+
+        monkeypatch.setattr(
+            statpal_sync, "live_write_would_revert", _revert_then_race
+        )
+
     result = await _sync_statpal_livescores()
+    # EXPIRE BEFORE READING. Without it a conditional UPDATE that matched zero
+    # rows reads identically to one that landed, because `synchronize_session`
+    # mirrors the values onto the loaded instance regardless (#6056).
+    sync_session.expire_all()
     rows = [
         sync_session.execute(select(Event).where(Event.id == i)).scalar_one()
         for i in ids
@@ -1725,3 +1841,405 @@ def test_a_created_row_has_no_position_to_revert_from():
     assert "game_clock" not in fields
     # And the decision itself, on the state such a row actually has:
     assert live_write_would_revert(None, None, "5:26 - 4th Quarter", "5:26") is False
+
+
+# ---------------------------------------------------------------------------
+# 7. The REALTIME producers write atomically too (#6056, CERT-2829)
+#
+# CERT-2825 was answered by making the hourly schedule pass compare-and-write.
+# CERT-2829's finding is that this was one third of the job: the two writers on
+# the REALTIME queue — `_sync_statpal_livescores` on a 30-second beat and
+# `update_event_fields_from_espn` on ESPN's — still read the row's position,
+# decided, and then ORM-assigned into a transaction that commits much later. At
+# concurrency 4 an older accepted observation can wait behind a newer commit and
+# then land on top of it, and a realtime write still pending can overwrite the
+# hourly path's freshly-committed compare-and-write. Same reader-visible defect,
+# same two columns, two more producers.
+#
+# The accepting branches for both producers are already covered above
+# (`test_espn_still_writes_an_observation_from_later_in_the_game`,
+# `test_statpal_still_writes_a_fixture_from_later_in_the_game`), and both now
+# read the database rather than an in-memory object, so they are not repeated
+# here.
+# ---------------------------------------------------------------------------
+
+
+def _commits_a_later_position(period, game_clock, scores):
+    """A writer on ANOTHER queue, in its own session, committing a newer state.
+
+    Its own `Session` is the point: the task under test keeps a stale in-memory
+    row exactly as a concurrent worker would, and nothing about this commit is
+    visible to the task's identity map.
+    """
+
+    def _run(engine, ids):
+        from sqlalchemy import update
+        from sqlalchemy.orm import Session
+
+        from app.models.models import Event
+
+        event_id = ids[0] if isinstance(ids, (list, tuple)) else ids
+        other = Session(engine, expire_on_commit=False)
+        try:
+            other.execute(
+                update(Event)
+                .where(Event.id == event_id)
+                .values(
+                    period=period,
+                    game_clock=game_clock,
+                    home_score=scores[0],
+                    away_score=scores[1],
+                )
+            )
+            other.commit()
+        finally:
+            other.close()
+
+    return _run
+
+
+@pytest.mark.asyncio
+async def test_concurrent_realtime_writers_cannot_commit_older_position_last_6056(
+    monkeypatch,
+):
+    """THE REQUIRED TEST (CERT-2829), in both commit orders.
+
+    One specimen, run twice with the producers swapped, because the defect is
+    symmetric and a fix that only ordered one of the two would leave the other
+    serving the same reader the same disappearing touchdown.
+
+    The row is at `21–10 @ 5:31 Q4` when the realtime producer reads it. The
+    feed offers `28–14 @ 5:26 Q4` — LATER in the quarter, so not a reversion,
+    and the sequential guard correctly says write. Then, in the window between
+    that decision and the write, the OTHER realtime producer commits
+    `28–20 @ 5:21 Q4`: later still.
+
+    Read-newer-commit-older. Without a write-time predicate the first producer's
+    `away_score = 14` reaches Postgres last and the reader watches 20 fall back
+    to 14 beside a clock reading 5:21.
+
+    ⚠️ EVERY NUMBER DIFFERS FROM THE ONE BESIDE IT, deliberately. An ORM
+    assignment of a value a column already holds does not mark it dirty, so a
+    specimen that reuses a number lets the unfixed parent write nothing and pass
+    on the defect. That mistake cost a presentation on the hourly twin of this
+    test; it is not repeated.
+    """
+    now = datetime.now(timezone.utc)
+
+    # ── ORDER 1: StatPal is the slow producer, ESPN commits underneath it ────
+    rows, snaps, result = await _run_livescores(
+        monkeypatch,
+        fixtures=[
+            _Fixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                raw_status="4th Quarter",
+                game_clock="5:26",
+                scores=(28, 14),
+            )
+        ],
+        events=[
+            ("New York Giants", "Dallas Cowboys", "5:31", "5:31 - 4th Quarter", (21, 10))
+        ],
+        interloper=_commits_a_later_position(
+            "5:21 - 4th Quarter", "5:21", (28, 20)
+        ),
+    )
+
+    assert (rows[0].home_score, rows[0].away_score) == (28, 20), (
+        "the touchdown must stay scored — StatPal's older write lost the race"
+    )
+    assert (rows[0].period, rows[0].game_clock) == ("5:21 - 4th Quarter", "5:21")
+    # The sequential guard is exonerated: it said WRITE, correctly, about the
+    # row it was shown. The race is what refused, and it is counted under its
+    # own name so the two causes stay apart in `task-metrics`.
+    assert result["reverting_live_skipped"] == 0
+    assert result["livescore_live_write_lost_race"] == 1
+    assert snaps == [], (
+        "a refused score must not reach score_snapshots either — that table is "
+        "where this defect was diagnosed from"
+    )
+
+    # ── ORDER 2: ESPN is the slow producer, StatPal commits underneath it ────
+    row, snaps, stats = await _drive_espn(
+        _Row(
+            period="5:31 - 4th Quarter",
+            game_clock="5:31",
+            home_score=21,
+            away_score=10,
+        ),
+        _EspnEvent(
+            clock="5:26",
+            status_detail="5:26 - 4th Quarter",
+            home_score=28,
+            away_score=14,
+        ),
+        interloper=_commits_a_later_position(
+            "5:21 - 4th Quarter", "5:21", (28, 20)
+        ),
+        monkeypatch=monkeypatch,
+    )
+
+    assert (row.home_score, row.away_score) == (28, 20), (
+        "the touchdown must stay scored — ESPN's older write lost the race"
+    )
+    assert (row.period, row.game_clock) == ("5:21 - 4th Quarter", "5:21")
+    assert "live_state_reversions_refused" not in stats
+    assert stats["live_state_write_lost_race"] == 1
+    assert snaps == []
+
+
+@pytest.mark.asyncio
+async def test_a_pending_realtime_write_cannot_overwrite_the_hourly_cas_6056(
+    monkeypatch,
+):
+    """The inverse of the schedule race, which CERT-2829 named specifically.
+
+    `test_concurrent_schedule_writer_cannot_commit_older_position_last_6056`
+    proves the BACKGROUND pass cannot land on top of a newer REALTIME commit.
+    This is the other direction: a realtime write already decided and still
+    pending, with the hourly compare-and-write committing a newer position
+    underneath it. Guarding only one direction would leave the pair no better
+    off than guarding neither — whichever producer happened to be slow that
+    minute would still win.
+
+    The interloper here commits the position the hourly pass produces, from its
+    own session, in the realtime producer's decision-to-write window.
+    """
+    now = datetime.now(timezone.utc)
+    rows, snaps, result = await _run_livescores(
+        monkeypatch,
+        fixtures=[
+            _Fixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                raw_status="4th Quarter",
+                game_clock="2:14",
+                scores=(31, 20),
+            )
+        ],
+        events=[
+            ("New York Giants", "Dallas Cowboys", "2:19", "2:19 - 4th Quarter", (28, 20))
+        ],
+        interloper=_commits_a_later_position(
+            "1:58 - 4th Quarter", "1:58", (31, 27)
+        ),
+    )
+
+    assert (rows[0].home_score, rows[0].away_score) == (31, 27)
+    assert (rows[0].period, rows[0].game_clock) == ("1:58 - 4th Quarter", "1:58")
+    assert result["livescore_live_write_lost_race"] == 1
+    assert result["reverting_live_skipped"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_clockless_authority_is_not_frozen_by_the_compare_and_write_6056():
+    """THE CONTROL THAT MATTERS MOST: the guard must not become a freeze.
+
+    An observation the position helper cannot place — halftime, and every sport
+    whose label carries no clock — is "no evidence", never "earliest". It has
+    always been written, and the compare-and-write must not quietly change that
+    into a refusal: an unplaceable authority that could not write would strand a
+    live row at whatever the last placeable writer said, which is a worse and
+    much quieter failure than the flicker this ship fixes.
+
+    Uncontested, so the predicate matches and the write lands. That is the
+    whole claim, and it is the branch a too-strict predicate would break.
+    """
+    row, _snaps, stats = await _drive_espn(
+        _Row(
+            period="0:00 - 2nd Quarter",
+            game_clock="0:00",
+            home_score=14,
+            away_score=7,
+        ),
+        _EspnEvent(
+            clock=None,
+            status_detail="Halftime",
+            home_score=14,
+            away_score=10,
+        ),
+    )
+
+    assert row.period == "Halftime", "an unplaceable label must still be written"
+    assert (row.home_score, row.away_score) == (14, 10)
+    assert "live_state_reversions_refused" not in stats, (
+        "there is no evidence of a reversion here, so nothing may be refused"
+    )
+    assert "live_state_write_lost_race" not in stats, (
+        "an uncontested write is not a lost race"
+    )
+
+
+def test_no_realtime_producer_assigns_the_columns_its_cas_compares():
+    """Gotcha #5, asserted rather than promised.
+
+    The compare-and-write's predicate reads `period` and `game_clock` off the
+    row. If either producer ALSO assigned one of the four live-state columns as
+    an ORM attribute, SQLAlchemy would flush that assignment ahead of the
+    UPDATE and the predicate would end up comparing the row against a value the
+    same pass had just written — a guard that has silently stopped guarding, and
+    one no behavioural test would catch, because it fails only under
+    concurrency.
+
+    Walked as an AST, not grepped. The first draft of this scan was a regex and
+    it failed on its own first run against a COMMENT — the line in
+    `_sync_statpal_livescores` that quotes `event.period = ee.status_detail`
+    while explaining what ESPN writes. A text scan for source structure reads
+    prose, strings and dead code as if they were statements; only the parse
+    tree distinguishes an assignment from a sentence about one.
+
+    Non-vacuity is asserted twice over, and the SECOND way is the one that
+    survives the subject changing shape. "The walk found some assignment" was
+    the obvious check and it is wrong here: `_sync_statpal_livescores` now
+    assigns no `event.*` attribute at all (its remaining writes go through
+    `_set_statpal_id`), so that assertion fails on a clean tree and tempts
+    whoever hits it to delete the safeguard. So the detector is instead run
+    against a synthetic source that DOES contain the offence, and must find it —
+    a check on the detector, independent of what the subjects happen to contain.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from app.tasks.statpal_sync import _sync_statpal_livescores
+    from app.utils.espn_helpers import update_event_fields_from_espn
+    from app.utils.live_state_write import LIVE_STATE_COLUMNS
+
+    assert LIVE_STATE_COLUMNS == (
+        "period", "game_clock", "home_score", "away_score"
+    )
+
+    def _event_attrs_assigned(source: str) -> set[str]:
+        found = set()
+        for node in ast.walk(ast.parse(source)):
+            targets = []
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+            elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+                targets = [node.target]
+            for target in targets:
+                if (
+                    isinstance(target, ast.Attribute)
+                    and isinstance(target.value, ast.Name)
+                    and target.value.id == "event"
+                ):
+                    found.add(target.attr)
+        return found
+
+    # The detector fires on the exact defect it exists to catch — including the
+    # comment that broke the regex draft, which must NOT be picked up.
+    assert _event_attrs_assigned(
+        "# event.game_clock = ee.clock\n"
+        "event.period = 'x'\n"
+        "event.status = 'live'\n"
+        "if event.home_score != 3:\n    pass\n"
+    ) == {"period", "status"}
+
+    for fn in (_sync_statpal_livescores, update_event_fields_from_espn):
+        source = textwrap.dedent(inspect.getsource(fn))
+
+        calls = {
+            node.func.id
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        assert "write_live_state_if_unmoved" in calls, (
+            f"{fn.__name__} no longer routes its live-state write through the "
+            "compare-and-write — this scan would be measuring nothing"
+        )
+
+        offenders = _event_attrs_assigned(source) & set(LIVE_STATE_COLUMNS)
+        assert not offenders, (
+            f"{fn.__name__} assigns {sorted(offenders)} directly; every "
+            f"live-state column must go through write_live_state_if_unmoved, "
+            f"or the predicate ends up comparing the row against this pass's "
+            f"own pending write"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_compare_and_write_touches_only_its_own_row_6056(monkeypatch):
+    """🔴 FOUND BY MUTATION, and the worst failure in this file if it were real.
+
+    Dropping `Event.id == event.id` from the predicate left a LIVE mutant: every
+    test here had a single row, so a statement that updated the whole table
+    passed all of them. The remaining predicate is a POSITION, and a position is
+    emphatically not unique — every row that has not started yet holds
+    `(NULL, NULL)`, so the unscoped statement would stamp one game's score
+    across every other game sharing its clock. A silent whole-table write is not
+    a worse version of this defect; it is a different and much larger one.
+
+    Two live rows at the SAME position, one fixture. The other row must not
+    move.
+    """
+    now = datetime.now(timezone.utc)
+    rows, _snaps, _result = await _run_livescores(
+        monkeypatch,
+        fixtures=[
+            _Fixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                raw_status="4th Quarter",
+                game_clock="5:26",
+                scores=(28, 14),
+            )
+        ],
+        events=[
+            ("New York Giants", "Dallas Cowboys", "5:31", "5:31 - 4th Quarter", (21, 10)),
+            # Same clock, same period — a different game, and the only thing
+            # separating the two in the statement is the id.
+            ("Green Bay Packers", "Chicago Bears", "5:31", "5:31 - 4th Quarter", (3, 7)),
+        ],
+    )
+
+    assert (rows[0].home_score, rows[0].away_score) == (28, 14), (
+        "the row the fixture is about must still be written"
+    )
+    assert (rows[1].home_score, rows[1].away_score) == (3, 7), (
+        "a different game sharing the same clock was overwritten"
+    )
+    assert (rows[1].period, rows[1].game_clock) == ("5:31 - 4th Quarter", "5:31")
+
+
+@pytest.mark.asyncio
+async def test_a_refused_realtime_write_leaves_no_score_snapshot(monkeypatch):
+    """The implication the snapshot gate leans on, asserted directly.
+
+    The gate reads `if updated and ...`, which is correct only because nothing
+    before it sets `updated` except the compare-and-write itself. Spelling the
+    condition `_live_write_landed and updated` made that explicit and was
+    unkillable by mutation — the extra term is implied — so the term went and
+    this took its place. If a future change sets `updated` earlier for some
+    reason unrelated to live state, this test is what fails.
+    """
+    now = datetime.now(timezone.utc)
+    _rows, snaps, result = await _run_livescores(
+        monkeypatch,
+        fixtures=[
+            _Fixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                raw_status="4th Quarter",
+                game_clock="5:26",
+                scores=(28, 14),
+            )
+        ],
+        events=[
+            ("New York Giants", "Dallas Cowboys", "5:31", "5:31 - 4th Quarter", (21, 10))
+        ],
+        interloper=_commits_a_later_position(
+            "5:21 - 4th Quarter", "5:21", (28, 20)
+        ),
+    )
+
+    assert result["livescore_live_write_lost_race"] == 1
+    assert snaps == [], (
+        "the refused 28-14 reached score_snapshots — the chart would show the "
+        "overtaken observation the row correctly rejected"
+    )
+    assert result["score_snapshots_created"] == 0

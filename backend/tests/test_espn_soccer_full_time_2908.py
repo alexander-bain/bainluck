@@ -411,6 +411,14 @@ class _Event:
         self.llm_importance = None
 
 
+class _Result:
+    """The compare-and-write added by #6056 / CERT-2829 reads `rowcount`.
+    Uncontested is the right default here — nothing in this file tests a race,
+    and a 0 would make every live-state write in it silently refuse."""
+
+    rowcount = 1
+
+
 class _Session:
     """Records the UPDATE statements the helper issues; adds nothing to a DB."""
 
@@ -420,7 +428,10 @@ class _Session:
 
     async def execute(self, statement):
         self.statements.append(statement)
-        return None
+        return _Result()
+
+    async def flush(self):
+        pass
 
     def add(self, obj):
         self.added.append(obj)
@@ -466,8 +477,12 @@ class TestTheLiveNowRailStopsCarryingFinishedMatches:
         )
         assert stats.get("espn_completed") == 1
         # The card's clock is unchanged. `period` was never the wrong field.
-        assert event.period == "FT"
-        assert event.game_clock == "90'+5'"
+        # Read off the statements rather than the object: since #6056 /
+        # CERT-2829 the four live-state columns are SENT by a conditional
+        # UPDATE instead of assigned, and `_written` is this file's own reader
+        # for exactly that.
+        assert written.get("period") == "FT"
+        assert written.get("game_clock") == "90'+5'"
 
     async def test_a_suspended_row_settles_in_one_hop(self, client):
         """Where the 574 stuck rows actually live: the silence fallback moved
@@ -485,7 +500,7 @@ class TestTheLiveNowRailStopsCarryingFinishedMatches:
         assert event.status == "live", "a match at 63' was closed"
         assert "completed_at" not in _written(session)
         assert stats.get("espn_completed") is None
-        assert event.period == "63'"
+        assert _written(session)["period"] == "63'"
 
     @pytest.mark.parametrize(
         "payload", NON_SETTLING_PAYLOADS, ids=lambda p: p["status"]["type"]["name"]

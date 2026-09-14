@@ -118,6 +118,14 @@ class _FakeScalars:
 
 
 class _FakeResult:
+    #: #6056 / CERT-2829: the live-state compare-and-write reads `rowcount` off
+    #: its result. Uncontested is the right default — nothing in this file
+    #: tests a race. ⚠️ Its ABSENCE was not a loud failure: the pass wraps each
+    #: row in the per-item try/except of gotcha #42, so the AttributeError was
+    #: swallowed and the row simply stayed `suspended`, which reads as a
+    #: behavioural regression rather than as a broken rail.
+    rowcount = 1
+
     def __init__(self, rows):
         self._rows = rows
 
@@ -132,6 +140,7 @@ class _FakeSession:
         self._rows = rows
         self.selects = []
         self.updates = []
+        self.written: dict = {}
         self.added = []
 
     async def execute(self, stmt, *args, **kwargs):
@@ -140,7 +149,14 @@ class _FakeSession:
             self.selects.append(text)
             return _FakeResult(self._rows)
         self.updates.append(text)
+        # The compare-and-write (#6056 / CERT-2829) sends the live-state
+        # columns as UPDATE values instead of assigning them, so a test that
+        # wants to know what this pass WROTE has to read the statement.
+        self.written.update(stmt.compile().params)
         return _FakeResult([])
+
+    async def flush(self):
+        pass
 
     def add(self, obj):
         self.added.append(obj)
@@ -273,10 +289,17 @@ async def test_the_prior_day_board_ends_both_matches():
 async def test_the_wrong_score_on_the_page_is_corrected_by_the_same_pass():
     """LAFC really won 2-0; the card printed `last score 1-0`."""
     rows = _suspended_specimens()
-    await _run(rows, BOARD_0909)
+    session, _espn, _stats = await _run(rows, BOARD_0909)
 
-    lafc = rows[0]
-    assert (lafc.home_score, lafc.away_score) == (2, 0)
+    # Read off the statement, not the object: since #6056 / CERT-2829 the four
+    # live-state columns are SENT by a conditional UPDATE whose predicate
+    # re-asserts the row's position, and this file drives the pass against a
+    # recording session rather than a database.
+    assert session.written["home_score"] == 2, "1-0 on the card, 2-0 in reality"
+    # `away_score` was already 0, so it is correctly absent from the statement:
+    # the compare-and-write sends the columns that CHANGED, not all four.
+    assert "away_score" not in session.written
+    assert rows[0].away_score == 0
 
 
 @pytest.mark.asyncio
