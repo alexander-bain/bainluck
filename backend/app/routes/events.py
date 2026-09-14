@@ -36,6 +36,7 @@ from app.utils.feed_reasons import _points as format_movement_points
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 from app.utils.prematch_reading import opening_consensus_has_frozen
 from app.utils.period_window_grade import grade_period_window
+from app.utils.resolution_authority import authority_tier
 from app.utils.prop_window import prop_window_closed, prop_window_span
 from app.utils.event_rails import (
     live_first_order,
@@ -13327,6 +13328,103 @@ def _settled_grade_fields(market, outcome) -> dict:
     }
 
 
+#: A grade at this tier or above RECOMPUTES to the same winner from cited data —
+#: tier 3 is the venue's own settlement, tier 2 the box score / game score
+#: (`app/utils/resolution_authority.py`). At or above it the row's answer is a
+#: FACT; below it (tier 1 `clean_resolution`, the `ungradeable_result`
+#: RETRACTION, tier 0 guesses) it is a reading of a price and stays a price.
+_PRICE_IS_A_VERDICT_MIN_TIER = 2
+
+
+def _row_is_graded_at_verdict_tier(row: dict) -> bool:
+    """True when this served row carries a grade strong enough to be an ANSWER.
+
+    Reads the two keys `_settled_grade_fields` always writes, so it asks the
+    same authoritative question that gate does and then narrows it by tier.
+    Both halves are load-bearing:
+
+    * `is_winner is None` is `_settled_grade_fields`'s "no verdict" — the
+      column default `False` on an ungraded row never reaches here as a claim
+      (its docstring carries the 6,032-row measurement); and
+    * the TIER test is what keeps `ungradeable_result` — a retraction, tier 1,
+      which both live US Open finalists carried while trading — out of the set.
+      `test_a_settled_leg_takes_no_live_price_5411.py` exists because a guard
+      keyed on `resolution_source IS NOT NULL` freezes exactly the rows that
+      most need to move.
+
+    This is NECESSARY and not sufficient: see `_verdict_is_provable`.
+    """
+    return (
+        row.get("is_winner") is not None
+        and authority_tier(row.get("resolution_source")) >= _PRICE_IS_A_VERDICT_MIN_TIER
+    )
+
+
+def _verdict_is_provable(row: dict, market_has_a_winner: bool) -> bool:
+    """True when this row's grade proves what happened (#6169, repaired).
+
+    🔴 A GRADED LOSS IS ONLY EVIDENCE ABOUT THE OTHER SIDE IF SOMETHING WON.
+    The tier test above answers "is this grade authoritative", which is not the
+    same question as "does this grade decide the market". On a VOIDED market the
+    venue grades EVERY leg a loser, so a row can be tier-3, definite and
+    unanimous, and still settle nothing.
+
+    Measured on production 2026-09-14, trailing 14 days: **389 markets across
+    163 events** hold two or more tier-2+ graded losers and ZERO winners —
+    NCAAF 46, NFL 41, MLB 40, esports 37, WTA 36, ATP 30, MLS 26. Not an edge.
+
+    The specimen that caught it, live at 16:52Z: `/events/15311870`
+    (Jeanjean v Quevedo, Sao Paulo Open). All 45 legs read `is_winner=False`,
+    `clob_authoritative`, `current_probability` exactly `0.500000`, market
+    `status='resolved'` — both sides of every two-sided market. Without this
+    predicate the Under legs of its three match totals invert to "the Over won"
+    and the Games map prints `Over 21.5 / 22.5 / 23.5 — 100%` for a match in
+    which nobody won anything. Serving a coin flip is useless; serving a
+    fabricated certainty is a lie, and the ship is #6169 precisely because a
+    settled ladder must not lie.
+
+    `market_has_a_winner` is asked of the row's OWN market's outcomes. For a
+    WINNING leg it is true by construction, so this only ever binds a loss —
+    which is the only direction that needs the other side to be proved.
+    """
+    return _row_is_graded_at_verdict_tier(row) and market_has_a_winner
+
+
+def _settled_over_probability(
+    grade: dict,
+    inverted: bool,
+    price: Optional[float],
+    market_has_a_winner: bool,
+) -> Optional[float]:
+    """The served over-axis number for a rung whose question is ANSWERED (#6169).
+
+    A verdict is not a price, and a price is not evidence about a verdict. Once
+    a rung is graded at tier 2 or above, `current_probability` is a LEFTOVER —
+    the last number a venue quoted before it stopped being a question — and only
+    one rail ever snaps it: measured 2026-09-14 over seven days, 21,446 of
+    21,524 `game_score` grades and 452,988 of 651,130 `clean_resolution` grades
+    carry an unsnapped price, against 8.2% for `api_settlement`. So "every
+    writer snaps its own price" is not the fix; serving the verdict is.
+
+    The specimen (#6169, `/events/14637256`, Giants 28 Cowboys 20): the 2nd-half
+    ladder's `Over 7.5` was graded a WINNER by `game_score` and kept its live
+    0.5, six `api_settlement` winners above it stored 1.0, and the monotonicity
+    pass then capped all six down to the stale rung — seven cleared lines served
+    as a coin flip on a finished game, beside a 1st-half card reading 100%.
+
+    `inverted` is the row's own axis, the same `is_under and not is_over` that
+    produced `over_probability`: an UNDER leg that WON is an over that did not
+    happen, so its verdict lands at 0.0 and not at 1.0. That inversion is the
+    half that needed `_verdict_is_provable` — read its docstring before touching
+    this, because a losing Under on a VOIDED market inverts into a 100% nobody
+    earned.
+    """
+    if not _verdict_is_provable(grade, market_has_a_winner):
+        return price
+    over_won = (not grade["is_winner"]) if inverted else grade["is_winner"]
+    return 1.0 if over_won else 0.0
+
+
 def _grade_settled_prop(event_finished, ctx, market, outcome, threshold, is_under) -> dict:
     """Compute {actual, hit, is_winner, resolution_source} for a settled prop.
 
@@ -14643,6 +14741,18 @@ async def _build_game_markets(
     # non-candidate row where they choose (steps 7 and 9b).
     _parent_candidates = _decomposed_container_parent_candidates(markets)
 
+    # 🔴 #6169: WHICH MARKETS ACTUALLY SETTLED TO A WINNER. A voided market is
+    # graded on EVERY leg and won by none, so "this leg lost" proves nothing
+    # about the other side there — see `_verdict_is_provable`, which is the only
+    # reader of this set. Built from the UNFILTERED outcomes on purpose: whether
+    # a market produced a winner is a fact about the market, not about which of
+    # its legs survived the empty-book and player-prop filters below.
+    markets_with_a_winner = {
+        market_id
+        for market_id, outs in outcomes_by_market.items()
+        if any(o.is_winner is True for o in outs)
+    }
+
     for market in markets:
         market_outcomes = outcomes_by_market.get(market.id, [])
 
@@ -14762,15 +14872,25 @@ async def _build_game_markets(
                     player_props.append(pp)
                     continue
 
+                # #6169 — A SETTLED RUNG SERVES ITS VERDICT, NOT ITS LAST PRICE.
+                # The axis is this row's own (`is_under and not is_over` is the
+                # same test that built `over_prob` four lines up), so an Under
+                # that won lands at 0.0. Applied HERE, at bucket-build, so every
+                # downstream pass — dedup, the sport-range guard, monotonicity —
+                # sees the answer rather than the leftover.
+                _grade = _settled_grade_fields(market, o)
                 totals_thresholds.append({
                     "threshold": threshold,
-                    "over_probability": round(over_prob, 4),
+                    "over_probability": _settled_over_probability(
+                        _grade, bool(is_under and not is_over), round(over_prob, 4),
+                        market.id in markets_with_a_winner,
+                    ),
                     "source": market.source,
                     "market_type": market_type,
                     "market_name": market.name,
                     "outcome_name": o.name,
                     "observed_at": _observed(o),
-                    **_settled_grade_fields(market, o),
+                    **_grade,
                     "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                         if o.opening_probability is not None and o.current_probability is not None else None,
                     "period": market_period,
@@ -15111,7 +15231,29 @@ async def _build_game_markets(
         for item in items[1:]:
             prev_prob = result[-1].get(prob_key)
             cur_prob = item.get(prob_key)
-            if cur_prob is not None and prev_prob is not None and cur_prob > prev_prob:
+            # 🔴 #6169: A COHERENCE RULE ABOUT PRICES HAS NO AUTHORITY OVER A
+            # VERDICT. This pass exists because thinly-traded rungs disagree
+            # with each other, and every step of it is an argument from one
+            # row's price to another's. A rung graded at tier 2 or above is no
+            # longer offering a price — it is stating what happened — so it is
+            # neither capped nor "corrected", whatever the rung below it says.
+            # Without this the fix one bucket up is undone by one ungraded
+            # neighbour: a single stale 0.5 below a run of settled winners
+            # rewrote six correct answers to a coin flip (the specimen in
+            # `_settled_over_probability`), which is the downstream-repair-
+            # launders-the-defect class — the guard that should have caught the
+            # stale rung instead erased the six rows that were right.
+            #
+            # A settled rung still DONATES: it stays `result[-1]` for the rungs
+            # above it, so a settled 1.0 ceiling caps nothing and a settled 0.0
+            # is gone before this pass (the `> 0` filter above). Only the
+            # rewrite of its own number is refused.
+            if (
+                cur_prob is not None and prev_prob is not None and cur_prob > prev_prob
+                and not _verdict_is_provable(
+                    item, item.get("_market_id") in markets_with_a_winner
+                )
+            ):
                 capped = {**item}
                 capped[prob_key] = prev_prob
                 # 🔴 #4970 / CERT-2640: THE NUMBER IS NOW THE SIBLING'S, SO THE
