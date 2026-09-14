@@ -176,16 +176,93 @@ class TestChooseFrozenFinal:
             )
 
 
+class TestClubResolution:
+    """`frozen_club` has NO fallback arm, and this is the measurement that licenses
+    that — the property, not a preference.
+
+    CERT-2869 banked a follow-up asking for an explicit alias for a truncated
+    `San Francisco Giant`. live/233 measured the premise and it is FALSE: that
+    string exists nowhere in `teams` (the real rows are `San Francisco` 13,
+    `San Francisco 49ers` 19, `San Francisco Dons` 18, `San Francisco Giants` 20,
+    across every sport). It was a one-character suffix clip read off a truncating
+    output, and it reached a docstring, three test literals and a grader's
+    follow-up before anyone measured the column. So the arm that string justified
+    had no consumer at all and is deleted.
+
+    These tests are the trap that catches the next version of that mistake: a
+    REAL truncation reddens `test_a_truncated_name_refuses_rather_than_widening`,
+    which is the signal to add an explicit measured alias — never a generic
+    prefix match on a rail that writes a score onto a side.
+    """
+
+    def test_every_roster_name_resolves_exactly(self):
+        """Exact membership is the whole function, so it has to cover the whole
+        roster: this is the half of the measurement that is checkable in CI (the
+        authority's 30 distinct names ARE these 30 franchises, read whole from the
+        MLB Stats API schedule)."""
+        from app.utils.statpal_league_rosters import MLB_TEAM_NAMES
+
+        assert len(MLB_TEAM_NAMES) == 30, (
+            f"roster is {len(MLB_TEAM_NAMES)} clubs, not 30 — re-measure both "
+            "vocabularies before trusting exact-only resolution"
+        )
+        unresolved = [c for c in MLB_TEAM_NAMES if frozen_club(c) != c]
+        assert not unresolved, f"roster names that do not resolve to themselves: {unresolved}"
+
+    def test_the_measured_production_vocabulary_resolves(self):
+        """Ours: 33 distinct `teams.name` on MLB-keyed events — 31 clubs resolving
+        exactly (both `St. Louis` spellings among them, folded to one club) and 2
+        non-clubs refusing. Those are the shapes, pinned by example."""
+        assert frozen_club("St. Louis Cardinals") == frozen_club("St.Louis Cardinals")
+        assert frozen_club("St.Louis Cardinals") is not None
+        assert frozen_club("San Francisco Giants") is not None
+        # The one real All-Star row (14973295, 2026-07-15). It sits two months
+        # outside the arm's 3-day window, but it must refuse on its own merits.
+        assert frozen_club("American League") is None
+        assert frozen_club("National League") is None
+
+    def test_a_truncated_name_refuses_rather_than_widening(self):
+        """\U0001F534 THE ANTI-REGRESSION PIN. Every one-character truncation of a
+        real club name must refuse. A prefix arm — the thing that was here, and the
+        thing an alias request would tempt someone to re-add — makes all 30 of these
+        resolve, and with them `Chicago`/`New York`/`Los Angeles` sit one edit away
+        from the city-token hole CERT-2864 and CERT-2867 were both about.
+
+        If this test ever goes red on a string production actually holds, the
+        answer is an explicit alias for THAT string, measured first.
+        """
+        from app.utils.statpal_league_rosters import MLB_TEAM_NAMES
+
+        widened = [c for c in MLB_TEAM_NAMES if frozen_club(c[:-1]) is not None]
+        assert not widened, (
+            f"{len(widened)} truncated names resolve — a fallback arm is back: {widened[:5]}"
+        )
+        # The specific string the refuted follow-up named, and the city it clips to.
+        assert frozen_club("San Francisco Giant") is None
+        assert frozen_club("San Francisco") is None
+
+    def test_an_unknown_club_refuses(self):
+        assert frozen_club("Sacramento Athletics") is None
+        assert frozen_club("") is None
+        assert frozen_club(None) is None
+
+
 class TestOrientation:
     def test_the_production_name_shapes_match(self):
-        # Our rows carry "St.Louis Cardinals" (no space) and the truncated
-        # "San Francisco Giant"; MLB writes "St. Louis Cardinals" / "Giants".
+        # The one real spelling split this population carries: our rows hold
+        # "St.Louis Cardinals" (no space), MLB writes "St. Louis Cardinals".
+        # `normalize_team` folds them to one club, so the pair aligns.
+        #
+        # There is NO second shape. An earlier cut asserted a truncated
+        # "San Francisco Giant" here; that string does not exist in `teams`
+        # (live/233 read the column whole) and the assertion only passed
+        # because of the prefix arm it was invented to justify. Both are gone.
         assert frozen_final_orientation(
             "St.Louis Cardinals", "Pittsburgh Pirates",
             "St. Louis Cardinals", "Pittsburgh Pirates",
         ) == "aligned"
         assert frozen_final_orientation(
-            "Pittsburgh Pirates", "San Francisco Giant",
+            "Pittsburgh Pirates", "San Francisco Giants",
             "Pittsburgh Pirates", "San Francisco Giants",
         ) == "aligned"
 
@@ -261,9 +338,9 @@ class TestOrientation:
 
     def test_a_side_that_names_no_club_is_refused_cert2864(self):
         """Our away name is the bare city. `frozen_club` refuses it — `New York`
-        is a prefix of two franchises — so the row identifies only one of its two
-        teams and nothing may be written onto it, even though our HOME matches
-        the authority's away exactly."""
+        is no club's name — so the row identifies only one of its two teams and
+        nothing may be written onto it, even though our HOME matches the
+        authority's away exactly."""
         assert frozen_club("New York") is None
         assert frozen_final_orientation(
             "New York Mets", "New York",
@@ -314,7 +391,7 @@ class TestOrientation:
         thought to enumerate".
         """
         names = ["Boston Red Sox", "Baltimore Orioles", "St.Louis Cardinals",
-                 "San Francisco Giant", "Chicago Cubs", "Chicago White Sox",
+                 "San Francisco Giants", "Chicago Cubs", "Chicago White Sox",
                  "New York Yankees", "New York Mets", "Athletics"]
         settleable = 0
         for our_home in names:
@@ -376,7 +453,7 @@ class TestOrientation:
         this pin and the fix in conflict, and the pin is right.
         """
         names = ["Boston Red Sox", "Baltimore Orioles", "St.Louis Cardinals",
-                 "San Francisco Giant", "Chicago Cubs", "Chicago White Sox",
+                 "San Francisco Giants", "Chicago Cubs", "Chicago White Sox",
                  "New York Yankees", "New York Mets", "Athletics"]
         for our_home in names:
             for our_away in names:
