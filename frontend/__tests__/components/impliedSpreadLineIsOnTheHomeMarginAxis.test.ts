@@ -96,8 +96,24 @@ describe("source arm — the chart spends the rule instead of re-deriving it", (
   });
 
   it("imports the helper it claims to use", () => {
-    expect(source).toMatch(
-      /import \{ impliedSpreadHomeMargin \} from "@\/lib\/impliedSpreadAxis";/,
+    // #6142 widened this from an exact-punctuation match on the whole import
+    // statement. The claim is this arm's own name — that `impliedSpreadHomeMargin`
+    // is imported from that module rather than re-derived here — and pinning the
+    // brace contents made the guard fail on a change that STRENGTHENS it: the
+    // chart now also imports `drawnImpliedSpreadSources` from the same module,
+    // spending a second rule instead of restating it. The module path and the
+    // symbol are still both required, so nothing this arm asserted is relaxed.
+    const decl = source.match(
+      /import \{([^}]*)\} from "@\/lib\/impliedSpreadAxis";/,
+    );
+    if (!decl) {
+      throw new Error(
+        "ScoreDifferentialChart.tsx does not import from @/lib/impliedSpreadAxis " +
+          "at all. This guard must never pass vacuously.",
+      );
+    }
+    expect(decl[1].split(",").map((s) => s.trim())).toContain(
+      "impliedSpreadHomeMargin",
     );
   });
 });
