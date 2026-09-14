@@ -15,6 +15,26 @@ import {
 } from "@/lib/eventShareMeta";
 
 /**
+ * #6105 — THE SCHEDULED FIXTURES IN THIS FILE NEEDED A CLOCK, NOT A NEW DATE.
+ *
+ * Three cases below describe "a scheduled game" and encode it as the literal
+ * `2026-09-02T23:00:00Z`, which was comfortably in the future when they were
+ * written. It is not any more, and once `buildEventShareCopy` learned to
+ * intercept a row that started and was never reported on, those fixtures stopped
+ * meaning what their own names say: they had become games twelve days past their
+ * own tip-off, which is precisely the population #6105 exists to stop calling
+ * upcoming. The tests were right and the fixtures had rotted.
+ *
+ * Pinning `now` two hours BEFORE the fixture's tip is the repair, and it is the
+ * one the parameter was added for: it restores the author's intent exactly,
+ * states it in the test rather than leaving it to the wall clock, and cannot rot
+ * again (gotcha #44 — offset from an injected anchor, never branch on the real
+ * clock). Moving the fixture's date forward instead would buy the same pass and
+ * leave the same trap armed for the next reader.
+ */
+const BEFORE_TIP = Date.parse("2026-09-02T21:00:00Z");
+
+/**
  * Production, 2026-08-29. `before` is the description the site actually served;
  * it is kept verbatim so this file fails loudly if anyone reverts the copy.
  */
@@ -106,7 +126,7 @@ describe("the kill — a probability is still the right answer when nothing sett
   };
 
   it("keeps the probability copy verbatim for a scheduled game", () => {
-    const copy = buildEventShareCopy(unsettled);
+    const copy = buildEventShareCopy(unsettled, null, BEFORE_TIP);
     expect(copy.settled).toBe(false);
     // The ORDER changed here, and only the order. This fence was written to prove
     // the #1495 settled ladder did not disturb the unsettled branch, and it still
@@ -150,13 +170,17 @@ describe("the kill — a probability is still the right answer when nothing sett
   });
 
   it("falls back cleanly when there is no probability at all", () => {
-    const copy = buildEventShareCopy({
-      home_team: "Celtics",
-      away_team: "76ers",
-      status: "scheduled",
-      commence_time: "2026-09-02T23:00:00Z",
-      current_odds: null,
-    });
+    const copy = buildEventShareCopy(
+      {
+        home_team: "Celtics",
+        away_team: "76ers",
+        status: "scheduled",
+        commence_time: "2026-09-02T23:00:00Z",
+        current_odds: null,
+      },
+      null,
+      BEFORE_TIP,
+    );
     expect(copy.title).toBe("76ers vs Celtics Odds");
     expect(copy.description).toContain("probability-first odds");
   });
@@ -357,13 +381,17 @@ describe("finished with NO authority — explicit no-result, never a stale forec
     // The kill for this rung: withholding a forecast is only right once the
     // question is closed.
     for (const status of ["scheduled", "live"]) {
-      const copy = buildEventShareCopy({
-        home_team: "Celtics",
-        away_team: "76ers",
-        status,
-        commence_time: "2026-09-02T23:00:00Z",
-        current_odds: { home_probability: 0.65, away_probability: 0.35 },
-      });
+      const copy = buildEventShareCopy(
+        {
+          home_team: "Celtics",
+          away_team: "76ers",
+          status,
+          commence_time: "2026-09-02T23:00:00Z",
+          current_odds: { home_probability: 0.65, away_probability: 0.35 },
+        },
+        null,
+        BEFORE_TIP,
+      );
       expect(copy.description).toContain("win probability");
     }
   });

@@ -35,7 +35,13 @@ const SCHEDULED_PAYLOAD = {
   home_score: null,
   away_score: null,
   status: "scheduled",
-  commence_time: "2026-09-02T23:00:00Z",
+  // #6105 — an OFFSET, because this payload's whole job is to be the unsettled
+  // control and "scheduled" is a relation to the clock, not a date. It held the
+  // literal `2026-09-02T23:00:00Z`, future when written and long past now, so
+  // once `buildEventShareCopy` learned to intercept a started-and-unreported row
+  // this control had silently become one of them and started asserting the
+  // opposite of its own name. An hour out from the anchor cannot rot (gotcha #44).
+  commence_time: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
   hero_probability: 0.65,
   hero_probability_source: "blend",
   current_odds: { home_probability: 0.65, away_probability: 0.35 },

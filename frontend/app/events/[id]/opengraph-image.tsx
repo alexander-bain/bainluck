@@ -11,6 +11,7 @@ import { unfurlImageOptions } from "@/lib/unfurlImageCache";
 import { isFinishedForShare } from "@/lib/eventShareMeta";
 import { resolveEventOutcome } from "@/lib/eventOutcome";
 import { prematchReading } from "@/lib/prematchReading";
+import { hasNoReportedResult, suspendedSummary } from "@/lib/eventState";
 
 export const runtime = "edge";
 export const alt = "Bain Luck game probability";
@@ -68,9 +69,34 @@ function isFinal(event: EventDetailResponse): boolean {
   return isFinishedForShare(event);
 }
 
+/**
+ * #6105 — THE OTHER WAY THIS CARD'S FORECAST GOES STALE.
+ *
+ * `isFinal` covers a game something SAID was over. This covers the one nothing
+ * ever spoke about: the clock ran out and no score feed, venue settlement or
+ * authority reported anything. `lib/eventState` owns the question for every card
+ * in the app; this card is the surface that never asked it.
+ *
+ * It is NOT folded into `isFinal`, and the separation is the same asymmetry
+ * `FINISHED_STATUSES` is built on. `suspended` is deliberately non-terminal — it
+ * can return to `live`, and CERT-752 is the cost of treating it as over (six US
+ * Open matches, one 1-2 down in sets, nearly settled off a partial score). So
+ * this predicate may withhold a forecast and may never crown anyone: every score
+ * and winner rung below stays gated on `isFinal` alone.
+ */
+function noReportedResult(event: EventDetailResponse): boolean {
+  return hasNoReportedResult(event.status, event.commence_time);
+}
+
 function eventStatus(event: EventDetailResponse): string {
   if (event.status === "live") return "Live now";
   if (isFinal(event)) return "Final";
+  // The house string, with the last score when the row holds one. Away-first:
+  // this card paints the away side in the LEFT column, and `eventShareMeta`
+  // passes the same order for the title beside it.
+  if (noReportedResult(event)) {
+    return suspendedSummary(event.away_score, event.home_score, "away-home");
+  }
   return "Upcoming";
 }
 
@@ -136,6 +162,33 @@ export default async function Image({ params }: { params: { id: string } }) {
   const awayTeam = event.away_team || "Away";
   const homeTeam = event.home_team || "Home";
   const final = isFinal(event);
+  const noResult = noReportedResult(event);
+
+  // ═══ #6105 — THE ONE QUESTION THE BIG NUMBER, THE BAR AND THE FOOTER SHARE ══
+  //
+  // "May this card advertise a live forecast?" Two different states answer no,
+  // for two different reasons, and #6085 only taught the card the first of them.
+  //
+  // Measured on production 2026-09-14, `/events/15291351` (NPB, Yomiuri Giants at
+  // Tokyo Yakult Swallows) — TWENTY DAYS after its own first pitch: this card drew
+  // `93%` and `7%` in 96px over a 93/7 bar, footer `Upcoming`, while the page it
+  // links to read `19d ago` and `No result reported` in its hero.
+  //
+  // And 93% was never the forecast. It is `current_odds` captured 12:58:07Z on the
+  // 25th, roughly four hours into the match, frozen there ever since; the
+  // `opening_odds` on the same payload read 54/46. So the card was thirty-nine
+  // points from the honest number AND calling the game upcoming.
+  //
+  // `Upcoming` is not a near-miss on this population — it is false on all of it.
+  // Measured the same morning: 2,739 `suspended` rows, 2,739 of them already past
+  // their own start, ZERO with a future one, plus 821 `scheduled` rows past the
+  // two-hour grace. 3,560 previews, no row where the word was right.
+  //
+  // The two reasons stay separate one line up and join only HERE, because what
+  // they share is a withholding and nothing else. Every rung that CROWNS someone
+  // — `scoresAreTrusted`, `outcome`, `decided`, the settled cache window — reads
+  // `final` and is untouched by this.
+  const forecastWithheld = final || noResult;
 
   // ═══ #6085 — A FINISHED GAME DOES NOT GET A FORECAST DRAWN ON IT ═══
   //
@@ -197,14 +250,46 @@ export default async function Image({ params }: { params: { id: string } }) {
   // `null` is a real answer here and licenses the empty space: a finished card
   // with no pre-match reading prints nothing rather than a number about a
   // different question.
-  const prematch = final ? prematchReading({ opening_odds: event.opening_odds }) : null;
+  //
+  // #6105 — and on a no-result row for the same reason, which is the precedent
+  // `EventCard` set rather than a new idea. CERT-792 dropped the live chip, the
+  // bar and the footer from a suspended card because all three assert something
+  // about a match nothing is reporting on; live/207 (#3016) then put the
+  // pre-match reading BACK, because the payload carries one and a card with no
+  // number at all is its own defect. 685 of the 2,739 suspended rows hold an
+  // opening line; the rest get `null` here and say so by saying nothing.
+  const prematch = forecastWithheld
+    ? prematchReading({ opening_odds: event.opening_odds })
+    : null;
 
   // THE BIG SLOT. On a live or scheduled game it is the probability, unchanged.
   // On a finished one it is the SCORE — "the score + bold winner tell the
   // story" is the settled treatment CERT-786 named and `FeedCard` has rendered
   // since L2-112, where the live probability is DROPPED rather than shrunk.
-  const awayHero = final ? (showScore ? `${event.away_score}` : null) : awayPct;
-  const homeHero = final ? (showScore ? `${event.home_score}` : null) : homePct;
+  //
+  // #6105 — on a no-result row it is the PRE-MATCH pair. There is no score to
+  // promote (55 of 2,739 carry one, and none is a result), so the slot that
+  // holds the fact on a settled card holds the only honest number here, which is
+  // exactly where `EventCard` puts it for this state: beside each name, labelled
+  // below. The live blend never reaches it.
+  const awayHero = final
+    ? showScore
+      ? `${event.away_score}`
+      : null
+    : noResult
+      ? prematch?.awayPercent != null
+        ? `${prematch.awayPercent}%`
+        : null
+      : awayPct;
+  const homeHero = final
+    ? showScore
+      ? `${event.home_score}`
+      : null
+    : noResult
+      ? prematch?.homePercent != null
+        ? `${prematch.homePercent}%`
+        : null
+      : homePct;
 
   // The bar under the two numbers is the SAME pair drawn as a width, so it
   // reads off the same rounding instead of being a third one that can disagree
@@ -214,8 +299,13 @@ export default async function Image({ params }: { params: { id: string } }) {
   // `FeedCard`'s `barHomeProb` ("finished events show opening odds"). A bar
   // still split 97/3 under a settled score would be the forecast surviving as
   // a shape after being removed as a number.
-  const barAwayPercent = final ? prematch?.awayPercent ?? null : awayRendered;
-  const showBar = !final || barAwayPercent != null;
+  //
+  // #6105 — and a no-result row takes the same treatment. A bar still split 93/7
+  // under "No result reported" would be the frozen in-game blend surviving as a
+  // shape after being removed as a number, which is the identical failure the
+  // line above was written for.
+  const barAwayPercent = forecastWithheld ? prematch?.awayPercent ?? null : awayRendered;
+  const showBar = !forecastWithheld || barAwayPercent != null;
   const awayWidth = Math.max(
     3,
     Math.min(97, barAwayPercent ?? Math.round(awayProbability * 100)),
@@ -395,7 +485,12 @@ export default async function Image({ params }: { params: { id: string } }) {
                   number says so ("labelled when not a prediction market") — an
                   unlabelled sportsbook median is the old footnote in a new
                   shape. `sportsbooks` and never a venue name (notice 33). */}
-              {final && prematch?.label && prematch.awayPercent != null && (
+              {/* #6105 — `forecastWithheld`, so a no-result card's pair is
+                  labelled as the pre-match reading it is. On that card the pair
+                  is the BIG number rather than a footnote under a score, which
+                  makes the label load-bearing rather than a caveat: unlabelled,
+                  96px of "54%" over "No result reported" reads as a live call. */}
+              {forecastWithheld && prematch?.label && prematch.awayPercent != null && (
                 <div style={{ fontSize: 20 }}>{`Pre-match · ${prematch.label}`}</div>
               )}
             </div>
@@ -408,6 +503,13 @@ export default async function Image({ params }: { params: { id: string } }) {
     ),
     // #6049 — a finished game's score is settled; a scheduled or live game's
     // win probability is the number that moved under a frozen picture.
+    //
+    // #6105 — a no-result row reads `isFinal` here and NOT `forecastWithheld`,
+    // which is the one place the two must not be collapsed. Its NUMBER is now
+    // fixed (the pre-match pair), but its STATE is the most movable one we hold:
+    // `suspended` is non-terminal and the row can still go `live` or be settled
+    // by something that finally watched. Caching it as settled would freeze
+    // "No result reported" over a match that has since been graded.
     unfurlImageOptions(size, isFinal(event) ? "settled" : "moving")
   );
 }
