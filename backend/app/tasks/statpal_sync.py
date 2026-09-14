@@ -41,6 +41,7 @@ from app.tasks.config import STATPAL_SPORT_MAPPING
 from app.utils.sport_keys import STATPAL_LIVE_ANCHOR_FIELD
 from app.utils.team_binding_invariant import accept_team_binding
 from app.utils.game_pairing import Pairing, live_write_is_premature, pair_verdict
+from app.utils.game_state import live_write_would_revert
 
 logger = logging.getLogger(__name__)
 
@@ -1268,6 +1269,10 @@ async def _sync_statpal_livescores() -> dict:
     details = []
     # #1945: a refusal that only logs is a refusal nobody measures.
     premature_live_skipped = 0
+    # #6056: live writes refused because this fixture is BEHIND the row it would
+    # overwrite. Same rule as the counter above, and this one is also the
+    # measurement of how often the live feeds disagree about where a game is.
+    reverting_live_skipped = 0
     _now = datetime.now(timezone.utc)
 
     # Only poll sports that are likely to have live games right now.
@@ -1384,7 +1389,58 @@ async def _sync_statpal_livescores() -> dict:
                     # several construction paths, and the line below already
                     # reads `raw_status` defensively for the same reason.
                     fixture_clock = getattr(fixture, "game_clock", None)
+
+                    # ── #6056: is this fixture BEHIND the row it is about to
+                    # overwrite? ────────────────────────────────────────────
+                    #
+                    # StatPal and `espn_helpers.update_event_fields_from_espn`
+                    # both write `period`, `game_clock`, `home_score` and
+                    # `away_score` on a live row on their own cadence, and
+                    # neither has ever asked whether the state it is replacing
+                    # came from a LATER moment of the game. Our own
+                    # `score_snapshots` caught the two of them alternating on
+                    # the 2026-09-14 Giants–Cowboys game — full evidence and
+                    # the reasoning for ordering by game time rather than by
+                    # score in `live_write_would_revert`'s module note.
+                    #
+                    # This is the same shape as the `live_write_is_premature`
+                    # refusal above — a guard, a counter and a log line — but
+                    # it sets a flag instead of `continue`ing, because the
+                    # fixture-id link further down is not a live-state write
+                    # and a stale clock is no reason to withhold it.
+                    #
+                    # Composed here, before the first assignment, and composed
+                    # the SAME way the write below composes it: comparing a
+                    # half-built label against the row would be comparing
+                    # something this task never stores.
+                    _incoming_period = None
                     if fixture.raw_status and fixture.raw_status not in ("live", "Live"):
+                        _incoming_period = (
+                            f"{fixture_clock} - {fixture.raw_status}"
+                            if fixture_clock
+                            else fixture.raw_status
+                        )
+                    live_state_is_stale = live_write_would_revert(
+                        event.period, event.game_clock,
+                        _incoming_period, fixture_clock,
+                    )
+                    if live_state_is_stale:
+                        reverting_live_skipped += 1
+                        logger.warning(
+                            "StatPal reversion guard: refused a live write on "
+                            "event %d (%s vs %s) — row is at %r/%r, fixture "
+                            "offered %r/%r (%s-%s) (#6056)",
+                            event.id, event.home_team_name, event.away_team_name,
+                            event.period, event.game_clock,
+                            _incoming_period, fixture_clock,
+                            fixture.home_score, fixture.away_score,
+                        )
+
+                    if (
+                        fixture.raw_status
+                        and fixture.raw_status not in ("live", "Live")
+                        and not live_state_is_stale
+                    ):
                         # Guard on the clock being non-empty, not on liveness:
                         # halftime is genuinely live and genuinely has no clock,
                         # so one guard is not enough (#5017).
@@ -1435,11 +1491,20 @@ async def _sync_statpal_livescores() -> dict:
                                 event.game_clock = fixture_clock
                                 updated = True
 
-                    # Update scores
-                    if fixture.home_score is not None and fixture.home_score != event.home_score:
+                    # Update scores (#6056: not from a fixture the guard above
+                    # positioned earlier in the game than the row already is)
+                    if (
+                        fixture.home_score is not None
+                        and fixture.home_score != event.home_score
+                        and not live_state_is_stale
+                    ):
                         event.home_score = fixture.home_score
                         updated = True
-                    if fixture.away_score is not None and fixture.away_score != event.away_score:
+                    if (
+                        fixture.away_score is not None
+                        and fixture.away_score != event.away_score
+                        and not live_state_is_stale
+                    ):
                         event.away_score = fixture.away_score
                         updated = True
 
@@ -1526,6 +1591,9 @@ async def _sync_statpal_livescores() -> dict:
         "sports_polled": len(details),
         "sports": details,
         "premature_live_skipped": premature_live_skipped,
+        # #6056 — rides out with the run so a spike is legible from
+        # `task-metrics` without reading logs, exactly like the line above.
+        "reverting_live_skipped": reverting_live_skipped,
     }
 
 

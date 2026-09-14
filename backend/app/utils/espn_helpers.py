@@ -15,7 +15,7 @@ from sqlalchemy import select, update as _sql_update
 from app.utils.event_completion import authority_may_settle, play_resumes
 # #5390: the period-string predicate lives in a leaf module, so this is a
 # plain module-level import rather than five function-local ones dodging a cycle.
-from app.utils.game_state import _sanitize_period
+from app.utils.game_state import _sanitize_period, live_write_would_revert
 from app.utils.name_normalization import names_match as _canonical_names_match
 from app.utils.espn_candidate_selection import (
     select_authorized_espn_candidate as _select_authorized_espn_candidate,
@@ -595,8 +595,45 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
             event.commence_time_source = "espn"
             changed = True
 
+    # ── #6056: is this fetch OLDER, in game time, than the row already is? ────
+    #
+    # ESPN is one of at least two unarbitrated writers on `game_clock`,
+    # `period`, `home_score` and `away_score` (`statpal_sync` is the other), and
+    # neither checks whether the state it is about to overwrite came from a
+    # LATER moment of the same game. On 2026-09-14 that served a reader a
+    # disappearing touchdown and a clock running backwards; the evidence and the
+    # reasoning are in `live_write_would_revert`'s module note.
+    #
+    # Computed ONCE, here, from the row as it stands BEFORE any of the four
+    # assignments below — reading it again between them would compare the fetch
+    # against a row it had itself half-updated, which is how a guard silently
+    # stops guarding.
+    #
+    # It gates exactly the four live-state fields. `commence_time` above, the
+    # broadcast/importance fields and the settle transition below are all
+    # deliberately outside it: none of them is positioned in game time, and a
+    # stale-looking clock must never be allowed to block a game from ending.
+    _new_period = _sanitize_period(ee.status_detail)
+    _live_state_is_stale = live_write_would_revert(
+        getattr(event, "period", None),
+        getattr(event, "game_clock", None),
+        _new_period,
+        ee.clock,
+    )
+    if _live_state_is_stale:
+        logger.info(
+            "#6056: refused a reverting live write on event %s — row is at "
+            "%r/%r, ESPN offered %r/%r (%s-%s)",
+            event.id, getattr(event, "period", None),
+            getattr(event, "game_clock", None), _new_period, ee.clock,
+            ee.home_score, ee.away_score,
+        )
+        stats["live_state_reversions_refused"] = (
+            stats.get("live_state_reversions_refused", 0) + 1
+        )
+
     # Update game clock
-    if ee.clock and event.game_clock != ee.clock:
+    if ee.clock and event.game_clock != ee.clock and not _live_state_is_stale:
         event.game_clock = ee.clock
         changed = True
 
@@ -619,9 +656,9 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
     #     answer for a missing one.
     # A date already stored is cleared rather than frozen, so the column
     # self-heals on the next sync and needs no migration.
-    _new_period = _sanitize_period(ee.status_detail)
+    # `_new_period` is computed above, with the staleness check that reads it.
     if _new_period:
-        if event.period != _new_period:
+        if event.period != _new_period and not _live_state_is_stale:
             event.period = _new_period
             changed = True
     elif ee.status_detail and event.period is not None and _sanitize_period(event.period) is None:
@@ -631,11 +668,19 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
 
     # Update scores + capture ScoreSnapshot for score differential chart
     score_changed = False
-    if ee.home_score is not None and event.home_score != ee.home_score:
+    if (
+        ee.home_score is not None
+        and event.home_score != ee.home_score
+        and not _live_state_is_stale
+    ):
         event.home_score = ee.home_score
         changed = True
         score_changed = True
-    if ee.away_score is not None and event.away_score != ee.away_score:
+    if (
+        ee.away_score is not None
+        and event.away_score != ee.away_score
+        and not _live_state_is_stale
+    ):
         event.away_score = ee.away_score
         changed = True
         score_changed = True
