@@ -1711,6 +1711,67 @@ def sweep_kalshi_resolution_window(self, limit: int = 500, concurrency: int = 6)
     bind=True,
     soft_time_limit=240,
     time_limit=300,
+    name="app.tasks.grade_fresh_kalshi_settlements",
+)
+def grade_fresh_kalshi_settlements(self, limit: int = 2000):
+    """#1121 residual: publish a finished game's GRADES within the half hour.
+
+    `settle_kalshi_recent_finals` below already reaches a finished game's Kalshi
+    rows in minutes and flips `status` — and says in its own docstring that it
+    "Writes NO grade". Nothing else grades on that timescale. Grading lives in
+    band 1 of `_backfill_kalshi_winners`, inside the 35-phase `backfill_winners`
+    omnibus, which runs `crontab(minute=45, hour="3,9,15,21")`. So the product
+    has an event-keyed arm at a 10-minute cadence that can only say "this is over"
+    and a population-keyed arm at a 6-hour cadence that can say what happened.
+
+    The reader-visible consequence, and the residual #1121's ordering fix leaves
+    behind: a game whose whistle falls just after a cycle shows "Resolved" over
+    ungraded props until the next one. Sunday's Cowboys-Giants was lucky — it
+    ended ~03:30Z, 15 minutes before the 03:45Z cycle. A game ending at 04:00Z —
+    every West Coast kickoff, every Monday-nighter — waits five and three
+    quarter hours, which is the whole of the following morning.
+
+    Ordering could not fix this and neither could a bigger band. #1121 moved the
+    right tickers to the head of the queue; this moves the queue. They are the
+    same 400 rows: the fast lane calls the SAME selector with the SAME
+    `_fresh_settlement_budget(limit)`, so it asks the venue about exactly the
+    tickers the omnibus would have asked about at :45 — never different ones,
+    only sooner. Band 2 (the 71k alphabetical tail) is skipped, not discarded:
+    it is the expensive half, it has no reader waiting on it, and its cursor is
+    left strictly untouched (see `fast_lane_only` in `backfill_winners.py` for
+    the delete-branch trap that costs).
+
+    BOUNDED: 400 recency tickers + at most `_EARLY_SETTLED_MAX_TICKERS` (50)
+    early-settled ones, one `GET /events/{ticker}` each at concurrency 5. The
+    whole three-band phase measured 110.7s on production 2026-09-14 09:45Z at
+    2,050 tickers, so this ~450-ticker slice is ~25s against a 240s soft limit.
+    Half-hourly, that is ~21,600 venue reads a day where the omnibus made ~8,200
+    — Kalshi is key-authenticated with no monthly quota (unlike The Odds API,
+    whose 5M budget this never touches), and concurrency is unchanged, so the
+    cost is calls, not contention. It also self-drains: a graded market leaves
+    band 1 by the selector's own authority clause, so the steady-state band is
+    small and today's 3,945-ticker backlog is a starting condition, not a load.
+
+    ON `realtime`, NOT `background`, for the reason `settle_kalshi_recent_finals`
+    measured and wrote down: `background` runs `--concurrency=2` against ~57
+    beats with `task_acks_late=False`, so a release destroys a reserved message
+    leaving no success, no failure and no start marker. A latency bar cannot be
+    met on a queue with that failure mode, and this task is nothing BUT a latency
+    bar — the omnibus at :45 is already the correctness backstop, so a dropped
+    fast-lane run costs lateness and never a grade. `expires` at one period so a
+    run that could not be served is discarded rather than queued behind the next.
+    """
+    from app.tasks.backfill_winners import _backfill_kalshi_winners
+    return _tracked_run(
+        "kalshi_fresh_grades",
+        _backfill_kalshi_winners(limit=limit, fast_lane_only=True),
+    )
+
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=240,
+    time_limit=300,
     name="app.tasks.settle_kalshi_recent_finals",
 )
 def settle_kalshi_recent_finals(self, limit: int = 200, concurrency: int = 6):
@@ -6293,6 +6354,31 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute="*/10"),
         "kwargs": {"limit": 200},
         "options": {"queue": "realtime", "expires": 600},
+    },
+    # #1121 residual — the grading twin of the beat above, which flips `status`
+    # every 10 min and writes no grade.
+    #
+    # `:09/:39` is picked against two constraints, not one. Every `*/5`, `*/10`,
+    # `*/15` and `*/30` beat in this schedule fires on a multiple of five, so
+    # these minutes collide with none of them. The second constraint is the one
+    # that is easy to miss: `backfill_winners` STARTS at `:45` and RUNS FOR ~818s
+    # (measured 2026-09-14, 840s soft limit), so its window is `:45`-`:59` — and
+    # the 492s `prob_and_datagolf` phase inside it writes `is_winner` across every
+    # source. A fire at `:53` would have landed in the middle of that. These two
+    # sit in the `:00`-`:44` quiet half, and the 240s soft limit puts the worst
+    # case at `:13`/`:43`, both clear of the omnibus start.
+    #
+    # The `:39` fire also does the omnibus a favour: band 1 self-drains, so the
+    # tickers it grades at `:39` have left the band by `:45` and the omnibus
+    # spends those 400 slots on older rows instead of re-asking.
+    #
+    # `expires` is exactly one period: a run the realtime lane could not serve is
+    # dropped, never queued behind its own successor.
+    "grade-fresh-kalshi-settlements": {
+        "task": "app.tasks.grade_fresh_kalshi_settlements",
+        "schedule": crontab(minute="9,39"),
+        "kwargs": {"limit": 2000},
+        "options": {"queue": "realtime", "expires": 1800},
     },
     "backfill-kalshi-trade-history": {
         "task": "app.tasks.backfill_kalshi_trades",
