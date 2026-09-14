@@ -461,6 +461,12 @@ export interface DivergenceRow {
   label: string;
   player: string;
   stat: string;
+  /**
+   * The market's own matchup ("Denver vs Kansas City"), carried so the sentence
+   * can tell a TEAM subject from a person's name without a vocabulary (#6210).
+   * Optional: rows whose market names no matchup simply do not set it.
+   */
+  matchup?: string;
   threshold: number;
   /** Where the market opened the question, 0..1. */
   pregameMark: number;
@@ -806,13 +812,42 @@ const NAME_SUFFIX = /^(?:jr|sr|ii|iii|iv)\.?$/i;
  * left — a name that is only `"Jr."` — keeps today's answer. There is nothing
  * better to say about it and inventing something would be the same mistake.
  */
-function possessive(player: string): string {
-  const parts = player.trim().split(/\s+/);
+function possessive(player: string, matchup?: string): string {
+  const subject = player.trim();
+  const whole = subject.endsWith("s") ? `${subject}'` : `${subject}'s`;
+
+  // #6210: A TEAM HAS NO SURNAME. Once a "Team Sacks" row stopped calling its
+  // subject "Team" and started naming the side the outcome states, this
+  // shortening began reaching names it was never written for: "Kansas City"
+  // became "City's", "Ohio St." became "St.'s", "Ole Miss" became "Miss'", and
+  // on an Eastern Michigan vs Michigan St. page "Eastern Michigan" became
+  // "Michigan's" — a possessive that names the wrong school. Measured over the
+  // same 15 events: 34 of 186 subjects.
+  //
+  // The test is the matchup, not a vocabulary: a subject that names one of the
+  // two sides of its own market is a team, so it is spelled out whole.
+  if (matchup && matchup.toLowerCase().includes(subject.toLowerCase())) return whole;
+
+  const parts = subject.split(/\s+/);
   let i = parts.length - 1;
   while (i > 0 && NAME_SUFFIX.test(parts[i])) i -= 1;
   // A trailing comma belongs to the suffix that has just been removed
   // (`Fernando Tatis, Jr.`), never to the surname.
   const last = (parts[i] || player).replace(/,+$/, "");
+
+  // #6210, the other half: shorten only to something that can BE a surname.
+  // "KC Chiefs D/ST" is a unit, and "D/ST's 9+ fantasy points" on a page with
+  // two defenses cannot say whose — the same defect as "Team's", one step on.
+  // Letters, apostrophes and hyphens keep every real surname shortening
+  // ("Croskey-Merritt's", "Lil'Jordan Humphrey" -> "Humphrey's"); a slash or an
+  // ampersand means the token is not a name and the subject is written out.
+  //
+  // A TRAILING PERIOD IS ALLOWED, deliberately: it is an abbreviation, and
+  // #5510's `Jr. Sr.` control pins that a degenerate all-suffix subject still
+  // reduces to one token. The teams that end in "St." are already spelled whole
+  // by the matchup rule above, which is the rule that owns them.
+  if (parts.length > 1 && !/^[\p{L}'’-]+\.?$/u.test(last)) return whole;
+
   return last.endsWith("s") ? `${last}'` : `${last}'s`;
 }
 
@@ -832,6 +867,8 @@ export function divergenceSentence(
   current: number,
   settled: boolean,
   resolution?: 0 | 1 | null,
+  /** The market's own matchup, so a team subject is not shortened (#6210). */
+  matchup?: string,
 ): string {
   const question = label.includes(": ") ? label.split(": ").slice(1).join(": ") : label;
 
@@ -850,13 +887,13 @@ export function divergenceSentence(
     // `hit` / `missed` is the verb form of PROP_HIT_LABEL / PROP_MISS_LABEL,
     // not a third word (see `resolutionLabel`, and #1650).
     const verdict = resolution === 1 ? "and it hit." : "and it missed.";
-    return `${possessive(player)} ${question} was marked ${pct(pregameMark)} — ${verdict}`;
+    return `${possessive(player, matchup)} ${question} was marked ${pct(pregameMark)} — ${verdict}`;
   }
 
   const tail = settled
     ? `finished at ${pct(current)}.`
     : `it's ${pct(current)} now.`;
-  return `${possessive(player)} ${question} opened at ${pct(pregameMark)} — ${tail}`;
+  return `${possessive(player, matchup)} ${question} opened at ${pct(pregameMark)} — ${tail}`;
 }
 
 /**
@@ -1127,6 +1164,7 @@ function withSentence(row: DivergenceRow, settled: boolean): DivergenceRow {
       row.current,
       settled,
       row.resolution,
+      row.matchup,
     ),
   };
 }
@@ -1258,6 +1296,7 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
       label: `${parsed.player}: ${thresholdPhrase(threshold)} ${parsed.stat.toLowerCase()}`,
       player: parsed.player,
       stat: parsed.stat,
+      matchup: parsed.team,
       threshold,
       pregameMark,
       current,
