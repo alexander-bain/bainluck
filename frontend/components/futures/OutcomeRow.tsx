@@ -6,6 +6,7 @@ import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 import EntityImage from "@/components/EntityImage";
 import { isNonSportsCategory, isInternationalSport, flagUrl } from "@/lib/images";
 import { SHAPE_QUANTITY, type MarketShape } from "@/lib/marketShape";
+import { isAuthoritativeResolution } from "@/lib/resolutionAuthority";
 
 /**
  * The verdict this row is allowed to state: `"won"`, `"lost"`, or `null` for
@@ -60,6 +61,17 @@ import { SHAPE_QUANTITY, type MarketShape } from "@/lib/marketShape";
  * is a rule that silently stops holding the first time a producer defaults the
  * other way, and nothing would catch it.
  *
+ * ### #6082 — and the market's STATUS is not the leg's question
+ *
+ * The paragraphs above are about WHO graded a leg. The other half is WHERE a
+ * grade is allowed to stand, and it is the same rule the backend already owns:
+ * `can_write_winner` (#845) admits a winner on a settled market OR on any market
+ * when an AUTHORITATIVE (tier-3) venue settlement says so. An `open` market can
+ * therefore hold a genuinely settled leg, which is the ordinary state of a
+ * threshold ladder mid-season. Only the WON arm crosses that line — see the
+ * comment on the branch itself for why the LOST arm cannot until #4597's drain
+ * lands. Tier-3 membership is `lib/resolutionAuthority.ts`.
+ *
  * Note this is a WEAKER guarantee than the props rail's `readPropGrade`, which
  * refuses to believe `is_winner` even WITH a source ("only `hit` types a
  * verdict", UX-P044/#1642, after 70 measured false red MISSes built from a
@@ -102,7 +114,6 @@ export function outcomeRowVerdict(
   // Unconditional in BOTH directions: a row that is both retracted and crowned is
   // a contradiction, and the honest render for a contradiction is the live one.
   if (outcome.resolution_source === RETRACTED_RESOLUTION_SOURCE) return null;
-  if (!isResolved) return null;
   // A SERVED null means the payload looked and found no grader ⇒ say nothing.
   //
   // `=== null`, never `== null`, and this is the load-bearing line of the whole
@@ -115,6 +126,45 @@ export function outcomeRowVerdict(
   // say", and the honest response to that is today's behaviour, not a blackout.
   if (outcome.resolution_source === null) return null;
   if (outcome.is_winner == null) return null;
+  // #6082 — THE MARKET'S STATUS IS NOT THE LEG'S QUESTION.
+  //
+  // `isResolved` is `market.status === "resolved"`, a MARKET-level fact, and it
+  // used to sit above this line refusing every verdict on a market that had not
+  // settled. A threshold ladder is exactly where that comes apart: Kalshi settled
+  // `80+ wins` and `75+ wins` YES on `/futures/261` while the market stayed
+  // legitimately `open` (the parent question runs to Nov 8 and `90+ wins` traded
+  // at 19%), so two called rungs printed `LATEST 99%` and `LATEST 98%` — and
+  // because both numbers were pre-settlement relics rather than prices, the page
+  // put `≥ 75 98%` directly above `≥ 80 99%`. 2,428 legs on 797 open markets
+  // carry this stamp (measured 2026-09-14), 1,738 priced under 99.5%.
+  //
+  // `can_write_winner` (#845) is the codebase's rule and it admits exactly this:
+  // a winner stands on a settled market, OR on any market when an AUTHORITATIVE
+  // (tier-3) venue settlement says so. `_outcome_is_settled` renders on that rule
+  // on the sibling surface and names this case. The comment above this function
+  // already claimed to be "the same rule, not a second private copy of it"; it
+  // was a second copy, and this is where it had diverged.
+  //
+  // ONLY THE WON ARM CROSSES THE STATUS LINE, and the asymmetry is deliberate
+  // rather than timid. A tier-3 `is_winner = true` cannot be CAL-P1004 residue by
+  // construction: that rail's population is `win_count = 0` markets, its
+  // retraction writes `ungradeable_result` (never `api_settlement`), and its only
+  // TRUE write is `restore_winner`, licensed by the venue's own answer for that
+  // exact ticker. A tier-3 `is_winner = false` on an OPEN market has no such
+  // proof — `is_winner` is `boolean NULL DEFAULT false`, so on a market nobody
+  // has finished grading a defaulted FALSE is indistinguishable from a called
+  // loss, and crowning it `Lost` is #4788's lie on a market that is still
+  // trading. That arm is #4597's, it waits on the CAL-P1004 drain, and until then
+  // an ungraded-looking leg keeps its price — which is also why `85+ wins` on
+  // this very market must keep reading 96%.
+  //
+  // A settled market is untouched: below this branch both arms answer as before.
+  if (!isResolved) {
+    return outcome.is_winner === true &&
+      isAuthoritativeResolution(outcome.resolution_source)
+      ? "won"
+      : null;
+  }
   return outcome.is_winner ? "won" : "lost";
 }
 
@@ -458,8 +508,13 @@ export default function OutcomeRow({
               header. Gated on the verdict rather than on `isResolved` because
               those are the same condition that picks the branch below; keying it
               off `isResolved` left the 51 already-ungraded rows on
-              `/futures/59700266` printing a bare unlabelled number. Open markets
-              are unaffected: `verdict` is always null when not resolved. */}
+              `/futures/59700266` printing a bare unlabelled number.
+
+              #6082: gating on the verdict is now load-bearing rather than merely
+              tidy. An OPEN market can carry a settled leg (a tier-3 venue
+              settlement is self-justifying), so `verdict` is no longer always
+              null when `!isResolved` — keyed off `isResolved` this label would
+              now print "Latest" directly above a `100% / Settled` cell. */}
           {verdict === null && (
             <div className="text-[10px] uppercase tracking-wide text-text-muted">
               Latest

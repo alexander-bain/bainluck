@@ -159,10 +159,42 @@ describe("#4788 outcomeRowVerdict — only a sourced grade is a verdict", () => 
     ).toBeNull();
   });
 
-  it("an unresolved row never carries a verdict, however it is graded", () => {
+  // SUPERSEDED BY #6082, deliberately retargeted rather than deleted.
+  //
+  // This assertion used to read "an unresolved row never carries a verdict,
+  // however it is graded" — a MARKET-level gate on a LEG-level question, and
+  // #6082 is the bug report against it: Kalshi settled `80+ wins` and `75+ wins`
+  // YES on `/futures/261` while the market stayed legitimately `open`, so two
+  // called rungs printed `LATEST 99%` / `98%` and the page drew the impossible
+  // `≥ 75 98%` above `≥ 80 99%`. `can_write_winner` (#845) admits a tier-3 venue
+  // settlement on ANY market status, which is what the backend's
+  // `_outcome_is_settled` has always done on the sibling surface.
+  //
+  // The guard #4788 actually needs here is the one kept below: an unresolved row
+  // carries no verdict UNLESS an authoritative settlement licenses it. Full
+  // both-directions coverage lives in
+  // `futuresSettledLegOnOpenMarket6082.test.tsx`.
+  it("an unresolved row carries a verdict only when a tier-3 settlement licenses it", () => {
+    // #6082: the venue said so, so it stands on an open market.
     expect(
       outcomeRowVerdict(
         outcome({ is_winner: true, resolution_source: "api_settlement" }),
+        false,
+      ),
+    ).toBe("won");
+    // Everything weaker than tier 3 is still refused on an open market …
+    for (const src of ["clean_resolution", "box_score", "pass2_guess", null]) {
+      expect(
+        outcomeRowVerdict(
+          outcome({ is_winner: true, resolution_source: src }),
+          false,
+        ),
+      ).toBeNull();
+    }
+    // … and so is the LOST arm, whatever graded it (#4597, waiting on the drain).
+    expect(
+      outcomeRowVerdict(
+        outcome({ is_winner: false, resolution_source: "api_settlement" }),
         false,
       ),
     ).toBeNull();
