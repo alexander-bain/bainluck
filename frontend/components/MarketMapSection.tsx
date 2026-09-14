@@ -24,6 +24,7 @@ import {
   quotedLinesPhrase,
   settledLinesPhrase,
   derivePeriod,
+  marketMapIsGraded,
   selectGameTotalRungs,
   selectHalfTotalRungs,
   ladderQuotesALine,
@@ -287,7 +288,7 @@ export default function MarketMapSection({
   const vocab = sportVocab(sportKey);
 
   const isLive = eventStatus === "live";
-  const isDone = eventStatus === "completed" || eventStatus === "closed";
+  const isDone = marketMapIsGraded(eventStatus);
   const status = isLive ? "live" : isDone ? "done" : "pre";
 
   /**
@@ -710,7 +711,7 @@ export default function MarketMapSection({
     // #3240: the selection lives in `marketMapUtils` so the Score Differential
     // note can ask whether THIS card renders instead of guessing from whether
     // the page happens to hold a played count.
-    const gameTotals = selectGameTotalRungs(gameMarkets.totals);
+    const gameTotals = selectGameTotalRungs(gameMarkets.totals, eventStatus);
 
     if (gameTotals.length === 0) return null;
 
@@ -946,7 +947,7 @@ export default function MarketMapSection({
       markers,
       ladder,
     };
-  }, [gameMarkets.totals, gameMarkets.pace, status, homeScore, awayScore, overUnder, openingOverUnder, vocab, sportKey]);
+  }, [gameMarkets.totals, gameMarkets.pace, status, eventStatus, homeScore, awayScore, overUnder, openingOverUnder, vocab, sportKey]);
 
   // #3240: `derivePeriod` now lives in `marketMapUtils` beside the half-total
   // selector that also needs it.
