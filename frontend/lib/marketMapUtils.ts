@@ -344,6 +344,16 @@ export function parseSpreadRungs(
     .filter((p) => spreadRungMatchesRail(p, railUnit));
 }
 
+/**
+ * An outcome naming a BAND of margins — "wins by 7 to 14 points".
+ *
+ * Anchored on `by <digits>` at the left and a digit at the right so it cannot
+ * reach a signed spread (`"Lakers -4.5"` has no digit before the sign) or a
+ * date inside a market name. One shape, three spellings: `to` is the form
+ * production serves today, the dashes are the same claim written differently.
+ */
+const NAMES_A_MARGIN_BAND = /\bby\s+\d+(?:\.\d+)?\s*(?:to|-|–|—)\s*\d/i;
+
 export function parseSpreadOutcome(
   outcomeName: string,
   probability: number,
@@ -357,6 +367,32 @@ export function parseSpreadOutcome(
   const isHome = homeWords.some((w) => w.length >= 3 && lower.includes(w));
   const isAway = awayWords.some((w) => w.length >= 3 && lower.includes(w));
   if (!isHome && !isAway) return null;
+
+  /* #3788's rule, web half. A `ParsedSpread` makes ONE claim — this side by
+     more than `threshold`, at this probability. `P(margin is 7 to 14)` is not
+     that claim: it is bounded at BOTH ends, and the upper bound is the entire
+     point of the market.
+
+     Kalshi serves each NFL game a `…: Spread` cover ladder AND a separate
+     `…: Winning Margin` band market; the backend files both under `spreads`
+     and `isFullGameSpread` excludes halves and nothing else, so they arrive on
+     one rail. Below, `threshold` is the LAST number in the name, so the band's
+     UPPER edge became the line — and on a settled game the band row served is
+     the WINNING one at probability 1.0. Measured 2026-09-14 over the eight
+     completed NFL events: four rails printed a rung at 100% for a margin that
+     did not happen — `/events/14637256` "New York Giants by 14+" on a game won
+     by 8, and `/events/14780150` "Philadelphia Eagles by 6+" on a game won by
+     2, where it was one of only TWO rungs on the rail.
+
+     Dropped rather than re-pointed at the band's lower edge: `7 to 14` is not
+     the claim `7+` either, and this rail has no way to draw "inside".
+
+     DELIBERATELY NOT REFUSED, exactly as #3788 ruled it for iOS: "wins by 15
+     or more points" is bounded at one end only, which IS a cover claim, so it
+     stays a rung. The two shapes come from the same market, so a guard on the
+     market NAME would drop the honest one with the dishonest one — which is
+     why this reads the outcome's shape instead. */
+  if (NAMES_A_MARGIN_BAND.test(outcomeName)) return null;
 
   const matches = outcomeName.match(/(\d+\.?\d*)/g);
   if (!matches || matches.length === 0) return null;
