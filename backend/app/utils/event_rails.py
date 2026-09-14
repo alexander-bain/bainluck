@@ -42,13 +42,17 @@ sweep a matrix and no anchor can rot (gotcha #44).
 
 from datetime import timedelta
 
-from sqlalchemy import and_, case, or_, select
+from sqlalchemy import and_, case, literal, or_, select
 
 from app.models.models import Event, Sport
 from app.utils.event_completion import (
     EVENT_SUSPENDED,
     RECENT_RAIL_STATUSES,
     UPCOMING_GRACE,
+)
+from app.utils.kalshi_occurrence_start import (
+    KALSHI_EXPECTED_EXPIRATION_PAD,
+    KALSHI_OCCURRENCE_TIMED_SOURCES,
 )
 from app.utils.sport_keys import STATPAL_SHADOW_ANCHOR_SPORT_PREFIXES
 
@@ -117,6 +121,140 @@ def suspended_rows():
     return Event.status == EVENT_SUSPENDED
 
 
+def _kalshi_expected_expiration_rows():
+    """The rows whose stored hour is Kalshi's expected expiration, not a kick-off.
+
+    The SQL half of the gate inside
+    :func:`~app.utils.kalshi_occurrence_start.kalshi_occurrence_scheduled_start`
+    — conjunct for conjunct, in that function's own order, and reading its
+    constants rather than restating them, so the pad and the provenance set
+    cannot drift from the Python the page renders with.
+
+    ``kalshi_ticker`` is absent here because it is absent there, and the reason
+    is in that module: it is a DATE parsed out of a ticker that resolves to
+    midnight UTC, so subtracting three hours from it would move a stand-in to
+    21:00 the previous day and call it a kick-off.
+
+    ``Sport.key.like("soccer%")`` mirrors that module's ``startswith("soccer")``
+    prefix test, and is a prefix for the same reason
+    :func:`_statpal_shadow_sport_ids` gives — the league vocabulary is the widest
+    we have and any enumeration of it is stale the week a competition is added.
+    The subquery is UNCORRELATED for that function's reason too: ``sports`` is a
+    few dozen rows, hoisted and hashed once per statement rather than evaluated
+    per candidate.
+    """
+    return and_(
+        Event.external_id.is_(None),
+        Event.commence_time_source.in_(sorted(KALSHI_OCCURRENCE_TIMED_SOURCES)),
+        Event.sport_id.in_(
+            select(Sport.id).where(Sport.key.like("soccer%")).correlate(None)
+        ),
+    )
+
+
+def rail_commence_floor(now):
+    """The instant a row's STORED hour must beat to still count as upcoming.
+
+    🔴 **#6031 — THE CLOCK A ROW IS FILED UNDER AND THE CLOCK ITS CARD PRINTS
+    WERE TWO DIFFERENT CLOCKS, AND ONLY ONE OF THEM WAS RIGHT.**
+
+    #5905 recovers a soccer kick-off from the Kalshi expected-expiration instant
+    we stored as one, and says of itself, correctly, that **it writes nothing**:
+    it is a serve-time reading that corrects the hydrated row in place. So every
+    Python serializer downstream of it sees the kick-off — including
+    :func:`~app.utils.lifecycle.served_event_status`, which is why a recovered
+    row does not get demoted on its way out the door. Every ``WHERE`` in this
+    module kept reading the raw column, three hours ahead.
+
+    A rail's membership was therefore computed on a clock its own card
+    contradicted, which is exactly the failure
+    :func:`started_without_result_rows` exists to refuse in its own docstring:
+    *one definition is the only thing that keeps a rail's position agreeing with
+    its card's label.* It was one definition in Python and another in SQL.
+
+    MEASURED on production 2026-09-14 00:16Z, ``/api/leagues/soccer_other``:
+    six of the eight "Upcoming" cards were past their own printed kick-off, and
+    two of them were **2h47m into play while filed as upcoming** —
+
+        15310509  Rubio Nu v Nacional      printed 21:30Z   stored 00:30Z
+        15308584  Caracas v Monagas        printed 21:30Z   stored 00:30Z
+
+    — because the stored hour had not yet reached ``now`` at all, let alone
+    ``now - 2h``. The same read over the whole table found 2 rows in that state
+    at that instant and ~260 Kalshi-timed soccer rows in seven days, each of
+    which spends the three hours of its own match being advertised as upcoming.
+
+    THE PAD MOVES THE THRESHOLD, NOT THE COLUMN, and that is not a stylistic
+    choice. ``commence_time - PAD >= now - GRACE`` and
+    ``commence_time >= now - GRACE + PAD`` are the same inequality, but the first
+    asks the database for interval arithmetic per row and the second compares the
+    column against a constant computed here before the statement is built. Two
+    things follow. The subtraction renders as Postgres ``make_interval(...)``,
+    which SQLite cannot evaluate — so that form is exercisable only against
+    production, and its guard suite would have had to assert the shape of a
+    string instead of the contents of a result set (measured: selecting it under
+    SQLite raises ``TypeError: fromisoformat: argument must be str``). And a
+    per-row expression over the column is work on every candidate, against an
+    ORDER BY that already leads with a ``CASE``.
+
+    ``live`` is deliberately NOT re-clocked even though it shares the defect's
+    shape. :func:`upcoming_rail_condition` gives ``live`` no floor, so the clock
+    cannot change what rail a live row lands on — only how :func:`started_live`
+    orders it — and there is no measured specimen of that, so it stays a
+    raw-column read until one exists rather than riding along on this evidence.
+    """
+    floor = now - UPCOMING_GRACE
+    return case(
+        (
+            _kalshi_expected_expiration_rows(),
+            literal(floor + KALSHI_EXPECTED_EXPIRATION_PAD),
+        ),
+        else_=literal(floor),
+    )
+
+
+def _at_or_after_rail_floor(now):
+    """``commence_time`` is at or after :func:`rail_commence_floor`.
+
+    🔴 THE FIRST CONJUNCT IS REDUNDANT AND IS NOT REMOVABLE. It is implied by
+    the second — the ``CASE``'s two branches are ``floor`` and ``floor + PAD``,
+    and the pad is positive, so anything clearing the CASE has already cleared
+    ``floor`` — and it is here for the PLANNER, which cannot see that. A bare
+    ``commence_time >= CASE ...`` has a per-row right-hand side, so the range
+    scan on ``ix_events_commence_time`` is lost and every candidate is filtered.
+
+    MEASURED on production 2026-09-14 00:4xZ (``db-query`` with ``explain``,
+    plan-only, on the real ``soccer_other`` upcoming shape), total plan cost:
+
+        plain ``>= now - 2h``            (pre-#6031)      40.67
+        bare ``>= CASE ...``                             160.31
+        both, i.e. this function                         103.32
+
+    #2260/LAT-P110 is why that is measured rather than assumed: this module's
+    sibling rail lost an index-ordered walk the same way and cost 4,649 ms on a
+    cold open. The residual over the pre-#6031 baseline is the CASE itself, and
+    is the price of the rail agreeing with the card.
+    """
+    return and_(
+        Event.commence_time >= now - UPCOMING_GRACE,
+        Event.commence_time >= rail_commence_floor(now),
+    )
+
+
+def _before_rail_floor(now):
+    """``commence_time`` is before :func:`rail_commence_floor`.
+
+    The same redundant-bound device as :func:`_at_or_after_rail_floor`, pointed
+    the other way: the CASE's LARGEST branch is ``floor + PAD``, so anything
+    below the CASE is already below ``floor + PAD``, and stating that bound
+    gives the planner an indexable upper range it cannot otherwise infer.
+    """
+    return and_(
+        Event.commence_time < now - UPCOMING_GRACE + KALSHI_EXPECTED_EXPIRATION_PAD,
+        Event.commence_time < rail_commence_floor(now),
+    )
+
+
 def started_without_result_rows(now):
     """``scheduled`` and its own kickoff is more than the grace behind us. #3211.
 
@@ -141,7 +279,7 @@ def started_without_result_rows(now):
     """
     return and_(
         Event.status == "scheduled",
-        Event.commence_time < now - UPCOMING_GRACE,
+        _before_rail_floor(now),
     )
 
 
@@ -177,12 +315,17 @@ def upcoming_rail_condition(now):
     on 2026-09-05 there were 41 ``live`` rows and **not one** was older than 12
     hours. A suspended row rides a past rail, so the net moving it is also what
     takes it off this one.
+
+    The floor the ``scheduled`` arm spends is :func:`rail_commence_floor`, not
+    the stored column — #6031. A row whose stored hour is Kalshi's expected
+    expiration reaches ``now - 2h`` three hours late, so it held this rail for
+    the whole of its own match; that function carries the two specimens.
     """
     return or_(
         Event.status == "live",
         and_(
             Event.status == "scheduled",
-            Event.commence_time >= now - UPCOMING_GRACE,
+            _at_or_after_rail_floor(now),
         ),
     )
 
