@@ -30,6 +30,7 @@ from app.utils.futures_unsupported_price import (
 from app.utils.hook_staleness import hook_names_unpriced_outcome, is_hook_stale
 from app.utils.leader_order import leader_first_outcomes
 from app.utils.event_rails import live_scheduled_settled_order
+from app.utils.event_twin_fold import fold_twin_events
 from app.utils.lifecycle import served_event_status
 from app.utils.sport_keys import LLM_CATEGORY_TO_SPORT_PREFIX
 from app.utils.tournament_stages import (
@@ -3106,6 +3107,24 @@ async def get_futures_market(
     return detail
 
 
+#: How many cards "Games This Week" shows. Was the bare `.limit(20)` on the
+#: query itself until #5905/#5918 — see `RELATED_EVENTS_FOLD_HEADROOM`.
+RELATED_EVENTS_LIMIT = 20
+
+#: Extra rows fetched so the twin fold has something to spend.
+#:
+#: The same bargain `teams.py` reasons out for its five-card rail, and it is
+#: available here for the same reason: this strip has no `offset` and no
+#: cursor, so over-fetching cannot make page one consume rows a page two would
+#: then re-serve. `list_events` folds AFTER its limit precisely because it IS
+#: offset-paginated; that hazard does not exist on a fixed strip.
+#:
+#: Folding after a DB limit of 20 would instead spend a card slot on a row it
+#: then drops: the three duplicate pairs measured below would leave the reader
+#: seventeen games instead of twenty.
+RELATED_EVENTS_FOLD_HEADROOM = RELATED_EVENTS_LIMIT
+
+
 @router.get("/{market_id}/related-events")
 async def get_related_events(
     market_id: int,
@@ -3224,9 +3243,83 @@ async def get_related_events(
             live_scheduled_settled_order(now),
             Event.commence_time.asc(),
         )
-        .limit(20)
+        .limit(RELATED_EVENTS_LIMIT + RELATED_EVENTS_FOLD_HEADROOM)
     )
-    events = events_result.scalars().all()
+    events = list(events_result.scalars().all())
+
+    # ── #5918/#5905: one fixture may not take two slots on this strip ─────────
+    #
+    # MEASURED ON PRODUCTION 2026-09-14 00:2xZ, `/api/futures/400/related-events`
+    # ("La Liga Winner", the page a reader reaches from the La Liga hub). Three
+    # pairs, each the same game twice, each exactly three hours apart:
+    #
+    #     15312069 Sevilla v Barcelona        19:00Z
+    #     15307701 Sevilla v Barcelona        22:00Z
+    #     15312070 Getafe v Málaga            12:00Z
+    #     15307708 Getafe v Malaga            15:00Z
+    #     15312067 Celta Vigo v Santander     16:30Z
+    #     15307700 Celta Vigo v Santander     19:30Z
+    #
+    # On the page that reads "Barcelona at Sevilla" on two rows of "Games This
+    # Week", three hours apart.
+    #
+    # THE THREE HOURS ARE THE WHOLE STORY, AND THEY ARE WHY ONE CALL FIXES BOTH
+    # HALVES. The second row of each pair is a Kalshi-minted row whose
+    # `commence_time` is the market's expected expiration, not kick-off (gotcha
+    # #14) — `KALSHI_EXPECTED_EXPIRATION_PAD`, 180 minutes exactly. So the twins
+    # are not near-misses a tolerance would have to reach: they are the SAME
+    # MINUTE once the pad is subtracted, and they read as different games only
+    # because it has not been. `recover_kalshi_occurrence_starts` runs at the
+    # top of `fold_twin_events` for exactly this reason, so the fold's
+    # same-minute soccer pass can then see one game where the raw columns show
+    # two. Neither ran here: every other list surface reaches both through this
+    # one call (`list_events`, search, the three league rails, the team rails,
+    # the feed) and this strip reached neither.
+    #
+    # `Event.sport` is eagerly loaded on the query above, which is load-bearing
+    # rather than incidental: `loaded_sport_key` answers `None` for an unloaded
+    # relationship — deliberately, so the fold never emits IO inside a stage
+    # wrapped in a bare `except` — and the soccer pass would then skip every row
+    # on a soccer strip while looking like it ran. That is CERT-2805's finding
+    # on the league rails, and the test for this change asserts the loader.
+    #
+    # Ordering is deliberately NOT recomputed. `live_scheduled_settled_order` is
+    # a five-group SQL authority (#3946, #3211/D107, CERT-1924) with no Python
+    # twin, and hand-rolling one here would make this route a second place that
+    # decides rail order — the exact shape CERT-1924 caught on this very
+    # endpoint. The survivors keep the order the database gave them, which is
+    # what every other folding surface does. Measured for the three pairs above:
+    # the elected survivor is in each case the row already sitting in its
+    # correct chronological slot, so no served row moves.
+    #
+    # Gotcha #42 as a whole stage: the fold improves the strip and is never a
+    # precondition for having one. If it raises, the reader gets today's strip —
+    # duplicates and all — rather than a 500 on a futures page.
+    try:
+        _fold = fold_twin_events(events)
+        if _fold.dropped_ids:
+            logger.info(
+                "futures related events: market %s collapsed %d duplicate rows "
+                "(dropped=%s)",
+                market.id,
+                len(_fold.dropped_ids),
+                _fold.dropped_ids,
+            )
+        events = _fold.events
+    except Exception:
+        logger.exception(
+            "futures related events: twin fold failed for market %s", market.id
+        )
+
+    # The cap is applied AFTER the fold, which is the point of the headroom.
+    #
+    # No `set_committed_value` dance for `merged_sources` here, unlike the team
+    # rails and the feed: this payload serves no probability for an event — id,
+    # names, kick-off, status, scores and the linked outcome — so there is no
+    # number that could disagree with the source list behind it. Taking the
+    # union anyway would be a write-shaped operation on a row nothing reads it
+    # from.
+    events = events[:RELATED_EVENTS_LIMIT]
 
     formatted_events = []
     for event in events:
