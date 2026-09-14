@@ -468,7 +468,25 @@ def started_without_result(status, commence_time, now) -> bool:
         return False
     if commence_time is None or now is None:
         return False
-    return commence_time < now - UPCOMING_GRACE
+    try:
+        return commence_time < now - UPCOMING_GRACE
+    except TypeError:
+        # 🔴 #6057. A tz-naive `commence_time` against a tz-aware `now` raises
+        # rather than compares, and until this predicate had its first
+        # executable caller nothing could discover that: it shipped as the
+        # canonical answer to "has this row's clock run out?" with ZERO
+        # consumers, so every input it had ever seen was one a test chose.
+        # Serving it from `_format_event` put real rows through it and two
+        # fixtures in `test_events_list_blank_cards_3016` went from passing to
+        # TypeError — a 500 on the event payload, not a wrong flag.
+        #
+        # FAIL CLOSED, and not as a new decision: this is exactly what
+        # `lifecycle.live_start_satisfied` does with the same comparison and
+        # says why — an uncomparable time cannot PROVE anything about the
+        # clock, so the honest answer is the one that claims nothing. The
+        # alternative, coercing a naive value to UTC, would invent an offset
+        # the row never stated and could move a card by hours.
+        return False
 
 
 #: RETIRED. The row is still in the table and is still addressable by anything
