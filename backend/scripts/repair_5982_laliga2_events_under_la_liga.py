@@ -165,12 +165,30 @@ def segunda_series() -> list[str]:
     Derived, never re-spelled. This script exists because a ticker resolved to
     the wrong competition; hardcoding a second opinion about which tickers those
     are would reproduce the original failure in a new place.
+
+    **BOTH maps, since #3813.** When this was written every LaLiga 2 prefix sat
+    in the futures map, so reading that one was the same thing as reading "the
+    shipped map". #3813 moved the four FIXTURE families to the game map — they
+    have to be there to be game-level, because a key present in both maps is a
+    tie and a tie is not game-level — leaving only `kxlaliga2promo` behind. A
+    futures-only read would therefore have quietly narrowed this repair's
+    population to the promotion market and found none of the fixtures it exists
+    to retag: not a crash, a repair that reports a small clean number. Reading
+    both maps is what "off the shipped map" always meant; it is now spelled that
+    way because the answer is split across two dicts.
     """
-    from app.utils.sport_keys import KALSHI_FUTURES_TICKER_TO_SPORT_KEY
+    from app.utils.sport_keys import (
+        KALSHI_FUTURES_TICKER_TO_SPORT_KEY,
+        KALSHI_TICKER_TO_SPORT_KEY,
+    )
 
     return sorted(
         prefix
-        for prefix, key in KALSHI_FUTURES_TICKER_TO_SPORT_KEY.items()
+        for mapping in (
+            KALSHI_TICKER_TO_SPORT_KEY,
+            KALSHI_FUTURES_TICKER_TO_SPORT_KEY,
+        )
+        for prefix, key in mapping.items()
         if key == RIGHT_SPORT_KEY
     )
 

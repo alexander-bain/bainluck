@@ -61,11 +61,11 @@
   59768531,
   59768535
  ],
- "reset_reason": "#3564 step 2: the FIXTURE was re-captured on 2026-09-06 at MAX_CANDIDATES=20 (production's own LIMIT 20), replacing the 2026-09-02 snapshot taken at 10. A REPLAY-HARNESS change, not a matcher change, which is what --reset is for. THIS RECORD IS ANCHORED ON 668, THE FLOOR ON MASTER (2825151d, #3672). An earlier attempt (CERT-2143/CERT-2152) was measured against 649, the floor at the older branch point 17ab0512, and reported \"649 -> 665, no regressions\" while silently replacing master's 668: a full re-capture rewrites the whole file rather than editing rows, so git produced no diff line saying 668 -> 665 and merge-tree exited 0. integrator/239 refused the merge and caught it by reading the merged BLOB rather than the exit code. Re-derived here on top of master: 5 pairs up, 8 pairs down, net 668 -> 665, and the number is stable across the rebase. THE 5 THAT ROSE: 59173370, 59173376 (b-title-mismatch), 59707277, 59707492, 59708412 (e-prop) - the matcher now correctly declines all five. THE 8 THAT FELL ARE ONE CAUSE - PRODUCTION HOLDS MORE THAN ONE EVENT ROW FOR THE SAME FIXTURE (twins) - and each is named: 59173709 (two rows both \"Bologna v Lazio\", 08-22 closed and 08-24 completed, one Serie A tie whose ticker says 26AUG24), 59700659 (Quorn v Shepshed: a VOIDED americanfootball_other row beside the completed soccer_fa_cup one), 59700662 (Aveley v Cheshunt, same shape), 59700871 (THREE \"Toluca v Leon\" rows - 08-31, 09-01, 09-03 - so the artifact's single named answer 15293431 is not defensible against the other two), 59705002 (two Metropolitanos v Trujillanos rows), 59705003 (two Est. Merida v UCV rows), 59723435 (Stade Rennais v Marseille, rows 15303080 and 15304211), 59767325 (Deportivo Pereira v Independiente Medellin, rows 15303286 and 15303032). The sole-fixture criterion picks no winner where two rows carry both team names, and blessing whichever duplicate the matcher reached would be laundering rather than adjudicating. They are recorded failing because they ARE failing; they go green when the duplicates are reconciled, not when this file is edited. Filed with per-pair census tables as #3707, under #2693, which lane1 owns under D39. ONE THING TO KNOW ABOUT THE LAST TWO: their artifact note reads \"no parent in window\", which was true on 2026-09-02 and is FALSE on 2026-09-06 - the parent IS now in the 20-candidate list, and at cap 10 it was evicted, which is the blindness this re-capture exists to remove. So the artifact's stated REASON for null is stale even though null is still the right answer, for the twin reason above. That makes them amendment candidates only once the twin is reconciled, never before: an amendment pointing at one of two rows for one fixture would launder the same choice this record declines to make. The amendment channel is matching_golden_adjudication_amendments.json, whose `was` is asserted against the dated artifact and which capture_matching_golden_fixture.py applies BEFORE the pair is built, so any such correction lands at a re-capture and never as a hand-edit here. Coverage stays 709/709 with zero drops. Of the 59 pairs whose verdict moved against the 09-02 fixture, 51 were re-adjudicated through the amendments file and now pass, each on a production census showing exactly ONE event carries both market team names; 3 more (attached-correct) were re-pointed at surviving rows after their adjudicated duplicate was reconciled away.",
+ "reset_reason": null,
  "anchor": "per-pair decision clock (see pair_as_of)",
  "fallback_as_of": "2026-09-02T20:00:00+00:00",
  "pair_count": 709,
- "passing_count": 665,
+ "passing_count": 666,
  "pairs": {
   "25926130": true,
   "59172944": true,
@@ -634,7 +634,7 @@
   "59714132": true,
   "59714133": true,
   "59714141": true,
-  "59714192": false,
+  "59714192": true,
   "59714207": true,
   "59714271": true,
   "59714342": true,

@@ -185,12 +185,29 @@ class TestTheUndoTakesTheSameGate:
 
 class TestTheSeriesComeFromTheShippedMap:
     def test_the_series_are_derived_and_are_the_laliga2_five(self, repair):
-        from app.utils.sport_keys import KALSHI_FUTURES_TICKER_TO_SPORT_KEY
+        """Still five, now read out of BOTH maps (#3813).
+
+        The population did not change; where it is written down did. #3813 moved
+        the four FIXTURE families to the game map to make them game-level — a key
+        in both maps is a tie, and a tie is not game-level — so a futures-only
+        derivation now yields `kxlaliga2promo` alone and this repair would find
+        none of the fixtures it exists to retag. It would not crash; it would
+        report a small clean number, which is the failure most likely to be
+        believed.
+        """
+        from app.utils.sport_keys import (
+            KALSHI_FUTURES_TICKER_TO_SPORT_KEY,
+            KALSHI_TICKER_TO_SPORT_KEY,
+        )
 
         series = repair.segunda_series()
         assert series == sorted(
             p
-            for p, k in KALSHI_FUTURES_TICKER_TO_SPORT_KEY.items()
+            for mapping in (
+                KALSHI_TICKER_TO_SPORT_KEY,
+                KALSHI_FUTURES_TICKER_TO_SPORT_KEY,
+            )
+            for p, k in mapping.items()
             if k == "soccer_spain_segunda_division"
         )
         assert set(series) == {
@@ -199,6 +216,31 @@ class TestTheSeriesComeFromTheShippedMap:
             "kxlaliga2total",
             "kxlaliga2btts",
             "kxlaliga2promo",
+        }
+
+    def test_the_derivation_reads_both_maps_not_just_the_one_it_started_in(
+        self, repair
+    ):
+        """#3813's rider, asserted so a revert to one map cannot pass quietly.
+
+        The five are SPLIT: four game-level, one season. Naming which side each
+        comes from is what makes a single-map derivation fail here instead of
+        silently shrinking the repair's reach.
+        """
+        from app.utils.sport_keys import (
+            KALSHI_FUTURES_TICKER_TO_SPORT_KEY,
+            KALSHI_TICKER_TO_SPORT_KEY,
+        )
+
+        series = set(repair.segunda_series())
+        assert series & set(KALSHI_TICKER_TO_SPORT_KEY) == {
+            "kxlaliga2game",
+            "kxlaliga2spread",
+            "kxlaliga2total",
+            "kxlaliga2btts",
+        }
+        assert series & set(KALSHI_FUTURES_TICKER_TO_SPORT_KEY) == {
+            "kxlaliga2promo"
         }
 
     def test_the_second_half_family_is_not_in_the_repair_population(self, repair):
