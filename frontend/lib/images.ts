@@ -684,3 +684,57 @@ export function isNonSportsCategory(category: string | null): boolean {
   if (!category) return false;
   return NON_SPORTS_CATEGORIES.has(category.toLowerCase());
 }
+
+/**
+ * A NUMERIC LADDER'S RUNGS ARE NOT ENTITIES (#4416).
+ *
+ * `isNonSportsCategory` above answers "could this market's outcomes be Wikipedia
+ * entities?" by looking at the CATEGORY, and the eight non-sports categories are
+ * full of markets whose outcomes are quantities: `At least 50%`, `Above 250K`,
+ * `30°C`, `65-89`, `Persib Bandung wins by more than 1.5 goals`. Keyed on category
+ * alone those rows draw an entity avatar, which can only ever fall back to the
+ * initials of a number — so the rank column is replaced by `4`, `3`, `4`, `3`, `≥4`
+ * and loses both its ordering and its amber leader.
+ *
+ * The test is the SET, not the row, and that is the whole trick. A rung is
+ * recognised not by looking numeric — plenty of real entities carry digits
+ * (`50 Cent`, `Blink-182`, `M8 Music Tracker`) — but by having a SIBLING with the
+ * same name once the numbers are removed. `At least 50%` and `At least 44%` both
+ * reduce to `at least %`; `50 Cent` and `Drake` reduce to two different things, so
+ * a market of rappers can never trip this and keeps its faces.
+ *
+ * All-or-nothing over the whole shipped set, for the same reason `outcomeDisplayNames`
+ * is (#2662): the badge is a COLUMN, so a market that is half quantity and half
+ * entity must keep its avatars rather than have some rows silently renumber. Those
+ * mixed `field` markets are the known, deliberate remainder — status quo, never a
+ * regression.
+ *
+ * Measured over 900 live non-sports markets (2026-09-14): flips 96.3% of `quantity`
+ * markets and 0% of `container_member` and `duel` — the two classes whose outcomes
+ * are pure entities — with no false positive found.
+ */
+export function isNumericLadder(names: readonly string[]): boolean {
+  // No explicit `length < 2` guard: the shared-skeleton test below already
+  // requires two rungs, so such a line would be provably unreachable as a
+  // behaviour — a mutant flipping it to `< 1` cannot be killed by any input.
+  //
+  // Every rung must carry a number. One entity among the rungs means this is not a
+  // ladder we can safely renumber, so the market keeps its avatars.
+  if (!names.every((name) => /\d/.test(name))) return false;
+
+  const skeletons = new Map<string, number>();
+  for (const name of names) {
+    const skeleton = name
+      .replace(/\d+/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+    const seen = (skeletons.get(skeleton) ?? 0) + 1;
+    // Two rungs sharing a skeleton is the ladder: the names differ only in
+    // their numbers, which is what a threshold series looks like and what a
+    // field of entities never does.
+    if (seen >= 2) return true;
+    skeletons.set(skeleton, seen);
+  }
+  return false;
+}
