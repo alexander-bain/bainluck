@@ -13606,6 +13606,161 @@ def _settled_market_prices_an_unstarted_game(event, market, market_outcomes, now
     return market_assigned_settled(market, list(market_outcomes))
 
 
+# How far a market's own trading window may outlive the fixture it hangs off
+# before the market is asking a different question (#6026). A game's own book
+# stops trading within hours of the whistle; one still due to trade next spring
+# is a season-long question that happens to name both clubs.
+#
+# READ OFF A PLATEAU, NOT TUNED. Every unsettled market attached to an event that
+# has already finished (203 rows, production 2026-09-14 01:5xZ,
+# `sql_fingerprint 5f26ea114496bb98`), counted by how far its `resolution_date`
+# outlives `now`:
+#
+#     > now    > +1d    > +3d    > +7d    > +30d
+#       27       25       25        6         6
+#
+# Flat from a week out to a month and beyond, so nothing here turns on the exact
+# number. The stable 6 are season-long questions (May 2027, June 2028); the 19
+# rows between three and seven days are a just-finished fixture's OWN book still
+# reading `open` because polling stopped seeing it (gotcha #33), and withholding
+# those would be the opposite of this rule.
+_MARKET_OUTLIVES_ITS_EVENT = timedelta(days=7)
+
+
+def _settled_market_graded_nothing(event, market, market_outcomes, now) -> bool:
+    """A FINISHED event's settled market on which nothing was ever graded (#6025).
+
+    THE ROW REFUTES ITSELF AND NO GROUND TRUTH IS NEEDED, the same way #5771's
+    gate does one function above. `/events/15297724` — Manchester United 0–1
+    Manchester City, hero correct at `Final`, `Manchester City WON` — printed
+    under "Additional Markets · settled":
+
+        Manchester City wins 1-0     last quote 99%   <- the true result
+        Manchester City wins 6-1     last quote 50%   <- did not happen
+        Manchester City wins 4-1     last quote 17%   <- did not happen
+        ... 29 more, summing to 240%
+
+    Market 60780435, `status='resolved'`, and `resolution_source IS NULL` on
+    every one of its 32 outcomes. Nothing was graded, so the section has no
+    verdict to state and falls back to the last traded price — which on a
+    settled book is a settlement artifact, never a distribution. Thirty-two
+    independent closing quotes cannot sum to 1 and these summed to 2.400
+    (`sql_fingerprint b96a90f055cb8db5`); the true result was not distinguishable
+    in kind from the false ones, just a row with a bigger number.
+
+    "SETTLED MEANS SETTLED" IS THE RULE BEING KEPT, NOT BENT. A completed event's
+    rows keep their settlement prices and their grades (gotcha #43), and #5771's
+    docstring names that third bucket as deliberately out of scope — but it names
+    it as rows that "keep their settlement prices AND their grades". This is the
+    cohort where the second half is absent: there is no verdict, so the frozen
+    price is the only thing the card can say, and it is a number about nothing.
+    Alex's standing ruling is a finished question shows its result graded or
+    shows nothing; this picks the second branch, and #4770 / #1735 are how rows
+    move back to the first.
+
+    SCOPE IS THE `other` SECTION ALONE, and deliberately not the top-of-loop
+    placement #5247 and #5771 share. Those two withdraw a market from EVERY
+    section because no section could have printed it honestly. Here the other
+    sections have grading rails of their own that do not need a
+    `resolution_source`: `_grade_settled_prop` grades totals and player props off
+    the box score, and #1735 publishes exactly the rows this predicate is true
+    of, verdict-only. Withdrawing at the top of the loop would delete the
+    information those rails recover. `other` is the one section that can only
+    ever speak in prices, so it is the one that has to go quiet.
+
+    MEASURED BLAST RADIUS, over the 14-day finished-event window
+    (`sql_fingerprint 85819f6c406fcf4f` / `b4f67c309d120831`): 7,444 of 19,440
+    settled markets are withheld, 1,591 + 10,405 keep their rows because
+    something on them is graded. Of 1,159 finished events holding any market,
+    430 are untouched, 652 lose some rows and 77 lose every settled market —
+    that last group being the events where nothing was ever graded at all, whose
+    section today is made entirely of numbers about nothing.
+
+    `market_assigned_settled` rather than a `status` test written here, for
+    #5771's reason (gotcha #33's settled-but-`status='open'` Kalshi rows), and
+    `_settled_grade_fields` rather than a bare `is_winner` read, for #2089's
+    (`is_winner` defaults to False, so the column cannot tell a loss from an
+    ungraded row). The two could in principle disagree — a row graded
+    `is_winner` with no `resolution_source` would be settled by the first and
+    ungraded by the second — and on the same window that cohort is **empty**: of
+    19,529 markets on finished events, zero carry a winner without a source
+    (`85819f6c406fcf4f`). Nothing here rests on how that case would resolve.
+    """
+    if not market_outcomes:
+        return False
+    if not _event_is_really_finished(event, now):
+        return False
+    if not market_assigned_settled(market, list(market_outcomes)):
+        return False
+    return all(
+        _settled_grade_fields(market, o)["resolution_source"] is None
+        for o in market_outcomes
+    )
+
+
+def _open_market_outlives_its_finished_event(event, market, market_outcomes, now) -> bool:
+    """A market still trading long after the fixture it is attached to (#6026).
+
+    THE INVERSE OF THE PREDICATE ABOVE, on the same page. Under the same
+    "Additional Markets · settled" heading on `/events/15297724`:
+
+        Manchester City finishes higher than Manchester United   last quote 91%
+        Manchester United finishes higher than Manchester City   last quote 23%
+
+    Market 59693538 is `status='open'` with `resolution_date 2027-05-31` — a
+    season-long table-position question with eight months left to run. 91% is not
+    a last quote, it is today's live price, and a reader is told a live market is
+    settled on the one page where the word is doing real work for everything
+    around it. (It also prints 91 + 23 = 114%, two independent binaries shown as
+    two sides of one question — gotcha #23.)
+
+    THE SECTION'S FRAMING IS THE EVENT'S, AND IT CANNOT BE THE MARKET'S FROM
+    HERE. `SpecialEventMarkets` keys `settled` off `eventStatus`, so every card
+    on a finished event's page inherits the heading and the `last quote` prefix.
+    Teaching the card to speak per-market is a layout change in ux's files
+    (notice 41), and the honest thing this side can do is stop handing the
+    section a row it can only describe falsely. The market keeps its own futures
+    page, where nothing calls it settled.
+
+    WHY THE TEST IS `resolution_date`, NOT "is it open". Two hundred and three
+    unsettled markets hang off finished events and almost all of them are that
+    fixture's own book still reading `open` because polling stopped seeing it
+    (gotcha #33) — those ARE settled in fact and the `last quote` framing is
+    exactly right for them. What separates this cohort is the market's own
+    statement about when it stops trading: `resolution_date` is
+    `max(close_time)`, a schedule (CAL-P989 / #2660), and a market scheduled to
+    trade for another eight months is not this fixture's. See
+    :data:`_MARKET_OUTLIVES_ITS_EVENT` for the measured plateau behind the
+    margin; the withheld population is 6 markets fleet-wide.
+    """
+    if not market_outcomes:
+        return False
+    if not _event_is_really_finished(event, now):
+        return False
+    if market_assigned_settled(market, list(market_outcomes)):
+        return False
+    resolves = getattr(market, "resolution_date", None)
+    if not isinstance(resolves, datetime):
+        # NULL is unknown, not future — the same abstention every clock gate in
+        # this file makes (`_event_has_not_kicked_off`). The isinstance rather
+        # than an `is None` test is the "a lookup must never throw the page" rule
+        # `market_assigned_settled` states for a partially-loaded row: this gate
+        # is asked of EVERY market on EVERY finished event, so unlike the two
+        # clock gates above it also meets rows whose `resolution_date` was never
+        # populated as a datetime at all, and a comparison that raises takes the
+        # whole page down. Caught by `test_a_venue_id_is_not_a_kalshi_ticker_3198`
+        # before this line existed, the same way #5771's naive-datetime coercion
+        # was caught by six tests it had never heard of.
+        return False
+    # A NAIVE timestamp is read as UTC, which is what the TIMESTAMPTZ column
+    # means, and a page build must never throw on a lookup (#5771 learned this
+    # the hard way, with 6 tests raising `can't compare offset-naive and
+    # offset-aware datetimes` on older fixtures).
+    if resolves.tzinfo is None:
+        resolves = resolves.replace(tzinfo=timezone.utc)
+    return resolves > now + _MARKET_OUTLIVES_ITS_EVENT
+
+
 def _event_is_really_finished(event, now) -> bool:
     """True only when an event is genuinely settled.
 
@@ -14749,6 +14904,22 @@ async def _build_game_markets(
                 })
 
         else:
+            # #6025 / #6026 — `other` IS THE ONLY SECTION THAT CAN SPEAK NOTHING
+            # BUT PRICES, so it is the only one that has to go quiet when the
+            # price is not a statement about anything. Computed once per market
+            # here and applied at the `other_markets.append` below rather than at
+            # the top of the loop (#5247 / #5771's placement), because the
+            # player-prop rescue in between routes rows to a rail that grades
+            # them off the box score without needing a `resolution_source` —
+            # withdrawing the market outright would delete the very rows #1735
+            # exists to recover. Both predicates' docstrings carry the specimen,
+            # the measurement and the reason for the scope.
+            other_stays_silent = _settled_market_graded_nothing(
+                event, market, market_outcomes, _gm_now
+            ) or _open_market_outlives_its_finished_event(
+                event, market, market_outcomes, _gm_now
+            )
+
             # Rescue player-prop-shaped outcomes from "other" markets.
             # Some markets land here because their name is a generic matchup
             # ("Celtics at Warriors") with no stat keywords, yet their
@@ -14835,6 +15006,8 @@ async def _build_game_markets(
                     }
                     pp.update(_grade_settled_prop(event_is_finished, _prop_ctx, market, o, threshold, is_under))
                     player_props.append(pp)
+                    continue
+                if other_stays_silent:
                     continue
                 other_markets.append({
                     "market_name": market.name,
