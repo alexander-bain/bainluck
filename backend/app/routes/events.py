@@ -6434,6 +6434,43 @@ async def search_events(
         seen_search_keys.add(dkey)
         deduped_futures.append(m)
 
+    # #2926: the markets that have an ANSWER, which is the set the two DISPLAY
+    # consumers below are allowed to draw from — the flat `futures` bucket and
+    # the families that render the ANSWERS card.
+    #
+    # A SECOND LIST RATHER THAN A `continue` IN THE LOOP ABOVE, deliberately.
+    # `deduped_futures` also feeds the EVENT CONCEPT lane further down, and a
+    # concept is derived from a market's NAME (`derive_soccer_concept` and its
+    # siblings never read a price). Dropping answerless rows from the shared
+    # list would delete tournament-page links that are perfectly good navigation
+    # — a render fix quietly costing recall on a different surface. So the
+    # concept lane keeps the full set and the cards take the filtered one.
+    #
+    # AND A SECOND DEDUP PASS, not a filter over `deduped_futures`, because the
+    # order of the two tests decides a case the filter gets wrong: dedup runs on
+    # the volume/rank-reranked list, so when an answerless row and an answerable
+    # one collapse to the same key, the answerless row can be the one that wins
+    # the key — and filtering afterwards would then drop BOTH, hiding a market
+    # with real prices behind an empty twin. That pairing is not hypothetical
+    # here: the empty population is 11,539 Polymarket rows (measured 2026-09-13)
+    # sitting in the same corpus as the Kalshi markets they read like. Asking
+    # for the answer FIRST means an empty row never claims a key it cannot use.
+    #
+    # Filtering here rather than at the `[:PAGE]` slice is what lets the refill
+    # lane below see the shortfall: a page short of answerable rows is the same
+    # failure mode dedup has (the window is spent and rank 21+ is never asked),
+    # and it gets the same one refill rather than a short page.
+    seen_answerable_keys: set[str] = set()
+    answerable_futures = []
+    for m in reranked_futures:
+        if not _futures_search_has_answer(m):
+            continue
+        akey = _normalize_futures_dedup_key(m)
+        if akey in seen_answerable_keys:
+            continue
+        seen_answerable_keys.add(akey)
+        answerable_futures.append(m)
+
     # LAT-P038/#1769 (defect 1b): dedup runs AFTER the LIMIT, so a collapsing
     # key SHRINKS the page instead of merging within it — the 20-row window is
     # consumed, the survivors are fewer than the page holds, and the eligible
@@ -6456,15 +6493,21 @@ async def search_events(
     # One refill, never a loop, and never at the cost of a late answer: if the
     # deadline is spent the short page ships as-is. A timeout here leaves the
     # already-good page alone rather than degrading the whole stage.
+    #
+    # #2926 reads the ANSWERABLE count here, not the deduped one. A window that
+    # dedups to ten rows of which four say "No outcomes available" is a page of
+    # six to a reader, and the pre-#2926 condition could not see that: it would
+    # ship the short page and never spend the refill it is entitled to.
     if (
-        len(deduped_futures) < _SEARCH_FUTURES_PAGE
+        len(answerable_futures) < _SEARCH_FUTURES_PAGE
         and len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW
         and time.monotonic() < _deadline
     ):
         logger.warning(
-            "search futures bucket COLLAPSED for %r — %d rows deduped to %d; "
-            "refilling from rank %d",
-            q, len(futures_markets_raw), len(deduped_futures), _SEARCH_FUTURES_WINDOW,
+            "search futures bucket COLLAPSED for %r — %d rows deduped to %d "
+            "(%d answerable); refilling from rank %d",
+            q, len(futures_markets_raw), len(deduped_futures),
+            len(answerable_futures), _SEARCH_FUTURES_WINDOW,
         )
         await _apply_search_statement_timeout(db, _deadline)
         # A SAVEPOINT, for the same reason the headline lane below has one
@@ -6506,14 +6549,24 @@ async def search_events(
             await _refill_savepoint.commit()
         for m in _rerank_search_futures(refill_rows, expanded):
             dkey = _normalize_futures_dedup_key(m)
-            if dkey in seen_search_keys:
-                continue
-            seen_search_keys.add(dkey)
-            deduped_futures.append(m)
-            if len(deduped_futures) >= _SEARCH_FUTURES_PAGE:
-                break
+            if dkey not in seen_search_keys:
+                seen_search_keys.add(dkey)
+                deduped_futures.append(m)
+            # #2926: the two lists keep SEPARATE key sets here for the reason
+            # given above the first pass — a key already spent by an answerless
+            # row in the window must not refuse the answerable row the refill
+            # went looking for. An answerless refill row still joins
+            # `deduped_futures` (the concept lane wants it) but never counts
+            # toward the page, and the `break` is spent on answerable rows only:
+            # a refill that stops on rows the reader cannot see leaves the page
+            # exactly as short as it was before it paid for the query.
+            if dkey not in seen_answerable_keys and _futures_search_has_answer(m):
+                seen_answerable_keys.add(dkey)
+                answerable_futures.append(m)
+                if len(answerable_futures) >= _SEARCH_FUTURES_PAGE:
+                    break
 
-    futures_markets = deduped_futures[:_SEARCH_FUTURES_PAGE]  # flat list (unchanged shape)
+    futures_markets = answerable_futures[:_SEARCH_FUTURES_PAGE]  # flat list (unchanged shape)
 
     # UX-P259/#2579: the tournament a player can win is reachable by their name.
     #
@@ -6673,8 +6726,15 @@ async def search_events(
         # already matches cannot spend a reserved slot on a row the page holds
         # (Sabalenka's tier-1 "…vs Camila Osorio: Set 1 Winner" is a name match
         # and is filtered here, not by a second hand-rolled rule).
+        #
+        # #2926: and it must have an answer. This lane PROMOTES a row into the
+        # page ahead of rows that earned their place, so an answerless promotion
+        # is the defect in its worst form — a "No outcomes available" card
+        # inserted above a market with real prices.
         _headline_rows = [
-            m for m in _headline_rows if not _query_name_match(m, expanded)
+            m
+            for m in _headline_rows
+            if not _query_name_match(m, expanded) and _futures_search_has_answer(m)
         ]
         futures_markets, _headline_promoted = promote_headline_contenders(
             futures_markets,
@@ -6734,8 +6794,16 @@ async def search_events(
     # actually ships. `futures_markets` is exactly the list serialized as
     # `futures` (via `formatted_futures`), including any UX-P259 promoted row, so
     # it is the set `more_count` measures "below" against.
+    #
+    # #2926: composed from the ANSWERABLE set. A family member with nothing to
+    # say is the `0 outcomes` row — the literal string Alex read five times in a
+    # row on `?q=rockies` — and `member_count`/`more_count` (#2646) then count
+    # markets the reader cannot see, so "+5 more markets below" promises five
+    # answers that are five blanks. Filtering the input fixes the rows and the
+    # counting in one place, which is why it is done here and not in the
+    # composer: the composer's contract is "compose what you are given".
     futures_families = _compose_futures_families(
-        deduped_futures,
+        answerable_futures,
         expanded,
         lambda m: _formatted_by_id[m.id],
         {m.id for m in futures_markets},
@@ -8651,6 +8719,21 @@ async def typeahead_search(
         dedup_key = _normalize_futures_dedup_key(market)
         if dedup_key in seen_futures_keys:
             continue
+        # #2926, and the SAME predicate /search takes eight thousand lines up —
+        # this file's own `_futures_open_now` comment records /search keeping a
+        # defect for three cycles after /typeahead's twin was fixed, so the two
+        # surfaces take one predicate or they drift again.
+        #
+        # Built ONCE and carried into the payload below rather than asked and
+        # then re-asked: a second derivation is a second rule, and here the two
+        # rules would be a membership test and the list itself, which is the
+        # pair most able to disagree. #993 Slice A put the answer in the
+        # dropdown precisely so a suggestion is not "just a title to click";
+        # a row with no answer is that title, and it clicks through to a detail
+        # page serving the same nothing (60505523 serves zero outcomes today).
+        _ta_top_outcomes = _build_search_top_outcomes(market, limit=3, lean=True)
+        if not _ta_top_outcomes:
+            continue
         seen_futures_keys.add(dedup_key)
         label = _TIER_LABELS.get(market.market_tier, None)
         if not label and market.sport_id is None:
@@ -8664,7 +8747,7 @@ async def typeahead_search(
             "sport_key": market.llm_sport_category,
             # #993 Slice A: carry the answer (top 3, #23-normalized) so the
             # dropdown shows "Lakers 62% · Cavs 18%", not just a title to click.
-            "top_outcomes": _build_search_top_outcomes(market, limit=3, lean=True),
+            "top_outcomes": _ta_top_outcomes,
             # RANKING evidence, private and stripped before the response. The
             # three rows above are a DISPLAY cut; using them as the market's
             # owned-outcome evidence made display truncation silently truncate
@@ -20352,6 +20435,47 @@ def _build_search_top_outcomes(
         out, lambda o: o.get("name"), lambda o: o.get("probability")
     )
     return _leader_pick_order(out)  # #993 shared leader-pick (Other/Field never headlines)
+
+
+def _futures_search_has_answer(market: "FuturesMarket", limit: int = 5) -> bool:
+    """Has this market got anything to SAY on a search surface? — #2926.
+
+    A futures card whose outcome list formats to nothing renders as its title
+    over the words *"No outcomes available"*, and the same market inside a
+    family renders as a row whose probability column prints the literal string
+    `0 outcomes`. Both are diagnostic prose standing where a number belongs
+    (notice 34 / D102), both spend a slot a real market wanted, and Alex has
+    seen both — `?q=Thun` when #2926 was filed, `?q=rockies` on 2026-09-09
+    where every one of the only ANSWERS card's five rows said `0 outcomes`.
+
+    THE PREDICATE IS THE FORMATTED LIST, NOT A ROW COUNT, and that is the whole
+    reason this is a function rather than an `EXISTS` in the SQL. #2926's own
+    reproduce SQL asks `NOT EXISTS (futures_outcomes)`; measured on production
+    2026-09-13 23:45Z over 37,483 open markets, that question finds 11,547 of
+    them and misses two younger populations that reach the reader identically:
+
+      - 1,344 open markets hold outcome rows with no `current_probability`;
+      - 1,989 hold rows whose every book is empty (bid ≤ 0.01, ask ≥ 0.99),
+
+    which `/api/futures/{id}` and this file's own formatter now decline to price
+    (#5611, #5898). Those ships correctly stopped printing a fabricated number;
+    nothing then removed the card left with nothing to print. Specimen 60505523
+    ("UEFA Europa League: League Phase Most Clean Sheets") has one outcome row
+    in the database and serves zero, and a row-count guard would keep its card.
+
+    So the question asked is exactly the one the card answers: run the card's
+    own builder and see whether anything survives. `lean=True` because only
+    emptiness is being read and the lean payload is the cheaper of the two; the
+    two shapes are built from the same `real` list and cannot disagree about it.
+    Pure over rows already loaded by the window's `selectinload`, so this issues
+    no query.
+
+    `limit` is the caller's own display limit (5 on /search, 3 on /typeahead)
+    for the same reason the formatters differ: the slice runs before
+    `_drop_dominant_field_outcomes`, so asking about a wider list than the
+    surface draws could call a card answerable on a row it will never show.
+    """
+    return bool(_build_search_top_outcomes(market, limit=limit, lean=True))
 
 
 def _search_owned_outcome_names(market: "FuturesMarket") -> tuple[str, ...]:

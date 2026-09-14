@@ -203,8 +203,14 @@ def test_the_refill_is_bounded_and_deadline_aware():
     unconditional query.
     """
     assert "_SEARCH_FUTURES_REFILL" in SEARCH_CODE
-    refill = SEARCH_CODE[SEARCH_CODE.index("len(deduped_futures) < _SEARCH_FUTURES_PAGE"):]
-    refill = refill[: refill.index("futures_markets = deduped_futures")]
+    # #2926 moved both anchors and neither assertion below: the trigger now reads
+    # the ANSWERABLE count (a page of ten rows, four of which say "No outcomes
+    # available", is a page of six and the old condition could not see it) and
+    # the page is sliced off that same list. What is guarded here — saturated
+    # window, deadline, offset past the window, one refill and never a loop — is
+    # unchanged, which is why this is a renamed anchor and not a relaxed test.
+    refill = SEARCH_CODE[SEARCH_CODE.index("len(answerable_futures) < _SEARCH_FUTURES_PAGE"):]
+    refill = refill[: refill.index("futures_markets = answerable_futures")]
     assert "len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW" in refill, (
         "the refill must require a SATURATED window — otherwise it re-queries "
         "for pages that are short because the corpus is short"
