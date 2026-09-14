@@ -6,7 +6,7 @@ import type { FuturesMarket, FuturesOutcome } from "@/lib/types";
 import { formatProbability } from "@/lib/api";
 import PersonalizedBadge from "./PersonalizedBadge";
 import EntityImage from "./EntityImage";
-import { isNonSportsCategory } from "@/lib/images";
+import { isNonSportsCategory, isNumericLadder } from "@/lib/images";
 // UX-P276 (#2710). Placed here rather than beside `leaderFirstSlice` at the end
 // of the import block on purpose: PR #2836 (#2831, same lane, ungraded) adds its
 // own import against that exact anchor, and two new lines sharing one context
@@ -126,6 +126,14 @@ export default function FuturesCard({
   // not a duel, and `slice` must not be able to manufacture one.
   const rowPercents = renderedOutcomeRowPercents(outcomes.map((o) => o.probability));
   const renderedById = new Map(outcomes.map((o, i) => [o.id, rowPercents[i] ?? null]));
+  // #4416: the rank badge below is swapped for a Wikipedia avatar on the eight
+  // non-sports categories, on the premise that a non-sports outcome names an
+  // entity. It fails for every threshold ladder — Fed rates, index closes, seat
+  // counts, temperatures — where the avatar can only reach its initials fallback
+  // and prints the first character of a number. Decided over the WHOLE shipped
+  // set for the same reason `outcomeLabels` is: a ladder is only recognisable
+  // from its siblings, and the sliced five must not be able to manufacture one.
+  const numericLadder = isNumericLadder(outcomes.map((o) => o.name));
   const isResolved = market.status === "resolved";
   // UX-P276 (#2710). Resolved once here rather than in the chip so the chip's
   // truthiness gate and the text it renders are the same value — a chip that
@@ -238,6 +246,7 @@ export default function FuturesCard({
                   marketCategory={market.llm_sport_category}
                   displayName={displayName}
                   rendered={renderedById.get(outcome.id) ?? null}
+                  numericLadder={numericLadder}
                 />
               </motion.div>
             ))}
@@ -287,6 +296,7 @@ function OutcomeRow({
   marketCategory,
   displayName,
   rendered,
+  numericLadder,
 }: {
   outcome: FuturesOutcome;
   rank: number;
@@ -303,6 +313,13 @@ function OutcomeRow({
    *  compile at the next call site and silently print 101 again with every test
    *  green — which is exactly how this row came to round independently. */
   rendered: number | null;
+  /** Whether this market's outcomes are a numeric ladder rather than a field of
+   *  entities (#4416). Required for the same reason `displayName` and `rendered`
+   *  are: a rung is only recognisable from its siblings, so only the caller — which
+   *  holds the whole outcome set — can decide it. A default of `false` would
+   *  compile at the next call site and silently print a row of digit-initials
+   *  where the rank belongs, with every test green. */
+  numericLadder: boolean;
 }) {
   const movement = outcome.movement ?? outcome.probability_change_24h;
   const prob = outcome.probability ?? 0;
@@ -343,13 +360,18 @@ function OutcomeRow({
   return (
     <div className="flex items-center gap-2">
       {/* Rank or Entity Image */}
-      {isNonSports ? (
+      {isNonSports && !numericLadder ? (
         // Deliberately the RAW name, not `displayName` (#2662): this is a Wikipedia
         // entity lookup, not a label, and a stripped suffix like "Set 1 Winner" is not
         // a better query than the full title. Provably a no-op for the strip
         // population anyway — all 375 of those markets carry a sports
         // `llm_sport_category` (372 table_tennis, 2 tennis, 1 cricket), so
         // `isNonSportsCategory` is false and this branch never renders for them.
+        //
+        // #4416: the category gate alone was the whole membership rule, and it
+        // assumed non-sports ⇒ entity. `numericLadder` is the other half — a
+        // threshold rung reaches nothing but this component's initials fallback,
+        // so it takes the rank instead and the column can count again.
         <EntityImage type="wikipedia" name={outcome.name} size={20} className="flex-shrink-0" />
       ) : (
         <span className={cn(
