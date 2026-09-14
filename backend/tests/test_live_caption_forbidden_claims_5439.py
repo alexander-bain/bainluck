@@ -320,13 +320,18 @@ class TestTense:
         assert "chance rose" not in text
 
     def test_a_settled_upset_still_says_what_happened(self):
-        """CONTROL — settled means settled, and the result is still stated."""
+        """CONTROL — settled means settled, and the result is still stated.
+
+        The sentence gained a subject in #5567 and takes the card's own percent
+        in #6181; this caller hands in no card percents, so the 38 here is still
+        the fallback rounding of 1 - 0.62.
+        """
         assert _reason(
             home_score=1,
             away_score=3,
             status="completed",
             highlight_reasons=["upset"],
-        ) == "Won as 38% underdog"
+        ) == "Cincinnati Reds won as a 38% underdog"
 
     @pytest.mark.parametrize("status", ["scheduled", "completed", "closed", None])
     def test_the_selector_answers_nothing_off_a_live_card(self, status):
