@@ -325,9 +325,33 @@ def _row(**kw):
     return SimpleNamespace(**base)
 
 
+#: The pass's clock for every arm in this file, FIXED.
+#:
+#: Gotcha #44, and this file paid for it: `rescheduled` counts only the rows
+#: whose corrected start is still ahead, so with the real wall clock the arms
+#: over `SPECIMENS` asserted 4 and got 4 until 09:00Z on 2026-09-14 — the moment
+#: the first two specimens' venue starts went past — and 2 for ever afterwards.
+#: The suite was green when it was written and red a few hours later, on no
+#: branch's change. Real production instants are the right corpus; reading the
+#: wall clock beside them is not.
+#:
+#: Chosen to sit AFTER every specimen's listed start (2026-09-13 20:14Z at the
+#: earliest, 2026-09-14 01:59Z at the latest) and BEFORE every venue start
+#: (09:00Z at the earliest), so each row is in the band and each corrected start
+#: is in the future. No branch on the clock — one instant, stated.
+_NOW = _utc(2026, 9, 14, 6, 0)
+
+
 async def _run(monkeypatch, rows, write_rowcount=1):
     session = _RecordingSession(rows, write_rowcount=write_rowcount)
     monkeypatch.setattr(poly, "get_task_session", lambda: _Ctx(session))
+
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return _NOW
+
+    monkeypatch.setattr(poly, "datetime", _Clock)
     stats = await redate_polymarket_listing_stamped_events()
     return stats, session
 
