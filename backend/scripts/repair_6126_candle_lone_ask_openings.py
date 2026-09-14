@@ -209,6 +209,94 @@ run is deleted up to the first row that is not this shape, and never past it: a
 0.99 appearing LATER in a series is a genuine move to near-certainty and is left
 alone.
 
+AND THE RUN IS DEFINED BY THE FIELD'S ARITHMETIC, NOT BY THE VALUE 0.99 (#6159).
+The first version of this run pinned its last clause to `probability = 0.99`.
+Three of that predicate's four clauses describe a SHAPE — kalshi, no book,
+exactly on the hour — and the fourth was a VALUE, and the rail also serves
+0.989, 0.98 and 0.97 on rows with the identical shape. Those survived the delete
+and BECAME the re-derived opening: 216 of 953 legs came out at >= 0.95, 204 of
+them on outcomes that lost. The shape was the evidence; the number was a sample
+of it.
+
+So the run now continues while the row is a rail row AND EITHER it carries the
+venue's default value OR the field refutes it at that instant — two legs of one
+exclusive market whose stored prices alone exceed the ceiling the whole field
+must sit under, with this leg the LARGER of the two (`_FIELD_REFUTES`). No
+constant is introduced:
+:data:`EXCLUSIVE_SUM_MAX` is the upper bound of the `price_exclusive` screen
+this script already uses, and the argument is the one the opening test already
+makes out loud — "two exclusive legs at 0.99 is 1.98, which is arithmetically
+impossible" — with the 0.99 taken out of it.
+
+MEASURED ON PRODUCTION, 2026-09-14 13:4x-14:1xZ, all 953 legs, no sampling. The
+model reproduces the shipped script's own numbers first (band 4,407; 953 legs;
+216 re-derived >= 0.95; 46 blank; KLM sum 58.32 / mean 0.3787), which is the
+control that says it is modelling this script and not a lookalike:
+
+                                        shipped     with the field witness
+    snapshot rows deleted                 2,796                      7,549
+    legs re-derived to >= 0.95              216                         11
+       of those, on an outcome that LOST    204                          9
+    legs re-derived to a blank               46                         51
+    legs whose published opening moves        -                        229
+    WINNERS whose published opening moves     0                          0
+
+NOT ONE STORED POINT BELOW 0.60 IS DELETED that the shipped version kept: the
+4,753 rows this adds are 2,926 at >= 0.95, 1,392 in [0.80, 0.95) and 435 in
+[0.60, 0.80). The rule reaches up, never down.
+
+THE WINNER LINE IS THE ONE THAT MATTERS, and it is why this is neither of the
+two forms #6159 sized. Reusing `classify_field_openings` at the instant reaches
+296 legs and deletes the genuine near-certain opening of 2 winners; a pairwise
+rule keyed on ">= 0.95" needs a 0.95 nobody derived. The pair-versus-ceiling
+rule takes neither. It extends 284 runs, 2 of them on a winner's leg — Julien
+Guerrier (KLM) and Frances Tiafoe (ATP Halle) — and NEITHER winner's published
+opening moves, because in both an earlier honest point already survives the
+longer delete: Guerrier opens at 0.650 under both rules, and Tiafoe is refused
+outright by the no-op rule below. The specimen that shows the value pin was the
+wrong witness is the loser cohort: 51 KLM golfers re-derive to exactly 0.989
+under the shipped rule, which nobody traded 51 times.
+
+AND THE CONSTANT IS NOT LOAD-BEARING, which is the other half of "not tuned".
+Sweeping the pairwise ceiling across 1.05 / 1.10 / 1.25 / 1.50 / 1.80 leaves the
+outcome unchanged at every step (measured on the pair rule before the
+larger-member clause: 7 legs >= 0.95, 51 blank, 0 winners moved at all five);
+the cliff is at 2.00, where 2 x 0.99 stops clearing it and the rule collapses
+back to the value pin. 1.25 is chosen inside that plateau because the script
+already uses it, not because the data came out nicely there.
+
+WHAT IT STILL LEAVES, SAID OUT LOUD. Eleven legs keep an opening >= 0.95 that
+nothing refutes: at their instant no partner leg of the field carries a price at
+or below theirs, so the arithmetic is silent, and a lone 0.98 among longshots is
+a coherent distribution. Two of the eleven are winners and correct; nine are
+not, and four of those nine are the price paid for the larger-member clause —
+a high leg whose only high partner sits ABOVE it is spared, because the partner
+is then the member that cannot be right.
+They are left exactly as they are — CERT-2855's line, unchanged: an absent
+correction is a gap, a fabricated one is a lie a curve then grades. The KLM
+ladder keeps 4 such legs where it currently has 55.
+
+A REPAIR THAT WOULD PUBLISH THE VALUE IT IS RETIRING IS REFUSED (see
+:func:`repair_is_a_no_op`). Six legs re-derive onto a bookless Kalshi row
+carrying 0.99 stamped OFF the hour — the band's own declared exclusion, a row
+this script cannot claim, surfacing in the re-derive rather than in the
+population. Deleting their runs costs 27 real chart points and leaves the page
+reading OPEN 99% exactly as before, so those legs are dropped from the plan and
+counted. 953 planned legs become 947.
+
+WHAT A READER GETS, COUNTED ON THE SERVED SHAPE. Applying #5539's serve-time
+verdict to the post-repair field of all 74 markets — the only way to count what
+is actually printed, since a withheld column shows nothing at all:
+
+                            markets withholding     legs printing OPEN >= 95%
+                            the opening column      on a page that publishes it
+    today                             52                     104
+    shipped repair                    18                      79
+    with the field witness            13                       9
+
+That is the ship: 104 fabricated near-certainties a reader can see today, 9
+afterwards, and 39 markets get their opening column back instead of 34.
+
 `opening_source` is deliberately NOT written. It is NULL on these rows because
 the rail never set one, and the surviving candle row it is re-derived from has
 no source either; inventing one would fabricate provenance. Its value is still
@@ -258,10 +346,24 @@ VENUE_DEFAULT_CANDLE = {
 #: would satisfy the refusal while pricing nothing, and this control catches it.
 TRADED_CONTROL_CANDLE = {"price": {"close_dollars": "0.9900"}}
 
+#: The value Kalshi's untraded default book reduces to, and therefore the only
+#: value this script's population predicate admits. Named rather than repeated
+#: because the SAME number is three different claims — the band's fingerprint,
+#: the leading run's value pin, and the value the repair must not re-publish —
+#: and a literal in three places is three chances for them to drift apart.
+VENUE_DEFAULT_PROBABILITY = 0.99
+
+#: How far a one-winner Kalshi field's stored prices may sum from certainty and
+#: still be read as a priced field. These are the `price_exclusive` bounds
+#: CERT-2857 graded, lifted out of the SQL so the leading run can reuse the
+#: upper one instead of restating it — see `_FIELD_REFUTES`.
+EXCLUSIVE_SUM_MIN = 0.85
+EXCLUSIVE_SUM_MAX = 1.25
+
 #: One row per leg in the fingerprint band, with both refutation tests and the
 #: exclusivity check evaluated in SQL so the dry run prints exactly what
 #: `--apply` would act on.
-_POPULATION_SQL = """
+_POPULATION_SQL = f"""
 WITH band AS (
     SELECT o.id, o.market_id, o.name,
            o.opening_probability, o.opening_captured_at AS ts, o.opening_source,
@@ -269,7 +371,7 @@ WITH band AS (
       FROM futures_outcomes o
       JOIN futures_markets m ON m.id = o.market_id
      WHERE m.source = 'kalshi'
-       AND o.opening_probability = 0.99
+       AND o.opening_probability = {VENUE_DEFAULT_PROBABILITY}
        AND o.opening_source IS NULL
        AND o.opening_captured_at IS NOT NULL
        AND date_part('minute', o.opening_captured_at) = 0
@@ -295,9 +397,11 @@ SELECT b.id,
        b.opening_source,
        (g.n > 1)                                         AS sum_refutes,
        (b.mutually_exclusive IS TRUE)                    AS venue_exclusive,
-       (e.cur_sum BETWEEN 0.85 AND 1.25)                 AS price_exclusive,
+       (e.cur_sum BETWEEN {EXCLUSIVE_SUM_MIN} AND {EXCLUSIVE_SUM_MAX})
+                                                         AS price_exclusive,
        nxt.p                                             AS next_p,
-       (nxt.p = 0.99 OR nxt.p < 0.90)                    AS series_refutes
+       (nxt.p = {VENUE_DEFAULT_PROBABILITY} OR nxt.p < 0.90)
+                                                         AS series_refutes
   FROM band b
   JOIN grp  g ON g.market_id = b.market_id AND g.ts = b.ts
   LEFT JOIN excl e ON e.market_id = b.market_id
@@ -312,35 +416,157 @@ SELECT b.id,
  ORDER BY b.market_id, b.id
 """
 
-#: The bad shape, as stored. The candle rail writes no book at all, which is why
-#: `app.utils.kalshi_empty_book.lone_ask_on_empty_book_sql` (which tests
-#: `yes_bid`) cannot see these rows — noted in that module too.
-_BAD_SHAPE = (
-    "bookmaker = 'kalshi' AND probability = 0.99 "
-    "AND yes_bid IS NULL AND yes_ask IS NULL "
-    "AND date_part('minute', captured_at) = 0 "
-    "AND date_part('second', captured_at) = 0"
+#: The RAIL, as stored: which writer put this row here. The candle rail writes
+#: no book at all, which is why `app.utils.kalshi_empty_book`'s
+#: `lone_ask_on_empty_book_sql` (which tests `yes_bid`) cannot see these rows —
+#: noted in that module too — and its `end_period_ts` lands exactly on the hour
+#: where the poller's `now` carries microseconds.
+#:
+#: This is a statement about PROVENANCE and carries no claim that the row is
+#: wrong. Everything that authorises a delete is in `_FIELD_REFUTES` and the
+#: value pin below.
+_RAIL_SHAPE = (
+    "s.bookmaker = 'kalshi' "
+    "AND s.yes_bid IS NULL AND s.yes_ask IS NULL "
+    "AND date_part('minute', s.captured_at) = 0 "
+    "AND date_part('second', s.captured_at) = 0"
 )
 
-#: The leading run for one leg: every bad-shape row from the opening instant up
-#: to (not including) the first row that is not this shape. `cutoff` NULL means
-#: the whole series is the default book and the run is all of it.
-_LEADING_RUN_SQL = f"""
-WITH cutoff AS (
-    SELECT min(s.captured_at) AS ts
-      FROM futures_odds_snapshots s
-     WHERE s.outcome_id = :oid
-       AND s.captured_at >= :ts
-       AND NOT ({_BAD_SHAPE})
-)
-SELECT s.id, s.captured_at
-  FROM futures_odds_snapshots s, cutoff c
+#: THE FIELD'S OWN ARITHMETIC, EVALUATED AT ONE INSTANT. Two outcomes of a
+#: one-winner market cannot both happen, so their true probabilities sum to at
+#: most 1; stored prices may exceed that by the book's overround, and
+#: :data:`EXCLUSIVE_SUM_MAX` is this script's own declaration of how far a
+#: whole Kalshi field may sum and still read as priced. A single PAIR that
+#: already exceeds the whole field's ceiling therefore leaves no room for the
+#: other legs, and the market has other legs. That is the same argument the
+#: opening test makes — "two exclusive legs at 0.99 is 1.98" — stated once
+#: instead of pinned to the one value the venue happened to serve.
+#:
+#: The leg's market is exclusive by construction: this runs only for legs
+#: `classify()` admitted, and admission requires a witness of exclusivity.
+#:
+#: `peer.probability <= s.probability` IS LOAD-BEARING AND IT IS NOT A MARGIN.
+#: An impossible pair says one of the two is wrong; it does not say which. The
+#: member this script may act on is the one claiming the larger share of a
+#: certainty already spoken for — never the smaller, which may be the honest
+#: price the other leg is crowding out. Without it the rule deleted 15 real
+#: mid-band prices on production, three of them on `Over 0.5 / 1.5 / 2.5 1H
+#: goals` ladders, where the market is NOT exclusive at all (a pre-existing
+#: gotcha #23 false positive of the screen) and 0.98 + 0.495 is perfectly
+#: coherent for nested thresholds. The test is `<=`, not `<`, so a field frozen
+#: at one value still refutes itself — the EXISTS is existential, so every leg
+#: of a cluster finds a partner at its own level and the whole cluster falls.
+#:
+#: `s.probability > EXCLUSIVE_SUM_MAX / 2` is arithmetic, not a tuning knob:
+#: with the partner bounded above by this row, the pair can reach at most
+#: `2 * s.probability`, so a row at or below half the ceiling can never be
+#: refuted by anything and the subquery would be wasted work on every longshot.
+_FIELD_REFUTES = f"""s.probability > {EXCLUSIVE_SUM_MAX} / 2.0 AND EXISTS (
+                SELECT 1
+                  FROM futures_odds_snapshots peer
+                  JOIN futures_outcomes peer_leg ON peer_leg.id = peer.outcome_id
+                 WHERE peer_leg.market_id = :mid
+                   AND peer.outcome_id <> s.outcome_id
+                   AND peer.captured_at = s.captured_at
+                   AND peer.bookmaker = 'kalshi'
+                   AND peer.probability <= s.probability
+                   AND peer.probability + s.probability > {EXCLUSIVE_SUM_MAX}
+           )"""
+
+#: `_BAD_SHAPE` USED TO LIVE HERE AND IS DELIBERATELY GONE. "This row is the
+#: untraded default book" is now a decision with two witnesses, so it belongs in
+#: :func:`is_default_book` where it can be tested against rows instead of by
+#: scanning a string. Keeping the old constant beside the new function would
+#: have left a predicate nothing executes and a guard that still passed on it —
+#: CodeQL flagged exactly that on the first push of this change.
+
+#: Every stored point of one leg, with the two facts :func:`leading_run` needs
+#: decided in SQL. The WHOLE series is read, not just the part from the stored
+#: opening instant, because the re-derive picks the earliest row that SURVIVES
+#: and 155 of these legs carry points stamped BEFORE their own stored opening.
+#: A plan that cannot see those cannot see what it is about to publish.
+_RUN_CANDIDATES_SQL = f"""
+SELECT s.id,
+       s.captured_at,
+       s.probability,
+       (s.captured_at >= :ts)  AS from_ts,
+       ({_RAIL_SHAPE})         AS rail,
+       ({_FIELD_REFUTES})      AS field_refutes
+  FROM futures_odds_snapshots s
  WHERE s.outcome_id = :oid
-   AND s.captured_at >= :ts
-   AND ({_BAD_SHAPE})
-   AND (c.ts IS NULL OR s.captured_at < c.ts)
- ORDER BY s.captured_at
+ ORDER BY s.captured_at, s.id
 """
+
+
+def is_default_book(row):
+    """True when this stored point is Kalshi's untraded default book.
+
+    Two witnesses, and the OR is deliberate — each is blind where the other
+    sees, the same shape the exclusivity test takes:
+
+      * the FIELD refutes it at that instant (`_FIELD_REFUTES`). Value-free, so
+        it reaches the 0.989 / 0.98 / 0.97 the rail also serves.
+      * the row carries the venue's measured default VALUE. Instant-free, so it
+        reaches a leg whose field partners have no stored point at that moment.
+
+    Both are gated on the rail: this repair answers for the candle rail and no
+    other writer. A poller row carrying a real book is not this script's to
+    judge, however odd its number looks.
+    """
+    return bool(row.rail) and (
+        float(row.probability) == VENUE_DEFAULT_PROBABILITY or bool(row.field_refutes)
+    )
+
+
+def leading_run(rows):
+    """`(ids to delete, the point that becomes the new opening)`.
+
+    `rows` is one leg's whole stored series in `captured_at` order, as
+    :data:`_RUN_CANDIDATES_SQL` returns it.
+
+    THE RUN IS A PREFIX AND STOPS AT THE FIRST HONEST POINT. A 0.99 appearing
+    LATER in a series is a genuine move to near-certainty and is left alone;
+    losing that bound would delete real points from the middle of a curve.
+
+    THE RUN STARTS AT THE STORED OPENING, THE SURVIVOR IS SOUGHT OVER THE WHOLE
+    SERIES. Those are different spans on purpose. The run is what this repair
+    has a warrant to delete — the warrant was issued about the opening instant.
+    The survivor is whatever a reader will actually see afterwards, and a point
+    stamped before the stored opening is still the first point of the curve.
+    """
+    doomed = []
+    for row in rows:
+        if not row.from_ts:
+            continue
+        if not is_default_book(row):
+            break
+        doomed.append(row.id)
+
+    cut = set(doomed)
+    survivor = next((row for row in rows if row.id not in cut), None)
+    return doomed, survivor
+
+
+def repair_is_a_no_op(survivor):
+    """True when deleting the run would change nothing a reader can see.
+
+    Six legs re-derive to a point carrying the very value being retired — five
+    onto a bookless Kalshi row at 0.99 stamped OFF the hour (the band's own
+    declared exclusion, a row this script cannot claim), one onto a row whose
+    book is empty on both sides, which is a different writer's rail. For those
+    the delete costs 27 real chart points and buys the reader nothing: the page
+    still reads OPEN 99%.
+
+    This is the script's own argument about the leading run, applied to its
+    result — "the repair would read as done while the reader saw no change."
+    It is a post-condition on the OUTCOME, not a predicate on the population,
+    which is why it may test a value where #5539 measured that a value rule
+    must never choose who gets repaired.
+    """
+    return (
+        survivor is not None
+        and float(survivor.probability) == VENUE_DEFAULT_PROBABILITY
+    )
 
 
 def tap_is_off():
@@ -495,35 +721,59 @@ async def run(args):
         # The leading run per repaired leg, and the point that will become the
         # new opening. Read for every mode, including the dry run, so the
         # attended operator sees the real write plan before authorising it.
-        plan = []
+        plan, no_ops = [], []
         for r, _ in repair:
-            run_rows = (
-                await s.execute(text(_LEADING_RUN_SQL), {"oid": r.id, "ts": r.ts})
+            rows = (
+                await s.execute(
+                    text(_RUN_CANDIDATES_SQL),
+                    {"oid": r.id, "mid": r.market_id, "ts": r.ts},
+                )
             ).fetchall()
-            plan.append((r, [x.id for x in run_rows]))
+            ids, survivor = leading_run(rows)
+            if repair_is_a_no_op(survivor):
+                no_ops.append((r, len(ids)))
+                continue
+            plan.append((r, ids, survivor))
 
-        deleted_total = sum(len(ids) for _, ids in plan)
+        if no_ops:
+            print(
+                f"\n=== refused as no-ops === {len(no_ops)} legs "
+                f"({sum(n for _, n in no_ops)} rows NOT deleted)"
+            )
+            print(
+                "      the earliest surviving point already carries the value "
+                "being retired, so the page would not change"
+            )
+
+        deleted_total = sum(len(ids) for _, ids, _ in plan)
         print(f"\n=== snapshot rows in the leading runs === {deleted_total}")
-        multi = sum(1 for _, ids in plan if len(ids) > 1)
+        multi = sum(1 for _, ids, _ in plan if len(ids) > 1)
         print(f"  legs whose default book persisted past the opening: {multi}")
+        print(
+            "  what the plan publishes: "
+            f"{sum(1 for _, _, sv in plan if sv is not None)} legs re-derive to "
+            f"an earlier point, {sum(1 for _, _, sv in plan if sv is None)} go "
+            "blank because the leg's whole stored series was the default book"
+        )
 
         if args.limit:
             plan = plan[: args.limit]
             print(f"  (--limit {args.limit}: acting on {len(plan)} legs)")
 
         print("\n=== sample ===")
-        for r, ids in plan[:8]:
+        for r, ids, survivor in plan[:8]:
+            opens = "blank" if survivor is None else str(survivor.probability)
             print(
                 f"  {r.id:>10}  {r.name[:34]:<34} {str(r.ts)[:19]}  "
-                f"run={len(ids):<3} next={r.next_p}"
+                f"run={len(ids):<3} opens={opens}"
             )
 
         if not (args.backup or args.apply):
             print("\ndry run — nothing written")
             return 0
 
-        outcome_ids = [r.id for r, _ in plan]
-        snap_ids = [i for _, ids in plan for i in ids]
+        outcome_ids = [r.id for r, _, _ in plan]
+        snap_ids = [i for _, ids, _ in plan for i in ids]
 
         if args.backup:
             print("\n=== backup ===")
@@ -612,7 +862,10 @@ async def run(args):
                     "             SELECT s.probability, s.captured_at "
                     "               FROM futures_odds_snapshots s "
                     "              WHERE s.outcome_id = o2.id "
-                    "              ORDER BY s.captured_at LIMIT 1) f ON true "
+                    # (captured_at, id) — the same tie-break `leading_run` uses,
+                    # or a leg with two points in one instant could publish a
+                    # different one than the plan showed the operator.
+                    "              ORDER BY s.captured_at, s.id LIMIT 1) f ON true "
                     "       WHERE o2.id = ANY(:ids)) nxt "
                     "WHERE o.id = nxt.id"
                 ),

@@ -105,17 +105,17 @@ def test_tap_is_off_requires_both_a_refusal_and_a_surviving_price():
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(cal, "candle_yes_price", lambda c: None)
         mp.setattr(chart, "normalize_candle", lambda c: None)
-        assert repair.tap_is_off() is False, (
-            "a reducer that prices nothing at all must not read as 'fixed'"
-        )
+        assert (
+            repair.tap_is_off() is False
+        ), "a reducer that prices nothing at all must not read as 'fixed'"
 
     # Half 2 broken: the pre-fix rule, which prices the default book at 0.99.
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(cal, "candle_yes_price", lambda c: 0.99)
         mp.setattr(chart, "normalize_candle", lambda c: 0.99)
-        assert repair.tap_is_off() is False, (
-            "the unfixed reducer must not read as 'fixed'"
-        )
+        assert (
+            repair.tap_is_off() is False
+        ), "the unfixed reducer must not read as 'fixed'"
 
 
 def test_a_write_is_refused_off_the_producer_app_and_a_dry_run_is_not(monkeypatch):
@@ -167,38 +167,214 @@ def test_the_population_keys_on_timestamp_precision_not_the_withdrawn_pair():
     `now` carries microseconds.
     """
     sql = repair._POPULATION_SQL
-    assert "date_part('minute'" in sql and "date_part('second'" in sql, (
-        "without the exact-hour predicate this is the withdrawn 4,611 count"
-    )
+    assert (
+        "date_part('minute'" in sql and "date_part('second'" in sql
+    ), "without the exact-hour predicate this is the withdrawn 4,611 count"
     assert "m.source = 'kalshi'" in sql, "Polymarket legs are not this rail's"
+
+
+def _point(pid, probability, *, rail=True, refuted=False, from_ts=True):
+    """One stored point as `_RUN_CANDIDATES_SQL` returns it."""
+    return types.SimpleNamespace(
+        id=pid,
+        captured_at=None,
+        probability=probability,
+        from_ts=from_ts,
+        rail=rail,
+        field_refutes=refuted,
+    )
 
 
 def test_the_leading_run_stops_at_the_first_honest_point():
     """A 0.99 LATER in a series is a genuine move and must survive.
 
-    The run is deleted only up to the first row that is not the bad shape, which
-    is what the `cutoff` CTE is for. Losing that bound would delete real
-    near-certainty points from the middle of a curve.
+    The run is a PREFIX. Losing that bound would delete real near-certainty
+    points from the middle of a curve — the case this guard exists for is the
+    fourth point below, which is the same value and the same shape as the two
+    the repair is entitled to.
     """
-    sql = repair._LEADING_RUN_SQL
-    assert "cutoff" in sql
-    assert "s.captured_at < c.ts" in sql, (
-        "the delete must be bounded above by the first non-default row"
+    doomed, survivor = repair.leading_run(
+        [
+            _point(1, 0.99),
+            _point(2, 0.99),
+            _point(3, 0.40),
+            _point(4, 0.99),
+        ]
     )
-    assert re.search(r"NOT \(.*bookmaker = 'kalshi'", sql, re.S), (
-        "the cutoff must be the first row that is NOT the bad shape"
+    assert doomed == [1, 2]
+    assert survivor.id == 3
+
+
+def test_the_run_continues_through_the_value_the_pin_could_not_see_6159():
+    """#6159. The rail serves 0.989/0.98/0.97, not only 0.99.
+
+    This is the KLM Open shape: the opening point, then the same field-wide
+    default book one tick down, which the shipped value pin left behind to
+    become the re-derived opening on 204 losing legs.
+    """
+    series = [
+        _point(1, 0.99),
+        _point(2, 0.989, refuted=True),
+        _point(3, 0.989, refuted=True),
+        _point(4, 0.012),
+    ]
+    doomed, survivor = repair.leading_run(series)
+    assert doomed == [1, 2, 3]
+    assert survivor.probability == 0.012
+
+    pinned_only = [
+        p for p in series if repair.VENUE_DEFAULT_PROBABILITY == p.probability
+    ]
+    assert len(pinned_only) == 1, (
+        "the value pin alone reaches one point here — that is the defect, and "
+        "this test is vacuous if the fixture stops reproducing it"
     )
 
 
-def test_the_bad_shape_requires_an_absent_book_not_merely_a_099():
+def test_an_unrefuted_near_certainty_is_not_deleted_for_being_high():
+    """A lone 0.98 among longshots IS a coherent distribution.
+
+    Nothing in the field contradicts it, so the arithmetic is silent and the
+    row stands — CERT-2855's line. The rule must be the field's refutation and
+    never "this number looks too big".
+    """
+    doomed, survivor = repair.leading_run([_point(1, 0.99), _point(2, 0.98)])
+    assert doomed == [1]
+    assert survivor.probability == 0.98
+    assert not repair.is_default_book(_point(9, 0.98))
+
+
+def test_only_the_candle_rail_is_judged_however_refuted_the_row_is():
+    """A row with a book belongs to a different writer.
+
+    The arithmetic can refute a poller row just as well, and this script still
+    may not delete it: its whole warrant is about the rail that minted the
+    default book.
+    """
+    assert repair.is_default_book(_point(1, 0.97, refuted=True))
+    assert not repair.is_default_book(_point(1, 0.97, rail=False, refuted=True))
+    assert not repair.is_default_book(_point(1, 0.99, rail=False))
+
+
+def test_the_survivor_is_read_over_the_whole_series_not_from_the_opening():
+    """155 of these legs carry points stamped BEFORE their own stored opening.
+
+    The run may only start at the opening instant — that is what was refuted —
+    but the value the page will print is the earliest point that survives, and
+    for those legs it sits before the run entirely. A plan that reported the
+    post-cutoff point would tell the operator the wrong answer.
+    """
+    doomed, survivor = repair.leading_run(
+        [
+            _point(1, 0.31, from_ts=False),
+            _point(2, 0.99),
+            _point(3, 0.99),
+            _point(4, 0.05),
+        ]
+    )
+    assert doomed == [2, 3], "a point before the opening is never deleted"
+    assert survivor.id == 1, "and it is still the first point of the curve"
+
+
+def test_a_repair_that_would_republish_the_value_it_retires_is_refused():
+    """Six legs on production. The delete would cost 27 chart points for nothing."""
+    assert repair.repair_is_a_no_op(_point(1, repair.VENUE_DEFAULT_PROBABILITY))
+    assert not repair.repair_is_a_no_op(_point(1, 0.012))
+    assert not repair.repair_is_a_no_op(None), (
+        "a leg whose whole series was the default book goes blank, which is the "
+        "honest answer and not a no-op"
+    )
+
+
+def test_the_pairwise_ceiling_is_the_scripts_own_exclusivity_bound():
+    """No new constant. It is `price_exclusive`'s upper bound, reused.
+
+    Restating it would let the screen that decides a market is a one-winner
+    field disagree with the arithmetic that then refutes a pair inside it.
+    """
+    assert f"{repair.EXCLUSIVE_SUM_MAX}" in repair._POPULATION_SQL
+    assert f"{repair.EXCLUSIVE_SUM_MIN}" in repair._POPULATION_SQL
+    # The OPERAND, not merely the digits: the short-circuit below also spells
+    # this number, so a bare `in` check passes on a ceiling that has drifted to
+    # a hand-typed literal. That mutation survived this guard once.
+    assert re.search(
+        r"peer\.probability \+ s\.probability > "
+        + re.escape(str(repair.EXCLUSIVE_SUM_MAX))
+        + r"(?!\d)",
+        repair._FIELD_REFUTES,
+    ), "the pair is compared against something other than the exclusivity bound"
+    assert (
+        repair.EXCLUSIVE_SUM_MIN < 1.0 < repair.EXCLUSIVE_SUM_MAX
+    ), "the band must straddle certainty or it is not an overround allowance"
+
+
+def test_only_the_larger_member_of_an_impossible_pair_may_be_deleted():
+    """An impossible pair says one of the two is wrong, not which one.
+
+    Without this clause the rule deleted 15 real mid-band prices on production,
+    three of them on `Over 0.5 / 1.5 / 2.5 1H goals` ladders where 0.98 + 0.495
+    is perfectly coherent because nested thresholds are not exclusive at all.
+    `<=` and not `<`, so a field frozen at ONE value still refutes itself.
+    """
+    assert re.search(
+        r"peer\.probability <= s\.probability", repair._FIELD_REFUTES
+    ), "a row may only be deleted against a partner at or below its own value"
+    assert "peer.probability < s.probability" not in repair._FIELD_REFUTES, (
+        "a strict < spares every leg of a field frozen at one value, which is "
+        "the population this repair exists for"
+    )
+
+
+def test_the_refutation_short_circuit_cannot_hide_a_refutable_row():
+    """`probability > MAX / 2` is arithmetic, not a threshold.
+
+    The partner is bounded above by this row, so the pair can reach at most
+    twice this row's probability and a row at or below half the ceiling can
+    never be refuted by anything. If the bound ever rose above that, the
+    subquery would stop being skipped on rows that were NOT safe to skip.
+    """
+    bound = repair.EXCLUSIVE_SUM_MAX / 2.0
+    assert bound * 2.0 <= repair.EXCLUSIVE_SUM_MAX
+    assert re.search(
+        r"s\.probability > "
+        + re.escape(str(repair.EXCLUSIVE_SUM_MAX))
+        + r" / 2\.0 AND EXISTS",
+        repair._FIELD_REFUTES,
+    )
+
+
+def test_the_field_witness_cannot_refute_a_leg_with_its_own_duplicate_rows():
+    """Legs carry duplicate points in one instant (15 for one Zverev row).
+
+    Without the self-exclusion a leg at 0.99 with a duplicate of itself would
+    "refute" itself and the rule would fire on every high row in the band,
+    including the ones nothing in the field contradicts.
+    """
+    assert "peer.outcome_id <> s.outcome_id" in repair._FIELD_REFUTES
+    assert (
+        "peer_leg.market_id = :mid" in repair._FIELD_REFUTES
+    ), "the partner must be another leg of THIS market"
+
+
+def test_the_rail_requires_an_absent_book_not_merely_a_099():
     """The candle rail stores NO book; a poller row at 0.99 has one.
 
     This is also why `kalshi_empty_book.lone_ask_on_empty_book_sql` cannot see
-    these rows — it tests `yes_bid`, which is NULL here.
+    these rows — it tests `yes_bid`, which is NULL here. The shape is SQL
+    because only the database can see the columns; the DECISION it feeds is
+    `is_default_book`, tested above against rows rather than against a string.
     """
-    assert "yes_bid IS NULL" in repair._BAD_SHAPE
-    assert "yes_ask IS NULL" in repair._BAD_SHAPE
-    assert "probability = 0.99" in repair._BAD_SHAPE
+    assert "s.yes_bid IS NULL" in repair._RAIL_SHAPE
+    assert "s.yes_ask IS NULL" in repair._RAIL_SHAPE
+    assert "s.bookmaker = 'kalshi'" in repair._RAIL_SHAPE
+    assert "probability" not in repair._RAIL_SHAPE, (
+        "the rail is a claim about the WRITER, not about the number — mixing a "
+        "value clause back in is #6159 all over again"
+    )
+    assert not hasattr(repair, "_BAD_SHAPE"), (
+        "a predicate nothing executes, with a guard that still passes on it: "
+        "CodeQL flagged this as an unused global and it is a vacuity trap"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -233,9 +409,10 @@ def test_series_only_real_099_trade_is_refused_without_venue_proof_6126():
 
     # ...and it stays refused in an exclusive market, so nobody can read the
     # refusal as gotcha #23 doing the work.
-    assert repair.classify(
-        _leg(series_refutes=True, next_p=0.89, price_exclusive=True)
-    ) is not None
+    assert (
+        repair.classify(_leg(series_refutes=True, next_p=0.89, price_exclusive=True))
+        is not None
+    )
 
     # THE NAMED WITNESS STILL REPAIRS. US Open Men's Singles (market 34277822,
     # `/futures/34277822`): 48 outcomes, one winner, current probabilities
@@ -265,15 +442,17 @@ def test_sum_is_the_only_authority_and_series_never_short_circuits_it():
     assert repair.classify(_leg(series_refutes=True, next_p=0.99)) is not None
     assert repair.classify(_leg(series_refutes=True, next_p=0.13)) is not None
     assert (
-        repair.classify(
-            _leg(series_refutes=True, next_p=0.13, price_exclusive=False)
-        )
+        repair.classify(_leg(series_refutes=True, next_p=0.13, price_exclusive=False))
         is not None
     ), "a non-exclusive market must not become repairable via SERIES"
     assert (
         repair.classify(
-            _leg(sum_refutes=True, price_exclusive=False, series_refutes=True,
-                 next_p=0.13)
+            _leg(
+                sum_refutes=True,
+                price_exclusive=False,
+                series_refutes=True,
+                next_p=0.13,
+            )
         )
         is not None
     ), "SERIES must not rescue a SUM leg that failed exclusivity"
@@ -287,9 +466,7 @@ def test_a_sum_refuted_leg_is_repaired_only_where_the_market_is_exclusive():
     """
     assert classify_ok(_leg(sum_refutes=True, price_exclusive=True, next_p=0.95))
 
-    why = repair.classify(
-        _leg(sum_refutes=True, price_exclusive=False, next_p=0.95)
-    )
+    why = repair.classify(_leg(sum_refutes=True, price_exclusive=False, next_p=0.95))
     assert why is not None and "gotcha #23" in why
 
 
@@ -320,8 +497,7 @@ def test_a_refusal_reason_is_a_stable_bucket_not_a_per_row_sentence():
     assert len(reasons) == 1, f"one cohort must be one bucket, got {reasons}"
 
     series = {
-        repair.classify(_leg(series_refutes=True, next_p=p))
-        for p in (0.99, 0.89, 0.13)
+        repair.classify(_leg(series_refutes=True, next_p=p)) for p in (0.99, 0.89, 0.13)
     }
     assert len(series) == 1, f"one cohort must be one bucket, got {series}"
 
@@ -428,9 +604,9 @@ def test_the_population_sql_carries_both_witnesses_under_the_names_classify_read
     """
     sql = repair._POPULATION_SQL
     assert "AS venue_exclusive" in sql and "AS price_exclusive" in sql
-    assert "b.mutually_exclusive IS TRUE" in sql, (
-        "`= true` would let a NULL flag through as unknown-is-yes"
-    )
+    assert (
+        "b.mutually_exclusive IS TRUE" in sql
+    ), "`= true` would let a NULL flag through as unknown-is-yes"
     assert "m.mutually_exclusive" in sql, "the band must carry the market flag"
 
 
