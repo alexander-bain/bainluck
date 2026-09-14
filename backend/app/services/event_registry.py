@@ -1301,7 +1301,11 @@ def apply_authorized_commence_time(
     decision function, so the #46 guard still exists exactly once.
 
     Returns what happened, for the caller's counters: ``"refused_inversion"``,
-    ``"corrected_and_voided"``, or ``"corrected"``.
+    ``"corrected_and_voided"``, or ``"corrected"``. Never
+    ``"corrected_and_unstarted"`` — this form does not forward
+    ``unstart_when_future``, deliberately, so the registry's own mint/link path
+    keeps exactly the behaviour it had before #6073 rung 2 armed that flag for
+    Phase 1.5 alone. A future caller that wants it asks the decision function.
     """
     outcome, writes = authorized_commence_time_write(
         event, new_commence, new_source, attributed_to=attributed_to,
@@ -1317,6 +1321,8 @@ def authorized_commence_time_write(
     new_source: Optional[str],
     *,
     attributed_to: Optional[str] = None,
+    unstart_when_future: bool = False,
+    now: Optional[datetime] = None,
 ) -> tuple[str, dict]:
     """Decide an ALREADY-AUTHORIZED ``commence_time`` write, WITHOUT applying it.
 
@@ -1340,9 +1346,41 @@ def authorized_commence_time_write(
     exists twice is a guard that will disagree with itself, which is the whole
     reason this was extracted from ``_update_fields_by_priority`` for #6073.
 
+    ``unstart_when_future`` — OFF BY DEFAULT, AND THAT DEFAULT IS THE WHOLE POINT.
+    A correction that moves a `live`/`suspended` row's start into the FUTURE has
+    said, in the same breath, that the match has not been played; leaving the
+    badge behind writes an honest date under a wrong state. lane1b measured the
+    cost of the date-only write on this exact population: `suspended` renders as
+    "No result reported", `transition_event_statuses` has no `suspended ->
+    scheduled` edge (its four are `scheduled->live`, `live->suspended`,
+    `suspended->live`, `suspended->retired`), so nothing in the state machine ever
+    drains the row — it keeps a "no result" badge over a kickoff days away,
+    forever.
+
+    It is a FLAG rather than the new behaviour because the population it is right
+    for is not the population this function serves. ``_update_fields_by_priority``
+    — every mint and link in the registry — would newly un-start any live row that
+    a schedule source moves forward, which is a widening across every provider
+    that nobody has measured and that #6073 never asked for. The flag keeps that
+    caller byte-identical and arms only the rail whose band was measured.
+
+    The four refusals mirror :func:`app.tasks.polymarket.redate_target`'s
+    deliberately, because the two writers must AGREE on the rows both can reach:
+    a score (even ``0``), a period, a running clock or any ``completed_at`` all
+    mean something reported on this game, and a row something reported on is not
+    one we may silently un-start. Measured 0 of 566 across the production band, so
+    they refuse nothing today and are the guard that holds the day one appears.
+    The status band is the other half of that agreement: only `live` and
+    `suspended` are states a future kickoff contradicts.
+
+    ``now`` is injected, never read from the wall clock here, so a test pins the
+    future/past branch by passing an instant rather than by offsetting against a
+    clock it also has to reason about (gotcha #44).
+
     Returns ``(outcome, writes)``: the outcome for the caller's counters
-    (``"refused_inversion"``, ``"corrected_and_voided"``, ``"corrected"``) and the
-    exact ``{column: value}`` map to apply. A refusal returns an EMPTY map, so
+    (``"refused_inversion"``, ``"corrected_and_voided"``,
+    ``"corrected_and_unstarted"``, ``"corrected"``) and the exact
+    ``{column: value}`` map to apply. A refusal returns an EMPTY map, so
     "apply the writes" is always the right thing for a caller to do with it.
     """
     # Guard (#46 invariant; gotcha #32 family): refuse to move
@@ -1398,7 +1436,51 @@ def authorized_commence_time_write(
         writes["status"] = "scheduled"
         writes["completed_at"] = None
         return "corrected_and_voided", writes
+    if unstart_when_future and _correction_unstarts_the_row(event, new_commence, now):
+        # The date said it: a match whose kickoff is still ahead has not gone
+        # stale, so `suspended` (which the event page renders as "No result
+        # reported") and `live` are both positively wrong. `scheduled` is the
+        # honest state, and the 60-second promotion gate takes the row live at
+        # the real hour off the corrected start.
+        logger.info(
+            "Un-starting event %s: %s->scheduled, %s moved the start to %s, "
+            "which is still in the future and nothing has reported on the game",
+            event.id, event.status, label, new_commence,
+        )
+        writes["status"] = "scheduled"
+        return "corrected_and_unstarted", writes
     return "corrected", writes
+
+
+def _correction_unstarts_the_row(
+    event: Event, new_commence: datetime, now: Optional[datetime],
+) -> bool:
+    """Does moving this row's start to ``new_commence`` prove it has not begun?
+
+    Pure and separate so every refusal is provable without building a write map,
+    and so the predicate can be read as one sentence rather than as a condition
+    stitched across a branch. See :func:`authorized_commence_time_write` for why
+    each clause is here and why it mirrors
+    :func:`app.tasks.polymarket.redate_target`.
+    """
+    if event.status not in ("live", "suspended"):
+        return False
+    if (
+        event.home_score is not None
+        or event.away_score is not None
+        or event.period is not None
+        or event.game_clock is not None
+        or event.completed_at is not None
+    ):
+        return False
+    reference = now or datetime.now(timezone.utc)
+    reference = reference if reference.tzinfo else reference.replace(tzinfo=timezone.utc)
+    target = (
+        new_commence
+        if new_commence.tzinfo
+        else new_commence.replace(tzinfo=timezone.utc)
+    )
+    return target > reference
 
 
 # ── Sport resolution cache ──────────────────────────────────────────
