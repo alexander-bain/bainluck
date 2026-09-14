@@ -843,7 +843,9 @@ def _twin_key_or_none(event) -> tuple | None:
         return None
 
 
-def _folded_past_rails(results: list, unreported: list, upcoming: list):
+def _folded_past_rails(
+    results: list, unreported: list, upcoming: list, off_page_finals: Sequence = ()
+):
     """One fixture, one card — across the past rails, and against a Final. #5746.
 
     `_folded_upcoming` above gave the upcoming rail the id-free braces to go
@@ -930,8 +932,19 @@ def _folded_past_rails(results: list, unreported: list, upcoming: list):
     precondition for having one. If it raises, both rails are served unfolded.
     """
     try:
+        # #5802 — the Finals this page is NOT printing, keyed the same way. See
+        # `finals_behind_the_results_cap_query`: an old ghost's survivor is cut
+        # by the results rail's ROW CAP, not by any time bound, so it is absent
+        # from all three lists above and the fold below can never see the pair.
+        _off_page_keys = {
+            k for k in (_twin_key_or_none(e) for e in off_page_finals) if k is not None
+        }
         fold = fold_twin_events([*upcoming, *results, *unreported])
-        if not fold.dropped_ids:
+        # The early return has to consider the off-page drop too: on the #5802
+        # specimen the fold drops NOTHING — each ghost is the only member of its
+        # pair on the page — so returning here on `dropped_ids` alone is exactly
+        # how six false cards survived a fold written to remove them.
+        if not fold.dropped_ids and not _off_page_keys:
             return results, unreported, upcoming
         survivors = {id(e) for e in fold.events}
         for survivor_id, merged in fold.merged_sources.items():
@@ -940,6 +953,16 @@ def _folded_past_rails(results: list, unreported: list, upcoming: list):
                 set_committed_value(survivor, "win_probability_sources", merged)
         kept_r = [e for e in results if id(e) in survivors]
         kept_u = [e for e in unreported if id(e) in survivors]
+        # #5802 — "waiting for its score" is a claim about the fixture, not about
+        # this page, so a Final we hold refutes it whether or not the results
+        # rail had a slot for it. Only the UNREPORTED rail is shortened here: the
+        # dropped card asserts something false, while the upcoming rail's
+        # equivalent is governed by the headroom trade argued above and is left
+        # to `_final_keys` below, which is keyed on Finals the page is printing.
+        if _off_page_keys:
+            kept_u = [
+                e for e in kept_u if _twin_key_or_none(e) not in _off_page_keys
+            ]
         # #5532 — the one shape that shortens the upcoming rail. Keyed off
         # `kept_r` and nothing else, so the drop can only ever be "this fixture
         # is already on the page as a finished card". A row the fold kept is
@@ -1204,6 +1227,72 @@ def unreported_games_query(
         .options(selectinload(fenced_event.sport))
         .order_by(fenced_event.commence_time.desc())
         .limit(UNREPORTED_LIMIT + 1)
+    )
+
+
+# How many Finals may share one kickoff minute before we stop asking. MLB is the
+# dense case that motivated this — 15 games a day, several at :10 past the hour —
+# and eight per instant covers every league we serve with room over. It is a
+# guard on a bounded query, not a product rule: a fixture whose Final is the
+# ninth row at its own minute keeps its card and the reader sees the old defect,
+# which is exactly the failure this query is allowed to have.
+FINALS_PER_INSTANT_CEILING = 8
+
+
+def finals_behind_the_results_cap_query(
+    sport_key: str,
+    now: datetime,
+    instants: Sequence[datetime],
+    *,
+    also_sport_keys: Sequence[str] = (),
+):
+    """The Finals that share a kickoff with an unreported row but are off the page.
+
+    #5802. `_folded_past_rails` can only fold a ghost against a survivor that is
+    IN one of the three lists it is handed, and for an old ghost there is never
+    one. Both past rails carry the same 14-day `RESULTS_LOOKBACK_DAYS`, so the
+    fold's own argument — that twins share a kickoff to the minute and so "can
+    never be separated by a rail's TIME bound" — is true and is not the bound
+    that separates them. THE ROW CAP IS. Each rail is `ORDER BY commence_time
+    DESC LIMIT n` over populations of wildly different density: measured on
+    production 2026-09-14 17:5xZ, `GET /api/leagues/baseball_mlb` served eight
+    Finals spanning about one day (MLB plays fifteen a day) and six unreported
+    rows reaching back eight, to 2026-09-06. Every one of those six had a
+    completed, ESPN-anchored twin holding the final score, and not one of those
+    twins was inside the results rail's eight. So the ghost outlives its
+    survivor in the payload, the fold sees one member of the pair, and the rail
+    prints "No result reported" over a game we have the score for — six cards,
+    eight days after the fact, for as long as the lookback holds them.
+
+    This query is the missing half: the unreported rail's own kickoff instants,
+    asked of the settled rail directly, unbounded by that rail's cap. At most
+    `UNREPORTED_LIMIT + 1` instants go in, so it is one indexed IN over a handful
+    of values — not a scan, and not a per-row query.
+
+    The rows it returns are CONTEXT and are never served. They exist to answer
+    one question about a row that IS being served: does this fixture already have
+    a Final somewhere. So the league scope and the settled condition are the
+    sibling rails' own, verbatim, and `not_a_proven_duplicate` is here for the
+    same reason it is there — a row already tagged a duplicate is not the
+    evidence we would suppress another row on.
+    """
+    return (
+        select(Event)
+        .join(Sport, Sport.id == Event.sport_id)
+        .where(
+            _rail_league_scope(sport_key, also_sport_keys),
+            not_a_proven_duplicate(),
+            settled_rail_condition(
+                now, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)
+            ),
+            Event.commence_time.in_(list(instants)),
+        )
+        # `twin_fold_key`'s element 0 is `league_identity(loaded_sport_key(...))`
+        # and a row whose `sport` never loaded keys as None — an unkeyable
+        # context row silently suppresses nothing, which is the quiet failure
+        # #5918 is about. Loaded here for the same reason all three rails load it.
+        .options(selectinload(Event.sport))
+        .limit(FINALS_PER_INSTANT_CEILING * (UNREPORTED_LIMIT + 1))
     )
 
 
@@ -2649,8 +2738,33 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         # finished card — and the reassignment must land BEFORE `_team_names`,
         # `_tag_folded_rows` and the formatter below, which are the readers that
         # would otherwise put the dropped duplicate back on the page.
+        # #5802: the Finals the results rail's row cap hides. Bounded by the
+        # unreported rail's own kickoff instants (at most `UNREPORTED_LIMIT + 1`
+        # of them) and skipped entirely when that rail is empty, which is the
+        # common case for every league that reports its scores.
+        _off_page_finals: list = []
+        _instants = sorted({e.commence_time for e in _u_events if e.commence_time})
+        if _instants:
+            try:
+                _f = await asyncio.wait_for(
+                    db.execute(
+                        finals_behind_the_results_cap_query(
+                            sport_key, now, _instants, also_sport_keys=_also_keys
+                        )
+                    ),
+                    timeout=10,
+                )
+                _off_page_finals = list(_f.scalars().all())
+            except Exception:
+                # Gotcha #42, and the same trade the fold itself makes: this
+                # query improves the page and is never a precondition for
+                # having one. Losing it restores the pre-#5802 behaviour.
+                logger.exception(
+                    "league page: off-page Final lookup failed over %d instants",
+                    len(_instants),
+                )
         _r_events, _u_events, _g_events = _folded_past_rails(
-            _r_events, _u_events, _g_events
+            _r_events, _u_events, _g_events, _off_page_finals
         )
 
         # UX-P074 (#1860): colours and logos for the SHARED event card, fetched
