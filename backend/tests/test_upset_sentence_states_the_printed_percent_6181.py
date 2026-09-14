@@ -111,28 +111,58 @@ class TestEitherCauseAlone:
 
 
 class TestTheSubject:
+    """#6204 MOVED THE PERCENTS IN THIS CLASS, AND DELIBERATELY NOT THE CLAIMS.
+
+    Each test here asks WHICH TEAM is named and WHICH SIDE of the keyed mapping
+    its number comes from; the percentages were free fixture values and were
+    picked without regard to the word between them. Three of them happened to
+    make the WINNER the pre-match favourite ("Dallas Cowboys won as a 62%
+    underdog"), which #6204 now refuses — a card may not call a side the board
+    prints on top an underdog. So the percents were mirrored to make each winner
+    a genuine underdog and the contracts left exactly as they were.
+
+    The mirror test below is STRONGER for it: it now holds the percents still
+    and moves the WINNER, which is the cleaner form of "the number follows the
+    team rather than a fixed index".
+    """
+
     def test_an_away_winner_is_named(self):
         assert (
-            _sentence(home_score=20, away_score=28)
-            == "Dallas Cowboys won as a 62% underdog"
+            _sentence(
+                home_score=20,
+                away_score=28,
+                prematch_percents={"home": 62, "away": 38},
+            )
+            == "Dallas Cowboys won as a 38% underdog"
         )
 
     @pytest.mark.parametrize(
-        "home_score,away_score,expected",
-        [(28, 20, SPECIMEN_HOME), (20, 28, SPECIMEN_AWAY)],
+        "home_score,away_score,percents,expected",
+        [
+            (28, 20, {"home": 38, "away": 62}, SPECIMEN_HOME),
+            (20, 28, {"home": 62, "away": 38}, SPECIMEN_AWAY),
+        ],
     )
     def test_the_named_team_is_always_the_one_that_won(
-        self, home_score, away_score, expected
+        self, home_score, away_score, percents, expected
     ):
-        text = _sentence(home_score=home_score, away_score=away_score)
+        text = _sentence(
+            home_score=home_score, away_score=away_score, prematch_percents=percents
+        )
         assert text.startswith(f"{expected} won as a ")
 
     def test_the_winner_takes_its_own_side_of_the_pair(self):
-        """A mirror of the percents must move the number with the team, or the
-        sentence is reading a fixed index rather than the winner's side."""
+        """The same percents with the other winner must move the number with the
+        team, or the sentence is reading a fixed index rather than the winner's
+        side. Paired with the specimen in section A, which wins at home and
+        takes the HOME value from this same mapping."""
         assert (
-            _sentence(prematch_percents={"home": 71, "away": 29})
-            == "New York Giants won as a 71% underdog"
+            _sentence(
+                home_score=20,
+                away_score=28,
+                prematch_percents={"home": 71, "away": 29},
+            )
+            == "Dallas Cowboys won as a 29% underdog"
         )
 
 

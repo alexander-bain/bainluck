@@ -1037,15 +1037,60 @@ def generate_event_reason(
                 # So the percents are handed in already resolved and already
                 # rounded, and the probability below is a fallback only, for the
                 # caller that holds an opening and no reading.
+                # #6204 — THE SCOREBOARD DECIDES "WON", AND THE BOARD DECIDES
+                # "UNDERDOG". THIS SENTENCE MAKES TWO CLAIMS AND USED TO CHECK
+                # NEITHER.
+                #
+                # Served on production 2026-09-14 over event 15307167 (Örebro SK
+                # 1-1 Nordic United FC, `status=completed`) as "Nordic United FC
+                # won as a 56% underdog", above the card's own `1 - 1` and its
+                # own pre-match row reading `44% · Pre-match · 56%`. Wrong three
+                # ways in one line: they did not win, nobody did, and 56% is the
+                # HIGHER of the two numbers the card prints.
+                #
+                # 1. THE DRAW. The winner was chosen by `if home > away / else`,
+                #    and a bare `else` swallows equality — so every level final
+                #    declared the away team the winner. The `upset` tag that
+                #    admits this sentence is set in `highlights.py` off
+                #    `favorite_switched`, a PRICE-derived flag; the scoreboard
+                #    was read only to pick a side, never to ask whether there
+                #    was a winner to pick. That is exactly #4580, whose note
+                #    sits forty lines below this one for the LIVE sentence:
+                #    "this sentence says *leading*, so the scoreboard decides
+                #    it, not the price". This one says *won*.
+                #
+                #    A draw returns "" rather than "Upset result", per #4640:
+                #    the bare string is the same false claim with the number
+                #    removed. The card already says it three ways — the Final
+                #    chip, the level score, and each side's pre-game percent.
+                #
+                # 2. THE WORD "UNDERDOG" is #6187's rule, and its helper is in
+                #    this file: a comparative may only be printed when the
+                #    reader can SEE it on the board. Tested on the PRINTED
+                #    percents, not the probabilities — #6187 measured that exact
+                #    ties at full precision are real, so a probability-gap test
+                #    would still pass a card printing `50% · Pre-match · 50%`
+                #    (event 15304229 did, live, that same read).
+                #
+                #    Read as: the pre-match leader is the side that LOST, and
+                #    the winner is the runner-up beneath it. `lead_is_printable`
+                #    fails to today's copy when either percent is unknown, so
+                #    the `opening`-only caller below keeps its wording verbatim.
                 printed = prematch_percents or {}
                 if home_score > away_score:
                     winner = home_team
                     winner_opening_prob = opening_home_prob
                     winner_printed = printed.get("home")
-                else:
+                    loser_printed = printed.get("away")
+                elif away_score > home_score:
                     winner = away_team
                     winner_opening_prob = 1 - opening_home_prob
                     winner_printed = printed.get("away")
+                    loser_printed = printed.get("home")
+                else:
+                    return ""
+                if not lead_is_printable(loser_printed, winner_printed):
+                    return ""
                 pct = _display_pct(winner_opening_prob, winner_printed)
                 return f"{winner} won as a {pct}% underdog"
             return "Upset result"
