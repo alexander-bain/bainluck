@@ -1229,6 +1229,58 @@ def auto_create_commence_time(market, fallback):
     return ticker_time, TICKER_DERIVED_COMMENCE_SOURCE
 
 
+def auto_create_venue_commence_time(market, fallback):
+    """The commence_time for a market whose VENUE publishes the fixture instant.
+
+    Returns a datetime. Pure: no DB, no clock — ``fallback`` is whatever the
+    caller already computed from ``market.commence_time``/``now``.
+
+    #6073, and it is :func:`auto_create_commence_time`'s other half. That one
+    rescues Kalshi, whose ticker names the day; Polymarket has no ticker at all,
+    so it always falls back — onto ``commence_time``, which for a Polymarket row
+    is Gamma's ``startDate``, **the moment the market was listed**. The venue
+    publishes the real thing in a different field (``startTime`` on the event,
+    ``gameStartTime`` on each nested market), #4965 parses it, and since #6073
+    the ingest stamps it on the sub-market rows this path actually mints from.
+
+    Measured on production 2026-09-14, four ITF tennis fixtures, each early by a
+    different amount — which is what rules out a timezone constant:
+
+        event      our commence_time      venue startTime        skew
+        15312412   2026-09-14 01:59:21Z   2026-09-14 13:00:00Z   +11.0h
+        15312430   2026-09-13 20:14:27Z   2026-09-14 09:00:00Z   +12.8h
+        15312429   2026-09-13 20:14:29Z   2026-09-14 09:00:00Z   +12.8h
+        15312434   2026-09-13 22:14:16Z   2026-09-14 16:00:00Z   +17.8h
+
+    15312412 was photographed badged **LIVE** at 04:55Z, eight hours before its
+    own first ball, with `No price` under it; the other three had already walked
+    on into ``suspended``, which the event page renders as "No result reported"
+    — a match that has not begun, reported as one that finished without a result.
+
+    Preferred UNCONDITIONALLY when present, which is the one place this differs
+    from the deliberately-narrow ticker rescue above. The ticker rescue leaves an
+    agreeing row alone because a date-only ticker (midnight) is COARSER than a
+    close time that happens to be right. There is no such trade here: the venue's
+    ``startTime`` is a full UTC instant and is the same field the fixture-linkage
+    guard already treats as authoritative (see :func:`venue_game_start`), so
+    preferring it can only move a row onto the venue's own answer. When it is
+    absent — no metadata, a row minted before the stamp, an unparseable value —
+    the reader returns None and this returns ``fallback`` unchanged, so every
+    non-Polymarket market and every un-restamped row keeps exactly today's
+    behaviour.
+
+    Deliberately applied AFTER the caller's 30-day sanity clamp rather than
+    before it: that clamp answers "this market's own time is garbage, so guess
+    ``now``", and guessing ``now`` is precisely the defect — it mints the row
+    already live. A fixture the venue itself publishes for two months out is not
+    garbage, so it is not re-dated to the clock.
+    """
+    fixture = venue_game_start(market)
+    if fixture is None:
+        return fallback
+    return fixture
+
+
 def auto_create_status(commence_time, commence_time_source, now) -> str:
     """The status an auto-created row should be BORN in. Pure: no DB.
 
@@ -6034,6 +6086,13 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
     commence_time = market.commence_time
     if not commence_time or abs((commence_time - now).total_seconds()) > 86400 * 30:
         commence_time = now
+
+    # #6073: prefer the VENUE's published fixture instant over both of the above.
+    # A Polymarket market's `commence_time` is Gamma's `startDate` — the listing
+    # stamp — so this path dated an ITF tennis fixture 12.8h before its own first
+    # ball and the page badged it LIVE. See `auto_create_venue_commence_time` for
+    # the four measured specimens and for why this sits after the clamp.
+    commence_time = auto_create_venue_commence_time(market, commence_time)
 
     # #2020, half one: prefer the TICKER-derived time over Kalshi's own
     # `commence_time`. See `auto_create_commence_time` for the why.

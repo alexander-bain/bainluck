@@ -316,6 +316,7 @@ def sub_market_metadata(
     matchup_title: Optional[str],
     clob_token_ids: Optional[list] = None,
     content_understanding: Optional[dict] = None,
+    venue_game_start=None,
 ) -> Optional[dict]:
     """``market_metadata`` for a decomposed Polymarket sub-market, at mint time.
 
@@ -363,10 +364,46 @@ def sub_market_metadata(
     here is the whole unblock: the ingest re-serves open events continuously and
     the caller MERGES rather than clobbers, so live markets acquire the key on
     the next poll without a separate backfill.
+
+    ── ``venue_game_start`` (#6073) ─────────────────────────────────────────
+
+    The same class a third time: a value the loop is already holding, dropped on
+    the way into the child row. The PARENT row two branches earlier stamps
+    ``event.game_start_time`` (#4965's fixture instant) from this very variable;
+    the sub-market got the matchup title and nothing else.
+
+    That omission is not cosmetic, because **the sub-market is the row the event
+    is minted from**. Measured on production 2026-09-14, group
+    ``polymarket:1019271`` (ITF W50 Pazardzhik, Mazzola v Zeltina): the parent
+    ``60980453`` holds ``venue_game_start = 2026-09-14T09:00:00Z`` and
+    ``event_id`` NULL; its six children hold no ``venue_game_start`` at all and
+    ``event_id = 15312430``. ``_create_event_from_prediction_market`` therefore dated
+    that fixture from ``commence_time`` — Gamma's ``startDate``,
+    ``2026-09-13 20:14:27Z``, the moment the market was LISTED — 12.8 hours
+    before the match, so `/events/15312430` walked past its own invented kickoff
+    into ``live`` and then ``suspended``, which the event page renders as "No
+    result reported": a match that had not begun, reported as one that finished
+    without a result. Three more specimens in #6073, each early by a different
+    amount, which is what rules out a timezone constant.
+
+    Stamped as an **ISO 8601 string**, matching what
+    :func:`app.tasks.prediction_market_matching.venue_game_start` parses and what
+    the parent already writes, so parent and child compare equal rather than
+    merely both being present. A ``None`` stamps nothing and the reader fails
+    open (its docstring says why), so a fixture the venue gives no start time for
+    keeps exactly today's behaviour.
     """
     meta: dict = {}
     if matchup_title:
         meta["matchup_title"] = matchup_title
+    if venue_game_start is not None:
+        _vgs = (
+            venue_game_start.isoformat()
+            if hasattr(venue_game_start, "isoformat")
+            else str(venue_game_start)
+        )
+        if _vgs:
+            meta["venue_game_start"] = _vgs
     if event_id is not None and str(event_id) != "":
         meta["polymarket_event_id"] = str(event_id)
     if clob_token_ids:
@@ -1351,6 +1388,12 @@ async def _process_event_batch(
                                     market, "sports_market_type", None
                                 ),
                             ),
+                            # #6073: the venue's own fixture instant, which the
+                            # parent row above already stamps from this same
+                            # variable. The child is the row the event is minted
+                            # from, so without it a match is dated by the moment
+                            # Polymarket listed it and reads LIVE hours early.
+                            venue_game_start=event.game_start_time,
                         )
                         # ── ITS OWN 24h VOLUME (UX-P157, #2256).
                         #
