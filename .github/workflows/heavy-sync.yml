@@ -252,8 +252,19 @@ jobs:
           # fires :05/:20/:35/:50 and runs 154-552s, so it holds 19 of the band's
           # 25 minutes), and no 25-minute window clears all three. So instead of
           # predicting the worker, ask it: `/api/admin/celery/inspect` already
-          # broadcasts the active set, and `HEAVY_TASKS` membership is what names
-          # the heavy fleet in it.
+          # broadcasts the active set, and the script names the heavy fleet in
+          # it from the app's own source.
+          #
+          # THAT NAMING IS NOT `HEAVY_TASKS` ALONE, AND READING IT AS SUCH LEFT
+          # THREE JOBS INVISIBLE (#5886's second residual). A beat entry that
+          # carries `options={"queue": "heavy"}` runs on worker-heavy whether or
+          # not its task is a member, because `apply_async(queue=…)` overrules
+          # `task_routes` — and three do, one of them
+          # `refresh_linked_polymarket_books` at **:38, the first minute of this
+          # band**, whose whole job is to give a linked market a price. So the
+          # script unions the declared set with the beats authored onto the
+          # queue (`heavy_queue_beat_tasks`). It costs at most one poll: that
+          # task's measured ring is 4.9-10.6s.
           #
           # THE READ IS DONE HERE RATHER THAN IN THE SCRIPT for one reason: this
           # is OUR host, so it must carry `x-bainluck-origin` (notice 39), and

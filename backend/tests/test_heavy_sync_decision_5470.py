@@ -651,6 +651,236 @@ def test_an_unreadable_task_set_is_unknown_and_never_an_empty_one(source):
     assert sync.heavy_task_names(source) is None
 
 
+# ---------------------------------------------------------------------------
+# #5886 residual (b) — WHAT RUNS ON worker-heavy IS NOT `HEAVY_TASKS`
+# ---------------------------------------------------------------------------
+
+
+def _authored_set():
+    """The beats authored onto the heavy queue, as the script parses them."""
+    source = (REPO / "backend" / "app" / "tasks" / "__init__.py").read_text()
+    return sync.heavy_queue_beat_tasks(source)
+
+
+#: The three the gap was found on, and the minute each fires. Named rather than
+#: derived, so that moving one is a decision somebody makes here and not a
+#: number that quietly follows the app.
+AUTHORED_HEAVY_BEATS = {
+    "app.tasks.refresh_linked_polymarket_books": 38,
+    "app.tasks.refresh_linked_game_books": 20,
+    "app.tasks.refresh_dated_fixture_starts": 7,
+}
+
+
+def test_three_beats_run_on_worker_heavy_without_being_in_heavy_tasks():
+    """The defect, stated as the two facts that make it one.
+
+    A beat entry carrying `options={"queue": "heavy"}` runs on worker-heavy
+    whether or not its task is in `HEAVY_TASKS`, because `apply_async(queue=…)`
+    overrules `task_routes`. The gate read membership, so these three were
+    invisible to it and a sync could cycle the dyno on top of one.
+
+    BOTH halves are asserted, because either alone is vacuous: that the parse
+    finds them (or the test proves nothing about this file) and that they are
+    genuinely NOT members (or it proves nothing about the gap). If someone
+    closes the gap the other way — by adding them to `HEAVY_TASKS` — this test
+    fails loudly and is the right place to record that, rather than passing
+    while its subject has moved.
+    """
+    from app.tasks import HEAVY_TASKS
+
+    authored = _authored_set()
+    assert authored is not None
+    for task in AUTHORED_HEAVY_BEATS:
+        assert task in authored, sorted(authored)
+        assert task not in HEAVY_TASKS
+
+
+def test_the_gates_set_is_exactly_the_two_arms_and_is_wider_than_either():
+    """The composed set, checked against the app's own objects both ways."""
+    from app.tasks import HEAVY_TASKS
+
+    declared, authored = _heavy_set(), _authored_set()
+    composed = sync.heavy_worker_task_names(declared, authored)
+    assert composed == frozenset(HEAVY_TASKS) | authored
+    # Non-vacuous: the union really did add something, and lost nothing.
+    assert composed > frozenset(HEAVY_TASKS)
+    assert frozenset(HEAVY_TASKS) <= composed and authored <= composed
+
+
+def test_the_price_refresher_the_gate_could_not_see_fires_inside_the_band():
+    """Why this is a reader's bug and not a tidiness one.
+
+    `refresh_linked_polymarket_books` gives a LINKED market with no outcome rows
+    a price (#3613); its Kalshi twin does the same (#3518). The first fires at
+    :38 — `window_bounds()`'s opening minute — so the gate was blind exactly
+    where a push happens. The minute is read from the app's beat literal, never
+    from this file, so moving the beat moves the assertion with it.
+    """
+    opens, closes = sync.window_bounds()
+    minute = _beat_minute("refresh-linked-polymarket-books-hourly")
+    assert minute == AUTHORED_HEAVY_BEATS["app.tasks.refresh_linked_polymarket_books"]
+    assert opens <= minute <= closes, (opens, minute, closes)
+
+
+def _beat_minute(beat_key: str) -> int:
+    """The `crontab(minute=N)` of one beat, read from the app's live schedule."""
+    from app.tasks import celery_app
+
+    return int(str(celery_app.conf.beat_schedule[beat_key]["schedule"]._orig_minute))
+
+
+def test_the_gate_holds_on_a_job_only_the_beat_literal_names():
+    """The verdict, and the control that proves the old reading was the defect.
+
+    Same payload, two sets: the composed one HOLDS and the declared-only one
+    proceeds. The second assertion is the bug as it stood, pinned so nobody
+    re-narrows the set and finds every test still green.
+    """
+    payload = _inspect_body(["app.tasks.refresh_linked_polymarket_books"])
+    active = sync.active_task_names(payload)
+
+    held = sync.inflight_verdict(
+        active=active,
+        heavy=sync.heavy_worker_task_names(_heavy_set(), _authored_set()),
+    )
+    assert held.code == BUSY
+    assert "refresh_linked_polymarket_books" in held.reason
+
+    blind = sync.inflight_verdict(active=active, heavy=_heavy_set())
+    assert blind.code == CLEAR
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        # The shape the gap is made of: heavy in the options, not a member.
+        (
+            "celery_app.conf.beat_schedule = {'b': {'task': 'app.tasks.x',"
+            " 'options': {'queue': 'heavy'}}}",
+            {"app.tasks.x"},
+        ),
+        # Another queue is not this queue.
+        (
+            "celery_app.conf.beat_schedule = {'b': {'task': 'app.tasks.x',"
+            " 'options': {'queue': 'background'}}}",
+            set(),
+        ),
+        # No options at all — routed by `task_routes`, which the other arm reads.
+        ("celery_app.conf.beat_schedule = {'b': {'task': 'app.tasks.x'}}", set()),
+        # A computed queue is not a literal one and must not be guessed at.
+        (
+            "celery_app.conf.beat_schedule = {'b': {'task': 'app.tasks.x',"
+            " 'options': {'queue': QUEUE}}}",
+            set(),
+        ),
+        # A computed TASK cannot be named, so it cannot be held on.
+        (
+            "celery_app.conf.beat_schedule = {'b': {'task': NAME,"
+            " 'options': {'queue': 'heavy'}}}",
+            set(),
+        ),
+        # An empty schedule is a real, readable answer: nothing is authored.
+        ("celery_app.conf.beat_schedule = {}", set()),
+    ],
+)
+def test_the_beat_arm_reads_the_literal_and_nothing_else(source, expected):
+    assert sync.heavy_queue_beat_tasks(source) == frozenset(expected)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "",                                        # nothing at all
+        "OTHER = {'a': 1}",                        # a different assignment
+        "celery_app.conf.beat_schedule = build()",  # not a literal
+        "celery_app.conf.other_attr = {}",          # the wrong attribute
+        "celery_app.conf.beat_schedule = {",        # does not parse
+    ],
+)
+def test_an_unreadable_schedule_is_unknown_and_not_an_empty_authored_set(source):
+    """`frozenset()` and `None` are different answers here, unlike above.
+
+    Empty means "no beat is authored onto the queue", which is an ordinary state
+    of the real file and must stay distinguishable from "the literal is gone" —
+    the caller says the second out loud and does not say the first.
+    """
+    assert sync.heavy_queue_beat_tasks(source) is None
+
+
+def test_a_lost_beat_arm_narrows_to_the_old_set_and_a_lost_member_set_is_unknown():
+    """The two arms fail differently, and the composer keeps them different.
+
+    Losing `beat_schedule` puts the gate back to exactly the reading it had
+    before this arm existed — degraded, still a veto. Losing `HEAVY_TASKS` is
+    the gotcha-#53 case the existing test protects and stays UNKNOWN, which
+    PROCEEDS: a cost gate that cannot read its fact must never stop the sync.
+    """
+    declared = frozenset({"app.tasks.a"})
+    authored = frozenset({"app.tasks.b"})
+    assert sync.heavy_worker_task_names(declared, None) == declared
+    assert sync.heavy_worker_task_names(None, authored) is None
+    assert sync.heavy_worker_task_names(None, None) is None
+    assert sync.heavy_worker_task_names(declared, frozenset()) == declared
+
+
+def test_the_cli_holds_on_the_beat_only_job_and_says_when_it_lost_the_arm(
+    tmp_path, capsys
+):
+    """The wiring, which is the half a pure-function test cannot reach.
+
+    A composed set that never reaches `inflight_verdict` is a fix that reads
+    right and does nothing (the repo has paid for that shape). So the CLI is
+    driven against the app's REAL source with a payload naming a beat-only job,
+    and separately against a source whose schedule it cannot read — where the
+    veto survives on the declared arm and the narrowing is said on stderr.
+    """
+    body = tmp_path / "inspect.json"
+    body.write_text(json.dumps(_inspect_body(["app.tasks.refresh_linked_game_books"])))
+    assert sync.main(["inflight", "--inspect-json", str(body)]) == BUSY
+    assert "refresh_linked_game_books" in capsys.readouterr().out
+
+    partial = tmp_path / "tasks.py"
+    partial.write_text("HEAVY_TASKS = {'app.tasks.match_prediction_markets'}\n")
+    still_busy = tmp_path / "declared.json"
+    still_busy.write_text(
+        json.dumps(_inspect_body(["app.tasks.match_prediction_markets"]))
+    )
+    assert (
+        sync.main(
+            [
+                "inflight",
+                "--inspect-json", str(still_busy),
+                "--tasks-source", str(partial),
+            ]
+        )
+        == BUSY
+    )
+    captured = capsys.readouterr()
+    assert "beat_schedule" in captured.err
+    # The narrowing goes to stderr ONLY: the workflow parses the verdict off
+    # stdout with `${INFLIGHT_OUT%%:*}` and a second line there would become it.
+    assert captured.out.startswith("BUSY:")
+    assert "\n" not in captured.out.strip()
+
+
+def test_the_workflows_prose_no_longer_states_the_reading_that_was_wrong():
+    """Read the RAW file, comments included — the assertion IS about the prose.
+
+    `_workflow_code()` strips comments on purpose, because a code assertion that
+    matches an explanation measures nothing. This one is the other kind: the
+    comment block is where a reader learns what the in-flight gate can see, and
+    it said "`HEAVY_TASKS` membership is what names the heavy fleet in it",
+    which was the false sentence behind #5886's second residual. A file that
+    describes a narrower reading than its script performs is the same drift as a
+    beat literal that says `background` while the loop routes it to `heavy`.
+    """
+    raw = WORKFLOW.read_text()
+    assert "membership is what names" not in raw
+    assert "heavy_queue_beat_tasks" in raw
+    assert "refresh_linked_polymarket_books" in raw
+
+
 def test_a_reply_naming_no_worker_is_unknown_not_an_idle_fleet():
     """A failed broadcast returns a body with only `_cache` in it.
 
