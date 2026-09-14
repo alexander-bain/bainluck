@@ -4010,6 +4010,160 @@ async def test_the_mlb_void_repair_cannot_erase_a_score_written_under_it_6056(
     )
 
 
+def _redates_the_row(target_index, new_commence, source="statpal"):
+    """A SCHEDULE writer moving `commence_time`, touching nothing else.
+
+    `reconcile_anchor_schedule._apply_move` and the #6073 kickoff sweep in
+    miniature: a settled row is found to be dated off the venue's own kickoff
+    and is re-dated, in another session, on another queue. It does not touch
+    `status`, it does not touch either score — it has no opinion about them —
+    which is exactly why a predicate over the score columns cannot see it.
+    """
+
+    def _run(engine, ids):
+        from sqlalchemy import update
+        from sqlalchemy.orm import Session
+
+        from app.models.models import Event
+
+        other = Session(engine, expire_on_commit=False)
+        try:
+            other.execute(
+                update(Event)
+                .where(Event.id == ids[target_index])
+                .values(commence_time=new_commence, commence_time_source=source)
+            )
+            other.commit()
+        finally:
+            other.close()
+
+    return _run
+
+
+@pytest.mark.asyncio
+async def test_the_mlb_void_repair_refuses_a_row_a_schedule_writer_re_dated_6056(
+    monkeypatch,
+):
+    """🔴 THE SCHEDULE WITNESS. Fails on the parent by voiding an un-inverted row.
+
+    The reason to void is TWO claims, and the score-only predicate only ever
+    re-asserted one of them. `_INVARIANT_ARM` picks this row up because it is
+    settled while commencing in the future — a statement about `commence_time`,
+    not about the score. In the window, a schedule writer re-dates it to a first
+    pitch in the PAST, which is the correction that makes the row legitimate:
+    settled, dated before it completed, nothing left to repair.
+
+    Unfixed, the void arm still fires. The score half of its predicate is
+    untouched — nobody moved a score, because the interloper has no opinion
+    about scores — so it matches, and the repair clears `completed_at` and
+    knocks a properly-dated settled game back to `scheduled` on the strength of
+    an inversion that no longer exists. The row loses its result.
+
+    Fixed, the predicate covers the two columns the SELECT actually reasoned
+    over, the row is recognised as no longer the row that was diagnosed, and the
+    next daily pass re-diagnoses it from scratch — and finds nothing wrong.
+    """
+    now = datetime.now(timezone.utc)
+    re_dated_to = now - timedelta(hours=9)
+
+    rows, ledger = await _run_mlb_repair(
+        monkeypatch,
+        rows=[
+            # Diagnosed first. Settled, no score, and commencing in the FUTURE
+            # — inverted at the instant it is read.
+            (
+                "Boston Red Sox", "New York Yankees",
+                now + timedelta(hours=3), now - timedelta(hours=5),
+                (None, None), "completed",
+            ),
+            # Scored, so the loop goes out to ground truth — the window.
+            (
+                "Chicago Cubs", "St. Louis Cardinals",
+                now - timedelta(hours=1), now - timedelta(hours=4),
+                (7, 3), "completed",
+            ),
+        ],
+        interloper=_redates_the_row(0, re_dated_to),
+    )
+
+    assert rows[0].status == "completed", (
+        "the void repair un-settled a game whose schedule had just been "
+        "CORRECTED underneath it. The inversion it diagnosed was gone by the "
+        "time it wrote, and it voided the row on the strength of it"
+    )
+    assert rows[0].completed_at is not None, (
+        "the void repair cleared `completed_at` — the column it writes and, "
+        "before this, the one column it never arbitrated. A settled game lost "
+        "the timestamp that says when it ended"
+    )
+    assert ledger["void"] == 1, "the row was correctly DIAGNOSED as voidable"
+    assert ledger["void_refused_row_moved"] == 1, (
+        "the refusal must be counted under its own name (gotcha #53)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_mlb_void_repair_refuses_a_row_whose_completed_at_moved_6056(
+    monkeypatch,
+):
+    """The other invariant column, on its own.
+
+    `fix_end`'s writer — and any settlement pass — moves `completed_at` without
+    touching status or score. Same shape as the re-date above, and worth its own
+    arm rather than a parametrize: this is the column the void write CLEARS, so
+    losing this race is the case where the compare-and-write destroys a value
+    another writer had just established and reports that nothing was refused.
+    """
+    now = datetime.now(timezone.utc)
+
+    rows, ledger = await _run_mlb_repair(
+        monkeypatch,
+        rows=[
+            (
+                "Boston Red Sox", "New York Yankees",
+                now - timedelta(hours=2), now - timedelta(hours=5),
+                (None, None), "completed",
+            ),
+            (
+                "Chicago Cubs", "St. Louis Cardinals",
+                now - timedelta(hours=1), now - timedelta(hours=4),
+                (7, 3), "completed",
+            ),
+        ],
+        interloper=_moves_completed_at(0, now - timedelta(minutes=20)),
+    )
+
+    assert rows[0].completed_at is not None, (
+        "the void repair cleared a `completed_at` that another writer had just "
+        "corrected — a column it writes and never compared"
+    )
+    assert rows[0].status == "completed"
+    assert ledger["void_refused_row_moved"] == 1
+
+
+def _moves_completed_at(target_index, new_completed):
+    """A settlement writer correcting `completed_at` alone."""
+
+    def _run(engine, ids):
+        from sqlalchemy import update
+        from sqlalchemy.orm import Session
+
+        from app.models.models import Event
+
+        other = Session(engine, expire_on_commit=False)
+        try:
+            other.execute(
+                update(Event)
+                .where(Event.id == ids[target_index])
+                .values(completed_at=new_completed)
+            )
+            other.commit()
+        finally:
+            other.close()
+
+    return _run
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("settled_status", ["completed", "closed"])
 @pytest.mark.parametrize("settled_scores", [(None, None), (0, 0)])
@@ -4351,6 +4505,11 @@ def test_the_mlb_void_repair_is_given_a_captured_decision_never_a_fresh_read_605
     That mutation leaves every behavioural test above green — the predicate
     would compare the row against itself and match every time — so the
     invariant is asserted in the shape of the call, where it lives.
+
+    Since the predicate covers the schedule columns too it is CAPTURED at the
+    diagnosis and passed through, so this test follows it there rather than
+    reading the call site alone: "built as a literal at the call site" is now
+    itself the failure, because by then the row is minutes and an HTTP call old.
     """
     import ast
     import inspect
@@ -4375,27 +4534,63 @@ def test_the_mlb_void_repair_is_given_a_captured_decision_never_a_fresh_read_605
 
     observed = [kw for kw in calls[0].keywords if kw.arg == "observed"]
     assert observed, "the void write lost its predicate"
-    mapping = observed[0].value
-    assert isinstance(mapping, ast.Dict), (
-        "the predicate is built elsewhere and cannot be certified here"
+    assert isinstance(observed[0].value, ast.Name), (
+        f"the void write builds its predicate inline, as "
+        f"`{ast.unparse(observed[0].value)}`. At this point in the function the "
+        "row has been through an HTTP call per scored sibling, so anything "
+        "assembled HERE is a write-time read however it is spelled. The "
+        "predicate must be a local captured at diagnosis and passed through."
     )
 
-    keys = {k.value for k in mapping.keys if isinstance(k, ast.Constant)}
-    assert keys == {"status", "home_score", "away_score"}, (
-        f"the void write predicates on {sorted(keys)}. It must re-assert all "
-        "THREE columns its decision read: the scores, and `status` — a game "
-        "that goes live while still 0-0 moves only `status`, and a score-only "
-        "predicate would match it and knock it back to `scheduled`."
+    # Follow it to where it IS built: the diagnosis site, inside the branch that
+    # decides the row is voidable and before the loop reaches any ground-truth
+    # fetch. That is the only place the values are contemporaneous with the
+    # decision they re-assert.
+    appends = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "append"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "void"
+    ]
+    assert len(appends) == 1, (
+        "the void population is now built in more than one place — this test "
+        "certifies one capture site and would silently miss the others"
     )
+    captured = [
+        arg for arg in ast.walk(appends[0]) if isinstance(arg, ast.Dict)
+    ]
+    assert len(captured) == 1, "the diagnosis no longer captures a predicate dict"
+    mapping = captured[0]
+
+    keys = {k.value for k in mapping.keys if isinstance(k, ast.Constant)}
+    assert keys == {
+        "status", "home_score", "away_score", "commence_time", "completed_at",
+    }, (
+        f"the void write predicates on {sorted(keys)}. It must re-assert all "
+        "FIVE columns its decision read. Three are the score claim — the "
+        "scores, and `status`, because a game that goes live while still 0-0 "
+        "moves only `status`. The other two are the SCHEDULE claim: "
+        "`_INVARIANT_ARM` selects this row on `commence_time`/`completed_at` "
+        "alone, and this write CLEARS `completed_at`. Drop them and a re-dating "
+        "writer can make the row un-inverted in the window while the predicate "
+        "still matches and voids it anyway."
+    )
+
+    # Anti-hard-coding (the M7 mutant): every predicate value must be read off
+    # the candidate row, not written as a constant that happens to be right for
+    # the common specimen.
     offenders = [
         ast.unparse(value)
         for value in mapping.values
-        if not isinstance(value, ast.Name)
+        if "r." not in ast.unparse(value)
     ]
     assert not offenders, (
-        f"the void write is handed {offenders} — values read at write time. "
-        "They must be locals captured when the row was DIAGNOSED, which is "
-        "minutes and one HTTP call per row earlier (#6056)."
+        f"the void predicate is handed {offenders}, which never reads the "
+        "candidate row. A predicate built from literals matches by luck on the "
+        "specimen the author had and arbitrates nothing on the others."
     )
 
     # And the values it WRITES must not include a predicate column's new value
