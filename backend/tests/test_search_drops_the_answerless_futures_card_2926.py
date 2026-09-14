@@ -418,37 +418,40 @@ def test_a_concept_is_still_reachable_through_an_answerless_market():
 
 
 # ---------------------------------------------------------------------------
-# /typeahead takes the same predicate
+# /typeahead deliberately does NOT take this predicate
 # ---------------------------------------------------------------------------
 
 
-def test_typeahead_and_search_take_one_predicate():
-    """This file's own `_futures_open_now` comment records /search keeping a
-    defect for three cycles after /typeahead's twin was fixed. The dropdown's
-    whole point (#993 Slice A) is that a suggestion carries the answer and is
-    not 'just a title to click'; a blank suggestion is that title, and it clicks
-    through to a detail page serving the same nothing.
+def test_typeahead_is_deliberately_not_filtered():
+    """The default in this file is one predicate on both surfaces —
+    `_futures_open_now`'s own comment records /search keeping a defect for three
+    cycles after /typeahead's twin was fixed. This is the exception, and it is
+    pinned so nobody "finishes the job" without reading why.
+
+    #2926 is prose standing where a number belongs: a card whose whole body
+    reads "No outcomes available", a family row printing the literal string
+    `0 outcomes`. Both of Alex's specimens are that. A dropdown row renders its
+    market's NAME, with an answer beside it when there is one — a row without
+    one is a title, which is honest navigation and claims nothing false, and
+    suppressing it deletes the only path to that market.
+
+    And #4723's pool contract in `tests/integration/test_search_recall_contract`
+    is a deploy-blocking statement in the other direction: `_typeahead_pool_seeds`
+    seeds outcome-less rows ON PURPOSE, and its Korpatsch control exists to catch
+    a pool key that becomes a filter.
     """
-    ta = inspect.getsource(events_route.typeahead_search)
-    assert "_ta_top_outcomes = _build_search_top_outcomes(market, limit=3, lean=True)" in ta
-    assert "if not _ta_top_outcomes:" in ta
-    assert '"top_outcomes": _ta_top_outcomes,' in ta, (
-        "the dropdown must carry the list it was tested on, not rebuild it — "
-        "two derivations are two rules that can disagree"
-    )
-
-
-def test_typeahead_asks_before_it_claims_the_dedup_key():
-    """Same ordering argument as /search: an answerless suggestion must not
-    spend a key its answerable twin needs."""
     ta = inspect.getsource(events_route.typeahead_search)
     pool = ta[ta.index("futures_pool = []"):]
     pool = pool[: pool.index("event_concept_pool = []")]
-    ask = pool.index("if not _ta_top_outcomes:")
-    claim = pool.index("seen_futures_keys.add(dedup_key)")
-    assert ask < claim, (
-        "the key is claimed before the answer is asked for, so an empty market "
-        "can still shadow its priced twin in the dropdown"
+    assert "_futures_search_has_answer" not in pool, (
+        "the /search predicate was extended into the typeahead pool — that "
+        "overrules #4723's deliberately outcome-less pool corpus and deletes "
+        "the only navigation path to 11,547 markets. If it is the right call, "
+        "it is a decision on #2926 with the recall gate re-argued, not a "
+        "consistency tidy-up"
+    )
+    assert "#2926 STOPS AT /search" in pool, (
+        "the reason it stops here must stay next to the code that stops"
     )
 
 

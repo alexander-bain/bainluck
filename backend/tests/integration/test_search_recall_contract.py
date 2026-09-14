@@ -513,19 +513,43 @@ async def _seed(session):
             )
         )
 
-    # #4728: the nickname corpus. Name-only, like the pool rows above — the
-    # nickname arm is a NAME arm, and an outcome would let a second arm answer.
+    # #4728: the nickname corpus. The nickname arm is a NAME arm and an outcome
+    # could let a second arm answer, which is why these rows were seeded
+    # name-only — but #2926 made "name-only" unservable: /search no longer ships
+    # a futures card with nothing to draw, so a nickname test built on
+    # outcome-less rows measured reachability of a row the route will not serve
+    # and went red on a change that is working as designed.
+    #
+    # Priced, therefore, and priced the way Kalshi prices a fixture — which is
+    # also what these three rows look like in production; the name-only version
+    # was the artefact. The second-arm concern is answered by CHOOSING the
+    # names rather than by omitting them: `Yes`/`No` share no substring with any
+    # query this file asserts on (checked against all 24 — `award`, `d'or`,
+    # `bruins`, `caitlin`, `celtcs`, `celtics`, `fed`, `laker`, `nba`, `nfl`,
+    # `niners`, `patriots`, `pats`, `re`, `recession`, `revs`, `sun`,
+    # `swiatek`, `us`, `wimbledon`, `yank` and the multi-word forms), so the
+    # outcome arm cannot reach them and the nickname arm is still the only thing
+    # under test.
     for external_id, name, category in _NICKNAME_SEEDS:
-        session.add(
-            FuturesMarket(
-                source="kalshi",
-                external_id=external_id,
-                name=name,
-                status="open",
-                llm_sport_category=category,
-                resolution_date=datetime.now(timezone.utc) + timedelta(days=90),
-            )
+        market = FuturesMarket(
+            source="kalshi",
+            external_id=external_id,
+            name=name,
+            status="open",
+            llm_sport_category=category,
+            resolution_date=datetime.now(timezone.utc) + timedelta(days=90),
         )
+        session.add(market)
+        await session.flush()
+        for outcome_name, prob in (("Yes", 0.58), ("No", 0.42)):
+            session.add(
+                FuturesOutcome(
+                    market_id=market.id,
+                    external_id=f"{external_id}:{outcome_name}",
+                    name=outcome_name,
+                    current_probability=prob,
+                )
+            )
 
     await session.commit()
 

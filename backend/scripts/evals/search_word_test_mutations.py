@@ -376,9 +376,14 @@ MUTANTS: list[tuple[str, Path, str, str, str, str]] = [
     (
         "refill-fires-unconditionally",
         EVENTS,
-        """        len(deduped_futures) < _SEARCH_FUTURES_PAGE
+        # #2926 renamed the list the trigger counts — it reads the ANSWERABLE
+        # rows now, because a page of ten of which four say "No outcomes
+        # available" is a page of six. The mutant is unchanged in substance:
+        # drop the saturated-window half and every honestly short page pays a
+        # second futures query.
+        """        len(answerable_futures) < _SEARCH_FUTURES_PAGE
         and len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW""",
-        """        len(deduped_futures) < _SEARCH_FUTURES_PAGE""",
+        """        len(answerable_futures) < _SEARCH_FUTURES_PAGE""",
         DEDUP_ORACLE,
         "OVER-APPLIES the refill: every short page — including the honestly short "
         "ones — pays a second futures query, on the stage that is already #1731's "

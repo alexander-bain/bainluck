@@ -6498,16 +6498,27 @@ async def search_events(
     # dedups to ten rows of which four say "No outcomes available" is a page of
     # six to a reader, and the pre-#2926 condition could not see that: it would
     # ship the short page and never spend the refill it is entitled to.
+    #
+    # THE LOG LINE BELOW IS LEFT BYTE-FOR-BYTE, and the comment lives up here
+    # rather than beside it for two reasons that both bite. Adding the
+    # answerable count to the message costs the sha: CodeQL reads a touched line
+    # as new code and flags the `%r` of `q` as log injection (medium), which
+    # notice 32 refuses — even though logging the query is what this line has
+    # always done and is the whole point of a recall warning. And a comment
+    # placed between the `):` and the `logger.warning(` splits the
+    # `refill-ignores-the-deadline` needle in
+    # `backend/scripts/evals/search_word_test_mutations.py`, which the mutation
+    # guard then scores UNAPPLIED. The count is diagnostic; the condition is the
+    # fix.
     if (
         len(answerable_futures) < _SEARCH_FUTURES_PAGE
         and len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW
         and time.monotonic() < _deadline
     ):
         logger.warning(
-            "search futures bucket COLLAPSED for %r — %d rows deduped to %d "
-            "(%d answerable); refilling from rank %d",
-            q, len(futures_markets_raw), len(deduped_futures),
-            len(answerable_futures), _SEARCH_FUTURES_WINDOW,
+            "search futures bucket COLLAPSED for %r — %d rows deduped to %d; "
+            "refilling from rank %d",
+            q, len(futures_markets_raw), len(deduped_futures), _SEARCH_FUTURES_WINDOW,
         )
         await _apply_search_statement_timeout(db, _deadline)
         # A SAVEPOINT, for the same reason the headline lane below has one
@@ -8719,21 +8730,31 @@ async def typeahead_search(
         dedup_key = _normalize_futures_dedup_key(market)
         if dedup_key in seen_futures_keys:
             continue
-        # #2926, and the SAME predicate /search takes eight thousand lines up —
-        # this file's own `_futures_open_now` comment records /search keeping a
-        # defect for three cycles after /typeahead's twin was fixed, so the two
-        # surfaces take one predicate or they drift again.
+        # #2926 STOPS AT /search AND DOES NOT COME IN HERE, and the reasoning is
+        # worth the lines because the default for this file is the opposite:
+        # `_futures_open_now` above records /search keeping a defect for three
+        # cycles after /typeahead's twin was fixed, so one predicate on both
+        # surfaces is normally the rule.
         #
-        # Built ONCE and carried into the payload below rather than asked and
-        # then re-asked: a second derivation is a second rule, and here the two
-        # rules would be a membership test and the list itself, which is the
-        # pair most able to disagree. #993 Slice A put the answer in the
-        # dropdown precisely so a suggestion is not "just a title to click";
-        # a row with no answer is that title, and it clicks through to a detail
-        # page serving the same nothing (60505523 serves zero outcomes today).
-        _ta_top_outcomes = _build_search_top_outcomes(market, limit=3, lean=True)
-        if not _ta_top_outcomes:
-            continue
+        # It does not transfer because the DEFECT does not. #2926 is prose
+        # standing where a number belongs — a card whose whole body reads "No
+        # outcomes available", a family row printing the literal string
+        # `0 outcomes` — which is notice 34 / D102, and both specimens Alex
+        # filed (`?q=Thun`, `?q=rockies`) are that. A dropdown row renders its
+        # market's NAME and, when there is one, an answer beside it; a row with
+        # no answer is a title, which is honest navigation and says nothing
+        # false. Suppressing it would delete the only path to that market.
+        #
+        # And #4723's pool contract is a deliberate, deploy-blocking statement
+        # in the other direction: `_typeahead_pool_seeds` in
+        # `tests/integration/test_search_recall_contract.py` seeds its rows with
+        # NO outcomes on purpose ("these rows are reached by NAME, and an
+        # outcome would put them in a second arm and blur what is being read"),
+        # and the Korpatsch control exists to catch exactly a pool key that
+        # becomes a filter. Overruling that in passing, for a defect nobody has
+        # reported on this surface, is how recall regressions get shipped.
+        #
+        # Carried to #2926 as the open question rather than decided here.
         seen_futures_keys.add(dedup_key)
         label = _TIER_LABELS.get(market.market_tier, None)
         if not label and market.sport_id is None:
@@ -8747,7 +8768,7 @@ async def typeahead_search(
             "sport_key": market.llm_sport_category,
             # #993 Slice A: carry the answer (top 3, #23-normalized) so the
             # dropdown shows "Lakers 62% · Cavs 18%", not just a title to click.
-            "top_outcomes": _ta_top_outcomes,
+            "top_outcomes": _build_search_top_outcomes(market, limit=3, lean=True),
             # RANKING evidence, private and stripped before the response. The
             # three rows above are a DISPLAY cut; using them as the market's
             # owned-outcome evidence made display truncation silently truncate
