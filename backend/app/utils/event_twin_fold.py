@@ -165,7 +165,7 @@ from app.utils.kalshi_occurrence_start import (
 )
 from app.utils.name_normalization import strip_diacritics
 from app.utils.proven_duplicates import merge_opening_line
-from app.utils.soccer_team_matching import soccer_pair_matches
+from app.utils.soccer_team_matching import club_alias_tokens, soccer_pair_matches
 from app.utils.sport_keys import league_identity
 
 logger = logging.getLogger(__name__)
@@ -747,6 +747,185 @@ def _catchall_sport_prefix(sport_key: Optional[str]) -> Optional[str]:
     return sport_key[: -len(_CATCHALL_SUFFIX)]
 
 
+#: Squad markers that name a DIFFERENT side of the same club and that
+#: :func:`soccer_pair_matches` cannot see. #2866 rung 3.
+#:
+#: Its `SQUAD_QUALIFIERS` already refuses a disagreement about `b` / `ii` / `w` /
+#: `u21` / `reserves`, and its docstring states the residual it cannot close: **a
+#: reserve side with its own NAME is not caught** — `Real Madrid` matches `Real
+#: Madrid Castilla`, and `Ajax` matches `Jong Ajax Amsterdam` (measured True).
+#: Within a league that residual is harmless, because a club's senior and
+#: reserve sides are not in one competition; this pass is the first thing to
+#: compare names ACROSS competitions, and an unmapped key is exactly where
+#: reserve and amateur sides land.
+#:
+#: So these two tokens are not a remembered vocabulary of B-team names — the
+#: thing `soccer_team_matching` refuses to invent, and rightly. Each is a word
+#: carried by a `soccer_other` row on our own board today: `/api/events/search?q=Ajax`
+#: served `Jong Ajax Amsterdam` (four rows) and `Ajax Amateurs` beside the senior
+#: Ajax fixtures on 2026-09-14. A token earns its place here by appearing on a
+#: real catch-all row that this pass would otherwise fold onto a senior card,
+#: never by being recalled as a B-team word.
+#:
+#: It can only ever REFUSE, so the failure it risks is two cards — today's
+#: behaviour — and never one card holding two games.
+_DIFFERENT_SQUAD_TOKENS = frozenset({"jong", "amateurs"})
+
+
+def _names_a_different_squad(left: tuple, right: tuple) -> bool:
+    """Does one side carry a named-squad marker the other does not? #2866 rung 3."""
+    for left_name, right_name in zip(left, right):
+        disputed = set(club_alias_tokens(left_name)) ^ set(club_alias_tokens(right_name))
+        if disputed & _DIFFERENT_SQUAD_TOKENS:
+            return True
+    return False
+
+
+def _objectively_different_games(left: list, right: list) -> bool:
+    """Do these two clusters hold evidence of being TWO REAL GAMES? #2866 rung 3.
+
+    The two controls the rung-two census applied to its population, applied here
+    per pair instead, so the pass refuses a bad fold on the row in front of it
+    rather than on a measurement taken once:
+
+    * two different `espn_id`s — the authority id is one game, one id (#2693),
+      so two of them in a cluster is two games by construction;
+    * two different SCORELINES — a fold that put these on one card would have to
+      throw one away, and neither is ours to discard.
+
+    A missing value on either side is NOT evidence and never refuses: 19 of the
+    19 catch-all rows this pass acts on carry no score and no `espn_id`, so a
+    refusal on absence would refuse the entire population it exists for.
+    """
+
+    def values(members: list, attr: str) -> set:
+        return {
+            value
+            for value in (getattr(member, attr, None) for member in members)
+            if value is not None
+        }
+
+    if len(values(left, "espn_id") | values(right, "espn_id")) > 1:
+        return True
+
+    def scores(members: list) -> set:
+        found = set()
+        for member in members:
+            home = getattr(member, "home_score", None)
+            away = getattr(member, "away_score", None)
+            if home is not None or away is not None:
+                found.add((home, away))
+        return found
+
+    return len(scores(left) | scores(right)) > 1
+
+
+def _catchall_name_variant_merges(
+    clusters: list[list],
+    identities: dict,
+    sport_keys: dict,
+    league_at: dict,
+) -> list[tuple[int, int]]:
+    """`(catch-all cluster, league cluster)` pairs naming one fixture. #2866 rung 3.
+
+    Only for a catch-all cluster whose exact fixture identity found NO league
+    twin — everything the identity pass already folds is left to it, so this can
+    add merges and can never change one.
+
+    The licence is the rung-two licence plus one substitution, and it is worth
+    naming the piece that does NOT change: the catch-all row still makes no
+    claim about its competition, the league row still does, they still agree on
+    the sport and on the MINUTE, and one club cannot play two fixtures in one
+    minute. What changes is only how "the same clubs" is decided — from
+    byte-equal squashed names to :func:`soccer_pair_matches`, the same predicate
+    `_merge_soccer_name_variants` has used within a league since #5918.
+
+    Three refusals, each of which leaves both rows standing (two cards, today's
+    behaviour) rather than guessing:
+
+    * **not soccer.** The predicate measured itself on soccer boards and is used
+      on soccer rows and nowhere else, exactly as the strict pass says. The 65
+      cross-sport catch-all pairs rung two found are refused by the prefix test
+      before this is ever reached.
+    * **more than one candidate.** A catch-all cluster matching two league
+      clusters is the `Madrid` ⊆ `Real Madrid` / `Atlético Madrid` shape, and it
+      is refused WHOLE — never resolved by picking one. A league cluster claimed
+      by two catch-all clusters is refused the same way and for the same reason.
+    * **objectively two games** — see :func:`_objectively_different_games`.
+    """
+    league_by_minute: dict = {}
+    for identity, entries in league_at.items():
+        league_by_minute.setdefault(identity[2], []).extend(entries)
+    if not league_by_minute:
+        return []
+
+    def names(index: int) -> tuple:
+        rep = _group_representative(clusters[index])
+        return (
+            getattr(rep, "home_team_name", None),
+            getattr(rep, "away_team_name", None),
+        )
+
+    candidates: dict[int, set] = {}
+    for index, members in enumerate(clusters):
+        for member in members:
+            identity = identities.get(id(member))
+            if identity is None or identity in league_at:
+                continue  # the identity pass has already had its say
+            sport_key = sport_keys.get(getattr(member, "sport_id", None))
+            prefix = _catchall_sport_prefix(sport_key) if sport_key else None
+            if prefix != "soccer":
+                continue
+            for target, target_key in league_by_minute.get(identity[2], ()):
+                if target == index or not target_key.startswith(prefix):
+                    continue
+                if not soccer_pair_matches(names(index), names(target)):
+                    continue
+                if _names_a_different_squad(names(index), names(target)):
+                    logger.info(
+                        "twin fold: refused a catch-all naming another squad of "
+                        "the same club (%s x %s)",
+                        getattr(_group_representative(clusters[index]), "id", "?"),
+                        getattr(_group_representative(clusters[target]), "id", "?"),
+                    )
+                    continue
+                if _objectively_different_games(clusters[index], clusters[target]):
+                    logger.info(
+                        "twin fold: refused a catch-all name variant holding a "
+                        "second scoreline or authority id (%s x %s)",
+                        getattr(_group_representative(clusters[index]), "id", "?"),
+                        getattr(_group_representative(clusters[target]), "id", "?"),
+                    )
+                    continue
+                candidates.setdefault(index, set()).add(target)
+
+    merges: list[tuple[int, int]] = []
+    claimed: dict[int, set] = {}
+    for index, targets in candidates.items():
+        if len(targets) != 1:
+            logger.info(
+                "twin fold: refused an ambiguous catch-all name variant claimed "
+                "by %d leagues",
+                len(targets),
+            )
+            continue
+        target = next(iter(targets))
+        claimed.setdefault(target, set()).add(index)
+        merges.append((index, target))
+
+    # A league cluster two DIFFERENT catch-all clusters both name is the same
+    # ambiguity read from the other end, and union-find would join all three —
+    # putting two catch-all fixtures on one real card. Refused whole.
+    contested = {target for target, sources in claimed.items() if len(sources) > 1}
+    if contested:
+        logger.info(
+            "twin fold: refused %d league cluster(s) claimed by more than one "
+            "catch-all name variant",
+            len(contested),
+        )
+    return [(source, target) for source, target in merges if target not in contested]
+
+
 def _merge_catchall_leagues(clusters: list[list], identities: dict) -> list[list]:
     """Fold a `*_other` group into the real league naming the same fixture. #2866.
 
@@ -895,6 +1074,70 @@ def _merge_catchall_leagues(clusters: list[list], identities: dict) -> list[list
                 continue  # one cluster already holds both sides
             if all(key.startswith(prefix) for key in target_keys):
                 merges.append((index, target))
+
+    # #2866 RUNG THREE — the catch-all row that SPELLS ITS CLUBS DIFFERENTLY.
+    # Everything above pairs on the exact fixture identity, so it reaches a
+    # `*_other` row only when its club names already squash byte-identically to
+    # the league row's. Measured 2026-09-14 06:3xZ by DRIVING `fold_twin_events`
+    # over the 1,559 reader-reachable soccer rows in `[now-3d, now+8d]`: master
+    # folds 80, this folds 98 — 18 newly folded, 0 lost, every one read by hand
+    # against its survivor and every one two rows of one fixture:
+    #
+    #     Sittard v Ajax           × Fortuna Sittard v Ajax    (eredivisie)
+    #     Enschede v Den Haag      × FC Twente Enschede v ADO Den Haag
+    #     GA Eagles v Groningen    × Go Ahead Eagles v Groningen
+    #     Jeonbuk v Seoul          × Jeonbuk Hyundai Motors v FC Seoul
+    #     Bucheon v Jeju SK        × Bucheon FC 1995 v Jeju United FC
+    #     America FC v Sao Bernardo × América Mineiro v São Bernardo  … 18 in all
+    #
+    # The reader sees the league row as a FINAL with a scoreline and the
+    # catch-all row directly beneath it saying "No result reported": the league
+    # row is `completed` while the catch-all sits `suspended`/`closed`/`voided`,
+    # and NOT ONE catch-all row in the population carries a score or an
+    # `espn_id`. Both objective false-fold controls are clean across it — no
+    # pair holds two different scorelines, no pair holds two different
+    # `espn_id`s — and they are re-applied per pair below rather than trusted
+    # from the measurement.
+    #
+    # A SQL census over a wider window is deliberately not the number here. It
+    # narrowed candidates by substring containment, while the predicate this
+    # pass uses is a TOKEN SUBSET, so it missed five of the 18 outright
+    # (`GA Eagles`, `Bucheon`, `América Mineiro` twice, `Hoffenheim II`). An
+    # instrument that is not the code is a lower bound, never the population —
+    # the same way rung two's own census read 8 until `translate()` was added.
+    #
+    # 🔴 WHY THIS PASS AND NOT A WIDER BUCKET, WHICH IS THE OBVIOUS VERSION.
+    # `_merge_soccer_name_variants` already owns "same fixture, different
+    # spelling" and would answer this if its bucket were not `(league, date)`.
+    # Dropping the league from that bucket would let the name predicate run
+    # across EVERY pair of competitions, and the predicate's own docstring
+    # states the residual that makes that unsafe: a reserve side with its own
+    # NAME is not caught, so `Ajax` matches `Jong Ajax Amsterdam` (measured
+    # True). Reserve and amateur sides are exactly what an unmapped key
+    # collects — this very board carries `Jong Ajax Amsterdam` and `Ajax
+    # Amateurs` in `soccer_other` — so the league separation is what stands
+    # between those rows and a senior card today. This pass keeps that
+    # separation everywhere except where one side is a catch-all making no
+    # competition claim at all, and pays for the residual with the two
+    # objective controls and the ambiguity refusals rather than with a
+    # remembered list of B-team names, which is the unmeasured vocabulary
+    # `soccer_team_matching` exists to avoid, plus
+    # :data:`_DIFFERENT_SQUAD_TOKENS` for the two markers our own board carries.
+    # Measured over the same window: not one senior-versus-reserve pair reaches
+    # this pass, because a reserve fixture and the senior fixture it shadows do
+    # not kick off in the same MINUTE. One reserve pair IS in the population and
+    # is correct — `Hoffenheim II` × `TSG Hoffenheim II` in Liga 3, the marker on
+    # BOTH sides, which is agreement and not a conflict.
+    #
+    # The minute is exact here, not `SOCCER_KICKOFF_DRIFT`: all 18 agree to the
+    # minute once #5905's Kalshi correction has run, so the drift bound would
+    # widen the licence without folding anything it does not already fold.
+    try:
+        merges.extend(
+            _catchall_name_variant_merges(clusters, identities, sport_keys, league_at)
+        )
+    except Exception:  # noqa: BLE001 — gotcha #42; the exact-identity merges stand
+        logger.exception("twin fold: catch-all name-variant pass failed")
 
     # A catch-all cluster that would land on TWO different league clusters is
     # refused whole, the same way an ambiguous identity is above. It is the only
