@@ -505,6 +505,109 @@ def heavy_task_names(source: str) -> frozenset | None:
     return None
 
 
+#: The queue `worker-heavy` consumes, as the beat literals spell it.
+HEAVY_QUEUE = "heavy"
+#: The assignment carrying the beat literals, read from the same file.
+BEAT_SCHEDULE_ATTR = "beat_schedule"
+
+
+def heavy_queue_beat_tasks(source: str) -> frozenset | None:
+    """Tasks of every beat entry AUTHORED ``options={"queue": "heavy"}``.
+
+    **`HEAVY_TASKS` IS NOT THE LIST OF WHAT RUNS ON `worker-heavy`, AND THREE
+    JOBS LIVE IN THE GAP.** Membership routes a task there
+    (`task_routes[t] = {"queue": "heavy"}`, `app/tasks/__init__.py`), but a beat
+    entry can send its own task there without being a member, by carrying the
+    queue in its `options` — `apply_async(queue=…)` overrules `task_routes`.
+    Measured on this tree, three entries do exactly that:
+
+        refresh-linked-polymarket-books-hourly  crontab(minute=38)
+        refresh-linked-game-books-hourly        crontab(minute=20)
+        refresh-dated-fixture-starts            crontab(minute=7, hour='1-23/2')
+
+    That is #5886's second residual with names on it, and the first of the three
+    is the one with teeth: **:38 is the first minute of the push band**
+    (:func:`window_bounds`), and both book refreshers exist to give a LINKED
+    market its price (#3518 Kalshi, #3613 Polymarket). A sync that cycles
+    worker-heavy on top of one leaves those markets priceless on the page until
+    the next hourly fire — which is the half of "releases preserve incoming
+    prices" this gate was supposed to cover and could not see.
+
+    The existing guard cannot catch this: `test_heavy_beat_literals_match_their_
+    effective_queue` asserts that every HEAVY_TASKS entry SAYS heavy, which is
+    the other direction. Nothing asked whether something says heavy without
+    being a member.
+
+    Cost of closing it, measured before it was built rather than assumed
+    (`task-metrics`, 2026-09-14 07:1xZ, 50-run ring): the only one of the three
+    that fires inside the band runs **4.9-10.6 s**. So the gate waits at most
+    one `INFLIGHT_POLL_SECONDS` for it, in the one hour-minute it fires, and
+    never refuses — busy is "not yet" (#5377).
+
+    ``None`` when the `beat_schedule` assignment is missing or does not parse —
+    the caller falls back to the declared set and says so. ``frozenset()`` is a
+    REAL answer here and is not folded into ``None``, unlike
+    :func:`heavy_task_names`: no beat authored onto the heavy queue is a
+    perfectly ordinary state of this file, while an empty `HEAVY_TASKS` means
+    the parse has lost its subject.
+    """
+    import ast
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Dict):
+            continue
+        if not any(
+            isinstance(t, ast.Attribute) and t.attr == BEAT_SCHEDULE_ATTR
+            for t in node.targets
+        ):
+            continue
+        names = set()
+        for entry in node.value.values:
+            if not isinstance(entry, ast.Dict):
+                continue
+            fields = {
+                k.value: v
+                for k, v in zip(entry.keys, entry.values)
+                if isinstance(k, ast.Constant)
+            }
+            task = fields.get("task")
+            options = fields.get("options")
+            if not isinstance(task, ast.Constant) or not isinstance(task.value, str):
+                continue
+            if not isinstance(options, ast.Dict):
+                continue
+            for ok, ov in zip(options.keys, options.values):
+                if (
+                    isinstance(ok, ast.Constant)
+                    and ok.value == "queue"
+                    and isinstance(ov, ast.Constant)
+                    and ov.value == HEAVY_QUEUE
+                ):
+                    names.add(task.value)
+        return frozenset(names)
+    return None
+
+
+def heavy_worker_task_names(
+    declared: frozenset | None, authored: frozenset | None
+) -> frozenset | None:
+    """Every task that RUNS on worker-heavy, by either route.
+
+    The two arms are composed here rather than inside either parse so the caller
+    can tell WHICH one went missing and say so: an unreadable `beat_schedule`
+    narrows the gate back to exactly the set it used before this function
+    existed, which is a quieter failure than an unreadable `HEAVY_TASKS` and
+    must not be printed as the same thing.
+    """
+    if declared is None:
+        return None
+    return declared if authored is None else declared | authored
+
+
 def active_task_names(payload) -> list | None:
     """Every task name the inspect payload reports as ACTIVE, or ``None``.
 
@@ -805,7 +908,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     f = sub.add_parser(
         "inflight",
-        help="hold while a HEAVY_TASKS job is running on worker-heavy (#5886)",
+        help="hold while a job is running on worker-heavy — HEAVY_TASKS plus any "
+        "beat authored onto the heavy queue without being a member (#5886)",
     )
     f.add_argument(
         "--inspect-json",
@@ -873,7 +977,23 @@ def main(argv: list[str] | None = None) -> int:
             *HEAVY_TASKS_SOURCE.split("/"),
         )
         source = _read(source_path)
-        heavy = heavy_task_names(source) if source is not None else None
+        declared = heavy_task_names(source) if source is not None else None
+        authored = heavy_queue_beat_tasks(source) if source is not None else None
+        heavy = heavy_worker_task_names(declared, authored)
+        # STDERR, deliberately: the workflow reads the VERDICT off stdout
+        # (`${INFLIGHT_OUT%%:*}`) and leaves stderr alone so a real problem
+        # reaches the log in place. A silent narrowing is the thing worth
+        # saying — the gate still vetoes, on a set that has quietly lost an arm.
+        if declared is not None and authored is None:
+            import sys as _sys
+
+            print(
+                f"the {BEAT_SCHEDULE_ATTR} literal could not be read from "
+                f"{HEAVY_TASKS_SOURCE}, so the in-flight set is {HEAVY_TASKS_NAME} "
+                "alone — a beat authored onto the heavy queue is invisible to this "
+                "reading (#5886)",
+                file=_sys.stderr,
+            )
 
         raw = _read(args.inspect_json)
         try:
