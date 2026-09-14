@@ -579,6 +579,109 @@ class TestTheRailWritesWhatTheShipClaims:
         assert session.writes == []
 
     @pytest.mark.asyncio
+    async def test_two_distinct_same_surname_pairs_cannot_retime_event_6073(
+        self, monkeypatch
+    ):
+        """CERT-2843's witness: siblings.
+
+        `names_match` accepts a 0.5 token overlap, so on a surname alone it says
+        "Alexander Zverev" IS "Mischa Zverev". That is a reasonable third stage
+        for a matcher ranking candidates and a dangerous identity test for a rail
+        writing a kickoff — and the fixtures most likely to be confused are
+        exactly these: the Zverev brothers, the Tsitsipas brothers, the Williams
+        sisters. Two entirely different matches, four different people, every
+        surname shared.
+
+        The refusal must be a refusal: no UPDATE issued at all, and counted.
+        """
+        rows = [_row(
+            home_team_name="Mischa Zverev",
+            away_team_name="Petros Tsitsipas",
+            linked_names=["Alexander Zverev vs. Stefanos Tsitsipas"],
+            linked_external_ids=["0xsiblings"],
+        )]
+        stats, session = await _run(monkeypatch, rows)
+
+        assert stats["moved"] == 0, "a shared surname is not a shared person"
+        assert stats["rescheduled"] == 0
+        assert stats["skipped_unpaired_group"] == 1
+        assert session.writes == [], "no UPDATE may be issued at all"
+
+    @pytest.mark.asyncio
+    async def test_a_surname_only_title_cannot_retime_a_sibling_fixture_6073(
+        self, monkeypatch
+    ):
+        """The subset direction, and it is the sibling hole from the other end.
+
+        "Zverev vs. Tsitsipas" is a perfectly ordinary way for a venue to title a
+        match, and it identifies NEITHER brother. Accepting a market whose tokens
+        are a subset of the event's would re-open on surnames exactly what the
+        token-set rule closes on first names.
+
+        The event's own start is unproven by such a title, so the rail declines —
+        and because reach was measured at 204/204 without the looser rule,
+        declining costs nothing.
+
+        Found by mutation: the docstring said "deliberately NOT accepting a
+        subset" and no arm held it, so `==` -> `<=` left the file green.
+        """
+        rows = [_row(
+            home_team_name="Mischa Zverev",
+            away_team_name="Petros Tsitsipas",
+            linked_names=["Zverev vs. Tsitsipas"],
+            linked_external_ids=["0xsurnames"],
+        )]
+        stats, session = await _run(monkeypatch, rows)
+
+        assert stats["moved"] == 0
+        assert stats["skipped_unpaired_group"] == 1
+        assert session.writes == []
+
+    @pytest.mark.asyncio
+    async def test_an_extra_name_token_cannot_retime_the_fixture_6073(
+        self, monkeypatch
+    ):
+        """The superset direction, for the same reason in reverse.
+
+        A title carrying a token the event's name does not have is describing
+        someone the event does not name — a different person with an overlapping
+        name, or a different competition's entrant. `==` -> `>=` also left the
+        file green until this arm existed.
+        """
+        rows = [_row(
+            home_team_name="Zverev",
+            away_team_name="Tsitsipas",
+            linked_names=["Alexander Zverev vs. Stefanos Tsitsipas"],
+            linked_external_ids=["0xextratoken"],
+        )]
+        stats, session = await _run(monkeypatch, rows)
+
+        assert stats["moved"] == 0
+        assert stats["skipped_unpaired_group"] == 1
+        assert session.writes == []
+
+    @pytest.mark.asyncio
+    async def test_the_same_surname_pair_still_moves_when_it_is_the_same_pair_6073(
+        self, monkeypatch
+    ):
+        """The valid twin for the sibling rule, swapped for good measure.
+
+        Same surnames, same PEOPLE, listed away-then-home. A rule that declined
+        this would have closed the hole by refusing the sport.
+        """
+        rows = [_row(
+            home_team_name="Mischa Zverev",
+            away_team_name="Petros Tsitsipas",
+            linked_names=["Petros Tsitsipas vs. Mischa Zverev"],
+            linked_external_ids=["0xsameopeople"],
+        )]
+        stats, session = await _run(monkeypatch, rows)
+
+        assert stats["moved"] == 1
+        assert stats["skipped_unpaired_group"] == 0
+        assert len(session.writes) == 1
+
+    @pytest.mark.asyncio
     async def test_the_pair_may_be_named_in_either_order_6073(self, monkeypatch):
         """The valid twin for the two-sided rule.
 

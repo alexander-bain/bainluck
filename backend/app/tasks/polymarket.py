@@ -32,7 +32,9 @@ from app.utils.futures_liveness import preserve_venue_settled  # #2222
 from app.utils.event_completion import (  # #6073
     POLYMARKET_VENUE_COMMENCE_SOURCE,
 )
-from app.utils.name_normalization import names_match  # #6073 CERT-2842
+from app.utils.name_normalization import (  # #6073 CERT-2843
+    normalize_team_name_for_matching,
+)
 from app.utils.prediction_market_matching import (  # #6073 CERT-2840
     extract_matchup_with_ticker_fallback,
 )
@@ -1360,6 +1362,34 @@ REDATE_WRITE_WITH_STATUS_SQL = f"""
 """
 
 
+def _same_participant(market_name: str, event_name: str) -> bool:
+    """One competitor, named twice — or two competitors who share a surname?
+
+    CERT-2843. The house `names_match` answers a DIFFERENT question well: it
+    ranks candidates for a matcher that is trying to find a home for a market,
+    and for that a 0.5 token overlap is a reasonable third stage. Used as an
+    identity test it says "Alexander Zverev" IS "Mischa Zverev", because the
+    surname is half the tokens. The fixtures most at risk of being confused are
+    precisely the ones this rail must not confuse: the Zverev brothers, the
+    Tsitsipas brothers, the Williams sisters.
+
+    So: equal token SETS after the house normalization (which strips diacritics,
+    case and punctuation, so "Zvereva" vs "Zvereva." and accented spellings are
+    not the failure this is about). A set rather than a sequence because "Last,
+    First" and "First Last" are the same person and a market may write either;
+    every token still has to be accounted for on both sides, which is the part
+    that makes it an identity test rather than a similarity score.
+
+    Deliberately NOT accepting a subset. "Zverev" alone is a legitimate subset of
+    "Alexander Zverev" and identifies neither brother, so allowing subsets would
+    reopen the hole this closes from the other end. Measured: 204/204 reach on
+    the live band either way, so nothing is bought by the looser rule.
+    """
+    market_tokens = set(normalize_team_name_for_matching(market_name or "").split())
+    event_tokens = set(normalize_team_name_for_matching(event_name or "").split())
+    return bool(market_tokens) and market_tokens == event_tokens
+
+
 def group_names_this_fixture(
     *,
     linked_names,
@@ -1398,9 +1428,19 @@ def group_names_this_fixture(
     a tour a single player appears in a great many fixtures, so one matched name
     is close to no evidence at all.
 
-    So the comparison is `names_match` applied to both sides and required to pair
-    up one-to-one. Measured at the same 100% reach as the one-sided form (below),
-    which is what makes the stricter rule free.
+    AND EVERY TOKEN, WHICH IS CERT-2843. The next reach for the comparison is
+    the house `names_match`, and it is also the wrong tool here: its third stage
+    accepts a token overlap of 0.5, so "Alexander Zverev" and "Mischa Zverev"
+    are the same person to it, on the surname alone. That is a sensible rule for
+    a matcher trying to find a home for a market and a dangerous one for a rail
+    writing a kickoff: tennis has the Zverev brothers, the Tsitsipas brothers and
+    the Williams sisters, and a sibling pair is exactly the fixture most likely
+    to be confused with its sibling pair.
+
+    So participants are compared by `_same_participant`, below: equal NAME TOKEN
+    SETS after the house normalization. Every token has to be accounted for in
+    both directions, which is what stops a shared surname standing in for a
+    shared person.
 
     ANY of the group's linked markets satisfying it is enough. A Polymarket group
     is a parent and its children and they carry different titles; requiring all
@@ -1434,10 +1474,10 @@ def group_names_this_fixture(
             # outright — is a valid market and no evidence about when one
             # fixture starts.
             continue
-        straight = names_match(market_a, home_team_name) and names_match(
+        straight = _same_participant(market_a, home_team_name) and _same_participant(
             market_b, away_team_name
         )
-        swapped = names_match(market_a, away_team_name) and names_match(
+        swapped = _same_participant(market_a, away_team_name) and _same_participant(
             market_b, home_team_name
         )
         if straight or swapped:
