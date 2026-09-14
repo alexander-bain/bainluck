@@ -47,17 +47,29 @@ describe("describeActivityComparison", () => {
       cohort(1.0341, 263_022)
     );
 
-    test("names the moved cohort as the WORSE one, not the better one", () => {
+    // #6176: the direction is still DERIVED — `data-activity-direction` is how
+    // the audit rail reads the split — but it is no longer allowed to reach a
+    // reader. The assertion that used to demand the ranking now forbids it.
+    test("still derives the ordering as a machine fact", () => {
       expect(live.direction).toBe("moved_higher");
-      expect(live.sentence).toContain("traded cohort carries the higher calibration error");
+    });
+    test("but the sentence does not rank the two cohorts", () => {
+      expect(live.sentence).not.toMatch(/carries the higher|carries the lower/);
+      expect(live.sentence).not.toMatch(/\bhigher calibration error\b/);
+      expect(live.sentence).not.toMatch(/\blower calibration error\b/);
     });
     test("leads with both displayed values", () => {
       expect(live.sentence).toContain("1.7pp");
       expect(live.sentence).toContain("1.0pp");
     });
-    test("the ratio is higher ÷ lower, so it is never below 1", () => {
-      expect(live.ratioText).toBe("1.7");
-      expect(Number(live.ratioText)).toBeGreaterThan(1);
+    test("and says why the two numbers cannot answer the question", () => {
+      expect(live.sentence).toMatch(/different sets of outcomes/);
+      expect(live.sentence).toMatch(/does not tell you/);
+    });
+    test("the ratio is gone, not merely suppressed", () => {
+      expect("ratioText" in live).toBe(false);
+      // "1.7x the untraded cohort's" was the sharpest form of the claim.
+      expect(live.sentence).not.toMatch(/[0-9]x\b/);
     });
     test("the exact shipped-bug string cannot be produced", () => {
       expect(live.sentence).not.toContain("0.6x");
@@ -72,43 +84,41 @@ describe("describeActivityComparison", () => {
     unchanged: { ece: unknown; n: unknown };
     direction: string;
     hasSentence: boolean;
-    ratio: string | null;
   }> = [
-    { name: "changed worse", moved: cohort(2.4), unchanged: cohort(1.2), direction: "moved_higher", hasSentence: true, ratio: "2.0" },
-    { name: "changed better", moved: cohort(1.2), unchanged: cohort(2.4), direction: "unchanged_higher", hasSentence: true, ratio: "2.0" },
-    { name: "exactly equal", moved: cohort(1.5), unchanged: cohort(1.5), direction: "tied", hasSentence: true, ratio: null },
+    { name: "changed worse", moved: cohort(2.4), unchanged: cohort(1.2), direction: "moved_higher", hasSentence: true },
+    { name: "changed better", moved: cohort(1.2), unchanged: cohort(2.4), direction: "unchanged_higher", hasSentence: true },
+    { name: "exactly equal", moved: cohort(1.5), unchanged: cohort(1.5), direction: "tied", hasSentence: true },
     // Tolerance boundary: display precision IS the tolerance. 1.44 and 1.54 both
     // print as different values; 1.44 and 1.4999 both print "1.5" and must tie.
-    { name: "tie by rounding (1.4499 vs 1.5001 → 1.4 vs 1.5, still ordered)", moved: cohort(1.4499), unchanged: cohort(1.5001), direction: "unchanged_higher", hasSentence: true, ratio: "1.1" },
-    { name: "tie by rounding (1.4501 vs 1.5000 → both 1.5)", moved: cohort(1.4501), unchanged: cohort(1.5), direction: "tied", hasSentence: true, ratio: null },
+    { name: "tie by rounding (1.4499 vs 1.5001 → 1.4 vs 1.5, still ordered)", moved: cohort(1.4499), unchanged: cohort(1.5001), direction: "unchanged_higher", hasSentence: true },
+    { name: "tie by rounding (1.4501 vs 1.5000 → both 1.5)", moved: cohort(1.4501), unchanged: cohort(1.5), direction: "tied", hasSentence: true },
     // Ordered but the ratio would print "1.0x", which reads as "the same".
-    { name: "ordered, ratio rounds to 1.0 → ratio suppressed", moved: cohort(9.9), unchanged: cohort(9.8), direction: "moved_higher", hasSentence: true, ratio: null },
+    { name: "ordered, ratio rounds to 1.0 → ratio suppressed", moved: cohort(9.9), unchanged: cohort(9.8), direction: "moved_higher", hasSentence: true },
     // Zero denominator: a real 0.0pp side makes higher/lower infinite.
-    { name: "zero lower side → ordering kept, ratio suppressed", moved: cohort(1.3), unchanged: cohort(0), direction: "moved_higher", hasSentence: true, ratio: null },
-    { name: "both zero", moved: cohort(0), unchanged: cohort(0), direction: "tied", hasSentence: true, ratio: null },
+    { name: "zero lower side → ordering kept, ratio suppressed", moved: cohort(1.3), unchanged: cohort(0), direction: "moved_higher", hasSentence: true },
+    { name: "both zero", moved: cohort(0), unchanged: cohort(0), direction: "tied", hasSentence: true },
     // Missing / empty cohorts: the comparison is suppressed entirely.
-    { name: "missing moved ECE", moved: { ece: null, n: 10_000 }, unchanged: cohort(1.0), direction: "unknown", hasSentence: false, ratio: null },
-    { name: "missing unchanged ECE", moved: cohort(1.0), unchanged: { ece: undefined, n: 10_000 }, direction: "unknown", hasSentence: false, ratio: null },
-    { name: "empty moved cohort (n=0)", moved: cohort(0, 0), unchanged: cohort(1.0), direction: "unknown", hasSentence: false, ratio: null },
-    { name: "missing n", moved: cohort(1.0), unchanged: { ece: 1.0, n: null }, direction: "unknown", hasSentence: false, ratio: null },
+    { name: "missing moved ECE", moved: { ece: null, n: 10_000 }, unchanged: cohort(1.0), direction: "unknown", hasSentence: false },
+    { name: "missing unchanged ECE", moved: cohort(1.0), unchanged: { ece: undefined, n: 10_000 }, direction: "unknown", hasSentence: false },
+    { name: "empty moved cohort (n=0)", moved: cohort(0, 0), unchanged: cohort(1.0), direction: "unknown", hasSentence: false },
+    { name: "missing n", moved: cohort(1.0), unchanged: { ece: 1.0, n: null }, direction: "unknown", hasSentence: false },
     // Non-finite: NaN/Infinity render as plausible text if they ever reach copy.
-    { name: "NaN moved", moved: cohort(NaN), unchanged: cohort(1.0), direction: "unknown", hasSentence: false, ratio: null },
-    { name: "Infinity unchanged", moved: cohort(1.0), unchanged: cohort(Infinity), direction: "unknown", hasSentence: false, ratio: null },
-    { name: "-Infinity moved", moved: cohort(-Infinity), unchanged: cohort(1.0), direction: "unknown", hasSentence: false, ratio: null },
+    { name: "NaN moved", moved: cohort(NaN), unchanged: cohort(1.0), direction: "unknown", hasSentence: false },
+    { name: "Infinity unchanged", moved: cohort(1.0), unchanged: cohort(Infinity), direction: "unknown", hasSentence: false },
+    { name: "-Infinity moved", moved: cohort(-Infinity), unchanged: cohort(1.0), direction: "unknown", hasSentence: false },
     // Poison: ECE is a mean of absolute errors, so a negative one is corrupt
     // input. Refuse it rather than ranking it as "best calibrated".
-    { name: "poison negative ECE", moved: cohort(-3.0), unchanged: cohort(1.0), direction: "unknown", hasSentence: false, ratio: null },
-    { name: "poison negative n", moved: cohort(1.0, -5), unchanged: cohort(1.0), direction: "unknown", hasSentence: false, ratio: null },
-    { name: "poison non-numeric ECE", moved: { ece: "1.0", n: 10_000 }, unchanged: cohort(2.0), direction: "unknown", hasSentence: false, ratio: null },
+    { name: "poison negative ECE", moved: cohort(-3.0), unchanged: cohort(1.0), direction: "unknown", hasSentence: false },
+    { name: "poison negative n", moved: cohort(1.0, -5), unchanged: cohort(1.0), direction: "unknown", hasSentence: false },
+    { name: "poison non-numeric ECE", moved: { ece: "1.0", n: 10_000 }, unchanged: cohort(2.0), direction: "unknown", hasSentence: false },
   ];
 
-  test.each(cases)("$name", ({ moved, unchanged, direction, hasSentence, ratio }) => {
+  test.each(cases)("$name", ({ moved, unchanged, direction, hasSentence }) => {
     const r = describeActivityComparison(
       moved as { ece: number; n: number },
       unchanged as { ece: number; n: number }
     );
     expect(r.direction).toBe(direction);
-    expect(r.ratioText).toBe(ratio);
     expect(r.sentence === null).toBe(!hasSentence);
   });
 
@@ -133,28 +143,49 @@ describe("describeActivityComparison", () => {
         expect(s).not.toMatch(/NaN|Infinity|undefined|null/);
       }
     });
-    test("a shown ratio is always >= 1 and matches the two displayed values", () => {
+    // #6176. The ratio invariant that stood here proved the RATIO was honest.
+    // The ratio is gone, so this asserts the stronger property that replaced
+    // it: no case emits one at all, in any form a reader could read as one.
+    test("no case emits a ratio, a multiple, or a comparative", () => {
       for (const c of cases) {
         const r = describeActivityComparison(
           c.moved as { ece: number; n: number },
           c.unchanged as { ece: number; n: number }
         );
-        if (!r.ratioText) continue;
-        const hi = Math.max(Number(r.movedText), Number(r.unchangedText));
-        const lo = Math.min(Number(r.movedText), Number(r.unchangedText));
-        expect(Number(r.ratioText)).toBeGreaterThanOrEqual(1);
-        expect(r.ratioText).toBe((hi / lo).toFixed(1));
+        expect("ratioText" in r).toBe(false);
+        if (!r.sentence) continue;
+        expect(r.sentence).not.toMatch(/[0-9]x\b|\btimes\b/);
+        expect(r.sentence).not.toMatch(/\b(higher|lower|worse|best|worst|outperform\w*)\b/i);
       }
     });
-    test("argument order decides only which label is named, never the ordering", () => {
-      const a = describeActivityComparison(cohort(2.4), cohort(1.2));
-      const b = describeActivityComparison(cohort(1.2), cohort(2.4));
-      expect(a.direction).toBe("moved_higher");
-      expect(b.direction).toBe("unchanged_higher");
-      expect(a.ratioText).toBe(b.ratioText);
-      // Both must name 2.4pp as the higher one, whichever slot it sat in.
-      expect(a.sentence).toContain("traded cohort carries the higher");
-      expect(b.sentence).toContain("untraded cohort carries the higher");
+
+    // #6176's load-bearing guard, and the one that fails if anybody reinstates
+    // a ranking in any wording at all. Whichever cohort is in front, the
+    // sentence must be the SAME sentence — so once the two numbers are masked
+    // out, the two strings are character-for-character identical. A ranking
+    // cannot survive that, because a ranking has to name a side.
+    test("the sentence differs only in its numbers, never in its claim", () => {
+      const mask = (s: string | null) => (s ?? "").replace(/[0-9]+\.[0-9]pp/g, "#pp");
+      const movedWorse = describeActivityComparison(cohort(2.4), cohort(1.2));
+      const unchangedWorse = describeActivityComparison(cohort(1.2), cohort(2.4));
+      const tied = describeActivityComparison(cohort(1.5), cohort(1.5));
+
+      // The ordering is still derived...
+      expect(movedWorse.direction).toBe("moved_higher");
+      expect(unchangedWorse.direction).toBe("unchanged_higher");
+      expect(tied.direction).toBe("tied");
+
+      // ...and is invisible in what the reader is handed.
+      expect(mask(movedWorse.sentence)).toBe(mask(unchangedWorse.sentence));
+      expect(mask(tied.sentence)).toBe(mask(movedWorse.sentence));
+
+      // Non-vacuity: the mask must not have eaten the whole sentence, and the
+      // numbers themselves must still be there unmasked in each one.
+      expect(mask(movedWorse.sentence).length).toBeGreaterThan(60);
+      expect(movedWorse.sentence).toContain("2.4pp");
+      expect(movedWorse.sentence).toContain("1.2pp");
+      expect(unchangedWorse.sentence).toContain("2.4pp");
+      expect(unchangedWorse.sentence).toContain("1.2pp");
     });
   });
 });

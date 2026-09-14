@@ -44,6 +44,58 @@ export function ece(cal: CalibrationErrorBucket[]): number {
 //      sensitive: a synthetic mix where moved was better within BOTH strata
 //      still inverted in aggregate. An ordering is an ordering. When it can't
 //      be computed honestly, we say nothing — nothing > unhelpful.
+//
+// ---------------------------------------------------------------------------
+// #6176 — AND RULE 2 DID NOT GO FAR ENOUGH: AN ORDERING IS ALSO A CLAIM
+// (Alex, Sun 2026-09-14, relayed verbatim by the codex coordinator 07:43 PT)
+// ---------------------------------------------------------------------------
+//
+// Rule 2 above forbids saying trading CAUSED the gap, and the sentence obeyed
+// it to the letter — "in this sample the untraded cohort carries the higher
+// calibration error" asserts no cause. Alex read the page anyway and reported
+// it as saying **untraded markets are more accurate than traded ones**, which
+// is the inference a reader draws from a ranking whether or not the prose
+// disclaims the mechanism. Refusing to say "because" does not stop a reader
+// hearing it.
+//
+// And the deeper objection is not about the wording at all:
+//
+//   > Current code compares DIFFERENT outcome cohorts by price_moved and
+//   > aggregate ECE; it is not an opening-to-close improvement test on the SAME
+//   > outcomes. [...] Existing aggregate section must not claim trading
+//   > improves/worsens accuracy from this cross-cohort result.
+//
+// The two sides are two different populations, so no ordering between them is
+// evidence about what trading does to a forecast — not a weak one, not a
+// qualified one, none. calibration/1215 measured why the nouns are wrong too:
+// the predicate is `calibration_probability IS DISTINCT FROM
+// opening_probability`, a value inequality that reads no clock and no trade;
+// the "untraded" arm is dominated by rows where we hold no second price at all
+// (CAL-P077: 37-84% of every cell), and `datagolf` can never leave it because
+// `backfill_winners` sets the two columns equal outright. The cohorts differ by
+// capture quality and source mix. Any ranking reports that, whichever way it
+// rounds.
+//
+// SO THE RANKING IS WITHDRAWN, AND ONLY THE RANKING. The two figures still
+// render, both curves still draw, and the matched-bucket table above them --
+// which holds the probability mix fixed and is a genuinely different
+// comparison -- is untouched. Alex's same instruction forbids hiding contrary
+// evidence, so nothing is deleted: what goes is the inference, and the sentence
+// now says in plain words why these two numbers cannot answer the question the
+// section's heading asks.
+//
+// WHAT THIS IS NOT. It is not the rename Alex explicitly refused ("Do NOT ship
+// Price changed/Price unchanged as the proposed solution") -- the cohort nouns
+// are deliberately left exactly as they are. It is not the replacement either:
+// the section that answers "do forecasts improve as the event approaches" needs
+// a PAIRED cohort (same outcome, two real strictly-pre-start observations), and
+// that is calibration's #1544 substrate, landed inert and not yet measured. ux
+// writes that copy WITH calibration once the number exists. This is the interim
+// state the correction mandates in the present tense: the claim comes down now.
+//
+// The ratio ("1.7x the traded cohort's") is deleted rather than suppressed. It
+// was the sharpest form of the withdrawn claim, and a null field that nothing
+// may render is an invitation to render it again.
 // ---------------------------------------------------------------------------
 
 /** Decimal places every ECE on the calibration page is rendered with. */
@@ -58,14 +110,19 @@ export interface ActivityCohort {
 }
 
 export interface ActivityComparison {
-  /** Which cohort carries the HIGHER error, judged at display precision. */
+  /**
+   * Which cohort carries the HIGHER error, judged at display precision.
+   *
+   * #6176: this is a MACHINE fact and is no longer allowed to reach a reader,
+   * in prose or in pixels. It survives because `data-activity-direction` is how
+   * the audit rail reads the split without re-deriving it; nothing renders a
+   * verdict from it.
+   */
   direction: "moved_higher" | "unchanged_higher" | "tied" | "unknown";
   /** Moved cohort ECE exactly as printed, e.g. "1.7". null when unusable. */
   movedText: string | null;
   /** Unchanged cohort ECE exactly as printed. null when unusable. */
   unchangedText: string | null;
-  /** higher ÷ lower at display precision, e.g. "1.7". null when unstateable. */
-  ratioText: string | null;
   /** The sentence to render. null means render no comparison at all. */
   sentence: string | null;
 }
@@ -74,7 +131,6 @@ const UNRENDERABLE: ActivityComparison = {
   direction: "unknown",
   movedText: null,
   unchangedText: null,
-  ratioText: null,
   sentence: null,
 };
 
@@ -89,9 +145,15 @@ function cohortValue(c: ActivityCohort | null | undefined): number | null {
 }
 
 /**
- * Direction-aware, causation-free description of the trading-activity split.
+ * Ranking-free description of the trading-activity split.
  *
- * Returns `sentence: null` for every state where a comparison cannot be made
+ * States both figures and what they cannot establish. It does NOT order the two
+ * cohorts, in prose or in a ratio — see the #6176 block above: they are
+ * different populations, so an ordering between them is not evidence about what
+ * trading does to a forecast, and a reader hears the causal claim regardless of
+ * how carefully the prose disclaims it.
+ *
+ * Returns `sentence: null` for every state where the figures cannot be stated
  * honestly — a missing cohort, an empty cohort, NaN/Infinity, a negative ECE.
  * The caller renders nothing in that case rather than guessing.
  */
@@ -105,6 +167,7 @@ export function describeActivityComparison(
 
   const movedText = m.toFixed(ECE_DISPLAY_DP);
   const unchangedText = u.toFixed(ECE_DISPLAY_DP);
+
   // UX-P075 item (c), Alex 2026-08-13: one vocabulary on this page. The cohorts
   // were "price moved"/"price unchanged" here, "Active Trading"/"Opening Price
   // Only" on the stat cards, and something else again in the toggle banner —
@@ -112,44 +175,20 @@ export function describeActivityComparison(
   // (`lib/calibrationCohort.ts` carries the reversal of L2-236's contrary
   // decision, in the open, per ruling 055 — and the proxy footnote that Alex
   // required to travel with the short word.)
-  const lead = `Traded sits at ${movedText}pp and untraded at ${unchangedText}pp`;
-
-  if (m === u) {
-    return {
-      direction: "tied",
-      movedText,
-      unchangedText,
-      ratioText: null,
-      sentence: `${lead} — effectively the same calibration error in this sample.`,
-    };
-  }
-
-  const movedHigher = m > u;
-  const higher = movedHigher ? m : u;
-  const lower = movedHigher ? u : m;
-  const higherLabel = movedHigher ? "traded" : "untraded";
-  const lowerLabel = movedHigher ? "untraded" : "traded";
-
-  // The ratio is suppressed when the smaller side rounds to 0.0pp (division by
-  // zero) and when it would print as "1.0x", which reads as "the same" beside
-  // prose that just said one is higher.
-  let ratioText: string | null = null;
-  if (lower > 0) {
-    const r = (higher / lower).toFixed(ECE_DISPLAY_DP);
-    if (r !== "1.0") ratioText = r;
-  }
-
-  const tail = ratioText
-    ? `, ${ratioText}x the ${lowerLabel} cohort's`
-    : "";
+  //
+  // #6176 leaves those nouns exactly where they are. Alex refused the rename as
+  // the fix, so what moves here is the claim, never the vocabulary.
   return {
-    direction: movedHigher ? "moved_higher" : "unchanged_higher",
+    // Still computed, still published as a data attribute, never rendered as a
+    // verdict — in prose here or in a value colour on the page.
+    direction: m === u ? "tied" : m > u ? "moved_higher" : "unchanged_higher",
     movedText,
     unchangedText,
-    ratioText,
     sentence:
-      `${lead} — in this sample the ${higherLabel} cohort carries the ` +
-      `higher calibration error${tail}.`,
+      `Traded sits at ${movedText}pp and untraded at ${unchangedText}pp. ` +
+      `These are two different sets of outcomes, not the same forecasts ` +
+      `measured twice, so the gap between them does not tell you whether ` +
+      `trading moved a price closer to the truth.`,
   };
 }
 

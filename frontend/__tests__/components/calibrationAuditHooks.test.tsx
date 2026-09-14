@@ -280,6 +280,90 @@ describe("the hooks carry the machine-readable state the rail grades on", () => 
     expect(SOURCE).toContain("data-activity-direction={activity.direction}");
   });
 
+  // =========================================================================
+  // #6176 (Alex, 2026-09-14): the aggregate cohort split may state both
+  // figures and rank neither. `describeActivityComparison` is guarded in
+  // calibrationMath.test.ts; these three literals live in the JSX, where that
+  // module cannot reach them, and each one is a way to render the withdrawn
+  // claim without emitting a single word of it.
+  // =========================================================================
+
+  test("the two aggregate tiles do not colour a winner and a loser", () => {
+    // L2-230 established on this very page that the value colour IS part of
+    // the claim. With the ordering withdrawn there is nothing honest for it to
+    // follow, so both tiles are neutral and `activity.direction` reaches the
+    // page only as the data attribute asserted above.
+    for (const testId of ["calibration-activity-moved", "calibration-activity-unchanged"]) {
+      const i = SOURCE.indexOf(`testId="${testId}"`);
+      expect(i).toBeGreaterThan(-1);
+      const block = SOURCE.slice(i, i + 320);
+      expect(block).toContain('valueClass="text-text-primary"');
+      // The exact shapes that encoded the verdict before.
+      expect(block).not.toContain("text-green-600");
+      expect(block).not.toContain("text-orange-600");
+      expect(block).not.toContain("activity.direction ===");
+    }
+  });
+
+  test("the aggregate curve's two series are not the good/bad colour pair", () => {
+    // Same claim as the tiles, in the most legible pixels on the page: green
+    // for one cohort and red for the other, on a chart whose whole subject is
+    // which side sits closer to the diagonal.
+    const i = SOURCE.indexOf("data: movedBuckets");
+    expect(i).toBeGreaterThan(-1);
+    const block = SOURCE.slice(i, i + 400);
+    expect(block).toContain("label: `Traded (");     // the nouns are unchanged
+    expect(block).toContain("label: `Untraded (");
+    expect(block).not.toContain("#16a34a");          // green
+    expect(block).not.toContain("#dc2626");          // red
+    // Categorical, drawn from the page's own palette, and the two series must
+    // still be TELLABLE APART. "Different index" is NOT that test: the first
+    // attempt here was COLORS[0] blue + COLORS[4] violet, two different indices
+    // ~42 degrees of hue apart, and the LOOK showed the curves blending into
+    // one purple mass. So the separation is measured, off the palette's own
+    // hexes, at the distance that failure sat just under.
+    const used = [...block.matchAll(/color: COLORS\[(\d+)\]/g)].map(m => Number(m[1]));
+    expect(used).toHaveLength(2);
+    expect(used[0]).not.toBe(used[1]);
+
+    const palette = SOURCE.slice(SOURCE.indexOf("const COLORS = ["));
+    const hexes = [...palette.slice(0, palette.indexOf("]")).matchAll(/#([0-9a-f]{6})/gi)]
+      .map(m => m[1]);
+    expect(hexes.length).toBeGreaterThanOrEqual(6);
+
+    const hue = (hex: string) => {
+      const [r, g, b] = [0, 2, 4].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
+      const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+      if (d === 0) return 0;
+      const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+      return (h * 60 + 360) % 360;
+    };
+    const [h1, h2] = used.map(i => hue(hexes[i]));
+    const separation = Math.min(Math.abs(h1 - h2), 360 - Math.abs(h1 - h2));
+    expect(separation).toBeGreaterThanOrEqual(60);
+
+    // The good/bad pair must not come back through the PALETTE either. The two
+    // `not.toContain` assertions above only see a hex spelled in the JSX, and
+    // `COLORS[1]`/`COLORS[2]` resolve to exactly #16a34a and #dc2626 while
+    // passing both of them and the hue test (green and red are 142 degrees
+    // apart). So the ban is re-applied to the RESOLVED colours.
+    const resolved = used.map(i => `#${hexes[i]}`.toLowerCase());
+    expect(resolved).not.toContain("#16a34a");
+    expect(resolved).not.toContain("#dc2626");
+  });
+
+  test("no prose in the section ranks the two cohorts", () => {
+    // The sentence is composed in `lib/calibrationMath.ts`, but the fold's own
+    // intro paragraph is a page literal and said "whichever side lands lower
+    // here is an observed ordering" — which invites exactly the reading Alex
+    // reported, however carefully the next clause disclaims the cause.
+    const i = SOURCE.indexOf('data-testid="calibration-overall-split"');
+    expect(i).toBeGreaterThan(-1);
+    const block = SOURCE.slice(i, i + 1200);
+    expect(block).not.toMatch(/whichever side lands lower/);
+    expect(block).toMatch(/different sets of outcomes/);
+  });
+
   test("the matched-bucket comparison LEADS the section, ahead of the tiles", () => {
     // CAL-P025 / exit-exam item 2 is an ordering requirement, not an addition:
     // "led by the matched-bucket comparison; the raw cross-cohort tiles are
