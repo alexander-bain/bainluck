@@ -442,6 +442,12 @@ class TestThePositionAgreesWithTheLabel:
             Column("period", String),
             Column("espn_id", String),
             Column("statpal_fixture_id", String),
+            # #6031: `started_without_result_rows` now spends
+            # `event_rails.rail_commence_floor`, which reads these two to tell a
+            # stored kick-off from Kalshi's expected-expiration instant. Left
+            # NULL by every row here, so every row takes the plain floor.
+            Column("external_id", String),
+            Column("commence_time_source", String),
         )
         Table(
             "sports", md,

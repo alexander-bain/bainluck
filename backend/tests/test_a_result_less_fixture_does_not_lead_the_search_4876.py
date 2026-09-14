@@ -69,7 +69,18 @@ SPORT_KEYS = {LIT_SPORT_ID: "tennis_atp"}
 def _create_schema(md):
     """Only what this ORDER BY touches. The models' JSONB columns cannot be
     created under SQLite; the EXPRESSION under test is the shipping one and
-    renders `events.<column>` by name, so it binds here unchanged."""
+    renders `events.<column>` by name, so it binds here unchanged.
+
+    ⚠️ THE COLUMN SET TRACKS THE EXPRESSION, and a column the expression grows
+    is not optional here: SQLite answers a missing one with
+    `OperationalError: no such column`, which fails this suite loudly rather
+    than quietly — which is the behaviour to want, and is how #6031 was made to
+    declare itself. `external_id` and `commence_time_source` arrived with that
+    issue: `started_without_result_rows` now spends
+    `event_rails.rail_commence_floor`, which reads both to decide whether a
+    row's stored hour is Kalshi's expected expiration rather than a kick-off.
+    Every row this suite inserts leaves them NULL, so every row takes the plain
+    floor and nothing below changes meaning."""
     from sqlalchemy import Column, DateTime, Integer, MetaData, String, Table
 
     assert isinstance(md, MetaData)
@@ -85,6 +96,8 @@ def _create_schema(md):
         Column("period", String),
         Column("espn_id", String),
         Column("statpal_fixture_id", String),
+        Column("external_id", String),
+        Column("commence_time_source", String),
     )
     sports = Table(
         "sports",
