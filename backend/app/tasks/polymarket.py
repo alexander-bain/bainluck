@@ -1470,7 +1470,12 @@ async def _process_event_batch(
                         sub_market_id = sub_result.scalar_one()
 
                         # Create Over/Yes outcome
-                        over_name = "Over" if "o/u" in sub_name.lower() else "Yes"
+                        over_name = _sub_market_side_label(
+                            market,
+                            0,
+                            sub_name,
+                            "Over" if "o/u" in sub_name.lower() else "Yes",
+                        )
                         over_american = probability_to_american(prob) if 0 < prob < 1 else None
 
                         sub_has_trading = (
@@ -1587,7 +1592,12 @@ async def _process_event_batch(
                         # Create Under/No outcome if available
                         if len(market.outcome_prices) > 1:
                             under_prob = market.outcome_prices[1]
-                            under_name = "Under" if "o/u" in sub_name.lower() else "No"
+                            under_name = _sub_market_side_label(
+                                market,
+                                1,
+                                sub_name,
+                                "Under" if "o/u" in sub_name.lower() else "No",
+                            )
                             under_american = probability_to_american(under_prob) if 0 < under_prob < 1 else None
 
                             # The Under/No side must open at ITS OWN price, not the
@@ -2960,6 +2970,47 @@ def _leg_label(market, event_title: str) -> str:
 # A leg labelled only "Yes"/"No" names no side, so it is never a rescue for a
 # label that has collapsed onto the market's own name (see :func:`_leg_label`).
 _YES_NO_LABELS = frozenset({"yes", "no"})
+
+
+def _sub_market_side_label(market, index: int, sub_name: str, fallback: str) -> str:
+    """The label for a decomposed sub-market's ``outcome_prices[index]`` side.
+
+    #6050. :func:`_leg_label` already settled this question for the PARENT
+    writer (Q492) and the decomposed sub-market writer never inherited it, so
+    the two paths disagreed about the same venue field. The sub-market writer
+    named both sides positionally — ``"Yes"``/``"No"`` unless the name said
+    "o/u" — which is right for a sub-market whose own name asks the question
+    ("Both Teams to Score", "D/ST Touchdown") and wrong for a game moneyline,
+    where Polymarket sends ``question`` set to the matchup itself and puts the
+    two sides in ``outcomes``. Production served
+    "Broncos vs. Chiefs — Yes 43.5% / No 56.5%" while the venue's own payload
+    for that condition read ``outcomes: ["Broncos", "Chiefs"]``: the reader
+    cannot recover which team "Yes" is, and the answer was one field away.
+
+    ``outcomes`` is the parallel array to ``outcome_prices`` (the same rule
+    :func:`_leg_label` rests on), so ``outcomes[index]`` is definitionally the
+    side this price belongs to — there is no orientation guess here.
+
+    Deliberately a RESCUE and not a rename: the venue's token is taken only
+    when it actually names a side. A bare ``Yes``/``No`` token names no side
+    either, and a token equal to the sub-market's own name reproduces the
+    collapse we are trying to undo, so both keep ``fallback``. That is what
+    keeps every genuine Yes/No sub-market — the large majority — byte-identical.
+    """
+    if _label_key(fallback) not in _YES_NO_LABELS:
+        # "Over"/"Under" already names its side; never second-guess it.
+        return fallback
+
+    tokens = list(getattr(market, "outcomes", None) or [])
+    if index >= len(tokens):
+        return fallback
+
+    token = (tokens[index] or "").strip()
+    if not token or _label_key(token) in _YES_NO_LABELS:
+        return fallback
+    if _label_key(token) == _label_key(sub_name):
+        return fallback
+    return token
 
 
 def _extract_outcome_name(question: str, event_title: str) -> str:
