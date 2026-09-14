@@ -940,6 +940,42 @@ jobs:
             exit 1
           fi
 
+      - name: "#6073 the re-date declines a row that moved under it (real Postgres)"
+        # CERT-2834. The re-date sweep selects its whole band in one statement
+        # and then writes row by row. The realtime pollers write into exactly
+        # that band every two minutes, so a score landing between the select and
+        # the write was overwritten by a repair holding a tuple it read seconds
+        # ago — committing `status = 'scheduled'` onto a game a reader can see
+        # has started. #6073's own defect, inverted and re-shipped by its fix.
+        #
+        # The guard is the write's own WHERE, which re-states every column the
+        # decision was made on. A session double cannot grade one: under a fake,
+        # `IS NOT DISTINCT FROM` and `=` are the same characters in a recorded
+        # string, and the difference between them is the difference between
+        # declining six nullable columns correctly and declining the entire
+        # band. Nor can a fake answer whether `CAST(:was_commence AS
+        # timestamptz)` satisfies asyncpg's parameter-type inference — and the
+        # sweep is wrapped in `except Exception` inside the poll, so an uncast
+        # bind is a rail that is dead in production and green in CI forever.
+        #
+        # So each arm drives the shipped sweep with a competing writer
+        # committing on a separate connection inside the window, and reads the
+        # result back on a third. The uncontested arm is not decoration: without
+        # it `WHERE false` passes every other assertion in the file.
+        #
+        # Same skip-detection as every gate in this job, for the same reason:
+        # pytest exits 0 when every test skips, so a gate that silently did not
+        # run is indistinguishable from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest \
+            tests/integration/test_polymarket_redate_atomicity_6073_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/redate_atomicity_6073.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/redate_atomicity_6073.txt; then
+            echo "::error::#6073 re-date atomicity gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#5918 the league rail loads the sport the fold reads (real Postgres)"
         # CERT-2805's finding, and it is a reach defect rather than a logic one:
         # the soccer name-pair fold worked and never fired on the page. All three

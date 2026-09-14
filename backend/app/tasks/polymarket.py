@@ -29,6 +29,15 @@ from app.utils.content_understanding import (  # CU-1 clause (2), #5273
 )
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
 from app.utils.futures_liveness import preserve_venue_settled  # #2222
+from app.utils.event_completion import (  # #6073
+    POLYMARKET_VENUE_COMMENCE_SOURCE,
+)
+from app.utils.name_normalization import (  # #6073 CERT-2847
+    strip_diacritics,
+)
+from app.utils.prediction_market_matching import (  # #6073 CERT-2840
+    extract_matchup_with_ticker_fallback,
+)
 from app.utils.pair_opening_coherence import (
     OK as PAIR_OPENING_OK,
     classify_pair_opening,
@@ -1006,6 +1015,16 @@ async def _poll_polymarket_markets():
     # this must not be weaker than that. `stats` is reported either way.
     stats["sub_markets_linked"] = await link_polymarket_sub_markets()
 
+    # #6073, AFTER the link sweep and for the same reason it sits after the
+    # `finally`: it reads `event_id` on the child rows that sweep has just
+    # written, so running it earlier would scan a corpus missing exactly the rows
+    # this poll repaired. Its own failure must not cost the poll its stats.
+    try:
+        stats["redated_events"] = await redate_polymarket_listing_stamped_events()
+    except Exception as e:  # noqa: BLE001 - one repair must not fail a whole poll
+        stats["errors"].append(f"redate: {e}")
+        logger.exception("Polymarket re-date sweep (#6073) failed")
+
     stats["total_api_events"] = len(seen_ids)
     logger.info(
         "Polymarket poll: %d API events → %d processed, %d markets, %d outcomes, %d snapshots, %d crypto skipped, %d errors | by_category: %s",
@@ -1085,6 +1104,645 @@ async def link_polymarket_sub_markets() -> int:
         result = await session.execute(_text(LINK_SUB_MARKETS_SQL))
         await session.commit()
         return result.rowcount or 0
+
+
+# ── #6073: re-date the fixtures ALREADY minted from the listing stamp ─────────
+#
+# The other two halves of #6073 are PREVENTION and they only reach a mint:
+# `sub_market_metadata` stamps `venue_game_start` on the child row (this module),
+# and `auto_create_commence_time` prefers it when it dates a NEW event (lane1's
+# `a02aca00a`). Neither re-dates a row that already exists, and
+# `commence_time_write_authorized` cannot: `_SOURCE_PRIORITY` ranks
+# `polymarket_venue` and `polymarket` equally (deliberately — same provider, same
+# authority), a tie loses, and the `same_record_revision` path needs
+# `incoming_source == current_source`, which a row stamped plain `polymarket`
+# fails. So the standing population is unreachable by design and needs its own
+# rail. This is it — CERT-2826's named repair.
+#
+# MEASURED ON PRODUCTION, 2026-09-14 (the whole band, not a sample):
+#
+#     events with commence_time_source='polymarket'      25,079
+#       ├─ closed                                        17,633   not touched
+#       ├─ voided                                         6,261   not touched
+#       ├─ suspended                                      1,175 ┐ the reader-visible
+#       └─ live                                              10 ┘ band
+#     of that band, still holding a linked Polymarket market    827
+#       ├─ group carries a venue_game_start                     820
+#       └─ no stamp anywhere in the group                         7   skipped
+#     of the 820, venue start LATER than ours              820  (100 %)
+#     of the 820, venue start EARLIER than ours              0
+#     of the 827, venue start still in the FUTURE          566
+#
+# **Not one of the 25,079 is `scheduled`.** The listing stamp is always in the
+# past, so every row minted from it has already sailed past its invented kickoff
+# — which is why the band is `suspended`, and why the page renders "No result
+# reported" for matches nobody has played. The skew runs +0.33 h to +658 h and is
+# CONTINUOUS (10 / 197 / 200 / 180 / 233 across <6h, 6-24h, 1-3d, 3-7d, >7d), so
+# there is no cliff separating "real skew" from "wrong stamp" and a magnitude cap
+# would be a fiction — worse, it would exclude the 233 rows that are most plainly
+# broken, every one of which has a start still in the future. Polymarket simply
+# lists some fixtures weeks ahead. The guards below are the measured ones instead.
+#
+# WHY THE STATUS MOVES WITH THE DATE, IN ONE TRANSACTION. Re-dating alone is
+# INERT for the reader: nothing in the state machine demotes `suspended`, so the
+# row would carry a correct future start and keep saying "No result reported"
+# forever. Worse, writing the status alone would be undone within a beat —
+# `espn_sync`'s `scheduled → live` arm selects on `commence_time <= now`, so a row
+# set back to `scheduled` while still holding the listing stamp is promoted
+# straight back. The two writes are only correct together, which is why they are
+# one UPDATE.
+#
+# THE EVIDENCE THAT SAYS THESE MATCHES HAVE NOT BEEN PLAYED. Of the 566 rows this
+# moves to `scheduled`: **0 carry a score, 0 a period, 0 a game clock, 0 a
+# `completed_at`.** Not most — the entire population, the same shape and the same
+# argument `commence_time_is_a_reported_start` makes one module over about its own
+# 705 rows. The predicate below still refuses on any of those four signals, so the
+# guard is real rather than decorative the day one of them appears.
+
+#: Candidate rows for the re-date, with their group's venue instant.
+#:
+#: Module scope and public for the same reason ``LINK_SUB_MARKETS_SQL`` is: a
+#: guard can execute it without driving a whole poll.
+#:
+#: Two group-level gates, both measured rather than assumed:
+#:
+#: * ``n_stamps = 1`` — a group must agree with itself about when the fixture is.
+#:   Measured 2026-09-14: no group carries two distinct ``venue_game_start``
+#:   values (max 1 of 895), so this costs nothing today and fails CLOSED if that
+#:   ever stops being true, rather than letting ``min()`` pick a winner by
+#:   collation.
+#: * ``n_events = 1`` — a group must name exactly ONE event. Measured: **21 of
+#:   895 groups link to 2 or 3 different events.** A group holds ONE fixture
+#:   instant, so on those the same instant would be written onto up to three
+#:   different fixtures and at most one could be right. That is a MATCHING defect
+#:   (the twins class, #2693 / lane1's), not a dating one, and re-dating it would
+#:   paper over it with a confident wrong time. They are excluded and counted.
+REDATE_LISTING_STAMPED_SQL = """
+    WITH cand AS (
+        SELECT DISTINCT fm.group_id
+        FROM events e
+        JOIN futures_markets fm ON fm.event_id = e.id
+        WHERE fm.source = 'polymarket'
+          AND fm.group_id IS NOT NULL
+          AND e.commence_time_source = :listing_src
+          AND e.status IN ('live', 'suspended')
+    ),
+    grp AS (
+        SELECT p.group_id,
+               count(DISTINCT p.market_metadata->>'venue_game_start')
+                   FILTER (WHERE p.market_metadata->>'venue_game_start' IS NOT NULL)
+                   AS n_stamps,
+               min(p.market_metadata->>'venue_game_start') AS vgs,
+               count(DISTINCT p.event_id) FILTER (WHERE p.event_id IS NOT NULL)
+                   AS n_events,
+               min(p.event_id) AS only_event_id,
+               array_agg(p.name) FILTER (WHERE p.event_id IS NOT NULL)
+                   AS linked_names,
+               array_agg(coalesce(p.external_id, ''))
+                   FILTER (WHERE p.event_id IS NOT NULL) AS linked_external_ids
+        FROM futures_markets p
+        JOIN cand c ON c.group_id = p.group_id
+        WHERE p.source = 'polymarket'
+        GROUP BY p.group_id
+    )
+    SELECT e.id            AS event_id,
+           e.home_team_name AS home_team_name,
+           e.away_team_name AS away_team_name,
+           g.linked_names   AS linked_names,
+           g.linked_external_ids AS linked_external_ids,
+           e.commence_time AS event_commence,
+           e.completed_at  AS completed_at,
+           e.home_score    AS home_score,
+           e.away_score    AS away_score,
+           e.period        AS period,
+           e.game_clock    AS game_clock,
+           e.status        AS status,
+           g.group_id      AS group_id,
+           g.vgs           AS venue_game_start,
+           g.n_stamps      AS n_stamps,
+           g.n_events      AS n_events
+    FROM grp g
+    JOIN events e ON e.id = g.only_event_id
+    WHERE g.n_stamps = 1
+      AND g.n_events = 1
+      AND e.commence_time_source = :listing_src
+      AND e.status IN ('live', 'suspended')
+    ORDER BY e.id
+"""
+
+
+#: The value ``commence_time_source`` carries on a row minted from the listing
+#: stamp — the population this rail exists to repair, and the value the write
+#: below re-asserts before it replaces it.
+LISTING_COMMENCE_SOURCE = "polymarket"
+
+
+#: Every column the decision was made on, re-asserted inside the write itself.
+#:
+#: CERT-2834'S FINDING, WHICH IS REAL. The first cut selected the band in one
+#: statement and then wrote each row by ``WHERE id = :id``. Between those two
+#: statements is an open window, and the realtime score poll writes into exactly
+#: this band: a score landing inside the window is read by nobody, and the repair
+#: — holding values it read seconds ago — commits ``status = 'scheduled'`` over a
+#: game that has visibly started. A reader then sees a live match badged as not
+#: yet begun. Selecting a row into a repair band is not permission to write over
+#: it; the write needs its own guard.
+#:
+#: So the UPDATE re-states the whole eligibility tuple and matches zero rows if
+#: anything moved. Three deliberate choices:
+#:
+#: * **Every column, not the ones that look decisive.** ``commence_time``,
+#:   ``status``, both scores, ``period``, ``game_clock``, ``completed_at`` and
+#:   ``commence_time_source`` — the four inputs ``redate_target`` refuses on, plus
+#:   the three columns this statement WRITES. Asserting only what the predicate
+#:   READ is the trap: a prior repair in this codebase reconciled exactly while a
+#:   column it never looked at moved under an otherwise-identical tuple.
+#: * **``IS NOT DISTINCT FROM``, not ``=``.** Six of the eight are nullable and
+#:   NULL is the common value; ``= NULL`` is never true, so an ``=`` form would
+#:   silently match nothing and this rail would repair zero rows while reporting
+#:   success.
+#: * **Every bind CAST.** ``IS NOT DISTINCT FROM $1`` gives Postgres nothing to
+#:   infer a parameter type from, and asyncpg raises rather than guessing. The
+#:   casts are the column's own types, so a schema change that renames or retypes
+#:   one fails loudly here instead of quietly widening the match.
+#:
+#: CERT-2837'S FINDING, WHICH IS ALSO REAL, AND IS WHY THE TWO ``EXISTS`` ARE
+#: HERE. The first cut re-asserted the group gates only NEGATIVELY: no second
+#: event, no disagreeing stamp. Both are satisfied by a group that has no rows
+#: left at all. Phase 1.5 detaches a mislinked market by committing
+#: ``event_id = NULL``, and when it does so to every market in this group inside
+#: the window, both ``NOT EXISTS`` pass VACUOUSLY — nothing to find — and the
+#: stale repair retimes and reschedules an event whose Polymarket evidence has
+#: just been withdrawn. The withdrawal is precisely the signal that this group
+#: never owned this fixture (CERT-2835's class), so writing its instant is the
+#: worst available outcome: a confident wrong kickoff, sourced to a provider that
+#: has stopped saying it.
+#:
+#: An absence cannot be asserted with a negative. So the write also states the
+#: two things positively — this group still links THIS event, and this group
+#: still carries the stamp about to be written. Together with the two negatives
+#: they reconstruct exactly the SELECT's own premise (``n_events = 1`` and it is
+#: this event; ``n_stamps = 1`` and it is this stamp).
+#:
+#: They are two clauses and not one deliberately. It is tempting to require a
+#: single row carrying BOTH the link and the stamp, which is stronger — and
+#: wrong: a Polymarket group is a parent and its children, the child row carries
+#: the venue kickoff (the ingest half of #6073) and the link need not sit on that
+#: same row. A combined form would decline rows whose evidence is entirely
+#: intact, which is the `= NULL` failure of the first cut wearing the other face:
+#: a rail that repairs nothing and reports success. The SELECT derives the two
+#: facts by separate aggregates over the group; the guard re-asserts them the
+#: same way.
+#:
+#: The two ``NOT EXISTS`` re-assert the GROUP gates for the same reason. Their
+#: window is not the score poll but the matcher: `match_prediction_markets` runs
+#: every 15 minutes and can link another market into this group, or relink one
+#: away, after the select. A group that has gained a second event no longer names
+#: one fixture, and a group that has gained a second stamp no longer agrees with
+#: itself about when that fixture is — in both cases the instant about to be
+#: written may belong to a different match, which is the mislink class (#2693)
+#: and not ours to paper over with a confident wrong time.
+_REDATE_UNCHANGED_WHERE = """
+    WHERE e.id = :id
+      AND e.commence_time IS NOT DISTINCT FROM CAST(:was_commence AS timestamptz)
+      AND e.commence_time_source IS NOT DISTINCT FROM CAST(:listing_src AS text)
+      AND e.status IS NOT DISTINCT FROM CAST(:was_status AS text)
+      AND e.home_score IS NOT DISTINCT FROM CAST(:was_home_score AS integer)
+      AND e.away_score IS NOT DISTINCT FROM CAST(:was_away_score AS integer)
+      AND e.period IS NOT DISTINCT FROM CAST(:was_period AS text)
+      AND e.game_clock IS NOT DISTINCT FROM CAST(:was_game_clock AS text)
+      AND e.completed_at IS NOT DISTINCT FROM CAST(:was_completed_at AS timestamptz)
+      AND EXISTS (
+          SELECT 1 FROM futures_markets fm1
+          WHERE fm1.group_id = CAST(:group_id AS text)
+            AND fm1.source = 'polymarket'
+            AND fm1.event_id = :id
+      )
+      AND EXISTS (
+          SELECT 1 FROM futures_markets fm1s
+          WHERE fm1s.group_id = CAST(:group_id AS text)
+            AND fm1s.source = 'polymarket'
+            AND fm1s.market_metadata->>'venue_game_start'
+                IS NOT DISTINCT FROM CAST(:was_venue_game_start AS text)
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM futures_markets fm2
+          WHERE fm2.group_id = CAST(:group_id AS text)
+            AND fm2.source = 'polymarket'
+            AND fm2.event_id IS NOT NULL
+            AND fm2.event_id <> :id
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM futures_markets fm3
+          WHERE fm3.group_id = CAST(:group_id AS text)
+            AND fm3.source = 'polymarket'
+            AND fm3.market_metadata->>'venue_game_start' IS NOT NULL
+            AND fm3.market_metadata->>'venue_game_start'
+                <> CAST(:was_venue_game_start AS text)
+      )
+"""
+
+#: The corrected start, when the row's state is not ours to judge.
+REDATE_WRITE_DATE_ONLY_SQL = f"""
+    UPDATE events AS e
+    SET commence_time = :dt,
+        commence_time_source = :src
+    {_REDATE_UNCHANGED_WHERE}
+"""
+
+#: The corrected start AND the status, in ONE statement, never two: a status
+#: written without the date is promoted straight back to `live` within a beat by
+#: `espn_sync`'s `commence_time <= now` arm.
+REDATE_WRITE_WITH_STATUS_SQL = f"""
+    UPDATE events AS e
+    SET commence_time = :dt,
+        commence_time_source = :src,
+        status = :status
+    {_REDATE_UNCHANGED_WHERE}
+"""
+
+
+#: Separators that mean "token boundary" inside a competitor's name.
+_IDENTITY_SEPARATORS = re.compile(r"[-_/]+")
+#: Everything else non-word is noise and is DELETED, not spaced — see
+#: `_same_participant` for why "F.C." must fold to `fc` and never to `f c`.
+_IDENTITY_PUNCTUATION = re.compile(r"[^\w\s]")
+
+
+def _identity_tokens(name: str) -> set:
+    """The name's identity-bearing tokens — built from primitives, on purpose.
+
+    CERT-2845 AND CERT-2847, WHICH ARE ONE DEFECT WITH TWO SPELLINGS. This fold
+    reached for a shared normalizer twice and was wrong twice.
+    `normalize_team_name_for_matching` strips the bare suffixes (`b`, `ii`,
+    `u21`, `women`), so "FC Barcelona B" was the senior side.
+    `normalize_team_name` keeps those and strips trailing PARENTHETICALS, so
+    "FC Barcelona (B)" was the senior side. Each fix closed the spelling in front
+    of it and left the class open.
+
+    The cause is not which normalizer: it is that BOTH are built for a matcher
+    trying to find a home for a market, where discarding a qualifier widens the
+    net helpfully. This rail asks the opposite question — is this the SAME
+    competitor — and for that every discarded token is evidence thrown away
+    before the comparison. Borrowing a normalizer means inheriting its opinion
+    about what does not matter, and that opinion is the bug.
+
+    So the fold is assembled here from primitives that only ever fold FORM, never
+    drop content: diacritics and case (`strip_diacritics` + `lower`), separators
+    to token boundaries, and remaining punctuation deleted rather than spaced.
+    Nothing is stripped, so no qualifier can be silently discarded and no future
+    edit to a shared normalizer can reopen this from a third direction.
+
+    It also makes the two spellings agree with each other, which is right:
+    "FC Barcelona (B)" and "FC Barcelona B" are `{fc, barcelona, b}` both ways,
+    so a market may write either and still date its own fixture, while neither
+    can date the senior one.
+
+    Measured: 204/204 reach on the live band, and correct on all 18 adversarial
+    titles this ship has accumulated.
+    """
+    folded = strip_diacritics(name or "").lower()
+    folded = _IDENTITY_SEPARATORS.sub(" ", folded)
+    folded = _IDENTITY_PUNCTUATION.sub("", folded)
+    return set(folded.split())
+
+
+def _same_participant(market_name: str, event_name: str) -> bool:
+    """One competitor, named twice — or two competitors who share a surname?
+
+    CERT-2843. The house `names_match` answers a DIFFERENT question well: it
+    ranks candidates for a matcher that is trying to find a home for a market,
+    and for that a 0.5 token overlap is a reasonable third stage. Used as an
+    identity test it says "Alexander Zverev" IS "Mischa Zverev", because the
+    surname is half the tokens. The fixtures most at risk of being confused are
+    precisely the ones this rail must not confuse: the Zverev brothers, the
+    Tsitsipas brothers, the Williams sisters.
+
+    So: equal token SETS after the house normalization (which strips diacritics,
+    case and punctuation, so "Zvereva" vs "Zvereva." and accented spellings are
+    not the failure this is about). A set rather than a sequence because "Last,
+    First" and "First Last" are the same person and a market may write either;
+    every token still has to be accounted for on both sides, which is the part
+    that makes it an identity test rather than a similarity score.
+
+    Deliberately NOT accepting a subset. "Zverev" alone is a legitimate subset of
+    "Alexander Zverev" and identifies neither brother, so allowing subsets would
+    reopen the hole this closes from the other end. Measured: 204/204 reach on
+    the live band either way, so nothing is bought by the looser rule.
+
+    Squad, youth and women's qualifiers are part of the identity — a B team is
+    not its first team, and the two play on different days. Keeping them is the
+    whole point of `_identity_tokens` building its own fold instead of borrowing
+    a matcher's normalizer; CERT-2845 and CERT-2847 are both that mistake.
+    """
+    market_tokens = _identity_tokens(market_name)
+    event_tokens = _identity_tokens(event_name)
+    return bool(market_tokens) and market_tokens == event_tokens
+
+
+def group_names_this_fixture(
+    *,
+    linked_names,
+    linked_external_ids,
+    home_team_name,
+    away_team_name,
+) -> bool:
+    """Does the group's own evidence NAME the fixture it is about to re-date?
+
+    CERT-2840'S FINDING. Every gate before this one is about COUNTING: one event
+    in the group, one stamp, nothing moved underneath. A group can satisfy all of
+    them and still be wrong about which match it describes — a single market
+    mislinked to a single event has `n_events = 1` and `n_stamps = 1`, so the
+    sweep took a Serena-Gauff market's kickoff and wrote it onto a
+    Mazzola-Zeltina fixture. That is the mislink class (#2693) and it is worse
+    here than elsewhere, because the instant lands with
+    `commence_time_source = 'polymarket_venue'` attached: a confident wrong
+    kickoff, sourced.
+
+    A provenance string says WHERE a value came from. It never proves the value
+    is about the row it is written to. Nothing upstream of this rail establishes
+    that, so the rail has to establish it itself.
+
+    The check parses the market title (with the matcher's ticker fallback) and
+    requires BOTH of the parsed participants to map onto this event's two teams,
+    one-to-one, in either orientation. The rail does not care which side is home,
+    only that the market is talking about this match.
+
+    BOTH SIDES, AND THAT IS CERT-2842. The obvious move is the matcher's own
+    `match_teams_to_event`, and it is the wrong tool here: it returns an
+    orientation as soon as ONE side matches, which is the right answer to the
+    question the matcher asks it — *which way round is this market* — and the
+    wrong answer to the question this rail asks it. A market reading
+    "Mazzola vs. Serena" shares a participant with "Mazzola vs. Zeltina" and is a
+    different match; one-sided agreement accepted it and re-dated the fixture. On
+    a tour a single player appears in a great many fixtures, so one matched name
+    is close to no evidence at all.
+
+    AND EVERY TOKEN, WHICH IS CERT-2843. The next reach for the comparison is
+    the house `names_match`, and it is also the wrong tool here: its third stage
+    accepts a token overlap of 0.5, so "Alexander Zverev" and "Mischa Zverev"
+    are the same person to it, on the surname alone. That is a sensible rule for
+    a matcher trying to find a home for a market and a dangerous one for a rail
+    writing a kickoff: tennis has the Zverev brothers, the Tsitsipas brothers and
+    the Williams sisters, and a sibling pair is exactly the fixture most likely
+    to be confused with its sibling pair.
+
+    So participants are compared by `_same_participant`, below: equal NAME TOKEN
+    SETS after the house normalization. Every token has to be accounted for in
+    both directions, which is what stops a shared surname standing in for a
+    shared person.
+
+    ANY of the group's linked markets satisfying it is enough. A Polymarket group
+    is a parent and its children and they carry different titles; requiring all
+    of them to parse would decline legitimate groups over a child whose name is a
+    prop. Requiring none is what shipped and is the defect.
+
+    MEASURED BEFORE ADOPTING, because a validator that cannot read our own titles
+    would silently reduce this rail to repairing nothing while reporting success
+    — the failure this ship has now twice had to design around. Over both ends of
+    the live band on 2026-09-14 (two 500-row slices, head and tail, 204 distinct
+    events across soccer, tennis, rugby, esports, cricket and ice hockey):
+    204/204 under the one-sided form, and 204/204 again under the two-sided form
+    shipped here. The stricter rule costs no reach.
+    """
+    names = list(linked_names or [])
+    ext_ids = list(linked_external_ids or [])
+    if not names or not (home_team_name and away_team_name):
+        # No linked market left to speak for the group, or an event with no teams
+        # to compare against. Either way the pairing is unproven, and unproven is
+        # the one thing this rail must not write on.
+        return False
+    for i, name in enumerate(names):
+        external_id = ext_ids[i] if i < len(ext_ids) else ""
+        matchup = extract_matchup_with_ticker_fallback(name or "", external_id or "")
+        if matchup is None:
+            continue
+        market_a = (matchup.team_a or "").strip()
+        market_b = (matchup.team_b or "").strip()
+        if not (market_a and market_b):
+            # A title naming one participant — a tournament-winner or an
+            # outright — is a valid market and no evidence about when one
+            # fixture starts.
+            continue
+        straight = _same_participant(market_a, home_team_name) and _same_participant(
+            market_b, away_team_name
+        )
+        swapped = _same_participant(market_a, away_team_name) and _same_participant(
+            market_b, home_team_name
+        )
+        if straight or swapped:
+            return True
+    return False
+
+
+def redate_target(
+    *,
+    venue_game_start,
+    event_commence,
+    now,
+    completed_at=None,
+    home_score=None,
+    away_score=None,
+    period=None,
+    game_clock=None,
+) -> Optional[tuple]:
+    """What should this row's ``(commence_time, status_or_None)`` become?
+
+    ``None`` ⇒ leave the row alone. A tuple's second element is ``None`` when the
+    date moves but the status is not ours to judge.
+
+    Pure, so every refusal below is provable without a database. The refusals,
+    each one measured against the production band in the block above:
+
+    * **No venue instant, or one that will not parse.** Nothing to write.
+    * **The move must be FORWARD.** Measured 820/820 later, 0 earlier — so this
+      costs nothing today and closes the one hazard that would matter if a later
+      poll ever published an earlier instant: moving a start BACKWARD can only
+      make a match that has not happened read as one that has, which is the exact
+      defect #6073 is about. A tie (the instants already agree) is also nothing to
+      do, and returns ``None`` rather than a no-op write.
+    * **Any evidence of play refuses the whole row.** A score — even ``0`` — a
+      period, or a running clock all mean something reported on this game, and a
+      row something reported on is not a row we may silently re-date and un-start.
+      Measured: 0 of 566 carry any of the four, so this refuses nothing today and
+      is the guard that holds the day one appears.
+    * **Never past ``completed_at`` (gotcha #46).** ``completed_at >=
+      commence_time`` is an invariant whose violation means a cross-event data
+      merge, so a target that would invert it is refused rather than clamped.
+      Measured: 0 of 827 carry ``completed_at`` at all.
+
+    THE STATUS, AND WHY ONLY ONE DIRECTION OF IT. When the corrected start is
+    still in the FUTURE the row's state is positively wrong — it cannot be
+    `suspended`, because a match that has not begun has not gone stale — and the
+    honest state is ``scheduled``; the ordinary promotion gate then takes it live
+    at the real hour, because ``polymarket_venue`` is a reported start and passes
+    ``commence_time_is_a_reported_start``. When the corrected start is in the PAST
+    the date was still wrong and is still worth fixing, but whether the row is
+    live, finished or stale is not something this rail can know — so it writes the
+    date and leaves ``status`` alone, exactly as ``_refine_stand_in_event_starts``
+    does one provider over.
+    """
+    if venue_game_start is None:
+        return None
+    if isinstance(venue_game_start, str):
+        try:
+            target = datetime.fromisoformat(venue_game_start.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        target = venue_game_start
+    if target is None or event_commence is None:
+        return None
+    target = target if target.tzinfo else target.replace(tzinfo=timezone.utc)
+    current = (
+        event_commence
+        if event_commence.tzinfo
+        else event_commence.replace(tzinfo=timezone.utc)
+    )
+    if target <= current:
+        return None
+    if (
+        home_score is not None
+        or away_score is not None
+        or period is not None
+        or game_clock is not None
+    ):
+        return None
+    if completed_at is not None:
+        completed = (
+            completed_at
+            if completed_at.tzinfo
+            else completed_at.replace(tzinfo=timezone.utc)
+        )
+        if target > completed:
+            return None
+    reference = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+    return (target, "scheduled" if target > reference else None)
+
+
+async def redate_polymarket_listing_stamped_events() -> dict:
+    """Give every already-minted Polymarket fixture the venue's own start.
+
+    #6073, the third half. See the block above for the population, the measured
+    guards and why the status rides with the date.
+
+    Returns a stats dict — ``moved``, ``rescheduled``, ``skipped_*`` — so a poll
+    that repairs nothing says so out loud rather than reading as a success
+    (``app/utils/task_verdict.py``: "it returned" is not "it worked").
+    """
+    stats = {
+        "scanned": 0,
+        "moved": 0,
+        "rescheduled": 0,
+        "skipped_multi_event_group": 0,
+        "skipped_ambiguous_stamp": 0,
+        "skipped_unpaired_group": 0,
+        "skipped_no_change": 0,
+        "skipped_raced": 0,
+    }
+    async with get_task_session() as session:
+        result = await session.execute(
+            text(REDATE_LISTING_STAMPED_SQL),
+            {"listing_src": LISTING_COMMENCE_SOURCE},
+        )
+        rows = result.fetchall()
+        now = datetime.now(timezone.utc)
+
+        for r in rows:
+            stats["scanned"] += 1
+            # Both gates are in the SQL's WHERE as well; re-asserted here so the
+            # refusal is provable in a unit test and so a future edit to either
+            # place cannot quietly drop one of them.
+            if r.n_events != 1:
+                stats["skipped_multi_event_group"] += 1
+                continue
+            if r.n_stamps != 1:
+                stats["skipped_ambiguous_stamp"] += 1
+                continue
+            # CERT-2840. Counting the group's rows says nothing about WHICH match
+            # they describe: one market mislinked to one event passes every gate
+            # above. Before this rail attributes an instant to a provider, the
+            # provider's own title has to name this fixture.
+            if not group_names_this_fixture(
+                linked_names=r.linked_names,
+                linked_external_ids=r.linked_external_ids,
+                home_team_name=r.home_team_name,
+                away_team_name=r.away_team_name,
+            ):
+                stats["skipped_unpaired_group"] += 1
+                logger.warning(
+                    "redate: group %s does not name event %s (%s vs %s) — "
+                    "not re-dating on a link this rail cannot verify",
+                    r.group_id,
+                    r.event_id,
+                    r.home_team_name,
+                    r.away_team_name,
+                )
+                continue
+            decision = redate_target(
+                venue_game_start=r.venue_game_start,
+                event_commence=r.event_commence,
+                now=now,
+                completed_at=r.completed_at,
+                home_score=r.home_score,
+                away_score=r.away_score,
+                period=r.period,
+                game_clock=r.game_clock,
+            )
+            if decision is None:
+                stats["skipped_no_change"] += 1
+                continue
+            target, new_status = decision
+            # Every column the decision was made on travels back into the
+            # write's own WHERE — see `_REDATE_UNCHANGED_WHERE`. A row that moved
+            # between the select and here simply does not match.
+            params = {
+                "dt": target,
+                "src": POLYMARKET_VENUE_COMMENCE_SOURCE,
+                "id": r.event_id,
+                "listing_src": LISTING_COMMENCE_SOURCE,
+                "was_commence": r.event_commence,
+                "was_status": r.status,
+                "was_home_score": r.home_score,
+                "was_away_score": r.away_score,
+                "was_period": r.period,
+                "was_game_clock": r.game_clock,
+                "was_completed_at": r.completed_at,
+                "group_id": r.group_id,
+                "was_venue_game_start": r.venue_game_start,
+            }
+            if new_status is None:
+                sql = REDATE_WRITE_DATE_ONLY_SQL
+            else:
+                sql = REDATE_WRITE_WITH_STATUS_SQL
+                params["status"] = new_status
+            written = await session.execute(text(sql), params)
+            if (written.rowcount or 0) == 0:
+                # The row moved under us. Counted and named, never silent: a
+                # repair that writes nothing must not read as one that worked
+                # (`app/utils/task_verdict.py`).
+                stats["skipped_raced"] += 1
+                logger.info(
+                    "Polymarket re-date (#6073): event %s changed between "
+                    "selection and write — left alone",
+                    r.event_id,
+                )
+                continue
+            stats["moved"] += 1
+            if new_status is not None:
+                stats["rescheduled"] += 1
+
+        if stats["moved"]:
+            await session.commit()
+        logger.info(
+            "Polymarket re-date (#6073): scanned %d, moved %d (%d back to "
+            "scheduled), skipped %d multi-event group / %d ambiguous stamp / "
+            "%d no change / %d raced",
+            stats["scanned"], stats["moved"], stats["rescheduled"],
+            stats["skipped_multi_event_group"], stats["skipped_ambiguous_stamp"],
+            stats["skipped_no_change"], stats["skipped_raced"],
+        )
+        return stats
 
 
 async def _process_event_batch(

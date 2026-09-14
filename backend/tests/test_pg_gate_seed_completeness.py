@@ -116,6 +116,12 @@ COVERED = (
     # a future column with a client-side default from making that seed illegal
     # without anybody noticing until a runner says so.
     "test_reconcile_lookback_reach_5779_pg.py",
+    # #6073 (CERT-2834's required repair). Seeds `sports`, five `events` and
+    # four `futures_markets` by raw INSERT. Every arm turns on the corpus being
+    # INSIDE the repair band, so a `NotNullViolation` there would not read as a
+    # broken seed — the band would simply come back empty and every "the repair
+    # declined it" assertion would pass having declined nothing.
+    "test_polymarket_redate_atomicity_6073_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"
