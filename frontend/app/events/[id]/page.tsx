@@ -97,6 +97,7 @@ import {
   SUSPENDED_DESCRIPTION,
   hasNoReportedResult,
   isFinishedStatus,
+  startBadgeLabel,
   suspendedSummary,
 } from "@/lib/eventState";
 import type { ActiveChartPoint } from "@/lib/types";
@@ -1379,7 +1380,13 @@ export default function EventPage({ params }: EventPageProps) {
               <span className="flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
                 <span className="text-[10px] text-amber-500 font-medium">
-                  {gameCountdown && !hasStarted ? `Starts in ${gameCountdown}` : "Pregame"}
+                  {/* #6031 — the word, and only the word. #3211 suppressed the
+                      countdown once `hasStarted`, which left this branch
+                      suppressing a countdown to a moment in the past while
+                      still printing "Pregame" over a "Since Start" chart. The
+                      two-hour hole this falls into, and why the grace is not
+                      the thing to widen, are in `startBadgeLabel`. */}
+                  {startBadgeLabel(hasStarted, gameCountdown)}
                 </span>
               </span>
             )}
