@@ -1470,7 +1470,13 @@ async def _process_event_batch(
                         sub_market_id = sub_result.scalar_one()
 
                         # Create Over/Yes outcome
-                        over_name = "Over" if "o/u" in sub_name.lower() else "Yes"
+                        over_fallback = "Over" if "o/u" in sub_name.lower() else "Yes"
+                        over_name = _sub_market_side_label(
+                            market,
+                            0,
+                            sub_name,
+                            over_fallback,
+                        )
                         over_american = probability_to_american(prob) if 0 < prob < 1 else None
 
                         sub_has_trading = (
@@ -1544,6 +1550,7 @@ async def _process_event_batch(
                             over_update["opening_probability"] = func.coalesce(
                                 FuturesOutcome.opening_probability, prob
                             )
+                        _carry_venue_side_name(over_update, over_name, over_fallback)
 
                         over_stmt = pg_insert(FuturesOutcome).values(
                             market_id=sub_market_id,
@@ -1587,7 +1594,13 @@ async def _process_event_batch(
                         # Create Under/No outcome if available
                         if len(market.outcome_prices) > 1:
                             under_prob = market.outcome_prices[1]
-                            under_name = "Under" if "o/u" in sub_name.lower() else "No"
+                            under_fallback = "Under" if "o/u" in sub_name.lower() else "No"
+                            under_name = _sub_market_side_label(
+                                market,
+                                1,
+                                sub_name,
+                                under_fallback,
+                            )
                             under_american = probability_to_american(under_prob) if 0 < under_prob < 1 else None
 
                             # The Under/No side must open at ITS OWN price, not the
@@ -1666,6 +1679,9 @@ async def _process_event_batch(
                                 under_update["opening_probability"] = func.coalesce(
                                     FuturesOutcome.opening_probability, under_prob
                                 )
+                            _carry_venue_side_name(
+                                under_update, under_name, under_fallback
+                            )
 
                             under_stmt = pg_insert(FuturesOutcome).values(
                                 market_id=sub_market_id,
@@ -2960,6 +2976,79 @@ def _leg_label(market, event_title: str) -> str:
 # A leg labelled only "Yes"/"No" names no side, so it is never a rescue for a
 # label that has collapsed onto the market's own name (see :func:`_leg_label`).
 _YES_NO_LABELS = frozenset({"yes", "no"})
+
+
+def _sub_market_side_label(market, index: int, sub_name: str, fallback: str) -> str:
+    """The label for a decomposed sub-market's ``outcome_prices[index]`` side.
+
+    #6050. :func:`_leg_label` already settled this question for the PARENT
+    writer (Q492) and the decomposed sub-market writer never inherited it, so
+    the two paths disagreed about the same venue field. The sub-market writer
+    named both sides positionally — ``"Yes"``/``"No"`` unless the name said
+    "o/u" — which is right for a sub-market whose own name asks the question
+    ("Both Teams to Score", "D/ST Touchdown") and wrong for a game moneyline,
+    where Polymarket sends ``question`` set to the matchup itself and puts the
+    two sides in ``outcomes``. Production served
+    "Broncos vs. Chiefs — Yes 43.5% / No 56.5%" while the venue's own payload
+    for that condition read ``outcomes: ["Broncos", "Chiefs"]``: the reader
+    cannot recover which team "Yes" is, and the answer was one field away.
+
+    ``outcomes`` is the parallel array to ``outcome_prices`` (the same rule
+    :func:`_leg_label` rests on), so ``outcomes[index]`` is definitionally the
+    side this price belongs to — there is no orientation guess here.
+
+    Deliberately a RESCUE and not a rename: the venue's token is taken only
+    when it actually names a side. A bare ``Yes``/``No`` token names no side
+    either, and a token equal to the sub-market's own name reproduces the
+    collapse we are trying to undo, so both keep ``fallback``. That is what
+    keeps every genuine Yes/No sub-market — the large majority — byte-identical.
+    """
+    if _label_key(fallback) not in _YES_NO_LABELS:
+        # "Over"/"Under" already names its side; never second-guess it.
+        return fallback
+
+    tokens = list(getattr(market, "outcomes", None) or [])
+    if index >= len(tokens):
+        return fallback
+
+    token = (tokens[index] or "").strip()
+    if not token or _label_key(token) in _YES_NO_LABELS:
+        return fallback
+    if _label_key(token) == _label_key(sub_name):
+        return fallback
+    return token
+
+
+def _carry_venue_side_name(update: dict, label: str, fallback: str) -> dict:
+    """Add ``name`` to an ON CONFLICT DO UPDATE set — but only when it is news.
+
+    CERT-2820's required repair, ``6050-RENAME-EXISTING-OUTCOMES-ON-CONFLICT``.
+    #6050 named the two sides correctly at INSERT, and every row the defect is
+    ABOUT already exists: the 20 measured bare-matchup markets are reached only
+    by the conflict arm, whose set dicts omitted ``name``. So each one would have
+    gone on reading "Yes" forever while the fix reported success — inert on
+    exactly its own population, which is the one place a rename cannot afford to
+    be.
+
+    🔴 **ONLY WHEN THE VENUE NAMED THE SIDE, AND THAT IS WHAT ``!= fallback``
+    MEANS.** :func:`_sub_market_side_label` returns the caller's fallback for
+    every degenerate shape — outcomes absent, token blank, token itself a bare
+    Yes/No, token echoing the sub-market's own name. An unconditional write would
+    therefore let ONE malformed payload rename a correctly stored "Broncos" back
+    to "Yes", turning a poll hiccup into a visible regression on the very card
+    this repairs. The comparison keeps the helper's fallbacks doing their job
+    instead of overwriting the row with them.
+
+    A genuine Yes/No sub-market — the large majority — takes the same branch and
+    needs no write at all: its stored name is already the fallback, so skipping
+    is not a compromise there, it is a no-op. That is also what keeps this
+    statement byte-identical for every market that was never wrong.
+
+    Returns the same dict, mutated, so a call site reads as one line.
+    """
+    if label != fallback:
+        update["name"] = label
+    return update
 
 
 def _extract_outcome_name(question: str, event_title: str) -> str:
