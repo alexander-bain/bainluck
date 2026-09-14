@@ -809,7 +809,9 @@ class _FixtureFetch:
         self.is_alarm = False
 
 
-async def _run_schedules(monkeypatch, *, schedule, live, events):
+async def _run_schedules(
+    monkeypatch, *, schedule, live, events, interloper=None, on_finish=None
+):
     """Drive the real `_sync_statpal_schedules` for NFL and return the rows.
 
     Same rail as `_run_livescores` above, plus the two collaborators this path
@@ -817,6 +819,16 @@ async def _run_schedules(monkeypatch, *, schedule, live, events):
     event registry. Both are stubbed to no-ops — this is a test about which
     score lands on a row, and a real `resolve_team` would only add a second
     source of failure to a question it has no part in.
+
+    `interloper` makes the background/realtime RACE deterministic (#6056,
+    CERT-2825). It is called `interloper(engine, event_ids)` exactly once, at
+    the instant the real task has read the row's position, decided the incoming
+    observation is not a reversion, and has not yet written — i.e. the only
+    window in which a newer writer can be overtaken. It is invoked from a
+    SECOND `Session`, so the task's session holds a stale in-memory row exactly
+    as the background worker would while realtime commits underneath it. The
+    hook is hung on `live_write_would_revert` rather than on a sleep because a
+    timing test that passes by luck is not a test.
     """
     from sqlalchemy import create_engine, select
     from sqlalchemy.orm import Session
@@ -924,7 +936,46 @@ async def _run_schedules(monkeypatch, *, schedule, live, events):
         statpal_sync, "accept_team_binding", lambda **kw: False, raising=False
     )
 
+    if interloper is not None:
+        _real_would_revert = statpal_sync.live_write_would_revert
+        _fired = []
+
+        def _revert_then_race(*args, **kwargs):
+            verdict = _real_would_revert(*args, **kwargs)
+            # Only race the branch that is about to WRITE. Firing on a refusal
+            # would prove nothing: there is no write to overtake.
+            if not verdict and not _fired:
+                _fired.append(True)
+                interloper(engine, ids)
+            return verdict
+
+        monkeypatch.setattr(
+            statpal_sync, "live_write_would_revert", _revert_then_race
+        )
+
     result = await _sync_statpal_schedules("americanfootball_nfl")
+    # EXPIRE BEFORE READING, or this rail cannot tell a write that reached
+    # Postgres from one that only reached an attribute (#6056, second
+    # presentation). The task now writes the live score with a Core
+    # compare-and-write and mirrors it onto the loaded object with
+    # `set_committed_value`, so a `select(Event)` here returns the identity-mapped
+    # instance and would report the mirrored value even if the UPDATE had
+    # matched zero rows — every assertion below would pass with the database
+    # untouched. Expiring forces a re-SELECT, so `rows` is what the next reader
+    # of the row would actually be served.
+    #
+    # `on_finish` runs BEFORE the expiry, and is the only way to see the loaded
+    # instances as the task left them — which is a separate contract from what
+    # the database holds. See
+    # `test_the_loaded_row_agrees_with_the_database_after_a_compare_and_write`.
+    if on_finish is not None:
+        on_finish(
+            [
+                sync_session.execute(select(Event).where(Event.id == i)).scalar_one()
+                for i in ids
+            ]
+        )
+    sync_session.expire_all()
     rows = [
         sync_session.execute(select(Event).where(Event.id == i)).scalar_one()
         for i in ids
@@ -1144,6 +1195,467 @@ async def test_schedule_sync_writes_when_the_row_has_no_position(monkeypatch):
 
     assert (rows[0].home_score, rows[0].away_score) == (28, 14)
     assert result["schedule_reverting_live_skipped"] == 0
+
+
+# ---------------------------------------------------------------------------
+# 6. THE RACE BETWEEN THE DECISION AND THE WRITE (CERT-2825)
+#
+# Guarding the hourly writer sequentially is not enough on the real topology.
+# `_sync_statpal_schedules` runs on the BACKGROUND queue; the 30-second StatPal
+# livescore writer and the ESPN writer run on REALTIME at concurrency 4. The
+# hourly path plain-SELECTs its rows, decides, mutates ORM state and commits at
+# session exit with no lock, no version column and — measured, per the #4307
+# note in that file — NO intermediate commit, so the window between reading
+# `event.period` and the score reaching Postgres spans every remaining fixture
+# in the sport, network calls included.
+#
+# An older accepted observation could therefore commit its score AFTER a newer
+# realtime one, and the reader watches the touchdown leave the page for exactly
+# the reason #6056 is about, one layer down.
+#
+# These drive the REAL task with a deterministic interleave: the second session
+# commits the newer position at the precise instant the task has decided and
+# not yet written. Both directions, as everywhere in this file — the losing
+# race refuses, the uncontested write still lands.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_concurrent_schedule_writer_cannot_commit_older_position_last_6056(
+    monkeypatch,
+):
+    """THE REQUIRED TEST (CERT-2825).
+
+    The row is at `21-10 @ 5:31 Q4` when the hourly pass reads it. The board
+    offers `28-14 @ 5:26 Q4` — later in the quarter, so NOT a reversion, and the
+    sequential guard correctly says write. Then, before that write lands, the
+    realtime writer commits `28-20 @ 5:21 Q4`: later still.
+
+    Read-newer-commit-older. Without the compare-and-write the hourly session's
+    `away_score = 14` reaches the database last and the reader watches 20 fall
+    back to 14 beside a clock that says 5:21. With it, the UPDATE's predicate no
+    longer matches the row and the newer state survives.
+
+    ⚠️ THE SPECIMEN IS CHOSEN SO BOTH COLUMNS ARE GENUINELY DIRTY. The first
+    draft of this test used the measured `28-14` on both sides; an ORM
+    assignment of the value a column already holds does not mark it dirty, so
+    the unfixed parent wrote nothing and the test passed on the defect. Every
+    number below differs from the one beside it for that reason.
+    """
+    from sqlalchemy import create_engine, select, update
+    from sqlalchemy.orm import Session
+
+    from app.models.models import Event
+
+    def _realtime_writer_commits_a_later_position(engine, ids):
+        """The other queue, in its own session — a second identity map, and a
+        commit the task's session knows nothing about."""
+        other = Session(engine, expire_on_commit=False)
+        try:
+            other.execute(
+                update(Event)
+                .where(Event.id == ids[0])
+                .values(
+                    period="5:21 - 4th Quarter",
+                    game_clock="5:21",
+                    home_score=28,
+                    away_score=20,
+                )
+            )
+            other.commit()
+        finally:
+            other.close()
+
+    now = datetime.now(timezone.utc)
+    rows, result = await _run_schedules(
+        monkeypatch,
+        schedule=[
+            _ScheduleFixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                fixture_id="280459",
+            )
+        ],
+        live=[
+            _LiveFixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                raw_status="4th Quarter",
+                game_clock="5:26",
+                scores=(28, 14),
+            )
+        ],
+        events=[
+            (
+                "New York Giants",
+                "Dallas Cowboys",
+                "5:31",
+                "5:31 - 4th Quarter",
+                (21, 10),
+                "280459",
+            )
+        ],
+        interloper=_realtime_writer_commits_a_later_position,
+    )
+
+    # What the next reader is served. The touchdown stays scored.
+    assert (rows[0].home_score, rows[0].away_score) == (28, 20)
+    assert (rows[0].period, rows[0].game_clock) == ("5:21 - 4th Quarter", "5:21")
+    # And the sequential guard is exonerated: it said WRITE, correctly, on the
+    # position it was shown. The race is what refused, and it is counted under
+    # its own name so the two causes stay distinguishable in `task-metrics`.
+    assert result["schedule_reverting_live_skipped"] == 0
+    assert result["schedule_live_write_lost_race"] == 1
+
+
+@pytest.mark.asyncio
+async def test_the_race_is_refused_when_only_the_period_moved_6056(monkeypatch):
+    """The twin of the test below, and the other half of the predicate.
+
+    Baseball is the natural specimen: the period label carries the whole
+    position (`live_progress_position('Top 9th', None)` is placeable, and the
+    `GROUP BY` behind this file's vocabulary found exactly these shapes) and
+    `game_clock` stays NULL all game. So a realtime writer moves the game on by
+    rewriting `period` alone.
+
+    The required test moves both columns, so `game_clock` alone catches it — a
+    predicate that re-asserted only the clock would pass it and let this
+    through. Found alive as a mutant.
+    """
+    from sqlalchemy import update
+    from sqlalchemy.orm import Session
+
+    from app.models.models import Event
+
+    def _realtime_writer_moves_only_the_period(engine, ids):
+        other = Session(engine, expire_on_commit=False)
+        try:
+            other.execute(
+                update(Event)
+                .where(Event.id == ids[0])
+                .values(period="Bot 9th", home_score=3, away_score=2)
+            )
+            other.commit()
+        finally:
+            other.close()
+
+    now = datetime.now(timezone.utc)
+    rows, result = await _run_schedules(
+        monkeypatch,
+        schedule=[
+            _ScheduleFixture(
+                now - timedelta(hours=3),
+                "Boston Red Sox",
+                "New York Yankees",
+                fixture_id="280459",
+            )
+        ],
+        live=[
+            _LiveFixture(
+                now - timedelta(hours=3),
+                "Boston Red Sox",
+                "New York Yankees",
+                raw_status="Top 9th",
+                game_clock=None,
+                scores=(3, 1),
+            )
+        ],
+        events=[
+            (
+                "Boston Red Sox",
+                "New York Yankees",
+                None,
+                "Top 9th",
+                (2, 1),
+                "280459",
+            )
+        ],
+        interloper=_realtime_writer_moves_only_the_period,
+    )
+
+    assert (rows[0].home_score, rows[0].away_score) == (3, 2)
+    assert rows[0].game_clock is None, "the specimen's point is that it did not move"
+    assert result["schedule_live_write_lost_race"] == 1
+
+
+@pytest.mark.asyncio
+async def test_the_race_is_refused_when_only_the_clock_moved_6056(monkeypatch):
+    """BOTH columns the decision reads are in the predicate, not just `period`.
+
+    The decision is taken on the pair `(period, game_clock)` — `game_clock` is a
+    column in its own right, and `live_progress_position("4th Quarter", "5:26")`
+    is placeable precisely because a writer may fill the clock while leaving it
+    off the label (ESPN's `status_detail` is `'Top 9th'` / `'4th Quarter'` for
+    several sports; only StatPal composes the compound string). So a realtime
+    writer can move the game a quarter-minute forward without touching `period`
+    at all.
+
+    A predicate that re-asserted only `period` would pass the required test
+    above — it moves both — and still let this one through. That mutant was
+    found alive; this is what kills it.
+    """
+    from sqlalchemy import update
+    from sqlalchemy.orm import Session
+
+    from app.models.models import Event
+
+    def _realtime_writer_moves_only_the_clock(engine, ids):
+        other = Session(engine, expire_on_commit=False)
+        try:
+            other.execute(
+                update(Event)
+                .where(Event.id == ids[0])
+                .values(game_clock="5:21", home_score=28, away_score=20)
+            )
+            other.commit()
+        finally:
+            other.close()
+
+    now = datetime.now(timezone.utc)
+    rows, result = await _run_schedules(
+        monkeypatch,
+        schedule=[
+            _ScheduleFixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                fixture_id="280459",
+            )
+        ],
+        live=[
+            _LiveFixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                raw_status="4th Quarter",
+                game_clock="5:24",
+                scores=(28, 14),
+            )
+        ],
+        events=[
+            (
+                "New York Giants",
+                "Dallas Cowboys",
+                "5:26",
+                "4th Quarter",
+                (21, 10),
+                "280459",
+            )
+        ],
+        interloper=_realtime_writer_moves_only_the_clock,
+    )
+
+    assert (rows[0].home_score, rows[0].away_score) == (28, 20)
+    assert rows[0].period == "4th Quarter", "the specimen's point is that it did not move"
+    assert result["schedule_live_write_lost_race"] == 1
+
+
+@pytest.mark.asyncio
+async def test_an_uncontested_schedule_write_still_lands_under_the_compare_and_write(
+    monkeypatch,
+):
+    """The twin (gotcha #43). The same specimen with a race that touches a
+    DIFFERENT row: the predicate must not refuse a write merely because some
+    other session committed. A compare-and-write that refused everything would
+    pass the test above and freeze every live score on the site."""
+    from sqlalchemy import update
+    from sqlalchemy.orm import Session
+
+    from app.models.models import Event
+
+    def _realtime_writer_touches_the_other_game(engine, ids):
+        other = Session(engine, expire_on_commit=False)
+        try:
+            other.execute(
+                update(Event).where(Event.id == ids[1]).values(home_score=3)
+            )
+            other.commit()
+        finally:
+            other.close()
+
+    now = datetime.now(timezone.utc)
+    rows, result = await _run_schedules(
+        monkeypatch,
+        schedule=[
+            _ScheduleFixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                fixture_id="280459",
+            )
+        ],
+        live=[
+            _LiveFixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                raw_status="4th Quarter",
+                game_clock="5:21",
+                scores=(28, 20),
+            )
+        ],
+        events=[
+            (
+                "New York Giants",
+                "Dallas Cowboys",
+                "5:26",
+                "5:26 - 4th Quarter",
+                (28, 14),
+                "280459",
+            ),
+            (
+                "Kansas City Chiefs",
+                "Denver Broncos",
+                "2:00",
+                "2:00 - 2nd Quarter",
+                (0, 0),
+                "280460",
+            ),
+        ],
+        interloper=_realtime_writer_touches_the_other_game,
+    )
+
+    assert (rows[0].home_score, rows[0].away_score) == (28, 20)
+    assert result["schedule_live_write_lost_race"] == 0
+
+
+@pytest.mark.asyncio
+async def test_the_loaded_row_agrees_with_the_database_after_a_compare_and_write(
+    monkeypatch,
+):
+    """The mirror is load-bearing, so it is killable.
+
+    The compare-and-write puts the score in the database with Core SQL, which
+    leaves the loaded ORM instance holding the value it was SELECTed with. The
+    task mirrors the new score back with `set_committed_value` — committed, not
+    assigned, because a plain assignment would re-write both columns
+    unconditionally at commit and undo the predicate the UPDATE just enforced.
+
+    Without the mirror the session hands the rest of the loop a row whose score
+    is a lie, which is the same class of defect this whole file exists to fix,
+    just in memory instead of on the page. Asserted here rather than left to the
+    next reader to discover: every other assertion in this section expires the
+    session first and so cannot see it.
+    """
+    seen = []
+    now = datetime.now(timezone.utc)
+    rows, _ = await _run_schedules(
+        monkeypatch,
+        schedule=[
+            _ScheduleFixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                fixture_id="280459",
+            )
+        ],
+        live=[
+            _LiveFixture(
+                now - timedelta(hours=3),
+                "New York Giants",
+                "Dallas Cowboys",
+                raw_status="4th Quarter",
+                game_clock="5:21",
+                scores=(28, 20),
+            )
+        ],
+        events=[
+            (
+                "New York Giants",
+                "Dallas Cowboys",
+                "5:26",
+                "5:26 - 4th Quarter",
+                (21, 10),
+                "280459",
+            )
+        ],
+        on_finish=lambda loaded: seen.append(
+            (loaded[0].home_score, loaded[0].away_score)
+        ),
+    )
+
+    assert seen == [(28, 20)], "the loaded row still holds the pre-UPDATE score"
+    # And the database agrees — the mirror reports what actually landed rather
+    # than replacing the check.
+    assert (rows[0].home_score, rows[0].away_score) == (28, 20)
+
+
+def test_the_schedule_path_never_assigns_the_columns_its_cas_compares():
+    """WHY THE COMPARE-AND-WRITE IS WELL-DEFINED UNDER GOTCHA #5.
+
+    The Core UPDATE lives in a loop that also sets `commence_time`, `status`,
+    `statpal_end_time`, the team ids and the `win_probability_sources` JSONB as
+    ORM attribute assignments on the same objects in the same session. Gotcha #5
+    says mixing the two is where flush ordering starts deciding outcomes: if
+    this function could assign `period` or `game_clock`, the predicate would
+    compare against whichever side of the flush it happened to land on, and the
+    guard would be a coin toss.
+
+    It cannot, and that is the load-bearing fact — so it is asserted here rather
+    than left in the comment beside the UPDATE. The moment somebody adds a
+    `event.period = ...` to this function, this test reddens and the
+    compare-and-write needs re-deriving, not merely re-running.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    import app.tasks.statpal_sync as statpal_sync
+
+    tree = ast.parse(
+        textwrap.dedent(inspect.getsource(statpal_sync._sync_statpal_schedules))
+    )
+    assigned = {
+        target.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Attribute)
+    }
+    assert "period" not in assigned
+    assert "game_clock" not in assigned
+    # Not vacuous: the same probe DOES see the attribute assignments this
+    # function really makes, so an empty set could never manufacture the pass.
+    assert "commence_time" in assigned
+    assert "status" in assigned
+
+    # AND THE SECOND HALF OF THE CLAIM: the live-update site no longer assigns
+    # the scores as ORM attributes at all — it writes them through the Core
+    # compare-and-write. The only remaining score assignments are the two in the
+    # creation branch, which CERT-2824/2825 both left deliberately unguarded
+    # (see `test_a_created_row_has_no_position_to_revert_from` for why). If a
+    # future edit puts an ORM score assignment back on the update path, the
+    # behavioural race test above would still pass — the ORM write would simply
+    # land last — so this is the assertion that catches it.
+    def _score_assign_nodes(root):
+        return [
+            node
+            for node in ast.walk(root)
+            if isinstance(node, ast.Assign)
+            for target in node.targets
+            if isinstance(target, ast.Attribute)
+            and target.attr in ("home_score", "away_score")
+        ]
+
+    creation_branches = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Name)
+        and node.test.id == "was_created"
+    ]
+    assert creation_branches, "the creation branch moved; re-derive this probe"
+    in_creation = {
+        id(n) for branch in creation_branches for n in _score_assign_nodes(branch)
+    }
+    all_score_assigns = _score_assign_nodes(tree)
+    assert len(all_score_assigns) == 2, (
+        "expected exactly the two creation-path score assignments, found "
+        f"{len(all_score_assigns)}"
+    )
+    assert all(id(n) in in_creation for n in all_score_assigns)
 
 
 def test_the_hourly_writer_actually_consults_the_guard():
