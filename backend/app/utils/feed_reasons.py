@@ -1165,6 +1165,79 @@ def leader_agreement_verb(
     return "leads"
 
 
+# ── A LEAD IS CLAIMED ONLY WHEN THE PRINTED BOARD CAN SHOW IT (#6187) ─────────
+#
+# Production page one, 2026-09-14 17:40Z: SEVEN of eighty-five field cards. Three
+# verbatim, each above its own printed rows:
+#
+#   'Canterbury-Bankstown Bulldogs (49%) now leads'    rows: 49% · 49% · 49%
+#   'MOUZ leads at 22%; resolves within a week'        rows: 22% · 22% · 22%
+#   'Jordan leads at 9%'                               rows:  9% ·  9% ·  8%
+#
+# The caption names a leader at a number its runner-up also shows. Nothing on the
+# card supports the verb: the reader's eye goes from "leads at 22%" straight to
+# two more rows reading 22%.
+#
+# 🔴 THIS IS OFTEN NOT A ROUNDING ARTEFACT AT ALL, AND THAT IS WHY THE TEST IS ON
+# THE PRINTED PERCENTS. Jordan is a real 0.9pp lead (0.0925 vs 0.0889) that rounds
+# away. But the Bulldogs, MOUZ and the S&P band are ties at FULL PRECISION —
+# 0.49/0.49/0.49, 0.2171/0.2171/0.2171, 0.1604/0.1604 — four of the seven. There
+# the "leader" is whichever row the descending sort happened to emit first, and
+# the sentence is not merely imprecise, it is arbitrary. A gap test on the
+# probabilities would have to pick an epsilon and would still pass the Jordan
+# card; the printed board is the thing the reader can actually check, so the
+# printed board is what decides whether the claim may be made.
+#
+# ** THE REMEDY IS TO DROP THE COMPARATIVE, NOT TO ADD PRECISION. ** A decimal in
+# the caption ("Jordan leads at 9.3%") makes the caption disagree with the board
+# in the other direction — #6181's defect with the operands swapped. The board is
+# already ranked, so rank 1 still reads first without the word.
+#
+# The `leader_change` branches do not merely drop the verb, they do not speak at
+# all: "New favorite" IS the comparative, and #4640 settled the shape of that
+# refusal for cumulative ladders one branch above ("Falling through rather than
+# returning the bare 'New favorite in {market}' is the point: that string is the
+# same false claim with the number removed"). A tie is the same false claim.
+
+
+def lead_is_printable(
+    rendered_leader_percent: Optional[int] = None,
+    rendered_runner_up_percent: Optional[int] = None,
+) -> bool:
+    """May this card's copy use a comparative — "leads", "New favorite"? (#6187)
+
+    True when the leader's printed percent is strictly greater than the highest
+    printed percent among the rows beneath it, i.e. when a reader checking the
+    board can see the lead the sentence asserts.
+
+    FAIL TO TODAY'S COPY. Either percent unknown returns True, so a caller that
+    has not been taught to pass the runner-up keeps its wording verbatim. Same
+    convention as `leader_agreement_verb`'s `leader_is_team`, and for the same
+    reason: the unknown case must not become a guess. Because that default is
+    silent, the adoption of the route call sites is asserted structurally in
+    `test_card_sentence_states_the_printed_percent_4146.py` — an unadopted call
+    site is a live defect here, not a latent one.
+    """
+    if rendered_leader_percent is None or rendered_runner_up_percent is None:
+        return True
+    return int(rendered_leader_percent) > int(rendered_runner_up_percent)
+
+
+def leader_standing_clause(
+    leader_name: str, pct: int, *, verb: str, lead_is_visible: bool
+) -> str:
+    """`MOUZ leads at 22%` — or `MOUZ at 22%` when the board cannot show a lead.
+
+    One composer for the clause rather than the five f-strings it replaces. The
+    headline, the reason and the context summary all state this same standing,
+    and they are near-copies maintained by hand, so six independent chances to
+    keep the comparative is six chances to reintroduce #6187.
+    """
+    if lead_is_visible:
+        return f"{leader_name} {verb} at {pct}%"
+    return f"{leader_name} at {pct}%"
+
+
 def generate_futures_reason(
     market_name: str,
     highlight_reasons: list[str],
@@ -1175,6 +1248,9 @@ def generate_futures_reason(
     leader_name: Optional[str] = None,
     leader_probability: Optional[float] = None,
     rendered_leader_percent: Optional[int] = None,
+    # #6187: the highest percent PRINTED beneath the leader. Defaults None so an
+    # uninformed caller keeps the comparative verbatim — see `lead_is_printable`.
+    rendered_runner_up_percent: Optional[int] = None,
     # #4700: proven team-ness of `leader_name`, for subject-verb agreement.
     # Defaults False so an uninformed caller keeps the singular verbatim.
     leader_is_team: bool = False,
@@ -1198,6 +1274,10 @@ def generate_futures_reason(
     _verb = leader_agreement_verb(leader_name, leader_is_team)
     # #4640: likewise resolved once — see `_leader_is_unnameable`.
     _no_leader_subject = _leader_is_unnameable(leader_name, leader_is_ladder_rung)
+    # #6187: and likewise — may any template below use a comparative at all?
+    _lead_visible = lead_is_printable(
+        rendered_leader_percent, rendered_runner_up_percent
+    )
 
     # A yes/no question never reaches the field templates below — it has no
     # field. See `compose_binary_card_copy`.
@@ -1230,7 +1310,11 @@ def generate_futures_reason(
     # branch does not speak at all and the next real signal does. Falling
     # through rather than returning the bare "New favorite in {market}" is the
     # point: that string is the same false claim with the number removed.
-    if "leader_change" in reasons and not leader_is_ladder_rung:
+    #
+    # #6187 — and a tie is that same false claim a third time. "New favorite" IS
+    # the comparative, so a board whose top rows print the same percent gets no
+    # verb-less variant here; it falls through to the next signal it can support.
+    if "leader_change" in reasons and not leader_is_ladder_rung and _lead_visible:
         if leader_name and leader_probability is not None:
             pct = _display_pct(leader_probability, rendered_leader_percent)
             return f"New favorite: {leader_name} ({pct}%) now {_verb} {market_name}"
@@ -1273,17 +1357,20 @@ def generate_futures_reason(
             if _no_leader_subject:
                 return f"{market_name} resolving within a week"
             pct = _display_pct(leader_probability, rendered_leader_percent)
-            return f"{market_name} resolving soon, {leader_name} {_verb} at {pct}%"
+            clause = leader_standing_clause(
+                leader_name, pct, verb=_verb, lead_is_visible=_lead_visible
+            )
+            return f"{market_name} resolving soon, {clause}"
         return f"{market_name} resolving within a week"
     if "resolving_soon_30d" in reasons:
         if leader_name and leader_probability is not None:
             if _no_leader_subject:
                 return f"{market_name} resolves within a month"
             pct = _display_pct(leader_probability, rendered_leader_percent)
-            return (
-                f"{market_name} resolves within a month, "
-                f"{leader_name} {_verb} at {pct}%"
+            clause = leader_standing_clause(
+                leader_name, pct, verb=_verb, lead_is_visible=_lead_visible
             )
+            return f"{market_name} resolves within a month, {clause}"
         return f"{market_name} resolving within a month"
 
     # Lifetime move, DATED and DEMOTED (D1 clause a, #4066).
@@ -1333,7 +1420,14 @@ def generate_futures_reason(
         if _no_leader_subject:
             return ""
         pct = _display_pct(leader_probability, rendered_leader_percent)
-        return f"{leader_name} ({pct}%) {_verb} {market_name}"
+        # #6187 — the only leader template whose subject is followed by the
+        # market rather than by a percent, so it takes "in" where the others
+        # simply drop the verb. `leader_standing_clause` deliberately does not
+        # cover this shape: folding two grammars into one helper is how the
+        # sentence would come back reading "Jordan (9%) Which countries will…".
+        if _lead_visible:
+            return f"{leader_name} ({pct}%) {_verb} {market_name}"
+        return f"{leader_name} ({pct}%) in {market_name}"
 
     return ""
 
@@ -1347,6 +1441,8 @@ def generate_futures_headline(
     leader_name: Optional[str] = None,
     leader_probability: Optional[float] = None,
     rendered_leader_percent: Optional[int] = None,
+    # #6187: see `generate_futures_reason`. Defaults None -> comparative kept.
+    rendered_runner_up_percent: Optional[int] = None,
     # #4700: proven team-ness of `leader_name`, for subject-verb agreement.
     # Defaults False so an uninformed caller keeps the singular verbatim.
     leader_is_team: bool = False,
@@ -1365,6 +1461,10 @@ def generate_futures_headline(
     _verb = leader_agreement_verb(leader_name, leader_is_team)
     # #4640: likewise resolved once — see `_leader_is_unnameable`.
     _no_leader_subject = _leader_is_unnameable(leader_name, leader_is_ladder_rung)
+    # #6187: likewise — see `generate_futures_reason`.
+    _lead_visible = lead_is_printable(
+        rendered_leader_percent, rendered_runner_up_percent
+    )
 
     if affirmative_probability is not None:
         return compose_binary_card_copy(
@@ -1390,7 +1490,9 @@ def generate_futures_headline(
 
     # #4640 — a cumulative ladder has no favorite to change; fall through to the
     # next real signal rather than emit the claim with the subject removed.
-    if "leader_change" in reasons and not leader_is_ladder_rung:
+    # #6187 — nor does a board whose top rows print the same percent; see the
+    # matching branch in `generate_futures_reason`.
+    if "leader_change" in reasons and not leader_is_ladder_rung and _lead_visible:
         if leader_name and leader_probability is not None:
             return f"New favorite: {leader_name} ({_display_pct(leader_probability, rendered_leader_percent)}%)"
         return "New favorite"
@@ -1423,14 +1525,27 @@ def generate_futures_headline(
         if leader_name and leader_probability is not None:
             if _no_leader_subject and market_name:
                 return f"{_short_market_name(market_name)} resolving soon"
-            return f"Resolving soon: {leader_name} {_verb} at {_display_pct(leader_probability, rendered_leader_percent)}%"
+            clause = leader_standing_clause(
+                leader_name,
+                _display_pct(leader_probability, rendered_leader_percent),
+                verb=_verb,
+                lead_is_visible=_lead_visible,
+            )
+            return f"Resolving soon: {clause}"
         return "Resolving soon"
 
     if "resolving_soon_30d" in reasons:
         if leader_name and leader_probability is not None:
             if _no_leader_subject and market_name:
                 return f"{_short_market_name(market_name)} resolves within a month"
-            return f"{leader_name} {_verb}; resolves within a month"
+            # #6187 — the one leader headline that carries the verb WITHOUT a
+            # percent, so dropping the verb alone would leave "MOUZ; resolves
+            # within a month", a subject with nothing said about it. The tie
+            # form states the standing the reader can check instead.
+            if _lead_visible:
+                return f"{leader_name} {_verb}; resolves within a month"
+            pct = _display_pct(leader_probability, rendered_leader_percent)
+            return f"{leader_name} at {pct}%; resolves within a month"
         return RESOLVING_WITHIN_MONTH_HEADLINE
 
     # Lifetime move — same demotion and same dating rule as
@@ -1464,7 +1579,12 @@ def generate_futures_headline(
             # this one had no clause. Falls through to the empty terminal below, and
             # from there to `primary_reason` in `routes/feed.py`.
             return ""
-        return f"{leader_name} {_verb} at {_display_pct(leader_probability, rendered_leader_percent)}%"
+        return leader_standing_clause(
+            leader_name,
+            _display_pct(leader_probability, rendered_leader_percent),
+            verb=_verb,
+            lead_is_visible=_lead_visible,
+        )
 
     return ""
 
@@ -1477,6 +1597,8 @@ def generate_futures_context_summary(
     leader_name: Optional[str] = None,
     leader_probability: Optional[float] = None,
     rendered_leader_percent: Optional[int] = None,
+    # #6187: see `generate_futures_reason`. Defaults None -> comparative kept.
+    rendered_runner_up_percent: Optional[int] = None,
     # #4700: see `generate_futures_reason`. Defaults False -> singular verbatim.
     leader_is_team: bool = False,
     # #4640: see `generate_futures_reason`. Defaults False -> copy unchanged.
@@ -1499,6 +1621,10 @@ def generate_futures_context_summary(
     reasons = set(highlight_reasons)
     # #4700: resolved once, above every branch (see `generate_futures_reason`).
     _verb = leader_agreement_verb(leader_name, leader_is_team)
+    # #6187: likewise — see `generate_futures_reason`.
+    _lead_visible = lead_is_printable(
+        rendered_leader_percent, rendered_runner_up_percent
+    )
 
     # This is the string the web card prints under its title, so it is where the
     # binary-as-race defect was actually READ ("China invade Taiwan by end of
@@ -1527,11 +1653,18 @@ def generate_futures_context_summary(
         if _copy_repeats_market_name(leader_name, market_name):
             return ""
         # #4640 — the single gate for this generator: every leader sentence it
-        # can emit is composed here, so a ladder rung is refused once.
+        # can emit is composed here, so a ladder rung is refused once. #6187
+        # rides the same gate: one place to drop the comparative, and the
+        # "resolves within a week/month" suffixes below inherit it.
         if _leader_is_unnameable(leader_name, leader_is_ladder_rung):
             return ""
         if leader_name and leader_probability is not None:
-            return f"{leader_name} {_verb} at {_display_pct(leader_probability, rendered_leader_percent)}%"
+            return leader_standing_clause(
+                leader_name,
+                _display_pct(leader_probability, rendered_leader_percent),
+                verb=_verb,
+                lead_is_visible=_lead_visible,
+            )
         return ""
 
     leader = leader_clause()

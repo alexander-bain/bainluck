@@ -539,7 +539,15 @@ def test_every_route_site_hands_the_composers_the_printed_percent(scorer):
         f"{scorer} no longer calls each composer exactly once: {calls}"
     )
     for lineno, name, kwargs in calls:
-        for required in ("rendered_leader_percent", "rendered_affirmative_percent"):
+        # #6187 joins the list rather than growing a second scan of the same six
+        # calls: it is the same coupling — the sentence is composed from the
+        # numbers the card prints — and its default is likewise silent, so an
+        # unadopted site restores the live defect instead of failing loudly.
+        for required in (
+            "rendered_leader_percent",
+            "rendered_affirmative_percent",
+            "rendered_runner_up_percent",
+        ):
             assert required in kwargs, (
                 f"{scorer} calls {name} at feed.py:{lineno} without {required}, so "
                 "that sentence derives its own percent again and can disagree "
@@ -562,7 +570,11 @@ def test_the_composers_still_accept_the_printed_percent():
         fr.generate_futures_context_summary,
     ):
         params = inspect.signature(composer).parameters
-        for required in ("rendered_leader_percent", "rendered_affirmative_percent"):
+        for required in (
+            "rendered_leader_percent",
+            "rendered_affirmative_percent",
+            "rendered_runner_up_percent",  # #6187
+        ):
             assert required in params, f"{composer.__name__} dropped {required}"
     assert (
         "rendered_affirmative_percent"
