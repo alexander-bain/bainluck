@@ -193,6 +193,52 @@ export function suspendedSummary(
 }
 
 /**
+ * The word the phase badge prints when an event is NOT live, NOT final and NOT
+ * {@link hasNoReportedResult} — i.e. the branch that speaks about its START.
+ *
+ * ── #6031: THE TWO-HOUR HOLE ──
+ *
+ * `startedWithoutResult` only fires past {@link UPCOMING_GRACE_MS}, so a
+ * `scheduled` row between its own kickoff and the two-hour mark is neither live
+ * nor "no result reported" — and the badge's old inline ternary
+ * (`countdown && !hasStarted ? … : "Pregame"`) sent it to the literal word
+ * **Pregame**. #3211 had already fixed the louder half of that lie by
+ * suppressing the countdown, which left the page suppressing a countdown to a
+ * moment in the past while still calling the match pregame, directly above a
+ * chart labelled "Since Start". Measured on production 2026-09-13: event
+ * 15308588 (Barcelona v Delfin), 77 minutes past its served kickoff
+ * (`artifacts/live-216/barcelona-delfin-pregame-0010Z.png`).
+ *
+ * EVERY match passes through this window — a row is `scheduled` until a source
+ * flips it to `live` — so this is the badge a reader sees when they tap a card
+ * at kickoff, not a rare tail state. It lasts seconds where ESPN anchors the
+ * fixture and up to the full two hours where nothing does (tennis, #2700).
+ *
+ * ⚠️ THE GRACE IS NOT THE BUG AND MUST NOT BE WIDENED TO CLOSE THIS. Making
+ * `startedWithoutResult` fire sooner would print "No result reported" over a
+ * match twenty minutes in, which is false and is the precise claim the grace
+ * exists to refuse. The repair is the WORD, and only the word.
+ *
+ * "Started" and not "Underway"/"In progress": `hasStarted` is
+ * `commence_time <= now` and nothing more, so the only thing this branch has
+ * standing to say is that the scheduled start has passed. The stronger words
+ * assert play is happening, which is exactly what no source has told us — that
+ * is why the row is still `scheduled` and why the badge is amber rather than
+ * the live branch's pulsing emerald.
+ *
+ * Lives here rather than inline for the reason #5885 moved `hasStarted` into
+ * `pageLiveClaimIsUnbacked`: a Next.js page carries no named exports, so a
+ * ternary in the JSX is a decision no test can hold.
+ */
+export function startBadgeLabel(
+  hasStarted: boolean,
+  countdown: string | null | undefined,
+): string {
+  if (hasStarted) return "Started";
+  return countdown ? `Starts in ${countdown}` : "Pregame";
+}
+
+/**
  * The section a status belongs to on every grid surface that groups events.
  *
  * `suspended` returns "live" — NOT because a suspended match is being played,
