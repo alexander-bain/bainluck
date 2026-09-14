@@ -407,6 +407,7 @@ class _FakeRedis:
         self.value = value
         self.raises = raises
         self.written = None
+        self.deleted = []
 
     def get(self, key):
         if self.raises:
@@ -418,6 +419,11 @@ class _FakeRedis:
             raise RuntimeError("redis down")
         self.written = (key, ttl, value)
         self.value = value
+
+    def delete(self, key):
+        if self.raises:
+            raise RuntimeError("redis down")
+        self.deleted.append(key)
 
 
 def _complete_state():
@@ -807,6 +813,10 @@ async def test_a_completed_walk_publishes_counts_that_reconcile():
     assert counts["market_result_unavailable"] == 5
     assert sum(counts.values()) == 12 * units + 5
 
+    # The working copy is dropped once published, so the next call starts a
+    # fresh walk of whatever the roster is THEN rather than resuming a finished one.
+    assert redis.deleted == [ccr.WORKING_KEY]
+
     # The published copy is readable and stamped with the roster it walked.
     published = ccr.read_published(redis)
     assert published["counts"] == counts
@@ -885,6 +895,38 @@ async def test_a_complete_walk_whose_publish_fails_is_banked_and_retried():
     assert retry["units_counted_this_call"] == [], "nothing was re-counted"
     assert session.global_calls == 1, "the global rung was not counted twice"
     assert retry["counts"] == first["counts"]
+
+
+async def test_a_failed_cache_write_is_reported_rather_than_swallowed():
+    """Fail-open, but never silent. A walk that has quietly stopped banking its
+    progress redoes the same units for ever and looks healthy doing it."""
+
+    class _WritesFail(_FakeRedis):
+        def setex(self, key, ttl, value):
+            raise RuntimeError("redis down")
+
+    session = _FakeSession(_roster(16), _unit_row(), _global_row())
+    report = await ccr.run_bounded_walk(session, _WritesFail(), buckets=8, max_units=2)
+
+    assert report["units_done"] == 2, "the walk itself still succeeded"
+    assert report["state_banked"] == "failed: RuntimeError"
+
+
+@pytest.mark.parametrize(
+    "max_units,expected", [(2, "working"), (100, "published_and_cleared")]
+)
+async def test_the_report_says_what_happened_to_the_resumable_state(max_units, expected):
+    session = _FakeSession(_roster(8), _unit_row(), _global_row())
+    report = await ccr.run_bounded_walk(
+        session, _FakeRedis(), buckets=4, max_units=max_units
+    )
+    assert report["state_banked"] == expected
+
+
+async def test_with_no_cache_at_all_the_state_is_reported_as_unbanked():
+    session = _FakeSession(_roster(8), _unit_row(), _global_row())
+    report = await ccr.run_bounded_walk(session, None, buckets=4, max_units=100)
+    assert report["state_banked"] is None
 
 
 async def test_an_empty_population_publishes_nothing_and_says_so():

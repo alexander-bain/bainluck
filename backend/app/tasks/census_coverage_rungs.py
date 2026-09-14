@@ -826,6 +826,12 @@ async def run_bounded_walk(
 
     published = publish(redis_client, state) if state.complete else False
 
+    # Reported rather than swallowed. The cache write is fail-open — it must
+    # never be the reason a walk fails — but a walk whose progress has silently
+    # stopped being banked would redo the same units for ever and look perfectly
+    # healthy doing it, which is the failure mode this whole module is resumable
+    # to avoid.
+    state_banked: str | None = None
     if redis_client is not None:
         try:
             if published:
@@ -833,6 +839,7 @@ async def run_bounded_walk(
                 # next call starts a fresh walk of whatever the roster is THEN,
                 # rather than resuming one that is already published.
                 redis_client.delete(WORKING_KEY)
+                state_banked = "published_and_cleared"
             else:
                 # Note the branch this also covers: a COMPLETE walk whose
                 # publish failed. Banking it means the next call resumes a
@@ -841,8 +848,9 @@ async def run_bounded_walk(
                 redis_client.setex(
                     WORKING_KEY, WORKING_TTL_SECONDS, encode_state(state)
                 )
-        except Exception:
-            pass
+                state_banked = "working"
+        except Exception as exc:  # noqa: BLE001 — fail-open, but never silent
+            state_banked = f"failed: {type(exc).__name__}"
 
     return {
         "census": "coverage-rungs",
@@ -863,6 +871,11 @@ async def run_bounded_walk(
         # can mistake a fragment for a total.
         "counts": rung_counts_for_bridge(state),
         "published": published,
+        # What happened to the resumable state: ``working`` (banked),
+        # ``published_and_cleared``, ``failed: <ExcType>``, or None when there is
+        # no cache at all. A caller that sees ``failed`` repeatedly is watching
+        # the walk lose its memory, not doing bounded work.
+        "state_banked": state_banked,
     }
 
 
