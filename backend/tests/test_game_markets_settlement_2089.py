@@ -43,6 +43,7 @@ a false statement is not.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -198,6 +199,16 @@ async def burruchaga_client():
     )
     ungraded.status = "open"  # gotcha #33 — settled upstream, still 'open' here
     ungraded.event_id = event.id
+    # #6026: and its trading window closed WITH the match, which is what "settled
+    # upstream" means. `_make_futures_market` defaults `resolution_date` to 60
+    # days out — a season-long schedule — and that default silently contradicted
+    # the line above: a market on a finished event still due to trade two months
+    # later is not that fixture's market, so `/game-markets` now withholds it and
+    # this row went absent rather than unverdicted. That is the same failure the
+    # comment four lines up already warns about for the totals classifier: a row
+    # that is missing proves nothing about a gate on verdicts. Stating the close
+    # time makes the fixture say what it always claimed to say.
+    ungraded.resolution_date = event.commence_time + timedelta(hours=3)
 
     outcomes = [
         _make_outcome(
