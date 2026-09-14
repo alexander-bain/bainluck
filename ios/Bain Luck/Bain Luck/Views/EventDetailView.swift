@@ -926,22 +926,33 @@ struct EventDetailView: View {
                         // view's: on a three-way market the points home shed are
                         // not points the away side gained, and the caption says
                         // so by naming home and keeping the sign.
-                        if let openingHome = event.openingOdds?.homeProbability,
-                           abs(home - openingHome) > 0.02 {
-                            let trend = DrawPricedWinner.trendSubject(
-                                homeDelta: home - openingHome, sport: event.sport
-                            )
+                        //
+                        // #3051 — and the SUBTRACTION is gone, not corrected.
+                        // The delta was computed on the raw probabilities while
+                        // the numbers above and below it are the rendered ones,
+                        // so `95` over `Opened 91` was captioned `+3`. The
+                        // caption now prints the two levels themselves
+                        // ("Sabalenka 91% → 95% since open"), which is the same
+                        // invariant with nothing left to round twice. Why the
+                        // levels and not `pp`: `SinceOpenCaption`.
+                        if let caption = SinceOpenCaption.caption(
+                            away: odds.awayProbability,
+                            home: odds.homeProbability,
+                            servedAwayPercent: odds.awayRenderedPercent,
+                            servedHomePercent: odds.homeRenderedPercent,
+                            openingAway: event.openingOdds?.awayProbability,
+                            openingHome: event.openingOdds?.homeProbability,
+                            sport: event.sport,
                             // #3430 — #1830's whole fix was naming the team the
-                            // delta belongs to. A label the other side shares
+                            // move belongs to. A label the other side shares
                             // un-names it again, so take the pair.
-                            let movers = TeamShortName.shortPair(
+                            names: TeamShortName.shortPair(
                                 away: event.awayTeam, home: event.homeTeam
                             )
-                            let subject = trend.isHome ? movers.home : movers.away
-                            let sign = trend.signedPoints < 0 ? "\u{2212}" : "+"
-                            Text("\(subject) \(sign)\(abs(trend.signedPoints))% since open")
+                        ) {
+                            Text(caption.text)
                                 .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(trend.isHome ? colors.home : colors.away)
+                                .foregroundStyle(caption.isHome ? colors.home : colors.away)
                         }
                         // #490: hero confidence signal (1-3 bars), computed
                         // client-side from the win-prob source count + whether the
