@@ -3437,6 +3437,7 @@ async def phase15_event_row_is_unmoved(session, event):
             select(
                 _Event.status, _Event.home_score, _Event.away_score,
                 _Event.completed_at, _Event.commence_time,
+                _Event.commence_time_source,
             ).where(_Event.id == event.id)
         )
     ).first()
@@ -3448,6 +3449,13 @@ async def phase15_event_row_is_unmoved(session, event):
         and row.away_score == event.away_score
         and _as_utc(row.completed_at) == _as_utc(event.completed_at)
         and _as_utc(row.commence_time) == _as_utc(event.commence_time)
+        # CERT-2849's required repair, `6073-ATOMIC-PHASE15-REDATE-INCLUDES-
+        # AUTHORITY-SOURCE`. The AUTHORITY column has to be in the premise for
+        # the same reason its value is read at all: it is what decides whether
+        # Polymarket may write here. A pass that authorized itself against
+        # `polymarket` and then found `espn` in the row is reasoning about a row
+        # that no longer exists, exactly as it would be for a changed score.
+        and row.commence_time_source == event.commence_time_source
     )
     return unmoved, row
 
@@ -3568,6 +3576,18 @@ async def phase15_redate_compare_and_write(session, event, writes, observed) -> 
             _unmoved_clause(_Event.away_score, observed.away_score),
             _unmoved_clause(_Event.completed_at, observed.completed_at),
             _unmoved_clause(_Event.commence_time, observed.commence_time),
+            # CERT-2849's required repair. `commence_time_source` was READ to
+            # authorize this write and omitted from the predicate, which left the
+            # ship raceable in the one way that matters: a HIGHER authority
+            # committing between the read and the write. The grader drove it —
+            # an independent interleave committed `espn` at the same instant, the
+            # five-column CAS still matched (no score, no status, no clock moved;
+            # only the authority did), and this statement overwrote it with
+            # `polymarket_venue` and the venue time. A source the row no longer
+            # holds now declines the row, so the later authority stands.
+            _unmoved_clause(
+                _Event.commence_time_source, observed.commence_time_source
+            ),
         )
         .values(
             commence_time=writes["commence_time"],

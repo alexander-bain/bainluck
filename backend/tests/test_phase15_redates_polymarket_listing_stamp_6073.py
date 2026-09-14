@@ -738,6 +738,8 @@ def test_the_redate_write_is_conditional_in_the_statement_not_in_python_6073():
         status="closed", home_score=None, away_score=None,
         completed_at=datetime(2026, 9, 14, 7, 0, tzinfo=timezone.utc),
         commence_time=LISTING_STAMP,
+        # CERT-2849's required repair: the AUTHORITY column joined the tuple.
+        commence_time_source="polymarket",
     )
     wrote = asyncio.run(phase15_redate_compare_and_write(
         _Recorder(), SimpleNamespace(id=15312442),
@@ -752,6 +754,10 @@ def test_the_redate_write_is_conditional_in_the_statement_not_in_python_6073():
     for column in (
         "events.status", "events.home_score", "events.away_score",
         "events.completed_at", "events.commence_time",
+        # CERT-2849: the column that AUTHORIZES the write is part of the row the
+        # statement is conditional on, or a higher authority can be overwritten
+        # without any other column moving.
+        "events.commence_time_source",
     ):
         assert column in where, f"{column} is not in the shipped WHERE"
     assert "= NULL" not in where
@@ -1213,3 +1219,87 @@ async def test_the_ingest_half_and_this_repair_compose_on_one_real_child_row():
     session.refresh(event)
     assert event.commence_time.replace(tzinfo=timezone.utc) == VENUE_KICKOFF
     assert event.commence_time_source == POLYMARKET_VENUE_COMMENCE_SOURCE
+
+
+@pytest.mark.asyncio
+async def test_higher_authority_committed_after_freshness_check_cannot_be_overwritten_6073():
+    """CERT-2849's required repair: the AUTHORITY column is part of the row.
+
+    `commence_time_source` is what AUTHORIZES this write — the pass reads it,
+    sees `polymarket`, and concludes Polymarket may re-date its own row. It was
+    the one column the decision read that the conditional UPDATE did not repeat,
+    and that gap is the ship's remaining race: a HIGHER authority committing
+    between the read and the write.
+
+    THE INTERLOPER MOVES NOTHING ELSE. It commits `espn` and leaves the status,
+    both scores, `completed_at` and `commence_time` exactly as observed — so the
+    five-column CAS matches happily and, before this repair, the statement
+    overwrote a higher authority's claim with `polymarket_venue` and the venue
+    time. A race witness that also moved the clock would have been caught by the
+    existing predicate and would have proved nothing about this one.
+
+    The producer's offer differs from the interloper's write on BOTH columns
+    (`polymarket_venue` vs `espn`, VENUE_KICKOFF vs the listing stamp), so a
+    no-op write cannot masquerade as a successful one.
+    """
+    from sqlalchemy import text
+
+    from app.tasks import prediction_market_matching as task_mod
+
+    session, tennis = _new_rail()
+    event = _event(session, tennis)
+    _market(session, event)
+    event_id = event.id
+
+    real_check = task_mod.phase15_event_row_is_unmoved
+
+    async def _check_then_authority_lands(inner_session, inner_event):
+        answer = await real_check(inner_session, inner_event)
+        # ONLY the authority column moves.
+        inner_session._s.execute(
+            text("UPDATE events SET commence_time_source = 'espn' WHERE id = :i"),
+            {"i": event_id},
+        )
+        inner_session._s.commit()
+        return answer
+
+    with patch.object(
+        task_mod, "phase15_event_row_is_unmoved", new=_check_then_authority_lands,
+    ):
+        stats = await _run_phase15(session)
+
+    row = session.execute(
+        text(
+            "SELECT commence_time, commence_time_source FROM events WHERE id = :i"
+        ),
+        {"i": event_id},
+    ).one()
+    assert row.commence_time_source == "espn", (
+        "a higher authority's claim was overwritten by Polymarket — the write "
+        "was authorized against a row that no longer existed"
+    )
+    assert str(row.commence_time).startswith("2026-09-13 20:14:27"), (
+        "the venue time landed anyway: the authority column declined the row "
+        "but the clock was written, which means the two are not in one statement"
+    )
+    assert stats["funnel"]["phase15_pm_venue_redate_lost_race"] == 1
+    assert "phase15_pm_venue_corrected_and_voided" not in stats["funnel"]
+
+
+@pytest.mark.asyncio
+async def test_the_uncontested_redate_still_lands_with_the_authority_in_the_predicate_6073():
+    """The twin for the arm above: `WHERE false` must not pass it.
+
+    Same rail, same path, one difference — nobody interleaves. Without this, a
+    predicate that declines every row satisfies the race test perfectly.
+    """
+    session, tennis = _new_rail()
+    event = _event(session, tennis)
+    _market(session, event)
+
+    stats = await _run_phase15(session)
+
+    session.refresh(event)
+    assert event.commence_time.replace(tzinfo=timezone.utc) == VENUE_KICKOFF
+    assert event.commence_time_source == POLYMARKET_VENUE_COMMENCE_SOURCE
+    assert stats["funnel"].get("phase15_pm_venue_redate_lost_race", 0) == 0
