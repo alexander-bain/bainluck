@@ -101,6 +101,19 @@ _OWNED_TABLES = [
 
 @pytest.fixture
 async def db():
+    """A real Postgres carrying the tables this gate needs.
+
+    Deliberately NOT `drop_all` + `create_all`, which is what the sibling gates
+    in this CI job do. They reset the WHOLE schema; this file needs a subset,
+    and dropping a subset fails once the siblings have run — `events`,
+    `futures_markets` and `teams` are referenced by a dozen tables outside it,
+    so PostgreSQL refuses the drop. (Green locally against a fresh database,
+    red in CI, which is the whole reason the job runs these in one database.)
+
+    So: create what is missing, destroy nothing, and make every fixture row
+    unique per call — every assertion here is scoped by `user_id`, so rows left
+    by another gate are invisible to it.
+    """
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     import app.models.models  # noqa: F401 — registers every table on Base
@@ -109,8 +122,7 @@ async def db():
     engine = create_async_engine(DB_URL)
     tables = [Base.metadata.tables[name] for name in _TABLES]
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all, tables=tables)
-        await conn.run_sync(Base.metadata.create_all, tables=tables)
+        await conn.run_sync(Base.metadata.create_all, tables=tables, checkfirst=True)
 
     maker = async_sessionmaker(engine, expire_on_commit=False)
     async with maker() as session:
@@ -119,13 +131,22 @@ async def db():
     await engine.dispose()
 
 
-async def _account_with_everything(session, tag: str) -> int:
+async def _account_with_everything(session, label: str) -> tuple[int, str]:
     """A user carrying one row of every kind that points at a user.
 
     Deliberately maximal: the pre-fix endpoint failed on the FIRST of these it
     met, so a fixture carrying only one kind would under-report the damage.
+
+    Returns ``(user_id, tag)``. The tag carries a unique suffix because the
+    database is shared with the other gates in this job and several of these
+    columns are UNIQUE — `device_tokens.device_token`, `users.firebase_uid`,
+    `oscars_pools.code`, `oscars_pool_members.member_token`.
     """
+    import uuid
+
     import app.models.models as m
+
+    tag = f"{label}-{uuid.uuid4().hex[:8]}"
 
     sport = (
         await session.execute(select(m.Sport).where(m.Sport.key == "basketball_nba"))
@@ -140,8 +161,12 @@ async def _account_with_everything(session, tag: str) -> int:
     await session.flush()
 
     team = m.Team(sport_id=sport.id, name=f"Team {tag}")
-    market = m.FuturesMarket(source="kalshi", external_id=f"X-{tag}", name=f"Market {tag}")
-    pool = m.OscarsPool(name=f"Pool {tag}", code=f"P{tag}"[:8], created_by_name=tag)
+    market = m.FuturesMarket(
+        source=f"kalshi-{tag}", external_id=f"X-{tag}", name=f"Market {tag}"
+    )
+    pool = m.OscarsPool(
+        name=f"Pool {tag}", code=uuid.uuid4().hex[:8], created_by_name=label
+    )
     session.add_all([team, market, pool])
     await session.flush()
 
@@ -168,12 +193,12 @@ async def _account_with_everything(session, tag: str) -> int:
             description=f"bug-{tag}",
         ),
         m.PredictionChallenge(
-            creator_user_id=user.id, challenge_code=f"C-{tag}"[:20],
+            creator_user_id=user.id, challenge_code=uuid.uuid4().hex[:20],
             market_id=market.id, creator_guess="over", creator_threshold=50,
         ),
     ])
     await session.commit()
-    return user.id
+    return user.id, tag
 
 
 async def _delete_account(session, user_id: int, load_in=None) -> None:
@@ -216,7 +241,7 @@ async def test_deleting_a_fully_populated_account_succeeds(db):
     """
     import app.models.models as m
 
-    user_id = await _account_with_everything(db, "headline")
+    user_id, _tag = await _account_with_everything(db, "headline")
 
     await _delete_account(db, user_id)
 
@@ -228,7 +253,7 @@ async def test_deleting_a_fully_populated_account_succeeds(db):
 
 @pytest.mark.parametrize("table", _OWNED_TABLES)
 async def test_the_users_own_rows_are_gone(db, table):
-    user_id = await _account_with_everything(db, "owned")
+    user_id, _tag = await _account_with_everything(db, "owned")
 
     # The strawman guard. "0 rows after" is the assertion, and 0 rows BEFORE
     # satisfies it without the endpoint doing anything — which is exactly what
@@ -251,7 +276,7 @@ async def test_kept_rows_keep_nothing_that_names_the_person(db):
     the row stays and every identifying field goes — including the profile
     email copied onto a bug report, which nulling ``user_id`` alone would miss.
     """
-    user_id = await _account_with_everything(db, "kept")
+    user_id, tag = await _account_with_everything(db, "kept")
 
     await _delete_account(db, user_id)
 
@@ -262,7 +287,8 @@ async def test_kept_rows_keep_nothing_that_names_the_person(db):
 
     surviving_bug = (
         await db.execute(
-            text("SELECT user_id, user_email FROM bug_reports WHERE description = 'bug-kept'")
+            text("SELECT user_id, user_email FROM bug_reports WHERE description = :d"),
+            {"d": f"bug-{tag}"},
         )
     ).one()
     assert surviving_bug == (None, None), (
@@ -272,7 +298,8 @@ async def test_kept_rows_keep_nothing_that_names_the_person(db):
 
     kept_query = (
         await db.execute(
-            text("SELECT count(*) FROM search_query_logs WHERE query = 'query-kept'")
+            text("SELECT count(*) FROM search_query_logs WHERE query = :q"),
+            {"q": f"query-{tag}"},
         )
     ).scalar()
     assert kept_query == 1, "the de-identified row should survive, not be deleted"
@@ -283,8 +310,8 @@ async def test_a_second_account_is_untouched(db):
     id — or a cascade reaching further than intended — takes someone else's
     data with it, and nothing in the response would say so.
     """
-    victim_id = await _account_with_everything(db, "victim")
-    bystander_id = await _account_with_everything(db, "bystander")
+    victim_id, _victim_tag = await _account_with_everything(db, "victim")
+    bystander_id, _bystander_tag = await _account_with_everything(db, "bystander")
 
     await _delete_account(db, victim_id)
 
@@ -318,7 +345,7 @@ async def test_it_does_not_matter_which_session_loaded_the_user(db):
 
     import app.models.models as m
 
-    user_id = await _account_with_everything(db, "foreign")
+    user_id, _tag = await _account_with_everything(db, "foreign")
 
     other_session = async_sessionmaker(db.bind, expire_on_commit=False)()
     try:
