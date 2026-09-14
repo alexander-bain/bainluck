@@ -140,6 +140,7 @@ process as the verdict; tests drive the ``now=`` keyword seam instead (gotcha #4
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -334,6 +335,40 @@ def band_seconds_left(now: datetime | None = None) -> int:
     return max(0, int((edge - now).total_seconds()))
 
 
+def seconds_until_window_opens(now: datetime | None = None) -> int:
+    """Whole seconds until the band's OPENING edge; ``0`` once inside it.
+
+    The mirror of :func:`band_seconds_left`, and derived from the same bounds for
+    the same reason: "how long until it is safe to push" and "how long it stays
+    safe" are two readings of one band, and a second constant for either is a
+    second answer free to drift from the first
+    (``test_the_two_edges_are_one_band_read_from_both_sides``).
+
+    Zero INSIDE the band — the caller reads that as "no wait is needed", which is
+    the same polarity :func:`band_seconds_left` uses for "stop waiting": both
+    degrade toward acting now rather than toward sleeping.
+
+    IT ROUNDS UP, AND THE REAL CLOCK IS WHY. ``int()`` truncates, and a real
+    ``now`` carries microseconds, so 13:30:20.84 -> :38 is 459.16 s and
+    truncating it lands the sleeper at 13:37:59.84 — one second OUTSIDE the band
+    it waited eight minutes to reach, where ``decide`` then HOLDs and the whole
+    wait is spent on the verdict it started with. Found by running the
+    subcommand against the wall clock rather than against a fixed anchor, which
+    is the one thing a ``now=``-seam test cannot do for itself
+    (``test_a_wait_computed_from_a_real_clock_lands_inside_the_band``).
+    ``band_seconds_left`` truncates for the same reason in the other direction:
+    there, short is the safe end.
+    """
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    if inside_window(now):
+        return 0
+    opens, _ = window_bounds()
+    edge = now.replace(minute=opens, second=0, microsecond=0)
+    if edge <= now:
+        edge += timedelta(hours=1)
+    return max(0, math.ceil((edge - now).total_seconds()))
+
+
 # ── the verdict ────────────────────────────────────────────────────────────────
 
 PUSH, HOLD, REFUSE, USAGE = 0, 1, 2, 3
@@ -438,6 +473,91 @@ def decide(
         "PUSH",
         f"heavy {heavy_live[:9]} -> main's live {main_live[:9]} ({why_now})",
     )
+
+
+def wait_seconds(
+    *,
+    main_live: str | None,
+    heavy_live: str | None,
+    heavy_is_ancestor: bool | None,
+    dispatched: bool = False,
+    heavy_release_age_min: int | None = None,
+    now: datetime | None = None,
+) -> int:
+    """Seconds to sleep so THIS run reaches the band; ``0`` when waiting cannot help.
+
+    OUTSIDE THE BAND IS "NOT YET", NOT "NOT TODAY" — the sentence the in-flight
+    loop already lives by, applied to the other clock (#5470).
+
+    WHAT IT COSTS, MEASURED, AND NOT THE THING IT WAS REPORTED AS. lane1/324
+    read four consecutive runs (:00, :10, :36, :43, one sync) and called the
+    deploy trigger phase-locked against the band; int355 read heavy three
+    releases behind at 12:55Z. Neither survives the whole population: over all
+    85 runs this workflow has had (2026-09-12T19:37Z .. 09-14T12:35Z, read
+    2026-09-14) **34 of 73 `workflow_run` fires landed in band, 47%**, and 29 of
+    the last 24 hours' 65. Deploys are spread across the hour, not stacked on
+    it, and at 12:55Z heavy was 72 min old — inside its own 180-min cycle floor,
+    where being behind is the priced design and not a defect.
+
+    THE REAL COST IS THE RESIDUAL AFTER THE FLOOR CLEARS, and it is visible in
+    heavy's own release record. Six consecutive releases, v15..v20
+    (2026-09-13 09:57 PDT .. 09-14 04:43): 3h47, 3h06, 4h01, 4h06, 3h47 —
+    **mean 3h45 against a 3h00 floor**. That 45-minute residual is this: the
+    floor clears at some minute of the hour, and nothing may push until a
+    trigger happens to arrive while the band is open. A trigger arrives every
+    ~22 min and is in band 47% of the time, which is 45 minutes of expected
+    wait — the arithmetic and the reading agree to the minute.
+
+    AND THE TAIL IS THE PART THAT HURT. When deploys stop — a quiet night, a
+    frozen tray — the only trigger left is the cron, which this repo measured at
+    19-359 min late and which landed in band **2 of 11 times** here. That is the
+    7h06m and 7h33m episodes recorded in this file's header, with merged launch
+    fixes dark on a worker that never got the code. A cron fire that sleeps to
+    the edge converges; a cron fire that HOLDs waits for another lottery.
+
+    A run that HOLDs at :10 and a run that sleeps 28 minutes and pushes at :38
+    differ only in whether the opportunity is taken; the alternative was never
+    "push at :10". So this CANNOT weaken any gate, and deliberately answers none
+    of their questions itself: the wait is authorised only when ``decide``, asked
+    about the moment the band opens with the release age it will have by then,
+    says PUSH. Every safety guard is re-asked for real after the sleep, against
+    refs re-read then — the sha pushed is the one main is serving when it is
+    pushed, never the one it was serving when the run started.
+
+    Three reasons it is affordable, none of them "runner time is cheap":
+
+    * ``bainluck`` is a PUBLIC repository, where GitHub-hosted standard runners
+      are free — so this spends no money, and is not the spend call D100 is;
+    * it spends one of the 20 free concurrent job slots, and only ever one: the
+      ``heavy-deploy`` group cancels a PENDING duplicate rather than the running
+      sleeper, so a burst of deploys collapses into the single run that is
+      already waiting — which then reads their newest sha when it wakes;
+    * it can only happen when there is real drift, a proven ancestry and a
+      cleared cycle floor. The ~8-cycles-a-day floor bounds the waits at 8, not
+      at one per deploy (``test_a_run_inside_the_cycle_floor_never_sleeps``).
+
+    The projected age is the one thing read forward rather than measured: heavy
+    released 160 min ago at :00 is past the 180-min floor by :38, so asking the
+    floor about NOW would refuse a wait the floor itself will permit. Projecting
+    is safe in the direction that matters — the real age at the push is at or
+    ABOVE the projection, because the push happens at or after the band opens.
+    """
+    now = now or datetime.now(timezone.utc)
+    secs = seconds_until_window_opens(now)
+    if dispatched or secs <= 0:
+        return 0
+    projected_age = (
+        None if heavy_release_age_min is None else heavy_release_age_min + (secs + 59) // 60
+    )
+    at_open = decide(
+        main_live=main_live,
+        heavy_live=heavy_live,
+        heavy_is_ancestor=heavy_is_ancestor,
+        dispatched=False,
+        heavy_release_age_min=projected_age,
+        now=now + timedelta(seconds=secs),
+    )
+    return secs if at_open.code == PUSH else 0
 
 
 # ---------------------------------------------------------------------------
@@ -934,6 +1054,32 @@ def main(argv: list[str] | None = None) -> int:
         help="print how many seconds of the sync band are left (0 outside it) — "
         "the deadline for waiting out a busy worker-heavy",
     )
+    w = sub.add_parser(
+        "wait-plan",
+        help="print how many seconds to sleep so this run reaches the band (0 when "
+        "waiting cannot help) — the same facts `decide` gets, asked about the "
+        "moment the band opens",
+    )
+    w.add_argument("--main-live", required=True, help="the MAIN app's live sha (40 hex)")
+    w.add_argument("--heavy-live", required=True, help="the HEAVY app's live sha (40 hex)")
+    w.add_argument(
+        "--heavy-is-ancestor",
+        required=True,
+        help="true|false — anything else is unknown, and an unknown ancestry is "
+        "never worth waiting for: it refuses on arrival",
+    )
+    w.add_argument(
+        "--dispatched",
+        action="store_true",
+        help="an attended run never waits — it is exempt from the band it would "
+        "be waiting for",
+    )
+    w.add_argument(
+        "--heavy-release-age-min",
+        default="",
+        help="minutes since heavy's current release. Projected forward to the "
+        "band's opening edge before the cycle floor is asked about it.",
+    )
     a = sub.add_parser(
         "age", help="print minutes since the app's current release (empty if unreadable)"
     )
@@ -1005,6 +1151,36 @@ def main(argv: list[str] | None = None) -> int:
         decision = inflight_verdict(active=active, heavy=heavy, dispatched=args.dispatched)
         print(f"{decision.verdict}: {decision.reason}")
         return decision.code
+
+    if args.command == "wait-plan":
+        # The NUMBER ALONE on stdout and always exit 0 — `age`'s contract, for a
+        # reason of its own: this is the cheapest gate in the file, and a wait
+        # that cannot compute itself must degrade to NOT waiting (0), never to a
+        # non-zero the workflow would have to interpret. The WHY goes to stderr,
+        # where it reaches the run log without becoming the number.
+        secs = wait_seconds(
+            main_live=args.main_live,
+            heavy_live=args.heavy_live,
+            heavy_is_ancestor=_bool_arg(args.heavy_is_ancestor),
+            dispatched=args.dispatched,
+            heavy_release_age_min=_age_arg(args.heavy_release_age_min),
+        )
+        opens, closes = window_bounds()
+        if secs:
+            print(
+                f"waiting {secs // 60}m{secs % 60:02d}s for the :{opens}-:{closes} band "
+                "rather than losing this opportunity to a scheduler measured 19-359 min "
+                "late — the facts are all re-read after the sleep",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "not waiting: either the band is open, this is an attended run, or "
+                "the same judge says this run would not push when it opens either",
+                file=sys.stderr,
+            )
+        print(secs)
+        return 0
 
     if args.command == "band-seconds-left":
         # The NUMBER ALONE on stdout, and always exit 0 — `age`'s contract, for

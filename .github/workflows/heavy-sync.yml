@@ -129,6 +129,15 @@ jobs:
   sync:
     name: Sync bainluck-heavy to the main app's live commit
     runs-on: ubuntu-latest
+    # A CEILING, NOT A BUDGET, and it exists because this job now SLEEPS. Its
+    # three bounded parts: the wait to the band's opening edge, at most one hour
+    # minus the band's own width (39 min at today's :38-:58); the in-flight wait,
+    # which cannot outlive the band (21 min); and the push plus the release
+    # readback (10 polls, 6 s apart) on top of checkout. ~70 min of real ceiling,
+    # so 75 leaves margin without letting a wedged run hold `heavy-deploy` for
+    # GitHub's default six hours — the concurrency group is the thing being
+    # protected here (`test_the_job_timeout_covers_the_longest_run_the_band_permits`).
+    timeout-minutes: 75
     # A CI run that did not succeed deployed nothing, so there is no new drift to
     # clear — and `workflow_run` offers `completed` as its only type. Written as
     # `!= 'workflow_run' || ...` so the schedule and the attended dispatch are
@@ -176,48 +185,111 @@ jobs:
           git remote add heroku-heavy \
             "https://heroku:$HEROKU_API_KEY@git.heroku.com/bainluck-heavy.git" 2>/dev/null || true
 
-          # THE MAIN APP'S LIVE COMMIT IS THE TARGET, NOT origin/master. Heavy's
-          # release phase skips `alembic upgrade heads` (Procfile, HEAVY_APP=1)
-          # but still runs `assert_migrations_applied.py`, so heavy must never be
-          # ahead of the migrations the PRIMARY app has applied. Tracking main's
-          # live ref makes that structural: the sha has already passed CI and
-          # already released on main, migrations and all.
-          MAIN_LIVE="$(git ls-remote heroku-main refs/heads/master 2>/dev/null | cut -f1)"
-          HEAVY_LIVE="$(git ls-remote heroku-heavy refs/heads/master 2>/dev/null | cut -f1)"
-          echo "main  live: ${MAIN_LIVE:-<unreadable>}"
-          echo "heavy live: ${HEAVY_LIVE:-<unreadable>}"
+          # EVERY FACT IS READ TOGETHER, IN A FUNCTION, BECAUSE THEY ARE READ
+          # TWICE. A run that sleeps to reach the band (below) has to judge the
+          # world it wakes up in and not the one it went to sleep in: main can
+          # deploy again while it waits, and the sha this job pushes must be the
+          # one main is serving at the moment of the push. Re-reading them as a
+          # set is the point — two facts from two different minutes is how a
+          # never-backwards guard gets asked about an ancestry that has moved.
+          read_facts() {
+            # THE MAIN APP'S LIVE COMMIT IS THE TARGET, NOT origin/master. Heavy's
+            # release phase skips `alembic upgrade heads` (Procfile, HEAVY_APP=1)
+            # but still runs `assert_migrations_applied.py`, so heavy must never be
+            # ahead of the migrations the PRIMARY app has applied. Tracking main's
+            # live ref makes that structural: the sha has already passed CI and
+            # already released on main, migrations and all.
+            MAIN_LIVE="$(git ls-remote heroku-main refs/heads/master 2>/dev/null | cut -f1)"
+            HEAVY_LIVE="$(git ls-remote heroku-heavy refs/heads/master 2>/dev/null | cut -f1)"
+            echo "main  live: ${MAIN_LIVE:-<unreadable>}"
+            echo "heavy live: ${HEAVY_LIVE:-<unreadable>}"
 
-          git fetch --quiet heroku-main refs/heads/master 2>/dev/null || true
-          git fetch --quiet heroku-heavy refs/heads/master 2>/dev/null || true
+            git fetch --quiet heroku-main refs/heads/master 2>/dev/null || true
+            git fetch --quiet heroku-heavy refs/heads/master 2>/dev/null || true
 
-          # Ask whether we HOLD each object before asking about ancestry.
-          # `merge-base --is-ancestor` on a commit we never fetched exits
-          # non-zero, which reads identically to a truthful "no" — the
-          # distinction ci.yml's deploy guard draws with its own `HAVE_LIVE`.
-          ANCESTOR=unknown
-          if [ -n "$MAIN_LIVE" ] && [ -n "$HEAVY_LIVE" ] \
-             && git cat-file -e "${MAIN_LIVE}^{commit}" 2>/dev/null \
-             && git cat-file -e "${HEAVY_LIVE}^{commit}" 2>/dev/null; then
-            if git merge-base --is-ancestor "$HEAVY_LIVE" "$MAIN_LIVE"; then
-              ANCESTOR=true
-            else
-              ANCESTOR=false
+            # Ask whether we HOLD each object before asking about ancestry.
+            # `merge-base --is-ancestor` on a commit we never fetched exits
+            # non-zero, which reads identically to a truthful "no" — the
+            # distinction ci.yml's deploy guard draws with its own `HAVE_LIVE`.
+            ANCESTOR=unknown
+            if [ -n "$MAIN_LIVE" ] && [ -n "$HEAVY_LIVE" ] \
+               && git cat-file -e "${MAIN_LIVE}^{commit}" 2>/dev/null \
+               && git cat-file -e "${HEAVY_LIVE}^{commit}" 2>/dev/null; then
+              if git merge-base --is-ancestor "$HEAVY_LIVE" "$MAIN_LIVE"; then
+                ANCESTOR=true
+              else
+                ANCESTOR=false
+              fi
             fi
-          fi
-          echo "heavy-is-ancestor: $ANCESTOR"
+            echo "heavy-is-ancestor: $ANCESTOR"
+
+            # How long since heavy was last DISTURBED, for the cycle floor. `age`
+            # always exits 0 and prints the number alone, so an unreadable answer
+            # arrives here as the empty string and `decide` proceeds on it: this is
+            # a cost gate, and a cost gate that cannot read its fact must not be
+            # able to fail a job — the opposite polarity to the guards above it.
+            HEAVY_AGE_MIN="$(python3 scripts/heavy_sync_decision.py age --app bainluck-heavy)"
+            echo "heavy release age: ${HEAVY_AGE_MIN:-<unreadable>} min"
+          }
+
+          read_facts
 
           DISPATCH_FLAG=""
           if [ -n "${DISPATCHED:-}" ]; then
             DISPATCH_FLAG="--dispatched"
           fi
 
-          # How long since heavy was last DISTURBED, for the cycle floor. `age`
-          # always exits 0 and prints the number alone, so an unreadable answer
-          # arrives here as the empty string and `decide` proceeds on it: this is
-          # a cost gate, and a cost gate that cannot read its fact must not be
-          # able to fail a job — the opposite polarity to the guards above it.
-          HEAVY_AGE_MIN="$(python3 scripts/heavy_sync_decision.py age --app bainluck-heavy)"
-          echo "heavy release age: ${HEAVY_AGE_MIN:-<unreadable>} min"
+          # OUTSIDE THE BAND IS "NOT YET", NOT "NOT TODAY" — the sentence the
+          # in-flight loop below already lives by, applied to the other clock.
+          #
+          # THE SIZE OF THE PRIZE IS MEASURED, and it is not the one this change
+          # was asked for. "The deploy trigger is phase-locked against the band"
+          # (lane1/324, four consecutive runs) does not survive the population:
+          # 34 of 73 `workflow_run` fires landed in band, 47%, over every run
+          # this workflow has had. What IS real is heavy's own release record —
+          # v15..v20, 3h47 / 3h06 / 4h01 / 4h06 / 3h47, MEAN 3h45 against a 3h00
+          # floor. The 45-minute residual is the wait for a trigger to arrive
+          # while the band is open once the floor has cleared, and one arrives
+          # every ~22 min at 47%: 45 min of expected wait, which is the reading.
+          # The tail is worse and is the part that hurt — when deploys stop, the
+          # only trigger is a cron measured 19-359 min late that landed in band
+          # 2 of 11 times, which is the 7h06m and 7h33m episodes in the header.
+          #
+          # Sleeping to the opening edge takes NOTHING away. The alternative was
+          # never "push at :10" — it was "push at nothing" — and every gate is
+          # re-asked for real after the sleep, against facts re-read then. The
+          # script answers only "would this run push when the band opens",
+          # because that question is `decide`'s and is asked OF `decide`.
+          #
+          # A sleeper wakes at :38:00 on the nose, which is the minute
+          # `refresh_linked_polymarket_books` fires on — deliberately not
+          # dodged with an offset. That is the in-flight gate's question, its
+          # ring is 4.9-10.6s measured, and a second clock constant to avoid
+          # one beat would be exactly the second answer this file keeps
+          # refusing to write.
+          #
+          # It is affordable for reasons that are checkable rather than vibes:
+          # this repository is PUBLIC, where GitHub-hosted standard runners are
+          # free (so this is not a spend call), and the `heavy-deploy` group
+          # cancels a PENDING duplicate rather than the running sleeper — a
+          # burst of deploys collapses into the one run already waiting, which
+          # reads their newest sha when it wakes. `timeout-minutes` on the job
+          # is the ceiling on the whole of it.
+          WAIT_S="$(python3 scripts/heavy_sync_decision.py wait-plan \
+            --main-live "${MAIN_LIVE:-}" \
+            --heavy-live "${HEAVY_LIVE:-}" \
+            --heavy-is-ancestor "$ANCESTOR" \
+            --heavy-release-age-min "${HEAVY_AGE_MIN:-}" \
+            $DISPATCH_FLAG)"
+          # A wait that did not parse is not a licence to sleep (gotcha #54: the
+          # VALUE, not the exit code) — anything but digits becomes 0, and 0 is
+          # the run this file has always been.
+          case "${WAIT_S}" in ''|*[!0-9]*) WAIT_S=0 ;; esac
+          if [ "$WAIT_S" -gt 0 ]; then
+            echo "Sleeping ${WAIT_S}s to reach the band, then re-reading every fact."
+            sleep "$WAIT_S"
+            read_facts
+          fi
 
           # Never piped, and the VALUE of the code is what is read (gotcha #54).
           set +e
