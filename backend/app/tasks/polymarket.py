@@ -1203,7 +1203,6 @@ REDATE_LISTING_STAMPED_SQL = """
            e.period        AS period,
            e.game_clock    AS game_clock,
            e.status        AS status,
-           g.group_id      AS group_id,
            g.vgs           AS venue_game_start,
            g.n_stamps      AS n_stamps,
            g.n_events      AS n_events
@@ -1214,96 +1213,6 @@ REDATE_LISTING_STAMPED_SQL = """
       AND e.commence_time_source = :listing_src
       AND e.status IN ('live', 'suspended')
     ORDER BY e.id
-"""
-
-
-#: The value ``commence_time_source`` carries on a row minted from the listing
-#: stamp — the population this rail exists to repair, and the value the write
-#: below re-asserts before it replaces it.
-LISTING_COMMENCE_SOURCE = "polymarket"
-
-
-#: Every column the decision was made on, re-asserted inside the write itself.
-#:
-#: CERT-2834'S FINDING, WHICH IS REAL. The first cut selected the band in one
-#: statement and then wrote each row by ``WHERE id = :id``. Between those two
-#: statements is an open window, and the realtime score poll writes into exactly
-#: this band: a score landing inside the window is read by nobody, and the repair
-#: — holding values it read seconds ago — commits ``status = 'scheduled'`` over a
-#: game that has visibly started. A reader then sees a live match badged as not
-#: yet begun. Selecting a row into a repair band is not permission to write over
-#: it; the write needs its own guard.
-#:
-#: So the UPDATE re-states the whole eligibility tuple and matches zero rows if
-#: anything moved. Three deliberate choices:
-#:
-#: * **Every column, not the ones that look decisive.** ``commence_time``,
-#:   ``status``, both scores, ``period``, ``game_clock``, ``completed_at`` and
-#:   ``commence_time_source`` — the four inputs ``redate_target`` refuses on, plus
-#:   the three columns this statement WRITES. Asserting only what the predicate
-#:   READ is the trap: a prior repair in this codebase reconciled exactly while a
-#:   column it never looked at moved under an otherwise-identical tuple.
-#: * **``IS NOT DISTINCT FROM``, not ``=``.** Six of the eight are nullable and
-#:   NULL is the common value; ``= NULL`` is never true, so an ``=`` form would
-#:   silently match nothing and this rail would repair zero rows while reporting
-#:   success.
-#: * **Every bind CAST.** ``IS NOT DISTINCT FROM $1`` gives Postgres nothing to
-#:   infer a parameter type from, and asyncpg raises rather than guessing. The
-#:   casts are the column's own types, so a schema change that renames or retypes
-#:   one fails loudly here instead of quietly widening the match.
-#:
-#: The two ``NOT EXISTS`` re-assert the GROUP gates for the same reason. Their
-#: window is not the score poll but the matcher: `match_prediction_markets` runs
-#: every 15 minutes and can link another market into this group, or relink one
-#: away, after the select. A group that has gained a second event no longer names
-#: one fixture, and a group that has gained a second stamp no longer agrees with
-#: itself about when that fixture is — in both cases the instant about to be
-#: written may belong to a different match, which is the mislink class (#2693)
-#: and not ours to paper over with a confident wrong time.
-_REDATE_UNCHANGED_WHERE = """
-    WHERE e.id = :id
-      AND e.commence_time IS NOT DISTINCT FROM CAST(:was_commence AS timestamptz)
-      AND e.commence_time_source IS NOT DISTINCT FROM CAST(:listing_src AS text)
-      AND e.status IS NOT DISTINCT FROM CAST(:was_status AS text)
-      AND e.home_score IS NOT DISTINCT FROM CAST(:was_home_score AS integer)
-      AND e.away_score IS NOT DISTINCT FROM CAST(:was_away_score AS integer)
-      AND e.period IS NOT DISTINCT FROM CAST(:was_period AS text)
-      AND e.game_clock IS NOT DISTINCT FROM CAST(:was_game_clock AS text)
-      AND e.completed_at IS NOT DISTINCT FROM CAST(:was_completed_at AS timestamptz)
-      AND NOT EXISTS (
-          SELECT 1 FROM futures_markets fm2
-          WHERE fm2.group_id = CAST(:group_id AS text)
-            AND fm2.source = 'polymarket'
-            AND fm2.event_id IS NOT NULL
-            AND fm2.event_id <> :id
-      )
-      AND NOT EXISTS (
-          SELECT 1 FROM futures_markets fm3
-          WHERE fm3.group_id = CAST(:group_id AS text)
-            AND fm3.source = 'polymarket'
-            AND fm3.market_metadata->>'venue_game_start' IS NOT NULL
-            AND fm3.market_metadata->>'venue_game_start'
-                <> CAST(:was_venue_game_start AS text)
-      )
-"""
-
-#: The corrected start, when the row's state is not ours to judge.
-REDATE_WRITE_DATE_ONLY_SQL = f"""
-    UPDATE events AS e
-    SET commence_time = :dt,
-        commence_time_source = :src
-    {_REDATE_UNCHANGED_WHERE}
-"""
-
-#: The corrected start AND the status, in ONE statement, never two: a status
-#: written without the date is promoted straight back to `live` within a beat by
-#: `espn_sync`'s `commence_time <= now` arm.
-REDATE_WRITE_WITH_STATUS_SQL = f"""
-    UPDATE events AS e
-    SET commence_time = :dt,
-        commence_time_source = :src,
-        status = :status
-    {_REDATE_UNCHANGED_WHERE}
 """
 
 
@@ -1409,12 +1318,11 @@ async def redate_polymarket_listing_stamped_events() -> dict:
         "skipped_multi_event_group": 0,
         "skipped_ambiguous_stamp": 0,
         "skipped_no_change": 0,
-        "skipped_raced": 0,
     }
     async with get_task_session() as session:
         result = await session.execute(
             text(REDATE_LISTING_STAMPED_SQL),
-            {"listing_src": LISTING_COMMENCE_SOURCE},
+            {"listing_src": "polymarket"},
         )
         rows = result.fetchall()
         now = datetime.now(timezone.utc)
@@ -1444,41 +1352,30 @@ async def redate_polymarket_listing_stamped_events() -> dict:
                 stats["skipped_no_change"] += 1
                 continue
             target, new_status = decision
-            # Every column the decision was made on travels back into the
-            # write's own WHERE — see `_REDATE_UNCHANGED_WHERE`. A row that moved
-            # between the select and here simply does not match.
             params = {
                 "dt": target,
                 "src": POLYMARKET_VENUE_COMMENCE_SOURCE,
                 "id": r.event_id,
-                "listing_src": LISTING_COMMENCE_SOURCE,
-                "was_commence": r.event_commence,
-                "was_status": r.status,
-                "was_home_score": r.home_score,
-                "was_away_score": r.away_score,
-                "was_period": r.period,
-                "was_game_clock": r.game_clock,
-                "was_completed_at": r.completed_at,
-                "group_id": r.group_id,
-                "was_venue_game_start": r.venue_game_start,
             }
             if new_status is None:
-                sql = REDATE_WRITE_DATE_ONLY_SQL
+                sql = """
+                    UPDATE events
+                    SET commence_time = :dt,
+                        commence_time_source = :src
+                    WHERE id = :id
+                """
             else:
-                sql = REDATE_WRITE_WITH_STATUS_SQL
+                # ONE statement, never two: a status written without the date is
+                # promoted straight back by the `commence_time <= now` arm.
+                sql = """
+                    UPDATE events
+                    SET commence_time = :dt,
+                        commence_time_source = :src,
+                        status = :status
+                    WHERE id = :id
+                """
                 params["status"] = new_status
-            written = await session.execute(text(sql), params)
-            if (written.rowcount or 0) == 0:
-                # The row moved under us. Counted and named, never silent: a
-                # repair that writes nothing must not read as one that worked
-                # (`app/utils/task_verdict.py`).
-                stats["skipped_raced"] += 1
-                logger.info(
-                    "Polymarket re-date (#6073): event %s changed between "
-                    "selection and write — left alone",
-                    r.event_id,
-                )
-                continue
+            await session.execute(text(sql), params)
             stats["moved"] += 1
             if new_status is not None:
                 stats["rescheduled"] += 1
@@ -1488,10 +1385,10 @@ async def redate_polymarket_listing_stamped_events() -> dict:
         logger.info(
             "Polymarket re-date (#6073): scanned %d, moved %d (%d back to "
             "scheduled), skipped %d multi-event group / %d ambiguous stamp / "
-            "%d no change / %d raced",
+            "%d no change",
             stats["scanned"], stats["moved"], stats["rescheduled"],
             stats["skipped_multi_event_group"], stats["skipped_ambiguous_stamp"],
-            stats["skipped_no_change"], stats["skipped_raced"],
+            stats["skipped_no_change"],
         )
         return stats
 
