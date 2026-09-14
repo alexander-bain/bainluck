@@ -90,6 +90,29 @@ DERIVED_COMMENCE_SOURCES = frozenset({TICKER_DERIVED_COMMENCE_SOURCE})
 #: provenance on 2026-09-13). Tracked on #5905.
 KALSHI_OCCURRENCE_COMMENCE_SOURCE = "kalshi_occurrence"
 
+#: #6073. What Gamma calls ``startTime`` on the event and ``gameStartTime`` on
+#: each nested market: the instant the fixture is played, stamped at ingest into
+#: ``market_metadata['venue_game_start']`` by ``tasks.polymarket`` (#4965).
+#:
+#: Named for the same reason ``kalshi_ticker`` is: to record WHICH of a
+#: provider's two time fields answered. A Polymarket market's own
+#: ``commence_time`` column carries Gamma's ``startDate`` — the LISTING stamp,
+#: the moment the market was published — and ``_create_event_from_prediction_market``
+#: dated every row it minted from it. Measured on production 2026-09-14: four
+#: ITF tennis fixtures minted 11.0h, 12.8h, 12.8h and 17.8h BEFORE the venue's
+#: own start, so each sailed past its stand-in kickoff and rendered ``LIVE`` on
+#: a match nobody had played (event 15312412, hero badged LIVE at 04:55Z for a
+#: 13:00Z start). The offsets all differ, which is what rules out a timezone
+#: constant and names the field.
+#:
+#: Deliberately NOT in ``DERIVED_COMMENCE_SOURCES`` — that set means "nothing
+#: published one", and here the venue published exactly this. It is a real
+#: time-of-day instant, not a date resolved to midnight, so a row promoted off
+#: it is promoted off a start the venue reported. ``kalshi_occurrence``'s
+#: 3h-after-the-whistle defect (above) is not shared: that field is a settlement
+#: backstop wearing a start's name, this one is the start.
+POLYMARKET_VENUE_COMMENCE_SOURCE = "polymarket_venue"
+
 
 def commence_time_is_a_reported_start(commence_time_source) -> bool:
     """May a clock be run from this event's ``commence_time``?

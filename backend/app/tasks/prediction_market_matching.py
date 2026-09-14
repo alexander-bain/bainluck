@@ -20,6 +20,7 @@ from sqlalchemy.orm import joinedload
 
 from app.tasks.base import get_task_session
 from app.utils.event_completion import (
+    POLYMARKET_VENUE_COMMENCE_SOURCE,
     TICKER_DERIVED_COMMENCE_SOURCE,
     commence_time_is_a_reported_start,
 )
@@ -1210,8 +1211,39 @@ def auto_create_commence_time(market, fallback):
     2026-08-20: ``KXLOLGAME-26AUG210500GAMTSW`` carries ticker time
     ``2026-08-21 05:00Z`` and ``market.commence_time`` ``2026-08-23 09:00Z`` —
     **two days apart**, and every event auto-created from it was stamped with the
-    close time. Prefer the ticker; fall back when there is no parseable one
-    (Polymarket has no ticker at all, so it always falls back).
+    close time. Prefer the ticker; fall back when there is no parseable one.
+
+    ── #6073: POLYMARKET HAS NO TICKER, AND THE SAME DEFECT BY A SECOND ROUTE ──
+
+    Polymarket has no ticker at all, so until #6073 this function always fell
+    back for it — onto ``market.commence_time``, which for a Polymarket row is
+    Gamma's ``startDate``: **the LISTING stamp, the moment the market was
+    published**. That is the identical mistake the Kalshi arm above exists to
+    undo, and this module has said so in writing since #4965
+    (:func:`venue_game_start`, whose whole reason to exist is that
+    ``commence_time`` cannot answer this question). The minting path was simply
+    never converted to read it.
+
+    Measured on production 2026-09-14 (lane1b/233, venue reads per notice 26):
+    four ITF fixtures minted **11.0h, 12.8h, 12.8h and 17.8h early**, each row
+    then sailing past its stand-in kickoff — event 15312412's hero badged
+    ``LIVE`` at 04:55Z for a match the venue starts at 13:00Z, then walking on
+    into ``suspended``, which the event page renders as "No result reported" for
+    a match that has not begun. No two offsets agree, which is what rules out a
+    timezone constant and names the field.
+
+    So: the venue's own fixture instant when it published one, the ticker when
+    Kalshi's disagrees with it, the caller's fallback otherwise.
+
+    The venue arm is deliberately NOT bounded by the caller's ±30-day
+    reasonableness clamp. That clamp exists to stop a fabricated
+    ``commence_time`` being copied onto a row, and it replaces the value with
+    ``now`` — which is the fabrication #4242 measured, not a cure for one. A
+    fixture the venue publishes 60 days out is a real fixture 60 days out. The
+    stale-market generator stays closed regardless: #4242's
+    :func:`auto_create_time_is_invented` runs at the call site against
+    ``market.commence_time``, so a two-year-old market is refused before this
+    value is ever written.
 
     Deliberately NARROW: the ticker time is used **only when the fallback
     actually disagrees with it**, i.e. only where the loop exists. A market whose
@@ -1221,6 +1253,15 @@ def auto_create_commence_time(market, fallback):
     coarser than a close time that happens to be right; that trade is only worth
     taking on rows that would otherwise re-create themselves forever.)
     """
+    # #6073. Polymarket only, and gated on the source rather than on the
+    # metadata key alone: `tasks.polymarket` is the only writer of that stamp,
+    # and this mirrors condition 1 of `_venue_confirmed_covered_fixture`, which
+    # takes the same instant for the same reason one guard over.
+    if getattr(market, "source", None) == "polymarket":
+        venue_fixture = venue_game_start(market)
+        if venue_fixture is not None:
+            return venue_fixture, POLYMARKET_VENUE_COMMENCE_SOURCE
+
     ticker_time = extract_game_date_from_ticker(getattr(market, "external_id", None))
     if ticker_time is None:
         return fallback, None
