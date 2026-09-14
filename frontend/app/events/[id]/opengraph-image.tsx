@@ -8,10 +8,10 @@ import { teamTextColor } from "@/lib/teamColors";
 import { unresolvedCardCopy } from "@/lib/unresolvedCardCopy";
 import type { ResolutionFailure } from "@/lib/unresolvedShareMeta";
 import { unfurlImageOptions } from "@/lib/unfurlImageCache";
-import { isFinishedForShare } from "@/lib/eventShareMeta";
+import { hasNoReportedResultForShare, isFinishedForShare } from "@/lib/eventShareMeta";
 import { resolveEventOutcome } from "@/lib/eventOutcome";
 import { prematchReading } from "@/lib/prematchReading";
-import { hasNoReportedResult, suspendedSummary } from "@/lib/eventState";
+import { suspendedSummary } from "@/lib/eventState";
 
 export const runtime = "edge";
 export const alt = "Bain Luck game probability";
@@ -83,20 +83,36 @@ function isFinal(event: EventDetailResponse): boolean {
  * Open matches, one 1-2 down in sets, nearly settled off a partial score). So
  * this predicate may withhold a forecast and may never crown anyone: every score
  * and winner rung below stays gated on `isFinal` alone.
+ *
+ * #6113 — and now a THIRD way the clock runs out on this card, which is why the
+ * owner moved to `eventShareMeta` beside `isFinishedForShare`. A row can still say
+ * `live` while the server has flagged its number frozen (`live_probability_pinned`,
+ * #5077), and status and time cannot see that. Delegated rather than widened here
+ * for the reason #6085 gives one predicate up: this is the SAME question the title
+ * beside this picture asks, and the whole defect was the two halves of one preview
+ * answering it apart.
  */
 function noReportedResult(event: EventDetailResponse): boolean {
-  return hasNoReportedResult(event.status, event.commence_time);
+  return hasNoReportedResultForShare(event);
 }
 
 function eventStatus(event: EventDetailResponse): string {
-  if (event.status === "live") return "Live now";
-  if (isFinal(event)) return "Final";
+  // #6113 — THIS TEST MOVED TO THE TOP AND THE ORDER IS NOW LOAD-BEARING.
+  //
+  // `noReportedResult` answers true for rows whose status IS `live` (the pinned
+  // arm), so the `live` test that used to stand here would shadow the entire new
+  // branch and this card would go on printing "Live now" over a number the server
+  // froze two hours ago. `isFinal` is disjoint from both — a `completed`/`closed`
+  // row is neither live nor no-result — so it is unaffected by the move.
+  //
   // The house string, with the last score when the row holds one. Away-first:
   // this card paints the away side in the LEFT column, and `eventShareMeta`
   // passes the same order for the title beside it.
   if (noReportedResult(event)) {
     return suspendedSummary(event.away_score, event.home_score, "away-home");
   }
+  if (event.status === "live") return "Live now";
+  if (isFinal(event)) return "Final";
   return "Upcoming";
 }
 

@@ -86,6 +86,7 @@
  */
 
 import type { SettledOutcome } from "./eventOutcome";
+import { liveClaimIsUnbacked } from "./eventLivePush";
 import {
   hasNoReportedResult,
   SUSPENDED_DESCRIPTION,
@@ -102,6 +103,68 @@ export interface EventShareMetaInput {
   hero_probability_source?: string | null;
   hero_settled_result?: string | null;
   current_odds?: { home_probability?: number | null; away_probability?: number | null } | null;
+  /** @see hasNoReportedResultForShare — #6113. Served by `/api/events/{id}`. */
+  live_probability_pinned?: { pinned?: boolean } | null;
+}
+
+/**
+ * ═══ #6113 — THE PREVIEW'S OWN ANSWER TO "HAS ANYONE TOLD US ANYTHING?" ═══
+ *
+ * `hasNoReportedResult` is card vocabulary keyed on status and time alone, and
+ * must stay that way — a payload field has no business in it (the same sentence
+ * page.tsx:367 is written to). But a link preview has the whole payload in hand,
+ * and there is a third way a match goes quiet that status and time cannot see.
+ *
+ * Measured on production 2026-09-14 08:26Z, `/events/15312053` (ATP, Vishal
+ * Balsekar vs Lomakin). The preview read `Live now` and `1% / 99%`; the page that
+ * link opens read `No result reported` over a chart that was a flat line. The
+ * payload says why:
+ *
+ *     "live_probability_pinned": { "pinned": true, "probability": 0.99,
+ *                                  "observations": 59, "span_seconds": 7105 }
+ *
+ * The same 0.99 came back 59 times across just under two hours. #5077 serves this
+ * flag precisely because the polls never stopped — they write on schedule, they
+ * write the same value — so the STAMP is fresh (five minutes old when I read it)
+ * while the NUMBER has not moved since 23 minutes after first serve.
+ *
+ * ── WHY THE BLEND-AGE ARM IS NOT CARRIED HERE ──
+ *
+ * `liveClaimIsUnbacked` takes `blendAgeMs`, and this passes `null` on purpose
+ * rather than deriving a second copy of the page's `freshestSourceStamp`.
+ *
+ * It is not reachable on this population and that is structural, not lucky: of the
+ * 23 rows sitting `live` at 08:26Z, 8 were pinned and ZERO had a blend older than
+ * an hour (the oldest was six minutes), because `odds_polling.py` moves a
+ * genuinely silent `live` row to `suspended` — which `hasNoReportedResult` already
+ * catches one line down, and #6105 already taught both halves of this preview to
+ * read. The pinned rows are the ones that net cannot see, by construction.
+ *
+ * And an unguarded age rule is not free: #5885 is on record for what it does to a
+ * page that has not kicked off yet (a 61-minute pregame blend printing "No result
+ * reported" ten hours before kickoff). Gating on `status === "live"` sidesteps that
+ * entirely — a scheduled row is not live — where a bare age test would reopen it.
+ *
+ * The helper is still CALLED rather than inlined as `!!pinned`, so the meaning of
+ * "this live claim is unbacked" keeps one owner across the page, the caption
+ * (#2800) and this preview, and a later change to that rule reaches all three.
+ *
+ * ── WHY IT WITHHOLDS AND DOES NOT CROWN ──
+ *
+ * Same asymmetry as the `suspended` branch below: a pinned match can un-pin the
+ * moment the price moves again, so this may refuse a forecast and may never assert
+ * the match is over. Every rung that crowns someone stays on `isFinishedForShare`.
+ */
+export function hasNoReportedResultForShare(
+  event: EventShareMetaInput,
+  now: number = Date.now(),
+): boolean {
+  if (hasNoReportedResult(event.status, event.commence_time, now)) return true;
+  if ((event.status ?? "").trim().toLowerCase() !== "live") return false;
+  return liveClaimIsUnbacked({
+    pinned: event.live_probability_pinned?.pinned,
+    blendAgeMs: null,
+  });
 }
 
 /**
@@ -333,7 +396,11 @@ export function buildEventShareCopy(
   // is away-vs-home and `opengraph-image.tsx` paints the away side on the left,
   // so the title, the description and the picture stay one order (the same
   // reasoning as the note on the probability title below).
-  if (hasNoReportedResult(event.status, event.commence_time, now)) {
+  // #6113 widens this to the pinned-live row rather than adding a branch beside
+  // it: to a reader those are one sentence — *this match should have happened and
+  // nobody has told us anything* — which is the sentence `SUSPENDED_LABEL` was
+  // chosen for, and the same call #5459 made for the page's badge.
+  if (hasNoReportedResultForShare(event, now)) {
     const summary = suspendedSummary(event.away_score, event.home_score, "away-home");
     return {
       title: `${matchup}: ${summary}`,
