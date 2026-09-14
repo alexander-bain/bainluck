@@ -131,12 +131,20 @@ enum InAppWebViewNavigation {
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 
-    /// `/about` and `/about/` are the same page; `""` (a bare origin) is `/`.
+    /// A bare origin has the empty path, and the empty path is `/`.
+    ///
+    /// There WAS a trailing-slash trim here, so that `/about/` and `/about`
+    /// read alike. It is gone because the mutation battery could not kill it:
+    /// `URL.path` already drops a trailing slash, so the branch was unreachable
+    /// for every input this function can receive, and unreachable code that
+    /// looks like a rule is worse than no code — it invites the next reader to
+    /// believe the normalisation is ours to change. The `/about/` case keeps
+    /// its test; what the test now pins is Foundation's behaviour, which is
+    /// exactly what would break if this ever moved to `path(percentEncoded:)`
+    /// or `pathComponents`.
     private static func normalizedPath(_ url: URL) -> String {
         let path = url.path
-        guard !path.isEmpty else { return "/" }
-        guard path.count > 1, path.hasSuffix("/") else { return path }
-        return String(path.dropLast())
+        return path.isEmpty ? "/" : path
     }
 }
 

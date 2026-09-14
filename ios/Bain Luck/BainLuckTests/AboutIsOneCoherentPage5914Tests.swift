@@ -89,6 +89,10 @@ final class AboutIsOneCoherentPage5914Tests: XCTestCase {
                       "a reload without the parameter leaves the screen")
         XCTAssertTrue(rendersInPlace("https://www.bainluck.com/about#calibration"),
                       "an in-page anchor leaves the screen")
+        // `URL.path` drops the trailing slash itself, so this pins Foundation
+        // rather than a rule of ours — deliberately kept after the trim that
+        // used to sit under it was deleted as unreachable. It is what would
+        // catch a move to `path(percentEncoded:)` or `pathComponents`.
         XCTAssertTrue(rendersInPlace("https://www.bainluck.com/about/"),
                       "the trailing-slash spelling reads as a different page")
     }
@@ -146,9 +150,17 @@ final class AboutIsOneCoherentPage5914Tests: XCTestCase {
 
     /// Somewhere else entirely. A source we name in the copy, a venue, an
     /// unfurled link — none of them belong inside an app screen titled About.
+    ///
+    /// 🔴 The third case is the one that matters, and the mutation battery is
+    /// why it is here: the first two have paths of their own, so a rule that
+    /// had stopped comparing hosts altogether would still refuse them, and the
+    /// suite would have been green over a web view that loaded ANY site's
+    /// /about page into a screen of ours.
     func testAnotherSiteLeavesTheAppScreen() {
         XCTAssertFalse(rendersInPlace("https://kalshi.com/markets"))
         XCTAssertFalse(rendersInPlace("https://polymarket.com/"))
+        XCTAssertFalse(rendersInPlace("https://kalshi.com/about"),
+                       "another site's About page loads inside ours — the host is not being compared")
     }
 
     // MARK: - The default, and the two lines in AboutView
