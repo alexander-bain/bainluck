@@ -3302,6 +3302,7 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         state_contradiction,
     )
     from app.utils.espn_id_stamp import STAMPED, stamp_espn_id_if_unheld
+    from app.utils.live_state_write import write_row_if_unmoved
     import asyncio as _asyncio
 
     stats: dict = {
@@ -3330,6 +3331,12 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         "score_blanks_filled": 0,
         "score_corrections": 0,
         "score_refused": {},
+        # live/224 (#6056): score writes dropped because another producer moved
+        # this row's score between the decision and the write. Eagerly zeroed
+        # like its siblings, so a 0 is a reading and not an absence (gotcha #53)
+        # — and so the key APPEARING on the first beat after a release is the
+        # deployment proof for this half of the ship.
+        "score_write_lost_race": 0,
         # live/073: the GAMES line, off the same read. `line_writes` counts rows
         # whose stored line the authority moved; `line_refused` is keyed by
         # reason for the same reason `score_refused` is.
@@ -3658,28 +3665,62 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                 # into the other rewrites history for no reader) — which is
                 # exactly the population that has been blank for four days. A
                 # score write gated on a status write would have skipped all 37.
-                was_blank = event.home_score is None and event.away_score is None
+                # ═══ THE POSITION THIS DECISION IS TAKEN AT (live/224, #6056) ═══
+                #
+                # Captured ONCE, here, and handed to both the decision below and
+                # the compare-and-write that lands it. `authority_score_write`
+                # decides by comparing ESPN against exactly these two values, so
+                # exactly these two are what the write must re-assert: if either
+                # moved while this pass was still working, the decision was taken
+                # against a row that no longer exists and the write is dropped.
+                #
+                # NOT re-read at the write — that is the whole point, and it is
+                # asserted structurally rather than by comment, because a fresh
+                # read there compares the row against itself and matches every
+                # time (`test_the_cas_is_given_a_captured_position_never_a_fresh_read_6056`).
+                #
+                # POSITION IS DELIBERATELY NOT THE PREDICATE HERE. This pass
+                # never reads or writes `period`/`game_clock`, and on a tennis
+                # row both are routinely NULL — predicating on them would be a
+                # compare-and-write that cannot refuse.
+                _observed_home = event.home_score
+                _observed_away = event.away_score
+
+                was_blank = _observed_home is None and _observed_away is None
                 score = authority_score_write(
                     ours=ours,
-                    our_home_score=event.home_score,
-                    our_away_score=event.away_score,
+                    our_home_score=_observed_home,
+                    our_away_score=_observed_away,
                     competition=competition,
                 )
                 if score["reason"] is not None:
                     stats["score_refused"][score["reason"]] = (
                         stats["score_refused"].get(score["reason"], 0) + 1
                     )
+                elif score["changes"] and not await write_row_if_unmoved(
+                    session,
+                    event,
+                    score["changes"],
+                    observed={
+                        "home_score": _observed_home,
+                        "away_score": _observed_away,
+                    },
+                    what="tennis score",
+                ):
+                    # LOST THE RACE. Another producer wrote this row's score
+                    # between the read above and this statement, so the row
+                    # already holds a later observation than the one this pass
+                    # is carrying. Dropping it is the correct response — the
+                    # next beat is five minutes away — but a refusal nobody
+                    # counts is indistinguishable from a quiet beat, which is
+                    # how this whole class stayed invisible.
+                    stats["score_write_lost_race"] += 1
                 elif score["changes"]:
                     # BOTH NUMBERS READ BEFORE EITHER IS WRITTEN — the log below
-                    # is a before/after and would print the same pair twice if
-                    # the assignment came first.
-                    before = (event.home_score, event.away_score)
-                    event.home_score = score["changes"].get(
-                        "home_score", event.home_score
-                    )
-                    event.away_score = score["changes"].get(
-                        "away_score", event.away_score
-                    )
+                    # is a before/after, and `write_row_if_unmoved` has already
+                    # mirrored the new values onto the instance, so `before`
+                    # must come off the captured pair and not off `event`.
+                    before = (_observed_home, _observed_away)
                     stats["score_writes"] += 1
                     if was_blank:
                         stats["score_blanks_filled"] += 1

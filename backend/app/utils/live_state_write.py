@@ -73,29 +73,54 @@ logger = logging.getLogger(__name__)
 LIVE_STATE_COLUMNS = ("period", "game_clock", "home_score", "away_score")
 
 
-async def write_live_state_if_unmoved(
+async def write_row_if_unmoved(
     session,
     event,
     values: Mapping[str, Any],
     *,
-    observed_period: str | None,
-    observed_clock: str | None,
-    what: str = "live state",
+    observed: Mapping[str, Any],
+    what: str,
 ) -> bool:
-    """Write `values` onto `event` only if its position has not moved since.
+    """Write `values` onto `event` only if every column in `observed` still holds it.
 
-    `observed_period` / `observed_clock` are the two columns AS THE CALLER READ
-    THEM when it took its decision — not as they stand now, which is the whole
-    distinction. Returns True if the write landed, False if another writer moved
-    the row first and it was refused.
+    `observed` maps a column name to its value AS THE CALLER READ IT when it took
+    its decision — not as it stands now, which is the whole distinction. Returns
+    True if the write landed, False if another writer moved the row first and it
+    was refused.
 
-    An empty `values` returns True: a caller with nothing to write has not lost
-    a race, and counting it as one would bury the real signal under every quiet
-    beat. Callers must keep every column in `LIVE_STATE_COLUMNS` out of their
-    own ORM assignments and pass them here instead — a pending ORM assignment to
-    one of the two predicate columns would be flushed ahead of this statement
-    and make the predicate compare the row against itself.
+    ── WHICH COLUMNS BELONG IN `observed` ──
+
+    The ones the decision CONSUMED, which are not always the ones it writes.
+    Position (`period`/`game_clock`) is the right predicate for a writer whose
+    decision was "is this observation earlier in the game than the row is" —
+    that is what `write_live_state_if_unmoved` below exists for, and it is what
+    the four score-and-clock producers use.
+
+    It is the WRONG predicate for a writer that never reads position. The tennis
+    authority pass decides by comparing ESPN's set score against the row's own
+    `home_score`/`away_score` and touches neither position column; on a tennis
+    row those two are routinely NULL, so a position predicate there would
+    compile, run, be green, and arbitrate precisely nothing — a compare-and-write
+    that cannot refuse is worse than none, because it reads as protection. That
+    writer therefore predicates on the two score columns its decision actually
+    read, and refuses if either moved.
+
+    An empty `values` returns True: a caller with nothing to write has not lost a
+    race, and counting it as one would bury the real signal under every quiet
+    beat. An empty `observed` RAISES, because it is not a compare-and-write at
+    all — it is an unconditional UPDATE wearing the name of one.
+
+    Callers must keep every predicate column out of their own ORM assignments and
+    pass it here instead: a pending ORM assignment to a predicate column would be
+    flushed ahead of this statement and make the predicate compare the row
+    against itself.
     """
+    if not observed:
+        raise ValueError(
+            f"#6056: {what} asked for a compare-and-write with nothing to "
+            "compare — an empty `observed` is an unconditional UPDATE"
+        )
+
     if not values:
         return True
 
@@ -117,8 +142,10 @@ async def write_live_state_if_unmoved(
             # compile time — a property of this value being None, not of the
             # predicate. Equivalent as written; only this spelling stays correct
             # if the comparison is ever built from a bindparam.
-            Event.period.is_not_distinct_from(observed_period),
-            Event.game_clock.is_not_distinct_from(observed_clock),
+            *[
+                getattr(Event, column).is_not_distinct_from(was)
+                for column, was in observed.items()
+            ],
         )
         .values(**values)
     )
@@ -132,9 +159,33 @@ async def write_live_state_if_unmoved(
         return True
 
     logger.info(
-        "#6056: refused a %s write on event %s — the row moved off %r/%r "
+        "#6056: refused a %s write on event %s — the row moved off %r "
         "between the decision and the write; offered %s",
-        what, getattr(event, "id", None), observed_period, observed_clock,
-        dict(values),
+        what, getattr(event, "id", None), dict(observed), dict(values),
     )
     return False
+
+
+async def write_live_state_if_unmoved(
+    session,
+    event,
+    values: Mapping[str, Any],
+    *,
+    observed_period: str | None,
+    observed_clock: str | None,
+    what: str = "live state",
+) -> bool:
+    """Write `values` onto `event` only if its POSITION has not moved since.
+
+    The position-predicated spelling of :func:`write_row_if_unmoved`, and the one
+    the four score-and-clock producers use: their decision is
+    `live_write_would_revert`, which reads exactly these two columns, so exactly
+    these two are what the write must re-assert.
+    """
+    return await write_row_if_unmoved(
+        session,
+        event,
+        values,
+        observed={"period": observed_period, "game_clock": observed_clock},
+        what=what,
+    )

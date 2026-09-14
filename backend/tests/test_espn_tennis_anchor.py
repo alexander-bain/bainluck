@@ -704,9 +704,10 @@ class _Event:
 
 
 class _Result:
-    def __init__(self, rows, scalar=True):
+    def __init__(self, rows, scalar=True, rowcount=0):
         self._rows = rows
         self._scalar = scalar
+        self.rowcount = rowcount
 
     def scalars(self):
         return self
@@ -715,17 +716,54 @@ class _Result:
         return self._rows
 
 
+def _literal(side):
+    """The Python value on one side of a compiled comparison.
+
+    `IS NOT DISTINCT FROM None` compiles its right side to a `Null` element
+    rather than a bind parameter, so a bare `.value` read misses exactly the
+    null-vs-null case these predicates exist to get right.
+    """
+    from sqlalchemy.sql.elements import Null
+
+    if isinstance(side, Null) or side is None:
+        return None
+    return getattr(side, "value", side)
+
+
 class _Session:
     """Answers the SELECTs the task makes: sport keys, events, then the
     `espn_id_holder` lookup `stamp_espn_id_if_unheld` runs per stamp.
 
     `holders` maps an espn_id to the event already holding it, so the
     database-level refusal can be exercised.
+
+    ── #6056: WHY THE UPDATE BRANCH EVALUATES ITS PREDICATE FOR REAL ──
+
+    The tennis score write is a compare-and-write (`write_row_if_unmoved`): a
+    conditional `UPDATE ... WHERE home_score IS NOT DISTINCT FROM <as read>`
+    whose caller branches on `rowcount`. The lazy way to keep this fake working
+    is to hand back `rowcount=1` and move on — and that is precisely the trap,
+    because it would make every compare-and-write assertion anyone later writes
+    in this file unfalsifiable: a refusal could never be observed, so a test
+    claiming to prove one would pass against a broken guard.
+
+    So the predicate is really evaluated against the in-memory row and the
+    values are really applied, mirroring SQLAlchemy's `synchronize_session`.
+    Today nothing in this file moves a row underneath the pass, so every write
+    matches — but it matches BECAUSE the predicate held, not because the fake
+    cannot say no. `TestTheFakeSessionCanActuallyRefuse` is what keeps that
+    sentence true.
+
+    This rail is still not the compare-and-write's witness, and is not meant to
+    be: a fake cannot demonstrate the READ-COMMITTED re-evaluation that makes
+    the statement atomic. That proof is on a real engine, in
+    `test_live_state_does_not_run_backwards_6056.py::_drive_tennis`.
     """
 
     def __init__(self, sport_keys, events, holders=None):
         self._answers = [_Result([(k,) for k in sport_keys]), _Result(events)]
         self._holders = holders or {}
+        self._events = {getattr(e, "id", None): e for e in events}
         self.committed = False
 
     async def __aenter__(self):
@@ -734,7 +772,42 @@ class _Session:
     async def __aexit__(self, *a):
         return False
 
+    async def flush(self):
+        """The compare-and-write flushes before its statement (gotcha #5).
+
+        A no-op here is honest: this fake has no pending-write queue to order
+        the UPDATE against, because it applies every write the moment it sees
+        it.
+        """
+        return None
+
+    def _apply_update(self, statement):
+        """Evaluate a conditional UPDATE's WHERE against the in-memory row."""
+        conditions = {}
+        clauses = getattr(statement.whereclause, "clauses", [statement.whereclause])
+        for clause in clauses:
+            column = getattr(getattr(clause, "left", None), "name", None)
+            if column is None:
+                return _Result([], rowcount=0)
+            conditions[column] = _literal(getattr(clause, "right", None))
+
+        event = self._events.get(conditions.pop("id", None))
+        if event is None:
+            return _Result([], rowcount=0)
+
+        for column, expected in conditions.items():
+            if getattr(event, column, None) != expected:
+                return _Result([], rowcount=0)
+
+        for column, value in statement._values.items():
+            setattr(event, getattr(column, "name", column), _literal(value))
+        return _Result([], rowcount=1)
+
     async def execute(self, statement, *a, **kw):
+        from sqlalchemy.sql.dml import Update
+
+        if isinstance(statement, Update):
+            return self._apply_update(statement)
         if self._answers:
             return self._answers.pop(0)
         # The holder probe: `select(Event.id).where(Event.espn_id == <id>)`.
@@ -760,6 +833,67 @@ def _install(monkeypatch, *, payloads, errors, sport_keys, events, holders=None)
     monkeypatch.setattr(svc, "fetch_scoreboards", lambda dates=None: (payloads, errors))
     monkeypatch.setattr(espn_sync, "get_task_session", lambda: session)
     return session
+
+
+class TestTheFakeSessionCanActuallyRefuse:
+    """#6056: the rig's own non-vacuity check.
+
+    `_Session` claims in its docstring that it evaluates a compare-and-write's
+    predicate rather than rubber-stamping it. That claim is load-bearing — every
+    score assertion in this file now runs through it — and it is exactly the kind
+    of claim that rots into a lie the first time someone "simplifies" the update
+    branch to `return _Result([], rowcount=1)`.
+
+    Nothing in this file contends a row, so no behavioural test here can tell the
+    two apart. These two can.
+    """
+
+    def _update(self, event_id, *, observed_home, new_home):
+        from sqlalchemy import update
+
+        from app.models.models import Event
+
+        return (
+            update(Event)
+            .where(
+                Event.id == event_id,
+                Event.home_score.is_not_distinct_from(observed_home),
+            )
+            .values(home_score=new_home)
+        )
+
+    async def test_it_applies_the_write_when_the_row_has_not_moved(self):
+        event = _Event(1, "A One", "B Two", "live", _at("2026-09-06T15:00Z"),
+                       home_score=1, away_score=0)
+        session = _Session([], [event])
+
+        result = await session.execute(
+            self._update(1, observed_home=1, new_home=2)
+        )
+
+        assert result.rowcount == 1
+        assert event.home_score == 2, (
+            "the fake must mirror the values onto the row the way "
+            "`synchronize_session` does, or every score assertion in this file "
+            "is testing the fake instead of the task"
+        )
+
+    async def test_it_refuses_the_write_when_the_row_moved_underneath(self):
+        event = _Event(1, "A One", "B Two", "live", _at("2026-09-06T15:00Z"),
+                       home_score=3, away_score=0)
+        session = _Session([], [event])
+
+        # The decision was taken when the row read 1; it now reads 3.
+        result = await session.execute(
+            self._update(1, observed_home=1, new_home=2)
+        )
+
+        assert result.rowcount == 0, (
+            "the fake session rubber-stamped a compare-and-write whose "
+            "predicate did not hold — every refusal test in this file would "
+            "now pass against a guard that cannot refuse"
+        )
+        assert event.home_score == 3, "a refused write must change nothing"
 
 
 class TestTennisSyncTask:
