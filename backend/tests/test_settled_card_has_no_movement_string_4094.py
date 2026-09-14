@@ -142,9 +142,14 @@ class TestTheDuringTheGameSentence:
 
     def test_an_upset_keeps_its_settled_sentence(self):
         """The one settled line that earns its place: it reads the result
-        against the PRE-GAME number rather than against the final one."""
+        against the PRE-GAME number rather than against the final one.
+
+        #6181/#5567 gave it a subject and moved its percent onto the number the
+        card prints; this caller hands in no card percents, so the fallback
+        still rounds 0.546 for itself and the 55 is unchanged.
+        """
         assert self._reason("completed", ["upset", "major_prob_swing"]) == (
-            "Won as 55% underdog"
+            "San Francisco Giants won as a 55% underdog"
         )
 
     def test_a_live_game_still_reports_its_movement(self):

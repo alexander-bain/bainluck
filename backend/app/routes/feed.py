@@ -103,8 +103,16 @@ from app.utils.feed_event_candidates import (
     event_candidate_ids,
 )
 from app.utils.discover_card_archetypes import classify_discover_card_archetype
-from app.utils.graded_card import card_sum_reason, rendered_card_percents
-from app.utils.prematch_reading import PREMATCH_PRIOR_SQL, prematch_prior_binds
+from app.utils.graded_card import (
+    card_sum_reason,
+    duel_percents_by_side,
+    rendered_card_percents,
+)
+from app.utils.prematch_reading import (
+    PREMATCH_PRIOR_SQL,
+    prematch_prior_binds,
+    resolve_prematch_reading,
+)
 from app.utils.discover_bundles import (
     assemble_awards_theme_bundles,
     assemble_discover_comparison_bundles,
@@ -8857,6 +8865,30 @@ async def _score_events(
                 away_score=event.away_score,
             )
 
+            # #6181 — THE PRE-MATCH ROW AND THE SENTENCE UNDER IT ARE ONE ANSWER.
+            #
+            # Resolved here, from the same inputs and through the same two pure
+            # functions the serializer below uses for `prematch_odds`, so the
+            # settled card's row and its result line cannot state two different
+            # pre-game numbers for one team. The serializer is left resolving its
+            # own — the contract that matters is on the SERVED payload (the
+            # sentence's percent equals the card's rendered percent), and that is
+            # what the guard asserts, rather than an internal that a later
+            # refactor could satisfy while the payload drifts.
+            _prematch_reading = resolve_prematch_reading(
+                by_source=prematch_by_event.get(event.id),
+                books_home=opening_home_prob,
+                books_away=opening_away_prob,
+            )
+            _prematch_percents = (
+                duel_percents_by_side(
+                    away_probability=_prematch_reading["away_probability"],
+                    home_probability=_prematch_reading["home_probability"],
+                )
+                if _prematch_reading is not None
+                else None
+            )
+
             # Generate reason text
             reason = generate_event_reason(
                 home_team=event.home_team_name,
@@ -8870,6 +8902,7 @@ async def _score_events(
                 home_score=event.home_score,
                 away_score=event.away_score,
                 event_tags=_event_tags,
+                prematch_percents=_prematch_percents,
             )
 
             # Compute event_tags on-the-fly (fresh, not stale persisted)

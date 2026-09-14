@@ -8,7 +8,7 @@ repeating scores, odds, or team names visible on the card.
 
 import re
 from datetime import datetime, timezone
-from typing import NamedTuple, Optional
+from typing import Mapping, NamedTuple, Optional
 
 from app.utils.graded_card import rendered_percent
 from app.utils.highlights import select_live_claim
@@ -976,6 +976,7 @@ def generate_event_reason(
     home_score: Optional[int] = None,
     away_score: Optional[int] = None,
     event_tags: Optional[list[str]] = None,
+    prematch_percents: Optional[Mapping[str, Optional[int]]] = None,
 ) -> str:
     """
     Generate a one-line explanation for why an event is interesting.
@@ -983,6 +984,15 @@ def generate_event_reason(
     Returns a human-readable reason string for the feed card, or empty
     string when the card's visual elements (score, odds bar, badges)
     already convey the information.
+
+    ``prematch_percents`` is ``{"home": int|None, "away": int|None}`` — the two
+    whole percents the FINISHED card prints in its own "Pre-match" row, already
+    resolved through the pre-match ladder and already rounded once as a duel by
+    `graded_card.duel_percents_by_side`. It is the authority for any sentence
+    that restates a pre-game number; see the settled block below for why nothing
+    here may re-derive them. Keyed rather than a pair because the caller is in
+    another module and a transposed side reads as a true sentence about the
+    wrong team.
     """
     reasons = set(highlight_reasons)
 
@@ -996,12 +1006,48 @@ def generate_event_reason(
                 and away_score is not None
                 and opening_home_prob is not None
             ):
+                # #6181 — THE SENTENCE STATES THE NUMBER THE CARD PRINTS, AND
+                # #5567 — IT NAMES WHO IT IS ABOUT.
+                #
+                # Served on production 2026-09-14 over event 14637256 (Cowboys
+                # 20-28 Giants) as "Won as 39% underdog" directly beneath the
+                # card's own row reading `62% · Pre-match · 38%`. One team, one
+                # pre-game chance, two numbers, two lines apart.
+                #
+                # TWO INDEPENDENT CAUSES, AND THE SPECIMEN SAT ON BOTH:
+                #
+                # 1. The wrong rung. The card's row is `prematch_odds`, the
+                #    per-team reading resolved through Alex's ladder — Kalshi,
+                #    then Polymarket, then the books (`utils/prematch_reading`).
+                #    That row said kalshi 0.385. This branch read `Event.opening_*`
+                #    — the books median, 0.3908 — because `feed_scoring`'s note
+                #    kept `opening_odds` for "the highlight/upset logic ... none
+                #    of them are asking this question". This sentence IS asking
+                #    it, and the card answers it three millimetres away.
+                #
+                # 2. The wrong rounding, and this half is load-bearing: swapping
+                #    to the ladder alone does NOT fix it. `rendered_percent(0.385)`
+                #    is 39, while the card derives the underdog's side as
+                #    `100 - leader` = 38. No rounding of the raw value can
+                #    reproduce a derived percent — which is exactly what
+                #    `_display_pct`'s `printed` parameter was added for (#4146),
+                #    and why this branch takes the card's percent rather than a
+                #    probability it would have to round for itself.
+                #
+                # So the percents are handed in already resolved and already
+                # rounded, and the probability below is a fallback only, for the
+                # caller that holds an opening and no reading.
+                printed = prematch_percents or {}
                 if home_score > away_score:
+                    winner = home_team
                     winner_opening_prob = opening_home_prob
+                    winner_printed = printed.get("home")
                 else:
+                    winner = away_team
                     winner_opening_prob = 1 - opening_home_prob
-                pct = _display_pct(winner_opening_prob)
-                return f"Won as {pct}% underdog"
+                    winner_printed = printed.get("away")
+                pct = _display_pct(winner_opening_prob, winner_printed)
+                return f"{winner} won as a {pct}% underdog"
             return "Upset result"
         # #4094 — NO INTRA-GAME MOVEMENT SENTENCE ON A FINAL CARD.
         #

@@ -378,6 +378,24 @@ def rendered_duel_percents(
     return [away_pct, home_pct]
 
 
+def duel_percents_by_side(
+    *, away_probability: Any, home_probability: Any
+) -> dict[str, int | None]:
+    """The same two percents as `rendered_duel_percents`, keyed by side.
+
+    Positional-by-convention is fine inside a serializer that unpacks the pair
+    two lines below the call. It is NOT fine across a module boundary: #6181
+    hands these percents to `generate_event_reason` so a settled card's result
+    line states the number its own row prints, and a caller that unpacked
+    ``[away, home]`` the wrong way round would put the winner's percent on the
+    loser — a sentence that stays grammatical, stays plausible, and is silently
+    about the other team. Keys cannot be transposed by a typo, and the order
+    lives here, once, with `rendered_duel_percents` itself.
+    """
+    away_pct, home_pct = rendered_duel_percents(away_probability, home_probability)
+    return {"away": away_pct, "home": home_pct}
+
+
 def card_fingerprint(
     *,
     title: str | None,
