@@ -6,6 +6,7 @@ import { formatShareProbability, truncateShareText } from "@/lib/share";
 import { futuresUnfurlCopy } from "@/lib/futuresDetailDisplay";
 import { unresolvedCardCopy } from "@/lib/unresolvedCardCopy";
 import type { ResolutionFailure } from "@/lib/unresolvedShareMeta";
+import { unfurlImageOptions } from "@/lib/unfurlImageCache";
 
 export const runtime = "edge";
 export const alt = "Bain Luck market probability";
@@ -109,10 +110,13 @@ export default async function Image({ params }: { params: { id: string } }) {
   // `/tournaments/[slug]`, `/event/[domain]/[slug]` and `/hub/[competition]`
   // already draw for this condition, so the five routes answer a rotted link
   // as one family.
+  // #6049 — "moving", not because this card holds a number (it holds none) but
+  // because it is a claim we may need to retract: the block above is about
+  // exactly that, and until this argument it was retractable only by a deploy.
   if (!lookup.ok) {
     return new ImageResponse(
       <UnfurlCard {...unresolvedCardCopy("market", lookup.failure)} />,
-      size,
+      unfurlImageOptions(size, "moving"),
     );
   }
 
@@ -275,6 +279,9 @@ export default async function Image({ params }: { params: { id: string } }) {
         </div>
       </div>
     ),
-    size
+    // #6049 — the same `isResolved` that decides whether a percentage is drawn
+    // decides how long the picture may be kept: the settled branch draws a
+    // winner that cannot move, the live branch draws a price that does.
+    unfurlImageOptions(size, isResolved ? "settled" : "moving")
   );
 }
