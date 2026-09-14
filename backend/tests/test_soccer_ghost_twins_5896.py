@@ -44,9 +44,11 @@ from app.utils.soccer_ghost_twins import (  # noqa: E402
     NOT_A_TWIN,
     REFUSE_AMBIGUOUS,
     TWIN_FOUND,
+    UNCLASSIFIED_SPORT_KEY,
     SoccerRow,
     block_key,
     classify_block,
+    fold_unclassified_blocks,
     plan_ghost_tags,
     row_has_final_score,
     row_is_fixture_anchored,
@@ -637,3 +639,228 @@ def test_two_clubs_in_different_competitions_do_not_share_a_block():
 
     assert plan.blocks_examined == 0
     assert plan.tags == []
+
+
+# ── 6. `soccer_other` is not a competition, so it cannot separate two rows ────
+#
+# The section above pins the sport key as a separator, and it stays one for every
+# key that NAMES a competition. `soccer_other` names none: it is the ingest's
+# catch-all, 9,512 production rows in 90 days against 245 for La Liga, holding
+# the Greek Cup, Copa do Brasil, four South American leagues and a cup's
+# qualifying rounds all at once. Reading it as "a different competition" reads an
+# absence as a fact, and it cost the sweep the Daejeon specimen below.
+#
+# The measurement that says this is safe is in the module docstring: over 365
+# days of production soccer, played+scored+anchored rows with identical names in
+# the same orientation inside MAX_GHOST_LAG number ONE, and that one is under a
+# single sport key. Cross-key genuine rematches: zero.
+
+
+#: The production specimen, 2026-09-14. The ghost is unclassified and three
+#: hours late; the real row is a statpal-anchored K-League game that finished 2-2.
+DAEJEON_GHOST = row(
+    15307887,
+    "Daejeon Citizen",
+    "Pohang Steelers",
+    datetime(2026, 9, 12, 13, 0, tzinfo=timezone.utc),
+    status="suspended",
+    sport_key="soccer_other",
+)
+DAEJEON_REAL = real_row(
+    15305024,
+    "Daejeon Citizen",
+    "Pohang Steelers",
+    datetime(2026, 9, 12, 10, 0, tzinfo=timezone.utc),
+    sport_key="soccer_korea_kleague1",
+)
+DAEJEON_NOW = datetime(2026, 9, 14, 20, 0, tzinfo=timezone.utc)
+
+
+def test_an_unclassified_ghost_is_decided_against_its_named_real_row():
+    """The Daejeon specimen: `soccer_other` v `soccer_korea_kleague1`, one fixture.
+
+    This is the whole reader-visible gain — before the fold the two rows sat in
+    separate blocks, each a block of one, and `blocks_examined` was 0.
+    """
+    plan = plan_ghost_tags([DAEJEON_GHOST, DAEJEON_REAL], now=DAEJEON_NOW)
+
+    assert plan.blocks_examined == 1
+    assert [(t.ghost_id, t.canonical_id) for t in plan.tags] == [(15307887, 15305024)]
+
+
+def test_the_fold_is_what_decides_it_and_not_some_other_relaxation():
+    """Strawman guard: the same two rows under one NAMED key each still refuse.
+
+    Without this, a test that merely deleted the sport key from the block key
+    would pass the case above identically, and the narrow rule would be
+    indistinguishable from the broad one this module rejected.
+    """
+    named_ghost = row(
+        15307887,
+        "Daejeon Citizen",
+        "Pohang Steelers",
+        datetime(2026, 9, 12, 13, 0, tzinfo=timezone.utc),
+        status="suspended",
+        sport_key="soccer_korea_fa_cup",
+    )
+
+    plan = plan_ghost_tags([named_ghost, DAEJEON_REAL], now=DAEJEON_NOW)
+
+    assert plan.blocks_examined == 0
+    assert plan.tags == []
+
+
+def test_two_named_competitions_for_the_same_clubs_refuse_the_unclassified_row():
+    """Which competition an unclassified row is in is a question we do not answer.
+
+    A league fixture and a cup tie between the same clubs inside the window: the
+    unclassified row could belong to either, so it joins neither and the refusal
+    is reported.
+    """
+    cup_real = real_row(
+        15305999,
+        "Daejeon Citizen",
+        "Pohang Steelers",
+        datetime(2026, 9, 12, 9, 0, tzinfo=timezone.utc),
+        sport_key="soccer_korea_fa_cup",
+    )
+
+    plan = plan_ghost_tags([DAEJEON_GHOST, DAEJEON_REAL, cup_real], now=DAEJEON_NOW)
+
+    assert plan.tags == []
+    assert any("2 named competitions" in r for r in plan.refusals), plan.refusals
+
+
+def test_an_unclassified_row_with_no_named_sibling_is_left_where_it_is():
+    """No named block for these clubs — the fold is a no-op, not an error."""
+    other_ghost = row(
+        15311117,
+        "Sligo Rovers FC",
+        "Galway United FC",
+        datetime(2026, 9, 14, 18, 45, tzinfo=timezone.utc),
+        status="suspended",
+        sport_key="soccer_other",
+    )
+    other_twin = row(
+        15310858,
+        "Sligo Rovers FC",
+        "Galway United FC",
+        datetime(2026, 9, 14, 18, 45, tzinfo=timezone.utc),
+        status="suspended",
+        sport_key="soccer_other",
+    )
+
+    plan = plan_ghost_tags([other_ghost, other_twin], now=DAEJEON_NOW)
+
+    assert plan.tags == []
+    assert plan.refusals == []
+    assert plan.blocks_examined == 1
+
+
+def test_the_fold_never_reaches_a_row_under_a_named_key():
+    """The cup-tie guard, restated against the fold rather than the block key.
+
+    `soccer_spain_copa_del_rey` and `soccer_spain_la_liga` are both real
+    competitions, so nothing moves and Sevilla v Valencia stays two fixtures.
+    """
+    cup_ghost = ghost_row(
+        15400009,
+        "Sevilla",
+        "Valencia",
+        datetime(2026, 9, 13, 19, 0, tzinfo=timezone.utc),
+        sport_key="soccer_spain_copa_del_rey",
+    )
+
+    folded, refusals = fold_unclassified_blocks(
+        {
+            block_key(r.sport_key, r.home_team_name, r.away_team_name): [r]
+            for r in (cup_ghost, SEVILLA_REAL)
+        }
+    )
+
+    assert len(folded) == 2
+    assert refusals == []
+
+
+def test_folding_cannot_turn_a_refusal_into_a_tag():
+    """An unclassified SECOND ghost makes the named block ambiguous, not decided.
+
+    The fold only ever adds rows to a block, so the direction it can fail in is
+    under-tagging. This pins that: the Sevilla pair is decidable on its own, and
+    an unclassified third row between the same clubs takes the decision away
+    rather than getting one of the two rows tagged anyway.
+    """
+    decided = plan_ghost_tags([SEVILLA_GHOST, SEVILLA_REAL], now=NOW)
+    assert len(decided.tags) == 1
+
+    unclassified_extra = ghost_row(
+        15400077,
+        "Sevilla",
+        "Valencia",
+        datetime(2026, 9, 13, 20, 0, tzinfo=timezone.utc),
+        sport_key="soccer_other",
+    )
+    plan = plan_ghost_tags(
+        [SEVILLA_GHOST, SEVILLA_REAL, unclassified_extra], now=NOW
+    )
+
+    assert plan.tags == []
+    assert any("not decidable" in r for r in plan.refusals), plan.refusals
+
+
+def test_an_unplaceable_row_that_could_not_be_a_ghost_is_not_reported():
+    """The refusal list is for decisions we declined, not for every unplaced row.
+
+    Two named competitions carry these clubs, so the unclassified block cannot be
+    placed — but its only row is settled and scored, so there was never a
+    decision to decline. Without this the noise guard is unmeasured and the
+    refusal list fills with rows nobody was ever going to tag.
+    """
+    settled_unclassified = real_row(
+        15305111,
+        "Daejeon Citizen",
+        "Pohang Steelers",
+        datetime(2026, 9, 12, 10, 0, tzinfo=timezone.utc),
+        sport_key="soccer_other",
+    )
+    cup_real = real_row(
+        15305999,
+        "Daejeon Citizen",
+        "Pohang Steelers",
+        datetime(2026, 9, 12, 9, 0, tzinfo=timezone.utc),
+        sport_key="soccer_korea_fa_cup",
+    )
+
+    plan = plan_ghost_tags(
+        [settled_unclassified, cup_real, DAEJEON_REAL], now=DAEJEON_NOW
+    )
+
+    assert plan.refusals == []
+    assert plan.tags == []
+
+
+def test_every_soccer_key_shares_one_llm_category():
+    """The property that keeps a cross-key fold from losing the ghost's prices.
+
+    The ghost usually holds the markets (8 on 15307887, 0 on its canonical), so
+    the tag is only safe because `_build_game_markets` folds them onto the
+    canonical. That reader's cross-sport safety net is
+    `sport_id == event.sport_id OR llm_sport_category == expected_category`, and
+    an unclassified ghost fails the first clause by construction — its markets
+    carry the unclassified `sport_id`. It survives on the second, which holds
+    only because `expected_category` is derived from the sport key's PREFIX.
+
+    Measured on production 2026-09-14, whole population: 2,865 markets on
+    unclassified ghost candidates, all 2,865 categorised `soccer`, none null and
+    none other. This pins the mechanism behind that number, so a future split of
+    the soccer prefix into two categories fails here rather than silently
+    emptying a folded fixture.
+    """
+    from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
+
+    assert (
+        UNCLASSIFIED_SPORT_KEY.split("_")[0]
+        == "soccer_korea_kleague1".split("_")[0]
+        == "soccer"
+    )
+    assert SPORT_PREFIX_TO_LLM_CATEGORY.get("soccer") == "soccer"

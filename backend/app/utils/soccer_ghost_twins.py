@@ -146,6 +146,86 @@ inside :data:`MAX_GHOST_LAG`, and the measurement that bounds THAT — zero
 genuine same-orientation rematches in 365 days — is what a wrongly-tagged
 ``suspended`` row would have to defeat.
 
+``soccer_other`` IS NOT A COMPETITION, SO IT CANNOT SEPARATE TWO ROWS
+══════════════════════════════════════════════════════════════════════
+
+The block key holds a sport key so that a cup tie and a league fixture between
+the same two clubs can never pair. That is right, and
+``test_two_clubs_in_different_competitions_do_not_share_a_block`` keeps it.
+
+But one soccer key names no competition. ``soccer_other`` is the ingest's
+catch-all — 9,512 rows in the last 90 days against 245 for La Liga, only 28 of
+them anchored — and ``sport_keys.py`` documents what is inside it: Greek Cup,
+Copa do Brasil, the Colombian, Ecuadorian, Dominican and Venezuelan leagues, a
+cup's qualifying rounds while its main draw sits under the real key. A row lands
+there when the ingest could not say WHICH competition it belongs to, so reading
+it as "a different competition from La Liga" reads an absence as a fact, and the
+block key was doing exactly that.
+
+The cost is a ghost the sweep cannot see at all. Measured on production
+2026-09-14, this module's own predicates, its own −5d/+5d window, whole
+population::
+
+    block key                      blocks  decidable  ambiguous  ghosts tagged
+    (sport_key, home, away)  today     14         14          0             14
+    unclassified folded in             15         15          0             15
+
+The one row is ``15307887`` — Daejeon Citizen v Pohang Steelers, advertised as a
+13:00Z fixture under ``soccer_other`` three hours after ``15305024`` finished
+2-2 under ``soccer_korea_kleague1``, statpal-anchored.
+
+So an unclassified block joins the named block that shares its two clubs, and
+**only when exactly one named competition does**. Two named competitions with
+the same two clubs in the window is unresolvable — we cannot say which one an
+unclassified row belongs to — and it is reported, never guessed.
+
+WHY THIS IS SAFE IN THE DIRECTION THAT MATTERS. The risk the sport key guards is
+that we stop printing a real fixture because a DIFFERENT real fixture between
+the same clubs refutes it. Measured over 365 days of production soccer, both
+rows played, both scored, both fixture-anchored, identical ``lower(btrim())``
+names in the same orientation, inside :data:`MAX_GHOST_LAG`::
+
+    pairs                                       1
+      ├─ under the SAME sport key               1   (itself a twin — one
+      │                                              statpal id, one instant)
+      └─ under DIFFERENT sport keys             0
+
+Zero. Not "rare": none, in a year, across every soccer key we carry. And folding
+can only ever ADD rows to a block, so where it does go wrong the block stops
+resolving to one ghost and one real row and is refused — under-tagging, which is
+this module's intended failure direction throughout.
+
+THE ONE THING A CROSS-KEY FOLD RISKS THAT A SAME-KEY FOLD NEVER DID. The ghost
+usually holds the prices — here 8 markets on ``15307887`` against 0 on the
+canonical — so the tag is only safe because ``_build_game_markets`` reads the
+tagged row's markets onto the canonical (``folded_event_ids``). That reader has
+a cross-sport safety net, ``sport_id == event.sport_id OR llm_sport_category ==
+expected_category``, and until now both halves of every folded pair shared a
+sport key, so the first clause always matched. An unclassified ghost's markets
+carry the unclassified ``sport_id``, so they survive only on the second clause —
+and that clause holds because ``expected_category`` is derived from the sport
+key's PREFIX (``sport_key.split("_")[0]``), which is ``soccer`` for both halves.
+
+That is a dependency, so it is measured rather than assumed. Every market on
+every unclassified ghost candidate in the sweep's window, 2026-09-14, whole
+population: 2,865 markets, 2,865 with ``llm_sport_category = 'soccer'``, 0 with
+a null category and 0 with any other category. ``test_every_soccer_key_shares_
+one_llm_category`` pins the prefix property that makes it true in general.
+
+AND WHY THE NAME KEY DID NOT MOVE WITH IT. The obvious next step — fold
+``Sligo Rovers FC`` onto ``Sligo Rovers`` too — was measured on the same
+population and rejected on its own numbers. Stripping a trailing club suffix
+(``fc``/``afc``/``cf``/``sc``/…) on top of the fold above gives 21 blocks, 17
+decidable and **4 ambiguous**, and one of those four is this module's headline
+pair: Sevilla v Valencia, decidable today, becomes two candidate ghosts and is
+refused. It also does not buy the specimen that motivated it — ``Sligo Rovers FC
+v Galway United FC`` carries FIVE unanchored rows against one canonical
+(``15307330``, 1-3, statpal 9528953), so it is refused either way. A name fold
+would lose a pair we tag today, keep the pair that prompted it, and widen a key
+away from its measurement. Those five rows are one fixture minted five times by
+ingest, which is a registry defect (#3813) and not something a judgement over
+existing rows can repair.
+
 THE NAME KEY IS DELIBERATELY THE NARROW ONE
 ════════════════════════════════════════════
 
@@ -210,6 +290,12 @@ SETTLED_STATUSES = ("completed", "closed")
 #: result is not being advertised as a fixture.
 GHOST_STATUSES = ("scheduled", "suspended")
 
+#: The key the ingest writes when it could not say WHICH competition a fixture
+#: belongs to. It is not a league — see the docstring section above for what is
+#: measured inside it — so it cannot be read as evidence that two rows are two
+#: different fixtures. Every other ``soccer_*`` key can.
+UNCLASSIFIED_SPORT_KEY = "soccer_other"
+
 
 def row_is_fixture_anchored(
     *, espn_id: object, statpal_fixture_id: object
@@ -270,6 +356,62 @@ class SoccerRow:
     is_fixture_anchored: bool
 
 
+def row_could_be_a_ghost(row: SoccerRow) -> bool:
+    """The three row-only halves of the ghost test, with the clock left out.
+
+    :func:`classify_block` adds :data:`GHOST_KICKOFF_GRACE` to this; the fold in
+    :func:`fold_unclassified_blocks` deliberately does not, because it is asking
+    "could this block ever produce a decision?" and half an hour either side of
+    a kick-off must not change which rows are considered together. One predicate
+    so the two cannot drift.
+    """
+    return (
+        row.status in GHOST_STATUSES
+        and not row.has_final_score
+        and not row.is_fixture_anchored
+    )
+
+
+def fold_unclassified_blocks(
+    blocks: dict[tuple[str, str, str], list[SoccerRow]],
+) -> tuple[dict[tuple[str, str, str], list[SoccerRow]], list[str]]:
+    """Move :data:`UNCLASSIFIED_SPORT_KEY` rows into the named block they belong
+    to, when exactly one named block shares their two clubs.
+
+    Returns the rebuilt blocks and any refusals. Pure; the input is not mutated.
+
+    Exactly one, and no guessing: two named competitions carrying the same two
+    clubs inside the window is a question about which competition an
+    unclassified row is in, and this module answers no such question. That
+    refusal is only recorded when the unclassified block actually holds a row
+    that could be a ghost, so the list stays readable.
+    """
+    named_by_clubs: dict[tuple[str, str], list[tuple[str, str, str]]] = defaultdict(
+        list
+    )
+    for sport, home, away in blocks:
+        if sport != UNCLASSIFIED_SPORT_KEY:
+            named_by_clubs[(home, away)].append((sport, home, away))
+
+    folded = {key: list(members) for key, members in blocks.items()}
+    refusals: list[str] = []
+    for key in list(blocks):
+        sport, home, away = key
+        if sport != UNCLASSIFIED_SPORT_KEY:
+            continue
+        targets = named_by_clubs.get((home, away), [])
+        if len(targets) == 1:
+            folded[targets[0]].extend(folded.pop(key))
+        elif len(targets) > 1 and any(
+            row_could_be_a_ghost(row) for row in blocks[key]
+        ):
+            refusals.append(
+                f"{home} v {away}: {len(targets)} named competitions carry these "
+                f"clubs, so an unclassified row cannot be placed in one"
+            )
+    return folded, refusals
+
+
 @dataclass(frozen=True)
 class GhostTag:
     """One decision: ``ghost_id`` is a second copy of ``canonical_id``."""
@@ -323,9 +465,7 @@ def classify_block(
     ghosts = [
         r
         for r in rows
-        if r.status in GHOST_STATUSES
-        and not r.has_final_score
-        and not r.is_fixture_anchored
+        if row_could_be_a_ghost(r)
         and not (now - GHOST_KICKOFF_GRACE < r.commence_time <= now)
     ]
     if not canonicals or not ghosts:
@@ -388,14 +528,20 @@ def plan_ghost_tags(
     ghosts are episodic (ten on 2026-09-13, zero in the preceding thirty days),
     so a floor on the tag count would refuse the healthy quiet day. The tennis
     sibling can floor its plan because a Slam fortnight always has twins.
+
+    :func:`fold_unclassified_blocks` runs between the grouping and the
+    classification, so a row the ingest could not assign to a competition is
+    judged alongside the named block for its two clubs rather than alone.
     """
     blocks: dict[tuple[str, str, str], list[SoccerRow]] = defaultdict(list)
     for row in rows:
         blocks[block_key(row.sport_key, row.home_team_name, row.away_team_name)].append(
             row
         )
+    blocks, fold_refusals = fold_unclassified_blocks(blocks)
 
     plan = GhostPlan(rows_considered=len(rows))
+    plan.refusals.extend(fold_refusals)
     for key, members in sorted(blocks.items()):
         if len(members) < 2:
             continue
