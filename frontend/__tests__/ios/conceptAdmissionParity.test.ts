@@ -55,7 +55,8 @@
  * rows.
  */
 
-import { readFileSync, existsSync, readdirSync, statSync } from "fs";
+import { execFileSync } from "child_process";
+import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync } from "fs";
 import { join } from "path";
 import type { FeedItem } from "@/lib/types";
 import { feedItemSuppressionReason } from "@/components/discover/utils";
@@ -212,7 +213,9 @@ describe("registry — a fourth copy cannot appear undeclared", () => {
   //: a scratch file quoting a decider is not a decider, and treating it as one
   //: makes the registry unanswerable rather than strict. No shipped source path
   //: is exempted by this: the non-vacuity control below still has to find all
-  //: three real implementations.
+  //: three real implementations. These two lists stay load-bearing because
+  //: `artifacts*` holds 842 TRACKED files; the rest are belt-and-braces now that
+  //: the candidate set is tracked-only.
   const SKIP_PREFIX = ["artifacts"];
   const EXT = [".py", ".ts", ".tsx", ".swift"];
   const VOCAB = [
@@ -245,21 +248,61 @@ describe("registry — a fourth copy cannot appear undeclared", () => {
     );
   }
 
-  function walk(dir: string, out: string[] = []): string[] {
-    for (const entry of readdirSync(dir)) {
-      if (SKIP.includes(entry)) continue;
-      if (SKIP_PREFIX.some((p) => entry.startsWith(p))) continue;
-      const full = join(dir, entry);
-      let st;
-      try {
-        st = statSync(full);
-      } catch {
-        continue;
-      }
-      if (st.isDirectory()) walk(full, out);
-      else if (EXT.some((e) => entry.endsWith(e))) out.push(full);
+  /**
+   * THE CANDIDATE SET IS WHAT GIT TRACKS, NOT WHAT THE FILESYSTEM HOLDS.
+   *
+   * This used to `readdirSync` the repo root. A directory walk cannot tell a
+   * fourth copy of the admission rule from a checkout somebody left behind, so
+   * in any tree that has ever held a cert worktree the guard reported hundreds
+   * of undeclared "implementations" and exited 1 — measured at the desk on a
+   * green sha: 587 entries, every one under `.claude/worktrees/**` or
+   * `cert-scratch-593/`. `.gitignore:127` already says `.claude/`; the walk read
+   * it anyway, because a walk has never heard of `.gitignore`.
+   *
+   * That is the expensive kind of false red: every lane runs the full suite
+   * before offering, so a gate that fails on the state of the TREE rather than
+   * the DIFF teaches people to read red as noise (gotcha #54 — the exit code has
+   * to mean something).
+   *
+   * Tracked-only is not a loosening. A fourth copy has to be committed to ship,
+   * and the moment it is, it is in this list. What it stops seeing is scratch,
+   * which could never have shipped.
+   *
+   * If git cannot answer, this THROWS rather than returning [] — an empty
+   * candidate set would make the registry check pass over nothing, which is the
+   * exact failure the non-vacuity control below exists to prevent.
+   */
+  function candidateFiles(): string[] {
+    let out: string;
+    try {
+      out = execFileSync("git", ["-C", REPO_ROOT, "ls-files", "-z"], {
+        encoding: "utf8",
+        maxBuffer: 64 * 1024 * 1024,
+      });
+    } catch (e) {
+      throw new Error(`the registry cannot enumerate tracked files: ${String(e)}`);
     }
-    return out;
+    // -z: NUL-separated, so no quoting and no escaping — `ios/Bain Luck/…`
+    // carries spaces and a quoted path would silently miss.
+    const tracked = out.split("\0").filter(Boolean);
+    if (!tracked.length) {
+      throw new Error(`git tracks no files under ${REPO_ROOT} — the registry cannot run`);
+    }
+    return tracked.filter((rel) => {
+      const segments = rel.split("/");
+      if (segments.some((s) => SKIP.includes(s))) return false;
+      if (segments.some((s) => SKIP_PREFIX.some((p) => s.startsWith(p)))) return false;
+      return EXT.some((e) => rel.endsWith(e));
+    });
+  }
+
+  /** The fingerprint, in one place: the three tests below must ask it the same
+   *  way, or the non-vacuity control stops controlling the check it guards. */
+  function admissionDeciderNames(rel: string): string[] {
+    if (isTest(rel)) return [];
+    const src = readFileSync(join(REPO_ROOT, rel), "utf8");
+    if (VOCAB.filter((v) => src.includes(v)).length < 3) return [];
+    return [...src.matchAll(DECL)].map((m) => m[1]).filter((n) => NAME.test(n));
   }
 
   it("every file that decides card admission is declared in the contract", () => {
@@ -273,12 +316,8 @@ describe("registry — a fourth copy cannot appear undeclared", () => {
     );
 
     const undeclared: string[] = [];
-    for (const full of walk(REPO_ROOT)) {
-      const rel = full.slice(REPO_ROOT.length + 1);
-      if (isTest(rel)) continue;
-      const src = readFileSync(full, "utf8");
-      if (VOCAB.filter((v) => src.includes(v)).length < 3) continue;
-      const names = [...src.matchAll(DECL)].map((m) => m[1]).filter((n) => NAME.test(n));
+    for (const rel of candidateFiles()) {
+      const names = admissionDeciderNames(rel);
       if (names.length && !declared.has(rel)) undeclared.push(`${rel} → ${names.join(", ")}`);
     }
 
@@ -290,17 +329,39 @@ describe("registry — a fourth copy cannot appear undeclared", () => {
     // forever and the registry becomes a green light wired to no sensor. This is
     // the same failure the dark-class limb had before #1948: perfectly healthy,
     // measuring nothing.
-    const hits = walk(REPO_ROOT)
-      .map((f) => f.slice(REPO_ROOT.length + 1))
-      .filter((rel) => {
-        if (isTest(rel)) return false;
-        const src = readFileSync(join(REPO_ROOT, rel), "utf8");
-        if (VOCAB.filter((v) => src.includes(v)).length < 3) return false;
-        return [...src.matchAll(DECL)].map((m) => m[1]).some((n) => NAME.test(n));
-      });
+    const hits = candidateFiles().filter((rel) => admissionDeciderNames(rel).length > 0);
 
     for (const impl of CONTRACT.implementations) {
       expect(hits).toContain(impl.path);
+    }
+  });
+
+  /**
+   * The strawman guard for the fix above: it proves the exclusion is TRACKEDNESS
+   * and not something narrower, and it fails if anyone re-points the registry at
+   * a filesystem walk.
+   *
+   * Written this way deliberately — the probe file carries the real fingerprint
+   * and sits inside the repo, so a walk WOULD pick it up. Asserting both halves
+   * on the same file is what makes this a control rather than a restatement of
+   * the implementation.
+   */
+  it("an untracked copy of a decider is not a fourth copy", () => {
+    const probeDir = join(REPO_ROOT, `.registry-probe-${process.pid}`);
+    const probeRel = `${probeDir.slice(REPO_ROOT.length + 1)}/flow_sentinel.py`;
+    try {
+      mkdirSync(probeDir, { recursive: true });
+      writeFileSync(
+        join(REPO_ROOT, probeRel),
+        readFileSync(join(REPO_ROOT, "backend/app/tasks/flow_sentinel.py"), "utf8"),
+      );
+
+      // It looks exactly like a decider to the fingerprint …
+      expect(admissionDeciderNames(probeRel)).toContain("feed_item_is_renderable");
+      // … and git does not track it, so the registry never sees it.
+      expect(candidateFiles()).not.toContain(probeRel);
+    } finally {
+      rmSync(probeDir, { recursive: true, force: true });
     }
   });
 
