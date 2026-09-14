@@ -63,7 +63,7 @@ describe("describeCategoryPopulation", () => {
     // icehockey_nhl)" beside a four-member fold misleading in the first place.
     expect(d.sentence).toContain("4 categories grouped under one name");
     expect(d.sentence).toContain("icehockey_nhl");
-    expect(d.sentence).toContain("traded outcomes only");
+    expect(d.sentence).toContain("all resolved outcomes except the price-unchanged ones");
   });
 
   it("still splits published from unpublished as DATA, off the sentence", () => {
@@ -151,7 +151,7 @@ describe("describeCategoryPopulation", () => {
 
     expect(d.pools).toBe(false);
     expect(d.sentence).not.toContain("grouped under one name");
-    expect(d.sentence).toContain("traded outcomes only");
+    expect(d.sentence).toContain("all resolved outcomes except the price-unchanged ones");
     expect(d.sentence).toContain("not just this slice");
   });
 
@@ -326,7 +326,8 @@ describe("the cap is legal only because the expansion is complete", () => {
 
 describe("cohortPhrase", () => {
   it("reads as a noun phrase for every cohort, not as a heading", () => {
-    // "measured over traded" is what dropping `shortLabel` into prose produces.
+    // "measured over Price changed + sportsbooks" is what dropping `shortLabel`
+    // into prose produces (#6176 renamed it; the hazard is unchanged).
     // Both keys must yield something that survives the sentence around it.
     for (const key of ["all", "excluding_never_moved"] as const) {
       const phrase = cohortPhrase(key);
@@ -354,7 +355,7 @@ describe("describeCategoryTablePopulation", () => {
   it("says a row can be a group, without counting how many are", () => {
     const s = describeCategoryTablePopulation("excluding_never_moved", 6, 15);
 
-    expect(s).toContain("traded outcomes only");
+    expect(s).toContain("all resolved outcomes except the price-unchanged ones");
     expect(s).toContain("group several closely related categories");
     // CAL-P1078 / notice 34: the coverage count is exactly the shape the notice
     // names. It travels on `data-pooled-rows` / `data-total-rows` instead — see

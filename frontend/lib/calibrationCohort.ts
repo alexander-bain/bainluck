@@ -104,6 +104,42 @@
 // footnote was holding back, and `calibrationCohort.test.ts` bans exactly those,
 // on the emitted strings. The word-ban L2-236 wanted, narrowed to the claims
 // that were actually at issue.
+//
+// ---------------------------------------------------------------------------
+// #6176 — AND THE SHORT WORD DID MAKE THE CLAIM (Alex, Sun 2026-09-14)
+// ---------------------------------------------------------------------------
+//
+// The paragraph above is the prediction. This is the prediction coming true,
+// which is why it is answered here rather than argued again.
+//
+// With the footnote deleted by D101, "Traded" and "untraded" stood alone as the
+// names of two cohorts, and the activity section's sentence read *"Traded sits
+// at 1.0pp and untraded at 1.7pp — in this sample the untraded cohort carries
+// the higher calibration error."* Alex read the page and reported it as the
+// page saying **untraded markets are more accurate than traded ones**, which is
+// not a claim this data can support and not one anybody set out to make. Relayed
+// by the codex coordinator 2026-09-14 07:03 PT: the visible labels,
+// legends, tags and explanatory text move to **"Price changed" / "Price
+// unchanged"**; the method does not move at all.
+//
+// This is not L2-236 being re-litigated. L2-236 wanted the labels to describe
+// the predicate; UX-P075 overruled the *phrasing* it chose ("Showing markets
+// whose price moved, plus sportsbook lines" — accurate, unread) on readability,
+// under ruling 044. "Price changed" costs a reader nothing to parse and says
+// exactly what the flag records, so the readability ground that carried the
+// August override does not carry this one. Later, specific to this page and
+// these exact words, so it governs (ruling 055's citation test).
+//
+// THE ONE PLACE THE NEW WORD CANNOT GO, AND WHY. The DEFAULT cohort is
+// `true` PLUS `null` — price-moved outcomes AND sportsbook lines, which carry no
+// flag because the test does not apply to them. Calling that whole set "Price
+// changed" would assert a movement we never measured for 10% of it: the original
+// L2-236 defect, rebuilt with today's vocabulary. So the default cohort's own
+// labels are derived from the partition, exactly as every other string here is —
+// "Price changed + sportsbooks" where those rows exist, plain "Price changed"
+// where they do not. The EXCLUDED side is `=== false` with nothing else in it,
+// so "Price unchanged" is simply its predicate, and that is the name it takes
+// everywhere on the page.
 
 /** en-US thousands separators, fixed so tests do not depend on host locale. */
 function fmt(n: number): string {
@@ -212,9 +248,9 @@ export function describeCohort(
       // on this page. Notice 33 bans the word whatever its number, and the
       // sentence loses nothing — it is already about sportsbook lines, named
       // in its own first clause.
-      `need none — a sportsbook moves its line with money — so they count as traded: ` +
-      `${fmt(movedN)} price-moved + ${fmt(notApplicableN)} sportsbook = ` +
-      `${fmt(defaultCohortN)} traded, plus ${fmt(unchangedN)} untraded ` +
+      `need none — a sportsbook moves its line with money — so they are shown alongside ` +
+      `the price-changed rows: ${fmt(movedN)} price-changed + ${fmt(notApplicableN)} sportsbook = ` +
+      `${fmt(defaultCohortN)} shown, plus ${fmt(unchangedN)} price-unchanged ` +
       `= ${fmt(fullN)} resolved outcomes.`
     : null;
 
@@ -236,10 +272,10 @@ export function describeCohort(
       // dissolved; the sportsbook count survives as a parenthetical inside the
       // cohort it actually belongs to.
       detail: hasNotApplicable
-        ? `${fmt(defaultCohortN)} traded (including ${fmt(notApplicableN)} ` +
-          `sportsbook lines) · ${fmt(unchangedN)} untraded.`
-        : `${fmt(movedN)} traded · ${fmt(unchangedN)} untraded.`,
-      toggleLabel: unchangedN > 0 ? "Exclude untraded" : "Show every outcome",
+        ? `${fmt(defaultCohortN)} price changed or sportsbook (including ` +
+          `${fmt(notApplicableN)} sportsbook lines) · ${fmt(unchangedN)} price unchanged.`
+        : `${fmt(movedN)} price changed · ${fmt(unchangedN)} price unchanged.`,
+      toggleLabel: unchangedN > 0 ? "Exclude price-unchanged" : "Show every outcome",
       statDetail: `all outcomes · ${fmt(fullN)} total`,
       heroClause: `${fmt(fullN)} resolved predictions`,
       partitionNote,
@@ -273,22 +309,34 @@ export function describeCohort(
   // inside the closed "The overall split" fold, which is where the other six
   // blocks of this class now live. The rows are named and counted in `detail`
   // either way.
-  const shortLabel = "Traded";
-  const headline = `Showing traded markets (${fmt(defaultCohortN)})`;
+  // #6176. UX-P080's ruling — that sportsbook lines belong INSIDE this cohort
+  // rather than in an apologetic third category — is untouched; what moves is
+  // only the noun, and it is derived from the partition so it cannot claim a
+  // movement we never measured. Where sportsbook rows are present the cohort is
+  // two named things and says so in three words; where they are not, it is the
+  // price-changed set and nothing else, so the plain name is the true one.
+  const shortLabel = hasNotApplicable ? "Price changed + sportsbooks" : "Price changed";
+  const headline = `Showing ${
+    hasNotApplicable ? "price-changed markets and sportsbook lines" : "price-changed markets"
+  } (${fmt(defaultCohortN)})`;
   // An empty excluded side excludes NOTHING, so it gets no clause — "Excluded:
-  // 0 untraded outcomes" states a non-fact. It was caught by the proxy-footnote
-  // pairing test on that test's first run (the pairing is gone with D101, the
-  // clause it caught is not), which is the whole argument for writing an
-  // assertion over the emitted strings rather than over the branch.
+  // 0 price-unchanged outcomes" states a non-fact. It was caught by the
+  // proxy-footnote pairing test on that test's first run (the pairing is gone
+  // with D101, the clause it caught is not), which is the whole argument for
+  // writing an assertion over the emitted strings rather than over the branch.
   const excluded = unchangedN > 0
-    ? ` Excluded: ${fmt(unchangedN)} untraded outcomes, whose price never moved off its opening line.`
+    ? ` Excluded: ${fmt(unchangedN)} outcomes whose price never moved off its opening line.`
     : "";
   const detail = hasNotApplicable
-    ? `${fmt(defaultCohortN)} traded outcomes ` +
-      `(including ${fmt(notApplicableN)} sportsbook lines).${excluded}`
+    ? // The two PARTS, which add to the headline's total. `defaultCohortN` here
+      // would read as "441,437 changed, and 154,803 sportsbook lines on top of
+      // that" — seen at 390px on the first LOOK of this change, and it is the
+      // same over-count the old copy avoided with its "(including …)".
+      `${fmt(movedN)} outcomes whose price changed, plus ` +
+      `${fmt(notApplicableN)} sportsbook lines.${excluded}`
     : // No sportsbook rows in this payload: the cohort is the price-moved set
       // and there is no second construction to name.
-      `Every traded outcome.${excluded}`;
+      `Every outcome whose price changed.${excluded}`;
 
   return {
     key: "excluding_never_moved",
@@ -298,15 +346,15 @@ export function describeCohort(
     headline,
     detail,
     toggleLabel: unchangedN > 0
-      ? `Include untraded (+${fmt(unchangedN)})`
+      ? `Include price-unchanged (+${fmt(unchangedN)})`
       : "Show every outcome",
     statDetail: unchangedN > 0
-      ? `excludes ${fmt(unchangedN)} untraded · ${fmt(fullN)} total`
+      ? `excludes ${fmt(unchangedN)} price-unchanged · ${fmt(fullN)} total`
       : `all outcomes · ${fmt(fullN)} total`,
     heroClause: unchangedN > 0
       ? `${fmt(defaultCohortN)} resolved predictions — every outcome except the ` +
-        `${fmt(unchangedN)} untraded ones, whose price never moved off its ` +
-        `opening line (${fmt(fullN)} in total)`
+        `${fmt(unchangedN)} whose price never moved off its opening line ` +
+        `(${fmt(fullN)} in total)`
       : `${fmt(defaultCohortN)} resolved predictions`,
     partitionNote,
     reconciles,

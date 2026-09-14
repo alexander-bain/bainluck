@@ -105,14 +105,22 @@ export function describeActivityComparison(
 
   const movedText = m.toFixed(ECE_DISPLAY_DP);
   const unchangedText = u.toFixed(ECE_DISPLAY_DP);
-  // UX-P075 item (c), Alex 2026-08-13: one vocabulary on this page. The cohorts
-  // were "price moved"/"price unchanged" here, "Active Trading"/"Opening Price
-  // Only" on the stat cards, and something else again in the toggle banner —
-  // five namings of two cohorts. The PREDICATE is unchanged; only the noun is.
-  // (`lib/calibrationCohort.ts` carries the reversal of L2-236's contrary
-  // decision, in the open, per ruling 055 — and the proxy footnote that Alex
-  // required to travel with the short word.)
-  const lead = `Traded sits at ${movedText}pp and untraded at ${unchangedText}pp`;
+  // #6176 — THE SENTENCE SAYS WHAT WAS MEASURED. It used to read "Traded sits
+  // at 1.0pp and untraded at 1.7pp", and Alex read that, correctly, as the page
+  // claiming untraded markets are the more accurate ones. We do not receive
+  // trade counts for most of these markets: the two cohorts are
+  // `price_moved === true` and `=== false`, which is whether a price MOVED, and
+  // a market can trade heavily and close where it opened. So the finding is
+  // stated in the terms it was computed in, and the claim about trading is not
+  // made at all rather than made and then qualified in small print.
+  //
+  // UX-P075 item (c) (Alex 2026-08-13, one vocabulary on this page) is not
+  // reversed by this — it is honoured: the new nouns are used by every one of
+  // the five sites that item named. `lib/calibrationCohort.ts` carries the
+  // reasoning and the citation chain.
+  const lead =
+    `Where the price changed we sit at ${movedText}pp; ` +
+    `where it never moved, ${unchangedText}pp`;
 
   if (m === u) {
     return {
@@ -127,8 +135,8 @@ export function describeActivityComparison(
   const movedHigher = m > u;
   const higher = movedHigher ? m : u;
   const lower = movedHigher ? u : m;
-  const higherLabel = movedHigher ? "traded" : "untraded";
-  const lowerLabel = movedHigher ? "untraded" : "traded";
+  const higherLabel = movedHigher ? "price-changed" : "price-unchanged";
+  const lowerLabel = movedHigher ? "price-unchanged" : "price-changed";
 
   // The ratio is suppressed when the smaller side rounds to 0.0pp (division by
   // zero) and when it would print as "1.0x", which reads as "the same" beside
