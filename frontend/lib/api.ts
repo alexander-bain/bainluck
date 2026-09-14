@@ -2458,6 +2458,16 @@ export interface CalibrationData {
    * artifact predates the rule", never as "nothing was excluded".
    */
   writer_bar_filter?: CalibrationWriterBarFilter | null;
+  /**
+   * CAL-P1216's coverage census: the full first-match-wins partition of the
+   * covered futures population into "on the curve" and one named exclusion
+   * each. Typed as `unknown` on purpose — `readCoverageAccounting`
+   * (`lib/calibrationCoverage.ts`) validates every field it reads, so a
+   * structural type here would only let the page trust a shape nobody checked.
+   * Absent, or present with `status: "unavailable"`, for any payload the
+   * out-of-band walk has not been proved to describe.
+   */
+  calibration_coverage_census?: unknown;
   // #997: minimum resolved-outcome count for a chartable sub-category, set
   // server-side (Redis-tunable) so web + native gate on the same bar.
   min_category_outcomes?: number;
