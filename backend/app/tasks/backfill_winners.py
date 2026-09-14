@@ -191,7 +191,7 @@ def _fresh_settlement_budget(limit: int) -> tuple[int, int]:
 
 
 async def _select_kalshi_settlement_tickers(
-    session, limit: int, cursor: str
+    session, limit: int, cursor: str, *, include_tail: bool = True
 ) -> tuple[list[str], list[str]]:
     """Pick this cycle's Kalshi event tickers: (just-settled band, tail band).
 
@@ -204,6 +204,14 @@ async def _select_kalshi_settlement_tickers(
 
     The bands are returned SEPARATELY, never pre-merged: the caller advances the
     Redis cursor from the tail band alone.
+
+    `include_tail=False` (#1121 residual) asks for the recency band ALONE, for the
+    half-hourly fast lane that grades a finished game while a reader is still on
+    its page. The fresh budget is computed from the SAME `_fresh_settlement_budget`
+    call either way, so the fast lane asks about EXACTLY the tickers the 6-hourly
+    omnibus would have asked about — the same rows, sooner, never different rows.
+    The tail statement is not merely discarded, it is NOT RUN: it is the expensive
+    half (a 71k-ticker alphabetical walk) and the cheap half is the whole point.
     """
     fresh_limit, tail_limit = _fresh_settlement_budget(limit)
 
@@ -314,6 +322,9 @@ async def _select_kalshi_settlement_tickers(
     # BAND 2 — the alphabetical tail, unchanged in shape and with its OWN budget.
     # It keeps the whole 71k-ticker population moving; the recency band only ever
     # jumps the queue for what a reader is looking at right now.
+    if not include_tail:
+        return fresh_tickers, []
+
     tail_rows = await session.execute(
         text("""
             SELECT fm.external_id
@@ -464,7 +475,9 @@ PHASE_0C_REPAIR_SQL = f"""
 """
 
 
-async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
+async def _backfill_kalshi_winners(
+    limit: int = 2000, dry_run: bool = False, *, fast_lane_only: bool = False
+):
     """Fetch settled Kalshi events by ticker and set is_winner from settlement data.
 
     Uses targeted GET /events/{ticker} lookups instead of paginating all settled
@@ -472,6 +485,26 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
 
     #4057: two bands, two budgets — everything that settled since the last cycle
     first (`_fresh_settlement_budget`), then the alphabetical cursor for the tail.
+
+    #1121 residual — `fast_lane_only` runs bands 1 and 3 and SKIPS band 2, for the
+    half-hourly `grade_fresh_kalshi_settlements` beat. See that task's docstring
+    for why the cadence is the residual. Two invariants it must not break, both
+    about band 2, which it is not allowed to touch at all:
+
+    Both hang off the single `_use_tail_cursor` flag below rather than off two
+    independent tests of `fast_lane_only`, because two guards for one property
+    make each other unfalsifiable — see the comment at the flag.
+
+    * it does not READ the tail cursor (it passes `""`, and the tail statement
+      never runs, so the value is unused rather than merely ignored); and
+    * it does not WRITE the tail cursor — INCLUDING the wrap branch. That second
+      one is the trap and it is silent: `tail_tickers` is empty on every fast-lane
+      run BY CONSTRUCTION, so the plain `elif _last_cursor:` arm below would
+      `DELETE` the cursor every half hour and reset the 71k-ticker alphabetical
+      walk to 'A' forever — gotcha #34's "one counter shared across a loop starves
+      the later members", arriving through the band that was supposed to be
+      untouched. An emptiness that is structural must never be read as an
+      emptiness that is informative.
     """
     import asyncio
     from app.services.kalshi_api import KalshiAPIService
@@ -495,12 +528,22 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
 
     _rc = get_redis_client()
     _cursor_key = "bainluck:kalshi_winner_backfill_cursor"
-    _raw = _rc.get(_cursor_key)
-    _last_cursor = _raw.decode() if isinstance(_raw, bytes) else (_raw or "")
+    # ONE flag, read at both ends of band 2's cursor lifecycle, so the guard is a
+    # single mutable thing a test can kill. Two independent guards — "pass `''` to
+    # the selector" and "skip the write" — each make the other unfalsifiable:
+    # with the empty cursor in place the `elif _last_cursor:` delete is already
+    # unreachable, so a test aimed at the write arm passes against a build with
+    # the write arm deleted. Flip this one name and both ends move together.
+    _use_tail_cursor = not fast_lane_only
+    if _use_tail_cursor:
+        _raw = _rc.get(_cursor_key)
+        _last_cursor = _raw.decode() if isinstance(_raw, bytes) else (_raw or "")
+    else:
+        _last_cursor = ""
 
     async with get_task_session() as session:
         fresh_tickers, tail_tickers = await _select_kalshi_settlement_tickers(
-            session, limit, _last_cursor
+            session, limit, _last_cursor, include_tail=not fast_lane_only
         )
         # #6012 — the early-settled band. Its own budget, so it can never take a
         # ticker from the two above (gotcha #34), and it does NOT move the tail
@@ -516,7 +559,11 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
     # anywhere in the alphabet, so letting one set the cursor would skip every
     # tail ticker between here and there — the reach bug this ship exists to fix,
     # re-introduced from the other end.
-    if tail_tickers:
+    if not _use_tail_cursor:
+        # Band 2 is not this caller's business — see the docstring. Neither arm
+        # below may run: `setex` is unreachable anyway, but `delete` is NOT.
+        pass
+    elif tail_tickers:
         _rc.setex(_cursor_key, 86400 * 14, tail_tickers[-1])
     elif _last_cursor:
         _rc.delete(_cursor_key)

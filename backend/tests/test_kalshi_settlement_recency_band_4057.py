@@ -187,15 +187,33 @@ def _finalized_event(leg_ticker: str) -> dict:
     }
 
 
-async def _drive(monkeypatch, *, fresh, tail, cursor="", answers=None, limit=2000):
+async def _drive(
+    monkeypatch,
+    *,
+    fresh,
+    tail,
+    cursor="",
+    answers=None,
+    limit=2000,
+    fast_lane_only=False,
+):
     """Run the real `_backfill_kalshi_winners` with the SELECTION stubbed.
 
     The selection's SQL is deliberately not exercised here — see the module
     docstring. Everything downstream of it is the real code path.
+
+    `fast_lane_only` drives the #1121-residual half-hourly beat. The stub honours
+    `include_tail` rather than trusting the caller to pass `tail=[]`: the whole
+    hazard is a tail that is empty BY CONSTRUCTION, so a test that hand-fed the
+    emptiness would be asserting its own fixture.
     """
-    async def _fake_select(session, limit_, cursor_):
-        _fake_select.seen = {"limit": limit_, "cursor": cursor_}
-        return list(fresh), list(tail)
+    async def _fake_select(session, limit_, cursor_, *, include_tail=True):
+        _fake_select.seen = {
+            "limit": limit_,
+            "cursor": cursor_,
+            "include_tail": include_tail,
+        }
+        return list(fresh), (list(tail) if include_tail else [])
 
     rc = _FakeRedis(cursor)
     session = _LoopSession()
@@ -210,7 +228,9 @@ async def _drive(monkeypatch, *, fresh, tail, cursor="", answers=None, limit=200
         "app.services.kalshi_api.KalshiAPIService", lambda *a, **k: venue
     )
 
-    stats = await bw._backfill_kalshi_winners(limit=limit)
+    stats = await bw._backfill_kalshi_winners(
+        limit=limit, fast_lane_only=fast_lane_only
+    )
     return stats, rc, venue, _fake_select
 
 
@@ -278,6 +298,90 @@ async def test_an_exhausted_tail_wraps_the_cursor_and_still_runs_the_recency_ban
     assert stats["tickers_queried"] == 1
 
 
+# ---------------------------------------------------------------------------
+# #1121 residual — the half-hourly fast lane (`grade_fresh_kalshi_settlements`)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_the_fast_lane_never_touches_the_tail_cursor(monkeypatch):
+    """THE TRAP, and the reason `fast_lane_only` is a branch and not a `tail=[]`.
+
+    The fast lane's tail is empty on EVERY run by construction. The wrap branch
+    directly above reads an empty tail as "the alphabet is exhausted, start over"
+    and DELETEs the cursor — a reading that is correct for the 6-hourly omnibus
+    and catastrophic here: at `:23` and `:53` it would reset the 71k-ticker walk
+    to 'A' forever, starving band 2 through the one band the fast lane was
+    supposed to leave alone (gotcha #34).
+
+    An emptiness that is structural must never be read as an emptiness that is
+    informative.
+    """
+    _stats, rc, _venue, _ = await _drive(
+        monkeypatch,
+        fresh=["KXNFLRECYDS-26SEP13DALNYG"],
+        tail=["KXNEWGLENN-262"],
+        cursor="ZZZ",
+        fast_lane_only=True,
+    )
+    assert rc.deleted == []
+    assert rc.setex_calls == []
+
+
+@pytest.mark.asyncio
+async def test_the_omnibus_still_wraps_on_the_same_inputs(monkeypatch):
+    """The arm above is two-sided, or it proves nothing.
+
+    Identical inputs, `fast_lane_only=False`: the delete MUST fire. Without this
+    the test above passes just as happily against a build where the wrap branch
+    was deleted outright — which would be a real regression of #4057.
+    """
+    _stats, rc, _venue, _ = await _drive(
+        monkeypatch,
+        fresh=["KXNFLRECYDS-26SEP13DALNYG"],
+        tail=[],
+        cursor="ZZZ",
+        fast_lane_only=False,
+    )
+    assert rc.deleted == ["bainluck:kalshi_winner_backfill_cursor"]
+
+
+@pytest.mark.asyncio
+async def test_the_fast_lane_does_not_read_the_cursor_either(monkeypatch):
+    """It passes `""`, not the stored value.
+
+    Band 2 does not run, so the cursor is not merely ignored — there is no
+    statement for it to be an input to. Passing the real value would be a live
+    coupling to a band this caller has no business observing.
+    """
+    _stats, _rc, _venue, sel = await _drive(
+        monkeypatch,
+        fresh=["KXNFLRECYDS-26SEP13DALNYG"],
+        tail=["KXNEWGLENN-262"],
+        cursor="KXN",
+        fast_lane_only=True,
+    )
+    assert sel.seen == {"limit": 2000, "cursor": "", "include_tail": False}
+
+
+@pytest.mark.asyncio
+async def test_the_fast_lane_asks_the_venue_about_the_same_fresh_tickers(monkeypatch):
+    """The same rows, sooner — never different rows.
+
+    The budget is the SAME `_fresh_settlement_budget(limit)` the omnibus uses, so
+    band 1 is character-for-character the set `:45` would have asked about. What
+    the fast lane drops is band 2, and only band 2.
+    """
+    stats, _rc, venue, _ = await _drive(
+        monkeypatch,
+        fresh=["KXNFLRECYDS-26SEP13DALNYG", "KXNFLREC-26SEP13DALNYG"],
+        tail=["KXNEWGLENN-262", "KXRAIN-26SEP09"],
+        cursor="KXN",
+        fast_lane_only=True,
+    )
+    assert venue.asked == ["KXNFLRECYDS-26SEP13DALNYG", "KXNFLREC-26SEP13DALNYG"]
+    assert (stats["fresh_selected"], stats["tail_selected"]) == (2, 0)
+
+
 @pytest.mark.asyncio
 async def test_a_ticker_in_both_bands_costs_one_venue_fetch(monkeypatch):
     """Dedup. The two bands are selected independently and can overlap."""
@@ -332,4 +436,7 @@ async def test_the_selection_is_handed_the_whole_cycle_budget_not_a_pre_split_on
     _stats, _rc, _venue, sel = await _drive(
         monkeypatch, fresh=[], tail=["KXA-1"], cursor="", limit=2000
     )
-    assert sel.seen == {"limit": 2000, "cursor": ""}
+    # `include_tail` is asserted here too, not omitted: the omnibus is the caller
+    # that must ask for BOTH bands, and it is the only one that advances the
+    # cursor. #1121's fast lane is the other side of this pair.
+    assert sel.seen == {"limit": 2000, "cursor": "", "include_tail": True}

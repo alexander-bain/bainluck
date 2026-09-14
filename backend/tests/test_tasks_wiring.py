@@ -379,6 +379,11 @@ class TestBeatScheduleCompleteness:
         # `realtime`, keyed on `events.completed_at` rather than on a population
         # page, so a finished game's legs are reached inside 30 minutes.
         "settle-kalshi-recent-finals",
+        # #1121 residual: the GRADING twin of the entry above, which writes no
+        # grade. `:09/:39` on `realtime`, band 1 only, so a finished game's props
+        # are graded inside half an hour instead of waiting for the 6-hourly
+        # `backfill-winners` omnibus at `:45`.
+        "grade-fresh-kalshi-settlements",
         "backfill-kalshi-trade-history",
         "backfill-settled-gap-creation",
         "backfill-polymarket-matchups",

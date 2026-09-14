@@ -559,6 +559,33 @@ async def test_the_two_bands_never_exceed_the_cycle_budget(pg_engine):
     assert len(fresh) + len(tail) <= 5
 
 
+@needs_postgres
+@pytest.mark.asyncio
+async def test_the_fast_lane_returns_the_same_band_1_and_no_band_2(pg_engine):
+    """#1121 residual, against the server: the SAME rows, sooner.
+
+    `grade_fresh_kalshi_settlements` runs at `:23/:53` and its entire claim is
+    that it asks about exactly what the `:45` omnibus would have asked about in
+    band 1 — so the two calls must agree on band 1 EXACTLY, ordering included,
+    while band 2 comes back empty.
+
+    The second assertion is what makes the first one worth making: the same
+    cursor and budget DO yield a non-empty tail when it is asked for, so the
+    empty tail is the skip and not a corpus that happens to have no tail rows.
+    """
+    from app.tasks.backfill_winners import _select_kalshi_settlement_tickers
+
+    full_fresh, full_tail = await _select(pg_engine, limit=20)
+    async with pg_engine.connect() as conn:
+        fast_fresh, fast_tail = await _select_kalshi_settlement_tickers(
+            conn, 20, CURSOR, include_tail=False
+        )
+
+    assert fast_fresh == full_fresh
+    assert fast_tail == []
+    assert full_tail, "corpus must offer a tail, or the arm above is vacuous"
+
+
 # ---------------------------------------------------------------------------
 # every exclusion, one row each
 # ---------------------------------------------------------------------------
