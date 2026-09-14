@@ -6,8 +6,10 @@ WHY THIS EXISTS
 `asc-builds.py` answers "what does Apple hold?" for BINARIES. It cannot answer
 the question the ship actually turns on. Uploading build 9 puts a binary at
 Apple; a binary is not a submission. A submission also needs a version record
-in an editable state with that build attached, per-locale description and
-keywords, screenshots whose ASSETS have finished uploading, a review contact, a
+in an editable state with an unexpired, VALID build attached to it (attached is
+not enough — Apple keeps expired builds attached and VALID), per-locale
+description and keywords, screenshots whose ASSETS have finished uploading, a
+review contact, a
 primary category, an age-rating declaration and a privacy-policy URL. Any one
 missing is a hard stop that otherwise surfaces only when a human presses Submit
 — and the expensive ones (screenshots) cost Alex real time to produce, so
@@ -15,8 +17,8 @@ finding them out AFTER the binary lands wastes exactly the lead time that
 knowing early would buy.
 
 So this prints every gate with a PASS/GAP verdict, measured from Apple's record
-rather than assumed. A clean run is a real answer: it says the only thing
-between us and a submission is a processed build.
+rather than assumed. A clean run is a real answer: nothing in Apple's record is
+in the way, and what remains is the attended press of Submit.
 
 THE TRAP THIS TOOL EXISTS TO NOT FALL INTO (measured 2026-09-14, native/157)
 ---------------------------------------------------------------------------
@@ -40,10 +42,14 @@ USAGE
   python3 tools/asc-submission-readiness.py --self-check   (no network; grades
       the pure verdict logic against fixtures, including the platform trap)
 
-CREDENTIALS  ASC_KEY_ID  ASC_ISSUER_ID  ASC_KEY_PATH  — from ~/.claude/.env,
-which holds them as SHELL vars and does NOT export them: a child process needs
-`set -a; source ~/.claude/.env; set +a` or it reads them ABSENT and the missing
-credential is misread as a broken key.
+CREDENTIALS  ASC_KEY_ID  ASC_ISSUER_ID  ASC_KEY_PATH
+Resolved by `asc-builds.py`, imported — not re-implemented here. That resolver
+already knows the two ways these read ABSENT while being perfectly fine: the
+env file holds BARE assignments so a plain `source` never reaches a python
+child, and the configured key path can be EPERM rather than missing. A second
+copy of that knowledge in this file would drift, and the half that drifts is
+the half that prints the remedy, so the reader is told to run something that
+cannot work. One resolver, one self-test.
 
 EXIT
   0  Apple answered and every gate read PASS (or --self-check passed)
@@ -106,6 +112,50 @@ def pick_version(rows: list[dict], platform: str) -> dict | None:
     return mine[0]
 
 
+def build_verdict(attrs: dict | None) -> tuple[bool, str]:
+    """Attached is not submittable: the build must also be VALID and UNEXPIRED.
+
+    Apple expires a build ~90 days after upload and will not review it, but it
+    stays attached to the version record and its processingState stays VALID —
+    so a gate that only asks "is a build attached?" prints PASS on a binary
+    that cannot ship. Measured 2026-09-14: the iOS 1.0 record still holds build
+    7, uploaded in May, VALID and EXPIRED, while the unexpired build 8 is
+    attached to nothing. That is precisely the state this tool is read in, so
+    the false PASS lands on the one gate an attended attach decision turns on.
+    """
+    if attrs is None:
+        return False, "no build attached to this version"
+    if not attrs:
+        # The relationship named a build the response did not include. That is
+        # a hole in our read, not a missing build — never report it as either.
+        return False, "attached build is not in Apple's response — cannot grade it"
+    version = attrs.get("version")
+    state = attrs.get("processingState")
+    if attrs.get("expired"):
+        return False, f"build {version} is EXPIRED — Apple will not review it"
+    if state != "VALID":
+        return False, f"build {version} is {state}, not VALID"
+    return True, f"build {version} ({state})"
+
+
+def build_gate(target: dict, included: list) -> tuple[bool, str]:
+    """Join the version's build relationship to the included build rows, grade it.
+
+    The join belongs inside the gate rather than in `main`. It is real logic
+    that can fail on its own — the relationship is an id, the attributes live
+    in a sibling `included` list, and picking the wrong list or filtering on
+    the wrong type yields an empty attrs dict, which is a hole in OUR read and
+    not a statement about Apple. Keeping it here is what lets --self-check
+    grade it; left in `main` it would be exercised only by a run that has
+    credentials and a network.
+    """
+    rel = target.get("relationships", {}).get("build", {}).get("data")
+    if not rel:
+        return build_verdict(None)
+    by_id = {i["id"]: i for i in included if i.get("type") == "builds"}
+    return build_verdict(by_id.get(rel["id"], {}).get("attributes", {}))
+
+
 def text_verdict(attrs: dict) -> tuple[bool, str]:
     desc = (attrs.get("description") or "").strip()
     kw = (attrs.get("keywords") or "").strip()
@@ -132,33 +182,57 @@ def contact_verdict(attrs: dict) -> tuple[bool, str]:
 
 
 # ---------------------------------------------------------------------------
+SIBLING = "asc-builds.py"
+
+
+def asc_builds():
+    """Import the sibling tool BY PATH, for its credential resolver.
+
+    Its filename carries a hyphen, so it is not a legal module name and
+    `import asc_builds` can never find it however the path is arranged — the
+    loader below is not ceremony, it is the only way in. Loading it is safe:
+    everything executable there sits behind `if __name__ == "__main__"`.
+
+    It must be beside us. That is true in the repo and false for a copy taken
+    out on its own (`git show <sha>:tools/... > /tmp/x.py` is a real habit in
+    this lane's directives), so the failure names the path tried rather than
+    dying somewhere later inside the resolver.
+    """
+    import importlib.util
+
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), SIBLING)
+    spec = importlib.util.spec_from_file_location("asc_builds", path)
+    if spec is None or spec.loader is None:
+        die(f"cannot load {path} — run this from the repo's tools/ directory")
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except OSError as exc:
+        die(f"cannot load {SIBLING} from {path}: {exc.strerror or exc}")
+    return mod
+
+
 def token() -> str:
     try:
         import jwt
     except ImportError:
         die("PyJWT is not importable; `pip3 install pyjwt cryptography`")
-    key_id = os.environ.get("ASC_KEY_ID")
-    issuer = os.environ.get("ASC_ISSUER_ID")
-    key_path = os.environ.get("ASC_KEY_PATH")
-    missing = [
-        n
-        for n, v in (
-            ("ASC_KEY_ID", key_id),
-            ("ASC_ISSUER_ID", issuer),
-            ("ASC_KEY_PATH", key_path),
-        )
-        if not v
-    ]
+    builds = asc_builds()
+    creds = builds.resolve_credentials()
+    key_id = creds["ASC_KEY_ID"]
+    issuer = creds["ASC_ISSUER_ID"]
+    missing = [n for n in builds.CRED_NAMES if not creds[n]]
     if missing:
         die(
-            f"missing credential(s): {', '.join(missing)} — these live in "
-            "~/.claude/.env UNEXPORTED; run `set -a; source ~/.claude/.env; set +a`"
+            f"missing credential(s): {', '.join(missing)} — not in the environment "
+            f"and not in {builds.ENV_FILE}. That file holds BARE assignments, so "
+            "plain `source` does not reach this process; use "
+            "`set -a; source ~/.claude/.env; set +a`."
         )
-    try:
-        with open(os.path.expanduser(key_path)) as fh:
-            private_key = fh.read()
-    except OSError as exc:
-        die(f"cannot read ASC_KEY_PATH: {exc}")
+    # Names every path it tried, each with its own errno, and exits 2 itself:
+    # EPERM on the configured path and a genuinely absent key are different
+    # bugs and must not collapse into one sentence.
+    private_key, _used = builds.read_key(creds["ASC_KEY_PATH"], key_id)
     now = int(time.time())
     return jwt.encode(
         {"iss": issuer, "iat": now, "exp": now + 900, "aud": "appstoreconnect-v1"},
@@ -234,17 +308,7 @@ def main() -> None:
     print(f"\ngates for {platform} {vstring} ({vstate}):")
     verdict("version record", vstate in EDITABLE_STATES, f"{vstring} is {vstate}")
 
-    build_rel = target.get("relationships", {}).get("build", {}).get("data")
-    if build_rel:
-        binc = {
-            i["id"]: i for i in versions.get("included", []) if i["type"] == "builds"
-        }
-        b = binc.get(build_rel["id"], {}).get("attributes", {})
-        verdict(
-            "build attached", True, f"build {b.get('version')} ({b.get('processingState')})"
-        )
-    else:
-        verdict("build attached", False, "no build attached to this version")
+    verdict("submittable build", *build_gate(target, versions.get("included", [])))
 
     locs = get(
         f"/appStoreVersions/{vid}/appStoreVersionLocalizations", bearer, soft=True
@@ -354,17 +418,30 @@ def summarize() -> None:
     if GAPS:
         print(f"VERDICT: {len(GAPS)} GAP(s) — {', '.join(GAPS)}")
         sys.exit(1)
-    print("VERDICT: every gate PASS — a processed build is the only thing missing")
+    print(
+        "VERDICT: every gate PASS — nothing in Apple's record blocks a submission"
+    )
     sys.exit(0)
 
 
 # ---------------------------------------------------------------------------
 def self_check() -> None:
     """Grade the pure verdict logic offline. Each case asserts BOTH directions
-    so a predicate that always returns the same answer cannot pass."""
+    so a predicate that always returns the same answer cannot pass.
+
+    No network and no credentials. It does read the sibling tool off disk, so
+    that the one thing this file no longer implements — resolving credentials —
+    is proven reachable before a run needs it.
+    """
     failures: list[str] = []
+    ran = 0
 
     def check(name: str, got, want) -> None:
+        # The summary line reports a COUNT, so count it here rather than typing
+        # a number into the string that nothing keeps honest. The number this
+        # replaces said 17 over 16 assertions.
+        nonlocal ran
+        ran += 1
         if got != want:
             failures.append(f"{name}: got {got!r}, want {want!r}")
 
@@ -384,6 +461,39 @@ def self_check() -> None:
         {"id": "new", "attributes": {"platform": "IOS", "appStoreState": "PREPARE_FOR_SUBMISSION"}},
     ]
     check("pick_version prefers editable", pick_version(hist, "IOS")["id"], "new")
+
+    # Attached-but-expired is the live state, so it gets both directions and
+    # the reason, not just a boolean: "EXPIRED" is what sends a reader to
+    # attach a different build rather than to go hunting for metadata.
+    valid = {"version": "9", "processingState": "VALID", "expired": False}
+    check("build valid unexpired", build_verdict(valid)[0], True)
+    check("build expired", build_verdict({**valid, "expired": True})[0], False)
+    check("build expired says why", "EXPIRED" in build_verdict({**valid, "expired": True})[1], True)
+    check("build still processing", build_verdict({**valid, "processingState": "PROCESSING"})[0], False)
+    check("build invalid", build_verdict({**valid, "processingState": "INVALID"})[0], False)
+    check("build none attached", build_verdict(None)[0], False)
+    # A missing include row must not read as "no build attached" — that would
+    # send a reader to upload a binary Apple already has.
+    check("build not in response", build_verdict({})[0], False)
+    check("build not in response says so", "not in Apple's response" in build_verdict({})[1], True)
+
+    # The join, on the shape Apple actually returns — the live 2026-09-14 iOS
+    # record: an expired build 7 reachable only through `included`.
+    tgt = {"relationships": {"build": {"data": {"id": "b7"}}}}
+    inc = [
+        {"id": "other", "type": "appStoreVersions", "attributes": {}},
+        {"id": "b7", "type": "builds", "attributes": {"version": "7", "processingState": "VALID", "expired": True}},
+        {"id": "b9", "type": "builds", "attributes": {"version": "9", "processingState": "VALID", "expired": False}},
+    ]
+    check("gate joins the attached build", build_gate(tgt, inc)[0], False)
+    check("gate grades the ATTACHED one, not the newest", "build 7" in build_gate(tgt, inc)[1], True)
+    check("gate passes when the unexpired one is attached", build_gate({"relationships": {"build": {"data": {"id": "b9"}}}}, inc)[0], True)
+    # Both of these are False, so the boolean alone cannot tell them apart —
+    # and they send a reader to opposite places (upload a binary vs fix our
+    # read). Assert the MESSAGE, or the two collapse into each other.
+    check("gate with no relationship", build_gate({}, inc)[1], build_verdict(None)[1])
+    check("no-relationship and bad-join differ", build_verdict(None)[1] != build_verdict({})[1], True)
+    check("gate when the id is not included", build_gate({"relationships": {"build": {"data": {"id": "b8"}}}}, inc)[1], build_verdict({})[1])
 
     check("text full", text_verdict({"description": "d", "keywords": "k"})[0], True)
     check("text no desc", text_verdict({"description": "", "keywords": "k"})[0], False)
@@ -411,12 +521,32 @@ def self_check() -> None:
     check("contact no phone", contact_verdict({**full, "contactPhone": ""})[0], False)
     check("contact none", contact_verdict({})[0], False)
 
+    # --- the borrowed resolver is actually reachable --------------------------
+    # Without this the import is only exercised by a run that has credentials
+    # and a network, i.e. never by a gate — and a hyphenated-filename import is
+    # exactly the kind that breaks silently when a file moves.
+    builds = asc_builds()
+    check("sibling exposes resolve_credentials", callable(getattr(builds, "resolve_credentials", None)), True)
+    check("sibling exposes read_key", callable(getattr(builds, "read_key", None)), True)
+    # token() reports missing names from CRED_NAMES and quotes ENV_FILE in the
+    # remedy, so both must be there and the three names must be the three.
+    check("sibling exposes CRED_NAMES", sorted(getattr(builds, "CRED_NAMES", ())), ["ASC_ISSUER_ID", "ASC_KEY_ID", "ASC_KEY_PATH"])
+    check("sibling exposes ENV_FILE", bool(getattr(builds, "ENV_FILE", "")), True)
+    # The sibling's main() is guarded by `__name__ == "__main__"`, so the name
+    # we load it under is the whole mechanism keeping this import from calling
+    # Apple. Assert the mechanism, not the arrival: reaching this line already
+    # proves it did not run.
+    check("loaded under a non-__main__ name", builds.__name__ != "__main__", True)
+
     if failures:
         print("SELF-CHECK FAILED")
         for f in failures:
             print(f"  {f}")
         sys.exit(1)
-    print("SELF-CHECK PASS — 17 assertions over pick_version/text/screenshot/contact")
+    print(
+        f"SELF-CHECK PASS — {ran} assertions over "
+        "pick_version/text/screenshot/contact + the borrowed resolver"
+    )
     sys.exit(0)
 
 
