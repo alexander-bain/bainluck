@@ -275,13 +275,23 @@ def test_the_two_madrid_clubs_still_never_chain():
     assert _ids(fold_twin_events(rows)) == [1, 2, 3]
 
 
-def test_a_different_sport_id_is_still_a_different_bucket():
+def test_a_different_competition_is_still_a_different_bucket():
+    """Widening the bucket to a DAY did not let it cross a competition, and
+    #2866's league element did not either.
+
+    Re-stated for the same reason as its twin in
+    `test_soccer_name_pair_fold_5918.py`: this used to hold one `sport_key`
+    against two `sport_id`s, a pair `sports.key`'s UNIQUE constraint makes
+    impossible, and element 0 of the key is now the LEAGUE. Two keys naming two
+    competitions is what the assertion was always about.
+    """
     rows = [
-        _Row(1, "Celta Vigo", "Málaga", sport_id=7),
+        _Row(1, "Celta Vigo", "Málaga", sport_key="soccer_spain_la_liga", sport_id=7),
         _Row(
             2,
             "RC Celta de Vigo",
             "Malaga CF",
+            sport_key="soccer_portugal_primeira_liga",
             sport_id=8,
             commence_time=KICKOFF + timedelta(minutes=2),
         ),

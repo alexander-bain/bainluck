@@ -286,10 +286,27 @@ def test_a_different_minute_is_a_different_fixture():
     assert _ids(fold_twin_events(rows)) == [1, 2]
 
 
-def test_a_different_sport_id_is_a_different_bucket():
+def test_a_different_competition_is_a_different_bucket():
+    """Two competitions never share a candidate bucket, however alike the names.
+
+    #2866 RE-STATED THIS FIXTURE AND DID NOT WEAKEN WHAT IT PINS. It used to
+    hold one `sport_key` against two `sport_id`s, which the bucket read as two
+    leagues while `sport_id` was element 0 of the key. `sports.key` is UNIQUE,
+    so that row pair cannot exist in the database — two ids are always two keys
+    — and since the key element became the LEAGUE (`americanfootball_nfl` and
+    `americanfootball_nfl_preseason` are one), the honest way to say "different
+    competition" is two keys that name different competitions. The assertion is
+    untouched: La Liga's Celta does not fold into the Primeira Liga's.
+    """
     rows = [
-        _Row(1, "Celta Vigo", "Málaga", sport_id=7),
-        _Row(2, "RC Celta de Vigo", "Malaga CF", sport_id=8),
+        _Row(1, "Celta Vigo", "Málaga", sport_key="soccer_spain_la_liga", sport_id=7),
+        _Row(
+            2,
+            "RC Celta de Vigo",
+            "Malaga CF",
+            sport_key="soccer_portugal_primeira_liga",
+            sport_id=8,
+        ),
     ]
 
     assert _ids(fold_twin_events(rows)) == [1, 2]
