@@ -197,7 +197,37 @@ describe("#5984 arm 1 — a percentage may not claim a boundary its probability 
     // The two rows sit one above the other on the same card, which is the whole
     // point: the rule has to separate a market quoting certainty from a market
     // quoting 0.999, and both of them are on screen at once.
-    expect(visible(render())).toContain("Zverev wins Set 1 100%");
+    //
+    // ── #6138 MOVED THIS ROW'S VEHICLE, NOT THIS ROW'S RULE ──────────────────
+    // The `Set 1 Winner` row in `WIRE` is verbatim production and carries
+    // `is_winner: true, resolution_source: api_settlement`. Since #6138 a graded
+    // row states `Won` instead of a price, so on the untouched payload this
+    // assertion's specimen no longer prints a percentage at all — it prints the
+    // answer, which is the better page and is asserted as such below.
+    //
+    // The CONTRACT here is the rounding boundary: an exact 1.0 may not be
+    // demoted to `>99%` by the rule that demotes 0.999. That contract is
+    // untouched and still needs the two rows side by side, so the grade — and
+    // ONLY the grade — is declared off for this one assertion. Rewriting the
+    // expectation to `Won` instead would delete the boundary test and leave
+    // nothing asserting that `>99%` cannot swallow a genuine certainty.
+    const ungradedSet1 = WIRE.map((r) =>
+      r.market_name === SET1 ? { ...r, is_winner: null, resolution_source: null } : r,
+    );
+    expect(visible(render({ other: ungradedSet1 }))).toContain("Zverev wins Set 1 100%");
+  });
+
+  test("#6138: on the REAL wire that row is graded, so it states the result", () => {
+    // The production state the assertion above had to step around, pinned here
+    // so the two cannot drift apart silently: the payload is untouched, the row
+    // is graded `api_settlement`, and a reader is told who won rather than shown
+    // a price of 100% on a set that is over.
+    const text = visible(render());
+    expect(text).toContain("Zverev wins Set 1 Won");
+    expect(text).not.toContain("Zverev wins Set 1 100%");
+    // Its ungraded neighbour is untouched — the boundary rule above still runs
+    // on a live row, which is what makes the pair meaningful.
+    expect(text).toContain("Zverev wins Set 2 >99%");
   });
 
   test("THE SETTLED ARM OBEYS THE SAME RULE — which is the production state now", () => {

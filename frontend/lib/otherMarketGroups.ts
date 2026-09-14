@@ -75,6 +75,14 @@ export interface OtherMarketRow {
    * and present-but-null elsewhere. See the note on `GameMarketsResponse`.
    */
   observed_at?: string | null;
+  /**
+   * #6138. Who won, and who says so. Carried verbatim to `LabeledRow` and read
+   * only by `outcomeRowVerdict` — the three states (grade / served-null /
+   * absent) are that function's to discriminate, not this module's. See the
+   * note on `GameMarketsResponse["other"][number].is_winner`.
+   */
+  is_winner?: boolean | null;
+  resolution_source?: string | null;
 }
 
 export interface ParsedPropLabel {
@@ -597,6 +605,9 @@ export interface LabeledRow {
    * sides, because only one of them is in the label.
    */
   winnerParts?: { scope: string; first: string; second: string } | null;
+  /** #6138. Carried from the wire; see `OtherMarketRow.is_winner`. */
+  isWinner?: boolean | null;
+  resolutionSource?: string | null;
 }
 
 export interface MergedOutcome {
@@ -656,6 +667,20 @@ export interface MergedOutcome {
    * being struck off, and a struck row must not be the loudest thing on a card.
    */
   unreachable?: boolean;
+  /**
+   * #6138 — the settlement grade, merged across the rows that share this label.
+   *
+   * Carried RAW rather than as a `"won" | "lost"`, because the rule that turns
+   * these two fields into a verdict is `outcomeRowVerdict` and it needs to know
+   * whether the market is resolved — a fact this module is not told. Reading
+   * them here would be the second private copy of a rule whose comment block
+   * already says, twice, that it must not be copied (#4788/#6082, CERT-2222,
+   * CERT-2517). `SpecialEventMarkets` holds the status and makes the call.
+   *
+   * ABSENT WHEN THE CONTRIBUTING ROWS DISAGREE — see `mergeOutcomes`.
+   */
+  isWinner?: boolean | null;
+  resolutionSource?: string | null;
 }
 
 export interface OutcomeMergeResult {
@@ -712,6 +737,30 @@ export function mergeOutcomes(rows: LabeledRow[]): OutcomeMergeResult {
     // the same answer one layer up, and two copies of "which end of the range"
     // is how the two surfaces come to disagree.
     const oldest = oldestSourceStamp(group.map((r) => r.observedAt));
+    /* ── #6138: A MERGED GRADE IS ONLY CARRIED WHEN THE GRADED ROWS AGREE ─────
+       Two venues can quote the same question, so a merged row can inherit two
+       settlements. Rows that carry NO grade abstain — a question Kalshi has
+       settled and Polymarket has not is still settled, and dropping the grade
+       because a second venue is slow is the false-negative half of the same
+       mistake. But two rows that both claim a grade and DISAGREE about who won
+       are a truth defect upstream, and the honest render for a contradiction is
+       the live one (`outcomeRowVerdict`'s own words about a row that is both
+       retracted and crowned). So: one distinct graded winner ⇒ carry it; two
+       ⇒ carry nothing and the row keeps its last quote.
+
+       Read off the pair, not off `is_winner` alone: the never-graded cohort is
+       exactly `is_winner: false, resolution_source: null` (#4788), so a group of
+       one graded loser and one ungraded row would otherwise look like two
+       agreeing losers. `resolution_source` is the only field that separates
+       them and is therefore the membership test for "this row claims a grade".
+       The retraction is deliberately NOT special-cased here — it is a
+       `resolution_source` like any other to this function, and refusing it is
+       `outcomeRowVerdict`'s first and unconditional line. */
+    const gradedRows = group.filter(
+      (r) => r.resolutionSource != null && r.isWinner != null,
+    );
+    const distinctWinners = new Set(gradedRows.map((r) => r.isWinner));
+    const grade = distinctWinners.size === 1 ? gradedRows[0] : null;
     outcomes.push({
       label,
       prob: probs[0],
@@ -720,6 +769,9 @@ export function mergeOutcomes(rows: LabeledRow[]): OutcomeMergeResult {
       ...(carried != null ? { setNumber: carried } : {}),
       ...(carriedParts != null ? { winnerParts: carriedParts } : {}),
       ...(oldest !== null ? { observedAt: oldest } : {}),
+      ...(grade !== null
+        ? { isWinner: grade.isWinner, resolutionSource: grade.resolutionSource }
+        : {}),
     });
   }
 
@@ -1202,6 +1254,12 @@ export function buildMarketSection(
       observedAt: row.observed_at ?? null,
       setNumber,
       winnerParts,
+      // #6138. `?? null` would collapse ABSENT into a served null here, and
+      // those two are NOT the same answer downstream: `outcomeRowVerdict`
+      // withholds on `=== null` precisely so that a payload with no key at all
+      // keeps today's behaviour through a deploy. Carried as-is.
+      isWinner: row.is_winner,
+      resolutionSource: row.resolution_source,
     });
   }
 

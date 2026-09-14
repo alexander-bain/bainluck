@@ -96,8 +96,23 @@ import { isAuthoritativeResolution } from "@/lib/resolutionAuthority";
  */
 export const RETRACTED_RESOLUTION_SOURCE = "ungradeable_result";
 
+/**
+ * The two fields this rule actually reads.
+ *
+ * #6138 WIDENED THE PARAMETER RATHER THAN COPYING THE FUNCTION. The event
+ * page's `Additional Markets` rows carry the same two fields under different
+ * names and needed the same answer; `FuturesOutcome` satisfies this shape, so
+ * every existing call site is unchanged and `tsc` proves it. The alternative
+ * was a second private copy of a rule whose own comment block says twice that
+ * it must not be copied — and #6082 exists because the last copy diverged.
+ */
+export interface GradedRow {
+  is_winner?: boolean | null;
+  resolution_source?: string | null;
+}
+
 export function outcomeRowVerdict(
-  outcome: FuturesOutcome,
+  outcome: GradedRow,
   isResolved: boolean,
 ): "won" | "lost" | null {
   // THE RETRACTION IS REFUSED FIRST, AND UNCONDITIONALLY — before `isResolved`,

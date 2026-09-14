@@ -20,6 +20,7 @@ import {
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { PriceAgeMark } from "@/components/event/PriceAgeMark";
 import { oldestSourceStamp, sourceIsStale } from "@/lib/sourceAge";
+import { outcomeRowVerdict } from "@/components/futures/OutcomeRow";
 
 interface SpecialEventMarketsProps {
   data: GameMarketsResponse;
@@ -44,6 +45,53 @@ interface SpecialEventMarketsProps {
 }
 
 /**
+ * Did the settlement rail grade this row, and what did it say?
+ *
+ * ═══ #6138 — THE VERDICT WAS ON THE WIRE AND THE CARD PRINTED A PRICE ═══
+ *
+ * On `/events/14780142` four hours after Chicago beat Carolina 59–37, this
+ * section read:
+ *
+ *     Carolina Panthers vs Chicago Bears
+ *       Chicago                                last quote 100%
+ *       Carolina                               last quote   0%
+ *     Chicago vs Carolina: 1st Half / Fulltime Result
+ *       Chicago wins 1H / Chicago wins game    last quote 100%
+ *       Tie 1H / Game ends in a tie            last quote   0%
+ *
+ * Every one of those rows arrived carrying `is_winner` and a
+ * `resolution_source`. Alex's standing ruling is that settled means settled —
+ * cards show RESULTS — and a card that answers "who won?" with a price is the
+ * defect that ruling names. Measured over four settled NFL pages (11:25Z
+ * 2026-09-14): 247 of 275 rows graded, all 247 printed as quotes.
+ *
+ * 🔴 THE SECOND HALF OF THAT `0%` IS WORSE THAN THE FIRST. Those rows carry
+ * `probability: null` — no venue quoted them — and `mergeOutcomes`' `?? 0`
+ * turns "no price" into a rendered `0%`. 73 of the 275 are in that state and
+ * every one is a graded loser, so the invented number was never the best we
+ * could say; `Lost` was sitting in the payload beside it.
+ *
+ * `outcomeRowVerdict` IS THE RULE AND IS NOT RE-DERIVED HERE. Retraction
+ * refused first and unconditionally; a served `resolution_source === null`
+ * withholds (never `== null`, so an older payload mid-deploy keeps today's
+ * behaviour); a null `is_winner` withholds; and on a market that is NOT
+ * resolved only a tier-3 authoritative `won` crosses the line, which is what
+ * lets a first-quarter market that has already settled state its result during
+ * a live game without a defaulted `false` crowning a loser (#4788/#6082).
+ * `settled` — `isSettledStatus(eventStatus)`, this section's own predicate —
+ * is the `isResolved` argument.
+ */
+function outcomeVerdict(
+  outcome: MarketCard["outcomes"][0],
+  settled: boolean,
+): "won" | "lost" | null {
+  return outcomeRowVerdict(
+    { is_winner: outcome.isWinner, resolution_source: outcome.resolutionSource },
+    settled,
+  );
+}
+
+/**
  * Is this row still carrying a LIVE price?
  *
  * The two early returns in `OutcomeBar` decide this today and #4970 needs the
@@ -51,12 +99,18 @@ interface SpecialEventMarketsProps {
  * be stated once for the whole card. Named here rather than re-derived there,
  * because a card that disagrees with its own rows about which of them are live
  * is the failure this whole section keeps re-learning (#2086).
+ *
+ * #6138 adds the third early return. A row stating `Won` has no live price for
+ * an age mark to be ABOUT, and counting it would make a card of eight graded
+ * rows plus one live one read as "mixed" — moving the card's stamp to the wrong
+ * place, which is the exact failure the denominator note below warns against.
  */
 function isLivePriced(
   outcome: MarketCard["outcomes"][0],
   settled: boolean,
 ): boolean {
   if (outcome.result) return false;
+  if (outcomeVerdict(outcome, settled) !== null) return false;
   return !(settled || outcome.decided === true);
 }
 
@@ -121,6 +175,46 @@ function OutcomeBar({
         >
           {outcome.result}
         </div>
+      </div>
+    );
+  }
+
+  // #6138. The question is answered and the settlement rail says who by. Same
+  // shape as the branch above — no bar, no percentage — but the answer is a
+  // VERDICT rather than a sentence, so it is said in the vocabulary the sibling
+  // card family already uses for exactly this: `Won` in the accent, `Lost`
+  // muted, both standing in the slot the price would have occupied
+  // (`FuturesCard`'s outcome row). A reader meeting both surfaces meets one
+  // word for one state.
+  //
+  // BELOW `outcome.result`, DELIBERATELY. A tennis decided set states the
+  // fuller `Noskova won Set 1` — it names the winner, which `Won` on a row
+  // labelled `Set 1 Winner` cannot — and a struck `— no longer possible` row
+  // is a third, quieter state. Those rows keep their sentence.
+  //
+  // ABOVE `frozen`, also deliberately: `frozen` is the fallback for a row we
+  // know has stopped moving but cannot say the answer to, and every row that
+  // reaches this line is one we CAN.
+  const verdict = outcomeVerdict(outcome, settled);
+  if (verdict !== null) {
+    return (
+      <div
+        className="flex items-baseline gap-2 text-xs"
+        data-testid="special-markets-verdict"
+        data-verdict={verdict}
+      >
+        <div className={`flex-1 ${verdict === "won" ? "font-semibold" : "text-text-secondary"}`}>
+          {outcome.label}
+        </div>
+        <span
+          className={
+            verdict === "won"
+              ? "font-mono tabular-nums font-bold text-emerald-600"
+              : "font-mono tabular-nums text-text-muted"
+          }
+        >
+          {verdict === "won" ? "Won" : "Lost"}
+        </span>
       </div>
     );
   }

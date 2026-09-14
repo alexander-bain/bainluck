@@ -1212,6 +1212,27 @@ export interface GameMarketsResponse {
      * event. See #4970's comment thread.
      */
     observed_at?: string | null;
+    /**
+     * #6138 — THE VERDICT WAS ALWAYS ON THE WIRE AND NEVER DECLARED HERE.
+     *
+     * The server has served both keys on this bucket for as long as it has
+     * served them on `player_props` above; this type did not say so, so the
+     * fields were dropped at the boundary and `SpecialEventMarkets` printed
+     * `last quote 100%` beside `Chicago wins 1H / Chicago wins game` on a game
+     * Chicago had won four hours earlier. Measured over four settled NFL pages
+     * (`14780142`, `14780147`, `14780145`, `14637256`, 2026-09-14 11:25Z):
+     * 247 of 275 `other` rows carry a published grade — 79 winners, 168 losers
+     * — and every one of them rendered as a price.
+     *
+     * The three states are the ones `FuturesOutcome.resolution_source` already
+     * documents and `outcomeRowVerdict` already discriminates: a string is a
+     * grade, a served `null` is "nobody graded this", ABSENT is "this payload
+     * cannot say" — which is what an older serialiser returns for the length of
+     * every deploy, since Vercel ships ahead of Heroku. Optional and nullable is
+     * the honest type; a required one would compile and then be wrong.
+     */
+    is_winner?: boolean | null;
+    resolution_source?: string | null;
   }[];
   pace: {
     total_scored: number;
