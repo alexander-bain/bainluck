@@ -59,6 +59,12 @@ from app.utils.event_concept_cache import (
     write_payload,
 )
 
+#: The key may keep its literal year — nothing here DERIVES anything from it; the
+#: concept is handed to the scorer whole. Its calendar WINDOW may not: #4449 made
+#: `_score_event_concepts` ask `majors_calendar.yaml` where this edition sits, the
+#: real Vuelta 2026 ended 2026-09-13, and on the 14th the scorer started correctly
+#: refusing to build an "upcoming" card for a race that had finished. The window is
+#: pinned to the clock in `one_concept` below — see `tests/lib_race_window`.
 CONCEPT_KEY = "event:cycling:vuelta-2026"
 
 #: Verbatim from the production envelope cycle 91 read out of the warm cache —
@@ -262,7 +268,9 @@ class TestTheProductionSpecimen:
 
         monkeypatch.setattr(ec, "get_adapter", lambda domain: _Adapter())
         assert await _resolve_concept_leader(None, CONCEPT_KEY) == (None, None)
-        assert built == [], "the cache-only rule (#1934) must not be softened by this fix"
+        assert (
+            built == []
+        ), "the cache-only rule (#1934) must not be softened by this fix"
 
 
 class TestTheMirrorIsBoundedRatherThanTrusted:
@@ -307,7 +315,10 @@ class TestFeedToResolverToWarmedKey:
     def one_concept(self, monkeypatch):
         import app.utils.event_concept_population as pop
 
+        from tests.lib_race_window import pin_race_window
+
         now = datetime.now(timezone.utc)
+        pin_race_window(monkeypatch, CONCEPT_KEY, when=now)
 
         async def _list_all(db, sport_filter=None, statuses=None):
             return [
@@ -428,9 +439,9 @@ def test_the_reader_names_its_slots_through_cache_keys():
 
     assert "cache_keys(key)" in src, "derive the slot names from the producer"
     assert "keys.primary" in src and "keys.stale" in src
-    assert 'f"{CACHE_PREFIX}{key}"' not in src, (
-        "the hand-rolled primary-only key is #1948; it does not come back"
-    )
+    assert (
+        'f"{CACHE_PREFIX}{key}"' not in src
+    ), "the hand-rolled primary-only key is #1948; it does not come back"
 
 
 def test_time_is_not_the_oracle():
@@ -438,9 +449,9 @@ def test_time_is_not_the_oracle():
     import inspect
 
     src = inspect.getsource(_FakeRedis)
-    assert "time.time" not in src and "datetime.now" not in src, (
-        "the TTL clock is owned by the test, not by the wall clock"
-    )
+    assert (
+        "time.time" not in src and "datetime.now" not in src
+    ), "the TTL clock is owned by the test, not by the wall clock"
     # `time` is imported for readers who expect a monotonic source here and find
     # a counter instead; keep the reference honest.
     assert time is not None

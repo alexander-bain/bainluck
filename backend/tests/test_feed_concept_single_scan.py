@@ -87,10 +87,34 @@ SOON = NOW + timedelta(days=2)
 #: `resolution_date`. There is no calendar left to pin, so the fixture is gone —
 #: not disabled, obsolete. Any year the clock lands in resolves on its own.
 #:
+#: AND THE FIXTURE IS BACK, pointed at a DIFFERENT calendar (2026-09-14). #4449
+#: gave `cycling_status` a second calendar — `majors_calendar.yaml`, which knows
+#: the real race DATES — so that a finished Grand Tour stops wearing the live pill.
+#: That made the edition matter again by another route: the real Vuelta 2026 ended
+#: 2026-09-13, so from the 14th the specimen resolved fine and was correctly called
+#: `settled`, and the two status-filtered reads below returned nothing. The window,
+#: like the resolution above it, is now carried relative to the clock.
+#:
 #: The arm is still fully exercised, and not by assumption: three tests below
 #: assert `cycling` is actually among the domains returned, so if the specimen
 #: ever stops resolving, this file goes red rather than quietly counting two arms.
 CYCLING_RESOLUTION = NOW + timedelta(days=13)
+
+#: The edition the specimen names, derived exactly as the code under test derives
+#: it — from the market's own resolution year, never from a literal.
+CYCLING_CONCEPT_KEY = f"event:cycling:vuelta-{CYCLING_RESOLUTION.year}"
+
+
+@pytest.fixture(autouse=True)
+def _the_race_is_running(monkeypatch):
+    """The specimen describes a Grand Tour in progress, so the calendar must agree.
+
+    Autouse because the specimen is module-level: every read in this file counts
+    the cycling arm, so every read needs the same race to be running.
+    """
+    from tests.lib_race_window import pin_race_window
+
+    pin_race_window(monkeypatch, CYCLING_CONCEPT_KEY, when=NOW)
 
 
 # ---------------------------------------------------------------------------
