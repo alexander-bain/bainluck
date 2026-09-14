@@ -52,19 +52,17 @@ import sys
 from datetime import datetime
 from typing import Any
 
-_REPO_ROOT_ADDED = False
-
-
 def _ensure_backend_on_path() -> None:
     """Put ``backend/`` on ``sys.path`` so ``app.utils`` imports.
 
-    Done lazily and idempotently rather than at import time: the self-check and
-    the CLI both need it, but a caller that has already arranged its own
-    ``PYTHONPATH`` (the shell wrapper does) must not get a second entry.
+    Done lazily rather than at import time: the self-check and the CLI both need
+    it, but a caller that has already arranged its own ``PYTHONPATH`` (the shell
+    wrapper does) must not get a second entry. The membership test IS the
+    idempotence guard — an earlier draft also kept a module-level "already done"
+    flag, which CodeQL correctly read as an unused global: a second flag saying
+    the same thing as ``backend not in sys.path`` is one more thing that can
+    disagree with it.
     """
-    global _REPO_ROOT_ADDED
-    if _REPO_ROOT_ADDED:
-        return
     import os
 
     backend = os.path.join(
@@ -72,7 +70,6 @@ def _ensure_backend_on_path() -> None:
     )
     if backend not in sys.path:
         sys.path.insert(0, backend)
-    _REPO_ROOT_ADDED = True
 
 
 #: The two apps a scheduled task can die on, main first so a tie in the
