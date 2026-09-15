@@ -309,8 +309,12 @@ async def pg_session():
     engine = create_async_engine(DB_URL)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all, tables=tables, checkfirst=True)
-        for stmt in _CLEAN:
-            await conn.execute(text(stmt), {"k": SPORT_KEY})
+        # Both market keys: the producer fixture's and the repair fixture's.
+        # Cleaning only the first leaves the repair rows behind, and the second
+        # run of this file then plans over two generations of them.
+        for key in (SPORT_KEY, REPAIR_KEY):
+            for stmt in _CLEAN:
+                await conn.execute(text(stmt), {"k": key})
 
     Session = async_sessionmaker(engine, expire_on_commit=False)
     async with Session() as session:
@@ -394,4 +398,284 @@ class TestTheBlockStillOnlyTouchesWhatItShould:
         assert stats.get("stale_zeroed") == 1, (
             "exactly one leg qualifies; a second retirement means the floor "
             f"stopped holding. stats: {stats}"
+        )
+
+
+# ─── THE REPAIR HALF ────────────────────────────────────────────────────────
+#
+# Everything above guards the PRODUCER: new arrivals store NULL. The 373 legs
+# already carrying a stored `0` are retired by
+# `scripts/repair_5869_stale_futures_legs_claiming_impossible.py`, and until
+# 2026-09-15 nothing executed one line of it.
+#
+# It shipped certed and GREEN, and its very first production invocation died on
+# `ImportError: cannot import name 'AsyncSessionLocal'` — a symbol that exists
+# nowhere in this codebase. The unit tests passed because they stub the session,
+# and every statement in `run()` sits below that import. A repair that cannot
+# open a connection is indistinguishable, from the outside, from a repair that
+# ran and found nothing to do (gotcha #53).
+#
+# So this class drives the REAL `run()` against real PostgreSQL rather than
+# re-implementing its steps here. A test that rebuilt the apply loop would have
+# been green on the broken script, which is the whole failure being guarded.
+
+REPAIR_KEY = "golf_masters_repair_5869"
+REPAIR_STALE = ("Repair Stale One", "Repair Stale Two")
+REPAIR_LIVE = "Repair Live Sibling"
+REPAIR_NO_ODDS = "Repair Zero With No Odds"
+REPAIR_SETTLED = "Repair Zero But Settled"
+
+#: The price the book puts back on a retired leg AFTER the repair ran. Any real
+#: number works; it only has to be distinguishable from the stale 0.
+REPRICED = 0.07
+
+
+def _repair_module():
+    """Load the repair script by path — `backend/scripts/` is not a package."""
+    import importlib.util
+    import pathlib
+
+    path = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "scripts"
+        / "repair_5869_stale_futures_legs_claiming_impossible.py"
+    )
+    spec = importlib.util.spec_from_file_location("_repair_5869", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+async def _seed_repair(session):
+    """Legs already carrying a stored 0 — the population the producer fix cannot reach.
+
+    Two specimens plus three controls, one of which (`REPAIR_LIVE`) is also load
+    bearing in the other direction: the repair's `EXISTS (sibling priced within
+    7 days)` clause means the specimens are only selected BECAUSE this row is
+    here and fresh.
+    """
+    from app.models.models import FuturesMarket, FuturesOutcome
+
+    now = datetime.now(timezone.utc)
+    stale = now - timedelta(days=3)
+
+    market = FuturesMarket(
+        source="odds_api",
+        external_id=REPAIR_KEY,
+        sport_id=None,
+        name="The Masters Winner (repair fixture)",
+        category="championship",
+        mutually_exclusive=True,
+        status="open",
+    )
+    session.add(market)
+    await session.flush()
+
+    rows = [
+        # the specimens: stored 0 beside a real quote, nothing settled
+        (REPAIR_STALE[0], 0, 331909, stale, None),
+        (REPAIR_STALE[1], 0, 221277, stale, None),
+        # the fresh sibling that qualifies the market
+        (REPAIR_LIVE, 0.42, -150, now, None),
+        # control: a 0 with no surviving quote is not this defect's fingerprint
+        (REPAIR_NO_ODDS, 0, None, stale, None),
+        # control: a graded 0 is a RESULT, and results are never rewritten
+        (REPAIR_SETTLED, 0, 331909, stale, "espn"),
+    ]
+    for name, prob, american, seen, resolution in rows:
+        session.add(
+            FuturesOutcome(
+                market_id=market.id,
+                external_id=name,
+                name=name,
+                current_probability=prob,
+                current_american_odds=american,
+                last_updated=seen,
+                resolution_source=resolution,
+            )
+        )
+    await session.commit()
+    return market.id
+
+
+async def _repair_ids(session):
+    """This fixture's outcome ids by name — the rollback is asserted by membership."""
+    rows = await session.execute(
+        text(
+            "SELECT o.external_id, o.id "
+            "  FROM futures_outcomes o JOIN futures_markets m ON m.id = o.market_id "
+            " WHERE m.source = 'odds_api' AND m.external_id = :k"
+        ),
+        {"k": REPAIR_KEY},
+    )
+    return {r[0]: r[1] for r in rows.fetchall()}
+
+
+async def _repair_legs(session):
+    rows = await session.execute(
+        text(
+            "SELECT o.external_id, o.current_probability, o.current_american_odds "
+            "  FROM futures_outcomes o JOIN futures_markets m ON m.id = o.market_id "
+            " WHERE m.source = 'odds_api' AND m.external_id = :k"
+        ),
+        {"k": REPAIR_KEY},
+    )
+    return {r[0]: {"prob": r[1], "american": r[2]} for r in rows.fetchall()}
+
+
+async def _run_repair(module, session, monkeypatch, **flags):
+    """Call the script's own `run()`, on this session, as an attended invocation.
+
+    `run()` resolves `async_session_maker` from `app.services.database` at call
+    time, so patching the attribute is what redirects it at the test database —
+    and it is also why a symbol that does not exist there fails this test rather
+    than reaching production.
+    """
+    import app.services.database as database_module
+
+    @asynccontextmanager
+    async def _session():
+        yield session
+
+    monkeypatch.setattr(database_module, "async_session_maker", _session)
+    monkeypatch.setenv("HEROKU_APP_NAME", "bainluck")
+
+    args = SimpleNamespace(**{"backup": False, "apply": False, "limit": 0, **flags})
+    return await module.run(args)
+
+
+async def _clear_repair_banks(session, module):
+    """Drop this fixture's rows out of the runtime backup tables, if they exist."""
+    for table in (module.BAK_TABLE, module.MANIFEST_TABLE):
+        present = (
+            await session.execute(text(f"SELECT to_regclass('{table}') IS NOT NULL"))
+        ).scalar_one()
+        if present:
+            await session.execute(
+                text(
+                    f"DELETE FROM {table} WHERE outcome_id IN ("
+                    "  SELECT o.id FROM futures_outcomes o"
+                    "    JOIN futures_markets m ON m.id = o.market_id"
+                    "   WHERE m.source = 'odds_api' AND m.external_id = :k)"
+                ),
+                {"k": REPAIR_KEY},
+            )
+            # …and the previous run's ids, whose outcomes the fixture already
+            # deleted. They reconcile against nothing, but they accumulate in a
+            # CI database that ten other steps share.
+            await session.execute(
+                text(
+                    f"DELETE FROM {table} b WHERE NOT EXISTS ("
+                    "  SELECT 1 FROM futures_outcomes o WHERE o.id = b.outcome_id)"
+                )
+            )
+    await session.commit()
+
+
+class TestTheRepairActuallyRuns:
+    """The roundtrip, executed. Its absence is why the first invocation died."""
+
+    async def test_the_repair_retires_the_stored_zeros_and_spares_the_controls(
+        self, pg_session, monkeypatch
+    ):
+        module = _repair_module()
+        await _seed_repair(pg_session)
+        await _clear_repair_banks(pg_session, module)
+
+        code = await _run_repair(
+            module, pg_session, monkeypatch, backup=True, apply=True
+        )
+        assert code == 0, (
+            f"the repair exited {code}. A non-zero here is the script refusing "
+            "or crashing — and a crash looks exactly like a clean no-op from "
+            "the outside, which is how the AsyncSessionLocal defect reached "
+            "production certed GREEN."
+        )
+
+        got = await _repair_legs(pg_session)
+        for name in REPAIR_STALE:
+            assert got[name]["prob"] is None, (
+                f"{name} still stores {got[name]['prob']!r}. The stored 0 is the "
+                "reader-visible half of #5869: it serves as `probability: 0.0` "
+                "and prints a flat `0%`, the site asserting IMPOSSIBLE."
+            )
+            assert got[name]["american"] is not None, (
+                f"{name} lost its last quote. Retiring a price is not erasing "
+                "the record of what the book last said."
+            )
+
+        assert float(got[REPAIR_LIVE]["prob"]) == pytest.approx(0.42), (
+            "the repair reached the priced sibling — the one row that must "
+            "survive, since it is what qualifies the market in the first place."
+        )
+        assert got[REPAIR_NO_ODDS]["prob"] == 0, (
+            "a 0 with no surviving quote does not carry this defect's "
+            "fingerprint; retiring it widens the repair past what was measured."
+        )
+        assert got[REPAIR_SETTLED]["prob"] == 0, (
+            "a graded 0 is a RESULT. Settled means settled — this repair may "
+            "never rewrite one."
+        )
+
+    async def test_the_restore_does_not_overwrite_a_price_that_came_back(
+        self, pg_session, monkeypatch
+    ):
+        """The documented undo, run after the book re-prices a retired leg.
+
+        Measured 2026-09-15: the unguarded form put the stale `0` back over a
+        real `0.07`, re-asserting IMPOSSIBLE about an outcome that is quoted
+        again — an undo that reintroduces the defect on a NEWER row than the one
+        it banked. The `IS NULL` clause is the reverse of the forward write's
+        compare-and-swap and is what makes the rollback safe to keep offering.
+        """
+        module = _repair_module()
+        await _seed_repair(pg_session)
+        await _clear_repair_banks(pg_session, module)
+
+        await _run_repair(module, pg_session, monkeypatch, backup=True, apply=True)
+
+        # the producer sees this leg again and stores a real number
+        await pg_session.execute(
+            text(
+                "UPDATE futures_outcomes o SET current_probability = :p "
+                "  FROM futures_markets m "
+                " WHERE m.id = o.market_id AND m.external_id = :k "
+                "   AND o.external_id = :n"
+            ),
+            {"p": REPRICED, "k": REPAIR_KEY, "n": REPAIR_STALE[0]},
+        )
+        await pg_session.commit()
+
+        # The script's OWN rollback statement, not a copy of it. A copy here
+        # would stay green while the documented undo rotted — the defect this
+        # test exists for lived in the prose form, not in the test's idea of it.
+        restored = {
+            r[0] for r in (await pg_session.execute(text(module.SQL["restore"]))).fetchall()
+        }
+        await pg_session.commit()
+
+        # Asserted by MEMBERSHIP, not by row count. The rollback is global on
+        # purpose — it undoes the whole manifest, which is what a rollback is —
+        # so in the CI database it also restores whatever a neighbouring run
+        # banked, and a count assertion here would fail on other people's rows.
+        ids = await _repair_ids(pg_session)
+        assert ids[REPAIR_STALE[1]] in restored, (
+            "the leg nobody re-priced was not restored, so the guard clause is "
+            "sparing everything and the rollback does nothing at all."
+        )
+        assert ids[REPAIR_STALE[0]] not in restored, (
+            "the rollback restored the leg the book re-priced. That is the "
+            "clobber: a stale 0 written back over a live quote."
+        )
+
+        got = await _repair_legs(pg_session)
+        assert float(got[REPAIR_STALE[0]]["prob"]) == pytest.approx(REPRICED), (
+            f"the restore overwrote a refreshed {REPRICED} with "
+            f"{got[REPAIR_STALE[0]]['prob']!r}. Dropping the `IS NULL` clause "
+            "turns the rollback into a second bug: it re-asserts IMPOSSIBLE "
+            "about a leg the book is quoting again."
+        )
+        assert got[REPAIR_STALE[1]]["prob"] == 0, (
+            "the leg that nobody re-priced was NOT restored, so the guard is "
+            "not sparing rows by refusing to do anything at all."
         )

@@ -115,13 +115,26 @@ NOT IN SCOPE, deliberately:
   * The `current_american_odds` value itself. It is the last honest thing the
     book said; retiring a price is not erasing the record of it.
 
-RESTORE, one command (D51(b)):
+RESTORE, one command (D51(b)). This is `SQL["restore"]` below, verbatim — the
+statement is a named artifact rather than prose precisely so the guard test can
+execute the thing a person pastes:
 
     UPDATE futures_outcomes o
        SET current_probability = b.current_probability
       FROM bak_5869_stale_legs b
      WHERE b.outcome_id = o.id
-       AND b.outcome_id IN (SELECT outcome_id FROM bak_5869_repair_manifest);
+       AND b.outcome_id IN (SELECT outcome_id FROM bak_5869_repair_manifest)
+       AND o.current_probability IS NULL;
+
+  THE LAST LINE IS LOAD-BEARING, and it is the reverse of the forward write's
+  compare-and-swap. Without it the restore is not an undo, it is a second bug:
+  the forward pass retires a leg to NULL, the book starts pricing that leg again,
+  the producer stores the real number — and a restore run afterwards puts the
+  stale `0` back over it, re-asserting IMPOSSIBLE about an outcome that is now
+  quoted. Measured 2026-09-15 on real PostgreSQL: a leg refreshed to `0.07` after
+  an apply was overwritten back to `0` by the unguarded form, and spared by this
+  one (`UPDATE 2` instead of `UPDATE 3`). Restore only what this repair set to
+  NULL and that is STILL NULL; anything else has a newer writer than the backup.
 
   The restore is only as honest as the backup, so the backup is reconciled by
   CONTENT, not by id (#5595): `--backup` evicts and re-stages any row that drifted
@@ -139,11 +152,16 @@ in `HEAVY_TASKS` — so the write cannot be fired from a laptop pointed at
 production with whatever happens to be checked out. A dry run only reads, and
 runs anywhere.
 
-USAGE:
+USAGE. The dyno's root `/app` IS this repo's `backend/`, so the path on Heroku is
+`scripts/...`, NOT `backend/scripts/...` — the latter is what a reader infers from
+the repo layout and it fails with a bare `Errno 2: No such file or directory`,
+which `heroku run:detached` reports as an empty stdout (gotcha #48). Run from the
+repo root locally; run without the `backend/` prefix on the dyno.
 
-    python3 scripts/repair_5869_stale_futures_legs_claiming_impossible.py
-    heroku run:detached -a bainluck -- python3 backend/scripts/repair_5869_stale_futures_legs_claiming_impossible.py --backup
-    heroku run:detached -a bainluck -- python3 backend/scripts/repair_5869_stale_futures_legs_claiming_impossible.py --backup --apply
+    python3 backend/scripts/repair_5869_stale_futures_legs_claiming_impossible.py
+    heroku run:detached -a bainluck -- python3 scripts/repair_5869_stale_futures_legs_claiming_impossible.py
+    heroku run:detached -a bainluck -- python3 scripts/repair_5869_stale_futures_legs_claiming_impossible.py --backup
+    heroku run:detached -a bainluck -- python3 scripts/repair_5869_stale_futures_legs_claiming_impossible.py --backup --apply
 """
 
 from __future__ import annotations
@@ -254,6 +272,20 @@ SQL = {
         VALUES (:outcome_id, :now)
         ON CONFLICT (outcome_id) DO UPDATE SET applied_at = EXCLUDED.applied_at
     """,
+    # THE ROLLBACK (D51(b)), kept here rather than only in the docstring so the
+    # guard test executes the statement a person will actually paste. An undo
+    # documented in prose is an undo nothing tests: the `IS NULL` clause below
+    # was missing from the prose form and silently re-asserted `0%` over a leg
+    # the book had started quoting again.
+    "restore": f"""
+        UPDATE futures_outcomes o
+           SET current_probability = b.current_probability
+          FROM {BAK_TABLE} b
+         WHERE b.outcome_id = o.id
+           AND b.outcome_id IN (SELECT outcome_id FROM {MANIFEST_TABLE})
+           AND o.current_probability IS NULL
+        RETURNING o.id
+    """,
     # THE FORWARD WRITE, and it is a compare-and-swap on the whole fingerprint.
     # Everything the plan asserted is re-checked here, because each clause names
     # something that could have changed in between: a settlement writer could
@@ -298,7 +330,8 @@ def wrong_app_refusal(args) -> Optional[str]:
         f"creates its backup tables at runtime and rewrites a served column, so "
         f"the invocation IS the attended step (standing notice 47(c)) and it "
         f"happens on one named app. Re-run with `heroku run:detached -a "
-        f"{PRODUCER_APP} -- python3 backend/scripts/{os.path.basename(__file__)} ...`."
+        f"{PRODUCER_APP} -- python3 scripts/{os.path.basename(__file__)} ...` "
+        f"(no `backend/` prefix — the dyno's root IS this repo's `backend/`)."
     )
 
 
@@ -361,7 +394,13 @@ def describe(rows) -> str:
 
 
 async def run(args):
-    from app.services.database import AsyncSessionLocal
+    # `async_session_maker` is the name this module actually exports, and the
+    # one the other 21 scripts in this directory import (#5869 follow-up). The
+    # first production invocation died here with `ImportError: cannot import
+    # name 'AsyncSessionLocal'` — a symbol that exists nowhere in the codebase —
+    # because every line below this one is unreachable from a unit test that
+    # stubs the session, so nothing but a real run could have caught it.
+    from app.services.database import async_session_maker
     from sqlalchemy import text
 
     refusal = wrong_app_refusal(args)
@@ -369,7 +408,7 @@ async def run(args):
         print(refusal)
         return 2
 
-    async with AsyncSessionLocal() as s:
+    async with async_session_maker() as s:
         rows = await plan(s, args.limit)
         ids = [r["outcome_id"] for r in rows]
 
