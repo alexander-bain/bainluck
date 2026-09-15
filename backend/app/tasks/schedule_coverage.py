@@ -60,8 +60,8 @@ async def run_mlb_schedule_coverage(date: Optional[str] = None) -> dict:
     our_events: list[dict] = []
     async with get_task_session() as s:
         rows = (await s.execute(
-            select(Event.id, Event.status, Team.name.label("home"),
-                   Sport.key.label("sport"))
+            select(Event.id, Event.status, Event.commence_time,
+                   Team.name.label("home"), Sport.key.label("sport"))
             .join(Sport, Sport.id == Event.sport_id)
             .outerjoin(Team, Team.id == Event.home_team_id)
             .where(
@@ -71,8 +71,13 @@ async def run_mlb_schedule_coverage(date: Optional[str] = None) -> dict:
             )
         )).all()
         # Second pass for away names (kept separate to avoid a double outerjoin alias).
+        # #6326: commence_time is REQUIRED here. The SELECT window below is 36h
+        # wide (deliberately, for boundary crossings), so without a start time
+        # the teams-only match in diff_schedule pairs each official game with
+        # the neighbouring day's game of the same series.
         ev_map = {r.id: {"id": r.id, "status": r.status, "home_team": r.home or "",
-                         "away_team": ""} for r in rows}
+                         "away_team": "", "commence_time": r.commence_time}
+                  for r in rows}
         if ev_map:
             away_rows = (await s.execute(
                 select(Event.id, Team.name.label("away"))

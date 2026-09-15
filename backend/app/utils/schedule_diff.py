@@ -26,7 +26,7 @@ pure, always-on detector.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 # MLB statusCode / detailedState groupings (statsapi).
@@ -37,6 +37,50 @@ _POSTPONED_STATES = {"Postponed", "Suspended", "Cancelled", "Canceled"}
 
 # Our terminal statuses.
 _SETTLED_STATUSES = {"completed", "closed"}
+
+# How far apart an official game and one of our events may start and still be
+# considered the SAME game (#6326).
+#
+# The number has to sit in the gap between "the same game, timed slightly
+# differently by two providers" and "the next game of the same series". MLB
+# series are consecutive days, so the nearest wrong answer is ~24h away; the
+# widest right answer is a same-day split doubleheader (~4-7h) or a long rain
+# delay. 8h clears both by a wide margin in each direction.
+_MATCH_WINDOW_HOURS = 8
+
+
+def _as_datetime(value) -> Optional[datetime]:
+    """Best-effort parse of an ISO string / datetime into an aware datetime.
+
+    Returns ``None`` for anything unparseable, which callers MUST treat as
+    "cannot compare" rather than "does not match" — see ``_same_game_time``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        try:
+            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+def _same_game_time(our_commence, official_datetime) -> bool:
+    """True if these two start times are close enough to be one game.
+
+    🔴 FAILS OPEN, deliberately. If either side is missing or unparseable we
+    return True, so the match falls back to the teams-only behaviour this
+    function was added to narrow. Failing closed would turn an absent
+    ``commence_time`` into a ``missing_event`` finding — inventing a louder
+    wrong answer than the one #6326 is fixing.
+    """
+    a = _as_datetime(our_commence)
+    b = _as_datetime(official_datetime)
+    if a is None or b is None:
+        return True
+    return abs((a - b).total_seconds()) <= _MATCH_WINDOW_HOURS * 3600
 
 
 @dataclass
@@ -105,8 +149,14 @@ def diff_schedule(
     """Classify every official game against our events into typed transitions.
 
     ``our_events`` are dicts with at least: ``id``, ``home_team``/``home``,
-    ``away_team``/``away``, ``status``. Only divergences are returned — an
-    official game with exactly one, correctly-stated event yields nothing.
+    ``away_team``/``away``, ``status``, and — since #6326 — ``commence_time``.
+    Only divergences are returned — an official game with exactly one,
+    correctly-stated event yields nothing.
+
+    ``commence_time`` is optional and its ABSENCE IS NOT A MISMATCH: a caller
+    that omits it gets the pre-#6326 teams-only matching, which is looser, never
+    stricter. The caller that matters (``tasks/schedule_coverage.py``) supplies
+    it.
     """
     out: list[ScheduleTransition] = []
 
@@ -117,9 +167,14 @@ def diff_schedule(
         return e.get("away_team") or e.get("away") or ""
 
     for og in official_games:
+        # #6326: teams ALONE is not an identity. MLB plays series on consecutive
+        # days, so a teams-only match pairs every official game with the whole
+        # series — on 2026-09-15 that reported 10 duplicates of which 9 were two
+        # real games. The start time is the term that separates them.
         matches = [
             e for e in our_events
             if teams_match(_e_home(e), _e_away(e), og.home, og.away)
+            and _same_game_time(e.get("commence_time"), og.game_datetime)
         ]
         dh = "" if og.doubleheader in ("N", "") else f" (DH game {og.game_number})"
 
@@ -130,15 +185,27 @@ def diff_schedule(
             ))
             continue
 
-        if len(matches) > 1:
+        # A split doubleheader legitimately has two events, so the bar is one
+        # higher for one. #6326: this rule was written as a COMMENT under an
+        # UNCONDITIONAL append and never asked — `og.doubleheader` reached only
+        # the message string. It is a condition now.
+        is_doubleheader = og.doubleheader not in ("N", "")
+        allowed_matches = 2 if is_doubleheader else 1
+
+        if len(matches) > allowed_matches:
+            expected = (f"expected at most {allowed_matches} (split doubleheader)"
+                        if is_doubleheader else "expected exactly 1")
             out.append(ScheduleTransition(
                 kind="duplicate_events", home=og.home, away=og.away, game_pk=og.game_pk,
                 event_ids=[m.get("id") for m in matches if m.get("id") is not None],
                 detail=f"official MLB game {og.away} @ {og.home}{dh} matches "
-                       f"{len(matches)} events (expected exactly 1)",
+                       f"{len(matches)} events ({expected})",
             ))
-            # A split doubleheader legitimately has two events; only flag when the
-            # official game is NOT a doubleheader (so two events = a real dup).
+            continue
+
+        if len(matches) > 1:
+            # A doubleheader's two legitimate events: nothing to report, and no
+            # single event to state-check below either.
             continue
 
         # Exactly one event — check state divergence.
