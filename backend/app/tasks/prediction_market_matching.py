@@ -775,6 +775,141 @@ async def covered_league_for_matchup(session, team_a, team_b) -> str | None:
     return sorted(shared)[0] if shared else None
 
 
+async def placeable_league_for_matchup(
+    session, team_a, team_b, sport_key: str | None,
+) -> str | None:
+    """The real league BOTH clubs play in, for a row keyed to a catch-all. #5576.
+
+    THE DEFECT THIS PLACES, AND THE ONE IT DOES NOT.
+    ``auto_create_sport_key_from_category`` can only ever return
+    ``<prefix>_other``, because the league map it consults is keyed on a KALSHI
+    TICKER and a Polymarket market has none. So every Polymarket-born fixture
+    lands in the catch-all whatever league it is really in, and one club's
+    season is split across two competition labels on one page — measured
+    2026-09-15 on ``/search?q=Yakult Swallows``, where an ``Other Baseball``
+    chip held five Yakult fixtures while an ``NPB`` chip held the rest.
+
+    It does NOT collapse a twin. A market-born claim is unanchored, so ruling
+    048 makes Step 3 unreachable and ``find_or_create_event`` CREATES whatever
+    the sport key says (``event_registry``, "RULING 048 GATE"). Placing the row
+    in its real league puts the card under the right competition; merging the
+    pair standing beside it needs an id channel and is #1946 / #2693.
+
+    WHY A SECOND CHANNEL, AND WHY IT IS NOT A LOOSER ONE.
+    :func:`covered_league_for_matchup` resolves on ``teams`` alone, and on the
+    live specimen that is not enough: Polymarket writes ``Hiroshima Carp``
+    while ``teams`` carries ``Hiroshima Toyo Carp``, so exact-on-``teams``
+    returns nothing for the very row this exists for. ``team_identity_mapping``
+    is the per-source alias channel that already holds the answer — the
+    ``polymarket``/``Hiroshima Carp``/``baseball_npb`` row was written
+    2026-07-09, two months BEFORE the phantom was minted on 2026-09-12. The
+    graph knew the league the whole time and the creator never asked.
+
+    FOUR REFUSALS, each one measured on that population rather than imagined:
+
+    1. **Same family as the key we already have.** The catch-all is not merely
+       mixed, it is sometimes wrong about the SPORT: ``basketball_other`` today
+       holds ``Baltimore``/``Indianapolis`` and ``Cleveland``/``Jacksonville``,
+       which are NFL games, and ``TPS Turku`` — an ice-hockey club by name —
+       resolves to ``soccer_finland_veikkausliiga``. Placing across families
+       would turn a bad label into a wrong-sport attachment, which is a truth
+       defect (notice 40). A cross-family read refuses instead.
+    2. **Exactly one candidate.** Nine MLB rows resolve to BOTH ``baseball_mlb``
+       and ``baseball_mlb_preseason``; ambiguity is not a placement.
+    3. **Never into a covered league.** Those rows should not exist at all, and
+       :func:`covered_league_for_matchup` has already refused the create by the
+       time this runs. If this channel sees a covered league the other did not,
+       the honest answer is to leave the row where it is rather than mint a
+       phantom INTO the real league page, where it would outrank nothing and
+       mislead everything. Widening the refusal itself is #5544's call, not
+       this one's.
+    4. **Never into another ``_other``.** ``basketball_other`` is a real row in
+       ``sports`` with nine teams on it, so the catch-all can resolve to itself.
+
+    BOTH SIDES MUST AGREE, for the reason :func:`covered_league_for_matchup`
+    gives: one side is not a matchup, and a bare nickname collides across
+    leagues. And the alias arm requires ``team_identity_mapping.sport_key`` to
+    agree with the club's OWN league — 724 of 19,777 rows disagree (measured
+    2026-09-15), and those are exactly the stale ones.
+
+    ONLY A CATCH-ALL IS RE-READ. ``sport_key`` comes in whole and a key that
+    does not end ``_other`` is returned to the caller untouched, without a
+    round trip. A key a Kalshi TICKER spelled is evidence from the venue's own
+    structure; second-guessing it by name lookup is how a correct row gets
+    moved, and this function may only ever improve on "we did not know".
+
+    Returns the league key, or None to leave the row in the catch-all. Fails
+    CLOSED: a placement is a claim about what competition a game belongs to,
+    and the catch-all is the honest answer when nothing can prove otherwise.
+    """
+    from app.models.models import Sport, Team, TeamIdentityMapping
+
+    sides = [s.strip() for s in (team_a, team_b) if s and s.strip()]
+    if (
+        session is None
+        or len(sides) != 2
+        or not sport_key
+        or not sport_key.endswith("_other")
+    ):
+        # Same no-signal reading as the covered guard above, and the same
+        # reason it may not raise: `session=None` drives the create path in
+        # #2020's call-site tests.
+        return None
+
+    family_prefix = sport_key[: -len("_other")]
+    if not family_prefix:
+        # `"_other"` itself names no family, and `startswith("_")` would match
+        # every key in `sports`.
+        return None
+
+    lowered = [s.lower() for s in sides]
+    family = f"{family_prefix}_"
+    leagues_by_side: list[set[str]] = [set(), set()]
+
+    def _record(name, alternates, league):
+        if not league or not league.startswith(family) or league.endswith("_other"):
+            return
+        known = {(name or "").lower()}
+        if isinstance(alternates, list):
+            known |= {str(a).lower() for a in alternates if a}
+        for index, side in enumerate(lowered):
+            if side in known:
+                leagues_by_side[index].add(league)
+
+    # Arm 1 — the club table, exactly as the covered guard reads it, bounded in
+    # SQL to this family. Two round trips rather than a UNION because the two
+    # arms do not have the same shape: only this one carries JSONB alternates,
+    # and casting a NULL into that column to make the shapes agree buys a
+    # Postgres type ambiguity in exchange for nothing.
+    teams_rows = await session.execute(
+        select(Team.name, Team.alternate_names, Sport.key)
+        .join(Sport, Sport.id == Team.sport_id)
+        .where(Sport.key.startswith(family))
+    )
+    for name, alternates, league in teams_rows:
+        _record(name, alternates, league)
+
+    # Arm 2 — the per-source alias channel, which is the one that knows
+    # `Hiroshima Carp`. `sport_key` on the mapping must agree with the club's
+    # own league; see the docstring for what the 724 disagreeing rows are.
+    alias_rows = await session.execute(
+        select(TeamIdentityMapping.source_name, Sport.key)
+        .join(Team, Team.id == TeamIdentityMapping.team_id)
+        .join(Sport, Sport.id == Team.sport_id)
+        .where(Sport.key.startswith(family))
+        .where(TeamIdentityMapping.sport_key == Sport.key)
+    )
+    for source_name, league in alias_rows:
+        _record(source_name, None, league)
+
+    shared = leagues_by_side[0] & leagues_by_side[1]
+    if len(shared) != 1:
+        # Ambiguous, or nothing at all — both leave the row in the catch-all.
+        return None
+    league = next(iter(shared))
+    return None if _sport_key_is_odds_api_covered(league) else league
+
+
 #: Which funnel counter a refusal increments. A mapping rather than the
 #: two-armed conditional it replaces, because that conditional's ELSE meant
 #: "sibling ticker" — so a third reason added to it would have been counted as a
@@ -6860,6 +6995,27 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
             market.name, sport_key, sport_key, covered_league,
         )
         return None
+
+    # #5576: the catch-all is a placement, not a fact. A market with no ticker
+    # can only ever be keyed `<prefix>_other`, so ask the clubs which league
+    # inside that family they actually play in — see
+    # `placeable_league_for_matchup` for the four refusals and for why this
+    # relabels the card without collapsing the twin beside it (ruling 048).
+    #
+    # AFTER the covered refusal above and not before it, because the two
+    # questions are different and only one of them may stop a create: this one
+    # never refuses a row, it only names it. The `_other` precondition lives
+    # INSIDE the resolver, so a key the TICKER spelled costs no round trip and
+    # cannot be second-guessed by a name lookup.
+    placed_league = await placeable_league_for_matchup(
+        session, team_a, team_b, sport_key,
+    )
+    if placed_league:
+        logger.info(
+            "Placing '%s' (#5576) — %s vs %s is a %s fixture, not %s",
+            market.name, team_a, team_b, placed_league, sport_key,
+        )
+        sport_key = placed_league
 
     status = auto_create_status(commence_time, commence_source, now)
     external_id = f"pm_{market.source}_{market.external_id}"
