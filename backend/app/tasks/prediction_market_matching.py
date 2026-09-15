@@ -668,6 +668,29 @@ ODDS_API_COVERED_PREFIXES = (
     "americanfootball_nfl", "americanfootball_ncaaf",
     "baseball_mlb", "icehockey_nhl",
     "soccer_usa_mls",
+    # #6377: Aussie Rules, both codes. Polymarket tags these events `afl` /
+    # `aflw` and NEITHER tag is in `_TAG_TO_CATEGORY` (polymarket.py), so
+    # `_tags_to_category` falls through to the "sports" catch-all, the sport is
+    # then guessed from the club NICKNAMES — Hawks, Suns, Kangaroos — and the
+    # fixture is minted into whichever catch-all that guess lands on. Measured
+    # on production 2026-09-15 over 30 days: 17 Aussie Rules fixtures minted as
+    # phantoms, scattered across THREE unrelated catch-alls (`basketball_other`
+    # 11, `americanfootball_other` 4, `motorsport_other` 3) — the scatter is the
+    # unmapped-series signature Q453 records. Three of them were on
+    # `/api/leagues/basketball_other` at the time of writing, holding 3 of the
+    # page's 8 upcoming "basketball" games.
+    #
+    # ALL 17 duplicate a real scheduled fixture — 17/17, checked by club pair
+    # rather than by `commence_time`, because the older rows carry Gamma's
+    # LISTING stamp instead of a kickoff (#4965 / gotcha #14) and are 90-167h
+    # adrift. The three minted since #6073 landed are exact to the second. That
+    # is precisely this list's predicate: the schedule already carries the game,
+    # so a market-born row can only ever be a twin of it.
+    #
+    # `aussierules_afl` alone would cover `aussierules_aflw` by prefix; both are
+    # named because the women's code is a competition in its own right and a
+    # reader of this tuple should not have to notice the prefix overlap.
+    "aussierules_afl", "aussierules_aflw",
 )
 
 
@@ -678,8 +701,38 @@ def _sport_key_is_odds_api_covered(sport_key: str | None) -> bool:
     )
 
 
-async def covered_league_for_matchup(session, team_a, team_b) -> str | None:
+async def covered_league_for_matchup(
+    session, team_a, team_b, *, unambiguous_only: bool = False,
+) -> str | None:
     """The covered league BOTH sides of this matchup play in, or None. #5544.
+
+    ``unambiguous_only`` (#6377) — REFUSE instead of tie-breaking when the two
+    clubs share more than one covered league. The two callers ask different
+    questions of the same resolver and only one of them can survive a guess:
+
+      * the MINTING refusal asks "is this matchup in a covered league at all",
+        a yes/no, and any member of ``shared`` answers it. Default, unchanged.
+      * the PHASE-15 RELINK asks "which league, exactly", then searches that
+        one key for the row to move a market ONTO. A tie-break that picks the
+        wrong league there does not fail closed — it can move a market onto a
+        real game in the other code.
+
+    Measured on production 2026-09-15, which is why this is a parameter and not
+    a comment: 37 club pairs field a side in BOTH ``aussierules_afl`` and
+    ``aussierules_aflw``, and one of them — North Melbourne Kangaroos v Geelong
+    Cats, 2026-08-15 — plays the two codes 2h45m apart, INSIDE
+    ``_PM_FIXTURE_MAX_DIFF_HOURS``. ``sorted(shared)[0]`` spells the men's key
+    first, so the women's market is the one that would move. That is a
+    wrong-sport attachment under notice 40, the exact class the four refusals in
+    :func:`placeable_league_for_matchup` exist to prevent.
+
+    The same shape is already reachable for the college keys this list has
+    always carried — a school fields both ``basketball_ncaab`` and
+    ``americanfootball_ncaaf`` — so the flag is not an Aussie Rules special
+    case; adding the two AFL keys is what made it load-bearing.
+
+    This is condition 4's own doctrine one level up: "a pass that cannot tell
+    them apart must not pick; #1946 owns that, not this."
 
     THE GUARD ABOVE THE AUTO-CREATE WAS AIMED ONE LEVEL TOO LOW. It refuses on
     ``sport_key.startswith("baseball_mlb")``, but a market with no ticker — i.e.
@@ -772,6 +825,8 @@ async def covered_league_for_matchup(session, team_a, team_b) -> str | None:
                 leagues_by_side[index].add(sport_key)
 
     shared = leagues_by_side[0] & leagues_by_side[1]
+    if unambiguous_only and len(shared) != 1:
+        return None
     return sorted(shared)[0] if shared else None
 
 
@@ -1137,7 +1192,11 @@ async def _venue_confirmed_covered_fixture(session, matchup, market, linked_even
          calls, so the two halves of #5544 cannot drift onto two answers. NPB,
          CPBL, FIBA and the European hockey rows resolve to nothing here and are
          never touched, which is the measured reason that refusal is club-level
-         and not family-level.
+         and not family-level. Called here with ``unambiguous_only=True``
+         (#6377): one list and one resolver still, but this arm needs the league
+         NAMED and the minting refusal only needs it to EXIST, so a matchup
+         whose clubs field two covered codes stops here instead of being
+         tie-broken onto one of them.
       3. The candidate is NOT itself auto-created, and is not the row we are on.
          Moving a market between two phantoms is churn wearing a fix's clothes.
       4. Its ``commence_time`` is inside ``_PM_FIXTURE_MAX_DIFF_HOURS`` of the
@@ -1158,8 +1217,12 @@ async def _venue_confirmed_covered_fixture(session, matchup, market, linked_even
     if fixture is None:
         return None  # no signal — see the docstring on venue_game_start
 
+    # `unambiguous_only` (#6377): this arm searches ONE league key for the row
+    # it will move a market onto, so a tie-break between two codes the clubs
+    # both field is a wrong-sport attachment rather than a missed one. See the
+    # resolver's docstring for the measured AFL/AFLW pair that makes this real.
     league = await covered_league_for_matchup(
-        session, matchup.team_a, matchup.team_b,
+        session, matchup.team_a, matchup.team_b, unambiguous_only=True,
     )
     if league is None:
         return None
