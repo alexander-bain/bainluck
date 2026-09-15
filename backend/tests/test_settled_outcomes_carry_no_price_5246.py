@@ -268,7 +268,19 @@ LIVE_KALSHI_SETTLEMENT_WRITERS = {
 #: files the old census never opened, and they are named here rather than
 #: silently skipped so the forward-only gap stays countable.
 NON_KALSHI_SETTLEMENT_WRITERS = {
-    "app/tasks/backfill_winners.py": {"_backfill_polymarket_winners_from_api"},
+    # #6110 adds the second Polymarket writer in this file. It is the only
+    # settlement writer in the repo that INSERTS rather than updates — it stores
+    # the champion of a field we ingested without one (the Vuelta a España 2026
+    # specimen: 30 riders, all correctly losers, no winner) — and it carries the
+    # terminal price by hand rather than through `settled_price_set_sql`,
+    # because that helper builds a SET clause and this is a VALUES list. The
+    # column set is the same three plus the grade; see
+    # `test_polymarket_champion_leg_minted_6110`, which asserts the INSERT names
+    # them by executing it, not by reading it.
+    "app/tasks/backfill_winners.py": {
+        "_backfill_polymarket_winners_from_api",
+        "_mint_missing_champion_leg",
+    },
     "app/tasks/kalshi.py": set(),
     "app/routes/admin_data_quality.py": set(),
     "app/tasks/repair_kalshi_fabricated_loss.py": set(),
