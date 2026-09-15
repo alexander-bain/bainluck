@@ -110,6 +110,32 @@ pytestmark = [
 ]
 
 
+#: Every seeded OUTCOME carries a price, and that is load-bearing (#6327).
+#:
+#: This file's subject is the recall ARMS — name AND-match, numeric term, league
+#: ticker, the outcome-id subquery, trigram — and none of them reads a price, so
+#: the seeds originally left `current_probability` NULL the same way they leave
+#: `volume` and `image_url` NULL: not the subject. #6327 then made the search page
+#: WITHDRAW a market whose every outcome is unpriced (it was drawing a ranked
+#: ladder of dashes), and an unpriced corpus is not a model of the markets this
+#: gate names — "Masters Tournament Winner 2026", "NBA Champion 2026", "Ballon
+#: d'Or Winner 2026" are among the most heavily traded questions on the venue.
+#: Without this the whole corpus is correctly suppressed and all 21 recall cases
+#: report RECALL REGRESSION against a route that is behaving exactly as ruled.
+#:
+#: So: an artefact of the fixture's focus, corrected — NOT the gate relaxed. The
+#: withdrawal rule itself is asserted at the route in
+#: `tests/integration/test_route_search_withdraws_unpriced_card_6327.py`, both
+#: directions, and at the predicate in
+#: `tests/test_search_withdraws_wholly_unpriced_card_6327.py`.
+#:
+#: One value for every leg on purpose: the rerank sorts on VOLUME (#993's
+#: real-interest signal), so a uniform price cannot buy any market an ordering it
+#: had not already earned, and every ordering assertion below reads the same as it
+#: did when the column was NULL.
+_SEED_PRICE = 0.25
+
+
 # --------------------------------------------------------------------------
 # Schema + seed
 # --------------------------------------------------------------------------
@@ -473,6 +499,7 @@ async def _seed(session):
                     market_id=market.id,
                     external_id=f"{external_id}:{outcome_name}",
                     name=outcome_name,
+                    current_probability=_SEED_PRICE,
                 )
             )
 
@@ -495,6 +522,7 @@ async def _seed(session):
                     market_id=market.id,
                     external_id=f"{external_id}:{outcome_name}",
                     name=outcome_name,
+                    current_probability=_SEED_PRICE,
                 )
             )
 

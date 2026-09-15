@@ -237,10 +237,20 @@ class TestAZeroIsAPriceNotAnAbsence:
 
 
 class TestDegenerateShapes:
-    def test_a_market_with_no_outcomes_at_all_is_unpriced(self):
-        """#3412's shape (zero outcome ROWS) — a different issue, same answer
-        here: it cannot draw an honest ladder either."""
-        assert _futures_market_is_wholly_unpriced(_Market([])) is True
+    def test_a_market_with_no_outcome_rows_is_left_alone(self):
+        """🔴 NOT this ship's population, and the first draft got it wrong.
+
+        Production, 2026-09-15, of 14,189 open tier-1/2 markets: **477** have
+        outcomes and no price (this ship), **1,043** have no outcome rows at all.
+        The second group draws no ladder to be dishonest with — it is #3412, with
+        a different remedy — and it is more than TWICE the size of the population
+        that was measured. Withdrawing it here would have been an unmeasured
+        suppression riding a measured one, on 1,043 cards, invisibly.
+
+        The card still ships; its ladder is empty either way.
+        """
+        assert _futures_market_is_wholly_unpriced(_Market([])) is False
+        assert _build_search_top_outcomes(_Market([]), limit=5) == []
 
     @pytest.mark.parametrize("prob", [0.0, 0.5, 1.0])
     def test_any_single_real_number_anywhere_saves_the_market(self, prob):

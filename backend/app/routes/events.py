@@ -6751,9 +6751,21 @@ async def search_events(
     # shared list would have deleted a legitimate destination to fix a card.
     #
     # `_deduped_page` is the page as it stood BEFORE this filter — byte-for-byte
-    # the old `futures_markets`. Two decisions below are deliberately still made
-    # on it (the headline-contender gate and the `bucket_collapse` verdict), each
-    # for its own reason, stated where it is read.
+    # the old `futures_markets`. TWO decisions below are deliberately still made
+    # on it, and both would be wrong on the filtered page:
+    #
+    #   1. THE HEADLINE-CONTENDER GATE. It asks a RANKING question — "did name
+    #      matches saturate the window, so the outcome-only arm never ran" — which
+    #      is a property of what the page was composed from, not of what a later
+    #      suppression left on it. Read the filtered page instead and a page whose
+    #      every row is withdrawn is EMPTY, `and <page>` short-circuits falsy, and
+    #      the one lane that could have refilled it with a priced tier-1 market
+    #      never runs: the reader goes from ten dashes-only cards to nothing at
+    #      all. Promotion itself still operates on the SHIPPED page, and a
+    #      contender is priced by its own query (`current_probability >=
+    #      MIN_CONTENDER_PROBABILITY`), so the lane can never put a dashes-only
+    #      card back on the page this filter just cleared.
+    #   2. THE `bucket_collapse` VERDICT — see its own note below.
     _deduped_page = deduped_futures[:_SEARCH_FUTURES_PAGE]
     futures_markets = [
         m for m in deduped_futures if not _futures_market_is_wholly_unpriced(m)
@@ -6798,18 +6810,9 @@ async def search_events(
     # the stage floor — the gate passes, the value comes back `None`, and the
     # arming line raises `TypeError` on the rarest request in the system.
     _headline_bound_ms = _search_headline_bound_ms(_deadline)
-    # #6327: the gate reads `_deduped_page`, the page BEFORE the price filter, so
-    # this lane's firing condition is byte-for-byte what it was before that ship.
-    # It asks a question about RANKING — "did name matches saturate the window, so
-    # the outcome-only arm never ran" — which is a property of what the page was
-    # composed from, not of what a later suppression left on it. Reading the
-    # filtered page instead would have been wrong in the direction that costs the
-    # reader an answer: a page whose every row is withdrawn is EMPTY, the gate
-    # short-circuits falsy, and the one lane that could have refilled it with a
-    # priced tier-1 market never runs. Promotion itself still operates on the
-    # SHIPPED page below, and a contender is priced by its own query
-    # (`current_probability >= MIN_CONTENDER_PROBABILITY`), so the lane can never
-    # put a dashes-only card back on the page this ship just cleared.
+    # #6327: `_deduped_page`, not `futures_markets` — the gate reads the page as
+    # dedup produced it, so this lane's firing condition is unchanged by the price
+    # filter. Full reasoning at `_deduped_page`'s definition above.
     if (
         _headline_patterns
         and len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW
@@ -21290,8 +21293,22 @@ def _futures_market_is_wholly_unpriced(market: "FuturesMarket") -> bool:
 
     `is not None`, not truthiness: see the builder's note — a stored `0` is a
     real price, and 91% of those legs have a live ask.
+
+    🔴 A MARKET WITH NO OUTCOME ROWS AT ALL IS NOT THIS SHIP'S POPULATION, and the
+    first draft of this predicate withdrew it. Production, 2026-09-15, of 14,189
+    open tier-1/2 markets:
+
+        outcomes, none of them priced   ->   477   this ship (a ladder of dashes)
+        no outcome rows whatsoever      -> 1,043   #3412, and NOT measured here
+
+    Those 1,043 draw no ladder to be dishonest with — they are a different defect
+    with a different remedy, they are more than twice this ship's population, and
+    withdrawing them would have been an unmeasured suppression riding a measured
+    one. `market.outcomes and ...` is the whole guard against that.
     """
-    return not any(o.current_probability is not None for o in market.outcomes)
+    return bool(market.outcomes) and not any(
+        o.current_probability is not None for o in market.outcomes
+    )
 
 
 def _build_search_top_outcomes(
