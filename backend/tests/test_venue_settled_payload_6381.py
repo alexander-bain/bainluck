@@ -452,3 +452,76 @@ class TestTheFrontendContractStillHasTwoArms:
             "hasNoReportedResult grew an arm; venue_settlement_is_askable must "
             "grow the same one or #6381 ships to a subset of its own class"
         )
+
+
+class TestTheVenueWordIsSpelledTwiceOnPurpose:
+    """`api_settlement` is defined in two modules, and merging them is a BUG.
+
+    int377 flagged the duplicate at merge (2026-09-15): `venue_settlement` and
+    `kalshi_market_status` both define `VENUE_SETTLEMENT_SOURCE =
+    "api_settlement"`. The obvious tidy — have the reader import the writer's
+    constant — is the wrong one, and this guard is here to record why rather
+    than leave the next reader to rediscover it.
+
+    The two answer different questions:
+
+    * `kalshi_market_status.VENUE_SETTLEMENT_SOURCE` is a WRITE constant. Its
+      own docstring scopes it to `graded_columns` "and the string it emits" —
+      one writer, the Kalshi forward capture.
+    * `venue_settlement.VENUE_SETTLEMENT_SOURCE` is a READ filter over
+      `futures_outcomes.resolution_source`, a column written by many hands.
+      `backfill_winners.py` spells the word at 14 write-shaped sites, and
+      `polymarket.py:4621` writes it for a venue Kalshi has nothing to do with.
+
+    So an import would assert that the reader's population is defined by ONE of
+    its writers. Rename the Kalshi constant and the import silently re-points
+    the read at the new word, while every historical row — and everything
+    `backfill_winners` and `polymarket` write tomorrow — still carries the old
+    one. The page goes back to saying "No result reported" over grades we hold:
+    the exact defect #6381 shipped to fix, re-introduced by a tidy, and failing
+    closed so nothing would alarm.
+
+    Asserting the gap makes a rename fail HERE, where the choice is visible.
+    """
+
+    def test_the_two_records_of_the_word_agree_today(self):
+        from app.utils import kalshi_market_status
+
+        assert VENUE_SETTLEMENT_SOURCE == kalshi_market_status.VENUE_SETTLEMENT_SOURCE, (
+            "the writer's word and the reader's filter have drifted — the read "
+            "population and the write are no longer the same rung. Do NOT fix "
+            "this by importing one from the other (see this class's docstring); "
+            "decide which rows the page may publish over, then re-state both."
+        )
+
+    def test_a_non_kalshi_writer_spells_it_too_which_is_what_forbids_the_import(self):
+        """The record that LICENSES the duplicate, asserted instead of asserted-of.
+
+        If this ever goes red because Kalshi's forward capture became the only
+        writer of the word, the import stops being wrong and the duplicate
+        stops being justified — which is a deliberate re-decision, not a tidy.
+        """
+        import re
+        from pathlib import Path
+
+        tasks = Path(__file__).resolve().parents[1] / "app/tasks"
+        write_shaped = re.compile(
+            r"""resolution_source\s*=\s*['"]""" + VENUE_SETTLEMENT_SOURCE + r"""['"]"""
+        )
+        non_kalshi_writers = sorted(
+            path.name
+            for path in tasks.glob("*.py")
+            if not path.name.startswith("kalshi")
+            and write_shaped.search(path.read_text())
+        )
+        assert non_kalshi_writers, (
+            "no non-Kalshi task writes `api_settlement` any more — re-read this "
+            "class's docstring before merging the two constants"
+        )
+        assert "polymarket.py" in non_kalshi_writers, (
+            "polymarket.py no longer writes the word. The general assertion "
+            "above stays green on siblings that only REFRESH already-graded "
+            f"rows ({', '.join(non_kalshi_writers)}), so the cross-venue writer "
+            "is pinned by name: it is the one that makes the read population "
+            "wider than any single venue's writer."
+        )
