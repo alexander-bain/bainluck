@@ -288,9 +288,30 @@ from app.utils.sport_keys import (
     get_sport_key_from_ticker as _get_sport_key_from_ticker,
     is_season_variant,
     league_identity,
+    sport_display_name,
 )
 
 router = APIRouter()
+
+
+def _sport_facet_labels(sport) -> tuple[str, str]:
+    """`(key, pill label)` for one event's sport — the search facet's entry.
+
+    #5657: the facet's `name` IS the filter pill a reader taps, so passing the
+    stored name through put `baseball_other` on screen between "MLB" and
+    "MiLB". Extracted from the loop in `search_events` rather than inlined so
+    the pill has a unit test of its own: this call site is one line away from
+    `_format_event`'s and nothing covered it.
+
+    The `"unknown"`/`"Unknown"` pair for a sport-less row is the pre-#5657
+    behaviour, unchanged — a row with no sport is not a naming question.
+    """
+    if sport is None:
+        return "unknown", "Unknown"
+    key = getattr(sport, "key", None)
+    derived = sport_display_name(key, getattr(sport, "name", None))
+    return key or "unknown", derived or "Unknown"
+
 
 _FUTURES_DEDUP_STRIP = re.compile(
     r"(nba\s+playoffs:\s*)?"
@@ -6090,8 +6111,7 @@ async def search_events(
         formatted_results.append(formatted)
 
         # Track sports for disambiguation info
-        sport_key = event.sport.key if event.sport else "unknown"
-        sport_name = event.sport.name if event.sport else "Unknown"
+        sport_key, sport_name = _sport_facet_labels(event.sport)
         if sport_key not in sports_found:
             sports_found[sport_key] = {
                 "key": sport_key,
@@ -21173,7 +21193,15 @@ def _format_event(
         # red on exactly that). Degrading to None is also the honest answer for
         # a caller that has one: the client treats a missing name like a raw one
         # and falls back to its map, which is the pre-#4368 behaviour.
-        "sport_name": getattr(event.sport, "name", None) if event.sport else None,
+        # #5657: `sport_display_name` rejects exactly one value — the key itself
+        # — so the degrade-to-None contract above is preserved byte-for-byte for
+        # a bare `Sport(key=...)` stub, and only `baseball_other` and its 14
+        # siblings change.
+        "sport_name": sport_display_name(
+            getattr(event.sport, "key", None), getattr(event.sport, "name", None)
+        )
+        if event.sport
+        else None,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
         "commence_time": event.commence_time.isoformat(),
