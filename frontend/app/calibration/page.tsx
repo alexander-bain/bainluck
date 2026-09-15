@@ -145,6 +145,21 @@ function CohortTag({ cohort, scope }: {
   );
 }
 
+/**
+ * A row of the "How We Compare" list. `mce` and (`rangeLow`, `rangeHigh`) are
+ * alternatives, never both: a benchmark published as a RANGE has no point value,
+ * and inventing one to draw a bar with is what CAL-P1261 removed.
+ */
+type BenchmarkRow = {
+  label: string;
+  mce?: number;
+  rangeLow?: number;
+  rangeHigh?: number;
+  n: number | null;
+  highlight: boolean;
+  ci?: string;
+};
+
 const COLORS = [
   "#2563eb", "#16a34a", "#dc2626", "#ea580c", "#7c3aed",
   "#db2777", "#0d9488", "#d97706", "#4f46e5", "#65a30d",
@@ -1128,31 +1143,53 @@ export default function CalibrationPage() {
           Our aggregate MCE compared to published calibration benchmarks from academic research and forecasting platforms.
         </p>
         <div className="space-y-3">
-          {[
+          {/* CAL-P1261 (#6278). Three claims in this list were not supported.
+              (1) OUR row reads `cohortMCE`/`cohortN` — the ACTIVE cohort,
+              traded-only by default — while the section sits in the cohort-tag
+              guard's exemption list as "external published benchmarks, not our
+              cohort". It is both, so our row carries its own tag and the
+              benchmark rows, which are not cohort-scoped at all, do not.
+              (2) Every row was colour-graded on OUR thresholds
+              (`mce < 4 ? green`). All four rows came out green, so the colour
+              carried no information, and grading Metaculus or a 2008 paper on
+              our scale publishes a verdict on someone else's calibration that
+              we cannot support. Only our own measured row is graded now.
+              (3) "Academic consensus range … 2-5pp" was PLOTTED and COLOURED as
+              3.5 — a midpoint that appears nowhere on the page, and one whose
+              green said "excellent" for a range whose top half the footnote
+              itself excluded. A range is drawn as a band between its ends. */}
+          {([
             { label: priceCohort === "closing" ? "Bain Luck (closing line)" : priceCohort === "opening" ? "Bain Luck (opening price)" : "Bain Luck (all sources)", mce: cohortMCE, n: cohortN, highlight: true, ci: priceCohort === "all" ? `${data.mce_ci_lower.toFixed(1)}-${data.mce_ci_upper.toFixed(1)}pp` : undefined },
             { label: "Metaculus (self-reported)", mce: 2.5, n: null, highlight: false },
             { label: "Iowa Electronic Markets (Berg et al. 2008)", mce: 1.5, n: null, highlight: false },
-            { label: "Academic consensus range (Arrow et al. 2008)", mce: 3.5, n: null, highlight: false, range: "2-5pp" },
-          ].map(row => {
-            const barWidth = Math.min(100, (row.mce / 10) * 100);
+            { label: "Academic consensus range (Arrow et al. 2008)", rangeLow: 2, rangeHigh: 5, n: null, highlight: false },
+          ] as BenchmarkRow[]).map(row => {
+            const isRange = row.rangeLow !== undefined && row.rangeHigh !== undefined;
+            const barLeft = isRange ? (row.rangeLow! / 10) * 100 : 0;
+            const barWidth = isRange
+              ? Math.min(100 - barLeft, ((row.rangeHigh! - row.rangeLow!) / 10) * 100)
+              : Math.min(100, ((row.mce ?? 0) / 10) * 100);
             return (
               <div key={row.label}>
                 <div className="flex justify-between items-baseline text-sm mb-1">
                   <span className={row.highlight ? "font-semibold text-text-primary" : "text-text-secondary"}>
                     {row.label}
+                    {row.highlight ? <CohortTag cohort={cohort} /> : null}
                   </span>
-                  <span className={`tabular-nums text-xs ${
-                    row.mce < 4 ? "text-green-600" : row.mce < 6 ? "text-blue-600" : "text-orange-600"
-                  } font-semibold`}>
-                    {row.range || `${row.mce.toFixed(1)}pp`}
-                    {"ci" in row && row.ci ? ` (95% CI: ${row.ci})` : ""}
+                  <span className={`tabular-nums text-xs font-semibold ${
+                    !row.highlight
+                      ? "text-text-secondary"
+                      : (row.mce ?? 0) < 4 ? "text-green-600" : (row.mce ?? 0) < 6 ? "text-blue-600" : "text-orange-600"
+                  }`}>
+                    {isRange ? `${row.rangeLow}-${row.rangeHigh}pp` : `${(row.mce ?? 0).toFixed(1)}pp`}
+                    {row.ci ? ` (95% CI: ${row.ci})` : ""}
                     {row.n ? ` | ${row.n.toLocaleString()} outcomes` : ""}
                   </span>
                 </div>
                 <div className="h-2 bg-surface-secondary rounded-full overflow-hidden">
                   <div
                     className={`h-full rounded-full ${row.highlight ? "bg-blue-500" : "bg-text-muted"}`}
-                    style={{ width: `${barWidth}%` }}
+                    style={{ marginLeft: `${barLeft}%`, width: `${barWidth}%` }}
                   />
                 </div>
               </div>
@@ -1160,7 +1197,7 @@ export default function CalibrationPage() {
           })}
         </div>
         <p className="text-xs text-text-muted mt-4">
-          Lower is better. Most prediction markets achieve 2-5pp MCE. Values below 4pp are considered excellent calibration.
+          Lower is better. These are published figures from other domains and eras — reference points, not a ranking.
         </p>
       </section>
 

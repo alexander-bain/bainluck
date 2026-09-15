@@ -652,7 +652,16 @@ describe("item 4 — every section names the cohort it draws from", () => {
    */
   const COHORT_FREE_SECTIONS = [
     "Something went wrong", // the ErrorBoundary fallback
-    "How We Compare", // external published benchmarks, not our cohort
+    // CAL-P1261: this exemption used to read "external published benchmarks,
+    // not our cohort", and that was half true in the direction that hides a
+    // defect. The BENCHMARK rows are cohort-free; the section also carries OUR
+    // row, built from `cohortMCE`/`cohortN` — the active, traded-only-by-default
+    // cohort — and the exemption is what let it print "1.0pp | 441,510 outcomes"
+    // beside three cohort-free figures with nothing saying which outcomes those
+    // were. A heading tag would be the wrong fix (it would label the benchmarks
+    // with our cohort too), so the tag sits on our ROW and the test below holds
+    // the exemption to exactly that.
+    "How We Compare",
     "Further Reading",
     "How We Measure This",
   ];
@@ -695,5 +704,67 @@ describe("item 4 — every section names the cohort it draws from", () => {
     // Labelling THAT section with the active cohort would be a lie in the one
     // place the distinction is being explained to the reader.
     expect(SOURCE).toContain('<CohortTag cohort={cohort} scope="comparison" />');
+  });
+});
+
+describe("CAL-P1261 — 'How We Compare' only claims what it can support", () => {
+  /**
+   * The section is exempt from the heading-level cohort rule above because its
+   * benchmark rows are genuinely cohort-free. That exemption is only honest
+   * while the three properties below hold, so they are asserted here rather
+   * than left to the exemption's comment.
+   */
+  // Anchored on the RENDERED HEADING, not the bare phrase. This guard's first
+  // run sliced from a doc comment several hundred lines earlier that happens to
+  // name the section, and reported the type declaration as the section body —
+  // the same failure the `<h2>` regex above carries its own note about. A guard
+  // a future comment can break is not a guard.
+  const start = SOURCE.indexOf(">How We Compare</h2>");
+  const end = SOURCE.indexOf("</section>", start);
+  const SECTION = SOURCE.slice(start, end);
+
+  test("the section this guard is about is still here and still substantial", () => {
+    // Anti-vacuity: every assertion below passes against an empty slice.
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    expect(SECTION.length).toBeGreaterThan(800);
+    expect(SECTION).toContain("Metaculus");
+  });
+
+  test("our own row names the cohort it was measured over", () => {
+    // It is built from `cohortMCE`/`cohortN` and sits beside three figures that
+    // are not cohort-scoped at all. Without a tag the reader cannot tell that
+    // our number excludes the untraded outcomes and the benchmarks exclude
+    // nothing.
+    expect(SECTION).toContain("cohortMCE");
+    expect(SECTION).toMatch(/row\.highlight\s*\?\s*<CohortTag cohort=\{cohort\} \/>/);
+  });
+
+  test("only our own measured row is colour-graded", () => {
+    // Grading a 2008 paper on our thresholds put all four rows in the same
+    // green, so the colour said nothing, and it published a verdict on someone
+    // else's calibration that we cannot support.
+    expect(SECTION).toContain("text-green-600");
+    const grading = SECTION.slice(
+      SECTION.indexOf("tabular-nums text-xs font-semibold"),
+      SECTION.indexOf("text-orange-600")
+    );
+    expect(grading).toContain("!row.highlight");
+  });
+
+  test("a benchmark published as a range is never plotted as an invented midpoint", () => {
+    // "2-5pp" was drawn and coloured as 3.5 — a number shown nowhere, whose
+    // green claimed "excellent" for a range whose top half the page excluded.
+    expect(SECTION).toContain("rangeLow");
+    expect(SECTION).toContain("rangeHigh");
+    expect(SECTION).not.toMatch(/mce:\s*3\.5/);
+  });
+
+  test("the footnote does not contradict itself", () => {
+    // It used to say "Most prediction markets achieve 2-5pp" and "below 4pp is
+    // excellent" in consecutive sentences, which makes most of the benchmark
+    // range excellent and the threshold meaningless. Neither claim was sourced.
+    expect(SECTION).toContain("Lower is better.");
+    expect(SECTION).not.toContain("excellent calibration");
   });
 });
