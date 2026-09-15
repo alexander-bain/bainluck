@@ -1545,6 +1545,28 @@ jobs:
             exit 1
           fi
 
+      - name: Identity quarantine is evaluated once per unit (real Postgres)
+        # #6275 / CAL-P1300. The gate above proves the chain reads the right
+        # date; this one proves reading it does not cost the build. A CTE
+        # referenced once is INLINED, and this one's consumer sits inside
+        # `ranked_outcomes`, so the regex landed on the INNER side of a nested
+        # loop and was re-derived once per OUTCOME over every market in the
+        # chunk — on production that took the unit mean from 130-165 s to a
+        # cancellation at the 483 s fence, zero units completed, the curve's
+        # date frozen. `AS MATERIALIZED` is the fix and a PLAN read is the only
+        # thing that can see it: the planner's cost estimate is identical either
+        # way (it has this chain at 1-5 rows), which is why it chose the rescan.
+        # The second arm strips the keyword back out and asserts the defect
+        # shape returns, so a green run means red-first executed here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_identity_quarantine_single_evaluation_6275_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/identityoneeval.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/identityoneeval.txt; then
+            echo "::error::#6275 single-evaluation gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Stand-in event starts get the published hour (real Postgres)
         # #3544, the repair CERT-2075 named. `_kalshi_commence_time` stores the
         # venue's published `occurrence_datetime` on the MARKET; the user reads

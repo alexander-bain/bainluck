@@ -140,7 +140,26 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: would have meant the repair never reached the population SQL — which is
 #: precisely the shape of the defect CERT-2902 found, so it is worth saying that
 #: this pin moving is evidence and not paperwork.
-LIVE_INPUT_FINGERPRINT = "80a180b082f22181a326dfcfb20429b2"
+#: RE-ANCHORED for CAL-P1300, the #6275 cost repair: ``80a180b0…`` ->
+#: ``1a1d9a91…``. One hashed input moved and it is a single keyword:
+#: ``identity_quarantine_ctes`` now emits ``identity_disputed_markets AS
+#: MATERIALIZED (``. The predicate, the population and the published rows are
+#: byte-for-byte what ``80a180b0…`` produced — this move is a PLAN change and
+#: nothing else — which is why the re-anchor is recorded here rather than
+#: treated as a population edit.
+#:
+#: WHAT THIS RE-KEY COSTS, WHICH IS THE QUESTION THE NOTE ABOVE INSISTS ON
+#: ASKING. Nominally it discards a 52/128 bank. Measured, it discards nothing
+#: that was going to finish: since ``80a180b0…`` reached ``bainluck-heavy`` at
+#: 11:48:44Z on 2026-09-15 the bank has been pinned at exactly 52 across every
+#: beat, two units attempted and ZERO completed each time, both cancelled at the
+#: 483,000 ms fence (``calibration:beat_gauge_history``; the 24 beats before it
+#: completed 6-10 units apiece at a 116-165 s mean). The inlined chain is why —
+#: see the gate. So the choice is not "keep 52 units or pay for a rebuild"; it
+#: is "keep a bank that cannot advance, or re-key one that can". The version is
+#: NOT bumped: the published population is unchanged, so there is nothing for a
+#: reader to be told and q271 still names the right rows.
+LIVE_INPUT_FINGERPRINT = "1a1d9a914a4824381d8132498197bb34"
 
 
 class _Db:

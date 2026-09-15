@@ -50,7 +50,15 @@ class TestTheExclusionIsActuallyApplied:
     """Half one of the ruling: the published curve excludes them."""
 
     def test_the_quarantine_ctes_are_in_the_population_chain(self, population_sql):
-        assert f"{IDENTITY_DISPUTED_CTE} AS (" in population_sql, (
+        # The claim is that the CTE is DEFINED in the canonical chain, so the
+        # pattern tolerates the optional `MATERIALIZED` (CAL-P1300 added it, and
+        # the reason it is there is a plan fact that
+        # `tests/integration/test_identity_quarantine_single_evaluation_6275_pg.py`
+        # owns — this guard is about wiring and must not also become a second,
+        # weaker statement of that one).
+        assert re.search(
+            rf"{re.escape(IDENTITY_DISPUTED_CTE)} AS (MATERIALIZED )?\(", population_sql
+        ), (
             "the quarantine CTE is absent from the canonical population chain — "
             "this is the #6275 defect exactly: a predicate in app/ that the "
             "payload never consumes"
