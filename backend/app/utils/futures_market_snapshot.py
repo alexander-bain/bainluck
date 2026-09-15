@@ -731,6 +731,39 @@ def _outcome_observed_epoch(outcome: Any) -> int | None:
     return _price_observed_epoch(outcome)
 
 
+def displayed_probability(outcome: Any) -> float | None:
+    """THE NUMBER THIS LEG PRINTS on a card, or `None` if it prints none (#6256).
+
+    Lifted verbatim out of the two futures serializers in `routes/feed.py`, which
+    each built the wire's `top_outcomes[].probability` with their own copy of this
+    expression. It is a SHARED DECISION rather than a helper for tidiness'
+    sake (ruling 021 — share the decision, not the ingredient): `displayed_price_
+    stamp` directly below has to know which legs print a number, and any second
+    expression that answers that question is a copy that can drift from the one
+    the card actually rendered. Here there is one answer and both readers take it.
+
+    🔴 THE TRUTHINESS IS DELIBERATE AND IS NOT THIS FUNCTION'S TO FIX. A stored
+    `0.000000` returns `None` — it prints an em dash, not `0%` — which is
+    `#6195`'s defect (a truthiness test on a probability, the class in gotcha
+    terms where `0.0` is the one value that behaves like absence). Reproducing
+    it faithfully is the point: this function's contract is "what the card
+    prints", not "what the price is", and a fold that disagreed with the
+    serializer about a `0.0` leg would be wrong about the reader's screen in the
+    opposite direction. When #6195 lands, it lands HERE, and the age fold follows
+    it in the same commit with no second edit — which is the drift this shape
+    exists to make structurally impossible.
+
+    `__dict__.get`, never `getattr`, for this module's usual reason (gotcha #42):
+    a deferred attribute lazy-loads and raises `MissingGreenlet` on the async
+    path. A carrier that cannot be read at all (`tennis_population.OutcomeRow`
+    and its `__slots__`) degrades to `None`, the honest state this module applies
+    everywhere — and those rows carry no observation stamp either, so the age
+    fold already ignored them and nothing there changes.
+    """
+    value = (_instance_dict(outcome) or _NO_INSTANCE_DICT).get("current_probability")
+    return float(value) if value else None
+
+
 def displayed_price_stamp(outcomes: Iterable[Any]) -> Any:
     """`MIN` observation over the legs HANDED IN — no ranking, no window (#5809).
 
@@ -751,10 +784,51 @@ def displayed_price_stamp(outcomes: Iterable[Any]) -> Any:
     card whose third leg was never polled, the honest thing the other two
     support is still their own age, and `None` there would delete a disclosure
     that is currently correct.
+
+    ═══ A LEG THAT PRINTS NO NUMBER DATES NOTHING (#6256) ═══
+
+    The rule above, one step further, and the step it was always missing: this
+    ignored a leg with no readable STAMP but not a leg with no readable PRICE.
+    Its own justification is "three printed probabilities are three facts, one
+    mark speaks for all of them" — and a row rendering an em dash contributes no
+    such fact, so it cannot be one of the three the mark speaks for, and it
+    certainly cannot be the OLDEST of them.
+
+    MEASURED on production 2026-09-15 ~04:05Z, `/api/feed?limit=40`: market
+    `112903`, "Which party will win the House in 2026?", printed
+    `Democratic Party 87% · Republican Party 14% · Other —` over the mark
+    **`125d ago`**. Both printed prices were stamped `2026-09-15 02:52:56Z`, about
+    an hour old; the served `price_observed_at` was `2026-05-12T17:15:00+00:00`,
+    byte-identical to the `last_updated` of the unpriced `Other` leg. The prices
+    had also MOVED since the defect was filed (`0.875` → `0.865`) while the mark
+    had not, so this was not a frozen card wearing a stale date — it was a
+    refreshing card wearing a date from a row that prints nothing.
+
+    Reach, `db-query`, open markets only: **521** markets carry ≥3 outcomes with
+    1–2 priced and an unpriced leg ≥6h older than the newest priced one, which is
+    the window in which `PriceAgeMark` draws at all.
+
+    🔴 `_top_price_observed_at`'s DEFENCE CANNOT COVER THIS, WHICH IS WHY THE GATE
+    IS HERE AND NOT THERE. That function sorts unreadable probabilities to `-1.0`
+    so they are "the first thing pushed out of the top-N window" — but a market
+    with fewer than `leg_count` priced legs has nothing to push them out WITH, so
+    the guard is structurally unreachable on precisely the population it exists to
+    protect. And the futures card does not go through it at all: both serializers
+    hand their already-filtered selection straight to this function.
+
+    `displayed_probability` is the test, and it is the SAME expression the
+    serializer used to compute the printed number — see its note. `None` still
+    comes back when no printed leg carries both a price and a stamp, which keeps
+    #5809's "null is checked, and we do not know" semantics rather than inventing
+    a fresh-looking absence.
     """
     seconds = [
         epoch
-        for epoch in (_outcome_observed_epoch(o) for o in outcomes)
+        for epoch in (
+            _outcome_observed_epoch(o)
+            for o in outcomes
+            if displayed_probability(o) is not None
+        )
         if epoch is not None
     ]
     if not seconds:

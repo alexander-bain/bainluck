@@ -5914,6 +5914,17 @@ from app.utils.futures_market_snapshot import (
     opening_baseline_stamp,
     price_poll_stamp as _price_poll_stamp,
     displayed_price_stamp as _displayed_price_stamp,
+    # #6256 — the printed number and the age mark under it are now ONE decision.
+    # Both serializers below built `top_outcomes[].probability` from their own
+    # private copy of the truthiness test on `current_probability`, and
+    # `displayed_price_stamp` had no way to ask which legs that produced a number
+    # for, so an unpriced leg the card renders as an em dash dated the mark above
+    # it. Same expression, same value on the wire, one answer.
+    #
+    # (Spelled in prose rather than quoted: the scan in
+    # `test_card_price_age_ignores_unpriced_leg_6256` matches the replaced
+    # expression as a substring, and a comment is source too.)
+    displayed_probability as _displayed_probability,
 )
 
 
@@ -9654,9 +9665,9 @@ async def _score_sports_mode_futures(
             {
                 "id": o.id,
                 "name": o.name,
-                "probability": (
-                    float(o.current_probability) if o.current_probability else None
-                ),
+                # #6256 — the same call `price_observed_at` below folds over, so
+                # the mark can never date the card by a row printing no number.
+                "probability": _displayed_probability(o),
                 "rank": position,
                 "movement": (
                     float(o.probability_change_24h)
@@ -11043,9 +11054,9 @@ async def _score_futures(
                 {
                     "id": o.id,
                     "name": o.name,
-                    "probability": (
-                        float(o.current_probability) if o.current_probability else None
-                    ),
+                    # #6256 — see the sibling serializer: the printed number and
+                    # the age mark under it are one decision, taken once.
+                    "probability": _displayed_probability(o),
                     "rank": position,
                     "movement": (
                         float(o.probability_change_24h)
