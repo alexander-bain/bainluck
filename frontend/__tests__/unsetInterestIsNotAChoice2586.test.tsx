@@ -284,11 +284,7 @@ describe("#2586 — an untouched interest is not a rejection", () => {
     expect(countOf(text, "Not set")).toBe(ALL_ROWS.length - 2);
   });
 
-  it("the selector highlights nothing for a category never chosen", () => {
-    // `Math.abs(undefined - 0) < 0.05` is NaN < 0.05, which is false — the same
-    // branch, reached by accident. The page states it, so this pins the reason
-    // as well as the result: an unset row has no selected option, and a chosen
-    // one does.
+  it("the label function separates absence from every choosable level", () => {
     /* eslint-disable @typescript-eslint/no-var-requires */
     const { getInterestLabel, UNSET_INTEREST_LABEL, getLevelLabel } =
       require("@/hooks/useCategoryInterests");
@@ -304,6 +300,38 @@ describe("#2586 — an untouched interest is not a rejection", () => {
     // the page is back to two states sharing a rendering.
     for (const value of [0, 0.1, 0.3, 1.0]) {
       expect(getLevelLabel(value)).not.toBe(UNSET_INTEREST_LABEL);
+    }
+  });
+
+  it("the open selector highlights nothing for a category never chosen", () => {
+    // The selector's four options only exist while the row is being edited, and
+    // `renderToStaticMarkup` cannot click. The first version of this file
+    // asserted the highlight in its NAME and tested the label function in its
+    // BODY — a mutation restoring `Math.abs((value ?? 0) - opt.value) < 0.05`,
+    // which re-highlights "Nah" on every untouched row the moment a reader opens
+    // one, passed all five rows. The predicate was lifted out of the JSX so the
+    // claim and the assertion are the same thing.
+    /* eslint-disable @typescript-eslint/no-var-requires */
+    const { isChosenLevel } = require("@/hooks/useCategoryInterests");
+    /* eslint-enable @typescript-eslint/no-var-requires */
+
+    // The defect: an untouched category must not light up the reject option.
+    for (const option of [1.0, 0.3, 0.1, 0]) {
+      expect(isChosenLevel(undefined, option)).toBe(false);
+    }
+
+    // …and a reader who DID pick still sees their pick, including "Nah" at 0.
+    expect(isChosenLevel(0, 0)).toBe(true);
+    expect(isChosenLevel(0, 0.1)).toBe(false);
+    expect(isChosenLevel(1.0, 1.0)).toBe(true);
+    expect(isChosenLevel(0.3, 0.3)).toBe(true);
+    expect(isChosenLevel(0.1, 0.1)).toBe(true);
+    // Exactly one option lights up per stored value — the selector is a radio,
+    // and the 0.05 tolerance is narrower than the 0.1 gap between the two
+    // closest levels.
+    for (const value of [0, 0.1, 0.3, 1.0]) {
+      const lit = [0, 0.1, 0.3, 1.0].filter((opt) => isChosenLevel(value, opt));
+      expect(lit).toEqual([value]);
     }
   });
 });

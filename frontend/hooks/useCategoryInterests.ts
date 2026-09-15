@@ -62,6 +62,24 @@ export function getInterestLabel(value: number | undefined): string {
 }
 
 /**
+ * Whether one option of the four-level selector is the reader's current pick.
+ *
+ * An untouched category picks NOTHING — that is the whole of #2586 restated for
+ * the open selector, and it is the half a static render cannot see, because the
+ * options only exist while the row is being edited. It lives here, out of the
+ * JSX, so it can be asserted directly.
+ *
+ * Written as an explicit `undefined` test rather than left to
+ * `Math.abs(undefined - opt) < 0.05` being `NaN < 0.05`: that lands on the same
+ * branch by accident, says nothing about intent, and flips the day a caller
+ * passes `null` instead.
+ */
+export function isChosenLevel(value: number | undefined, option: number): boolean {
+  if (value === undefined) return false;
+  return Math.abs(value - option) < 0.05;
+}
+
+/**
  * Hook for reading/writing category interests.
  * Auth'd users: reads/writes via API (sport affinities).
  * Anonymous users: reads/writes via the device's anonymous bucket.

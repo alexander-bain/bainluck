@@ -13,7 +13,7 @@ import {
   fetchFuturesByIds,
 } from "@/lib/api";
 import { usePinnedEvents, usePinnedFutures, usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
-import { useCategoryInterests, getInterestLabel } from "@/hooks/useCategoryInterests";
+import { useCategoryInterests, getInterestLabel, isChosenLevel } from "@/hooks/useCategoryInterests";
 import {
   resolvePrincipal,
   principalKey,
@@ -358,11 +358,7 @@ function InterestRow({
                 setIsEditing(false);
               }}
               className={`px-2 py-0.5 rounded text-[10px] transition-colors ${
-                // An untouched category highlights NOTHING — the reader has not
-                // picked one of these four. Spelled out rather than left to
-                // `undefined - 0` being NaN, which lands on the same branch by
-                // accident and would flip the day a caller passes null instead.
-                value !== undefined && Math.abs(value - opt.value) < 0.05
+                isChosenLevel(value, opt.value)
                   ? "bg-text-primary text-surface-deep"
                   : "bg-surface-elevated text-text-secondary hover:bg-surface-border"
               }`}
