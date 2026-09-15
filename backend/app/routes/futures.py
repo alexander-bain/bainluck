@@ -32,6 +32,10 @@ from app.utils.leader_order import leader_first_outcomes
 from app.utils.event_rails import live_scheduled_settled_order
 from app.utils.event_twin_fold import fold_twin_events
 from app.utils.lifecycle import served_event_status
+from app.utils.settlement_stamp import (
+    last_charted_timestamp as _last_charted_timestamp,
+    settled_point_timestamp,
+)
 from app.utils.sport_keys import LLM_CATEGORY_TO_SPORT_PREFIX
 from app.utils.tournament_stages import (
     get_stages_for_sport,
@@ -124,11 +128,19 @@ def _apply_settled_winner_freeze(
     Read-side only (gotcha #21): appends/synthesizes a terminal CHART point;
     never writes snapshots or ``is_winner``. The terminal point carries
     settlement-time semantics (gotcha #22 spirit — the completed journey ends at
-    the finish, not fabricated mid-event movement): its timestamp is the
-    settlement time (``resolution_date`` clamped to now, since Kalshi
-    ``resolution_date`` can be a future close-time artifact — gotcha #14), and is
-    never placed before the last real data point. Non-champion lines are left to
+    the finish, not fabricated mid-event movement), and is never placed before
+    the champion's own last real data point. Non-champion lines are left to
     terminate at their own last real value.
+
+    ⭐ #6360 — WHERE THAT TIMESTAMP COMES FROM IS ITS OWN DECISION, AND IT USED
+    TO END AT THE CLOCK. ``resolution_date`` is a SCHEDULE, and on Kalshi it is
+    routinely in the FUTURE for a market that has already settled (gotcha #14),
+    so ``min(resolution_date, now)`` returned ``now`` and the champion's point
+    was stamped with the moment of the request — a dot that moves every time the
+    page is opened, measured twice 28 s apart on `/api/futures/58675941/history`.
+    ``app/utils/settlement_stamp.py`` holds the ladder that replaces it, the
+    populations (8,773 markets on the clock arm, 593,549 unchanged) and the
+    measurement that keeps ``settled_at`` OUT of first place.
     """
     winners = [o for o in (market.outcomes or []) if getattr(o, "is_winner", False)]
     champ = None
@@ -147,12 +159,15 @@ def _apply_settled_winner_freeze(
         return
 
     now = datetime.now(timezone.utc)
-    settle_ts = now
-    rd = getattr(market, "resolution_date", None)
-    if rd is not None:
-        if rd.tzinfo is None:
-            rd = rd.replace(tzinfo=timezone.utc)
-        settle_ts = min(rd, now)  # clamp future Kalshi close-times to now (gotcha #14)
+    # #6360: the last REAL point anywhere on this chart — the second witness in
+    # the ladder, read before the champion's own entry is touched so the
+    # synthesized point can never be its own evidence.
+    settle_ts, _settle_basis = settled_point_timestamp(
+        resolution_date=getattr(market, "resolution_date", None),
+        last_observed=_last_charted_timestamp(outcome_history),
+        settled_at=getattr(market, "settled_at", None),
+        now=now,
+    )
 
     entry = outcome_history.get(champ.id)
     if entry and entry.get("history"):
