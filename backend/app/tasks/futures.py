@@ -378,7 +378,39 @@ async def _poll_futures_odds():
                                 and existing.last_updated < yesterday
                                 and existing.current_probability
                                 and float(existing.current_probability) > 0):
-                            existing.current_probability = 0
+                            # NULL, not 0 (#5869). This block knows exactly one
+                            # thing: the outcome was ABSENT from the API
+                            # response for over a day. That is "we no longer
+                            # have a price", which is NULL. `0` is a different
+                            # sentence — it says the outcome is IMPOSSIBLE — and
+                            # nothing here established that.
+                            #
+                            # It is not a distinction only a pedant can see. The
+                            # served key is `probability`, and every serializer
+                            # in `routes/futures.py` is `is not None`-guarded
+                            # (#6081), so a stored 0 ships `0.0` and the client
+                            # prints a flat `0%`: `probabilityParts`
+                            # (`frontend/lib/probabilityDisplay.ts:136`) needs
+                            # `prob > 0` before it will fall back to the truthful
+                            # `<1%` marker, so 0 is the one value that renders as
+                            # a hard claim. NULL renders `-`. Measured on
+                            # production 2026-09-15: 435 legs across 8 open
+                            # markets print `0%` beside a real
+                            # `current_american_odds` — Athletics at `0%` and
+                            # `+331909` on the World Series page.
+                            #
+                            # NULL is also the shape the column already carries
+                            # (340,387 rows) and the one its other writers agree
+                            # on: `futures_price_refresh.py` retires a
+                            # non-positive price to NULL, and the sibling line
+                            # below says the same thing about the movement delta
+                            # in the same breath. There is no reader to migrate
+                            # — the falsy-zero idiom that dominates this column
+                            # (`if o.current_probability`, `or 0`) already
+                            # treats 0 and NULL identically; only the
+                            # `is not None` serializers can tell them apart, and
+                            # telling them apart is the point.
+                            existing.current_probability = None
                             existing.last_updated = now
                             # Retire the movement delta in the same breath as
                             # the zeroing (CERT-627). This line refreshes

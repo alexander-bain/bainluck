@@ -619,6 +619,31 @@ jobs:
             exit 1
           fi
 
+      - name: "#5869 a vanished futures leg retires to NULL (real Postgres)"
+        # A leg the venue stopped listing was stored as `current_probability = 0`,
+        # which serves as `probability: 0.0` and renders a flat `0%` — the site
+        # asserting the outcome is IMPOSSIBLE. 436 legs across 8 open markets
+        # printed that, 122 of them on one page, beside real American odds.
+        #
+        # Real Postgres because the block only runs after the market upsert
+        # returns an id through `pg_insert(...).on_conflict_do_update(...)`, which
+        # no other dialect compiles — a unit double would exercise the branch
+        # without ever reaching the statement that gates it.
+        #
+        # The gate carries its own controls: the responding leg must keep its
+        # price and a leg absent for only an hour must survive the 24h floor, so
+        # a mutation that widens the retirement fails here rather than in the
+        # ship assertion. `stats["stale_zeroed"]` is asserted too — a seed that
+        # never reached the block would satisfy "is NULL" by doing nothing.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_stale_futures_leg_retires_to_null_5869.py \
+            -v -s -rs 2>&1 | tee /tmp/stale_leg_5869.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/stale_leg_5869.txt; then
+            echo "::error::#5869 stale-leg contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Polymarket settlement sweep SQL (real Postgres)
         # #2637. The rewritten resolved-status sweep selects its population with
         # `SELECT DISTINCT <expr> AS eid ... ORDER BY eid::bigint`, and under
