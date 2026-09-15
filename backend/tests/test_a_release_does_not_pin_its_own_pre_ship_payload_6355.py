@@ -224,7 +224,7 @@ class TestAPayloadFromAnotherBuildIsRefused:
         also wrong.
         """
         monkeypatch.setattr(gmc, "current_build_id", lambda: "v4579")
-        monkeypatch.setattr(gmc, "get_client", lambda: object())
+        monkeypatch.setattr(gmc, "get_client", object)  # any non-None client
         monkeypatch.setattr(
             gmc, "read_slot", lambda client, key: _stamped("v4578-preship")
         )
@@ -241,7 +241,7 @@ class TestAPayloadFromAnotherBuildIsRefused:
         pre-ship payload delivered anyway, now wearing an availability label.
         """
         monkeypatch.setattr(gmc, "current_build_id", lambda: "v4579")
-        monkeypatch.setattr(gmc, "get_client", lambda: object())
+        monkeypatch.setattr(gmc, "get_client", object)  # any non-None client
 
         keys = gmc.keys_for(15306857)
         monkeypatch.setattr(
@@ -259,7 +259,7 @@ class TestAPayloadFromAnotherBuildIsRefused:
     def test_a_current_build_slot_is_still_served_live(self, monkeypatch):
         """The reverse direction. This is a cache and it must still cache."""
         monkeypatch.setattr(gmc, "current_build_id", lambda: "v4579")
-        monkeypatch.setattr(gmc, "get_client", lambda: object())
+        monkeypatch.setattr(gmc, "get_client", object)  # any non-None client
         monkeypatch.setattr(gmc, "read_slot", lambda client, key: _stamped("v4579"))
 
         body, state = gmc.read(15306857)
@@ -300,7 +300,7 @@ class TestItFailsOpenWhenTheBuildIsUnknown:
     ):
         """End to end, because the predicate passing is not the cache working."""
         monkeypatch.setattr(gmc, "current_build_id", lambda: UNKNOWN_BUILD)
-        monkeypatch.setattr(gmc, "get_client", lambda: object())
+        monkeypatch.setattr(gmc, "get_client", object)  # any non-None client
         monkeypatch.setattr(gmc, "read_slot", lambda client, key: _stamped("v4578"))
 
         body, state = gmc.read(15306857)

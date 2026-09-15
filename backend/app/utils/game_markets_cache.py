@@ -338,10 +338,22 @@ def read(event_id: int, rc=None) -> tuple[dict[str, Any] | None, str]:
         # 2013 ms — a ~190 ms median, not the 2.25 s this tier was built for.
         # It is paid once per event per release, by the small set of events
         # whose slot is still fresh at the moment of a deploy.
+        # ⚠️ NEITHER `event_id` NOR THE STORED BUILD IS INTERPOLATED, and that is
+        # not an oversight. CodeQL grades a path parameter reaching a log line
+        # `py/log-injection` at MEDIUM severity — a notice-32 refuse — and it
+        # grades the string read back out of Redis the same way. The first push
+        # of this change carried both and CodeQL flagged both; the house rule
+        # (`routes/events.py`, `league_futures.py`, `tournaments._log_slug`) is
+        # to log a value we sourced ourselves or nothing at all.
+        #
+        # Nothing diagnostic is actually lost. `current_build_id()` is read from
+        # the environment and is not a taint source, the interesting signal here
+        # is the COUNT of these lines just after a release rather than which
+        # event, and the refused payload names its own build in the envelope
+        # this module publishes (`cache.build_id`).
         logger.info(
-            "game-markets slot for %s refused (stale_build %s != %s) — rebuilding",
-            event_id,
-            build_id_of(primary),
+            "game-markets: a slot built by another release was refused "
+            "(running build %s) — rebuilding",
             current_build_id(),
         )
         return None, "stale_build"
@@ -350,9 +362,14 @@ def read(event_id: int, rc=None) -> tuple[dict[str, Any] | None, str]:
     if mirror is None:
         return None, "miss"
     if not payload_is_current_build(mirror):
+        # `event_id` is deliberately absent for the reason given on the primary
+        # branch above. The sibling line below it DOES carry the id and is the
+        # pre-existing `py/log-injection` alert already open against this file
+        # on master — tolerated debt that a new line must not add to.
         logger.info(
-            "game-markets mirror for %s refused (stale_build) — reader will rebuild",
-            event_id,
+            "game-markets: a mirror built by another release was refused "
+            "(running build %s) — reader will rebuild",
+            current_build_id(),
         )
         return None, "stale_build"
     servable, reason = mirror_is_servable(mirror)
