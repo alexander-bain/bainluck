@@ -241,10 +241,96 @@ ghost whose two halves are spelled differently and which we therefore miss; that
 is under-tagging, which leaves a duplicate card visible and fixable. The cost of
 the loose key is a real fixture we stop printing. The failure directions are not
 symmetric, so the key stays where the measurement is.
+
+…SO THE LOOSE KEY RUNS SECOND, OVER THE ROWS THE NARROW ONE LEFT
+═════════════════════════════════════════════════════════════════
+
+The paragraph above is still true and the key above has not moved. What it
+leaves behind was measured by lane1 on production 2026-09-14 (comment
+5670673213 on #3813): **18 ghosts holding 59 markets whose canonical serves
+zero**, and the reader-visible failure is not a duplicate card at all — it is
+``/events/15307330``, Sligo Rovers 1-3 Galway United, Final, chart, and then
+**no market rail whatsoever**, because its six settled goal-total rungs sit on a
+row the page never reads. Those pairs differ in BOTH block coordinates at once
+(``soccer_other`` vs ``soccer_league_of_ireland``, ``Sabadell`` vs ``Sabadell
+FC``), so :func:`block_key` puts them in different blocks and
+:func:`classify_block` is never handed the pair. Not a lag miss, not a status
+miss, not the ambiguous arm: structurally invisible at any window.
+
+Widening :func:`block_key` itself was measured and is a net LOSS — stripping a
+club suffix inside the one key gives 21 blocks, 17 decidable and **4 ambiguous**,
+and one of the four is this module's own Sevilla v Valencia, decidable today and
+refused after. That is the shape of the trap: a looser key merges two blocks that
+each already resolved, and ambiguity is contagious.
+
+So the loose key never touches the first pass. :func:`residual_pass` runs AFTER
+it, over the rows it did not decide, and differs from it in exactly ONE
+coordinate: club names come from :func:`loose_block_key`, trailing legal suffix
+stripped. A ghost the first pass tagged is withheld, so no decision can be
+revised and nothing the narrow key resolves today can be lost. A canonical is
+NOT withheld: one played fixture can honestly have two id-less copies.
+
+**THE SPORT KEY STAYS IN THE KEY, AND A PRODUCTION PAIR IS WHY.** The first cut
+of this pass dropped it — the measured stranded pairs straddle two NAMED
+competitions (``la_liga`` against ``segunda_division``), so dropping it is the
+only thing that reaches them, and the 365-day rematch count over
+played-AND-ANCHORED rows was zero, which read like permission. Widening the
+denominator refuted it. Over 365 days of soccer, played and scored, **anchoring
+not required** — 8,838 rows instead of 1,332 — the same-orientation loose-key
+pairs within :data:`MAX_GHOST_LAG` are six, and one of them is::
+
+    15293467  1. FC Köln v TSG Hoffenheim  08-28 16:30Z  1-0  soccer_germany_bundesliga_women
+    14970278  1. FC Köln v TSG Hoffenheim  08-29 13:30Z  3-2  soccer_germany_bundesliga
+
+Two real fixtures, twenty-one hours apart, different results, the same two club
+names in the same orientation, separated by **nothing but the sport key**. The
+other five are three same-key duplicates and the Lazio v AC Milan twin counted
+in both directions (one statpal id 9545725, one instant). The earlier zero was
+an artefact of its own anchoring filter, which excluded every one of these.
+
+That pair also names the general shape: a key can be another key with a
+qualifier appended (``_women``, ``_qualification``, ``_qualifiers_europe``) and
+then the same two club NAMES are two different squads. Four such variants exist
+in the 59 soccer keys we carry. A rule excluding just those would readmit the
+cup-tie case that ``test_two_clubs_in_different_competitions_do_not_share_a_
+block`` forbids on doctrine, and the argument for readmitting it would be an
+absence of evidence in a year — while the failure it risks is a real upcoming
+fixture silently vanishing, against a miss that merely leaves a visible gap. The
+failure directions are not symmetric, so the sport key stays and the only fold
+across keys remains :func:`fold_unclassified_blocks`.
+
+RECALL, over the sweep's own −5d/+5d window, whole population, 1,248 rows: first
+pass 12 tags (unchanged, by construction), residual pass **+1 tag moving 4
+markets onto a canonical that held 1** — ghost ``15307681`` *Gwangju v FC Anyang*
+(``soccer_other``) onto ``15306857`` *Gwangju FC v FC Anyang*
+(``soccer_korea_kleague1``), which the shipped pass missed for the single
+character ``FC`` — plus one refusal, Granada v Albacete, that was previously not
+even examined.
+
+WHAT REMAINS STRANDED, NAMED RATHER THAN ROUNDED AWAY. Of lane1's 18 ghosts /
+59 markets (#3813, comment 5670673213), this pass takes one and the rest are
+three classes, none of them this module's to decide:
+
+* **two NAMED competitions** — Mallorca v Sabadell (7 markets) and Andorra v
+  Real Sociedad B (4). Decidable only by crossing the key, which the Köln pair
+  above says we may not do on names and a clock alone. What would settle them is
+  knowing Sabadell is a Segunda club and the ghost's ``la_liga`` key is
+  therefore impossible — a squad-to-competition authority, not a judgement over
+  two rows.
+* **multi-mint** (#3813) — Sligo has FIVE id-less rows against one canonical,
+  three at the canonical's own instant. The block cannot resolve to one ghost,
+  and guessing which of five to stop printing is the call this module must not
+  make. Its 14 markets need the registry fix, not a label.
+* **pre-kick-off twins** — FC Sion v FC Zurich and Fiorentina v Pisa are two
+  copies of a fixture nobody has played yet. Every judgement here rests on a
+  scored, fixture-anchored row refuting an id-less one; with no result on either
+  side there is no canonical, and inventing one from the anchor alone is a
+  different rule with no measurement behind it.
 """
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -296,6 +382,36 @@ GHOST_STATUSES = ("scheduled", "suspended")
 #: different fixtures. Every other ``soccer_*`` key can.
 UNCLASSIFIED_SPORT_KEY = "soccer_other"
 
+#: Trailing tokens that are a club's legal form rather than part of its name, so
+#: ``Sabadell FC`` and ``Sabadell`` are one club. Used ONLY by
+#: :func:`loose_block_key`, i.e. only in the second pass — see the docstring
+#: section on why the first pass's key did not move.
+#:
+#: Deliberately short and deliberately trailing-only: every difference in the
+#: measured population is a trailing legal form (``Sligo Rovers FC``, ``Andorra
+#: CF``, ``Sabadell FC``, ``Galway United FC``), and a LEADING token is a
+#: different question — ``FC Zurich`` and ``Zurich`` are not known to be one club
+#: here and nothing measured says they are. ``b`` is absent on purpose: ``Real
+#: Sociedad B`` is a reserve side and a genuinely different team.
+CLUB_LEGAL_SUFFIXES = (
+    "fc",
+    "afc",
+    "cf",
+    "sc",
+    "cd",
+    "ud",
+    "ec",
+    "sd",
+    "fk",
+    "if",
+    "bk",
+    "sk",
+)
+
+_CLUB_LEGAL_SUFFIX_RE = re.compile(
+    r"\s+(?:" + "|".join(CLUB_LEGAL_SUFFIXES) + r")$", re.IGNORECASE
+)
+
 
 def row_is_fixture_anchored(
     *, espn_id: object, statpal_fixture_id: object
@@ -333,6 +449,29 @@ def block_key(sport_key: object, home: object, away: object) -> tuple[str, str, 
         str(sport_key or "").strip().lower(),
         str(home or "").strip().lower(),
         str(away or "").strip().lower(),
+    )
+
+
+def loose_block_key(home: object, away: object) -> tuple[str, str]:
+    """The SECOND-pass club names: everything :func:`block_key` folds, plus one
+    trailing :data:`CLUB_LEGAL_SUFFIXES` token per club.
+
+    Names only. The sport key is NOT dropped — :func:`residual_pass` feeds these
+    two strings back through :func:`block_key` with the row's own key, so the
+    only fold across competitions remains the unclassified one. The production
+    pair that decided this (Köln women against Köln men, 21 hours apart) is in
+    the module docstring.
+
+    Orientation is still load-bearing and still ordered, so a two-legged tie's
+    second leg can no more pair here than it can in the narrow key.
+
+    One suffix, not a loop: ``Real Madrid CF SC`` is not a spelling anyone
+    produces, and each extra strip is another shape the precision measurement
+    never examined.
+    """
+    return (
+        _CLUB_LEGAL_SUFFIX_RE.sub("", str(home or "").strip().lower()),
+        _CLUB_LEGAL_SUFFIX_RE.sub("", str(away or "").strip().lower()),
     )
 
 
@@ -429,6 +568,13 @@ class GhostPlan:
     refusals: list[str] = field(default_factory=list)
     blocks_examined: int = 0
     rows_considered: int = 0
+    #: Blocks the SECOND pass looked at, and how many of ``tags`` it contributed.
+    #: Reported separately rather than summed in, because the two passes fail
+    #: differently: the first going quiet means the narrow key stopped reaching
+    #: its rows, and the second going quiet means the loose one did. One total
+    #: hides whichever half died.
+    residual_blocks_examined: int = 0
+    residual_tags: int = 0
 
 
 def classify_block(
@@ -513,6 +659,72 @@ def classify_block(
     )
 
 
+def residual_pass(
+    rows: list[SoccerRow],
+    *,
+    decided_ghost_ids: set[int],
+    now: datetime,
+    max_lag: timedelta = MAX_GHOST_LAG,
+) -> tuple[list[GhostTag], list[str], int]:
+    """Re-run the first pass over what it did not decide, with loose club names.
+
+    Returns ``(tags, refusals, blocks_examined)``. Pure.
+
+    It differs from the first pass in exactly ONE coordinate — the club names are
+    :func:`loose_block_key`'d instead of :func:`block_key`'d. The sport key is
+    still in the key and the only fold across keys is still
+    :func:`fold_unclassified_blocks`, i.e. still unclassified-to-named and still
+    only when exactly one named competition carries the clubs. Two NAMED
+    competitions are as separate here as they are there; see the docstring
+    section for the production pair that settles why.
+
+    WHY THIS CANNOT UNDO THE FIRST PASS, stated as the two properties it rests on
+    rather than as an intention:
+
+    * a ghost already tagged is removed from this population, so no row can be
+      re-decided against a different canonical, and the first pass's tag count is
+      a floor on the plan's;
+    * ambiguity is MONOTONE under adding rows — :func:`classify_block` refuses
+      once two ghosts or two canonicals pair, and a larger block can only add
+      pairs — so a block the first pass refused can never become decidable here.
+      That is what makes re-blocking safe at all, and it is the property the
+      rejected "widen :func:`block_key` itself" design broke in the other
+      direction, by merging blocks that had each already resolved.
+
+    A canonical is deliberately NOT withheld: it is settled, scored and anchored,
+    so :func:`row_could_be_a_ghost` is false for it and it can only ever play the
+    same role twice. One played fixture with two id-less copies is a real shape —
+    the Andorra specimen in the module docstring is one.
+    """
+    residual = [r for r in rows if r.event_id not in decided_ghost_ids]
+    blocks: dict[tuple[str, str, str], list[SoccerRow]] = defaultdict(list)
+    for r in residual:
+        loose_home, loose_away = loose_block_key(r.home_team_name, r.away_team_name)
+        blocks[block_key(r.sport_key, loose_home, loose_away)].append(r)
+    blocks, refusals = fold_unclassified_blocks(blocks)
+
+    tags: list[GhostTag] = []
+    examined = 0
+    for key, members in sorted(blocks.items()):
+        if len(members) < 2:
+            continue
+        # Every row here shares one NARROW key too, so the first pass already
+        # examined this block and reached the same answer. Re-reading it would
+        # only restate its refusal in different words and double-count it.
+        narrow_keys = {
+            block_key(m.sport_key, m.home_team_name, m.away_team_name) for m in members
+        }
+        if len(narrow_keys) < 2:
+            continue
+        examined += 1
+        outcome, tag, explanation = classify_block(members, now=now, max_lag=max_lag)
+        if outcome == TWIN_FOUND and tag is not None:
+            tags.append(tag)
+        elif outcome == REFUSE_AMBIGUOUS:
+            refusals.append(f"{key[1]} v {key[2]} (loose names): {explanation}")
+    return tags, refusals, examined
+
+
 def plan_ghost_tags(
     rows: list[SoccerRow],
     *,
@@ -532,6 +744,10 @@ def plan_ghost_tags(
     :func:`fold_unclassified_blocks` runs between the grouping and the
     classification, so a row the ingest could not assign to a competition is
     judged alongside the named block for its two clubs rather than alone.
+
+    :func:`residual_pass` then runs over whatever the narrow key did not decide,
+    under the looser key, and can only ADD — see its docstring for the two
+    properties that make that true.
     """
     blocks: dict[tuple[str, str, str], list[SoccerRow]] = defaultdict(list)
     for row in rows:
@@ -551,4 +767,15 @@ def plan_ghost_tags(
             plan.tags.append(tag)
         elif outcome == REFUSE_AMBIGUOUS:
             plan.refusals.append(f"{key[0]} {key[1]} v {key[2]}: {explanation}")
+
+    extra_tags, extra_refusals, examined = residual_pass(
+        rows,
+        decided_ghost_ids={t.ghost_id for t in plan.tags},
+        now=now,
+        max_lag=max_lag,
+    )
+    plan.tags.extend(extra_tags)
+    plan.refusals.extend(extra_refusals)
+    plan.residual_blocks_examined = examined
+    plan.residual_tags = len(extra_tags)
     return plan

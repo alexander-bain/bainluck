@@ -455,6 +455,47 @@ class TestTheWriteRail:
 
         assert "restore_5896_soccer_ghost_tags.py --apply" in summary["undo"]
 
+    def test_the_summary_reports_the_second_pass_on_its_own_numbers(self):
+        """#5896/#3813: the two passes reach different populations, so a single
+        total cannot say which of them stopped reaching its own.
+
+        Gwangju: the narrow key sees two blocks of one ("Gwangju" against
+        "Gwangju FC") and decides nothing; the second pass decides it. If these
+        two counters are ever folded into `blocks_examined`/`pairs_found`, the
+        first pass could go silently blind behind the second's numbers.
+        """
+        rows = [
+            _Row(
+                id=15307681,
+                sport_key="soccer_other",
+                home="Gwangju",
+                away="FC Anyang",
+                at=GHOST_AT,
+                status="suspended",
+            ),
+            _Row(
+                id=15306857,
+                sport_key="soccer_korea_kleague1",
+                home="Gwangju FC",
+                away="FC Anyang",
+                at=CANON_AT,
+                status="completed",
+                home_score=1,
+                away_score=1,
+                statpal_fixture_id="9540001",
+            ),
+            *_filler(400),
+        ]
+
+        plan = sweep.build_plan(rows, now=NOW)
+
+        assert plan.blocks_examined == 0, "the narrow key must not see this pair"
+        assert plan.residual_blocks_examined == 1
+        assert plan.residual_tags == 1
+        assert [(t.ghost_id, t.canonical_id) for t in plan.tags] == [
+            (15307681, 15306857)
+        ]
+
     def test_the_undo_reads_the_table_the_sweep_banks_into(self):
         """One constant, imported, not two strings that agree today."""
         import scripts.restore_5896_soccer_ghost_tags as undo
