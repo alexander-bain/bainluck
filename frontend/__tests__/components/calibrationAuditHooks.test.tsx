@@ -767,4 +767,29 @@ describe("CAL-P1261 — 'How We Compare' only claims what it can support", () =>
     expect(SECTION).toContain("Lower is better.");
     expect(SECTION).not.toContain("excellent calibration");
   });
+
+  test("no figure can wrap in the middle of itself", () => {
+    // Found on the after-LOOK of CAL-P1261's own ship, at 390px: the range
+    // rendered as "2-" on one line and "5pp" on the next, because the value
+    // span wraps (it must — our row is three fragments long) and a hyphen is a
+    // break opportunity. A number split across two lines is a different number
+    // to a reader. So each figure is its own `whitespace-nowrap` token and the
+    // wraps happen BETWEEN fragments. The CI clause carries the same hyphen
+    // ("0.3-1.2pp") and is covered by the same rule.
+    const value = SECTION.slice(
+      SECTION.indexOf("tabular-nums text-xs font-semibold"),
+      SECTION.indexOf("h-2 bg-surface-secondary")
+    );
+    expect(value.length).toBeGreaterThan(200); // anti-vacuity: the slice is real
+    expect(value).toContain("rangeLow}-${row.rangeHigh}pp");
+    // Both hyphenated figures — the range and the CI — sit inside a nowrap span.
+    for (const figure of ["rangeLow}-${row.rangeHigh}pp", "(95% CI: ${row.ci})"]) {
+      const at = value.indexOf(figure);
+      expect(at).toBeGreaterThan(-1);
+      const opener = value.lastIndexOf('<span className="whitespace-nowrap">', at);
+      expect(opener).toBeGreaterThan(-1);
+      // …and nothing closes that span before the figure is reached.
+      expect(value.slice(opener, at)).not.toContain("</span>");
+    }
+  });
 });
