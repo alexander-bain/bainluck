@@ -38,6 +38,28 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     /// rather than defaulted. Read it through `EventOutcome.resolve` — never
     /// branch on the raw string, or the third outcome goes missing again.
     let heroSettledResult: String?
+    /// #6381 — whether the VENUE has already graded this event, decoded from
+    /// `venue_settled`. Three states and they are three different answers:
+    /// absent (this build's server never asked), `false` (we asked and the
+    /// venue said nothing), `true` (it graded this event).
+    ///
+    /// It is NOT a status and it never becomes one. `status`, the scores and
+    /// `started_without_result` are byte-identical beside it — the producer
+    /// (`app/utils/venue_settlement.py`) reads `futures_outcomes` rows where
+    /// `is_winner IS TRUE AND resolution_source = 'api_settlement'` and writes
+    /// nothing. Read it through ``EventState/showsVenueSettledVerdict(_:venueSettled:commenceTime:now:)``.
+    let venueSettled: Bool?
+    /// #6381 — the graded FULL-CONTEST score, as an outcome NAME and verbatim:
+    /// `"Draw 0-0"`, `"Brighton & Hove Albion wins 5-0"`, `"Aryna Sabalenka
+    /// wins 2-0"`. `nil` whenever the venue graded only props, which is 370 of
+    /// the 426 rows in the issue's own sample.
+    ///
+    /// 🔴 DO NOT PARSE IT. Its shape differs by sport (soccer names a scoreline,
+    /// tennis names sets) and the producer's own contract note says the same
+    /// thing to the web half: render it as given. A `nil` here is not a missing
+    /// value to fill in — it is the state where saying "settled" without
+    /// inventing a score is the whole answer (#6381 acceptance 4).
+    let venueSettledResult: String?
 }
 
 // MARK: - Standings Context

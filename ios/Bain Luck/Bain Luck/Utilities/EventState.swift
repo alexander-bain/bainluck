@@ -111,6 +111,52 @@ enum EventState {
             && !isSuspendedAndStarted(status, commenceTime: commenceTime, now: now)
     }
 
+    /// Whether the page should say the VENUE has already settled this event.
+    ///
+    /// #6381, the native consumer half. The producer answers one question about
+    /// rows we already hold — "does a graded `api_settlement` outcome exist for
+    /// this event?" — and hands the surface `venue_settled`. On the phone the
+    /// page it corrects does not say "No result reported" at all: event
+    /// `15310639` (Liverpool FC v Fulham FC, graded `Draw 0-0` on 2026-09-12)
+    /// served `status: scheduled`, no scores and no prices, so the hero drew
+    /// two crests, the kick-off date and the word **vs** — an ordinary upcoming
+    /// fixture, 3.6 days after it was played, one scroll above its own graded
+    /// `Draw 0-0 · 100%`. The suspended arm (889 rows) prints
+    /// ``suspendedLabel`` over the same held grade.
+    ///
+    /// 🔴 A `true` HERE IS NOT A `status`, AND THIS IS NOT ``isFinished``.
+    /// Nothing about the row's status, scores or rail membership moves — the
+    /// server deliberately did not settle the event, because that is a data
+    /// write and it collides with the rail semantics #3211 depends on. So this
+    /// predicate may only be read by the slots that would otherwise CLAIM the
+    /// event is unplayed. A caller reaching for it to decide "is this over" has
+    /// the wrong question and wants ``canStillBeGraded``.
+    ///
+    /// The clock is part of the test for #4021's reason, one state along: a row
+    /// whose kick-off is still ahead of us must not receive the settled
+    /// treatment, whatever a market attached to it has been graded as. A nil
+    /// date counts as started, matching ``hasStarted``'s documented default.
+    ///
+    /// ``isFinished`` is excluded because a Final already says this, better —
+    /// it has a score and a winner, and a second settled voice beside it would
+    /// be two chips making one claim.
+    static func showsVenueSettledVerdict(
+        _ status: String?, venueSettled: Bool?, commenceTime: Date?, now: Date = Date()
+    ) -> Bool {
+        guard venueSettled == true else { return false }
+        guard !isFinished(status) else { return false }
+        return hasStarted(commenceTime: commenceTime, now: now)
+    }
+
+    /// The short badge an event the venue has already graded wears.
+    ///
+    /// Deliberately not "Final": a final has a score from something that
+    /// watched the game, and this row has neither — what we hold is the house
+    /// that took the bets saying the question is answered. Deliberately not
+    /// "Settled" alone either, which on its own reads as a market state; the
+    /// reader's question is about the game.
+    static let venueSettledLabel = "Result settled"
+
     /// The short badge a suspended event wears.
     ///
     /// Deliberately NOT the bare word "Suspended": for a rain-delayed US Open
