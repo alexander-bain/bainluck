@@ -2031,8 +2031,27 @@ def _market_name_names(market_name, event_alias):
     surname — this population already contains a player called ``Day`` — and the
     conjunction is what makes a chance collision vanishingly unlikely once the
     candidate is already scoped to one venue group.
+
+    🔴 A BLANK TEAM NAME INVERTS THIS PREDICATE INTO A WILDCARD, AND IT IS THE
+    ONE DIRECTION THAT LOSES ROWS. ``'%' || '' || '%'`` is ``'%%'``, which every
+    name matches, so a settled event storing an empty (or whitespace-only) team
+    name would make the arm above suppress its ENTIRE venue group — the UFC
+    straddle this whole design exists to avoid, arriving through the back door.
+    The two emptiness tests are what stop it. NULL already fails closed on its
+    own (``ilike NULL`` is NULL, never true) and the column is ``NOT NULL``
+    besides; ``''`` is the spelling that fails OPEN, which is why it is named
+    here rather than left to the type.
+
+    Measured on production 2026-09-15 06:2xZ: **zero** rows in ``events`` carry a
+    blank or whitespace-only ``home_team_name``/``away_team_name``, so these
+    terms change no result set today — they are a guard against a writer, not a
+    repair of a population. Cost is two scalar comparisons on a row the join
+    already produced; no relation is added to the plan and the arm's shape is
+    unchanged, so #6304's cost battery still describes it.
     """
     return and_(
+        func.trim(event_alias.home_team_name) != "",
+        func.trim(event_alias.away_team_name) != "",
         market_name.ilike(literal("%") + event_alias.home_team_name + literal("%")),
         market_name.ilike(literal("%") + event_alias.away_team_name + literal("%")),
     )

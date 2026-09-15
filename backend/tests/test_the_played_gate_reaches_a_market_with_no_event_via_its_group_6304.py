@@ -114,6 +114,26 @@ M_NO_GROUP = 60999001           # -> MUST SURVIVE, untouched as a class
 # Only ONE side of the pair is named -> fail closed.
 M_HALF_NAMED = 60999002         # "Townsend Total Games" -> MUST SURVIVE
 
+# A settled event whose team names are BLANK. `'%' || '' || '%'` is `'%%'`, which
+# every name matches, so the name check inverts into a wildcard and the arm eats
+# the whole venue group. Zero production rows are in this state (measured
+# 2026-09-15 06:2xZ, `events` scanned for blank/whitespace team names: 0) — these
+# fixtures exist so a future writer cannot put one there silently.
+BLANK_EVENT = 15312998          # completed, both names ""
+BLANK_GROUP = "polymarket:2000002"
+M_BLANK_ATTACHED = 61047747     # on the blank event -> suppressed by arm 1 either way
+M_BLANK_UNATTACHED = 61047748   # -> MUST SURVIVE
+
+WS_EVENT = 15312997             # completed, both names " " (whitespace, not empty)
+WS_GROUP = "polymarket:2000003"
+M_WS_ATTACHED = 61047749
+M_WS_UNATTACHED = 61047750      # -> MUST SURVIVE
+
+HALFBLANK_EVENT = 15312996      # completed, home "", away "Townsend"
+HALFBLANK_GROUP = "polymarket:2000004"
+M_HALFBLANK_ATTACHED = 61047751
+M_HALFBLANK_UNATTACHED = 61047752  # names Townsend only -> MUST SURVIVE
+
 
 def _event(event_id, status, home, away, *, tags=None):
     return Event(
@@ -198,6 +218,36 @@ def engine():
 
         # Unattached AND ungrouped.
         s.add(_market(M_NO_GROUP, None, "Tatjana Maria vs Taylor Townsend", None))
+
+        # Settled events with blank team names — the wildcard edge.
+        s.add(_event(BLANK_EVENT, "completed", "", ""))
+        s.add(_market(M_BLANK_ATTACHED, BLANK_EVENT, "Blank Event Winner", BLANK_GROUP))
+        s.add(
+            _market(
+                M_BLANK_UNATTACHED, None, "Kostyuk vs Jovic Total Games", BLANK_GROUP
+            )
+        )
+
+        s.add(_event(WS_EVENT, "completed", " ", " "))
+        s.add(_market(M_WS_ATTACHED, WS_EVENT, "Whitespace Event Winner", WS_GROUP))
+        s.add(
+            _market(M_WS_UNATTACHED, None, "Bejlek vs Parry Total Games", WS_GROUP)
+        )
+
+        s.add(_event(HALFBLANK_EVENT, "completed", "", "Townsend"))
+        s.add(
+            _market(
+                M_HALFBLANK_ATTACHED, HALFBLANK_EVENT, "Half Blank Winner",
+                HALFBLANK_GROUP,
+            )
+        )
+        s.add(
+            _market(
+                M_HALFBLANK_UNATTACHED, None,
+                "Guadalajara Open Akron: Marta Kostyuk vs Taylor Townsend",
+                HALFBLANK_GROUP,
+            )
+        )
         s.commit()
     return eng
 
@@ -355,6 +405,102 @@ class TestTheArmFailsClosed:
         after = _offered(engine, _futures_game_already_played())
         assert after < before
         assert after == before - {M_SPECIMEN, M_TERSE_NAME}
+
+
+# ---------------------------------------------------------------------------
+# 3b. The blank-name wildcard — the one way the name check fails OPEN
+# ---------------------------------------------------------------------------
+
+
+def _the_arm_with_an_unguarded_name_check():
+    """The arm as first shipped: name containment with no emptiness test.
+
+    The BEFORE for this section, rebuilt rather than imported for the same
+    reason `_the_6296_arms_alone` is — a control that reads the code under test
+    cannot be one. Everything here is the shipped arm except the two
+    `trim(...) != ''` terms.
+    """
+    from sqlalchemy import and_
+    from sqlalchemy.orm import aliased
+
+    from app.utils.proven_duplicates import ghost_names_canonical
+
+    sib = aliased(FuturesMarket, name="ctl_sibling")
+    ghost = aliased(Event, name="ctl_grp_ghost")
+    canonical = aliased(Event, name="ctl_grp_canonical")
+    from sqlalchemy import literal, or_
+
+    return ~(
+        select(sib.id)
+        .select_from(sib)
+        .join(ghost, ghost.id == sib.event_id)
+        .outerjoin(canonical, ghost_names_canonical(ghost, canonical))
+        .where(
+            FuturesMarket.event_id.is_(None),
+            FuturesMarket.group_id.isnot(None),
+            sib.group_id == FuturesMarket.group_id,
+            or_(
+                ghost.status.in_(tuple(sorted(SETTLED_STATUSES))),
+                canonical.status.in_(tuple(sorted(SETTLED_STATUSES))),
+            ),
+            and_(
+                FuturesMarket.name.ilike(
+                    literal("%") + ghost.home_team_name + literal("%")
+                ),
+                FuturesMarket.name.ilike(
+                    literal("%") + ghost.away_team_name + literal("%")
+                ),
+            ),
+        )
+        .correlate(FuturesMarket)
+        .exists()
+    )
+
+
+class TestABlankTeamNameCannotSwallowAGroup:
+    """`'%' || '' || '%'` is `'%%'`, and every name matches it.
+
+    So a settled event that stores a blank team name turns the arm's safety
+    check into a wildcard and suppresses its ENTIRE venue group — the UFC
+    straddle this design exists to prevent, arriving through the back door.
+    Zero production rows are in that state today (`events` scanned 2026-09-15
+    06:2xZ: 0 blank or whitespace-only team names), so these are guards against
+    a writer rather than a repair. Flagged by the desk at merge time.
+    """
+
+    @pytest.mark.parametrize(
+        "market_id",
+        [M_BLANK_UNATTACHED, M_WS_UNATTACHED, M_HALFBLANK_UNATTACHED],
+    )
+    def test_the_unguarded_check_would_have_suppressed_it(self, engine, market_id):
+        """🔴 RED FIRST. If this stops holding, the fixtures no longer reproduce
+        the edge and the three assertions below are decoration."""
+        assert market_id not in _offered(engine, _the_arm_with_an_unguarded_name_check())
+
+    @pytest.mark.parametrize(
+        "market_id",
+        [M_BLANK_UNATTACHED, M_WS_UNATTACHED, M_HALFBLANK_UNATTACHED],
+    )
+    def test_the_shipped_arm_keeps_it(self, engine, market_id):
+        assert market_id in _offered(engine, _futures_game_already_played())
+
+    def test_a_blank_side_is_not_the_other_half_of_the_pair(self, engine):
+        """The half-blank row is the sharp one: its name really does contain
+        `Townsend`, the away side of the settled event. Requiring BOTH names is
+        no protection at all when one of them matches everything, so this fails
+        if someone guards only one side.
+        """
+        assert "Townsend" in "Guadalajara Open Akron: Marta Kostyuk vs Taylor Townsend"
+        assert M_HALFBLANK_UNATTACHED in _offered(engine, _futures_game_already_played())
+
+    def test_the_emptiness_test_renders_on_postgres(self):
+        """SQLite and Postgres both spell it `trim(...)`, but the guard suite
+        runs the portable dialect, so the production rendering is pinned BY NAME
+        the way the rest of this arm's Postgres shape is.
+        """
+        sql = _sql(select(FuturesMarket.id).where(_futures_game_already_played()))
+        assert "trim(grp_ghost.home_team_name) != ''" in sql
+        assert "trim(grp_ghost.away_team_name) != ''" in sql
 
 
 # ---------------------------------------------------------------------------
