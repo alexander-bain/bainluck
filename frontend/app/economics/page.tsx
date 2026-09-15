@@ -10,6 +10,7 @@ import {
 import ErrorState from "@/components/ErrorState";
 import EconomicsSkeleton from "@/components/skeletons/EconomicsSkeleton";
 import { fetchEconomics } from "@/lib/api";
+import { ratePathHeading } from "@/lib/fedRatePath";
 import type { EconData, EconDistribution } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
@@ -232,7 +233,12 @@ export default function EconomicsPage() {
               <Card className="min-w-0">
                 <div className="flex justify-between items-start mb-4">
                   <div>
-                    <h3 className="text-xl font-semibold text-text-primary">2026 rate path</h3>
+                    {/* #2870: derived from the columns below, never written by
+                        hand — the literal said "2026" over three 2027 meetings
+                        for eleven days. */}
+                    <h3 className="text-xl font-semibold text-text-primary">
+                      {ratePathHeading(t.fed.fomc_meetings)}
+                    </h3>
                     <p className="text-[13px] text-text-secondary mt-1">
                       Market-implied probability of each Fed funds bracket
                     </p>

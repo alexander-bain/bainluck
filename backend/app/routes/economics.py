@@ -479,38 +479,124 @@ async def get_economics(db: AsyncSession):
     fomc_meetings = []
     rate_cuts = []
     rate_side = []
-    for m in fed_markets:
-        name_lower = (m.name or "").lower()
-        ext_lower = (m.external_id or "").lower()
+
+    # ─── The rate-path heatmap picks its own columns (#2870) ────────────────
+    #
+    # This one card renders a market as a DISTRIBUTION, and that makes the
+    # shared leader-probability arm of `should_exclude_from_featured` read the
+    # wrong thing about it. These are cumulative `Above X%` ladders, so the
+    # leader is the probability of the ladder's LOWEST rung — a near-certain
+    # statement by construction, not a measure of how much the market has to
+    # say. Kalshi trims the rungs already decided for a near-term meeting, so
+    # the floor rung sits higher and the leader sits closer to 1.0:
+    #
+    #     Jan 2027   floor `Above 0.00%`   leader 0.975   18 rungs   shown
+    #     Sep 2026   floor `Above 2.75%`   leader 0.995   11 rungs   HIDDEN
+    #
+    # Measured on production 2026-09-14, that was a perfect split over all six
+    # open ladders — the three above the 0.98 bar were exactly the three 2026
+    # meetings. The nearer the meeting, the shorter the ladder, the more
+    # certain the exclusion, so the card was structurally guaranteed to omit
+    # the imminent meeting and show only ones far enough out to still be
+    # uncertain. On 2026-09-14 it was headed "2026 rate path" over three 2027
+    # columns while the Sep 2026 meeting resolving in two days was absent, and
+    # its distribution was perfectly drawable (~86.5% of the mass in the
+    # 3.75–4.00% bracket).
+    #
+    # ⚠️ Why the ONE arm and not the predicate. The obvious fix — stop applying
+    # a leader-probability test to markets rendered as a distribution — was
+    # measured and is not narrow: 1,645 open markets site-wide are cumulative
+    # ladders and 230 of them are currently held off featured surfaces by this
+    # bar, across /economics, /politics, /entertainment AND the cross-source
+    # spotlight (`2Pac Streams in 2026`, `Burger King Foot Traffic in
+    # September`, `Brent crude oil price on September 30`). That is a
+    # browse-surface content change, not a bug fix. So the exception is scoped
+    # to the one card that has the distribution property, by asking the shared
+    # predicate the question WITHOUT the confidence arm — `leader_probability`
+    # is passed as None, which `is_probability_extreme` answers False for.
+    # `PROBABILITY_EXTREME_HIGH` itself is untouched, so ux/1022's `Canada
+    # recession before 2027? 99.6%` finding stays fixed and `spotlight_eligible`
+    # above is unchanged.
+    #
+    # ⚠️ The other two arms stay LIVE, and they are what retires a meeting once
+    # it has happened. `status` cannot be trusted to do it alone — settled
+    # Kalshi markets sit at `status='open'` in our DB until the settled-events
+    # backfill reaches them (gotcha #33), and four past meetings in this very
+    # family are `resolved` only because that backfill has run. The load-bearing
+    # one is the title arm: `stale_explicit_title_month` retires
+    # "…after Sep 2026 meeting?" from month-end + 1 day, verified over five
+    # faked clocks in the guard test. Between a meeting resolving and that
+    # month ending the column can show a decided meeting, whose distribution
+    # has collapsed onto the realised bracket; that is the page's existing
+    # grace behaviour for every economics market, it reads as the rate path's
+    # most recent anchor, and `resolution_date` is the sharper instrument if
+    # anyone ever wants to close that window.
+    def _is_fomc_ladder(m) -> bool:
+        """Does this market belong in the rate-path heatmap at all?"""
+        return (
+            "fed funds rate after" in (m.name or "").lower()
+            and len(_outcomes_sorted(m)) >= 3
+        )
+
+    # `_classify_theme` is re-asked rather than assumed so this set is provably
+    # the old one plus ONLY what the confidence arm was rejecting — nothing
+    # here can reach the card through a theme the old code never put it in.
+    # (It is not free: these tickers are `KXFED-26SEP`, which matches no entry
+    # in `_THEME_BY_TICKER` — `kxfedfunds`/`kxfedcuts`/`kxfedhikes` all miss the
+    # hyphen — so they classify as "fed" via the NAME regex, and a ticker-prefix
+    # change upstream could silently move them.)
+    fomc_source = [
+        m for m in all_markets
+        if _is_fomc_ladder(m)
+        and _classify_theme(m) == "fed"
+        and should_exclude_from_featured(
+            m.name, m.llm_sport_category, m.status, None, now,
+        ) is None
+    ]
+
+    for m in fomc_source:
         outcomes = _outcomes_sorted(m)
-        if "fed funds rate after" in name_lower and len(outcomes) >= 3:
-            has_cumulative = any("above" in (o.name or "").lower() for o in outcomes)
-            if has_cumulative:
-                discrete = _cumulative_to_discrete(outcomes, max_buckets=10)
-                # Reverse so highest rate is first (top of heatmap)
-                discrete.reverse()
-            else:
-                discrete = _brackets_from_outcomes(m)
+        has_cumulative = any("above" in (o.name or "").lower() for o in outcomes)
+        if has_cumulative:
+            discrete = _cumulative_to_discrete(outcomes, max_buckets=10)
+            # Reverse so highest rate is first (top of heatmap)
+            discrete.reverse()
+        else:
+            discrete = _brackets_from_outcomes(m)
 
-            date_str = m.name.split("after ")[-1].split("?")[0].strip() if "after" in (m.name or "") else ""
-            mo = date_str.split(" ")[0] if date_str else ""
-            # Extract year for sorting (e.g., "Jun 2026" → 202606)
-            parts = date_str.split()
-            sort_key = 0
-            if len(parts) >= 2:
-                year = int(parts[1]) if parts[1].isdigit() else 2026
-                month_num = _MONTH_ORDER.get(mo[:3].lower(), 0)
-                sort_key = year * 100 + month_num
+        date_str = m.name.split("after ")[-1].split("?")[0].strip() if "after" in (m.name or "") else ""
+        mo = date_str.split(" ")[0] if date_str else ""
+        # Extract year for sorting (e.g., "Jun 2026" → 202606)
+        parts = date_str.split()
+        sort_key = 0
+        if len(parts) >= 2:
+            year = int(parts[1]) if parts[1].isdigit() else 2026
+            month_num = _MONTH_ORDER.get(mo[:3].lower(), 0)
+            sort_key = year * 100 + month_num
 
-            fomc_meetings.append({
-                "date": date_str,
-                "mo": mo,
-                "dist": discrete,
-                "resolved": m.status in ("resolved", "closed"),
-                "market_id": m.id,
-                "sort_key": sort_key,
-            })
-        elif "how many" in name_lower and ("cut" in name_lower or "hike" in name_lower):
+        fomc_meetings.append({
+            "date": date_str,
+            "mo": mo,
+            "dist": discrete,
+            "resolved": m.status in ("resolved", "closed"),
+            "market_id": m.id,
+            "sort_key": sort_key,
+        })
+
+    for m in fed_markets:
+        # Drawn as a heatmap column above, so it is not also a Side markets row.
+        #
+        # Measured, not assumed: this `continue` changes NOTHING today. Deleting
+        # it leaves the guard suite green, because a ladder reaching the `else`
+        # below hits `_market_row`, which refuses any market with more than five
+        # outcomes — and these carry 11 to 18 rungs. It is kept as the explicit
+        # statement of intent, and `test_a_ladder_can_never_become_a_side_row`
+        # pins the refusal that makes it redundant, so whoever widens
+        # `_market_row` finds out that this line just became load-bearing.
+        if _is_fomc_ladder(m):
+            continue
+        name_lower = (m.name or "").lower()
+        if "how many" in name_lower and ("cut" in name_lower or "hike" in name_lower):
             rate_cuts = _brackets_from_outcomes(m)
         else:
             _row = _market_row(m)
