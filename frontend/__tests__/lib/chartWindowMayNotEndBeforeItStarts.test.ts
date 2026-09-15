@@ -136,6 +136,31 @@ describe("#6349 the window may not end before it starts", () => {
     expect(ms(d.end)).toBeGreaterThan(ms(d.start));
   });
 
+  test("a window that ends EXACTLY where it starts is as blank as an inverted one", () => {
+    // The `<=` in the floor, not `<`. A mutation pass caught this: flipping it
+    // to `<` left every other test green, and a zero-width window draws exactly
+    // as much as a backwards one — nothing.
+    //
+    // The shape is not contrived. The only game-end evidence is a single score
+    // snapshot taken at kickoff (the 0-0 every livescore feed opens with), while
+    // Kalshi — excluded from GAME_END_SOURCES because it quotes past the final
+    // whistle — carries the two post-start points that make the page choose
+    // "Since Start". End lands on commence; so does start.
+    const data = payload({
+      score_history: [{ timestamp: at(0), home_score: 0, away_score: 0 }],
+      win_prob_history: {
+        kalshi: [
+          { timestamp: at(10), probability: 0.6 },
+          { timestamp: at(80), probability: 0.7 },
+        ],
+      },
+    });
+    expect(defaultChartTimeRange(data, COMMENCE)).toBe("live");
+
+    const d = domain(data, "live")!;
+    expect(ms(d.end)).toBeGreaterThan(ms(d.start));
+  });
+
   test("CONTROL — a completed game with real in-game data keeps its game-duration window", () => {
     // The fix must not widen a page that was already right. ESPN runs through
     // the match, so the end ladder's first branch answers and the window is the
