@@ -11,8 +11,20 @@
 // It measures on the REAL page so the font stack, letter-spacing and padding are the ones
 // production resolves, not the ones the class names imply.
 //
-// EXIT CODES ARE A STORY (gotcha #124): 0 measured, 2 usage, 4 no event card on this draw
-// (the feed is shuffled — a re-run, not a failure), 1 anything else.
+// AFTER THE SHIP (#6330 merged `30fbde79e`, 2026-09-15 10:21Z) THE PREMISE ABOVE IS GONE,
+// AND THAT IS WHY THIS FILE CHANGED RATHER THAN BEING LEFT ALONE. The chip and the badge
+// are now two children of ONE absolutely-positioned flex row, so the chip is no longer an
+// absolute itself — and the locator below ("the absolute rounded pill at the hero's
+// top-left") stopped matching it and printed `NO EVENT CARD ON THIS DRAW (no chip)` at
+// exit 4 over a page full of event cards. An instrument that reports absence when its
+// subject is present is worse than no instrument: exit 4 is the "re-run, the feed shuffled"
+// code, so it read as noise. The locator now finds the pill whether or not it carries the
+// position itself, and the measurement it prints is the one the new markup makes decidable:
+// the chip's real box against the badge's real box, on every card of the draw.
+//
+// EXIT CODES ARE A STORY (gotcha #124): 0 measured and no card overlaps, 2 usage, 3 a chip
+// and a LIVE badge INTERSECT on at least one card (the defect is back), 4 no event card on
+// this draw (the feed is shuffled — a re-run, not a failure), 1 anything else.
 import { createRequire } from 'module';
 import { existsSync, readdirSync } from 'fs';
 
@@ -54,14 +66,50 @@ await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
 await page.waitForTimeout(2500);
 
 const result = await page.evaluate((labels) => {
-  const card = document.querySelector('[data-card-format="event"]');
-  if (!card) return { none: true };
-  // The chip is the only absolutely-positioned pill at the hero's top-left.
-  const chip = [...card.querySelectorAll('div')].find((d) => {
-    const cs = getComputedStyle(d);
-    return cs.position === 'absolute' && cs.borderRadius.includes('9999')
-      && parseFloat(cs.left) < 20 && parseFloat(cs.top) < 20;
-  });
+  const cards = [...document.querySelectorAll('[data-card-format="event"]')];
+  if (cards.length === 0) return { none: true };
+
+  // The pill at the hero's top-left, WHETHER OR NOT it is the positioned element:
+  // since #6330 the position lives on the flex row that holds the chip and the LIVE
+  // badge, so a `position === 'absolute'` test finds the row and rejects the chip.
+  // Asked of the box instead — a rounded pill whose top-left corner sits in the
+  // hero's top-left corner — the locator reads both markups.
+  const pillAt = (card, pred) => {
+    const cardBox = card.getBoundingClientRect();
+    return [...card.querySelectorAll('div')].find((d) => {
+      const cs = getComputedStyle(d);
+      if (!cs.borderRadius.includes('9999')) return false;
+      const b = d.getBoundingClientRect();
+      if (b.width === 0 || b.height === 0) return false;
+      if (b.top - cardBox.top > 24) return false;
+      return pred(b, cardBox, d);
+    });
+  };
+
+  // Every card of the draw, as the reader has it: what the chip says, and whether it
+  // shares pixels with the LIVE badge. An intersection is the #6330 defect returning.
+  const drawn = cards.map((card) => {
+    const cardBox = card.getBoundingClientRect();
+    const chipEl = pillAt(card, (b, cb) => b.left - cb.left < 24);
+    const liveEl = [...card.querySelectorAll('div')].find(
+      (d) => d.textContent.trim() === 'LIVE' && d.getBoundingClientRect().width > 0,
+    );
+    if (!chipEl) return null;
+    const c = chipEl.getBoundingClientRect();
+    const l = liveEl ? liveEl.getBoundingClientRect() : null;
+    return {
+      text: chipEl.textContent.trim(),
+      truncated: chipEl.scrollWidth > chipEl.clientWidth + 1,
+      live: Boolean(l),
+      gap: l ? Math.round(l.left - c.right) : null,
+      overlaps: Boolean(l && c.right > l.left && c.left < l.right),
+      width: Math.round(c.width),
+      cardWidth: Math.round(cardBox.width),
+    };
+  }).filter(Boolean);
+
+  const card = cards[0];
+  const chip = pillAt(card, (b, cb) => b.left - cb.left < 24);
   if (!chip) return { none: true, reason: 'no chip' };
   const cs = getComputedStyle(chip);
   const cardBox = card.getBoundingClientRect();
@@ -74,11 +122,26 @@ const result = await page.evaluate((labels) => {
   // The emoji + space the chip prefixes to every label.
   const prefix = chip.textContent.trim().split(/\s+/)[0] + ' ';
 
+  // The width the chip is ALLOWED, which since #6330 is a property of the row and not
+  // of the card: the flex row's content box, less the LIVE badge and the gap when the
+  // card is live. That is the number a label is long against now — crossing it costs a
+  // tail to `truncate`, where before it cost a collision with the badge.
+  const row = chip.parentElement;
+  const rowBox = row.getBoundingClientRect();
+  const rowCs = getComputedStyle(row);
+  const liveNow = [...card.querySelectorAll('div')].find(
+    (d) => d.textContent.trim() === 'LIVE' && d.getBoundingClientRect().width > 0,
+  );
+  const reserved = liveNow
+    ? liveNow.getBoundingClientRect().width + (parseFloat(rowCs.columnGap) || 0)
+    : 0;
+  const allowed = rowBox.width - reserved;
+
   const widthOf = (t) => ctx.measureText(t).width + tracking * t.length;
   const rows = labels.map((l) => {
     const text = prefix + l.toUpperCase();
     const w = widthOf(text) + padX;
-    return { label: l, chipWidth: Math.round(w), rightEdge: Math.round(chipBox.left - cardBox.left + w) };
+    return { label: l, chipWidth: Math.round(w), fits: w <= allowed };
   });
 
   return {
@@ -86,8 +149,13 @@ const result = await page.evaluate((labels) => {
     chipLeft: Math.round(chipBox.left - cardBox.left),
     chipText: chip.textContent.trim(),
     chipWidthNow: Math.round(chipBox.width),
+    chipIsAbsolute: cs.position === 'absolute',
+    rowWidth: Math.round(rowBox.width),
+    allowed: Math.round(allowed),
+    liveOnThisCard: Boolean(liveNow),
     font: ctx.font, tracking, padX, prefix,
     rows,
+    drawn,
   };
 }, LABELS);
 
@@ -98,16 +166,33 @@ if (result.none) {
   process.exit(4);
 }
 
-// The LIVE badge is centred on the card and is ~62px wide at this type size; its left
-// edge is the first pixel a growing chip may not cross.
-const LIVE_W = 62;
-const liveLeft = result.cardWidth / 2 - LIVE_W / 2;
-
-console.log(`card ${result.cardWidth}px · chip starts ${result.chipLeft}px · font ${result.font} · tracking ${result.tracking} · padding ${result.padX}`);
+console.log(`card ${result.cardWidth}px · chip starts ${result.chipLeft}px · chip is its own absolute: ${result.chipIsAbsolute}`);
+console.log(`row ${result.rowWidth}px · chip may have ${result.allowed}px of it${result.liveOnThisCard ? ' (LIVE reserved on this card)' : ''}`);
 console.log(`chip on screen now: ${JSON.stringify(result.chipText)} = ${result.chipWidthNow}px`);
-console.log(`LIVE badge (centred, ~${LIVE_W}px) occupies ${Math.round(liveLeft)}..${Math.round(liveLeft + LIVE_W)}px\n`);
-console.log('label'.padEnd(30), 'chip px', ' right edge', ' overlaps LIVE?');
+console.log(`font ${result.font} · tracking ${result.tracking} · padding ${result.padX}\n`);
+
+// EVERY CARD OF THE DRAW — the after-check. `overlaps` is measured box against box, so
+// it answers the reader's question rather than a class name's promise.
+const overlapping = result.drawn.filter((d) => d.overlaps);
+console.log(`${result.drawn.length} event cards on this draw · ${result.drawn.filter((d) => d.live).length} live · ${overlapping.length} with a chip touching LIVE`);
+console.log('chip'.padEnd(30), 'px', '  live', ' gap to LIVE', ' clipped');
+for (const d of result.drawn) {
+  console.log(
+    d.text.padEnd(30),
+    String(d.width).padStart(4),
+    (d.live ? '  yes' : '   no'),
+    String(d.gap === null ? '-' : d.gap).padStart(12),
+    '  ' + (d.truncated ? 'YES' : 'no'),
+  );
+}
+
+console.log('\nWOULD THESE LABELS FIT THE SPACE THE ROW LEAVES?');
+console.log('label'.padEnd(30), 'chip px', ' fits');
 for (const r of result.rows) {
-  const over = r.rightEdge > liveLeft;
-  console.log(r.label.padEnd(30), String(r.chipWidth).padStart(7), String(r.rightEdge).padStart(11), '  ' + (over ? 'YES' : 'no'));
+  console.log(r.label.padEnd(30), String(r.chipWidth).padStart(7), '  ' + (r.fits ? 'yes' : 'NO — clipped'));
+}
+
+if (overlapping.length > 0) {
+  console.log(`\n🔴 ${overlapping.length} chip(s) intersect the LIVE badge: ${overlapping.map((d) => JSON.stringify(d.text)).join(', ')}`);
+  process.exit(3);
 }
