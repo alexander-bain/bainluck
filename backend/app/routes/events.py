@@ -37,6 +37,7 @@ from app.utils.feed_reasons import _points as format_movement_points
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 from app.utils.prematch_reading import opening_consensus_has_frozen
 from app.utils.period_window_grade import grade_period_window
+from app.utils.final_score_margin import margin_verdict_from_final_score
 from app.utils.resolution_authority import authority_tier
 from app.utils.prop_window import prop_window_closed, prop_window_span
 from app.utils.event_rails import (
@@ -13664,6 +13665,13 @@ def _row_is_graded_at_verdict_tier(row: dict) -> bool:
     )
 
 
+#: Set on a served row whose stored grade the FINAL SCORE independently
+#: recomputes (#6312). Read by `_verdict_is_provable`, by the deep-OTM spread
+#: floor and by the spreads `> 0` filter — the three gates that between them
+#: dropped a settled all-legs-lost market before the reader ever saw it.
+_SCORE_PROVED_KEY = "_score_proves_verdict"
+
+
 def _verdict_is_provable(row: dict, market_has_a_winner: bool) -> bool:
     """True when this row's grade proves what happened (#6169, repaired).
 
@@ -13690,8 +13698,62 @@ def _verdict_is_provable(row: dict, market_has_a_winner: bool) -> bool:
     `market_has_a_winner` is asked of the row's OWN market's outcomes. For a
     WINNING leg it is true by construction, so this only ever binds a loss —
     which is the only direction that needs the other side to be proved.
+
+    ⭐ #6312 — AND THE SCOREBOARD IS A SECOND ROUTE TO THE SAME PROOF. A sibling
+    winner is one way to know a market settled rather than voided; it is not the
+    only way. A 1–1 draw makes "wins by more than 1.5 goals" false for BOTH
+    sides by subtraction, so that market has no winner and is still decided —
+    and a void at the venue does not change what the scoreboard says. Rows whose
+    grade `_score_proves_this_grade` has RECOMPUTED from the final score carry
+    `_SCORE_PROVED_KEY` and are provable on their own evidence. Nothing about
+    the sibling-winner rule is relaxed: this is an OR, and a row that carries
+    neither proof is refused exactly as before. Rows built from
+    `_settled_grade_fields` alone never carry the key, so every caller that
+    passes a bare grade dict is byte-identical.
     """
-    return _row_is_graded_at_verdict_tier(row) and market_has_a_winner
+    return _row_is_graded_at_verdict_tier(row) and (
+        market_has_a_winner or bool(row.get(_SCORE_PROVED_KEY))
+    )
+
+
+def _score_proves_this_grade(event, event_is_finished, sport_key, market, outcome) -> bool:
+    """True when the FINAL SCORE independently recomputes this leg's own grade.
+
+    🔴 THIS IS A RECOMPUTATION, NOT A SECOND GRADER. The score is not allowed to
+    OVERRULE the venue and it is not allowed to grade an ungraded row: the row
+    must already be graded at `_PRICE_IS_A_VERDICT_MIN_TIER`, and the arithmetic
+    must then arrive at the same answer. That is precisely the claim
+    `_PRICE_IS_A_VERDICT_MIN_TIER`'s docstring makes about a tier-2+ grade
+    ("RECOMPUTES to the same winner from cited data") — performed here instead
+    of assumed, on the one family where the cited data is already on the event
+    row.
+
+    A DISAGREEMENT PUBLISHES NOTHING. If the venue says this leg won and the
+    final score says it did not, one of the two is wrong and we cannot tell
+    which from here, so the row keeps today's behaviour. The asymmetry is the
+    guardrail (gotcha #43): wrongly withholding costs the reader a row that is
+    invisible today anyway, wrongly publishing prints a false result beside a
+    game they just watched.
+
+    `margin_verdict_from_final_score` refuses everything it cannot positively
+    identify — the shape, the side, the scoring unit, both scores — so this
+    returns False for every market family but a full-game margin question on a
+    finished game in a sport whose score column counts the question's own unit.
+    """
+    if not event_is_finished:
+        return False
+    grade = _settled_grade_fields(market, outcome)
+    if not _row_is_graded_at_verdict_tier(grade):
+        return False
+    proved = margin_verdict_from_final_score(
+        getattr(outcome, "name", None),
+        sport_key,
+        getattr(event, "home_team_name", None),
+        getattr(event, "away_team_name", None),
+        getattr(event, "home_score", None),
+        getattr(event, "away_score", None),
+    )
+    return proved is not None and proved is bool(grade["is_winner"])
 
 
 def _settled_over_probability(
@@ -15237,12 +15299,48 @@ async def _build_game_markets(
         ):
             continue
 
+        # ⭐ #6312 — WHICH OF THIS MARKET'S LEGS THE FINAL SCORE ANSWERS.
+        #
+        # Computed here, above the `has_no_real_price` drop, because that gate is
+        # the first of THREE that between them delete an all-legs-lost market
+        # whole, and all three need the same answer. It is per-leg and keyed on
+        # the outcome id rather than a per-market flag: a market may hold one
+        # provable leg beside legs this cannot identify, and those keep today's
+        # behaviour exactly.
+        #
+        # `_score_proves_this_grade` returns False on its first line for an
+        # unfinished event, so a live or scheduled page does no regex work.
+        _score_proved_ids = {
+            o.id
+            for o in market_outcomes
+            if _score_proves_this_grade(
+                event, event_is_finished, sport_key, market, o
+            )
+        }
+
         # #921 slice 2: don't render no-real-price or placeholder-team markets on
         # event pages. No real price = every outcome null/zero OR top outcome
         # below the 0.5% display floor (renders as a "0%" card — the symptom
         # Manus kept flagging). Placeholder teams ("TBD vs TBD") have no info to
         # show. Reuses the slice-1 helper; even-odds 50% + real games stay.
-        if has_no_real_price([o.current_probability for o in market_outcomes]):
+        #
+        # 🔴 #6312: …BUT 0.0 IS FALSY, AND ON A SETTLED MARGIN MARKET IT IS THE
+        # ANSWER. `real = [p for p in probs if p]` reads four graded zeros as "no
+        # price at all", so the settled Spread of a 1–1 draw
+        # (`KXKLEAGUESPREAD-26SEP13GWAANY`, four legs at 0.000000,
+        # `api_settlement`) was discarded ~330 lines before it could reach
+        # `spreads.append(...)` — `spreads: []` on a page already printing that
+        # same fixture's losing moneyline legs and its losing total rungs.
+        #
+        # The justification this filter was written under is true of a LIVE
+        # ladder — "every outcome null or zero" is a dead card — and stops being
+        # true the moment the question has an answer. The market is readmitted
+        # only when the SCOREBOARD has answered at least one of its legs, which
+        # is a fact about the game and not a reading of the price; an unpriced
+        # card with nothing proved on it is dropped exactly as it is today.
+        if has_no_real_price(
+            [o.current_probability for o in market_outcomes]
+        ) and not _score_proved_ids:
             continue
         if _PLACEHOLDER_TEAM_RE.search(market.name or ""):
             continue
@@ -15413,20 +15511,39 @@ async def _build_game_markets(
             for o in market_outcomes:
                 threshold = _extract_threshold(o.name)
                 prob = float(o.current_probability) if o.current_probability is not None else None
+                _score_proved = o.id in _score_proved_ids
                 row = {
                     "market_name": market.name,
                     "outcome_name": o.name,
                     "observed_at": _observed(o),
                     "threshold": threshold,
-                    "probability": round(prob, 4) if prob else None,
+                    # 🔴 #6312: `if prob else None` — 0.0 IS FALSY, so a rung the
+                    # venue settled at zero published a NULL probability beside a
+                    # real grade. Inert for every row that reaches the payload
+                    # today (a stored 0.0 is below `_SPREAD_DEEP_OTM_FLOOR`, so
+                    # it was routed away two branches down before this null could
+                    # be served); it is load-bearing for the rows #6312 readmits,
+                    # whose 0.0 IS the answer "this line did not come in".
+                    "probability": round(prob, 4) if prob is not None else None,
                     "source": market.source,
                     **_settled_grade_fields(market, o),
                     "_market_id": market.id,
                 }
+                if _score_proved:
+                    row[_SCORE_PROVED_KEY] = True
                 # #921 residual: drop deep-OTM alternate spread rungs (cover prob
                 # below the floor) so the section shows meaningful lines, not the
                 # full ladder. Near-the-money alts + the main line stay.
-                if prob is not None and prob < _SPREAD_DEEP_OTM_FLOOR:
+                #
+                # …AND A LINE THE SCOREBOARD HAS ANSWERED IS NOT AN ALTERNATE
+                # RUNG (#6312), for the same reason #4845 carved this floor for a
+                # closed window: a settled 0.0 is a verdict, not a price too small
+                # to be worth the space. The #4845 route below cannot rescue these
+                # rows — it hands them to `_grade_closed_windows`, which grades
+                # bounded PERIODS off a line score and refuses a full-game margin
+                # — so a row whose grade the final score has recomputed stays in
+                # `spreads` and carries its verdict there.
+                if prob is not None and prob < _SPREAD_DEEP_OTM_FLOOR and not _score_proved:
                     # …BUT A SETTLED WINDOW IS NOT A DEEP-OTM RUNG (#4845).
                     #
                     # This is CERT-2502's finding one bucket over. That one was
@@ -15981,9 +16098,29 @@ async def _build_game_markets(
     # The `> 0` filter that lived inside `_enforce_monotonicity` is hoisted so it
     # still runs on EVERY row, including rows in groups no longer capped — skipping
     # the call must not put 0% rungs back on the page.
+    #
+    # 🔴 #6312 — THE THIRD AND LAST GATE THAT DELETED THE ALL-LEGS-LOST MARKET.
+    # A rung readmitted by the deep-OTM carve-out above arrives here carrying a
+    # probability of exactly 0.0 — its ANSWER — and this line drops it again.
+    #
+    # The exemption is written as the flag and not as `_verdict_is_provable(...)`
+    # deliberately. The sibling-winner arm of that predicate is UNREACHABLE at
+    # this line: a stored 0.0 is below `_SPREAD_DEEP_OTM_FLOOR`, so the only
+    # 0.0-priced rows that get this far are the ones the floor's own #6312
+    # carve-out let through, which by construction carry the flag. Spelling the
+    # wider predicate here would read as protection for a population that cannot
+    # arrive — #6205 deleted exactly that kind of decoration after a mutant sweep
+    # proved it dead. Widening the FLOOR to every provable verdict would make it
+    # reachable and is a real question for a settled deep-OTM ladder, but it is a
+    # different ship from this one and is not smuggled in here.
+    #
+    # The tier bar #6196 relies on is not skipped, only asked earlier: the flag
+    # is set only by `_score_proves_this_grade`, which requires
+    # `_row_is_graded_at_verdict_tier` before it consults the score at all.
     spreads = [
         s for s in spreads
-        if s.get("probability") is not None and s.get("probability", 0) > 0
+        if s.get("probability") is not None
+        and (s.get("probability", 0) > 0 or s.get(_SCORE_PROVED_KEY))
     ]
     spreads.sort(key=lambda x: abs(x.get("threshold", 0) or 0))
     spread_by_market: dict[object, list[dict]] = {}
