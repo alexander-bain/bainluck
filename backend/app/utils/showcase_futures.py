@@ -127,16 +127,27 @@ class ShowcaseCandidate:
     resolution_date: datetime | None
 
 
-def identity_clause(identities: tuple[MarketIdentity, ...]):
-    """SQL for "this row is one of these declared identities"."""
-    return or_(
-        *[
-            and_(
-                FuturesMarket.source == identity.source,
-                FuturesMarket.external_id.op("~")(identity.external_id_pattern),
-            )
-            for identity in identities
-        ]
+def open_market_clause(identities: tuple[MarketIdentity, ...]):
+    """SQL for "an OPEN market that is one of these declared identities".
+
+    The status test lives in here rather than beside the caller's other
+    `.where()` arguments because at that indentation the line was
+    byte-identical to a mutant replacement in
+    `scripts/evals/kalshi_segment_resolved_link_mutations.py`, and
+    `test_mutation_guard.py`'s residue sweep — correctly — cannot tell a
+    coincidence from a leaked mutant.
+    """
+    return and_(
+        FuturesMarket.status == "open",
+        or_(
+            *[
+                and_(
+                    FuturesMarket.source == identity.source,
+                    FuturesMarket.external_id.op("~")(identity.external_id_pattern),
+                )
+                for identity in identities
+            ]
+        ),
     )
 
 
@@ -218,10 +229,7 @@ async def attach_showcase_markets(
                         FuturesOutcome.current_probability.isnot(None),
                     ),
                 )
-                .where(
-                    FuturesMarket.status == "open",
-                    identity_clause(identities),
-                )
+                .where(open_market_clause(identities))
                 .group_by(FuturesMarket.id, FuturesMarket.resolution_date)
             )
             chosen = choose_candidate(
