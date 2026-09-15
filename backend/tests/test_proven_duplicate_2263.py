@@ -858,15 +858,34 @@ class TestTheFold:
         `GET /api/events/{id}/game-markets` — measured on production as 32
         market entries on the ghost against 3 on the canonical, which is the
         gap this ship closes.
+
+        #6221 follow-up: the read moved one call down, into
+        `folded_market_read_filters`, so that the sport net and the id set it
+        nets over could be exercised together against a real server. So this
+        grep now FOLLOWS THE DELEGATION rather than naming a line's old home —
+        the route must call the helper, and the helper must hold the fold.
+        Pinning only the route would have let the helper stop folding; pinning
+        only the helper would have let the route stop calling it.
+
+        This remains a grep, and the Part G note below is still right that a
+        grep cannot tell you the payload changed. The execution proof now lives
+        in `tests/integration/test_folded_market_sport_net_6221_pg.py`, which
+        runs this exact construct against Postgres over a cross-key pair.
         """
         import inspect
 
-        from app.routes.events import _build_game_markets
+        from app.routes.events import (
+            _build_game_markets, folded_market_read_filters,
+        )
 
-        source = inspect.getsource(_build_game_markets)
-        assert "folded_event_ids" in source
-        assert "FuturesMarket.event_id.in_(market_event_ids)" in source
-        assert "FuturesMarket.event_id == event_id" not in source
+        route = inspect.getsource(_build_game_markets)
+        assert "folded_market_read_filters" in route
+        assert "FuturesMarket.event_id == event_id" not in route
+
+        read = inspect.getsource(folded_market_read_filters)
+        assert "folded_event_ids" in read
+        assert "FuturesMarket.event_id.in_(market_event_ids)" in read
+        assert "FuturesMarket.event_id == event_id" not in read
 
 
 # ════════════════════════════════════════════════════════════════════════════

@@ -141,6 +141,30 @@ COVERED = (
     # broken seed — the band would simply come back empty and every "the repair
     # declined it" assertion would pass having declined nothing.
     "test_polymarket_redate_atomicity_6073_pg.py",
+    # #6221's cross-sport net follow-up. Seeds `sports`, two `events` and three
+    # `futures_markets` by raw INSERT, and it names both of the Python-side
+    # defaults this file exists to catch — `sports.active` and
+    # `futures_markets.mutually_exclusive`.
+    #
+    # Its seed also carries a vacuity hazard the NOT-NULL arm cannot see, so it
+    # is written down rather than left to be rediscovered: the whole gate turns
+    # on the ghost and the canonical holding DIFFERENT `sport_id`s. If both
+    # `_sport_id` calls ever returned one row, the first arm of the net would
+    # match on its own, every assertion would pass, and the arm under test
+    # would never be reached. The seed asserts `kleague != other` in place for
+    # that reason — legal DDL is not the same thing as a seed that can fail.
+    #
+    # It also paid for a hazard worth reading before writing the NEXT gate that
+    # seeds a lookup table, because this file's arms cannot see it either:
+    # `search-recall` shares ONE database across all ~55 gates, and the earlier
+    # ones seed `sports` with EXPLICIT ids, which never advances the sequence.
+    # `INSERT INTO sports (key, ...) ON CONFLICT (key) DO NOTHING` draws
+    # `nextval` BEFORE it evaluates the conflict, so a genuinely new key dies on
+    # `sports_pkey` — `Key (id)=(1) already exists` — a pkey collision reported
+    # by a statement whose whole point was to tolerate a key collision. The
+    # sibling gates survive it only because each inserts one sport the shared
+    # database already holds. This gate needs three, so it names its own ids.
+    "test_folded_market_sport_net_6221_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"
