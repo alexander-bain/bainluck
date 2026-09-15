@@ -895,7 +895,12 @@ async def placeable_league_for_matchup(
     2026-07-09, two months BEFORE the phantom was minted on 2026-09-12. The
     graph knew the league the whole time and the creator never asked.
 
-    FOUR REFUSALS, each one measured on that population rather than imagined:
+    FOUR REFUSALS HERE AND A FIFTH AT THE CALL SITE, each one measured on that
+    population rather than imagined. The fifth — the target competition must
+    still be running at the fixture's own kickoff — is
+    :func:`league_is_running_at` (#6392); it is separate because it needs the
+    kickoff, which this function is deliberately not told, and because it asks
+    about the LEAGUE rather than about the matchup:
 
     1. **Same family as the key we already have.** The catch-all is not merely
        mixed, it is sometimes wrong about the SPORT: ``basketball_other`` today
@@ -997,7 +1002,115 @@ async def placeable_league_for_matchup(
         # Ambiguous, or nothing at all — both leave the row in the catch-all.
         return None
     league = next(iter(shared))
-    return None if _sport_key_is_odds_api_covered(league) else league
+    if _sport_key_is_odds_api_covered(league):
+        return None
+    # Refusal 5 lives in :func:`league_is_running_at`, at the CALL SITE rather
+    # than here, because it is a different question with a different input: this
+    # function asks which league two clubs share, and that one asks whether the
+    # league is running at a kickoff this function is never told about. See
+    # #6392 for the two specimens the four refusals above let through.
+    return league
+
+
+#: #6392 — how far back from a fixture's own kickoff
+#: :func:`league_is_running_at` will look for proof that the competition is
+#: still running.
+#:
+#: MEASURED, not chosen. On 2026-09-15 the 24 same-family rows minted since the
+#: #5544 guard landed split cleanly on this number:
+#:
+#:   * the worst gap among the 21 CORRECT placements is 7 days — ``baseball_npb``,
+#:     whose schedule is loaded only to 09-15 while Polymarket already lists to
+#:     09-22. This is the case that rules out "the kickoff must fall inside the
+#:     loaded schedule": that rule refuses a correct placement.
+#:   * the best gap among the 3 WRONG ones is 58.8 days — a 09-16 friendly
+#:     placed into a World Cup whose final was 2026-07-19. The third is 97 days,
+#:     a September tennis match placed into a French Open that ended 06-07.
+#:
+#: So every threshold in 8..58 returns the same verdict and 30 sits in the
+#: middle of that band with an order of magnitude of margin on each side.
+#: ``test_threshold_separates_the_measured_population`` asserts the gap itself,
+#: so shrinking the margin fails rather than silently re-tuning the constant.
+_PLACEMENT_SEASON_WINDOW_DAYS = 30
+
+#: The ``commence_time_source`` values that mean "a market told us when this is",
+#: as opposed to a schedule source. :func:`league_is_running_at` must not let a
+#: row from this set vouch for a league, or the phantoms would license each
+#: other: one bad placement becomes the evidence admitting the next.
+#:
+#: Written as the set to EXCLUDE rather than the schedule sources to allow,
+#: because that is the predicate the #6392 measurement was taken with. The two
+#: forms agree exactly today — production carries these five plus ``odds_api``,
+#: ``statpal``, ``espn``, ``mlb_schedule_repair`` and NULL — and the allow form
+#: is the one to switch to if a sixth market source ever appears without this
+#: list being updated.
+MARKET_BORN_COMMENCE_SOURCES = (
+    "kalshi",
+    "kalshi_ticker",
+    "kalshi_occurrence",
+    "polymarket",
+    "polymarket_venue",
+)
+
+
+async def league_is_running_at(session, league: str | None, commence_time) -> bool:
+    """Whether ``league`` has a real schedule around ``commence_time``. #6392.
+
+    THE DEFECT. :func:`placeable_league_for_matchup` names the league two clubs
+    SHARE, and a national team or a tennis player belongs to a competition
+    permanently: ``teams`` carries France under ``soccer_fifa_world_cup``
+    forever, so "France" ∩ "Canada" is exactly one league and refusal 2 is
+    satisfied. The placer then filed a 2026-09-17 friendly into a World Cup
+    whose final was 2026-07-19, and a 2026-09-12 tennis match into a French Open
+    that ended 2026-06-07. Both dates are decidable from our own ``events``
+    table; neither needs an external source.
+
+    WHY A SEASON WINDOW AND NOT A FIXTURE LOOKUP. The obvious test — "does the
+    real league already carry this exact matchup near this time" — refuses the
+    correct placements too. Measured on the same population: all 8 ``baseball_npb``
+    rows have NO counterpart within ±3 days, because the schedule source is
+    loaded to 09-15 while Polymarket lists to 09-22. A market legitimately sees
+    further ahead than the schedule does. What separates NPB from the World Cup
+    is not whether THIS fixture is known, it is whether the competition is
+    running at all.
+
+    WHY SCHEDULE-BORN ONLY. A market-born row in the target league would let the
+    phantoms vouch for each other — the first bad placement becomes the evidence
+    that admits the second. Only a schedule source may anchor a season.
+
+    ``commence_time`` is the fixture's OWN kickoff, not the clock. That is what
+    makes this decidable from the row (gotcha #44: a test anchored here cannot
+    branch on when it runs), and it is why the answer does not drift between the
+    create and a later re-read.
+
+    Fails CLOSED, like every refusal in :func:`placeable_league_for_matchup`: no
+    league, no kickoff, or no session all return False and the row keeps its
+    catch-all key, which #5576's own docstring calls the honest answer when
+    nothing can prove otherwise.
+    """
+    from app.models.models import Event, Sport
+
+    if session is None or not league or commence_time is None:
+        # The same no-signal reading the two resolvers above take, and the same
+        # reason it may not raise: `session=None` drives the create path in
+        # #2020's and #4242's call-site tests.
+        return False
+
+    floor = commence_time - timedelta(days=_PLACEMENT_SEASON_WINDOW_DAYS)
+    anchor = await session.execute(
+        select(Event.id)
+        .join(Sport, Sport.id == Event.sport_id)
+        .where(Sport.key == league)
+        .where(Event.commence_time >= floor)
+        .where(
+            or_(
+                Event.commence_time_source.is_(None),
+                Event.commence_time_source.notin_(MARKET_BORN_COMMENCE_SOURCES),
+            )
+        )
+        .limit(1)
+    )
+    return anchor.first() is not None
 
 
 #: Which funnel counter a refusal increments. A mapping rather than the
@@ -7108,6 +7221,24 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
     placed_league = await placeable_league_for_matchup(
         session, team_a, team_b, sport_key,
     )
+    # #6392: the fifth refusal. A club or a national side belongs to a
+    # competition permanently in `teams`, so the four refusals above are all
+    # satisfied by a matchup whose competition finished months ago — they placed
+    # a 09-17 friendly into a World Cup whose final was 07-19. Ask whether the
+    # league is actually running at THIS fixture's kickoff before relabelling.
+    if placed_league and not await league_is_running_at(
+        session, placed_league, commence_time,
+    ):
+        logger.info(
+            "Refusing placement of '%s' (#6392) — %s v %s resolves to %s, but "
+            "that competition has no schedule-born fixture within %dd of %s; "
+            "leaving the row on %s",
+            market.name, team_a, team_b, placed_league,
+            _PLACEMENT_SEASON_WINDOW_DAYS,
+            commence_time.isoformat() if commence_time else None,
+            sport_key,
+        )
+        placed_league = None
     if placed_league:
         logger.info(
             "Placing '%s' (#5576) — %s vs %s is a %s fixture, not %s",
