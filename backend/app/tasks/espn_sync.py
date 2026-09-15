@@ -707,6 +707,26 @@ async def _sync_espn_live_events():
                 logger.warning(
                     "Deep authority straggler pass failed: %s", e, exc_info=True
                 )
+
+            # ── And the stranded rows that were never LATE, only MISDATED ──
+            #
+            # Third try/except for the same reason the second one exists: this
+            # arm asks a different channel (the anchor, not the board) and a
+            # failure here must not cost the two settle passes their run. It
+            # runs AFTER them deliberately — a row the settle door has just
+            # finished has left the candidate states and is never re-examined.
+            try:
+                await _recover_unstarted_authority_fixtures(
+                    session,
+                    straggler_espn,
+                    datetime.now(timezone.utc),
+                    stats,
+                )
+            except Exception as e:
+                stats["errors"].append(f"unstarted_authority_recovery: {str(e)}")
+                logger.warning(
+                    "Unstarted authority recovery pass failed: %s", e, exc_info=True
+                )
             finally:
                 await straggler_espn.close()
 
@@ -937,6 +957,70 @@ MAX_DEEP_STRAGGLER_CANDIDATES = 200
 #: in-place change to a JSONB value is invisible to the ORM's change tracking
 #: and is silently dropped (gotcha #4).
 DEEP_STRAGGLER_ASKED_KEY = "deep_straggler_asked_at"
+
+
+# ── THE OTHER HALF OF THE STRANDED SEVEN: THE GAME THAT NEVER KICKED OFF ─────
+#
+# `_settle_deep_authority_stragglers` above reaches the stranded population by
+# asking the BOARD DAY our row carries. That is the right question for a game
+# that finished — but three of the measured seven are not late, they are
+# MISDATED, and for them the board day our row carries is the defect itself.
+# ESPN files them under their real November/October dates, so the September
+# board we fetch does not contain their id and the settle pass is a no-op on
+# exactly the rows a reader can see are wrong:
+#
+#   * 15175988 Michigan State @ Michigan — we say Sep 4, ESPN says **Nov 7**
+#   * 14870016 Auburn @ Georgia          — we say Sep 5, ESPN says **Oct 17**
+#   * 15291065 D.C. United @ FC Cincinnati — we say Sep 6, ESPN says **Oct 21**
+#
+# MEASURED against ESPN by id 2026-09-15 04:3xZ (standing notice 26 — the venue's
+# own answer, not our mirror): all three are `STATUS_SCHEDULED`, `state=pre`,
+# `completed=false`, both competitor scores absent, and the team names match our
+# row exactly. They have not been played. Our row calls them `suspended` with a
+# kickoff 9-10 days past, which is why the page draws a "Since Start" win-
+# probability chart (the web chart cuts on `commence_time`, and `suspended`
+# selects that tab) over a flat 87% line for a game that kicks off in November.
+#
+# SO THIS ARM INVERTS THE QUESTION THE WAY `reconcile_anchor_schedule` DOES —
+# "what game IS this row's anchor?", one `summary?event=` call per row — because
+# that is the only channel that can reach a fixture no board we fetch contains.
+# It does not widen the settle arms: their door needs `state="post"` AND
+# `completed=True`, this one needs `state="pre"` AND a start in the FUTURE, and
+# no ESPN answer satisfies both. The two are mutually exclusive on the ANSWER,
+# which is a stronger disjointness than a window boundary.
+#
+# WHY IT WRITES THE STATE AND NOT ONLY THE CLOCK. `reconcile_anchor_schedule`
+# deliberately writes `commence_time` alone, and for its own population that is
+# right. Here it would be a half-repair that invents a state with no precedent:
+# production carries ZERO `suspended` rows with a future kickoff (measured
+# 2026-09-15 04:4xZ), so moving only the clock would leave these three as the
+# only ones, still labelled "No result reported", still charted as a game that
+# started. The authority's answer is a single consistent fact — *this fixture
+# has not been played and starts at T* — and the row is made to say that or
+# nothing at all.
+#
+#: How long before this arm re-asks about the same row. Same six hours and the
+#: same reasoning as :data:`AUTHORITY_DEEP_STRAGGLER_REASK`: on a 60s beat an
+#: uncooled re-ask would spend ~1,440 ESPN calls a day per permanently-stuck row.
+#: A row that has NEVER been asked is not subject to it and is picked up on the
+#: next pass, so this delays no repair a reader is waiting on.
+AUTHORITY_UNSTARTED_REASK = timedelta(hours=6)
+
+#: ESPN calls this arm may add to one pass. Unlike the settle arms this is one
+#: call PER ROW rather than per board day, so the budget is the wall-clock cost
+#: directly: 4 x ~0.59s (re-measured in `reconcile_anchor_schedule`) against a
+#: beat whose p95 already overruns its 60s period. The measured stock is three
+#: and drains in one pass; the budget bounds the blast radius of the cooldown
+#: being wrong, not the ordinary cost.
+MAX_UNSTARTED_RECOVERY_ASKS_PER_PASS = 4
+
+#: This arm's own queue stamp, beside :data:`DEEP_STRAGGLER_ASKED_KEY` and for
+#: the same reason (gotcha #41 / the stalest-first livelock): the sort key must
+#: be one the work ADVANCES, and "when we last asked" is, while "when it was
+#: scheduled" is not. A SEPARATE key from the deep arm's because the two ask
+#: different questions on different channels — sharing one stamp would let a
+#: board fetch silence an anchor dereference that had never run.
+UNSTARTED_RECOVERY_ASKED_KEY = "unstarted_recovery_asked_at"
 
 #: The Redis key that turns the unreachable-suspended arm on, and the number of
 #: rows it may retire per pass. ABSENT OR 0 MEANS THE ARM DOES NOTHING — not
@@ -1440,6 +1524,232 @@ async def _settle_deep_authority_stragglers(
         ),
         on_asked=_stamp_asked,
     )
+
+
+def _unstarted_recovery_asked_at(event, now):
+    """When this arm last asked about `event`, or None if it never has."""
+    sources = getattr(event, "win_probability_sources", None) or {}
+    raw = sources.get(UNSTARTED_RECOVERY_ASKED_KEY)
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw))
+    except (TypeError, ValueError):
+        # An unparseable stamp is treated as "never asked" rather than skipped.
+        # The failure mode of forgetting is one extra call; the failure mode of
+        # skipping is a row that is never revisited again.
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+async def _recover_unstarted_authority_fixtures(session, espn, now, stats):
+    """Restore the misdated fixtures the board arms cannot reach (#6280).
+
+    The complement of :func:`_settle_deep_authority_stragglers`: those rows are
+    late, these are MISDATED, and the block comment at
+    :data:`AUTHORITY_UNSTARTED_REASK` sets out the measurement and the reason
+    this asks the anchor rather than the board.
+
+    ── THE FOUR GATES, AND WHY EACH ONE IS NOT THE OTHERS ──
+
+    1. ``get_event`` returned an answer. It is ``None`` for a 404 AND for a dark
+       authority (``ESPNAuthorityDark`` is swallowed there), and neither is
+       evidence about the fixture — gotcha #53. No answer, no write, and the
+       row keeps its place in the queue.
+    2. ESPN says ``scheduled`` with BOTH scores absent. A fixture with a score
+       has been played whatever its status string says.
+    3. ESPN's start is in the FUTURE. This is the gate that makes the arm safe
+       against its own worst case: if the anchor named a game that already
+       happened, the write would move a played game's clock forward and hide it.
+       It is also the narrow reading of Alex's 2026-09-14 constraint — *a
+       scheduled kickoff is not evidence of an actual start* — so a scheduled
+       time is used to set a SCHEDULED kickoff and never to assert that a game
+       started or finished.
+    4. The teams agree with the anchor. A disagreement means the id is wrong,
+       not the clock, and that is
+       ``repair_authority_id_collisions``' question — refused here, never
+       guessed at.
+
+    Plus one refusal taken from the sibling rather than reinvented: a row whose
+    clock came from StatPal is left alone, because
+    ``app.utils.anchor_schedule.schedule_decision`` rules StatPal outranks ESPN
+    for kickoff times and two rails must not disagree about that.
+
+    THE WRITE IS A COMPARE-AND-WRITE (#6056). It touches four live-state columns
+    (``period``, ``game_clock``, and the two scores), so it goes through
+    ``write_row_if_unmoved`` rather than a bare Core ``update``. The predicate is
+    what this arm's decision actually CONSUMED — ``status`` and ``commence_time``,
+    the two facts that made the row a candidate — and not position, which this
+    arm never reads and which is NULL on these rows anyway; a position predicate
+    here would compile, run green and arbitrate nothing.
+    """
+    from sqlalchemy import update as sql_update
+
+    from app.utils.event_completion import EVENT_SUSPENDED
+    from app.utils.live_state_write import write_row_if_unmoved
+
+    stats["unstarted_recovery_candidates"] = 0
+    stats["unstarted_recovery_eligible"] = 0
+    stats["unstarted_recovery_asked"] = 0
+    stats["unstarted_recovery_recovered"] = 0
+    stats["unstarted_recovery_refused_teams"] = 0
+    stats["unstarted_recovery_no_answer"] = 0
+    stats["unstarted_recovery_row_moved"] = 0
+
+    result = await session.execute(
+        select(Event)
+        .options(selectinload(Event.sport))
+        .where(
+            Event.status.in_(["live", EVENT_SUSPENDED]),
+            Event.espn_id.isnot(None),
+            Event.commence_time < now - AUTHORITY_STRAGGLER_LOOKBACK,
+        )
+        .order_by(Event.commence_time.desc())
+        .limit(MAX_DEEP_STRAGGLER_CANDIDATES)
+    )
+    candidates = result.scalars().all()
+    stats["unstarted_recovery_candidates"] = len(candidates)
+
+    cooldown_floor = now - AUTHORITY_UNSTARTED_REASK
+    never = datetime.min.replace(tzinfo=timezone.utc)
+    eligible = []
+    for event in candidates:
+        sport_key = event.sport.key if event.sport else ""
+        if sport_key not in ESPN_SPORT_MAPPING:
+            continue
+        # The sibling rail owns this row's clock; see the docstring.
+        if event.commence_time_source == "statpal":
+            continue
+        asked = _unstarted_recovery_asked_at(event, now)
+        if asked is not None and asked > cooldown_floor:
+            continue
+        eligible.append((asked or never, event.id, sport_key, event))
+
+    stats["unstarted_recovery_eligible"] = len(eligible)
+    if not eligible:
+        return
+
+    # Stalest ASK first — never stalest kickoff, which is the key the work
+    # cannot advance — then the id for a reproducible pass.
+    eligible.sort(key=lambda item: (item[0], item[1]))
+
+    for _asked, _event_id, sport_key, event in eligible[
+        :MAX_UNSTARTED_RECOVERY_ASKS_PER_PASS
+    ]:
+        try:
+            espn_event = await espn.get_event(sport_key, event.espn_id)
+        except Exception as e:
+            stats["errors"].append(f"unstarted_recovery_{event.id}: {str(e)}")
+            continue
+
+        recovered = False
+        if espn_event is None:
+            # Gate 1 — absent or dark, indistinguishable here and both silent.
+            stats["unstarted_recovery_no_answer"] += 1
+        else:
+            starts_at = getattr(espn_event, "date", None)
+            if starts_at is not None and starts_at.tzinfo is None:
+                starts_at = starts_at.replace(tzinfo=timezone.utc)
+            unplayed = (
+                espn_event.status == "scheduled"  # gate 2
+                and espn_event.home_score is None
+                and espn_event.away_score is None
+            )
+            in_future = starts_at is not None and starts_at > now  # gate 3
+            if unplayed and in_future:
+                home_names, away_names = get_event_name_variations(event)
+                teams_agree = bool(
+                    espn_event.home_team
+                    and espn_event.away_team
+                    and espn_team_matches(home_names, espn_event.home_team)
+                    and espn_team_matches(away_names, espn_event.away_team)
+                )
+                if not teams_agree:  # gate 4
+                    stats["unstarted_recovery_refused_teams"] += 1
+                else:
+                    # Read BEFORE the write — the log's whole value is the pair
+                    # of clocks, and the CAS below updates the instance itself.
+                    previous_clock = event.commence_time
+                    previous_status = event.status
+                    # THE PREDICATE IS WHAT THE DECISION CONSUMED (#6056), which
+                    # here is not position but the two facts that made this row a
+                    # candidate at all: it was unsettled, and its clock was the
+                    # stale one. If a settle arm finished it or another rail
+                    # corrected its clock between the SELECT and now, this row is
+                    # no longer the thing we decided about and the write refuses.
+                    # Deliberately NOT a period/game_clock predicate: this arm
+                    # never reads position, and on these rows both are routinely
+                    # NULL, so such a predicate could never refuse — the vacuous
+                    # compare-and-write `write_row_if_unmoved` warns about.
+                    try:
+                        landed = await write_row_if_unmoved(
+                            session,
+                            event,
+                            {
+                                "commence_time": starts_at,
+                                "commence_time_source": "espn",
+                                "status": "scheduled",
+                                "home_score": None,
+                                "away_score": None,
+                                "period": None,
+                                "game_clock": None,
+                            },
+                            observed={
+                                "status": previous_status,
+                                "commence_time": previous_clock,
+                            },
+                            what="unstarted authority recovery",
+                        )
+                    except Exception as e:
+                        stats["errors"].append(
+                            f"unstarted_recovery_write_{event.id}: {str(e)}"
+                        )
+                        continue
+                    if not landed:
+                        # The row moved under us. It is not recovered, so it
+                        # keeps its place in the queue and is asked again.
+                        stats["unstarted_recovery_row_moved"] += 1
+                    else:
+                        recovered = True
+                        stats["unstarted_recovery_recovered"] += 1
+                        logger.info(
+                            "#6280 unstarted recovery: event %d (%s vs %s, %s) "
+                            "was %s at %s — ESPN's anchor %s says it is "
+                            "scheduled for %s and has not been played. "
+                            "Restored to scheduled.",
+                            event.id,
+                            event.away_team_name,
+                            event.home_team_name,
+                            sport_key,
+                            previous_status,
+                            previous_clock.isoformat() if previous_clock else None,
+                            event.espn_id,
+                            starts_at.isoformat(),
+                        )
+
+        if recovered:
+            # It has left the candidate states, so it can never be selected
+            # again and a stamp on it would be residue — the lesson the deep
+            # arm's `_stamp_asked` records one function up.
+            continue
+        # Merged onto whatever the deep arm may have written THIS pass: the
+        # identity map hands both arms the same ORM object and that arm mirrors
+        # its own stamp, so reading the attribute here cannot lose it.
+        updated = dict(getattr(event, "win_probability_sources", None) or {})
+        updated[UNSTARTED_RECOVERY_ASKED_KEY] = now.isoformat()
+        try:
+            await session.execute(
+                sql_update(Event)
+                .where(Event.id == event.id)
+                .values(win_probability_sources=updated)
+            )
+        except Exception as e:
+            stats["errors"].append(f"unstarted_recovery_stamp_{event.id}: {str(e)}")
+            continue
+        event.win_probability_sources = updated
+        stats["unstarted_recovery_asked"] += 1
 
 
 async def _find_sport_keys_to_sync(session):
