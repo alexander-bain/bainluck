@@ -28,8 +28,8 @@ def _case(case_id: str) -> dict:
 def test_committed_corpus_is_complete_and_matches_oracles() -> None:
     corpus = load_corpus(FIXTURE)
     report = evaluate_corpus(corpus)
-    assert report["total"] == 22
-    assert report["passed"] == 22, [row for row in report["cases"] if not row["ok"]]
+    assert report["total"] == 23
+    assert report["passed"] == 23, [row for row in report["cases"] if not row["ok"]]
     ids = {row["id"] for row in corpus["cases"]}
     # Every class the ruling names has to be represented, or the corpus is
     # asserting reconciliation over a population it never exercised.
@@ -42,6 +42,11 @@ def test_committed_corpus_is_complete_and_matches_oracles() -> None:
         "opening-below-writer-bar-rung",
         "malformed-and-unknown-truth-rung",
         "checked-zero-is-not-unknown",
+        # #6275 / #1902 (Alex ruling): the identity quarantine. Listed here
+        # for the same reason as its neighbours -- a rung the corpus does
+        # not exercise is a rung nobody notices going wrong, and this one
+        # was PLOTTING its rows until #6275.
+        "identity-disputed-is-its-own-rung",
     } <= ids
 
 

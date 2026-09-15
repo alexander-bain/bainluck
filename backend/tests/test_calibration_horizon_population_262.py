@@ -192,7 +192,14 @@ class TestHorizonSQLReusesCanonicalPopulation:
         # T-0 keys off resolution_date itself; the others subtract an interval.
         sql0, p0 = _build_time_horizon_sql(0)
         sql7, p7 = _build_time_horizon_sql(7)
-        assert "make_interval" not in sql0 and p0 == {}
+        # #6275: the bare substring is too broad now that the population
+        # chain carries the identity quarantine, whose date arithmetic uses
+        # `make_interval(days => p.dd - 1)` for a reason that has nothing to
+        # do with a horizon cutoff. What this line is actually about is the
+        # HORIZON interval, so it names it — the same precise form the T-7
+        # assertion below already used. The empty params still prove T-0
+        # binds no cutoff at all.
+        assert "make_interval(days => :days)" not in sql0 and p0 == {}
         assert "make_interval(days => :days)" in sql7 and p7 == {"days": 7}
         # No single hard-coded "+1h" / one-hour public default is introduced.
         assert "make_interval(hours" not in sql7

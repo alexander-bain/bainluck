@@ -121,6 +121,14 @@ def _futures_row(**overrides):
         "cb_market_result_unavailable": 0,
         "cb_truth_source_missing": 12,
         "cb_truth_ineligible_source": 40,
+        # #6275 / #1902 (Alex ruling). A checked zero, exactly like
+        # `cb_opening_below_writer_bar` below and for the same reason: this
+        # synthetic bucket holds no market whose ticker disagrees with its
+        # event, and the partition has to stay exact. The rung is given a real
+        # count by the `identity-disputed-is-its-own-rung` case in
+        # `tests/evals/fixtures/calibration_coverage_bridge_contract.json`,
+        # which is the fixture whose job that is.
+        "cb_identity_disputed": 0,
         "cb_question_ungraded": 3,
         "cb_malformed_or_unknown_truth": 6,
         "cb_phantom_liquidity": 8,

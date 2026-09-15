@@ -27,6 +27,16 @@ from app.utils.calibration_coverage_bridge import (
 # rather than restated — the read-side exclusion and the write-side coherence
 # rule must not be able to disagree about what "the pair sums to 1" means.
 from app.utils.pair_opening_coherence import PAIR_SUM_TOLERANCE
+# #6275 / #1902: the identity quarantine Alex ruled. Imported, never restated —
+# `market_identity` is the ONE home for this predicate and was lifted into
+# `app/` specifically so this payload could consume it.
+from app.utils.market_identity import (
+    IDENTITY_DISPUTED_CTE,
+    QUARANTINE_READER_REASON,
+    QUARANTINE_REASON,
+    QUARANTINE_RULE_TEXT,
+    identity_quarantine_ctes,
+)
 from app.utils.resolution_authority import (
     CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL,
     CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL,
@@ -3612,6 +3622,11 @@ def _calibration_population_ctes(
     return f"""{leading_ctes}market_info AS (
                 SELECT fm.id AS market_id, fm.source, fm.event_id, fm.group_id,
                     fm.commence_time,
+                    -- #6275: the market's OWN id, which is what the identity
+                    -- quarantine reads. Carried here rather than joined later so
+                    -- the quarantine runs on the same chunk-scoped population as
+                    -- every other exclusion (the C14 drift lesson).
+                    fm.external_id,
                     -- CAL-P168 (#1978): R3 matches the market's own TITLE. Named
                     -- `market_name` rather than `name` because `futures_outcomes`
                     -- also has a `name` and an unqualified one in a downstream
@@ -3643,6 +3658,24 @@ def _calibration_population_ctes(
                       (fm.market_metadata->>'datagolf_recovery_residual')::boolean,
                       false)
             ),
+            -- #6275 / #1902, queue 363 item 4 (ALEX RULING): the identity
+            -- quarantine. A market whose own ticker names a different game date
+            -- than the event it is linked to is bound to the WRONG GAME, so the
+            -- truth it would be graded against is some other game's. Alex ruled
+            -- those outcomes out of the published curves as under review until
+            -- identity-verified, and the ruling's verify line is explicit that
+            -- BOTH halves are required: "the published curve excludes them AND
+            -- the page states the exclusion with its count; a silent drop fails
+            -- this item." The exclusion is below; the count is published as
+            -- `quarantine` in the payload.
+            --
+            -- The predicate is NOT written here. It is rendered by
+            -- `app.utils.market_identity`, which also owns the Python form the
+            -- census script uses, because a shared eligibility predicate gets
+            -- ONE implementation — that module was lifted out of the census
+            -- script for exactly this consumer and then never consumed by it,
+            -- which is the defect #6275 reports.
+            {identity_quarantine_ctes(source_relation="market_info")},
             -- Queue 299: ONE per-market structural scan feeding every shape and
             -- result-authority rung. Counts are over ALL outcomes of the market
             -- (never the eligibility-filtered subset) — the same basis the
@@ -4334,6 +4367,12 @@ def _calibration_population_ctes(
                     -- Queue 299 rung 1: the market graded NOBODY — UNKNOWN truth,
                     -- not a set of losses (is_winner's default is False).
                     (nwm.market_id IS NOT NULL) AS is_no_winner_market,
+                    -- #6275 / #1902 (ALEX RULING): the market's own ticker names
+                    -- a different game day than the event it is attached to, so
+                    -- the truth it would be graded against is some other game's.
+                    -- Held OUT of the published curve as under review, and
+                    -- disclosed by count in the payload's `quarantine` key.
+                    (idm.market_id IS NOT NULL) AS is_identity_disputed,
                     -- Queue 299 rung 2: draw-capable duel with no draw member.
                     (dam.market_id IS NOT NULL) AS is_draw_authority_missing,
                     -- Queue 299 rung 3: a 'field' that captured <=1 member.
@@ -4446,6 +4485,9 @@ def _calibration_population_ctes(
                 LEFT JOIN player_props_placeholder_markets ppp
                     ON ppp.market_id = fo.market_id
                 LEFT JOIN no_winner_markets nwm ON nwm.market_id = fo.market_id
+                -- #6275: the identity quarantine. One row per disputed market,
+                -- so this cannot multiply outcomes.
+                LEFT JOIN {IDENTITY_DISPUTED_CTE} idm ON idm.market_id = fo.market_id
                 LEFT JOIN draw_authority_markets dam ON dam.market_id = fo.market_id
                 LEFT JOIN orphan_partition_markets opm ON opm.market_id = fo.market_id
                 LEFT JOIN nonexclusive_bundle_markets nbm ON nbm.market_id = fo.market_id
@@ -4516,6 +4558,13 @@ def _calibration_population_ctes(
                           AND NOT ro.is_no_winner_market
                           AND NOT ro.is_draw_authority_missing
                           AND NOT ro.is_orphan_partition
+                          -- #6275: the identity quarantine is market-level, so a
+                          -- disputed field loses EVERY member and would be
+                          -- incomplete anyway. Named explicitly all the same, so
+                          -- the survivor set here and the ``deduped`` WHERE stay
+                          -- readable as the same list rather than agreeing by
+                          -- luck of another rung.
+                          AND NOT ro.is_identity_disputed
                     ) AS survivor_n,
                     COUNT(*) FILTER (
                         WHERE ro.is_winner
@@ -4530,6 +4579,13 @@ def _calibration_population_ctes(
                           AND NOT ro.is_no_winner_market
                           AND NOT ro.is_draw_authority_missing
                           AND NOT ro.is_orphan_partition
+                          -- #6275: the identity quarantine is market-level, so a
+                          -- disputed field loses EVERY member and would be
+                          -- incomplete anyway. Named explicitly all the same, so
+                          -- the survivor set here and the ``deduped`` WHERE stay
+                          -- readable as the same list rather than agreeing by
+                          -- luck of another rung.
+                          AND NOT ro.is_identity_disputed
                     ) AS survivor_win_n
                 FROM ranked_outcomes ro
                 JOIN mex_field_candidates mfc ON mfc.market_id = ro.market_id
@@ -4656,6 +4712,12 @@ def _calibration_population_ctes(
                     AND NOT ro.is_no_winner_market
                     AND NOT ro.is_draw_authority_missing
                     AND NOT ro.is_orphan_partition
+                    -- #6275 / #1902 (ALEX RULING): identity-disputed markets are
+                    -- QUARANTINED from the published curves as under review.
+                    -- Read-side only (gotcha #21) — the rows are dropped, never
+                    -- re-graded, and `is_winner` is untouched. This is the line
+                    -- that makes the page's "not graded, not counted" copy true.
+                    AND NOT ro.is_identity_disputed
                     AND NOT ro.is_field_incomplete
                     AND
                     CASE
@@ -4815,6 +4877,13 @@ _COVERAGE_RUNG_PREDICATES: tuple[tuple[str, str], ...] = (
             n_outcomes_col="mrs_cov.n_outcomes",
         ),
     ),
+    # #6275 / #1902 (ALEX RULING). Ordered HERE, above the result-shape rungs,
+    # because the dispute is about WHICH GAME's truth this row would be paired
+    # with — a question that precedes whether that truth is well-shaped. Placing
+    # it after them would let `malformed_or_unknown_truth` claim the rows first
+    # and leave the bridge's count of the quarantine reading near zero while the
+    # payload's `quarantine` key reported thousands.
+    ("identity_disputed", "COALESCE(n.is_identity_disputed, false)"),
     ("question_ungraded", "n.outcome_id IS NULL"),
     (
         "malformed_or_unknown_truth",
@@ -5169,6 +5238,13 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                     -- exclusion block, so each rung's size is transparent.
                     COUNT(*) FILTER (WHERE is_no_winner_market) AS no_winner_excluded,
                     COUNT(DISTINCT market_id) FILTER (WHERE is_no_winner_market) AS no_winner_markets,
+                    -- #6275 / #1902 (ALEX RULING): the quarantine's own size.
+                    -- The ruling's verify line requires the page to state the
+                    -- exclusion WITH ITS COUNT -- a silent drop fails the item --
+                    -- so these two are not bookkeeping, they are the disclosure.
+                    COUNT(*) FILTER (WHERE is_identity_disputed) AS identity_disputed_excluded,
+                    COUNT(DISTINCT market_id) FILTER (WHERE is_identity_disputed)
+                        AS identity_disputed_markets,
                     COUNT(*) FILTER (WHERE is_draw_authority_missing) AS draw_authority_excluded,
                     COUNT(DISTINCT market_id) FILTER (WHERE is_draw_authority_missing) AS draw_authority_markets,
                     COUNT(*) FILTER (WHERE is_orphan_partition) AS orphan_partition_excluded,
@@ -5276,6 +5352,8 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
             + """,
                 MAX(ls.no_winner_excluded) AS no_winner_excluded,
                 MAX(ls.no_winner_markets) AS no_winner_markets,
+                MAX(ls.identity_disputed_excluded) AS identity_disputed_excluded,
+                MAX(ls.identity_disputed_markets) AS identity_disputed_markets,
                 MAX(ls.draw_authority_excluded) AS draw_authority_excluded,
                 MAX(ls.draw_authority_markets) AS draw_authority_markets,
                 MAX(ls.orphan_partition_excluded) AS orphan_partition_excluded,
@@ -6169,6 +6247,8 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         # Queue 299 (#1012): result-authority + shape rung counts.
         no_winner_excluded = _int0("no_winner_excluded")
         no_winner_markets_count = _int0("no_winner_markets")
+        identity_disputed_excluded = _int0("identity_disputed_excluded")
+        identity_disputed_markets_count = _int0("identity_disputed_markets")
         draw_authority_excluded = _int0("draw_authority_excluded")
         draw_authority_markets_count = _int0("draw_authority_markets")
         orphan_partition_excluded = _int0("orphan_partition_excluded")
@@ -7060,6 +7140,41 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         "by_source": by_source,
         "date_range": date_range,  # L2-78 Item 0: resolved-data span for the hero
         "corrections": CALIBRATION_CORRECTIONS,  # L2-73 §E trust panel
+        # =====================================================================
+        # #6275 / #1902, queue 363 item 4 — ALEX RULING, the reader-facing half.
+        #
+        # "the published curve excludes them AND the page states the exclusion
+        # with its count; a silent drop fails this item."
+        #
+        # The page has rendered a "Held out, under review" section off this key
+        # since CAL-P067; the key was never served, so the section rendered
+        # nothing and a reader was told nothing. Both halves land together on
+        # purpose: publishing the count while the rows were still IN the curves
+        # would have been a worse lie than the silence, because the section's
+        # own copy says these rows are "not graded, not counted".
+        #
+        # EMPTY LIST, NOT AN OMITTED KEY, when nothing is held. The page hides
+        # the section either way, but a served empty list is a measured "we
+        # checked and there is nothing", and an absent key is "we never looked" —
+        # the distinction gotcha #53 exists for.
+        #
+        # `reason` is what PRINTS, so it is plain words (notice 34); the machine
+        # key and the method sentence ride in `note`, which the page deliberately
+        # does not render.
+        # =====================================================================
+        "quarantine": (
+            [
+                {
+                    "reason": QUARANTINE_READER_REASON,
+                    "outcomes": identity_disputed_excluded,
+                    "status": "under_review",
+                    "note": f"{QUARANTINE_REASON}: {QUARANTINE_RULE_TEXT}",
+                    "markets": identity_disputed_markets_count,
+                }
+            ]
+            if identity_disputed_excluded > 0
+            else []
+        ),
         # #997 App Store ship-gate: the minimum resolved-outcome count for a
         # chartable sub-category. Shipped so web + native gate on the SAME bar
         # instead of hardcoding their own; by_category / by_sport above are
@@ -7300,6 +7415,16 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                 player_props_placeholder_excluded
                 - player_props_placeholder_temporary_excluded
             ),
+        },
+        # #6275 / #1902, queue 363 item 4 (ALEX RULING): the identity quarantine.
+        # Sits in the exclusions list like every other read-side filter, because
+        # that is what it is; the `quarantine` key below is the reader-facing
+        # half the ruling separately requires.
+        "identity_quarantine_filter": {
+            "applies_to": "all",
+            "rule": QUARANTINE_RULE_TEXT,
+            "excluded": identity_disputed_excluded,
+            "excluded_markets": identity_disputed_markets_count,
         },
         # Queue 299 rung 1 (#1012): result authority before anything else.
         "no_winner_filter": {
@@ -7665,6 +7790,13 @@ def population_predicate_fingerprint() -> str:
             # would otherwise change which rows a chunk reads while leaving
             # this digest identical.
             + inspect.getsource(_roster_pushdown_predicates)
+            # #6275 / #1902: the identity quarantine narrows the population,
+            # so it is a SQL-shaping input to it by this docstring's own rule.
+            # Rendered in another module, so the two hashes above never cover
+            # it: without this line a widened or corrected quarantine would
+            # change which rows qualify while this digest went on claiming the
+            # predicate had not moved.
+            + inspect.getsource(identity_quarantine_ctes)
         )
     except Exception:  # noqa: BLE001 — no source => never claim a match
         # A digest nothing can equal (``_same_predicate`` requires equality), so
@@ -7733,6 +7865,17 @@ def _main_input_fingerprint() -> str:
             # pushdown gate is a SQL-shaping helper CALLED by two of the roots
             # above, and a function's source never covers its callees.
             + inspect.getsource(_roster_pushdown_predicates)
+            # #6275 / #1902 -- the EIGHTH instance of the hole this docstring
+            # keeps describing, closed on the deploy that opens it.
+            # `identity_quarantine_ctes` renders the whole quarantine chain and
+            # lives in ANOTHER MODULE, so
+            # `inspect.getsource(_calibration_population_ctes)` hashes the CALL
+            # and never the SQL it returns. Editing the predicate -- widening
+            # it, changing the round-trip, changing the timezone -- would change
+            # which rows the curve publishes while leaving this digest
+            # identical, and a cursor banked under one quarantine would stay
+            # resumable by code carrying another.
+            + inspect.getsource(identity_quarantine_ctes)
         )
     except Exception:  # noqa: BLE001 — no source (frozen/optimized) => never carry
         source = f"unavailable:{time.time()}"
@@ -7755,6 +7898,11 @@ def _main_input_fingerprint() -> str:
         # Hashed by NAME as well as value, like its two neighbours above, so it
         # is greppable rather than an incidental substring.
         f"nonexclusive_bundle_cells={sorted(NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS)}",
+        # #6275 / #1902 -- hashed by NAME and by VALUE like its neighbours.
+        # The CTE name is interpolated into the emitted SQL (the join alias and
+        # the coverage rung predicate both reference it), so a rename is a SQL
+        # change the source hash above cannot see.
+        f"identity_quarantine_cte={IDENTITY_DISPUTED_CTE}",
         # CAL-P1002F (#1978) D66 — the SIXTH instance of the same hole, closed on
         # the deploy that opens it rather than after an incident. Its sibling
         # above is the whole argument: this tuple is INTERPOLATED into the emitted

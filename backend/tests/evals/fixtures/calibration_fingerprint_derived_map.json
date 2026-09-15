@@ -19,9 +19,10 @@
     "_main_futures_sql",
     "_roster_pushdown_predicates",
     "_virtual_market_ctes",
-    "compute_calibration_payload"
+    "compute_calibration_payload",
+    "identity_quarantine_ctes"
   ],
-  "input_count": 69,
+  "input_count": 74,
   "inputs": [
     {
       "covered_by_value": false,
@@ -266,6 +267,17 @@
       "sql_interpolated": false,
       "used_in": [
         "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": "50c00688a5caf1a3",
+      "impact": "sql_shaping",
+      "name": "IDENTITY_DISPUTED_CTE",
+      "origin": "app.utils.market_identity:IDENTITY_DISPUTED_CTE",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes"
       ]
     },
     {
@@ -606,6 +618,39 @@
       ]
     },
     {
+      "covered_by_value": false,
+      "definition_sha16": "5796f65f03a83c43",
+      "impact": "behavior_or_evidence",
+      "name": "QUARANTINE_READER_REASON",
+      "origin": "app.utils.market_identity:QUARANTINE_READER_REASON",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": "664e8c88faacaf79",
+      "impact": "sql_shaping",
+      "name": "QUARANTINE_REASON",
+      "origin": "app.utils.market_identity:QUARANTINE_REASON",
+      "sql_interpolated": true,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": "4b2807979ab6745e",
+      "impact": "sql_shaping",
+      "name": "QUARANTINE_RULE_TEXT",
+      "origin": "app.utils.market_identity:QUARANTINE_RULE_TEXT",
+      "sql_interpolated": true,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
       "covered_by_value": true,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
@@ -759,7 +804,7 @@
     },
     {
       "covered_by_value": false,
-      "definition_sha16": "1d4a70e368c2a0f1",
+      "definition_sha16": "9162b7d5b65cb5f8",
       "impact": "sql_shaping",
       "name": "_COVERAGE_RUNG_KEYS",
       "origin": "app.utils.calibration_coverage_bridge:RUNG_KEYS",
@@ -796,7 +841,7 @@
     },
     {
       "covered_by_value": false,
-      "definition_sha16": "402adc095fe06c0d",
+      "definition_sha16": "4b34b536921b04e2",
       "impact": "behavior_or_evidence",
       "name": "_build_coverage_census",
       "origin": "app.utils.calibration_coverage_bridge:build_coverage_census",
@@ -815,12 +860,24 @@
       "used_in": [
         "_calibration_population_ctes"
       ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": "e07ae873350e619d",
+      "impact": "sql_shaping",
+      "name": "identity_quarantine_ctes",
+      "origin": "app.utils.market_identity:identity_quarantine_ctes",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes",
+        "population_predicate_fingerprint"
+      ]
     }
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "1fc9112607c6606134bfba9febec4c8cfb567e02df8e1f34cc2e93236da2d839",
-  "uncovered_behavior_or_evidence": 33,
-  "uncovered_count": 56,
-  "uncovered_sql_shaping": 23
+  "source_sha256": "17ccf5f19247844a1689d78c33cda7f71550346502126db1237633cc26f2a07b",
+  "uncovered_behavior_or_evidence": 34,
+  "uncovered_count": 61,
+  "uncovered_sql_shaping": 27
 }

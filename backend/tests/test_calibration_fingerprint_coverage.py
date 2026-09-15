@@ -255,7 +255,19 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # It arrives UNCOVERED, like the three eligibility names already in this
         # census, and that is the same hole rather than a new one — see the
         # cross-module test below, where it is named.
-        assert artifact["input_count"] == 69
+        # #6275 (the identity quarantine, Alex ruling queue 363 item 4): 69 -> 74.
+        # Five names arrive from `app.utils.market_identity`:
+        # `identity_quarantine_ctes` (the SQL renderer), `IDENTITY_DISPUTED_CTE`
+        # (the CTE name, interpolated into the join alias and the coverage rung)
+        # and the three disclosure strings `QUARANTINE_REASON`,
+        # `QUARANTINE_RULE_TEXT`, `QUARANTINE_READER_REASON`.
+        #
+        # The renderer is HASHED AS A ROOT rather than by value, which is the
+        # form that matters for a function: its whole source is in the digest, so
+        # no edit to the quarantine SQL can leave the fingerprint still. It is
+        # counted uncovered here because this census reads `covered_by_value`
+        # over names DEFINED in the build module, and these are imported.
+        assert artifact["input_count"] == 74
         # CAL-P162: 4 -> 5. `MEX_NORMALIZE_THRESHOLD` joined the by-value set on
         # the deploy that made it decide PUBLICATION rather than only pricing.
         # CAL-P164 added no by-value input, so this stands still.
@@ -278,7 +290,11 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # to a renderer for a constant already on this list, not a second source
         # of truth; the reasoning and the measured limits are at the cross-module
         # test below, which is where the name is tracked.
-        assert artifact["uncovered_count"] == 56
+        # #6275: 56 -> 61, the five names above. Four of the five are prose or
+        # a CTE name; the fifth, `identity_quarantine_ctes`, is a predicate — and
+        # it is the one that does NOT widen the unguarded surface, because it was
+        # added to the hashed-root list in the same commit that introduced it.
+        assert artifact["uncovered_count"] == 61
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -409,7 +425,18 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # gains a function that renders a constant already on the list, not a
         # new source of truth. The honest summary is the one used for the
         # `*_RULE_TEXT` siblings: the same hole, one call wider.
-        assert artifact["uncovered_sql_shaping"] == 23
+        # #6275: 23 -> 27. Four of the five new names are flagged
+        # `sql_interpolated` by this census's heuristic (it marks any name inside
+        # a string-building BinOp), but only ONE of them shapes SQL:
+        # `IDENTITY_DISPUTED_CTE`, and it is hashed BY VALUE in
+        # `_main_input_fingerprint` for exactly that reason. `QUARANTINE_REASON`
+        # and `QUARANTINE_RULE_TEXT` are flagged because they are interpolated
+        # into the payload's `note` f-string, which is disclosure prose and not
+        # SQL at all — the same over-read the `*_RULE_TEXT` siblings above
+        # already earned an exemption for, and counted here rather than argued
+        # away. `identity_quarantine_ctes` is flagged and IS SQL, and is covered
+        # as a hashed root.
+        assert artifact["uncovered_sql_shaping"] == 27
 
     def test_the_five_hashed_roots_are_derived_not_declared_here(self, artifact):
         # D119 / CAL-P1090 added the fifth: `_roster_pushdown_predicates`, the
@@ -425,6 +452,15 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
             "_roster_pushdown_predicates",
             "_virtual_market_ctes",
             "compute_calibration_payload",
+            # #6275 adds the SIXTH: `identity_quarantine_ctes`, which renders the
+            # identity quarantine Alex ruled (queue 363 item 4). It is the same
+            # class as `_roster_pushdown_predicates` above — a SQL-shaping helper
+            # CALLED by a root, so the root's source hash can never cover the SQL
+            # it returns — with one difference worth naming: it lives in ANOTHER
+            # MODULE, so a widened or corrected quarantine could have been landed
+            # by a queue that never touched this file. Added as a root in the same
+            # commit that introduced the call, rather than left to be discovered.
+            "identity_quarantine_ctes",
         ]
 
     def test_the_proven_hole_is_listed_uncovered_and_sql_shaping(self, artifact):
@@ -497,14 +533,34 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
             if not r["covered_by_value"]
             and not r["origin"].startswith("app.tasks.precompute_calibration")
         )
+        # #6275 TAKES IT TO TWELVE (the identity quarantine, Alex ruling queue
+        # 363 item 4). Five names arrive from `app.utils.market_identity`, and
+        # the tier is the right place for all five: that module is owned by the
+        # matching/census side, so a queue that never opens this file can change
+        # what the calibration curve publishes. What bounds each one:
+        #   * `identity_quarantine_ctes` — the SQL. HASHED AS A ROOT (see the
+        #     test above), so an edit still invalidates every banked unit. The
+        #     detector cannot credit cross-module coverage, so it is counted.
+        #   * `IDENTITY_DISPUTED_CTE` — hashed BY VALUE in
+        #     `_main_input_fingerprint`, same as `PAIR_SUM_TOLERANCE`.
+        #   * the three `QUARANTINE_*` strings — disclosure prose, deliberately
+        #     NOT hashed. Hashing them would mean a copy edit discards a
+        #     multi-hour bank, and there is no half-and-half hazard to protect
+        #     against: the prose is assembled once at payload build, not per
+        #     chunk, so no two units can ever carry different copies of it.
         assert cross == [
             "CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL",
             "CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL",
+            "IDENTITY_DISPUTED_CTE",
             "PAIR_SUM_TOLERANCE",
             "PRICE_DERIVED_SOURCES_SQL",
+            "QUARANTINE_READER_REASON",
+            "QUARANTINE_REASON",
+            "QUARANTINE_RULE_TEXT",
             "_COVERAGE_RUNG_KEYS",
             "_build_coverage_census",
             "calibration_truth_eligible_sql",
+            "identity_quarantine_ctes",
         ]
         # The cross-module tier carries a definition digest precisely so that a
         # change to a constant this module does not own still moves the

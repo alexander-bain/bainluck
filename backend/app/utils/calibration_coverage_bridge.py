@@ -104,6 +104,13 @@ BRIDGE_RUNGS: tuple[tuple[str, str], ...] = (
         "so it cannot grade its own forecast.",
     ),
     (
+        "identity_disputed",
+        "The market's own ID names a different game day than the game it is "
+        "attached to, so the result it would be graded against belongs to some "
+        "other game. Held out of the published curves as under review until the "
+        "identity is verified.",
+    ),
+    (
         "question_ungraded",
         "The virtual question this outcome belongs to graded no winner at all, "
         "so its members are unknown truth rather than confident losses.",

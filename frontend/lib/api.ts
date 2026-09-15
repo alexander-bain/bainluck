@@ -2592,11 +2592,18 @@ export interface CalibrationCategoryMetric {
  * its size so the curve's denominator is never silently short.
  */
 export interface CalibrationQuarantine {
+  /**
+   * Printed verbatim as the row label, so it is reader copy and not a machine
+   * key (standing notice 34). The machine key and the method sentence ride in
+   * `note`, which the page deliberately does not render.
+   */
   reason: string;
   outcomes: number;
   status: "under_review";
   note?: string;
   opened?: string | null;
+  /** #6275: how many MARKETS the held outcomes came from. Not rendered today. */
+  markets?: number;
 }
 
 /** L2-73 §E: the corrections log — "what we found and fixed" (trust panel). */

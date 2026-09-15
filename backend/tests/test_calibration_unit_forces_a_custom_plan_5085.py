@@ -109,7 +109,26 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: ``CALIBRATION_POPULATION_VERSION`` moved q270 -> q271. An UNMOVED fingerprint
 #: would have meant the widening never reached the population SQL. The bank is
 #: discarded either way by the version bump, so the re-key costs nothing extra.
-LIVE_INPUT_FINGERPRINT = "661793560ea5219af31abeb6d3bbf6ca"
+#: RE-ANCHORED for #6275 (the identity quarantine, Alex ruling queue 363 item 4):
+#: ``66179356…`` -> ``c0a825a6…``. The move is again the EXPECTED one — two hashed
+#: inputs changed on purpose: ``_calibration_population_ctes`` now renders the
+#: quarantine chain, and ``identity_quarantine_ctes`` was ADDED to the hash list
+#: (it lives in another module, so the population root could never have covered
+#: the SQL it returns).
+#:
+#: THIS RE-ANCHOR IS NOT LIKE THE THREE ABOVE, and the difference is the whole
+#: reason to read this note. Each of those rode a ``CALIBRATION_POPULATION_VERSION``
+#: bump, so they could say "the bank is discarded either way by the version bump,
+#: so the re-key costs nothing extra". This change does NOT bump the version, so
+#: the re-key is NOT already paid for: deploying it discards every banked unit and
+#: restarts a multi-hour convergence. Whether it should instead ride the combined
+#: invalidation window ruling 024 describes — with the version bump and its
+#: published before/after census — is an ACTIVATION decision that was explicitly
+#: withheld from the lane that made this change (#6275, coordinator note
+#: 2026-09-14 18:37 PDT: "production fingerprint reset/rebuild/enable not yet
+#: authorized"). Re-anchoring the pin RECORDS the move; it does not decide when
+#: to pay for it.
+LIVE_INPUT_FINGERPRINT = "c0a825a6269f563c817f4488a13247c2"
 
 
 class _Db:

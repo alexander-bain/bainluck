@@ -402,6 +402,14 @@ class TestCalibrationPublicEndpoint:
             # census, not a population change, so nothing above it moved.
             "calibration_coverage_census",
             "corrections",  # L2-73 §E
+            # #6275 / #1902, Alex ruling queue 363 item 4. The page has rendered
+            # its "Held out, under review" section off `quarantine` since
+            # CAL-P067 and the key was never served, so the section rendered
+            # nothing while the disputed rows stayed in the curves. Both halves
+            # of the ruling land together: the filter applies the exclusion, the
+            # key states its count.
+            "quarantine",
+            "identity_quarantine_filter",
             "date_range",  # L2-78 Item 0: resolved-data span for the hero
             "generated_at",
             # Queue 324 / ruling 025: the serve-time declaration. Not a payload

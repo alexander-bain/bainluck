@@ -1481,6 +1481,26 @@ jobs:
             exit 1
           fi
 
+      - name: Identity quarantine SQL == Python predicate (real Postgres)
+        # #6275 / #1902, Alex ruling queue 363 item 4. The quarantine is applied
+        # to the published curve in SQL and stated in Python, so the predicate
+        # now has two forms. This differential is the only thing that keeps them
+        # one predicate: it runs the SHIPPED CTE chain and
+        # `market_identity_disputed` over one corpus at two event times and
+        # fails on any disagreement. The corpus is built from the four places a
+        # naive translation diverges (to_date rolling Feb 30 over, YY mapping
+        # 70-99 into the 1900s, a non-month RAISING mid-beat, and first-match
+        # regex semantics) plus the Eastern-vs-UTC night-game case, none of
+        # which any fake can decide. Same skip-detection as every gate here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_market_identity_quarantine_sql_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/identityquarantine.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/identityquarantine.txt; then
+            echo "::error::identity quarantine differential SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Stand-in event starts get the published hour (real Postgres)
         # #3544, the repair CERT-2075 named. `_kalshi_commence_time` stores the
         # venue's published `occurrence_datetime` on the MARKET; the user reads
