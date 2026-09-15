@@ -351,6 +351,22 @@ _NICKNAME_SEEDS = [
     ("kalshi-nickname-mls-revs", "Chicago Fire FC vs. New England Revolution", "soccer"),
 ]
 
+#: Outcome names for the nickname seeds, chosen so the outcome arm stays mute.
+#:
+#: Every other seed in this file is priced (#6327); these were the last name-only
+#: rows a /search test asserts on, and #3412's withdrawal made that shortcut fatal
+#: to them. They cannot simply be named "Patriots"/"Revolution" — the outcome-name
+#: arm would then answer `pats` and `revs`, the nickname arm under test would stop
+#: being the only thing that can reach these rows, and
+#: `test_the_nickname_arm_does_not_fan_out_across_sports` would be satisfied by a
+#: route that had lost the alias entirely.
+#:
+#: "Home" and "Away" contain none of `pat`, `patriot`, `rev`, `nba champion`, nor
+#: any token in the file-wide exclusion list. They are also the two words a real
+#: two-sided fixture market actually uses, so the corpus got more realistic, not
+#: less. One price for both legs, for the reason stated at `_SEED_PRICE`.
+_NICKNAME_OUTCOMES = ("Home", "Away")
+
 
 async def _seed(session):
     from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport, Team
@@ -541,19 +557,50 @@ async def _seed(session):
             )
         )
 
-    # #4728: the nickname corpus. Name-only, like the pool rows above — the
-    # nickname arm is a NAME arm, and an outcome would let a second arm answer.
+    # #4728: the nickname corpus. PRICED, with deliberately inert outcome names
+    # — the same correction #6327 made to the main corpus above, for the same
+    # reason and with the confound answered rather than dodged (#3412).
+    #
+    # These rows were name-only because "an outcome would let a second arm
+    # answer", which is a real hazard and is NOT what omitting the price
+    # protected against: the hazard is the outcome NAME joining the candidate
+    # set, not the price column existing. #3412 made /search withdraw a market
+    # holding no outcome rows at all, so a name-only seed is no longer a model
+    # of the markets this gate names — "Jets vs. Patriots" is an ordinary NFL
+    # fixture, and without this every nickname case reports a RECALL REGRESSION
+    # against a route behaving exactly as ruled.
+    #
+    # `_NICKNAME_OUTCOMES` is the confound's actual answer: two names that
+    # appear in NO query this file asserts on (checked against `pats`,
+    # `patriots`, `revs`, `nba champion` and the file-wide list at
+    # `_typeahead_pool_seeds` — `re`, `us`, `nba`, `mvp`, `fed`, `sun`, `yank`,
+    # `laker`, `celtic`, `masters`, `clark`, `d'or`). So the outcome-name arm
+    # still cannot answer any of them and the nickname arm remains the only
+    # thing that can reach these rows — which is the whole subject.
+    #
+    # The POOL seeds above stay name-only and unpriced: #3412 deliberately does
+    # not filter the typeahead, so nothing suppresses them. See the note at
+    # `typeahead_search`'s futures pool.
     for external_id, name, category in _NICKNAME_SEEDS:
-        session.add(
-            FuturesMarket(
-                source="kalshi",
-                external_id=external_id,
-                name=name,
-                status="open",
-                llm_sport_category=category,
-                resolution_date=datetime.now(timezone.utc) + timedelta(days=90),
-            )
+        market = FuturesMarket(
+            source="kalshi",
+            external_id=external_id,
+            name=name,
+            status="open",
+            llm_sport_category=category,
+            resolution_date=datetime.now(timezone.utc) + timedelta(days=90),
         )
+        session.add(market)
+        await session.flush()
+        for outcome_name in _NICKNAME_OUTCOMES:
+            session.add(
+                FuturesOutcome(
+                    market_id=market.id,
+                    external_id=f"{external_id}:{outcome_name}",
+                    name=outcome_name,
+                    current_probability=_SEED_PRICE,
+                )
+            )
 
     await session.commit()
 

@@ -8930,26 +8930,28 @@ async def typeahead_search(
     for market in ta_futures_ranked:
         if len(futures_pool) >= 5:
             break
-        # #3412: a dropdown row whose market holds no outcome row at all can only
-        # ever be a bare title sitting beside siblings that read "Lakers 62% ·
-        # Cavs 18%", and it spends one of just FIVE slots to do it. Measured on
-        # production today: 2 of 19 futures rows across `pats` / `niners` /
-        # `red sox` / `chiefs` / `lakers`.
+        # 🔴 #3412 DELIBERATELY STOPS AT /search AND DOES NOT FILTER HERE.
         #
-        # ONLY the no-rows population (#3412), NOT `_futures_card_has_no_answer`.
-        # An empty `top_outcomes` here has two causes and the other one is
-        # unmeasured on this surface: `60768956` ("TX-04 House election: Pat
-        # Fallon vote percent") draws an empty dropdown ladder while HOLDING
-        # outcome rows, so a truthiness test on the rendered list would withdraw
-        # it too, on no evidence. That is the exact mistake #6327's fence exists
-        # to prevent — measure the surface before you widen on it.
+        # An outcome-less market IS withdrawn from the search page, where it
+        # draws a full-height card reading "No outcomes available" — prose where
+        # a number belongs (notice 34 / D102). A DROPDOWN ROW WITHOUT AN ANSWER
+        # IS JUST A TITLE, which is honest navigation, so the same population is
+        # not a defect on this surface. That is the recorded discriminator, and
+        # the two surfaces differ on purpose.
         #
-        # Filtered HERE and not out of `ta_futures_ranked`, because the event
-        # CONCEPT pool below reads that same ranked list and an unpriced winner
-        # field is still a real tournament (see /search's note on
-        # `deduped_futures`).
-        if _futures_market_has_no_outcome_rows(market):
-            continue
+        # This was tried and reverted on evidence. Filtering the pool here
+        # reddens FOUR gates, and one of them exists precisely to catch it:
+        # `_typeahead_pool_seeds`' Korpatsch row (#4723,
+        # "Doubles: Huergo/Korpatsch vs Chan/Joint") is reachable by `pats` by
+        # INTERIOR SUBSTRING ONLY and is documented as "exactly the row that
+        # vanishes if the #4723 keys ever become a filter". It vanished. The
+        # gate was right and the change was wrong.
+        #
+        # So the dropdown keeps name-reachability for outcome-less rows, and
+        # `_futures_card_has_no_answer` is never asked on this path. If anyone
+        # later wants consistency between the two surfaces, that is a product
+        # decision about what a dropdown row is FOR — measure it, and expect to
+        # argue with #4723's control row, not with this comment.
         dedup_key = _normalize_futures_dedup_key(market)
         if dedup_key in seen_futures_keys:
             continue

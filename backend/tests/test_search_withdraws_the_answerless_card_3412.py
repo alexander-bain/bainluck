@@ -70,22 +70,22 @@ Collapsing them into one "is it empty" test is the tempting simplification and
 it destroys the ability to re-measure or revert either half. `TestTheTwoHalves`
 holds that line.
 
-**The typeahead takes the NARROW predicate only.** An empty rendered ladder in
-the dropdown has two causes, and only one is measured on that surface: market
-`60768956` ("TX-04 House election: Pat Fallon vote percent") serves an empty
-`top_outcomes` while HOLDING outcome rows. A truthiness test on the rendered
-list would withdraw it too, on no evidence — the exact mistake #6327's fence
-exists to prevent. `TestTheTypeahead` manufactures that specimen and asserts it
-SURVIVES.
+**THE SHIP STOPS AT /search, and the typeahead keeps the same population.** A
+card and a dropdown row are different objects: the card is a full-height slot
+printing prose where a number belongs (notice 34 / D102); a dropdown row without
+an answer is just a title, which is honest navigation. Filtering the dropdown
+was tried and reverted on evidence — it reddened four suites, one of which
+(#4723's Korpatsch control) exists precisely to catch a pool key that becomes a
+filter. `TestTheTypeaheadIsDeliberatelyNotInScope` records that, with the live
+population so the exclusion is a decision and not an observation of nothing.
 
 ═══ WHAT MUST NOT CHANGE ═══
 
 * A market with one priced rung keeps its card. Withdrawal on a search surface
   is a suppression; the reverse direction is asserted as hard as the forward one.
-* `deduped_futures` / `ta_futures_ranked` stay whole for event-CONCEPT
-  derivation. An unpriced winner field is still a real tournament and its page
-  link must survive the card's withdrawal — so the typeahead filter lives inside
-  the `futures_pool` loop, not on the ranked list.
+* `deduped_futures` stays whole for event-CONCEPT derivation. An unpriced winner
+  field is still a real tournament and its page link must survive the card's
+  withdrawal.
 * Families withdraw with the flat bucket. A family composes from the wider
   deduped set and is exactly the back door a half-applied withdrawal leaves open.
 * `_deduped_page` keeps feeding the headline-contender gate and the
@@ -246,16 +246,45 @@ class TestTheTwoHalves:
 
 
 # ---------------------------------------------------------------------------
-# 4. The typeahead takes the NARROW predicate, on its own measurement.
+# 4. THE SURFACE BOUNDARY. This ship stops at /search, and that is a decision.
 # ---------------------------------------------------------------------------
 
 
-class TestTheTypeahead:
-    def test_the_dropdown_specimen_holds_no_rows_and_goes(self):
-        """`61062725` / `60959118`: 2 of 19 futures rows across five real queries.
+class TestTheTypeaheadIsDeliberatelyNotInScope:
+    """🔴 Tried, reverted on evidence, and recorded here so it is not retried blind.
 
-        A bare title beside siblings reading "Lakers 62% · Cavs 18%", spending
-        one of only five dropdown slots.
+    The dropdown serves the same population — measured 2026-09-15, 2 of 19
+    futures rows across `pats` / `niners` / `red sox` / `chiefs` / `lakers`.
+    Filtering it looked obviously right and is not:
+
+    **A /search card and a dropdown row are different objects.** The card is a
+    full-height slot printing "No outcomes available" — prose where a number
+    belongs (notice 34 / D102). A dropdown row without an answer is just a
+    title, which is honest navigation to a page the reader asked for.
+
+    And the gate said so first. Filtering the pool reddened FOUR suites, one of
+    which exists precisely to catch this: `_typeahead_pool_seeds`' Korpatsch row
+    (#4723) is reachable by `pats` by INTERIOR SUBSTRING ONLY and is documented
+    as "exactly the row that vanishes if the #4723 keys ever become a filter".
+    It vanished. Also red: `test_route_typeahead_intent_5060`, and two more
+    pool-ordering cases in the recall contract.
+
+    Reopening this means arguing with #4723's control row, with a measurement of
+    what a dropdown row is FOR — not with a one-line change.
+    """
+
+    def test_the_typeahead_does_not_ask_either_withdrawal_predicate(self):
+        calls = _calls_inside("typeahead_search")
+
+        assert "_futures_card_has_no_answer" not in calls
+        assert "_futures_market_has_no_outcome_rows" not in calls
+
+    def test_the_dropdown_population_is_real_and_is_being_left_alone(self):
+        """NOT VACUOUS: the rows the dropdown keeps really are answer-less.
+
+        `61062725` / `60959118`, served by the live typeahead today. The test
+        above is a decision about these rows, not an observation that there are
+        none.
         """
         esports = _Market([], id=61062725, name="Rainbow Six Siege: ENTERPRISE vs Chiefs")
         hockey = _Market([], id=60959118, name="NL: Rapperswil-Jona Lakers vs. Fribourg")
@@ -263,15 +292,15 @@ class TestTheTypeahead:
         assert _futures_market_has_no_outcome_rows(esports) is True
         assert _futures_market_has_no_outcome_rows(hockey) is True
 
-    def test_a_market_with_rows_but_an_empty_dropdown_ladder_SURVIVES(self):
-        """🔴 The mixed-cause trap, manufactured.
+    def test_an_empty_dropdown_ladder_does_not_imply_an_empty_market(self):
+        """🔴 The mixed-cause trap, manufactured — still live for whoever retries this.
 
         Market `60768956`, "TX-04 House election: Pat Fallon vote percent",
         serves `top_outcomes: []` in the live dropdown while HOLDING outcome
-        rows. Its empty ladder has a different cause, unmeasured on this
-        surface. The typeahead filter keys on the ROWS, never on the rendered
-        list — a truthiness test on `top_outcomes` would delete this on no
-        evidence.
+        rows. Anyone reaching for "just drop the rows with no `top_outcomes`"
+        would delete this one too, on no evidence and for a different cause.
+        Any future typeahead rule must key on the ROWS, never on the rendered
+        list.
         """
         pat_fallon = _Market(
             [_Outcome(1, "Pat Fallon"), _Outcome(2, "Other")],
@@ -279,9 +308,7 @@ class TestTheTypeahead:
             name="TX-04 House election: Pat Fallon vote percent",
         )
 
-        # The rendered ladder really is empty — the trap is live, not hypothetical.
         assert _build_search_top_outcomes(pat_fallon, limit=3, lean=True) == []
-        # And the typeahead predicate still keeps it.
         assert _futures_market_has_no_outcome_rows(pat_fallon) is False
 
 
@@ -366,21 +393,23 @@ class TestTheRoutesActuallyAskTheQuestion:
             f"(2 call sites), found {len(uses)}"
         )
 
-    def test_the_typeahead_filters_on_the_narrow_predicate(self):
-        """Kills: the `continue` deleted from the dropdown pool loop."""
-        calls = _calls_inside("typeahead_search")
+    def test_the_withdrawal_is_confined_to_the_search_handler(self):
+        """The scope of the ship, asserted as wiring and not just as prose.
 
-        assert "_futures_market_has_no_outcome_rows" in calls, (
-            "the dropdown must not spend one of five slots on a bare title"
-        )
-
-    def test_the_typeahead_does_NOT_take_the_wide_predicate(self):
-        """The boundary, asserted as wiring and not just as prose.
-
-        Widening the dropdown to `_futures_card_has_no_answer` would withdraw
-        the #6327 population from a surface where it was never measured — and
-        would take `60768956` with it. If someone "makes the two surfaces
-        consistent", they must measure the typeahead first and then change this
-        line deliberately.
+        `search_events` is the ONLY function that may ask
+        `_futures_card_has_no_answer`. The typeahead's exclusion has its own
+        class below and its own reasons; this asserts nothing else in the module
+        has quietly grown the filter.
         """
-        assert "_futures_card_has_no_answer" not in _calls_inside("typeahead_search")
+        tree = ast.parse(inspect.getsource(_events_module))
+        askers = {
+            fn.name
+            for fn in ast.walk(tree)
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+            for c in ast.walk(fn)
+            if isinstance(c, ast.Call)
+            and getattr(c.func, "id", None) == "_futures_card_has_no_answer"
+        }
+        assert askers == {"search_events"}, (
+            f"the withdrawal reached a surface it was not measured on: {askers}"
+        )
