@@ -14,7 +14,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select, and_, or_, union, func, case, cast, any_, literal, Date, Integer, String, literal_column, text, true
@@ -171,7 +171,7 @@ EVENT_LIST_DEFAULT_STATUSES = [
 ]
 
 
-def event_list_window_condition(*, now, end_date, recent_start):
+def event_list_window_condition(*, now, end_date, recent_start, finished_start=None):
     """The time window `GET /api/events` applies on top of the status set.
 
     Three arms, and the status set above is a SEPARATE gate — excluding
@@ -181,7 +181,42 @@ def event_list_window_condition(*, now, end_date, recent_start):
     * live — regardless of when it started;
     * scheduled — **anywhere inside the same span a Final gets**, which is the
       recent floor at one end and the requested range at the other;
-    * completed / closed / **suspended** — started yesterday or today.
+    * completed / closed / **suspended** — started on or after `finished_start`.
+
+    🔴 #3246 — THE TWO FLOORS ARE NOW SEPARATE, AND THE SCHEDULED ARM KEEPS THE
+    NARROW ONE. `finished_start` defaults to `recent_start`, so every caller
+    that passes three kwargs is byte-identical and this is purely additive.
+
+    The results floor had to move because one floor could not serve both arms.
+    `recent_start` is `(now - 1 day)` truncated to midnight UTC, which
+    **breathes between 24h and 48h** across the day (it truncates *after*
+    subtracting) and so steps at `00:00Z` = 17:00 PDT. Measured by ux/1283 on
+    production 2026-09-15 with the floor 46.2h back, `/api/events?days=14`
+    against `/api/leagues/{key}` in the same minute:
+
+        americanfootball_ncaaf   0 completed of 78 rows  vs  8 held with scores
+        americanfootball_nfl     2 completed of 34       vs  8
+        tennis_atp               0 of 37                 vs  8
+        aussierules_afl          0 of 3                  vs  6
+
+    Sorting the kickoffs against the floor reproduces every count with nothing
+    left over, so it is the floor and not absent data — we hold
+    `Chicago 59 @ Carolina 37` and decline to serve it to `/sports/
+    americanfootball_nfl`. A weekly league loses its whole slate mid-evening
+    Pacific while the reader is looking at it; `days` cannot rescue it, because
+    `days` bounds the FUTURE only (`days=14` and `days=90` return byte-identical
+    payloads on AFL).
+
+    **The scheduled arm deliberately does NOT widen with it.** #3211 gave that
+    arm a backwards floor so a row still marked `scheduled` after its own
+    kickoff stays reachable — "its clock ran out and nothing reported an
+    ending". Those rows carry no score. A reader asking for more RESULTS is not
+    asking for three days of kickoff-passed ghosts beside the finals, so the
+    scheduled arm keeps `recent_start` however far back the results floor goes.
+
+    `suspended` continues to ride the finished arm, which is the point of it
+    being there: it is as recent as the Final it replaced, so it ages off with
+    the widened Finals rather than with the scheduled ghosts.
 
     `suspended` rides the finished window for the same reason it rides
     `recent_cutoff` in the feed: a suspended row is as recent as the Final it
@@ -213,6 +248,8 @@ def event_list_window_condition(*, now, end_date, recent_start):
     every row the old arm admitted, so this is purely additive: nothing that
     was reachable stopped being reachable.
     """
+    if finished_start is None:
+        finished_start = recent_start
     return or_(
         Event.status == "live",
         and_(
@@ -222,7 +259,7 @@ def event_list_window_condition(*, now, end_date, recent_start):
         ),
         and_(
             Event.status.in_(["completed", "closed", EVENT_SUSPENDED]),
-            Event.commence_time >= recent_start,
+            Event.commence_time >= finished_start,
         ),
     )
 
@@ -11174,6 +11211,27 @@ async def list_events(
     sport: Optional[str] = Query(None, description="Filter by sport key"),
     status: Optional[str] = Query(None, description="Filter by status"),
     days: int = Query(7, description="Number of days ahead to show"),
+    # #3246. `Annotated` rather than this file's usual `= Query(...)`, and the
+    # deviation is deliberate: 35 tests across four suites call `list_events`
+    # DIRECTLY as a plain function, so a parameter they do not pass keeps its
+    # default — and with `= Query(1, ...)` that default is the `Query` OBJECT,
+    # not `1`. `timedelta(days=<Query>)` then raises TypeError for every caller
+    # that simply did not care about this parameter. `Annotated` puts the
+    # metadata in the type and leaves the default a real int, so a direct call
+    # gets 1 and the whole class of breakage cannot happen here.
+    past_days: Annotated[
+        int,
+        Query(
+            ge=0,
+            le=14,
+            description=(
+                "Number of days back of finished results to show. 1 (the "
+                "default) is yesterday-and-today, which is what this route "
+                "has always served. Weekly leagues need more: NFL's Sunday "
+                "slate is already outside it by Monday evening Pacific."
+            ),
+        ),
+    ] = 1,
     limit: int = Query(200, ge=1, le=500, description="Max events to return"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
     db: AsyncSession = Depends(get_db),
@@ -11208,10 +11266,21 @@ async def list_events(
     end_date = now + timedelta(days=days)
     # Include completed events from yesterday and today
     yesterday_start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    # #3246 — the RESULTS floor, which the caller sizes. `past_days=1` computes
+    # `yesterday_start` to the microsecond, so the default is this route's
+    # long-standing behaviour and nothing changes for a caller that omits it.
+    # Truncated the same way deliberately: "results since a date" is the
+    # question a reader is asking, not "results in the last N×24 hours".
+    finished_start = (now - timedelta(days=past_days)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
 
     conditions.append(
         event_list_window_condition(
-            now=now, end_date=end_date, recent_start=yesterday_start
+            now=now,
+            end_date=end_date,
+            recent_start=yesterday_start,
+            finished_start=finished_start,
         )
     )
 
