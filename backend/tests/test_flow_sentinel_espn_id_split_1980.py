@@ -373,10 +373,20 @@ class _Result:
 class _Session:
     def __init__(self):
         self.score_writes = []
+        self.grade_retractions = []
         self.commits = 0
 
     async def execute(self, stmt, params=None):
         sql = str(stmt)
+        # Queue 067 — a corrected score also retracts the grades derived from
+        # it. BEFORE the population branch, which also says "COUNT(*) AS n":
+        # falling through to that one hands the retraction a bogus non-zero
+        # count, which is exactly how this harness first failed.
+        if "futures_outcomes" in sql:
+            if sql.lstrip().startswith("SELECT"):
+                return _Result([SimpleNamespace(n=0)])
+            self.grade_retractions.append(params)
+            return SimpleNamespace(rowcount=0)
         if "GROUP BY 1, 2" in sql:
             return _Result(list(_GROUPS))
         if "unnest(" in sql:

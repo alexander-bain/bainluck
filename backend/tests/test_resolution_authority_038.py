@@ -35,16 +35,13 @@ from app.utils.resolution_authority import (
 # whose grade is computed from OUR OWN `events` columns (scores / box score /
 # scoring plays) rather than from an external venue's settlement.
 #
-# MAINTAIN THIS. Adding a source that reads `events` to produce a grade means
-# adding it here — and if it is also in AUTHORITATIVE_SOURCES, this suite goes
-# red, which is the entire point of ruling 038.
-EVENTS_DERIVED_SOURCES: frozenset[str] = frozenset({
-    "box_score",          # events.box_score_data → player props
-    "box_score_bound",    # events.box_score_data, graded as a bound
-    "scoring_plays",      # events.box_score_data["scoring_plays"]
-    "game_score",         # events.home_score / events.away_score
-    "poly_total_score",   # events.home_score + events.away_score  (moved by 038)
-})
+# MAINTAIN THIS — in `app/utils/resolution_authority.py`, beside the tier sets it
+# is a subset of. It moved there in queue 067 because production needs it: it is
+# the exact set of grades that stop being true when `repair_event_final_scores`
+# corrects a wrong final. Adding a source that reads `events` to produce a grade
+# means adding it there, and if it is also in AUTHORITATIVE_SOURCES this suite
+# goes red, which is the entire point of ruling 038.
+from app.utils.resolution_authority import EVENTS_DERIVED_SOURCES  # noqa: E402
 
 
 class TestPolyTotalScoreIsTier2:
