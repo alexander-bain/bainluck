@@ -700,10 +700,13 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                     # visible defect #6056 is about, just at a slower cadence.
                     #
                     # Same decision as the livescores writer, on the same scale
-                    # (`statpal_live_position`), and deliberately NOT a
-                    # score comparison — see `live_write_would_revert`'s module
-                    # note for why ordering is by position in game time and a
-                    # falling score is a legitimate correction.
+                    # (`statpal_live_position`), ordered by position in game
+                    # time and NOT by a blanket "the score may not fall" clamp —
+                    # see `live_write_would_revert`'s module note for why a
+                    # falling score from a LATER moment is a legitimate
+                    # correction that has to land. #6251 added the one place the
+                    # score is consulted, an exact position tie, which this
+                    # writer passes the same way the other two do.
                     #
                     # Counted under its OWN name rather than folded into
                     # `reverting_live_skipped`: these are two writers on two
@@ -728,6 +731,10 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                         # suite can separate the two spellings today.
                         _observed_period = event.period
                         _observed_clock = event.game_clock
+                        # #6251: read with the position, for the tie-break and
+                        # for the compare-and-write that re-asserts it.
+                        _observed_home_score = event.home_score
+                        _observed_away_score = event.away_score
                         if live_write_is_premature(event.commence_time, now):
                             premature_live_skipped += 1
                             logger.warning(
@@ -741,6 +748,10 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                         elif live_write_would_revert(
                             _observed_period, _observed_clock,
                             _incoming_period, _incoming_clock,
+                            stored_home_score=_observed_home_score,
+                            stored_away_score=_observed_away_score,
+                            incoming_home_score=live_data.home_score,
+                            incoming_away_score=live_data.away_score,
                         ):
                             schedule_reverting_live_skipped += 1
                             logger.warning(
@@ -837,6 +848,8 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                                     session, event, _new_scores,
                                     observed_period=_observed_period,
                                     observed_clock=_observed_clock,
+                                    observed_home_score=_observed_home_score,
+                                    observed_away_score=_observed_away_score,
                                     what="StatPal schedule-sync live score",
                                 ):
                                     updated = True
@@ -1650,10 +1663,26 @@ async def _sync_statpal_livescores() -> dict:
                     # mistake as recomputing the guard between assignments.
                     _observed_period = event.period
                     _observed_clock = event.game_clock
+                    # #6251: the two score columns are read here for the same
+                    # reason and at the same instant as the two position ones —
+                    # the guard's tie-break consults them, and the
+                    # compare-and-write below re-asserts them.
+                    _observed_home_score = event.home_score
+                    _observed_away_score = event.away_score
 
                     live_state_is_stale = live_write_would_revert(
                         _observed_period, _observed_clock,
                         _incoming_period, fixture_clock,
+                        # #6251. THIS is the writer the measurement was taken on:
+                        # on MLB its `raw_status` IS the inning label ('Top 8th'),
+                        # so `_incoming_period` and the row tie for the whole
+                        # half-inning and the position comparison has nothing to
+                        # say. 221 of 292 measured MLB score reversions in the
+                        # three days to 2026-09-15 were that tie.
+                        stored_home_score=_observed_home_score,
+                        stored_away_score=_observed_away_score,
+                        incoming_home_score=fixture.home_score,
+                        incoming_away_score=fixture.away_score,
                     )
                     if live_state_is_stale:
                         reverting_live_skipped += 1
@@ -1758,6 +1787,8 @@ async def _sync_statpal_livescores() -> dict:
                         session, event, _live_values,
                         observed_period=_observed_period,
                         observed_clock=_observed_clock,
+                        observed_home_score=_observed_home_score,
+                        observed_away_score=_observed_away_score,
                         what="StatPal livescore",
                     )
                     if _live_values and not _live_write_landed:

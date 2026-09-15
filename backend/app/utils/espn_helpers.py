@@ -769,6 +769,12 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
     # (#6056 / CERT-2829).
     _observed_period = getattr(event, "period", None)
     _observed_clock = getattr(event, "game_clock", None)
+    # #6251: read BESIDE the position and on the same terms, because the guard's
+    # tie-break consults them and the compare-and-write re-asserts them. Read
+    # once, here, before the four live-state values are composed — a score read
+    # again at write time would be the row this same call had half-updated.
+    _observed_home_score = getattr(event, "home_score", None)
+    _observed_away_score = getattr(event, "away_score", None)
     # Collected here and written as ONE conditional statement below; never
     # assigned onto the ORM row. See the compare-and-write note.
     _live_values: dict = {}
@@ -779,6 +785,14 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
         _observed_clock,
         _new_period,
         ee.clock,
+        # #6251. On a clocked sport these rarely change the verdict — two ESPN
+        # fetches at the same clock to the second are uncommon — but ESPN is a
+        # writer on MLB rows too, where the position ties for a whole
+        # half-inning and this is the only discriminator there is.
+        stored_home_score=_observed_home_score,
+        stored_away_score=_observed_away_score,
+        incoming_home_score=ee.home_score,
+        incoming_away_score=ee.away_score,
     )
     if _live_state_is_stale:
         logger.info(
@@ -868,6 +882,8 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
         session, event, _live_values,
         observed_period=_observed_period,
         observed_clock=_observed_clock,
+        observed_home_score=_observed_home_score,
+        observed_away_score=_observed_away_score,
         what="ESPN live state",
     )
     if _live_values:

@@ -303,9 +303,17 @@ class TestTheGuardRefusesOnlyProvenReversions:
             "5:42 - 4th Quarter", "5:42", "6:41 - 4th Quarter", "6:41"
         )
 
-    def test_an_exact_tie_is_accepted(self):
+    def test_an_exact_tie_with_no_score_evidence_is_accepted(self):
         """A same-moment correction — two feeds at 5:21, one with a newer score —
-        is the case the reader most needs to land."""
+        is the case the reader most needs to land.
+
+        AMENDED BY #6251, and the amendment is narrow: a tie is still accepted
+        on the POSITION question, which is all this call asks. Once the caller
+        also hands over four readable scores the tie gains a second question —
+        see `TestTheInningTieIsBrokenByTheScore6251`. A caller that passes none,
+        as every caller did before #6251 and as `mlb_sync` still does, gets
+        exactly this answer.
+        """
         assert not live_write_would_revert(
             "5:21 - 4th Quarter", "5:21", "5:21 - 4th Quarter", "5:21"
         )
@@ -313,10 +321,23 @@ class TestTheGuardRefusesOnlyProvenReversions:
     def test_a_correction_at_a_later_moment_is_accepted(self):
         """THE REASON THIS ORDERS ON TIME AND NOT ON SCORE. A touchdown reversed
         on review arrives as a LOWER score from a LATER moment, and must land.
-        The guard cannot even see the score — which is the point — so the test
-        asserts the position it does see."""
+
+        Asserted twice over since #6251, because the second spelling is now the
+        load-bearing one: the guard CAN see the score, and must still let this
+        through on the strength of the position alone. A monotonic clamp is the
+        thing this module has rejected from the start."""
         assert not live_write_would_revert(
             "5:21 - 4th Quarter", "5:21", "4:58 - 4th Quarter", "4:58"
+        )
+        assert not live_write_would_revert(
+            "5:21 - 4th Quarter",
+            "5:21",
+            "4:58 - 4th Quarter",
+            "4:58",
+            stored_home_score=28,
+            stored_away_score=20,
+            incoming_home_score=28,
+            incoming_away_score=14,
         )
 
     def test_an_earlier_quarter_is_refused_however_small_its_clock(self):
@@ -359,6 +380,247 @@ class TestTheGuardRefusesOnlyProvenReversions:
         b = ("5:26 - 4th Quarter", "5:26")
         assert live_write_would_revert(*a, *b) is True
         assert live_write_would_revert(*b, *a) is False
+
+
+# ---------------------------------------------------------------------------
+# 2b. #6251: the inning tie, and the score that breaks it
+#
+# Baseball's label carries no clock, so `live_progress_position` gives every
+# observation inside one `Top 4th` the same tuple and the comparison above ties.
+# MEASURED on production over the three days to 2026-09-15, MLB score reversions
+# in `score_snapshots` split 221 pairs / 37 events at the SAME inning-state
+# against 1 pair at a different one and 70 with no period evidence — so the tie
+# is not a corner of this defect, it is very nearly all of it. Every one of the
+# 221 sat on a plain `Top N` / `Bottom N` label this module places correctly:
+# the guard was parsing them, finding them equal, and having nothing to say.
+#
+# The whole risk of the fix is that it becomes the monotonic clamp the module
+# note rejects, so the controls below carry as much weight as the refusals.
+# ---------------------------------------------------------------------------
+
+
+class TestTheInningTieIsBrokenByTheScore6251:
+    #: The production shape, in the vocabulary the measurement found: a StatPal
+    #: fixture and the row both labelled `Top 8th` (32 of the 221 pairs sat on
+    #: that exact label, the single commonest), the feed a run behind.
+    TIE = ("Top 8th", None, "Top 8th", None)
+
+    def test_a_run_cannot_leave_the_page_inside_one_half_inning(self):
+        assert live_write_would_revert(
+            *self.TIE,
+            stored_home_score=4,
+            stored_away_score=3,
+            incoming_home_score=4,
+            incoming_away_score=1,
+        )
+
+    def test_the_positions_really_do_tie_so_the_score_is_the_only_discriminator(self):
+        """NOT VACUOUS. If the two labels were separable this class would be
+        testing the rule above it, and every assertion here would pass for the
+        wrong reason. They are not separable — that is the defect."""
+        assert live_progress_position("Top 8th", None) == live_progress_position(
+            "Top 8th", None
+        )
+        assert not live_write_would_revert(*self.TIE)
+
+    def test_a_tie_that_scores_a_run_still_lands(self):
+        """The reader is waiting for exactly this write. A guard that refused it
+        would be worse than the flicker."""
+        assert not live_write_would_revert(
+            *self.TIE,
+            stored_home_score=4,
+            stored_away_score=1,
+            incoming_home_score=4,
+            incoming_away_score=3,
+        )
+
+    def test_a_tie_that_says_the_same_thing_lands(self):
+        assert not live_write_would_revert(
+            *self.TIE,
+            stored_home_score=4,
+            stored_away_score=3,
+            incoming_home_score=4,
+            incoming_away_score=3,
+        )
+
+    def test_either_side_falling_is_enough(self):
+        """One side up and the other down is not a lagging feed and not a
+        correction. Refusing costs one beat; accepting puts a score on the page
+        that no feed ever served."""
+        assert live_write_would_revert(
+            *self.TIE,
+            stored_home_score=4,
+            stored_away_score=3,
+            incoming_home_score=9,
+            incoming_away_score=1,
+        )
+
+    def test_the_refusal_heals_the_moment_the_inning_state_turns(self):
+        """THE ANSWER TO THE OBJECTION THAT KILLED THE MONOTONIC CLAMP. The bar
+        is the stored POSITION, which the game moves past on its own: the same
+        lower score the tie refuses is accepted as soon as the feed reaches the
+        next state, so a genuine mid-inning correction is deferred by at most one
+        half-inning and is never pinned."""
+        lower = dict(
+            stored_home_score=4,
+            stored_away_score=3,
+            incoming_home_score=4,
+            incoming_away_score=1,
+        )
+        assert live_write_would_revert("Top 8th", None, "Top 8th", None, **lower)
+        assert not live_write_would_revert("Top 8th", None, "Middle 8th", None, **lower)
+        assert not live_write_would_revert("Top 8th", None, "Bottom 8th", None, **lower)
+        assert not live_write_would_revert("Top 8th", None, "Top 9th", None, **lower)
+
+    def test_an_earlier_inning_is_still_refused_whatever_the_score_says(self):
+        """The first rule is untouched and still runs first — including when the
+        score RISES, which is a lagging feed's most convincing disguise."""
+        assert live_write_would_revert(
+            "Top 8th",
+            None,
+            "Bottom 2nd",
+            None,
+            stored_home_score=4,
+            stored_away_score=3,
+            incoming_home_score=9,
+            incoming_away_score=9,
+        )
+
+    @pytest.mark.parametrize("missing", ["stored_home", "stored_away", "in_home", "in_away"])
+    def test_one_missing_score_is_no_evidence_and_leaves_the_tie_accepted(self, missing):
+        """A comparison missing a side cannot say anything, and at a tie
+        "cannot say" has to mean "accept" — the pre-#6251 answer."""
+        scores = {
+            "stored_home_score": 4,
+            "stored_away_score": 3,
+            "incoming_home_score": 4,
+            "incoming_away_score": 1,
+        }
+        scores[
+            {
+                "stored_home": "stored_home_score",
+                "stored_away": "stored_away_score",
+                "in_home": "incoming_home_score",
+                "in_away": "incoming_away_score",
+            }[missing]
+        ] = None
+        assert not live_write_would_revert(*self.TIE, **scores)
+
+    def test_a_zero_is_a_score_and_not_an_absence(self):
+        """The false-zero class, which is why `_as_score` never coerces to 0. A
+        feed that serves 0-0 for "I have nothing" would otherwise wipe a 4-3
+        game, and at a tie that is precisely a reversion."""
+        assert live_write_would_revert(
+            *self.TIE,
+            stored_home_score=4,
+            stored_away_score=3,
+            incoming_home_score=0,
+            incoming_away_score=0,
+        )
+
+    @pytest.mark.parametrize("junk", ["", "  ", "abc", None, object(), True, False])
+    def test_an_unreadable_score_is_no_evidence_rather_than_an_exception(self, junk):
+        """Two of the three writers read these off duck-typed fixture objects
+        that promise nothing about the type. An exception here would take down a
+        live sync pass; a coercion to 0 would fabricate a reversion."""
+        assert not live_write_would_revert(
+            *self.TIE,
+            stored_home_score=4,
+            stored_away_score=3,
+            incoming_home_score=junk,
+            incoming_away_score=1,
+        )
+
+    def test_a_numeric_string_is_read_as_the_score_it_is(self):
+        """The other half of `_as_score`: total, not merely defensive."""
+        assert live_write_would_revert(
+            *self.TIE,
+            stored_home_score="4",
+            stored_away_score="3",
+            incoming_home_score="4",
+            incoming_away_score="1",
+        )
+
+    def test_a_clocked_tie_is_deliberately_NOT_covered(self):
+        """THE FENCE, and the test that stops this becoming the monotonic clamp.
+
+        `5:21 - 4th Quarter` against itself is two feeds agreeing on the SECOND
+        and disagreeing on the score, which is what a correction looks like; a
+        lagging clocked feed lags in its clock, so the positional rule has
+        already caught it. Only a label that names a SPAN — an inning — earns
+        the tie-break. Found by
+        `test_schedule_sync_accepts_a_same_position_correction`, which this
+        change reddened on its first draft and which was right.
+        """
+        assert not live_write_would_revert(
+            "5:21 - 4th Quarter",
+            "5:21",
+            "5:21 - 4th Quarter",
+            "5:21",
+            stored_home_score=28,
+            stored_away_score=20,
+            incoming_home_score=28,
+            incoming_away_score=14,
+        )
+
+    def test_an_end_of_period_tie_is_an_instant_and_is_not_covered_either(self):
+        """`End of 3rd Quarter` carries the same `0.0` elapsed as an inning, so
+        it is the near-miss this fence has to exclude on purpose: it is a moment
+        the game passes through once, not a stretch it sits in."""
+        assert not live_write_would_revert(
+            "End of 3rd Quarter",
+            None,
+            "End of 3rd Quarter",
+            None,
+            stored_home_score=28,
+            stored_away_score=20,
+            incoming_home_score=28,
+            incoming_away_score=14,
+        )
+
+    def test_the_two_ladders_share_a_number_line_and_a_collision_is_not_a_tie(self):
+        """`Top 1st` and `End of 5th Period` both place at `(5.0, 0.0)` — two
+        ladders on one number line, which is harmless only because no row ever
+        holds both. Requiring BOTH sides to name a span keeps the tie-break off
+        that collision rather than relying on the harmlessness."""
+        assert live_progress_position("Top 1st", None) == live_progress_position(
+            "End of 5th Period", None
+        )
+        assert not live_write_would_revert(
+            "Top 1st",
+            None,
+            "End of 5th Period",
+            None,
+            stored_home_score=4,
+            stored_away_score=3,
+            incoming_home_score=0,
+            incoming_away_score=0,
+        )
+
+    def test_it_stays_silent_where_it_cannot_place_the_observation(self):
+        """The score never promotes an unplaceable pair into a refusal — no
+        position, no tie, no tie-break. Otherwise the clamp would be back in
+        through the door marked `Halftime`."""
+        assert not live_write_would_revert(
+            "Halftime",
+            None,
+            "Halftime",
+            None,
+            stored_home_score=4,
+            stored_away_score=3,
+            incoming_home_score=0,
+            incoming_away_score=0,
+        )
+        assert not live_write_would_revert(
+            "Final",
+            None,
+            "Final",
+            None,
+            stored_home_score=4,
+            stored_away_score=3,
+            incoming_home_score=0,
+            incoming_away_score=0,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -624,7 +886,17 @@ async def test_a_lower_score_from_a_later_moment_still_lands_from_espn():
 
 
 class _Fixture:
-    def __init__(self, start_time, home, away, *, raw_status, game_clock, scores):
+    def __init__(
+        self,
+        start_time,
+        home,
+        away,
+        *,
+        raw_status,
+        game_clock,
+        scores,
+        clock_field_served=True,
+    ):
         self.start_time = start_time
         self.home_team = home
         self.away_team = away
@@ -634,10 +906,21 @@ class _Fixture:
         self.home_score, self.away_score = scores
         self.raw_status = raw_status
         self.game_clock = game_clock
-        self.clock_field_served = True
+        # False is the BASEBALL shape and not a convenience: StatPal's baseball
+        # board carries no `timer` key at all (it carries `outs` there), so its
+        # silence is structural rather than a cleared clock. Defaulted True so
+        # every clocked specimen above is untouched.
+        self.clock_field_served = clock_field_served
 
 
-async def _run_livescores(monkeypatch, *, fixtures, events, interloper=None):
+async def _run_livescores(
+    monkeypatch,
+    *,
+    fixtures,
+    events,
+    interloper=None,
+    sport_key="americanfootball_nfl",
+):
     """Drive the real `_sync_statpal_livescores` and return the rows.
 
     `interloper(engine, event_ids)` makes the realtime/realtime race
@@ -670,7 +953,7 @@ async def _run_livescores(monkeypatch, *, fixtures, events, interloper=None):
                 instance.__dict__[attr] = value.replace(tzinfo=timezone.utc)
 
     now = datetime.now(timezone.utc)
-    sport = Sport(key="americanfootball_nfl", name="americanfootball_nfl")
+    sport = Sport(key=sport_key, name=sport_key)
     sync_session.add(sport)
     sync_session.flush()
     ids = []
@@ -857,6 +1140,97 @@ async def test_statpal_still_writes_a_fixture_from_later_in_the_game(monkeypatch
     assert rows[0].period == "5:21 - 4th Quarter"
     assert len(snaps) == 1
     assert result["reverting_live_skipped"] == 0
+
+
+def _mlb_livescore(*, inning, scores):
+    """The shape StatPal's MLB board actually serves, read from the venue.
+
+    `GET /api/v1/mlb/livescores` at 2026-09-15 01:05Z returned the inning label
+    verbatim in `status` — `Top 7th`, `End 6th`, `Middle 5th`, `Bottom 5th` —
+    and no `timer` key, which `_normalize_status` maps to `live` and the sync
+    then keeps as `raw_status`. So `_incoming_period` on this path IS the inning
+    label, and it ties with the row for the whole half-inning.
+    """
+    return _Fixture(
+        datetime.now(timezone.utc) - timedelta(hours=2),
+        "Boston Red Sox",
+        "New York Yankees",
+        raw_status=inning,
+        game_clock=None,
+        scores=scores,
+        clock_field_served=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_run_does_not_leave_an_mlb_page_inside_one_half_inning(monkeypatch):
+    """#6251 END TO END, on the writer the measurement was taken on.
+
+    The row is at 4–3 in the `Top 8th`; the 30-second StatPal beat offers 4–1 at
+    the same `Top 8th`. Before this fix the positions tied, the guard accepted,
+    and two runs left the page in front of a reader — 221 of the 292 MLB score
+    reversions measured in the three days to 2026-09-15 were this, and 32 of
+    them on this very label.
+    """
+    rows, snaps, result = await _run_livescores(
+        monkeypatch,
+        sport_key="baseball_mlb",
+        fixtures=[_mlb_livescore(inning="Top 8th", scores=(4, 1))],
+        events=[
+            ("Boston Red Sox", "New York Yankees", None, "Top 8th", (4, 3)),
+        ],
+    )
+
+    assert (rows[0].home_score, rows[0].away_score) == (4, 3), (
+        "the two runs must not leave the page"
+    )
+    assert rows[0].period == "Top 8th"
+    assert result["reverting_live_skipped"] == 1
+    assert snaps == [], (
+        "and the refused observation must not reach the Score Differential "
+        "chart either — the table this defect was diagnosed from"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_mlb_refusal_lifts_when_the_half_inning_turns(monkeypatch):
+    """THE TWIN, and the answer to the objection that killed the clamp
+    (gotcha #43). The identical lower score, offered one inning-state later,
+    must land — so a genuine correction waits at most a half-inning and is never
+    pinned. Without this the test above passes with the writer disabled."""
+    rows, snaps, result = await _run_livescores(
+        monkeypatch,
+        sport_key="baseball_mlb",
+        fixtures=[_mlb_livescore(inning="Middle 8th", scores=(4, 1))],
+        events=[
+            ("Boston Red Sox", "New York Yankees", None, "Top 8th", (4, 3)),
+        ],
+    )
+
+    assert (rows[0].home_score, rows[0].away_score) == (4, 1), (
+        "a correction from a later moment still lands"
+    )
+    assert rows[0].period == "Middle 8th"
+    assert result["reverting_live_skipped"] == 0
+
+
+@pytest.mark.asyncio
+async def test_an_mlb_run_scoring_inside_one_half_inning_still_lands(monkeypatch):
+    """The OTHER twin, and the one a reader notices first: the tie-break must
+    only ever refuse downwards. A run scored in the `Top 8th` arrives at the
+    same label and has to reach the page immediately."""
+    rows, snaps, result = await _run_livescores(
+        monkeypatch,
+        sport_key="baseball_mlb",
+        fixtures=[_mlb_livescore(inning="Top 8th", scores=(4, 5))],
+        events=[
+            ("Boston Red Sox", "New York Yankees", None, "Top 8th", (4, 3)),
+        ],
+    )
+
+    assert (rows[0].home_score, rows[0].away_score) == (4, 5)
+    assert result["reverting_live_skipped"] == 0
+    assert len(snaps) == 1
 
 
 @pytest.mark.asyncio
@@ -4833,3 +5207,236 @@ def test_no_undeclared_appender_writes_a_score_snapshot_6056():
         f"declared as a snapshot appender but no longer constructs one: "
         f"{stale} — delete the entry, the claim it carries is spent"
     )
+
+
+# ---------------------------------------------------------------------------
+# 9. #6251: the tie-break's own inputs are re-asserted at write time
+#
+# Once the decision reads the two score columns, a compare-and-write that
+# predicates only on the position is arbitrating on a number another writer may
+# already have moved — the same class of mistake #6056 exists to close, one
+# column over. So the three producers that write a score now hand their observed
+# scores to `write_live_state_if_unmoved` as well as to the guard.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_writer_that_moves_only_the_score_loses_the_race_6251(monkeypatch):
+    """THE POSITION IS UNTOUCHED AND THE WRITE MUST STILL BE REFUSED.
+
+    The interloper commits `4–5` while leaving `Top 8th` exactly where it was,
+    so a predicate on the two position columns alone matches and the slow
+    producer's `4–3` lands on top of a run that had already scored. This is the
+    specimen the position predicate structurally cannot see.
+    """
+    from sqlalchemy import update
+    from sqlalchemy.orm import Session
+
+    from app.models.models import Event
+
+    def _moves_only_the_score(engine, ids):
+        other = Session(engine, expire_on_commit=False)
+        try:
+            other.execute(
+                update(Event).where(Event.id == ids[0]).values(home_score=4, away_score=5)
+            )
+            other.commit()
+        finally:
+            other.close()
+
+    rows, snaps, result = await _run_livescores(
+        monkeypatch,
+        sport_key="baseball_mlb",
+        fixtures=[_mlb_livescore(inning="Top 8th", scores=(4, 3))],
+        events=[("Boston Red Sox", "New York Yankees", None, "Top 8th", (4, 2))],
+        interloper=_moves_only_the_score,
+    )
+
+    assert (rows[0].home_score, rows[0].away_score) == (4, 5), (
+        "the run that scored under us must stay scored"
+    )
+    # The sequential guard is exonerated — 4–3 over 4–2 is a run SCORING, which
+    # it was right to accept about the row it was shown. The race refused it.
+    assert result["reverting_live_skipped"] == 0
+    assert result["livescore_live_write_lost_race"] == 1
+    assert snaps == []
+
+
+@pytest.mark.asyncio
+async def test_an_uncontested_mlb_write_still_lands_under_the_wider_predicate(
+    monkeypatch,
+):
+    """THE TWIN (gotcha #43). Widening a compare-and-write's predicate is how one
+    quietly starts refusing everything, and a predicate that refuses everything
+    passes the test above while freezing every live score on the site."""
+    rows, snaps, result = await _run_livescores(
+        monkeypatch,
+        sport_key="baseball_mlb",
+        fixtures=[_mlb_livescore(inning="Bottom 8th", scores=(4, 3))],
+        events=[("Boston Red Sox", "New York Yankees", None, "Top 8th", (4, 2))],
+    )
+
+    assert (rows[0].home_score, rows[0].away_score) == (4, 3)
+    assert rows[0].period == "Bottom 8th"
+    assert result["livescore_live_write_lost_race"] == 0
+    assert len(snaps) == 1
+
+
+@pytest.mark.asyncio
+async def test_one_observed_score_without_the_other_raises_rather_than_half_guards():
+    """`_score_would_regress` needs all four sides to say anything, so a decision
+    that read one score read both. A one-sided predicate would compile, run, be
+    green, and guard a decision nobody took — which is the failure mode
+    `write_row_if_unmoved` already refuses an empty `observed` for."""
+    from app.utils.live_state_write import write_live_state_if_unmoved
+
+    class _Ev:
+        id = 1
+        period = None
+        game_clock = None
+
+    with pytest.raises(ValueError, match="#6251"):
+        await write_live_state_if_unmoved(
+            None,
+            _Ev(),
+            {"home_score": 1},
+            observed_period=None,
+            observed_clock=None,
+            observed_home_score=4,
+        )
+
+
+def test_every_score_writing_producer_hands_its_scores_to_the_guard_and_the_cas_6251():
+    """THE UNADOPTED-CALL-SITE GUARD, and the reason it is worth a test.
+
+    A tie-break is a property of a CALL, not of the function that implements it:
+    a producer that keeps calling `live_write_would_revert` with four positional
+    arguments gets the pre-#6251 answer, silently, and no behavioural test in
+    this suite covers a writer that does not exist yet. So the claim asserted
+    here is the one the module note makes — every producer that WRITES a score
+    passes four scores to the guard and two observed scores to the
+    compare-and-write.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    import app.tasks.statpal_sync as statpal_sync
+    import app.utils.espn_helpers as espn_helpers
+
+    producers = {
+        "_sync_statpal_livescores": statpal_sync._sync_statpal_livescores,
+        "_sync_statpal_schedules": statpal_sync._sync_statpal_schedules,
+        "update_event_fields_from_espn": espn_helpers.update_event_fields_from_espn,
+    }
+    guard_kwargs = {
+        "stored_home_score",
+        "stored_away_score",
+        "incoming_home_score",
+        "incoming_away_score",
+    }
+    cas_kwargs = {"observed_home_score", "observed_away_score"}
+
+    for name, fn in producers.items():
+        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        ]
+
+        guards = [c for c in calls if c.func.id == "live_write_would_revert"]
+        assert guards, f"{name} no longer calls the guard at all"
+        for call in guards:
+            supplied = {kw.arg for kw in call.keywords}
+            assert guard_kwargs <= supplied, (
+                f"{name} calls live_write_would_revert without "
+                f"{sorted(guard_kwargs - supplied)} — this producer writes a "
+                "score, so its ties are exactly the #6251 population and it "
+                "would silently get the pre-fix answer"
+            )
+
+        writes = [c for c in calls if c.func.id == "write_live_state_if_unmoved"]
+        assert writes, f"{name} no longer compare-and-writes at all"
+        for call in writes:
+            supplied = {kw.arg for kw in call.keywords}
+            assert cas_kwargs <= supplied, (
+                f"{name} compare-and-writes without {sorted(cas_kwargs - supplied)} "
+                "— the decision read those columns, so the write must re-assert "
+                "them or the tie-break arbitrates on a stale number"
+            )
+
+
+def test_the_win_probability_pass_writes_no_score_so_it_passes_none_6251():
+    """THE DELIBERATE NON-ADOPTION, asserted so it cannot become an oversight.
+
+    `mlb_sync`'s win-probability pass calls the same guard and the same
+    compare-and-write, and passes no scores to either — correctly, because it
+    writes `period` and `game_clock` only and therefore cannot revert a score.
+    Handing it scores would only let a concurrent score change veto a perfectly
+    good inning label.
+
+    The two halves are asserted together on purpose: the day this pass starts
+    writing a score, the first assertion reddens and the second is the work to
+    do. A comment saying so would not have reddened.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    import app.tasks.mlb_sync as mlb_sync
+
+    tree = ast.parse(
+        textwrap.dedent(inspect.getsource(mlb_sync._sync_mlb_win_probability))
+    )
+
+    # (a) it writes no score — neither as an ORM assignment nor into the dict
+    #     the compare-and-write sends.
+    score_columns = {"home_score", "away_score"}
+    assigned = {
+        target.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Attribute)
+    }
+    assert not (score_columns & assigned), (
+        "the win-probability pass has started ORM-assigning a score — it is now "
+        "a score writer and owes the #6251 arguments"
+    )
+    # Scoped to the dict the compare-and-write is actually given. A probe over
+    # every subscript assignment in the function is the wrong instrument and
+    # says so loudly: this pass also builds a local `game_state["home_score"]`
+    # for the win-probability model, which is not a write to the row.
+    written = {
+        target.slice.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Subscript)
+        and isinstance(target.value, ast.Name)
+        and target.value.id == "_live_values"
+        and isinstance(target.slice, ast.Constant)
+        and isinstance(target.slice.value, str)
+    }
+    assert not (score_columns & written), (
+        "the win-probability pass has started composing a score into its "
+        "live-state values — it owes the #6251 arguments"
+    )
+    # Not vacuous: the same probe DOES see the two keys this pass really writes,
+    # so an empty set could never manufacture the pass.
+    assert written == {"period", "game_clock"}, written
+
+    # (b) and so it passes no score to either the guard or the write.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in (
+                "live_write_would_revert",
+                "write_live_state_if_unmoved",
+            ):
+                supplied = {kw.arg for kw in node.keywords}
+                assert not any("score" in (arg or "") for arg in supplied), (
+                    f"{node.func.id} in the win-probability pass was handed a "
+                    "score, but this pass writes none — see the comment beside "
+                    "the call"
+                )

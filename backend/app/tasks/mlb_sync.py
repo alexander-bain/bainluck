@@ -247,6 +247,16 @@ async def _sync_mlb_win_probability():
                     if _incoming_clock is not None:
                         _live_values["game_clock"] = _incoming_clock
 
+                    # #6251: NO SCORES ARE PASSED HERE, AND THAT IS THE RIGHT
+                    # CALL, NOT AN OMISSION. The tie-break exists to stop a
+                    # writer taking a run back off the row; this pass writes
+                    # `period` and `game_clock` only — `_live_values` two lines
+                    # up is the whole field set — so it cannot revert a score
+                    # and has nothing for the tie-break to arbitrate. Handing it
+                    # scores would only let a concurrent score change veto a
+                    # perfectly good inning label. Asserted by
+                    # `test_the_win_probability_pass_writes_no_score_so_it_passes_none_6251`,
+                    # which reddens if this pass ever starts writing one.
                     if _live_values and live_write_would_revert(
                         _observed_period, _observed_clock,
                         _incoming_period, _incoming_clock,

@@ -125,33 +125,80 @@ def normalize_live_game_state(
 # second one is simply BEHIND, and nothing stops a behind observation
 # overwriting an ahead one.
 #
-# ── WHY THIS ORDERS BY GAME TIME AND NEVER LOOKS AT THE SCORE ──
+# ── WHY THE PRIMARY DISCRIMINATOR IS GAME TIME AND NOT THE SCORE ──
 #
-# The obvious guard — "a score may not go down" — is the wrong one and was
+# The obvious guard — "a score may not go down, ever" — is the wrong one and was
 # rejected. A score going down is exactly what a legitimate correction looks
-# like: a touchdown reversed on review, a point taken off after a penalty. A
-# monotonic clamp would pin the first wrong number ever written and call it
-# truth, which is a worse failure than the flicker because it never heals.
+# like: a touchdown reversed on review, a point taken off after a penalty. An
+# UNCONDITIONAL monotonic clamp would pin the first wrong number ever written
+# and call it truth, which is a worse failure than the flicker because it never
+# heals.
 #
-# So the discriminator is WHEN the observation was taken, in game time, and the
-# score is not consulted at all. An observation positioned strictly EARLIER in
-# the game than the state already stored cannot be news, whatever it says; one
-# positioned at or after it is accepted, whatever it says — including a lower
-# score. That is the whole rule.
+# So the discriminator is WHEN the observation was taken, in game time. An
+# observation positioned strictly EARLIER in the game than the state already
+# stored cannot be news, whatever it says; one positioned strictly AFTER it is
+# accepted, whatever it says — including a lower score. That is the rule, and
+# for every sport that carries a clock it is the whole rule.
+#
+# ── #6251: AT A POSITION TIE, AND ONLY THERE, THE SCORE BREAKS IT ──
+#
+# Game time is a discriminator only as fine as the label it is read from, and
+# baseball's label has no clock in it. `live_progress_position` gives every
+# observation inside one `Top 4th` the identical tuple `(inning*4 + state, 0.0)`,
+# so the comparison above ties, the guard accepts, and a lagging feed overwrites
+# an ahead one with nothing standing in its way. That is not a corner: MEASURED
+# on production over the three days to 2026-09-15, MLB score reversions in
+# `score_snapshots` split
+#
+#     221 pairs / 37 events   at the SAME inning-state   <- ties, accepted today
+#       1 pair  /  1 event    at a different one         <- the rule above
+#      70 pairs / 22 events   no period evidence either side
+#
+# and every one of the 221 sat on a plain `Top N` / `Bottom N` label that this
+# module places perfectly well. The guard is not failing to parse them; it is
+# parsing them, finding them equal, and having nothing else to say.
+#
+# The tie-break is the score, and the reason that is NOT the clamp rejected
+# above is how narrowly it is scoped. Three fences, and the first is the one
+# that matters:
+#
+#   * IT APPLIES ONLY WHERE THE LABEL NAMES A SPAN, never where it names an
+#     instant — see `_position_names_a_span`. A clocked tie (`5:21 - 4th
+#     Quarter` against itself) is two feeds agreeing on the second and
+#     disagreeing on the score, which IS a correction and still lands at once; a
+#     lagging clocked feed lags in its clock, so the rule above has it already.
+#     An inning tie agrees on nothing finer than "somewhere in this half-inning".
+#   * It refuses only while the position is UNCHANGED. The instant the game
+#     moves to the next inning-state the incoming position is strictly later,
+#     the first rule accepts it, and the lower score lands. So a genuine
+#     correction is DEFERRED by at most one half-inning, never pinned. The
+#     objection to the clamp was that it never heals; this heals on the clock
+#     of the game itself, exactly as the positional refusal does.
+#   * It is consulted only when all four scores are readable. A missing score
+#     on either side is no evidence and leaves today's behaviour untouched. A
+#     tie whose score RISES, or holds, still lands.
+#
+# What it buys: within one half-inning a run cannot un-score itself. What it
+# costs: a downward correction taken mid-inning waits for the inning-state to
+# turn. On a feed that publishes a corrected score every 30 seconds, that is a
+# bounded wait for a right answer against an unbounded flicker of wrong ones.
 #
 # ── IT ONLY REFUSES WHAT IT CAN PROVE, AND IT CANNOT DEADLOCK ──
 #
 # Unparseable on EITHER side ⇒ no refusal. A position this function cannot
 # locate is not evidence of staleness, and a guard that blocks writes it does
 # not understand would freeze a live game — far worse than the flicker it is
-# fixing. Equal positions are accepted too, so a same-moment correction lands.
+# fixing. Equal positions with no score evidence are accepted too, so a
+# same-moment correction lands.
 #
 # There is also no way for a refusal to become permanent. The bar is the STORED
 # position, which the game itself moves past: if the ahead writer falls silent,
 # the behind writer catches up to the frozen bar within a minute or two and is
-# accepted again. Nothing needs a timeout, and no writer is declared the winner
-# — the ordering is symmetric, so whichever feed is ahead at that instant wins
-# that instant.
+# accepted again. The #6251 tie-break inherits that property rather than
+# weakening it — its bar is the stored position too, and it stops applying the
+# moment the game leaves it. Nothing needs a timeout, and no writer is declared
+# the winner — the ordering is symmetric, so whichever feed is ahead at that
+# instant wins that instant.
 
 #: `M:SS`, `MM:SS` or `MMM:SS`, with an optional tenths tail (ESPN serves
 #: `0:04.2` inside the final minute of a period). Anchored: a clock is the whole
@@ -327,19 +374,104 @@ def live_progress_position(
     return None
 
 
+def _as_score(value: object) -> int | None:
+    """``value`` as a score, or ``None`` if it is not one.
+
+    Deliberately total rather than trusting the caller: three writers feed this,
+    two of them from duck-typed fixture objects that make no promise about the
+    type of ``home_score``. An un-coercible value is NO EVIDENCE — the same
+    verdict an absent score gets — never an exception and never a zero, because
+    a zero here is a real baseball score and would read as a reversion from any
+    lead (gotcha: absent and empty are different claims).
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _position_names_a_span(period: str | None) -> bool:
+    """Does this label name a STRETCH of game time rather than an instant?
+
+    This is the whole reason the #6251 tie-break is not a general rule, and the
+    distinction is the one the existing behaviour already turns on:
+
+    * `'5:21 - 4th Quarter'` locates an observation to the SECOND. Two feeds
+      that tie there genuinely agree about the moment and disagree about the
+      score, which is what a correction looks like — and a feed that were merely
+      lagging would be lagging in its clock too, so the position rule has
+      already caught it. Those ties must keep landing immediately
+      (`test_schedule_sync_accepts_a_same_position_correction`).
+    * `'Top 8th'` locates it to a half-inning, which is minutes wide. A tie
+      there is not evidence of simultaneity; it is the absence of any evidence
+      at all, and it is the window the lagging feed lives in.
+
+    So only the inning ladder qualifies. `'End of 3rd Quarter'` is deliberately
+    excluded even though it also carries a `0.0` elapsed: that is a real instant
+    the game passes through once, not a span.
+
+    Requiring BOTH sides to satisfy this also keeps the tie-break off a rank
+    COLLISION rather than a real tie — `'Top 1st'` and `'End of 5th Period'`
+    both place at `(5.0, 0.0)`, because the inning ladder and the period ladder
+    share a number line they never share a row on.
+    """
+    if not period:
+        return False
+    return bool(_INNING_STATE_RE.search(str(period)))
+
+
+def _score_would_regress(
+    stored_home: object,
+    stored_away: object,
+    incoming_home: object,
+    incoming_away: object,
+) -> bool:
+    """Does this observation take a run/point off a side, with all four readable?
+
+    ``False`` unless every one of the four is a readable score: a comparison
+    missing a side is no evidence, and this is only ever consulted as a
+    tie-break, where "no evidence" must leave the tie accepted.
+
+    EITHER side falling is enough. A pair where one side rises and the other
+    falls is not a lagging feed and not a correction — it is two different
+    games, or a feed mid-rewrite — and refusing it costs one beat.
+    """
+    sh = _as_score(stored_home)
+    sa = _as_score(stored_away)
+    ih = _as_score(incoming_home)
+    ia = _as_score(incoming_away)
+    if sh is None or sa is None or ih is None or ia is None:
+        return False
+    return ih < sh or ia < sa
+
+
 def live_write_would_revert(
     stored_period: str | None,
     stored_clock: str | None,
     incoming_period: str | None,
     incoming_clock: str | None,
+    *,
+    stored_home_score: object = None,
+    stored_away_score: object = None,
+    incoming_home_score: object = None,
+    incoming_away_score: object = None,
 ) -> bool:
     """Is this incoming live observation from EARLIER in the game than the row?
 
-    ``True`` only when both sides are locatable AND the incoming one is strictly
+    ``True`` when both sides are locatable AND the incoming one is strictly
     earlier — the one case where accepting the write is guaranteed to move the
-    served state backwards in front of a reader. Every other case, including
-    both unreadable and an exact tie, is ``False``: this function's job is to
-    refuse proven reversions, not to gatekeep live updates.
+    served state backwards in front of a reader — or, at a tie on a position
+    that names a SPAN of game time rather than an instant, when the four scores
+    are all readable and the incoming one takes a run off a side (#6251; the
+    module note says why a clockless label needs a second discriminator, and why
+    scoping it this narrowly is not the monotonic clamp that was rejected).
+
+    Every other case is ``False``: this function's job is to refuse proven
+    reversions, not to gatekeep live updates. The four score arguments are
+    keyword-only and default to absent, so a caller that does not write scores
+    — and therefore cannot revert one — asks the same question it always did.
     """
     incoming = live_progress_position(incoming_period, incoming_clock)
     if incoming is None:
@@ -347,4 +479,17 @@ def live_write_would_revert(
     stored = live_progress_position(stored_period, stored_clock)
     if stored is None:
         return False
-    return incoming < stored
+    if incoming < stored:
+        return True
+    if (
+        incoming == stored
+        and _position_names_a_span(stored_period)
+        and _position_names_a_span(incoming_period)
+    ):
+        return _score_would_regress(
+            stored_home_score,
+            stored_away_score,
+            incoming_home_score,
+            incoming_away_score,
+        )
+    return False
