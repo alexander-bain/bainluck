@@ -64,6 +64,19 @@ COVERED = (
     # arm's, and it is what stops the NEXT raw INSERT added to this file from
     # reaching a runner unchecked.
     "test_calibration_threshold_ladder_pg.py",
+    # #6211 (CAL-P1310). Seeds three DataGolf markets and their boards by raw
+    # INSERT to prove `market_info` withholds an unverified market WHOLE —
+    # winners and losers together. Two seeding hazards worth naming here rather
+    # than leaving to be rediscovered, neither of which the NOT-NULL arm sees:
+    #
+    #   * `futures_markets.category` is NOT NULL with no server default, and
+    #     `llm_sport_category` is the CELL key the population groups on. Omitting
+    #     the first kills the gate outright; omitting the second leaves it green
+    #     and vacuous, which is worse.
+    #   * `market_metadata` is the whole subject — the three markets are
+    #     identical except for it — so a seed that dropped it would compare a
+    #     market against itself and pass.
+    "test_calibration_datagolf_symmetric_exclusion_pg.py",
     # #2927. Added the same night this check would have saved the trip: the
     # containers gate seeded `INSERT INTO sports (key, name)` and died on
     # `NotNullViolation: null value in column "active"` in CI, because
