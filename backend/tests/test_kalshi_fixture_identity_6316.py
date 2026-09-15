@@ -189,9 +189,7 @@ class TestTheKeyIsTheVenuesOwnFixtureId:
         `competition_from_tickers` does, because a row holding two venues'
         fixtures reports a link defect and picking one builds on top of it."""
         assert (
-            kalshi_event_key(
-                ["KXEPLGAME-26SEP12LFCFUL", "KXEPLGAME-26SEP13LFCFUL"]
-            )
+            kalshi_event_key(["KXEPLGAME-26SEP12LFCFUL", "KXEPLGAME-26SEP13LFCFUL"])
             is None
         )
         assert (
@@ -367,8 +365,14 @@ class TestOneBlockIsDecidedByTheAnchorNotByACount:
 
     def test_a_scored_idless_row_beside_a_real_canonical_does_not_make_two(self):
         """The other half of the same guard: the id-less row must not be counted
-        into the ambiguity either, or a block that is perfectly decidable starts
-        refusing itself."""
+        into the AMBIGUITY, or a block that is perfectly decidable starts refusing
+        itself.
+
+        Since #6358 it is counted as a second GHOST — see
+        :class:`TestAPlayedCopyIsStillACopy` for why that is the ship rather than
+        a relaxation — and the two halves of this guard are independent: what must
+        never change is that an unanchored row cannot make the block ambiguous.
+        """
         scored_but_idless = ghost(
             event_id=GHOST_ID + 5, status="completed", scored=True, anchored=False
         )
@@ -376,15 +380,26 @@ class TestOneBlockIsDecidedByTheAnchorNotByACount:
             [ghost(), scored_but_idless, canonical()], now=NOW
         )
         assert outcome == TWIN_FOUND
-        assert [(t.ghost_id, t.canonical_id) for t in tags] == [(GHOST_ID, CANON_ID)]
+        assert {(t.ghost_id, t.canonical_id) for t in tags} == {
+            (GHOST_ID, CANON_ID),
+            (GHOST_ID + 5, CANON_ID),
+        }
 
-    def test_a_scored_or_anchored_row_is_never_the_ghost_half(self):
-        for kw in ({"scored": True}, {"anchored": True}):
-            outcome, tags, _ = classify_fixture_ticker_block(
-                [ghost(**kw), canonical()], now=NOW
-            )
-            assert outcome == NOT_A_TWIN, kw
-            assert tags == []
+    def test_an_anchored_row_is_never_the_ghost_half(self):
+        """The half of the old `scored or anchored` guard that #6358 does NOT
+        touch, and the one carrying the weight.
+
+        A row an authority names independently of us is never a copy, whatever
+        ticker it shares — that is what makes the canonical the canonical. The
+        `scored` half was the other arm and it was dropped deliberately: six of
+        the seven American football repairs are `completed` copies carrying their
+        fixture's real final score (26SEP06LOUMISS reads 41-38 on both rows).
+        """
+        outcome, tags, _ = classify_fixture_ticker_block(
+            [ghost(anchored=True), canonical()], now=NOW
+        )
+        assert outcome == NOT_A_TWIN
+        assert tags == []
 
 
 class TestThePassOverAPopulation:
