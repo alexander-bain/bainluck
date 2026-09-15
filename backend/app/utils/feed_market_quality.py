@@ -974,6 +974,104 @@ _LOW_SIGNAL_SPORT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ── ONE GOLF TOURNAMENT IS ONE STORY (#6423) ─────────────────────────────────
+#
+# A tour stop is sold by all three venues as the same tournament asked a dozen
+# ways — winner, the cut, top-5/10/20, each round's leader, a hole-in-one, a
+# playoff — so Discover dealt Biltmore Championship Asheville as SEVEN cards
+# (three of them inside five slots) with `story_key = None` on every one. The
+# only golf arm in this cascade named `truist championship`, which has 243
+# markets and ZERO of them open: the one dial we had pointed at a tournament no
+# reader can see, while two live floods (Biltmore 24 open, BMW PGA 15) ran
+# uncapped.
+#
+# 🔴 THE KEY IS MINTED ON A GRAMMAR, NOT ON A NAME, AND THE MEASUREMENT IS WHY.
+# Read all 81 open `llm_sport_category='golf'` markets by name: SEVEN of them
+# are `PGA Award for Best Animated Theatrical Motion Picture?` and its
+# siblings — Producers Guild awards misclassified as golf (the #4515 class) —
+# plus `Will Anthropic sign the Open Weights ... letter?`. Any key that reaches
+# for "PGA", or that derives a tournament by stripping a trailing phrase from
+# whatever it is handed, folds four entertainment cards out of the feed FOR THE
+# WRONG REASON and hides the misclassification instead of exposing it.
+#
+# So a key exists only where a tournament name is followed by a recognised golf
+# QUESTION. Every Biltmore / BMW PGA / Nationwide / Amgen row carries one; no
+# `PGA Award` row does, nor the Ryder Cup captains, nor the 3-Ball matchups,
+# nor the "will X ever" novelties. The tournament name is shared verbatim
+# across kalshi / polymarket / datagolf (only the separator and the tour prefix
+# differ), which is what lets a name-derived key group a family cross-source.
+_GOLF_TOUR_PREFIX_RE = re.compile(
+    r"^(?:pga tour|dp world tour|liv golf|european tour|korn ferry tour)\s*:\s*",
+    re.IGNORECASE,
+)
+
+_GOLF_QUESTION_SUFFIX_RE = re.compile(
+    r"(?:\s*[:\-–]\s*|\s+)"
+    r"(?:"
+    r"winner"
+    r"|(?:to\s+)?make the cut"
+    r"|top\s+\d+(?:\s+finishers?|\s+finish)?"
+    r"|end of round\s+\d+\s+leader"
+    r"|(?:first|second|third|1st|2nd|3rd)\s+round\s+leader"
+    r"|hole[-\s]?in[-\s]?one"
+    r"|playoff"
+    r"|albatross"
+    r")"
+    r"\s*\??\s*$",
+    re.IGNORECASE,
+)
+
+# A remainder that opens like a question is a sentence, not a tournament
+# ("Will Scottie Scheffler win the grand slam ...", "Golfers to win a Major").
+_GOLF_NOT_A_TOURNAMENT_RE = re.compile(
+    r"^(?:will|who|does|do|can|is|are|has|have|should|golfers?\b)\b",
+    re.IGNORECASE,
+)
+
+#: Prefix for the per-tournament story keys minted below. Consumers key on the
+#: PREFIX (the cap in `diversify_quality_families`, the label/question in
+#: `discover_bundles`) because the tournament half is derived, so it can never
+#: appear in a hand-written dict.
+GOLF_TOURNAMENT_STORY_PREFIX = "story:golf_tournament:"
+
+
+def golf_tournament_display_name(name: str) -> str | None:
+    """The tournament VERBATIM from ``name``, or ``None`` if there is no golf question.
+
+    Verbatim matters: this is what the bundle headline renders. The slug inside
+    the story key cannot be un-slugified back into a name a reader recognises —
+    `bmw_pga_championship` title-cases to "Bmw Pga Championship" and
+    `nationwide_children_s_hospital_championship` to "Children S" — so the
+    display name is cut from the venue's own string, apostrophes and acronyms
+    intact, and never rebuilt from the key.
+    """
+    stripped = _GOLF_TOUR_PREFIX_RE.sub("", name or "").strip()
+    tournament = _GOLF_QUESTION_SUFFIX_RE.sub("", stripped).strip(" :-–")
+    if not tournament or tournament == stripped:
+        return None
+    if _GOLF_NOT_A_TOURNAMENT_RE.match(tournament):
+        return None
+    # One word is not a tournament name: it is whatever was left when the
+    # question ate the rest ("Winner" -> ""), and grouping on it would put
+    # unrelated stops in one family.
+    if len([w for w in re.split(r"\s+", tournament) if w]) < 2:
+        return None
+    return tournament
+
+
+def golf_tournament_story_key(name: str) -> str | None:
+    """``story:golf_tournament:<slug>`` when ``name`` is "<tournament> <golf question>".
+
+    Returns ``None`` — deliberately, and for most of the golf corpus — when the
+    name carries no recognised golf question, which is the whole guard against
+    the misclassified Producers Guild rows described above.
+    """
+    tournament = golf_tournament_display_name(name)
+    if tournament is None:
+        return None
+    slug = re.sub(r"_+", "_", re.sub(r"[^a-z0-9]+", "_", tournament.lower())).strip("_")
+    return f"{GOLF_TOURNAMENT_STORY_PREFIX}{slug}" if slug else None
+
 _EPISODE_LEVEL_RE = re.compile(
     r"("
     r"S\d{1,2}E\d{1,2}"
@@ -1467,6 +1565,15 @@ def _story_key(name: str, category: str) -> str | None:
     if "truist championship" in lower:
         return "story:golf_truist_championship"
 
+    # #6423. AFTER the truist arm on purpose — that key is the more specific of
+    # the two, it is authored end to end (title, question, cap), and leaving it
+    # first means this change cannot alter a single thing about the tournament
+    # the product already had a dial for.
+    if category == "golf":
+        golf_tournament = golf_tournament_story_key(name)
+        if golf_tournament is not None:
+            return golf_tournament
+
     if _LOW_SIGNAL_SPORT_RE.search(name):
         return "story:niche_low_signal_sports"
 
@@ -1751,7 +1858,37 @@ def classify_market_quality(
         family_key = re.sub(r"<num>", "<num>", family_key)
     if not family_key:
         family_key = "unknown"
-    story_key = persisted_story_key or _story_key(name, category)
+    # ── #6423: THE PERSISTED KEY WINS IN GENERAL, BUT NOT OVER THIS GRAMMAR ──
+    #
+    # `futures_markets.story_key` has TWO writers and they speak different
+    # vocabularies. `enrich_discover_llm_metadata` stores what `_story_key`
+    # computed; `enrich_cu_v2_profiles` stores `raw["story_key"]` — free text
+    # the MODEL invented — and measured on production 2026-09-15, ZERO of the
+    # 425 open markets carrying a persisted key carry one this function could
+    # produce. 406 of the 413 distinct persisted keys have exactly one member.
+    #
+    # A story whose family is one market can never fold anything. Its only
+    # effect is to displace the deterministic key that would have — which is
+    # why four golf rows (`story:biltmore_championship_asheville_winner` and
+    # friends, each a slug of its own title) were about to walk straight
+    # through the cap below and put the Winner card back beside the bundle.
+    #
+    # ⚠️ SCOPED TO THIS GRAMMAR ON PURPOSE. The general precedence is a real and
+    # bigger defect — 131 open markets are exempt from authored caps this way,
+    # including 24 US state races (cap 2) and 19 regional US elections (cap 1) —
+    # but flipping it wholesale is NOT safe: the same measurement found rows
+    # where the deterministic answer is itself wrong ("Brent crude oil price on
+    # September 30" computes `story:regional_us_elections`), so the flip would
+    # trade one wrong key for another. That needs its own measurement and its
+    # own ship. Here the claim is narrow and checked by name: for a golf
+    # tournament, the grammar above is the authority.
+    computed_story_key = _story_key(name, category)
+    if computed_story_key is not None and computed_story_key.startswith(
+        GOLF_TOURNAMENT_STORY_PREFIX
+    ):
+        story_key = computed_story_key
+    else:
+        story_key = persisted_story_key or computed_story_key
 
     return MarketQuality(
         quality_class=quality,
@@ -3204,6 +3341,27 @@ def diversify_quality_families(
         "story:foreign_local_elections": 1,
         "story:us_state_races": 2,
     }
+    # #6423. `per_story_caps` is a dict of literal keys, and a DERIVED key can
+    # never be in it: one entry per golf tournament would have to be written by
+    # hand before the tournament existed. Without this the whole family falls
+    # through to `story_family_cap` (5), which is not a fix — it is Biltmore's
+    # seven cards becoming five. Matched longest-prefix-first so a future
+    # narrower prefix wins, the same way the truist arm outranks the derived
+    # golf key upstream.
+    prefix_story_caps = {
+        GOLF_TOURNAMENT_STORY_PREFIX: 3,
+    }
+
+    def _cap_for(story_key: str) -> int:
+        exact = per_story_caps.get(story_key)
+        if exact is not None:
+            return exact
+        for prefix, value in sorted(
+            prefix_story_caps.items(), key=lambda kv: -len(kv[0])
+        ):
+            if story_key.startswith(prefix):
+                return value
+        return story_family_cap
 
     for item in sorted_items:
         family = item.get("_quality_family_key")
@@ -3216,7 +3374,7 @@ def diversify_quality_families(
 
         if story and story_family_cap > 0:
             count = story_counts.get(story, 0)
-            cap = min(story_family_cap, per_story_caps.get(story, story_family_cap))
+            cap = min(story_family_cap, _cap_for(story))
             if count >= cap:
                 continue
 
