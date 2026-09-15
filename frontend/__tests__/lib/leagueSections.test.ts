@@ -27,7 +27,10 @@
  */
 
 import realPayload from "../fixtures/leagueUsOpen.20260904.json";
-import { buildLeagueSections as buildLeagueSectionsAt } from "@/lib/sports/leagueSections";
+import {
+  buildLeagueSections as buildLeagueSectionsAt,
+  leagueSubtitle,
+} from "@/lib/sports/leagueSections";
 import type { Event, EventStatus } from "@/lib/types";
 
 const REAL_EVENTS = realPayload.events as unknown as Event[];
@@ -321,5 +324,91 @@ describe("ux/1058 · ordering and purity", () => {
       ev(8, "completed", "2026-09-03T20:00:00Z", null),
     ]);
     expect(ids(sections[0].events)).toEqual([8, 7]);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// D · #3246 — the sentence over the sections
+//
+// `leagueSubtitle` is an ADDITION, so as in section A "revert to the parent" is
+// a collection error rather than a red arm; the rendered half has the genuine
+// red arm and lives in
+// `__tests__/capture/leagueSubtitlePromisesSections3246.test.tsx`. The arms here
+// are the counter-cases: each bucket empty in turn, and the exhaustive map from
+// composition to sentence.
+// ───────────────────────────────────────────────────────────────────────────
+describe("ux/1282 · #3246 the subtitle names only what is there", () => {
+  const LIVE_AND_UPCOMING = "Win probabilities for live and upcoming games.";
+  const FINISHED_BELOW = "Finished games below.";
+
+  const subtitleFor = (events: Event[]) => leagueSubtitle(buildLeagueSections(events));
+
+  const finished = () => ev(1, "completed", "2026-09-03T10:00:00Z", "2026-09-03T12:00:00Z");
+  const upcoming = () => ev(2, "scheduled", "2026-09-09T00:00:00Z");
+  const live = () => ev(3, "live" as EventStatus, "2026-09-04T12:00:00Z");
+
+  test("no finished game, no promise of one — the soccer arm of #3246", () => {
+    expect(subtitleFor([upcoming()])).toBe(LIVE_AND_UPCOMING);
+  });
+
+  test("no game still to play, no claim of one", () => {
+    expect(subtitleFor([finished()])).toBe(FINISHED_BELOW);
+  });
+
+  test("both buckets, both sentences, in the order they are rendered", () => {
+    expect(subtitleFor([finished(), upcoming()])).toBe(
+      `${LIVE_AND_UPCOMING} ${FINISHED_BELOW}`,
+    );
+  });
+
+  test("a live-only league is described by the same first sentence", () => {
+    // Live and upcoming share a clause because they render as one promise: a
+    // game you can still watch or still wait for.
+    expect(subtitleFor([live()])).toBe(LIVE_AND_UPCOMING);
+    expect(subtitleFor([live(), finished()])).toBe(
+      `${LIVE_AND_UPCOMING} ${FINISHED_BELOW}`,
+    );
+  });
+
+  test("nothing to describe is the empty string, not a sentence about nothing", () => {
+    expect(leagueSubtitle([])).toBe("");
+    expect(subtitleFor([])).toBe("");
+  });
+
+  test("the real payload's own composition still earns both clauses", () => {
+    expect(subtitleFor(REAL_EVENTS)).toBe(`${LIVE_AND_UPCOMING} ${FINISHED_BELOW}`);
+  });
+
+  test("BINDING: the sentence and the sections agree over all eight compositions", () => {
+    // Exhaustive rather than illustrative: three buckets, present or absent,
+    // and the claim is read back off `sections` — the value the page renders —
+    // never off the events that were handed in.
+    for (const mask of [0, 1, 2, 3, 4, 5, 6, 7]) {
+      const events: Event[] = [];
+      if (mask & 1) events.push(live());
+      if (mask & 2) events.push(upcoming());
+      if (mask & 4) events.push(finished());
+      const sections = buildLeagueSections(events);
+      const sentence = leagueSubtitle(sections);
+      const keys = sections.map((s) => s.key);
+      expect(sentence.includes(FINISHED_BELOW)).toBe(keys.includes("finished"));
+      expect(sentence.includes(LIVE_AND_UPCOMING)).toBe(
+        keys.includes("live") || keys.includes("upcoming"),
+      );
+    }
+  });
+
+  test("a section with a heading and no cards promises nothing", () => {
+    // `buildLeagueSections` never emits one, so this is the invariant NOT being
+    // borrowed: the sentence is decided by cards, not by the key alone, and a
+    // future caller that assembles its own sections cannot print a promise over
+    // an empty heading.
+    expect(leagueSubtitle([{ key: "finished", title: "Finished", events: [] }])).toBe("");
+    expect(
+      leagueSubtitle([
+        { key: "upcoming", title: "Upcoming", events: [upcoming()] },
+        { key: "finished", title: "Finished", events: [] },
+      ]),
+    ).toBe(LIVE_AND_UPCOMING);
   });
 });
