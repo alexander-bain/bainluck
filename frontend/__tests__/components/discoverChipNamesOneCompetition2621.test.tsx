@@ -128,8 +128,20 @@ function chipLabel(html: string): string {
   return chipText(html).split(" ").slice(1).join(" ");
 }
 
-// The sport keys that shared a chip in the live window, with the `sports.name`
-// production serves beside each. Frozen from the 2026-09-15 read.
+// The sport keys that shared a chip, with the `sports.name` production actually
+// serves beside each — re-read from production at 2026-09-15T08:40Z, by name,
+// rather than carried over from the build. That re-read corrected two rows:
+// `icehockey_sweden_allsvenskan` serves "HockeyAllsvenskan" (this list said
+// "SHL - Sweden", which production has never served for that key), and
+// `rugby_other` is a TENTH sport on the `OTHER` chip that the first pass missed.
+// The served name is not decoration here: `getSportLabel` returns it verbatim
+// whenever it is not raw, so a wrong name in this fixture tests a payload that
+// does not exist.
+//
+// The handball/soccer Bundesliga pair has NO fixtures in the current window —
+// handball is between seasons — so it is not one of today's live collisions. It
+// stays because the collision is structural in the key, not seasonal: both keys
+// derive the chip "GERMANY BUNDESLIGA" the moment handball plays again.
 const COLLIDED: Array<[string, string]> = [
   ["soccer_other", "soccer_other"],
   ["tennis_other", "tennis_other"],
@@ -140,14 +152,15 @@ const COLLIDED: Array<[string, string]> = [
   ["americanfootball_other", "americanfootball_other"],
   ["icehockey_other", "icehockey_other"],
   ["motorsport_other", "motorsport_other"],
+  ["rugby_other", "rugby_other"],
   ["handball_germany_bundesliga", "Handball-Bundesliga"],
   ["soccer_germany_bundesliga", "Bundesliga - Germany"],
   ["soccer_sweden_allsvenskan", "Allsvenskan - Sweden"],
-  ["icehockey_sweden_allsvenskan", "SHL - Sweden"],
+  ["icehockey_sweden_allsvenskan", "HockeyAllsvenskan"],
 ];
 
 describe("#2621(a) — the chip stops naming more than one competition", () => {
-  it("no two of the thirteen keys that collided render the same chip", () => {
+  it("no two of the fourteen keys that collided render the same chip", () => {
     // Asserted on the WORDS, not on `chipText`. Two of these pairs sit in
     // different categories and so carry different glyphs — a distinctness test
     // over the whole pill is satisfiable by the emoji alone while both chips
@@ -156,13 +169,15 @@ describe("#2621(a) — the chip stops naming more than one competition", () => {
     expect(new Set(labels).size).toBe(COLLIDED.length);
   });
 
-  it("the nine sports that all read OTHER each name their own sport", () => {
-    // 806 of the window's events. The word that replaced them has to be the
-    // reader's word, not merely a different one, so these are asserted by value.
+  it("the ten sports that all read OTHER each name their own sport", () => {
+    // 804 of the window's 2,133 events at the 08:40Z re-read — the largest single
+    // defect on the surface. The word that replaced them has to be the reader's
+    // word, not merely a different one, so these are asserted by value.
     expect(chipText(render("soccer_other", "soccer_other"))).toContain("Other Soccer");
     expect(chipText(render("tennis_other", "tennis_other"))).toContain("Other Tennis");
     expect(chipText(render("basketball_other", "basketball_other"))).toContain("Other Basketball");
     expect(chipText(render("icehockey_other", "icehockey_other"))).toContain("Other Hockey");
+    expect(chipText(render("rugby_other", "rugby_other"))).toContain("Other Rugby");
   });
 
   it("the handball Bundesliga is not the football Bundesliga", () => {
