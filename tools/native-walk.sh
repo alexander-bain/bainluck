@@ -73,7 +73,7 @@ fi
 SETTLE=${NATIVE_WALK_SETTLE:-11}
 
 args=()
-# Two first-run gates stand between a cold launch and the feed, and BOTH must be
+# THREE first-run gates stand between a cold launch and the feed, and ALL must be
 # answered or every shot is a photograph of a consent card:
 #   - the app's own telemetry sheet ("Help us find what's broken?"), which is a
 #     SwiftUI .sheet over the whole app. `none` is exactly what "No thanks"
@@ -81,14 +81,65 @@ args=()
 #     app as a reader who declined — the conservative choice, and the one that
 #     turns analytics OFF rather than on.
 #   - the system notification alert, via the app's own -suppress_notification_prompt.
-# NATIVE_WALK_FIRSTRUN=1 leaves both in, for the one shot where first run IS the
-# subject.
+#   - DiscoverView's welcome sheet (`discover_onboarded`), the carousel that opens
+#     "What the world thinks will happen" with Continue/Skip. It was missing here
+#     until 2026-09-15 (native/172) and the omission is invisible on a container
+#     that has already been through it — which every long-lived simulator has, so
+#     the gap only shows on a genuinely clean install or after `simctl erase`, and
+#     then EVERY route photographs the carousel while the log still says WALK ok.
+#     `WelcomeView`'s own `onDisappear` writes this key, so setting it is the same
+#     answer a reader gives by tapping Skip. BainLuckUITests/UITestLaunch.swift
+#     has carried it since 2026-09-14; this file is the other consumer of the same
+#     three gates and had only two.
+# NATIVE_WALK_FIRSTRUN=1 leaves all three in, for the one shot where first run IS
+# the subject.
 if [ "${NATIVE_WALK_FIRSTRUN:-0}" != "1" ]; then
   args+=(-bainluck_telemetry_consent none)
+  args+=(-discover_onboarded YES)
   [ "${NATIVE_WALK_PROMPT:-0}" = "1" ] || args+=(-suppress_notification_prompt YES)
+  # Notice 39 — our own robots are tagged, never minted. Opening a route IS a
+  # card open, and a card open POSTs to /api/feed/interactions, which is the
+  # reader's downrank signal. The UI-test target has passed this since it was
+  # written; this script opens the same routes and did not.
+  args+=(-launch_no_interaction_upload YES)
 fi
 [ -n "$ROUTE" ]  && args+=(-launch_route "$ROUTE")
 [ -n "$SCROLL" ] && args+=(-launch_scroll "$SCROLL")
+
+# ── DOES THIS SCRIPT ANSWER EVERY GATE THE UI-TEST TARGET ANSWERS? ───────────
+# The two consumers of the app's launch-argument channel are this script and
+# BainLuckUITests/UITestLaunch.swift, and they drifted: the welcome carousel was
+# added to that file on 2026-09-14 and never here. The drift is INVISIBLE on a
+# container that has already been through the gate — which every long-lived
+# simulator has — so it surfaces only after `simctl erase`, and then every route
+# photographs a modal while this script still prints `WALK ok`. A wrong shot
+# that announces itself as a right one is the failure this whole file exists to
+# prevent, so the drift is a STOP, not a warning.
+#
+# Keys only, never values: the UI-test target answers `-discover_onboarded NO`
+# when it is deliberately re-arming the gates, and that is not drift.
+#
+# It reads the `args+=` LINES, not the file — measured 2026-09-15: a whole-file
+# scan passes on a script that only MENTIONS the key in this very comment, so
+# deleting the line that sends it left the guard green and the walk still
+# photographed the carousel. A guard whose own prose satisfies it is no guard.
+GATES_SRC="$REPO/ios/Bain Luck/BainLuckUITests/UITestLaunch.swift"
+if [ -f "$GATES_SRC" ]; then
+  missing=""
+  # CONTAINING, not starting with: the notification gate is sent from the tail
+  # of a `[ … ] || args+=(…)` line, and an anchored pattern silently declared
+  # the one gate this script has always answered to be missing.
+  sent="$(/usr/bin/grep -F 'args+=(' "$0")"
+  for key in $(/usr/bin/sed -n 's/^[[:space:]]*"\(-[A-Za-z_]*\)",.*/\1/p' "$GATES_SRC"); do
+    printf '%s\n' "$sent" | /usr/bin/grep -q -- "\\$key" || missing="$missing $key"
+  done
+  if [ -n "$missing" ]; then
+    echo "WALK: FIRST-RUN GATE MISSING —$missing" >&2
+    echo "  UITestLaunch.swift answers it and this script does not. On a clean" >&2
+    echo "  container every shot photographs that gate and the log still says ok." >&2
+    exit 2
+  fi
+fi
 
 xcrun simctl terminate "$DEV" "$BUNDLE" >/dev/null 2>&1
 sleep 1
