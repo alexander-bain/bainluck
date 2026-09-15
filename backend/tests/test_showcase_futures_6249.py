@@ -11,13 +11,14 @@ read off production on 2026-09-14; they are real siblings that a looser rule
 (a name pattern, a tier, a canonical key) admits today.
 """
 
+import logging
 from datetime import datetime, timezone
 
 import pytest
 
 from app.utils.showcase_futures import (
     MIN_PRICED_OUTCOMES,
-    _loggable,
+    _declared_slug,
     SHOWCASE_MARKET_IDENTITIES,
     ShowcaseCandidate,
     attach_showcase_markets,
@@ -205,20 +206,52 @@ class TestChoosingAmongOpenMarkets:
 
 
 class TestTheFailureLogCannotBeForged:
-    """`sport_slug` comes off the URL path (CodeQL `py/log-injection`)."""
+    """`sport_slug` is a path segment (CodeQL `py/log-injection`, medium).
 
-    def test_a_newline_cannot_write_a_second_log_line(self):
+    Nothing derived from the request reaches the log line: the value spent is
+    a key of the allowlist, which is a module constant.
+    """
+
+    def test_a_known_slug_is_still_named(self):
+        assert _declared_slug("soccer") == "soccer"
+        assert _declared_slug("football") == "football"
+
+    def test_an_unknown_slug_contributes_nothing_at_all(self):
         forged = "soccer\nWARNING:root:transfer approved"
-        assert "\n" not in _loggable(forged)
-        assert _loggable(forged).startswith("soccer")
+        assert _declared_slug(forged) == "unlisted"
+        assert _declared_slug("golf") == "unlisted"
 
-    def test_a_real_slug_survives_intact(self):
-        for slug in ("soccer", "american-football", "march_madness"):
-            assert _loggable(slug) == slug
+    async def test_the_emitted_record_names_the_sport_and_nothing_else(self, caplog):
+        """The assertion is on the RECORD, not on the helper — a sanitiser
+        proves nothing if the caller interpolates the raw value anyway.
 
-    def test_a_flood_is_truncated_and_an_empty_one_still_prints(self):
-        assert len(_loggable("x" * 4000)) == 40
-        assert _loggable("\r\n\r\n") == "(unprintable)"
+        An unlisted slug cannot reach this line at all, by two independent
+        routes: the enrichment returns before the query when nothing is
+        declared for it, and `_declared_slug` would print `unlisted` if it
+        ever did. So the reachable case is the one asserted."""
+        with caplog.at_level(logging.WARNING, logger="app.utils.showcase_futures"):
+            out = await attach_showcase_markets(
+                "soccer",
+                [{"name": "Champions League", "type": "championship"}],
+                RaisingDb(),
+                now=NOW,
+            )
+        assert out[0]["futures_market_id"] is None
+        assert caplog.records, "a swallowed failure must still be logged"
+        message = caplog.records[-1].getMessage()
+        assert "sport_slug=soccer" in message
+        assert "\n" not in message
+
+    async def test_an_unlisted_slug_never_reaches_the_log_line(self, caplog):
+        forged = "soccer\nWARNING:root:transfer approved"
+        with caplog.at_level(logging.WARNING, logger="app.utils.showcase_futures"):
+            await attach_showcase_markets(
+                forged,
+                [{"name": "Champions League", "type": "championship"}],
+                RaisingDb(),
+                now=NOW,
+            )
+        assert caplog.records == [], "nothing is declared for it, so nothing runs"
 
 
 class FakeResult:

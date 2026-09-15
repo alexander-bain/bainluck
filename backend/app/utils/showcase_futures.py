@@ -118,17 +118,20 @@ SHOWCASE_MARKET_IDENTITIES: dict[tuple[str, str], tuple[MarketIdentity, ...]] = 
 }
 
 
-#: Everything a slug may contribute to a log line. `sport_slug` arrives from the
-#: URL path, and the route only 404s on an unknown one AFTER this module can be
-#: called directly — so a newline in it would write a second, forged log line
-#: (CodeQL `py/log-injection`, medium, on the first cut of this file). The
-#: truncation is part of the fix: a 4KB slug is a log-flooding line, not a
-#: diagnostic.
-_LOGGABLE = re.compile(r"[^a-z0-9_-]")
+def _declared_slug(sport_slug: str) -> str:
+    """The slug to SPEND in a log line — taken from the allowlist, not the URL.
 
-
-def _loggable(sport_slug: str) -> str:
-    return _LOGGABLE.sub("", sport_slug.lower())[:40] or "(unprintable)"
+    `sport_slug` is a path segment, so a newline in it forges a second log line
+    (CodeQL `py/log-injection`, medium). A regex scrub does not answer that, as
+    measured: the alert came straight back on the scrubbed version. So nothing
+    derived from the request reaches the log — the string returned here is a
+    key of `SHOWCASE_MARKET_IDENTITIES`, which is a module constant, and an
+    unrecognised slug logs the literal `unlisted`.
+    """
+    return next(
+        (slug for slug, _event in SHOWCASE_MARKET_IDENTITIES if slug == sport_slug),
+        "unlisted",
+    )
 
 
 @dataclass(frozen=True)
@@ -262,7 +265,7 @@ async def attach_showcase_markets(
     except Exception:  # noqa: BLE001 — a hub page outlives its enrichment
         logger.warning(
             "showcase market lookup failed for sport_slug=%s",
-            _loggable(sport_slug),
+            _declared_slug(sport_slug),
             exc_info=True,
         )
         return [
