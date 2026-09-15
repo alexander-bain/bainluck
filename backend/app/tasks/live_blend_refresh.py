@@ -450,13 +450,25 @@ class LiveBlendRefresher:
 
         try:
             from app.tasks.snapshots import _create_or_update_win_prob_snapshot
+            from app.tasks.prediction_market_matching import _second_slot
+
+            # #6277 — THE SAME SECOND SLOT THE 15-MINUTE MATCHER WRITES, from the
+            # same helper. This lane recomputes the number every few seconds from
+            # the same rows, so a partition published by the matcher and
+            # complemented here would be overwritten with the fabricated value
+            # within one tick — during the match, which is the window the
+            # photographed card was taken in. The two writers disagreeing is the
+            # one thing this module exists to prevent, and it applies to the away
+            # slot exactly as it applies to the home one.
+            away_value, draw_value = _second_slot(reading, value)
 
             snapshot, is_new = await _create_or_update_win_prob_snapshot(
                 session,
                 event_id=event_id,
                 source=self.source,
                 home_win_probability=value,
-                away_win_probability=round(1.0 - value, 4),
+                away_win_probability=round(away_value, 4),
+                draw_probability=None if draw_value is None else round(draw_value, 4),
                 game_state={
                     "market_name": getattr(reading.market, "name", None),
                     "market_id": getattr(reading.market, "id", None),

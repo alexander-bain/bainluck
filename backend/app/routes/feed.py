@@ -112,6 +112,7 @@ from app.utils.graded_card import (
 from app.utils.prematch_reading import (
     PREMATCH_PRIOR_SQL,
     prematch_prior_binds,
+    prematch_row_to_reading,
     resolve_prematch_reading,
 )
 from app.utils.discover_bundles import (
@@ -8618,14 +8619,13 @@ async def _score_events(
 
         pm_result = await db.execute(text(PREMATCH_PRIOR_SQL), pm_binds)
         for row in pm_result.all():
-            prematch_by_event.setdefault(row.event_id, {})[row.source] = (
-                float(row.home_win_probability),
-                (
-                    float(row.away_win_probability)
-                    if row.away_win_probability is not None
-                    else None
-                ),
-            )
+            # #6277 — the row's shape is defined once, beside the statement that
+            # produced it, so a member cannot be dropped here without a test
+            # noticing. It was inline, and inline made this the one link in the
+            # chain no unit test could reach.
+            prematch_by_event.setdefault(row.event_id, {})[
+                row.source
+            ] = prematch_row_to_reading(row)
 
     # Score each event using aggregate probabilities from all available sources
     scored_items = []

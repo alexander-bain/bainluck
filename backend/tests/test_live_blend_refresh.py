@@ -318,6 +318,13 @@ class _Reading:
     market = _Market()
     outcome = _Outcome()
     yes_probability = 0.99
+    # #6277 — the fields `_second_slot` reads. A two-way reading carries no
+    # partition, so this stub says so explicitly rather than by omission: the
+    # attribute being ABSENT is a different statement from its being None, and
+    # the writer under test has to see the one the real `BlendReading` makes.
+    home_probability = 0.61
+    away_probability = None
+    draw_probability = None
 
 
 class TestSnapshotThrottle:

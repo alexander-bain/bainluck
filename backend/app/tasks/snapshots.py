@@ -16,6 +16,7 @@ async def _create_or_update_win_prob_snapshot(
     game_state: dict = None,
     is_completed: bool = False,
     max_gap_seconds: float = None,
+    draw_probability: float = None,
 ) -> tuple:
     """
     Create a new WinProbSnapshot or update existing if value unchanged.
@@ -45,6 +46,23 @@ async def _create_or_update_win_prob_snapshot(
     and the stat model drifts; appending those produced the chart "stale tail".
     The terminal value is still captured (in place at the real final, or as a
     single new point if no prior snapshot exists yet for this event+source).
+
+    ``draw_probability`` (#6277) is the third member of a three-way game, and it
+    is the EVIDENCE that the pair beside it is not a complement: a reader of this
+    table can only tell a genuine sub-unit pair from two unrelated numbers by
+    checking that all three sum to one. ``None`` on every two-way source, which
+    is every source but a soccer/cricket game winner.
+
+    ── THE SECOND SLOT IS REFRESHED ON THE DEDUP PATH, AND HAS TO BE ──────────
+    Sameness is decided on the HOME number alone, and that was complete for as
+    long as away was ``1 - home``: the two could not disagree. Now they can. A
+    three-way market whose home price holds while the draw drains into the away
+    side is one observation by this function's test and two different boards, and
+    without the refresh below the row would keep the second slot it was minted
+    with — which on the first pass after this ships is the fabricated complement.
+    Refreshed IN PLACE rather than appended: it is the same observation, the
+    caller is telling us more about it, and appending would grow the time series
+    of every quiet soccer market for a correction that is not a price move.
     """
     from app.models.models import WinProbSnapshot
 
@@ -97,6 +115,7 @@ async def _create_or_update_win_prob_snapshot(
         if is_completed and existing is not None:
             existing.home_win_probability = home_win_probability
             existing.away_win_probability = away_win_probability
+            existing.draw_probability = draw_probability
             if game_state is not None:
                 existing.game_state = game_state
             existing.valid_until = now
@@ -112,12 +131,17 @@ async def _create_or_update_win_prob_snapshot(
             source=source,
             home_win_probability=home_win_probability,
             away_win_probability=away_win_probability,
+            draw_probability=draw_probability,
             game_state=game_state,
             reading_count=1,
         )
         return snapshot, True
     else:
-        # Same value — bump the counter
+        # Same value — bump the counter, and carry the caller's second slot onto
+        # the row it is describing (#6277; see the docstring for why the home
+        # test no longer settles it).
+        existing.away_win_probability = away_win_probability
+        existing.draw_probability = draw_probability
         existing.reading_count += 1
         existing.valid_until = now
         return existing, False

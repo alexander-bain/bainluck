@@ -1619,6 +1619,50 @@ async def _cleanup_orphaned_blend_sources(session, time_remaining_fn=None, limit
     return pruned
 
 
+def _second_slot(reading, home_prob: float) -> tuple:
+    """``(away, draw)`` for a snapshot: the venue's numbers, or the complement.
+
+    THE ONE PLACE THE COMPLEMENT IS STILL WRITTEN, so that "where does the away
+    number come from" has one answer instead of three (#6277). Every writer of a
+    ``win_prob_snapshots`` row off a :class:`BlendReading` asks this, and a
+    two-way source gets exactly the arithmetic it has always had.
+
+    ``home_prob`` is the value AFTER :func:`_check_and_fix_inversion`, and the
+    comparison against the reading's own is the orientation guard:
+
+    **A FIRED INVERSION WITHDRAWS THE PARTITION.** The cross-check flips when the
+    sportsbook consensus says our home/away assignment is backwards — and that
+    assignment is precisely what named the partition's members. Keeping the
+    members while flipping the anchor would publish the away team's price in the
+    home slot, which is the #6277 defect with the sides exchanged: a worse lie
+    than the one being fixed, because it is a real number on the wrong club.
+    Falling back to the complement is the honest failure here — it is what the
+    row held before this shipped, so a market that trips the inversion is left
+    exactly as it was rather than made confidently wrong.
+
+    The better repair is to SWAP the members rather than drop them (on a
+    three-way board ``1 - home`` is not the other side's price either, so a
+    flipped soccer row is fabricated whichever way it lands). That is not written
+    here because there is no specimen: it would be an untested branch dressed as
+    a fix, and the narrow hole is named in the issue instead.
+    """
+    away = reading.away_probability
+    draw = reading.draw_probability
+    if away is None or draw is None:
+        return 1.0 - home_prob, None
+    # "Did it flip" is asked as "which of the two candidates is this closer to",
+    # NOT as an equality against the reading. Callers legitimately hand back a
+    # ROUNDED home number — the WebSocket lane stamps the same 4-dp value it
+    # writes — and an equality test with a tight tolerance would read every one
+    # of those roundings as an inversion and withdraw the partition from the
+    # fastest writer in the system, silently, on every tick. Rounding moves the
+    # value by at most 5e-5; a flip moves it by |1 - 2p|.
+    original = float(reading.home_probability)
+    if abs(home_prob - (1.0 - original)) < abs(home_prob - original):
+        return 1.0 - home_prob, None
+    return away, draw
+
+
 async def _check_and_fix_inversion(
     session, event_id: int, home_prob: float, source: str,
 ) -> float:
@@ -4558,7 +4602,7 @@ async def _phase2_persist_group_reading(
     home_prob = await _check_and_fix_inversion(
         session, anchor.event_id, reading.home_probability, anchor.source,
     )
-    away_prob = 1.0 - home_prob
+    away_prob, draw_prob = _second_slot(reading, home_prob)
 
     if write_snapshot:
         snapshot, is_new = await _create_or_update_win_prob_snapshot(
@@ -4567,6 +4611,7 @@ async def _phase2_persist_group_reading(
             source=anchor.source,
             home_win_probability=round(home_prob, 4),
             away_win_probability=round(away_prob, 4),
+            draw_probability=None if draw_prob is None else round(draw_prob, 4),
             game_state={
                 # `reading.market`, NOT the group's primary. The primary is only
                 # the row picked to iterate once per (event, source); since the
@@ -7974,7 +8019,7 @@ async def _poll_live_prediction_market_prices():
                 home_prob = await _check_and_fix_inversion(
                     session, event.id, home_prob, market.source,
                 )
-                away_prob = 1.0 - home_prob
+                away_prob, draw_prob = _second_slot(reading, home_prob)
 
                 # Write snapshot with deduplication
                 snapshot, is_new = await _create_or_update_win_prob_snapshot(
@@ -7983,6 +8028,7 @@ async def _poll_live_prediction_market_prices():
                     source=market.source,
                     home_win_probability=round(home_prob, 4),
                     away_win_probability=round(away_prob, 4),
+                    draw_probability=None if draw_prob is None else round(draw_prob, 4),
                     game_state={
                         # `reading.market`, NOT the loop's `market`. The loop
                         # row is only the group's PRIMARY — the row picked to
