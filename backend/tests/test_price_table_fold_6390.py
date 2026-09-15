@@ -399,3 +399,243 @@ class TestMutants:
         payload, _ = serve(_route_event(), ALIGNED_GHOST, both)
         assert _books(payload).count("pinnacle") == 2
         assert payload["current_odds"]["bookmaker_count"] == len(GHOST_BOOKS) + 1
+
+
+# ── THE HISTORY HALF (#6399) — WHAT MAKES FOLD C REACHABLE ───────────────────
+#
+# CERT-2925 BLOCKed the detail fold above on a reachability failure, and it was
+# right: the price table it fills is nested inside the Win Probability card, and
+# `suppressWinProbabilityCard` in `frontend/app/events/[id]/page.tsx` removes
+# that whole card when EVERY series the chart can draw is empty and the game has
+# begun. `get_event_odds_history` was still reading `OddsSnapshot.event_id ==
+# event_id`, so on the named specimen the detail payload gained ten sportsbooks
+# that no reader could reach.
+#
+# Measured on production 2026-09-15 19:20Z, which is why the history fold is the
+# route taken rather than un-nesting the disclosure:
+#
+#     canonical 15311919   history    0   bookmaker_history  0   snapshots     0
+#     ghost     15297786   history 1236   bookmaker_history 10   snapshots  2471
+#
+# So folding here does not merely make the card mount — it draws the real curve.
+#
+# 🔴 THE RESIDUAL IS NOT CLOSED BY THIS FILE. A book whose only reading was
+# captured after the finished-event end cap still reaches the detail payload
+# (which applies no cap) and not the history (which does), so the "ten prices,
+# no series" shape remains reachable and is still suppressed. That is the
+# disclosure's nesting, in ux's layout file (notice 41), and it is #6421.
+
+
+class _HistoryResult(_Result):
+    """`_Result` plus the `.scalar()` the end-cap helper calls."""
+
+    def scalar(self):
+        return self._rows[0] if self._rows else None
+
+
+class _HistoryRouteSession:
+    """Answers the reads `get_event_odds_history` makes.
+
+    🔴 THE RIG HONOURS THE FILTER, for the reason `_RouteSession` states: a fake
+    that hands back every snapshot regardless answers the UNFOLDED query with
+    the ghost's rows too, and the mutant that reverts this ship passes.
+
+    It does NOT collapse to the latest row per `(event, bookmaker)` the way
+    `_RouteSession` does — that is the DETAIL route's CTE. This route wants
+    every reading, which is exactly the population the interleave picker has to
+    thin, so a rig that pre-thinned it would hide the defect being guarded.
+    """
+
+    def __init__(self, event, fold_rows, snapshots):
+        self.event = event
+        self.fold_rows = list(fold_rows)
+        self.snapshots = list(snapshots)
+        self.odds_id_filters: list[set | None] = []
+
+    @staticmethod
+    def _requested_ids(statement):
+        """The event ids this statement asked for.
+
+        NOT `_RouteSession._requested_ids`. That one keys on `startswith("id")`
+        because the detail route's CTE binds `Event.id.in_(...)` as `id_1`; here
+        the column is `OddsSnapshot.event_id`, which binds as `event_id_1` and
+        misses that prefix. The first run of this class recorded `[None]` on
+        every branch and the rig answered an unfolded query with the ghost's
+        rows anyway — the exact fail-open its docstring warns about, reached by
+        reusing the helper rather than by not having one.
+
+        🔴 IT MUST READ THE SCALAR FORM TOO, and that is the second fail-open
+        this rig had. `event_id == event_id` binds ONE int, not a list, so a
+        list-only reader returns `None` for the pre-fix query — which this class
+        reads as "no filter, serve everything", and the ghost's rows arrive on
+        the unfolded route. Both headline tests below passed against a fully
+        reverted `events.py` until this branch existed. A rig that cannot
+        express the BEFORE state cannot witness the fix.
+        """
+        ids: set[int] = set()
+        for key, value in statement.compile().params.items():
+            if "id" not in key:
+                continue
+            if isinstance(value, (list, tuple, set)):
+                ids.update(value)
+            elif isinstance(value, int):
+                ids.add(value)
+        return ids or None
+
+    async def execute(self, statement, *_a, **_kw):
+        sql = " ".join(str(statement).split())
+        if "odds_snapshots" in sql:
+            ids = self._requested_ids(statement)
+            self.odds_id_filters.append(ids)
+            rows = [s for s in self.snapshots if ids is None or s.event_id in ids]
+            return _HistoryResult(sorted(rows, key=lambda s: s.captured_at))
+        if is_series_fold(sql):
+            return _HistoryResult(self.fold_rows)
+        if "FROM events" in sql:
+            return _HistoryResult([self.event])
+        return _HistoryResult([])
+
+
+def _history(event, fold_rows, snapshots):
+    from app.routes import events as events_route
+
+    event.sport = Sport(id=S_SOCCER, key="soccer_france_ligue_one", name="Ligue 1")
+    session = _HistoryRouteSession(event, fold_rows, snapshots)
+    payload = asyncio.run(
+        events_route.get_event_odds_history(CANON_ID, hours=24, db=session)
+    )
+    return payload, session
+
+
+#: Three readings per book, so a series is a SERIES and not a single point.
+GHOST_SERIES = [
+    _snap(GHOST_ID, book, minutes=i * 3 + tick, snap_id=1000 + i * 10 + tick)
+    for i, book in enumerate(GHOST_BOOKS)
+    for tick in range(3)
+]
+
+
+class TestTheHistoryRoute:
+    def test_the_empty_chart_gains_the_ghosts_ten_series(self):
+        """The ship. Canonical holds nothing; the page draws all ten books."""
+        payload, _ = _history(_route_event(), ALIGNED_GHOST, GHOST_SERIES)
+
+        assert sorted(payload["bookmaker_history"]) == GHOST_BOOKS
+        assert payload["bookmaker_count"] == 10
+        assert payload["snapshot_count"] == len(GHOST_SERIES)
+        assert payload["history"], "the aggregated line is what OddsChart draws"
+
+    def test_the_suppression_guard_the_page_applies_now_reads_false(self):
+        """The reachability claim CERT-2925 asked for, stated as the page states
+        it.
+
+        `hasNoPriceHistoryAtAll` is an AND over exactly these five inputs, so
+        this is the predicate and not a paraphrase of it. Before the fold every
+        one of them was empty on `15311919` and the card — with #6390's price
+        table inside it — was removed from the page.
+        """
+        payload, _ = _history(_route_event(), ALIGNED_GHOST, GHOST_SERIES)
+
+        every_series_empty = (
+            not payload["history"]
+            and not payload["win_prob_history"]
+            and not payload["espn_history"]
+            and not payload["aggregate_line"]
+            and not any(payload["bookmaker_history"].values())
+        )
+        assert not every_series_empty
+
+    def test_an_untagged_event_asks_for_exactly_its_own_id(self):
+        """The no-op proof: an unfolded page compiles to the read it had."""
+        _, session = _history(_route_event(), UNFOLDED, GHOST_SERIES)
+
+        assert session.odds_id_filters, "the route never queried odds_snapshots"
+        assert all(ids == {CANON_ID} for ids in session.odds_id_filters)
+
+    def test_every_odds_read_in_the_route_is_folded(self):
+        """Not just the one branch the specimen happens to take.
+
+        A fold applied to the finished-event query alone would serve this
+        specimen and leave the windowed and stale-open branches reading the
+        canonical only — the shape #6399 was filed about, one level down.
+        """
+        _, session = _history(_route_event(), ALIGNED_GHOST, GHOST_SERIES)
+
+        assert session.odds_id_filters
+        assert all(
+            ids == {CANON_ID, GHOST_ID} for ids in session.odds_id_filters
+        ), session.odds_id_filters
+
+    def test_a_crossed_ghost_draws_nothing_rather_than_an_inverted_curve(self):
+        """Orientation. An inverted curve is worse than the missing one."""
+        payload, session = _history(_route_event(), CROSSED_GHOST, GHOST_SERIES)
+
+        assert all(ids == {CANON_ID} for ids in session.odds_id_filters)
+        assert payload["bookmaker_history"] == {}
+        assert payload["snapshot_count"] == 0
+
+
+class TestNoInterleave:
+    """Two rows' readings of ONE book are two partial recordings of one history.
+
+    Concatenating them by timestamp splices a stray point into a clean line —
+    a visible jag rather than an error, which is why no exception-based guard
+    would ever find it. `series_row_for_each_source` takes the RICHEST row,
+    because here the canonical is usually the poorer one.
+    """
+
+    #: The canonical holds a two-point stub for a book the ghost recorded fully.
+    CANON_STUB = [
+        _snap(CANON_ID, "pinnacle", minutes=90 + tick, snap_id=9000 + tick)
+        for tick in range(2)
+    ]
+
+    def test_the_poorer_rows_points_are_discarded_whole(self):
+        payload, _ = _history(
+            _route_event(), ALIGNED_GHOST, GHOST_SERIES + self.CANON_STUB
+        )
+
+        pinnacle = payload["bookmaker_history"]["pinnacle"]
+        assert len(pinnacle) == 3, "the ghost's three, not five interleaved"
+        assert payload["snapshot_count"] == len(GHOST_SERIES)
+
+    def test_the_stub_would_otherwise_have_been_spliced_in(self):
+        """Anti-vacuity: the rig really did hand the route both rows.
+
+        Without this the test above passes on a session that silently dropped
+        the canonical's snapshots, and it would keep passing with the picker
+        deleted.
+        """
+        _, session = _history(
+            _route_event(), ALIGNED_GHOST, GHOST_SERIES + self.CANON_STUB
+        )
+        served = [
+            s
+            for s in GHOST_SERIES + self.CANON_STUB
+            if s.event_id in (session.odds_id_filters[0] or set())
+        ]
+        assert len(served) == len(GHOST_SERIES) + 2
+
+    def test_mutant_canonical_first_keeps_the_stub_over_the_real_curve(
+        self, monkeypatch
+    ):
+        """RICHEST, not CANONICAL — the one substitution that reads as safer.
+
+        "Prefer the canonical" is the rule a later reader is most likely to
+        reach for, and on this fold it is backwards: the canonical is the poorer
+        row by construction, so the page would keep a two-point stub over the
+        ghost's real curve the moment the canonical held any reading at all.
+        The picker is load-bearing in a direction its name does not announce.
+        """
+        canonical_first = {
+            book: CANON_ID if (book, CANON_ID) in {("pinnacle", CANON_ID)} else GHOST_ID
+            for book in GHOST_BOOKS
+        }
+        monkeypatch.setattr(
+            "app.utils.proven_duplicates.series_row_for_each_source",
+            lambda _counts, _canon: canonical_first,
+        )
+        payload, _ = _history(
+            _route_event(), ALIGNED_GHOST, GHOST_SERIES + self.CANON_STUB
+        )
+        assert len(payload["bookmaker_history"]["pinnacle"]) == 2

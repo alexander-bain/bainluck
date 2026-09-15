@@ -18650,6 +18650,44 @@ async def get_event_odds_history(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
+    # ── The odds series is folded too, not just the win-prob one (#6399) ──────
+    #
+    # #3810 Fold B gave `win_prob_snapshots` this treatment further down and
+    # `odds_snapshots` was left behind, so a repaired fixture whose prices all
+    # landed on its hidden duplicate drew nothing: `/events/15311919`
+    # (Brest 0-1 PSG) served `history` 0 / `bookmaker_history` {} / 0 snapshots
+    # while ghost `15297786` held 1,236 points across ten sportsbook series
+    # (measured on production 2026-09-15).
+    #
+    # That emptiness is not only a missing chart. `suppressWinProbabilityCard`
+    # on the event page is true when EVERY series here is empty and the game has
+    # begun, and the "Sportsbooks" disclosure — the current price table #6390
+    # fills — is nested inside the card that guard removes. So the page rendered
+    # a final score and nothing else, and folding #6390's detail read alone
+    # could not be seen (CERT-2925).
+    #
+    # Hoisted above the odds branch rather than computed beside the win-prob
+    # query it used to sit next to: both halves of this route need the same row
+    # set, and two lookups could in principle disagree about which twins are
+    # orientation-safe, which would draw one source from a row the other refused.
+    # One lookup, one answer.
+    #
+    # 🔴 `folded_series_event_ids`, never `folded_event_ids`. These rows store
+    # `home_win_probability` / `home_moneyline`, whose meaning comes from their
+    # OWN event row's team slots; a crossed twin folded in here plots an exactly
+    # inverted curve, which is worse than the missing one. It returns
+    # `[event_id]` for an untagged event, so every query below compiles to the
+    # read it replaced.
+    #
+    # 🔴 Outside any try/except, for the reason the win-prob block states: a
+    # fold that failed inside one would take the whole chart down silently.
+    from app.utils.proven_duplicates import (
+        folded_series_event_ids,
+        series_row_for_each_source,
+    )
+
+    series_event_ids = await folded_series_event_ids(db, event_id)
+
     # Get snapshots within time range
     # For completed/closed events, return ALL snapshots (no time window)
     # so users can always see the full probability history.
@@ -18676,7 +18714,7 @@ async def get_event_odds_history(
         # why `commence_time` cannot be trusted to bound this cohort.
         result = await db.execute(
             select(OddsSnapshot)
-            .where(OddsSnapshot.event_id == event_id)
+            .where(OddsSnapshot.event_id.in_(series_event_ids))
             .order_by(OddsSnapshot.captured_at)
             .limit(3000)
         )
@@ -18703,7 +18741,9 @@ async def get_event_odds_history(
             event.completed_at, event.commence_time, commence_cap
         )
 
-        query = select(OddsSnapshot).where(OddsSnapshot.event_id == event_id)
+        query = select(OddsSnapshot).where(
+            OddsSnapshot.event_id.in_(series_event_ids)
+        )
         if end_cap:
             query = query.where(OddsSnapshot.captured_at <= end_cap)
         result = await db.execute(query.order_by(OddsSnapshot.captured_at).limit(3000))
@@ -18736,7 +18776,7 @@ async def get_event_odds_history(
                 snapshots_override = (
                     await db.execute(
                         select(OddsSnapshot)
-                        .where(OddsSnapshot.event_id == event_id)
+                        .where(OddsSnapshot.event_id.in_(series_event_ids))
                         .order_by(OddsSnapshot.captured_at)
                         .limit(3000)
                     )
@@ -18752,7 +18792,7 @@ async def get_event_odds_history(
             select(OddsSnapshot)
             .where(
                 and_(
-                    OddsSnapshot.event_id == event_id,
+                    OddsSnapshot.event_id.in_(series_event_ids),
                     or_(
                         # Case 1: Snapshot created within the time window
                         OddsSnapshot.captured_at >= cutoff,
@@ -18774,6 +18814,38 @@ async def get_event_odds_history(
     snapshots = (
         snapshots_override if snapshots_override is not None else result.scalars().all()
     )
+
+    # ── One row per sportsbook, never a union (#6399) ────────────────────────
+    #
+    # The unit here is a SERIES, so this is `series_row_for_each_source`'s
+    # question and not `latest_snapshot_for_each_bookmaker`'s: two rows'
+    # readings of the same sportsbook are two partial recordings of one price
+    # history, and concatenating them by timestamp interleaves a stray point
+    # into an otherwise clean line — a visible jag rather than an error. The
+    # key is the BOOKMAKER, which is what "source" means for `odds_snapshots`,
+    # exactly as `source` is for the win-prob rows the same picker serves below.
+    #
+    # Richest wins rather than canonical, for the reason the picker states: the
+    # canonical is usually the POORER row here — that is the whole defect — so
+    # a canonical-first rule would keep a two-point stub over the ghost's
+    # 1,236-point curve the moment the canonical held any reading at all.
+    #
+    # Both consumers downstream read `snapshots`: the aggregated `history` line
+    # and the per-book `bookmaker_history`. Filtering once, here, is what keeps
+    # them describing the same rows — de-duplicating only the per-book series
+    # would leave the aggregate quietly double-weighting a twinned sportsbook.
+    #
+    # Skipped entirely for an untagged event, where the picker is a no-op over
+    # one id: the common page pays one `len()`, not a `Counter` over 3,000 rows.
+    if len(series_event_ids) > 1:
+        series_row_by_bookmaker = series_row_for_each_source(
+            Counter((s.bookmaker, s.event_id) for s in snapshots), event_id
+        )
+        snapshots = [
+            s
+            for s in snapshots
+            if series_row_by_bookmaker.get(s.bookmaker) == s.event_id
+        ]
 
     # Group snapshots by capture time and aggregate across bookmakers
     # For snapshots that started before the cutoff but were valid during it,
@@ -18941,13 +19013,10 @@ async def get_event_odds_history(
     # exact pages this issue is about. `folded_series_event_ids` reads `events`,
     # which always exists; if it fails the database is failing and that must
     # surface (gotcha #53, and the same reasoning as `folded_event_ids`).
-    from app.utils.proven_duplicates import (
-        folded_series_event_ids,
-        series_row_for_each_source,
-    )
-
-    series_event_ids = await folded_series_event_ids(db, event_id)
-
+    #
+    # `series_event_ids` and the picker are now computed once at the top of this
+    # route (#6399), where the odds series needs them too — still outside every
+    # try, so the paragraph above holds unchanged.
     try:
         from app.models.models import WinProbSnapshot
         from app.config.win_prob_sources import WIN_PROB_SOURCES
