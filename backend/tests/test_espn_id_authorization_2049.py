@@ -766,7 +766,11 @@ class TestNoUngatedEspnIdStampSurvives:
         ("app/tasks/espn_sync.py", "_backfill_team_logos",
          "team.espn_id = matched_espn.espn_id"):
             "Team.espn_id again, and already gated on `match_was_exact` so a "
-            "fuzzy token-overlap hit never sets the id.",
+            "fuzzy token-overlap hit never sets the id. Since #6432 the same "
+            "statement also serves the repoint arm, where the stored id "
+            "matched a record that accuses itself (ESPN's two 'Sydney Swans', "
+            "one carrying GCFC's badge) and exactly one same-name record does "
+            "not — still an id-anchored match, never a fuzzy one.",
         ("app/tasks/repair_authority_id_collisions.py", "<module>",
          "UPDATE events SET espn_id = NULL"):
             "A CLEAR, and the gate is the wrong shape for it: "
