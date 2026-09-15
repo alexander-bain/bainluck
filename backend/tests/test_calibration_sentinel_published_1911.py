@@ -34,6 +34,7 @@ from app.tasks.calibration_sentinel import (
     _fold_row_into_cohort,
     _new_cohort,
     build_issue_body,
+    build_reobservation_comment,
     raw_vs_published,
 )
 
@@ -276,3 +277,60 @@ def test_a_working_exclusion_body_does_not_shout_the_harms_warning():
         "kalshi_prop_threshold", 0.241,
     )
     assert "MAKING THIS CURVE WORSE" not in body
+
+
+# ---------------------------------------------------------------------------
+# The RECURRENCE comment — #1911's acceptance applied to the path it missed
+# ---------------------------------------------------------------------------
+#
+# #1911 fixed the filed body and left the re-observation comment printing the
+# raw number by itself, so a long-open issue states the pair once (on the day
+# it was filed) and contradicts it on every recurrence after that. #1145 is
+# the live specimen: body "n-weighted MCE: 17.42pp" (pre-#1911), recurrences
+# 18.96pp and 19.04pp, while the sweep that wrote them had already computed
+# published 18.35pp / n=4,445 / real_break.
+
+
+def test_every_recurrence_comment_carries_raw_and_published_with_their_n():
+    """The body's acceptance, verbatim, on the recurrence path."""
+    comment = build_reobservation_comment(
+        _body_cohort(21.33, 3.69, 11016, DISP_EXCLUSION_WORKING, "because")
+    )
+    assert "21.33pp" in comment
+    assert "3.69pp" in comment
+    assert "14315" in comment   # raw n
+    assert "11016" in comment   # published n
+    assert "RAW" in comment and "PUBLISHED" in comment
+
+
+def test_a_recurrence_states_the_disposition_not_just_a_number():
+    """The number alone is what made #1145 unreadable: climbing, and silent on
+    whether anyone sees it."""
+    comment = build_reobservation_comment(
+        _body_cohort(18.83, 18.35, 4445, DISP_REAL_BREAK,
+                     "the exclusion does not reach this, and users see it")
+    )
+    assert "real_break" in comment
+    assert "users see it" in comment
+
+
+def test_the_1145_specimen_recurrence_cannot_be_read_as_raw_only():
+    """#1145's own values. The defect was not a wrong number — it was a true
+    number with no companion, so pin that the published one travels with it."""
+    comment = build_reobservation_comment(
+        _body_cohort(18.83, 18.35, 4445, DISP_REAL_BREAK, "both over 5.0pp")
+    )
+    # The old form was "MCE 18.83pp, n=14315" and nothing else.
+    assert "18.35pp" in comment, "published number dropped — this is the #1911 defect"
+    assert "4445" in comment
+
+
+def test_an_absent_published_number_says_so_in_the_recurrence_too():
+    """Both directions (gotcha #43): the absent case must not degrade into a
+    flattering zero on the path that runs every sweep."""
+    comment = build_reobservation_comment(
+        _body_cohort(21.33, None, 9, DISP_PUBLISHED_UNKNOWN, "too few")
+    )
+    assert "not computable" in comment
+    assert "ABSENT" in comment
+    assert "0.00pp" not in comment
