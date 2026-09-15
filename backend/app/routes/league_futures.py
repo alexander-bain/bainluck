@@ -28,6 +28,7 @@ from app.routes.events import (
     _normalize_futures_dedup_key,
 )
 from app.services import get_db
+from app.services.anchor_channel import market_born_duplicates_on_page
 from app.utils.aggregation import compute_aggregate_probability
 from app.utils.event_rails import (
     live_first_order,
@@ -2766,6 +2767,64 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         _r_events, _u_events, _g_events = _folded_past_rails(
             _r_events, _u_events, _g_events, _off_page_finals
         )
+
+        # ── #6345: the same stage `search_events` runs, on the surface that ────
+        #    never adopted it.
+        #
+        # `_folded_past_rails` above is a PAGE-LOCAL fold: `fold_twin_events`
+        # needs both rows of a pair on this page. The specimen is precisely the
+        # pair it cannot see. Measured on production 2026-09-15:
+        #
+        #   ghost      15308951  Celta Fortuna v Eibar     soccer_spain_la_liga
+        #   canonical  15306978  Celta Fortuna v SD Eibar  soccer_spain_segunda_division
+        #
+        # The canonical is in a DIFFERENT LEAGUE, so it is never on this page and
+        # the name fold is structurally blind to it — the reader gets the ghost
+        # under NO RESULT REPORTED, and tapping it serves the canonical's Final
+        # ("Eibar WON 0–4"). The list says we have no result for a match whose
+        # result is one tap away on our own page.
+        #
+        # `market_born_duplicates_on_page` needs neither row: it is the id-keyed
+        # Q050 verdict the event page has trusted since 2026-09-02, asked of a
+        # set. #6231 shipped this exact stage for `search_events` ON THIS EXACT
+        # PAIR; this page simply never called it. That is the whole change — a
+        # sibling surface adopting a shipped fix, not a new rule.
+        #
+        # AFTER the fold, deliberately, for #6231's reason: the fold may recover
+        # a Kalshi row's kick-off and elect a survivor, and running this first
+        # would hand it a page it had not finished reasoning about.
+        #
+        # All three rails, as on search, because a market-born ghost is not a
+        # property of the rail it landed on. It costs nothing to say so: the
+        # candidate screen is pure and answers from columns these rows already
+        # hold, so a page whose rows carry scores issues NO query, and a page
+        # that does issues exactly one over at most ~24 already-capped rows.
+        #
+        # Gotcha #42 applied to a stage, as everywhere else in this block: a
+        # suppression that raises serves the unsuppressed page, which is today's
+        # behaviour.
+        if _r_events or _u_events or _g_events:
+            try:
+                _drained = await market_born_duplicates_on_page(
+                    db, [*_g_events, *_r_events, *_u_events]
+                )
+                if _drained:
+                    _r_events = [e for e in _r_events if e.id not in _drained]
+                    _u_events = [e for e in _u_events if e.id not in _drained]
+                    _g_events = [e for e in _g_events if e.id not in _drained]
+                    logger.info(
+                        "league page %s market-born drain: %d ghost row(s) "
+                        "suppressed (%s)",
+                        sport_key,
+                        len(_drained),
+                        list(_drained.items())[:20],
+                    )
+            except Exception:  # noqa: BLE001 — see the gotcha #42 note above
+                logger.exception(
+                    "league page %s market-born drain failed; serving the "
+                    "undrained page",
+                    sport_key,
+                )
 
         # UX-P074 (#1860): colours and logos for the SHARED event card, fetched
         # ONCE for both rails. `_build_team_lookup` is the same in-memory-cached
