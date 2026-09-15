@@ -2634,3 +2634,266 @@ def test_malformed_restock_stamp_cannot_crash_or_become_an_epoch(tmp_path, stamp
     assert "invalid .last-restock" in out
     assert "WOULD WRITE" in out
     assert state.read_text() == stamp  # rehearsal never repairs production state
+
+
+# ─────────────────────── not-before: deferring without a session (#6409) ─────
+#
+# THE COST, measured 2026-09-15: live launched 25 empty sessions in ~30 minutes
+# and calibration held a model session in 570-second sleeps from 17:18Z to an
+# 18:30Z checkpoint. None advanced the rebuild. The take loop consumes the oldest
+# `*.md` on sight, `RESTOCK_MIN_INTERVAL` throttles only the runner's OWN
+# restocks, and a sentence in the file saying when to start is read AFTER the
+# session it was meant to prevent has begun.
+#
+# These drive `--take-once`, which is one pass of the REAL take loop — same
+# selection, same `mv`, same consume — against a stub `claude` on PATH. A
+# deferral proved only under `--dry-run` is a deferral proved not to run; and
+# proving "nothing launched" by watching the daemon for N seconds would be the
+# wall-clock test the issue rules out. The clock is faked through
+# `LANE_NOW_EPOCH`, so no test here waits for time to pass.
+
+
+def _runner_rig(tmp_path, lane="demo"):
+    """A scratch handoff tree plus a `claude` stub that COUNTS its launches.
+
+    Idempotent: `_stage` and `_take_once` call it too, so a test never has to
+    remember whether the rig is already built.
+    """
+    handoff = tmp_path / "handoff"
+    launches = tmp_path / "launches.txt"
+    if handoff.exists():
+        return handoff, tmp_path / "worktree", tmp_path / "bin", launches
+    (handoff / "runner-inbox" / lane).mkdir(parents=True)
+    (handoff / "STANDING-NOTICES.md").write_text("# NOTICES\n1. be good\n")
+    workdir = tmp_path / "worktree"
+    workdir.mkdir()
+    binp = tmp_path / "bin"
+    binp.mkdir()
+    stub = binp / "claude"
+    # Appends one line per invocation: the count is the assertion, so the stub
+    # must never overwrite. Exits 0 so the loop takes the consume branch.
+    stub.write_text(f'#!/bin/bash\necho LAUNCH >> "{launches}"\nexit 0\n')
+    stub.chmod(0o755)
+    return handoff, workdir, binp, launches
+
+
+def _take_once(tmp_path, lane="demo", now=None, extra_env=None):
+    handoff, workdir, binp, launches = _runner_rig(tmp_path, lane)
+    env = {
+        "LANE_HANDOFF": str(handoff),
+        "PATH": f"{binp}:{os.environ['PATH']}",
+        "LANE_SESSION_TIMEOUT": "30",
+    }
+    if now is not None:
+        env["LANE_NOW_EPOCH"] = str(now)
+    env.update(extra_env or {})
+    rc, out = run(RUNNER, "--take-once", str(workdir), lane, env=env)
+    fired = launches.read_text().count("LAUNCH") if launches.exists() else 0
+    return rc, out, fired
+
+
+def _stage(tmp_path, name, body, lane="demo"):
+    handoff, *_ = _runner_rig(tmp_path, lane)
+    f = handoff / "runner-inbox" / lane / name
+    f.write_text(body)
+    return f
+
+
+def _inbox(tmp_path, lane="demo"):
+    handoff, *_ = _runner_rig(tmp_path, lane)
+    return sorted(p.name for p in (handoff / "runner-inbox" / lane).iterdir())
+
+
+# --- the ship -----------------------------------------------------------------
+
+
+def test_a_directive_not_yet_due_launches_nothing(tmp_path):
+    """🔴 THE SHIP. Not "it exits early" — no model session is started at all."""
+    _runner_rig(tmp_path)
+    f = _stage(tmp_path, "A.md", "# later\n\nnot-before: 2099-01-01T00:30:00Z\n\nWork.\n")
+    rc, out, fired = _take_once(tmp_path)
+    assert rc == 0, out
+    assert fired == 0, f"a deferred directive started {fired} session(s):\n{out}"
+    # And it is neither taken nor consumed: the file the runner skipped is still
+    # exactly the file a later pass must find.
+    assert f.exists(), out
+    assert _inbox(tmp_path) == ["A.md"], out
+
+
+def test_the_idle_line_names_the_next_due_time(tmp_path):
+    """Acceptance: an idle window must read as WAITING, not as a crash."""
+    _runner_rig(tmp_path)
+    _stage(tmp_path, "A.md", "not-before: 2026-09-16T00:30:00Z\n")
+    # 2026-09-15T18:30:00Z — six hours before the stamp.
+    rc, out, fired = _take_once(tmp_path, now=1789497000)
+    assert rc == 0 and fired == 0, out
+    assert "next due" in out, out
+    assert "demo/A.md" in out, out
+    assert "2026-09-16T00:30:00Z" in out, out
+    assert "6h0m" in out, f"the wait is not stated in human terms:\n{out}"
+
+
+def test_a_due_directive_is_taken_exactly_once(tmp_path):
+    """The other half: deferral must expire, and expire into ONE take."""
+    _runner_rig(tmp_path)
+    _stage(tmp_path, "A.md", "not-before: 2026-09-16T00:30:00Z\n\nWork.\n")
+    rc, out, fired = _take_once(tmp_path, now=1789519000)  # 00:36Z, past the stamp
+    assert rc == 0, out
+    assert fired == 1, f"expected exactly one session, got {fired}:\n{out}"
+    names = _inbox(tmp_path)
+    assert names and names[0].startswith("A.consumed-"), names
+    assert not any(n.endswith(".md") for n in names), names
+
+
+def test_a_deferred_item_does_not_block_a_fresh_assignment(tmp_path):
+    """Acceptance: an OLDER deferred item cannot stand in front of urgent work.
+
+    The take loop picks the oldest `*.md`, so the deferred one is first in line;
+    the fix is that it picks the oldest ELIGIBLE one.
+    """
+    _runner_rig(tmp_path)
+    old = _stage(tmp_path, "A-deferred.md", "not-before: 2099-01-01T00:00:00Z\n")
+    os.utime(old, (1, 1))  # unambiguously the oldest by mtime
+    _stage(tmp_path, "B-urgent.md", "# urgent\n\nFix the live page.\n")
+    rc, out, fired = _take_once(tmp_path)
+    assert rc == 0, out
+    assert fired == 1, out
+    assert "taking B-urgent.md" in out, out
+    names = _inbox(tmp_path)
+    assert "A-deferred.md" in names, f"the deferred item was consumed:\n{names}"
+    assert any(n.startswith("B-urgent.consumed-") for n in names), names
+
+
+def test_a_deferral_survives_a_runner_restart(tmp_path):
+    """Each `--take-once` is a fresh process, so three passes are three restarts.
+
+    Nothing about the deferral lives in the runner's memory — which is the only
+    reason a restart cannot lose it.
+    """
+    _runner_rig(tmp_path)
+    _stage(tmp_path, "A.md", "not-before: 2026-09-16T00:30:00Z\n")
+    for _ in range(3):
+        rc, out, fired = _take_once(tmp_path, now=1789497000)
+        assert rc == 0 and fired == 0, out
+    assert _inbox(tmp_path) == ["A.md"]
+    # Same file, same inbox, clock moved on: now it runs.
+    rc, out, fired = _take_once(tmp_path, now=1789519000)
+    assert fired == 1, out
+
+
+def test_pending_deferred_work_stops_the_runner_restocking_over_it(tmp_path):
+    """Acceptance: the deferred file must still COUNT as queued.
+
+    This is why a deferred directive keeps its `.md` name instead of being
+    renamed aside — renaming it would empty the inbox in `inbox_queued`'s eyes
+    and self-restock would manufacture exactly the empty session #6409 is about.
+    """
+    handoff, workdir, binp, launches = _runner_rig(tmp_path)
+    (handoff / "PROGRAM-DEMO.md").write_text("# demo program\n")
+    (handoff / "lane-program-map.txt").write_text("demo PROGRAM-DEMO.md\n")
+    _stage(tmp_path, "A.md", "not-before: 2099-01-01T00:00:00Z\n")
+    rc, out = run(
+        RUNNER, "--restock-once", str(workdir), "demo",
+        env={"LANE_HANDOFF": str(handoff), "PATH": f"{binp}:{os.environ['PATH']}"},
+    )
+    assert "no restock" in out, out
+    assert "WOULD WRITE" not in out and "wrote " not in out, out
+    assert _inbox(tmp_path) == ["A.md"], _inbox(tmp_path)
+
+
+# --- the failure directions ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "stamp",
+    [
+        "tonight",
+        "00:30",                       # a bare time
+        "2026-09-16",                  # a bare date
+        "2026-09-16T00:30:00",         # no zone: two instants on two laptops
+        "2026-09-16T08:08:08+05:00",   # a zone, but not UTC
+        "2026-13-45T99:99:99Z",        # calendar-shaped and impossible
+        "08",                          # the octal trap, on its own
+        "0000-00-00T00:00:00Z",
+    ],
+)
+def test_an_unreadable_not_before_runs_the_work_loudly_rather_than_losing_it(
+    tmp_path, stamp
+):
+    """Fail-safe direction: a typo must cost a warning, never the work.
+
+    Deferring what we cannot read would turn one bad character into a directive
+    that never runs and nobody is told about — the silent half of the bug this
+    ship exists to remove.
+    """
+    _runner_rig(tmp_path)
+    _stage(tmp_path, "A.md", f"# work\n\nnot-before: {stamp}\n")
+    rc, out, fired = _take_once(tmp_path)
+    assert rc == 0, f"the runner crashed on '{stamp}':\n{out}"
+    assert fired == 1, f"'{stamp}' silently swallowed the work:\n{out}"
+    assert "unreadable not-before" in out, out
+    assert stamp.split()[0] in out, out
+    # The remedy is printed beside the complaint, because the reader of this
+    # line is the lane that mis-typed it.
+    assert "2026-09-16T00:30:00Z" in out, out
+    # No arithmetic ran on it: an octal or range crash would show up as a shell
+    # diagnostic, and `08` is the literal value that produces one.
+    assert "value too great for base" not in out, out
+    assert "syntax error" not in out, out
+
+
+@pytest.mark.parametrize(
+    "stamp",
+    [
+        "2026-09-16T00:30:00Z",
+        "2026-09-16T00:30Z",            # seconds omitted
+        "2026-09-16 00:30:00Z",         # space separator
+        "2026-09-16T00:30:00+00:00",
+        "2026-09-16T00:30+00:00",
+    ],
+)
+def test_every_documented_form_of_the_stamp_is_understood(tmp_path, stamp):
+    """One accepted-forms table, asserted rather than described in a comment."""
+    _runner_rig(tmp_path)
+    _stage(tmp_path, "A.md", f"not-before: {stamp}\n")
+    rc, out, fired = _take_once(tmp_path, now=1789497000)  # 6 h before
+    assert rc == 0 and fired == 0, f"'{stamp}' was not read as a deferral:\n{out}"
+    assert "2026-09-16T00:30:00Z" in out, out
+    rc, out, fired = _take_once(tmp_path, now=1789519000)  # 6 min after
+    assert fired == 1, f"'{stamp}' never became due:\n{out}"
+
+
+def test_the_stamp_is_read_inside_an_html_comment(tmp_path):
+    """The form a directive author uses when the line should not render."""
+    _runner_rig(tmp_path)
+    _stage(tmp_path, "A.md", "# work\n\n<!-- not-before: 2099-01-01T00:00:00Z -->\n")
+    rc, out, fired = _take_once(tmp_path)
+    assert rc == 0 and fired == 0, out
+
+
+def test_a_directive_with_no_stamp_is_untouched_by_any_of_this(tmp_path):
+    """Compatibility: every directive in every inbox today carries no metadata."""
+    _runner_rig(tmp_path)
+    _stage(tmp_path, "A.md", "# ordinary work\n\nDo the thing.\n\n— codex\n")
+    rc, out, fired = _take_once(tmp_path)
+    assert rc == 0, out
+    assert fired == 1, out
+    assert "not-before" not in out, out
+
+
+def test_a_stamp_quoted_deep_in_a_report_does_not_defer_it(tmp_path):
+    """Only the header is metadata. A session pasting this very paragraph into
+    its restock must not defer the next one by accident."""
+    _runner_rig(tmp_path)
+    body = "# report\n\n" + "filler line\n" * 60 + "not-before: 2099-01-01T00:00:00Z\n"
+    _stage(tmp_path, "A.md", body)
+    rc, out, fired = _take_once(tmp_path)
+    assert rc == 0 and fired == 1, out
+
+
+def test_take_once_starts_no_session_when_the_inbox_is_empty(tmp_path):
+    """The control: the rig itself must not be what makes a launch happen."""
+    _runner_rig(tmp_path)
+    rc, out, fired = _take_once(tmp_path)
+    assert rc == 0 and fired == 0, out
+    assert "idle" in out, out

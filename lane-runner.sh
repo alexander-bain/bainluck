@@ -9,6 +9,30 @@
 #
 #   --dry-run  evaluate the SELF-RESTOCK rules once for each named lane, print
 #              what would be written, write nothing, exit. Never runs a session.
+#   --take-once  run exactly ONE pass of the real take loop and exit. Same code
+#              path as the daemon — it takes, runs and consumes for real — so a
+#              guard test can prove the SELECTION without waiting on a loop.
+#
+# NOT BEFORE: DEFERRING A DIRECTIVE WITHOUT BURNING A SESSION (#6409)
+#   A directive may carry, anywhere in its first 40 lines, a line of the form
+#
+#       not-before: 2026-09-16T00:30:00Z
+#
+#   (an HTML comment wrapper is fine: `<!-- not-before: … -->`; the seconds may
+#   be omitted; the separator may be a space; the zone must be `Z` or `+00:00`.)
+#
+#   The runner reads that BEFORE it starts anything. Until the stamp passes, the
+#   file is skipped — no model session is launched, none is held asleep — while
+#   every OTHER directive in the same inbox stays runnable, so a deferred item
+#   can never block a fresh explicit assignment. Because the file keeps its `.md`
+#   name it still counts as queued, which is what stops self-restock from
+#   manufacturing an empty session on top of it. The idle line names the next due
+#   time, so an idle window reads as waiting rather than as a crash.
+#
+#   Prose ("do not start before 00:30Z") is NOT this: prose is read only after a
+#   session has already been launched, which is the whole cost #6409 is about.
+#   A `not-before:` the runner cannot parse is announced loudly and treated as
+#   DUE — the failure direction that loses no work.
 #
 # How it works: watches ~/bainluck/.claude/handoff/runner-inbox/<lane>/ for *.md
 # queue files staged by Fable. Takes the OLDEST, runs a fresh headless claude
@@ -37,8 +61,10 @@ trap 'trap - INT TERM HUP; echo; echo "[runner] stopping - signalling session su
 
 DRYRUN=0
 RESTOCK_ONCE=0
+TAKE_ONCE=0
 if [ "${1:-}" = "--dry-run" ]; then DRYRUN=1; shift; fi
 if [ "${1:-}" = "--restock-once" ]; then RESTOCK_ONCE=1; shift; fi
+if [ "${1:-}" = "--take-once" ]; then TAKE_ONCE=1; shift; fi
 
 WORKDIR="${1:?usage: lane-runner.sh [--dry-run] <workdir> <lane> [lane2 ...]}"
 shift
@@ -400,8 +426,130 @@ lane_program () {
   return 1
 }
 
+# ─── NOT-BEFORE: A DIRECTIVE THAT DEFERS WITHOUT LAUNCHING ANYTHING (#6409) ──
+#
+# THE COST THIS EXISTS FOR, measured 2026-09-15: live launched 25 empty sessions
+# in ~30 minutes and calibration held a model session in 570-second sleeps from
+# 17:18Z to an 18:30Z checkpoint. None of them advanced the rebuild. The take
+# loop consumes the oldest `*.md` the moment it appears, and RESTOCK_MIN_INTERVAL
+# throttles only the runner's OWN restocks — a directive a lane writes for itself
+# bypasses it entirely. A sentence inside the file saying when to start is read
+# by the model, i.e. after the session it was meant to prevent has begun.
+#
+# So the stamp has to be readable by the RUNNER, before it spends anything.
+#
+# The clock is overridable for the guard tests only; production never sets it.
+# Note the fall-back is evaluated per call, not captured at start-up: a runner
+# lives for days, and a start-up epoch would make every deferral due.
+runner_now () { echo "${LANE_NOW_EPOCH:-$(date +%s)}"; }
+
+# Parse one directive's `not-before:`. Echoes an epoch and returns 0 when there
+# is a usable one; returns 1 (silent) when the directive carries none; returns 2
+# and echoes the offending text when it carries one we cannot read.
+#
+# THREE THINGS THIS DELIBERATELY DOES NOT DO.
+#   * It does not do its own date arithmetic. `date` converts; this function
+#     only ever compares integers it has checked are integers. Hand-splitting
+#     "00:30" and feeding `$((08))` to the shell is the octal crash this class of
+#     parser is famous for, and it would take the runner down for every lane.
+#   * It does not accept a bare local time. A stamp without `Z`/`+00:00` is two
+#     different instants on two laptops (the fleet's own clock note: this Mac
+#     prints EDT), so it is refused as malformed rather than guessed at.
+#   * It does not search the whole file. Only the first 40 lines, so a `not-before:`
+#     QUOTED in the body of a long report — this very paragraph, in a directive
+#     that pastes it — cannot silently defer somebody's work.
+directive_not_before () {
+  local F="$1" RAW V EPOCH
+  RAW=$(head -40 "$F" 2>/dev/null \
+        | grep -iE '^[[:space:]]*(<!--[[:space:]]*)?not-before:' \
+        | head -1)
+  [ -n "$RAW" ] || return 1
+  # Strip the key, an optional comment wrapper, and surrounding blanks.
+  V=$(printf '%s' "$RAW" | sed -E 's/^[[:space:]]*(<!--[[:space:]]*)?[Nn][Oo][Tt]-[Bb][Ee][Ff][Oo][Rr][Ee]:[[:space:]]*//; s/[[:space:]]*-->[[:space:]]*$//; s/[[:space:]]+$//')
+  case "$V" in
+    # `YYYY-MM-DD` then `T` or a space, `HH:MM` with optional `:SS`, then the
+    # zone. Anything else falls through to the malformed arm below.
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][T\ ][0-9][0-9]:[0-9][0-9]Z) V="${V%Z}:00Z" ;;
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][T\ ][0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) : ;;
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][T\ ][0-9][0-9]:[0-9][0-9]+00:00) V="${V%+00:00}:00Z" ;;
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][T\ ][0-9][0-9]:[0-9][0-9]:[0-9][0-9]+00:00) V="${V%+00:00}Z" ;;
+    *) echo "$V"; return 2 ;;
+  esac
+  V="${V/ /T}"
+  # GNU first, then BSD, for the reason `file_ctime` gives: the two accept each
+  # other's flags often enough that the wrong order returns a plausible wrong
+  # answer instead of an error. GNU rejects `-j`; BSD rejects `-d <iso>`.
+  EPOCH=$(date -u -d "$V" +%s 2>/dev/null) \
+    || EPOCH=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$V" +%s 2>/dev/null) \
+    || { echo "$V"; return 2; }
+  # A calendar-shaped string that neither `date` refused nor converted (an
+  # out-of-range month, say) must not reach the arithmetic below.
+  case "${EPOCH:-}" in ''|*[!0-9]*) echo "$V"; return 2 ;; esac
+  echo "$EPOCH"
+}
+
+# Is this directive runnable right now? Prints one line and returns 1 when it is
+# not. The announcement lives here so the take loop and the idle summary can
+# never disagree about which files are being held.
+#
+# `NEXT_DUE_EPOCH` / `NEXT_DUE_WHAT` accumulate the soonest deferral seen in this
+# pass; the idle branch reads them so an empty window says WHEN, not just that it
+# is empty.
+NEXT_DUE_EPOCH=""
+NEXT_DUE_WHAT=""
+directive_is_due () {
+  local F="$1" L="$2" NB RC NOW
+  NB=$(directive_not_before "$F"); RC=$?
+  [ "$RC" -eq 1 ] && return 0                       # no stamp: ordinary directive
+  if [ "$RC" -eq 2 ]; then
+    # LOUD, and DUE. The other direction — refusing to run what we cannot read —
+    # turns one typo into work that never runs and nobody is told about.
+    # stdout, like every other `[runner:…]` line: an operator who pipes the
+    # window must not be the one who loses the warning.
+    echo "[runner:$L] $(basename "$F"): unreadable not-before '${NB}' — running it NOW."
+    echo "[runner:$L]   expected e.g. 'not-before: 2026-09-16T00:30:00Z' (UTC, Z or +00:00)"
+    return 0
+  fi
+  NOW=$(runner_now)
+  [ "$NOW" -ge "$NB" ] && return 0
+  if [ -z "$NEXT_DUE_EPOCH" ] || [ "$NB" -lt "$NEXT_DUE_EPOCH" ]; then
+    NEXT_DUE_EPOCH="$NB"
+    NEXT_DUE_WHAT="$L/$(basename "$F")"
+  fi
+  return 1
+}
+
+# "in 1h02m" — the reader's question is how long, not which epoch.
+human_until () {
+  local S="$1" H M
+  [ "$S" -lt 0 ] && S=0
+  H=$((S / 3600)); M=$(((S % 3600) / 60))
+  if [ "$H" -gt 0 ]; then echo "${H}h${M}m"; else echo "${M}m"; fi
+}
+
+# The idle line. It names the next due time when something is deferred, because
+# the failure this ship is judged on is an operator unable to tell a runner that
+# is WAITING from one that has died (#6409 acceptance). GNU/BSD order as above.
+idle_announce () {
+  local WHEN=""
+  if [ -n "$NEXT_DUE_EPOCH" ]; then
+    WHEN=$(date -u -d "@$NEXT_DUE_EPOCH" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) \
+      || WHEN=$(date -u -r "$NEXT_DUE_EPOCH" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) \
+      || WHEN="epoch $NEXT_DUE_EPOCH"
+    echo "[runner] idle - no eligible work in: ${LANES[*]}  ($(date '+%H:%M:%S'))" \
+         "- next due: $NEXT_DUE_WHAT at $WHEN (in $(human_until $((NEXT_DUE_EPOCH - $(runner_now)))))"
+  else
+    echo "[runner] idle - no queued work in: ${LANES[*]}  ($(date '+%H:%M:%S'))"
+  fi
+}
+
 # Count queued directives exactly the way the take loop globs for them, so the
 # two can never disagree about whether a lane has work.
+#
+# A DEFERRED DIRECTIVE IS STILL QUEUED, and that is the point: it keeps its `.md`
+# name, so restock guard 1 below sees the lane as having work and does not write
+# a fresh directive on top of it. Renaming deferred files out of this glob would
+# have re-created the empty session #6409 exists to stop.
 inbox_queued () { ls "$1"/*.md 2>/dev/null | grep -vc '\.consumed-' ; }
 inbox_running () { ls "$1"/*.md.running 2>/dev/null | wc -l | tr -d ' ' ; }
 inbox_restocks () { ls "$1"/RESTOCK-*.md "$1"/RESTOCK-*.md.running 2>/dev/null | wc -l | tr -d ' ' ; }
@@ -746,11 +894,25 @@ EOF
 IDLE=0
 while true; do
   TOOK=0
+  # Recomputed every pass: a deferral that came due since the last one must not
+  # still be advertised as pending, and one staged since must be.
+  NEXT_DUE_EPOCH=""
+  NEXT_DUE_WHAT=""
   for L in "${LANES[@]}"; do
     INBOX="$HANDOFF/runner-inbox/$L"
-    # oldest staged .md first; skip .running / .consumed
-    Q=$(ls -tr "$INBOX"/*.md 2>/dev/null | grep -v '\.consumed-' | head -1)
-    [ -n "${Q:-}" ] || continue
+    # Oldest staged .md first; skip .running / .consumed. The FIRST ELIGIBLE one
+    # rather than simply the first (#6409): a directive deferred to tonight must
+    # not stand in front of an assignment staged for now. `read` rather than a
+    # `for` over the glob so a directive whose name contains a space is one
+    # candidate, not several.
+    Q=""
+    while IFS= read -r CAND; do
+      [ -n "$CAND" ] || continue
+      directive_is_due "$CAND" "$L" || continue
+      Q="$CAND"
+      break
+    done < <(ls -tr "$INBOX"/*.md 2>/dev/null | grep -v '\.consumed-')
+    [ -n "$Q" ] || continue
     TS=$(date +%Y%m%d-%H%M%S)
     RUN="$Q.running"
     mv "$Q" "$RUN" 2>/dev/null || continue   # atomic take; lose the race → next loop
@@ -837,6 +999,13 @@ while true; do
     fi
     TOOK=1
   done
+  if [ "$TAKE_ONCE" -eq 1 ]; then
+    # One real pass, for the guard tests. Announce the deferral state before
+    # leaving, because "took nothing" and "took nothing, next due at 00:30Z" are
+    # different facts and only the second one is a working runner.
+    [ "$TOOK" -eq 0 ] && idle_announce
+    exit 0
+  fi
   if [ "$TOOK" -eq 1 ]; then
     IDLE=0
   else
@@ -857,7 +1026,7 @@ while true; do
     if [ "$WROTE" -eq 1 ]; then IDLE=0; continue; fi
     # Legible silence: say we're idle, immediately and then every ~5 minutes,
     # so an empty window always distinguishes "no work queued" from "stuck".
-    [ $((IDLE % 5)) -eq 0 ] && echo "[runner] idle - no queued work in: ${LANES[*]}  ($(date '+%H:%M:%S'))"
+    [ $((IDLE % 5)) -eq 0 ] && idle_announce
     IDLE=$((IDLE + 1))
     sleep "$IDLE_SLEEP"
   fi
