@@ -1,0 +1,8 @@
+Test Case '-[BainLuckUITests.AReaderCanRevealWhenAPriceWasLastSeenTests testTappingTheAgeChipRevealsThePreciseStampAndTappingAgainPutsItAway]' started.
+    t =    36.35s found an age chip after 0 swipe(s): Price 3d ago. Last number: 11 Sep, 8:51 PM
+    t =    36.78s chip label: Price 3d ago. Last number: 11 Sep, 8:51 PM
+    t =    49.65s witness below the chip: 'Resolves Nov 15' at y=718.0
+Test Case '-[BainLuckUITests.AReaderCanRevealWhenAPriceWasLastSeenTests testTappingTheAgeChipRevealsThePreciseStampAndTappingAgainPutsItAway]' passed (55.669 seconds).
+	 Executed 1 test, with 0 failures (0 unexpected) in 55.669 (55.670) seconds
+	 Executed 1 test, with 0 failures (0 unexpected) in 55.669 (55.670) seconds
+	 Executed 1 test, with 0 failures (0 unexpected) in 55.669 (55.671) seconds
