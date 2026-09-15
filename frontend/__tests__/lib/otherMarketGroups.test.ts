@@ -1070,6 +1070,99 @@ describe("canonicalMatchupTitle (#5181)", () => {
   });
 });
 
+// #6417 — the live specimen, read off the wire on 2026-09-15. Alavés v Valencia
+// (`/events/15305823`) was 0–0 at half time and the page printed `Draw >99%`
+// under a card headed `Alavés vs Valencia`, two inches under a hero saying
+// `Alavés 43%`. The probability is RIGHT for the halftime question; the title
+// is what lied, because the re-title deleted the six characters that said so.
+const ALAVES_HOME = "Alavés";
+const ALAVES_AWAY = "Valencia";
+const ALAVES_HALFTIME = "Deportivo Alavés vs. Valencia CF - Halftime Result";
+
+describe("canonicalMatchupTitle (#6417) — a qualifier after a spaced dash is kept", () => {
+  test("THE DEFECT: the halftime question keeps the words that make it the halftime question", () => {
+    expect(canonicalMatchupTitle(ALAVES_HALFTIME, ALAVES_HOME, ALAVES_AWAY))
+      .toBe("Alavés vs Valencia - Halftime Result");
+  });
+
+  test("every suffix the venue actually ships survives the rename", () => {
+    // Measured 2026-09-15 on open, event-linked, matchup-shaped, colon-free
+    // rows: 5,135 of 6,687 carry one of these, and all 5,135 hold exactly one
+    // separator with the matchup in the head.
+    for (const suffix of [
+      "Second Half Result",
+      "Exact Score",
+      "First Team to Score",
+      "More Markets",
+      "Total Corners",
+      "Player Props",
+      "1st/2nd Half First Team to Score, 1st Half Exact Score",
+      "Highest Scoring Quarter",
+    ]) {
+      expect(canonicalMatchupTitle(`Deportivo Alavés vs. Valencia CF - ${suffix}`, ALAVES_HOME, ALAVES_AWAY))
+        .toBe(`Alavés vs Valencia - ${suffix}`);
+    }
+  });
+
+  test("#5181's own ship is unchanged — a bare matchup still gets our two names", () => {
+    // The guard against fixing this by refusing outright: a flat refusal would
+    // have handed 5,135 rows back to the venue's spelling.
+    expect(canonicalMatchupTitle(VANCOUVER_MARKET, VANCOUVER_HOME, VANCOUVER_AWAY))
+      .toBe("Vancouver Whitecaps FC vs LA Galaxy");
+  });
+
+  test("a hyphen inside a club's name is not a separator", () => {
+    // `Saint-Étienne` has no spaces around its hyphen, so it is one token.
+    expect(canonicalMatchupTitle("Saint-Étienne vs. Paris FC", "AS Saint-Étienne", "Paris FC"))
+      .toBe("AS Saint-Étienne vs Paris FC");
+  });
+
+  test("a qualifier that comes BEFORE the matchup refuses, keeping every character", () => {
+    // The head is not a matchup, so there is nothing to canonicalise and the
+    // leading text is not reconstructible from two team names.
+    expect(canonicalMatchupTitle("Group A - Alavés vs. Valencia", ALAVES_HOME, ALAVES_AWAY))
+      .toBeNull();
+  });
+
+  test("a colon still refuses even when a dash qualifier is also present", () => {
+    expect(canonicalMatchupTitle("Alavés vs. Valencia - Total: O/U 2.5", ALAVES_HOME, ALAVES_AWAY))
+      .toBeNull();
+  });
+});
+
+describe("buildMarketSection (#6417) — six questions stop fusing into one card", () => {
+  // The second harm on the same screen: because all six re-titled to the
+  // identical string, `draft.cards.get(cardName)` put them in ONE card, which
+  // is how the reader saw three different draw prices under one heading.
+  const SIX_QUESTIONS = [
+    "Halftime Result",
+    "Second Half Result",
+    "First Team to Score",
+    "More Markets",
+    "Exact Score",
+    "Total Corners",
+  ];
+  const ALAVES_ROWS: OtherMarketRow[] = SIX_QUESTIONS.map((q) => ({
+    market_name: `Deportivo Alavés vs. Valencia CF - ${q}`,
+    outcome_name: "Draw",
+    probability: 0.5,
+    source: "polymarket",
+  }));
+
+  test("THE SHIP: six markets produce six cards, each naming its own question", () => {
+    const names = cardNames(buildMarketSection(ALAVES_ROWS, { homeTeam: ALAVES_HOME, awayTeam: ALAVES_AWAY }));
+    for (const q of SIX_QUESTIONS) {
+      expect(names).toContain(`Alavés vs Valencia - ${q}`);
+    }
+    expect(new Set(names).size).toBe(SIX_QUESTIONS.length);
+  });
+
+  test("no card is headed with the bare matchup — that heading is what made `Draw >99%` read as the match", () => {
+    const names = cardNames(buildMarketSection(ALAVES_ROWS, { homeTeam: ALAVES_HOME, awayTeam: ALAVES_AWAY }));
+    expect(names).not.toContain("Alavés vs Valencia");
+  });
+});
+
 describe("buildMarketSection — #5181 the card stops printing a club that does not exist", () => {
   test("THE SHIP: the specimen's card is titled with our names, not the venue's", () => {
     const section = buildMarketSection(VANCOUVER, VANCOUVER_TEAMS);
