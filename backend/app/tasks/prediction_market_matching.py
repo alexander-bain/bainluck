@@ -691,6 +691,41 @@ ODDS_API_COVERED_PREFIXES = (
     # named because the women's code is a competition in its own right and a
     # reader of this tuple should not have to notice the prefix overlap.
     "aussierules_afl", "aussierules_aflw",
+    # #6386: the Canadian Football League, the same defect as #6377 one
+    # competition over. The sport is guessed from the club NICKNAMES —
+    # Tiger-Cats, Elks, Stampeders, Lions — so the guess lands somewhere
+    # different almost every time. Measured on production 2026-09-15 over the
+    # whole table: 76 fixtures whose BOTH sides are CFL clubs minted as
+    # phantoms, scattered across FOUR unrelated catch-alls
+    # (`americanfootball_other` 22, `baseball_other` 21, `rugby_other` 20,
+    # `basketball_other` 13) — one worse than Aussie Rules' three, and the same
+    # unmapped-series scatter Q453 records. One was still upcoming and served
+    # as the FIRST of the 8 upcoming games on `/api/leagues/rugby_other`:
+    # event 15312931 Montreal Alouettes v Hamilton Tiger-Cats, minted 08:21Z
+    # that morning, against the real `americanfootball_cfl` row 15312374 at the
+    # same instant to the second.
+    #
+    # ALL 76 duplicate a real CFL fixture — 76/76, checked by club pair rather
+    # than by `commence_time`, for #6377's reason: the older rows carry Gamma's
+    # LISTING stamp instead of a kickoff (#4965 / gotcha #14) and are days
+    # adrift. The Odds API is demonstrably carrying the league end to end — 68
+    # `odds_api` CFL rows all-time, latest 2026-09-14 — so this list's stated
+    # predicate holds exactly: a market-born row can only be a twin.
+    #
+    # NARROWER IN RISK THAN THE AFL KEYS ABOVE, and measured rather than
+    # assumed. #6377 needed `unambiguous_only` because 37 AFL club pairs field
+    # a side in both codes; CFL has ZERO such collisions — all 9 clubs plus the
+    # two alternates `Argonauts` and `Blue Bombers` resolve to this key and to
+    # no other league. So `shared` is always exactly 1 here and the relink arm,
+    # which needs the league NAMED, can attach the market to the real fixture
+    # instead of merely refusing the phantom.
+    #
+    # It also makes `placeable_league_for_matchup` return None for CFL. That
+    # removes nothing: no market-born row has EVER landed in this key —
+    # all-time provenance is 68 `odds_api` + 2 `espn`, zero from any market
+    # source — because that placer is family-scoped and three of the four
+    # catch-alls above are in the wrong family to begin with.
+    "americanfootball_cfl",
 )
 
 
