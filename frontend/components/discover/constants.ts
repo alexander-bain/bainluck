@@ -1,4 +1,5 @@
 import { categoryEmoji } from "@/lib/categoryEmoji";
+import { getCategoryForLeague } from "@/lib/sportCategories";
 
 export const CATEGORY_GRADIENTS: Record<string, string> = {
   basketball: "linear-gradient(135deg, #7c2d12, #c2410c)",
@@ -65,10 +66,47 @@ const DEFAULT_EMOJI = "📊";
  * a colour is how `health` came to wear a weather chip (#4264).
  */
 export function getCat(cat: string | null | undefined) {
-  if (!cat) return { ...DEFAULT_COLORS, emoji: DEFAULT_EMOJI };
-  const key = cat.toLowerCase();
+  const key = chipCategory(cat);
+  if (!key) return { ...DEFAULT_COLORS, emoji: DEFAULT_EMOJI };
   return {
     ...(CATEGORY_COLORS[key] ?? DEFAULT_COLORS),
     emoji: categoryEmoji(key) ?? DEFAULT_EMOJI,
   };
+}
+
+/**
+ * The shelf a card's chip belongs to, from either a shelf name or a SPORT KEY.
+ *
+ * #6247. Every one of these maps is keyed on a shelf name — `football`,
+ * `hockey`, `motorsports` — and `components/discover/EventCard` was handing
+ * them `data.sport.split("_")[0]`, which is a sport-key segment:
+ * `americanfootball`, `icehockey`, `rugbyleague`. No match, so every NFL and
+ * NHL card on the landing page drew the grey fallback 📊 and lost its
+ * gradient. Measured over a 10-day window: 892 of 8,806 events —
+ * americanfootball 659, icehockey 198, rugbyleague 30, motorsport 5.
+ *
+ * #4326 repaired four fallers by ADDING shelf names to the maps, which could
+ * never reach these: `americanfootball` is not a shelf name and never will be.
+ * The mapping from sport key to shelf already exists and is used by the rest
+ * of the site — `getCategoryForLeague` in `lib/sportCategories.ts` — so this
+ * reads it rather than minting a second answer here.
+ *
+ * ⚠️ IT MUST BE GIVEN THE WHOLE KEY. Those prefixes carry the underscore
+ * (`americanfootball_`), so the truncated segment the card used to pass
+ * matches nothing and this function would be inert — the assertion in
+ * `discoverCardChipKnowsItsSport6247.test.tsx` is on the card's own render for
+ * exactly that reason.
+ *
+ * A shelf name comes back untouched — every prefix carries a trailing
+ * underscore, so `politics`, `weather` and `health` match none of them — which
+ * is why `llm_sport_category` callers need no fast path around this and do not
+ * have one: an early return for "I already know this name" was measured
+ * equivalent for every value any caller passes, and an untested branch that
+ * changes nothing is worse than no branch. An unknown key is likewise returned
+ * as-is, to fall through to the default the way it always has.
+ */
+export function chipCategory(raw: string | null | undefined): string | undefined {
+  if (!raw) return undefined;
+  const key = raw.toLowerCase();
+  return getCategoryForLeague(key)?.key ?? key;
 }
