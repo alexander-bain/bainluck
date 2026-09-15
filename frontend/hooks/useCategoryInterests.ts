@@ -43,6 +43,43 @@ export function getLevelLabel(value: number): string {
 }
 
 /**
+ * The label for a category the reader may never have touched (#2586).
+ *
+ * `undefined` is not `0`. A stored map starts as `{}` — `parseInterests(null)`
+ * — and a category absent from it carries no choice at all, while `0` is the
+ * reader having picked "Nah" from the selector. `getLevelLabel` cannot tell
+ * them apart because its only floor is the reject label, so every caller that
+ * coerced absent to `0` printed a rejection the reader never made: all 24 rows
+ * of `/preferences` read "Nah ›" in a clean browser, which is what #2586
+ * reports. Pass the raw lookup — `interests[key]`, not `interests[key] ?? 0` —
+ * and absence keeps its own label.
+ */
+export const UNSET_INTEREST_LABEL = "Not set";
+
+export function getInterestLabel(value: number | undefined): string {
+  if (value === undefined) return UNSET_INTEREST_LABEL;
+  return getLevelLabel(value);
+}
+
+/**
+ * Whether one option of the four-level selector is the reader's current pick.
+ *
+ * An untouched category picks NOTHING — that is the whole of #2586 restated for
+ * the open selector, and it is the half a static render cannot see, because the
+ * options only exist while the row is being edited. It lives here, out of the
+ * JSX, so it can be asserted directly.
+ *
+ * Written as an explicit `undefined` test rather than left to
+ * `Math.abs(undefined - opt) < 0.05` being `NaN < 0.05`: that lands on the same
+ * branch by accident, says nothing about intent, and flips the day a caller
+ * passes `null` instead.
+ */
+export function isChosenLevel(value: number | undefined, option: number): boolean {
+  if (value === undefined) return false;
+  return Math.abs(value - option) < 0.05;
+}
+
+/**
  * Hook for reading/writing category interests.
  * Auth'd users: reads/writes via API (sport affinities).
  * Anonymous users: reads/writes via the device's anonymous bucket.
