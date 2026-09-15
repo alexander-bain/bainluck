@@ -204,7 +204,12 @@ def test_the_refill_is_bounded_and_deadline_aware():
     """
     assert "_SEARCH_FUTURES_REFILL" in SEARCH_CODE
     refill = SEARCH_CODE[SEARCH_CODE.index("len(deduped_futures) < _SEARCH_FUTURES_PAGE"):]
-    refill = refill[: refill.index("futures_markets = deduped_futures")]
+    # The refill block ends where the page is cut from `deduped_futures`. #6327
+    # split that one line in two — `_deduped_page` (the page as dedup produced
+    # it) and `futures_markets` (that page minus the wholly-unpriced cards) — so
+    # the end anchor is the first of the pair. The assertions below are unchanged
+    # and still read exactly the refill block.
+    refill = refill[: refill.index("_deduped_page = deduped_futures[")]
     assert "len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW" in refill, (
         "the refill must require a SATURATED window — otherwise it re-queries "
         "for pages that are short because the corpus is short"
@@ -224,7 +229,21 @@ def test_the_response_reports_a_collapse_it_could_not_fix():
     collapse = SEARCH_CODE[SEARCH_CODE.index("_futures_collapsed = ("):]
     collapse = collapse[: collapse.index(")\n", collapse.index("_SEARCH_FUTURES_PAGE"))]
     assert "len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW" in collapse
-    assert "len(futures_markets) < _SEARCH_FUTURES_PAGE" in collapse
+    # #6327: measured on `_deduped_page` — the page DEDUP produced — not on the
+    # page that ships. The verdict's whole meaning is "rows were MERGED away",
+    # and the price filter is a deliberate withdrawal, not a merge: folding them
+    # together would report a bucket outage every time we correctly suppress a
+    # dashes-only card. `max(..., _headline_promoted)` is the promoter's own
+    # contract (it hoists within the page, returning `max(len(page), promoted)`),
+    # so on every query that withdraws nothing this is the old expression.
+    assert (
+        "max(len(_deduped_page), _headline_promoted) < _SEARCH_FUTURES_PAGE"
+        in collapse
+    )
+    assert "len(futures_markets) <" not in collapse, (
+        "the collapse verdict must not be computed from the price-filtered page "
+        "— a withdrawal is not a collapse (#6327)"
+    )
     assert 'if _futures_collapsed else {}' in SEARCH_CODE, (
         "the key must be additive-when-true, like `degraded` — a key that is "
         "always present teaches readers to ignore it"

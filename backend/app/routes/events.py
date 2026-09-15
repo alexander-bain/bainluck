@@ -6736,7 +6736,28 @@ async def search_events(
             if len(deduped_futures) >= _SEARCH_FUTURES_PAGE:
                 break
 
-    futures_markets = deduped_futures[:_SEARCH_FUTURES_PAGE]  # flat list (unchanged shape)
+    # #6327: withdraw the cards that can only draw dashes. The builder empties
+    # their ladder (see its note); this is what stops the empty-laddered card
+    # itself reaching the reader, on the surface where the defect was measured.
+    #
+    # FILTER-THEN-SLICE, so a real market from rank 11 takes the withdrawn row's
+    # slot instead of the page simply getting shorter — the withdrawal costs the
+    # reader no answer it would otherwise have had.
+    #
+    # `deduped_futures` is deliberately left WHOLE. It also drives the event
+    # CONCEPT derivation below, and an unpriced winner field is still a real
+    # tournament: the specimen ("WTA Guadalajara Winner") is exactly the tennis
+    # winner-field shape that resolves to a tournament page. Filtering the
+    # shared list would have deleted a legitimate destination to fix a card.
+    #
+    # `_deduped_page` is the page as it stood BEFORE this filter — byte-for-byte
+    # the old `futures_markets`. Two decisions below are deliberately still made
+    # on it (the headline-contender gate and the `bucket_collapse` verdict), each
+    # for its own reason, stated where it is read.
+    _deduped_page = deduped_futures[:_SEARCH_FUTURES_PAGE]
+    futures_markets = [
+        m for m in deduped_futures if not _futures_market_is_wholly_unpriced(m)
+    ][:_SEARCH_FUTURES_PAGE]  # flat list (unchanged shape)
 
     # UX-P259/#2579: the tournament a player can win is reachable by their name.
     #
@@ -6777,11 +6798,23 @@ async def search_events(
     # the stage floor — the gate passes, the value comes back `None`, and the
     # arming line raises `TypeError` on the rarest request in the system.
     _headline_bound_ms = _search_headline_bound_ms(_deadline)
+    # #6327: the gate reads `_deduped_page`, the page BEFORE the price filter, so
+    # this lane's firing condition is byte-for-byte what it was before that ship.
+    # It asks a question about RANKING — "did name matches saturate the window, so
+    # the outcome-only arm never ran" — which is a property of what the page was
+    # composed from, not of what a later suppression left on it. Reading the
+    # filtered page instead would have been wrong in the direction that costs the
+    # reader an answer: a page whose every row is withdrawn is EMPTY, the gate
+    # short-circuits falsy, and the one lane that could have refilled it with a
+    # priced tier-1 market never runs. Promotion itself still operates on the
+    # SHIPPED page below, and a contender is priced by its own query
+    # (`current_probability >= MIN_CONTENDER_PROBABILITY`), so the lane can never
+    # put a dashes-only card back on the page this ship just cleared.
     if (
         _headline_patterns
         and len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW
-        and futures_markets
-        and all(_query_name_match(m, expanded) for m in futures_markets)
+        and _deduped_page
+        and all(_query_name_match(m, expanded) for m in _deduped_page)
         and _headline_bound_ms is not None
     ):
         # THE LANE'S OWN BOUND, not the request's remainder — see
@@ -6930,9 +6963,19 @@ async def search_events(
     # unsaturated window means we saw every candidate, and a refilled page means
     # the collapse was survivable. This fires only when a user really is being
     # shown fewer distinct markets than exist.
+    # #6327: measured on the page DEDUP produced, not on the page the price
+    # filter ships. This verdict's whole meaning is "rows were merged away", and
+    # a deliberate withdrawal is not a merge — folding the two together would
+    # report a bucket outage every time we correctly suppress a dashes-only
+    # card, reddening the recall gate on the fix (`bucket_collapse`,
+    # `tests/evals/test_search_bucket_stability.py`). `max(...)` mirrors
+    # `promote_headline_contenders`' documented contract — it HOISTS within the
+    # page and returns `max(len(page), promoted)`, never appending — so this is
+    # byte-for-byte the old `len(futures_markets)` on every query that withdraws
+    # nothing, which is 12,919 of the 13,397 open tier-1/2 markets.
     _futures_collapsed = (
         len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW
-        and len(futures_markets) < _SEARCH_FUTURES_PAGE
+        and max(len(_deduped_page), _headline_promoted) < _SEARCH_FUTURES_PAGE
     )
 
     # Format each deduped market ONCE and reuse in both flat + families (avoids
@@ -6957,8 +7000,12 @@ async def search_events(
     # actually ships. `futures_markets` is exactly the list serialized as
     # `futures` (via `formatted_futures`), including any UX-P259 promoted row, so
     # it is the set `more_count` measures "below" against.
+    # #6327: the families are a READER surface too, and they compose from the
+    # wider deduped set — so a card withdrawn from the flat bucket above would
+    # walk straight back in through a family. Same predicate, same reason; the
+    # event concepts below still read the unfiltered `deduped_futures`.
     futures_families = _compose_futures_families(
-        deduped_futures,
+        [m for m in deduped_futures if not _futures_market_is_wholly_unpriced(m)],
         expanded,
         lambda m: _formatted_by_id[m.id],
         {m.id for m in futures_markets},
@@ -21229,6 +21276,24 @@ from app.utils.duplicate_condition_outcomes import (  # noqa: E402
 )
 
 
+def _futures_market_is_wholly_unpriced(market: "FuturesMarket") -> bool:
+    """No outcome on this market carries a price at all (#6327).
+
+    The cheap row-level half of the guard inside `_build_search_top_outcomes`,
+    used by the search page to WITHDRAW the card rather than ship a ladder of
+    dashes. Deliberately conservative relative to the builder: it reads every
+    outcome, while the builder judges the placeholder-filtered survivors, so a
+    market this calls unpriced is one the builder is certain to empty. The
+    reverse is not guaranteed (a market whose only priced rung is a placeholder
+    keeps its card and simply draws no ladder) — that is the safe direction, and
+    it keeps this off the hot path's outcome-by-outcome filtering work.
+
+    `is not None`, not truthiness: see the builder's note — a stored `0` is a
+    real price, and 91% of those legs have a live ask.
+    """
+    return not any(o.current_probability is not None for o in market.outcomes)
+
+
 def _build_search_top_outcomes(
     market: "FuturesMarket", limit: int = 5, lean: bool = False
 ) -> list[dict]:
@@ -21275,6 +21340,31 @@ def _build_search_top_outcomes(
         market_is_open=getattr(market, "status", None) == "open",
         is_winner_of=lambda o: bool(o.is_winner),
     )
+    # #6327: a market where NOTHING is priced draws a ranked ladder of dashes —
+    # sixteen rungs, an order implying a favourite, and not one number. Measured
+    # live 2026-09-15: `?q=Sonmez` served market 61106176 "WTA Guadalajara
+    # Winner" (kalshi, tier 1, open) exactly so. #6235 closed this class on
+    # `/politics` and `/entertainment` eight hours earlier
+    # (`routes/politics.py:247`); the search serializer shares the defect and
+    # not the guard, which is the "a shipped fix's guard pins ONE component"
+    # class. Same predicate as the sibling, deliberately.
+    #
+    # `is not None`, NOT a truthiness test. A stored `0` is a REAL price and 91%
+    # of the zero legs carry a live `current_yes_ask` — withdrawing those would
+    # delete a market a reader can still buy. That render (`0` served as a dash,
+    # which should read `<1%`) is #6327's SECOND finding and is display
+    # semantics for the ladder's owner, deliberately not fixed here.
+    #
+    # Measured population, production the same minute: of 13,397 open tier-1/2
+    # markets, **478** have no priced outcome and **all 478 are wholly NULL** —
+    # zero of them are the stored-zero kind, so the two findings do not overlap
+    # on a single row and this predicate cannot reach the second's population.
+    #
+    # Returning `[]` rather than a dashed list serves BOTH surfaces off the one
+    # guard: the typeahead dropdown (`lean=True`) stops carrying three
+    # `probability: None` rungs, and the search card is withdrawn by the caller.
+    if not any(o.current_probability is not None for o in real):
+        return []
     real.sort(key=lambda o: o.current_probability or 0, reverse=True)
     top = real[:limit]
     if lean:
