@@ -71,6 +71,7 @@ def row(
     scored=False,
     anchored=False,
     sport_key="soccer_spain_la_liga",
+    ticker_sport_key=None,
 ):
     return SoccerRow(
         event_id=event_id,
@@ -81,6 +82,7 @@ def row(
         status=status,
         has_final_score=scored,
         is_fixture_anchored=anchored,
+        ticker_sport_key=ticker_sport_key,
     )
 
 
@@ -276,10 +278,16 @@ def test_the_window_is_three_days_and_a_fourth_day_is_a_different_fixture():
     assert MAX_GHOST_LAG == timedelta(days=3)
 
     played = real_row(
-        15400010, "Sevilla", "Valencia", datetime(2026, 9, 10, 19, 0, tzinfo=timezone.utc)
+        15400010,
+        "Sevilla",
+        "Valencia",
+        datetime(2026, 9, 10, 19, 0, tzinfo=timezone.utc),
     )
     four_days_later = ghost_row(
-        15400011, "Sevilla", "Valencia", datetime(2026, 9, 14, 19, 0, tzinfo=timezone.utc)
+        15400011,
+        "Sevilla",
+        "Valencia",
+        datetime(2026, 9, 14, 19, 0, tzinfo=timezone.utc),
     )
 
     assert classify_block([four_days_later, played], now=NOW)[0] == NOT_A_TWIN
@@ -295,10 +303,16 @@ def test_a_ghost_dated_BEFORE_a_completed_row_is_never_hidden():
     partner. The correct answer is to refuse.
     """
     misdated_played = real_row(
-        15400012, "Sevilla", "Valencia", datetime(2026, 9, 14, 19, 0, tzinfo=timezone.utc)
+        15400012,
+        "Sevilla",
+        "Valencia",
+        datetime(2026, 9, 14, 19, 0, tzinfo=timezone.utc),
     )
     upcoming = ghost_row(
-        15400013, "Sevilla", "Valencia", datetime(2026, 9, 13, 19, 0, tzinfo=timezone.utc)
+        15400013,
+        "Sevilla",
+        "Valencia",
+        datetime(2026, 9, 13, 19, 0, tzinfo=timezone.utc),
     )
 
     outcome, tag, _ = classify_block([upcoming, misdated_played], now=NOW)
@@ -332,7 +346,9 @@ def test_two_candidate_real_rows_are_refused_rather_than_guessed():
         datetime(2026, 9, 12, 19, 0, tzinfo=timezone.utc),
     )
 
-    outcome, tag, _ = classify_block([SEVILLA_GHOST, second_real, SEVILLA_REAL], now=NOW)
+    outcome, tag, _ = classify_block(
+        [SEVILLA_GHOST, second_real, SEVILLA_REAL], now=NOW
+    )
 
     assert outcome == REFUSE_AMBIGUOUS
     assert tag is None
@@ -485,9 +501,7 @@ def test_a_suspended_ghost_is_the_state_the_shipped_predicate_could_not_see():
     `MAX_GHOST_LAG`, and still exactly one ghost against one scored,
     fixture-anchored real row.
     """
-    two_days_after_the_fake_kickoff = datetime(
-        2026, 9, 15, 20, 0, tzinfo=timezone.utc
-    )
+    two_days_after_the_fake_kickoff = datetime(2026, 9, 15, 20, 0, tzinfo=timezone.utc)
     suspended_ghost = row(
         15298125,
         "Sevilla",
@@ -801,9 +815,7 @@ def test_folding_cannot_turn_a_refusal_into_a_tag():
         datetime(2026, 9, 13, 20, 0, tzinfo=timezone.utc),
         sport_key="soccer_other",
     )
-    plan = plan_ghost_tags(
-        [SEVILLA_GHOST, SEVILLA_REAL, unclassified_extra], now=NOW
-    )
+    plan = plan_ghost_tags([SEVILLA_GHOST, SEVILLA_REAL, unclassified_extra], now=NOW)
 
     assert plan.tags == []
     assert any("not decidable" in r for r in plan.refusals), plan.refusals
@@ -946,10 +958,16 @@ def test_a_block_the_first_pass_refused_is_never_resolved_by_the_second():
     so it must refuse too and must never pick one.
     """
     ghost_a = ghost_row(
-        15400011, "Sevilla", "Valencia", datetime(2026, 9, 13, 19, 0, tzinfo=timezone.utc)
+        15400011,
+        "Sevilla",
+        "Valencia",
+        datetime(2026, 9, 13, 19, 0, tzinfo=timezone.utc),
     )
     ghost_b = ghost_row(
-        15400012, "Sevilla", "Valencia", datetime(2026, 9, 13, 21, 0, tzinfo=timezone.utc)
+        15400012,
+        "Sevilla",
+        "Valencia",
+        datetime(2026, 9, 13, 21, 0, tzinfo=timezone.utc),
     )
     ghost_c = ghost_row(
         15400013,
@@ -1012,7 +1030,9 @@ def test_the_suffix_strip_is_a_legal_form_and_never_a_squad():
         "galway united",
     )
     assert loose_block_key("Real Sociedad B", "x") == ("real sociedad b", "x")
-    assert loose_block_key("Real Sociedad", "x") != loose_block_key("Real Sociedad B", "x")
+    assert loose_block_key("Real Sociedad", "x") != loose_block_key(
+        "Real Sociedad B", "x"
+    )
 
 
 def test_the_strip_is_trailing_only_and_takes_one_token():
@@ -1077,3 +1097,291 @@ def test_one_played_fixture_may_have_two_id_less_copies():
 
     assert sorted(t.ghost_id for t in plan.tags) == [15305187, 15307878]
     assert {t.canonical_id for t in plan.tags} == {15305059}
+
+
+# ── 8. the third pass: the competition read off the row's own ticker ─────────
+#
+# What the second pass left is named in the module docstring, and the first of
+# its three classes asked for "a squad-to-competition authority" to settle
+# Mallorca v Sabadell and Andorra v Real Sociedad B. That authority is already in
+# the row: the ghost holds `KXLALIGA2GAME-26SEP13MALSAB`, and `KXLALIGA2` is
+# Kalshi's own name for the Segunda, mapped in `sport_keys` since #5982. The row
+# was minted BEFORE that mapping landed, by the eight-character `kxlaliga` prefix
+# that swallowed every Spanish ticker, so its `la_liga` key and its own markets
+# disagree — and the markets are the ones with an authority behind them.
+#
+# Measured on production 2026-09-15, the sweep's own -5d/+5d window, whole
+# population, 1,247 rows: first two passes 13 tags (unchanged), third pass +2
+# tags moving 11 markets onto two canonicals that served zero.
+#
+# These tests pin: it takes the measured specimen, it is the THIRD pass that
+# does it, a canonical's competition is never re-read, a row whose markets name
+# two competitions is silent rather than guessed, a season ticker is not a
+# fixture's competition, and the Köln pair stays out.
+
+#: The production specimen, 2026-09-15. /events/15306010 rendered the 2-0 final,
+#: the chart, the score differential and then "MORE SOCCER" with no market rail,
+#: while all seven of that match's markets sat on the hidden la_liga row.
+MALLORCA_GHOST = row(
+    15308726,
+    "Mallorca",
+    "Sabadell",
+    datetime(2026, 9, 13, 19, 30, tzinfo=timezone.utc),
+    status="suspended",
+    sport_key="soccer_spain_la_liga",
+    ticker_sport_key="soccer_spain_segunda_division",
+)
+MALLORCA_REAL = real_row(
+    15306010,
+    "Mallorca",
+    "Sabadell FC",
+    datetime(2026, 9, 13, 16, 30, tzinfo=timezone.utc),
+    sport_key="soccer_spain_segunda_division",
+)
+MALLORCA_NOW = datetime(2026, 9, 15, 5, 0, tzinfo=timezone.utc)
+
+
+def test_the_stranded_specimen_is_decided_by_the_ticker_pass():
+    """Mallorca: two coordinates differ at once, so only the third pass reaches it.
+
+    `soccer_spain_la_liga` against `soccer_spain_segunda_division` AND `Sabadell`
+    against `Sabadell FC` — the narrow key and the loose-name key both put these
+    rows in different blocks, which is why 59 markets sat where no sweep could
+    see them (#3813, comment 5670673213).
+    """
+    plan = plan_ghost_tags([MALLORCA_GHOST, MALLORCA_REAL], now=MALLORCA_NOW)
+
+    assert [(t.ghost_id, t.canonical_id) for t in plan.tags] == [(15308726, 15306010)]
+    assert plan.ticker_tags == 1, "it must be the THIRD pass that found it"
+    assert plan.blocks_examined == 0, "the narrow key must still see two blocks"
+    assert plan.residual_tags == 0, "the loose-name key must still see two blocks"
+
+
+def test_without_its_ticker_the_same_two_rows_are_not_decided():
+    """The control: the ticker is doing the work, not some other relaxation.
+
+    Identical rows with nothing said about their markets stay in two blocks. A
+    pass that decided them anyway would be crossing two named competitions on
+    names and a clock, which is exactly what the Köln pair forbids.
+    """
+    silent_ghost = row(
+        15308726,
+        "Mallorca",
+        "Sabadell",
+        datetime(2026, 9, 13, 19, 30, tzinfo=timezone.utc),
+        status="suspended",
+        sport_key="soccer_spain_la_liga",
+    )
+
+    plan = plan_ghost_tags([silent_ghost, MALLORCA_REAL], now=MALLORCA_NOW)
+
+    assert plan.tags == []
+    assert plan.ticker_blocks_examined == 0
+
+
+def test_a_canonicals_competition_is_never_re_read_from_a_market():
+    """Only a row that could be a ghost has a competition in doubt.
+
+    A canonical is settled, scored AND fixture-anchored, so an authority that
+    knows the fixture independently of us has already said what it is. If a
+    mis-linked market could move a canonical's block, a REAL fixture would leave
+    the block its own ghost is in — the direction that loses a card rather than a
+    duplicate.
+    """
+    from app.utils.soccer_ghost_twins import block_sport_key
+
+    misfiled_market_on_a_real_row = real_row(
+        15306010,
+        "Mallorca",
+        "Sabadell FC",
+        datetime(2026, 9, 13, 16, 30, tzinfo=timezone.utc),
+        sport_key="soccer_spain_segunda_division",
+        ticker_sport_key="soccer_spain_la_liga",
+    )
+
+    assert (
+        block_sport_key(misfiled_market_on_a_real_row)
+        == "soccer_spain_segunda_division"
+    ), "a canonical is blocked under its own key, whatever its markets say"
+    assert block_sport_key(MALLORCA_GHOST) == "soccer_spain_segunda_division"
+    assert block_sport_key(MALLORCA_REAL) == "soccer_spain_segunda_division"
+
+
+def test_two_competitions_on_one_row_name_neither_of_them():
+    """Disagreement is silence, and that is the load-bearing half.
+
+    A row whose markets name two competitions is telling us something real — the
+    link rail put two series on one row — and the answer is not to pick one.
+    """
+    from app.utils.soccer_ghost_twins import competition_from_tickers
+
+    assert (
+        competition_from_tickers(
+            ["KXLALIGA2GAME-26SEP13MALSAB", "KXLALIGAGAME-26SEP13RMABAR"]
+        )
+        is None
+    )
+    assert (
+        competition_from_tickers(
+            ["KXLALIGA2GAME-26SEP13MALSAB", "KXLALIGA2TOTAL-26SEP12ANDRSO"]
+        )
+        == "soccer_spain_segunda_division"
+    )
+
+
+def test_a_season_ticker_never_names_a_fixtures_competition():
+    """GAME tickers only, through the predicate rather than a bare `startswith`.
+
+    `KXLALIGA-26` resolves to a sport key perfectly well — it is the season
+    winner market — and it says nothing whatever about which fixture a row is.
+    `KXLALIGA2H-26SEP13MALSAB` is the La Liga first-half family, which diverges
+    from `kxlaliga2` at the character after it; reading prefixes by grammar
+    rather than by the registered map is how that one gets called a Segunda game.
+    """
+    from app.utils.soccer_ghost_twins import competition_from_tickers
+
+    assert competition_from_tickers(["KXLALIGA-26"]) is None
+    assert competition_from_tickers(["KXLALIGA2H-26SEP13MALSAB"]) is None
+    assert competition_from_tickers([]) is None
+    assert competition_from_tickers([None, ""]) is None
+
+
+def test_the_koln_pair_carries_no_ticker_so_the_third_pass_cannot_see_it():
+    """The measurement that lets this pass cross two NAMED competitions at all.
+
+    Over 365 days of production soccer, played and scored, loose-key names in the
+    same orientation inside MAX_GHOST_LAG, straddling two sport keys, there is
+    exactly ONE pair — Köln women 08-28 against Köln men 08-29 — and it carries
+    zero Kalshi tickers on either side (the men's row holds 14 Polymarket markets
+    and no Kalshi series at all). The pass is silent on the one population that
+    motivated keeping the sport key.
+    """
+    womens = row(
+        15293467,
+        "1. FC Köln",
+        "TSG Hoffenheim",
+        datetime(2026, 8, 28, 16, 30, tzinfo=timezone.utc),
+        status="scheduled",
+        sport_key="soccer_germany_bundesliga_women",
+    )
+    mens_real = real_row(
+        14970278,
+        "1. FC Köln",
+        "TSG Hoffenheim",
+        datetime(2026, 8, 27, 13, 30, tzinfo=timezone.utc),
+        sport_key="soccer_germany_bundesliga",
+    )
+
+    plan = plan_ghost_tags([womens, mens_real], now=GWANGJU_NOW)
+
+    assert plan.tags == [], "a women's fixture is not a copy of the men's"
+    assert plan.ticker_blocks_examined == 0
+
+
+def test_the_third_pass_cannot_revise_what_the_first_two_decided():
+    """A ghost already tagged is withheld, so the earlier tag count is a floor.
+
+    Gwangju is decided by the second pass. Adding a ticker that names a third
+    competition must not re-decide it against anything else.
+    """
+    ticker_bearing_gwangju_ghost = row(
+        15307681,
+        "Gwangju",
+        "FC Anyang",
+        datetime(2026, 9, 13, 8, 30, tzinfo=timezone.utc),
+        status="suspended",
+        sport_key=UNCLASSIFIED_SPORT_KEY,
+        ticker_sport_key="soccer_spain_segunda_division",
+    )
+
+    plan = plan_ghost_tags(
+        [ticker_bearing_gwangju_ghost, GWANGJU_REAL], now=GWANGJU_NOW
+    )
+
+    assert [(t.ghost_id, t.canonical_id) for t in plan.tags] == [(15307681, 15306857)]
+    assert plan.residual_tags == 1
+    assert plan.ticker_tags == 0
+
+
+def test_a_block_an_earlier_pass_refused_is_never_resolved_by_the_ticker_pass():
+    """Ambiguity is monotone under adding rows, and this pass only adds rows.
+
+    Observed on the measured population: Granada v Albacete reaches the third
+    pass with THREE candidate ghosts where the second saw two, and is refused
+    again. A larger block can only add pairs, so it can never resolve.
+    """
+    ghost_a = row(
+        15307866,
+        "Granada",
+        "Albacete",
+        datetime(2026, 9, 13, 19, 30, tzinfo=timezone.utc),
+        status="suspended",
+        sport_key="soccer_spain_la_liga",
+        ticker_sport_key="soccer_spain_segunda_division",
+    )
+    ghost_b = row(
+        15400021,
+        "Granada CF",
+        "Albacete",
+        datetime(2026, 9, 13, 20, 0, tzinfo=timezone.utc),
+        status="suspended",
+        sport_key="soccer_spain_segunda_division",
+    )
+    ghost_c = row(
+        15400024,
+        "Granada",
+        "Albacete CF",
+        datetime(2026, 9, 13, 21, 0, tzinfo=timezone.utc),
+        status="suspended",
+        sport_key="soccer_spain_segunda_division",
+    )
+    real = real_row(
+        15400022,
+        "Granada",
+        "Albacete",
+        datetime(2026, 9, 13, 16, 0, tzinfo=timezone.utc),
+        sport_key="soccer_spain_segunda_division",
+    )
+
+    plan = plan_ghost_tags([ghost_a, ghost_b, ghost_c, real], now=MALLORCA_NOW)
+
+    assert plan.tags == [], "two candidate ghosts are refused, never picked between"
+    assert any(
+        "loose names)" in r for r in plan.refusals
+    ), "the second pass must be the one that refused first"
+    assert any(
+        "ticker competition" in r for r in plan.refusals
+    ), "the refusal must be reported by the pass that saw the bigger block"
+
+
+def test_the_ticker_pass_does_not_re_report_a_block_the_second_one_examined():
+    """A block whose members already shared one loose-name key is not re-read.
+
+    Otherwise every refusal the second pass reports is restated in different
+    words and counted twice, and `ticker_blocks_examined` stops meaning anything.
+    """
+    plan = plan_ghost_tags([GWANGJU_GHOST, GWANGJU_REAL], now=GWANGJU_NOW)
+
+    assert plan.residual_blocks_examined == 1
+    assert plan.ticker_blocks_examined == 0
+
+
+def test_a_ticker_that_agrees_with_the_row_changes_nothing():
+    """The exception is for disagreement only; agreement is the ordinary case."""
+    from app.utils.soccer_ghost_twins import block_sport_key
+
+    agreeing = row(
+        15400023,
+        "Sevilla",
+        "Valencia",
+        datetime(2026, 9, 13, 19, 0, tzinfo=timezone.utc),
+        sport_key="soccer_spain_la_liga",
+        ticker_sport_key="soccer_spain_la_liga",
+    )
+
+    assert block_sport_key(agreeing) == "soccer_spain_la_liga"
+
+    plan = plan_ghost_tags([agreeing, SEVILLA_REAL], now=NOW)
+
+    assert [(t.ghost_id, t.canonical_id) for t in plan.tags] == [(15400023, 15298233)]
+    assert plan.ticker_tags == 0, "the first pass already had it"

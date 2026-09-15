@@ -80,6 +80,7 @@ import json
 from app.services.anchor_channel import DUPLICATE_TAG_PREFIX, duplicate_tag
 from app.utils.soccer_ghost_twins import (
     SoccerRow,
+    competition_from_tickers,
     plan_ghost_tags,
     row_has_final_score,
     row_is_fixture_anchored,
@@ -124,7 +125,11 @@ SELECT e.id,
        e.away_score,
        e.espn_id,
        e.statpal_fixture_id,
-       CAST(COALESCE(e.event_tags, '[]'::jsonb) AS text) AS tags_text
+       CAST(COALESCE(e.event_tags, '[]'::jsonb) AS text) AS tags_text,
+       (SELECT string_agg(DISTINCT fm.external_id, ',')
+          FROM futures_markets fm
+         WHERE fm.event_id = e.id
+           AND fm.source = 'kalshi')               AS kalshi_tickers
   FROM events e
   JOIN sports s ON s.id = e.sport_id
  WHERE s.key LIKE 'soccer%%'
@@ -184,6 +189,14 @@ def build_plan(rows, *, now):
             ),
             is_fixture_anchored=row_is_fixture_anchored(
                 espn_id=r.espn_id, statpal_fixture_id=r.statpal_fixture_id
+            ),
+            # Split here rather than in SQL: `string_agg` is how one row's many
+            # tickers survive the projection, and the judgement must be handed a
+            # sequence it can be tested with rather than a comma-joined string
+            # it has to parse. An empty aggregate is `None` and means "this row
+            # holds no Kalshi markets", which reads as no opinion.
+            ticker_sport_key=competition_from_tickers(
+                (r.kalshi_tickers or "").split(",")
             ),
         )
         for r in rows
@@ -397,7 +410,9 @@ async def run_soccer_ghost_twin_sweep(
     async with get_task_session() as session:
         try:
             rows = await load_rows(session, lookback=lookback, lookahead=lookahead)
-        except Exception as exc:  # noqa: BLE001 — "I could not look" is not "nothing to do"
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 — "I could not look" is not "nothing to do"
             await session.rollback()
             return {
                 **summary,
@@ -431,6 +446,8 @@ async def run_soccer_ghost_twin_sweep(
                 # which of them stopped reaching its own.
                 "residual_blocks_examined": plan.residual_blocks_examined,
                 "residual_pairs_found": plan.residual_tags,
+                "ticker_blocks_examined": plan.ticker_blocks_examined,
+                "ticker_pairs_found": plan.ticker_tags,
                 "pairs_found": len(plan.tags),
                 "already_tagged": len(plan.tags) - len(todo),
                 "tags_to_write": len(todo),
