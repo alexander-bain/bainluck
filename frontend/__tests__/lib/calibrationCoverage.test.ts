@@ -52,10 +52,12 @@ describe("the accounting the reader gets", () => {
   });
 
   it("counts a measured-zero rule rather than listing it as an exclusion", () => {
-    // `field_incomplete` is 0 in the fixture: a rule that fired on nobody.
+    // `field_incomplete` and `identity_disputed` are both 0 in the fixture:
+    // rules that fired on nobody.
     const a = readCoverageAccounting(COMPLETE_CENSUS)!;
     expect(a.rows.map(r => r.key)).not.toContain("field_incomplete");
-    expect(a.emptyRules).toBe(1);
+    expect(a.rows.map(r => r.key)).not.toContain("identity_disputed");
+    expect(a.emptyRules).toBe(2);
   });
 
   it("labels every row from this module, never from the payload", () => {
@@ -115,7 +117,7 @@ describe("what it refuses to show", () => {
 
   it("shows nothing for a rung it cannot put a sentence to", () => {
     // RENAMED, not appended, and it is the ZERO rung that is renamed: the
-    // arithmetic still balances and the rung count is still eleven, so the
+    // arithmetic still balances and the rung count is still twelve, so the
     // unknown-label refusal is the only guard that can return null here.
     // Appending a rung instead — the obvious way to write this — is caught by
     // the arithmetic and by the rung count, and the test then passes with the
@@ -178,11 +180,11 @@ describe("what it refuses to show", () => {
 
   it("shows nothing when one rung appears twice and another not at all", () => {
     // The one duplicate shape none of the other guards can see: the zero rung
-    // re-keyed onto a rung that is already present. Eleven entries, every label
+    // re-keyed onto a rung that is already present. Twelve entries, every label
     // known, the arithmetic untouched because the copy carries zero — and one
     // whole exclusion rule silently absent from a list a reader is invited to
-    // add up. Pushing a copy instead leaves twelve entries and is caught by the
-    // rung count, which is how this test passed for the wrong reason first.
+    // add up. Pushing a copy instead leaves thirteen entries and is caught by
+    // the rung count, which is how this test passed for the wrong reason first.
     const census = clone();
     rungIn(census, "field_incomplete").key = "phantom_liquidity";
     expect(readCoverageAccounting(census)).toBeNull();

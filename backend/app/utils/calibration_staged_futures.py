@@ -321,6 +321,13 @@ DEFAULT_CENSUS_COLUMNS: tuple[str, ...] = (
     "esports_bundle_excluded",
     "no_winner_excluded",
     "no_winner_markets",
+    # #6275 / #1902 (Alex ruling): the identity quarantine's disclosure counts.
+    # Declared in the SAME commit that emits them, which is the lesson the
+    # player-props pair below records the hard way: CAL-P162 emitted its columns
+    # and declared them nowhere, the first banked unit raised
+    # UndeclaredColumnError, and no generation could publish.
+    "identity_disputed_excluded",
+    "identity_disputed_markets",
     "draw_authority_excluded",
     "draw_authority_markets",
     "orphan_partition_excluded",
@@ -365,6 +372,11 @@ DISTINCT_CENSUS_COLUMNS = frozenset(
         "no_winner_markets",
         "draw_authority_markets",
         "orphan_partition_markets",
+        # #6275: COUNT(DISTINCT market_id), additive over a partition of markets
+        # exactly like its neighbours. Its outcome-level sibling
+        # `identity_disputed_excluded` is a plain COUNT(*) and correctly stays
+        # out of this set.
+        "identity_disputed_markets",
         "nonexclusive_bundle_markets",
         "mex_published_markets",
         "published_questions",

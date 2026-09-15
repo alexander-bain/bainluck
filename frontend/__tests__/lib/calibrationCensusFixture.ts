@@ -17,6 +17,16 @@
 //     `status === "complete"` would be dead code.
 //   * the coverage bridge reconciles ANYWAY, because it is a different unit
 //     with its own reconciliation. That is the number a reader gets.
+//
+// ONE RUNG IS NOT FROM THAT CAPTURE, and it is called out rather than blended
+// in: `identity_disputed` (#6275) is appended at `outcomes: 0`, carrying the
+// server's verbatim `rule` text. The quarantine had not run in production when
+// the block above was captured, so the serve path could not yet emit it. Zero
+// is the honest count — it leaves every reconciliation in this fixture
+// arithmetically untouched (it lands in `emptyRules`, not in `rows`) instead of
+// inventing a bucket and hand-balancing the other numbers to match. When a
+// production census that includes the quarantine can be captured, re-capture
+// the whole block verbatim and delete this paragraph.
 export const COMPLETE_CENSUS = {
   "schema_version": "calibration-coverage-bridge/v1",
   "status": "incomplete",
@@ -67,6 +77,13 @@ export const COMPLETE_CENSUS = {
         "outcomes": 9442,
         "checked": true,
         "rule": "The outcome's winner was established by a source that is not independent of the market's own price (price-derived or guess-family), so it cannot grade its own forecast."
+      },
+      {
+        "key": "identity_disputed",
+        "unit": "futures_outcome",
+        "outcomes": 0,
+        "checked": true,
+        "rule": "The market's own ID names a different game day than the game it is attached to, so the result it would be graded against belongs to some other game. Held out of the published curves as under review until the identity is verified."
       },
       {
         "key": "question_ungraded",

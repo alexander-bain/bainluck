@@ -13,9 +13,21 @@ def _unhashed_cross_module(live,names):
 
  Same test `test_calibration_fingerprint_coverage.py` applies when it pins the
  cross-module list: not covered by value, and defined outside the build module.
+
+ 🔴 AND NOT A HASHED ROOT (#6275, CERT-2902's repair found this). The two
+ conjuncts above were a complete test of "the digest will not move" only while
+ every hashed root lived in the build module. `identity_quarantine_ctes` is the
+ first that does not: it is cross-module and it is not covered by value, but
+ `_main_input_fingerprint` hashes its SOURCE, so editing it moves the digest —
+ measured, `c0a825a6…` -> `80a180b0…` on the repair that prompted this line.
+ Without this conjunct the ratchet told the author of that repair "regenerating
+ this artifact RECORDS your change; it does not make it safe" and quoted two
+ blocking constraints, about a change the digest had already caught. A warning
+ that fires on the safe case is how the unsafe one stops being read.
  """
  rows=_rows(live)
- return [n for n in names if n in rows and not rows[n]["covered_by_value"] and not rows[n]["origin"].startswith("app.tasks.precompute_calibration")]
+ roots=set(live["hashed_roots"])
+ return [n for n in names if n in rows and n not in roots and not rows[n]["covered_by_value"] and not rows[n]["origin"].startswith("app.tasks.precompute_calibration")]
 def divergence_message(live,pinned):
  """What an author who just reddened the ratchet needs, instead of a dict diff.
 
@@ -91,6 +103,30 @@ def test_the_message_withholds_the_note_when_the_moved_input_is_not_in_that_tier
  mutated=BUILD.read_text().replace("        REPRESENTATIVE_TIE_AUTHORITY,\n","",1)
  message=divergence_message(derive_map(mutated),frozen())
  assert "REPRESENTATIVE_TIE_AUTHORITY" in message
+ assert "UNHASHED CROSS-MODULE TIER" not in message
+ assert FIX_SEQUENCING_NOTE not in message
+def test_a_cross_module_hashed_root_is_not_reported_as_unhashed():
+ """#6275 / CERT-2902. `identity_quarantine_ctes` is the specimen and the only
+ member of its shape: hashed as a ROOT, defined outside the build module, not
+ covered by value. Editing it MOVES the digest, so the author must regenerate
+ the artifact and nothing else — the opposite of what the note says.
+
+ Mutated rather than asserted off the pinned row, because the row would go on
+ satisfying a classifier that had stopped consulting `hashed_roots`.
+ """
+ module="app.utils.market_identity"
+ source=(BUILD.parents[1]/"utils/market_identity.py").read_text()
+ needle="Step 1: the date token"
+ assert needle in source, "the mutation site moved — re-aim it inside identity_quarantine_ctes"
+ live=derive_map(module_sources={module:source.replace(needle,"Step 1: the mutated date token",1)})
+ moved=_moved(live,frozen())
+ assert "identity_quarantine_ctes" in moved, "the mutation did not move the input, so this proves nothing"
+ assert _unhashed_cross_module(live,moved)==[], (
+  "a cross-module HASHED ROOT was reported in the unhashed tier. Its source is "
+  "hashed by `_main_input_fingerprint`, so the digest moves and an in-flight "
+  "bank cannot straddle the change — the note's premise is false for it."
+ )
+ message=divergence_message(live,frozen())
  assert "UNHASHED CROSS-MODULE TIER" not in message
  assert FIX_SEQUENCING_NOTE not in message
 def test_the_message_is_not_a_strawman_on_the_real_tree():
