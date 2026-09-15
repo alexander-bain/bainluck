@@ -1857,11 +1857,27 @@ async def backfill_missing_scores(session, stats):
     from app.models.models import Event, Team
     from app.tasks.config import ESPN_SPORT_MAPPING
     from app.tasks.espn_sync import get_event_name_variations
-    from app.utils.name_normalization import (
-    names_match as _canonical_names_match,
-    normalize_name as _normalize_name,
-    shared_token_rivals as _shared_token_rivals,
-)
+    # #6215 follow-up `6215-REMOVE-ACCIDENTAL-BACKFILL-IMPORTS`. The rival veto
+    # and `normalize_name` were imported here and never used — and they must
+    # NOT be wired in, which is why this comment replaces them rather than a
+    # TODO.
+    #
+    # 🔴 MEASURED ON THIS RAIL, 2026-09-15, and the number does not resemble
+    # either of the other two. Over 1,060 real alias pairs from 500
+    # ESPN-anchored teams (`name` vs each of its `alternate_names`, which is
+    # exactly the comparison below), `names_match` accepts 943 and
+    # `shared_token_rivals` would refuse **10 of them** — of which NINE are
+    # genuine aliases this backfill needs (`LA Clippers`, `C Palace`,
+    # `NY Red Bulls`, `UAlbany Great Danes`, `Mt. St. Mary's` /
+    # `Mount St. Mary's`) and one is a true rival pair. Nine real clubs would
+    # silently stop getting their scores backfilled to refuse one.
+    #
+    # The veto belongs on the two rails that DECIDE AN IDENTITY and write it
+    # down (`espn_identity_corresponds`, `location_corresponds`). This rail
+    # RECALLS a candidate and then requires both teams to agree, so its failure
+    # mode and its cost are different. `test_the_backfill_rail_keeps_its_aliases_6215`
+    # pins the nine.
+    from app.utils.name_normalization import names_match as _canonical_names_match
     from sqlalchemy.orm import selectinload
 
     def names_match(our_names: list, espn_name: str) -> bool:
