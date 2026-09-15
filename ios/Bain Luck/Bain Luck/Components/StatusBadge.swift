@@ -11,6 +11,14 @@ struct StatusBadge: View {
     /// with the clock on the FRONT (#3273). Both call sites pass
     /// `event.espn?.period` straight through.
     var period: String? = nil
+    /// #6381 — the served `venue_settled`, and DEFAULTED FALSE on purpose.
+    ///
+    /// Only `/api/events/{id}` carries this key, so the event hero is the only
+    /// call site that can pass a real value; the four card/row/schedule call
+    /// sites have no way to know and keep the badge they have. Defaulting
+    /// rather than requiring it is what keeps that true without four edits that
+    /// would each have to invent a value.
+    var venueSettled: Bool = false
 
     /// Formatted live text: "Q1 5:11", "Bottom 7th", or "LIVE".
     ///
@@ -56,6 +64,32 @@ struct StatusBadge: View {
                 .padding(.vertical, 2)
                 .background(Color.cardBackgroundDark)
                 .clipShape(Capsule())
+        } else if EventState.showsVenueSettledVerdict(
+            status, venueSettled: venueSettled, commenceTime: commenceTime?.asDate) {
+            // #6381 — ABOVE the suspended arm and below FINAL, and the order is
+            // the whole point of putting it here rather than at the end of the
+            // chain. 889 of the 1,471 rows the venue has graded are `suspended`,
+            // so an arm placed after that one would never see them and the
+            // bigger half of the class would keep printing "No result reported"
+            // over a result we are holding. FINAL stays first because it says
+            // this better: it has a score.
+            //
+            // Grey, not orange. The suspended badge is orange because it is
+            // reporting an absence the reader may want to act on; this one
+            // reports that the question is answered, which is the settled voice
+            // FINAL already wears.
+            HStack(spacing: 3) {
+                Image(systemName: "checkmark.circle")
+                    .font(.system(size: 8))
+                Text(EventState.venueSettledLabel)
+                    .font(.caption2)
+                    .fontWeight(.medium)
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color.cardBackgroundDark)
+            .clipShape(Capsule())
         } else if EventState.isSuspendedAndStarted(status, commenceTime: commenceTime?.asDate) {
             // 🔴 #4021 — THE CLOCK IS PART OF THE TEST, and it has to be tested
             // HERE rather than left to callers. Three of this component's five
