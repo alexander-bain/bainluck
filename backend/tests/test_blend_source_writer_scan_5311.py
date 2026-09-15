@@ -156,6 +156,20 @@ from app.utils.probability_eligibility import MARKET_DERIVED_SOURCES  # noqa: E4
 #    mirrored so in-session reads agree (gotcha #4/#5). The stamp is taken AFTER
 #    the settle door has run on the row, so it merges into what the door wrote
 #    rather than clobbering it.
+#  * `espn_sync.py::_recover_unstarted_authority_fixtures` — SIDECAR, #6280, and
+#    the SAME queue-stamp shape as the deep straggler arm one bullet up, under
+#    its own key `unstarted_recovery_asked_at`. It is the complement arm: those
+#    stranded rows are LATE and are settled off their board day, these are
+#    MISDATED and are dereferenced by anchor (`summary?event=`), which is the
+#    only channel that reaches a fixture no board we fetch contains. Separate
+#    key rather than sharing the deep arm's, because the two ask different
+#    questions on different channels and one stamp would let a board fetch
+#    silence an anchor dereference that had never run. No source, no market, no
+#    reading. The stamp is SKIPPED on a row this arm recovered — a recovered row
+#    becomes `scheduled` and leaves the candidate set, so a stamp on it is
+#    residue — and is otherwise merged onto whatever the deep arm wrote in the
+#    same pass, which is safe because the session's identity map hands both arms
+#    the same ORM object and that arm mirrors its own stamp (gotcha #4/#5).
 #  * `prediction_market_matching.py` / `admin_matching.py` / `source_intelligence.py`
 #    — PRUNE. Each REMOVES a source key rather than writing a value: the two
 #    `prune_blend_source` callers, the admin "clear kalshi" repair, and the raw
@@ -190,6 +204,10 @@ KNOWN_NON_READING_WRITES: dict[tuple[str, str, str], str] = {
      "_settle_deep_authority_stragglers", "orm-assign"): "sidecar",
     ("backend/app/tasks/espn_sync.py",
      "_settle_deep_authority_stragglers", "update.values"): "sidecar",
+    ("backend/app/tasks/espn_sync.py",
+     "_recover_unstarted_authority_fixtures", "orm-assign"): "sidecar",
+    ("backend/app/tasks/espn_sync.py",
+     "_recover_unstarted_authority_fixtures", "update.values"): "sidecar",
     ("backend/app/tasks/futures_price_refresh.py",
      "_KALSHI_WITHDRAW_EVENT_HERO_SQL", "raw-sql"): "prune",
     ("backend/app/tasks/statpal_sync.py", "_set_statpal_id", "orm-assign"):

@@ -4367,6 +4367,18 @@ _DECLARED_CORE_WRITERS = {
         "`ESPNSnapshot` — a different table and an append. Its own Core "
         "statement on `events` writes `completed_at`/`status` only."
     ),
+    "espn_sync._recover_unstarted_authority_fixtures": (
+        "CONVERTED, #6280. Goes through `write_row_if_unmoved`; the four live-"
+        "state names are the keys of the dict handed to it, and that helper's "
+        "statement IS the compare-and-write. Its predicate is `status` + "
+        "`commence_time` rather than position, because that is what this arm's "
+        "decision consumed — the row was unsettled and its clock was the stale "
+        "one — and position is NULL on this population, so a position "
+        "predicate could never refuse. Held up by "
+        "`test_the_write_is_predicated_on_what_the_decision_consumed` and "
+        "`test_a_row_that_moved_under_us_is_not_counted_as_recovered` in "
+        "`test_the_misdated_fixture_that_never_kicked_off_6280.py`."
+    ),
     "espn_sync._process_live_sport": (
         "NOT A WRITE AT ALL — these are READS. The names are the parameters of "
         "`espn_scheduled_marks_not_started` / `espn_scheduled_demotes_live`, "
