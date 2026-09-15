@@ -627,6 +627,28 @@ async def get_economics(db: AsyncSession):
 
     # Re-read filtered lists
     fed_markets = themed.get("fed", [])
+
+    # The section's count must describe what the section RENDERS (#2870
+    # follow-up, found by CERT-2899's grader).
+    #
+    # `fed_markets` is the post-exclusion theme list, so a restored ladder was
+    # drawn as a heatmap column and then not counted. Two consequences, and the
+    # second is the one that matters: the payload could report `count: 3`
+    # beside six rendered meetings, and — because the page gates the whole
+    # Federal Reserve section on `t.fed.count > 0` — a fed theme whose only
+    # members were confidence-excluded ladders would yield 0 and hide a section
+    # that had columns to draw.
+    #
+    # Latent rather than live when this was written: production `count` was 49,
+    # held clear of zero by the three non-extreme 2027 controls. Fixed anyway,
+    # because it is the same class as the bug this card was just repaired for —
+    # a surface keyed on a set that is not the set it renders.
+    #
+    # A union by id, not a sum: a ladder that passes the full predicate is in
+    # both lists and must not be counted twice.
+    _fed_section_count = len(
+        {m.id for m in fed_markets} | {m.id for m in fomc_source}
+    )
     inflation_markets = themed.get("inflation", [])
     jobs_markets = themed.get("jobs", [])
     recession_markets = themed.get("recession", [])
@@ -848,7 +870,7 @@ async def get_economics(db: AsyncSession):
         "cross_source": cross_source,
         "themes": {
             "fed": {
-                "count": len(fed_markets),
+                "count": _fed_section_count,
                 "fomc_meetings": fomc_meetings[:8],
                 "rate_cuts": rate_cuts,
                 "side_markets": rate_side[:6],
