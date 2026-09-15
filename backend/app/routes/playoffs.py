@@ -690,8 +690,10 @@ def _asks_who_wins_the_division(market_name: str) -> bool:
     Polymarket's "Pro Football: AFC West Champion", which matches the config's
     ``(?:AFC|NFC)\\s+(?:East|West|North|South)`` pattern and never says the word
     — is untouched, so the gate cannot drop a title market it has not enumerated.
-    All 22 live division-column markets carrying the word (NFL 8, NHL 4, MLB 6,
-    NBA 6) are "… Division Winner" and pass.
+    All 24 live division-column markets carrying the word (NFL 8, NHL 4, MLB 6,
+    NBA 6) are "… Division Winner" and pass. Counts re-read from
+    ``/api/playoffs/{nfl,nhl,mlb,nba}?debug=true`` on 2026-09-15; every one of
+    the 24 is asserted by name in ``TestDivisionColumnAsksWhoWins``.
     """
     low = market_name.lower()
     if not re.search(r"\bdivisions?\b", low):

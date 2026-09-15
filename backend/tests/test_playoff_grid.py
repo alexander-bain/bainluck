@@ -1657,6 +1657,20 @@ class TestDivisionColumnAsksWhoWins:
 
     # Every market that WAS legitimately in a live division column, all four
     # leagues. The fix must not move one of them.
+    #
+    # COMPLETE, not a sample: every name and external_id below was enumerated on
+    # 2026-09-15 from ``_debug_column_markets['division']`` on
+    # ``/api/playoffs/{nfl,nhl,mlb,nba}?debug=true`` — NFL 8+8, NHL 4, MLB 6+6,
+    # NBA 6 (41 markets; the 3 impostors above are the rest of NFL's 19). It was
+    # a per-league sample when this class was written, while the
+    # ``routes/playoffs.py`` docstring claimed all 24 word-carrying markets were
+    # asserted by name; completing the list is what makes that sentence true.
+    #
+    # ATTACHED IS NOT VISIBLE, and the difference is this ship: all eight NFL
+    # Kalshi title markets were attached to the column pre-fix, but only four
+    # reached a team cell, because the keep-the-lowest dedup let the impostor
+    # displace the others. Read ``_debug_column_markets`` and the bug is
+    # invisible; read the team cells and it is the whole defect.
     LIVE_DIVISION_MARKETS = [
         # NFL — Kalshi, the genuine title markets the impostors were displacing
         ("AFC East Division Winner", "KXNFLAFCEAST-27", NFL_CONFIG),
@@ -1667,19 +1681,43 @@ class TestDivisionColumnAsksWhoWins:
         ("NFC North Division Winner", "KXNFLNFCNORTH-27", NFL_CONFIG),
         ("NFC South Division Winner", "KXNFLNFCSOUTH-27", NFL_CONFIG),
         ("NFC West Division Winner", "KXNFLNFCWEST-27", NFL_CONFIG),
-        # NFL — Polymarket, which never says the word and so must pass through
+        # NFL — Polymarket, which never says the word and so must pass through.
+        # Three of these names carry trailing whitespace in production; they are
+        # reproduced byte-for-byte rather than tidied, because a name is the
+        # gate's whole input and a tidied one is a different input.
+        ("Pro Football: AFC East Champion", "232598", NFL_CONFIG),
+        ("Pro Football: AFC North Champion", "232603", NFL_CONFIG),
+        ("Pro Football: AFC South Champion", "232605", NFL_CONFIG),
         ("Pro Football: AFC West Champion", "232614", NFL_CONFIG),
+        ("Pro Football: NFC East Champion", "232617", NFL_CONFIG),
         ("Pro Football: NFC North Champion", "232622", NFL_CONFIG),
-        # NHL
+        ("Pro Football: NFC South Champion", "232642", NFL_CONFIG),
+        ("Pro Football: NFC West Champion  ", "232647", NFL_CONFIG),
+        # NHL — all four, Kalshi only
+        ("NHL Atlantic Division Winner", "KXNHLATLANTIC-27", NHL_CONFIG),
+        ("NHL Central Division Winner", "KXNHLCENTRAL-27", NHL_CONFIG),
         ("NHL Metropolitan Division Winner", "KXNHLMETROPOLITAN-27", NHL_CONFIG),
         ("NHL Pacific Division Winner", "KXNHLPACIFIC-27", NHL_CONFIG),
-        # MLB — Kalshi says the word, Polymarket does not
+        # MLB — Kalshi says the word, Polymarket does not; all six of each
         ("AL East Division Winner", "KXMLBALEAST-26", MLB_CONFIG),
+        ("AL Central Division Winner", "KXMLBALCENT-26", MLB_CONFIG),
+        ("AL West Division Winner", "KXMLBALWEST-26", MLB_CONFIG),
+        ("NL East Division Winner", "KXMLBNLEAST-26", MLB_CONFIG),
         ("NL Central Division Winner", "KXMLBNLCENT-26", MLB_CONFIG),
+        ("NL West Division Winner", "KXMLBNLWEST-26", MLB_CONFIG),
+        ("MLB: 2026 AL East Champion", "215876", MLB_CONFIG),
+        ("MLB: 2026 AL Central Champion", "215885", MLB_CONFIG),
         ("MLB: 2026 AL West Champion", "215886", MLB_CONFIG),
-        # NBA
+        ("MLB: 2026 NL East Champion", "215891", MLB_CONFIG),
+        ("MLB: 2026 NL Central Champion ", "215896", MLB_CONFIG),
+        ("MLB: 2026 NL West Champion ", "215901", MLB_CONFIG),
+        # NBA — all six, Kalshi only
+        ("Pro Basketball Atlantic Division Winner", "KXNBAATLANTIC-26", NBA_CONFIG),
+        ("Pro Basketball Central Division Winner", "KXNBACENTRAL-26", NBA_CONFIG),
+        ("Pro Basketball Northwest Division Winner", "KXNBANORTHWEST-26", NBA_CONFIG),
         ("Pro Basketball Pacific Division Winner", "KXNBAPACIFIC-26", NBA_CONFIG),
         ("Pro Basketball Southeast Division Winner", "KXNBASOUTHEAST-26", NBA_CONFIG),
+        ("Pro Basketball Southwest Division Winner", "KXNBASOUTHWEST-26", NBA_CONFIG),
     ]
 
     @pytest.mark.parametrize("name,ticker", NFL_IMPOSTORS)
