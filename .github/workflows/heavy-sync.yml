@@ -459,7 +459,18 @@ jobs:
             # on `-le` against a non-number, which an `if` reads as "false" —
             # i.e. as permission to sleep again (gotcha #54: read the value).
             case "${BAND_LEFT}" in ''|*[!0-9]*) BAND_LEFT=0 ;; esac
-            if [ "$BAND_LEFT" -le 30 ]; then
+            # 56 = `CONFIRM_SEPARATION_SECONDS`, and it is A WHOLE TURN OF THIS
+            # LOOP, not the sleep. This literal read `30` — the sleep alone —
+            # until #6283, and the difference cost a cycle in production: run
+            # 117 on 2026-09-15 read IDLE at 00:58:23Z with 36 s of band left,
+            # took the confirm branch because 36 > 30, and the turn took 55.7 s,
+            # so the band shut mid-read and the step exited `HOLD — the band
+            # closed`. Heavy sat another 60 min on `c1b52e9c3` while the main
+            # app served `f880e45da`. Any remainder the loop can SPEND but not
+            # FINISH inside is a remainder it must not spend, because the
+            # fallback here — pushing on one idle read — is the gate this job
+            # shipped with and is the cheaper of the two by an hour.
+            if [ "$BAND_LEFT" -le 56 ]; then
               if [ "$INFLIGHT" -eq 0 ]; then
                 # An unconfirmed IDLE at the edge pushes. This is the reading
                 # the gate used before the confirm existed, so the confirm has

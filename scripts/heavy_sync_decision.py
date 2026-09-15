@@ -310,6 +310,43 @@ INFLIGHT_POLL_SECONDS = 30
 #: cannot cost a cycle (`test_the_confirm_degrades_to_a_single_read_at_the_edge`).
 IDLE_CONFIRMATIONS = 2
 
+#: What ONE more turn of the wait loop costs in band, measured end to end.
+#:
+#: The broadcast half of it: ~25.6 s, eight production reads on 2026-09-13
+#: 21:38-21:43Z landing at 25.6-29.6 s, rounded UP to a whole 26 so the
+#: derivation below can never under-state the turn. This is the same number
+#: :data:`IDLE_CONFIRMATIONS` derives the confirm's blind window from — one
+#: measurement, named once, rather than a figure that lives only in prose.
+INFLIGHT_READ_SECONDS = 26
+
+#: THE BAND'S EDGE, AND IT IS A TURN OF THE LOOP AND NOT A SLEEP (#6283).
+#:
+#: The wait loop breaks at the edge so that an unconfirmed IDLE still pushes,
+#: which is the reading this gate used before the confirm existed. The whole
+#: claim above it — "the confirm can only WAIT, never refuse … so it cannot
+#: cost a cycle, only the band can" — is TRUE only if the edge is at least what
+#: one more turn costs. It was not: the workflow carried a hand-typed `30`,
+#: which is :data:`INFLIGHT_POLL_SECONDS` alone, while a turn is the sleep PLUS
+#: the read it ends on.
+#:
+#: The specimen is run 117, 2026-09-15, and it is the whole reason this constant
+#: exists. The gate reached PUSH at 00:49:35Z, waited out a busy worker-heavy
+#: for nine minutes, and read IDLE at 00:58:23Z with 36 s of band left. 36 > 30,
+#: so it took the confirm branch — and the turn took 55.7 s, so the band shut
+#: mid-read and the run ended `HOLD — the band closed while the fleet was being
+#: read`. `bainluck-heavy` then sat another 60 minutes on `c1b52e9c3` while the
+#: main app served `f880e45da`, which is precisely the cycle the confirm was
+#: promised never to cost. The turn cost is not an estimate either: the same
+#: hour's run 122 printed `Confirming in 30s` at 01:46:55.5Z and `Pushing` at
+#: 01:47:51.2Z — 55.7 s, again.
+#:
+#: So any band remainder in (`INFLIGHT_POLL_SECONDS`, this] is a remainder the
+#: loop can spend but cannot finish inside, and every second of it is a lost
+#: hour. Derived, never typed: two copies of one number is how a comment becomes
+#: a story about a value nothing enforces, and the YAML's literal is pinned to
+#: this one by `test_the_bands_edge_is_a_whole_turn_of_the_wait_loop`.
+CONFIRM_SEPARATION_SECONDS = INFLIGHT_POLL_SECONDS + INFLIGHT_READ_SECONDS
+
 
 def band_seconds_left(now: datetime | None = None) -> int:
     """Whole seconds until the band's closing edge; ``0`` once it has passed.

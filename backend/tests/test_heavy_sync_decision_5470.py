@@ -1224,7 +1224,7 @@ def test_the_wait_stops_at_the_bands_edge_and_holds(tmp_path):
 
 
 def test_an_unreadable_deadline_stops_the_wait_rather_than_licensing_it(tmp_path):
-    """`[ "" -le 30 ]` exits 2, which an `if` reads as false — i.e. as
+    """`[ "" -le 56 ]` exits 2, which an `if` reads as false — i.e. as
     permission to sleep again. Anything but digits must mean stop."""
     for bad in ("", "unreadable", "-1"):
         code, reads, sleeps = _run_wait_loop(
@@ -1282,11 +1282,62 @@ def test_the_confirm_degrades_to_a_single_read_at_the_edge(tmp_path):
     At the band's edge an unconfirmed IDLE pushes — which is exactly the
     reading this gate used before the confirm existed. So the confirm is
     strictly additional safety inside the band and takes nothing away at it.
+
+    THE DEADLINE HERE USED TO BE `30`, WHICH IS WHY THIS TEST WAS GREEN WHILE
+    THE PROPERTY IT NAMES WAS FALSE (#6283). 30 was the threshold's own value:
+    the one input at which the branch cannot be wrong. Run 117 on 2026-09-15
+    entered the confirm with 36 s left, spent 55.7 s in it, and lost the cycle
+    to the very fallback this docstring says it degrades to. So the deadlines
+    are now swept across the turn, and the first of them is that specimen.
     """
+    for deadline in (1, 30, 36, sync.CONFIRM_SEPARATION_SECONDS):
+        code, reads, sleeps = _run_wait_loop(
+            tmp_path / f"d{deadline}", bodies=[IDLE_BODY, IDLE_BODY],
+            deadlines=[deadline],
+        )
+        assert (code, reads, sleeps) == (0, 1, 0), (
+            f"{deadline}s of band left is less than one turn of the loop "
+            f"({sync.CONFIRM_SEPARATION_SECONDS}s), so the confirm spent a "
+            "cycle it could not finish paying for"
+        )
+
+    # And the reverse population, or the assertion above is satisfiable by a
+    # loop that never confirms at all: one second past a whole turn, there is
+    # room to confirm and the confirm happens.
     code, reads, sleeps = _run_wait_loop(
-        tmp_path, bodies=[IDLE_BODY, IDLE_BODY], deadlines=[30]
+        tmp_path / "affordable",
+        bodies=[IDLE_BODY, IDLE_BODY],
+        deadlines=[sync.CONFIRM_SEPARATION_SECONDS + 1],
     )
-    assert (code, reads, sleeps) == (0, 1, 0)
+    assert (code, reads, sleeps) == (0, 2, 1)
+
+
+def test_the_bands_edge_is_a_whole_turn_of_the_wait_loop():
+    """THE EDGE IS A VERDICT, SO IT IS DERIVED — the rule the script states
+    about itself and the YAML did not keep.
+
+    A turn is the sleep AND the read it ends on. `INFLIGHT_POLL_SECONDS` alone
+    under-states it by the whole broadcast, and every second of the gap is an
+    hour of `bainluck-heavy` serving code the main app has stopped serving.
+    """
+    loop = _extract_wait_loop()
+    assert f'"$BAND_LEFT" -le {sync.CONFIRM_SEPARATION_SECONDS} ]' in loop, (
+        "the wait loop's edge is not the derived turn cost; two copies of one "
+        "number is how a comment becomes a story about a value nothing enforces"
+    )
+    # Derived, and derived UPWARDS: a turn is strictly more than its sleep.
+    assert (
+        sync.CONFIRM_SEPARATION_SECONDS
+        == sync.INFLIGHT_POLL_SECONDS + sync.INFLIGHT_READ_SECONDS
+    )
+    assert sync.INFLIGHT_READ_SECONDS >= 26, (
+        "the inspect broadcast measured 25.6-29.6 s over eight production "
+        "reads; rounding it DOWN puts the edge back inside a turn"
+    )
+    # A turn still has to fit in the band, or the loop would break on its first
+    # read at every minute and the confirm would never run at all.
+    band_s = (sync.window_bounds()[1] - sync.window_bounds()[0] + 1) * 60
+    assert sync.CONFIRM_SEPARATION_SECONDS * sync.IDLE_CONFIRMATIONS < band_s
 
 
 def test_the_workflow_confirms_the_number_of_times_the_script_documents():
@@ -1450,7 +1501,13 @@ def test_the_sleep_in_the_workflow_is_the_poll_the_script_documents():
     nothing enforces."""
     loop = _extract_wait_loop()
     assert f"sleep {sync.INFLIGHT_POLL_SECONDS}" in loop
-    assert f'-le {sync.INFLIGHT_POLL_SECONDS} ]' in loop
+    # THE EDGE IS NOT ASSERTED HERE, AND THE LINE THAT USED TO DO IT WAS THE
+    # DEFECT WRITTEN DOWN (#6283). This test also read
+    # `assert f'-le {sync.INFLIGHT_POLL_SECONDS} ]' in loop`, which pinned the
+    # band's edge to the SLEEP — so the one number the script says must stay
+    # derived was held equal to the one it says is a plain sample rate, and a
+    # turn of the loop costs both of them. The edge has its own guard:
+    # `test_the_bands_edge_is_a_whole_turn_of_the_wait_loop`.
     # It is a sample rate, not a threshold — no verdict turns on its value — but
     # it still has to be a rate that can catch the thing it is watching. Both
     # bounds come from readings this file already holds: a sampler slower than
