@@ -105,11 +105,28 @@ def test_live_fresh_ttl_is_the_in_memory_tier_s_own_number():
 
 
 def test_final_statuses_match_the_in_memory_tier_s_own_definition():
-    """Finality must not acquire a second definition on the way into Redis."""
+    """Finality must not acquire a second definition on the way into Redis.
+
+    The L1 half used to be asserted with a `0.0` timestamp, because a final
+    entry was returned regardless of age. #6355 age-bounds it, so the assertion
+    is now made where it is actually informative: an entry OLDER than the live
+    TTL and YOUNGER than the final one. It survives only if this status is
+    final, which is the property the test is named for — and, unlike the `0.0`
+    form, it also proves the entry is age-evaluated at all.
+    """
+    import time as _time
+
     for status in ("completed", "closed"):
         assert gmc.is_final(status)
-        # ...and the L1 read agrees, which is the branch that has always existed.
-        events_route._game_markets_cache[1] = (0.0, status, {"x": 1})
+        stale_for_a_live_game = _time.time() - (
+            events_route._GAME_MARKETS_LIVE_TTL + 5
+        )
+        events_route._game_markets_cache[1] = (
+            stale_for_a_live_game,
+            status,
+            events_route._current_build_id(),
+            {"x": 1},
+        )
         assert events_route._read_game_markets_memo(1) == {"x": 1}
         events_route._game_markets_cache.clear()
 
