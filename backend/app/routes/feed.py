@@ -94,6 +94,7 @@ from app.utils.aggregation import (
     compute_aggregate_probability as _compute_aggregate_probability,
 )
 from app.utils.event_taxonomy import compute_event_tags, compute_market_tags
+from app.utils.market_display_name import clean_market_display_name
 from app.utils.hero_probability import resolve_hero
 from app.utils.probability_eligibility import is_refused
 from app.utils.feed_event_candidates import (
@@ -6835,6 +6836,12 @@ def _score_market_trace(
         newest_outcome_at=_price_poll_stamp(market),
     )
 
+    # #3513: printed vs interpreted — see `_score_sports_mode_futures`. The
+    # trace exists to reproduce the card, so its copy is composed from the same
+    # string the card prints; the raw stored `name` is served separately by
+    # `build_discover_market_trace`.
+    display_name = clean_market_display_name(market.name)
+
     highlight_result = compute_futures_highlight(
         market_tier=market.market_tier,
         sport_category=market.llm_sport_category,
@@ -6887,7 +6894,7 @@ def _score_market_trace(
             leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
             leader_probability=leader_prob,
             source_count=source_count,
-            market_name=market.name,
+            market_name=display_name,
             affirmative_probability=affirmative_probability,
             top_surprise_opened_at=top_surprise_opened_at,
             now=now,
@@ -6897,7 +6904,7 @@ def _score_market_trace(
     context_summary = generate_futures_context_summary(
         headline=headline,
         highlight_reasons=highlight_result.reasons,
-        market_name=market.name,
+        market_name=display_name,
         leader_name=leader_name,
         leader_is_team=_leader_outcome_is_team(outcomes_data),
         leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
@@ -7039,7 +7046,7 @@ def _score_market_trace(
             "headline": headline,
             "context_summary": context_summary,
             "reason": generate_futures_reason(
-                market_name=market.name,
+                market_name=display_name,
                 highlight_reasons=highlight_result.reasons,
                 top_mover_name=top_mover_name,
                 top_mover_change=top_mover_change,
@@ -7353,6 +7360,12 @@ async def build_discover_market_trace(
     trace = {
         "market": {
             "id": market.id,
+            # #3513: deliberately the RAW stored value, not the cleaned display
+            # form. This block is the row as it sits in the database, and a
+            # diagnostic that silently tidies the field it is there to show is
+            # worse than no diagnostic. The trace's card COPY is composed from
+            # the cleaned name (see `_score_market_trace`), so the two together
+            # say both "what we store" and "what a reader sees".
             "name": market.name,
             "source": market.source,
             "status": market.status,
@@ -9581,6 +9594,13 @@ async def _score_sports_mode_futures(
         if market.canonical_market_key:
             source_count = canonical_source_counts.get(market.canonical_market_key, 1)
 
+        # #3513: the question a reader is SHOWN. `market.name` can be
+        # Polymarket's group template with the blank still in it ("Netanyahu out
+        # by...?"), so every string a person reads is composed from this and
+        # every decision we make is still made from `market.name` — printed vs
+        # interpreted, see `clean_market_display_name`.
+        display_name = clean_market_display_name(market.name)
+
         highlight_result = compute_futures_highlight(
             market_tier=market.market_tier,
             sport_category=market.llm_sport_category,
@@ -9699,7 +9719,7 @@ async def _score_sports_mode_futures(
                 rendered_leader_percent=_printed_leader,
                 rendered_runner_up_percent=_printed_runner_up,
                 source_count=source_count,
-                market_name=market.name,
+                market_name=display_name,
                 affirmative_probability=affirmative_probability,
                 rendered_affirmative_percent=_printed_affirmative,
                 top_surprise_opened_at=top_surprise_opened_at,
@@ -9710,7 +9730,7 @@ async def _score_sports_mode_futures(
         context_summary = generate_futures_context_summary(
             headline=headline,
             highlight_reasons=highlight_result.reasons,
-            market_name=market.name,
+            market_name=display_name,
             leader_name=_h_leader,
             leader_is_team=_leader_outcome_is_team(outcomes_data),
             leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
@@ -9791,7 +9811,7 @@ async def _score_sports_mode_futures(
             continue
 
         reason = generate_futures_reason(
-            market_name=market.name,
+            market_name=display_name,
             highlight_reasons=highlight_result.reasons,
             top_mover_name=_h_mover,
             top_mover_change=top_mover_change,
@@ -9856,7 +9876,7 @@ async def _score_sports_mode_futures(
 
         futures_data = {
             "id": market.id,
-            "name": market.name,
+            "name": display_name,
             "sport": market.sport.key if market.sport else None,
             "sport_name": market.sport.name if market.sport else None,
             "llm_sport_category": market.llm_sport_category,
@@ -10958,6 +10978,9 @@ async def _score_futures(
             if market.canonical_market_key:
                 source_count = canonical_source_counts.get(market.canonical_market_key, 1)
 
+            # #3513: printed vs interpreted — see `_score_sports_mode_futures`.
+            display_name = clean_market_display_name(market.name)
+
             highlight_result = compute_futures_highlight(
                 market_tier=market.market_tier,
                 sport_category=market.llm_sport_category,
@@ -11099,7 +11122,7 @@ async def _score_futures(
                     rendered_leader_percent=_printed_leader,
                     rendered_runner_up_percent=_printed_runner_up,
                     source_count=source_count,
-                    market_name=market.name,
+                    market_name=display_name,
                     affirmative_probability=affirmative_probability,
                     rendered_affirmative_percent=_printed_affirmative,
                     top_surprise_opened_at=top_surprise_opened_at,
@@ -11110,7 +11133,7 @@ async def _score_futures(
             context_summary = generate_futures_context_summary(
                 headline=headline,
                 highlight_reasons=highlight_result.reasons,
-                market_name=market.name,
+                market_name=display_name,
                 leader_name=_h_leader,
                 leader_is_team=_leader_outcome_is_team(outcomes_data),
                 leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
@@ -11459,7 +11482,7 @@ async def _score_futures(
                 continue
 
             reason = generate_futures_reason(
-                market_name=market.name,
+                market_name=display_name,
                 highlight_reasons=highlight_result.reasons,
                 top_mover_name=_h_mover,
                 top_mover_change=top_mover_change,
@@ -11531,7 +11554,7 @@ async def _score_futures(
 
             futures_data = {
                 "id": market.id,
-                "name": market.name,
+                "name": display_name,
                 "sport": market.sport.key if market.sport else None,
                 "sport_name": market.sport.name if market.sport else None,
                 "llm_sport_category": market.llm_sport_category,
