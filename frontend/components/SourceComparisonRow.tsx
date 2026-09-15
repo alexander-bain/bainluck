@@ -49,7 +49,7 @@ export default function SourceComparisonRow({
       data-provider-sources={row.sources.join(",")}
       data-row-state={row.state}
     >
-      <td className="py-2.5 pr-4 font-medium text-text-primary">
+      <td className="py-2.5 pr-1 sm:pr-4 font-medium text-text-primary">
         {row.label}
         {row.sources.length > 1 && (
           /* #4214's survivor. This read "Per-sportsbook (Odds API) · Odds API ·
@@ -82,9 +82,9 @@ export default function SourceComparisonRow({
         </td>
       ) : (
         <>
-          <td className="py-2.5 pr-4 text-right tabular-nums">{row.n.toLocaleString()}</td>
+          <td className="py-2.5 pr-1 sm:pr-4 text-right tabular-nums">{row.n.toLocaleString()}</td>
           <td
-            className={`py-2.5 pr-4 text-right tabular-nums font-semibold ${
+            className={`py-2.5 pr-1 sm:pr-4 text-right tabular-nums font-semibold ${
               (row.ece as number) < 3
                 ? "text-green-600"
                 : (row.ece as number) < 5
@@ -94,7 +94,7 @@ export default function SourceComparisonRow({
           >
             {(row.ece as number).toFixed(1)}pp
           </td>
-          <td className="py-2.5 pr-4 text-right tabular-nums text-text-muted">
+          <td className="py-2.5 pr-1 sm:pr-4 text-right tabular-nums text-text-muted">
             {(row.mce as number).toFixed(1)}pp
           </td>
           <td className="py-2.5 text-right tabular-nums">{(row.brier as number).toFixed(4)}</td>

@@ -1087,14 +1087,14 @@ export default function CalibrationPage() {
             )}
           </p>
         </CalibrationCardNote>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto scroll-shadow-x">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-text-muted uppercase tracking-wide">
-                <th className="pb-2 pr-4">Source</th>
-                <th className="pb-2 pr-4 text-right">Outcomes</th>
-                <th className="pb-2 pr-4 text-right">ECE</th>
-                <th className="pb-2 pr-4 text-right" title="Max/worst-bucket sensitivity (equal-weighted): a small bucket counts as much as a large one, so it over-reacts to thin samples.">
+              <tr className="text-left text-xs text-text-muted uppercase tracking-normal sm:tracking-wide">
+                <th className="pb-2 pr-1 sm:pr-4">Source</th>
+                <th className="pb-2 pr-1 sm:pr-4 text-right">Outcomes</th>
+                <th className="pb-2 pr-1 sm:pr-4 text-right">ECE</th>
+                <th className="pb-2 pr-1 sm:pr-4 text-right" title="Max/worst-bucket sensitivity (equal-weighted): a small bucket counts as much as a large one, so it over-reacts to thin samples.">
                   MCE&nbsp;<span className="text-text-muted/60">&#9432;</span>
                 </th>
                 <th className="pb-2 text-right">Brier</th>
@@ -1119,14 +1119,14 @@ export default function CalibrationPage() {
                 />
               ))}
               <tr className="border-t-2 border-surface-border font-semibold">
-                <td className="py-2.5 pr-4 text-text-primary">Combined</td>
-                <td className="py-2.5 pr-4 text-right tabular-nums">{cohortN.toLocaleString()}</td>
-                <td className={`py-2.5 pr-4 text-right tabular-nums ${
+                <td className="py-2.5 pr-1 sm:pr-4 text-text-primary">Combined</td>
+                <td className="py-2.5 pr-1 sm:pr-4 text-right tabular-nums">{cohortN.toLocaleString()}</td>
+                <td className={`py-2.5 pr-1 sm:pr-4 text-right tabular-nums ${
                   cohortECE < 3 ? "text-green-600" : cohortECE < 5 ? "text-blue-600" : "text-orange-600"
                 }`}>
                   {cohortECE.toFixed(1)}pp
                 </td>
-                <td className="py-2.5 pr-4 text-right tabular-nums text-text-muted">
+                <td className="py-2.5 pr-1 sm:pr-4 text-right tabular-nums text-text-muted">
                   {cohortMCE.toFixed(1)}pp
                 </td>
                 <td className="py-2.5 text-right tabular-nums">{cohortBrier.toFixed(4)}</td>
@@ -1466,26 +1466,26 @@ export default function CalibrationPage() {
       {/* Table */}
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
         <h2 className="text-title-3 text-text-primary mb-3">Calibration Table<CohortTag cohort={cohort} /></h2>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto scroll-shadow-x">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-text-muted uppercase tracking-wide">
-                <th className="pb-2 pr-4">Bucket</th>
-                <th className="pb-2 pr-4 text-right">N</th>
-                <th className="pb-2 pr-4 text-right">Avg Predicted</th>
-                <th className="pb-2 pr-4 text-right">Actual Rate</th>
-                <th className="pb-2 pr-4 text-right">95% CI</th>
+              <tr className="text-left text-xs text-text-muted uppercase tracking-normal sm:tracking-wide">
+                <th className="pb-2 pr-1 sm:pr-4">Bucket</th>
+                <th className="pb-2 pr-1 sm:pr-4 text-right">N</th>
+                <th className="pb-2 pr-1 sm:pr-4 text-right">Avg Predicted</th>
+                <th className="pb-2 pr-1 sm:pr-4 text-right">Actual Rate</th>
+                <th className="pb-2 pr-1 sm:pr-4 text-right">95% CI</th>
                 <th className="pb-2 text-right">Error</th>
               </tr>
             </thead>
             <tbody>
               {cohortBuckets.map(b => (
                 <tr key={b.bucket} className="border-t border-surface-border">
-                  <td className="py-2 pr-4">{b.bucket}</td>
-                  <td className="py-2 pr-4 text-right tabular-nums">{b.n.toLocaleString()}</td>
-                  <td className="py-2 pr-4 text-right tabular-nums">{b.avgProb}%</td>
-                  <td className="py-2 pr-4 text-right tabular-nums">{b.actual}%</td>
-                  <td className="py-2 pr-4 text-right tabular-nums text-text-muted">
+                  <td className="py-2 pr-1 sm:pr-4">{b.bucket}</td>
+                  <td className="py-2 pr-1 sm:pr-4 text-right tabular-nums">{b.n.toLocaleString()}</td>
+                  <td className="py-2 pr-1 sm:pr-4 text-right tabular-nums">{b.avgProb}%</td>
+                  <td className="py-2 pr-1 sm:pr-4 text-right tabular-nums">{b.actual}%</td>
+                  <td className="py-2 pr-1 sm:pr-4 text-right tabular-nums text-text-muted">
                     {b.ciLower.toFixed(1)}-{b.ciUpper.toFixed(1)}%
                   </td>
                   <td className={`py-2 text-right tabular-nums ${
@@ -1831,14 +1831,14 @@ export default function CalibrationPage() {
             provable as grading coverage passes 50%, not as more data arrives.
           </p>
         )}
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto scroll-shadow-x">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-text-muted uppercase tracking-wide">
-                <th className="pb-2 pr-4">Category</th>
-                <th className="pb-2 pr-4 text-right">Outcomes</th>
-                <th className="pb-2 pr-4 text-right">ECE</th>
-                <th className="pb-2 pr-4 text-right" title="Worst-bucket sensitivity (equal-weighted).">MCE&nbsp;<span className="text-text-muted/60">&#9432;</span></th>
+              <tr className="text-left text-xs text-text-muted uppercase tracking-normal sm:tracking-wide">
+                <th className="pb-2 pr-1 sm:pr-4">Category</th>
+                <th className="pb-2 pr-1 sm:pr-4 text-right">Outcomes</th>
+                <th className="pb-2 pr-1 sm:pr-4 text-right">ECE</th>
+                <th className="pb-2 pr-1 sm:pr-4 text-right" title="Worst-bucket sensitivity (equal-weighted).">MCE&nbsp;<span className="text-text-muted/60">&#9432;</span></th>
                 <th className="pb-2 text-right">Brier</th>
               </tr>
             </thead>
@@ -1875,7 +1875,7 @@ export default function CalibrationPage() {
                   data-cap-applied={pop.capApplied ? "true" : "false"}
                   data-published-members={pop.publishedMembers.join(",")}
                   data-unpublished-members={pop.unpublishedMembers.join(",")}>
-                  <td className="py-2 pr-4 font-medium text-text-primary">
+                  <td className="py-2 pr-1 sm:pr-4 font-medium text-text-primary">
                     {categoryLabel(cm.category)}
                     {notProvable && (
                       <span
@@ -1921,15 +1921,15 @@ export default function CalibrationPage() {
                         payload publishes them. This ship hides our accounting of
                         that gap from the reader; it does not close it. */}
                   </td>
-                  <td className="py-2 pr-4 text-right tabular-nums">{cm.n.toLocaleString()}</td>
-                  <td title={pop.title} className={`py-2 pr-4 text-right tabular-nums ${
+                  <td className="py-2 pr-1 sm:pr-4 text-right tabular-nums">{cm.n.toLocaleString()}</td>
+                  <td title={pop.title} className={`py-2 pr-1 sm:pr-4 text-right tabular-nums ${
                     notProvable
                       ? "font-normal text-text-muted line-through decoration-orange-400/60"
                       : `font-semibold ${cm.ece < 3 ? "text-green-600" : cm.ece < 5 ? "text-blue-600" : "text-orange-600"}`
                   }`}>
                     {cm.ece.toFixed(1)}pp
                   </td>
-                  <td className={`py-2 pr-4 text-right tabular-nums text-text-muted ${
+                  <td className={`py-2 pr-1 sm:pr-4 text-right tabular-nums text-text-muted ${
                     notProvable ? "line-through decoration-orange-400/60" : ""
                   }`}>
                     {cm.mce.toFixed(1)}pp
