@@ -101,6 +101,40 @@ import {
  * The exact stamp goes in `title`, which is where notice 34 puts a method note
  * — "a tooltip on the source mark" — and never in the page body.
  *
+ * ═══ AND THE REVEAL IS NOT MOUSE-ONLY (#6343) ═══
+ *
+ * The stem is **"Last number:"**, and the sentence is repeated in an `sr-only`
+ * span. Both halves come from the phone, which shipped this disclosure first
+ * (PR #6366, `ios/…/Utilities/SourceAge.swift`):
+ *
+ *  - `SourceAge.reveal` reads `"Last number: 12 Sep, 3:51 AM"`. "Last number" is
+ *    what the two native surfaces that already date a price say, and it is the
+ *    more accurate word than web's old "Last seen" — we do not receive trades,
+ *    and the stamp is when a probability last reached us. Notice 35 wants one
+ *    card family everywhere, so web moves to the phone's words rather than the
+ *    two platforms disclosing one fact in two grammars. The field order moved
+ *    with it, one file down in `formatSourceStamp`.
+ *  - a `title` alone is the mouse and nothing else. `LiquidityMark`'s header
+ *    states the rule this repo already follows — Alex's constraint that a
+ *    non-hover equivalent is designed at the same time, not later — and a
+ *    phone-width web reader, which is the reader notice 42 actually walks, has
+ *    no hover at all.
+ *
+ * 🔴 It is an `sr-only` span rather than `LiquidityMark`'s real `<button>`, and
+ * the difference is deliberate: that button exists because it OPENS something
+ * (`onReveal` hands a sentence up to a panel the surface owns). This mark has
+ * no panel and nothing to open, so a focus stop here would be a tab stop that
+ * does nothing on every stale card — the cost `LiquidityMark`'s own
+ * `decorative` flag was added to avoid. An `sr-only` span announces the whole
+ * sentence with no interaction, no tab stop, and no pixel moved, and it cannot
+ * swallow a tap meant for the card link underneath.
+ *
+ * What this does NOT buy: a sighted touch reader still cannot reach the precise
+ * stamp, because a `title` does not fire on touch and there is no panel to open.
+ * That half needs a reveal host in the calling surfaces, which is a layout
+ * change in four callers rather than a grammar change here — recorded, not
+ * silently skipped.
+ *
  * ═══ `nowMs` IS AN ARGUMENT ═══
  *
  * Gotcha #44. A guard pins "31 minutes draws, 29 does not" at a fixed instant
@@ -150,6 +184,12 @@ export function PriceAgeMark({
   // the render must not be the thing that discovers they disagreed.
   if (age === null) return null;
 
+  // ONE sentence, built once and spent on both disclosure paths, for
+  // `liquidityReveal`'s reason: two call sites formatting it separately is how
+  // the tooltip and the screen reader drift apart.
+  const stamp = formatSourceStamp(observedAt);
+  const reveal = stamp ? `Last number: ${stamp}` : null;
+
   return (
     <span
       className="inline-flex items-center gap-1 text-text-muted"
@@ -157,11 +197,7 @@ export function PriceAgeMark({
       data-scope={scope}
       data-cadence={cadence}
       data-observed-at={observedAt ?? undefined}
-      title={
-        formatSourceStamp(observedAt)
-          ? `Last seen ${formatSourceStamp(observedAt)}`
-          : undefined
-      }
+      title={reveal ?? undefined}
     >
       {/* Fixed width, unlike the chip #4251 was filed on: a 5px dot plus a
           bounded age cannot take a market label's line away from it. */}
@@ -170,6 +206,11 @@ export function PriceAgeMark({
         className="h-[5px] w-[5px] shrink-0 rounded-full bg-text-muted/60"
       />
       <span className="text-[10px] leading-none whitespace-nowrap">{age}</span>
+      {/* The non-hover half. `sr-only` and not `aria-label` on the wrapper: a
+          label on the wrapper would REPLACE the visible "3d ago" for a screen
+          reader, trading one disclosure for the other. This adds the precise
+          stamp after the age, which is how the phone reads it too. */}
+      {reveal ? <span className="sr-only">{reveal}</span> : null}
     </span>
   );
 }
