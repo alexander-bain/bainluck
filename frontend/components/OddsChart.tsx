@@ -1031,6 +1031,25 @@ export default function OddsChart({
     };
   }, [chartData, plottedProbKeys]);
 
+  // #6349 — THE "SINCE START" SELF-RESET IS AN EFFECT, NOT A RENDER-TIME CALL.
+  // It used to sit inside the early return below and call `handleTimeRangeChange`
+  // — which on the event page is the PARENT's setter — in the middle of this
+  // component's render. That was harmless only because the guard around it could
+  // never be true once a shared domain was supplied (see the early return). The
+  // honest `drawnExtent` test makes it reachable, and reachable setState-during-
+  // render of another component is a React warning and an ordering hazard, so it
+  // moves here before anything can return.
+  const nothingToDrawInLiveWindow =
+    !drawnExtent && timeRange === "live" && !!history && history.length > 0;
+  useEffect(() => {
+    if (!nothingToDrawInLiveWindow) return;
+    handleTimeRangeChange("all");
+    setHasUserOverridden(false);
+    // `handleTimeRangeChange` is re-created every render; the flag above is the
+    // real trigger and it goes false as soon as the wider window draws.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nothingToDrawInLiveWindow]);
+
   // Compute "Game Start" reference line time (formatted to match chart categories)
   const gameStartTime = useMemo(() => {
     if (!commenceTime || chartData.length === 0 || !drawnExtent) return null;
@@ -1254,11 +1273,26 @@ export default function OddsChart({
 
   // Early return for empty data across ALL sources (not just sportsbook odds)
   // If "Since Start" filter caused empty data, auto-reset to "all"
-  if (chartData.length === 0) {
-    if (timeRange === "live" && history && history.length > 0) {
-      // Data exists but all pre-start — reset filter silently
-      handleTimeRangeChange("all");
-      setHasUserOverridden(false);
+  //
+  // #6349 — `chartData.length === 0` IS NOT "NOTHING TO DRAW", AND ON THIS PAGE
+  // IT NEVER FIRES. `chartData` is padded by this component: `fillMinuteGaps`
+  // inserts a category for every minute of the parent's shared domain, and
+  // `ensurePoint` adds one per period boundary. So once the event page supplies
+  // `chartStartTime`/`chartEndTime` — which it always does — a window holding no
+  // odds at all still produces hundreds of value-less rows, the length test is
+  // false, and BOTH this guard and the "Since Start" self-reset beneath it are
+  // dead code. The reader gets the thing the guard exists to prevent: axes, a
+  // "+ 3 sources" control and three `<path>` elements with an empty `d`.
+  //
+  // `drawnExtent` is already the honest test — the first and last category
+  // actually carrying a plotted value, null when there is none — and it is
+  // computed above for exactly this distinction (CERT-1984). Measured on
+  // /events/15296797, a 1-1 Argentine Primera game whose books closed 19h52m
+  // before kickoff: zero post-start points on every odds series, so "Since
+  // Start" drew an empty grid while its own pill sat DISABLED.
+  if (chartData.length === 0 || !drawnExtent) {
+    if (nothingToDrawInLiveWindow) {
+      // Data exists but all pre-start — the effect above resets the filter.
       return null; // Will re-render with "all" data
     }
     const isPreGame = eventStatus === "scheduled";
