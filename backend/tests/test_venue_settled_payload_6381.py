@@ -30,6 +30,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.utils.event_completion import UPCOMING_GRACE
 from app.utils.venue_settlement import (
     FULL_SCOPE_SCORE_MARKETS,
     VENUE_SETTLEMENT_SOURCE,
@@ -52,6 +53,38 @@ _MEASURED_WITH_A_SCORE = 56
 
 def _now():
     return datetime(2026, 9, 15, 18, 0, tzinfo=timezone.utc)
+
+
+def _real_now():
+    """🔴 THE REAL CLOCK, ON PURPOSE — gotcha #44, and it already bit this file.
+
+    `_now()` is frozen so the specimen's shape is reproducible, and that is
+    right for every anchor far from a boundary: 3.6 days past kickoff, a
+    `completed_at` three days old, the status-gated `suspended`/`live` arms
+    (those never reach the clock — `started_without_result` refuses them on
+    status, which is why they do not drift).
+
+    It is WRONG for the two scope cases whose entire meaning is their distance
+    from the boundary, because the predicate under test reads the REAL clock:
+    `started_without_result` asks `commence_time < now() - UPCOMING_GRACE`.
+
+    Frozen anchor + real-clock predicate = green when written, red forever
+    after. Measured: `_now() - 30m` is 17:30Z, written to sit inside a 2h
+    grace. It passed CI on `7ca69931c` that morning and went red at 19:30Z the
+    SAME DAY — the moment the real clock put 17:30Z more than two hours in the
+    past — reddening master for every lane, with no diff to blame.
+
+    So offset from the real now, and state the offset in terms of the constant
+    that defines the boundary, so a change to `UPCOMING_GRACE` moves the anchor
+    with it instead of silently invalidating the case's intent.
+    """
+    return datetime.now(timezone.utc)
+
+
+#: The two real-clock anchors. Module-level so the guard below can assert they
+#: are still what their names claim at RUN time, not merely at collection.
+_NOT_YET_KICKED_OFF = _real_now() + timedelta(hours=3)
+_INSIDE_THE_GRACE = _real_now() - UPCOMING_GRACE / 2
 
 
 def _event(**kw):
@@ -206,11 +239,12 @@ class TestTheScope:
         "event_kwargs, why",
         [
             (
-                {"commence_time": _now() + timedelta(hours=3)},
+                # Real clock, not `_now()` — see `_real_now`.
+                {"commence_time": _NOT_YET_KICKED_OFF},
                 "a fixture whose clock has not run out says no such thing",
             ),
             (
-                {"commence_time": _now() - timedelta(minutes=30)},
+                {"commence_time": _INSIDE_THE_GRACE},
                 "inside the upcoming grace it is still a fixture",
             ),
             (
@@ -245,6 +279,30 @@ class TestTheScope:
         assert not venue_settlement_is_askable(
             payload, live_claim_is_unbacked=False
         ), why
+
+    def test_the_two_clock_anchors_still_mean_what_they_are_named(self):
+        """🔴 PINS THE ROT, NOT THE VALUE — the red that hit master 2026-09-15.
+
+        The case above cannot tell "the predicate correctly refuses this row"
+        from "the anchor drifted out of the window it was written to sit in":
+        both read as a pass until the drift crosses the boundary, and then it
+        is a red with no diff behind it. This asserts the PREMISE instead.
+
+        It is deliberately stated against `UPCOMING_GRACE` rather than against
+        `30 minutes`, so re-freezing `_real_now()` or widening the grace fails
+        HERE, naming the anchor, instead of somewhere downstream hours later.
+        """
+        age = datetime.now(timezone.utc) - _INSIDE_THE_GRACE
+        assert timedelta(0) < age < UPCOMING_GRACE, (
+            f"the 'inside the grace' anchor is {age} old against a "
+            f"{UPCOMING_GRACE} grace — it no longer sits inside the window the "
+            "case exists to test. Anchor it on the real clock (`_real_now`), "
+            "never on frozen `_now()`: gotcha #44."
+        )
+        assert _NOT_YET_KICKED_OFF > datetime.now(timezone.utc), (
+            "the 'not yet kicked off' anchor is in the past — the case is now "
+            "testing a started fixture and would pass for the wrong reason."
+        )
 
     def test_completed_at_alone_does_NOT_take_a_stuck_row_out_of_scope(self):
         """🔴 PINS THE REMOVAL OF A GUARD, NOT ITS PRESENCE.
@@ -451,4 +509,77 @@ class TestTheFrontendContractStillHasTwoArms:
         assert returned.count("||") == 1, (
             "hasNoReportedResult grew an arm; venue_settlement_is_askable must "
             "grow the same one or #6381 ships to a subset of its own class"
+        )
+
+
+class TestTheVenueWordIsSpelledTwiceOnPurpose:
+    """`api_settlement` is defined in two modules, and merging them is a BUG.
+
+    int377 flagged the duplicate at merge (2026-09-15): `venue_settlement` and
+    `kalshi_market_status` both define `VENUE_SETTLEMENT_SOURCE =
+    "api_settlement"`. The obvious tidy — have the reader import the writer's
+    constant — is the wrong one, and this guard is here to record why rather
+    than leave the next reader to rediscover it.
+
+    The two answer different questions:
+
+    * `kalshi_market_status.VENUE_SETTLEMENT_SOURCE` is a WRITE constant. Its
+      own docstring scopes it to `graded_columns` "and the string it emits" —
+      one writer, the Kalshi forward capture.
+    * `venue_settlement.VENUE_SETTLEMENT_SOURCE` is a READ filter over
+      `futures_outcomes.resolution_source`, a column written by many hands.
+      `backfill_winners.py` spells the word at 14 write-shaped sites, and
+      `polymarket.py:4621` writes it for a venue Kalshi has nothing to do with.
+
+    So an import would assert that the reader's population is defined by ONE of
+    its writers. Rename the Kalshi constant and the import silently re-points
+    the read at the new word, while every historical row — and everything
+    `backfill_winners` and `polymarket` write tomorrow — still carries the old
+    one. The page goes back to saying "No result reported" over grades we hold:
+    the exact defect #6381 shipped to fix, re-introduced by a tidy, and failing
+    closed so nothing would alarm.
+
+    Asserting the gap makes a rename fail HERE, where the choice is visible.
+    """
+
+    def test_the_two_records_of_the_word_agree_today(self):
+        from app.utils import kalshi_market_status
+
+        assert VENUE_SETTLEMENT_SOURCE == kalshi_market_status.VENUE_SETTLEMENT_SOURCE, (
+            "the writer's word and the reader's filter have drifted — the read "
+            "population and the write are no longer the same rung. Do NOT fix "
+            "this by importing one from the other (see this class's docstring); "
+            "decide which rows the page may publish over, then re-state both."
+        )
+
+    def test_a_non_kalshi_writer_spells_it_too_which_is_what_forbids_the_import(self):
+        """The record that LICENSES the duplicate, asserted instead of asserted-of.
+
+        If this ever goes red because Kalshi's forward capture became the only
+        writer of the word, the import stops being wrong and the duplicate
+        stops being justified — which is a deliberate re-decision, not a tidy.
+        """
+        import re
+        from pathlib import Path
+
+        tasks = Path(__file__).resolve().parents[1] / "app/tasks"
+        write_shaped = re.compile(
+            r"""resolution_source\s*=\s*['"]""" + VENUE_SETTLEMENT_SOURCE + r"""['"]"""
+        )
+        non_kalshi_writers = sorted(
+            path.name
+            for path in tasks.glob("*.py")
+            if not path.name.startswith("kalshi")
+            and write_shaped.search(path.read_text())
+        )
+        assert non_kalshi_writers, (
+            "no non-Kalshi task writes `api_settlement` any more — re-read this "
+            "class's docstring before merging the two constants"
+        )
+        assert "polymarket.py" in non_kalshi_writers, (
+            "polymarket.py no longer writes the word. The general assertion "
+            "above stays green on siblings that only REFRESH already-graded "
+            f"rows ({', '.join(non_kalshi_writers)}), so the cross-venue writer "
+            "is pinned by name: it is the one that makes the read population "
+            "wider than any single venue's writer."
         )

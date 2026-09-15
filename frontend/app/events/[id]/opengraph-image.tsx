@@ -15,7 +15,7 @@ import {
 } from "@/lib/eventShareMeta";
 import { resolveEventOutcome } from "@/lib/eventOutcome";
 import { prematchReading } from "@/lib/prematchReading";
-import { suspendedSummary } from "@/lib/eventState";
+import { suspendedSummary, venueSettledSummary } from "@/lib/eventState";
 
 export const runtime = "edge";
 export const alt = "Bain Luck game probability";
@@ -112,8 +112,14 @@ function eventStatus(event: EventDetailResponse): string {
   // The house string, with the last score when the row holds one. Away-first:
   // this card paints the away side in the LEFT column, and `eventShareMeta`
   // passes the same order for the title beside it.
+  // #6381 — the same swap `eventShareMeta` makes for the title beside this
+  // picture, from the same two keys, so the pair reads as one card. Null on
+  // every row the venue has not settled.
   if (noReportedResult(event)) {
-    return suspendedSummary(event.away_score, event.home_score, "away-home");
+    return (
+      venueSettledSummary(event.venue_settled, event.venue_settled_result) ??
+      suspendedSummary(event.away_score, event.home_score, "away-home")
+    );
   }
   if (event.status === "live") return "Live now";
   if (isFinal(event)) return "Final";
