@@ -424,6 +424,119 @@ class TestAZeroTheScoreboardDoesNotDecideStillGoes:
         )
         assert served == {}, f"a scoreless event produced verdicts: {sorted(served)}"
 
+    def test_a_resolved_margin_market_on_a_LIVE_game_publishes_nothing(self):
+        """🔴 THE GATE THE MARKET-STATUS TEST DOES NOT COVER, found by mutation.
+
+        Deleting `if not event_is_finished` survived every other test here,
+        because `_settled_grade_fields` refuses a market that is not `resolved`
+        and the live fixtures all used an open one. The hole it leaves is the
+        real shape: a market the venue has ALREADY settled sitting on a game
+        still being played (#5771's population — 2,080 events / 8,867 markets).
+        There `home_score` is the score SO FAR, and subtracting it answers a
+        full-game question at half-time. Gwangju lead 1–0 with the match live:
+        "FC Anyang wins by more than 1.5 goals" is false RIGHT NOW and is not
+        yet false.
+        """
+        rows = (
+            ("Gwangju wins by more than 0.5 goals", 0.40, None, None),
+            ("FC Anyang wins by more than 1.5 goals", 0.0, False, "api_settlement"),
+        )
+        served = _served_spreads(
+            _payload(
+                [_market(status="resolved")],
+                _legs(rows),
+                event=_event(status="live", home_score=1, away_score=0),
+            )
+        )
+        assert "Gwangju wins by more than 0.5 goals" in served, (
+            "fixture did not reach the code under test"
+        )
+        assert "FC Anyang wins by more than 1.5 goals" not in served, (
+            "a full-game margin was graded off a score the game is still moving"
+        )
+
+    def test_a_deep_otm_rung_the_score_cannot_read_is_still_dropped(self):
+        """🔴 #921's own behaviour, isolated — found by mutation.
+
+        Every other control here uses a rung stored at 0.0, which BOTH the
+        deep-OTM floor and the `> 0` filter would take, so neutering the floor
+        alone changed nothing and the mutant lived. A rung at 0.01 is below the
+        floor and above the filter, so only the floor can drop it.
+
+        The rung is a SIGNED spread ("Gwangju -1.5"), which this ship's parser
+        refuses by design — the shape is a follow-up, not smuggled in — so it is
+        unproved for a reason the reader of this test can check.
+        """
+        rows = (
+            ("Gwangju wins by more than 1.5 goals", 0.50, True, "api_settlement"),
+            ("Gwangju -1.5", 0.01, False, "api_settlement"),
+        )
+        served = _served_spreads(
+            _payload([_market()], _legs(rows), event=_event(home_score=2, away_score=0))
+        )
+        assert "Gwangju wins by more than 1.5 goals" in served, (
+            "fixture did not reach the code under test"
+        )
+        assert "Gwangju -1.5" not in served, (
+            "a deep-OTM alternate rung nothing has answered was put back on the page"
+        )
+
+    def test_only_the_PROVED_leg_of_a_readmitted_market_comes_back(self):
+        """🔴 THE PER-LEG CLAIM, and it was untested until the mutation sweep.
+
+        Gate 1 is asked of a MARKET and the proof is a fact about a LEG, so
+        readmitting the market readmits its unprovable legs along with it unless
+        the gates behind it stay keyed on the leg. Spelling the carve-out as a
+        per-market flag (`if _score_proved_ids` instead of `o.id in
+        _score_proved_ids`) passes every other test in this file and puts an
+        unanswered 0% rung on a finished page.
+
+        Both legs are stored at 0.0 and graded identically. The only difference
+        is that the scoreboard can read one of them: "Gwangju -1.5" is a signed
+        spread, a shape this ship's parser refuses by design.
+        """
+        rows = (
+            ("Gwangju wins by more than 1.5 goals", 0.0, False, "api_settlement"),
+            ("Gwangju -1.5", 0.0, False, "api_settlement"),
+        )
+        served = _served_spreads(_payload([_market()], _legs(rows)))
+        assert "Gwangju wins by more than 1.5 goals" in served, (
+            "the proved leg did not readmit its own market"
+        )
+        assert "Gwangju -1.5" not in served, (
+            "an unprovable leg rode in on its sibling's proof"
+        )
+
+    def test_an_all_zero_market_with_nothing_proved_still_leaves_the_page(self):
+        """#921 slice 2's outcome, and a note on what this does NOT prove.
+
+        An all-zero moneyline on a finished game reaches no reader. That is the
+        statement worth pinning and it holds.
+
+        🔴 IT DOES NOT ISOLATE `has_no_real_price`, and saying so is the point:
+        neutering that gate alone was run as a mutant and this test still
+        passed, because `other_stays_silent` (#6025/#6026) refuses the same rows
+        one branch later. Every bucket behind gate 1 has a newer guard of its
+        own — `other_stays_silent`, the deep-OTM floor, `_enforce_monotonicity`'s
+        filter, step 9's band — which is why the gate's narrowness is not
+        isolable from here. The bucket with no second guard is `matchups`
+        (h2h/3ball), and this ship cannot reach it: `_score_proved_ids` is empty
+        for a market whose outcomes are player names.
+        """
+        moneyline = _market(id=903, name="Gwangju vs FC Anyang",
+                            external_id="KXKLEAGUEGAME-26SEP13GWAANY")
+        legs = _legs(
+            (("Tie", 0.0, None, None),
+             ("Gwangju", 0.0, None, None),
+             ("FC Anyang", 0.0, None, None)),
+            market_id=903,
+            first_id=9200,
+        )
+        payload = _payload([moneyline], legs)
+        assert payload.get("other") == [], (
+            f"an unpriced card was served as three 0% rows: {payload.get('other')}"
+        )
+
     def test_an_ambiguous_team_name_resolves_to_neither_side(self):
         """"New York" on a Red Bulls/City matchup names both clubs, so it names
         no side and the margin cannot be computed for it."""
