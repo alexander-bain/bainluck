@@ -394,7 +394,6 @@ async def test_this_arm_selects_the_exact_complement_of_the_shallow_window():
     "no board was fetched" would be asserting a filter the rig cannot apply, and
     would pass for the wrong reason the moment the clause was deleted.
     """
-    _session, _espn, _stats = await _run([_fsu_smu()])
     session = _FakeSession([])
     await _settle_deep_authority_stragglers(
         session, _FakeESPN(BOARDS), NOW, {"authority_dark_sports": 0, "errors": []},
