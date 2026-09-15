@@ -75,6 +75,25 @@ shape                                 rows
 
 The first five and the last are threshold questions and are parsed. "N to M" is
 the band above and is refused. Nothing here is case-sensitive.
+
+THE CLIENT ALREADY DOES THIS ARITHMETIC, AND THE TWO AGREE
+-----------------------------------------------------------
+`MarketMapSection.gradeMarginRung` (#6203, web) grades a margin rung off the
+same final score the moment the rows reach it — `(isHome ? margin : -margin) >=
+threshold ? "cleared" : "missed"` — and a fully graded ladder prints
+`cleared` / `not cleared` with no percentage on it at all. So these rows land in
+a renderer that is already waiting for them; what was missing was the rows.
+
+🔴 ITS COMPARATOR IS `>=` AND THIS ONE IS `>`, WHICH IS ONLY SAFE BECAUSE OF A
+MEASURED FACT. The two can disagree on exactly one input: a margin that lands ON
+an integer line ("wins by over 3 runs", final margin 3 — false here, "cleared"
+there). Measured 2026-09-15 over all 92,487 rows of the "more than"/"over"
+family: **every one of them carries a half line** (`.5`), and zero integer lines
+exist, so the disagreeing input cannot be constructed from production data. The
+"N or more" shape IS integer-lined and is inclusive on both sides, so it agrees
+by construction. If a venue ever ships an integer "over N" line, this note is
+where the reader should start: `test_or_more_is_inclusive_and_over_is_not` pins
+this side of it.
 """
 
 from __future__ import annotations
