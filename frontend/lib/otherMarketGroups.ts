@@ -415,6 +415,35 @@ function winnerParts(
  * (`… : Total Goals`, `… : O/U 2.5`), and none of that is reconstructible from
  * two team names. Refusing those is the whole reason this reads the shape.
  *
+ * #6417 — THE OTHER VENUE PUTS IT AFTER A DASH, AND THE RULE DELETED IT.
+ * `Deportivo Alavés vs. Valencia CF - Halftime Result` splits into exactly two
+ * sides, carries no colon, and was therefore re-titled to `Alavés vs Valencia`.
+ * On `/events/15305823`, 0–0 at half time, that printed a correct `Draw >99%`
+ * under the FULL-MATCH heading, two inches below a hero saying `Alavés 43%` —
+ * the reader saw a live match declared a near-certain draw with 45 minutes
+ * left. The number was right; the deleted six characters were the lie. The same
+ * deletion fused six distinct questions into one card (`cardName` is the
+ * grouping key below), which is how one screen came to show three different
+ * draw prices.
+ *
+ * #5181's measurement was taken on Kalshi's naming, where the qualifier always
+ * follows a colon, and was blind to the other venue's separator. Measured
+ * 2026-09-15 over open, event-linked, matchup-shaped, colon-free rows:
+ * polymarket 5,135 of 6,687 carry a ` - ` qualifier, kalshi 0. Every one of the
+ * 5,135 holds EXACTLY ONE separator with the matchup in the head, so splitting
+ * at the first one is not a heuristic here, it is the shape.
+ *
+ * WHY THE QUALIFIER IS KEPT RATHER THAN THE WHOLE NAME REFUSED. Refusing on a
+ * dash the way we refuse on a colon would also fix both harms — but it would
+ * hand 5,135 rows back to the venue's spelling and give up #5181's ship on
+ * three quarters of the population it was written for. The matchup part IS
+ * reconstructible from two team names; only the qualifier is not. So we
+ * canonicalise the half we can and keep the half we cannot, verbatim.
+ *
+ * The en- and em-dash variants match zero rows today and are admitted anyway:
+ * they are the same grammar, and the cost of a venue rename is this defect
+ * again, silently.
+ *
  * Layout-safe: `PropMiniCard` renders the title in a plain `div` with no
  * `truncate`, so the longer canonical name WRAPS rather than clipping — checked
  * because at 390px the opposite would have traded this defect for #5161's.
@@ -431,12 +460,25 @@ export function canonicalMatchupTitle(
   if (!name || !home || !away) return null;
   // A colon means the name carries more than the matchup — leave it alone.
   if (name.includes(":")) return null;
-  // Exactly two sides. `A vs B vs C` is not a matchup this can name.
-  const parts = name.split(/\s+vs\.?\s+/i);
+  // #6417: a SPACED dash separates the matchup from the qualifier that says
+  // which question this is. Spaced on both sides on purpose — `Saint-Étienne`
+  // is one token and must not be cut in half.
+  const separator = name.match(/\s+[-–—]\s+/);
+  const matchup = separator ? name.slice(0, separator.index) : name;
+  const qualifier = separator
+    ? name.slice((separator.index ?? 0) + separator[0].length).trim()
+    : "";
+  // Exactly two sides. `A vs B vs C` is not a matchup this can name. Read on
+  // the matchup part alone, so `Group A - Alavés vs. Valencia` — where the
+  // extra text comes FIRST and is just as unreconstructible — now refuses
+  // instead of being silently trimmed to the two names.
+  const parts = matchup.split(/\s+vs\.?\s+/i);
   if (parts.length !== 2) return null;
   if (!parts[0].trim() || !parts[1].trim()) return null;
-  // Home first, matching the hero's own order on the same page.
-  return `${home} vs ${away}`;
+  // Home first, matching the hero's own order on the same page; the venue's own
+  // dash and qualifier ride along untouched.
+  if (!qualifier) return `${home} vs ${away}`;
+  return `${home} vs ${away} ${separator?.[0].trim()} ${qualifier}`;
 }
 
 /**
