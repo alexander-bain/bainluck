@@ -95,7 +95,11 @@ from typing import Any, Optional
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.utils.event_completion import TICKER_DERIVED_COMMENCE_SOURCE
+from app.utils.event_completion import (
+    KALSHI_OCCURRENCE_COMMENCE_SOURCE,
+    POLYMARKET_VENUE_COMMENCE_SOURCE,
+    TICKER_DERIVED_COMMENCE_SOURCE,
+)
 from app.utils.provider_anchor_keys import (
     ANCHOR_KIND_GAME,
     ANCHOR_KIND_MARKET,
@@ -670,8 +674,51 @@ def _json_or_none(value: Optional[dict]) -> Optional[str]:
 #: `None` is deliberately absent. Most of the table predates the column, and
 #: reading a missing provenance as "market-born" would put nearly every historic
 #: row in this class — q076's stated narrowness, from the other side.
+#:
+#: ═══ #6262: A REFINEMENT OF A MEMBER IS STILL A MEMBER ══════════════════════
+#:
+#: `kalshi_occurrence` and `polymarket_venue` joined the vocabulary AFTER q076
+#: wrote this set, and nothing here was ever wrong — two entries were simply
+#: never added. Both are the SAME provider writing the SAME row, and both exist
+#: only to record WHICH of that provider's two time fields answered
+#: (`occurrence_datetime` rather than a day parsed out of a ticker; Gamma's
+#: `startTime` rather than its `startDate` listing stamp). Their own docstrings
+#: in `event_completion` say so. **A row does not stop being market-born
+#: because its market told us a better hour.**
+#:
+#: 🔴 That omission had the perverse shape: `recover_kalshi_occurrence_starts`
+#: REWRITES `commence_time_source` to `kalshi_occurrence`, so improving a
+#: ghost's hour used to remove it from this class. Fixing the time un-drained
+#: the row.
+#:
+#: The safety clause above survives both additions, and that is the reason they
+#: are safe rather than merely plausible: `_SOURCE_PRIORITY` ranks
+#: `polymarket_venue` at 0 explicitly, and `kalshi_occurrence` is unlisted,
+#: which `commence_time_write_authorized` reads as 0 by its `.get(..., 0)`
+#: default. A write lands only on `incoming > current`, so no `odds_api`(1),
+#: `statpal`(2), `espn`(3) or `mlb_schedule_repair`(4) row can be downgraded
+#: into this set — nor can a `None`-sourced historic row, which also reads 0.
+#: `test_every_market_born_source_ranks_below_every_schedule_source_6262` pins
+#: that in both directions so this stays a property and not a coincidence.
+#:
+#: Measured on production 2026-09-15 01:5xZ, over the whole `live`+`scheduled`
+#: candidate population: the band clearing the first six refusals goes **35 ->
+#: 42**, and all seven new members are genuine — six `polymarket_venue` tennis
+#: rows that resolve to a same-family canonical (a search for `Badosa` served
+#: `Justina Mikulskyte v Paula Badosa` TWICE, 13:00Z and 20:30Z, both "No price
+#: yet"), and one `kalshi_occurrence` row, `15305046`, which the sport-family
+#: refusal still declines. **This change does not close that one**: it is a
+#: `basketball_other` ghost of an `americanfootball_nfl` fixture and needs the
+#: separate catch-all-key question (#6262 gap B), which relaxes a guard rather
+#: than completing a set.
 MARKET_BORN_COMMENCE_SOURCES = frozenset(
-    {SOURCE_KALSHI, SOURCE_POLYMARKET, TICKER_DERIVED_COMMENCE_SOURCE}
+    {
+        SOURCE_KALSHI,
+        SOURCE_POLYMARKET,
+        TICKER_DERIVED_COMMENCE_SOURCE,
+        KALSHI_OCCURRENCE_COMMENCE_SOURCE,
+        POLYMARKET_VENUE_COMMENCE_SOURCE,
+    }
 )
 
 #: One statement, one round trip: every fact the drain verdict turns on, for
@@ -909,8 +956,16 @@ async def resolve_market_born_duplicates(
 
        Under-coverage is the safe failure direction — a missed ghost renders, a
        wrong resolution serves the wrong match.
-    6. **Same sport family** (:func:`_sport_family`). 505 of 505 today, so it
-       costs nothing and refuses the one outcome that would be unrecoverable.
+    6. **Same sport family** (:func:`_sport_family`). 🔴 **RE-MEASURED, AND IT
+       IS NO LONGER FREE.** The 2026-09-02 note said "505 of 505 today, so it
+       costs nothing"; on 2026-09-15, over the `live`+`scheduled` band, it
+       fires on **3 of 42** — `basketball_other` and `soccer_other` ghosts
+       whose markets sit on NFL rows. It stays, because the direction it
+       refuses is the unrecoverable one (a reader served a game from the wrong
+       sport), but nobody may now call it decoration. Whether a CATCH-ALL key
+       like `*_other` should be able to refuse at all — it names no
+       competition, so it refuses on evidence that is not there — is #6262
+       gap B, which is its own change with its own population.
 
     Only `market` anchors are read. A `game` anchor is counted (refusal 1) and a
     `container` anchor — a Polymarket event id — is IGNORED rather than treated

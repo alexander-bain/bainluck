@@ -75,8 +75,15 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
         "M3",
         "a NULL provenance reads as market-born — q076's narrowness undone, "
         "which puts most of the historic table in this class",
-        """    {SOURCE_KALSHI, SOURCE_POLYMARKET, TICKER_DERIVED_COMMENCE_SOURCE}""",
-        """    {SOURCE_KALSHI, SOURCE_POLYMARKET, TICKER_DERIVED_COMMENCE_SOURCE, None}""",
+        # Re-targeted for #6262: the set literal went multi-line when
+        # `kalshi_occurrence` and `polymarket_venue` were added, so the old
+        # single-line needle drifted. Same mutant, same intent — `None` joins
+        # the set — anchored on the closing brace, which occurs once.
+        """        POLYMARKET_VENUE_COMMENCE_SOURCE,
+    }""",
+        """        POLYMARKET_VENUE_COMMENCE_SOURCE,
+        None,
+    }""",
         CHANNEL,
     ),
     (
