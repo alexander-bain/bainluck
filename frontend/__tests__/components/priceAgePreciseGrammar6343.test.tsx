@@ -152,13 +152,16 @@ describe("SHIP: web's absolute stamp is the phone's, field for field", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("GUARD: web has ONE precise-stamp formatter", () => {
-  /* Mutant: re-inline the old body into `formatSourceStamp`
-     (`toLocaleString("en-US", { month: "short", day: "numeric", … })`). Every
-     SHIP test above dies with it, and so does this — but this one states the
-     DECISION rather than the output, so it also kills the subtler mutant that
-     hand-rolls a day-first string locally and drifts from `preciseObservedAt`
-     the next time that function changes. */
+describe("SHIP: web has ONE precise-stamp formatter", () => {
+  /* Labelled SHIP and not GUARD because it is MEASURED red against the parent
+     (5 of 5 cases), which this file's convention says a GUARD must not be. It
+     still names its mutant, because the reason it is worth keeping after the
+     ship is the mutant rather than the diff: re-inlining the old body into
+     `formatSourceStamp` (`toLocaleString("en-US", { month, day, … })`) kills
+     every SHIP test above too, but this one states the DECISION rather than the
+     output and so ALSO kills the subtler mutant that hand-rolls a day-first
+     string locally and drifts from `preciseObservedAt` the next time that
+     function changes. */
   test.each([
     SPECIMEN,
     "2026-01-01T00:00:00Z",
@@ -170,9 +173,11 @@ describe("GUARD: web has ONE precise-stamp formatter", () => {
     expect(formatSourceStamp(iso)).toMatch(DAY_FIRST);
   });
 
-  /* Mutant: `title={stamp}` and `sr-only`{`Last number: ${stamp}`} — two call
-     sites building the sentence separately. `liquidityReveal` is one string for
-     exactly this reason; this asserts the two paths cannot drift apart. */
+  /* Also red on the parent (which had no announcement at all), so also SHIP.
+     Mutant it kills after the ship: `title={stamp}` with
+     `sr-only`{`Last number: ${stamp}`} — two call sites building the sentence
+     separately. `liquidityReveal` is one string for exactly this reason; this
+     asserts the two paths cannot drift apart. */
   test("the tooltip and the announcement are the SAME sentence", () => {
     const html = mark(SPECIMEN, "futures");
     expect(titleOf(html)).toBe(srOnly(html));
@@ -230,17 +235,20 @@ describe("CONTROL: an empty liquidity payload cannot hide the age (#6343)", () =
     expect(PriceAgeMark.length).toBe(1); // one props object, destructured
     const withNoLiquidityAnywhere = mark(SPECIMEN, "futures");
     expect(withNoLiquidityAnywhere).toContain('data-testid="price-age-mark"');
-    expect(titleOf(withNoLiquidityAnywhere)).toBe(
-      `Last number: ${SPECIMEN_PRECISE}`,
-    );
+    // Deliberately asserts that a reveal EXISTS, not what it says: the grammar
+    // is the SHIP block's business, and pinning it here would make this control
+    // red against the parent and stop it being a control at all.
+    expect(titleOf(withNoLiquidityAnywhere)).not.toBeNull();
   });
 
   test("a 3-day-old price on a card with no liquidity data still says 3d ago", () => {
     // The production specimen end to end: feed index 1, 77 hours old, `liq {}`.
+    // Green on both sides — the disclosure was never liquidity-gated on web,
+    // and this is what says so if someone ever gates it.
     const html = bar(ago(77 * HOUR));
     expect(html).toContain('data-testid="price-age-mark"');
     expect(visible(html)).toContain("3d ago");
-    expect(titleOf(html)).toMatch(/^Last number: /);
+    expect(titleOf(html)).not.toBeNull();
   });
 });
 
