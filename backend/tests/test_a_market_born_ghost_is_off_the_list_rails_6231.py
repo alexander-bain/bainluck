@@ -163,6 +163,15 @@ def _verdict_mapping(event_id: int, *, candidate, sport_key, **overrides):
         "other_targets": 1 if candidate is not None else 0,
         "candidate_id": candidate,
         "holds_markets": False,
+        # #6262 gap B added refusal 6's second witness. It is planted ABSENT
+        # here on purpose: this file is about the list rails, not about the
+        # verdict, and an absent market witness reproduces exactly the
+        # pre-gap-B behaviour these cases were written against. The witness
+        # itself is graded against the real SQL in
+        # `test_market_born_duplicate_cross_sport_witness_6262.py` — a
+        # hand-built mapping cannot grade a statement.
+        "market_ids": 0,
+        "market_id": None,
     }
     mapping.update(overrides)
     return _VerdictRow(mapping)

@@ -116,7 +116,7 @@ from app.utils.provider_anchor_keys import (
     statpal_qualifier_refusal,
     statpal_sport_from_source_id,
 )
-from app.utils.sport_keys import get_llm_category_for_prefix
+from app.utils.sport_keys import get_llm_category_for_prefix, get_sport_key_from_ticker
 
 logger = logging.getLogger(__name__)
 
@@ -728,6 +728,13 @@ MARKET_BORN_COMMENCE_SOURCES = frozenset(
 #: — `(source, external_id)` is `uq_futures_source_external`, a UNIQUE index, so
 #: each anchor yields at most one row and the LEFT JOIN cannot fan out.
 #:
+#: `market_id` is the SECOND witness refusal 6 weighs (#6262 gap B), and it is
+#: the anchor's `source_id` — **the venue's own ticker, read back verbatim**.
+#: `kalshi_anchor_key` stores the raw ticker and `polymarket_anchor_key` the raw
+#: `conditionId`; no code path anywhere writes an anchor's `source_id` from an
+#: event. That is the whole reason this column and not another is the witness:
+#: see refusal 6 for the one that looked right and was not.
+#:
 #: 🔴 THIS IS THE ONLY DRAIN VERDICT. #6231 needed the same seven refusals over a
 #: PAGE of rows rather than one id, and the obvious shape — a second, batched
 #: SQL beside this one — is the shape that goes wrong: two statements encoding
@@ -753,7 +760,7 @@ anch AS (
       JOIN cand ON cand.event_id = a.event_id
 ),
 mkt AS (
-    SELECT anch.event_id, fm.event_id AS target
+    SELECT anch.event_id, fm.event_id AS target, anch.source_id AS market_id
       FROM anch
       LEFT JOIN futures_markets fm
              ON fm.source = anch.source
@@ -765,6 +772,10 @@ SELECT
     cand.provenance,
     cand.sport_key,
     cand.carries_truth,
+    (SELECT count(DISTINCT mkt.market_id) FROM mkt
+      WHERE mkt.event_id = cand.event_id) AS market_ids,
+    (SELECT min(mkt.market_id) FROM mkt
+      WHERE mkt.event_id = cand.event_id) AS market_id,
     (SELECT count(*) FROM anch
       WHERE anch.event_id = cand.event_id AND anch.id_kind = :game_kind)
         AS game_anchors,
@@ -788,11 +799,11 @@ SELECT
 #: The sport key of each id named — the canonical side of refusal 6.
 #:
 #: One statement for the whole page, for the same reason the verdict is: the
-#: family check is not decoration. Measured on production 2026-09-14 23:5xZ it
-#: fires on 3 of the 36 rows that clear the other six refusals
-#: (`basketball_other` and `soccer_other` ghosts whose markets moved onto NFL
-#: rows), so a batch path that quietly dropped it would serve a reader a
-#: football game under a basketball card.
+#: family check is not decoration. Measured on production 2026-09-15 05:30Z it
+#: still refuses 4 of the 45 rows that clear every other refusal on the GHOST
+#: ROW's key alone, and admits 3 of those 4 once the anchor TICKER's sport is
+#: weighed beside it (#6262 gap B) — so a batch path that quietly dropped this
+#: lookup would serve a reader a football game under a basketball card.
 _SPORT_KEY_BY_ID_SQL = (
     "SELECT e.id, s.key FROM events e LEFT JOIN sports s ON s.id = e.sport_id "
     "WHERE e.id IN :event_ids"
@@ -956,16 +967,73 @@ async def resolve_market_born_duplicates(
 
        Under-coverage is the safe failure direction — a missed ghost renders, a
        wrong resolution serves the wrong match.
-    6. **Same sport family** (:func:`_sport_family`). 🔴 **RE-MEASURED, AND IT
-       IS NO LONGER FREE.** The 2026-09-02 note said "505 of 505 today, so it
-       costs nothing"; on 2026-09-15, over the `live`+`scheduled` band, it
-       fires on **3 of 42** — `basketball_other` and `soccer_other` ghosts
-       whose markets sit on NFL rows. It stays, because the direction it
-       refuses is the unrecoverable one (a reader served a game from the wrong
-       sport), but nobody may now call it decoration. Whether a CATCH-ALL key
-       like `*_other` should be able to refuse at all — it names no
-       competition, so it refuses on evidence that is not there — is #6262
-       gap B, which is its own change with its own population.
+    6. **Same sport family** (:func:`_sport_family`) — **weighed against TWO
+       witnesses, not one** (#6262 gap B). The canonical's family must equal the
+       ghost ROW's family, *or* the family the ghost's own anchor TICKER names.
+
+       🔴 **THE GHOST ROW'S OWN SPORT IS THE WEAKER WITNESS, AND IT IS THE ONE
+       THIS REFUSAL USED TO CONSULT ALONE.** A market-born row's `sport_id` is
+       stamped once, at mint, from whatever `_categorize_kalshi_market` could
+       tell at the time; for an UNMAPPED Kalshi series that is step 2, a guess
+       off the market's TEXT. `sport_keys.py` records what that produces — one
+       NFL series scattered across five sports, `kxnflrace`'s 80 markets all
+       landing on `basketball_other`, "Fantasy POINTS" reading as basketball
+       (Q453, #5621). The event row minted in the meantime keeps the guess
+       forever. So the disagreement this refusal was firing on is not evidence
+       of a cross-sport read — it is the fossil of a bug fixed elsewhere.
+
+       🔴 **THE SECOND WITNESS MUST BE ONE THE LINK WRITER CANNOT TOUCH, AND THE
+       OBVIOUS CANDIDATE IS NOT (CERT-2891).** The first build of this clause
+       asked the MARKET's `sport_id` — and `_set_market_sport_fields` sets
+       `market.sport_id = matched_event["sport_id"]`, so the market's sport is
+       COPIED FROM THE EVENT THE DRAIN IS BEING ASKED TO CONFIRM. It agreed with
+       the canonical in 42 of 42 rows measured, which read as overwhelming
+       corroboration and was a tautology: a copy equalling its source. Worse
+       than useless — a soccer ghost whose soccer market is mis-attached to a
+       TENNIS canonical refuses on the first pass, the writer then stamps the
+       market tennis, and the second pass admits the cross-sport read the
+       refusal exists to stop. **Before two columns are allowed to vouch for
+       each other here, find each one's writer.**
+
+       The witness is therefore the **anchor's `source_id`** — the venue's own
+       ticker — through :func:`get_sport_key_from_ticker`, a pure function over
+       the static maps in `sport_keys.py`. `kalshi_anchor_key` stores the raw
+       ticker verbatim and nothing derives it from an event, so no link writer
+       can move it. It needs no join to `futures_markets` at all, so the market
+       row cannot contaminate it either.
+
+       **Measured through THIS STATEMENT over the whole production
+       `live`+`scheduled` band, 2026-09-15 05:30Z** — 1,337 rows, of which 45
+       clear every other refusal: 41 already folded on the ghost row's own key,
+       and the ticker witness adds **3** — 15305032, 15305039, 15305046, all
+       `basketball_other` rows minted by `KXNFLRACE-…` tickers that read
+       `americanfootball_nfl`. **Three, not four, and the fourth is named here
+       rather than rounded away:** ghost 15311150, ticker `KXNFLFG-26SEP14DENKC`,
+       a series absent from both ticker maps, so `get_sport_key_from_ticker`
+       returns `None`, there is no second witness, and it stays refused. Mapping
+       `kxnflfg` is a `sport_keys.py` change with its own blast radius and is not
+       smuggled in here. Under-coverage is the safe direction. (A fifth row of
+       the same shape, 15305029, is declined by refusal 7 for holding its own
+       markets — the refusals compose, and a claim counted before them is
+       inflated.)
+
+       **What still refuses, and it is the whole point:** a ghost whose ticker
+       is a soccer ticker resolving onto an NFL canonical fails BOTH witnesses,
+       *and goes on failing after the writer has run*, which is the property
+       CERT-2891 found missing. `market_ids <> 1` (several distinct tickers on
+       one ghost) yields no second witness and the row falls back to the ghost
+       key exactly as before: ambiguity is not evidence, the same reading
+       refusal 4 takes of two destinations. That branch is deliberately coarser
+       than it could be — two tickers of the SAME sport read as ambiguity rather
+       than as agreement — because collapsing them would mean deriving per
+       ticker in Python and the aggregation is worth less than the single
+       statement. Measured: **7,987 of 7,987** market-born ghosts carry exactly
+       one distinct market anchor, so the coarse branch is empty today, and the
+       direction it errs in is refusal.
+
+       Under-coverage remains the safe direction here as in refusal 5 — which
+       is why the second witness must AGREE with the canonical to admit, and can
+       never be used to refuse something the first witness already cleared.
 
     Only `market` anchors are read. A `game` anchor is counted (refusal 1) and a
     `container` anchor — a Polymarket event id — is IGNORED rather than treated
@@ -1020,7 +1088,7 @@ async def resolve_market_born_duplicates(
     # Refusals 1-5, all answerable from the verdict row itself. An id that is
     # absent from `rows` (no such event) simply never reaches this loop.
     passed: dict[int, int] = {}
-    ghost_families: dict[int, Optional[str]] = {}
+    ghost_witnesses: dict[int, tuple[Optional[str], Optional[str]]] = {}
     for row in rows:
         verdict = row._mapping
         candidate = verdict["candidate_id"]
@@ -1037,7 +1105,21 @@ async def resolve_market_born_duplicates(
             continue
         ghost_id = int(verdict["event_id"])
         passed[ghost_id] = int(candidate)
-        ghost_families[ghost_id] = _sport_family(verdict["sport_key"])
+        # Refusal 6's two witnesses to the GHOST's sport. The second is derived
+        # HERE, from the venue's own ticker, and never read from a column a link
+        # writer fills — CERT-2891 blocked the version that asked the market's
+        # `sport_id`, which `_set_market_sport_fields` copies off the very event
+        # this drain is trying to confirm. `market_ids <> 1` is ambiguity, and
+        # ambiguity is not evidence (refusal 4's reading).
+        market_family = (
+            _sport_family(get_sport_key_from_ticker(verdict["market_id"]))
+            if verdict["market_ids"] == 1
+            else None
+        )
+        ghost_witnesses[ghost_id] = (
+            _sport_family(verdict["sport_key"]),
+            market_family,
+        )
 
     if not passed:
         return {}
@@ -1059,24 +1141,35 @@ async def resolve_market_born_duplicates(
 
     # A candidate missing from this map is a row that vanished between the two
     # reads. It is a refusal, not a resolution: `.get` yields `None`, whose
-    # family is `None`, which never equals the ghost's.
+    # family is `None`, which is never IN a witness set that excludes `None`.
     canonical_sports = {int(r[0]): r[1] for r in canonical_rows}
 
     resolved: dict[int, int] = {}
     for ghost_id, candidate in passed.items():
-        ghost_family = ghost_families[ghost_id]
+        ghost_family, market_family = ghost_witnesses[ghost_id]
         canonical_family = _sport_family(canonical_sports.get(candidate))
-        if ghost_family is None or ghost_family != canonical_family:
+        # `None` is excluded by construction, which is what makes the plain
+        # membership test below safe: an unreadable canonical key is `None`, and
+        # `None` can never be in the set, so it refuses without a second clause.
+        # Refusal 5's lesson — a clause that cannot fail is decoration, not a
+        # guard — applied here rather than re-learned.
+        witnesses = {f for f in (ghost_family, market_family) if f is not None}
+        if canonical_family not in witnesses:
             logger.warning(
-                "Refusing to resolve event %s to %s: sport families %r vs %r "
+                "Refusing to resolve event %s to %s: canonical family %r is "
+                "named by neither witness (ghost row %r, anchor ticker %r) "
                 "(Q050) — a cross-sport read is the one outcome worth refusing",
-                ghost_id, candidate, ghost_family, canonical_family,
+                ghost_id, candidate, canonical_family,
+                ghost_family, market_family,
             )
             continue
         logger.info(
             "Event %s is a market-born duplicate of %s — reading as the "
-            "canonical row (Q050, ruling 048 drain clause)",
+            "canonical row (Q050, ruling 048 drain clause; sport agreed by "
+            "%s)",
             ghost_id, candidate,
+            "the ghost row" if ghost_family == canonical_family
+            else "the anchor ticker, over the ghost row's %r" % (ghost_family,),
         )
         resolved[ghost_id] = candidate
 

@@ -48,7 +48,15 @@ from _mutation_guard import guarded_targets  # noqa: E402
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CHANNEL = ROOT / "app" / "services" / "anchor_channel.py"
 ROUTE = ROOT / "app" / "routes" / "events.py"
-SUITE = ROOT / "tests" / "test_market_born_duplicate_reads_as_canonical_q050.py"
+#: The suites that grade a mutant. #6262 gap B split refusal 6's ghost-side
+#: witness in two and pinned the new shapes in their OWN file, so a battery
+#: still running only the Q050 battery would report every gap B mutant as a
+#: survivor and read as a suite hole that is really a missing `-p` argument.
+SUITES = [
+    ROOT / "tests" / "test_market_born_duplicate_reads_as_canonical_q050.py",
+    ROOT / "tests" / "test_a_market_born_refinement_is_still_market_born_6262.py",
+    ROOT / "tests" / "test_market_born_duplicate_cross_sport_witness_6262.py",
+]
 
 #: (id, description, old, new, target). `old` must appear EXACTLY once in
 #: `target` — a mutation that matches zero or many places is a harness bug
@@ -142,8 +150,60 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M10",
         "the family check removed — a tennis url may serve a soccer match",
-        """    if ghost_family is None or ghost_family != canonical_family:""",
-        """    if False:""",
+        # RE-TARGETED, not regenerated (#6262 gap B): refusal 6 now weighs a
+        # witness SET, so the needle moved onto the new condition. Same mutant,
+        # same intent — the whole refusal short-circuited off.
+        """        if canonical_family not in witnesses:""",
+        """        if False:""",
+        CHANNEL,
+    ),
+    # ── #6262 gap B: refusal 6's second witness, from every side ─────────
+    (
+        "M19",
+        "the ghost ROW's key stops being a witness, so the 38 rows that folded "
+        "on it alone — every one whose market carries no sport — stop folding",
+        """        witnesses = {f for f in (ghost_family, market_family) if f is not None}""",
+        """        witnesses = {f for f in (market_family,) if f is not None}""",
+        CHANNEL,
+    ),
+    (
+        "M20",
+        "ANY agreeing anchor is taken instead of requiring the ghost to carry "
+        "exactly one, so one stray attachment folds anything onto anything",
+        """            if verdict["market_ids"] == 1""",
+        """            if verdict["market_ids"] >= 1""",
+        CHANNEL,
+    ),
+    (
+        "M21",
+        "`None` is left in the witness set, so a row whose canonical AND ghost "
+        "both have unreadable sports resolves on absence read as agreement",
+        """        witnesses = {f for f in (ghost_family, market_family) if f is not None}""",
+        """        witnesses = {ghost_family, market_family}""",
+        CHANNEL,
+    ),
+    (
+        # RE-AIMED (CERT-2891): the old M22 pinned a NULL-exclusion clause on
+        # `futures_markets.sport_id`, the witness that turned out to be a copy
+        # of the answer. The column is gone; what needs pinning now is that the
+        # ticker is resolved THROUGH the map rather than used as a string.
+        "M22",
+        "the ticker is read raw instead of through `sport_keys`, so the second "
+        "witness never names a family and every folded row comes back",
+        """            _sport_family(get_sport_key_from_ticker(verdict["market_id"]))""",
+        """            _sport_family(verdict["market_id"])""",
+        CHANNEL,
+    ),
+    (
+        # The mirror of M19, and the one that matters most: it is #6262 gap B
+        # reverted in place. If it survives, the ship is not pinned by anything.
+        "M23",
+        "gap B reverted — the second witness deleted, so the four NFL ghosts "
+        "go back onto the page under a basketball card",
+        """        witnesses = {f for f in (ghost_family, market_family) if f is not None}
+        if canonical_family not in witnesses:""",
+        """        witnesses = {f for f in (ghost_family,) if f is not None}
+        if canonical_family not in witnesses:""",
         CHANNEL,
     ),
     # ── the SQL itself ───────────────────────────────────────────────────
@@ -227,7 +287,8 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
 
 def _run_suite() -> int:
     return subprocess.run(
-        [sys.executable, "-m", "pytest", str(SUITE), "-q", "--no-header"],
+        [sys.executable, "-m", "pytest", *[str(s) for s in SUITES],
+         "-q", "--no-header"],
         cwd=ROOT,
         capture_output=True,
         text=True,

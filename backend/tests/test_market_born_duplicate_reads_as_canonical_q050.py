@@ -61,6 +61,16 @@ GHOST = 15300759          # tennis_atp, kalshi_ticker midnight stand-in, no mark
 CANONICAL = 15293804      # tennis_atp_us_open, odds_api, completed 1-3
 WINNER_TICKER = "KXATPMATCH-26AUG30VALMON"
 
+#: Real venue tickers, used as refusal 6's second witness (#6262 gap B). They
+#: are REAL because the witness is `get_sport_key_from_ticker`, a longest-prefix
+#: lookup over `sport_keys.py`'s maps — an invented ticker would answer `None`
+#: and every test steering the witness would silently be testing the no-witness
+#: branch instead. Asserted against the map itself in the gap B suite.
+SOCCER_TICKER = "KXEPLGAME-26SEP14ARSMCI"        # -> soccer_epl    -> soccer
+#: A series in NEITHER ticker map, so it yields no witness at all. This is the
+#: production row gap B does NOT fold; see the gap B suite.
+UNMAPPED_TICKER = "KXNFLFG-26SEP14DENKC"         # -> None          -> no witness
+
 SPORT_TENNIS_ATP = 41
 SPORT_TENNIS_US_OPEN = 77
 SPORT_SOCCER = 12
@@ -97,7 +107,8 @@ CREATE TABLE futures_markets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source TEXT,
     external_id TEXT,
-    event_id INTEGER
+    event_id INTEGER,
+    sport_id INTEGER
 );
 """
 
@@ -170,6 +181,8 @@ def _plant_specimen(
     ghost_provenance: str = TICKER_DERIVED_COMMENCE_SOURCE,
     ghost_sport: int = SPORT_TENNIS_ATP,
     canonical_sport: int = SPORT_TENNIS_US_OPEN,
+    market_sport: int = SPORT_TENNIS_US_OPEN,
+    market_ticker: str = WINNER_TICKER,
     ghost_home_score=None,
     ghost_completed_at=None,
 ) -> None:
@@ -177,6 +190,14 @@ def _plant_specimen(
 
     Every refusal test below starts from THIS and changes one fact, so a refusal
     that fires for the wrong reason shows up as the specimen test going red too.
+
+    🔴 **`market_ticker` IS refusal 6's second witness; `market_sport` IS NOT,
+    AND THE TWO KNOBS ARE SEPARATE ON PURPOSE (#6262 gap B, CERT-2891).** The
+    first build of that clause read `futures_markets.sport_id`, which
+    `_set_market_sport_fields` copies off the matched event — so the witness was
+    a copy of the answer. `market_sport` is kept as a knob precisely so a test
+    can set it to the canonical's sport (what the real writer would stamp) while
+    `market_ticker` names another sport, and prove the drain is not moved by it.
     """
     conn.executemany(
         "INSERT INTO sports (id, key) VALUES (?, ?)",
@@ -201,13 +222,13 @@ def _plant_specimen(
     conn.execute(
         "INSERT INTO event_provider_anchors (event_id, source, source_id, "
         "id_kind) VALUES (?, ?, ?, ?)",
-        (GHOST, "kalshi", WINNER_TICKER, "market"),
+        (GHOST, "kalshi", market_ticker, "market"),
     )
     # ...and the market itself has already been moved onto the real row.
     conn.execute(
-        "INSERT INTO futures_markets (source, external_id, event_id) "
-        "VALUES (?, ?, ?)",
-        ("kalshi", WINNER_TICKER, CANONICAL),
+        "INSERT INTO futures_markets (source, external_id, event_id, sport_id) "
+        "VALUES (?, ?, ?, ?)",
+        ("kalshi", market_ticker, CANONICAL, market_sport),
     )
     conn.commit()
 
