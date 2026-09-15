@@ -37,10 +37,14 @@ Event `15305046` — the `OTHER BASKETBALL · Today 8:15 PM · Denver / Kansas C
 card that sat directly under the live Chiefs–Broncos game on a search for
 "Kansas City" — is `kalshi_occurrence` and DOES enter the band here, but the
 sport-family refusal still declines it (`basketball` vs `football`). Closing it
-means relaxing that guard for catch-all `*_other` keys, which is #6262 gap B: a
-separate change, because completing a set and relaxing a guard are not the same
-risk. `test_the_nfl_ghost_is_admitted_to_the_band_and_still_refused_6262` pins
-exactly that, so nobody reads this ship as having closed it.
+means changing that guard, which is #6262 gap B: a separate change, because
+completing a set and re-witnessing a guard are not the same risk.
+
+**Gap B has since landed** (`test_market_born_duplicate_cross_sport_witness
+_6262.py`) and moved this limit, which is what its own tests say out loud. What
+survives here unchanged is the half gap A was really pinning: the PROVENANCE is
+not what decides a cross-sport pair —
+`test_the_cross_sport_refusal_and_not_the_provenance_is_what_decides_6262`.
 """
 
 from __future__ import annotations
@@ -64,6 +68,7 @@ from app.utils.event_completion import (
 from tests.test_market_born_duplicate_reads_as_canonical_q050 import (
     CANONICAL,
     GHOST,
+    SOCCER_TICKER,
     SPORT_SOCCER,
     SPORT_TENNIS_ATP,
     _connect,
@@ -151,33 +156,46 @@ def test_refining_a_ghosts_hour_does_not_un_drain_it_6262():
     )
 
 
-def test_the_nfl_ghost_is_admitted_to_the_band_and_still_refused_6262():
-    """The scope limit, asserted rather than promised.
+def test_the_cross_sport_refusal_and_not_the_provenance_is_what_decides_6262():
+    """🔴 GAP A'S SCOPE LIMIT, MOVED BY GAP B — deliberately, and here is the move.
 
-    `15305046` is `basketball_other`; its canonical `14638896` is
-    `americanfootball_nfl`. Gap A puts it in the band — the provenance no longer
-    refuses it — and refusal 6 still declines it. If a later change makes this
-    resolve, that change is gap B and it must come with gap B's measurement.
+    This test shipped with gap A as
+    `test_the_nfl_ghost_is_admitted_to_the_band_and_still_refused_6262`: a
+    cross-family pair entered the band and refusal 6 declined it, whichever
+    market-born provenance it wore. Gap B split refusal 6's ghost-side witness
+    in two — the ghost ROW's sport, and the sport of the MARKET that minted it —
+    so the sentence "a cross-family pair is refused" now needs saying about a
+    named witness. What did NOT change is the thing gap A was pinning: **the
+    provenance is not what decides.** Both arms below swap one member provenance
+    for another and get the same answer.
+
+    The ANCHOR TICKER is planted as the ghost's sport here, which is the
+    mis-attached case the guard exists for: a soccer market that has been moved
+    onto a tennis event. Both witnesses then say soccer, the canonical says
+    tennis, and it is refused. The other arm — the ticker agreeing with the
+    canonical — is the gap B ship and lives in
+    `test_market_born_duplicate_cross_sport_witness_6262.py`.
+
+    🔴 `market_sport` is deliberately left at its default, the CANONICAL's
+    tennis — i.e. exactly what `_set_market_sport_fields` stamps once the link
+    is written. If refusal 6 ever goes back to reading that column (CERT-2891),
+    this test is one of the ones that goes red.
     """
-    conn = _connect()
-    _plant_specimen(
-        conn,
-        ghost_provenance=KALSHI_OCCURRENCE_COMMENCE_SOURCE,
-        ghost_sport=SPORT_SOCCER,           # soccer_epl ghost...
-        canonical_sport=SPORT_TENNIS_ATP,   # ...tennis canonical
-    )
-    assert _resolve(conn) is None
-
-    # ...and the provenance is NOT why: same rows, same sports, one member
-    # provenance swapped for another, still refused.
-    conn.execute(
-        "UPDATE events SET commence_time_source = ? WHERE id = ?",
-        (TICKER_DERIVED_COMMENCE_SOURCE, GHOST),
-    )
-    conn.commit()
-    assert _resolve(conn) is None, (
-        "the cross-sport refusal must be doing this, not the provenance"
-    )
+    for provenance in (
+        KALSHI_OCCURRENCE_COMMENCE_SOURCE,
+        TICKER_DERIVED_COMMENCE_SOURCE,
+    ):
+        conn = _connect()
+        _plant_specimen(
+            conn,
+            ghost_provenance=provenance,
+            ghost_sport=SPORT_SOCCER,               # soccer_epl ghost...
+            canonical_sport=SPORT_TENNIS_ATP,       # ...tennis canonical...
+            market_ticker=SOCCER_TICKER,            # ...off a soccer TICKER
+        )
+        assert _resolve(conn) is None, (
+            f"the cross-sport refusal must be doing this, not {provenance!r}"
+        )
 
 
 # ═══ The invariant that makes the set safe, pinned in BOTH directions ═══════
