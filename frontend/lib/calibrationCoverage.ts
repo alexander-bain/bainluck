@@ -56,6 +56,8 @@ export const RUNG_LABELS: Readonly<Record<string, string>> = {
   market_result_unavailable: "Result could not be established, so the whole market was set aside",
   truth_source_missing: "Nothing independent recorded what happened",
   truth_ineligible_source: "The only record of what happened came from the price itself",
+  identity_disputed:
+    "The market points at a different day than the game it is attached to, so it is held out while the mismatch is checked",
   question_ungraded: "No outcome in the question was ever marked the winner",
   malformed_or_unknown_truth: "The recorded result does not add up to a scoreable answer",
   phantom_liquidity: "Nobody ever bid or traded, so the price is not a forecast",

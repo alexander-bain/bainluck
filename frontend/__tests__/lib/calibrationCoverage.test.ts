@@ -52,10 +52,12 @@ describe("the accounting the reader gets", () => {
   });
 
   it("counts a measured-zero rule rather than listing it as an exclusion", () => {
-    // `field_incomplete` is 0 in the fixture: a rule that fired on nobody.
+    // `field_incomplete` and `identity_disputed` are both 0 in the fixture:
+    // rules that fired on nobody.
     const a = readCoverageAccounting(COMPLETE_CENSUS)!;
     expect(a.rows.map(r => r.key)).not.toContain("field_incomplete");
-    expect(a.emptyRules).toBe(1);
+    expect(a.rows.map(r => r.key)).not.toContain("identity_disputed");
+    expect(a.emptyRules).toBe(2);
   });
 
   it("labels every row from this module, never from the payload", () => {
