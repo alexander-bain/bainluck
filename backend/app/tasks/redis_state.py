@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import threading
 import time
 
 import redis
@@ -89,6 +90,65 @@ def _redis_retry_on_errors():
     return [_ConnErr, _TmoErr]
 
 
+# ---------------------------------------------------------------------------
+# #1197: ONE CLIENT PER PROCESS PER PARAMETER SET, NOT ONE PER CALL.
+#
+# Every one of the 290 ``get_redis_client()`` call sites used to mint a NEW client
+# and a NEW ConnectionPool, so every Redis touch in this codebase was an
+# independent TLS handshake against Heroku Redis — and the two stability settings
+# already on the client, ``health_check_interval=25`` and TCP keepalive, only apply
+# to a connection that is REUSED. A pool that is discarded after one op can never
+# be health-checked. That is why the keepalive-only fixes (#233/#239) left the
+# ``[SSL: UNEXPECTED_EOF_WHILE_READING]`` churn flat.
+#
+# Caching also makes ``_REDIS_MAX_CONNECTIONS`` mean something: a per-call pool
+# bounded at 40 bounded nothing, because there was a fresh one each time.
+#
+# Three properties this cache has to hold, all of them load-bearing:
+#
+#   * FORK. Celery prefork children must never share a parent's live sockets —
+#     two processes writing one connection corrupts the protocol. The pid is in
+#     the key (correctness) and ``os.register_at_fork`` clears the dict in the
+#     child (hygiene, so inherited fds are not held by a dict nobody will read).
+#   * FACTORY IDENTITY. Tests patch ``redis.from_url`` to hand the caller a mock.
+#     A cache keyed only on parameters would serve a patched test whatever client
+#     an earlier unpatched test happened to build — a real client, against real
+#     Redis, silently ignoring the mock. So an entry is only reused while the
+#     factory that built it is still the ``redis.from_url`` in effect, and the
+#     entry holds a strong reference to that factory so its id cannot be recycled
+#     under us.
+#   * THREADS. ``redis.Redis`` and its pool are thread-safe, and the shared
+#     ``Retry``'s ``EqualJitterBackoff`` is stateless (``compute(failures)`` takes
+#     the count as an argument), so one client across threads carries no shared
+#     mutable state. The lock here guards the dict, nothing else.
+#
+# ``get_async_redis_client`` is deliberately NOT cached: ``routes/event_stream.py``
+# ``aclose()``s its client when an SSE stream ends, which would tear a shared
+# client out from under every other user of it.
+# ---------------------------------------------------------------------------
+_CLIENT_CACHE: dict = {}
+_CLIENT_CACHE_LOCK = threading.Lock()
+
+
+def reset_redis_client_cache() -> None:
+    """Drop every cached sync client. For tests and for post-fork hygiene."""
+    with _CLIENT_CACHE_LOCK:
+        _CLIENT_CACHE.clear()
+
+
+def _reset_redis_client_cache_after_fork() -> None:
+    """Child-side fork hook: never take the parent's lock or its sockets."""
+    global _CLIENT_CACHE_LOCK
+    # The parent may have been holding the lock at fork time; a child that waits
+    # on it deadlocks forever. Replace it, then clear without acquiring anything.
+    _CLIENT_CACHE_LOCK = threading.Lock()
+    _CLIENT_CACHE.clear()
+
+
+if hasattr(os, "register_at_fork"):  # pragma: no branch - present on POSIX
+    os.register_at_fork(after_in_child=_reset_redis_client_cache_after_fork)
+
+
 def get_redis_client(
     socket_timeout=_DEFAULT_REDIS_SOCKET_TIMEOUT,
     socket_connect_timeout=_DEFAULT_REDIS_SOCKET_TIMEOUT,
@@ -105,8 +165,24 @@ def get_redis_client(
     the latency-bounded ``_redis_fast_fail_retry()`` — use it for clients on the hot
     request path (the latency sampler) so a churning TLS connection degrades to
     fail-open in a fraction of a second instead of spending the full retry budget.
+
+    The client is CACHED per process per parameter set (#1197), so repeat callers
+    share one warm connection pool instead of opening a fresh TLS connection each
+    time. See the block above this function for the fork/patching/thread rules.
     """
     import ssl
+
+    factory = redis.from_url
+    cache_key = (
+        os.getpid(),
+        REDIS_URL,
+        socket_timeout,
+        socket_connect_timeout,
+        bool(fast_fail),
+    )
+    cached = _CLIENT_CACHE.get(cache_key)
+    if cached is not None and cached[0] is factory:
+        return cached[1]
 
     kwargs = {}
     if socket_timeout is not None:
@@ -134,12 +210,19 @@ def get_redis_client(
     kwargs["max_connections"] = _REDIS_MAX_CONNECTIONS
 
     if REDIS_URL.startswith("rediss://"):
-        return redis.from_url(
+        client = factory(
             REDIS_URL,
             ssl_cert_reqs=ssl.CERT_NONE,
             **kwargs,
         )
-    return redis.from_url(REDIS_URL, **kwargs)
+    else:
+        client = factory(REDIS_URL, **kwargs)
+
+    # The entry holds the factory itself, not its id: a strong reference is what
+    # stops a garbage-collected mock's id being handed to a later mock.
+    with _CLIENT_CACHE_LOCK:
+        _CLIENT_CACHE[cache_key] = (factory, client)
+    return client
 
 
 def get_async_redis_client():
