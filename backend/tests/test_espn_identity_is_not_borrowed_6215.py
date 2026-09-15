@@ -688,3 +688,51 @@ def test_the_veto_only_refuses_and_never_admits_6215():
     assert not shared_token_rivals("Fluminense", "Arsenal")
     assert not shared_token_rivals("", "Manchester City")
     assert not shared_token_rivals("Manchester City", None)
+
+
+# ═══ The THIRD rail, and why the veto stops at two ═══════════════════════════
+
+#: Real alias pairs the score backfill depends on, every one of them measured
+#: as a pair `shared_token_rivals` WOULD refuse (2026-09-15, over 1,060 pairs
+#: from 500 ESPN-anchored teams: `names_match` accepts 943, the veto would
+#: refuse 10 — these nine plus one true rival).
+_BACKFILL_ALIASES_THE_VETO_WOULD_COST = [
+    ("New York Red Bulls", "NY Red Bulls"),
+    ("New York Red Bulls", "Red Bull NY"),
+    ("Crystal Palace", "C Palace"),
+    ("Los Angeles Clippers", "LA Clippers"),
+    ("Grand Canyon Antelopes", "Grand Canyon Lopes"),
+    ("North Dakota St Bison", "N Dakota St"),
+    ("Army Knights", "Black Knights"),
+    ("Albany Great Danes", "UAlbany Great Danes"),
+    ("Mt. St. Mary's Mountaineers", "Mount St. Mary's Mountaineers"),
+]
+
+
+@pytest.mark.parametrize("ours,theirs", _BACKFILL_ALIASES_THE_VETO_WOULD_COST)
+def test_the_backfill_rail_keeps_its_aliases_6215(ours, theirs):
+    """🔴 THE COST STILL DOES NOT TRANSFER — and this is the THIRD rail.
+
+    `backfill_missing_scores` imported `shared_token_rivals` and never used it.
+    Deleting a dead import is the obvious sweep, and it would have thrown away
+    the finding: those imports marked an UNCONVERTED CALL SITE, which is usually
+    a live bug. Here it is the opposite, and only measuring says which.
+
+    That rail RECALLS a candidate ESPN game and then requires BOTH teams to
+    agree; it does not decide an identity and write it down. Wiring the veto in
+    would refuse nine real clubs' score backfill to refuse one true rival pair.
+    So the veto stops at two rails ON PURPOSE, and this test is what a future
+    "surely this one too" change runs into.
+
+    Each pair below is asserted through the SAME predicate the backfill's local
+    `names_match` closure calls, so if the import ever comes back, this reddens
+    with the club that would have lost its score.
+    """
+    assert names_match(ours, theirs), (
+        f"{ours!r}/{theirs!r} no longer matches — the score backfill has "
+        "stopped recognising a real alias"
+    )
+    assert shared_token_rivals(ours, theirs), (
+        f"{ours!r}/{theirs!r} is no longer a pair the veto would refuse, so "
+        "this row has stopped documenting the cost and must be re-measured"
+    )
