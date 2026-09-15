@@ -1649,12 +1649,33 @@ GOLF_TOPN_SERIES_PREFIXES = ("KXPGAR2TOP", "KXPGAR3TOP")
 #: because a hand-written `KXPGAR[0-9]TOP` would silently be WIDER than the folded
 #: families — it reaches `KXPGAR1TOP*` and `KXPGAR4TOP*`, series nobody has
 #: measured, which is precisely the category-widening the census warns against.
-GOLF_TOPN_DECLARED_N_PATTERN = "^(?:%s)([0-9]+)-" % "|".join(GOLF_TOPN_SERIES_PREFIXES)
+#:
+#: 🔴 THE PREFIX ALTERNATION IS A CAPTURING GROUP, AND N IS GROUP **2**, because
+#: the obvious non-capturing `(?:...)` CANNOT SURVIVE ``text()``. This whole chain
+#: is executed as ``text(_main_futures_sql())``, and SQLAlchemy reads the `:KXP...`
+#: inside `(?:KXP...` as a bind parameter named ``KXPGAR2TOP`` — the query then
+#: raises on every run for a parameter nobody can supply. It is the same hazard
+#: :data:`VM_ROSTER_MARKET_IDS_PARAM` documents one screen up (gotcha #45's
+#: cousin), reached through a regex instead of a cast. Measured against production
+#: 2026-09-15: the `(?:` form fails server-side while this one returns '10'.
+#: A guard test renders every variant of the chain through ``text()`` and asserts
+#: the bind set, so the next `?:` is caught in CI rather than on deploy.
+GOLF_TOPN_DECLARED_N_PATTERN = "^(%s)([0-9]+)-" % "|".join(GOLF_TOPN_SERIES_PREFIXES)
+
+#: Which group of :data:`GOLF_TOPN_DECLARED_N_PATTERN` holds the declared N. Named
+#: once and read by both the SQL and the Python mirror so the two cannot drift.
+GOLF_TOPN_DECLARED_N_GROUP = 2
 
 #: SQL extracting the declared N from the series ticker: the digits after `TOP`
-#: and before the event suffix. `KXPGAR2TOP10-3MO26` -> 10.
-GOLF_TOPN_DECLARED_N_SQL = (
-    "substring(fm.external_id from '%s')" % GOLF_TOPN_DECLARED_N_PATTERN
+#: and before the event suffix. `KXPGAR2TOP10-3MO26` -> 10. ``regexp_match``
+#: rather than ``substring``, because ``substring(... from pattern)`` returns the
+#: FIRST capturing group — which here is the PREFIX (`'KXPGAR2TOP'`), so the
+#: `::numeric` cast beside it would raise `invalid input syntax` on every folded
+#: market. Non-matching input yields NULL from both, so the `IS NOT NULL` arm is
+#: unchanged (verified server-side).
+GOLF_TOPN_DECLARED_N_SQL = "(regexp_match(fm.external_id, '%s'))[%d]" % (
+    GOLF_TOPN_DECLARED_N_PATTERN,
+    GOLF_TOPN_DECLARED_N_GROUP,
 )
 
 GOLF_TOPN_INCOHERENT_RULE_TEXT = (
@@ -3348,7 +3369,11 @@ def golf_topn_declared_ceiling(external_id: str | None) -> int | None:
     match = re.match(GOLF_TOPN_DECLARED_N_PATTERN, external_id)
     if match is None:
         return None
-    ceiling = int(match.group(1))
+    # Group 2, named once in GOLF_TOPN_DECLARED_N_GROUP and read by the SQL too:
+    # group 1 is the PREFIX alternation, which has to capture because `(?:` is a
+    # bind parameter to `text()`. Reading group 1 here would return 'KXPGAR2TOP'
+    # and raise on the int() — the same slip the SQL side makes silently.
+    ceiling = int(match.group(GOLF_TOPN_DECLARED_N_GROUP))
     return ceiling if ceiling > 0 else None
 
 

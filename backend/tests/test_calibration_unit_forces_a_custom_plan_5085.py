@@ -123,7 +123,15 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: the version bump either way, so the re-key costs nothing extra on top of it —
 #: but that bump's own cost (a full 128-unit rebuild) is real and is recorded at
 #: the constant.
-LIVE_INPUT_FINGERPRINT = "86a4815fdab2f6fa239722905525877a"
+#:
+#: RE-PINNED ONCE MORE (CAL-P1268): ``golf_topn_declared_n_sql`` is hashed BY
+#: VALUE, and its value changed when the declared-N regex had to stop using a
+#: non-capturing group — ``(?:`` is read by ``text()`` as a bind parameter, so the
+#: first form could not execute at all (measured against production 2026-09-15).
+#: The hash moving here is that rider doing its job: the SQL that decides the
+#: published population changed, so the bank re-keys. An unmoved hash after that
+#: edit would have been the bug.
+LIVE_INPUT_FINGERPRINT = "98ef238cf12d1ebe4cf470e2b6109f6c"
 
 
 class _Db:

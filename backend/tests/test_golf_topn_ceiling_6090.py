@@ -16,6 +16,7 @@ import pytest
 
 from app.tasks.precompute_calibration import (
     GOLF_TOPN_CEILING_TOLERANCE,
+    GOLF_TOPN_DECLARED_N_GROUP,
     GOLF_TOPN_DECLARED_N_PATTERN,
     GOLF_TOPN_DECLARED_N_SQL,
     GOLF_TOPN_SERIES_PREFIXES,
@@ -171,3 +172,106 @@ class TestDegenerateTickers:
         """`TOP0` would make every field incoherent against a bar of 0."""
         assert golf_topn_declared_ceiling("KXPGAR2TOP0-X26") is None
         assert market_is_golf_topn_incoherent("KXPGAR2TOP0-X26", 0.5) is False
+
+
+class TestTheChainSurvivesTextCompilation:
+    """The regex must not be read as a BIND PARAMETER (CAL-P1268, gotcha #45's cousin).
+
+    WHY THIS CLASS EXISTS, in the words of the defect it was written after. The
+    first build of this rule extracted N with the obvious non-capturing group,
+    ``'^(?:KXPGAR2TOP|KXPGAR3TOP)([0-9]+)-'``. Every behavioural test above passed
+    and the string tests passed too, because the pattern IS shared and the SQL IS
+    built from it. But the whole population chain is executed as
+    ``text(_main_futures_sql())``, and SQLAlchemy reads the ``:KXPGAR2TOP`` inside
+    ``(?:KXPGAR2TOP`` as a bind parameter: the statement compiles to
+    ``'^(?%(KXPGAR2TOP)s|...'`` and raises for a parameter nobody can supply. It
+    was measured against production on 2026-09-15 — the ``(?:`` form is refused
+    server-side, the capturing form returns ``'10'`` — and it would have taken the
+    accuracy page down on the deploy that carried it, not in CI.
+
+    ``compile(...).params`` is the discriminator, and the only honest one. A
+    ``text()`` object's ``_bindparams`` OVER-reports: it lists ``spac`` for the
+    POSIX class ``[[:space:]]`` that this chain has always contained and that
+    executes perfectly well. The COMPILER is what decides, and it substitutes the
+    regex group while leaving the character class alone.
+
+    This is deliberately a test of the WHOLE CHAIN and not of this rule's regex:
+    the next ``(?:`` will be written by somebody else, somewhere else in these
+    9,000 lines, and this is the only assertion in the suite that would see it.
+    """
+
+    @staticmethod
+    def _substituted_binds(**kwargs) -> list:
+        from sqlalchemy import text
+        from sqlalchemy.dialects import postgresql
+
+        from app.tasks.precompute_calibration import _calibration_population_ctes
+
+        sql = "WITH " + _calibration_population_ctes(**kwargs) + " SELECT 1"
+        return sorted(text(sql).compile(dialect=postgresql.dialect()).params)
+
+    def test_the_default_chain_carries_no_bind_parameters_at_all(self):
+        assert self._substituted_binds() == []
+
+    def test_a_scoped_chain_carries_none_either(self):
+        """The measurement rails scope the chain through `market_info_extra`."""
+        assert self._substituted_binds(
+            market_info_extra="AND fm.source = 'kalshi'"
+        ) == []
+
+    def test_the_frozen_roster_chain_carries_ONLY_its_three_declared_params(self):
+        """The roster binds are real and intended — and they are the whole list.
+
+        Pinning the exact set rather than "no binds" is what keeps this test alive
+        on the one render that legitimately has them.
+        """
+        from app.tasks.precompute_calibration import (
+            VM_ROSTER_IS_GROUPED_PARAM,
+            VM_ROSTER_MARKET_IDS_PARAM,
+            VM_ROSTER_VM_IDS_PARAM,
+        )
+
+        assert self._substituted_binds(frozen_vm_roster=True) == sorted(
+            [
+                VM_ROSTER_IS_GROUPED_PARAM,
+                VM_ROSTER_MARKET_IDS_PARAM,
+                VM_ROSTER_VM_IDS_PARAM,
+            ]
+        )
+
+    def test_the_guard_fails_on_the_defect_it_was_written_for(self):
+        """The strawman check: a `(?:` really does become a bind parameter.
+
+        Without this, the three assertions above would still pass if SQLAlchemy
+        ever stopped substituting — a guard that cannot fail is not a guard.
+        """
+        from sqlalchemy import text
+        from sqlalchemy.dialects import postgresql
+
+        defective = "SELECT substring(x from '^(?:KXPGAR2TOP|KXPGAR3TOP)([0-9]+)-')"
+        compiled = text(defective).compile(dialect=postgresql.dialect())
+        assert sorted(compiled.params) == ["KXPGAR2TOP"]
+
+
+class TestTheDeclaredNIsReadFromTheRightGroup:
+    """Group 1 is the PREFIX; N is group 2. Reading group 1 raises on the cast."""
+
+    def test_the_prefix_group_is_not_mistaken_for_the_ceiling(self):
+        import re
+
+        match = re.match(GOLF_TOPN_DECLARED_N_PATTERN, "KXPGAR2TOP10-3MO26")
+        assert match is not None
+        assert match.group(1) == "KXPGAR2TOP"
+        assert match.group(GOLF_TOPN_DECLARED_N_GROUP) == "10"
+        assert golf_topn_declared_ceiling("KXPGAR2TOP10-3MO26") == 10
+
+    def test_the_sql_reads_the_same_group_the_python_does(self):
+        assert f"[{GOLF_TOPN_DECLARED_N_GROUP}]" in GOLF_TOPN_DECLARED_N_SQL
+
+    def test_the_sql_uses_regexp_match_not_substring(self):
+        """`substring(... from pattern)` returns group 1 — here, the prefix.
+
+        It would then cast 'KXPGAR2TOP'::numeric and raise on every folded market.
+        """
+        assert "regexp_match" in GOLF_TOPN_DECLARED_N_SQL
+        assert "substring" not in GOLF_TOPN_DECLARED_N_SQL
