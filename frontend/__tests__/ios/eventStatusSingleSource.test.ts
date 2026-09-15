@@ -207,9 +207,16 @@ d("iOS reads one event-status vocabulary", () => {
       // "scheduled" plus a commenceTime in the past; formatCountdown returns nil
       // for a past date, so the badge fell through to EmptyView and the match
       // wore no label at all. A suspended arm placed AFTER the default is dead.
+      //
+      // #6381 re-anchored the second index rather than relaxing it. The default
+      // arm grew a `venueSettled:` argument and went multi-line, so the literal
+      // one-line call this read for is gone — and an `indexOf` that returns -1
+      // is the SAME failure text as an arm in the wrong order, which is how a
+      // wiring guard turns into a guard about its own formatting. The claim is
+      // unchanged: whatever the call looks like, the pregame default comes last.
       const body = detail();
       const suspendedArm = body.indexOf("} else if EventState.isSuspendedAndStarted(");
-      const pregameDefault = body.indexOf(`StatusBadge(status: "scheduled", commenceTime: event.commenceTime)`);
+      const pregameDefault = body.search(/StatusBadge\(\s*status: "scheduled",/);
       expect(suspendedArm).toBeGreaterThan(-1);
       expect(pregameDefault).toBeGreaterThan(suspendedArm);
     });
@@ -697,5 +704,187 @@ describe("#4018 — a card stops forecasting a game that can never be graded", (
     expect(read(DETAIL)).toMatch(
       /commenceTime: event\.commenceTime\?\.asDate,\s*boxScore: vm\.relatedFutures\?\.boxScore/,
     );
+  });
+});
+
+/**
+ * #6381 — THE PHONE STOPS PRESENTING A GRADED MATCH AS AN UPCOMING FIXTURE.
+ *
+ * The native consumer half of the notice-46 pair whose producer is
+ * `app/utils/venue_settlement.py` (web consumer: ux). The defect wears a
+ * different face here than on the web, and it is the face that matters for what
+ * these assertions have to pin.
+ *
+ * `bainluck://events/15310639` — Liverpool FC v Fulham FC, graded `Draw 0-0`
+ * with `resolution_source='api_settlement'` on 2026-09-12 — served
+ * `status: scheduled`, both scores null and no prices. So the iPhone hero drew
+ * two crests, `Sep 11 at 5:00 PM`, the word **vs** and NO badge at all
+ * (`StatusBadge`'s scheduled arm returns EmptyView once `formatCountdown` is nil
+ * for a past date), one scroll above that same page printing
+ * `Correct Score · Draw 0-0 · 100%`. The web's "No result reported" sentence is
+ * `EventState.suspendedLabel` here and is gated on `status == "suspended"`, so
+ * it was not even the sentence on this row — the 889-row suspended arm is where
+ * the phone says it.
+ *
+ * WHY SOURCE ASSERTIONS. Same reason as the two blocks above, and it is the
+ * whole reason this file exists: the badge chain and the hero's centre slot are
+ * SwiftUI bodies, XCTest cannot enter them, and CI compiles no Swift at all.
+ * `BainLuckTests/VenueSettledHero6381Tests.swift` proves the predicate and the
+ * decode; nothing but a text scan can prove either one is wired.
+ */
+describe("#6381 — the hero stops denying a result the venue already gave us", () => {
+  const read = (rel: string) => stripComments(readFileSync(join(IOS_ROOT, rel), "utf8"));
+
+  const BADGE = "Components/StatusBadge.swift";
+  const DETAIL = "Views/EventDetailView.swift";
+  const MODEL = "Models/EventModels.swift";
+
+  it("the predicate and the label are the shared ones, and reachable", () => {
+    // Reachability first: every assertion below is a regex over source, so a
+    // path typo would pass all of them vacuously.
+    expect(read(BADGE).length).toBeGreaterThan(1000);
+    expect(read(DETAIL).length).toBeGreaterThan(1000);
+    const canonical = stripComments(readFileSync(CANONICAL, "utf8"));
+    expect(canonical).toMatch(/static func showsVenueSettledVerdict\(/);
+
+    // 🔴 THE TIERS ARE PINNED TO EACH OTHER, NOT TO A LITERAL TYPED TWICE.
+    // Both halves of this pair print a settled badge for the same row, so a
+    // reader who opens one match on the phone and on the web is owed the same
+    // word — Alex's "one system-wide settled language". Asserting a second
+    // hardcoded copy of "Settled" here would pass happily while the two sides
+    // drifted apart, which is exactly what happened for a day: native shipped
+    // "Result settled" against the web's "Settled". So READ the web constant
+    // and require the Swift literal to equal it.
+    const webLabel = /export const VENUE_SETTLED_LABEL = "([^"]+)"/.exec(
+      readFileSync(join(__dirname, "../../lib/eventState.ts"), "utf8"),
+    );
+    expect(webLabel).not.toBeNull();
+    const swiftLabel = /static let venueSettledLabel = "([^"]+)"/.exec(canonical);
+    expect(swiftLabel).not.toBeNull();
+    expect(swiftLabel![1]).toBe(webLabel![1]);
+  });
+
+  it("the payload keys are decoded, and the result is NOT parsed anywhere", () => {
+    const model = read(MODEL);
+    expect(model).toMatch(/let venueSettled: Bool\?/);
+    expect(model).toMatch(/let venueSettledResult: String\?/);
+    // 🔴 The producer's contract: the string is an outcome NAME whose shape
+    // differs by sport — "Draw 0-0" in soccer, "Aryna Sabalenka wins 2-0" in
+    // tennis, where the digits are SETS. Anything that split it on a dash or
+    // pulled two integers out of it would publish a set score as a game score.
+    // Scanned over the whole app rather than the three files this ship touches,
+    // because the next reader of this field is the one that would do it.
+    const parsers: string[] = [];
+    for (const path of swiftFiles(IOS_ROOT)) {
+      for (const [index, line] of stripComments(readFileSync(path, "utf8")).split("\n").entries()) {
+        if (!/venueSettledResult/.test(line)) continue;
+        if (/\.(split|components|range|prefix|suffix|dropFirst|dropLast|replacingOccurrences|firstMatch|wholeMatch)\b/.test(line)) {
+          parsers.push(`${path.slice(IOS_ROOT.length + 1)}:${index + 1} — ${line.trim()}`);
+        }
+      }
+    }
+    expect(parsers).toEqual([]);
+  });
+
+  it("the badge's venue-settled arm is reached BEFORE the suspended one", () => {
+    // ORDER IS THE SHIP. 889 of the 1,471 graded rows are `suspended`, so an arm
+    // placed after that one is dead for the majority of its own population —
+    // they would go on printing "No result reported" over a held result. FINAL
+    // still outranks both: it has a score.
+    const code = read(BADGE);
+    const final = code.indexOf("} else if EventState.isFinished(status) {");
+    const venue = code.indexOf("} else if EventState.showsVenueSettledVerdict(");
+    const suspended = code.indexOf("} else if EventState.isSuspendedAndStarted(status,");
+    expect(final).toBeGreaterThan(-1);
+    expect(venue).toBeGreaterThan(final);
+    expect(suspended).toBeGreaterThan(venue);
+    // KILLS THE MUTANT `Text("Settled")`: the label lives in EventState
+    // so the badge and the hero cannot drift into two sentences.
+    expect(code).toMatch(/Text\(EventState\.venueSettledLabel\)/);
+  });
+
+  it("BOTH of the hero's remaining badge arms are handed the served flag", () => {
+    // The suspended arm and the pregame default are the two that claim the
+    // event is unplayed, and they are wrong in the same way on a graded row.
+    // Handing the flag to only one of them would fix 426 rows and leave 889.
+    const code = read(DETAIL);
+    expect(code).toMatch(
+      /StatusBadge\(\s*status: "suspended",\s*commenceTime: event\.commenceTime,\s*venueSettled: event\.venueSettled == true\)/,
+    );
+    expect(code).toMatch(
+      /StatusBadge\(\s*status: "scheduled",\s*commenceTime: event\.commenceTime,\s*venueSettled: event\.venueSettled == true\)/,
+    );
+  });
+
+  it("the hero's centre slot answers before it prices, and never prints vs over a result", () => {
+    // The slot that said **vs**. Placed above the `currentOdds` arm on purpose:
+    // two giant percentages between two crests are read as what the market
+    // thinks WILL happen, and the question is already answered. The finished
+    // branch resolves the same way — verdict first, opening price demoted.
+    const code = read(DETAIL);
+    const settled = code.indexOf("} else if EventState.showsVenueSettledVerdict(");
+    const priced = code.indexOf("} else if let odds = event.currentOdds,");
+    const vs = code.indexOf('Text("vs")');
+    expect(settled).toBeGreaterThan(-1);
+    expect(priced).toBeGreaterThan(settled);
+    expect(vs).toBeGreaterThan(priced);
+    // The verbatim result.
+    expect(code).toMatch(/Text\(result\)\s*\n\s*\.font\(\.title3\.weight\(\.bold\)\)/);
+
+    // 🔴 AND THE NO-SCORE ARM SAYS NOTHING, BECAUSE THE BADGE ALREADY SAID IT.
+    // This slot used to print `venueSettledLabel`, which the badge prints too,
+    // so 370 of the 426 rows — every event graded on props with no scoreline —
+    // drew the same word twice on one card (event 15304840, caught in the
+    // after-shot). An empty middle is the honest answer: "vs" reads as a
+    // fixture, "no score" reads as 0-0, and the word again is an echo.
+    // Asserted as ABSENCE in the hero, while the badge's own copy above is
+    // asserted as PRESENCE — the pair is what pins "exactly once".
+    expect(read(BADGE)).toMatch(/Text\(EventState\.venueSettledLabel\)/);
+    expect(code).not.toMatch(/Text\(EventState\.venueSettledLabel\)/);
+  });
+
+  it("the verdict slot accepts any offered width, because the string is the venue's", () => {
+    // 🔴 THE AFTER-SHOT CAUGHT THIS, NO TEST DID. The hero's centre column is
+    // its inflexible middle — the two crest columns take
+    // `.frame(maxWidth: .infinity)` and this one is given its ideal width. At
+    // `.title3` a 31-character verdict ("Brighton & Hove Albion wins 5-0",
+    // event 15310517) pushed the whole card off BOTH screen edges. Lengths
+    // arrive from the venue, so the slot has to bend, and a guard that only
+    // checked the short specimen would have shipped it.
+    const code = read(DETAIL);
+    expect(code).toMatch(
+      /Text\(result\)[\s\S]{0,400}?\.frame\(maxWidth: EventDetailView\.verdictSlotWidth\)\s*\n\s*\.layoutPriority\(-1\)/,
+    );
+    // 🔴 THE CAP IS FINITE, AND THAT IS THE ASSERTION — the second shot of this
+    // ship proved `.infinity` does not hold this slot. The two crest columns are
+    // `maxWidth: .infinity` siblings, so an infinite maximum here asks the row
+    // for MORE width, never less, and the card went off both screen edges with
+    // the modifier in place. A future tidy-up that "makes it consistent with its
+    // siblings" reintroduces the exact defect, so the number is pinned.
+    expect(code).toMatch(/static let verdictSlotWidth: CGFloat = \d+$/m);
+  });
+
+  it("the chart's empty state stops saying 'yet' under a settled hero", () => {
+    // #3859 drew this for `completed` and #6381 is the same sentence: the line
+    // sat one screen under the new "Settled" hero still promising
+    // readings to come. The flag has to travel from the page to the component —
+    // a default that never gets passed is the silent half of this class.
+    const chart = read("Components/OddsChartView.swift");
+    expect(chart).toMatch(/var venueSettled: Bool = false/);
+    // 🔴 THE PROPERTY IS NOT THE DOOR. `OddsChartView` writes its own
+    // initializer, so the memberwise one does not exist and a property declared
+    // without a matching parameter is unreachable from the page — `extra
+    // argument 'venueSettled' in call`, which is a compile error here and would
+    // be a silent `false` if the init took a dictionary or the property were
+    // set later. Both halves asserted, because CI compiles no Swift.
+    expect(chart).toMatch(/init\(eventId: Int[\s\S]{0,400}?\n\s*venueSettled: Bool = false,/);
+    expect(chart).toMatch(/self\.venueSettled = venueSettled/);
+    expect(chart).toMatch(
+      /static func noReadingsLine\(\s*status: String\?,\s*venueSettled: Bool = false,\s*commenceTime: Date\? = nil,\s*now: Date = Date\(\)\s*\)/,
+    );
+    expect(chart).toMatch(
+      /Text\(Self\.noReadingsLine\(\s*status: status,\s*venueSettled: venueSettled,\s*commenceTime: commenceTime\?\.asDate\)\)/,
+    );
+    expect(read(DETAIL)).toMatch(/venueSettled: event\.venueSettled == true,\s*\n\s*homeTeamName: event\.homeTeam/);
   });
 });

@@ -310,6 +310,9 @@ struct EventDetailView: View {
                     VStack(spacing: 0) {
                         OddsChartView(eventId: event.id, teamColors: teamColors(event),
                                      commenceTime: event.commenceTime, status: event.status,
+                                     // #6381 — so the empty state stops saying
+                                     // "yet" under a hero that says settled.
+                                     venueSettled: event.venueSettled == true,
                                      homeTeamName: event.homeTeam,
                                      awayTeamName: event.awayTeam,
                                      homeTeamLogo: event.homeTeamData?.logoSmall,
@@ -837,6 +840,72 @@ struct EventDetailView: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
+                    } else if EventState.showsVenueSettledVerdict(
+                        event.status,
+                        venueSettled: event.venueSettled,
+                        commenceTime: event.commenceTime?.asDate) {
+                        // #6381 — the slot that said **vs** over a match that
+                        // was played four days ago. Placed ABOVE the price pair
+                        // deliberately: a settled question's story is its
+                        // answer, and the two big percentages under two crests
+                        // are read as what the market thinks WILL happen. The
+                        // finished branch above resolves the same way — verdict
+                        // first, the pre-game number demoted to a caption.
+                        if let result = event.venueSettledResult {
+                            // VERBATIM, and it is an outcome NAME rather than a
+                            // scoreline: "Draw 0-0" in soccer, "Aryna Sabalenka
+                            // wins 2-0" in tennis (sets, not games). The
+                            // producer's contract says do not parse it and the
+                            // reason is that sentence — anything that split it
+                            // into two numbers would publish a tennis set score
+                            // as a game score.
+                            // 🔴 BOUNDED, AND THE FIRST DRAFT WAS NOT — the
+                            // after-shot caught it. This column is the hero's
+                            // inflexible middle: the two crest columns take
+                            // `.frame(maxWidth: .infinity)` and this one gets
+                            // its ideal width, which for a verdict like "Sion
+                            // Win" is fine and for "Brighton & Hove Albion wins
+                            // 5-0" is 31 characters at 20pt. On `15310517` that
+                            // pushed the whole hero card off BOTH screen edges —
+                            // the away crest clipped at the left, "COV" at the
+                            // right, the date cut off. The string is the
+                            // venue's, its length is not ours to choose, so the
+                            // slot has to accept any offered width instead.
+                            Text(result)
+                                .font(.title3.weight(.bold))
+                                .foregroundStyle(.primary)
+                                .multilineTextAlignment(.center)
+                                .lineLimit(3)
+                                .minimumScaleFactor(0.55)
+                                .frame(maxWidth: EventDetailView.verdictSlotWidth)
+                                .layoutPriority(-1)
+                        } else {
+                            // 370 of the issue's 426 rows are graded on props
+                            // alone, so there is no score to name and inventing
+                            // one from a prop is the fabricated-100% trap the
+                            // producer refuses on its own side.
+                            //
+                            // 🔴 THE BADGE ALREADY SAID IT — caught in the
+                            // after-shot, not by a test. This slot first
+                            // printed `venueSettledLabel`, and the badge three
+                            // points above prints the same constant, so event
+                            // 15304840 (Townsend v Sabalenka, 16 prop grades,
+                            // no scoreline) drew the word TWICE on one card:
+                            // the chip and then the hero, stacked. That is the
+                            // "two chips making one claim" shape this ship
+                            // removes from Finals, reintroduced two lines
+                            // down. The web half of the pair had it right in
+                            // prose all along — "a settled match with NO
+                            // graded score prints the badge alone".
+                            //
+                            // So: nothing. Not "vs" (it reads as a fixture,
+                            // which is the whole defect), not "no score"
+                            // (reads as 0-0), not the word again. The badge
+                            // carries the state and the crests carry the
+                            // matchup; an empty middle is the only thing here
+                            // that says nothing false.
+                            EmptyView()
+                        }
                     } else if let odds = event.currentOdds,
                               let pair = DrawPricedWinner.printablePair(
                                 away: odds.awayProbability,
@@ -1109,6 +1178,25 @@ struct EventDetailView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
+    /// The widest the hero's centre verdict may be, in points.
+    ///
+    /// 🔴 A CAP, NOT A LAYOUT — and it is here because `.frame(maxWidth: .infinity)`
+    /// did NOT hold it. Observed on the simulator, 2026-09-15 12:59 PT: with
+    /// that modifier and `lineLimit(3)`, "Brighton & Hove Albion wins 5-0"
+    /// (event `15310517`) still drew on one line and still pushed the whole hero
+    /// card off BOTH screen edges — the away crest clipped at the left, "COV" at
+    /// the right, the date cut off. (That intermediate frame was overwritten by
+    /// the next shot; the kept pair in `artifacts/native-181/` is the original
+    /// **vs** and the bounded result.) The two crest columns are
+    /// `.frame(maxWidth: .infinity)` siblings, so the row grants this slot its
+    /// ideal width first and an infinite maximum asks for MORE room, never less.
+    ///
+    /// 150pt is under a third of the 402pt iPhone 17 width with both crests and
+    /// their names drawn, and it is a MAXIMUM: every short verdict this slot has
+    /// ever held ("Sion Win", "Draw 0-0", "87 – 13") is narrower and centres
+    /// inside it unchanged, so nothing that fit before is being re-laid-out.
+    static let verdictSlotWidth: CGFloat = 150
+
     // MARK: - Hero Status Badge
 
     /// #4002 — the arms are ORDERED, and `suspended` has to come before the
@@ -1129,9 +1217,20 @@ struct EventDetailView: View {
             StatusBadge(status: event.status, commenceTime: event.commenceTime)
         } else if EventState.isSuspendedAndStarted(
             event.status, commenceTime: event.commenceTime?.asDate) {
-            StatusBadge(status: "suspended", commenceTime: event.commenceTime)
+            // #6381 — `venueSettled` is handed to BOTH remaining arms, because
+            // both of them are wrong in the same way when the venue has graded
+            // the row: this one claims no result was reported, and the one
+            // below it shows a kick-off countdown. StatusBadge decides which
+            // sentence wins; this view does not duplicate that chain.
+            StatusBadge(
+                status: "suspended",
+                commenceTime: event.commenceTime,
+                venueSettled: event.venueSettled == true)
         } else {
-            StatusBadge(status: "scheduled", commenceTime: event.commenceTime)
+            StatusBadge(
+                status: "scheduled",
+                commenceTime: event.commenceTime,
+                venueSettled: event.venueSettled == true)
         }
     }
 
