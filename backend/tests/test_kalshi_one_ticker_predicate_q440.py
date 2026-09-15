@@ -381,6 +381,13 @@ class TestTheRepairArmIsNarrow:
         second assertion: the narrow predicate refuses all nine. That is asserted
         unconditionally. The premise is now READ off the map instead of
         remembered, and split, because the two groups make different arguments.
+
+        UNCHANGED BY Q477, deliberately, and recorded here because the queue
+        looked at it and decided. Q477 registers per-fixture soccer series for
+        the anchor channel and does NOT widen `is_kalshi_game_level_ticker`, so
+        the equivalence this premise asserts still holds against exactly one
+        map. Had the shared predicate been widened, this premise would have had
+        to read both — see `is_kalshi_match_series_ticker` for why it was not.
         """
         from app.utils.sport_keys import is_kalshi_shadowed_futures_ticker
 
