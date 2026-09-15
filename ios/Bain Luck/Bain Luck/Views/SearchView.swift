@@ -480,6 +480,13 @@ struct SearchView: View {
                                 .font(.caption)
                                 .fontWeight(.medium)
                         }
+                        // Same defect as the suggestion rows below (#6268), one row
+                        // up: without these two the tappable area is the width of the
+                        // caption text, so most of this row does nothing. Fixed here
+                        // too rather than left for the next walkthrough to re-find —
+                        // it is the same component and the same reader.
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 }
@@ -542,6 +549,16 @@ struct SearchView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
+                    // #6268 — THE MIDDLE OF THIS ROW WAS DEAD, AND THE SHORTER THE
+                    // NAME THE DEADER IT WAS. `.buttonStyle(.plain)` hit-tests the
+                    // rendered CONTENT, and a `Spacer()` renders nothing, so the gap
+                    // between the name and the trailing kind label took no touches at
+                    // all. Measured on iPhone 17: the row is 402 pt wide, so a tap
+                    // lands at x=201, while "Boston Red Sox" ends at x=158 — the
+                    // reader's thumb landed in the hole and the action never ran.
+                    // "Golden State Warriors" reaches past 201 and worked, which is
+                    // why this read as "some team rows are dead" for a day.
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }

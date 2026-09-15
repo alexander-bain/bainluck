@@ -30,6 +30,19 @@ enum UITestLaunch {
         // "No thanks" records (ConsentLevel.none), so the sheet is already
         // answered and never presents.
         "-bainluck_telemetry_consent", "none",
+        // DiscoverView's welcome sheet (`discover_onboarded`). The SECOND
+        // first-run gate over Discover, and it was missed when this file was
+        // written because the container in front of the rig that day had already
+        // been through it. Measured 2026-09-14 on a genuinely clean install: the
+        // sheet presents over Discover and the ONLY two hittable buttons in the
+        // whole app are its "Continue" and "Skip" — the tab bar reports
+        // `hittable == false` at correct geometry `(0, 791, 402, 83)`, so a tab
+        // tap logs `Computed hit point {-1, -1}` and lands nowhere. That reads as
+        // "THE RIG CANNOT TAP", which is the most alarming and most misleading
+        // sentence this target can print: the rig taps fine, the app is behind a
+        // modal. `WelcomeView`'s own `onDisappear` writes exactly this key, so
+        // setting it is the same answer a reader gives by tapping Skip.
+        "-discover_onboarded", "YES",
         // LaunchRig.suppressInteractionUploadKey — a swipe and a card open each
         // POST to `/api/feed/interactions`. A reader's taps are the downrank
         // signal that endpoint is for; a robot's taps are noise in it, and
