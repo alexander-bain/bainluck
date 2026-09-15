@@ -52,39 +52,31 @@ _MEASURED_WITH_A_SCORE = 56
 
 
 def _now():
-    return datetime(2026, 9, 15, 18, 0, tzinfo=timezone.utc)
-
-
-def _real_now():
     """🔴 THE REAL CLOCK, ON PURPOSE — gotcha #44, and it already bit this file.
 
-    `_now()` is frozen so the specimen's shape is reproducible, and that is
-    right for every anchor far from a boundary: 3.6 days past kickoff, a
-    `completed_at` three days old, the status-gated `suspended`/`live` arms
-    (those never reach the clock — `started_without_result` refuses them on
-    status, which is why they do not drift).
+    This returned the literal `2026-09-15 18:00Z` for one morning. Every anchor
+    in the file is written as an OFFSET from here, which is the shape gotcha #44
+    asks for — but an offset is only meaningful from a moving origin, because
+    the code under test reads the REAL clock: `started_without_result` asks
+    `commence_time < now() - UPCOMING_GRACE`.
 
-    It is WRONG for the two scope cases whose entire meaning is their distance
-    from the boundary, because the predicate under test reads the REAL clock:
-    `started_without_result` asks `commence_time < now() - UPCOMING_GRACE`.
-
-    Frozen anchor + real-clock predicate = green when written, red forever
-    after. Measured: `_now() - 30m` is 17:30Z, written to sit inside a 2h
+    Frozen origin + real-clock predicate = green when written, red forever
+    after. Measured: `_now() - 30m` was 17:30Z, written to sit inside the 2h
     grace. It passed CI on `7ca69931c` that morning and went red at 19:30Z the
-    SAME DAY — the moment the real clock put 17:30Z more than two hours in the
-    past — reddening master for every lane, with no diff to blame.
+    SAME DAY — the instant the real clock put 17:30Z more than two hours in the
+    past — reddening master for every lane in the fleet, with no diff to blame.
 
-    So offset from the real now, and state the offset in terms of the constant
-    that defines the boundary, so a change to `UPCOMING_GRACE` moves the anchor
-    with it instead of silently invalidating the case's intent.
+    The mirror image was live at the same time and is why this is a function,
+    not two patched call sites: `_now() - 1h` as a "live row that has started"
+    is false for any clock BEFORE 17:00Z, so `clock_sweep.py` failed 9/12
+    points on the frozen version. Both directions have one cause and one fix.
+
+    So: real clock, every call site, no exceptions. State an offset against the
+    constant that defines the boundary (`UPCOMING_GRACE`) rather than a bare
+    number, so widening the grace moves the anchor with it instead of silently
+    invalidating the case's intent.
     """
     return datetime.now(timezone.utc)
-
-
-#: The two real-clock anchors. Module-level so the guard below can assert they
-#: are still what their names claim at RUN time, not merely at collection.
-_NOT_YET_KICKED_OFF = _real_now() + timedelta(hours=3)
-_INSIDE_THE_GRACE = _real_now() - UPCOMING_GRACE / 2
 
 
 def _event(**kw):
@@ -239,12 +231,13 @@ class TestTheScope:
         "event_kwargs, why",
         [
             (
-                # Real clock, not `_now()` — see `_real_now`.
-                {"commence_time": _NOT_YET_KICKED_OFF},
+                {"commence_time": _now() + timedelta(hours=3)},
                 "a fixture whose clock has not run out says no such thing",
             ),
             (
-                {"commence_time": _INSIDE_THE_GRACE},
+                # Half a grace old: inside the window by construction, and it
+                # stays inside if the grace changes. Never a bare `30 minutes`.
+                {"commence_time": _now() - UPCOMING_GRACE / 2},
                 "inside the upcoming grace it is still a fixture",
             ),
             (
@@ -280,28 +273,34 @@ class TestTheScope:
             payload, live_claim_is_unbacked=False
         ), why
 
-    def test_the_two_clock_anchors_still_mean_what_they_are_named(self):
+    def test_the_clock_origin_moves_because_every_anchor_hangs_off_it(self):
         """🔴 PINS THE ROT, NOT THE VALUE — the red that hit master 2026-09-15.
 
-        The case above cannot tell "the predicate correctly refuses this row"
-        from "the anchor drifted out of the window it was written to sit in":
-        both read as a pass until the drift crosses the boundary, and then it
-        is a red with no diff behind it. This asserts the PREMISE instead.
+        The cases around this one cannot tell "the predicate correctly refuses
+        this row" from "the anchor drifted out of the window it was written to
+        sit in": both read as a pass right up until the drift crosses the
+        boundary, and then it is a red with no diff behind it. Every other test
+        in this file inherits `_now()`'s origin, so the premise is checked once,
+        here, rather than restated at thirteen call sites.
 
-        It is deliberately stated against `UPCOMING_GRACE` rather than against
-        `30 minutes`, so re-freezing `_real_now()` or widening the grace fails
-        HERE, naming the anchor, instead of somewhere downstream hours later.
+        Asserted against the real clock and against `UPCOMING_GRACE` — never a
+        bare literal — so re-freezing `_now()` fails HERE, naming the cause,
+        instead of somewhere downstream hours later on somebody else's PR.
         """
-        age = datetime.now(timezone.utc) - _INSIDE_THE_GRACE
+        drift = abs(datetime.now(timezone.utc) - _now())
+        assert drift < timedelta(minutes=1), (
+            f"`_now()` is {drift} away from the real clock, so it has been "
+            "re-frozen to a literal. Every anchor in this file is an offset "
+            "from it, and the code under test reads the real clock: the two "
+            "drift apart until a boundary case inverts and reddens master for "
+            "the whole fleet with no diff behind it. Gotcha #44."
+        )
+        # The origin moving is necessary but not sufficient: the grace-relative
+        # anchor must still land inside the window it exists to probe.
+        age = datetime.now(timezone.utc) - (_now() - UPCOMING_GRACE / 2)
         assert timedelta(0) < age < UPCOMING_GRACE, (
             f"the 'inside the grace' anchor is {age} old against a "
-            f"{UPCOMING_GRACE} grace — it no longer sits inside the window the "
-            "case exists to test. Anchor it on the real clock (`_real_now`), "
-            "never on frozen `_now()`: gotcha #44."
-        )
-        assert _NOT_YET_KICKED_OFF > datetime.now(timezone.utc), (
-            "the 'not yet kicked off' anchor is in the past — the case is now "
-            "testing a started fixture and would pass for the wrong reason."
+            f"{UPCOMING_GRACE} grace — it no longer sits inside the window."
         )
 
     def test_completed_at_alone_does_NOT_take_a_stuck_row_out_of_scope(self):
