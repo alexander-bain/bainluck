@@ -14848,15 +14848,64 @@ def _read_game_markets_memo(event_id: int):
     return None
 
 
-def _write_game_markets_memo(event_id: int, source_status, response) -> None:
-    """The L1 write, with its size bound. Now stamped with the build (#6355)."""
+def _memo_stamp(response) -> float:
+    """The epoch L1's age bound is measured FROM: when the payload was BUILT.
+
+    🔴 #6394 — THE TWO TIERS MUST SHARE ONE DEADLINE, NOT RUN TWO IN SERIES.
+    This used to be `time.time()`, i.e. when this process happened to READ the
+    payload, and the read is not the build. A body that L2 hands over as `live`
+    at 3,599 s — one second inside `FRESH_TTL_FINAL` — was stamped into L1 with a
+    brand-new clock and served for another full hour, so the two bounds COMPOSED
+    to ~2x the number both tiers believe they are enforcing. Measured on
+    production 2026-09-15 on 4/4 completed controls: a payload built 16:02:54Z
+    was still being served at 17:04:44Z, age 3,710 s, under an hour's bound.
+
+    That is the same class as #6355 and not the same bug: #6355's `build_id`
+    check covers a payload the RELEASE invalidated, at any age, and is untouched
+    here. This covers the payload nothing invalidated except the clock.
+
+    The subtraction keeps the answer in the LOCAL process's frame, because that
+    is the frame `_read_game_markets_memo` compares against. `payload_age_seconds`
+    is the same helper `mirror_is_servable` bounds L2's mirror with, so the age
+    L1 enforces and the age L2 enforces are computed one way, not two.
+
+    Two fall-backs to `now`, both deliberately in the direction of today's
+    behaviour — this is a cache, and the wall-clock bound still applies to
+    everything that takes them:
+
+    * **No parseable `created_at`.** Unlike `mirror_is_servable`, which REFUSES
+      such a payload, refusing here would stop L1 memoising anything a writer
+      forgot to stamp — a latency regression, not a truth one, since the payload
+      is still bounded exactly as it is today.
+    * **A `created_at` in the FUTURE** (a writer dyno whose clock runs ahead).
+      A negative age would push the stamp forward and make the entry outlive the
+      bound — the one direction this fix exists to close — so skew can only ever
+      shorten the entry's life, never extend it.
+    """
     import time as _time
 
+    from app.utils import game_markets_cache as gmc
+
+    now = _time.time()
+    age = gmc.payload_age_seconds(response)
+    if age is None or age <= 0:
+        return now
+    return now - age
+
+
+def _write_game_markets_memo(event_id: int, source_status, response) -> None:
+    """The L1 write, with its size bound. Now stamped with the build (#6355).
+
+    The timestamp is the payload's own build time, not this moment (#6394) — see
+    `_memo_stamp`. Eviction sorts on the same field, so the entry dropped when
+    the bound is reached is the one holding the OLDEST CONTENT rather than the
+    one this process happened to read first.
+    """
     if len(_game_markets_cache) >= _GAME_MARKETS_MAX_SIZE:
         oldest_key = min(_game_markets_cache, key=lambda k: _game_markets_cache[k][0])
         del _game_markets_cache[oldest_key]
     _game_markets_cache[event_id] = (
-        _time.time(),
+        _memo_stamp(response),
         str(source_status or ""),
         _current_build_id(),
         response,
