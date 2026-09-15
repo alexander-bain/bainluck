@@ -40,7 +40,7 @@ Every function takes ``now`` rather than reading the clock, so the guard can
 sweep a matrix and no anchor can rot (gotcha #44).
 """
 
-from datetime import timedelta
+from datetime import timedelta, timezone
 
 from sqlalchemy import and_, case, literal, or_, select
 
@@ -55,6 +55,108 @@ from app.utils.kalshi_occurrence_start import (
     KALSHI_OCCURRENCE_TIMED_SOURCES,
 )
 from app.utils.sport_keys import STATPAL_SHADOW_ANCHOR_SPORT_PREFIXES
+
+#: The `commence_time_source` values that mean "nothing gave us a start time".
+#:
+#: The BARE venue name only. `kalshi_ticker`, `kalshi_occurrence` and
+#: `polymarket_venue` all record that a real instant was read from somewhere and
+#: are never this class — which is the whole reason #2020 and #6073 introduced
+#: them. A bare `kalshi` says only "a Kalshi market wrote this", and that covers
+#: BOTH a real `market.commence_time` and the clock we substituted when there
+#: was none, so the source alone cannot separate them. See
+#: :func:`commence_time_was_never_a_kickoff` for the arm that can.
+_POLL_CLOCK_FALLBACK_SOURCES = frozenset({"kalshi", "polymarket"})
+
+#: How near its own creation a `commence_time` sits before it IS that creation.
+#:
+#: Measured, not chosen: the specimens sit 55.5s–130.5s from their `created_at`
+#: (the row is written a couple of minutes after the pass takes its clock), and
+#: the nearest row on the other side of the line is 452s. Ten minutes sits in
+#: that gap with room either way.
+POLL_CLOCK_STAMP_TOLERANCE = timedelta(minutes=10)
+
+
+def commence_time_was_never_a_kickoff(event) -> bool:
+    """True when this row's ``commence_time`` is the clock we read it at. #6346.
+
+    **THE CARD THIS EXISTS FOR.** `/sport/soccer/epl`, under NO RESULT REPORTED:
+    *"Liverpool — Manchester United"*, with three more beside it. None of those
+    matches has been played, and one of them is not a match at all — the row was
+    minted from `KXEPLH2HFINISH-EPL27LFCMUN`, **"Liverpool vs Manchester United:
+    Who Will Finish Higher"**, a question about final league-table position over
+    the whole 2026-27 season. It has no kickoff because there is no game.
+
+    `prediction_market_matching` line 6801 stamps such a row
+    ``commence_time = now`` when the market carries no usable time, and the call
+    site says so in its own comment: *"`commence_time` above may have just been
+    replaced with `now`, which is not a game time at all"*.
+
+    🔴 **WHY THAT ROW CAN NEVER LEAVE THIS RAIL ON ITS OWN.** A row stamped at
+    creation is **past its own kickoff forever**, so it satisfies "started and
+    nobody reported an ending" permanently — and it satisfies it more strongly
+    every day. The rail is not misjudging it; the rail is being told a fiction
+    and answering correctly. Nothing ages it off, and
+    ``espn_sync._retire_unreachable_suspended`` deliberately excludes
+    ESPN-covered sports because ``_backfill_espn_ids`` is nominally their door —
+    a door that dereferences the very date that was invented.
+
+    ⚠️ **NOT "unanchored", and not the source.** The obvious predicate is to drop
+    market-born or ``provenance:unanchored`` rows from the rail. Measured on
+    production 2026-09-15, **all 17 rows this rail holds across the five soccer
+    leagues are `provenance:unanchored`**, so that empties it — and it re-breaks
+    #3211, which BUILT this rail for 171 US Open matches that are themselves
+    venue-minted. ``commence_time_source = 'kalshi'`` alone is no better: it
+    covers 610 rail rows, including 166 real ATP fixtures on clean half-hour
+    kickoffs.
+
+    **So the test is the conjunction, and each arm alone is far too broad:**
+
+    ===================================================  ======
+    predicate                                            rows
+    ===================================================  ======
+    ``commence_time_source = 'kalshi'``                   610
+    a sub-minute ``commence_time`` alone                  204
+    born within ten minutes of its own ``created_at``      13
+    **both of the last two, which is this function**      **6**
+    ===================================================  ======
+
+    A real fixture is scheduled on a minute boundary; a clock is not. And a row
+    whose "kickoff" is the moment we wrote it was not scheduled at all. The seven
+    rows that clear arm 2 but not arm 1 are the positive control: MiLB, esports
+    and tennis fixtures at 23:05:00, 20:08:00, 19:15:00 and 06:30:00, real games
+    merely DISCOVERED near their start. Keyed on either arm alone they would
+    vanish.
+
+    Pure, and reads only columns the row is already holding — the same shape and
+    the same reason as
+    :func:`app.services.anchor_channel.is_drain_candidate_row`, so a rail pays no
+    query to ask. It also fails in the recoverable direction: an unreadable row
+    is left alone, which serves today's card rather than hiding a real match.
+    """
+    if getattr(event, "commence_time_source", None) not in _POLL_CLOCK_FALLBACK_SOURCES:
+        return False
+    commence = getattr(event, "commence_time", None)
+    created = getattr(event, "created_at", None)
+    if commence is None or created is None:
+        return False
+    # A scheduled kick-off lands on a minute boundary. Microseconds as well as
+    # seconds, because that is what a clock leaves behind: the five EPL rows
+    # share `18:50:00.316804` to the microsecond — one poll pass stamped them
+    # all, which is the fingerprint no real fixture list can produce.
+    if commence.second == 0 and commence.microsecond == 0:
+        return False
+    # ⚠️ `Event.commence_time` is `DateTime(timezone=True)` and `Event.created_at`
+    # is a bare `DateTime` (naive UTC, `server_default=func.now()`), so
+    # subtracting them raises `TypeError` rather than returning a wrong answer.
+    # Normalise both to aware UTC instead of assuming either side.
+    if commence.tzinfo is None:
+        commence = commence.replace(tzinfo=timezone.utc)
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return abs((commence - created).total_seconds()) <= (
+        POLL_CLOCK_STAMP_TOLERANCE.total_seconds()
+    )
+
 
 #: The statuses that mean "this happened and we know how it went" — the settled
 #: rail's whole vocabulary after #3748.

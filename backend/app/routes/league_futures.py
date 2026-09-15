@@ -30,6 +30,7 @@ from app.routes.events import (
 from app.services import get_db
 from app.utils.aggregation import compute_aggregate_probability
 from app.utils.event_rails import (
+    commence_time_was_never_a_kickoff,
     live_first_order,
     settled_rail_condition,
     unreported_rail_condition,
@@ -2725,6 +2726,67 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         _r_events = list(_r.scalars().all())
         _u = await asyncio.wait_for(db.execute(_unreported_q), timeout=10)
         _u_events = list(_u.scalars().all())
+
+        # ── #6346: a row whose kick-off was never a kick-off is not "late" ────
+        #
+        # The EPL page printed "Liverpool — Manchester United · No result
+        # reported" for a match that has not been played, beside three more.
+        # Four of the five are not fixtures at all: they were minted from
+        # `KXEPLH2HFINISH-*` — "Who Will Finish Higher", a question about final
+        # league-table position over the whole season, which has no kick-off
+        # because there is no game.
+        #
+        # This rail admits a row whose kick-off passed with nothing reported. A
+        # row stamped `commence_time = now` at creation satisfies that FOREVER,
+        # and more strongly every day, so it can never age off on its own.
+        # `commence_time_was_never_a_kickoff` carries the measurement and the
+        # refusals that keep #3211's US Open population on the page.
+        #
+        # 🔴 FIRST, BEFORE ANY OTHER STAGE TOUCHES THESE ROWS, AND THAT
+        # PLACEMENT IS THE WHOLE FIX. `kalshi_occurrence_start` recovers a
+        # served kick-off by subtracting Kalshi's expected-expiration pad, in
+        # place, via `set_committed_value`. On a fabricated stamp it does not
+        # decline — it reads the fiction as an expiration and derives a kick-off
+        # three hours before it, so by the time the rails are folded the row no
+        # longer sits anywhere near its own `created_at` and this predicate
+        # answers False on the very rows it was written for. Measured while
+        # building this: placed after the fold it withheld 0 of 5; placed here,
+        # 5 of 5. A serve-time repair that rebuilds the value a check reads is
+        # invisible to that check.
+        #
+        # ONLY this rail. A row that is genuinely live or genuinely finished is
+        # none of this function's business.
+        #
+        # Python rather than SQL, deliberately: the predicate compares two
+        # columns of different tz-awareness and reads sub-minute precision,
+        # neither of which survives the round trip through both dialects this
+        # route is exercised on. The list is bounded by `UNREPORTED_LIMIT`, so
+        # it is a handful of pure calls over columns the rows already hold.
+        if _u_events:
+            try:
+                _invented = {
+                    e.id for e in _u_events if commence_time_was_never_a_kickoff(e)
+                }
+                if _invented:
+                    _u_events = [e for e in _u_events if e.id not in _invented]
+                    # 🔴 The league is NOT interpolated, for the reason the
+                    # competition-share log above records: `sport_key` is a path
+                    # parameter, so a NEW log line carrying it is a
+                    # `py/log-injection` finding and notice 32 refuses those.
+                    # The withheld row ids are integers off the database and
+                    # identify the page better than the key would.
+                    logger.info(
+                        "league page unreported rail: %d row(s) withheld, "
+                        "commence_time is the poll clock (%s)",
+                        len(_invented),
+                        sorted(_invented)[:20],
+                    )
+            except Exception:  # noqa: BLE001 — see the gotcha #42 note above
+                logger.exception(
+                    "league page: invented-kickoff gate failed; serving the "
+                    "unreported rail unfiltered"
+                )
+
         # ── #5746: a finished game may not also be waiting for its score ──
         #
         # Folded ACROSS the two past rails in one call, with the upcoming rail
