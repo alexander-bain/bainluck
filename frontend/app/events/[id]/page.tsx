@@ -100,11 +100,13 @@ import { derivePeriodBoundaries } from "@/lib/periodMarkers";
 import { formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import {
   SUSPENDED_DESCRIPTION,
+  VENUE_SETTLED_DESCRIPTION,
   blendCaptionIsStale,
   hasNoReportedResult,
   isFinishedStatus,
   startBadgeLabel,
   suspendedSummary,
+  venueSettledSummary,
 } from "@/lib/eventState";
 import type { ActiveChartPoint } from "@/lib/types";
 import TeamNameLink from "@/components/TeamNameLink";
@@ -377,6 +379,21 @@ export default function EventPage({ params }: EventPageProps) {
   // and the projected-final suppression cannot answer this question three ways.
   const isSuspended =
     hasNoReportedResult(event?.status, event?.commence_time) || liveClaimUnbacked;
+
+  // #6381 — WHAT THAT STATE SAYS, when a source that carried this match's
+  // markets has already graded it. Null on every other row, so the badge keeps the sentence
+  // it had.
+  //
+  // Computed BESIDE `isSuspended` and not inside it: the flag's other four
+  // consumers (the suppressed countdown, the suppressed projected final, the
+  // map's past-tense marks, the withdrawn age stamp) are all still right about
+  // a venue-settled match — it has no forecast left and no update to promise —
+  // and flipping the flag to move one sentence would quietly un-suppress them.
+  // Only the words were wrong. The page keeps its ONE `hasNoReportedResult`
+  // answer (#4015) and gains one string derived from it.
+  const venueSettledSentence = isSuspended
+    ? venueSettledSummary(event?.venue_settled, event?.venue_settled_result)
+    : null;
 
   // When the stream stops delivering, refetch ONCE. This does two jobs: it
   // settles the page on a number that came from the database rather than the
@@ -1443,15 +1460,23 @@ export default function EventPage({ params }: EventPageProps) {
                  says why in a sentence below. */
               <span
                 className="text-[10px] font-semibold text-text-muted"
-                title={SUSPENDED_DESCRIPTION}
+                title={venueSettledSentence ? VENUE_SETTLED_DESCRIPTION : SUSPENDED_DESCRIPTION}
                 data-testid="event-hero-suspended"
+                data-venue-settled={venueSettledSentence ? "true" : undefined}
               >
+                {/* #6381 — the venue's own grade outranks our silence. When a
+                    source that carried this match's markets has settled them, the
+                    badge says so (and names the graded score when there is
+                    one) instead of denying a result the page draws one screen
+                    below. `venueSettledSummary` returns null on every other
+                    row, so the branch below is unchanged for them. */}
                 {/* CERT-786 — the shared summary, so the hero says exactly what
                     the card the reader tapped said. The page-level sentence
                     stays on the `title`, which has room for it. */}
                 {/* #2786 — HOME-AWAY, matching this page's own hero, which
                     stacks the home score above the away score. */}
-                {suspendedSummary(event?.away_score, event?.home_score, "home-away")}
+                {venueSettledSentence ??
+                  suspendedSummary(event?.away_score, event?.home_score, "home-away")}
               </span>
             ) : (
               <span className="flex items-center gap-1.5">

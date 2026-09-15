@@ -90,7 +90,9 @@ import { liveClaimIsUnbacked } from "./eventLivePush";
 import {
   hasNoReportedResult,
   SUSPENDED_DESCRIPTION,
+  VENUE_SETTLED_DESCRIPTION,
   suspendedSummary,
+  venueSettledSummary,
 } from "./eventState";
 
 export interface EventShareMetaInput {
@@ -105,6 +107,12 @@ export interface EventShareMetaInput {
   current_odds?: { home_probability?: number | null; away_probability?: number | null } | null;
   /** @see hasNoReportedResultForShare — #6113. Served by `/api/events/{id}`. */
   live_probability_pinned?: { pinned?: boolean } | null;
+  /** @see EventDetailResponse.venue_settled — #6381. Served on exactly the rows
+   *  the branch below fires on, so the preview and the page it opens cannot
+   *  disagree about whether a result exists. */
+  venue_settled?: boolean;
+  /** @see EventDetailResponse.venue_settled — #6381. */
+  venue_settled_result?: string | null;
 }
 
 /**
@@ -523,11 +531,30 @@ export function buildEventShareCopy(
   // it: to a reader those are one sentence — *this match should have happened and
   // nobody has told us anything* — which is the sentence `SUSPENDED_LABEL` was
   // chosen for, and the same call #5459 made for the page's badge.
+  // #6381 — and the venue's own grade outranks all of it. The page this link
+  // opens now reads "Settled · Draw 0-0", so a preview still reading "No result
+  // reported" would be #6113's defect again, told by the other half of the same
+  // pair. `venueSettledSummary` is null on every row the venue has not settled,
+  // so the branch is unchanged for them.
+  //
+  // `settled` STAYS FALSE, and that is not an oversight. It gates the copy that
+  // leads with a trusted score (`hero_probability_source === "settled"`, Q441),
+  // and a graded market outcome is not that measurement — flipping it here would
+  // reach branches this key was never verified against. The words change; the
+  // classification does not.
   if (hasNoReportedResultForShare(event, now)) {
-    const summary = suspendedSummary(event.away_score, event.home_score, "away-home");
+    const settledByVenue = venueSettledSummary(
+      event.venue_settled,
+      event.venue_settled_result,
+    );
+    const summary =
+      settledByVenue ??
+      suspendedSummary(event.away_score, event.home_score, "away-home");
     return {
       title: `${matchup}: ${summary}`,
-      description: truncate(`${summary}. ${SUSPENDED_DESCRIPTION}`),
+      description: truncate(
+        `${summary}. ${settledByVenue ? VENUE_SETTLED_DESCRIPTION : SUSPENDED_DESCRIPTION}`,
+      ),
       settled: false,
     };
   }

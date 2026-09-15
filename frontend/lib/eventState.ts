@@ -136,6 +136,74 @@ export const SUSPENDED_DESCRIPTION =
   "This match left the live board and no source has reported a result.";
 
 /**
+ * The badge a match wears when a source that carried its markets has settled
+ * them, while nothing has reported a score to us (#6381).
+ *
+ * NOT "Final". `completed`/`closed` mean something with standing said the match
+ * ended, and this row's status still says otherwise — the ladder's word would
+ * be a claim we cannot make. "Settled" is the word the rest of the app already
+ * uses for a question whose answer is in (`eventConceptDisplay`,
+ * `propDivergence`), and it is the honest one here: the markets are graded, the
+ * scoreboard never arrived.
+ */
+export const VENUE_SETTLED_LABEL = "Settled";
+
+/**
+ * The sentence behind {@link VENUE_SETTLED_LABEL}, on the `title` where
+ * `SUSPENDED_DESCRIPTION` sits — standing notice 34 keeps the explanation off
+ * the page body, and this state needs one more than most: a reader who watched
+ * the badge say "No result reported" yesterday is owed the reason it no longer
+ * does.
+ */
+export const VENUE_SETTLED_DESCRIPTION =
+  "The markets on this match have been settled.";
+
+/**
+ * What the hero says INSTEAD of {@link SUSPENDED_LABEL} when the venue has
+ * already graded the match — or `null` when it has not, which is the caller's
+ * signal to keep the sentence it was printing.
+ *
+ * ── #6381: THE PAGE DENIED A RESULT IT WAS DRAWING ONE SCREEN BELOW ──
+ *
+ * `/events/15310639` (Liverpool FC v Fulham FC, tier 1) served `scheduled`,
+ * both scores null and the hero badge "No result reported", while its own
+ * markets on the same payload read `Correct Score · Draw 0-0 · Won`, graded
+ * three days earlier. 1,471 events all-time make that contradiction; 68 of them
+ * also hold the score.
+ *
+ * ⚠️ THIS DOES NOT TOUCH {@link hasNoReportedResult}, AND THAT IS THE DESIGN.
+ * That predicate is shared card vocabulary keyed on status and time alone
+ * (#3211), and the producer's guard reddens if it grows a fourth arm. Every
+ * other consumer of the page's `isSuspended` — the suppressed countdown
+ * (#3211), the suppressed projected final (#5257), the map's past-tense marks
+ * (#5206) — is still RIGHT about a venue-settled match: there is nothing left
+ * to forecast and no update to promise. Only the SENTENCE was wrong, so only
+ * the sentence moves.
+ *
+ * The result is printed VERBATIM. It is an outcome name, not a score, and its
+ * shape is the sport's: `"Draw 0-0"`, `"Brighton & Hove Albion wins 5-0"`,
+ * `"Aryna Sabalenka wins 2-0"` (sets). The producer already refused the
+ * lookalikes — `1st Half Correct Score`, `First Team to Score` — by
+ * segment-exact market name, and both of those were live on the specimen event
+ * itself, so a client that re-derived anything here would be the second place
+ * that judgement lives and the first place it drifts.
+ *
+ * A settled match with NO graded score prints the badge alone — the tennis
+ * shape, where 16 prop grades settle the event and no market ever quoted a
+ * scoreline. Deliberately not "Settled · no score": on a page whose sibling
+ * states print real scorelines, "no score" reads as 0-0, which is a result we
+ * do not have. Saying less is the only way to say nothing false.
+ */
+export function venueSettledSummary(
+  venueSettled: boolean | null | undefined,
+  venueSettledResult: string | null | undefined,
+): string | null {
+  if (!venueSettled) return null;
+  const result = venueSettledResult?.trim();
+  return result ? `${VENUE_SETTLED_LABEL} · ${result}` : VENUE_SETTLED_LABEL;
+}
+
+/**
  * Which side a surface paints FIRST when it prints a pair of scores.
  *
  * Not a preference and not a style token — a fact about a specific component,
