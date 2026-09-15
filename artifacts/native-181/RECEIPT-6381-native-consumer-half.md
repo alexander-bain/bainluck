@@ -42,14 +42,18 @@ native twin to build, and I said so on the issue rather than building one.
 
 ## 2. What it says now
 
-`artifacts/native-181/after-01-liverpool-fulham-draw00.png` (13:13 PT, shipped tree):
-badge **`✓ Result settled`**, centre **`Draw 0-0`**, chart line **`No win probability readings for
+`artifacts/native-181/after-01-liverpool-fulham-draw00.png` (14:50 PT, shipped tree):
+badge **`✓ Settled`**, centre **`Draw 0-0`**, chart line **`No win probability readings for
 this game.`** — the "yet" gone for the same reason #3859 dropped it on a Final.
+
+⚠️ **Every frame below was re-shot at 14:50 PT.** The first set said `Result settled` and printed
+that word twice on the no-score arm; §3b and §3c are the two corrections, and shots of a tree I am
+no longer shipping have no business in a receipt.
 
 | frame | event | state | what it proves |
 |---|---|---|---|
 | `after-01-liverpool-fulham-draw00.png` | `15310639` | settled, score named | soccer's `Draw 0-0`, verbatim |
-| `after-02-sabalenka-no-score.png` | `15304840` | settled, **no score** | 370 of 426 rows are graded on props alone: the word alone, no invented score |
+| `after-02-sabalenka-no-score.png` | `15304840` | settled, **no score** | 370 of 426 rows are graded on props alone: **the badge alone**, empty centre, no invented score |
 | `after-04-brighton-long-string-bounded.png` | `15310517` | settled, long string | `Brighton & Hove Albion wins 5-0` wrapped inside the hero |
 | `control-01-completed-final.png` | `15311023` | `completed` | `FINAL`, `Sion Win`, 5–2 — untouched, no second settled voice |
 | `control-02-upcoming-fixture.png` | `15313111` | genuinely upcoming | `In 12h 2m`, `59% – 41%` — untouched |
@@ -71,6 +75,48 @@ MORE width, never less. The fix is a finite cap (`EventDetailView.verdictSlotWid
 "makes it consistent with its siblings" cannot reintroduce it. The intermediate overflow frame is
 kept as `during-03-brighton-overflow-first-draft.png` (that one is from the pre-cap build; the
 `.infinity` frame between them was overwritten by the next shot and is recorded here, not filed).
+
+## 3b. The word was wrong, and the app itself said so
+
+The branch shipped the badge as **"Result settled"** for a day. ux's web half of this same pair —
+already on master at `98c176537` — says **"Settled"**. Same row, two tiers, two words, against
+Alex's standing *one system-wide settled language*.
+
+I had written a docstring defending the longer form: that "Settled" alone reads as a market state
+rather than a fact about the game. **The app refutes it.** `TournamentHubPresentation` already
+prints `Settled · Elena Rybakina won the title.` and `Settled · this draw is decided.` — the same
+word, the same `label · verdict` shape, the same meaning, one tap from this screen. So the outlier
+was mine, against the web twin *and* against native's own vocabulary, and the half that had not
+landed is the half that moves.
+
+**Pinned, not re-typed.** `eventStatusSingleSource.test.ts` now READS `VENUE_SETTLED_LABEL` out of
+`frontend/lib/eventState.ts` and requires the Swift literal to equal it. A second hardcoded
+`"Settled"` here would have passed happily while the tiers drifted — which is exactly what a day of
+divergence looked like. Mutation in **both** directions: Swift back to `"Result settled"` ⇒ red
+(`Expected "Settled", Received "Result settled"`); the web constant to `"Graded"` ⇒ red
+(`Expected "Graded", Received "Settled"`). The second one is the load-bearing half: it proves the
+guard reads the other tier rather than a literal that happens to match today.
+
+## 3c. The word appeared TWICE, and my own after-shot had it the first time
+
+On the no-score arm the hero printed `venueSettledLabel` in its centre slot while the badge three
+points above printed the same constant. Event `15304840` (Townsend v Sabalenka, 16 prop grades, no
+scoreline) drew **"Settled" twice on one card** — the chip, then the hero, stacked. That is the
+"two chips making one claim" shape this ship removes from Finals, reintroduced two lines down.
+
+🔴 **It was in the first after-shot too, as "Result settled" twice, and I did not see it.** The
+shorter word only made the echo louder. The defect is mine and pre-dates the rename; shortening the
+string is what made me look at the frame again.
+
+The web half had the rule right in prose the whole time: *"a settled match with NO graded score
+prints the badge alone"*. Native now does that — the centre slot is `EmptyView()`. Not `"vs"` (it
+reads as a fixture, which is the entire defect), not `"no score"` (reads as 0-0), not the word
+again. The badge carries the state, the crests carry the matchup, and the empty middle is the only
+thing there that says nothing false.
+
+The guard asserts it as a **pair**: presence of `Text(EventState.venueSettledLabel)` in
+`StatusBadge.swift`, absence of it in `EventDetailView.swift`. Either one alone permits the echo;
+together they pin "exactly once".
 
 ## 4. Two instrument findings, recorded so nobody re-pays
 
@@ -101,9 +147,10 @@ was found — running mutants without first reading the baseline would have scor
 | gate | result |
 |---|---|
 | macOS build (`native-gates.sh`) | PASS |
-| `BainLuckTests` | `Executed 2413 tests, with 0 failures (0 unexpected) in 36.878 (37.714) seconds` — sha `3b0a6caba` |
+| `BainLuckTests` | `Executed 2413 tests, with 0 failures (0 unexpected) in 36.338 (37.619) seconds` — sha `db5b0b217` |
 | recompile proof | **all 6 changed Swift files compiled in ONE run**, after `touch`ing every one of them: the first attempt printed `NOT SEEN  EventModels.swift`, because an incremental build only proves the files it happened to rebuild |
 | `frontend/__tests__/ios/eventStatusSingleSource` | 40 passed / 0 failed |
+| ux's two web-half suites, composed on this tree | `venueSettledHero6381` + `venueSettledUnfurl6381` — 63 passed / 0 failed with my change in the tree |
 | `npm run build` (ESLint gate) | exit 0 |
 | `npm run typecheck` (TS gate) | exit 0 — 70 errors, baseline 70 |
 

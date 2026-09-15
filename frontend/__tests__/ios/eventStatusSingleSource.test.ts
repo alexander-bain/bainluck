@@ -828,9 +828,19 @@ describe("#6381 — the hero stops denying a result the venue already gave us", 
     expect(settled).toBeGreaterThan(-1);
     expect(priced).toBeGreaterThan(settled);
     expect(vs).toBeGreaterThan(priced);
-    // The verbatim result, and the no-score fallback that must not invent one.
+    // The verbatim result.
     expect(code).toMatch(/Text\(result\)\s*\n\s*\.font\(\.title3\.weight\(\.bold\)\)/);
-    expect(code).toMatch(/Text\(EventState\.venueSettledLabel\)/);
+
+    // 🔴 AND THE NO-SCORE ARM SAYS NOTHING, BECAUSE THE BADGE ALREADY SAID IT.
+    // This slot used to print `venueSettledLabel`, which the badge prints too,
+    // so 370 of the 426 rows — every event graded on props with no scoreline —
+    // drew the same word twice on one card (event 15304840, caught in the
+    // after-shot). An empty middle is the honest answer: "vs" reads as a
+    // fixture, "no score" reads as 0-0, and the word again is an echo.
+    // Asserted as ABSENCE in the hero, while the badge's own copy above is
+    // asserted as PRESENCE — the pair is what pins "exactly once".
+    expect(read(BADGE)).toMatch(/Text\(EventState\.venueSettledLabel\)/);
+    expect(code).not.toMatch(/Text\(EventState\.venueSettledLabel\)/);
   });
 
   it("the verdict slot accepts any offered width, because the string is the venue's", () => {

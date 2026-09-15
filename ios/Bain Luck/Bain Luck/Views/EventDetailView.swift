@@ -883,17 +883,28 @@ struct EventDetailView: View {
                             // 370 of the issue's 426 rows are graded on props
                             // alone, so there is no score to name and inventing
                             // one from a prop is the fabricated-100% trap the
-                            // producer refuses on its own side. The neutral word
-                            // is the whole honest answer — the same shape as the
-                            // `.undecided` branch above, which prints "Final"
-                            // and no number for exactly this reason.
-                            Text(EventState.venueSettledLabel)
-                                .font(.title3.weight(.bold))
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                                .lineLimit(2)
-                                .minimumScaleFactor(0.6)
-                                .frame(maxWidth: .infinity)
+                            // producer refuses on its own side.
+                            //
+                            // 🔴 THE BADGE ALREADY SAID IT — caught in the
+                            // after-shot, not by a test. This slot first
+                            // printed `venueSettledLabel`, and the badge three
+                            // points above prints the same constant, so event
+                            // 15304840 (Townsend v Sabalenka, 16 prop grades,
+                            // no scoreline) drew the word TWICE on one card:
+                            // the chip and then the hero, stacked. That is the
+                            // "two chips making one claim" shape this ship
+                            // removes from Finals, reintroduced two lines
+                            // down. The web half of the pair had it right in
+                            // prose all along — "a settled match with NO
+                            // graded score prints the badge alone".
+                            //
+                            // So: nothing. Not "vs" (it reads as a fixture,
+                            // which is the whole defect), not "no score"
+                            // (reads as 0-0), not the word again. The badge
+                            // carries the state and the crests carry the
+                            // matchup; an empty middle is the only thing here
+                            // that says nothing false.
+                            EmptyView()
                         }
                     } else if let odds = event.currentOdds,
                               let pair = DrawPricedWinner.printablePair(
