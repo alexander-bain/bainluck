@@ -766,19 +766,37 @@ function GameMarketsGrid({
 /**
  * Parse a player stat outcome like "Derrick White: 12+" into parts.
  * Also handles "Over 218.5" / "Under 48.5" for team-level totals.
+ *
+ * #6253: THE DIRECTION WORD IS THE WHOLE ROW, SO IT IS CARRIED OUT OF HERE.
+ * `/events/15312629` served an O/U corners pair whose outcomes were the bare
+ * words `Over` and `Under` — no number, nothing else. This function matched
+ * `/^(over|under)/` and then threw the matched word away, so the two rows left
+ * the parser byte-identical and the tiles printed one constant, `Team`, twice
+ * at 51% and 50%. Nothing downstream could recover the distinction, because it
+ * had already been deleted here. `direction` is that word, kept.
  */
 function parseStatOutcome(outcomeName: string): {
   playerName: string | null;
   line: string | null;
   isTeamTotal: boolean;
+  direction: "Over" | "Under" | null;
 } {
-  // Team-level: "Over 218.5" or "Under 48.5"
-  if (/^(over|under)\b/i.test(outcomeName.trim())) {
-    const lineMatch = outcomeName.match(/([\d.]+\+?)/);
+  const trimmed = outcomeName.trim();
+  // Team-level: "Over 218.5" or "Under 48.5" — or, on the reported page, the
+  // bare word with no line at all.
+  const dirMatch = trimmed.match(/^(over|under)\b/i);
+  if (dirMatch) {
+    const lineMatch = trimmed.match(/([\d.]+\+?)/);
+    const remainder = trimmed.replace(/^(over|under)\s*/i, "").trim();
     return {
       playerName: null,
-      line: lineMatch ? lineMatch[1] : outcomeName.replace(/^(over|under)\s*/i, "").trim(),
+      // `|| null` rather than the empty string the replace returns for a bare
+      // "Over". No pixel moves — every render site already gates on falsiness
+      // and `parseThreshold("")` was already null — but `line` now MEANS
+      // "there is a line", so those gates are a fact rather than a coincidence.
+      line: lineMatch ? lineMatch[1] : remainder || null,
       isTeamTotal: true,
+      direction: dirMatch[1].toLowerCase() === "over" ? "Over" : "Under",
     };
   }
   // Player-level: "Derrick White: 12+" or "Jaylen Brown: 4+"
@@ -788,10 +806,11 @@ function parseStatOutcome(outcomeName: string): {
       playerName: outcomeName.slice(0, colonIdx).trim(),
       line: outcomeName.slice(colonIdx + 1).trim(),
       isTeamTotal: false,
+      direction: null,
     };
   }
   // Fallback: just a name or unknown
-  return { playerName: outcomeName, line: null, isTeamTotal: false };
+  return { playerName: outcomeName, line: null, isTeamTotal: false, direction: null };
 }
 
 /** Parsed stat row for display */
@@ -802,6 +821,8 @@ interface StatRow {
   marketId: number;
   outcomeName: string;
   isTeamTotal: boolean;
+  /** "Over" / "Under" for a team total — the tile's subject (#6253). */
+  direction: "Over" | "Under" | null;
   matchedPlayer?: RelatedFuture["matched_player"];
 }
 
@@ -925,6 +946,7 @@ function StatPropsSection({
       marketId: f.market_id,
       outcomeName: f.outcome_name,
       isTeamTotal: parsed.isTeamTotal,
+      direction: parsed.direction,
       matchedPlayer: f.matched_player,
     };
     const existing = groups.get(cat) || [];
@@ -1000,8 +1022,12 @@ function StatPropsSection({
                 the ones the reader is comparing. */}
             {(() => {
             const visibleRows = rows.slice(0, ROWS_PER_GROUP);
+            // #6253: a team total's subject is READ from the outcome — "Over"
+            // or "Under" — never the invented word "Team", which on an O/U
+            // corners line names a thing that does not exist and, applied to
+            // both halves of the pair, said nothing about either.
             const tileLabels = disambiguateLabels(
-              visibleRows.map((r) => r.playerName || (r.isTeamTotal ? "Team" : "—")),
+              visibleRows.map((r) => r.playerName || r.direction || "—"),
             );
             return (
             <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide">
@@ -1099,7 +1125,7 @@ function StatPropsSection({
                         either way, so nothing the tile drops is unrecoverable. */}
                     <div
                       className="text-[11px] font-semibold text-text-primary truncate leading-tight"
-                      title={row.playerName || (row.isTeamTotal ? "Team" : undefined)}
+                      title={row.playerName || row.outcomeName || undefined}
                     >
                       {tileLabels[rowIndex]}
                     </div>
