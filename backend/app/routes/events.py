@@ -13498,6 +13498,56 @@ def _settled_over_probability(
     return 1.0 if over_won else 0.0
 
 
+def _settled_over_verdict(
+    grade: dict,
+    inverted: bool,
+    market_has_a_winner: bool,
+) -> dict:
+    """The served over-axis GRADE for a rung built from an UNDER leg (#6239).
+
+    🔴 A ROW NORMALISED ONTO THE OVER AXIS IS GRADED ON THE OVER AXIS. The two
+    keys `_settled_grade_fields` returns describe the leg the database row came
+    from; `over_probability` four lines up describes the OVER. Serving them
+    side by side leaves a half-inverted row: on `/events/14637256` (Cowboys 20
+    @ Giants 28, Final 48 points) the 52.5 rung read `over_probability: 0.0`
+    with `is_winner: true` and `resolution_source: poly_total_score` — a 0%
+    over that won, on a line the game never came near. This mirrors
+    `_settled_over_probability` exactly, key for key, so the number and the
+    verdict can never again disagree about which side of the line they mean.
+
+    The unprovable branch is the one that has to be a WITHHOLDING and not an
+    inversion, for `_verdict_is_provable`'s own reason: on a voided market the
+    venue grades every leg a loser, so flipping a losing Under there would
+    publish `is_winner: true` — a fabricated 100% nobody earned — under a price
+    the sibling helper correctly leaves as a leftover quote. Below the verdict
+    tier the same holds: a tier-1 retraction is not a grade to invert.
+
+    🔴 THAT BRANCH NULLS THE VERDICT AND KEEPS THE SOURCE, which is a third
+    shape `_settled_grade_fields` never returns, and it is deliberate: the
+    grade is REAL — the venue graded this leg — it simply does not decide the
+    over. Both readers are already right for that statement. The client rule
+    (`outcomeRowVerdict`, #4788) refuses on `is_winner == null` before it ever
+    looks at the source, so nothing prints. And `resolution_source` is what the
+    #1588 window filter ~900 lines below reads to tell a settled row from a
+    stale quote: dropping it would take a voided period rung off the ladder
+    entirely — a disappearance this repair never argued for and the opposite
+    direction from #6196, which exists to keep a settled ladder's losing rungs
+    on the page. `test_a_lone_losing_leg_with_no_winner_anywhere_keeps_its_price`
+    (#6169) is the row that measured it.
+
+    A non-inverted row is returned untouched: its leg and its axis are the same
+    statement, which is why this only ever binds an Under.
+    """
+    if not inverted:
+        return grade
+    if not _verdict_is_provable(grade, market_has_a_winner):
+        return {"is_winner": None, "resolution_source": grade["resolution_source"]}
+    return {
+        "is_winner": not grade["is_winner"],
+        "resolution_source": grade["resolution_source"],
+    }
+
+
 def _grade_settled_prop(event_finished, ctx, market, outcome, threshold, is_under) -> dict:
     """Compute {actual, hit, is_winner, resolution_source} for a settled prop.
 
@@ -14951,19 +15001,25 @@ async def _build_game_markets(
                 # that won lands at 0.0. Applied HERE, at bucket-build, so every
                 # downstream pass — dedup, the sport-range guard, monotonicity —
                 # sees the answer rather than the leftover.
+                #
+                # #6239 — AND THE VERDICT TAKES THE SAME AXIS AS THE NUMBER.
+                # `_inverted` is computed ONCE and handed to both helpers on
+                # purpose: the half-inverted row this repairs existed because
+                # the price was normalised here and the grade was spread raw.
                 _grade = _settled_grade_fields(market, o)
+                _inverted = bool(is_under and not is_over)
+                _market_settled = market.id in markets_with_a_winner
                 totals_thresholds.append({
                     "threshold": threshold,
                     "over_probability": _settled_over_probability(
-                        _grade, bool(is_under and not is_over), round(over_prob, 4),
-                        market.id in markets_with_a_winner,
+                        _grade, _inverted, round(over_prob, 4), _market_settled,
                     ),
                     "source": market.source,
                     "market_type": market_type,
                     "market_name": market.name,
                     "outcome_name": o.name,
                     "observed_at": _observed(o),
-                    **_grade,
+                    **_settled_over_verdict(_grade, _inverted, _market_settled),
                     "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                         if o.opening_probability is not None and o.current_probability is not None else None,
                     "period": market_period,
