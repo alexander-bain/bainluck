@@ -22,6 +22,7 @@ Three properties carry the whole thing and each is guarded here:
   alone. The manifest is the discriminator; there is deliberately no
   `--allow-small`.
 """
+import ast
 import collections
 import importlib.util
 import pathlib
@@ -458,12 +459,91 @@ def test_an_empty_reconciliation_is_not_a_clean_backup():
     assert repair.backup_is_exact({"futures_outcomes": 1}) is False
 
 
-def test_a_small_plan_names_which_of_its_two_causes_happened():
+def test_a_small_plan_names_which_of_its_three_causes_happened():
     assert repair.explain_small_plan(repair.SANITY_FLOOR, 0) == ""
     drained = repair.explain_small_plan(5, repair.SANITY_FLOOR)
     assert drained.startswith("ALREADY APPLIED")
     broke = repair.explain_small_plan(5, 0)
     assert broke.startswith("FILTER BROKE")
+    producer = repair.explain_small_plan(632, 0, 1410)
+    assert producer.startswith("PRODUCER GOT THERE FIRST")
+
+
+def test_the_producer_branch_never_outranks_the_manifest():
+    """A run that applied rows AND saw re-grades is still ALREADY APPLIED.
+
+    The manifest is the stronger statement — it is a record of this script's own
+    successful writes — so it is read first. Two true explanations printed as one
+    is how a later reader learns the wrong thing about what happened.
+    """
+    both = repair.explain_small_plan(5, repair.SANITY_FLOOR, 999)
+    assert both.startswith("ALREADY APPLIED")
+    # And below the floor the manifest is still part of the sum, not ignored in
+    # favour of the newer number: 5 + 600 + 700 clears it, 5 + 700 does not.
+    mixed = repair.explain_small_plan(5, 600, 700)
+    assert mixed.startswith("PRODUCER GOT THERE FIRST")
+    assert "600" in mixed and "700" in mixed
+
+
+def test_the_producer_branch_does_not_blunt_the_floor():
+    """The 2H-only regression must still STOP, re-grades or not.
+
+    The teeth are kept by where the number comes from: `regraded_rows` is
+    counted over the SAME candidate scan as the clears, so a scan that narrowed
+    takes both down together. A narrowing that leaves 248 clearable cannot
+    conjure 1,000 re-grades out of rows it no longer selects — but the assertion
+    that matters is that a SHORT total still fails, whatever the split.
+    """
+    assert repair.explain_small_plan(248, 0, 0).startswith("FILTER BROKE")
+    assert repair.explain_small_plan(248, 0, 100).startswith("FILTER BROKE")
+    # And the boundary is the floor itself, not a fudge above it.
+    just_short = repair.explain_small_plan(248, 0, repair.SANITY_FLOOR - 249)
+    assert just_short.startswith("FILTER BROKE")
+    exactly = repair.explain_small_plan(248, 0, repair.SANITY_FLOOR - 248)
+    assert exactly.startswith("PRODUCER GOT THERE FIRST")
+
+
+def test_the_producer_branch_is_measured_and_not_a_flag():
+    """`regraded_count` reads the classifier's own output, keyed on the constant.
+
+    A substring test against the printed prose would zero the branch the next
+    time someone rewords the message, and the branch failing OPEN reads as
+    "the filter broke" — the exact false alarm this was added to remove.
+    """
+    refuse = [
+        {"refuse_reason": repair.REGRADED_REASON},
+        {"refuse_reason": repair.REGRADED_REASON},
+        {"refuse_reason": "the bug does not explain the stored verdict — "
+                          "a DIFFERENT defect"},
+        # The near-miss that makes the exact match load-bearing: a MARKET-level
+        # refusal is free to mention a re-grade, and a substring test would
+        # count it toward the floor. That is a refusal counted as a success.
+        {"refuse_reason": "market cannot be re-graded while this leg stands"},
+        {},
+    ]
+    assert repair.regraded_count(refuse) == 2
+    assert repair.regraded_count([]) == 0
+
+
+def test_the_run_report_feeds_the_measured_count_into_the_floor():
+    """The branch is only real if the call site passes the number.
+
+    `run()` needs a database, so no unit test reaches it — and a two-argument
+    call there restores the old behaviour exactly while every test above still
+    passes. Asserted on the syntax tree rather than a substring so reformatting
+    does not silently retire the check.
+    """
+    tree = ast.parse((_SCRIPTS /
+                      "repair_5221_second_half_graded_from_the_first_quarter.py"
+                      ).read_text())
+    calls = [n for n in ast.walk(tree)
+             if isinstance(n, ast.Call)
+             and getattr(n.func, "id", None) == "explain_small_plan"]
+    assert len(calls) == 1, "one call site expected"
+    assert len(calls[0].args) + len(calls[0].keywords) == 3, (
+        "explain_small_plan must be called with the measured re-grade count; "
+        "a two-argument call reinstates the FILTER BROKE false alarm"
+    )
 
 
 def test_there_is_no_override_flag_for_the_sanity_floor():
@@ -745,8 +825,17 @@ def _every_refusal():
     yield "no grader", _legs(
         ticker="KXNBA1HSPREAD-26MAR18PORIND", names=["a name nothing parses"],
         stored=[False], **base)
-    yield "a different defect", _legs(
+    # Portland took the real 1H by 17, so "over 5.5" stored TRUE is what the
+    # FIXED producer writes. The bug (Portland by 4) does not explain it, and
+    # that used to be the only thing this bucket asked.
+    yield "already re-graded correctly", _legs(
         ticker="KXNBA1HSPREAD-26MAR18PORIND", names=name, stored=[True], **base)
+    # Neither reading explains it: Indiana LOST the 1H by 17 and the quarter by
+    # 4, and is stored winning it. #5237's real shape, and the row the 1,410
+    # producer re-grades were burying.
+    yield "a different defect", _legs(
+        ticker="KXNBA1HSPREAD-26MAR18PORIND",
+        names=["Indiana wins the 1H by over 1.5 points"], stored=[True], **base)
     # CERT-2642's survivor: clearable legs AND a TRUE the bug cannot explain, so
     # the market is refused whole rather than cleared behind a standing blocker.
     yield "a surviving TRUE locker", _legs(
@@ -772,19 +861,74 @@ def test_every_refusal_carries_a_stated_reason():
 
 
 def test_the_refusal_paths_are_distinguishable_from_each_other():
-    """Seven paths, seven reasons — a shared string merges two defects into one bucket.
+    """Eight paths, eight reasons — a shared string merges two defects into one bucket.
 
     6 -> 7 (CERT-2642): the surviving TRUE `game_score` locker. It is a distinct
     refusal from "a different defect" even though that is what puts the leg in
     the cohort — this one is about the MARKET being unrepairable, and reporting
     them under one string would hide which markets are merely observed from
     which are refused whole.
+
+    7 -> 8 (2026-09-15): "the bug did not write it" turned out to be TWO
+    populations once the producer fix started landing — a row it has since put
+    RIGHT, and a row nothing explains. Measured on production the same morning
+    they were 1,410 and 4, reported as one number of 1,439. Splitting them is
+    the same principle that produced #5237 in the first place.
     """
     reasons = set()
     for _label, legs in _every_refusal():
         _c, _u2, _s, refuse = repair.classify(legs)
         reasons.add(refuse[0]["refuse_reason"])
-    assert len(reasons) == 7, reasons
+    assert len(reasons) == 8, reasons
+
+
+def test_the_producers_own_correct_verdict_is_told_apart_from_a_real_defect():
+    """One market, two rows the bug cannot explain, and only ONE is a defect.
+
+    The production shape, 2026-09-15: Portland took the real 1H 79-62 and the
+    first quarter 37-33. "Portland by over 5.5" stored TRUE is the fixed
+    producer's own verdict arriving. "Indiana by over 1.5" stored TRUE is
+    #5237 — Indiana lost the half by 17 and the quarter by 4.
+
+    Before the split both printed as "a DIFFERENT defect" and the run reported
+    1,439 refusals of which 4 were real. A reader of that number looks for a
+    defect in a bucket that is 98% success.
+    """
+    base = {k: v for k, v in PORIND_1H_SPREAD.items()
+            if k in ("home", "away", "final", "periods")}
+    legs = _legs(ticker="KXNBA1HSPREAD-26MAR18PORIND",
+                 names=["Portland wins the 1H by over 5.5 points",
+                        "Indiana wins the 1H by over 1.5 points"],
+                 stored=[True, True], **base)
+    clear, _unlock, _spare, refuse = repair.classify(legs)
+    assert clear == []
+    by_name = {leg["outcome_name"]: leg["refuse_reason"] for leg in refuse}
+    assert by_name["Portland wins the 1H by over 5.5 points"] == \
+        repair.REGRADED_REASON
+    assert "DIFFERENT defect" in by_name["Indiana wins the 1H by over 1.5 points"]
+    assert repair.regraded_count(refuse) == 1
+
+
+def test_splitting_the_bucket_changes_no_market_level_decision():
+    """A re-graded TRUE still blocks its market, because it is still a blocker.
+
+    The split is a REPORTING and FLOOR change. `is_winner IS TRUE` on a
+    `game_score` row keeps the market out of the producer's scan whether the
+    verdict is right or wrong, so CERT-2642's survivor refusal has to fire on
+    it exactly as before — otherwise this change clears legs behind a standing
+    blocker, which is the bug CERT-2631 and CERT-2642 were both written for.
+    """
+    legs = _legs(**{**PORIND_1H_SPREAD,
+                    "names": PORIND_1H_SPREAD["names"]
+                             + ["Portland wins the 1H by over 5.5 points"],
+                    "stored": PORIND_1H_SPREAD["stored"] + [True]})
+    clear, unlock, spare, refuse = repair.classify(legs)
+    assert clear == [] and unlock == [] and spare == []
+    assert len(refuse) == len(legs)
+    assert repair.regraded_count(refuse) == 0, (
+        "a whole-market refusal overwrites every leg's reason with the market's, "
+        "so the re-grade label must not survive it and inflate the floor"
+    )
 
 
 def test_a_missing_linescore_refuses_rather_than_being_skipped():
