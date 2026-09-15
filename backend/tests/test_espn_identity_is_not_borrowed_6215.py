@@ -492,3 +492,199 @@ class TestTheClearCoversWhatAReaderSees:
         source = inspect.getsource(espn_sync._cleanup_bad_espn_matches)
         assert "team.espn_id = None" in source
         assert "clear_espn_sourced_identity(team)" in source
+
+
+# =============================================================================
+# CERT-2881 — the shared-token rival class, over BOTH rails.
+#
+# The BLOCK, in one line: both the writer's admission and the repair's selection
+# reused the house `names_match`, and `names_match` is a RECALL instrument whose
+# stage 3 accepts any pair with >=0.5 token overlap. So the guard that exists to
+# stop a club wearing another club's ESPN identity accepted Manchester United's
+# row as Manchester City, and the repair built to clean that up classified the
+# stored borrowed location as legitimate. A guard and a repair that are both
+# wrong in the same direction leave the defect untouched and look correct.
+#
+# The pairs below are not invented. Every "must refuse" line is True under
+# `names_match` today; every "must keep" line is a real row from the 1,000-row
+# holdout measured 2026-09-14.
+# =============================================================================
+
+# Deferred exactly like the module-scope helpers above, and for the same reason
+# this file records at line 64: a control that dies at IMPORT proves only that a
+# symbol is new. `shared_token_rivals` does not exist on the parent commit, so a
+# module-level import here would turn every witness below into exit 2 instead of
+# the failing VALUE that shows the defect.
+
+
+def shared_token_rivals(*args):
+    from app.utils.name_normalization import shared_token_rivals as _impl
+
+    return _impl(*args)
+
+
+def names_match(*args):
+    from app.utils.name_normalization import names_match as _impl
+
+    return _impl(*args)
+
+
+def _location_corresponds(*args):
+    from scripts.repair_6215_borrowed_espn_identity import (
+        location_corresponds as _impl,
+    )
+
+    return _impl(*args)
+
+
+# Pairs the house matcher accepts and that are DIFFERENT CLUBS.
+_RIVALS = [
+    ("Manchester United", "Manchester City"),
+    ("Manchester City", "Manchester United"),
+    ("Real Madrid", "Real Sociedad"),
+    ("New York Jets", "New York Giants"),
+    ("Los Angeles Lakers", "Los Angeles Clippers"),
+    ("Inter Milan", "AC Milan"),
+    ("Qarabag FK", "Viking FK"),
+    ("Morehead State", "Illinois State"),
+]
+
+# Pairs that are ONE club spelled two ways and must survive the veto. Each is a
+# shape that broke an earlier draft of the rule, and each is a real row from the
+# 1,000-row holdout.
+#
+# 🔴 THE TWO RAILS DISAGREE ABOUT SOME OF THESE, AND THE SPLIT IS THE POINT.
+# `names_match("Duke Blue Devils", "Duke")` is FALSE — it refuses prefix
+# containment on purpose — so on the WRITER rail those pairs never reach the
+# veto at all; they are carried on the repair rail's own prefix arm. Asserting
+# them through `espn_identity_corresponds` would be asserting pre-existing
+# behaviour this change does not touch, and it would go red for a reason that
+# has nothing to do with the veto. So `_SAME_CLUB_BOTH_RAILS` is the subset the
+# house matcher accepts, and the prefix-only shapes are pinned on the repair
+# rail alone.
+_SAME_CLUB_BOTH_RAILS = [
+    ("Seattle Seahawks", "Seattle Seahawks"),           # identical
+    ("Leeds United", "Leeds United"),                   # identical
+    ("Kansas St Wildcats", "Kansas State"),             # St / State abbreviation
+    ("Michigan St Spartans", "Michigan State"),         # St / State abbreviation
+    ("New York Red Bulls", "Red Bull New York"),        # word order + plural
+    ("Hobart Statesmen", "Hobart College"),             # institution-type word
+    ("Johns Hopkins Blue Jays", "Johns Hopkins University"),
+    ("Athletic Bilbao", "Athletic Club"),               # institution-type word
+    ("Nottingham Forest", "Nottm Forest"),              # truncation, drops the MIDDLE
+]
+
+#: One club, but a pair the house matcher declines — repair rail only.
+_SAME_CLUB_REPAIR_RAIL_ONLY = [
+    ("Duke Blue Devils", "Duke"),                       # mascot suffix
+    ("Evansville Purple Aces", "Evansville"),           # mascot suffix
+    ("Seattle Seahawks", "Seattle"),                    # city prefix, the US norm
+    ("SE Missouri St Redhawks", "Southeast Missouri State"),
+]
+
+
+class _Payload:
+    """The ESPN team shape `upsert_team` is handed."""
+
+    def __init__(self, display_name=None, name=None, short_name=None,
+                 nickname=None, location=None, abbreviation=None, record=None):
+        self.display_name = display_name
+        self.name = name
+        self.short_name = short_name
+        self.nickname = nickname
+        self.location = location
+        self.abbreviation = abbreviation
+        self.record = record
+
+
+@pytest.mark.parametrize("ours,theirs", _RIVALS)
+def test_shared_token_rivals_never_share_espn_identity_6215(ours, theirs):
+    """🔴 THE CERT-2881 SHIP, asserted on both rails from one table.
+
+    The `names_match` assertion is not decoration: it pins that each pair really
+    is one the house matcher accepts, so if `names_match` is ever tightened this
+    test says so instead of passing vacuously on pairs that no longer reach the
+    veto at all.
+    """
+    assert names_match(ours, theirs), (
+        f"{ours!r}/{theirs!r} is no longer a names_match pair — this row has "
+        "stopped testing the defect and must be re-chosen"
+    )
+    assert shared_token_rivals(ours, theirs)
+
+    # Rail 1 — the WRITER. Their club-naming field carries the rival's name.
+    assert not espn_identity_corresponds(
+        ours, None, _Payload(display_name=theirs, name=theirs)
+    ), f"upsert would stamp {theirs!r}'s ESPN identity onto {ours!r}"
+
+    # Rail 2 — the REPAIR's selection.
+    assert not _location_corresponds(ours, theirs), (
+        f"the repair calls {ours!r} wearing {theirs!r}'s location legitimate, "
+        "so it would skip the very rows it exists to clean"
+    )
+
+
+@pytest.mark.parametrize(
+    "ours,theirs", _SAME_CLUB_BOTH_RAILS + _SAME_CLUB_REPAIR_RAIL_ONLY
+)
+def test_a_legitimate_alias_survives_the_rival_veto_6215(ours, theirs):
+    """The control. A veto that refuses everything would pass the test above.
+
+    Each pair is one club spelled two ways, and on the repair rail a false
+    refusal is not a missing crest — it is a destructive UPDATE clearing a real
+    club's identity. The naive form of this rule failed 86 of these.
+    """
+    assert not shared_token_rivals(ours, theirs)
+    assert _location_corresponds(ours, theirs), (
+        f"the repair would CLEAR {ours!r}, a real club, because its location "
+        f"reads {theirs!r}"
+    )
+
+
+@pytest.mark.parametrize("ours,theirs", _SAME_CLUB_BOTH_RAILS)
+def test_a_legitimate_alias_still_enriches_on_the_writer_rail_6215(ours, theirs):
+    """...and the writer still adopts it, for the pairs that reach the veto."""
+    assert names_match(ours, theirs), (
+        f"{ours!r}/{theirs!r} no longer reaches the veto on the writer rail — "
+        "move it to _SAME_CLUB_REPAIR_RAIL_ONLY rather than deleting it"
+    )
+    assert espn_identity_corresponds(
+        ours, None, _Payload(display_name=theirs, name=theirs)
+    ), f"{ours!r} would lose its ESPN identity to the rival veto"
+
+
+def test_the_city_alone_can_never_establish_identity_6215():
+    """The hole the rival rule cannot close, and the reason `location` is special.
+
+    Manchester City's payload carries `location = "Manchester"`, and `Manchester`
+    sits inside `Manchester United` with nothing left over — a strict subset, not
+    a rival, so no token-rivalry test can refuse it. If the city is allowed to
+    vouch by containment, United's row takes City's badge however good the rule
+    above it is.
+    """
+    city_only = _Payload(location="Manchester")
+    assert not espn_identity_corresponds("Manchester United", None, city_only)
+    assert not espn_identity_corresponds("Manchester City", None, city_only)
+
+    # ...but an exact city field still corroborates, which is how ESPN spells
+    # several clubs, and the club-naming fields still answer first for the
+    # ordinary US shape.
+    assert espn_identity_corresponds(
+        "Leeds United", None, _Payload(location="Leeds United")
+    )
+    assert espn_identity_corresponds(
+        "Seattle Seahawks", None,
+        _Payload(display_name="Seattle Seahawks", location="Seattle"),
+    )
+
+
+def test_the_veto_only_refuses_and_never_admits_6215():
+    """`shared_token_rivals` is a veto, not a matcher.
+
+    Two names with no shared token are not its question — answering True there
+    would make it a second, disagreeing matcher, which is the failure ruling 048
+    exists to end.
+    """
+    assert not shared_token_rivals("Fluminense", "Arsenal")
+    assert not shared_token_rivals("", "Manchester City")
+    assert not shared_token_rivals("Manchester City", None)

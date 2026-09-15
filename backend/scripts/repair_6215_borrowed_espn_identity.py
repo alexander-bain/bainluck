@@ -111,7 +111,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.tasks.espn_sync import ESPN_SOURCED_IDENTITY_FIELDS  # noqa: E402
-from app.utils.name_normalization import names_match, normalize_name  # noqa: E402
+from app.utils.name_normalization import (  # noqa: E402
+    names_match,
+    normalize_name,
+    shared_token_rivals,
+)
 
 #: The app whose deploy carries the writer fix. ESPN sync runs on the main app.
 PRODUCER_APP = "bainluck"
@@ -168,6 +172,21 @@ def location_corresponds(name, location) -> bool:
     if not name or not location:
         # Nothing to compare is not evidence of a lie — see `identity_is_borrowed`.
         return True
+    # 🔴 CROSS-TOWN RIVALS FIRST, BEFORE EITHER ACCEPTANCE (#6215, CERT-2881).
+    # `names_match("Manchester City", "Manchester United")` is True, so without
+    # this veto a City row wearing United's location was classified CLEAN and the
+    # repair skipped exactly the rows it exists for. The prefix arm below is no
+    # help either: the two share a leading word.
+    #
+    # THE VETO'S COST HAD TO BE MEASURED ON *THIS* RAIL AND IT DID NOT TRANSFER
+    # FROM THE WRITER'S. The same rule costs the writer ONE row in 1,000; here
+    # the naive form cost 86 — `Kansas St Wildcats` vs `Kansas State`,
+    # `New York Red Bulls` vs `Red Bull New York` — which on a rail that holds a
+    # destructive UPDATE is real clubs losing their identity. Both relief clauses
+    # inside `shared_token_rivals` exist because of that measurement. Final cost
+    # here: 19 of 1,000, of which 17 read as genuine borrowed identities.
+    if shared_token_rivals(name, location):
+        return False
     if names_match(name, location):
         return True
     ours = normalize_name(name).split()
