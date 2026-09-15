@@ -14540,6 +14540,111 @@ async def _rebuild_game_markets(event_id: int) -> None:
         )
 
 
+def linked_market_sport_filter(event_sport_id, expected_category, market_event_ids):
+    """The cross-sport safety net for markets read off a FOLDED set of rows.
+
+    #6221 follow-up (`6221-CROSS-KEY-FOLDED-MARKET-ROUTING`). Pure: no DB, no
+    clock. Returns the SQLAlchemy condition `_build_game_markets` ANDs onto its
+    linked-market query, or `None` when the event carries no sport to net
+    against.
+
+    ── WHY THIS GREW A SECOND SPORT ID ──
+
+    The net has always asked "does this market's sport match THE EVENT's sport",
+    which was a complete question for exactly as long as a fold could not cross a
+    sport key. #6221 ended that: `soccer_ghost_twins` now pairs a `soccer_other`
+    ghost with a `soccer_korea_kleague1` canonical, and `folded_event_ids` hands
+    this query the ghost's id. So for every cross-key fold the first clause is
+    false BY CONSTRUCTION — the ghost's markets carry the ghost's `sport_id`,
+    which is the one sport this net was comparing against and rejecting.
+
+    That left the second clause, `llm_sport_category == expected_category`,
+    carrying the fold on its own for the first time. It holds on today's
+    population — 2,865 folded soccer markets, 2,865 `soccer`, 0 null, 0 other,
+    measured on #6221 — and that is a census, not a contract. The row it cannot
+    survive is the ordinary one: `llm_sport_category IS NULL` with the ghost's
+    `sport_id` set. First clause false (wrong sport id), second false (NULL is
+    not `soccer`), third false (the id is not null), so the market is dropped and
+    the reader gets the fixture page #6221 exists to repair with nothing on it.
+    Nothing warns; the fold still "works".
+
+    So the net now asks the question the fold already answered: does this
+    market's sport match **any row we have PROVEN is this fixture**. A market on
+    a proven duplicate is not a cross-sport mislink — identity was settled at the
+    write side (`event_registry._proven_duplicates`), and re-litigating it here
+    with a field guaranteed to differ is the reader re-deciding what the writer
+    decided, which is the second-matcher failure ruling 048 exists to end.
+
+    Deliberately NOT widened further. The net is not dropped for folded rows:
+    a genuinely foreign market (a baseball `sport_id`, or a `baseball`
+    `llm_sport_category`) is still refused, because its sport is in neither the
+    canonical's nor any folded row's. The folded sports are a closed set of at
+    most a handful of ids that the fold itself produced, so this cannot admit an
+    arbitrary sport — which is what separates it from "drop the sport key
+    entirely", the broad relaxation #6221 already rejected once.
+
+    ── WHY A SUBQUERY AND NOT A SECOND ROUND TRIP ──
+
+    The obvious shape is to SELECT the folded rows' sport ids and pass the list
+    in. It costs a second `db.execute`, and that is not free here: every
+    mock-backed suite over this route feeds `db.execute` an ordered
+    `side_effect`, so one extra call shifts every later result by one and
+    MagicMocks surface in arithmetic far downstream. Measured before this was
+    written: 63 failures across 11 files, not one of them about sport. A
+    subquery asks the same question inside the one round trip the route already
+    makes, so the call sequence is unchanged and the server does the join.
+    """
+    if not event_sport_id or not expected_category:
+        return None
+
+    sport_arms = [FuturesMarket.sport_id == event_sport_id]
+    # Only when there IS a fold. For an unfolded event `market_event_ids` is
+    # `[event_id]`, so the subquery could only return the sport already compared
+    # against on the line above, and the statement compiles to what it did
+    # before #6221.
+    if market_event_ids is not None and len(market_event_ids) > 1:
+        sport_arms.append(
+            FuturesMarket.sport_id.in_(
+                select(Event.sport_id).where(Event.id.in_(market_event_ids))
+            )
+        )
+
+    return or_(
+        *sport_arms,
+        FuturesMarket.llm_sport_category == expected_category,
+        and_(
+            FuturesMarket.sport_id.is_(None),
+            FuturesMarket.llm_sport_category.is_(None),
+        ),
+    )
+
+
+async def folded_market_read_filters(db, event_id, event_sport_id, expected_category):
+    """Every WHERE term `_build_game_markets` reads its linked markets under.
+
+    Returns `(market_event_ids, filters)`. One function owns the whole decision
+    — which rows to read from, and which of their markets the sport net admits —
+    because the two halves are one question and splitting them is how a guard
+    ends up pinning the net while the id set it nets over goes untested. The
+    route is a thin caller so that the gate exercises what ships.
+    """
+    from app.utils.proven_duplicates import folded_event_ids
+
+    market_event_ids = await folded_event_ids(db, event_id)
+    filters = [FuturesMarket.event_id.in_(market_event_ids)]
+
+    # One `db.execute` for the whole decision — the folded rows' sports ride in
+    # as a subquery rather than a second round trip. See
+    # `linked_market_sport_filter` for why that is load-bearing and not a
+    # micro-optimisation.
+    sport_net = linked_market_sport_filter(
+        event_sport_id, expected_category, market_event_ids,
+    )
+    if sport_net is not None:
+        filters.append(sport_net)
+    return market_event_ids, filters
+
+
 async def _build_game_markets(
     event_id: int,
     db: AsyncSession,
@@ -14592,24 +14697,13 @@ async def _build_game_markets(
     # `[event_id]`, so an untagged event compiles to the identical query it had
     # before. Nothing is merged, deleted or repointed — see
     # `utils/proven_duplicates.py`.
-    from app.utils.proven_duplicates import folded_event_ids
-
-    market_event_ids = await folded_event_ids(db, event_id)
-    linked_filters = [FuturesMarket.event_id.in_(market_event_ids)]
-    if event.sport_id and expected_category:
-        # Safety net: only show markets whose sport matches the event's sport.
-        # Uses OR(sport_id match, llm_sport_category match, both NULL) to avoid
-        # dropping markets with incomplete metadata while still blocking cross-sport.
-        linked_filters.append(
-            or_(
-                FuturesMarket.sport_id == event.sport_id,
-                FuturesMarket.llm_sport_category == expected_category,
-                and_(
-                    FuturesMarket.sport_id.is_(None),
-                    FuturesMarket.llm_sport_category.is_(None),
-                ),
-            )
-        )
+    # Safety net: only show markets whose sport matches this fixture's — where
+    # "this fixture" is every row the fold has proven to BE it, not just this
+    # one. See `linked_market_sport_filter` for why the second id became
+    # load-bearing at #6221.
+    market_event_ids, linked_filters = await folded_market_read_filters(
+        db, event_id, event.sport_id, expected_category,
+    )
     linked_query = select(FuturesMarket).where(*linked_filters)
     market_result = await db.execute(linked_query)
     markets = list(market_result.scalars().all())
