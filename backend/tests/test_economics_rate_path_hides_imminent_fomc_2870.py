@@ -477,3 +477,72 @@ class TestAPastMeetingStillLeavesTheCard:
         ]
         fed = await _fed(pool)
         assert 99003 not in _ids(fed)
+
+
+# ---------------------------------------------------------------------------
+# Follow-up: the section's COUNT and its render gate use the restored set
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestTheSectionCountsWhatItRenders:
+    """Found by CERT-2899's grader against the first sha, and fixed here.
+
+    `themes.fed.count` was `len(fed_markets)` — the post-exclusion theme list —
+    so a ladder restored to the heatmap was drawn as a column and then not
+    counted. The payload could report `count: 3` beside six rendered meetings.
+
+    ⚠️ The second consequence is the one that matters, and it is not cosmetic.
+    `app/economics/page.tsx` gates the WHOLE Federal Reserve section on
+    `t.fed && t.fed.count > 0`. A fed theme whose only members were
+    confidence-excluded ladders yields 0 and hides a section that has columns
+    to draw — the same class as the bug this card was just repaired for, a
+    surface keyed on a set that is not the set it renders.
+
+    It was latent, not live: production `count` read 49, held clear of zero by
+    the three non-extreme 2027 controls. Fixed rather than filed because the
+    distance between latent and live here is one quiet quarter in which the
+    2027 ladders also shorten.
+    """
+
+    async def test_the_count_includes_the_restored_ladders(self):
+        fed = await _fed(_production_pool())
+        assert fed["count"] == 6, (
+            "the card renders six meetings; the section counted only the three "
+            "that were never excluded"
+        )
+
+    async def test_a_section_of_only_restored_ladders_does_not_report_zero(self):
+        """The render-gate case, stated as the page's own condition. Under the
+        parent this is `count == 0` with one heatmap column published, i.e. the
+        section disappears with content in it."""
+        fed = await _fed(
+            [_ladder(109984, "Fed funds rate after Sep 2026 meeting?", _SEP_2026_RUNGS)]
+        )
+        assert len(fed["fomc_meetings"]) == 1
+        assert fed["count"] > 0, (
+            "the page gates the section on `count > 0`, so this hides a "
+            "Federal Reserve section that has a column to draw"
+        )
+
+    async def test_a_market_in_both_lists_is_counted_once(self):
+        """A union, not a sum: the three 2027 ladders are in `fed_markets` AND
+        in the heatmap source. A `+` here would report 9 for 6 markets."""
+        fed = await _fed(_production_pool())
+        assert fed["count"] == len({m.id for m in _production_pool()})
+
+    async def test_non_ladder_fed_markets_are_still_counted(self):
+        pool = _production_pool() + [
+            _binary(99001, "Fed emergency rate cut before 2027?", 0.42),
+        ]
+        fed = await _fed(pool)
+        assert fed["count"] == 7
+
+    async def test_a_past_meeting_is_not_counted(self):
+        """The count must not become a second way for a retired meeting to
+        register on the page."""
+        pool = _production_pool() + [
+            _ladder(110060, "Fed funds rate after Jul 2026 meeting?", _SEP_2026_RUNGS),
+        ]
+        fed = await _fed(pool)
+        assert fed["count"] == 6
