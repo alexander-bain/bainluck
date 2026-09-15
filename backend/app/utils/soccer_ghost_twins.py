@@ -417,13 +417,48 @@ Zero of nineteen. The direction rule refuses the whole population by
 construction, and it is right to: it is the rule that makes the card ship
 precise. So this pass does not touch it — it asks its own question alongside it.
 
-The reader-visible half, and the specimen this pass is measured on:
-``/events/15186733`` is Waterford FC 3-1 Bohemians, Final, League of Ireland,
-StatPal-anchored, and ``/api/events/15186733/game-markets`` serves **0 totals,
-0 spreads, 0 other** — hero, chart, then nothing. ``15186691`` is the same two
-clubs in the same competition 19 hours earlier, ``closed``, no score, no fixture
-id, and serves **9 totals, 8 spreads and 29 other**. Forty-six settled markets,
-on a page no reader has any reason to open.
+The reader-visible half, and the specimen this pass is measured on: ``14959571``
+is **AS Roma 4-0 Fiorentina**, Serie A, 2026-08-24, ESPN ``401874928`` — and it
+has **zero linked markets**. ``14968103`` is the same two clubs in the same
+competition 53 hours earlier, ``closed``, no score, no fixture id, holding
+**28 Polymarket markets**. A marquee Serie A result whose prices are all on a
+row nobody opens (notice 27).
+
+🔴 **"SERVES NOTHING" IS MEASURED ON THE LINKED-MARKET COUNT, NOT ON THE SERVED
+PAYLOAD, AND THAT IS NOT A SHORTCUT.** ``_build_game_markets`` assembles its
+whole rail from ``FuturesMarket`` rows whose ``event_id`` is in
+``folded_event_ids``, and returns the empty ``{"totals": [], "spreads": [],
+"other": [], …}`` body the moment that set is empty. So a linked count of zero
+IS the early return — it is the builder's own input, not a proxy for it.
+
+Reading the payload instead would have been wrong, and was. On 2026-09-15 nine
+of the eleven canonicals below served a full rail — 38 to 83 markets — while
+holding zero linked rows. Two consecutive reads returned the identical
+``created_at`` (the L1 in-process memo; the Redis entry is fresh for
+``FRESH_TTL_FINAL`` = 3600 s on a final game), so the cache cannot be made to
+rebuild from outside and "the page looks fine" is unfalsifiable from there.
+
+What settles it is tracing one served market rather than arguing about the
+cache. ``/api/events/14961230/game-markets`` serves ``_market_id 58728702``,
+Atalanta vs Sassuolo: Total Goals, ``observed_at`` 2026-09-13T12:47Z — and that
+row's ``event_id`` **is NULL**. The body is a photograph of an input set that no
+longer exists; on a genuine rebuild the builder finds nothing and returns the
+empty body. The two rows with a null ``lifecycle_watermark`` (``15296797``,
+``15299944``) never held markets and serve that empty body already.
+
+So the strand here has TWO halves and this pass repairs one of them: the
+canonical's own Kalshi markets were orphaned to a null ``event_id``, and the
+copy kept the Polymarket ones. Folding the copy gives the bare page a settled
+rail; it does not re-link what was orphaned, and nothing here should be read as
+claiming it does.
+
+WHAT THIS PASS DELIBERATELY DOES NOT REACH, MEASURED THE SAME DAY. ``15186733``
+is Waterford FC 3-1 Bohemians with 63 markets stranded on ``15186691``, and this
+pass refuses it — because ``15186733`` carries **no ``espn_id`` and no
+``statpal_fixture_id``**. With no authority naming the fixture independently of
+us, neither row can be the canonical, and choosing between two id-less rows is
+the call ruling 048 forbids. It is a real defect and it belongs to the registry
+(#3813), not to a judgement over existing rows.
 
 WHAT REPLACES THE DIRECTION RULE, SINCE THE CLOCK CANNOT
 ─────────────────────────────────────────────────────────
@@ -440,9 +475,25 @@ reason a direction-agnostic pairing is safe to run.
 The ambiguity refusal is unchanged in spirit and stricter in practice: the
 canonical-shaped rows are counted over the WHOLE block, market count ignored,
 so a block holding two played rows is refused before the zero-market one is
-looked at. On the measured population that is 14 blocks → **11 tags, 3 refused**
-— Real Sociedad v Espanyol (three candidate ghosts), Levante v Real Betis
-(three), Liverpool v Nottingham Forest (two).
+looked at.
+
+YIELD, from the pure planner run over the sweep's own -45d/+5d population as it
+stood on production 2026-09-15 — 6,721 rows, whole population, no sampling::
+
+    stranded blocks examined                                   472
+      ├─ tags                                                   11
+      │    (139 markets moving onto pages with none: Serie A
+      │     4, EPL 1, Bundesliga 1, Ligue 1 2, Brasileirão 1,
+      │     Argentine Primera 1 — every canonical scored and
+      │     fixture-anchored, every one of them serving zero)
+      └─ refused ambiguous                                       5
+           Bournemouth v Everton (4 copies), Real Sociedad v
+           Espanyol (3), Levante v Real Betis (3), Liverpool v
+           Nottingham Forest (2), Fiorentina v Frosinone (2)
+
+The same run is the evidence for the window widening: first pass, residual and
+ticker contributed **1 and 2 tags respectively and nothing new from the extra 40
+days**, so the four passes do not overlap in practice either.
 
 WHY ``GHOST_STATUSES`` IS NOT THE GATE HERE, AND THE ONE STATUS THAT IS
 ────────────────────────────────────────────────────────────────────────
