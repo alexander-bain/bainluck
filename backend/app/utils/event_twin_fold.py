@@ -154,7 +154,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Any, Iterable, Optional
 
@@ -163,6 +163,7 @@ from app.utils.kalshi_occurrence_start import (
     loaded_sport_key,
     recover_kalshi_occurrence_starts,
 )
+from app.utils.lifecycle import live_start_satisfied
 from app.utils.name_normalization import strip_diacritics
 from app.utils.proven_duplicates import merge_opening_line
 from app.utils.soccer_team_matching import club_alias_tokens, soccer_pair_matches
@@ -171,8 +172,12 @@ from app.utils.sport_keys import league_identity
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "ABANDONED_STUB_STATUSES",
+    "FINISHED_WITH_RESULT_STATUSES",
     "FoldResult",
     "fold_twin_events",
+    "is_abandoned_stub",
+    "is_finished_with_result",
     "is_kalshi_date_only",
     "twin_fold_key",
     "twin_identity_rank",
@@ -297,6 +302,86 @@ def _league_identities(events: Iterable[Any]) -> dict:
         if identity:
             identities[sport_id] = identity
     return identities
+
+
+ABANDONED_STUB_STATUSES = frozenset({"suspended", "scheduled"})
+"""Row statuses a fixture can be stuck in and never print a result. #6047.
+
+An ALLOWLIST, for the reason `EVENT_PLAYABLE_STATUSES` spells out in
+`app.utils.lifecycle`: the denylist form of this question ("anything that is not
+completed") admits every status nobody thought of, and this codebase has already
+paid for that once. `voided` and `merged` are retirement markers and are NOT
+here — a row upstream has already withdrawn is not a card this fold needs to
+reason about — and `live` is not here either, because a live row with no score
+is #5532's shape, which the strict key already folds on the minute it shares
+with its Final. These two are the statuses the specimens hold.
+"""
+
+FINISHED_WITH_RESULT_STATUSES = frozenset({"completed", "closed"})
+"""Row statuses that, WITH a score, mean "this page is printing a Final". #6047.
+
+Both are needed and neither is decoration. `completed` is what ESPN writes and
+what all three La Liga specimens carry; `closed` is what a definitive StatPal
+completion writes and is the dominant terminal state in the table by an order of
+magnitude (212,289 rows against 15,731 on 2026-09-05, measured in
+`EVENT_PLAYABLE_STATUSES`'s own note). A tier that admitted only `completed`
+would be inert on every fixture whose Final came from StatPal.
+"""
+
+
+def _has_score(event: Any) -> bool:
+    return (
+        getattr(event, "home_score", None) is not None
+        or getattr(event, "away_score", None) is not None
+    )
+
+
+def is_abandoned_stub(event: Any, now: Optional[datetime] = None) -> bool:
+    """True when a row can only ever print "No result reported". #6047.
+
+    Three conditions, all required, and the conjunction is the whole licence for
+    a tier that has NO clock bound between the pair (:func:`_merge_abandoned_stubs`):
+    a status that makes no claim to have finished, no score of any kind, and a
+    kick-off that has already passed. A row like that is not waiting for
+    anything — the hour it names is gone and it has nothing to show for it.
+
+    THE PAST TEST IS `live_start_satisfied`, NOT `<`, AND THAT IS THE SAFETY.
+    That function is the codebase's one "is this start known, comparable and
+    behind us" rule, and it returns **False** for a missing time and for a
+    tz-naive/tz-aware mismatch (its own docstring: "cannot prove the event
+    started"). Both of those failures land on "not a stub", so an unreadable
+    clock costs the row its fold and never costs a reader a card. Restating the
+    comparison here with a bare `<` would raise on the mismatch instead, and
+    `fold_twin_events`'s gotcha #42 guard would then discard the whole pass.
+
+    `getattr(..., None)` on status rather than an attribute access: six call
+    sites in four route files hand this fold hydrated rows, but the guard suites
+    hand it doubles that carry only the columns the fold historically read. A
+    double with no `status` is not a stub, which is the inert branch.
+    """
+    status = getattr(event, "status", None)
+    if status not in ABANDONED_STUB_STATUSES:
+        return False
+    if _has_score(event):
+        return False
+    return live_start_satisfied(
+        getattr(event, "commence_time", None), now or datetime.now(timezone.utc)
+    )
+
+
+def is_finished_with_result(event: Any) -> bool:
+    """True when a row is a Final a reader can already read a score off. #6047.
+
+    The score is half the test and not a formality: a `completed` row with no
+    score prints "No result reported" exactly like the stub does, and folding one
+    result-less card into another result-less card moves the defect rather than
+    fixing it. The survivor this tier elects must be the card that says what
+    happened.
+    """
+    return (
+        getattr(event, "status", None) in FINISHED_WITH_RESULT_STATUSES
+        and _has_score(event)
+    )
 
 
 def twin_fold_key(event: Any, identities: Optional[dict] = None) -> Optional[tuple]:
@@ -599,6 +684,17 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
         grouped = _merge_catchall_leagues(grouped, row_identities)
     except Exception:  # noqa: BLE001 — gotcha #42; the league-keyed groups stand
         logger.exception("twin fold: catch-all league merge failed; serving groups")
+
+    # #6047 — LAST, AND ON THE GROUPS THE THREE TIERS ABOVE HAVE ALREADY MADE.
+    # Its doubleheader refusal counts Final GROUPS, so it needs each real contest
+    # already collapsed to one; run before them it would see a fixture's two
+    # spellings as two contests and refuse the fold it exists to make. It is also
+    # the only tier with no clock bound, so it goes where the least is left for it
+    # to reach: everything the key and the names can pair is already paired.
+    try:
+        grouped = _merge_abandoned_stubs(grouped)
+    except Exception:  # noqa: BLE001 — gotcha #42; the tiers above still stand
+        logger.exception("twin fold: abandoned-stub merge failed; serving groups")
 
     # Keyed on the PYTHON object, not on `.id`: the fold must survive a caller
     # that hands it two hydrated rows carrying the same primary key, and must
@@ -1320,6 +1416,187 @@ def _name_clusters(bucket_keys: list[tuple], groups: dict[tuple, list]) -> list[
                 "twin fold: refused a non-clique soccer cluster %s",
                 [pairs[key] for key in members],
             )
+    return out
+
+
+def _fixture_triple(event: Any) -> Optional[tuple]:
+    """:func:`twin_fold_key` with the clock taken out — the fixture, not the slot.
+
+    `None` for the same reasons the key returns `None`: a row missing a club name
+    or a sport cannot be proven to be anybody's twin, and this tier's whole
+    licence is that it admits no false positives.
+    """
+    home = _squash(getattr(event, "home_team_name", None))
+    away = _squash(getattr(event, "away_team_name", None))
+    sport_id = getattr(event, "sport_id", None)
+    if not home or not away or sport_id is None:
+        return None
+    return (sport_id, away, home)
+
+
+def _merge_abandoned_stubs(grouped: list[list], now: Optional[datetime] = None):
+    """Fold a stranded stub into the Final of the same fixture. NO clock bound. #6047.
+
+    THE PAGE THIS EXISTS FOR. `/sport/soccer/laliga`, 390px, 2026-09-13 02:50Z:
+    a reader met Real Racing Club de Santander v Alavés **twice inside one
+    screen** — `Sep 12 · FINAL · 2 SANTANDER – 1 ALAVÉS`, and ~800px below,
+    under NO RESULT REPORTED, `Santander 51% / Alavés 49%`. Athletic Bilbao v
+    Elche and Osasuna v Espanyol the same. Each pair is one ESPN row and one Odds
+    API row, and the club names are **byte-identical on both sides** — this is
+    not a naming gap::
+
+        15298235  Racing Santander v Alavés  2026-09-12 12:00Z  espn      completed  2–1
+        15298075  "                          2026-09-13 19:00Z  odds_api  suspended   —
+
+    🔴 EVERY OTHER TIER IN THIS MODULE IS RIGHT TO REFUSE THEM, AND NONE OF THEM
+    SHOULD BE WIDENED TO REACH THEM. The Odds API rows carry a fabricated
+    `19:00:00Z` **31 hours** after the real kick-off and on the next UTC day, so
+    they are not in their twin's minute (`twin_fold_key`), not within
+    :data:`SOCCER_KICKOFF_DRIFT`, and not even in the same `_soccer_bucket_key`
+    candidate bucket. Widening the drift bound would swallow the 30-minute
+    re-mints #5918 excluded on purpose and the three-hour Kalshi rows #5905
+    exists to correct upstream; widening the bucket past a UTC day is refused in
+    `_soccer_bucket_key`'s own docstring for the same reason. Both refusals are
+    correct and both stay.
+
+    🔴 AND THE FABRICATED STAMP IS NOT USABLE AS THE DISCRIMINATOR, WHICH IS THE
+    TRAP THIS TIER EXISTS TO STEP AROUND. Four rows sharing one exact
+    `19:00:00Z` reads as a fabrication fingerprint until you check the fifth:
+    `15298074` Atlético Madrid v Real Sociedad carries the same second and
+    **really kicked off then** (completed, 3–0). Simultaneous kick-offs are
+    ordinary in soccer, so "several rows share a second" can never decide this.
+
+    SO THE CLOCK IS DROPPED FROM THE PAIRING ENTIRELY, AND THE LICENCE IS CARRIED
+    BY FOUR GATES INSTEAD — three on the rows, one on the bucket:
+
+    1. **The fixture matches exactly**, by :func:`_fixture_triple`: same
+       `sport_id` and both clubs squashed-equal in the **same orientation**. This
+       is the STRICT squash, not the soccer token-subset predicate, so `Texas` ⊄
+       `Texas State` here and the tier is safe to run on every sport. Orientation
+       is what excludes a league's reverse fixture and the return leg of a
+       two-legged tie — both are the same pair with home and away swapped.
+    2. **The loser is an abandoned stub** (:func:`is_abandoned_stub`): a status
+       that makes no claim to have finished, no score at all, and a kick-off
+       already in the past.
+    3. **The survivor is a printed Final** (:func:`is_finished_with_result`):
+       terminal status AND a score. Folding a result-less card into another
+       result-less card would move the defect, not fix it.
+    4. **The fixture is unambiguous in the rows the caller handed us**: a triple
+       with more than one Final group is REFUSED WHOLE. If two real games between
+       one pair in one orientation are both on this page, nothing here can say
+       which of them a stranded stub belonged to, so it says nothing and the
+       reader keeps both cards. It is also why this pass runs on GROUPS rather
+       than rows: by now the strict key and the soccer name pass have already
+       collapsed each real contest to one group, so "more than one Final group"
+       means more than one contest and not merely more than one row.
+
+    🔴 AND IT IS SOCCER-ONLY, WHICH IS THE GATE THAT MAKES DROPPING THE CLOCK
+    SAFE AT ALL — GATE 1 DOES NOT COVER THIS ON ITS OWN. Orientation excludes a
+    league's reverse fixture and a two-legged tie's return leg, but it does NOT
+    exclude **a baseball doubleheader**: two real games, one pair, one
+    orientation, hours apart, and leg two stranded without a score is exactly the
+    stub shape above. That is not hypothetical — it is a written contract,
+    `test_a_doubleheaders_second_leg_keeps_its_own_card` in
+    `test_league_past_rails_twin_fold_5746.py`, and this tier folded it until the
+    gate went in. Soccer has no doubleheader: one pair meets home-and-away
+    (orientation differs), a tie's legs swap (orientation differs), and two
+    fixtures between one pair at one ground inside a reader's window do not
+    exist. So the licence for "no clock bound" is a property of the SPORT, not of
+    the predicate, and the gate is load-bearing in precisely the way
+    `_merge_soccer_name_variants`'s own soccer gate is.
+
+    WHAT THIS DELIBERATELY DOES NOT REACH, so nobody reads it as a general fix:
+    the same stranded-stub shape in MLB (#3622, 41 pairs) and NCAAF (#3172).
+    Those are the sports with the doubleheader hazard, and they need a
+    discriminator this tier has not got — an id anchor, or #1946's
+    `event_provider_anchors` drain, which is the durable repair for all of them.
+
+    WHAT BOUNDS IT IN PRACTICE, since gates 1 and 4 are the only structural
+    bounds: the rows the CALLER loaded. This fold never sees the whole table — a
+    league page fetches a window of days, `/api/feed` a page of cards — so "no
+    clock bound" means "no bound beyond the window the reader is already looking
+    at", which is the window in which appearing twice is the defect.
+
+    ELECTION IS UNCHANGED AND IS DELIBERATELY NOT RESTATED HERE.
+    :func:`twin_identity_rank` already ranks a visible score above everything, so
+    the Final wins gate 3's pair by the rule that was already there; this pass
+    contributes a pairing and no opinion about survival. The venue union, the
+    opening-line carry (#5853) and :attr:`FoldResult.survivor_of` (#5532) all
+    then apply to these pairs exactly as they do to every other tier.
+    """
+    now = now or datetime.now(timezone.utc)
+    finals: dict[tuple, list[int]] = {}
+    stubs: dict[tuple, list[int]] = {}
+
+    for index, members in enumerate(grouped):
+        sport_key = loaded_sport_key(_group_representative(members))
+        if not sport_key or not sport_key.startswith("soccer"):
+            # Not soccer, or the caller did not load `Event.sport` — either way
+            # this pass has nothing it is licensed to say about these rows.
+            continue
+        triples = {
+            triple
+            for triple in (_fixture_triple(member) for member in members)
+            if triple is not None
+        }
+        if not triples:
+            continue
+        # Exclusive by construction — a stub has no score and a Final has one —
+        # so a group can never be both a donor and a target.
+        if all(is_abandoned_stub(member, now) for member in members):
+            for triple in triples:
+                stubs.setdefault(triple, []).append(index)
+        elif any(is_finished_with_result(member) for member in members):
+            for triple in triples:
+                finals.setdefault(triple, []).append(index)
+
+    if not stubs:
+        return grouped
+
+    merge_into: dict[int, int] = {}
+    ambiguous: set[int] = set()
+    for triple, stub_indices in stubs.items():
+        final_indices = finals.get(triple) or []
+        if len(final_indices) != 1:
+            if final_indices:
+                logger.info(
+                    "twin fold: refused an abandoned-stub fold, %d Finals for %s",
+                    len(final_indices),
+                    triple,
+                )
+            continue
+        target = final_indices[0]
+        for stub_index in stub_indices:
+            # A stub group can carry two triples only if the soccer name pass
+            # merged two spellings into it; if those point at different Finals
+            # the stub's fixture is not decided and it keeps its own card.
+            if merge_into.setdefault(stub_index, target) != target:
+                ambiguous.add(stub_index)
+
+    for stub_index in ambiguous:
+        logger.info(
+            "twin fold: refused an abandoned-stub fold, two Finals claim group %d",
+            stub_index,
+        )
+        merge_into.pop(stub_index, None)
+
+    if not merge_into:
+        return grouped
+
+    # The same shape as `_merge_soccer_name_variants`'s tail, deliberately: a
+    # merged cluster takes the position of whichever of its member groups the
+    # caller listed first, so nothing is reordered for a page this pass does not
+    # touch. (`result.events` is rebuilt in the caller's own row order anyway;
+    # this keeps group order stable for the log line and the tests.)
+    out: list[list] = []
+    position: dict[int, int] = {}
+    for index, members in enumerate(grouped):
+        target = merge_into.get(index, index)
+        if target in position:
+            out[position[target]].extend(members)
+            continue
+        position[target] = len(out)
+        out.append(list(members))
     return out
 
 
