@@ -10,6 +10,9 @@ struct ComparisonCardView: View {
     @Binding var navigationPath: NavigationPath
     var onOpen: (() -> Void)? = nil
 
+    /// #6343 — the price-age reveal, open or closed. See `PriceAgeMarkView`.
+    @State private var revealedPriceAge: String?
+
     // MARK: - Derived data
 
     private var outcomes: [FeedFuturesOutcome] {
@@ -88,8 +91,28 @@ struct ComparisonCardView: View {
                     .foregroundStyle(DS.textMuted)
                 // #490: confidence signal (1-3 bars) — renders nothing when absent.
                 SignalBarsView(tier: data.confidenceTier)
+                // #6343 — the same mark the hero futures card draws, on the same
+                // rule (`discoverPriceAgeMark`). Four card views render a futures
+                // card and wiring only one would leave the mark on the MINORITY of
+                // the feed: in the read this shipped against, 11 of 16 datable
+                // cards were `outcome_distribution` and the 60.2h PGA ladder — one
+                // of the two genuinely stale specimens — was one of them.
+                if let mark = data.discoverPriceAgeMark(
+                    onReveal: { revealedPriceAge = revealedPriceAge == $0 ? nil : $0 }
+                ) {
+                    mark
+                }
             }
             .padding(.top, 12)
+
+            // #6343 — the tap reveal, inline under the footer for the reason
+            // `LiquidityMarkView` gives: a popover on a phone covers the number
+            // the reader just asked about. Present on all four futures cards so
+            // the affordance does not differ by card shape.
+            if let revealedPriceAge {
+                LiquidityRevealCaption(sentence: revealedPriceAge)
+                    .padding(.top, 8)
+            }
         }
         .padding(16)
         .background(Color.cardBackground)
@@ -251,7 +274,8 @@ private func comparisonPreviewData(
         winner: nil,
         winnerOpeningProbability: nil,
         // #1885: a preview fixture belongs to no story family.
-        storyKey: nil
+        storyKey: nil,
+        priceObservedAt: nil
     )
 }
 #endif

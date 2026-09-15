@@ -548,6 +548,17 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     /// must degrade to plain category rather than treat nil as a family of its
     /// own. Decoded from `story_key` via `.convertFromSnakeCase`.
     let storyKey: String?
+    /// #6343: when the prices this card PRINTS were last seen — the oldest of the
+    /// printed legs, computed by `_card_price_observed_at` (`routes/feed.py`) and
+    /// served by both futures serializers since #5752. NOT `resolutionDate`, which
+    /// is when the question gets answered; the two were confused on the US Open
+    /// final page, where a card an hour stale sat under a hero stamped 20s.
+    ///
+    /// The native model dropped it, so no phone surface could render an age at all
+    /// while the web marked the same cards `● 3d ago`. Decoded from
+    /// `price_observed_at` via the decoder's `.convertFromSnakeCase`; rendered by
+    /// `PriceAgeMarkView`, dated by `SourceAge`.
+    let priceObservedAt: String?
 }
 
 // MARK: - Discover Card Archetype

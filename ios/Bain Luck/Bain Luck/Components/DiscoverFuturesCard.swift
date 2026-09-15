@@ -30,6 +30,12 @@ struct NativeFuturesDiscoverCard: View {
     /// drifting apart.
     @ScaledMetric(relativeTo: .largeTitle) private var heroNumeralSize: CGFloat = 52
 
+    /// #6343 — the price-age reveal, open or closed. The phone has no hover, so
+    /// the precise stamp arrives by tap; the state lives here rather than in the
+    /// mark because the caption is drawn under the whole footer, where it cannot
+    /// cover the number the reader just asked about.
+    @State private var revealedPriceAge: String?
+
     private var categoryLabel: String {
         sportCategoryDisplayName(data.sportName ?? data.llmSportCategory).uppercased()
     }
@@ -199,6 +205,20 @@ struct NativeFuturesDiscoverCard: View {
                             .background(Color.blue.opacity(0.10), in: Capsule())
                     }
 
+                    // #6343 — beside the source mark, which is where D91 and
+                    // notice 34 put sourcing: the number, the small mark, at most
+                    // one short caption.
+                    //
+                    // The rule — settled suppression and the six-hour futures
+                    // cadence — is `discoverPriceAgeMark`, in `PriceAgeMarkView`,
+                    // so a guard can pin it. Spelled inline here it would be a
+                    // rule no test can reach (see that function's header).
+                    if let mark = data.discoverPriceAgeMark(
+                        onReveal: { revealedPriceAge = revealedPriceAge == $0 ? nil : $0 }
+                    ) {
+                        mark
+                    }
+
                     Spacer()
 
                     // #490 / L2-184: confidence signal (1-3 bars) — renders nothing
@@ -232,6 +252,14 @@ struct NativeFuturesDiscoverCard: View {
                         }
                         #endif
                     }
+                }
+
+                // #6343 — the tap reveal. Inline UNDER the footer rather than a
+                // popover, for the reason `LiquidityMarkView` gives: a popover on
+                // a phone covers the number the reader just asked about, and this
+                // sentence is only meaningful while that number is on screen.
+                if let revealedPriceAge {
+                    LiquidityRevealCaption(sentence: revealedPriceAge)
                 }
             }
             .padding(14)
