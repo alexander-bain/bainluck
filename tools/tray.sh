@@ -6,12 +6,18 @@
 #   usage:  tools/tray.sh <inbox-dir>        one inbox
 #           tools/tray.sh --all [<root>]     every inbox under runner-inbox/
 #           tools/tray.sh --strict <dir>     an undefined suffix also exits 1
-#           tools/tray.sh --dry-run          self-test on a synthetic tree, no I/O
+#           tools/tray.sh --dry-run          self-test: classifier + verdict/exit agreement
 #           tools/tray.sh --help
 #
 #   exit 0  inspected, nothing PENDING — the tray is clear of work
 #   exit 1  a result: something is PENDING (or, under --strict, undefined)
 #   exit 2  the tool could not answer (bad usage, unreadable directory)
+#
+#   A PIPE EATS THE EXIT CODE (gotcha #54). `tray.sh <dir> | tail` leaves `$?`
+#   holding TAIL's zero, which reads as CLEAR next to a NOT CLEAR verdict — int364
+#   hit this on the tool's first real run at the desk. So every VERDICT and FLEET
+#   line ENDS with the code it is about to return, `(exit N)`. Piped or not, read
+#   the line: it carries the same bit as `$?` on a channel a pipe cannot eat.
 #
 # ── WHY THIS IS A FILE (int363 → latency/414, 2026-09-14 23:52Z) ─────────────
 #
@@ -93,8 +99,12 @@ IN_FLIGHT_STATES="running"
 # toggled around a hot loop is the kind of global that outlives the loop.
 shopt -s nocasematch
 
+# Prints the header block above, from the title to the first `# ──` banner. The
+# range is delimited, not numbered: the first draft said `3,13p` and this very
+# edit — four lines added above it — would have silently truncated the usage text
+# to nothing a reader would notice, which is the tool's own failure mode.
 usage() {
-    /usr/bin/sed -n '3,13p' "${BASH_SOURCE[0]}" | /usr/bin/sed 's/^# \{0,1\}//'
+    /usr/bin/sed -n '3,${/^# ──/q; s/^# \{0,1\}//; p;}' "${BASH_SOURCE[0]}"
 }
 
 # ── THE HOT PATH IS FORK-FREE ON PURPOSE ─────────────────────────────────────
@@ -186,14 +196,26 @@ classify() {
     printf '%s\t%s\n' "$_CLASS" "$_DETAIL"
 }
 
+# _verdict_exit <code> <printf-fmt-without-newline> [args…] — print the line with
+# `(exit <code>)` welded to its end, then return that same code. One argument,
+# used twice, so the sentence a piped reader gets and the code a scripted reader
+# gets cannot disagree.
+_verdict_exit() {
+    local code="$1" fmt="$2"
+    shift 2
+    # shellcheck disable=SC2059  # fmt is a literal from this file, never input
+    printf "$fmt (exit %d)\n" "$@" "$code"
+    return "$code"
+}
+
 # Returns 0 clear, 1 needs-a-human. Prints one block.
 scan_dir() {
     local dir="$1" quiet="${2:-0}" strict="${STRICT:-0}"
     local pending=() inflight=() unknown=() other=() done_n=0
 
     if [ ! -d "$dir" ]; then
-        printf 'TRAY %s :: UNREADABLE — not a directory. This is NOT an empty tray.\n' "$dir"
-        return 2
+        _verdict_exit 2 'TRAY %s :: UNREADABLE — not a directory. This is NOT an empty tray.' "$dir"
+        return $?
     fi
 
     # `${f##*/}`, not `basename` — see the fork-free note above. `read -r` with an
@@ -241,18 +263,25 @@ scan_dir() {
     # DEFAULT answers the desk's actual question, "is anyone owed an action",
     # and the hygiene item is printed, named and counted in the header without
     # setting the code. `--strict` is there for a reader who wants it to count.
+    #
+    # Every branch below states its own exit code in the printed line. See the
+    # pipe note in the header: `$?` is not a channel this tool can rely on
+    # reaching its reader, and a verdict whose text a pipe preserves while its
+    # code is silently replaced is the same defect as a listing that returns
+    # nothing. `_verdict_exit` keeps the printed number and the returned one from
+    # ever drifting apart — they are one argument, used twice.
     if [ "$np" -gt 0 ] || { [ "$strict" = "1" ] && [ "$nu" -gt 0 ]; }; then
-        printf 'VERDICT %s :: NOT CLEAR — %d pending, %d unknown-suffix. Read them before you call this tray empty.\n' \
+        _verdict_exit 1 'VERDICT %s :: NOT CLEAR — %d pending, %d unknown-suffix. Read them before you call this tray empty.' \
             "$dir" "$np" "$nu"
-        return 1
+        return $?
     fi
     if [ "$nu" -gt 0 ]; then
-        printf 'VERDICT %s :: CLEAR of pending work — but %d file(s) wear a suffix nobody defined (named above). Hygiene, not an action; `--strict` makes it exit 1.\n' \
+        _verdict_exit 0 'VERDICT %s :: CLEAR of pending work — but %d file(s) wear a suffix nobody defined (named above). Hygiene, not an action; `--strict` makes it exit 1.' \
             "$dir" "$nu"
-        return 0
+        return $?
     fi
-    printf 'VERDICT %s :: CLEAR — every file carries a disposition. (This is a claim about the DIRECTORY, not about whether an offer went unwritten — notice 31(b).)\n' "$dir"
-    return 0
+    _verdict_exit 0 'VERDICT %s :: CLEAR — every file carries a disposition. (This is a claim about the DIRECTORY, not about whether an offer went unwritten — notice 31(b).)' "$dir"
+    return $?
 }
 
 # ── self-test ────────────────────────────────────────────────────────────────
@@ -276,7 +305,7 @@ dry_run() {
         fi
     }
 
-    printf 'tray.sh --dry-run :: classifier self-test, no filesystem read\n'
+    printf 'tray.sh --dry-run :: self-test — classifier on names, then verdict/exit agreement on a throwaway tree\n'
     run_case 'FROM-latency-413-2327Z-ROW-CLEAR-asking-for-the-next-one.md'            PENDING
     run_case 'RESTOCK-20260914-155500.md'                                              PENDING
     run_case 'FROM-x.md.consumed-2315Z-int363-MERGED-96bf28663'                        DONE
@@ -293,8 +322,68 @@ dry_run() {
     run_case 'notes.txt'                                                               NOT-A-NOTE
     run_case 'PARKED-MEASUREMENTS'                                                     NOT-A-NOTE
 
+    # ── the printed code and the returned code are one claim ─────────────────
+    #
+    # `(exit N)` exists because a pipe eats `$?`, so a reader who can only see
+    # the TEXT must be able to trust it. That trust is exactly what drifts the
+    # first time someone adds a branch and copies the wrong literal, and it
+    # drifts SILENTLY — the tool keeps printing a number and the number is
+    # wrong, which is worse than the pipe. So each verdict branch is run for
+    # real, against a throwaway tree, and the number in the sentence is compared
+    # with the number the function actually returned. A temp directory is the
+    # one bit of I/O in here and it buys the whole guarantee.
+    local tmp
+    tmp="$(mktemp -d "${TMPDIR:-/tmp}/tray-dryrun.XXXXXX")" || {
+        printf '  FAIL  could not create a temp tree for the verdict cases\n'
+        return 1
+    }
+
+    verdict_case() {
+        local label="$1" dir="$2" want_rc="$3" want_text="$4"
+        local out rc printed
+        out="$(scan_dir "$dir" 1)"; rc=$?
+        printed="${out##*"(exit "}"; printed="${printed%%)*}"
+        if [ "$rc" = "$want_rc" ] && [ "$printed" = "$want_rc" ] && [[ "$out" == *"$want_text"* ]]; then
+            printf '  ok    exit %s   %s\n' "$rc" "$label"
+        else
+            printf '  FAIL  %s: returned=%s printed=%s want=%s (text %s)\n' \
+                "$label" "$rc" "$printed" "$want_rc" \
+                "$([[ "$out" == *"$want_text"* ]] && printf 'ok' || printf "missing '$want_text'")"
+            fails=$((fails + 1))
+        fi
+    }
+
+    mkdir -p "$tmp/clear" "$tmp/pending" "$tmp/unknown"
+    : > "$tmp/clear/FROM-x.md.consumed-0100Z-int364-MERGED"
+    : > "$tmp/pending/FROM-latency-414-0055Z-GATE-GO.md"
+    : > "$tmp/unknown/FROM-x.md.bananas-1200Z-someone-invented-a-state"
+
+    verdict_case 'clear tray'                "$tmp/clear"       0 'CLEAR — every file'
+    verdict_case 'one pending offer'         "$tmp/pending"     1 'NOT CLEAR'
+    verdict_case 'unknown suffix, default'   "$tmp/unknown"     0 'CLEAR of pending work'
+    # Set and unset around the call, never `STRICT=1 verdict_case …`: an
+    # assignment prefixed to a FUNCTION call is not reliably scoped to it, and a
+    # leak here would silently re-grade every later case.
+    STRICT=1
+    verdict_case 'unknown suffix, --strict'  "$tmp/unknown"     1 'NOT CLEAR'
+    unset STRICT
+    verdict_case 'directory that is not one' "$tmp/no-such-dir" 2 'UNREADABLE'
+
+    # The usage text is printed by a delimited `sed` range over this very file;
+    # a range that stops matching prints NOTHING and `--help` fails open silent.
+    local help_text
+    help_text="$(usage)"
+    if [[ "$help_text" == *'exit 1'* ]] && [[ "$help_text" == *'PIPE EATS'* ]]; then
+        printf '  ok    %-10s usage block still reaches the exit codes and the pipe note\n' 'help'
+    else
+        printf '  FAIL  usage block is truncated or empty (%d chars) — check the sed range\n' "${#help_text}"
+        fails=$((fails + 1))
+    fi
+
+    case "$tmp" in */tray-dryrun.*) rm -rf "$tmp" ;; esac
+
     if [ "$fails" -eq 0 ]; then
-        printf 'tray.sh --dry-run :: 15/15 OK, exit 0\n'
+        printf 'tray.sh --dry-run :: 21/21 OK, exit 0\n'
         return 0
     fi
     printf 'tray.sh --dry-run :: %d FAILED\n' "$fails"
@@ -318,16 +407,16 @@ main() {
         --all)
             local root="${2:-$HOME/bainluck/.claude/handoff/runner-inbox}"
             if [ ! -d "$root" ]; then
-                printf 'ROOT %s :: UNREADABLE — not a directory. This is NOT an empty fleet.\n' "$root"
-                return 2
+                _verdict_exit 2 'ROOT %s :: UNREADABLE — not a directory. This is NOT an empty fleet.' "$root"
+                return $?
             fi
             local rc=0 d sub
             while IFS= read -r d; do
                 scan_dir "$d" 1 || { sub=$?; [ "$sub" -gt "$rc" ] && rc=$sub; }
             done < <(find "$root" -maxdepth 1 -mindepth 1 -type d | sort)
-            printf 'FLEET %s :: %s\n' "$root" \
+            _verdict_exit "$rc" 'FLEET %s :: %s' "$root" \
                 "$([ "$rc" -eq 0 ] && printf 'every inbox CLEAR' || printf 'at least one inbox NOT CLEAR — re-run it without --all for the filenames')"
-            return $rc ;;
+            return $? ;;
     esac
     [ $# -eq 1 ] || { usage; return 2; }
     scan_dir "$1" "$quiet"
