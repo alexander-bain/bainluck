@@ -204,6 +204,25 @@ class TestAnUnreadableTwoHundredIsNeverAnAbsence:
         assert "leaderboard" in str(caught.value)
 
 
+class TestTheUnknownEnvelopeRoutesToTheRETRYABLEClass:
+    """Raising is only half the ship — where it lands decides the market's fate.
+
+    ``_recover_datagolf_participation`` reads ``getattr(exc.response,
+    "status_code", None)`` and stops the run on 429. An exception that carried a
+    response with a 429 would halt the sweep; one that is not an ``Exception``
+    at all would escape the per-market isolation and abort the batch (#994).
+    """
+
+    def test_it_is_an_ordinary_exception_the_per_market_handler_catches(self):
+        assert issubclass(DataGolfUnknownEnvelope, Exception)
+
+    def test_it_carries_no_response_so_it_can_never_be_read_as_a_429(self):
+        exc = DataGolfUnknownEnvelope("top-level keys=['leaderboard']")
+
+        assert getattr(getattr(exc, "response", None), "status_code", None) is None
+        assert not isinstance(exc, httpx.HTTPStatusError)
+
+
 class TestTheFourHundredAbsenceChannel:
     """DataGolf says "no such event" with a 400 and a sentence, not a 404."""
 
