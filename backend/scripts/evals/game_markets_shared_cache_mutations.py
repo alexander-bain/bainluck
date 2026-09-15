@@ -217,7 +217,20 @@ MUTANTS: list[tuple[str, str, pathlib.Path, str, str]] = [
         "the fail-open goes — an unknown running build kills the cache everywhere",
         CACHE,
         "    running = current_build_id()\n    if not running or running == UNKNOWN_BUILD:\n        return True",
-        "    running = current_build_id()",
+        # 🔴 THE REPLACEMENT NEUTERS THE CONDITION RATHER THAN DELETING THE
+        # BLOCK, AND IT HAS TO STAY MULTI-LINE. The obvious form of this mutant
+        # is to drop the two guard lines, leaving the bare
+        # `running = current_build_id()` — and that reddens CI on the branch
+        # that adds it, in `scan_mutation_residue.py` Pass B, against THIS FILE.
+        #
+        # Pass B's test is `repl in text and needle not in text`. A registry
+        # normally clears itself because it contains both literals, but a
+        # MULTI-LINE needle appears here only with escaped `\n`, so the scanner
+        # cannot find it — while a SINGLE-LINE replacement of 24+ chars is
+        # found verbatim, and reads as a mutant copied outside its target.
+        # M16 and M17 escape it by being multi-line, M18 by being under 24
+        # chars, and this one is the shape that has neither defence.
+        "    running = current_build_id()\n    if False:\n        return True",
     ),
 ]
 
