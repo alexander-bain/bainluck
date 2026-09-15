@@ -812,6 +812,27 @@ if [ "$SHA_IN" = "--selftest" ]; then
   check "check-runs is gated on the EXIT CODE, not on empty stdout" \
     "/usr/bin/grep -q 'refusal_rc' '$self'"
 
+  # The false STOP of 2026-09-15: read flat, this gate refuses on runs a later
+  # check suite already superseded. The reduction must be present, and the two
+  # queries must share ONE definition of it or they drift apart silently.
+  # Counted with a bracket expression so this assertion does not match ITSELF:
+  # the pattern text here is `[$]CR…`, which has no `$` before the name, while
+  # both live uses are `"$CR…"`. Exactly 2 — the refusal query and the counts.
+  # A plain substring count would stay green if the live code dropped to one use
+  # and only the selftest's own mentions remained. Vacuous guards are the thing.
+  check "check-runs are reduced to the newest run per check, not read flat" \
+    "/usr/bin/grep -q '^CR_LATEST=' '$self' && [ \$(/usr/bin/grep -c '[\$]CR_LATEST' '$self') -eq 2 ]"
+  # The fail-open hazard, pinned by name: CodeQL and Vercel open their own check
+  # suites and can appear ONLY in the earliest batch, so grouping on the SUITE
+  # (or taking max suite id) drops the one verdict notice 32 exists to catch.
+  # This asserts the grouping key is app+name. Flipping it to the suite is the
+  # regression, and it would go green on every sha that has nothing to hide.
+  # Scanned on the DEFINITION LINE alone, not the whole file, for the same
+  # self-reference reason: this test names the wrong key in order to forbid it.
+  check "the check-run reduction groups on app+name, never on check_suite" \
+    "/usr/bin/grep -q '^CR_LATEST=.*group_by.*app\.slug.*\.name' '$self' \
+     && ! /usr/bin/grep '^CR_LATEST=' '$self' | /usr/bin/grep -q 'check_suite'"
+
   # Notice 18: a repair row cites its own id after "supersedes".
   check "the supersedes scan excludes the cert's own row" \
     "/usr/bin/grep -q -- '-v \"| \$cert --\"' '$self'"
@@ -2185,15 +2206,43 @@ esac
 # `// ""` is mandatory — ten of sixteen titles are null on a real sha and the
 # unguarded form aborts at the first one. GATE ON THE EXIT CODE, not on empty
 # stdout: exit 0 + no output = pass; exit 1 + no output = the abort, re-run.
+#
+# 🔴 THE ENDPOINT RETURNS EVERY RUN THE SHA EVER HAD, NOT ITS CURRENT VERDICT.
+# Re-triggering CI creates a NEW check suite; the old suite's runs stay attached
+# to the commit forever. Read flat, this gate refuses on a failure that a later
+# suite already replaced with a pass — a FALSE STOP, and the same rows notice
+# 28's gate one screen up has already discarded by name as "superseded by age".
+# Measured on `7137df744` (discover/098, 2026-09-15): 48 runs across 12 suites,
+# three `failure` rows, all superseded; the current suite was 12/12 clean. The
+# desk had to hand-build a per-suite table to clear it.
+#
+# 🔴 AND THE OBVIOUS FIX — "keep only the newest suite" — IS A FAIL-OPEN HOLE.
+# Each GitHub App opens its OWN suite, and on that same sha `github-advanced-
+# security` (CodeQL) and `vercel` ran ONLY in the EARLIEST batch, 19:24Z. Newest
+# -suite-only would have dropped the CodeQL verdict entirely, which is the one
+# reading this gate exists to catch (`b6c9df44`, CERT-2165).
+#
+# So the reduction is the newest run per (APP, NAME) — never per suite. A name
+# that ran once is kept whatever its age; a name that ran three times is judged
+# on its newest. Keyed on app as well as name so two apps publishing the same
+# check name cannot suppress each other. Both controls measured before shipping:
+# `7137df744` 3 refusals → 0, and `b6c9df44` still refuses its high-severity
+# CodeQL alert.
 # ─────────────────────────────────────────────────────────────────────────────
+# Defined once so the refusal query and the counts below can never drift apart.
+CR_LATEST='[.check_runs[]] | group_by([(.app.slug // ""), .name]) | map(sort_by([(.started_at // ""), .id]) | last)'
 refusal="$(gh api "repos/$REPO_SLUG/commits/$SHA/check-runs?per_page=100" \
-  --jq '.check_runs[]|select((.conclusion=="failure") or (((.output.title) // "")|test("high|critical|security vulnerability";"i")))|"\(.name): \(.conclusion) — \((.output.title) // "null")"' 2>/dev/null)"
+  --jq "$CR_LATEST"'|.[]|select((.conclusion=="failure") or (((.output.title) // "")|test("high|critical|security vulnerability";"i")))|"\(.name): \(.conclusion) — \((.output.title) // "null")"' 2>/dev/null)"
 refusal_rc=$?
 if [ "$refusal_rc" -ne 0 ]; then
   stopq "notice 32 check-runs" "the check-runs query failed (exit $refusal_rc); an empty result here is NOT a pass"
 elif [ -z "$refusal" ]; then
-  n_runs="$(gh api "repos/$REPO_SLUG/commits/$SHA/check-runs?per_page=100" --jq '.check_runs|length' 2>/dev/null)"
-  pass "notice 32 check-runs" "refusal set empty at exit 0 over ${n_runs:-?} check-runs"
+  # One call, both numbers: the current set that was judged, and the raw total,
+  # so a reader can see how much history was superseded rather than guess.
+  n_pair="$(gh api "repos/$REPO_SLUG/commits/$SHA/check-runs?per_page=100" --jq "[($CR_LATEST|length), (.check_runs|length)]|@tsv" 2>/dev/null)"
+  n_latest="$(printf '%s' "$n_pair" | cut -f1)"
+  n_runs="$(printf '%s' "$n_pair" | cut -f2)"
+  pass "notice 32 check-runs" "refusal set empty at exit 0 over ${n_latest:-?} current checks, newest run per app+name (${n_runs:-?} raw runs incl. superseded re-runs)"
 else
   stop "notice 32 check-runs" "refused: $(printf '%s' "$refusal" | tr '\n' ';')"
 fi
