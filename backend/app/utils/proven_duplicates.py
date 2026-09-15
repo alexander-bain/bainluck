@@ -95,9 +95,10 @@ import json
 import re
 from dataclasses import dataclass
 
-from sqlalchemy import Boolean, String, func, or_, select
+from sqlalchemy import Boolean, Integer, String, func, literal, or_, select
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.expression import ColumnElement
+from sqlalchemy.sql.visitors import InternalTraversal
 
 from app.models.models import Event
 from app.services.anchor_channel import DUPLICATE_TAG_PREFIX, duplicate_tag
@@ -170,6 +171,99 @@ def tagged_duplicate_of(canonical_event_id: int):
     this row?", this one asks "whose content did I just decline to print?".
     """
     return _TaggedDuplicateOf(canonical_event_id)
+
+
+class _GhostNamesCanonical(ColumnElement):
+    """``ghost.event_tags`` names ``canonical.id`` — the COLUMN-to-COLUMN form.
+
+    :class:`_TaggedDuplicateOf` answers "is this row a duplicate of event 1234?",
+    with 1234 a Python int the caller already holds. This one answers the
+    question a JOIN asks — "does THIS row name THAT row?" — where neither side is
+    known until the planner runs. #6296 needed it: a market's game may be over
+    because the row it hangs off is a proven duplicate of a row that IS over, and
+    nothing in Python knows which canonical that is.
+
+    🔴 THE POSTGRES ARM IS NOT AN OPTIMISATION, IT IS THE ONLY VIABLE FORM.
+    ``_TaggedDuplicateOf``'s ``@>`` cannot serve this shape — there is no fixed
+    tag value to contain, because the tag's tail is the other table's primary
+    key. The portable spelling (a ``LIKE`` whose pattern is built by concatenating
+    ``canonical.id``) is correct but unindexable, so the planner must test every
+    row of ``events`` for every candidate market. Measured on production
+    2026-09-15 03:5xZ, the /search futures pool filtered to ``name ILIKE
+    '%Townsend%'`` (237,084 events):
+
+        postgres arm (regex extract + primary-key lookup) ....    15 ms
+        portable arm (LIKE over a concatenated id) .......... 2,895 ms
+        portable arm, the pool's widest shape ............... TIMED OUT (>25 s)
+
+    So the two arms are not interchangeable and the portable one exists only to
+    keep the guard suite on SQLite, exactly as this module's other pair does.
+
+    🔴 THE TWO ARMS DIFFER ON A ROW CARRYING TWO ``duplicate-of`` TAGS: the
+    Postgres regex reads the FIRST, the portable LIKE matches ANY. Measured on
+    production the same minute: **0 events carry more than one**, and a second
+    tag would itself be a matching defect (a row cannot duplicate two different
+    games). Stated rather than papered over, because a reader of the SQL would
+    otherwise have to derive it.
+    """
+
+    #: A WHERE-clause boolean, so `select().where()` composes with it.
+    type = Boolean()
+    #: Two column expressions, both traversed below, so the cache key varies with
+    #: the aliases this is built on. `inherit_cache` without the traversal would
+    #: hand two different alias pairs the same compiled SQL.
+    inherit_cache = True
+    _traverse_internals = [
+        ("ghost_tags", InternalTraversal.dp_clauseelement),
+        ("canonical_id", InternalTraversal.dp_clauseelement),
+    ]
+
+    def __init__(self, ghost, canonical):
+        self.ghost_tags = func.cast(ghost.event_tags, String)
+        self.canonical_id = canonical.id
+
+
+@compiles(_GhostNamesCanonical, "postgresql")
+def _ghost_names_canonical_postgresql(element, compiler, **kw):
+    """Extract the id the tag carries, then meet the canonical on its primary key."""
+    return compiler.process(
+        element.canonical_id
+        == func.cast(
+            func.substring(element.ghost_tags, f"{DUPLICATE_TAG_PREFIX}([0-9]+)"),
+            Integer,
+        ),
+        **kw,
+    )
+
+
+@compiles(_GhostNamesCanonical)
+def _ghost_names_canonical_portable(element, compiler, **kw):
+    """Everything else (the guard suite's SQLite): the quoted-element LIKE.
+
+    The quotes carry the same weight they carry in the sibling arm above:
+    ``duplicate-of:1530`` is a prefix of ``duplicate-of:15304938``, so an
+    unquoted pattern would let a settled event with a short id claim a ghost that
+    names a completely different match.
+    """
+    return compiler.process(
+        element.ghost_tags.like(
+            literal(f'%"{DUPLICATE_TAG_PREFIX}')
+            + func.cast(element.canonical_id, String)
+            + literal('"%')
+        ),
+        **kw,
+    )
+
+
+def ghost_names_canonical(ghost, canonical):
+    """``ghost`` carries ``provenance:duplicate-of:<canonical.id>``.
+
+    A join condition between two aliases of ``events``: the row we decline to
+    print, and the row it was proven to duplicate. Use it when the answer lives on
+    the canonical and the surface only holds the ghost — #6296's played-game gate
+    is the first caller.
+    """
+    return _GhostNamesCanonical(ghost, canonical)
 
 
 async def folded_event_ids(db, canonical_event_id: int) -> list[int]:
