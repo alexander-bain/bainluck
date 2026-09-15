@@ -49,7 +49,10 @@ from app.utils.settled_price import (  # noqa: E402  # #5246
     settled_price_set_sql,
     settled_price_values,
 )
-from app.utils.futures_liveness import preserve_venue_settled  # noqa: E402  # #2222
+from app.utils.futures_liveness import (  # noqa: E402  # #2222, then #5896
+    preserve_venue_settled,
+    venue_answered,
+)
 # #2927: imports nothing but stdlib (same rule as sport_keys.py), so it is safe
 # at module scope — the alarm below needs it outside the task body.
 from app.utils.kalshi_series_selection import (  # noqa: E402
@@ -3418,6 +3421,14 @@ _LINKED_GAME_BOOKS_SQL = text(
            fm.name,
            fm.event_id,
            split_part(fm.external_id, '-', 1) AS series,
+           -- #5896. The selector's window spans both sides of kick-off (see
+           -- `LINKED_BOOK_LOOKBACK_HOURS`), and the settled-book branch below
+           -- may only act on ONE of them: a contest that has not started. Read
+           -- here rather than derived in Python from `commence_time`, because
+           -- the two withdrawal statements this branch runs carry the same two
+           -- clauses in their own WHERE and a second copy computed against a
+           -- different clock would be a third opinion on one question.
+           (e.status = 'scheduled' AND e.commence_time > NOW()) AS pre_kickoff,
            (SELECT MAX(fo.last_updated)
               FROM futures_outcomes fo
              WHERE fo.market_id = fm.id) AS newest_price
@@ -3531,6 +3542,17 @@ async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
       declining to write is what froze a withdrawn leg at 39% on the top row of
       a live NFL card. ``_poll_kalshi_markets`` cannot do this job: it fetches
       ``status="open"`` (gotcha #33) and never sees a withdrawn leg at all.
+    * **It never quotes a contest the venue has already answered on a game
+      that has not kicked off** (#5896). ``result`` is the venue's own verdict
+      (``venue_answered``), and a market whose whole book carries one is not a
+      price — it is a settlement artifact wearing the shape of a price, which
+      ``_kalshi_yes_probability`` reads out of the last trade. Before kick-off
+      the stored rows are WITHDRAWN through #5771's own two statements and the
+      leg loop is skipped entirely; after kick-off this is inert and the
+      closing line is written exactly as before. This is the second case where
+      the pass writes a price DOWN, and it exists because #5771 fixed the
+      refusal in a task that structurally cannot reach these rows: its batch
+      needs six hours of price silence, and this pass re-prices them hourly.
     * **It never overwrites a graded row.** Both writes carry
       ``is_winner IS NOT TRUE`` (gotcha #21, and ``IS NOT TRUE`` rather than
       ``IS NULL`` because unsettled is stored as FALSE — #2199's first live
@@ -3576,6 +3598,17 @@ async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
         # about the LISTING, an unreadable book is a fact about the QUOTE.
         "outcomes_withdrawn_cleared": 0,
         "outcomes_withdrawn_skipped": 0,
+        # #5896. Unconditional, like #5771's pair in `futures_price_refresh`
+        # and for the same reason: a key that only appears when the branch
+        # fires cannot tell "this pass withdrew nothing" from "this pass was
+        # built without the branch", and that ambiguity is exactly what let
+        # the 10:50Z run report `terminal: complete` over four wrong pages.
+        # `markets` counts the decision, `quotes`/`heroes` count the rows.
+        "pre_kickoff_settled_markets": 0,
+        "pre_kickoff_quotes_withdrawn": 0,
+        "pre_kickoff_heroes_cleared": 0,
+        "pre_kickoff_settled_mixed": 0,
+        "pre_kickoff_settled_legs_skipped": 0,
         "snapshots_written": 0,
         "books_unreadable": 0,
         "deadline_hit": False,
@@ -3635,6 +3668,86 @@ async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
                         continue
                     stats["markets_reached"] += 1
 
+                    # #5896. The venue has answered a contest our event row
+                    # says has not started, and THIS pass is the writer that
+                    # keeps the answer on the page.
+                    #
+                    # #5771 taught `futures_price_refresh` to refuse the
+                    # settlement artifact and to withdraw the row it had
+                    # already written. It could not finish the job: its batch
+                    # rides a six-hour price-silence anti-join, and every
+                    # market below is re-priced by THIS pass at :20 every hour,
+                    # so it never goes six hours silent and never enters that
+                    # batch. Measured on the four La Liga / Brasileirão pages
+                    # of #5896 — `pre_kickoff_quotes_withdrawn: 0` on the
+                    # 10:50Z run while the pages kept serving 99% — and the
+                    # rows carry this pass's fingerprint: `last_updated`
+                    # 12:21:16Z against a 12:20:00Z snapshot, one minute after
+                    # its own beat. Both writers have to agree, which is the
+                    # same conclusion `_poll_live_prediction_market_prices`
+                    # reached about #4356.
+                    #
+                    # The two statements are IMPORTED, not re-written: they
+                    # carry their own scope (`e.status = 'scheduled' AND
+                    # e.commence_time > NOW()`), so a second copy here would be
+                    # a second opinion about when withdrawing a quote is safe.
+                    answered = [
+                        vm for vm in venue_markets if venue_answered(vm.result)
+                    ]
+                    if row.pre_kickoff and len(answered) == len(venue_markets):
+                        from app.tasks.futures_price_refresh import (
+                            _KALSHI_WITHDRAW_EVENT_HERO_SQL,
+                            _KALSHI_WITHDRAW_PRE_KICKOFF_SQL,
+                        )
+
+                        stats["pre_kickoff_settled_markets"] += 1
+                        # Quote first, then the hero, in one transaction — the
+                        # order is CERT-2772's argument and is not cosmetic:
+                        # the hero statement asks whether any Kalshi price is
+                        # still standing on this event, and that answer must
+                        # already exclude the legs withdrawn one line above.
+                        withdrawn = (
+                            await session.execute(
+                                _KALSHI_WITHDRAW_PRE_KICKOFF_SQL,
+                                {"market_id": row.id},
+                            )
+                        ).fetchall()
+                        heroes = (
+                            await session.execute(
+                                _KALSHI_WITHDRAW_EVENT_HERO_SQL,
+                                {"market_id": row.id},
+                            )
+                        ).fetchall()
+                        stats["pre_kickoff_quotes_withdrawn"] += len(withdrawn)
+                        stats["pre_kickoff_heroes_cleared"] += len(heroes)
+                        if withdrawn or heroes:
+                            logger.info(
+                                "refresh_linked_game_books: withdrew %s settled "
+                                "Kalshi quote(s) and %s hero key(s) on market %s "
+                                "(%s) — the venue answered a contest that has "
+                                "not started (#5896, #5771)",
+                                len(withdrawn), len(heroes), row.id,
+                                row.external_id,
+                            )
+                        # Never fall through to the price loop: writing the
+                        # artifact back is the defect, and a `continue` here
+                        # is what makes the withdrawal hold for longer than
+                        # one hour.
+                        continue
+                    if row.pre_kickoff and answered:
+                        # A MIXED book before kick-off. Kalshi settles a game's
+                        # legs together, so this is rare — one of the 36
+                        # candidates read at 12:32Z on 2026-09-13
+                        # (`KXEREDIVISIETOTAL-26SEP13EXCFCU`, finalized rungs
+                        # beside an `inactive` one). The answered legs are
+                        # skipped below rather than withdrawn: the withdrawal
+                        # statement is market-grain, and spending it on a
+                        # market whose other legs still trade would take real
+                        # prices down. The residual is named rather than
+                        # hidden — such a market keeps its stored artifact
+                        # until the venue answers the whole book.
+                        stats["pre_kickoff_settled_mixed"] += 1
+
                     existing = {
                         e[0]: e[1]
                         for e in (
@@ -3658,6 +3771,18 @@ async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
                         # unreadable one: those are different facts, and
                         # `books_unreadable` is the gauge that says the venue
                         # went quiet on us.
+                        # #5896, the mixed book's answered leg. Only reachable
+                        # when SOME of this market's legs are answered — the
+                        # all-answered case never gets here — and only before
+                        # kick-off, where re-writing a settlement as a price is
+                        # the defect. After kick-off this is inert and the leg
+                        # is priced exactly as before: settled means settled,
+                        # and a finished game's closing line is calibration's
+                        # evidence (gotcha #21).
+                        if row.pre_kickoff and venue_answered(venue_market.result):
+                            stats["pre_kickoff_settled_legs_skipped"] += 1
+                            continue
+
                         withdrawn = _is_withdrawn_leg(venue_market.status)
                         prob = (
                             None

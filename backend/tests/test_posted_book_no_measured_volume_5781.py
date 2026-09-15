@@ -480,6 +480,13 @@ class TestEverySiteBindsTheNewParameters:
             "tests/test_futures_price_refresh.py": MENTIONS,
             # Reads the strings to assert their shape; never runs them.
             "tests/test_posted_book_no_measured_volume_5781.py": MENTIONS,
+            # #5896. Names `_CANDIDATE_SQL` in its module docstring — the
+            # six-hour anti-join is the REASON that ship exists, so the prose
+            # has to name it — and imports the two withdrawal statements,
+            # which are not built on the pool. Executes neither.
+            "tests/test_linked_books_stop_quoting_a_settled_prekickoff_market_5896.py": (
+                MENTIONS
+            ),
         }
         # `polymarket_condition_refresh` and `feed_served_markets` mention
         # `HIGH_VALUE_SQL` in DOCSTRINGS and import neither module, so they are

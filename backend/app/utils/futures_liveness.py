@@ -109,6 +109,36 @@ VENUE_SETTLED_KEY = "price_refresh_venue_settled_since"
 
 assert isinstance(VENUE_SETTLED_CONFIRM_HOURS, int)  # interpolated into SQL
 
+
+def venue_answered(result) -> bool:
+    """Has Kalshi declared this contract's outcome?
+
+    ``result`` is ``'yes'`` / ``'no'`` once the venue settles and the EMPTY
+    STRING while the contract trades — not ``None``. So the test is truthiness
+    after a strip, never ``is not None``: `result is not None` is true of every
+    active market Kalshi sends and would retire the whole book.
+
+    Read off whichever shape the caller holds (raw dict value or the parsed
+    ``KalshiMarket.result``); both carry the venue's own word verbatim.
+
+    🔴 IT LIVES HERE BECAUSE TWO WRITERS NOW ASK IT (#5771, then #5896).
+    ``futures_price_refresh`` asks it to refuse a settlement as a price;
+    ``kalshi._refresh_linked_game_books`` — the hourly pass that actually owns
+    the linked game rows, and the one that was writing the artifact back every
+    :20 while #5771's gate held — asks the same question of the same payload.
+    A second copy would be a second opinion, which is the drift this module's
+    docstring exists to refuse.
+
+    Deliberately keyed on ``result`` and NOT on a status allowlist. The venue's
+    status vocabulary is open: the 36 pre-kick-off candidates read on
+    2026-09-13 12:32Z came back ``finalized`` (23), ``determined`` (3),
+    ``active`` (8) and ``inactive`` (1 leg), and a rule written against the
+    statuses known on the day would have missed every ``determined`` one.
+    ``result`` is the venue's answer itself, and an unlisted status cannot
+    hide it.
+    """
+    return bool(str(result or "").strip())
+
 #: SQL that formats "now, minus the confirmation window" in the same shape the
 #: stamp is written in, so the two can be compared as text.
 _VENUE_SETTLED_CUTOFF_SQL = (
