@@ -97,6 +97,14 @@ COVERED = (
     # after, and the seed names it.
     "test_backup_round_trip_jsonb_6215_pg.py",
     "test_polymarket_resolved_candidate_sql_pg.py",
+    # #6390. Enrolled with the gate itself, and this check earned its keep
+    # immediately: the seed's first run died on
+    # `NotNullViolation: null value in column "reading_count"` — `OddsSnapshot`
+    # carries a client-side ORM default and no server default, which is exactly
+    # the class this file is named after. Caught locally only because a real
+    # Postgres was to hand; on a runner it would have read as "the #6390 gate is
+    # broken" rather than "the seed is short a column".
+    "test_price_table_fold_6390_pg.py",
     # #6073's stuck-status rescue. Seeds `sports` and four `events` by raw
     # INSERT, and `sports.active` plus `events.status` are both the Python-side
     # default this file is named after — the seed names them.

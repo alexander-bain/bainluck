@@ -2231,6 +2231,34 @@ jobs:
             exit 1
           fi
 
+      - name: "#6390 price-table fold (real Postgres)"
+        # The sibling of the step above. #6390 folded `odds_snapshots` onto the
+        # canonical — the member of the fold family (#2693 markets, #3810 series
+        # and blend) that nobody had folded, which left Brest-PSG 15311919
+        # rendering a final score and no prices while its hidden duplicate held
+        # all ten sportsbooks.
+        #
+        # Only a real Postgres can grade the load-bearing fact. The unit rig
+        # EMULATES `latest_odds_per_bookmaker_query`'s per-(event, bookmaker)
+        # grouping, so it is only as good as that belief: if the recursive CTE
+        # collapsed across events by itself, the de-duplicating picker would be
+        # dead code and the rig would be inventing the problem it solves. The
+        # first test here asserts the server really does return a shared book
+        # twice. The fold is also read out of `events.event_tags` with a jsonb
+        # `@>`, which sqlite does not have — same reason as #6221 above.
+        #
+        # Same skip detection as every gate in this job: pytest exits 0 when
+        # each test skips, and a gate that silently did not run reads exactly
+        # like one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_price_table_fold_6390_pg.py \
+            -v -rs 2>&1 | tee /tmp/pricetable6390.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/pricetable6390.txt; then
+            echo "::error::#6390 price-table fold gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
