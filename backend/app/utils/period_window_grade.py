@@ -49,12 +49,20 @@ Four refusals are deliberate and are the ones worth knowing about:
   ``push``; teaching the builder that third word is a follow-up, not a thing to
   smuggle in here.)
 * **An ambiguous side.** "New York" against a Yankees/Mets line matches both, so
-  it matches neither. See :func:`_resolve_side`.
+  it matches neither. See :func:`app.utils.team_side.resolve_team_side`.
+
+That side resolver used to live in this module. It moved to
+:mod:`app.utils.team_side` (#6312) — unchanged, and re-imported here under its
+old private names — because the full-game margin grader asks exactly the same
+question of the same strings, and two copies of a fail-safe matcher drift.
 """
 
 from __future__ import annotations
 
 import re
+
+from app.utils.team_side import normalize_team_text as _norm
+from app.utils.team_side import resolve_team_side as _resolve_side
 
 __all__ = ["grade_period_window"]
 
@@ -78,47 +86,6 @@ _TIE_RE = re.compile(r"^\s*(?:tie|draw)\b", re.IGNORECASE)
 
 # "Tampa Bay -1.5 first 5 innings" / "Atlanta +2.5".
 _SPREAD_RE = re.compile(r"^\s*(?P<team>.+?)\s+(?P<sign>[+-])\s*(?P<line>\d+(?:\.\d+)?)\b")
-
-
-def _norm(text) -> str:
-    """Lowercased, single-spaced, punctuation-light — for team-name comparison only."""
-    if not text:
-        return ""
-    cleaned = re.sub(r"[.'’]", "", str(text)).lower()
-    return " ".join(cleaned.split())
-
-
-def _resolve_side(team_text, home_team_name, away_team_name):
-    """``"home"``, ``"away"``, or ``None`` when the name does not name exactly one.
-
-    The outcome wears a SHORT name and the row wears the full one — "Tampa Bay"
-    against "Tampa Bay Rays", "Los Angeles A" against "Los Angeles Angels". So
-    the test is prefix containment in either direction, and the fail-safe is
-    **exactly one** side matching:
-
-    * "New York" on a Yankees/Mets matchup matches both, so it resolves to
-      neither. Picking one would print a verdict under the wrong club's name.
-    * "Chicago WS" matches neither "Chicago White Sox" nor "Pittsburgh Pirates",
-      because "ws" is an abbreviation and not a prefix. That row keeps today's
-      behaviour — suppressed — rather than being graded off a guess.
-
-    A permissive matcher is the right tool for LINKING two rows that are probably
-    the same fixture and the wrong tool for DISPLAYING a result, so this is
-    deliberately its own strict test rather than a reuse of the matcher helpers.
-    """
-    needle = _norm(team_text)
-    if not needle:
-        return None
-
-    matches = []
-    for side, full_name in (("home", home_team_name), ("away", away_team_name)):
-        candidate = _norm(full_name)
-        if not candidate:
-            continue
-        if candidate == needle or candidate.startswith(needle) or needle.startswith(candidate):
-            matches.append(side)
-
-    return matches[0] if len(matches) == 1 else None
 
 
 def _window_totals(first_period, last_period, home_period_scores, away_period_scores):
