@@ -66,6 +66,7 @@ from sqlalchemy.ext.compiler import compiles
 
 from app.utils.game_pairing import clockless_write_defers_to_authority
 from app.utils.game_state import (
+    _INNING_STATE_RE,
     live_progress_position,
     live_write_would_revert,
 )
@@ -140,12 +141,46 @@ class TestAnObservationIsPlacedInGameTime:
             ("Bottom 1st", "Top 2nd"),
             ("Top 8th", "Bottom 9th"),
             ("Bottom 9th", "Top 10th"),
+            # #6251: the two INNING-BREAK states, in the order the game plays
+            # them. Each pair is adjacent, so a ladder that merely sorted the
+            # words alphabetically ("bottom" < "end" < "middle" < "top") would
+            # fail every one of them.
+            ("Top 4th", "Middle 4th"),
+            ("Middle 4th", "Bottom 4th"),
+            ("Bottom 4th", "End 4th"),
+            ("End 4th", "Top 5th"),
+            ("Middle 3rd", "End 7th"),
+            ("End 9th", "Top 10th"),
         ],
     )
     def test_baseball_orders_on_the_label_alone(self, earlier, later):
-        """Baseball has no clock, so the half-inning label carries the ordering
-        by itself — top before bottom, inning before inning."""
+        """Baseball has no clock, so the inning-state label carries the ordering
+        by itself — top, middle, bottom, end, then the next inning."""
         assert live_progress_position(earlier, None) < live_progress_position(later, None)
+
+    def test_the_whole_inning_ladder_is_strictly_increasing(self):
+        """#6251, stated once as a sequence rather than as pairs: the guard is
+        only worth anything if EVERY state of an inning outranks the one before
+        it and the last one outranks the next inning's first.
+
+        The pairwise cases above can all pass on a ladder with a duplicate rank
+        in it (two states colliding on one number still compare `<` against
+        their neighbours); this cannot.
+        """
+        ladder = [
+            f"{state} {inning}{suffix}"
+            for inning, suffix in ((1, "st"), (2, "nd"), (3, "rd"), (4, "th"))
+            for state in ("Top", "Middle", "Bottom", "End")
+        ]
+        positions = [live_progress_position(label, None) for label in ladder]
+
+        unplaceable = [
+            label for label, position in zip(ladder, positions) if position is None
+        ]
+        assert not unplaceable, f"unplaceable inning states: {unplaceable}"
+        assert positions == sorted(
+            set(positions)
+        ), f"not strictly increasing: {list(zip(ladder, positions))}"
 
     def test_the_clock_can_come_from_the_separate_column(self):
         """A writer that fills `game_clock` but leaves the clock off the period
@@ -174,14 +209,53 @@ class TestWhatItRefusesToPlace:
             "Final/OT",
             "1H",
             "2H",
-            "Middle 3rd",  # StatPal MLB, #5017's unobserved-family list
-            "End 9th",
+            # `'Middle 3rd'` and `'End 9th'` USED TO BE HERE, on #5017's
+            # "unobserved family" ground. #6251 removed them: they are the
+            # inning-break states, they ARE observed (`espn_snapshots`
+            # 2026-03-15 → 2026-08-26, and 2 of 6 live MLB rows at
+            # 2026-09-15 00:25Z), and unlike `Half` their order is fixed by the
+            # sport rather than guessed. They are now ranked, and asserted by
+            # `test_baseball_orders_on_the_label_alone` and
+            # `test_the_whole_inning_ladder_is_strictly_increasing` above.
             "",
             None,
         ],
     )
     def test_unplaceable_labels_are_none(self, period):
         assert live_progress_position(period, "5:00") is None
+
+    @pytest.mark.parametrize(
+        "period",
+        [
+            "End of 1st Quarter",
+            "End of 3rd Quarter",
+            "End of 2nd Half",
+            "End of OT",
+            "End of 2OT",
+            "End 1st Period",
+        ],
+    )
+    def test_the_other_sports_end_family_is_not_read_as_an_inning(self, period):
+        """#6251's negative guard, and the reason the inning pattern carries a
+        lookahead.
+
+        Every `End …` label measured outside baseball belongs to another sport:
+        `'End of 3rd Quarter'` (NFL/NCAAF/NBA/WNBA), `'End of 2nd Half'`
+        (NCAAB), `'End of OT'`. Widening the baseball branch to `end` must not
+        quietly capture any of them and place a basketball quarter-end on the
+        inning ladder — a silent wrong answer, since both sides would still be
+        floats and the comparison would still run.
+
+        Asserted on the PATTERN rather than on the returned number, because the
+        overtime and inning ladders legitimately share integers — `'End of OT'`
+        is `4 + 1` and `'Top 1st'` is `1 * 4 + 1`, both `5.0`. They never meet
+        (a row is one sport), so the collision is harmless, but it does mean a
+        value assertion here would be testing the wrong thing and would fail for
+        a reason that is not the defect.
+        """
+        assert (
+            _INNING_STATE_RE.search(period) is None
+        ), f"{period!r} was captured by the baseball inning pattern"
 
     def test_a_half_is_deliberately_unplaceable_because_direction_is_unknown(self):
         """Soccer's clock counts UP and college basketball's counts DOWN, and one

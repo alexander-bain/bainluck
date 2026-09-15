@@ -198,12 +198,60 @@ _TERMINAL_LABEL_RE = re.compile(
     re.IGNORECASE,
 )
 
-#: Baseball has no clock, so its ordering is entirely in the label: two
-#: half-innings per inning, top before bottom. Measured vocabulary is exactly
-#: `'Top 9th'` / `'Bottom 2nd'`.
-_HALF_INNING_RANK = {"top": 1, "bottom": 2}
-_HALF_INNING_RE = re.compile(
-    r"\b(top|bottom)\s+(\d{1,2})(?:st|nd|rd|th)\b", re.IGNORECASE
+#: Baseball has no clock, so its ordering is entirely in the label: FOUR states
+#: per inning, in the order the game plays them — `Top` (visitors bat), `Middle`
+#: (the break after the top half), `Bottom` (home bats), `End` (the break after
+#: the bottom half, before the next inning's top).
+#:
+#: ── WHY `Middle`/`End` ARE RANKED NOW AND WERE NOT BEFORE (#6251) ──
+#:
+#: They were originally listed as deliberately unplaceable, on the stated ground
+#: that they were an "unobserved family" (#5017) — the same conservatism that
+#: still refuses `Half`. That premise is now refuted by measurement, and the two
+#: cases are NOT alike:
+#:
+#: * OBSERVED. `espn_snapshots` holds `'End 8th'`, `'End 11th'`, `'End 2nd'`,
+#:   `'End 3rd'`, `'Middle 7th'`, `'Middle 9th'` between 2026-03-15 and
+#:   2026-08-26; and a direct read of `events.period` at 2026-09-15 00:25Z
+#:   caught 2 of the 6 live MLB rows sitting on one (`'Middle 3rd'` on 15312194,
+#:   `'End 7th'` on 15312187). They are the INNING-BREAK states, so they are
+#:   short-lived — which is why a sparse snapshot table under-counts them and
+#:   why the live table catches them a third of the time.
+#: * UNAMBIGUOUS. `Half` is refused because the STRING cannot say which way its
+#:   clock runs, so ranking it would invert a whole sport. Nothing is being
+#:   guessed here: baseball's structure fixes top → middle → bottom → end, and
+#:   the label names the state outright.
+#:
+#: Leaving them unplaceable is not neutral. Unplaceable means the guard stands
+#: down ENTIRELY on that row — not "coarse", blind — so while a game sat in an
+#: inning break, an observation from the 1st could overwrite the 9th. That
+#: window is exactly when a run has just scored and the feeds most disagree.
+#:
+#: Ranking four states per inning rather than two also halves the tie window the
+#: guard cannot see through. It does NOT close it: two observations inside one
+#: `Top 4th` still tie, which is #6251's remaining half.
+#:
+#: ONLY the full-word spellings are ranked, on purpose. `_BASEBALL_HALF_ALIASES`
+#: above canonicalises `middle` to `'Mid'`, which reads like a spelling this
+#: guard should also accept — it is not, because that function is display-only
+#: (`normalize_live_game_state`'s three callers are all serializers) and its
+#: output is never written back to `events.period`. Checked rather than assumed:
+#: `'Mid …'`, `'Bot …'`, `'T …'` and `'B …'` return 0 rows across both
+#: `espn_snapshots.period` and `events.period`. Ranking an unstored spelling
+#: would be the same unmeasured guess this block just finished refuting.
+_INNING_STATE_RANK = {"top": 1, "middle": 2, "bottom": 3, "end": 4}
+_INNING_STATES_PER_INNING = 4
+#: The negative lookahead keeps this off the other sports' `End` family. Every
+#: non-baseball `End` label measured across `espn_snapshots` is the
+#: `'End of 3rd Quarter'` / `'End of 2nd Half'` / `'End of OT'` shape, which
+#: carries an ` of ` and so cannot match `end <n><ord>` anyway; the lookahead is
+#: for the unmeasured `'End 1st Period'` spelling, where stealing a hockey
+#: period-end into the inning ladder would be silent and wrong. Fail-closed:
+#: it can only make this branch decline, never widen it.
+_INNING_STATE_RE = re.compile(
+    r"\b(top|middle|bottom|end)\s+(\d{1,2})(?:st|nd|rd|th)\b"
+    r"(?!\s+(?:quarter|period|half))",
+    re.IGNORECASE,
 )
 
 
@@ -254,11 +302,11 @@ def live_progress_position(
     if end_of:
         return (float(end_of.group(1)), 0.0)
 
-    half_inning = _HALF_INNING_RE.search(text)
-    if half_inning:
-        inning = int(half_inning.group(2))
-        half = _HALF_INNING_RANK[half_inning.group(1).lower()]
-        return (float(inning * 2 + half), 0.0)
+    inning_state = _INNING_STATE_RE.search(text)
+    if inning_state:
+        inning = int(inning_state.group(2))
+        state = _INNING_STATE_RANK[inning_state.group(1).lower()]
+        return (float(inning * _INNING_STATES_PER_INNING + state), 0.0)
 
     countdown = _COUNTDOWN_PERIOD_RE.search(text)
     if countdown:
