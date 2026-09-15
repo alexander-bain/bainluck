@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from app.utils.event_rails import (
+    commence_time_was_never_a_kickoff,
     live_first_order,
     recent_or_unreported_condition,
     upcoming_rail_condition,
@@ -325,7 +326,43 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
     # `_folded_briefs` runs over deduped rows, and lets the union this fold
     # writes onto the survivor be the fallback that lookup degrades to.
     upcoming_rows = _fold_rail(list(upcoming_r.scalars().all()), "upcoming", team.slug)
-    recent_rows = _fold_rail(list(recent_r.scalars().all()), "recent", team.slug)
+    # ── #6346 on the OTHER surface that spends `recent_or_unreported_condition` ──
+    #
+    # #6346 took "Liverpool — Manchester United · No result reported" off
+    # `/sport/soccer/epl` and left it on `/api/teams/liverpool`, which is the same
+    # card about the same row. MEASURED 2026-09-15 12:5xZ, after that fix was live
+    # on production (`fd5326559` is an ancestor of the deployed sha): the league
+    # page served `unreported_games: 0` while the Liverpool team page was still
+    # serving `15302967` and `15302968` — the Manchester United and Everton
+    # season-matchup containers, two of the five the league page had just stopped
+    # showing.
+    #
+    # Not a second policy: `commence_time_was_never_a_kickoff` is #6346's own
+    # helper, called here rather than reimplemented, so the tolerance and the
+    # source set cannot drift between the two readers of one rail condition.
+    #
+    # BEFORE `_fold_rail`, for the reason the league page gives for going before
+    # its own fold: a container must never be elected the survivor of a fold
+    # against the real row it shadows. The team page has no
+    # `kalshi_occurrence_start` recovery in front of it, so placement is a
+    # correctness margin here rather than the whole fix.
+    #
+    # Wrapped, because this rail is Priority #3 and the file's own rule two
+    # paragraphs down is that an optional step never takes the page with it.
+    _recent_raw = list(recent_r.scalars().all())
+    try:
+        _recent_raw = [e for e in _recent_raw if not commence_time_was_never_a_kickoff(e)]
+    except Exception:  # noqa: BLE001 — a gate may not cost a reader their rail
+        # The team ID and not the slug: the slug reaches this route as a path
+        # parameter, and a new log line carrying one is a `py/log-injection`
+        # finding that notice 32 refuses — the same call the league page's own
+        # withhold log records making.
+        logger.exception(
+            "team page: invented-kickoff gate failed for team %s; serving "
+            "the recent rail unfiltered",
+            team.id,
+        )
+    recent_rows = _fold_rail(_recent_raw, "recent", team.slug)
     upcoming_events, recent_events = await _folded_briefs(
         db, team, upcoming_rows, recent_rows
     )
