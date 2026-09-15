@@ -81,6 +81,7 @@ from app.services.anchor_channel import DUPLICATE_TAG_PREFIX, duplicate_tag
 from app.utils.soccer_ghost_twins import (
     SoccerRow,
     competition_from_tickers,
+    kalshi_event_key,
     plan_ghost_tags,
     row_has_final_score,
     row_is_fixture_anchored,
@@ -227,6 +228,12 @@ def build_plan(rows, *, now):
             # the row. Counting only the source the pass above parses would call
             # a canonical stranded while it serves nine Polymarket rows.
             market_count=r.market_count or 0,
+            # The SAME external_id list `ticker_sport_key` is read from, asked a
+            # different question: not "which competition" (a map lookup that
+            # returns None for every #6316 ghost, because their series prefixes
+            # are unregistered) but "which fixture" (string identity, which needs
+            # no map to be complete).
+            ticker_event_key=kalshi_event_key((r.kalshi_tickers or "").split(",")),
         )
         for r in rows
     ]
@@ -483,6 +490,14 @@ async def run_soccer_ghost_twin_sweep(
                 # other number here stays exactly where it was.
                 "stranded_blocks_examined": plan.stranded_blocks_examined,
                 "stranded_pairs_found": plan.stranded_tags,
+                # Its own pair again, and the one that reports a VENUE outage:
+                # this is the only pass keyed on a Kalshi ticker, so a format
+                # change there takes these two to zero and leaves every other
+                # number on this verdict exactly where it was. `pairs_found` can
+                # exceed `fixture_blocks_examined` here — a block may hold two
+                # ghosts — which is true of no other pass.
+                "fixture_blocks_examined": plan.fixture_blocks_examined,
+                "fixture_pairs_found": plan.fixture_tags,
                 "pairs_found": len(plan.tags),
                 "already_tagged": len(plan.tags) - len(todo),
                 "tags_to_write": len(todo),

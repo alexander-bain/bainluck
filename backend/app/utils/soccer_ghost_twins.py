@@ -511,6 +511,109 @@ it: ``live``. A match in progress is unscored and may be unanchored, and calling
 it a duplicate of anything is the one mistake here that reaches a reader
 mid-match. :data:`GHOST_KICKOFF_GRACE` is applied for the same reason and by the
 same predicate as everywhere else.
+
+THE FIFTH PASS STOPS GUESSING: THE VENUE ALREADY TOLD US THESE ARE ONE FIXTURE
+═══════════════════════════════════════════════════════════════════════════════
+
+Every pass above pairs rows on our own ``home_team_name`` and
+``away_team_name``, loosened by a suffix rule and scoped by a competition, with
+a clock or a market count standing in for proof. #6316 is the population where
+none of that is needed, because **both rows carry the same Kalshi event
+ticker**.
+
+``/events/15310639`` is Liverpool FC v Fulham FC, ``scheduled``, kickoff stored
+at ``2026-09-12 00:00:00+00``, running a live "Next update" countdown and
+printing "No result reported" three days after the match. ``/events/15297677``
+is the same fixture, ``completed``, 0-0, with a chart and a settled rail. The
+first page is direct-link reachable only, so no listing rule can reach it. And
+the two rows are not a guess::
+
+    15297677  KXEPLGAME-26SEP12LFCFUL, KXEPLSPREAD-26SEP12LFCFUL, … (15 markets)
+    15310639  KXEPLSCORE-26SEP12LFCFUL, KXEPL1HSCORE-26SEP12LFCFUL,
+              KXEPLFTTS-26SEP12LFCFUL                               (3 markets)
+
+``26SEP12LFCFUL`` is Kalshi's own event ticker for that fixture, and it is on
+both rows. That is an **id-anchored correspondence** — a shared provider id on
+the candidate — which is the first arm ruling 048 names, and it is the arm the
+rest of this module does not have. Gotcha #32's "an id-less claim NEVER absorbs"
+is the reason the other four passes need a clock or a market asymmetry to stand
+in for evidence; this pass has the id, so it needs neither.
+
+WHY THE FOUR PASSES ABOVE ALL MISS IT. The ghost is dated 14 hours BEFORE the
+canonical, so the direction rule refuses it (passes 1-3). The canonical serves
+15 markets, so the market-asymmetry rule refuses it (pass 4). And three of the
+six specimens do not share even the LOOSE name key — ``RC Lens`` against
+``Racing Club De Lens``, ``Brighton & Hove Albion`` against ``Brighton and Hove
+Albion``, ``Deportivo`` against ``RC Deportivo De La Coruña`` — so no widening
+short of a fuzzy matcher reaches them by name at all.
+
+WHY THE TICKER MAPS DO NOT REACH IT EITHER, WHICH IS WHY THIS IS NOT
+:func:`ticker_pass` AGAIN. That pass reads a COMPETITION off a ticker through
+:func:`is_kalshi_game_level_ticker`, and every one of the ghost's three tickers
+fails that predicate: ``KXEPLSCORE``, ``KXEPL1HSCORE`` and ``KXEPLFTTS`` are not
+registered game-level prefixes, so :func:`competition_from_tickers` returns
+``None`` for all six ghosts. This pass never asks which competition a ticker
+names. It asks only whether two rows carry the SAME event ticker, which is a
+question about string identity and needs no map to be complete.
+
+PRECISION, MEASURED OVER THE WHOLE POPULATION RATHER THAN ARGUED. Production
+2026-09-15, every soccer row in the sweep's own -45d/+5d window carrying a
+Kalshi market whose ticker has an event suffix::
+
+    rows carrying an event key                                 1,636
+      └─ carrying exactly ONE, so this pass reads them         1,617
+    distinct event keys over those rows                        1,522
+      ├─ keys on one row only                                  1,446
+      └─ keys shared by 2+ rows                                   76
+           ├─ one played canonical + at least one ghost          13  ← acts
+           ├─ two played canonicals                               1  ← refused
+           └─ no canonical, or no ghost                          62  ← silent
+    ghost rows tagged                                             16
+      └─ blocks contributing two of them                          3
+
+**Every shared-key block holding a canonical was read by name — 15 of them under
+the grammar before the one-key rule was applied, 33 rows — and every one is
+genuinely one fixture: zero collisions.** Sevilla v Atlético (2 copies),
+Chelsea v Brighton (2), Man United v Ipswich, Napoli v Como, Sunderland v Fulham
+(2), Sevilla v Valencia, Genoa v Frosinone, Grêmio v Vasco, Le Havre v Angers,
+Liverpool v Fulham, Freiburg v M'gladbach, Sunderland v Arsenal, Coventry v
+Brighton, Le Mans v Lens, Sassuolo v Juventus. A collision would need two soccer
+fixtures on one date whose team codes concatenate identically in the same order;
+the population says it does not happen, and the claim is falsifiable by re-running
+that read rather than by taking this paragraph's word.
+
+WHAT IT REFUSES, AND THE TWO REAL REPAIRS THAT REFUSAL COSTS. A row whose markets
+name TWO event keys is left alone — the same None-on-disagreement rule
+:func:`competition_from_tickers` applies, for the same reason: a row holding two
+venues' fixtures is telling us the link rail is wrong, and the answer to that is
+not to pick one. 19 rows are in that state and two of them are otherwise
+decidable blocks (Sassuolo v Juventus, Grêmio v Vasco), so the strict rule costs
+two repairs. Both canonicals carry two DATE spellings of their own single fixture
+(``26SEP12SASJUV`` and ``26SEP13SASJUV``); three others are two ORIENTATIONS of
+one fixture, and three more (``26APR11SDMIN`` with ``26AUG01MINSD``) are a
+genuine home-and-away pair linked to one row. Separating those is a link-rail
+question with its own evidence, not a judgement over two rows, so it is named
+here and not guessed at.
+
+WHAT THIS PASS DOES NOT REACH, SAID PLAINLY. Of #6316's six proven duplicates,
+five share a ticker and this pass takes them. The sixth — Getafe v Deportivo,
+``15310513`` against ``15311881`` — does not: the canonical carries **no Kalshi
+markets at all**, so there is no shared id, and pairing it would be absorption on
+names and a date alone. It is left refused. #6316's wider population is
+477 rows across tennis, soccer and four other sports; this pass is soccer-only
+and id-only, and the tennis two thirds of that population is explicitly out of
+its reach.
+
+WHY IT MAY TAG MORE THAN ONE GHOST PER BLOCK, WHERE EVERY OTHER PASS REFUSES.
+:func:`classify_block` refuses a block with two candidate ghosts because with
+names and a clock as the only evidence, "which of these is the copy" is
+undecidable. Here it is decided by the anchor rather than by the count: the
+canonical is the one row an authority names independently of us, and every other
+row carrying that venue's event ticker is a copy of it. Three of the thirteen
+blocks hold two ghosts each and all six are real. What stays ambiguous is the
+other direction — TWO played, fixture-anchored rows sharing one event ticker —
+and that is refused, because it means an authority has named one Kalshi fixture
+twice and this module does not adjudicate between authorities.
 """
 
 from __future__ import annotations
@@ -671,6 +774,54 @@ def loose_block_key(home: object, away: object) -> tuple[str, str]:
     )
 
 
+#: A Kalshi EVENT ticker's second field: two-digit year, three-letter month,
+#: two-digit day, then the concatenated team codes — ``26SEP12LFCFUL``.
+#:
+#: The month is an allowlist rather than ``[A-Z]{3}`` because the whole claim of
+#: :func:`kalshi_event_key` is that this string names ONE fixture on ONE date,
+#: and three arbitrary letters name nothing. The trailing run is ``[A-Z]+`` with
+#: no length rule: team codes are 2 to 5 letters per club and vary by series, and
+#: a length rule is a guess where the date prefix is already doing the work.
+#:
+#: Anchored both ends, so a market-level ticker with a third field
+#: (``SERIES-EVENT-OUTCOME``) contributes its EVENT field and never its outcome —
+#: the split takes field two, and this asserts field two is a date-shaped one.
+_KALSHI_EVENT_TICKER_RE = re.compile(
+    r"^[0-9]{2}(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[0-9]{2}[A-Z]+$"
+)
+
+
+def kalshi_event_key(external_ids: Iterable[object]) -> str | None:
+    """The one Kalshi EVENT ticker this row's markets name, or ``None``.
+
+    The venue's own identifier for a fixture, which is what makes
+    :func:`fixture_ticker_pass` an id-anchored correspondence (ruling 048 arm A)
+    rather than one more judgement over names — see that pass and the module
+    docstring's fifth section.
+
+    ``None`` on DISAGREEMENT and not a pick, exactly as
+    :func:`competition_from_tickers` does and for the same reason: a row whose
+    markets name two Kalshi events is telling us the link rail put two fixtures
+    on one row, and choosing one of them would build a pairing on top of a known
+    link defect. Measured at 19 rows on 2026-09-15 — some two date spellings of
+    one fixture, some two orientations, some a genuine home-and-away pair — and
+    the module docstring names the two decidable blocks that refusal costs.
+
+    No sport-key or competition map is consulted anywhere here, which is the
+    point: :func:`competition_from_tickers` returns ``None`` for every ghost in
+    #6316's population because their series prefixes are unregistered, and this
+    question does not need the prefix to mean anything.
+    """
+    named = {
+        parts[1]
+        for ext in external_ids
+        if ext
+        for parts in ((str(ext).split("-"),))
+        if len(parts) > 1 and _KALSHI_EVENT_TICKER_RE.match(parts[1])
+    }
+    return named.pop() if len(named) == 1 else None
+
+
 def competition_from_tickers(external_ids: Iterable[object]) -> str | None:
     """The one competition this row's own Kalshi GAME tickers name, or ``None``.
 
@@ -726,6 +877,13 @@ class SoccerRow:
     #: a row claiming no markets can be neither half of a stranded pair, so an
     #: unset count can only ever withhold a tag.
     market_count: int = 0
+    #: The Kalshi EVENT ticker this row's markets unanimously name —
+    #: :func:`kalshi_event_key` of the same ``external_id`` list
+    #: ``ticker_sport_key`` is read from, or ``None``. Read ONLY by
+    #: :func:`fixture_ticker_pass`. Defaults to ``None`` so every row built
+    #: before that pass existed keeps its meaning: a row naming no event can be
+    #: neither half of a ticker-identity pair, so an unset key can only withhold.
+    ticker_event_key: str | None = None
 
 
 def block_sport_key(row: SoccerRow) -> str:
@@ -861,6 +1019,15 @@ class GhostPlan:
     #: exactly where it was.
     stranded_blocks_examined: int = 0
     stranded_tags: int = 0
+    #: Blocks the FIFTH pass looked at, and how many of ``tags`` it contributed.
+    #: Its own pair for the same reason as the other three, and it dies in a way
+    #: none of them can: it is the only pass keyed on a VENUE identifier, so a
+    #: Kalshi ticker-format change takes it to zero while every other number in
+    #: this object is untouched. Tags can exceed blocks here — a block may hold
+    #: two ghosts — which is true of no other pass and is why the two are
+    #: reported rather than one ratio.
+    fixture_blocks_examined: int = 0
+    fixture_tags: int = 0
 
 
 def classify_block(
@@ -1256,6 +1423,136 @@ def stranded_market_pass(
     return tags, refusals, examined
 
 
+def classify_fixture_ticker_block(
+    rows: list[SoccerRow],
+    *,
+    now: datetime,
+) -> tuple[str, list[GhostTag], str]:
+    """Decide one block for the fifth pass. Pure.
+
+    Returns ``(outcome, tags, explanation)`` — a LIST of tags, which is the one
+    shape difference from :func:`classify_block` and
+    :func:`classify_stranded_block`, both of which return at most one. The module
+    docstring's fifth section carries why: every row in this block carries the
+    venue's own ticker for one fixture, so "which of these is the copy" is not a
+    question — the canonical is the row an authority names independently of us
+    and every other one is a copy of it. Three of the thirteen measured blocks
+    hold two ghosts.
+
+    No clock arithmetic and no name comparison happens here at all. The block key
+    IS the evidence, so re-deriving agreement from the rows would be a second,
+    weaker matcher running underneath a stronger one.
+
+    :data:`GHOST_KICKOFF_GRACE` is still applied, by the same expression as
+    everywhere else: a row inside half an hour of its own kick-off must not be
+    relabelled while a reader may be watching it, and that reason does not depend
+    on what proved the pairing.
+    """
+    played = [r for r in rows if row_is_a_played_canonical(r)]
+    ghosts = [
+        r
+        for r in rows
+        if row_could_be_a_ghost(r)
+        and not (now - GHOST_KICKOFF_GRACE < r.commence_time <= now)
+    ]
+    if not played or not ghosts:
+        return NOT_A_TWIN, [], "no played row with an unanchored copy on this ticker"
+    if len(played) > 1:
+        return (
+            REFUSE_AMBIGUOUS,
+            [],
+            (
+                f"{len(played)} played, fixture-anchored rows carry this same "
+                f"Kalshi event ticker — an authority has named one venue fixture "
+                f"twice and which row is the fixture is not decidable here"
+            ),
+        )
+
+    canonical = played[0]
+    return (
+        TWIN_FOUND,
+        [
+            GhostTag(
+                ghost_id=ghost.event_id,
+                canonical_id=canonical.event_id,
+                reason=(
+                    f"{ghost.home_team_name} v {ghost.away_team_name}: shares "
+                    f"Kalshi event ticker {ghost.ticker_event_key} with a played "
+                    f"row, no score, no fixture id"
+                ),
+            )
+            for ghost in ghosts
+        ],
+        "fixture ticker",
+    )
+
+
+def fixture_ticker_pass(
+    rows: list[SoccerRow],
+    *,
+    decided_ghost_ids: set[int],
+    now: datetime,
+) -> tuple[list[GhostTag], list[str], int]:
+    """Re-run the pairing over what the first four passes left, blocking rows by
+    the Kalshi EVENT ticker their own markets name.
+
+    Returns ``(tags, refusals, blocks_examined)``. Pure.
+
+    THE ONLY PASS HERE THAT IS NOT A JUDGEMENT ABOUT NAMES. Its key is a venue
+    identifier, so it carries the id-anchored correspondence ruling 048 names as
+    arm A and gotcha #32 requires before one row may stand in for another; the
+    four passes above have no id and spend their docstrings earning the right to
+    proceed without one. The module docstring's fifth section carries the
+    specimen (``26SEP12LFCFUL`` on both halves of Liverpool v Fulham), the
+    precision read (76 shared keys, 15 canonical-bearing blocks read by name,
+    zero collisions), and why neither the direction rule, the market asymmetry,
+    the loose name key nor :func:`ticker_pass`'s competition map reaches this
+    population.
+
+    It does not call :func:`_reblock`, and not only because the key is a single
+    string: that helper exists to stop a re-KEYED pass restating an earlier
+    pass's refusal in different words, and the ``already_examined_key_of``
+    shortcut would be wrong here. A block every earlier pass saw and refused is
+    a NEW answer under a venue id, not an echo of a refusal reached on names.
+
+    It does not call :func:`fold_unclassified_blocks` either, and that is a
+    property rather than an omission. The fold exists to move a
+    :data:`UNCLASSIFIED_SPORT_KEY` row into the named block for its two clubs;
+    this key contains no competition at all, so a ``soccer_other`` row and a
+    ``soccer_brazil_campeonato`` row sharing one event ticker are already in one
+    block. The measured population contains exactly that pair — ``15311681``
+    against ``15299943``, Grêmio v Vasco — and it needs no fold to be seen.
+
+    It inherits the property that makes passes two, three and four safe, by the
+    same mechanism: a ghost already decided is withheld, so no earlier decision
+    can be revised. It cannot collide from the other side either — every earlier
+    pass can only tag an unanchored, unscored row, which
+    :func:`row_is_a_played_canonical` is false for, so no row this pass calls a
+    canonical is already someone else's ghost.
+    """
+    residual = [r for r in rows if r.event_id not in decided_ghost_ids]
+    blocks: dict[str, list[SoccerRow]] = defaultdict(list)
+    for r in residual:
+        if r.ticker_event_key:
+            blocks[r.ticker_event_key].append(r)
+
+    tags: list[GhostTag] = []
+    refusals: list[str] = []
+    examined = 0
+    for key, members in sorted(blocks.items()):
+        if len(members) < 2:
+            continue
+        examined += 1
+        outcome, block_tags, explanation = classify_fixture_ticker_block(
+            members, now=now
+        )
+        if outcome == TWIN_FOUND:
+            tags.extend(block_tags)
+        elif outcome == REFUSE_AMBIGUOUS:
+            refusals.append(f"{key} (fixture ticker): {explanation}")
+    return tags, refusals, examined
+
+
 def plan_ghost_tags(
     rows: list[SoccerRow],
     *,
@@ -1281,6 +1578,13 @@ def plan_ghost_tags(
     properties that make that true. :func:`ticker_pass` runs last over what
     those two left, blocking each ghost-capable row under the competition its
     own Kalshi game tickers name, and adds under the same two properties.
+
+    :func:`fixture_ticker_pass` runs FIFTH and last, over what the other four
+    left, blocking rows by the Kalshi EVENT ticker their markets name rather than
+    by any reading of our own club names. It is the only pass with an id-anchored
+    correspondence behind it and the only one that can tag more than one ghost in
+    a block; its own docstring and the module docstring's fifth section carry
+    both. Running it last is what keeps it purely additive.
 
     :func:`stranded_market_pass` runs FOURTH and is the only one asking a
     different question — not "which row is still being advertised" but "which
@@ -1340,4 +1644,14 @@ def plan_ghost_tags(
     plan.refusals.extend(stranded_refusals)
     plan.stranded_blocks_examined = stranded_examined
     plan.stranded_tags = len(stranded_tags)
+
+    fixture_tags, fixture_refusals, fixture_examined = fixture_ticker_pass(
+        rows,
+        decided_ghost_ids={t.ghost_id for t in plan.tags},
+        now=now,
+    )
+    plan.tags.extend(fixture_tags)
+    plan.refusals.extend(fixture_refusals)
+    plan.fixture_blocks_examined = fixture_examined
+    plan.fixture_tags = len(fixture_tags)
     return plan
