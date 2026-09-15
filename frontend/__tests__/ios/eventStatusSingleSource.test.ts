@@ -746,7 +746,22 @@ describe("#6381 — the hero stops denying a result the venue already gave us", 
     expect(read(DETAIL).length).toBeGreaterThan(1000);
     const canonical = stripComments(readFileSync(CANONICAL, "utf8"));
     expect(canonical).toMatch(/static func showsVenueSettledVerdict\(/);
-    expect(canonical).toMatch(/static let venueSettledLabel = "Result settled"/);
+
+    // 🔴 THE TIERS ARE PINNED TO EACH OTHER, NOT TO A LITERAL TYPED TWICE.
+    // Both halves of this pair print a settled badge for the same row, so a
+    // reader who opens one match on the phone and on the web is owed the same
+    // word — Alex's "one system-wide settled language". Asserting a second
+    // hardcoded copy of "Settled" here would pass happily while the two sides
+    // drifted apart, which is exactly what happened for a day: native shipped
+    // "Result settled" against the web's "Settled". So READ the web constant
+    // and require the Swift literal to equal it.
+    const webLabel = /export const VENUE_SETTLED_LABEL = "([^"]+)"/.exec(
+      readFileSync(join(__dirname, "../../lib/eventState.ts"), "utf8"),
+    );
+    expect(webLabel).not.toBeNull();
+    const swiftLabel = /static let venueSettledLabel = "([^"]+)"/.exec(canonical);
+    expect(swiftLabel).not.toBeNull();
+    expect(swiftLabel![1]).toBe(webLabel![1]);
   });
 
   it("the payload keys are decoded, and the result is NOT parsed anywhere", () => {
@@ -783,7 +798,7 @@ describe("#6381 — the hero stops denying a result the venue already gave us", 
     expect(final).toBeGreaterThan(-1);
     expect(venue).toBeGreaterThan(final);
     expect(suspended).toBeGreaterThan(venue);
-    // KILLS THE MUTANT `Text("Result settled")`: the label lives in EventState
+    // KILLS THE MUTANT `Text("Settled")`: the label lives in EventState
     // so the badge and the hero cannot drift into two sentences.
     expect(code).toMatch(/Text\(EventState\.venueSettledLabel\)/);
   });
@@ -841,7 +856,7 @@ describe("#6381 — the hero stops denying a result the venue already gave us", 
 
   it("the chart's empty state stops saying 'yet' under a settled hero", () => {
     // #3859 drew this for `completed` and #6381 is the same sentence: the line
-    // sat one screen under the new "Result settled" hero still promising
+    // sat one screen under the new "Settled" hero still promising
     // readings to come. The flag has to travel from the page to the component —
     // a default that never gets passed is the silent half of this class.
     const chart = read("Components/OddsChartView.swift");

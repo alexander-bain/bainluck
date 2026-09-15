@@ -152,10 +152,25 @@ enum EventState {
     ///
     /// Deliberately not "Final": a final has a score from something that
     /// watched the game, and this row has neither — what we hold is the house
-    /// that took the bets saying the question is answered. Deliberately not
-    /// "Settled" alone either, which on its own reads as a market state; the
-    /// reader's question is about the game.
-    static let venueSettledLabel = "Result settled"
+    /// that took the bets saying the question is answered.
+    ///
+    /// ── WHY THE BARE WORD, AND WHY IT IS NOT THIS LANE'S CHOICE TO MAKE ──
+    ///
+    /// This shipped for a day as "Result settled", on the reasoning that
+    /// "Settled" alone reads as a market state. The app itself refutes that:
+    /// `TournamentHubPresentation` already prints `"Settled · Elena Rybakina
+    /// won the title."` and `"Settled · this draw is decided."` — the same
+    /// word, in the same `label · verdict` shape, for the same meaning, on a
+    /// surface a reader reaches from this one. The web half of this very pair
+    /// (`frontend/lib/eventState.VENUE_SETTLED_LABEL`, ux, already on master)
+    /// landed on `"Settled"` from the same evidence.
+    ///
+    /// So "Result settled" was the outlier against both the web twin AND this
+    /// app's own settled vocabulary, and Alex's standing ruling is that there
+    /// is ONE system-wide settled language. The tiers are pinned to each other
+    /// by `eventStatusSingleSource.test.ts`, which reads the web constant
+    /// rather than restating the string, so neither side can drift alone.
+    static let venueSettledLabel = "Settled"
 
     /// The short badge a suspended event wears.
     ///

@@ -311,7 +311,7 @@ struct OddsChartView: View {
     /// #6381 — and the SECOND settled reading, added for the same reason as the
     /// first. A match the venue has already graded is over, so "yet" is the
     /// same false promise here as it is on a `completed` row; the hero one
-    /// screen up now says "Result settled" and this line sat under it still
+    /// screen up now says "Settled" and this line sat under it still
     /// offering more readings to come. It takes the served flag and the clock
     /// rather than a precomputed boolean, so the test stays in `EventState`
     /// where every other native reading of "is it over?" comes from.

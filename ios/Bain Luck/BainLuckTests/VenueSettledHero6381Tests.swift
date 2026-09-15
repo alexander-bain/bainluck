@@ -154,9 +154,16 @@ final class VenueSettledHero6381Tests: XCTestCase {
 
     // MARK: - The label
 
-    func testTheLabelIsNeitherFinalNorAMarketWord() {
-        XCTAssertEqual(EventState.venueSettledLabel, "Result settled")
+    /// The word itself is pinned to the web twin by
+    /// `eventStatusSingleSource.test.ts`, which reads
+    /// `VENUE_SETTLED_LABEL` out of `frontend/lib/eventState.ts` rather than
+    /// restating it — one settled language across the two tiers. What XCTest
+    /// can still say without re-typing that literal is the pair of things the
+    /// word must NOT collide with on this screen.
+    func testTheLabelIsNeitherFinalNorTheSentenceItReplaces() {
+        XCTAssertEqual(EventState.venueSettledLabel, "Settled")
         XCTAssertNotEqual(EventState.venueSettledLabel, EventState.suspendedLabel)
+        XCTAssertFalse(EventState.venueSettledLabel.lowercased().contains("final"))
     }
 
     // MARK: - The chart's empty state, one screen below the hero
@@ -165,7 +172,7 @@ final class VenueSettledHero6381Tests: XCTestCase {
     /// "No win probability readings for this game.", because "yet" promises
     /// readings that can never arrive. A venue-graded row is the same sentence
     /// and was still getting the promise — visible in the after-shot of this
-    /// very ship, under a hero now reading "Result settled".
+    /// very ship, under a hero now reading "Settled".
     func testAVenueGradedGameDropsTheFalsePromise() {
         XCTAssertEqual(
             OddsChartView.noReadingsLine(
