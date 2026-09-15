@@ -293,11 +293,17 @@ class TestThePostgresRendering:
         assert "dup_ghost.status" not in sql, sql
 
     def test_the_predicate_still_survives_an_outer_query_that_joins_events(self):
-        """#4914's compile-time crash, re-run against the two-alias shape."""
+        """#4914's compile-time crash, re-run against the two-alias shape.
+
+        The arm count is asserted EXACTLY, not `>=`, so that adding an arm has to
+        be a deliberate edit here rather than a silent one — #6304 added the
+        third (a market with no event of its own, reached through its venue
+        group) and this line is where that had to be acknowledged.
+        """
         sql = _sql(
             select(FuturesMarket.id)
             .join(Event, Event.id == FuturesMarket.event_id)
             .where(_futures_game_already_played())
         )
-        assert sql.count("NOT (EXISTS") == 2, sql
+        assert sql.count("NOT (EXISTS") == 3, sql
         assert "FROM events AS dup_canonical, events AS dup_ghost" in sql, sql

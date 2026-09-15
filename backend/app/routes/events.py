@@ -2020,6 +2020,24 @@ def _futures_name_arms(ilike_futures_filter, fts_q: str) -> list:
     return [_fts_filter(FuturesMarket.name, fts_q), ilike_futures_filter]
 
 
+def _market_name_names(market_name, event_alias):
+    """``market_name`` contains BOTH of ``event_alias``'s team names (#6304).
+
+    Substring containment in SQL, both sides lowercased by ``ilike`` — the one
+    spelling that renders identically on Postgres and on the guard suite's
+    SQLite, so the arm this feeds is tested by the SQL production runs.
+
+    Deliberately requires BOTH sides. A single-name test would fire on a common
+    surname — this population already contains a player called ``Day`` — and the
+    conjunction is what makes a chance collision vanishingly unlikely once the
+    candidate is already scoped to one venue group.
+    """
+    return and_(
+        market_name.ilike(literal("%") + event_alias.home_team_name + literal("%")),
+        market_name.ilike(literal("%") + event_alias.away_team_name + literal("%")),
+    )
+
+
 def _futures_game_already_played():
     """The market's own game has been declared Final (#4914). SHARED by /search and /typeahead.
 
@@ -2101,9 +2119,102 @@ def _futures_game_already_played():
     `folded_event_ids()` already serves those markets on the canonical's own
     event page (`/api/events/15312415/game-markets` returns 13 while that row
     owns 0).
+
+    🔴 #6304 — A MARKET MAY HANG OFF NO ROW AT ALL. Both arms above correlate on
+    `FuturesMarket.event_id`, so both are structurally blind to the 32,483
+    markets in this pool carrying `event_id IS NULL` — including 60842470,
+    `Guadalajara Open Akron: Tatjana Maria vs Taylor Townsend`, which survived
+    #6296 as the ANSWERS headline of a match the same page printed as FINAL.
+
+    The third arm reaches it through the venue group. A market with no event of
+    its own, whose `group_id` siblings ARE attached to a game already played, is
+    a candidate — and then the played event's own team names must appear in the
+    candidate's name or it is kept.
+
+    🔴 THE NAME CHECK IS NOT A NICETY, IT IS THE WHOLE SAFETY OF THE ARM, AND
+    THE OBVIOUS ID-ONLY FORM IS WRONG. A Polymarket `group_id` is a venue EVENT
+    id, which is one match for tennis and one CARD for combat sports. Measured
+    on production 2026-09-15 04:4xZ, `polymarket:13696` is UFC 308: two markets
+    attached to a `closed` Topuria/Holloway, and four unattached siblings —
+    `Whittaker vs. Chimaev`, `Murphy vs. Ige`, `Ankalaev vs. Rakic`,
+    `Magomedov vs. Petrosyan` — which are DIFFERENT FIGHTS. An id-only rule
+    suppresses all four by inferring they are "about" Topuria/Holloway. They
+    happen to be stale for their own unrelated reason (#5261/#2637), so it would
+    be right by accident; the moment a card straddles — a prelim finished and
+    attached while the main event is still upcoming and unattached, the state of
+    every UFC card mid-evening — the same inference deletes a live main event
+    from search.
+
+    `count(DISTINCT event) = 1` for all sixteen candidates, UFC included, so
+    "the group points at one event" does NOT discriminate. That was measured and
+    rejected before this spelling. Name agreement does: 12 suppressed, 4 kept,
+    exactly the UFC card.
+
+    🔴 THE VETO THE ISSUE ASKED FOR IS INERT, AND IS NOT WHAT MAKES THIS SAFE.
+    #6304 specified "at least one played sibling AND no unplayed sibling". The
+    second half selects the same 16 rows with it and without it while costing a
+    second correlated subquery, because an unplayed sibling of a played game is
+    normally unattached and so invisible to it. It is omitted; the name check is
+    the guard, and it FAILS CLOSED — names disagree, the card stays, which is
+    exactly today's behaviour. Nothing here can create or absorb an attachment,
+    so this is a search gate and not a matching change (D35 / #2693).
+
+    🔴 THE NAME IS READ OFF THE ATTACHED ROW, AND THE CANONICAL'S SPELLING IS
+    DELIBERATELY NOT CONSULTED. The status test needs both rows — the ghost is
+    `suspended` and only the canonical says `completed` — but the NAME test uses
+    the attached row alone, because that row stores the venue's terse form
+    (`Jacquemot` / `Samsonova`) while the canonical stores the full one
+    (`Elsa Jacquemot` / `Liudmila Samsonova`), and the terse form is a substring
+    of the full. Markets are named both ways —
+    `Guadalajara Open Akron: Elsa Jacquemot vs Liudmila Samsonova` AND
+    `Set 1 Winner: Jacquemot vs Samsonova` — so the terse spelling covers both
+    and the full one does not. Measured on production 2026-09-15 05:0xZ:
+
+        attached row's spelling only ......... 12   <- shipped
+        canonical's spelling only ............  8
+        either ............................... 12
+
+    `either` equalling `attached-only` proves the canonical's names are a strict
+    SUBSET, so adding them reaches nothing while widening an OR on a hot
+    predicate. Dropped for the same reason as the veto above: an inert term is
+    not free, and an inert term on the SUPPRESSING side is an untested widening.
+
+    The NAME half therefore needs no regex and has ONE spelling — `ilike`
+    renders as `ILIKE` on Postgres and `lower() LIKE lower()` on SQLite, the
+    same predicate — so the guard suite exercises the real one. Be precise about
+    the scope of that claim: the ghost JOIN this arm shares with the second
+    still carries `ghost_names_canonical`'s two compilations, so the arm as a
+    whole is not single-rendered and the Postgres shape is pinned by name below.
+
+    COST, measured on the shape that actually runs — the emitted SQL with the
+    name filter already applied (`status='open' AND name ILIKE '%Townsend%'`),
+    six interleaved EXPLAIN ANALYZE rounds, execution + planning:
+
+        arms 1+2 ....... median  4.2 /  5.1 ms   max  4.8 /  9.3 ms
+        arms 1+2+3 ..... median 12.2 / 13.4 ms   max 20.7 / 53.8 ms
+
+    (two separate six-round batteries, quoted as a pair rather than averaged —
+    the host is shared and the tail moves between batteries while the ~+8 ms
+    median delta does not. Read the tail, not the median.)
+
+    and the only row it removes on that query is 60842470, the specimen. The
+    arm is correlated, so it must stay BEHIND the name filter exactly like
+    #6299's — over the unfiltered `open` pool the same predicate is 576 ms.
+
+    ⚠️ THE SHORT-CIRCUIT LEVER WAS TRIED AND IT IS SLOWER. Hoisting the two
+    cheap outer tests so the subquery is skipped for rows it cannot apply to —
+    `event_id IS NOT NULL OR group_id IS NULL OR NOT EXISTS (...)` — is
+    set-identical (same three rows) and measures **median 21.4 ms, max 133.5 ms**
+    against 12.2 / 20.7 for the plain form. The top-level OR blocks the anti-join
+    transformation, which is the same finding `_futures_name_arms` records one
+    level up ("UNION, not OR"). Do not re-try it; the majority of this pool
+    carries `event_id IS NULL` anyway, so there is little to short-circuit.
     """
     _dup_ghost = aliased(Event, name="dup_ghost")
     _dup_canonical = aliased(Event, name="dup_canonical")
+    _grp_sibling = aliased(FuturesMarket, name="grp_sibling")
+    _grp_ghost = aliased(Event, name="grp_ghost")
+    _grp_canonical = aliased(Event, name="grp_canonical")
     return and_(
         ~(
             select(Event.id)
@@ -2120,6 +2231,24 @@ def _futures_game_already_played():
                 _dup_ghost.id == FuturesMarket.event_id,
                 ghost_names_canonical(_dup_ghost, _dup_canonical),
                 _dup_canonical.status.in_(tuple(sorted(SETTLED_STATUSES))),
+            )
+            .correlate(FuturesMarket)
+            .exists()
+        ),
+        ~(
+            select(_grp_sibling.id)
+            .select_from(_grp_sibling)
+            .join(_grp_ghost, _grp_ghost.id == _grp_sibling.event_id)
+            .outerjoin(_grp_canonical, ghost_names_canonical(_grp_ghost, _grp_canonical))
+            .where(
+                FuturesMarket.event_id.is_(None),
+                FuturesMarket.group_id.isnot(None),
+                _grp_sibling.group_id == FuturesMarket.group_id,
+                or_(
+                    _grp_ghost.status.in_(tuple(sorted(SETTLED_STATUSES))),
+                    _grp_canonical.status.in_(tuple(sorted(SETTLED_STATUSES))),
+                ),
+                _market_name_names(FuturesMarket.name, _grp_ghost),
             )
             .correlate(FuturesMarket)
             .exists()
