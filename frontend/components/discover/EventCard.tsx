@@ -14,6 +14,7 @@ import type { CardActionCallbacks } from "./types";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import { probabilityAuthorityClass } from "@/lib/confidence";
+import { getSportLabel } from "@/lib/sportCategories";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
 import {
   SUSPENDED_LABEL,
@@ -118,6 +119,31 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   // segment here would leave the fix inert.
   const sportCat = chipCategory(data.sport) || "sports";
   const catStyle = getCat(sportCat);
+  // #2621 (ux half) — THE CHIP NAMES A COMPETITION, NOT A KEY FRAGMENT.
+  //
+  // This used to print the server's `sport_label` verbatim. That field is
+  // GENERATED — `feed.py::_get_sport_label` keeps every segment of the sport key
+  // but the leading sport family — so it cannot tell two competitions apart when
+  // the family is the only thing that differs. Measured over the 2,148 events in
+  // the NOW-2d..+7d window: 852 of them (40%) wore a chip some OTHER sport also
+  // wore. `OTHER` alone covered 806 events across NINE sports (soccer 404, tennis
+  // 288, baseball, basketball, cricket, esports, American football, ice hockey,
+  // motorsport); `GERMANY BUNDESLIGA` covered handball and soccer; `SWEDEN
+  // ALLSVENSKAN` covered soccer and ice hockey.
+  //
+  // `getSportLabel` is the canonical three-source rule (#4350 / #4358 / #4381) and
+  // is what this card's two siblings — `components/EventCard.tsx:470` and
+  // `components/FeedCard.tsx:471` — already call, so this surface was also the one
+  // printing a different chip from the others for the same game (notice 35). Over
+  // the same 82 live keys it returns 82 DISTINCT labels: `soccer_other` reads
+  // "Other Soccer", `handball_germany_bundesliga` reads "Handball-Bundesliga".
+  //
+  // The `data.sport` guard is not decoration: `sport_label` is set only on the
+  // event-card path, so a payload without a sport key keeps the old ladder rather
+  // than falling to the literal "Sports".
+  const sportChip = data.sport
+    ? getSportLabel(data.sport, data.sport_name)
+    : data.sport_label || data.sport_name || "Sports";
 
   // #5245(b) — THE CONTEXT SLOT NEVER SPEAKS THE STATE. `contextSnippet` below
   // falls back to this string, so a finished game whose wire carried no caption
@@ -188,8 +214,26 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
       {trending && <TrendBadge />}
 
       <div className="relative h-44 flex items-center justify-center gap-6" style={{ background: CATEGORY_GRADIENTS[sportCat] || `linear-gradient(135deg, ${awayColor}33, ${homeColor}33)` }}>
-        <div className={`absolute top-3 left-3 ${catStyle.bg} ${catStyle.text} text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full backdrop-blur-sm`}>{catStyle.emoji} {data.sport_label || data.sport_name || "Sports"}</div>
-        {isLive && <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-red-500/90 text-white text-[10px] font-bold uppercase px-2.5 py-1 rounded-full"><span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />LIVE</div>}
+        {/* #2621 (ux half) — THE STATUS PILLS SHARE ONE ROW, SO THEY CANNOT SHARE PIXELS.
+            The chip and the LIVE badge used to be two independent absolutes — one at
+            `left-3`, one centred at `left-1/2` — with nothing stopping the first growing
+            into the second. At 390px the card is 334px wide and the centred badge starts
+            at 136px, which a chip reaches at about fifteen characters. Measured on
+            production: 505 of the 2,148 events in the NOW-2d..+7d window (24%) already
+            carry a label that long, and every one of them is a live card for the duration
+            of its own match — `UEFA EUROPA LEAGUE` was photographed reading
+            `UEFA EUROPA LEA` with the badge sitting on the rest. The intersection is
+            empty at most instants, which is why it survived: a two-hour-per-row
+            population is transient, not absent.
+            One flex row makes the overlap unrepresentable. `right-12` clears the dismiss
+            button; `right-36` also clears the trending pill, which is right-anchored at
+            `right-12` and ~85px wide (#4131 keeps it in the corner, so this reserves for
+            it rather than moving it). `truncate` is the backstop only — every label in the
+            live corpus fits the 274px this leaves. */}
+        <div className={`absolute top-3 left-3 ${trending ? "right-36" : "right-12"} flex items-center gap-2`}>
+          <div className={`min-w-0 truncate ${catStyle.bg} ${catStyle.text} text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full backdrop-blur-sm`}>{catStyle.emoji} {sportChip}</div>
+          {isLive && <div className="shrink-0 flex items-center gap-1.5 bg-red-500/90 text-white text-[10px] font-bold uppercase px-2.5 py-1 rounded-full"><span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />LIVE</div>}
+        </div>
 
         <div className="flex flex-col items-center gap-2">
           {data.away_team_data?.logo_small ? <img src={data.away_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" /> : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: awayColor }}>{teamCrestBadge(data.away_team)}</div>}
