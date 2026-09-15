@@ -4013,8 +4013,9 @@ def tennis_twin_sweep_task(self, apply: bool = True, lookback: int = 10,
 
 @celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
                  name="app.tasks.soccer_ghost_twin_sweep")
-def soccer_ghost_twin_sweep_task(self, apply: bool = True, lookback: int = 5,
-                                 lookahead: int = 5):
+def soccer_ghost_twin_sweep_task(self, apply: bool = True,
+                                 lookback: int | None = None,
+                                 lookahead: int | None = None):
     """#5896 — the same fold, for the class tennis's pairing cannot see.
 
     Ten soccer rows on 2026-09-13 advertised a match that had already been
@@ -4032,12 +4033,28 @@ def soccer_ghost_twin_sweep_task(self, apply: bool = True, lookback: int = 5,
     Enrolled in ENFORCED_TASKS from birth (#1884) with a real `terminal`. Its
     band sits on the POPULATION rather than on the plan — soccer ghosts are
     episodic, so an empty plan is the healthy majority state and a plan floor
-    would refuse the quiet day. See the module docstring's verdict contract."""
-    from app.tasks.soccer_ghost_twin_sweep import run_soccer_ghost_twin_sweep
+    would refuse the quiet day. See the module docstring's verdict contract.
+
+    🔴 THE WINDOW IS RESOLVED FROM THE MODULE, NEVER RE-TYPED HERE. This
+    signature read `lookback: int = 5` and the beat entry passed
+    `{"lookback": 5}`, so the module's `DEFAULT_LOOKBACK_DAYS` was consulted by
+    nothing on the scheduled path — widening it to 45 for the stranded-market
+    pass (#3813) would have changed the constant, the tests and the docstring
+    while production kept reading five days. A `None` here means "whatever the
+    module says", which is the only spelling that cannot drift from it.
+    """
+    from app.tasks.soccer_ghost_twin_sweep import (
+        DEFAULT_LOOKAHEAD_DAYS,
+        DEFAULT_LOOKBACK_DAYS,
+        run_soccer_ghost_twin_sweep,
+    )
+
     return _tracked_run(
         "soccer_ghost_twin_sweep",
         run_soccer_ghost_twin_sweep(
-            apply=apply, lookback=lookback, lookahead=lookahead
+            apply=apply,
+            lookback=DEFAULT_LOOKBACK_DAYS if lookback is None else lookback,
+            lookahead=DEFAULT_LOOKAHEAD_DAYS if lookahead is None else lookahead,
         ),
     )
 
@@ -5232,10 +5249,17 @@ celery_app.conf.beat_schedule = {
     # APPLY, unattended, under D51: reversible label, no deleter, prior value
     # banked into `bak_5896_soccer_ghost_tags` first, and one-command undo via
     # `scripts/restore_5896_soccer_ghost_tags.py --apply`.
+    #
+    # NO `lookback`/`lookahead` HERE, DELIBERATELY. Pinning them made this entry
+    # a second copy of the window, and the module's own constant was then read
+    # by nothing that runs (#3813). Omitting them passes `None`, which the task
+    # resolves from `DEFAULT_LOOKBACK_DAYS`/`DEFAULT_LOOKAHEAD_DAYS` —
+    # `test_the_scheduled_window_is_the_modules_window` fails if either comes
+    # back.
     "soccer-ghost-twin-sweep": {
         "task": "app.tasks.soccer_ghost_twin_sweep",
         "schedule": crontab(minute="9,49"),
-        "kwargs": {"apply": True, "lookback": 5, "lookahead": 5},
+        "kwargs": {"apply": True},
         "options": {"queue": "background"},
     },
     "merge-duplicate-events": {

@@ -73,6 +73,7 @@ class _Row:
         statpal_fixture_id=None,
         tags=None,
         kalshi_tickers=None,
+        market_count=0,
     ):
         self.id = id
         self.sport_key = sport_key
@@ -90,6 +91,12 @@ class _Row:
         #: `ticker_sport_key`. Named here so dropping it from the SELECT breaks
         #: these tests rather than silently making that pass inert.
         self.kalshi_tickers = kalshi_tickers
+        #: How many markets of ANY source hang off this row — the column
+        #: `build_plan` turns into the fourth pass's `market_count`. Here for
+        #: the same reason as `kalshi_tickers`: drop it from the SELECT and
+        #: these tests fail, rather than the stranded pass quietly finding
+        #: every played row market-less and every copy market-free.
+        self.market_count = market_count
 
 
 def ghost(**kw):
@@ -136,6 +143,19 @@ def _filler(n):
         )
         for i in range(n)
     ]
+
+
+def _healthy_backdrop():
+    """A backdrop comfortably above whatever the floor currently is.
+
+    Derived from `MIN_EXPECTED_ROWS` rather than the literal 400 these tests
+    carried while the floor was 200. The literal was never the point — "clears
+    the floor with room" was — and when the window widened to -45d and the floor
+    rose with it (both on 2026-09-15), every one of these tests failed on its
+    backdrop instead of on its subject. The one test that is ABOUT the floor's
+    exact value parametrizes `MIN_EXPECTED_ROWS - 1` directly and is unaffected.
+    """
+    return _filler(sweep.MIN_EXPECTED_ROWS + 200)
 
 
 class _Result:
@@ -281,12 +301,23 @@ class TestTheSweepRunsWithoutAHuman:
 
     def test_the_window_covers_the_whole_decidable_population(self):
         """The lookback has to reach at least as far back as the widest lag the
-        judgement will accept, or the sweep can plan a pair it never read."""
+        judgement will accept, or the sweep can plan a pair it never read.
+
+        Asserted on the MODULE constants, not on the beat kwargs it used to
+        read. The entry pinned `lookback: 5` of its own, which made it a second
+        copy of the window and left `DEFAULT_LOOKBACK_DAYS` read by nothing that
+        runs (#3813); the entry now passes neither and the task resolves both.
+        The assertion is unchanged — only where the effective value lives.
+        `test_the_beat_entry_pins_no_window_of_its_own` guards the other half.
+        """
+        from app.tasks.soccer_ghost_twin_sweep import (
+            DEFAULT_LOOKAHEAD_DAYS,
+            DEFAULT_LOOKBACK_DAYS,
+        )
         from app.utils.soccer_ghost_twins import MAX_GHOST_LAG
 
-        entry = self._schedule()["soccer-ghost-twin-sweep"]
-        assert entry["kwargs"]["lookback"] >= MAX_GHOST_LAG.days
-        assert entry["kwargs"]["lookahead"] >= 1
+        assert DEFAULT_LOOKBACK_DAYS >= MAX_GHOST_LAG.days
+        assert DEFAULT_LOOKAHEAD_DAYS >= 1
 
 
 def test_it_is_enrolled_in_enforced_tasks():
@@ -324,7 +355,7 @@ class TestTheTwoZerosDoNotShareAVerdict:
         thirty days. A plan floor would make the healthy state red on most days
         of the year.
         """
-        summary, _ = _run(_filler(400), monkeypatch)
+        summary, _ = _run(_healthy_backdrop(), monkeypatch)
 
         assert summary["terminal"] == "complete"
         assert summary["pairs_found"] == 0
@@ -353,7 +384,7 @@ class TestTheTwoZerosDoNotShareAVerdict:
     def test_a_plan_above_the_ceiling_is_refused(self, monkeypatch):
         """A pairing regression labels far more rows than anyone has measured,
         and a sweep never gets to ratify its own surprise."""
-        rows = _filler(400)
+        rows = _healthy_backdrop()
         for i in range(sweep.MAX_EXPECTED_TAGS + 1):
             rows.append(_Row(id=800000 + i, home=f"Cc{i}", away=f"Dd{i}", at=GHOST_AT))
             rows.append(
@@ -377,7 +408,7 @@ class TestTheTwoZerosDoNotShareAVerdict:
 
     def test_a_read_that_raises_is_failed_and_unmeasured(self, monkeypatch):
         """ "I could not look" is not "there was nothing to do" (gotcha #53)."""
-        summary, _ = _run(_filler(400), monkeypatch, read_raises=True)
+        summary, _ = _run(_healthy_backdrop(), monkeypatch, read_raises=True)
 
         assert summary["terminal"] == "failed"
         assert summary["measured"] is False
@@ -390,7 +421,7 @@ class TestTheTwoZerosDoNotShareAVerdict:
 
     def test_a_dry_run_withholds_and_says_so(self, monkeypatch):
         summary, session = _run(
-            [ghost(), canonical(), *_filler(400)], monkeypatch, apply=False
+            [ghost(), canonical(), *_healthy_backdrop()], monkeypatch, apply=False
         )
 
         assert summary["terminal"] == "no_work"
@@ -403,7 +434,7 @@ class TestTheTwoZerosDoNotShareAVerdict:
         rows = [
             ghost(tags=f'["provenance:duplicate-of:{CANON_ID}"]'),
             canonical(),
-            *_filler(400),
+            *_healthy_backdrop(),
         ]
 
         summary, session = _run(rows, monkeypatch)
@@ -421,7 +452,7 @@ class TestTheTwoZerosDoNotShareAVerdict:
 
 class TestTheWriteRail:
     def test_the_specimen_is_tagged_on_a_healthy_population(self, monkeypatch):
-        summary, session = _run([ghost(), canonical(), *_filler(400)], monkeypatch)
+        summary, session = _run([ghost(), canonical(), *_healthy_backdrop()], monkeypatch)
 
         assert summary["terminal"] == "complete"
         assert summary["written"] == 1
@@ -431,7 +462,7 @@ class TestTheWriteRail:
     def test_the_backup_is_banked_before_the_first_append(self, monkeypatch):
         """D51: the undo must exist before the change does. Asserted on the
         real statement order, not on a helper being called."""
-        _, session = _run([ghost(), canonical(), *_filler(400)], monkeypatch)
+        _, session = _run([ghost(), canonical(), *_healthy_backdrop()], monkeypatch)
 
         assert session.calls.index("bank") < session.calls.index("append_tag")
         assert session.banked == [(GHOST_ID, CANON_ID, "[]")]
@@ -440,7 +471,7 @@ class TestTheWriteRail:
         """`rowcount` 0 means either "already tagged" or "did not land", and only
         a read back tells them apart (gotcha #53)."""
         summary, _ = _run(
-            [ghost(), canonical(), *_filler(400)],
+            [ghost(), canonical(), *_healthy_backdrop()],
             monkeypatch,
             write_silently_noops=True,
         )
@@ -450,14 +481,14 @@ class TestTheWriteRail:
 
     def test_a_write_that_raises_is_partial_and_names_the_row(self, monkeypatch):
         summary, _ = _run(
-            [ghost(), canonical(), *_filler(400)], monkeypatch, write_fails=True
+            [ghost(), canonical(), *_healthy_backdrop()], monkeypatch, write_fails=True
         )
 
         assert summary["terminal"] == "partial"
         assert summary["failed_ids"] == [GHOST_ID]
 
     def test_the_summary_carries_the_one_command_undo(self, monkeypatch):
-        summary, _ = _run([ghost(), canonical(), *_filler(400)], monkeypatch)
+        summary, _ = _run([ghost(), canonical(), *_healthy_backdrop()], monkeypatch)
 
         assert "restore_5896_soccer_ghost_tags.py --apply" in summary["undo"]
 
@@ -490,7 +521,7 @@ class TestTheWriteRail:
                 away_score=1,
                 statpal_fixture_id="9540001",
             ),
-            *_filler(400),
+            *_healthy_backdrop(),
         ]
 
         plan = sweep.build_plan(rows, now=NOW)
@@ -533,7 +564,7 @@ class TestTheWriteRail:
                 away_score=0,
                 statpal_fixture_id="9545042",
             ),
-            *_filler(400),
+            *_healthy_backdrop(),
         ]
 
         plan = sweep.build_plan(rows, now=NOW)
@@ -551,7 +582,7 @@ class TestTheWriteRail:
 
         Most of the window is this row, so a crash here is the whole sweep.
         """
-        plan = sweep.build_plan([ghost(), canonical(), *_filler(400)], now=NOW)
+        plan = sweep.build_plan([ghost(), canonical(), *_healthy_backdrop()], now=NOW)
 
         assert plan.ticker_tags == 0
         assert [t.ghost_id for t in plan.tags] == [GHOST_ID]
@@ -592,7 +623,7 @@ class TestNoFoldNoTags:
         removing a duplicate card, so the run fails rather than reporting a
         clean small write."""
         summary, session = _run(
-            [ghost(), canonical(), *_filler(400)], monkeypatch, fold_live=False
+            [ghost(), canonical(), *_healthy_backdrop()], monkeypatch, fold_live=False
         )
 
         assert summary["terminal"] == "failed"
@@ -603,7 +634,7 @@ class TestNoFoldNoTags:
     def test_a_quiet_day_is_still_green_without_the_fold(self, monkeypatch):
         """The gate is on the WRITE, not on the run: with nothing to tag there
         is nothing the missing fold can damage."""
-        summary, _ = _run(_filler(400), monkeypatch, fold_live=False)
+        summary, _ = _run(_healthy_backdrop(), monkeypatch, fold_live=False)
 
         assert summary["terminal"] == "complete"
 

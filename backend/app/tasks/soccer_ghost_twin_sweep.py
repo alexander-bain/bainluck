@@ -95,18 +95,39 @@ from app.utils.soccer_ghost_twins import (
 #: "roll back the soccer sweep" would silently restore every tennis ghost too.
 BAK_TABLE = "bak_5896_soccer_ghost_tags"
 
-#: The window the sweep reads. The ghost must be in the future to be a defect at
-#: all, and its canonical sits at most `MAX_GHOST_LAG` (3 days) behind it, so a
-#: -5d/+5d window covers the whole decidable population with margin. Wider is
-#: not safer here: it is more rows for the same ten answers.
-DEFAULT_LOOKBACK_DAYS = 5
+#: The window the sweep reads. The lookahead is what the first three passes
+#: need: an advertised ghost is in the future and its canonical sits at most
+#: `MAX_GHOST_LAG` (3 days) behind it.
+#:
+#: The LOOKBACK was 5 for the same reason and is now 45, because
+#: `stranded_market_pass` hunts a defect that faces the other way. A played row
+#: serving an empty market rail is not transient — it stays wrong until someone
+#: repairs it — so the population is a backlog rather than a front, and at -5d
+#: the sweep could see 2 of the 19 measured pairs.
+#:
+#: 🔴 **Widening a window is a precision question before it is a coverage one,
+#: so it was measured rather than argued.** Over -45d/+5d on production
+#: 2026-09-15, the population the first three passes can act on — a scored,
+#: fixture-anchored row with an unanchored unscored twin dated AFTER it inside
+#: `MAX_GHOST_LAG` — is **zero rows**. The extra 40 days hand those passes no
+#: new work at all; every pair down there is refused by their direction rule,
+#: which is exactly why the fourth pass exists. So the widening is coverage for
+#: one pass and a no-op for the others, by measurement.
+DEFAULT_LOOKBACK_DAYS = 45
 DEFAULT_LOOKAHEAD_DAYS = 5
 
 #: Non-vacuity floor, on the READ. Measured 2026-09-13 at 1,493 soccer rows in
-#: the -5d/+5d window; the floor is set well below that because a genuinely thin
-#: international break is a real state and must not read as a failure, while a
-#: renamed sport key or a broken join collapses this to single digits.
-MIN_EXPECTED_ROWS = 200
+#: the then -5d/+5d window; the floor is set well below that because a genuinely
+#: thin international break is a real state and must not read as a failure, while
+#: a renamed sport key or a broken join collapses this to single digits.
+#:
+#: Raised with the window on 2026-09-15 and NOT left where it was: a floor is
+#: only a rail while it is proportional to the read. The same day measured 1,253
+#: rows at -5d/+5d against 6,723 at -45d/+5d, so a floor of 200 under the wider
+#: window would have sat at 3% of the population and waved through a join
+#: returning a twentieth of it. 1,000 keeps the ~6x headroom the 200 was chosen
+#: for.
+MIN_EXPECTED_ROWS = 1_000
 
 #: Ceiling on the PLAN, measured at 10. A pairing regression that starts
 #: labelling real fixtures shows up here first, and a sweep is never the thing
@@ -129,7 +150,10 @@ SELECT e.id,
        (SELECT string_agg(DISTINCT fm.external_id, ',')
           FROM futures_markets fm
          WHERE fm.event_id = e.id
-           AND fm.source = 'kalshi')               AS kalshi_tickers
+           AND fm.source = 'kalshi')               AS kalshi_tickers,
+       (SELECT count(*)
+          FROM futures_markets fm
+         WHERE fm.event_id = e.id)                 AS market_count
   FROM events e
   JOIN sports s ON s.id = e.sport_id
  WHERE s.key LIKE 'soccer%%'
@@ -198,6 +222,11 @@ def build_plan(rows, *, now):
             ticker_sport_key=competition_from_tickers(
                 (r.kalshi_tickers or "").split(",")
             ),
+            # Every source, not just Kalshi: the fourth pass asks whether a
+            # reader's page is bare, and a page is bare when NOTHING hangs off
+            # the row. Counting only the source the pass above parses would call
+            # a canonical stranded while it serves nine Polymarket rows.
+            market_count=r.market_count or 0,
         )
         for r in rows
     ]
@@ -448,6 +477,12 @@ async def run_soccer_ghost_twin_sweep(
                 "residual_pairs_found": plan.residual_tags,
                 "ticker_blocks_examined": plan.ticker_blocks_examined,
                 "ticker_pairs_found": plan.ticker_tags,
+                # Its own pair for the reason above and one more: this is the
+                # only pass whose evidence is the market counts, so it is the
+                # only one that goes quiet when the market join dies, and every
+                # other number here stays exactly where it was.
+                "stranded_blocks_examined": plan.stranded_blocks_examined,
+                "stranded_pairs_found": plan.stranded_tags,
                 "pairs_found": len(plan.tags),
                 "already_tagged": len(plan.tags) - len(todo),
                 "tags_to_write": len(todo),

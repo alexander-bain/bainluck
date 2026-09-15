@@ -388,6 +388,129 @@ The reader-visible half: ``/events/15306010`` was hero, chart, score
 differential and then straight to "MORE SOCCER" with no market rail whatsoever,
 while seven markets for that match sat on a hidden row filed under the wrong
 league — which also put a played Segunda fixture on the La Liga page.
+
+THE FOURTH PASS ASKS A DIFFERENT QUESTION: WHOSE PAGE HOLDS THE PRICES
+═══════════════════════════════════════════════════════════════════════
+
+Everything above hunts ONE defect — a row still advertised as a fixture after
+the fixture was played — and the direction rule in :func:`classify_block` is
+that defect written down: ``0 < ghost.commence_time - canonical.commence_time``.
+A phantom card is always dated LATER than the match it copies, because a row
+dated earlier is not advertising anything.
+
+What that leaves is the mirror image, and it is not a card defect at all. The
+duplicate sits BEFORE the played row, nobody sees it, and it is holding the
+prices. Measured on production 2026-09-15 over 365 days of soccer — same
+competition, same NARROW key, same orientation, inside :data:`MAX_GHOST_LAG`,
+one side settled/scored/fixture-anchored and serving ZERO markets, the other
+unscored, unanchored and holding at least one::
+
+    pairs                                                        19
+      └─ inside the last 23 days                                 19
+      └─ with the ghost dated AFTER the canonical                 0
+      └─ needing any name widening to pair                        0
+           (lags run 0.0h to −53.8h; every pair already
+            shares the narrow key, so passes two and three
+            reach none of them either)
+
+Zero of nineteen. The direction rule refuses the whole population by
+construction, and it is right to: it is the rule that makes the card ship
+precise. So this pass does not touch it — it asks its own question alongside it.
+
+The reader-visible half, and the specimen this pass is measured on: ``14959571``
+is **AS Roma 4-0 Fiorentina**, Serie A, 2026-08-24, ESPN ``401874928`` — and it
+has **zero linked markets**. ``14968103`` is the same two clubs in the same
+competition 53 hours earlier, ``closed``, no score, no fixture id, holding
+**28 Polymarket markets**. A marquee Serie A result whose prices are all on a
+row nobody opens (notice 27).
+
+🔴 **"SERVES NOTHING" IS MEASURED ON THE LINKED-MARKET COUNT, NOT ON THE SERVED
+PAYLOAD, AND THAT IS NOT A SHORTCUT.** ``_build_game_markets`` assembles its
+whole rail from ``FuturesMarket`` rows whose ``event_id`` is in
+``folded_event_ids``, and returns the empty ``{"totals": [], "spreads": [],
+"other": [], …}`` body the moment that set is empty. So a linked count of zero
+IS the early return — it is the builder's own input, not a proxy for it.
+
+Reading the payload instead would have been wrong, and was. On 2026-09-15 nine
+of the eleven canonicals below served a full rail — 38 to 83 markets — while
+holding zero linked rows. Two consecutive reads returned the identical
+``created_at`` (the L1 in-process memo; the Redis entry is fresh for
+``FRESH_TTL_FINAL`` = 3600 s on a final game), so the cache cannot be made to
+rebuild from outside and "the page looks fine" is unfalsifiable from there.
+
+What settles it is tracing one served market rather than arguing about the
+cache. ``/api/events/14961230/game-markets`` serves ``_market_id 58728702``,
+Atalanta vs Sassuolo: Total Goals, ``observed_at`` 2026-09-13T12:47Z — and that
+row's ``event_id`` **is NULL**. The body is a photograph of an input set that no
+longer exists; on a genuine rebuild the builder finds nothing and returns the
+empty body. The two rows with a null ``lifecycle_watermark`` (``15296797``,
+``15299944``) never held markets and serve that empty body already.
+
+So the strand here has TWO halves and this pass repairs one of them: the
+canonical's own Kalshi markets were orphaned to a null ``event_id``, and the
+copy kept the Polymarket ones. Folding the copy gives the bare page a settled
+rail; it does not re-link what was orphaned, and nothing here should be read as
+claiming it does.
+
+WHAT THIS PASS DELIBERATELY DOES NOT REACH, MEASURED THE SAME DAY. ``15186733``
+is Waterford FC 3-1 Bohemians with 63 markets stranded on ``15186691``, and this
+pass refuses it — because ``15186733`` carries **no ``espn_id`` and no
+``statpal_fixture_id``**. With no authority naming the fixture independently of
+us, neither row can be the canonical, and choosing between two id-less rows is
+the call ruling 048 forbids. It is a real defect and it belongs to the registry
+(#3813), not to a judgement over existing rows.
+
+WHAT REPLACES THE DIRECTION RULE, SINCE THE CLOCK CANNOT
+─────────────────────────────────────────────────────────
+
+The market asymmetry itself: the canonical must serve NOTHING and the twin must
+hold something. That is strictly MORE evidence than the first three passes ask
+for, not less — they require no market on either side — and it is what bounds
+the blast radius. **This pass can only ever fire on a page that is currently
+serving no markets at all**, so the worst a wrong tag can do is put the wrong
+prices on a bare page; it can never replace a correct market rail with someone
+else's. No other pass in this module has that property, and it is the only
+reason a direction-agnostic pairing is safe to run.
+
+The ambiguity refusal is unchanged in spirit and stricter in practice: the
+canonical-shaped rows are counted over the WHOLE block, market count ignored,
+so a block holding two played rows is refused before the zero-market one is
+looked at.
+
+YIELD, from the pure planner run over the sweep's own -45d/+5d population as it
+stood on production 2026-09-15 — 6,721 rows, whole population, no sampling::
+
+    stranded blocks examined                                   472
+      ├─ tags                                                   11
+      │    (139 markets moving onto pages with none: Serie A
+      │     4, EPL 1, Bundesliga 1, Ligue 1 2, Brasileirão 1,
+      │     Argentine Primera 1 — every canonical scored and
+      │     fixture-anchored, every one of them serving zero)
+      └─ refused ambiguous                                       5
+           Bournemouth v Everton (4 copies), Real Sociedad v
+           Espanyol (3), Levante v Real Betis (3), Liverpool v
+           Nottingham Forest (2), Fiorentina v Frosinone (2)
+
+The same run is the evidence for the window widening: first pass, residual and
+ticker contributed **1 and 2 tags respectively and nothing new from the extra 40
+days**, so the four passes do not overlap in practice either.
+
+WHY ``GHOST_STATUSES`` IS NOT THE GATE HERE, AND THE ONE STATUS THAT IS
+────────────────────────────────────────────────────────────────────────
+
+:data:`GHOST_STATUSES` is ``scheduled``/``suspended`` because those are the
+states a row can be *advertised* in, and the section above gives the reason for
+each exclusion — all of them reasons about printing a card. A stranded market is
+stranded at every status: four of the eleven decidable pairs (Roma v Fiorentina,
+Bologna v Lazio, Torino v AC Milan, Atalanta v Sassuolo — 98 markets between
+them) carry a ``closed`` twin, already unprintable and therefore invisible to
+every rule above, and still holding the prices.
+
+So this pass does not read the status gate. It reads one status, and excludes
+it: ``live``. A match in progress is unscored and may be unanchored, and calling
+it a duplicate of anything is the one mistake here that reaches a reader
+mid-match. :data:`GHOST_KICKOFF_GRACE` is applied for the same reason and by the
+same predicate as everywhere else.
 """
 
 from __future__ import annotations
@@ -443,6 +566,13 @@ SETTLED_STATUSES = ("completed", "closed")
 #: because they are already unprintable; the settled pair because a row with a
 #: result is not being advertised as a fixture.
 GHOST_STATUSES = ("scheduled", "suspended")
+
+#: The one status :func:`stranded_market_pass` excludes, where the passes above
+#: instead name the statuses they allow. A stranded market is stranded whatever
+#: state its row is in — see the fourth-pass section of the module docstring —
+#: but a match actually in progress is unscored, may not be anchored yet, and is
+#: the one row here whose mislabelling reaches a reader mid-match.
+LIVE_STATUS = "live"
 
 #: The key the ingest writes when it could not say WHICH competition a fixture
 #: belongs to. It is not a league — see the docstring section above for what is
@@ -588,6 +718,14 @@ class SoccerRow:
     #: none, holds only season markets, or holds markets from two competitions.
     #: Read ONLY by :func:`ticker_pass`; the first two passes never see it.
     ticker_sport_key: str | None = None
+    #: How many markets of ANY source hang off this row. Read ONLY by
+    #: :func:`stranded_market_pass`, which uses the asymmetry between the two
+    #: halves of a pair as the evidence the other three passes take from the
+    #: clock. Defaults to 0 so every existing construction of this row — and
+    #: every test written before the fourth pass existed — keeps its meaning:
+    #: a row claiming no markets can be neither half of a stranded pair, so an
+    #: unset count can only ever withhold a tag.
+    market_count: int = 0
 
 
 def block_sport_key(row: SoccerRow) -> str:
@@ -627,6 +765,22 @@ def row_could_be_a_ghost(row: SoccerRow) -> bool:
         row.status in GHOST_STATUSES
         and not row.has_final_score
         and not row.is_fixture_anchored
+    )
+
+
+def row_is_a_played_canonical(row: SoccerRow) -> bool:
+    """The canonical test, named once because two passes ask it.
+
+    :func:`classify_block` used to spell this inline and
+    :func:`classify_stranded_block` needs the identical question for its
+    ambiguity count. Two spellings of one role is exactly the drift that would
+    let the two passes disagree about which rows have been played — so there is
+    one predicate and both call it.
+    """
+    return (
+        row.status in SETTLED_STATUSES
+        and row.has_final_score
+        and row.is_fixture_anchored
     )
 
 
@@ -699,6 +853,14 @@ class GhostPlan:
     #: report that as a quiet ordinary day.
     ticker_blocks_examined: int = 0
     ticker_tags: int = 0
+    #: Blocks the FOURTH pass looked at, and how many of ``tags`` it contributed.
+    #: Its own pair for the same reason the other two have one, and with the
+    #: sharpest failure of the four: this pass is the only one whose evidence is
+    #: the market counts, so it goes quiet the moment those stop being read —
+    #: a join that returns no markets leaves every other number in this object
+    #: exactly where it was.
+    stranded_blocks_examined: int = 0
+    stranded_tags: int = 0
 
 
 def classify_block(
@@ -727,11 +889,7 @@ def classify_block(
     canonical is a shape this module has never measured, and guessing which of
     two rows to stop printing is precisely the call it must not make.
     """
-    canonicals = [
-        r
-        for r in rows
-        if r.status in SETTLED_STATUSES and r.has_final_score and r.is_fixture_anchored
-    ]
+    canonicals = [r for r in rows if row_is_a_played_canonical(r)]
     ghosts = [
         r
         for r in rows
@@ -933,6 +1091,171 @@ def ticker_pass(
     )
 
 
+def row_could_strand_markets(row: SoccerRow) -> bool:
+    """Could this row be the hidden half of a pair, holding prices nobody sees?
+
+    Unscored and unanchored, exactly as :func:`row_could_be_a_ghost` requires —
+    those two are what make a row a copy rather than a fixture. What differs is
+    the status question, and the module docstring's fourth-pass section carries
+    the measurement: ``GHOST_STATUSES`` describes the states a row can be
+    *advertised* in, and four of the eleven measured pairs strand their markets
+    on a ``closed`` row that is advertised nowhere. So the allowlist is replaced
+    by one exclusion, :data:`LIVE_STATUS`.
+
+    Holding at least one market is a REQUIREMENT and not a detail: a row with no
+    markets strands nothing, so there is no defect to repair and no evidence to
+    repair it on. The clock is not consulted here at all.
+    """
+    return (
+        row.status != LIVE_STATUS
+        and not row.has_final_score
+        and not row.is_fixture_anchored
+        and row.market_count > 0
+    )
+
+
+def classify_stranded_block(
+    rows: list[SoccerRow],
+    *,
+    now: datetime,
+    max_lag: timedelta = MAX_GHOST_LAG,
+) -> tuple[str, GhostTag | None, str]:
+    """Decide one block for the fourth pass. Returns the same triple as
+    :func:`classify_block`, and is pure.
+
+    Two differences from :func:`classify_block`, both stated in the module
+    docstring with the measurement behind them:
+
+    * **the pairing is direction-agnostic** — ``abs(...) <= max_lag`` rather than
+      the strictly-after rule. Every one of the nineteen measured pairs is dated
+      at or before its canonical, so the card rule refuses all of them, and no
+      widening of the NAME key reaches any of them either;
+    * **market asymmetry replaces what the clock was proving** — the canonical
+      must serve nothing and the twin must hold something. That is more evidence
+      than the other passes require, and it is what bounds the worst case: this
+      can only fire on a page already serving no markets.
+
+    🔴 **The ambiguity count ignores market counts on purpose.** The canonical
+    role is counted over every played row in the block via
+    :func:`row_is_a_played_canonical`, so a block holding two played fixtures is
+    refused BEFORE anyone asks which of them serves zero. Counting only the
+    zero-market ones would let a block with one stranded canonical and one
+    healthy one look decidable, and "these two clubs played twice in three days"
+    is the shape that must never resolve.
+    """
+    played = [r for r in rows if row_is_a_played_canonical(r)]
+    strandable = [
+        r
+        for r in rows
+        if row_could_strand_markets(r)
+        and not (now - GHOST_KICKOFF_GRACE < r.commence_time <= now)
+    ]
+    if not played or not strandable:
+        return NOT_A_TWIN, None, "no played row with a market-holding copy here"
+
+    pairs = [
+        (ghost, canonical)
+        for ghost in strandable
+        for canonical in played
+        if abs(ghost.commence_time - canonical.commence_time) <= max_lag
+    ]
+    if not pairs:
+        return (
+            NOT_A_TWIN,
+            None,
+            f"no market-holding copy sits within {max_lag.days}d of a played row",
+        )
+
+    paired_ghosts = {ghost.event_id for ghost, _ in pairs}
+    paired_canonicals = {canonical.event_id for _, canonical in pairs}
+    if len(paired_ghosts) != 1 or len(paired_canonicals) != 1:
+        return (
+            REFUSE_AMBIGUOUS,
+            None,
+            (
+                f"{len(paired_ghosts)} market-holding cop(ies) and "
+                f"{len(paired_canonicals)} played row(s) pair in this block — "
+                f"which row the prices belong to is not decidable"
+            ),
+        )
+
+    ghost, canonical = pairs[0]
+    if canonical.market_count:
+        return (
+            NOT_A_TWIN,
+            None,
+            (
+                f"the played row already serves {canonical.market_count} market(s), "
+                f"so nothing of its is stranded"
+            ),
+        )
+
+    lag_hours = (ghost.commence_time - canonical.commence_time).total_seconds() / 3600
+    return (
+        TWIN_FOUND,
+        GhostTag(
+            ghost_id=ghost.event_id,
+            canonical_id=canonical.event_id,
+            reason=(
+                f"{ghost.home_team_name} v {ghost.away_team_name}: holds "
+                f"{ghost.market_count} market(s) {lag_hours:+.0f}h from a played "
+                f"row that serves none, no score, no fixture id"
+            ),
+        ),
+        "stranded",
+    )
+
+
+def stranded_market_pass(
+    rows: list[SoccerRow],
+    *,
+    decided_ghost_ids: set[int],
+    now: datetime,
+    max_lag: timedelta = MAX_GHOST_LAG,
+) -> tuple[list[GhostTag], list[str], int]:
+    """Re-run the pairing over what the first three passes left, asking who holds
+    the prices instead of who is being advertised.
+
+    Returns ``(tags, refusals, blocks_examined)``. Pure.
+
+    The NARROW key, deliberately and by measurement: all nineteen pairs already
+    share it, so nothing here needs :func:`loose_block_key` and this pass does
+    not inherit that key's ambiguity. It is therefore the only pass that reuses
+    the first pass's own blocking, which is also why it cannot use
+    :func:`_reblock` — that helper exists to stop a re-KEYED pass restating an
+    earlier pass's refusal in different words, and the question here is
+    different, so re-examining the same block is a new answer rather than an
+    echo.
+
+    It inherits the property that makes the second and third passes safe, by the
+    same mechanism: a ghost already decided is withheld, so no earlier decision
+    can be revised. It cannot collide with the earlier passes from the other
+    side either — they can only tag a row that is unanchored and unscored, which
+    :func:`row_is_a_played_canonical` is false for, so no row this pass calls a
+    canonical can already be someone else's ghost.
+    """
+    residual = [r for r in rows if r.event_id not in decided_ghost_ids]
+    blocks: dict[tuple[str, str, str], list[SoccerRow]] = defaultdict(list)
+    for r in residual:
+        blocks[block_key(r.sport_key, r.home_team_name, r.away_team_name)].append(r)
+    blocks, refusals = fold_unclassified_blocks(blocks)
+
+    tags: list[GhostTag] = []
+    examined = 0
+    for key, members in sorted(blocks.items()):
+        if len(members) < 2:
+            continue
+        examined += 1
+        outcome, tag, explanation = classify_stranded_block(
+            members, now=now, max_lag=max_lag
+        )
+        if outcome == TWIN_FOUND and tag is not None:
+            tags.append(tag)
+        elif outcome == REFUSE_AMBIGUOUS:
+            refusals.append(f"{key[1]} v {key[2]} (stranded markets): {explanation}")
+    return tags, refusals, examined
+
+
 def plan_ghost_tags(
     rows: list[SoccerRow],
     *,
@@ -958,6 +1281,13 @@ def plan_ghost_tags(
     properties that make that true. :func:`ticker_pass` runs last over what
     those two left, blocking each ghost-capable row under the competition its
     own Kalshi game tickers name, and adds under the same two properties.
+
+    :func:`stranded_market_pass` runs FOURTH and is the only one asking a
+    different question — not "which row is still being advertised" but "which
+    row is holding the prices" — over the narrow key, direction-agnostic, and
+    gated on a played row that serves no markets at all. Its own section of the
+    module docstring carries why the three passes above cannot reach that
+    population and why this one is safe to run beside them.
     """
     blocks: dict[tuple[str, str, str], list[SoccerRow]] = defaultdict(list)
     for row in rows:
@@ -999,4 +1329,15 @@ def plan_ghost_tags(
     plan.refusals.extend(ticker_refusals)
     plan.ticker_blocks_examined = ticker_examined
     plan.ticker_tags = len(ticker_tags)
+
+    stranded_tags, stranded_refusals, stranded_examined = stranded_market_pass(
+        rows,
+        decided_ghost_ids={t.ghost_id for t in plan.tags},
+        now=now,
+        max_lag=max_lag,
+    )
+    plan.tags.extend(stranded_tags)
+    plan.refusals.extend(stranded_refusals)
+    plan.stranded_blocks_examined = stranded_examined
+    plan.stranded_tags = len(stranded_tags)
     return plan
