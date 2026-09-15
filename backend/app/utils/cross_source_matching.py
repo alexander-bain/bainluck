@@ -201,6 +201,65 @@ def is_same_question(left: str | None, right: str | None) -> bool:
     return _is_conservative_near_match(left, right)
 
 
+# Minimum shared tokens a pair must have before :func:`is_same_question` can
+# possibly pair it. DERIVED FROM THE THRESHOLDS ABOVE, not tuned:
+#
+#   near arm — needs ``min(len) >= 3`` and ``containment >= 0.85``, so the
+#     overlap is at least ``ceil(0.85 * 3) = 3``;
+#   exact arm — equal normalized questions have equal token sets, so the
+#     overlap is the whole set.
+#
+# 2 rather than 3 buys the one case the near arm's floor excludes: an exact
+# match that two or three tokens long ("Oscar Winner"). It is one below the
+# tightest reachable bound, deliberately, because this filter's only job is to
+# say NO cheaply and a filter that says no too often is a silent bug.
+#
+# 🔴 THIS CONSTANT IS A CONSEQUENCE OF 0.72 / 0.85 / 3. Anyone who loosens
+# those must re-derive it — a lower containment bound admits pairs with fewer
+# shared tokens, and this filter would start hiding them from the matcher.
+_SAME_QUESTION_MIN_SHARED_TOKENS = 2
+
+
+def same_question_tokens(question: str | None) -> frozenset[str]:
+    """The token set :func:`could_be_same_question` compares, computed once.
+
+    Exposed so a caller holding N titles can tokenize N times instead of the
+    2 * N * (N - 1) / 2 times a naive pairwise loop over
+    :func:`is_same_question` costs — that loop re-tokenizes BOTH sides on every
+    pair, and it is the whole cost. Measured on the 137 futures titles Discover
+    served on 2026-09-15: 9,316 pairs at 3.95 us each (37 ms) unfiltered,
+    versus 62 surviving pairs and 2.3 ms with this.
+    """
+    return frozenset(_near_match_tokens(question or ""))
+
+
+def could_be_same_question(
+    left_tokens: frozenset[str], right_tokens: frozenset[str]
+) -> bool:
+    """Cheap NECESSARY condition for :func:`is_same_question` — never sufficient.
+
+    A ``False`` here is a promise that ``is_same_question`` would also have said
+    no; a ``True`` means "ask it". Callers MUST still call the real predicate —
+    this sees no numeric tokens, no direction tokens and no thresholds.
+
+    The promise holds under title rewriting that only REMOVES tokens (the
+    leading-year strip in ``discover_bundles._comparison_title`` is the live
+    case): a smaller token set can only shrink the overlap the real predicate
+    sees, so a pair that clears the real bound after stripping also clears this
+    one before it. It would NOT hold for a rewrite that ADDS or SUBSTITUTES
+    tokens; nothing does that today, and this is the sentence that would have
+    to change first.
+    """
+    if (
+        len(left_tokens) < _SAME_QUESTION_MIN_SHARED_TOKENS
+        or len(right_tokens) < _SAME_QUESTION_MIN_SHARED_TOKENS
+    ):
+        # Too short for the shared-token floor to mean anything: the exact arm
+        # can still pair these ("Oscar Winner"), so refuse to exclude them.
+        return True
+    return len(left_tokens & right_tokens) >= _SAME_QUESTION_MIN_SHARED_TOKENS
+
+
 # ---------------------------------------------------------------------------
 # Outcome alignment — comparing like with like
 # ---------------------------------------------------------------------------

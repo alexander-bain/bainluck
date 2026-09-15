@@ -887,6 +887,102 @@ def _dedupe_same_question_members(
     return kept, folded
 
 
+def fold_same_question_cards(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop a standalone card that asks a question an earlier card already asked.
+
+    #6400 — :func:`_dedupe_same_question_members` above has folded cross-venue
+    duplicates INSIDE a bundle since #4446, and the standalone card list has
+    never been asked the same question. On production 2026-09-15 Discover dealt
+    Polymarket's "Brazil Presidential Election" (Flávio Bolsonaro 52%) and
+    Kalshi's "Brazil Presidential election winner?" (Flávio Bolsonaro 54%) as
+    two cards 1,156 px apart on one load, ranks 6 and 7 of the served payload.
+    Polymarket's own Gamma record for event 45915 settles that they are one
+    question — *"resolve according to the listed candidate that wins this
+    election … includes any potential second round"* — which is exactly what
+    Kalshi's ``KXBRPRES-26`` asks.
+
+    The two caps that DO run on this list cannot see such a pair, and neither is
+    broken: ``diversify_quality_families(exact_family_cap=1)`` keys on the
+    normalized NAME, so one trailing word ("winner") is a second family, and the
+    story cap cannot fire because ``_subnational_election_story_key`` returns
+    ``None`` for anything presidential — a national race deliberately is not a
+    local election. An exact-name cap is a same-WORDING cap, and a cross-venue
+    duplicate is by definition differently worded.
+
+    Same two gates as the bundle sibling, for the same reasons, and BOTH are
+    required: the venues differ, and :func:`is_same_question` pairs the titles
+    after :func:`_comparison_title`. Not a third mechanism — the discrimination
+    this leans on is the one measured in that predicate's docstring and bound by
+    its tests, and the standing ruling behind both is one number per question.
+
+    Differences from the sibling, which is why this is not the same function:
+
+    * it walks a MIXED list — events, bundles, concepts and tournaments pass
+      through untouched, and only ``type: "futures"`` items are compared;
+    * it runs on a list two orders of magnitude longer than a bundle's members,
+      so it carries :func:`could_be_same_question` as a prefilter (see there for
+      why excluding on shared tokens cannot hide a pair);
+    * one malformed card must never wipe the pass (#1091 / gotcha 42), so a
+      comparison that raises KEEPS the card and moves on.
+
+    ``items`` arrives in rank order, so the survivor is the better-ranked card —
+    the same contract the sibling states.
+    """
+    from app.utils.cross_source_matching import (
+        could_be_same_question,
+        is_same_question,
+        same_question_tokens,
+    )
+
+    kept: list[dict[str, Any]] = []
+    # Parallel to `kept`, holding (source, tokens, data) for the futures entries
+    # only — `None` for every other card type, so indexes stay aligned and a
+    # non-futures card is skipped by a single identity check.
+    kept_keys: list[tuple[str, frozenset[str], dict[str, Any]] | None] = []
+
+    for item in items:
+        data = _futures_data(item)
+        if not data:
+            kept.append(item)
+            kept_keys.append(None)
+            continue
+
+        source = str(data.get("source") or "")
+        tokens = same_question_tokens(str(data.get("name") or ""))
+
+        duplicate = False
+        for key in kept_keys:
+            if key is None:
+                continue
+            kept_source, kept_tokens, kept_data = key
+            if kept_source == source:
+                continue
+            if not could_be_same_question(kept_tokens, tokens):
+                continue
+            try:
+                duplicate = is_same_question(
+                    _comparison_title(kept_data, data),
+                    _comparison_title(data, kept_data),
+                )
+            except Exception:  # pragma: no cover - defensive, see docstring
+                logger.warning(
+                    "Discover: same-question fold skipped a pair (%r vs %r)",
+                    kept_data.get("name"),
+                    data.get("name"),
+                    exc_info=True,
+                )
+                duplicate = False
+            if duplicate:
+                break
+
+        if duplicate:
+            continue
+        kept.append(item)
+        kept_keys.append((source, tokens, data))
+
+    return kept
+
+
 def assemble_story_theme_bundles(
     items: list[dict[str, Any]],
     *,

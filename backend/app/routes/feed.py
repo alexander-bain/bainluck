@@ -120,6 +120,7 @@ from app.utils.discover_bundles import (
     assemble_discover_comparison_bundles,
     assemble_geopolitics_theme_bundles,
     assemble_swings_theme_bundles,
+    fold_same_question_cards,
 )
 from app.utils import (
     compute_highlight,
@@ -10004,6 +10005,10 @@ async def _score_sports_mode_futures(
         exact_family_cap=1,
         story_family_cap=5,
     )
+    # #6400 — LAST, after the name-keyed caps: those collapse the same wording,
+    # this collapses the same QUESTION across two venues, which no name key can
+    # see. Running it on the capped list also keeps its pairwise loop short.
+    scored_items = fold_same_question_cards(scored_items)
 
     return scored_items
 
@@ -11745,11 +11750,16 @@ async def _score_futures(
         # question (e.g., "Who wins Best Picture?" x 10 nominee markets).
         items = _dedupe_futures_by_group_id(items)
         items = cap_low_quality_families(items, cap=1)
-        return diversify_quality_families(
+        items = diversify_quality_families(
             items,
             exact_family_cap=1,
             story_family_cap=5,
         )
+        # #6400 — LAST, after the name-keyed caps: those collapse the same
+        # wording, this collapses the same QUESTION across two venues, which no
+        # name key can see. Running it on the capped list also keeps its
+        # pairwise loop short.
+        return fold_same_question_cards(items)
 
     if _fused:
         # Both pools go through the IDENTICAL dedupe + caps the single pool used
