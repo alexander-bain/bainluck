@@ -141,6 +141,21 @@ from app.utils.probability_eligibility import MARKET_DERIVED_SOURCES  # noqa: E4
 #    writes every other column by plain ORM assignment, so a Core update mixed
 #    into it would be gotcha #5 — the helper returns a whole new dict, which is
 #    what makes the assignment visible to change tracking (gotcha #4).
+#  * `espn_sync.py::_settle_deep_authority_stragglers` — SIDECAR, #6280, and the
+#    third instance of the `statpal_end_time` shape in this file. The deep
+#    straggler arm reaches anchored `live`/`suspended` rows that aged PAST the
+#    48h settle window, where nothing else selects them. Three of the seven rows
+#    in the measured population can never resolve (ESPN files them under a later
+#    board day), so they requalify on every 60s pass forever — a stalest-first
+#    queue ordered on `commence_time` would park them at its head and starve the
+#    settleable rows behind them. The queue therefore sorts on a key the work
+#    ADVANCES: when the arm last ASKED about the row, under the non-probability
+#    key `deep_straggler_asked_at`. No source, no market, no reading, so the
+#    stamper is the wrong function. Both shapes for the same reason as
+#    `_process_live_sport` two bullets up — one Core update, then the ORM object
+#    mirrored so in-session reads agree (gotcha #4/#5). The stamp is taken AFTER
+#    the settle door has run on the row, so it merges into what the door wrote
+#    rather than clobbering it.
 #  * `prediction_market_matching.py` / `admin_matching.py` / `source_intelligence.py`
 #    — PRUNE. Each REMOVES a source key rather than writing a value: the two
 #    `prune_blend_source` callers, the admin "clear kalshi" repair, and the raw
@@ -171,6 +186,10 @@ KNOWN_NON_READING_WRITES: dict[tuple[str, str, str], str] = {
         "sidecar",
     ("backend/app/tasks/espn_sync.py", "_sync_tennis_from_espn", "orm-assign"):
         "sidecar",
+    ("backend/app/tasks/espn_sync.py",
+     "_settle_deep_authority_stragglers", "orm-assign"): "sidecar",
+    ("backend/app/tasks/espn_sync.py",
+     "_settle_deep_authority_stragglers", "update.values"): "sidecar",
     ("backend/app/tasks/futures_price_refresh.py",
      "_KALSHI_WITHDRAW_EVENT_HERO_SQL", "raw-sql"): "prune",
     ("backend/app/tasks/statpal_sync.py", "_set_statpal_id", "orm-assign"):
