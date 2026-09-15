@@ -247,7 +247,15 @@ class TestDegenerateShapes:
         that was measured. Withdrawing it here would have been an unmeasured
         suppression riding a measured one, on 1,043 cards, invisibly.
 
-        The card still ships; its ladder is empty either way.
+        THIS PREDICATE still says False for them and must keep saying False —
+        that is the whole point of the boundary. What has changed since is the
+        CALL SITE: #3412 measured that population's reach (52 of 342 futures rows
+        over the 30 top real reader queries) and now withdraws it too, through
+        `_futures_card_has_no_answer`, which is this predicate OR'd with
+        `_futures_market_has_no_outcome_rows`. So the card no longer ships — but
+        it is withdrawn on its own evidence, under its own name, and either half
+        can still be re-measured or reverted without touching the other. See
+        `test_search_withdraws_the_answerless_card_3412.py`.
         """
         assert _futures_market_is_wholly_unpriced(_Market([])) is False
         assert _build_search_top_outcomes(_Market([]), limit=5) == []
