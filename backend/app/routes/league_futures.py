@@ -28,8 +28,10 @@ from app.routes.events import (
     _normalize_futures_dedup_key,
 )
 from app.services import get_db
+from app.services.anchor_channel import market_born_duplicates_on_page
 from app.utils.aggregation import compute_aggregate_probability
 from app.utils.event_rails import (
+    commence_time_was_never_a_kickoff,
     live_first_order,
     settled_rail_condition,
     unreported_rail_condition,
@@ -2725,6 +2727,67 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         _r_events = list(_r.scalars().all())
         _u = await asyncio.wait_for(db.execute(_unreported_q), timeout=10)
         _u_events = list(_u.scalars().all())
+
+        # ── #6346: a row whose kick-off was never a kick-off is not "late" ────
+        #
+        # The EPL page printed "Liverpool — Manchester United · No result
+        # reported" for a match that has not been played, beside three more.
+        # Four of the five are not fixtures at all: they were minted from
+        # `KXEPLH2HFINISH-*` — "Who Will Finish Higher", a question about final
+        # league-table position over the whole season, which has no kick-off
+        # because there is no game.
+        #
+        # This rail admits a row whose kick-off passed with nothing reported. A
+        # row stamped `commence_time = now` at creation satisfies that FOREVER,
+        # and more strongly every day, so it can never age off on its own.
+        # `commence_time_was_never_a_kickoff` carries the measurement and the
+        # refusals that keep #3211's US Open population on the page.
+        #
+        # 🔴 FIRST, BEFORE ANY OTHER STAGE TOUCHES THESE ROWS, AND THAT
+        # PLACEMENT IS THE WHOLE FIX. `kalshi_occurrence_start` recovers a
+        # served kick-off by subtracting Kalshi's expected-expiration pad, in
+        # place, via `set_committed_value`. On a fabricated stamp it does not
+        # decline — it reads the fiction as an expiration and derives a kick-off
+        # three hours before it, so by the time the rails are folded the row no
+        # longer sits anywhere near its own `created_at` and this predicate
+        # answers False on the very rows it was written for. Measured while
+        # building this: placed after the fold it withheld 0 of 5; placed here,
+        # 5 of 5. A serve-time repair that rebuilds the value a check reads is
+        # invisible to that check.
+        #
+        # ONLY this rail. A row that is genuinely live or genuinely finished is
+        # none of this function's business.
+        #
+        # Python rather than SQL, deliberately: the predicate compares two
+        # columns of different tz-awareness and reads sub-minute precision,
+        # neither of which survives the round trip through both dialects this
+        # route is exercised on. The list is bounded by `UNREPORTED_LIMIT`, so
+        # it is a handful of pure calls over columns the rows already hold.
+        if _u_events:
+            try:
+                _invented = {
+                    e.id for e in _u_events if commence_time_was_never_a_kickoff(e)
+                }
+                if _invented:
+                    _u_events = [e for e in _u_events if e.id not in _invented]
+                    # 🔴 The league is NOT interpolated, for the reason the
+                    # competition-share log above records: `sport_key` is a path
+                    # parameter, so a NEW log line carrying it is a
+                    # `py/log-injection` finding and notice 32 refuses those.
+                    # The withheld row ids are integers off the database and
+                    # identify the page better than the key would.
+                    logger.info(
+                        "league page unreported rail: %d row(s) withheld, "
+                        "commence_time is the poll clock (%s)",
+                        len(_invented),
+                        sorted(_invented)[:20],
+                    )
+            except Exception:  # noqa: BLE001 — see the gotcha #42 note above
+                logger.exception(
+                    "league page: invented-kickoff gate failed; serving the "
+                    "unreported rail unfiltered"
+                )
+
         # ── #5746: a finished game may not also be waiting for its score ──
         #
         # Folded ACROSS the two past rails in one call, with the upcoming rail
@@ -2766,6 +2829,68 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         _r_events, _u_events, _g_events = _folded_past_rails(
             _r_events, _u_events, _g_events, _off_page_finals
         )
+
+        # ── #6345: the list may not advertise a row the detail route disowns ──
+        #
+        # LaLiga's "unreported games" printed `Celta Fortuna v Eibar` (event
+        # 15308951). Tapping it landed the reader on a DIFFERENT event —
+        # 15306978, `Celta Fortuna v SD Eibar` — because `/api/events/15308951`
+        # has folded it since Q050. The list and the detail route disagreed
+        # about whether the card was a fixture at all.
+        #
+        # This is #6231's complaint on an uncovered sibling surface, not a new
+        # class: `market_born_duplicates_on_page` is the SET form, built for
+        # exactly this, and `search_events` and the event page have both called
+        # it since 2026-09-02. The league list never did.
+        #
+        # 🔴 The twin fold above cannot reach these rows and that is structural,
+        # not a tuning gap: it needs BOTH rows on the page, and here the
+        # canonical row is a Segunda fixture the LaLiga rails never select. The
+        # verdict is id-keyed and needs neither.
+        #
+        # AFTER the fold, deliberately, and the opposite order from #6346's gate
+        # above — which must run BEFORE it. The fold may recover a Kalshi row's
+        # kick-off and elect a survivor; this removes what is left over, and
+        # running it first would hand the fold a page it had not finished
+        # reasoning about.
+        #
+        # It suppresses and does not fold, and refusal 5 is why that loses
+        # nothing: a row qualifies only if it holds no markets, no score and no
+        # `completed_at`. There is nothing on these rows to carry anywhere —
+        # a card that could never be filled in is the reader's complaint.
+        #
+        # Costs nothing on the ordinary page: the candidate gate is pure and
+        # excludes every scored, completed or schedule-timed row, so no query is
+        # issued at all unless a market-born row is actually on a rail. All
+        # three rails are bounded by their own SQL limits (at most
+        # `UPCOMING_GAMES_LIMIT + 1 + scan depth + fold headroom`,
+        # `RESULTS_LIMIT + 1` and `UNREPORTED_LIMIT + 1`), so the set handed over
+        # is a few dozen ids at worst.
+        _page_rows = [*_g_events, *_r_events, *_u_events]
+        if _page_rows:
+            try:
+                _drained = await asyncio.wait_for(
+                    market_born_duplicates_on_page(db, _page_rows), timeout=10
+                )
+                if _drained:
+                    _g_events = [e for e in _g_events if e.id not in _drained]
+                    _r_events = [e for e in _r_events if e.id not in _drained]
+                    _u_events = [e for e in _u_events if e.id not in _drained]
+                    # The league is NOT interpolated: `sport_key` is a path
+                    # parameter and a new log line carrying it is a
+                    # `py/log-injection` finding (see the competition-share log
+                    # above). The ghost→canonical pairs identify the page.
+                    logger.info(
+                        "league page market-born drain: %d ghost row(s) "
+                        "suppressed (%s)",
+                        len(_drained),
+                        list(_drained.items())[:20],
+                    )
+            except Exception:  # noqa: BLE001 — see the gotcha #42 note above
+                logger.exception(
+                    "league page: market-born drain failed; serving the "
+                    "undrained page"
+                )
 
         # UX-P074 (#1860): colours and logos for the SHARED event card, fetched
         # ONCE for both rails. `_build_team_lookup` is the same in-memory-cached
