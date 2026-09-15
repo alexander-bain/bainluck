@@ -189,6 +189,7 @@ def _futures_row(**kw):
         poly_placeholder_excluded=3,
         poly_included=40, poly_never_traded_total=6, poly_never_traded_in_curve=2,
         both_false_excluded=4, both_winner_excluded=1, golf_placeholder_excluded=7,
+        golf_topn_incoherent_excluded=2,
         mex_normalized_outcomes=15, mex_candidate_markets=9,
         mex_normalized_markets=6, field_incomplete_markets=3,
         field_incomplete_outcomes=21, esports_bundle_excluded=5,

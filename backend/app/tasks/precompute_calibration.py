@@ -688,7 +688,32 @@ def _main_payload_is_publishable(response: Any) -> bool:
 # in scope at the population scan, and the scan acquires one only WITH q270 —
 # `mrs_lad`, the `market_result_shape` join #5305 added for the ladder arm. On
 # q270's parent there was nothing for the shape half to read.
-CALIBRATION_POPULATION_VERSION = "q271"
+#
+# ---------------------------------------------------------------------------
+# q272 — CAL-P1267 (#6090/#6092): golf Top-N fields whose prices exceed their own
+# declared ceiling stop being graded.
+#
+# WHAT MOVED: `_calibration_population_ctes` gains `golf_topn_incoherent_markets`
+# and the `is_golf_topn_incoherent` exclusion. A "top N finisher" field has
+# exactly N winners, so its probabilities sum to N; the two folded Kalshi golf
+# series published fields summing to 5-7x that (147 legs, sum 67.9, ceiling 10).
+# The winner counts are correct and nothing is re-graded — only our copy of the
+# prices is wrong, so the rows leave the curve. Read-side only (gotcha #21).
+#
+# 🔴 THIS BUMP NARROWS, and it is the reason the bump is MANDATORY rather than
+# tidy: the exclusion changes which rows are published, so a banked unit computed
+# under q271 and a unit computed under this predicate describe two different
+# populations. Merging them would produce a curve that is neither. An unmoved
+# version here would be the bug.
+#
+# 🔴 WHAT IT COSTS, said before deploy rather than discovered after: the bump
+# INVALIDATES the 128-unit staged futures bank (`load_staged_cursor` returns
+# INVALIDATE / `population_version_changed`), so the accuracy page rebuilds from
+# unit 0 and is stale-or-dark for the length of one full rebuild. It therefore
+# also resets the ruling-009 freeze ring, which read 19/24 at 2026-09-15T04:26Z
+# and was projecting MET around the 07:35Z beat. That is the whole price of this
+# change; the change itself is one CTE and one AND NOT.
+CALIBRATION_POPULATION_VERSION = "q272"
 
 #: What THIS bump expects to do to the population, stated up front so the publish
 #: gate can hold it to its word (CAL-P982, #1978). ``None`` on any build that is
@@ -1547,6 +1572,103 @@ GOLF_PLACEHOLDER_RULE_TEXT = (
     "Read-side only; never mutates resolutions."
 )
 
+# ---------------------------------------------------------------------------
+# CAL-P1267 (#6090/#6092) — golf Top-N FINISHER fields whose prices cannot be a
+# distribution at their OWN ceiling.
+#
+# WHAT A READER SAW. `/calibration` published the two Kalshi golf Top-N finisher
+# series, `KXPGAR2TOP*` and `KXPGAR3TOP*`, at a 20-28pp gap between predicted and
+# actual. It read as miscalibration. It is not: the winner counts are CORRECT
+# (~10 for a TOP10 market, ~5 for a TOP5) and the grading is sound. The PRICES are
+# collectively impossible. Measured over all 41 markets in the two series
+# (production, 2026-09-14):
+#
+#     market                   outcomes  winners  sum(published)  ceiling
+#     KXPGAR2TOP10-3MO26          147      12         67.9          10
+#     KXPGAR3TOP10-CHSC26         128      11         51.1          10
+#     KXPGAR2TOP10-CHSC26         134      10         50.9          10
+#     KXPGAR2TOP10-WYC26          153      13         49.2          10
+#     KXPGAR2TOP10-USO26          117      10         45.0          10
+#     KXPGAR3TOP5-MAST26           91       6         30.4           5
+#     KXPGAR2TOP5-THOC26          156       7         22.1           5
+#
+# In a "does this player finish in the top N" field exactly N legs win, so the
+# true probabilities sum to N. A field summing to 5-7x its own ceiling was never
+# a set of forecasts. The mechanism is a long tail of never-traded legs carrying
+# `current = opening = 0.405`, a price that never moved off its initial value,
+# entering the curve as sincere ~40% forecasts against a ~7.5% base rate.
+#
+# 🔴 WHY THE CEILING COMES FROM THE TICKER AND NEVER FROM `n_winners`. This is the
+# whole safety of the rule. `market_is_nonexclusive_bundle_structural`'s sum arm
+# asks `cp_sum > 1.15`, which is the right SHAPE of test at a ceiling of one and
+# the wrong constant here — an honest TOP10 field sums to ~10 and that arm would
+# refuse every one of them. The tempting repair is to make that arm ceiling-aware
+# as `cp_sum > n_winners * 1.15`. DO NOT: `kalshi/economics` was excluded on
+# Alex's ruling of 2026-08-28 on specimens like `KXDJI-26JUL2814` — 76 outcomes,
+# 76 winners, sum 72.48 — whose bar would become 76 * 1.15 = 87.4, silently
+# returning 63,537 ruled-out rows to the curve. A cumulative intraday ladder's
+# realized winner count is not a field's ceiling. So N is parsed from the series
+# ticker, where the market DECLARES it (`...TOP10-...` -> 10), and the rows above
+# show why even the declared N cannot be read off the winners: ties push a TOP10
+# market to 11, 12, 13 actual winners.
+#
+# WHY A SEPARATE FLAG AND NOT AN ARM OF `golf_placeholder_markets`. That rule is
+# the >=0.80 band in over-subscribed mex markets; these placeholders sit at 0.405
+# and are structurally invisible to it. Its published counter means "high-band
+# one-sided asks" and folding a different population into it would make the
+# page's own number a lie.
+#
+# SCOPED TO THE MEASURED FAMILY, deliberately, and this is the standing warning
+# from CAL-P112 item 3 obeyed rather than restated: the shipped
+# `nonexclusive_bundle_census` says the whole `golf` cell must NOT be excluded on
+# the realization arm (would-exclude 14,791 @ ECE 3.81 vs remainder 4,898 @ ECE
+# 8.60 — it removes golf's BETTER half and moves the cell towards 8.60, the
+# `kalshi/entertainment` D66 trap). A cell-level census averages a 20-28pp series
+# into a 3.81 cell, which is exactly why this defect survived the per-cell
+# procedure. The rule therefore reaches the declared-ceiling family only, and an
+# honest Top-N field inside it — one whose prices do sum to about N — stays
+# published.
+#
+# Read-side only (gotcha #21): the rows are dropped from the curve, never
+# re-graded. `is_winner` is truth and is untouched.
+
+#: The overround tolerance applied to a Top-N field's DECLARED ceiling is
+#: `MEX_NORMALIZE_THRESHOLD`, bound below as `GOLF_TOPN_CEILING_TOLERANCE` at the
+#: point that constant is defined. It is REUSED rather than fitted here, so there
+#: is one overround constant in this module and a Top-N field is held to exactly
+#: the standard a one-winner field is held to. At N = 1 this rule reduces to
+#: `cp_sum > 1.15`, the shipped sum arm, byte for byte.
+
+#: Series ticker prefixes whose markets declare a Top-N ceiling in the ticker.
+#: The two families measured in #6090/#6092. A prefix that has not been folded
+#: does not belong here — see the census warning above.
+GOLF_TOPN_SERIES_PREFIXES = ("KXPGAR2TOP", "KXPGAR3TOP")
+
+#: The declared-N regex, as ONE pattern both the CTE and the Python mirror are
+#: built from. Derived from :data:`GOLF_TOPN_SERIES_PREFIXES` rather than retyped,
+#: because a hand-written `KXPGAR[0-9]TOP` would silently be WIDER than the folded
+#: families — it reaches `KXPGAR1TOP*` and `KXPGAR4TOP*`, series nobody has
+#: measured, which is precisely the category-widening the census warns against.
+GOLF_TOPN_DECLARED_N_PATTERN = "^(?:%s)([0-9]+)-" % "|".join(GOLF_TOPN_SERIES_PREFIXES)
+
+#: SQL extracting the declared N from the series ticker: the digits after `TOP`
+#: and before the event suffix. `KXPGAR2TOP10-3MO26` -> 10.
+GOLF_TOPN_DECLARED_N_SQL = (
+    "substring(fm.external_id from '%s')" % GOLF_TOPN_DECLARED_N_PATTERN
+)
+
+GOLF_TOPN_INCOHERENT_RULE_TEXT = (
+    "Excludes Kalshi golf Top-N finisher fields whose published prices cannot be a "
+    "distribution at their own ceiling. A 'top N' field has exactly N winners, so its "
+    "probabilities sum to N; these summed to 5-7x that (a 147-leg Top-10 field summed "
+    "to 67.9 against a ceiling of 10). The ceiling is read from the ticker, where the "
+    "market declares it, never from the realized winner count — ties make a Top-10 "
+    "market resolve 11, 12 or 13 winners, and a cumulative ladder's winner count is "
+    "not a ceiling at all. An honest Top-N field, whose prices do sum to about N, "
+    "stays published. The winners are graded correctly and are not re-graded; only "
+    "our copy of the prices is wrong. Read-side only; never mutates resolutions."
+)
+
 # Queue #157 (#1012): curve-side MULTI-CANDIDATE NORMALIZATION.
 #
 # A resolved, mutually-exclusive market with >=3 outcomes is a partition of ONE
@@ -1573,6 +1695,13 @@ GOLF_PLACEHOLDER_RULE_TEXT = (
 # (gotcha #21) — never mutates is_winner / calibration_probability. Writer-side
 # durable normalization (stamp at capture) is follow-up scope on #1012.
 MEX_NORMALIZE_THRESHOLD = 1.15
+
+#: CAL-P1267 (#6090/#6092). The overround tolerance a golf Top-N field's DECLARED
+#: ceiling is held to. Bound to the normalizer's constant rather than fitted, so
+#: that at N = 1 the Top-N rule reduces to the shipped sum arm exactly; see the
+#: block above `GOLF_TOPN_SERIES_PREFIXES` for why the ceiling itself may never
+#: come from `n_winners`.
+GOLF_TOPN_CEILING_TOLERANCE = MEX_NORMALIZE_THRESHOLD
 
 MEX_NORMALIZE_RULE_TEXT = (
     "Normalizes resolved mutually-exclusive markets with >=3 outcomes and exactly "
@@ -3200,6 +3329,51 @@ def outcome_in_golf_high_band(cp: float | None) -> bool:
     return cp is not None and cp >= GOLF_PLACEHOLDER_HIGH_BAND
 
 
+def golf_topn_declared_ceiling(external_id: str | None) -> int | None:
+    """The N a golf Top-N market DECLARES in its series ticker, or None (CAL-P1267).
+
+    Canonical, unit-tested definition mirroring ``GOLF_TOPN_DECLARED_N_SQL``:
+    ``KXPGAR2TOP10-3MO26`` -> 10, ``KXPGAR3TOP5-MAST26`` -> 5. Returns None for any
+    ticker outside the folded families, which is what keeps the rule inside the
+    population it was measured on.
+
+    The ceiling is read here and never from the realized winner count. Ties make a
+    Top-10 field resolve with 11, 12 or 13 winners, and — the reason this is a hard
+    rule rather than a preference — a cumulative ladder's winner count is not a
+    ceiling at all, so a winners-derived bar would un-exclude `kalshi/economics`
+    (see the block above :data:`GOLF_TOPN_SERIES_PREFIXES`). Read-side only.
+    """
+    if not external_id:
+        return None
+    match = re.match(GOLF_TOPN_DECLARED_N_PATTERN, external_id)
+    if match is None:
+        return None
+    ceiling = int(match.group(1))
+    return ceiling if ceiling > 0 else None
+
+
+def market_is_golf_topn_incoherent(
+    external_id: str | None, cp_sum: float | None
+) -> bool:
+    """True if a golf Top-N field's published prices exceed its own ceiling (CAL-P1267).
+
+    Canonical, unit-tested definition mirroring the ``golf_topn_incoherent_markets``
+    CTE: exactly N legs of a "top N finisher" field win, so its probabilities sum to
+    N. A field whose published sum exceeds ``N * GOLF_TOPN_CEILING_TOLERANCE`` was
+    never a set of forecasts — the measured specimens sum to 5-7x their ceiling.
+
+    ``cp_sum`` is None when the market contributed no eligible priced outcome; a
+    market with no sum cannot be shown incoherent, so it FAILS CLOSED and stays
+    published, matching the SQL where ``NULL > x`` is NULL. An honest Top-N field
+    summing to about N is likewise untouched. Read-side only (gotcha #21) — the
+    grading is correct and these rows are dropped, never re-graded.
+    """
+    ceiling = golf_topn_declared_ceiling(external_id)
+    if ceiling is None or cp_sum is None:
+        return False
+    return cp_sum > ceiling * GOLF_TOPN_CEILING_TOLERANCE
+
+
 def _wilson_ci(wins: int, total: int, z: float = 1.96) -> tuple[float, float]:
     if total == 0:
         return (0.0, 0.0)
@@ -3935,6 +4109,35 @@ def _calibration_population_ctes(
                 GROUP BY fo.market_id
                 HAVING COUNT(*) >= 2
             ),
+            -- CAL-P1267 (#6090/#6092): golf Top-N FINISHER fields whose published
+            -- prices exceed their OWN declared ceiling. Exactly N legs of a "top
+            -- N" field win, so its probabilities sum to N; the measured specimens
+            -- sum to 5-7x that (a 147-leg Top-10 field summed to 67.9 against a
+            -- ceiling of 10). Mirrors `market_is_golf_topn_incoherent`.
+            --
+            -- 🔴 THE CEILING COMES FROM THE TICKER, NEVER FROM THE WINNER COUNT.
+            -- Ties resolve a Top-10 field with 11-13 winners, and a cumulative
+            -- ladder's winner count is not a ceiling at all — a winners-derived
+            -- bar would take `KXDJI-26JUL2814` (76 outcomes, 76 winners, sum
+            -- 72.48) under a 87.4 bar and silently return 63,537 rows Alex ruled
+            -- out on 2026-08-28. See the block above GOLF_TOPN_SERIES_PREFIXES.
+            --
+            -- `bundle_price_sum` is reused as the sum rather than re-summed here,
+            -- so this rule and RULE E's sum arm can never drift apart on what
+            -- "the published prices" means. It arrives already scoped to the
+            -- eligible published population; a market with no eligible priced
+            -- outcome is absent from it and therefore FAILS CLOSED (stays
+            -- published), matching the Python mirror.
+            golf_topn_incoherent_markets AS (
+                SELECT mi.market_id
+                FROM market_info mi
+                JOIN futures_markets fm ON fm.id = mi.market_id
+                JOIN bundle_price_sum bps ON bps.market_id = mi.market_id
+                WHERE mi.category = 'golf'
+                  AND {GOLF_TOPN_DECLARED_N_SQL} IS NOT NULL
+                  AND bps.cp_sum > ({GOLF_TOPN_DECLARED_N_SQL})::numeric
+                                   * {GOLF_TOPN_CEILING_TOLERANCE}
+            ),
             -- Queue #157 (#1012): multi-candidate normalization support.
             -- mex_win_counts: winner count over ALL outcomes of each mex market
             -- (the structure test — genuine partitions have exactly 1 winner;
@@ -4347,6 +4550,12 @@ def _calibration_population_ctes(
                     (gpm.market_id IS NOT NULL
                      AND COALESCE(fo.calibration_probability, fo.opening_probability)
                          >= {GOLF_PLACEHOLDER_HIGH_BAND}) AS is_golf_placeholder,
+                    -- CAL-P1267 (#6090/#6092): this outcome belongs to a golf
+                    -- Top-N field whose published prices exceed its declared
+                    -- ceiling. Market-level, so every leg of the field goes —
+                    -- the incoherence is a property of the field, not of any
+                    -- single price inside it.
+                    (gti.market_id IS NOT NULL) AS is_golf_topn_incoherent,
                     -- Queue #186 (#941, corrects #167): Kalshi player-prop
                     -- threshold "<subject>: N+" OVER captures. EXCLUDED when
                     -- (A) category='hockey' (NHL goal-family is corrupt at every
@@ -4450,6 +4659,7 @@ def _calibration_population_ctes(
                 LEFT JOIN orphan_partition_markets opm ON opm.market_id = fo.market_id
                 LEFT JOIN nonexclusive_bundle_markets nbm ON nbm.market_id = fo.market_id
                 LEFT JOIN golf_placeholder_markets gpm ON gpm.market_id = fo.market_id
+                LEFT JOIN golf_topn_incoherent_markets gti ON gti.market_id = fo.market_id
                 -- #5305: per-market winner cardinality for the ladder arm. One row
                 -- per market_id (``market_result_shape`` groups by market_id plus
                 -- two per-market columns), so this cannot multiply outcomes.
@@ -4507,6 +4717,7 @@ def _calibration_population_ctes(
                           -- over its survivors.
                           AND NOT ro.is_player_props_placeholder
                           AND NOT ro.is_golf_placeholder
+                          AND NOT ro.is_golf_topn_incoherent
                           AND NOT ro.is_kalshi_prop_threshold
                           AND NOT ro.is_weather_wide_spread
                           -- Queue 299: the new rungs are published per-outcome
@@ -4525,6 +4736,7 @@ def _calibration_population_ctes(
                           AND NOT ro.is_esports_bundle
                           AND NOT ro.is_player_props_placeholder
                           AND NOT ro.is_golf_placeholder
+                          AND NOT ro.is_golf_topn_incoherent
                           AND NOT ro.is_kalshi_prop_threshold
                           AND NOT ro.is_weather_wide_spread
                           AND NOT ro.is_no_winner_market
@@ -4646,6 +4858,7 @@ def _calibration_population_ctes(
                     -- quote is still sitting in `opening_probability`.
                     AND NOT ro.is_player_props_placeholder
                     AND NOT ro.is_golf_placeholder
+                    AND NOT ro.is_golf_topn_incoherent
                     AND NOT ro.is_kalshi_prop_threshold
                     AND NOT ro.is_weather_wide_spread
                     -- Queue 299 rungs 1-3 (#1012): result authority before
@@ -4841,6 +5054,7 @@ _COVERAGE_RUNG_PREDICATES: tuple[tuple[str, str], ...] = (
         "structural_artifact",
         "COALESCE(n.is_esports_bundle, false) "
         "OR COALESCE(n.is_golf_placeholder, false) "
+        "OR COALESCE(n.is_golf_topn_incoherent, false) "
         "OR COALESCE(n.is_kalshi_prop_threshold, false) "
         "OR COALESCE(n.is_weather_wide_spread, false)",
     ),
@@ -5116,6 +5330,8 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                     COUNT(*) FILTER (WHERE is_malformed_binary AND malformed_win_count = 2) AS both_winner_excluded,
                     -- L2-79 Item 2: golf one-sided-ask placeholder exclusion count.
                     COUNT(*) FILTER (WHERE is_golf_placeholder) AS golf_placeholder_excluded,
+                    -- CAL-P1267: golf Top-N over-ceiling field exclusion count.
+                    COUNT(*) FILTER (WHERE is_golf_topn_incoherent) AS golf_topn_incoherent_excluded,
                     -- Queue #157: multi-candidate normalization transparency —
                     -- how many curve outcomes had their probability normalized.
                     COUNT(*) FILTER (WHERE is_mex_normalized) AS mex_normalized_outcomes,
@@ -5249,6 +5465,7 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                 MAX(ls.both_false_excluded) AS both_false_excluded,
                 MAX(ls.both_winner_excluded) AS both_winner_excluded,
                 MAX(ls.golf_placeholder_excluded) AS golf_placeholder_excluded,
+                MAX(ls.golf_topn_incoherent_excluded) AS golf_topn_incoherent_excluded,
                 MAX(ls.mex_normalized_outcomes) AS mex_normalized_outcomes,
                 MAX(ls.mex_candidate_markets) AS mex_candidate_markets,
                 MAX(ls.mex_normalized_markets) AS mex_normalized_markets,
@@ -6146,6 +6363,12 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         golf_placeholder_excluded = (
             int(rows[0].golf_placeholder_excluded)
             if rows and rows[0].golf_placeholder_excluded is not None
+            else 0
+        )
+        # CAL-P1267 (#6090/#6092): golf Top-N over-ceiling field exclusion count.
+        golf_topn_incoherent_excluded = (
+            int(rows[0].golf_topn_incoherent_excluded)
+            if rows and rows[0].golf_topn_incoherent_excluded is not None
             else 0
         )
         # Queue #157: multi-candidate normalization transparency count.
@@ -7155,6 +7378,13 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             "rule": GOLF_PLACEHOLDER_RULE_TEXT,
             "excluded": golf_placeholder_excluded,
         },
+        "golf_topn_incoherent_filter": {  # CAL-P1267 (#6090/#6092)
+            "applies_to": "golf Top-N finisher series (%s)"
+            % ", ".join(GOLF_TOPN_SERIES_PREFIXES),
+            "rule": GOLF_TOPN_INCOHERENT_RULE_TEXT,
+            "tolerance": GOLF_TOPN_CEILING_TOLERANCE,
+            "excluded": golf_topn_incoherent_excluded,
+        },
         "mex_normalization": {  # Queue #157 (#1012) + Queue #257 Item 1
             "applies_to": "all",
             "rule": MEX_NORMALIZE_RULE_TEXT,
@@ -7782,6 +8012,26 @@ def _main_input_fingerprint() -> str:
         # this costs a full rebuild on any other day, and today the fingerprint
         # is moving anyway.
         f"mex_normalize_threshold={MEX_NORMALIZE_THRESHOLD}",
+        # CAL-P1267 (#6090/#6092) — the same hole again, closed on the deploy
+        # that opens it, for the reason every neighbour above records. Both are
+        # INTERPOLATED into `golf_topn_incoherent_markets`, so
+        # `inspect.getsource` hashes the f-string TEMPLATE and never the value,
+        # and both decide WHICH ROWS THE CURVE PUBLISHES:
+        #
+        #   * the rendered ticker pattern decides which series the ceiling rule
+        #     reaches at all — and it is built from `GOLF_TOPN_SERIES_PREFIXES`,
+        #     so hashing it covers adding a folded series too. That is the edit
+        #     most likely to be made later and the one that must never be
+        #     silent: the census warns a widening here reaches families nobody
+        #     has measured;
+        #   * the tolerance is the ceiling's overround window — at a different
+        #     value a different set of fields is impossible.
+        #
+        # Change either and a cursor banked under the old value would otherwise
+        # stay resumable by code carrying the new one, merging units built from
+        # two populations into one published payload.
+        f"golf_topn_declared_n_sql={GOLF_TOPN_DECLARED_N_SQL}",
+        f"golf_topn_ceiling_tolerance={GOLF_TOPN_CEILING_TOLERANCE}",
         # CAL-P168 (#1978) — the SIXTH instance, and the largest single batch of
         # it, closed on the deploy that creates it rather than left for the
         # tripwire to count. Every one of these is INTERPOLATED into the emitted
@@ -8834,6 +9084,7 @@ def _build_time_horizon_sql(days: int) -> tuple[str, dict]:
                         (SELECT COUNT(*) FROM ranked_outcomes WHERE is_malformed_binary) AS excl_malformed_binary,
                         (SELECT COUNT(*) FROM ranked_outcomes WHERE is_esports_bundle) AS excl_esports_bundle,
                         (SELECT COUNT(*) FROM ranked_outcomes WHERE is_golf_placeholder) AS excl_golf_placeholder,
+                        (SELECT COUNT(*) FROM ranked_outcomes WHERE is_golf_topn_incoherent) AS excl_golf_topn_incoherent,
                         (SELECT COUNT(*) FROM ranked_outcomes WHERE is_kalshi_prop_threshold) AS excl_kalshi_prop_threshold,
                         (SELECT COUNT(*) FROM ranked_outcomes WHERE is_weather_wide_spread) AS excl_weather_wide_spread,
                         (SELECT COUNT(*) FROM normalized WHERE is_field_incomplete) AS excl_field_incomplete,
@@ -8865,6 +9116,7 @@ def _build_time_horizon_sql(days: int) -> tuple[str, dict]:
                     d.candidate_n, d.final_n, d.distinct_questions,
                     d.excl_illiquid, d.excl_poly_placeholder, d.excl_malformed_binary,
                     d.excl_esports_bundle, d.excl_golf_placeholder,
+                    d.excl_golf_topn_incoherent,
                     d.excl_kalshi_prop_threshold, d.excl_weather_wide_spread,
                     d.excl_field_incomplete,
                     d.ladder_questions, d.ladder_rungs_suppressed
@@ -8990,6 +9242,9 @@ async def _compute_time_horizon_calibration():
                             "malformed_binary": int(r.excl_malformed_binary or 0),
                             "esports_bundle": int(r.excl_esports_bundle or 0),
                             "golf_placeholder": int(r.excl_golf_placeholder or 0),
+                            "golf_topn_incoherent": int(
+                                r.excl_golf_topn_incoherent or 0
+                            ),
                             "kalshi_prop_threshold": int(r.excl_kalshi_prop_threshold or 0),
                             "weather_wide_spread": int(r.excl_weather_wide_spread or 0),
                             "field_incomplete": int(r.excl_field_incomplete or 0),

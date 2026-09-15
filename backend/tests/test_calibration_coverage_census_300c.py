@@ -79,7 +79,9 @@ _EXISTING_TRANSPARENCY_COLUMNS = (
     # #5401 writer-bar disclosure counts.
     "writer_bar_included", "writer_bar_excluded",
     "poly_never_traded_total", "poly_never_traded_in_curve", "both_false_excluded",
-    "both_winner_excluded", "golf_placeholder_excluded", "mex_normalized_outcomes",
+    "both_winner_excluded", "golf_placeholder_excluded",
+    # CAL-P1267 (#6090/#6092): golf Top-N over-ceiling field exclusion.
+    "golf_topn_incoherent_excluded", "mex_normalized_outcomes",
     "mex_candidate_markets", "mex_normalized_markets", "field_incomplete_markets",
     "field_incomplete_outcomes", "esports_bundle_excluded", "no_winner_excluded",
     "no_winner_markets", "draw_authority_excluded", "draw_authority_markets",

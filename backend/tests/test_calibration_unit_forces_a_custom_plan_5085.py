@@ -109,7 +109,21 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: ``CALIBRATION_POPULATION_VERSION`` moved q270 -> q271. An UNMOVED fingerprint
 #: would have meant the widening never reached the population SQL. The bank is
 #: discarded either way by the version bump, so the re-key costs nothing extra.
-LIVE_INPUT_FINGERPRINT = "661793560ea5219af31abeb6d3bbf6ca"
+#:
+#: RE-ANCHORED AGAIN for CAL-P1267 (#6090/#6092): ``66179356…`` -> ``86a4815f…``.
+#: The move is the EXPECTED one and an unmoved fingerprint would have meant the
+#: exclusion never reached the population SQL — which is worth restating every
+#: time, because re-anchoring a pin is how a rig starts agreeing with whatever it
+#: is given. Two hashed inputs changed on purpose: ``_calibration_population_ctes``
+#: renders the new ``golf_topn_incoherent_markets`` CTE and its ``AND NOT``, and
+#: ``CALIBRATION_POPULATION_VERSION`` moved q271 -> q272 — plus two new by-value
+#: entries (``golf_topn_declared_n_sql``, ``golf_topn_ceiling_tolerance``), added
+#: on the deploy that creates them so a later widening of the folded series can
+#: never change the population without re-keying the bank. The bank is discarded by
+#: the version bump either way, so the re-key costs nothing extra on top of it —
+#: but that bump's own cost (a full 128-unit rebuild) is real and is recorded at
+#: the constant.
+LIVE_INPUT_FINGERPRINT = "86a4815fdab2f6fa239722905525877a"
 
 
 class _Db:

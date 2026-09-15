@@ -156,6 +156,7 @@ def _bucket_row(
         both_false_excluded=0,
         both_winner_excluded=0,
         golf_placeholder_excluded=0,
+        golf_topn_incoherent_excluded=0,
         mex_normalized_outcomes=0,
         esports_bundle_excluded=0,
         kalshi_prop_threshold_excluded=0,
@@ -370,6 +371,7 @@ class TestCalibrationPublicEndpoint:
             "exclusion_symmetry",  # Queue #220/221 Item 3
             "malformed_binary_filter",  # L2-79 Item 1 (#997/#1010)
             "golf_placeholder_filter",  # L2-79 Item 2 (#940/#762)
+            "golf_topn_incoherent_filter",  # CAL-P1267 (#6090/#6092)
             "mex_normalization",  # Queue #157 (#1012)
             # Queue 300D Item 1: NOT a filter — nothing here is excluded. It is
             # the one-time representative IDENTITY delta from adopting a

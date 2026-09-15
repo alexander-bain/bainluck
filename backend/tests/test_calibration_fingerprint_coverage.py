@@ -255,7 +255,21 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # It arrives UNCOVERED, like the three eligibility names already in this
         # census, and that is the same hole rather than a new one — see the
         # cross-module test below, where it is named.
-        assert artifact["input_count"] == 69
+        #
+        # CAL-P1267 (#6090/#6092): 69 -> 73. The golf Top-N declared-ceiling
+        # exclusion adds four: `GOLF_TOPN_SERIES_PREFIXES`,
+        # `GOLF_TOPN_DECLARED_N_SQL`, `GOLF_TOPN_CEILING_TOLERANCE` and
+        # `GOLF_TOPN_INCOHERENT_RULE_TEXT`. TWO OF THEM ARRIVE COVERED BY VALUE
+        # on the deploy that creates them, which is the precedent
+        # `MEX_NORMALIZE_THRESHOLD` set rather than a courtesy: both are
+        # interpolated into the new CTE and both decide which rows publish. The
+        # prefixes tuple is covered TRANSITIVELY — the hashed
+        # `GOLF_TOPN_DECLARED_N_SQL` is rendered from it — so adding a folded
+        # series re-keys the bank instead of changing the population in silence.
+        # The rule text is uncovered like its nineteen `*_RULE_TEXT` siblings and
+        # for the same reason: hashing prose would force a ~3.3 h rebuild for a
+        # copy edit.
+        assert artifact["input_count"] == 73
         # CAL-P162: 4 -> 5. `MEX_NORMALIZE_THRESHOLD` joined the by-value set on
         # the deploy that made it decide PUBLICATION rather than only pricing.
         # CAL-P164 added no by-value input, so this stands still.
@@ -268,7 +282,11 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # on the deploy that creates it. `uncovered_count` again does not move,
         # which is the claim the docstring above makes: the unguarded surface
         # did not grow.
-        assert len(artifact["covered_by_value"]) == 13
+        # CAL-P1267 (#6090/#6092): 13 -> 15. `GOLF_TOPN_DECLARED_N_SQL` and
+        # `GOLF_TOPN_CEILING_TOLERANCE` are hashed by value on the deploy that
+        # creates them — both are interpolated into the new CTE and both decide
+        # which rows publish, which is the `MEX_NORMALIZE_THRESHOLD` precedent.
+        assert len(artifact["covered_by_value"]) == 15
         # CAL-P1121 (#5401): 54 -> 55, the prose disclosure string. See the
         # docstring — covered_by_value deliberately does NOT move with it.
         # CAL-P1138 (q271, D112 #997): 55 -> 56, `calibration_truth_eligible_sql`.
@@ -278,7 +296,12 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # to a renderer for a constant already on this list, not a second source
         # of truth; the reasoning and the measured limits are at the cross-module
         # test below, which is where the name is tracked.
-        assert artifact["uncovered_count"] == 56
+        # CAL-P1267 (#6090/#6092): 56 -> 58. The two same-module additions are
+        # `GOLF_TOPN_INCOHERENT_RULE_TEXT` (prose, uncovered like its nineteen
+        # siblings) and `GOLF_TOPN_SERIES_PREFIXES` (covered transitively by the
+        # hashed SQL it renders). The change's two WHERE-clause inputs were
+        # covered by value rather than added here.
+        assert artifact["uncovered_count"] == 58
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -409,7 +432,15 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # gains a function that renders a constant already on the list, not a
         # new source of truth. The honest summary is the one used for the
         # `*_RULE_TEXT` siblings: the same hole, one call wider.
-        assert artifact["uncovered_sql_shaping"] == 23
+        #
+        # CAL-P1267 (#6090/#6092): 23 -> 24. Only ONE of this change's four
+        # inputs lands here — `GOLF_TOPN_SERIES_PREFIXES` — and it is the same
+        # hole one name wider rather than a new one, because the constant it
+        # shapes (`GOLF_TOPN_DECLARED_N_SQL`) is hashed BY VALUE in the same
+        # commit. The two inputs that actually render the WHERE clause were
+        # covered rather than counted, which is the direction this pin is
+        # supposed to push an author.
+        assert artifact["uncovered_sql_shaping"] == 24
 
     def test_the_five_hashed_roots_are_derived_not_declared_here(self, artifact):
         # D119 / CAL-P1090 added the fifth: `_roster_pushdown_predicates`, the
@@ -552,7 +583,12 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # 48 -> 49 at CAL-P1121: KALSHI_WRITER_BAR_RULE_TEXT is same-module
         # prose, so it lands in the non-cross tier and the cross list is
         # unchanged -- which is the property this line is really pinning.
-        assert len(cross) + 49 == artifact["uncovered_count"]
+        # 49 -> 51 at CAL-P1267 (#6090/#6092): `GOLF_TOPN_INCOHERENT_RULE_TEXT`
+        # and `GOLF_TOPN_SERIES_PREFIXES` are both same-module, so they land in
+        # the non-cross tier and the cross list is again unchanged -- which is
+        # the property this line is really pinning. The change's two
+        # WHERE-clause inputs are not here at all: they were covered by value.
+        assert len(cross) + 51 == artifact["uncovered_count"]
 
 
 class TestInterpolationDetectionCoversNonFStringSql:

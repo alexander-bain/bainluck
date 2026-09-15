@@ -101,6 +101,7 @@ def _bucket_row(
         both_false_excluded=0,
         both_winner_excluded=0,
         golf_placeholder_excluded=0,
+        golf_topn_incoherent_excluded=0,
         mex_normalized_outcomes=0,
         esports_bundle_excluded=0,
         kalshi_prop_threshold_excluded=0,

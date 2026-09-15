@@ -313,6 +313,12 @@ DEFAULT_CENSUS_COLUMNS: tuple[str, ...] = (
     "both_false_excluded",
     "both_winner_excluded",
     "golf_placeholder_excluded",
+    # CAL-P1267 (#6090/#6092): golf Top-N over-ceiling field exclusion. A
+    # COUNT(*) FILTER over `normalized` like its sibling above, so it rides the
+    # same additive passthrough and needs no merge rule of its own. Declared in
+    # the SAME commit that emits it, for the reason the CAL-P168 note below
+    # records — and this guard did catch it during the build.
+    "golf_topn_incoherent_excluded",
     "mex_normalized_outcomes",
     "mex_candidate_markets",
     "mex_normalized_markets",

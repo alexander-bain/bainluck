@@ -2,6 +2,8 @@
   "covered_by_value": [
     "CALIBRATION_POPULATION_VERSION",
     "COVERAGE_CENSUS_ENABLED",
+    "GOLF_TOPN_CEILING_TOLERANCE",
+    "GOLF_TOPN_DECLARED_N_SQL",
     "KALSHI_WRITER_BAR_MET",
     "MEX_NORMALIZE_THRESHOLD",
     "NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS",
@@ -21,7 +23,7 @@
     "_virtual_market_ctes",
     "compute_calibration_payload"
   ],
-  "input_count": 69,
+  "input_count": 73,
   "inputs": [
     {
       "covered_by_value": false,
@@ -264,6 +266,51 @@
       "name": "GOLF_PLACEHOLDER_RULE_TEXT",
       "origin": "app.tasks.precompute_calibration:GOLF_PLACEHOLDER_RULE_TEXT",
       "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "GOLF_TOPN_CEILING_TOLERANCE",
+      "origin": "app.tasks.precompute_calibration:GOLF_TOPN_CEILING_TOLERANCE",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes",
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "GOLF_TOPN_DECLARED_N_SQL",
+      "origin": "app.tasks.precompute_calibration:GOLF_TOPN_DECLARED_N_SQL",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "GOLF_TOPN_INCOHERENT_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:GOLF_TOPN_INCOHERENT_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "GOLF_TOPN_SERIES_PREFIXES",
+      "origin": "app.tasks.precompute_calibration:GOLF_TOPN_SERIES_PREFIXES",
+      "sql_interpolated": true,
       "used_in": [
         "compute_calibration_payload"
       ]
@@ -819,8 +866,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "1fc9112607c6606134bfba9febec4c8cfb567e02df8e1f34cc2e93236da2d839",
-  "uncovered_behavior_or_evidence": 33,
-  "uncovered_count": 56,
-  "uncovered_sql_shaping": 23
+  "source_sha256": "e593485dae5ee2d1ca61f12d6758108dc5023922b5fd16bc210ac096c2194a76",
+  "uncovered_behavior_or_evidence": 34,
+  "uncovered_count": 58,
+  "uncovered_sql_shaping": 24
 }
