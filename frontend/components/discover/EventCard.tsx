@@ -166,6 +166,17 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   // were over 12 hours old. Empty string means "render no date" (an unparseable
   // time, or the impossible future-dated final the shared guard rejects).
   const finishedLabel = isDone ? formatFinishedGameLabel(data.commence_time) : "";
+  // #6361 — the same label for the sibling state, because the argument in the
+  // `isDone` block's own comment ("the finished-at date has to be readable on a
+  // draw and on a card whose scores never arrived") is the argument for this
+  // one: a card with no result is the card that most needs to say WHEN.
+  // DATE-ONLY ("compact"), not the relative style above, which renders
+  // `Today 7:00 PM` for a same-day fixture — a time of day beside "No result
+  // reported" is the future-tense start time live/048 refused on this branch.
+  // "" means "render no date" and covers the gotcha #14 impossible future final.
+  const unreportedLabel = isSuspended
+    ? formatFinishedGameLabel(data.commence_time, Date.now(), "compact")
+    : "";
   const contextSnippet = feedContextSnippet(item) || headline;
   const expandedContext = feedExpandedContext(item);
   // UX-P051 (#1710) — this slot is sized for "Q3", and it was painting ESPN's
@@ -356,6 +367,18 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
                   `away_score` on the left and `home_score` on the right. */}
               {suspendedSummary(data.away_score, data.home_score, "away-home")}
             </span>
+            {/* #6361 — mirrors the `finishedLabel` span in the `isDone` block
+                above: same slot, same weight, same muted treatment. AFTER the
+                badge, never before it, so the date is read as the tail of "no
+                result reported" and never as a kickoff (#3211). */}
+            {unreportedLabel && (
+              <span
+                className="text-[11px] text-text-muted"
+                data-testid="event-card-unreported-at"
+              >
+                {unreportedLabel}
+              </span>
+            )}
           </div>
         )}
 

@@ -476,6 +476,18 @@ function EventFeedCard({
   // Date/time for finished events (staleness context)
   const finishedTime = isFinished ? formatFinishedDate(data.commence_time) : null;
 
+  // #6361 — the same context for a card nobody reported a result on, which had
+  // none at all. DATE-ONLY, and deliberately NOT `formatFinishedDate`: that one
+  // is the "relative" style, which renders `Today 7:00 PM` for a same-day
+  // fixture, and a time of day beside "No result reported" is exactly the
+  // future-tense start time live/048 refused on this branch. "compact" is the
+  // shared helper's date-only form and carries the same gotcha #14 guard, so an
+  // impossible future `commence_time` yields "" — render no date — rather than
+  // a lie.
+  const unreportedDate = isSuspended
+    ? formatFinishedGameLabel(data.commence_time, Date.now(), "compact")
+    : null;
+
   // ═══ ux/1041 (#2752): THE LIVE SCORE READS IN THE CARD'S OWN ORDER ═══
   //
   // Everything else on this card counts AWAY first — the two team rows below
@@ -692,6 +704,10 @@ function EventFeedCard({
                   render into THIS SLOT and still agree, which is what #2786 was
                   for — and its guard is what makes them move together. */}
               {suspendedSummary(data.away_score, data.home_score, "away-home")}
+              {/* #6361 — the date, after the words and in the same slot, so the
+                  card reads "…no result reported · Sep 13" rather than going
+                  undated while its FINISHED sibling below is dated. */}
+              {unreportedDate && <> · {unreportedDate}</>}
             </span>
           ) : liveScoreLine ? (
             <span
