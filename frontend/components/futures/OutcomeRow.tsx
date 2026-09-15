@@ -329,6 +329,42 @@ export default function OutcomeRow({
   // `false` as a grader's verdict.
   const verdict = outcomeRowVerdict(outcome, isResolved);
 
+  // #6325 — A SETTLED BOARD DOES NOT NUMBER ITSELF.
+  //
+  // `rank` is a PRICE rank: where an outcome sat in the field while the market was
+  // being made. The page hands this row `outcome.rank ?? index + 1`, so a leg with
+  // no price history takes its display position instead — and on
+  // `/futures/58675941` ("Vuelta a Espana 2026: Winner") that printed TWO rows
+  // badged `1`: the graded champion, minted by #6110 with `rank` NULL and hoisted
+  // to the top by the settled sort, and Tadej Pogacar, who lost with a stored rank
+  // of 1. Measured on production: **677 markets resolved in the last 45 days have a
+  // NULL-ranked graded winner beside a sibling holding stored rank 1**, and 1,960
+  // mix ranked and unranked legs at all.
+  //
+  // The collision is the symptom; the column is the defect. On a settled market the
+  // rows are ordered winner-first and then by frozen price, so the badges beside
+  // them read `1 1 27 28 17 10 …` — #4416's sentence exactly: a column that carries
+  // no ordering while looking exactly like one.
+  //
+  // NOT THE FIX: renumbering the settled rows by display position. It makes the
+  // column coherent by asserting something we do not know — that the second row
+  // FINISHED second. Only the winner is graded here; everyone else merely lost, and
+  // their order on the page is the order their prices froze in. A badge is not a
+  // place to invent a result order, and there is nothing true left for it to say,
+  // so it says nothing. The verdict chip already crowns the winner (#4788).
+  //
+  // The arrow goes with it, and not for tidiness: `rank_change_24h` survives
+  // settlement on **180,626 rows across 20,904 settled markets** (45 days), so a
+  // finished board prints "moved 3 places in the last 24 hours" about a market that
+  // ended weeks ago. Leaving it would also orphan an arrow beside a badge this
+  // change removes.
+  //
+  // Scoped to `isResolved`, the MARKET-level fact — so a settled leg on an open
+  // market (#6082) keeps its badges, because that board is still being priced. The
+  // card's own row (`FuturesCard.tsx:291`) is a different component whose badge is
+  // positional for every row, so it cannot collide and is not this defect.
+  const printsRank = !isResolved;
+
   // Entity image detection. #4483: the non-sports test alone was the bug — it
   // asks "could this name have a Wikipedia picture?" and a threshold answers yes.
   // The caller's shape-aware `showEntityImage` is the gate now.
@@ -381,26 +417,31 @@ export default function OutcomeRow({
         </button>
       )}
 
-      {/* Rank */}
-      <span
-        className={`w-8 h-8 flex items-center justify-center text-sm rounded-full shrink-0 ${
-          isLeader
-            ? "bg-amber-100 text-amber-700 font-bold"
-            : "bg-surface-card text-text-secondary border border-surface-border"
-        }`}
-      >
-        {rank}
-      </span>
+      {/* Rank + rank change — the whole cell, silent on a settled board (#6325) */}
+      {printsRank && (
+        <>
+          <span
+            data-testid="outcome-rank-badge"
+            className={`w-8 h-8 flex items-center justify-center text-sm rounded-full shrink-0 ${
+              isLeader
+                ? "bg-amber-100 text-amber-700 font-bold"
+                : "bg-surface-card text-text-secondary border border-surface-border"
+            }`}
+          >
+            {rank}
+          </span>
 
-      {/* Rank change indicator */}
-      {rankChange !== null && rankChange !== 0 && (
-        <span
-          className={`text-xs shrink-0 ${
-            rankChange < 0 ? "text-emerald-600" : "text-red-500"
-          }`}
-        >
-          {rankChange < 0 ? `↑${Math.abs(rankChange)}` : `↓${rankChange}`}
-        </span>
+          {rankChange !== null && rankChange !== 0 && (
+            <span
+              data-testid="outcome-rank-change"
+              className={`text-xs shrink-0 ${
+                rankChange < 0 ? "text-emerald-600" : "text-red-500"
+              }`}
+            >
+              {rankChange < 0 ? `↑${Math.abs(rankChange)}` : `↓${rankChange}`}
+            </span>
+          )}
+        </>
       )}
 
       {/* Name */}
