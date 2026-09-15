@@ -37,9 +37,7 @@ final class CanThisRigTapAtAllTests: XCTestCase {
     /// requiring its content is the cheapest assertion that can only be true if
     /// a real touch was delivered.
     func testTheRigCanDeliverATouchAndTheAppRespondsToIt() {
-        let app = XCUIApplication()
-        app.launchArguments += UITestLaunch.arguments
-        app.launch()
+        let app = UITestLaunch.launchApp()
 
         let tabBar = app.tabBars.firstMatch
         XCTAssertTrue(

@@ -88,6 +88,26 @@
 #   tools/native-uitest.sh --keep-state        # do not uninstall first
 #   tools/native-uitest.sh --allow-non-iphone  # run on an iPad anyway (see above)
 #   tools/native-uitest.sh --explain           # resolve everything and STOP. No xcodebuild.
+#   tools/native-uitest.sh --rearm-first-run-gates   # THE NEGATIVE CONTROL — see below
+#
+# ═══ THE NEGATIVE CONTROL, AND WHY THIS SUITE NEEDS ONE ═══
+#
+# A journey test whose every assertion is satisfied by "nothing happened" passes
+# forever and is indistinguishable, from the outside, from one that walked. This
+# suite cannot detect that about itself: a green run is exactly what both look
+# like.
+#
+# So `--rearm-first-run-gates` puts Discover's first-run sheet back in front of
+# the app, which makes the whole app untouchable, and then EVERY test must go
+# RED. A test that stays green in that state is asserting nothing, and the
+# verdict below is inverted to say so by name.
+#
+# Measured 2026-09-15 on 29d42093: 2 of 10 stayed green — check 5 itself (which
+# asserted cards EXIST, and they do underneath a modal) and check 6's tab
+# round-trip (which never asserted it LEFT Discover). Both were given the
+# assertion they were missing; the control now reads 9 red + 1 named exemption,
+# documented at the verdict below. Run this whenever a test is added to the
+# target; it is not part of a normal run.
 #
 # Exit 0 only when the run finished AND nothing failed. Gotcha #54: the gate is
 # never piped, its exit code is captured and reported as a VALUE — and for
@@ -104,6 +124,7 @@ ONLY=""
 KEEP_STATE=""
 ALLOW_NON_IPHONE=""
 EXPLAIN=""
+REARM=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -112,6 +133,7 @@ while [ $# -gt 0 ]; do
     --keep-state) KEEP_STATE=1 ;;
     --allow-non-iphone) ALLOW_NON_IPHONE=1 ;;
     --explain) EXPLAIN=1 ;;
+    --rearm-first-run-gates) REARM=1 ;;
     -h|--help) sed -n '1,/^set -u/p' "${BASH_SOURCE[0]}" | sed '$d'; exit 0 ;;
     *) echo "unknown flag: $1" >&2; exit 2 ;;
   esac
@@ -182,6 +204,7 @@ echo "  scheme    : $SCHEME"
 echo "  simulator : ${SIMNAME:-<named by udid>}  ($DEVICE)"
 echo "  state     : $([ -n "$KEEP_STATE" ] && echo 'KEPT (--keep-state)' || echo 'uninstalled first, so the run starts on a clean container')"
 echo "  scope     : ${ONLY:-all classes}"
+[ -n "$REARM" ] && echo "  mode      : NEGATIVE CONTROL — first-run gates re-armed, EVERY test must go RED"
 echo "  log       : $LOG"
 
 [ -n "$EXPLAIN" ] && { say "done (--explain) — nothing was built and nothing was run"; exit 0; }
@@ -213,6 +236,16 @@ ONLY_ARG=()
 # which is what /bin/bash on macOS is — so the whole-suite path (the default,
 # and the one every lane runs) died before xcodebuild started while `--only`
 # worked fine. The `+` form expands to nothing when the array is empty.
+# `TEST_RUNNER_<VAR>` is xcodebuild's channel into the test RUNNER's environment
+# (the prefix is stripped before the runner sees it). It must be exported into
+# xcodebuild's own environment: passed as a trailing `VAR=value` argument it is
+# read as a BUILD SETTING, lands in the build environment, and never reaches the
+# runner — measured 2026-09-15, and the run came back looking perfectly normal,
+# which is why the verdict below refuses to trust a control it cannot see.
+if [ -n "$REARM" ]; then
+  export TEST_RUNNER_BL_UITEST_REARM_FIRST_RUN_GATES=1
+fi
+
 xcodebuild test \
   -project "$PROJECT" -scheme "$SCHEME" \
   -destination "id=$DEVICE" \
@@ -226,6 +259,75 @@ case "$EXIT" in
   70) echo "  (70 — the destination could not be resolved. THE RUN NEVER HAPPENED; this is not a failing journey.)" ;;
   *) echo "  ($EXIT is an unusual xcodebuild code — check the log before reading it as a test result.)" ;;
 esac
+
+# ── The verdict, when this is the negative control ───────────────────────────
+# Inverted ON PURPOSE: with the app behind its first-run sheet nothing is
+# reachable, so a green test is a test that is not looking at the app.
+if [ -n "$REARM" ]; then
+  say "negative control (first-run gates RE-ARMED)"
+  PASSED=$(/usr/bin/grep -cE "^Test Case .* passed" "$LOG" 2>/dev/null)
+  RAN=$(/usr/bin/grep -cE "^Test Case .* (passed|failed)" "$LOG" 2>/dev/null)
+
+  # A control that passes because nothing ran is the exact failure it exists to
+  # catch, one level up. Zero executed tests is never a pass here.
+  if [ "${RAN:-0}" -eq 0 ]; then
+    echo "  THE CONTROL DID NOT RUN: 0 test cases executed (xcodebuild exit $EXIT)."
+    echo "  This is NOT a clean control — read the log, do not record a result."
+    echo "  log: $LOG"
+    exit 1
+  fi
+
+  # THE CONTROL MUST PROVE IT CONTROLLED. `UITestLaunch.launchApp` logs which
+  # mode it is in on every launch; if the switch did not reach the runner the
+  # app was never blocked, every test is green for the ordinary reason, and
+  # reporting that as "your tests assert nothing" is a false accusation.
+  if ! /usr/bin/grep -q "first-run gates: RE-ARMED" "$LOG" 2>/dev/null; then
+    echo "  THE SWITCH DID NOT REACH THE RUNNER — no launch logged 'first-run gates:"
+    echo "  RE-ARMED', so the app was NOT blocked and this run is not a control."
+    echo "  Nothing about the suite can be concluded from it. log: $LOG"
+    exit 1
+  fi
+
+  echo "  $RAN test cases ran, $PASSED of them PASSED."
+
+  # THE ONE TEST THIS CONTROL CANNOT BLOCK, named with its measured reason.
+  #
+  # The default is FAIL — a green test not named here is a test whose assertions
+  # are satisfied by "nothing happened". This list is the exception and it is
+  # short on purpose; adding a name to it is a claim you have to have measured.
+  #
+  # testLeavingDiscover…: measured 2026-09-15. Its first tab tap lands nowhere
+  # (`Computed hit point {-1, -1}`), but XCUITest's own interrupting-element
+  # handling clears the sheet before `openTab`'s single retry, so by the retry
+  # the app is genuinely unblocked and the test really does walk the round trip.
+  # The control cannot hold a modal open across a helper that retries. Its new
+  # "the Discover nav bar must GO AWAY" assertion is proved load-bearing by
+  # mutation instead (point `openTab` at the already-selected Discover tab and
+  # it goes red), not by this control.
+  CONTROL_CANNOT_BLOCK="testLeavingDiscoverForAnotherTabAndComingBackLandsOnDiscover"
+
+  UNEXPLAINED=0
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    NAME=$(printf '%s' "$line" | sed -E 's/.* (test[A-Za-z0-9_]+)\].*/\1/')
+    if printf '%s\n' "$CONTROL_CANNOT_BLOCK" | /usr/bin/grep -qx "$NAME"; then
+      echo "      EXEMPT  $NAME (control cannot hold the modal across its retry — see the note in this script)"
+    else
+      echo "      GREEN   $NAME"
+      UNEXPLAINED=$((UNEXPLAINED + 1))
+    fi
+  done <<< "$(/usr/bin/grep -E "^Test Case .* passed" "$LOG")"
+
+  if [ "$UNEXPLAINED" -eq 0 ]; then
+    echo "  CONTROL HELD: every test the control can block went red, so each has at"
+    echo "  least one assertion that can see a blocked screen."
+    exit 0
+  fi
+  echo "  CONTROL FAILED — $UNEXPLAINED test(s) above are green on an app nobody can"
+  echo "  touch, so their assertions are satisfied by 'nothing happened'."
+  echo "  Give each one an assertion that a stuck app fails. See #6318 / #6268."
+  exit 1
+fi
 
 # ── The verdict ──────────────────────────────────────────────────────────────
 # Read BY NAME from the "All tests" summary, never by position. #5591: xcodebuild

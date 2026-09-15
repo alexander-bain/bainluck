@@ -20,10 +20,36 @@ import XCTest
 /// about its own prompt.
 enum UITestLaunch {
 
+    /// Present Discover's first-run sheet ON PURPOSE, to prove this target's
+    /// assertions can still see a blocked app.
+    ///
+    /// A journey suite has a sensor problem it cannot detect from the inside: a
+    /// test whose every assertion is satisfied by "nothing happened" reports PASS
+    /// forever and looks exactly like a test that walked. Re-arming the gate is
+    /// the negative control — with the app behind a modal, EVERY test here must
+    /// go red, and any test that stays green is asserting nothing.
+    ///
+    /// Measured 2026-09-15 on `29d42093`, which is why this switch exists: 2 of
+    /// 10 stayed green — check 5 (`testDiscoverOpensOnRealCards`, which asserted
+    /// its cards EXIST, and they do underneath a modal) and check 6's tab
+    /// round-trip. Both have since been given the assertion they were missing.
+    /// The control now holds 9 red + 1 named exemption: it cannot block the tab
+    /// round-trip, because XCUITest clears the sheet as an interrupting element
+    /// before that test's one retry. The script names it and says why; that test's
+    /// new assertion is proved by mutation instead. Re-run whenever a test is added:
+    ///
+    ///     tools/native-uitest.sh --rearm-first-run-gates
+    ///
+    /// Read as an environment variable rather than a launch argument because it
+    /// configures the TEST RUNNER's idea of how to launch the app, not the app.
+    static var firstRunGatesAreReArmed: Bool {
+        ProcessInfo.processInfo.environment["BL_UITEST_REARM_FIRST_RUN_GATES"] == "1"
+    }
+
     /// Launch arguments in `simctl`'s `-key value` form, which is also
     /// `UserDefaults`' — the same channel `LaunchRig` and `NotificationManager`
     /// already read.
-    static let arguments: [String] = [
+    static var arguments: [String] { [
         // NotificationManager.suppressPromptKey — never ask for notifications.
         "-suppress_notification_prompt", "YES",
         // TelemetryConsent.storageKey — `none` is exactly what tapping
@@ -42,23 +68,42 @@ enum UITestLaunch {
         // sentence this target can print: the rig taps fine, the app is behind a
         // modal. `WelcomeView`'s own `onDisappear` writes exactly this key, so
         // setting it is the same answer a reader gives by tapping Skip.
-        "-discover_onboarded", "YES",
+        "-discover_onboarded", firstRunGatesAreReArmed ? "NO" : "YES",
         // LaunchRig.suppressInteractionUploadKey — a swipe and a card open each
         // POST to `/api/feed/interactions`. A reader's taps are the downrank
         // signal that endpoint is for; a robot's taps are noise in it, and
         // standing notice 39 says our own robots are TAGGED, never minted. So
         // this target taps freely and writes nothing.
         "-launch_no_interaction_upload", "YES",
-    ]
+    ] }
+
+    /// The activity every launch logs, naming which mode the run is in.
+    ///
+    /// `--rearm-first-run-gates` is worthless if it can fail to arrive and leave
+    /// the run looking normal: a control that did not control reports "these
+    /// tests are green against a blocked app" about an app that was never
+    /// blocked, which is a false accusation aimed at the suite. Measured
+    /// 2026-09-15 — the first draft passed the switch as an xcodebuild build
+    /// setting, which reaches the BUILD environment and not the runner's, and
+    /// the control came back 10/10 green looking exactly like a real finding.
+    /// So the runner says out loud what it is doing and the script refuses to
+    /// report a control that cannot show this line.
+    static var modeActivityName: String {
+        "first-run gates: " + (firstRunGatesAreReArmed ? "RE-ARMED (negative control)" : "answered")
+    }
 
     /// Launch the app under test with this target's standing arguments.
     ///
     /// Every test goes through here so no test can quietly omit the
     /// interaction-upload suppression and start writing to production — the one
-    /// mistake in this target that would not show up as a red test.
-    static func launchApp() -> XCUIApplication {
+    /// mistake in this target that would not show up as a red test. `extra` is
+    /// for the flags one test needs (the debug badge) and exists so that needing
+    /// one is not a reason to hand-roll a launch and drop the suppression.
+    @discardableResult
+    static func launchApp(extra: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments += arguments
+        app.launchArguments += arguments + extra
+        XCTContext.runActivity(named: modeActivityName) { _ in }
         app.launch()
         return app
     }
