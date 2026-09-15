@@ -127,6 +127,7 @@ from app.utils.proven_duplicates import (
     FoldedBlendView,
     folded_card_numbers_batch,
     folded_probability_sources_batch,
+    ghost_names_canonical,
     not_a_proven_duplicate,
 )
 
@@ -2082,15 +2083,47 @@ def _futures_game_already_played():
     still shows `FROM events, futures_markets`, because correlation needs an
     enclosing query to resolve against. It is only ever used embedded, and the
     two guards above cover the two shapes it is embedded in.
+
+    🔴 #6296 — A MARKET MAY HANG OFF A ROW WE NEVER PRINT, AND THAT ROW NEVER
+    LEARNS ITS GAME IS OVER. The first arm asks the market's own event. When that
+    event is a proven duplicate, the score, the `completed_at` and the
+    `completed` status all land on the CANONICAL row, and the ghost stays
+    `suspended` for ever — so the first arm reads a row that is structurally
+    incapable of answering. Measured on production 2026-09-15 03:3xZ: 25 `open`
+    markets in this pool sat on tagged duplicates of `completed` games, four of
+    them `market_tier 1`, and `/search?q=Townsend` printed five of them as open
+    questions three inches under the same match's FINAL card.
+
+    The second arm is the same question asked of the canonical. It is the narrow
+    subset of the `suspended` bucket this docstring declines to touch above —
+    narrow because nothing is guessed: the tag NAMES the row that has already
+    declared the game final. Nothing is lost by the suppression, because
+    `folded_event_ids()` already serves those markets on the canonical's own
+    event page (`/api/events/15312415/game-markets` returns 13 while that row
+    owns 0).
     """
-    return ~(
-        select(Event.id)
-        .where(
-            Event.id == FuturesMarket.event_id,
-            Event.status.in_(tuple(sorted(SETTLED_STATUSES))),
-        )
-        .correlate(FuturesMarket)
-        .exists()
+    _dup_ghost = aliased(Event, name="dup_ghost")
+    _dup_canonical = aliased(Event, name="dup_canonical")
+    return and_(
+        ~(
+            select(Event.id)
+            .where(
+                Event.id == FuturesMarket.event_id,
+                Event.status.in_(tuple(sorted(SETTLED_STATUSES))),
+            )
+            .correlate(FuturesMarket)
+            .exists()
+        ),
+        ~(
+            select(_dup_canonical.id)
+            .where(
+                _dup_ghost.id == FuturesMarket.event_id,
+                ghost_names_canonical(_dup_ghost, _dup_canonical),
+                _dup_canonical.status.in_(tuple(sorted(SETTLED_STATUSES))),
+            )
+            .correlate(FuturesMarket)
+            .exists()
+        ),
     )
 
 
