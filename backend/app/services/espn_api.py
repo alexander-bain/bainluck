@@ -689,7 +689,24 @@ class ESPNAPIService:
         """Parse ESPN event data into ESPNEvent object."""
         try:
             competition = event_data.get("competitions", [{}])[0]
-            status_data = event_data.get("status", {})
+            # TWO PAYLOAD SHAPES REACH THIS PARSER, and only one of them puts
+            # `status`/`date` at the top level (#6280).
+            #
+            #   * `get_scoreboard` — a board event: `date` and `status` are on
+            #     the event itself, and `competitions[0]` carries the rest.
+            #   * `get_event` — a `summary?event=` answer, which has NO `date`
+            #     and NO `status` on `header` at all. Both live one level down,
+            #     on `header.competitions[0]`. Measured against
+            #     `football/college-football/summary?event=401858511`
+            #     2026-09-15 06:1xZ: `header` keys are competitions/id/league/
+            #     links/season/timeValid/uid/week — no date, no status.
+            #
+            # Without the fallback, every summary parse returned `status=""`
+            # and `date=None` while teams and scores came through correctly, so
+            # the failure was silent and shaped exactly like "ESPN says nothing
+            # is scheduled". The fallback fires ONLY when the top level lacks
+            # the key, so the board path cannot change behaviour.
+            status_data = event_data.get("status") or competition.get("status") or {}
             status_type = status_data.get("type", {})
 
             # Parse status
@@ -748,8 +765,8 @@ class ESPNAPIService:
                 if home_win_prob is not None and home_win_prob > 1.0:
                     home_win_prob = home_win_prob / 100.0
 
-            # Parse date
-            date_str = event_data.get("date")
+            # Parse date — same two shapes as `status` above.
+            date_str = event_data.get("date") or competition.get("date")
             date = datetime.fromisoformat(date_str.replace("Z", "+00:00")) if date_str else None
 
             # Parse season type (1=preseason, 2=regular, 3=postseason)
