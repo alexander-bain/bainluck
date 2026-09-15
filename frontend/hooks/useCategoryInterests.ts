@@ -43,6 +43,25 @@ export function getLevelLabel(value: number): string {
 }
 
 /**
+ * The label for a category the reader may never have touched (#2586).
+ *
+ * `undefined` is not `0`. A stored map starts as `{}` — `parseInterests(null)`
+ * — and a category absent from it carries no choice at all, while `0` is the
+ * reader having picked "Nah" from the selector. `getLevelLabel` cannot tell
+ * them apart because its only floor is the reject label, so every caller that
+ * coerced absent to `0` printed a rejection the reader never made: all 24 rows
+ * of `/preferences` read "Nah ›" in a clean browser, which is what #2586
+ * reports. Pass the raw lookup — `interests[key]`, not `interests[key] ?? 0` —
+ * and absence keeps its own label.
+ */
+export const UNSET_INTEREST_LABEL = "Not set";
+
+export function getInterestLabel(value: number | undefined): string {
+  if (value === undefined) return UNSET_INTEREST_LABEL;
+  return getLevelLabel(value);
+}
+
+/**
  * Hook for reading/writing category interests.
  * Auth'd users: reads/writes via API (sport affinities).
  * Anonymous users: reads/writes via the device's anonymous bucket.

@@ -13,7 +13,7 @@ import {
   fetchFuturesByIds,
 } from "@/lib/api";
 import { usePinnedEvents, usePinnedFutures, usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
-import { useCategoryInterests, getLevelLabel } from "@/hooks/useCategoryInterests";
+import { useCategoryInterests, getInterestLabel } from "@/hooks/useCategoryInterests";
 import {
   resolvePrincipal,
   principalKey,
@@ -209,7 +209,7 @@ export default function PreferencesPage() {
               category={cat.key}
               label={cat.label}
               emoji={cat.emoji}
-              value={interests[cat.key] ?? 0}
+              value={interests[cat.key]}
               onUpdate={setInterest}
             />
           ))}
@@ -334,12 +334,13 @@ function InterestRow({
   category: string;
   label: string;
   emoji: string;
-  value: number;
+  /** `undefined` = never chosen. See `getInterestLabel` (#2586). */
+  value: number | undefined;
   onUpdate: (category: string, value: number) => void;
 }) {
   const [isEditing, setIsEditing] = useState(false);
 
-  const currentLabel = getLevelLabel(value);
+  const currentLabel = getInterestLabel(value);
 
   return (
     <div className="flex items-center justify-between text-xs py-1">
@@ -357,7 +358,11 @@ function InterestRow({
                 setIsEditing(false);
               }}
               className={`px-2 py-0.5 rounded text-[10px] transition-colors ${
-                Math.abs(value - opt.value) < 0.05
+                // An untouched category highlights NOTHING — the reader has not
+                // picked one of these four. Spelled out rather than left to
+                // `undefined - 0` being NaN, which lands on the same branch by
+                // accident and would flip the day a caller passes null instead.
+                value !== undefined && Math.abs(value - opt.value) < 0.05
                   ? "bg-text-primary text-surface-deep"
                   : "bg-surface-elevated text-text-secondary hover:bg-surface-border"
               }`}
