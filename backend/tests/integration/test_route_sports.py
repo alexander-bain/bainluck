@@ -282,6 +282,17 @@ class TestSportHierarchyDetail:
         league_slugs = [l["slug"] for l in body["leagues"]]
         assert "ufc" in league_slugs
 
+    async def test_showcase_events_always_carry_the_market_keys(self, client):
+        """#6249: the card asks "do we hold this market?" — so the answer is
+        always present, even when it is null and even when the lookup failed.
+        An absent key and a null key would be two ways of saying no."""
+        resp = await client.get("/api/sports/hierarchy/football")
+        body = resp.json()
+        assert body["showcase_events"], "football has showcase events"
+        for event in body["showcase_events"]:
+            assert "futures_market_id" in event
+            assert "futures_priced_outcomes" in event
+
     async def test_soccer_has_multiple_leagues(self, client):
         resp = await client.get("/api/sports/hierarchy/soccer")
         body = resp.json()

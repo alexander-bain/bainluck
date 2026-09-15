@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.models import Sport
 from app.services import get_db, get_db_rw, OddsAPIService
+from app.utils.showcase_futures import attach_showcase_markets
 from app.utils.sport_keys import SPORT_HIERARCHY, get_sport_hierarchy
 
 
@@ -169,11 +170,20 @@ async def get_sport_hierarchy_endpoint():
 
 
 @router.get("/hierarchy/{sport_slug}")
-async def get_sport_hierarchy_detail(sport_slug: str):
+async def get_sport_hierarchy_detail(
+    sport_slug: str, db: AsyncSession = Depends(get_db)
+):
     """
     Get hierarchy data for a single sport.
 
     Returns leagues and showcase events for the sport hub page.
+
+    Showcase events carry `futures_market_id` when we hold an open, priced
+    market that IS that competition (#6249). The hub page's card said "odds
+    available closer to the event" for the Super Bowl while we served 32
+    priced teams, because the card had no way to ask this question. Which
+    market counts as which competition is an allowlist, not a search:
+    `app/utils/showcase_futures.py` says why.
     """
     hierarchy = get_sport_hierarchy(sport_slug)
     if not hierarchy:
@@ -182,7 +192,9 @@ async def get_sport_hierarchy_detail(sport_slug: str):
         "slug": hierarchy["slug"],
         "name": hierarchy["name"],
         "leagues": hierarchy["leagues"],
-        "showcase_events": hierarchy.get("showcase_events", []),
+        "showcase_events": await attach_showcase_markets(
+            sport_slug, hierarchy.get("showcase_events", []), db
+        ),
     }
 
 

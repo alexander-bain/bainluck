@@ -2386,6 +2386,23 @@ export interface SportLeague {
 export interface SportShowcaseEvent {
   name: string;
   type: string;
+  /**
+   * The open, priced market that IS this competition, when we hold one (#6249).
+   *
+   * Null is the honest answer for Wimbledon in September, and it is what the
+   * "odds available closer to the event" card is FOR. The card only earns that
+   * sentence when this is null — it was printing it for the Super Bowl beside
+   * 32 priced teams, because the page had no way to ask.
+   *
+   * Which market counts as which competition is decided server-side against an
+   * allowlist of provider ids (`app/utils/showcase_futures.py`), never by
+   * matching this `name` against market names here: "Champions League" matches
+   * the women's competition and the league phase too, which is a live defect
+   * one surface over (#6250).
+   */
+  futures_market_id?: number | null;
+  /** How many outcomes that market prices — the card's only number. */
+  futures_priced_outcomes?: number | null;
 }
 
 export interface SportHierarchy {
