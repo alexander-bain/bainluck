@@ -5221,10 +5221,37 @@ def _format_market_detail(
     #     rows they mean; both key off the same `_FIELD_DOMINANT_MIN`.
     # `drop_dominant_field_outcomes` NEVER EMPTIES, so an all-field market still
     # renders its list rather than a silent zero-outcome page.
+    #
+    # 🔴 #6110 — AND A SETTLED CHAMPION IS EXEMPT, BECAUSE THE RULE ABOVE IS
+    # ABOUT A LIVE QUOTE. Everything UX-P164 argues is about a market still
+    # being made: a no-bid `Other 1.0` is an ask nobody bids against, so it is
+    # not an answer. Once the venue SETTLES the field, that same row is the
+    # result. Measured on production 2026-09-15, minutes after the #6110 repair
+    # ran: `futures_outcomes` for market 58675941 held 31 legs, exactly one
+    # winner — `Other`, 1.0, `resolution_source='api_settlement'` — and this
+    # line deleted it, so `/api/futures/58675941` served **30 outcomes and no
+    # winner** and a finished Grand Tour still showed thirty riders who lost and
+    # nobody who won. The data repair was complete and the page was unchanged.
+    #
+    # The predicate is stricter than the sibling's bare `is_winner` on purpose
+    # (#4788, argued at the `resolution_source` key above): the column is
+    # `boolean NULL DEFAULT false`, so a `True` beside a NULL source is a row
+    # nobody graded, and this exemption should not be the one place that trusts
+    # it. A settled field champion always carries a source.
+    def _is_graded_winner(o: dict) -> bool:
+        return bool(o.get("is_winner")) and o.get("resolution_source") is not None
+
     outcomes = drop_dominant_field_outcomes(
-        outcomes, lambda o: o.get("name"), lambda o: o.get("probability")
+        outcomes,
+        lambda o: o.get("name"),
+        lambda o: o.get("probability"),
+        is_winner_of=_is_graded_winner,
     )
-    leader_pick_order(outcomes)
+    # The SAME predicate, and it has to be the same one: `leader_pick_order`
+    # demotes a dominant field row to the END and then steps a named row over it,
+    # so exempting the drop alone would have moved the champion of a finished race
+    # from "deleted" to "last of 31, behind the page's fold". Half a carve-out.
+    leader_pick_order(outcomes, is_winner_of=_is_graded_winner)
 
     # #5906: THE HOOK GOES THROUGH THE SAME GATE THE DISCOVER CARD HAS ALWAYS
     # USED. `routes/feed.py` has run every stored hook past `is_hook_stale`
