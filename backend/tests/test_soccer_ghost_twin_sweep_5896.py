@@ -127,12 +127,20 @@ def canonical(**kw):
 
 
 def _filler(n):
-    """`n` inert soccer rows, so a population can clear `MIN_EXPECTED_ROWS`.
+    """`n` inert soccer rows, so a population can clear BOTH read floors.
 
-    The floor is on the READ here, not on the plan, so any test about the
-    verdict needs a realistic backdrop of ordinary fixtures or it trips the
-    floor instead of testing what it meant to. Names are unique per row so the
+    The floors are on the READ here, not on the plan, so any test about the
+    verdict needs a realistic backdrop of ordinary fixtures or it trips a floor
+    instead of testing what it meant to. Names are unique per row so the
     backdrop can never pair with itself and quietly change a plan size.
+
+    Each row also carries its OWN Kalshi event ticker since #6358 added
+    `MIN_EXPECTED_TICKER_ROWS`, for two reasons. The floor is real — a backdrop
+    of 1,200 rows holding no venue ticker at all is not a population the fifth
+    pass can be said to have reached — and the ticker is unique per row, so the
+    backdrop lands in 1,200 single-row blocks that are never classified and the
+    plan is unchanged. A SHARED ticker here would silently pair the whole
+    backdrop into one block.
     """
     return [
         _Row(
@@ -140,6 +148,12 @@ def _filler(n):
             home=f"Club Aa{i}",
             away=f"Club Bb{i}",
             at=GHOST_AT + timedelta(minutes=i),
+            # Digits spelled as letters: the event-ticker grammar this is read
+            # under ends `[A-Z]+`, so `…FIL12` is not an event key at all and a
+            # backdrop built with one would clear no floor while looking as if
+            # it did.
+            kalshi_tickers="KXEPLGAME-26SEP12FIL"
+            + "".join(chr(ord("A") + int(d)) for d in str(i)),
         )
         for i in range(n)
     ]
@@ -452,7 +466,9 @@ class TestTheTwoZerosDoNotShareAVerdict:
 
 class TestTheWriteRail:
     def test_the_specimen_is_tagged_on_a_healthy_population(self, monkeypatch):
-        summary, session = _run([ghost(), canonical(), *_healthy_backdrop()], monkeypatch)
+        summary, session = _run(
+            [ghost(), canonical(), *_healthy_backdrop()], monkeypatch
+        )
 
         assert summary["terminal"] == "complete"
         assert summary["written"] == 1
@@ -645,20 +661,45 @@ class TestNoFoldNoTags:
 
 
 @pytest.mark.parametrize(
-    "rows_considered,tags,expected_substring",
+    "soccer_rows,ticker_rows,tags,expected_substring",
     [
-        (sweep.MIN_EXPECTED_ROWS - 1, 0, "below the floor"),
-        (sweep.MIN_EXPECTED_ROWS, 0, None),
-        (sweep.MIN_EXPECTED_ROWS, sweep.MAX_EXPECTED_TAGS, None),
-        (sweep.MIN_EXPECTED_ROWS, sweep.MAX_EXPECTED_TAGS + 1, "above the ceiling"),
+        (sweep.MIN_EXPECTED_ROWS - 1, sweep.MIN_EXPECTED_TICKER_ROWS, 0, "soccer row"),
+        (
+            sweep.MIN_EXPECTED_ROWS,
+            sweep.MIN_EXPECTED_TICKER_ROWS - 1,
+            0,
+            "event ticker",
+        ),
+        (sweep.MIN_EXPECTED_ROWS, sweep.MIN_EXPECTED_TICKER_ROWS, 0, None),
+        (
+            sweep.MIN_EXPECTED_ROWS,
+            sweep.MIN_EXPECTED_TICKER_ROWS,
+            sweep.MAX_EXPECTED_TAGS,
+            None,
+        ),
+        (
+            sweep.MIN_EXPECTED_ROWS,
+            sweep.MIN_EXPECTED_TICKER_ROWS,
+            sweep.MAX_EXPECTED_TAGS + 1,
+            "above the ceiling",
+        ),
     ],
 )
-def test_the_band_boundaries(rows_considered, tags, expected_substring):
+def test_the_band_boundaries(soccer_rows, ticker_rows, tags, expected_substring):
+    """Both floors, each at its own boundary and each with the OTHER one healthy.
+
+    Parametrized as two independent rows rather than one combined "read" number,
+    because that is the property #6358 needs: the soccer join and the Kalshi
+    ticker rail die separately, and a floor that only fires when BOTH collapse
+    would pass every single-sided failure it exists to catch.
+    """
     plan = GhostPlan(
         tags=[
             GhostTag(ghost_id=i, canonical_id=i + 1, reason="x") for i in range(tags)
         ],
-        rows_considered=rows_considered,
+        rows_considered=soccer_rows + ticker_rows,
+        soccer_rows_considered=soccer_rows,
+        ticker_rows_considered=ticker_rows,
     )
 
     reason = sweep.band_refusal_reason(plan)

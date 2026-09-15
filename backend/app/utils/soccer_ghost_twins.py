@@ -614,6 +614,107 @@ blocks hold two ghosts each and all six are real. What stays ambiguous is the
 other direction — TWO played, fixture-anchored rows sharing one event ticker —
 and that is refused, because it means an authority has named one Kalshi fixture
 twice and this module does not adjudicate between authorities.
+
+THE FIFTH PASS IS NOT A SOCCER PASS, AND CONFINING IT TO SOCCER COST NINE ROWS
+═══════════════════════════════════════════════════════════════════════════════
+
+Everything above pairs rows on our own club names under a competition, so the
+population read was ``WHERE s.key LIKE 'soccer%'`` and the fifth pass inherited
+it. Nothing in that pass reads a sport: its key is a venue fixture id, its
+canonical test is "does an authority name this row", and its refusal is "two
+authorities named it twice". #6358 is the row that makes the inheritance
+indefensible::
+
+    14632820  Los Angeles Rams v San Francisco 49ers  americanfootball_nfl
+              completed 7-27, espn 401872657, statpal 280446, 66 markets
+    15305029  San Francisco v Los Angeles R           basketball_other
+              scheduled 2026-09-10 00:00:00+00, 1 market
+
+Both carry ``26SEP10SFLAR``. No name matcher can reach that pair: the sides are
+reversed, the away club is truncated to ``Los Angeles R``, and the sport key is
+wrong. No clock can: the ghost's kickoff is the ``00:00:00`` placeholder #6316
+names. The venue's id can, and it is the only thing that can.
+
+WHAT THE TAG DOES TO SEARCH, AND WHAT IT DOES NOT — MEASURED ON PRODUCTION
+2026-09-15, BECAUSE THE DIFFERENCE IS THE WHOLE OF CERT-2910's FINDING. Tagging
+``15305029`` withdraws it from every rail reading
+:func:`app.utils.proven_duplicates.not_a_proven_duplicate`. That filter is
+scope-only: it removes a duplicate, it never recalls the canonical in its place.
+So the phantom stops being served, and the query that returned nothing but the
+phantom returns nothing at all rather than the game::
+
+    q=Los Angeles R      1 result   the ghost 15305029      → becomes 0 results
+    q=Los Angeles Ram   19 results  includes played 14632820, ghost already
+                                    absent  → unchanged by this pass
+
+The played game is already reachable one character further in, and was before
+this change. **Substituting a canonical for a suppressed duplicate inside search
+is a separate ship and is NOT claimed here** — it is the unmet half of #6358,
+which is why this pass does not close that issue.
+
+WHAT CHANGED, IN TWO LINES. :func:`plan_ghost_tags` partitions rather than the
+SQL filtering: the four name-based passes are handed ``soccer_rows`` via
+:func:`row_is_soccer` — the identical population, so they cannot newly reach an
+NFL name — and the fifth is handed all of them. And the fifth pass's ghost arm
+becomes :func:`row_could_be_a_venue_ticker_ghost`, which drops the "unscored and
+advertised" half of the strict test because the id already proved what that half
+was inferring.
+
+YIELD AND SAFETY, MEASURED WHOLE-POPULATION ON PRODUCTION 2026-09-15. Every row
+in -45d/+5d carrying exactly one Kalshi event ticker — 5,653 rows, 4,785 distinct
+keys — blocked by that ticker, in blocks holding exactly one played, fixture-
+anchored canonical::
+
+    ghost rows planned                                          25
+      ├─ soccer                                                 16  ← unchanged
+      ├─ american football                                       7
+      ├─ NFL row keyed basketball_other                          1
+      └─ tennis                                                  1
+
+**All 16 soccer rows are the SAME 16 the shipped pass already tagged, compared by
+id and not by count** — every soccer ghost in the population is
+``scheduled``/``suspended``, so the wider arm admits none of them that the strict
+arm refused, and the one two-canonical block stays refused. The widening's entire
+effect is the nine rows in other sports, and each of the nine was read by name:
+seven are the same fixture with the same final score on both rows (26AUG13ARILV
+14-27, 26AUG13TENSF 13-19, 26AUG15DALSEA 7-17, 26SEP06LOUMISS 41-38,
+26SEP06WSUWASH 24-10, 26SEP12UCDSMU 56-10, and 26SEP12MHUUNM whose copy is
+unscored), one is the Rams row above, one is Sabalenka v Rybakina.
+
+THE HALF THAT IS THE SHIP: THE FOLD, NOT THE SUPPRESSION. Six of the seven
+football copies are ``completed`` and hold most of the fixture's prices.
+``/events/15196980`` — Raiders 14-27 Cardinals, the fixture-anchored row (espn
+``401873640``) — renders ONE unlabelled ``No 91% / Yes 9%`` gauge while its copy
+``/events/15191796`` carries nineteen graded markets, a win-probability curve
+and a score-differential chart. **Neither row is reachable from search** — both
+are 2026-08-13 preseason, outside its recency window, measured 2026-09-15 — so
+the canonical is not "the row search sends you to": it is the row every rail
+keeps once the copy is withdrawn. Tagging the copy folds its markets onto the
+canonical, the same reclamation :func:`stranded_market_pass` performs for
+soccer, reached here by the venue's id rather than by a market-count asymmetry.
+Across the eight pairs the canonical pages carry **101 markets today and 186
+after the fold** (production 2026-09-15, counted per row).
+
+HOW THE CROSS-SPORT MARKET REACHES THE PAGE, SINCE IT IS NOT THE CLAUSE THE
+SOCCER SECTION ABOVE RELIES ON. ``15305029``'s single market is
+``KXNFLFFPTS-26SEP10SFLAR`` — "San Francisco vs Los Angeles R: Fantasy Points",
+an NFL market carrying ``llm_sport_category = 'basketball'``. On the Rams
+canonical (``expected_category = 'football'``, via
+:data:`SPORT_PREFIX_TO_LLM_CATEGORY`, not a bare prefix) it clears neither the
+sport-id arm nor the category arm of :func:`linked_market_sport_filter`. It
+reaches the page on the third arm, the one #6221 added: a market whose
+``sport_id`` is the sport of any event in ``market_event_ids``. That arm exists
+for exactly a fold across sport keys, and this is the first pair to exercise it.
+
+WHAT IS STILL OUT OF REACH, SAID PLAINLY. 366 tennis and 126 baseball blocks hold
+two or more rows on one event key with NO fixture-anchored canonical among them —
+tennis rows carry neither an ``espn_id`` nor a ``statpal_fixture_id``, so
+:func:`row_is_a_played_canonical` is false for every row in the block and the
+pass is silent by construction. That population is real (one Bonzi v Hanfmann
+match exists as six rows, five of them holding one Kalshi market each) and it
+needs a canonical test that does not depend on an authority id. It is named here
+and not guessed at, because "the row with the most markets wins" is exactly the
+name-and-shape absorption gotcha #32 refuses.
 """
 
 from __future__ import annotations
@@ -682,6 +783,13 @@ LIVE_STATUS = "live"
 #: measured inside it — so it cannot be read as evidence that two rows are two
 #: different fixtures. Every other ``soccer_*`` key can.
 UNCLASSIFIED_SPORT_KEY = "soccer_other"
+
+#: What makes a row one of the FIRST FOUR passes' rows. One spelling, shared by
+#: :func:`row_is_soccer` and by the population SQL's ``LIKE 'soccer%'``, because
+#: the sixth section of this docstring turns that SQL filter into an in-process
+#: partition and two spellings of "is this soccer" is exactly how a widening
+#: leaks into the passes it was measured not to touch.
+SOCCER_KEY_PREFIX = "soccer"
 
 #: Trailing tokens that are a club's legal form rather than part of its name, so
 #: ``Sabadell FC`` and ``Sabadell`` are one club. Used ONLY by
@@ -926,6 +1034,53 @@ def row_could_be_a_ghost(row: SoccerRow) -> bool:
     )
 
 
+def row_is_soccer(row: SoccerRow) -> bool:
+    """Is this row one the first four passes are allowed to judge?
+
+    The population read used to answer this in SQL and hand the planner nothing
+    else. It no longer does — :func:`fixture_ticker_pass` needs every sport — so
+    the filter moved here, unchanged in meaning, and :func:`plan_ghost_tags`
+    applies it before the four name-based passes see anything. A predicate rather
+    than an inline ``startswith`` at three call sites, for the reason
+    :func:`row_is_fixture_anchored` is one: the widening's whole safety argument
+    is that passes 1-4 see EXACTLY the rows they were measured on, and that
+    argument is only as good as there being one place to read it.
+
+    ``sport_key`` is coerced because a row's key arrives from the database and a
+    NULL there must read as "not soccer" rather than raise mid-plan.
+    """
+    return str(row.sport_key or "").startswith(SOCCER_KEY_PREFIX)
+
+
+def row_could_be_a_venue_ticker_ghost(row: SoccerRow) -> bool:
+    """The ghost arm of the FIFTH pass, which is wider than the other four's.
+
+    :func:`row_could_be_a_ghost` asks three questions — advertised status, no
+    score, no fixture id — because the passes that call it have no id and must
+    infer from the row's own shape that it is a copy rather than a fixture. This
+    pass has the venue's identifier, so only ONE of those three is still load-
+    bearing: a row that no authority names, sharing a venue fixture id with a row
+    that one does, is the copy. The other two are inferences the id makes
+    redundant, and requiring them costs six of the seven measured American
+    football repairs, whose copies are ``completed`` and carry the same final
+    score as their canonical (26SEP06LOUMISS: 41-38 on both rows, 3 markets on
+    the anchored one and 18 on the copy).
+
+    ``live`` is still excluded, by the same reasoning and the same constant as
+    :func:`row_could_strand_markets`: a match in progress is the one row here
+    whose mislabelling reaches a reader mid-match, and no id-anchored evidence
+    makes that cost acceptable. :data:`GHOST_KICKOFF_GRACE` is applied by the
+    caller, as everywhere else.
+
+    Measured on production 2026-09-15 over the whole -45d/+5d population: this
+    predicate and the strict one plan the IDENTICAL 16 soccer ghosts — every
+    soccer ghost in the population is ``scheduled``/``suspended`` anyway — so the
+    widening's entire yield is the nine rows in other sports. The module
+    docstring's sixth section carries the row-by-row read.
+    """
+    return not row.is_fixture_anchored and row.status != LIVE_STATUS
+
+
 def row_is_a_played_canonical(row: SoccerRow) -> bool:
     """The canonical test, named once because two passes ask it.
 
@@ -1028,6 +1183,18 @@ class GhostPlan:
     #: reported rather than one ratio.
     fixture_blocks_examined: int = 0
     fixture_tags: int = 0
+    #: How many of ``rows_considered`` the first four passes were handed, i.e.
+    #: the soccer partition. Its own number and not a ratio: ``rows_considered``
+    #: now counts every sport, so the floor that proves the name-based passes
+    #: still reach their population has to be asked of THIS one — a soccer join
+    #: that dies while the Kalshi-bearing rows keep arriving moves this to zero
+    #: and leaves the total looking healthy.
+    soccer_rows_considered: int = 0
+    #: How many rows carried exactly one Kalshi event ticker, i.e. the only rows
+    #: the fifth pass can ever block. Its own number for the mirror-image reason:
+    #: a Kalshi ticker-format change, or a link rail that stops attaching markets,
+    #: takes this to zero while the soccer count is untouched.
+    ticker_rows_considered: int = 0
 
 
 def classify_block(
@@ -1441,7 +1608,12 @@ def classify_fixture_ticker_block(
 
     No clock arithmetic and no name comparison happens here at all. The block key
     IS the evidence, so re-deriving agreement from the rows would be a second,
-    weaker matcher running underneath a stronger one.
+    weaker matcher running underneath a stronger one. That is also why the ghost
+    arm is :func:`row_could_be_a_venue_ticker_ghost` and not the strict
+    :func:`row_could_be_a_ghost` the other passes use: with the venue's id in
+    hand, "unscored and advertised" is a weaker restatement of what the id
+    already proved, and requiring it refuses six of the seven measured American
+    football repairs for having been played.
 
     :data:`GHOST_KICKOFF_GRACE` is still applied, by the same expression as
     everywhere else: a row inside half an hour of its own kick-off must not be
@@ -1452,7 +1624,7 @@ def classify_fixture_ticker_block(
     ghosts = [
         r
         for r in rows
-        if row_could_be_a_ghost(r)
+        if row_could_be_a_venue_ticker_ghost(r)
         and not (now - GHOST_KICKOFF_GRACE < r.commence_time <= now)
     ]
     if not played or not ghosts:
@@ -1477,8 +1649,8 @@ def classify_fixture_ticker_block(
                 canonical_id=canonical.event_id,
                 reason=(
                     f"{ghost.home_team_name} v {ghost.away_team_name}: shares "
-                    f"Kalshi event ticker {ghost.ticker_event_key} with a played "
-                    f"row, no score, no fixture id"
+                    f"Kalshi event ticker {ghost.ticker_event_key} with a played, "
+                    f"fixture-anchored row and is named by no authority itself"
                 ),
             )
             for ghost in ghosts
@@ -1586,6 +1758,15 @@ def plan_ghost_tags(
     a block; its own docstring and the module docstring's fifth section carry
     both. Running it last is what keeps it purely additive.
 
+    🔴 **The five passes are handed DIFFERENT populations, and that line is the
+    whole safety argument for the widening.** ``rows`` is now every sport; the
+    four name-based passes are handed ``soccer_rows`` — the same partition their
+    SQL filter used to make — and only the fifth sees the rest. Done here rather
+    than in the caller so that a pure test can prove it: pass an NFL row into
+    this function and passes 1-4 must behave exactly as if it were absent, which
+    is not a property a SQL ``WHERE`` clause can be tested for. The module
+    docstring's sixth section carries what the fifth pass gains by it.
+
     :func:`stranded_market_pass` runs FOURTH and is the only one asking a
     different question — not "which row is still being advertised" but "which
     row is holding the prices" — over the narrow key, direction-agnostic, and
@@ -1593,14 +1774,20 @@ def plan_ghost_tags(
     module docstring carries why the three passes above cannot reach that
     population and why this one is safe to run beside them.
     """
+    soccer_rows = [row for row in rows if row_is_soccer(row)]
+
     blocks: dict[tuple[str, str, str], list[SoccerRow]] = defaultdict(list)
-    for row in rows:
+    for row in soccer_rows:
         blocks[block_key(row.sport_key, row.home_team_name, row.away_team_name)].append(
             row
         )
     blocks, fold_refusals = fold_unclassified_blocks(blocks)
 
-    plan = GhostPlan(rows_considered=len(rows))
+    plan = GhostPlan(
+        rows_considered=len(rows),
+        soccer_rows_considered=len(soccer_rows),
+        ticker_rows_considered=sum(1 for row in rows if row.ticker_event_key),
+    )
     plan.refusals.extend(fold_refusals)
     for key, members in sorted(blocks.items()):
         if len(members) < 2:
@@ -1613,7 +1800,7 @@ def plan_ghost_tags(
             plan.refusals.append(f"{key[0]} {key[1]} v {key[2]}: {explanation}")
 
     extra_tags, extra_refusals, examined = residual_pass(
-        rows,
+        soccer_rows,
         decided_ghost_ids={t.ghost_id for t in plan.tags},
         now=now,
         max_lag=max_lag,
@@ -1624,7 +1811,7 @@ def plan_ghost_tags(
     plan.residual_tags = len(extra_tags)
 
     ticker_tags, ticker_refusals, ticker_examined = ticker_pass(
-        rows,
+        soccer_rows,
         decided_ghost_ids={t.ghost_id for t in plan.tags},
         now=now,
         max_lag=max_lag,
@@ -1635,7 +1822,7 @@ def plan_ghost_tags(
     plan.ticker_tags = len(ticker_tags)
 
     stranded_tags, stranded_refusals, stranded_examined = stranded_market_pass(
-        rows,
+        soccer_rows,
         decided_ghost_ids={t.ghost_id for t in plan.tags},
         now=now,
         max_lag=max_lag,

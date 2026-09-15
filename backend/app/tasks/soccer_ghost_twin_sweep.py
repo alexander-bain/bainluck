@@ -1,7 +1,18 @@
-"""#5896 — stop advertising a soccer match that was played two days ago.
+"""#5896 / #6358 — stop advertising a match that has already been played.
 
 **SHIP: on the La Liga page, Sevilla v Valencia stops appearing as tonight's
-19:00 kick-off when it finished 1-0 on Wednesday.** (Pillar: MATCHING.)
+19:00 kick-off when it finished 1-0 on Wednesday — and the Raiders 14-27
+Cardinals result page stops rendering one unlabelled gauge, gaining the nineteen
+graded markets that sat on a duplicate row no reader could reach.**
+(Pillar: MATCHING.)
+
+🔴 **THE NAME OF THIS MODULE IS HISTORY, NOT SCOPE.** Four of its five passes are
+soccer-only and were measured there; the fifth keys on a Kalshi EVENT ticker,
+reads no sport at all, and since #6358 runs over every sport that carries a
+Kalshi market. The file is not renamed because the beat entry names this module
+path and a ``beat_schedule`` change is dispatched from the ``scheduler`` dyno on
+``bainluck-heavy`` — so a rename would hold a reader-facing repair behind a heavy
+release for a cosmetic gain. The rename is filed, not smuggled in here.
 
 Ten such rows were live on production on 2026-09-13 — four La Liga, four
 Argentine Primera, one Segunda, one Brasileirao — each of them a second copy of
@@ -49,6 +60,16 @@ window, measured at 1,493 for -5d/+5d. A renamed sport key, a moved column or a
 broken join collapses that number and the run refuses; an honestly quiet
 matchday does not. The ceiling :data:`MAX_EXPECTED_TAGS` still guards the other
 direction, where a pairing regression starts labelling real fixtures.
+
+**TWO FLOORS SINCE #6358, BECAUSE THERE ARE NOW TWO POPULATIONS.** The read is no
+longer one thing: the four name-based passes get the soccer partition and the
+fifth gets every row carrying a Kalshi event ticker. Those halves die
+independently — a renamed sport key leaves the tickers arriving, a Kalshi ticker
+format change leaves the soccer join intact — and a single floor over the total
+is cleared by whichever half is still healthy. So
+:data:`MIN_EXPECTED_ROWS` is asked of ``soccer_rows_considered`` and
+:data:`MIN_EXPECTED_TICKER_ROWS` of ``ticker_rows_considered``, and the verdict
+reports both beside ``rows_read``.
 
 VERDICT CONTRACT
 ════════════════
@@ -128,7 +149,27 @@ DEFAULT_LOOKAHEAD_DAYS = 5
 #: window would have sat at 3% of the population and waved through a join
 #: returning a twentieth of it. 1,000 keeps the ~6x headroom the 200 was chosen
 #: for.
+#:
+#: 🔴 Asked of the SOCCER partition and not of the read, since #6358 widened the
+#: read to every sport carrying a Kalshi market. The four name-based passes are
+#: handed that partition and nothing else, so it is the number whose collapse
+#: means THEY stopped reaching their rows — and a total that also counts 8,286
+#: football, tennis and baseball rows would sail over this floor with the soccer
+#: join returning nothing at all.
 MIN_EXPECTED_ROWS = 1_000
+
+#: The mirror floor, on the rows the FIFTH pass can consume: those resolving to
+#: exactly one Kalshi event ticker. Measured 2026-09-15 at 5,653 over -45d/+5d
+#: (1,611 of them soccer), so 1,000 keeps the same ~5x headroom
+#: :data:`MIN_EXPECTED_ROWS` carries.
+#:
+#: Its own floor because the two halves die independently and neither number can
+#: report the other's death: a renamed sport key takes the soccer count to zero
+#: while Kalshi keeps attaching tickers, and a Kalshi ticker-format change —
+#: which is the single likeliest way this pass goes silent, since its key is a
+#: venue string — takes this one to zero while the soccer count is untouched.
+#: One combined floor would be cleared by whichever half was still healthy.
+MIN_EXPECTED_TICKER_ROWS = 1_000
 
 #: Ceiling on the PLAN, measured at 10. A pairing regression that starts
 #: labelling real fixtures shows up here first, and a sweep is never the thing
@@ -157,7 +198,13 @@ SELECT e.id,
          WHERE fm.event_id = e.id)                 AS market_count
   FROM events e
   JOIN sports s ON s.id = e.sport_id
- WHERE s.key LIKE 'soccer%%'
+ WHERE (
+         s.key LIKE 'soccer%%'
+         OR EXISTS (SELECT 1
+                      FROM futures_markets fm
+                     WHERE fm.event_id = e.id
+                       AND fm.source = 'kalshi')
+       )
    AND e.commence_time >= now() - make_interval(days => :lookback)
    AND e.commence_time <= now() + make_interval(days => :lookahead)
    AND e.status NOT IN ('voided', 'merged')
@@ -168,10 +215,21 @@ SELECT e.id,
 
 
 async def load_rows(session, *, lookback: int, lookahead: int, page: int = 2000):
-    """Every soccer row in the window, paged by id.
+    """Every soccer row in the window, plus every row of ANY sport that carries a
+    Kalshi market. Paged by id.
 
     The cursor key IS the sort key, which is the only shape that cannot skip or
     repeat a row while the table is being written underneath the scan.
+
+    🔴 **The second arm is bounded by what the fifth pass can consume, not by
+    "all sports".** :func:`~app.utils.soccer_ghost_twins.fixture_ticker_pass`
+    blocks on ``kalshi_event_key``, which is ``None`` for a row with no Kalshi
+    markets, so such a row can never join a block and reading it would change no
+    outcome. Measured on production 2026-09-15 in -45d/+5d: 84,876 rows of all
+    sports against **15,009** under this predicate (6,723 soccer + 8,286 others
+    carrying a Kalshi market), of which 5,653 actually resolve to exactly one
+    event key. Dropping the ``EXISTS`` would sextuple a read that runs every
+    twenty minutes and add nothing a reader could see.
     """
     from sqlalchemy import text
 
@@ -264,11 +322,19 @@ def band_refusal_reason(plan) -> str | None:
     is the population read, because an empty plan is the healthy majority state
     for this class — see the module docstring.
     """
-    if plan.rows_considered < MIN_EXPECTED_ROWS:
+    if plan.soccer_rows_considered < MIN_EXPECTED_ROWS:
         return (
-            f"the window yielded only {plan.rows_considered} soccer row(s), below "
-            f"the floor {MIN_EXPECTED_ROWS} — the judgement is not reaching its "
-            f"population (a renamed sport key, a moved column, a broken join). "
+            f"the window yielded only {plan.soccer_rows_considered} soccer row(s), "
+            f"below the floor {MIN_EXPECTED_ROWS} — the four name-based passes are "
+            f"not reaching their population (a renamed sport key, a moved column, "
+            f"a broken join). Re-measure before writing."
+        )
+    if plan.ticker_rows_considered < MIN_EXPECTED_TICKER_ROWS:
+        return (
+            f"only {plan.ticker_rows_considered} row(s) in the window resolve to a "
+            f"Kalshi event ticker, below the floor {MIN_EXPECTED_TICKER_ROWS} — the "
+            f"id-anchored pass is not reaching its population (a Kalshi ticker "
+            f"format change, a link rail that stopped attaching markets). "
             f"Re-measure before writing."
         )
     if len(plan.tags) > MAX_EXPECTED_TAGS:
@@ -463,7 +529,7 @@ async def run_soccer_ghost_twin_sweep(
                 "terminal": "no_work",
                 "rows_read": 0,
                 "reason": (
-                    f"no soccer rows in the window (-{lookback}d/+{lookahead}d), so "
+                    f"no rows in the window (-{lookback}d/+{lookahead}d), so "
                     f"this pass can vouch for nothing"
                 ),
             }
@@ -476,6 +542,12 @@ async def run_soccer_ghost_twin_sweep(
         summary.update(
             {
                 "rows_read": len(rows),
+                # Both partitions, beside the total and never folded into it:
+                # the four name-based passes read the first and the fifth reads
+                # the second, they die independently, and the total is the one
+                # number that can look healthy while either half is dark.
+                "soccer_rows_read": plan.soccer_rows_considered,
+                "ticker_rows_read": plan.ticker_rows_considered,
                 "blocks_examined": plan.blocks_examined,
                 # Reported beside the first pass's, never folded into it: the two
                 # keys reach different populations and a single total cannot say
@@ -539,7 +611,9 @@ async def run_soccer_ghost_twin_sweep(
                 "banked": 0,
                 "reason": (
                     f"every ghost this sweep can decide is already labelled "
-                    f"({len(plan.tags)} in plan over {plan.rows_considered} row(s))"
+                    f"({len(plan.tags)} in plan over {plan.rows_considered} row(s): "
+                    f"{plan.soccer_rows_considered} soccer, "
+                    f"{plan.ticker_rows_considered} carrying a Kalshi event ticker)"
                 ),
             }
 
