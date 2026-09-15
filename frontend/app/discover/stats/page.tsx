@@ -134,7 +134,7 @@ export default function PredictionStatsPage() {
         <div className="max-w-4xl mx-auto px-4 py-20 text-center text-text-muted">
           <p className="text-4xl mb-4">🎯</p>
           <p className="text-lg font-medium">No predictions yet</p>
-          <p className="text-sm mt-2">Play the &quot;What are the odds?&quot; cards in <Link href="/discover" className="text-blue-600 hover:underline">Discover</Link> to start tracking your stats.</p>
+          <p className="text-sm mt-2">Play the &quot;What are the odds?&quot; cards in <Link href="/discover" className="text-accent-brand hover:underline">Discover</Link> to start tracking your stats.</p>
         </div>
       </div>
     );
