@@ -2261,26 +2261,157 @@ async def _process_live_sport(
     await create_unmatched_fn(session, our_events, espn_events, sport_key, stats)
 
 
+def espn_abbreviation_corresponds(abbreviation, *names) -> bool:
+    """True when an ESPN abbreviation can be derived from the club's own name.
+
+    ESPN's AFL list carries two records named "Sydney Swans" (#6432): id 4 is
+    SYD/syd.png, id 19 is GCFC/gcfc.png — Gold Coast's media filed under
+    Sydney's name. The names are identical, so the name comparison
+    `_cleanup_bad_espn_matches` performs cannot tell them apart. The
+    abbreviation is the only witness the record carries against itself.
+
+    Two ways to correspond, because real clubs build abbreviations both ways:
+    the letters in order ("SYD" through s-y-d-n-e-y, "STK" through s-t-k-ilda)
+    or the club's initials as a prefix ("NMFC" opens with N-M for North
+    Melbourne, then adds letters the name never had). "GCFC" is neither for
+    "Sydney Swans", and no other record on the real 19-team roster is accused.
+    """
+    if not abbreviation:
+        return False
+    abbr = "".join(ch for ch in abbreviation.lower() if ch.isalnum())
+    if not abbr:
+        return False
+    for name in names:
+        if not name:
+            continue
+        tokens = "".join(
+            ch if ch.isalnum() else " " for ch in name.lower()
+        ).split()
+        if not tokens:
+            continue
+        initials = "".join(token[0] for token in tokens)
+        if abbr.startswith(initials):
+            return True
+        letters = iter("".join(tokens))
+        if all(ch in letters for ch in abbr):
+            return True
+    return False
+
+
+def _espn_record_is_self_consistent(espn_team) -> bool:
+    return espn_abbreviation_corresponds(
+        espn_team.abbreviation,
+        espn_team.display_name,
+        espn_team.short_name,
+        espn_team.name,
+    )
+
+
+def build_espn_name_lookup(espn_teams):
+    """Index an ESPN team list by id and by name, refusing ambiguous names.
+
+    A plain ``{name.lower(): team}`` dict silently keeps whichever record ESPN
+    listed LAST, which is how a Sydney Swans row came to hold Gold Coast's
+    badge (#6432). A name two records answer to is ambiguous: resolve it only
+    when exactly one of them is self-consistent, and otherwise leave the name
+    out of the lookup rather than let list order decide.
+
+    Returns ``(by_id, by_name, name_candidates, collisions)``; the candidates
+    map is what :func:`consistent_same_name_sibling` reads.
+    """
+    by_id = {}
+    name_candidates = {}
+    for espn_team in espn_teams:
+        by_id[espn_team.espn_id] = espn_team
+        # Skip et.name (mascot-only like "Buckeyes") and et.nickname — these
+        # cause false positives when multiple teams share a mascot.
+        for name in (espn_team.display_name, espn_team.short_name):
+            if name and len(name) >= 4:
+                bucket = name_candidates.setdefault(name.lower(), [])
+                if all(other.espn_id != espn_team.espn_id for other in bucket):
+                    bucket.append(espn_team)
+
+    by_name = {}
+    collisions = {"resolved": 0, "refused": 0}
+    for name_key, candidates in name_candidates.items():
+        if len(candidates) == 1:
+            by_name[name_key] = candidates[0]
+            continue
+        consistent = [et for et in candidates if _espn_record_is_self_consistent(et)]
+        if len(consistent) == 1:
+            by_name[name_key] = consistent[0]
+            collisions["resolved"] += 1
+        else:
+            collisions["refused"] += 1
+            logger.warning(
+                "ESPN name %r is answered by %d records and no abbreviation "
+                "settles it — refusing the name rather than taking the last: %s",
+                name_key,
+                len(candidates),
+                [(et.espn_id, et.abbreviation) for et in candidates],
+            )
+    return by_id, by_name, name_candidates, collisions
+
+
+def consistent_same_name_sibling(matched_espn, name_candidates):
+    """The record a poisoned anchor should point at, or ``None``.
+
+    An ``espn_id`` already on our row wins every match here, and
+    :func:`_backfill_team_logos` never revisits a row that has a logo — so a
+    row stamped with ESPN's corrupt duplicate can never be corrected by the
+    name path, and the `espn_id`-mismatch guard in ``upsert_team`` then refuses
+    every real payload for the club. When the anchored record is not
+    self-consistent and exactly one record sharing its name is, that one is the
+    club. Anything less certain returns ``None``: an odd abbreviation on its
+    own is not evidence.
+    """
+    if matched_espn is None or _espn_record_is_self_consistent(matched_espn):
+        return None
+    for name in (matched_espn.display_name, matched_espn.short_name):
+        if not name or len(name) < 4:
+            continue
+        candidates = name_candidates.get(name.lower()) or []
+        consistent = [et for et in candidates if _espn_record_is_self_consistent(et)]
+        if len(consistent) == 1 and consistent[0].espn_id != matched_espn.espn_id:
+            return consistent[0]
+    return None
+
+
 async def _backfill_team_logos():
     """Async implementation of backfill_team_logos."""
     from app.services.espn_api import ESPNAPIService, SPORT_LEAGUE_MAP
     from app.models.models import Team, Sport
-    from sqlalchemy import select
+    from sqlalchemy import or_, select
 
     stats = {
         "sports_checked": 0,
         "teams_fetched": 0,
         "teams_updated": 0,
+        "espn_anchors_repointed": 0,
+        "espn_name_collisions_resolved": 0,
+        "espn_name_collisions_refused": 0,
         "errors": [],
     }
 
     try:
         async with get_task_session() as session:
-            # Find teams missing logos, grouped by sport
+            # Find under-enriched teams, grouped by sport. A missing
+            # abbreviation admits the #6432 rows: a team anchored to ESPN's
+            # corrupt duplicate keeps the wrong crest AND never gets a badge,
+            # because `upsert_team` refuses every payload whose id disagrees
+            # with the stored one. Measured 2026-09-15: 8,259 rows have no
+            # logo, and the abbreviation arm adds 157 — a bounded widening,
+            # and those 157 are write-protected below unless the match is
+            # exact.
             result = await session.execute(
                 select(Team, Sport.key)
                 .join(Sport)
-                .where(Team.logo_url_small.is_(None))
+                .where(
+                    or_(
+                        Team.logo_url_small.is_(None),
+                        Team.abbreviation.is_(None),
+                    )
+                )
             )
             teams_missing_logos = result.all()
 
@@ -2321,27 +2452,35 @@ async def _backfill_team_logos():
                     if not espn_teams:
                         continue
 
-                    # Build lookup of ESPN teams by various name forms
-                    # Skip et.name (mascot-only like "Buckeyes", "Bulldogs") and
-                    # et.nickname (often same as mascot) — these cause false positives
-                    # when multiple teams share a mascot.
-                    espn_by_id = {}
-                    espn_by_name = {}
-                    for et in espn_teams:
-                        espn_by_id[et.espn_id] = et
-                        for name in [et.display_name, et.short_name]:
-                            if name and len(name) >= 4:
-                                espn_by_name[name.lower()] = et
+                    # Build lookup of ESPN teams by various name forms. A name
+                    # two records answer to is refused, never taken by list
+                    # order (#6432) — see `build_espn_name_lookup`.
+                    (
+                        espn_by_id,
+                        espn_by_name,
+                        espn_name_candidates,
+                        collisions,
+                    ) = build_espn_name_lookup(espn_teams)
+                    stats["espn_name_collisions_resolved"] += collisions["resolved"]
+                    stats["espn_name_collisions_refused"] += collisions["refused"]
 
                     # Try to match our teams to ESPN teams
                     for team in teams_by_sport.get(sport_key, []):
                         matched_espn = None
                         match_was_exact = False
+                        repointed_from = None
+                        had_media = bool(team.logo_url_small)
 
                         # Match by ESPN ID first (most reliable)
                         if team.espn_id and team.espn_id in espn_by_id:
                             matched_espn = espn_by_id[team.espn_id]
                             match_was_exact = True
+                            sibling = consistent_same_name_sibling(
+                                matched_espn, espn_name_candidates
+                            )
+                            if sibling is not None:
+                                repointed_from = matched_espn.espn_id
+                                matched_espn = sibling
                         else:
                             # Match by name
                             names_to_check = [team.name]
@@ -2368,12 +2507,49 @@ async def _backfill_team_logos():
                                     match_was_exact = False
                                     break
 
+                        # A row that already carries a crest is only in this
+                        # pass because its abbreviation is missing. A token
+                        # score of 0.51 must never overwrite media that is
+                        # already right (#4750's class) — an exact name, the
+                        # stored id, or a repoint, or nothing at all.
+                        if had_media and not (match_was_exact or repointed_from):
+                            continue
+
                         if matched_espn and matched_espn.logo_url:
-                            team.logo_url_small = matched_espn.logo_url
-                            team.logo_url_large = matched_espn.logo_url
-                            # Only set espn_id from exact or ID matches, not fuzzy scoring
-                            if not team.espn_id and match_was_exact:
+                            if repointed_from or not had_media:
+                                team.logo_url_small = matched_espn.logo_url
+                                team.logo_url_large = matched_espn.logo_url
+                            if repointed_from:
+                                # The anchor itself was the defect: it pinned
+                                # the wrong club's media AND made `upsert_team`
+                                # refuse every real payload for this club.
+                                logger.warning(
+                                    "Repointing team %s (%r) from ESPN id %s to "
+                                    "%s — %r does not correspond to %r",
+                                    team.id,
+                                    team.name,
+                                    repointed_from,
+                                    matched_espn.espn_id,
+                                    espn_by_id[repointed_from].abbreviation,
+                                    espn_by_id[repointed_from].display_name,
+                                )
+                                stats["espn_anchors_repointed"] += 1
+                            # Only set espn_id from exact or ID matches, not
+                            # fuzzy scoring — or from a repoint, which is an
+                            # id match whose record accused itself. ONE write
+                            # site on purpose: the #2049 census keys on the
+                            # statement, so a second copy would hide behind
+                            # this one's allowlist reason.
+                            if repointed_from or (
+                                not team.espn_id and match_was_exact
+                            ):
                                 team.espn_id = matched_espn.espn_id
+                            if (
+                                matched_espn.abbreviation
+                                and not team.abbreviation
+                                and (match_was_exact or repointed_from)
+                            ):
+                                team.abbreviation = matched_espn.abbreviation
                             if matched_espn.primary_color and not team.primary_color:
                                 color = matched_espn.primary_color
                                 if not color.startswith("#"):
