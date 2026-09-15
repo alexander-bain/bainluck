@@ -40,14 +40,19 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.dialects import sqlite as sqlite_dialect
 
 from app.services.anchor_channel import (
     MARKET_BORN_COMMENCE_SOURCES,
+    _DRAIN_VERDICT,
     _DRAIN_VERDICT_SQL,
     is_drain_candidate_row,
+    market_born_duplicates_on_page,
     resolve_market_born_duplicate,
+    resolve_market_born_duplicates,
 )
 from app.utils.event_completion import TICKER_DERIVED_COMMENCE_SOURCE
 
@@ -115,18 +120,40 @@ class _Result:
     def first(self):
         return self._rows[0] if self._rows else None
 
+    def fetchall(self):
+        return list(self._rows)
+
 
 class _SqliteSession:
-    """Enough AsyncSession to run `resolve_market_born_duplicate` for real."""
+    """Enough AsyncSession to run `resolve_market_born_duplicate` for real.
+
+    #6231 — IT NOW COMPILES THE STATEMENT INSTEAD OF STRINGIFYING IT, and that
+    is a faithfulness fix rather than an accommodation. A real `AsyncSession`
+    hands the clause to a dialect; this fake used to hand `str(stmt)` straight
+    to `sqlite3`, so any SQLAlchemy construct that only exists after compilation
+    was invisible to the whole battery. The set-shaped verdict uses an expanding
+    bindparam — `IN :event_ids` becoming `IN (:event_ids_1, …)` at execution —
+    and under the old harness that reached sqlite3 as the literal marker
+    `__[POSTCOMPILE_event_ids]`, i.e. this harness could not execute a statement
+    production executes fine.
+
+    `statements` still records the clause the module passed, UNCOMPILED, so
+    `test_the_resolver_issues_its_own_sql_and_not_a_paraphrase` keeps comparing
+    the module's own object and loses nothing.
+    """
 
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
         self.statements: list[str] = []
 
     async def execute(self, stmt, params=None):
-        sql = str(stmt)
-        self.statements.append(sql)
-        cursor = self.conn.execute(sql, params or {})
+        self.statements.append(str(stmt))
+        bound = stmt.bindparams(**params) if params else stmt
+        compiled = bound.compile(
+            dialect=sqlite_dialect.dialect(paramstyle="named"),
+            compile_kwargs={"render_postcompile": True},
+        )
+        cursor = self.conn.execute(str(compiled), dict(compiled.params))
         return _Result([_Row(r) for r in cursor.fetchall()])
 
 
@@ -202,12 +229,25 @@ def test_the_specimen_resolves_to_the_row_espn_agrees_with():
 
 
 def test_the_resolver_issues_its_own_sql_and_not_a_paraphrase():
-    """If the module's statement and the executed one ever diverge, say so here."""
+    """If the module's statement and the executed one ever diverge, say so here.
+
+    #6231 — the comparison is against the module's CLAUSE, not its raw string,
+    because the clause is now what the module holds: `_DRAIN_VERDICT` is
+    `text(_DRAIN_VERDICT_SQL)` with one expanding bindparam, built once at
+    import. The guard is unchanged in strength — a resolver that hand-rolled a
+    statement would still fail it — and the second assertion below keeps the raw
+    constant the source of truth rather than letting the two drift apart.
+    """
     conn = _connect()
     _plant_specimen(conn)
     session = _SqliteSession(conn)
     asyncio.run(resolve_market_born_duplicate(session, GHOST))
-    assert session.statements[0].strip() == _DRAIN_VERDICT_SQL.strip()
+    assert session.statements[0].strip() == str(_DRAIN_VERDICT).strip()
+    # ...and the clause is still that SQL, differing only where the expanding
+    # bindparam is rendered. Nothing else about the statement may change here.
+    assert str(_DRAIN_VERDICT).strip() == _DRAIN_VERDICT_SQL.replace(
+        "IN :event_ids", "IN (__[POSTCOMPILE_event_ids])"
+    ).strip()
 
 
 def test_a_different_sports_row_for_one_sport_still_resolves():
@@ -472,6 +512,198 @@ def test_an_event_that_does_not_exist_resolves_to_nothing():
     conn = _connect()
     _plant_specimen(conn)
     assert _resolve(conn, 999999999) is None
+
+
+# =============================================================================
+# Part 1b — the SET form (#6231). Everything above grades it already, because
+# `resolve_market_born_duplicate` is now a one-id call into it. What is left is
+# what only a page can get wrong: rows must be decided INDEPENDENTLY. A verdict
+# written per row and then aggregated can fail in two directions — one refused
+# row suppressing the page's good resolutions, or one resolvable row carrying a
+# refused sibling along with it — and the second is the unrecoverable one,
+# because it serves a reader the wrong match.
+# =============================================================================
+
+
+SECOND_GHOST = 15308951      # the #6231 specimen: Celta Fortuna v Eibar
+SECOND_CANONICAL = 15306978  # Celta Fortuna v SD Eibar, 0-4 final, Segunda
+SECOND_TICKER = "KXLALIGAGAME-26SEP14CELEIB"
+SPORT_SOCCER_SEGUNDA = 91
+
+
+def _plant_second_pair(conn: sqlite3.Connection, *, canonical_sport=None) -> None:
+    """A SECOND, unrelated ghost/canonical pair in the same database.
+
+    The production #6231 specimen, which is a different sport and a different
+    provenance from the tennis pair `_plant_specimen` lays down — so a page
+    holding both is a real mixed page, not the same row twice.
+    """
+    conn.executemany(
+        "INSERT OR IGNORE INTO sports (id, key) VALUES (?, ?)",
+        [
+            (SPORT_SOCCER, "soccer_spain_la_liga"),
+            (SPORT_SOCCER_SEGUNDA, "soccer_spain_segunda_division"),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO events (id, sport_id, commence_time_source, home_score, "
+        "away_score, completed_at) VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            (SECOND_GHOST, SPORT_SOCCER, "kalshi", None, None, None),
+            (
+                SECOND_CANONICAL,
+                canonical_sport if canonical_sport is not None
+                else SPORT_SOCCER_SEGUNDA,
+                "odds_api", 0, 4, "2026-09-14 20:27:27+00",
+            ),
+        ],
+    )
+    conn.execute(
+        "INSERT INTO event_provider_anchors (event_id, source, source_id, "
+        "id_kind) VALUES (?, ?, ?, ?)",
+        (SECOND_GHOST, "kalshi", SECOND_TICKER, "market"),
+    )
+    conn.execute(
+        "INSERT INTO futures_markets (source, external_id, event_id) "
+        "VALUES (?, ?, ?)",
+        ("kalshi", SECOND_TICKER, SECOND_CANONICAL),
+    )
+    conn.commit()
+
+
+def _resolve_many(conn: sqlite3.Connection, ids):
+    return asyncio.run(resolve_market_born_duplicates(_SqliteSession(conn), ids))
+
+
+def test_the_set_form_agrees_with_the_single_id_form_row_for_row():
+    """The wrapper cannot diverge from the core, and this is why it is a wrapper.
+
+    Two independent implementations of one verdict drift, and the drift that
+    matters ADMITS a row the other refuses. There is only one implementation;
+    this asserts the observable consequence over a mixed page.
+    """
+    conn = _connect()
+    _plant_specimen(conn)
+    _plant_second_pair(conn)
+    ids = [GHOST, CANONICAL, SECOND_GHOST, SECOND_CANONICAL, 999999999]
+
+    batch = _resolve_many(conn, ids)
+    one_at_a_time = {
+        eid: _resolve(conn, eid)
+        for eid in ids
+        if _resolve(conn, eid) is not None
+    }
+
+    assert batch == one_at_a_time
+    assert batch == {GHOST: CANONICAL, SECOND_GHOST: SECOND_CANONICAL}
+
+
+def test_two_unrelated_ghosts_on_one_page_each_resolve_to_their_own_canonical():
+    """Not to each other, and not to whichever row the SQL happened to see first."""
+    conn = _connect()
+    _plant_specimen(conn)
+    _plant_second_pair(conn)
+
+    resolved = _resolve_many(conn, [GHOST, SECOND_GHOST])
+
+    assert resolved == {GHOST: CANONICAL, SECOND_GHOST: SECOND_CANONICAL}
+
+
+def test_a_refused_row_does_not_suppress_its_neighbours_resolution():
+    """One row failing a refusal must cost that row only.
+
+    A page-shaped verdict that bailed out on the first refusal would leave every
+    later ghost rendering — the bug this ship exists to fix, reintroduced by the
+    batching.
+    """
+    conn = _connect()
+    _plant_specimen(conn)
+    # The second ghost is refused by the cross-family guard, nothing else.
+    _plant_second_pair(conn, canonical_sport=SPORT_TENNIS_ATP)
+
+    resolved = _resolve_many(conn, [SECOND_GHOST, GHOST])
+
+    assert resolved == {GHOST: CANONICAL}
+
+
+def test_a_resolvable_row_never_carries_a_refused_sibling_with_it():
+    """The unrecoverable direction: a refused row must NEVER appear resolved.
+
+    `test_a_refused_row_does_not_suppress_its_neighbours_resolution` is the same
+    page read for the opposite failure. Both are needed — an implementation that
+    returned every candidate it queried would pass that one and fail this one,
+    and it would take a reader to a soccer match from a tennis card.
+    """
+    conn = _connect()
+    _plant_specimen(conn)
+    _plant_second_pair(conn, canonical_sport=SPORT_TENNIS_ATP)
+
+    resolved = _resolve_many(conn, [GHOST, SECOND_GHOST])
+
+    assert SECOND_GHOST not in resolved
+
+
+def test_an_empty_page_issues_no_query_at_all():
+    """`{}` without touching the database — the cost claim, asserted."""
+    conn = _connect()
+    _plant_specimen(conn)
+    session = _SqliteSession(conn)
+
+    assert asyncio.run(resolve_market_born_duplicates(session, [])) == {}
+    assert session.statements == []
+
+
+def test_the_page_helper_issues_no_query_when_the_cheap_gate_excludes_everything():
+    """`market_born_duplicates_on_page` is free on a page of real fixtures.
+
+    This is the whole reason the helper exists rather than the routes calling
+    the resolver: a rail whose rows all carry scores must not pay for a verdict
+    it can never pass. A regression here is a latency defect on `/api/events`,
+    which is silent — hence an assertion on the statement log, not on timing.
+    """
+    conn = _connect()
+    _plant_specimen(conn)
+    session = _SqliteSession(conn)
+
+    scored = SimpleNamespace(
+        id=1, commence_time_source="kalshi", home_score=2, away_score=1,
+        completed_at=None,
+    )
+    scheduled_by_a_real_schedule = SimpleNamespace(
+        id=2, commence_time_source="odds_api", home_score=None, away_score=None,
+        completed_at=None,
+    )
+
+    resolved = asyncio.run(
+        market_born_duplicates_on_page(
+            session, [scored, scheduled_by_a_real_schedule]
+        )
+    )
+
+    assert resolved == {}
+    assert session.statements == []
+
+
+def test_the_page_helper_names_the_ghost_among_rows_it_must_not_suppress():
+    """The positive half: a real page, and only the ghost comes back."""
+    conn = _connect()
+    _plant_specimen(conn)
+    session = _SqliteSession(conn)
+
+    page = [
+        SimpleNamespace(
+            id=GHOST, commence_time_source=TICKER_DERIVED_COMMENCE_SOURCE,
+            home_score=None, away_score=None, completed_at=None,
+        ),
+        SimpleNamespace(
+            id=CANONICAL, commence_time_source="odds_api",
+            home_score=1, away_score=3, completed_at="2026-09-02 01:36:28+00",
+        ),
+    ]
+
+    resolved = asyncio.run(market_born_duplicates_on_page(session, page))
+
+    assert resolved == {GHOST: CANONICAL}
 
 
 # =============================================================================
