@@ -1152,6 +1152,10 @@ class TestNbaCupExcludeConfig:
         assert NBA_CONFIG.external_id_exclude_prefixes == ["KXNBACUP"]
         assert NFL_CONFIG.external_id_exclude_prefixes == ["KXSBHOST"]
         assert MLB_CONFIG.external_id_exclude_prefixes == ["KXTEAMSINWS"]
+        # #6250: KXUCLLEAGUE-27 "Champions League: League of Champion" asks
+        # which domestic league the winner comes from — 16 league-name outcomes
+        # in a column headed "Team".
+        assert CHAMPIONS_LEAGUE_CONFIG.external_id_exclude_prefixes == ["KXUCLLEAGUE"]
 
 
 class TestMatchingRulePatterns:
@@ -1816,3 +1820,220 @@ class TestDivisionColumnAsksWhoWins:
             "Total Wins by the AFC North Division",
         ):
             assert _asks_who_wins_the_division(name) is False, name
+
+
+# ============================================================================
+# #6250 — the Champion column blended two other questions into the men's UCL
+# ============================================================================
+
+
+def _ucl_market(name: str, external_id: str, tier: int = 1, source: str = "kalshi"):
+    m = MagicMock()
+    m.name = name
+    m.external_id = external_id
+    m.market_tier = tier
+    m.source = source
+    return m
+
+
+def _admitted(name: str, external_id: str, config, tier: int = 1, source: str = "kalshi"):
+    """(passes the league filter, resolved grid column) — the pair the grid uses."""
+    if not _market_passes_league_filter(name, external_id, config):
+        return False, None
+    return True, _match_market_to_column(
+        _ucl_market(name, external_id, tier, source), config
+    )
+
+
+class TestGridGenderGuardCoversEveryConfig:
+    """#6250: the guard existed and covered six leagues, so soccer kept the bug.
+
+    `_GRID_MENS_LEAGUES` shipped as the six US leagues. Every soccer grid was
+    therefore ungendered, and "UEFA Women's Champions League 2026-27 Winner"
+    landed in the men's Champion column — Real Madrid rendered 0.32, the mean
+    of the women's 0.495 and the men's 0.145.
+
+    The omission was silent because nothing ever asked whether a config was
+    classified. This asks.
+    """
+
+    def test_every_config_is_classified_exactly_once(self):
+        from app.routes.playoffs import (
+            _GRID_MENS_LEAGUES,
+            _GRID_WOMENS_LEAGUES,
+            _GRID_UNGENDERED_LEAGUES,
+        )
+
+        sets = {
+            "mens": set(_GRID_MENS_LEAGUES),
+            "womens": set(_GRID_WOMENS_LEAGUES),
+            "ungendered": set(_GRID_UNGENDERED_LEAGUES),
+        }
+        for slug in LEAGUE_CONFIGS:
+            homes = [k for k, v in sets.items() if slug in v]
+            assert homes, (
+                f"LeagueConfig '{slug}' is in none of _GRID_MENS_LEAGUES / "
+                "_GRID_WOMENS_LEAGUES / _GRID_UNGENDERED_LEAGUES, so the grid's "
+                "gender refusal does not apply to it. That silence is #6250: "
+                "decide which it is (ungendered is a valid answer, with a reason)."
+            )
+            assert len(homes) == 1, f"'{slug}' is classified twice: {homes}"
+
+    def test_the_three_sets_name_no_league_that_does_not_exist(self):
+        from app.routes.playoffs import (
+            _GRID_MENS_LEAGUES,
+            _GRID_WOMENS_LEAGUES,
+            _GRID_UNGENDERED_LEAGUES,
+        )
+
+        named = set(_GRID_MENS_LEAGUES) | set(_GRID_WOMENS_LEAGUES) | set(_GRID_UNGENDERED_LEAGUES)
+        assert named <= set(LEAGUE_CONFIGS), (
+            f"gender sets name slugs with no config: {sorted(named - set(LEAGUE_CONFIGS))}"
+        )
+
+    def test_the_five_soccer_grids_are_men(self):
+        from app.routes.playoffs import _GRID_MENS_LEAGUES
+
+        for slug in ("mls", "epl", "la-liga", "champions-league", "bundesliga"):
+            assert slug in _GRID_MENS_LEAGUES, slug
+
+
+class TestWomensCompetitionOutOfTheMensGrid:
+    """The specimen: polymarket 994389 in the men's Champion column."""
+
+    WOMENS_UCL = ("UEFA Women's Champions League 2026-27 Winner", "994389")
+
+    def test_womens_ucl_is_refused_by_the_ucl_grid(self):
+        passes, column = _admitted(*self.WOMENS_UCL, CHAMPIONS_LEAGUE_CONFIG, source="polymarket")
+        assert passes is False, (
+            "the women's Champions League still reaches the men's grid"
+        )
+        assert column is None
+
+    def test_the_refusal_is_the_gender_guard_and_nothing_else(self):
+        """Anti-vacuity: with the pre-#6250 league list the market IS admitted.
+
+        Without this the test above could pass because some unrelated filter
+        happens to reject the row, and a later change to that filter would
+        reopen the defect with the test still green.
+        """
+        import app.routes.playoffs as playoffs_module
+
+        original = playoffs_module._GRID_MENS_LEAGUES
+        try:
+            playoffs_module._GRID_MENS_LEAGUES = (
+                "ncaa-basketball", "ncaa-football", "nba", "nhl", "nfl", "mlb",
+            )
+            passes, column = _admitted(
+                *self.WOMENS_UCL, CHAMPIONS_LEAGUE_CONFIG, source="polymarket"
+            )
+        finally:
+            playoffs_module._GRID_MENS_LEAGUES = original
+        assert passes is True and column == "championship", (
+            "the pre-fix constants no longer reproduce the defect, so this "
+            "test proves nothing about the fix"
+        )
+
+    def test_a_resolved_womens_ucl_row_is_refused_too(self):
+        """Both spellings of the apostrophe, and the older Kalshi series.
+
+        `UEFA Women’s UCL: Winner` (polymarket 340471) carries U+2019, and
+        `Women's Champions League Champion` (KXUCLW-26) reaches the column on
+        `\\bChampions\\s+League\\b`. Neither is live on the men's grid today —
+        their only route is the resolved backfill, which is dead — so this is
+        the guard that keeps them out when it is revived.
+        """
+        for name, eid, src in (
+            ("UEFA Women’s UCL: Winner", "340471", "polymarket"),
+            ("Women's Champions League Champion", "KXUCLW-26", "kalshi"),
+        ):
+            passes, column = _admitted(name, eid, CHAMPIONS_LEAGUE_CONFIG, source=src)
+            assert passes is False, name
+            assert column is None, name
+
+    def test_the_mens_market_is_untouched(self):
+        passes, column = _admitted("Champions League Winner", "KXUCL-27", CHAMPIONS_LEAGUE_CONFIG)
+        assert passes is True
+        assert column == "championship", (
+            "the real Champion market must still populate the Champion column"
+        )
+
+
+class TestLeagueOfChampionOutOfTheTeamColumn:
+    """`Champions League: League of Champion` asks which LEAGUE, not which team.
+
+    Its 16 outcomes are league names (Ligue 1 0.99, Bundesliga 0.99, English
+    Premier League 0.52), and it satisfied `Champions\\s+League.*(?:Winner|
+    Champion)` on the word "Champion", so four leagues rendered as rows under a
+    column headed "Team".
+    """
+
+    LEAGUE_OF_CHAMPION = ("Champions League: League of Champion", "KXUCLLEAGUE-27")
+
+    def test_it_is_refused(self):
+        passes, column = _admitted(*self.LEAGUE_OF_CHAMPION, CHAMPIONS_LEAGUE_CONFIG)
+        assert passes is False
+        assert column is None
+
+    def test_the_refusal_is_the_ticker_exclusion(self):
+        """Anti-vacuity: drop the prefix and the market comes straight back."""
+        import dataclasses
+
+        unfixed = dataclasses.replace(
+            CHAMPIONS_LEAGUE_CONFIG, external_id_exclude_prefixes=[]
+        )
+        passes, column = _admitted(*self.LEAGUE_OF_CHAMPION, unfixed)
+        assert passes is True and column == "championship", (
+            "the ticker exclusion is not what refuses this market"
+        )
+
+    def test_the_exclusion_keys_on_the_ticker_not_the_title(self):
+        """A title regex is what caused #6250; the fix must not be one.
+
+        Same NAME, a different series ticker: still admitted. If this fails,
+        someone replaced the ticker exclusion with a name pattern and the fix
+        now depends on a string the venue can re-word at any time.
+        """
+        passes, column = _admitted(
+            "Champions League: League of Champion", "KXUCL-27", CHAMPIONS_LEAGUE_CONFIG
+        )
+        assert passes is True and column == "championship"
+
+    def test_the_season_roll_does_not_reopen_it(self):
+        passes, _ = _admitted(
+            "Champions League: League of Champion", "KXUCLLEAGUE-28", CHAMPIONS_LEAGUE_CONFIG
+        )
+        assert passes is False
+
+
+class TestUclChampionColumnAcceptanceSet:
+    """All seven open UCL-named markets we hold, by name (#6250's table).
+
+    Three were admitted to the Champion column and only one of the three was
+    right. The four correct rejections must STAY rejected: any widening that
+    pulls Top Scorer or the Golden Boot back in is the regression this catches.
+    """
+
+    CASES = (
+        # (name, external_id, source, tier, admitted_to_column)
+        ("Champions League Winner", "KXUCL-27", "kalshi", 1, "championship"),
+        ("Champions League: League of Champion", "KXUCLLEAGUE-27", "kalshi", 1, None),
+        ("UEFA Women's Champions League 2026-27 Winner", "994389", "polymarket", 1, None),
+        ("UEFA Champions League: Top Scorer 2026-27", "989012", "polymarket", 5, None),
+        ("Champions League Golden Boot", "KXUCLLEADER-27GOAL", "kalshi", 3, None),
+        ("Champions League Assists Leader", "KXUCLLEADER-27AST", "kalshi", 5, None),
+        ("UEFA Champions League: League Phase Last Place", "988817", "polymarket", 5, None),
+    )
+
+    @pytest.mark.parametrize("name,eid,source,tier,expected", CASES)
+    def test_column_for_each_open_ucl_market(self, name, eid, source, tier, expected):
+        _, column = _admitted(name, eid, CHAMPIONS_LEAGUE_CONFIG, tier=tier, source=source)
+        assert column == expected, f"{name} -> {column}, expected {expected}"
+
+    def test_exactly_one_market_feeds_the_champion_column(self):
+        champions = [
+            name for name, eid, source, tier, _ in self.CASES
+            if _admitted(name, eid, CHAMPIONS_LEAGUE_CONFIG, tier=tier, source=source)[1]
+            == "championship"
+        ]
+        assert champions == ["Champions League Winner"], champions

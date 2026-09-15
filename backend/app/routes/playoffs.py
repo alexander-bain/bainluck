@@ -3125,8 +3125,34 @@ def _grid_column_resolved(teams: list, key: str, eps: float = 0.01) -> bool:
 # Gender exclusion: Men's leagues should not include Women's markets and vice versa
 _GRID_WOMENS_RE = re.compile(r"\bWomen.?s\b|\bWNCAA\b|\bWNCAAB\b|\(W\)", re.IGNORECASE)
 _GRID_MENS_RE = re.compile(r"\bMen.?s\b", re.IGNORECASE)
-_GRID_MENS_LEAGUES = ("ncaa-basketball", "ncaa-football", "nba", "nhl", "nfl", "mlb")
+# #6250: this guard shipped covering the six US leagues and NOTHING ELSE, so
+# every soccer grid kept the bug it was written to stop. "UEFA Women's
+# Champions League 2026-27 Winner" (polymarket 994389) matches
+# CHAMPIONS_LEAGUE_CONFIG's `\bChampions\s+League\b` name pattern and its
+# `Champions\s+League.*(?:Winner|Champion)` column rule, so it landed in the
+# men's Champion column and Real Madrid rendered 0.32 — the mean of the
+# women's 0.495 and the men's 0.145, a number neither market states.
+#
+# The five soccer grids are listed here rather than derived because the list is
+# a claim that the refusal was MEASURED for each: the complete delta is ten
+# soccer rows (six open, four resolved), enumerated on production 2026-09-15 as
+# every soccer market matching ``_GRID_WOMENS_RE`` — all ten are genuine
+# women's competitions and none of the five grids is a women's competition, so
+# nothing correct is dropped. ``golf`` stays out: PGA/LPGA is a live question
+# nobody has measured, and a guess here would silently drop LPGA rows the way
+# this omission silently kept them.
+#
+# ``TestGridGenderGuardCoversEveryConfig`` fails when a new LeagueConfig lands
+# in none of the three sets, so the next league cannot skip the guard in
+# silence the way the soccer five did.
+_GRID_MENS_LEAGUES = (
+    "ncaa-basketball", "ncaa-football", "nba", "nhl", "nfl", "mlb",
+    "mls", "epl", "la-liga", "champions-league", "bundesliga",
+)
 _GRID_WOMENS_LEAGUES = ("wnba", "ncaa-women-basketball")
+#: Grids that are deliberately NOT gender-filtered, with the reason. Being here
+#: is a decision; being in none of the three sets is an oversight.
+_GRID_UNGENDERED_LEAGUES = ("golf",)
 
 # Columns that stop trading once the regular season ends — prices sit at
 # 99.5%/0.5% for weeks with no updates, so they get a 60-day staleness cutoff
@@ -3773,6 +3799,24 @@ async def get_playoff_grid(
             resolved_result = await db.execute(resolved_stmt)
             resolved_markets = resolved_result.scalars().unique().all()
             logger.info("Grid %s: resolved backfill found %d markets", league_slug, len(resolved_markets))
+            # 🔴 THIS LOOP HAS NEVER RUN A SINGLE ITERATION (#6250 found it,
+            # #6413 owns it). ``league_patterns`` and ``league_exclude`` are
+            # locals of ``_market_passes_league_filter`` and
+            # ``_get_team_progression_for_event_uncached``; neither is assigned
+            # in this function or at module level (AST-checked), so the first
+            # iteration raises NameError straight into the ``except Exception``
+            # below, which logs "resolved backfill failed (non-critical)" and
+            # moves on. Every empty column this was written to fill has stayed
+            # empty since it was written.
+            #
+            # DO NOT "fix" it by defining the two names. The loop has no
+            # staleness cutoff and forces ``is_winner`` outcomes to 1.0, so
+            # waking it would print LAST season's qualifiers at 100% in this
+            # season's empty QF/SF/Final columns — a truth regression dressed
+            # as a repair. Whoever revives it owes a season bound AND must call
+            # ``_market_passes_league_filter`` rather than this two-of-five
+            # copy, which is missing the gender refusal and the ticker
+            # exclusion the live path applies.
             for market in resolved_markets:
                 if league_patterns and not any(p.search(market.name or "") for p in league_patterns):
                     logger.debug("Grid %s backfill: %s rejected by league_patterns", league_slug, market.name[:40])

@@ -841,6 +841,19 @@ CHAMPIONS_LEAGUE_CONFIG = LeagueConfig(
         r"\bUCL\b",
         r"\bUEFA\s+Champions\b",
     ],
+    # #6250: Kalshi's KXUCLLEAGUE-27 "Champions League: League of Champion"
+    # asks which DOMESTIC LEAGUE the winner comes from — its 16 outcomes are
+    # "Ligue 1" 0.99, "Bundesliga" 0.99, "English Premier League" 0.52 — and it
+    # satisfies the Champion column's `Champions\s+League.*(?:Winner|Champion)`
+    # rule on the word "Champion" alone. Four leagues therefore rendered as
+    # grid rows under a column headed "Team", and team_count counted them.
+    # Excluded on the SERIES TICKER rather than the title because the title is
+    # what admitted it: a name regex narrow enough to refuse "League of
+    # Champion" is one typo away from refusing the real "Champions League
+    # Winner" (KXUCL-27), while the ticker families are disjoint by
+    # construction and survive the season roll to KXUCLLEAGUE-28.
+    # The market is not deleted or hidden: /futures/59164808 stays reachable.
+    external_id_exclude_prefixes=["KXUCLLEAGUE"],
     columns=[
         GridColumn(key="quarterfinal", label="QF", order=1),
         GridColumn(key="semifinal", label="SF", order=2),
