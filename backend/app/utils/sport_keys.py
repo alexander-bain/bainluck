@@ -922,6 +922,62 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxnfl2td": "americanfootball_nfl",              # Multiple TDs
     "kxnflfirsttdtime": "americanfootball_nfl",      # First TD time
     "kxnflgamefg": "americanfootball_nfl",           # Game field goals
+    # #6262 follow-up — the FOURTH instance of the hole Q453 and #5621 record,
+    # and the one that named itself in a shipped commit message rather than
+    # being found later. `KXNFLFG` is a SEPARATE venue series from `kxnflgamefg`
+    # above; read at the venue 2026-09-15 06:44Z
+    # (`GET /trade-api/v2/series/KXNFLFG`, HTTP 200):
+    #
+    #   ticker KXNFLFG · title "Pro Football Field Goals" · category Sports
+    #   tags ['Football'] · settlement source nfl.com
+    #
+    # 🔴 THE NAME RULES READ "Team Field GOALS" AS SOCCER. Run the real
+    # categoriser over the specimen with the series tag absent, which is the
+    # state at mint time:
+    #
+    #   _categorize_kalshi_market("Denver vs Kansas City: Team Field Goals",
+    #                             "Sports", "KXNFLFG-26SEP14DENKC", None)
+    #     -> "soccer"                      (and -> "football" once tagged)
+    #
+    # so step 1 ("AUTHORITATIVE — ticker never lies") returned nothing, the row
+    # fell through to the name, and `auto_create_sport_key_from_category` minted
+    # event **15311150 `soccer_other` "Denver vs Kansas City"**, scheduled
+    # 2026-09-14 00:00Z for a game that kicked off 2026-09-15 00:15Z — the
+    # Kalshi close time standing in for kickoff (gotcha #14). Measured on
+    # production 2026-09-15 06:4xZ: 16 KXNFLFG markets exist, all 16 are NOW
+    # linked to real `americanfootball_nfl` events (the series-tag repair
+    # re-categorised the MARKETS), and the ghost EVENT that one of them minted
+    # is still there holding 0 markets. Fixing the label did not drain the row;
+    # it orphaned it — the same shape Q050 records for `_reconcile_kalshi_
+    # match_segments`.
+    #
+    # 🔴 WHAT THIS LITERAL ACTUALLY SHIPS is the drain's second witness. #6262
+    # gap B (`614e20b05`) made refusal 6 weigh the ghost's own anchor TICKER
+    # through `get_sport_key_from_ticker`, and named this row as the one
+    # specimen it could not admit: `kxnflfg` was in neither map, so the witness
+    # returned None. It now returns `americanfootball_nfl`, whose family matches
+    # canonical 14638896, and 15311150 folds. Anchor confirmed on production —
+    # one `market` anchor, `source_id = 'KXNFLFG-26SEP14DENKC'`, single target
+    # 14638896 — so `market_ids = 1` and the coarse branch is not taken.
+    #
+    # Prefix blast radius, computed over BOTH maps rather than eyeballed: no
+    # registered key is a prefix of `kxnflfg-…` (it resolves `None` today) and
+    # `kxnflfg` is a prefix of no registered key in either map, so longest-prefix
+    # precedence moves no other ticker. The near neighbours differ at character
+    # 7: `kxnflffpts`, `kxnflfirsttd`, `kxnflfirsttdtime`, `kxnflfantasymost`,
+    # `kxnflfirstpick`. `feeds_win_prob_blend` stays False (the prefix does not
+    # end in `game`), so a field-goals prop still cannot write the win-prob
+    # blend. Being `americanfootball_nfl` puts it under BOTH auto-create
+    # refusals — `ODDS_API_COVERED_PREFIXES` and `football` in
+    # `LLM_CATEGORIES_THAT_MAY_NOT_CREATE_EVENTS` — so the mint cannot recur.
+    #
+    # DELIBERATELY NOT ALSO ADDED TO `KALSHI_TICKER_TO_DISPLAY_LABEL`. That map
+    # is not a label map: `_is_kalshi_game_ticker` reads it, and a truthy answer
+    # arms `_build_game_market_name` (which RENAMES the row as a matchup) and
+    # the `occurrence_datetime` preference in `_kalshi_commence_time`. Those are
+    # a different change with a different argument, and this one is the drain's
+    # witness. The subset guard in `test_sport_keys` holds either way.
+    "kxnflfg": "americanfootball_nfl",               # Team field goals (#6262)
     "kxnflgamesack": "americanfootball_nfl",         # Game sacks
     "kxnflgametd": "americanfootball_nfl",           # Game touchdowns
     "kxnflgameto": "americanfootball_nfl",           # Game turnovers
