@@ -69,6 +69,21 @@ const HOUR = 60 * MIN;
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
 
 /**
+ * The same offset, taken from the REAL clock — for the one surface that reads
+ * its own `Date.now()`.
+ *
+ * 🔴 `ActionBar` takes no clock prop, so `bar(ago(...))` measured a stamp
+ * anchored at the frozen {@link NOW} against whatever time it is when the suite
+ * runs, and the gap between those two grows by a day every day. It went red on
+ * master at 2026-09-15 19:30Z, when the real elapsed time crossed 96h and a
+ * fixture written as "77 hours" started printing `4d ago`: not a regression,
+ * just the bomb reaching its own fuse. Gotcha #44 — offset FIRST from the clock
+ * the subject actually reads, and never mix two anchors in one assertion. The
+ * `mark()` helper is unaffected: it passes `nowMs={NOW}` and pins both sides.
+ */
+const agoReal = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+/**
  * The production specimen's own stamp, and the reason the strings below are
  * exact rather than shaped: this instant is the one `ios/…/SourceAge.swift`
  * quotes ("12 Sep, 3:51 AM") when it documents the field order web is adopting.
@@ -245,7 +260,7 @@ describe("CONTROL: an empty liquidity payload cannot hide the age (#6343)", () =
     // The production specimen end to end: feed index 1, 77 hours old, `liq {}`.
     // Green on both sides — the disclosure was never liquidity-gated on web,
     // and this is what says so if someone ever gates it.
-    const html = bar(ago(77 * HOUR));
+    const html = bar(agoReal(77 * HOUR));
     expect(html).toContain('data-testid="price-age-mark"');
     expect(visible(html)).toContain("3d ago");
     expect(titleOf(html)).not.toBeNull();
