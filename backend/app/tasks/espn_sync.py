@@ -688,6 +688,25 @@ async def _sync_espn_live_events():
                 logger.warning(
                     "Authority straggler pass failed: %s", e, exc_info=True
                 )
+
+            # ── And the rows that aged out of that window entirely (#6280) ──
+            #
+            # Its OWN try/except, not the one above: the two arms select
+            # disjoint populations, so a failure to reach the stranded backlog
+            # must not cost the liveness-adjacent pass its run, or the reverse.
+            try:
+                await _settle_deep_authority_stragglers(
+                    session,
+                    straggler_espn,
+                    datetime.now(timezone.utc),
+                    stats,
+                    update_event_fields_from_espn,
+                )
+            except Exception as e:
+                stats["errors"].append(f"deep_authority_stragglers: {str(e)}")
+                logger.warning(
+                    "Deep authority straggler pass failed: %s", e, exc_info=True
+                )
             finally:
                 await straggler_espn.close()
 
@@ -853,6 +872,71 @@ AUTHORITY_STRAGGLER_LOOKBACK = timedelta(hours=48)
 #: never races a genuinely live game to the settle door — and the door itself
 #: refuses anything ESPN has not marked ``completed`` regardless.
 AUTHORITY_STRAGGLER_MIN_AGE = timedelta(hours=2)
+
+
+# ── PAST THE WINDOW, AN ANCHORED ROW IS STRANDED FOR GOOD (#6280) ────────────
+#
+# The lookback above bounds the only pass that can settle a `live`/`suspended`
+# row from ESPN. The other drain — `suspended` → `retired` — is keyed on the row
+# being UNREACHABLE (`suspended_row_is_unreachable`: no provider id of any kind).
+# So a row WITH an `espn_id` that misses the 48h settle window falls in a gap
+# nothing selects: too anchored to be retired, too old to be settled. It does not
+# age out, it does not recover, and no later pass revisits it.
+#
+# MEASURED on production 2026-09-15 02:2xZ: the whole stranded population is
+# SEVEN rows, all 7-30 days old, in five (sport, board day) groups — 4 NCAAF and
+# 3 MLS. There is no ancient tail. Read back against ESPN's own dated boards by
+# id (standing notice 26), the seven split three ways, and the split is the
+# design:
+#
+#   * FOUR are on their own board as `state=post completed=True` — Illinois
+#     42-23 UAB, FSU 24-27 SMU, Portland 5-4 Minnesota, Vancouver 1-3 St. Louis.
+#     These settle, and their SCORES are corrected in the same write: we were
+#     serving FSU-SMU as 17-24 six days after it finished 24-27.
+#   * TWO are marquee college-football fixtures THAT HAVE NOT BEEN PLAYED
+#     (Michigan State @ Michigan, Auburn @ Georgia). ESPN files them under their
+#     November/October board days, so the board for the September date our row
+#     carries does not contain their id at all.
+#   * ONE is a genuine postponement (15291065, FC Cincinnati v D.C. United),
+#     moved to an October board. Same shape: absent from the day we ask about.
+#
+# THE LAST THREE ARE WHY THIS ARM NEEDS A CLOCK OF ITS OWN. They requalify on
+# every single pass and can never resolve, so a widened window on a 60s beat
+# would re-ask five boards forever — ~7,200 extra ESPN requests a day against a
+# task whose p95 already overruns its own period (111.5s, see
+# `MAX_DATED_BOARDS_PER_SPORT`) — for a three-row stock that will never move.
+# A stalest-first queue with a per-pass budget and no stamp is worse still: the
+# three that cannot advance sit at the head of it forever and starve the rows
+# behind them. So the sort key is one THE WORK ADVANCES — when we last ASKED,
+# not when the match kicked off — and it is written whether or not the ask
+# settled anything.
+#
+#: How long before this arm asks about the same row again. Sized on what it is
+#: protecting: the beat is 60s, so a re-ask cooldown of six hours turns the
+#: permanent residue from ~7,200 requests a day into twenty. A row that has NEVER
+#: been asked is not subject to it — it is picked up on the very next pass — so
+#: this delays nothing a reader is waiting on.
+AUTHORITY_DEEP_STRAGGLER_REASK = timedelta(hours=6)
+
+#: Board fetches this arm may add to one pass. Twice the liveness path's ceiling
+#: (`MAX_DATED_BOARDS_PER_SPORT`), and it can afford to be because it runs on the
+#: cooldown above rather than every pass: the measured five-group pile drains in
+#: two passes from cold, and steady state is zero. The budget is the blast radius
+#: of the cooldown being wrong, not the ordinary cost.
+MAX_DEEP_STRAGGLER_BOARDS_PER_PASS = 4
+
+#: Ceiling on rows loaded into memory. The population is structurally small and
+#: measured at seven, but a SELECT with no bound is a promise about the future
+#: rather than a fact about now.
+MAX_DEEP_STRAGGLER_CANDIDATES = 200
+
+#: Where the last-asked stamp lives. `win_probability_sources` carries
+#: non-probability facts already — `statpal_end_time` and `ESPN_NOT_STARTED_KEY`
+#: both ride it for exactly this reason — so this needs no migration and no
+#: column. Written with a Core UPDATE, never by attribute assignment: an
+#: in-place change to a JSONB value is invisible to the ORM's change tracking
+#: and is silently dropped (gotcha #4).
+DEEP_STRAGGLER_ASKED_KEY = "deep_straggler_asked_at"
 
 #: The Redis key that turns the unreachable-suspended arm on, and the number of
 #: rows it may retire per pass. ABSENT OR 0 MEANS THE ARM DOES NOTHING — not
@@ -1099,15 +1183,54 @@ async def _settle_authority_stragglers(session, espn, now, stats, update_fields_
 
     stats["straggler_candidates"] = sum(len(v) for v in groups.values())
 
-    for (sport_key, board_date), events in sorted(groups.items()):
+    await _ask_boards_by_espn_id(
+        session, espn, sorted(groups.items()), stats, update_fields_fn,
+        stat_prefix="straggler",
+        log_tag=(
+            "#4652 straggler: event %d (%s vs %s, %s) %s → %s from the %s "
+            "board — the day it was filed under, not the day we were asking "
+            "about."
+        ),
+    )
+
+
+async def _ask_boards_by_espn_id(
+    session, espn, ordered_groups, stats, update_fields_fn, *,
+    stat_prefix, log_tag, on_asked=None,
+):
+    """Fetch each (sport, board day) board and settle its rows BY ``espn_id``.
+
+    The shared body of both straggler arms — the shallow one above and the deep
+    one below — so the safety case those two docstrings make lives in exactly one
+    place. ``ordered_groups`` is an already-ordered sequence of
+    ``((sport_key, board_date), [event, ...])``; each arm decides its own
+    candidates and its own order, and neither decides how a board is read.
+
+    ``on_asked`` is called with each group's events once the board has been
+    ASKED FOR, whether or not it answered. The deep arm advances its queue on
+    that call, so it must fire on the dark path too: a sport whose board is
+    persistently dark would otherwise hold the head of a stalest-first queue
+    forever, which is the livelock the stamp exists to prevent.
+
+    ⚠️ IT FIRES AFTER THE ROW LOOP, NOT BEFORE, AND THAT ORDERING IS LOAD-BEARING.
+    ``update_fields_fn`` writes ``win_probability_sources`` itself (three sites in
+    ``espn_helpers``), and each one re-assigns the in-memory value after its Core
+    UPDATE so the object stays in step. A caller that merges a key into that same
+    JSONB — which is exactly what the deep arm's stamp does — therefore has to
+    read it once the door has finished with it, or it writes back a dict the door
+    has already moved on from and silently drops the probability it just stored.
+    """
+    for (sport_key, board_date), events in ordered_groups:
         # Per-group, so one sport's dark board or bad row cannot wipe the pass
         # for every other sport (gotcha #42).
         try:
             board = await espn.get_scoreboard(sport_key, date=board_date)
         except Exception as e:
             stats["errors"].append(
-                f"straggler_fetch_{sport_key}_{board_date}: {str(e)}"
+                f"{stat_prefix}_fetch_{sport_key}_{board_date}: {str(e)}"
             )
+            if on_asked is not None:
+                await on_asked(events)
             continue
 
         if board is None:
@@ -1118,9 +1241,11 @@ async def _settle_authority_stragglers(session, espn, now, stats, update_fields_
                 "ESPN board %s authority dark for %s — %d straggler(s) left "
                 "as they are", board_date, sport_key, len(events),
             )
+            if on_asked is not None:
+                await on_asked(events)
             continue
 
-        stats["straggler_boards_fetched"] += 1
+        stats[f"{stat_prefix}_boards_fetched"] += 1
         by_id = {ee.espn_id: ee for ee in board if ee.espn_id}
         claimed_espn_ids = {e.espn_id for e in events if e.espn_id}
 
@@ -1134,17 +1259,187 @@ async def _settle_authority_stragglers(session, espn, now, stats, update_fields_
                     session, event, matched, claimed_espn_ids, stats
                 )
             except Exception as e:
-                stats["errors"].append(f"straggler_update_{event.id}: {str(e)}")
+                stats["errors"].append(
+                    f"{stat_prefix}_update_{event.id}: {str(e)}"
+                )
                 continue
             if event.status != was:
-                stats["straggler_settled"] += 1
+                stats[f"{stat_prefix}_settled"] += 1
                 logger.info(
-                    "#4652 straggler: event %d (%s vs %s, %s) %s → %s from the "
-                    "%s board — the day it was filed under, not the day we "
-                    "were asking about.",
+                    log_tag,
                     event.id, event.home_team_name, event.away_team_name,
                     sport_key, was, event.status, board_date,
                 )
+
+        if on_asked is not None:
+            await on_asked(events)
+
+
+def _deep_straggler_asked_at(event, now) -> Optional[datetime]:
+    """When did the deep arm last ASK about this row? ``None`` for never.
+
+    ``None`` is also the answer for a stamp that cannot be read and for one that
+    sits in the FUTURE, and both defaults are deliberate: this value is a queue
+    position, and the failure mode to avoid is a row that can never reach the
+    head of the queue again. A garbled stamp or a clock that ran backwards would
+    park a settleable row forever; treating either as "never asked" costs one
+    board fetch and self-heals on the next write.
+
+    ``now`` is a parameter rather than a clock read for the reason every other
+    time-dependent policy in this module takes one: a function that reads its own
+    clock cannot be tested against a fixed anchor (gotcha #44).
+    """
+    sources = getattr(event, "win_probability_sources", None) or {}
+    raw = sources.get(DEEP_STRAGGLER_ASKED_KEY)
+    if not raw:
+        return None
+    try:
+        asked = datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
+        return None
+    if asked.tzinfo is None:
+        asked = asked.replace(tzinfo=timezone.utc)
+    if asked > now:
+        return None
+    return asked
+
+
+async def _settle_deep_authority_stragglers(
+    session, espn, now, stats, update_fields_fn
+):
+    """Reach the anchored rows that aged out of the settle window (#6280).
+
+    ``_settle_authority_stragglers`` above asks about the right BOARD DAY but
+    only for rows inside :data:`AUTHORITY_STRAGGLER_LOOKBACK`. This arm is the
+    same question asked of the rows that fell past it — the permanently stranded
+    population described at :data:`AUTHORITY_DEEP_STRAGGLER_REASK`, which nothing
+    else selects.
+
+    ── STRICTLY DISJOINT FROM THE SHALLOW ARM, WHICH IS THE WHOLE SAFETY CASE ──
+
+    The candidate window is ``commence_time < now - AUTHORITY_STRAGGLER_LOOKBACK``
+    — the exact complement of the shallow arm's, not an overlap. So this cannot
+    change what the shallow arm does, cannot double-fetch a board it already
+    fetched in the same pass, and cannot put a row the liveness path is actively
+    working into a six-hour cooldown. The two arms partition the anchored
+    unsettled population on one boundary; move the boundary and they still
+    partition it.
+
+    It settles through the same door as every other authority write —
+    ``update_fields_fn`` requires ``state="post"`` AND ``completed=True``
+    (``espn_terminal_state``) — and it matches BY ``espn_id`` ONLY, never by
+    name, for the reason ``_settle_authority_stragglers`` sets out at length: a
+    name match across board days lets a finished game's Final land on a fixture
+    that has not kicked off (gotcha #32, CERT-752's class). Here that is not a
+    theoretical worry. Three of the seven rows in the measured population are
+    fixtures ESPN has filed under a LATER board day than the one our row carries
+    — two unplayed college-football games and one postponement — so the board
+    this arm fetches for them does not contain their id and the pass is a no-op
+    on exactly the rows that must not be settled. They are refused a step before
+    the door, by absence rather than by judgement.
+
+    ``authority_board_day_has_rolled`` is not consulted: it is structurally True
+    for everything past 48 hours, and a guard that cannot return False on its own
+    candidate set is a vacuous one.
+    """
+    from sqlalchemy import update as sql_update
+
+    from app.utils.event_completion import EVENT_SUSPENDED, espn_board_date
+
+    stats["deep_straggler_candidates"] = 0
+    stats["deep_straggler_eligible"] = 0
+    stats["deep_straggler_groups"] = 0
+    stats["deep_straggler_boards_fetched"] = 0
+    stats["deep_straggler_settled"] = 0
+    stats["deep_straggler_asked"] = 0
+
+    result = await session.execute(
+        select(Event)
+        .options(selectinload(Event.sport))
+        .where(
+            Event.status.in_(["live", EVENT_SUSPENDED]),
+            Event.espn_id.isnot(None),
+            Event.commence_time < now - AUTHORITY_STRAGGLER_LOOKBACK,
+        )
+        .order_by(Event.commence_time.desc())
+        .limit(MAX_DEEP_STRAGGLER_CANDIDATES)
+    )
+    candidates = result.scalars().all()
+    stats["deep_straggler_candidates"] = len(candidates)
+
+    # THE COOLDOWN AND THE ORDER ARE BOTH READ OFF THE SAME STAMP, in Python
+    # rather than in SQL. The population is bounded by the SELECT above and
+    # measured at seven; keeping the queue arithmetic out of a JSONB expression
+    # keeps it testable without a database, which is how every other policy in
+    # this module is tested.
+    cooldown_floor = now - AUTHORITY_DEEP_STRAGGLER_REASK
+    groups: dict[tuple[str, str], list] = {}
+    asked_by_group: dict[tuple[str, str], datetime] = {}
+    never = datetime.min.replace(tzinfo=timezone.utc)
+
+    for event in candidates:
+        sport_key = event.sport.key if event.sport else ""
+        if sport_key not in ESPN_SPORT_MAPPING:
+            continue
+        asked = _deep_straggler_asked_at(event, now)
+        if asked is not None and asked > cooldown_floor:
+            continue
+        key = (sport_key, espn_board_date(event.commence_time))
+        groups.setdefault(key, []).append(event)
+        # A group is as stale as its stalest row, so one never-asked row pulls
+        # its whole board day forward — the board is fetched once either way.
+        stamp = asked or never
+        if key not in asked_by_group or stamp < asked_by_group[key]:
+            asked_by_group[key] = stamp
+
+    stats["deep_straggler_eligible"] = sum(len(v) for v in groups.values())
+    stats["deep_straggler_groups"] = len(groups)
+    if not groups:
+        return
+
+    # Stalest first, then a stable tiebreak so a pass is reproducible.
+    ordered = sorted(groups.items(), key=lambda kv: (asked_by_group[kv[0]], kv[0]))
+    ordered = ordered[:MAX_DEEP_STRAGGLER_BOARDS_PER_PASS]
+
+    async def _stamp_asked(events):
+        """Advance the queue for every row this pass actually asked about.
+
+        Rows the ask SETTLED are skipped: they have left the candidate states,
+        so they can never be selected again and a stamp on them is residue.
+        """
+        from app.utils.event_completion import authority_may_settle
+
+        for event in events:
+            if not authority_may_settle(event.status):
+                continue
+            updated = dict(getattr(event, "win_probability_sources", None) or {})
+            updated[DEEP_STRAGGLER_ASKED_KEY] = now.isoformat()
+            try:
+                await session.execute(
+                    sql_update(Event)
+                    .where(Event.id == event.id)
+                    .values(win_probability_sources=updated)
+                )
+            except Exception as e:
+                stats["errors"].append(
+                    f"deep_straggler_stamp_{event.id}: {str(e)}"
+                )
+                continue
+            # Keep the in-memory row consistent with the write, so a second
+            # read inside the same pass sees the same queue position.
+            event.win_probability_sources = updated
+            stats["deep_straggler_asked"] += 1
+
+    await _ask_boards_by_espn_id(
+        session, espn, ordered, stats, update_fields_fn,
+        stat_prefix="deep_straggler",
+        log_tag=(
+            "#6280 deep straggler: event %d (%s vs %s, %s) %s → %s from the %s "
+            "board — anchored, past the 48h settle window, and stranded until "
+            "now."
+        ),
+        on_asked=_stamp_asked,
+    )
 
 
 async def _find_sport_keys_to_sync(session):
