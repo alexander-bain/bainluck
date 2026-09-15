@@ -124,6 +124,24 @@ body {
   display: none;
 }
 
+/* Horizontal scroll shadows for wide data tables (#6292).
+   A table that overflows its container was cut mid-glyph with no affordance, so a
+   column sitting entirely off-screen read as a column that does not exist. These
+   shadows appear ONLY when there is something to scroll to and fade out as that
+   edge is reached — the `local` background-attachment on the cover gradients is
+   what makes them self-hiding, so a table that fits shows nothing at all. */
+.scroll-shadow-x {
+  background-image:
+    linear-gradient(to right, var(--surface-card) 30%, rgba(255, 255, 255, 0)),
+    linear-gradient(to left, var(--surface-card) 30%, rgba(255, 255, 255, 0)),
+    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0)),
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0));
+  background-position: left center, right center, left center, right center;
+  background-repeat: no-repeat;
+  background-size: 40px 100%, 40px 100%, 14px 100%, 14px 100%;
+  background-attachment: local, local, scroll, scroll;
+}
+
 /* Live pulse animation */
 @keyframes pulse-live {
   0%, 100% {
