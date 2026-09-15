@@ -1007,15 +1007,32 @@ async def resolve_market_born_duplicates(
        clear every other refusal: 41 already folded on the ghost row's own key,
        and the ticker witness adds **3** — 15305032, 15305039, 15305046, all
        `basketball_other` rows minted by `KXNFLRACE-…` tickers that read
-       `americanfootball_nfl`. **Three, not four, and the fourth is named here
+       `americanfootball_nfl`. **Three at that hour, and the fourth was named
        rather than rounded away:** ghost 15311150, ticker `KXNFLFG-26SEP14DENKC`,
-       a series absent from both ticker maps, so `get_sport_key_from_ticker`
-       returns `None`, there is no second witness, and it stays refused. Mapping
-       `kxnflfg` is a `sport_keys.py` change with its own blast radius and is not
-       smuggled in here. Under-coverage is the safe direction. (A fifth row of
-       the same shape, 15305029, is declined by refusal 7 for holding its own
-       markets — the refusals compose, and a claim counted before them is
-       inflated.)
+       a series then absent from both ticker maps, so `get_sport_key_from_ticker`
+       returned `None`, there was no second witness, and it stayed refused.
+       Mapping `kxnflfg` is a `sport_keys.py` change with its own blast radius
+       and was not smuggled in here. Under-coverage is the safe direction.
+       (A fifth row of the same shape, 15305029, is declined by refusal 7 for
+       holding its own markets — the refusals compose, and a claim counted
+       before them is inflated.)
+
+       🟢 **THE FOURTH FOLDS AS OF 2026-09-15, AND NOT ONE LINE OF THIS FILE
+       MOVED (#6262 follow-up, `71e1e5b7`).** `kxnflfg` was mapped where it
+       belonged — in `sport_keys.py`, in its own ship, carrying its own blast
+       radius — and this statement picked the fold up for free. That is the
+       property the second witness was built for, so the paragraph above is
+       kept as written rather than rewritten: it is a true reading of 05:30Z,
+       and the way its gap closed is the argument. **Measured on production
+       2026-09-15 09:0xZ, after the main-app release recorded as carrying it:**
+       `GET /api/events/15311150` answers `14638896`; the control `15311995`
+       answers itself, so it is a fold and not a blanket redirect; and the ghost
+       is off `/api/events/search?q=Denver` via `market_born_duplicates_on_page`
+       while the canonical 14638896 is still served there. The ghost row itself
+       is untouched in `events` — still `scheduled`, still `sport_id` 37873 —
+       which is what "suppress, do not fold" means and why nothing here had to
+       change. **The lesson for the next refusal that comes up one short: the
+       repair is usually a map entry, never a loosened refusal.**
 
        **What still refuses, and it is the whole point:** a ghost whose ticker
        is a soccer ticker resolving onto an NFL canonical fails BOTH witnesses,
