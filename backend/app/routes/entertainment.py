@@ -146,12 +146,42 @@ def _classify_kind(market: FuturesMarket, outcome_count: int) -> str:
 
 
 def _market_row(market: FuturesMarket, max_outcomes: int = 3) -> dict | None:
-    """Enriched market row with all available fields."""
+    """Enriched market row with all available fields.
+
+    Returns None for a market this page holds no probability for at all —
+    see the refusal below.
+    """
     outcomes = _clean_outcomes(market.outcomes)
     outcomes = sorted(
         outcomes, key=lambda o: float(o.current_probability or 0), reverse=True
     )
     if not outcomes:
+        return None
+    # #6235 — A MARKET NOBODY HAS PRICED IS NOT A MARKET AT 0%.
+    #
+    # This is #2950's refusal, ported from `economics._market_row`, whose
+    # docstring states the rule it turns on: a priced zero is DATA (the market
+    # says no); a NULL is the ABSENCE of data, and only the second is grounds
+    # for refusing the row. That fix landed in the sibling route alone — its
+    # note records that `politics.py` and `entertainment.py` "already refuse on
+    # their third line", which is the check above: it refuses a market with NO
+    # OUTCOMES, never one whose outcomes carry no price. The `float(... or 0)`
+    # reads below are what renders the difference: every rung folds to 0.0 and
+    # the row headlines a confident `0%`.
+    #
+    # Measured on production 2026-09-14, the same minute, across the three
+    # dashboards that share this row shape — the already-fixed sibling is the
+    # control: `/api/economics` **0 of 55** zero-probability rows,
+    # `/api/entertainment` **20 of 112**, `/api/politics` **32 of 68**. The 20
+    # here are the never-traded daily-chart racks: `YouTube Charts: Weekly Top
+    # Song USA`, `Taylor Swift · Views on Sep 13, 2026`, `Ligue 1 Golden Boot`.
+    #
+    # ⚠️ THE ZEROS ARE NOT A BACKFILL HOLE, so withdrawing the card deletes no
+    # alarm: of the 424 open markets in these categories with no priced outcome,
+    # **420 have never held a single `futures_odds_snapshots` row**. There is no
+    # price to recover and none is being hidden. `outcome_count` is unaffected;
+    # a market that gets its first price returns on the next build.
+    if not any(o.current_probability is not None for o in outcomes):
         return None
     top = outcomes[:max_outcomes]
     outcome_count = len(outcomes)

@@ -218,6 +218,34 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
     outcomes = _clean_outcomes(market.outcomes)
     if not outcomes:
         return None
+    # #6235 — A MARKET NOBODY HAS PRICED IS NOT A MARKET AT 0%.
+    #
+    # This is #2950's refusal, ported from `economics._market_row`, whose
+    # docstring states the rule it turns on: a priced zero is DATA (the market
+    # says no); a NULL is the ABSENCE of data, and only the second is grounds
+    # for refusing the row. That fix landed in the sibling route alone — its
+    # note records that `politics.py` and `entertainment.py` "already refuse on
+    # their third line", which is the two lines above: they refuse a market with
+    # NO OUTCOMES, never one whose outcomes carry no price. So the half of the
+    # class that lives one level down stayed open here for the whole of #2950's
+    # life, and the three `float(... or 0)` reads below are what renders it:
+    # every rung folds to 0.0 and the row headlines a confident `0%`.
+    #
+    # Measured on production 2026-09-14, the same minute, across the three
+    # dashboards that share this row shape — the already-fixed sibling is the
+    # control: `/api/economics` **0 of 55** zero-probability rows,
+    # `/api/politics` **32 of 68**, `/api/entertainment` **20 of 112**. On
+    # `/politics` the Congressional section was 10 of 10 and RELATED MARKETS
+    # six of six, each printing a real question over `0%`.
+    #
+    # ⚠️ THE ZEROS ARE NOT A BACKFILL HOLE, so withdrawing the card deletes no
+    # alarm: of the 424 open markets in these categories with no priced outcome,
+    # **420 have never held a single `futures_odds_snapshots` row**. There is no
+    # price to recover and none is being hidden — the market has simply never
+    # traded. `outcome_count` is unaffected; a market that gets its first price
+    # returns on the next build.
+    if not any(o.current_probability is not None for o in outcomes):
+        return None
     expired = expired_ladder_rungs(
         [
             (
