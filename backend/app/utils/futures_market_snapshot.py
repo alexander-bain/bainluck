@@ -589,6 +589,44 @@ def _outcome_probability(outcome: Any) -> float:
         return -1.0
 
 
+def outcome_prints_a_price(outcome: Any) -> bool:
+    """Whether a card rendering this leg would put a NUMBER beside it (#6256).
+
+    THE ONE PREDICATE BOTH SIDES OF THE CARD MUST AGREE ON. The futures
+    serializers decide what to print with
+    `float(o.current_probability) if o.current_probability else None`, and
+    `displayed_price_stamp` decides what may date the mark. #6256 is what
+    happens when those two disagree: the Premier Lacrosse League Championship
+    card printed two probabilities observed 41 minutes earlier, a third row
+    rendering `—`, and the mark `2d ago` — because the fold read the blank row's
+    stamp. `Which party will win the House in 2026?` read `125d ago` over two
+    prices from the same 41 minutes. So both sides call THIS, and a future edit
+    to what counts as printable moves them together or not at all.
+
+    🔴 THE TRUTHINESS IS DELIBERATE AND IT IS NOT THIS FUNCTION'S BUG TO FIX.
+    `not value` treats `0.0` as unprintable along with `None`, which is #6195 —
+    a probability of exactly zero is a real price and should render `0%`. It is
+    reproduced here ON PURPOSE, because the rule is *"does the card print a
+    number"* and today the card does not print one for a `0.0` leg. PLL's six
+    eliminated legs are `0.000000`, not `NULL`; if this function were stricter
+    than the serializer, the specimen in #6256 would still date its mark from a
+    row showing `—`. When #6195 lands, this predicate and the serializers change
+    in one place together — which is the whole reason it is one function.
+
+    `__dict__.get`, never `getattr`, for this module's usual reason (gotcha
+    #42). The `__slots__` carrier with no instance dict answers `False`, the
+    same honest degradation it already gets from `_outcome_observed_epoch`.
+    """
+    value = (_instance_dict(outcome) or _NO_INSTANCE_DICT).get("current_probability")
+    if not value:
+        return False
+    try:
+        float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
 def _top_price_observed_at(
     outcomes: Iterable[Any], leg_count: int = CARD_PRICE_AGE_LEG_COUNT
 ) -> Any:
@@ -751,10 +789,35 @@ def displayed_price_stamp(outcomes: Iterable[Any]) -> Any:
     card whose third leg was never polled, the honest thing the other two
     support is still their own age, and `None` there would delete a disclosure
     that is currently correct.
+
+    ═══ A LEG THAT PRINTS NO NUMBER IS NOT A PRICE FACT EITHER (#6256) ═══
+
+    The rule above, one step further, and the step #5809 did not take: this
+    ignored a leg with no readable STAMP but not a leg with no readable PRICE.
+    A row rendering `—` contributes no probability for the mark to speak for,
+    so dating the mark from it states an age for prices that do not exist —
+    while the prices the card DOES show go undisclosed. Measured on production
+    2026-09-15: `2d ago` under two 41-minute-old prices, `125d ago` under two
+    more, and 521 open markets in the reachable population.
+
+    `_top_price_observed_at`'s defence against this — `_outcome_probability`
+    returns `-1.0` for an unreadable price so it sorts out of the top-N window —
+    is structurally unreachable for exactly this population: when a market has
+    fewer than three priced legs, a three-leg slice has nothing to push the
+    blank row out WITH. A ranking cannot exclude what there is no replacement
+    for; only a predicate can.
+
+    `None` still means "we do not know" and now also covers a card on which no
+    printed leg carries both a price and a stamp — which is a card showing no
+    numbers at all, so there is no disclosure being deleted.
     """
     seconds = [
         epoch
-        for epoch in (_outcome_observed_epoch(o) for o in outcomes)
+        for epoch in (
+            _outcome_observed_epoch(o)
+            for o in outcomes
+            if outcome_prints_a_price(o)
+        )
         if epoch is not None
     ]
     if not seconds:
@@ -1211,6 +1274,7 @@ __all__ = [
     "opening_baseline_stamp",
     "price_poll_stamp",
     "displayed_price_stamp",
+    "outcome_prints_a_price",
     "concept_card_leg_count",
     "concept_price_observed_at_iso",
     "to_plain",

@@ -5914,6 +5914,7 @@ from app.utils.futures_market_snapshot import (
     opening_baseline_stamp,
     price_poll_stamp as _price_poll_stamp,
     displayed_price_stamp as _displayed_price_stamp,
+    outcome_prints_a_price as _outcome_prints_a_price,
 )
 
 
@@ -9654,8 +9655,15 @@ async def _score_sports_mode_futures(
             {
                 "id": o.id,
                 "name": o.name,
+                # #6256: `outcome_prints_a_price` is the SAME predicate
+                # `displayed_price_stamp` uses to decide which legs may date the
+                # age mark. Wire-identical to the truthiness test it replaces —
+                # the point is that the card's numbers and the card's stamp can
+                # no longer disagree about which rows are prices. They did: a
+                # row rendering `—` dated one card `2d ago` over two prices 41
+                # minutes old.
                 "probability": (
-                    float(o.current_probability) if o.current_probability else None
+                    float(o.current_probability) if _outcome_prints_a_price(o) else None
                 ),
                 "rank": position,
                 "movement": (
@@ -11043,8 +11051,13 @@ async def _score_futures(
                 {
                     "id": o.id,
                     "name": o.name,
+                    # #6256 — the twin of the `_score_sports_mode_futures` site.
+                    # Same predicate as `displayed_price_stamp`, so the printed
+                    # numbers and the age mark cannot drift apart here either.
                     "probability": (
-                        float(o.current_probability) if o.current_probability else None
+                        float(o.current_probability)
+                        if _outcome_prints_a_price(o)
+                        else None
                     ),
                     "rank": position,
                     "movement": (
