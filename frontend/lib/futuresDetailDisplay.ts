@@ -342,8 +342,6 @@ export function futuresUnfurlCopy<
   hookDescription?: string | null;
 }): FuturesUnfurlCopy {
   const isResolved = opts.status === "resolved";
-  const featured = pickHeroOutcome(opts.outcomes, opts.leader, isResolved);
-  const featuredName = isResolved ? leaderLabel(featured) : null;
   // `is_winner === true` is required before the word "won" is printed, mirroring
   // `FuturesHero`'s `resolvedWon` chip. `pickHeroOutcome` falls back to the price
   // leader when nothing is graded, and a fallback must not crown an ungraded row
@@ -351,7 +349,21 @@ export function futuresUnfurlCopy<
   // #6079 — asked through `gradedWinner` rather than re-derived here, because the
   // unfurl TITLE needs the identical answer and the copy of this test that lived
   // in `layout.tsx` is exactly the one that went missing.
-  const settledWon = gradedWinner(opts.outcomes, opts.leader, opts.status) !== null;
+  const graded = gradedWinner(opts.outcomes, opts.leader, opts.status);
+  const settledWon = graded !== null;
+  // #6301 — THE NAME GOES WITH THE VERDICT, and until now it did not.
+  //
+  // `settledWon` was gated on the grade (#6079) and `featuredName` was not: it took
+  // `pickHeroOutcome`'s price-leader fallback, so a settled field with nothing graded
+  // put a LOSER's name at 64px on the share card and hung a grey RESOLVED pill beside
+  // it. Production `/futures/58675941` (Vuelta a Espana 2026: Winner) serves 30 legs,
+  // `is_winner:false` on every one, and this line named Tadej Pogacar — who lost that
+  // race to Enric Mas Nicolau. The two halves of one sentence disagreed because only
+  // one of them asked for the grade.
+  //
+  // The card degrades to the market title (`featuredName || title` at the call site),
+  // which is honest and needs no explanation — notice 34.
+  const featuredName = graded ? leaderLabel(graded) : null;
 
   // A SETTLED CARD GETS NO CAPTION AT ALL (#6061), and that keeps #6032's rule
   // rather than relaxing it: the hook leads on a LIVE market only, because
