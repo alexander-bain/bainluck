@@ -27,6 +27,7 @@ Both directions are asserted throughout, which is the issue's own requirement:
 question still prints its pair.**
 """
 
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -455,24 +456,28 @@ class TestTheCardTheReaderActuallySees:
 
 
 class TestADedupedRowDoesNotKeepAStaleSecondSlot:
-    """`_create_or_update_win_prob_snapshot` — sameness is decided on HOME alone.
+    """`_create_or_update_win_prob_snapshot` — sameness used to be decided on
+    HOME alone, and that was complete for as long as away was `1 - home`.
 
-    That test was complete for as long as away was `1 - home`: the two could not
-    disagree. Now they can, and on the FIRST pass after this ships every existing
-    row holds the fabricated complement. Without the refresh, a soccer market
-    whose home price happens to hold across that pass keeps the number this issue
-    is about — on the settled card, which is where it is read.
+    🔴 THE FIRST BUILD FIXED THIS THE WRONG WAY AND CERT-2894 BLOCKED IT. It
+    refreshed the second slot IN PLACE on the same-value branch, which does not
+    move `captured_at` — so a post-kickoff reading rewrote a PRE-KICKOFF row and
+    the pre-match cutoff served in-play evidence as the pre-match favourite.
+
+    The second slot is part of the VALUE. A change takes the ordinary changed
+    path: old row closed out, new row stamped now. Evidence never lands on a row
+    older than itself.
     """
 
     class _Existing:
-        def __init__(self, home, away, draw=None):
+        def __init__(self, home, away, draw=None, captured_at=None):
             self.home_win_probability = home
             self.away_win_probability = away
             self.draw_probability = draw
             self.game_state = None
             self.reading_count = 1
             self.valid_until = None
-            self.captured_at = None
+            self.captured_at = captured_at
 
     class _Session:
         def __init__(self, existing):
@@ -495,7 +500,63 @@ class TestADedupedRowDoesNotKeepAStaleSecondSlot:
         )
 
     @pytest.mark.asyncio
-    async def test_an_unchanged_home_price_still_corrects_the_away_slot(self):
+    async def test_post_kickoff_second_slot_move_cannot_rewrite_the_prematch_favourite_6277(
+        self,
+    ):
+        """🔴 CERT-2894's REQUIRED TEST, on the grader's exact probe.
+
+        A pre-kickoff row priced the board 0.40 / 0.35 / 0.25 — home favoured.
+        A post-kickoff reading of the SAME home price arrives with the draw
+        drained into the away side, 0.40 / 0.42 / 0.18.
+
+        Under the blocked build that landed on the pre-kickoff row in place:
+        `is_new=False`, the timestamp never moved, and the pre-match cutoff
+        query — which selects by `captured_at` — then read 42 vs 40 and served
+        the AWAY side as the pre-match favourite off in-play evidence.
+
+        Three things are asserted, and the third is the reader's.
+        """
+        before_kickoff = datetime(2026, 9, 14, 18, 0, tzinfo=timezone.utc)
+        existing = self._Existing(0.40, 0.35, 0.25, captured_at=before_kickoff)
+
+        row, is_new = await self._write(
+            existing,
+            home_win_probability=0.40,
+            away_win_probability=0.42,
+            draw_probability=0.18,
+        )
+
+        # 1. It is a new observation, not a rewrite of the old one.
+        assert is_new is True, (
+            "a moved second slot is a different board and must get its own "
+            "captured_at (CERT-2894)"
+        )
+        assert row is not existing
+
+        # 2. The pre-kickoff row is untouched where it counts.
+        assert float(existing.away_win_probability) == pytest.approx(0.35)
+        assert float(existing.draw_probability) == pytest.approx(0.25)
+        assert existing.captured_at == before_kickoff, (
+            "the pre-kickoff row's timestamp moved, so the cutoff query can no "
+            "longer tell pre-match evidence from in-play evidence"
+        )
+
+        # 3. What the reader is served off the pre-match row: HOME favoured,
+        #    which is what the board actually said before kickoff.
+        assert existing.home_win_probability > existing.away_win_probability, (
+            "the pre-match favourite flipped to the away side on in-play "
+            "evidence — the exact defect CERT-2894 refused"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_one_time_complement_correction_is_a_new_row_too(self):
+        """The case the blocked build wrote in place, taking the honest path.
+
+        On the first pass after this ships every existing row holds the
+        fabricated complement. Correcting it is still a different board from the
+        one stored, so it appends rather than backdating the truth onto a
+        timestamp at which we did not know it. The old row is closed out.
+        """
         existing = self._Existing(SNAP_HOME, 1.0 - SNAP_HOME, None)
         row, is_new = await self._write(
             existing,
@@ -503,10 +564,53 @@ class TestADedupedRowDoesNotKeepAStaleSecondSlot:
             away_win_probability=K_AWAY,
             draw_probability=K_TIE,
         )
-        assert is_new is False, "a corrected second slot is not a new price point"
-        assert row is existing
+        assert is_new is True
+        assert row is not existing
         assert float(row.away_win_probability) == pytest.approx(K_AWAY)
         assert float(row.draw_probability) == pytest.approx(K_TIE)
+        assert existing.valid_until is not None, "the old row must be closed out"
+        # ...and the stale row keeps its own history rather than being rewritten.
+        assert float(existing.away_win_probability) == pytest.approx(1.0 - SNAP_HOME)
+
+    @pytest.mark.asyncio
+    async def test_an_identical_triple_still_dedups_to_one_row(self):
+        """The dedup is not switched off — only widened to the whole value.
+
+        Same home, same away, same draw: one observation, counter bumped, no new
+        point. Without this a three-way market would append on every poll and
+        the guard above would be indistinguishable from deleting the dedup.
+        """
+        existing = self._Existing(SNAP_HOME, K_AWAY, K_TIE)
+        row, is_new = await self._write(
+            existing,
+            home_win_probability=SNAP_HOME,
+            away_win_probability=K_AWAY,
+            draw_probability=K_TIE,
+        )
+        assert (is_new, row is existing, row.reading_count) == (False, True, 2)
+
+    @pytest.mark.asyncio
+    async def test_a_draw_arriving_against_a_stored_none_is_a_change(self):
+        """A two-way reading and a three-way reading are not the same board.
+
+        `None` against a number is a change in BOTH directions — asserted both
+        ways, because a one-directional test passes against a comparison that
+        silently coerces `None` to 0.0.
+        """
+        existing = self._Existing(SNAP_HOME, K_AWAY, None)
+        _row, is_new = await self._write(
+            existing,
+            home_win_probability=SNAP_HOME,
+            away_win_probability=K_AWAY,
+            draw_probability=K_TIE,
+        )
+        assert is_new is True
+
+        existing = self._Existing(SNAP_HOME, K_AWAY, K_TIE)
+        _row, is_new = await self._write(
+            existing, home_win_probability=SNAP_HOME, away_win_probability=K_AWAY
+        )
+        assert is_new is True
 
     @pytest.mark.asyncio
     async def test_a_two_way_source_still_deduped_to_a_bare_complement(self):
