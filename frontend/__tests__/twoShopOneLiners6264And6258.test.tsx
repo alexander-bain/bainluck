@@ -84,30 +84,35 @@ const ANALYTICS_HOOKS = {
 };
 
 /**
- * Strip tags the way an INLINE element actually renders — to nothing.
+ * 🔴 THIS FILE ASSERTS ON MARKUP, AND THE TWO HELPERS IT DOES NOT HAVE ARE THE
+ * FINDING.
  *
- * 🔴 The first version of this file used the house `visibleText`, which
- * replaces every tag with a SPACE. Against a defect that IS a missing space
- * that helper manufactures the answer: `is <em>not</em>covered` becomes
- * `is  not covered`, so the pre-fix page passed `toContain("is not covered")`
- * and M1 — reverting the fix — survived the whole sweep green. The helper is
- * right for every other file (it keeps block-level siblings from gluing) and
- * wrong for exactly this one.
+ * 1. The house `visibleText` replaces every tag with a SPACE. Against a defect
+ *    that IS a missing space it manufactures the answer: `is <em>not</em>covered`
+ *    reads back as `is  not covered`, so the broken page passed
+ *    `toContain("is not covered")` and M1 — reverting the fix — survived the
+ *    first sweep green. That helper is right for every other file (it stops
+ *    block-level siblings gluing) and wrong for exactly this one.
  *
- * An inline tag contributes no whitespace in a browser, so `""` is the faithful
- * model here. Everything asserted below lives inside a single `<li>`, so the
- * block-gluing the house helper exists to prevent cannot reach it.
+ * 2. The obvious replacement, stripping tags to `""` the way an inline element
+ *    actually renders, is **`js/incomplete-multi-character-sanitization`,
+ *    CodeQL HIGH** — `<scr<script>ipt>` survives a single pass, so a regex that
+ *    deletes tags is a broken sanitiser wherever it appears. It refused this
+ *    sha at notice 32 and it was right to: the fix for that rule is to loop
+ *    until stable, and writing a loop here would be building a sanitiser inside
+ *    a test that has no untrusted input, purely to satisfy a scanner.
+ *
+ * The defect is an ADJACENCY in the markup — whether anything sits between
+ * `</em>` and `covered` — so the markup is the honest oracle, not a proxy for
+ * it. `renderToStaticMarkup` emits no comment separators, so `<em>not</em>`
+ * followed immediately by `covered` is exactly what a reader sees glued
+ * together, verified by reading the rendered string on master:
+ *
+ *     "it runs on every visit and is <em>not</em>covered by the analytics"
+ *
+ * Every assertion below reads that string. Nothing is stripped, so nothing can
+ * be manufactured by the stripping.
  */
-function inlineText(markup: string): string {
-  return markup
-    .replace(/<[^>]*>/g, "")
-    .replace(/[“”]/g, '"')
-    .replace(/[’]/g, "'")
-    .replace(/&#x27;|&apos;/g, "'")
-    .replace(/&amp;/g, "&")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 describe("#6264 — /privacy does not glue a word to the end of an emphasis", () => {
   function renderPrivacy(): string {
@@ -159,27 +164,35 @@ describe("#6264 — /privacy does not glue a word to the end of an emphasis", ()
     return bulletFor(markup, "Vercel Web Analytics");
   }
 
+  /** The sentence as it stands in the markup once the emphasis is closed. */
+  const JOINED = "it runs on every visit and is <em>not</em>covered by the analytics choice";
+  const SPACED = "it runs on every visit and is <em>not</em> covered by the analytics choice";
+
   it("finds the Web Analytics bullet, and finds it apart from its twin", () => {
     // Without this, every assertion below passes vacuously on "".
     const bullet = webAnalyticsBullet(renderPrivacy());
     expect(bullet).not.toBe("");
-    expect(inlineText(bullet)).toContain("a declined visit is still counted");
+    expect(bullet).toContain("a declined visit is still counted");
     // The neighbouring Speed Insights bullet must NOT be in this slice, or the
     // scoping bought nothing.
     expect(bullet).not.toContain("Speed Insights");
   });
 
   it("reads 'is not covered', not 'is notcovered'", () => {
-    const text = inlineText(webAnalyticsBullet(renderPrivacy()));
+    const bullet = webAnalyticsBullet(renderPrivacy());
 
-    // The photographed defect.
-    expect(text).not.toContain("notcovered");
-    expect(text).toContain("it runs on every visit and is not covered by the analytics choice");
+    // The photographed defect, in the exact form the renderer produced it on
+    // master. Both directions: the glued form is gone AND the spaced form is
+    // there, so deleting the sentence does not pass.
+    expect(bullet).not.toContain(JOINED);
+    expect(bullet).toContain(SPACED);
   });
 
   it("the emphasis survives — the fix is a space, not a deleted tag", () => {
-    // Deleting `<em>` would satisfy the row above and lose the emphasis that
-    // carries the sentence's meaning: it is *not* covered.
+    // Deleting `<em>` would satisfy `not.toContain(JOINED)` above and lose the
+    // emphasis that carries the sentence's meaning: it is *not* covered.
+    // `SPACED` already embeds the tag, so this is belt-and-braces on the tag
+    // existing at all in the bullet.
     expect(webAnalyticsBullet(renderPrivacy())).toContain("<em>not</em>");
   });
 
@@ -188,10 +201,8 @@ describe("#6264 — /privacy does not glue a word to the end of an emphasis", ()
     // A repair that reflowed the whole list, or "fixed" both, would show here.
     const speedInsights = bulletFor(renderPrivacy(), "Vercel Speed Insights");
     expect(speedInsights).not.toBe("");
-    expect(inlineText(speedInsights)).toContain(
-      "it runs on every visit and is not covered by the analytics choice"
-    );
-    expect(speedInsights).toContain("<em>not</em>");
+    expect(speedInsights).toContain(SPACED);
+    expect(speedInsights).not.toContain(JOINED);
   });
 });
 
