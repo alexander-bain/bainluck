@@ -9,7 +9,7 @@ so it appears as a trend line on the OddsChart alongside sportsbooks, ESPN, etc.
 
 import re
 import logging
-from typing import Optional
+from typing import Any, Optional
 from datetime import datetime, timedelta, timezone
 
 from app.utils.name_normalization import (
@@ -1561,6 +1561,127 @@ def find_moneyline_outcome(
                     return (outcome, yes_is_home)
 
     return None
+
+
+#: How far a three-way market's three members may sum from 1.0 and still be read
+#: as ONE partition of ONE question.
+#:
+#: MEASURED, not chosen: production 2026-09-15, every fully-priced three-way
+#: board on an upcoming soccer fixture — 125 Kalshi (.963-1.025, median .995) and
+#: 256 Polymarket (.825-1.070, median .980). **380 of those 381 sum inside this
+#: band**; the one exception is a Polymarket board below .90, which is a thin or
+#: stale leg and is correctly refused into the complement rather than published
+#: as a partition. Kalshi quotes in whole cents and carries its spread across
+#: three legs rather than two, so an exact 1.0 is never available.
+#:
+#: Far too tight, meanwhile, for three numbers that are not a partition: a game
+#: winner beside a Both-Teams-To-Score price does not land here by accident.
+#:
+#: ``prematch_reading._PARTITION_TOLERANCE`` is the SERVE-side half of this and
+#: is kept equal to it on purpose — a reader narrower than its writer discards
+#: rows the writer published and the ship goes quietly half-inert, which is the
+#: whole failure mode this issue is about. Asserted by a test, not by proximity.
+_THREE_WAY_SUM_BAND = (0.90, 1.10)
+
+
+def find_three_way_partition(
+    outcomes: list,
+    home_outcome: Any,
+    event_home_team: str,
+    event_away_team: str,
+) -> Optional[tuple]:
+    """``(away_outcome, draw_outcome)`` when this ONE market prices a three-way
+    game, or ``None``.
+
+    WHY THIS EXISTS. A soccer game winner is a THREE-WAY question and the writers
+    store a home/away PAIR, so the away slot was filled with ``1 - home``. That is
+    not the away side's price: it is ``P(not home)``, which hands the away team
+    the opposition's price **plus the entire draw**. Measured over four days of
+    completed fixtures carrying a Kalshi ``Tie`` member (#6277): the complement was
+    exact on **230 of 230** snapshots, and of the 45 whose three venue prices were
+    all present **21 printed the wrong favourite** — because the served favourite
+    is decided by ``home > away`` and every home favourite priced under 50%, the
+    ordinary case in soccer, lost that comparison to its own leftover mass. The
+    photographed card (15298124) called Real Betis a 51% pre-match favourite off a
+    board that priced them at 24.5%, one line above a ``Recent upset`` chip that
+    was telling the truth.
+
+    THE PARTITION IS PROVEN, NOT NAMED. The draw member is identified as "the
+    outcome this market prices that is neither side and is not a prop", and the
+    reading is only returned when the three prices SUM INTO ``_THREE_WAY_SUM_BAND``.
+    Deliberately not a word list: there are already three separate records of the
+    draw vocabulary in this codebase (``market_shape._DRAW_TOKENS``,
+    ``precompute_calibration.DRAW_AUTHORITY_OUTCOME_NAMES``, and
+    ``period_window_grade``'s prose), they disagree, and a fourth would be a fourth
+    thing to keep in step. Coherence is evidence; a spelling is a guess that reads
+    as evidence. It also carries wording this repo has never seen — a venue that
+    writes ``Empate`` or ``Unentschieden`` is priced correctly by arithmetic.
+
+    FAIL-CLOSED, AND THE CALLER'S HOME READING IS THE ANCHOR. ``home_outcome`` is
+    the row :func:`find_moneyline_outcome` actually resolved, passed in rather than
+    re-derived, and this returns ``None`` unless that row is itself one of the two
+    competitor members found here. That is the whole orientation guard: the
+    moneyline resolver has three routes that reach a number without matching the
+    home team by name (the away-side fallback, the full-matchup fallback, the
+    generic Yes/No last resort), and each of them already reports a home
+    probability that is itself a complement. Publishing an away price beside one of
+    those would pair a real number with a derived one and call the result a
+    reading. Exactly one home member and exactly one away member are required for
+    the same reason: two rows matching a side is Kalshi's per-team pair or an
+    ambiguous name, and neither is a partition this function can orient.
+
+    Returns the OUTCOME ROWS, never floats, so the caller stamps the same
+    provenance for these members as it already does for the speaker.
+    """
+    if home_outcome is None:
+        return None
+
+    home_members: list = []
+    away_members: list = []
+    others: list = []
+
+    for outcome in outcomes:
+        if not outcome.name or outcome.current_probability is None:
+            continue
+        prob = float(outcome.current_probability)
+        # The same 0/1 refusal `find_moneyline_outcome` applies, for the same
+        # reason: a settled member prices at exactly 0 or 1 and a partition built
+        # out of settled prices describes the result, not the forecast.
+        if prob <= 0 or prob >= 1:
+            continue
+        if _is_prop_or_spread_outcome(outcome.name):
+            continue
+
+        matches_home = _fuzzy_team_match(outcome.name, event_home_team)
+        matches_away = _fuzzy_team_match(outcome.name, event_away_team)
+        # #4629's rule, unchanged: a name reaching BOTH teams names neither.
+        # Here it disqualifies the whole reading rather than the row — an
+        # outcome we cannot orient is not a member we can put in a partition.
+        if matches_home and matches_away:
+            return None
+        if matches_home:
+            home_members.append(outcome)
+        elif matches_away:
+            away_members.append(outcome)
+        else:
+            others.append(outcome)
+
+    if len(home_members) != 1 or len(away_members) != 1 or len(others) != 1:
+        return None
+    if home_members[0] is not home_outcome:
+        return None
+
+    draw_outcome = others[0]
+    total = (
+        float(home_members[0].current_probability)
+        + float(away_members[0].current_probability)
+        + float(draw_outcome.current_probability)
+    )
+    low, high = _THREE_WAY_SUM_BAND
+    if not low <= total <= high:
+        return None
+
+    return away_members[0], draw_outcome
 
 
 # ── Kalshi ticker → team abbreviation extraction ──────────────────────────────

@@ -48,6 +48,7 @@ from app.utils.prediction_market_matching import (
     extract_matchup_with_ticker_fallback,
     feeds_win_prob_blend,
     find_moneyline_outcome,
+    find_three_way_partition,
 )
 from app.utils.probability_eligibility import (
     EligibilityRecord,
@@ -184,6 +185,29 @@ class BlendReading:
     #: Defaults to ``()`` so a reading built anywhere else is unchanged; callers
     #: fall back to ``(outcome,)``, which is what a single-market reading means.
     contributing_outcomes: tuple = ()
+
+    #: THE OTHER TWO MEMBERS, when the speaker priced a THREE-WAY game (#6277).
+    #:
+    #: Until these existed the only arithmetic a writer had for the second slot
+    #: was ``1 - home_probability``, and on a soccer game winner that is not the
+    #: away team's price — it is ``P(not home)``, the opposition price plus the
+    #: whole draw. Measured: exact on 230/230 four-day Kalshi snapshots carrying a
+    #: ``Tie`` member, and 21 of the 45 fully-priced cards printed the WRONG
+    #: FAVOURITE off it. The fix could not live at the three call sites because
+    #: the number they needed was not in this object; it had to be put here.
+    #:
+    #: BOTH ARE ``None`` TOGETHER OR NEITHER IS. A partition is only published
+    #: when :func:`find_three_way_partition` proved one (see its docstring: a
+    #: coherent sum, one member a side, the caller's own home row the anchor), so
+    #: there is no state where the away price is known and the draw is not. A
+    #: caller may therefore test either one and get the same answer, and a
+    #: consumer reading ``home + away + draw`` gets a partition or gets nothing.
+    #:
+    #: ``None`` on every two-way source and on every devig — see
+    #: :func:`compute_source_home_probability` for why a devigged composite
+    #: cannot carry one.
+    away_probability: Optional[float] = None
+    draw_probability: Optional[float] = None
 
 
 def _home_probability_for_market(
@@ -779,8 +803,12 @@ def admissible_speakers_are_all_settled(group: Sequence[MarketOutcomes]) -> bool
 
 def _reading_for_entry(
     entry: MarketOutcomes, home_team_name: str, away_team_name: str
-) -> Optional[tuple[Any, float, Any, float]]:
-    """``(matchup, home prob, outcome, yes prob)`` from ONE market, or None.
+) -> Optional[tuple[Any, float, Any, float, Optional[float], Optional[float]]]:
+    """``(matchup, home prob, outcome, yes prob, away prob, draw prob)``, or None.
+
+    The last two are the OTHER MEMBERS of a three-way game (#6277) and are
+    ``None`` on every two-way market — see :func:`find_three_way_partition`,
+    which decides it, and ``BlendReading.away_probability``, which carries it.
 
     The whole admission rule for a single market lives here — the Kalshi
     props/spreads gate, the name parse, and the moneyline resolution — so that
@@ -827,7 +855,21 @@ def _reading_for_entry(
         return None
 
     home_prob, outcome, yes_prob = reading
-    return matchup, home_prob, outcome, yes_prob
+
+    # #6277 — the second slot is a READING now, wherever the venue priced one.
+    # Asked of the SPEAKING market only and anchored on the row that produced
+    # `home_prob`, so a partition can never be paired with a home number that
+    # came from somewhere else in the group.
+    away_prob = draw_prob = None
+    partition = find_three_way_partition(
+        list(entry.outcomes or []), outcome, home_team_name, away_team_name,
+    )
+    if partition is not None:
+        away_outcome, draw_outcome = partition
+        away_prob = float(away_outcome.current_probability)
+        draw_prob = float(draw_outcome.current_probability)
+
+    return matchup, home_prob, outcome, yes_prob, away_prob, draw_prob
 
 
 def compute_source_home_probability(
@@ -886,6 +928,15 @@ def compute_source_home_probability(
     the sibling cannot be resolved, the single reading stands as-is: an average
     of one usable number and one absent one is not a devig, it is a coin flip
     wearing the word.
+
+    THE SECOND SLOT IS A READING WHERE THE VENUE PRICED ONE (#6277). When the
+    speaker prices a coherent three-way partition, ``away_probability`` and
+    ``draw_probability`` carry the venue's own numbers for the other two members;
+    otherwise both are None and the caller complements, exactly as before. This
+    function is the only place that can supply them — a writer holding a bare
+    home probability has no route back to the row it came from — which is why a
+    defect seen at three call sites is fixed here instead. See ``BlendReading``
+    for the invariant and the measurement.
     """
     entries = list(group or [])
     if not entries:
@@ -923,7 +974,7 @@ def compute_source_home_probability(
         found = _reading_for_entry(entry, home_team_name, away_team_name)
         if found is not None:
             speaker = entry
-            matchup, home_prob, outcome, yes_prob = found
+            matchup, home_prob, outcome, yes_prob, away_prob, draw_prob = found
             break
     if speaker is None:
         return None
@@ -1024,6 +1075,20 @@ def compute_source_home_probability(
             if sibling_reading is not None:
                 home_prob = (home_prob + sibling_reading[0]) / 2.0
                 devigged = True
+                # A DEVIGGED COMPOSITE CANNOT CARRY A PARTITION (#6277). The
+                # published home number is now the mean of two markets, and the
+                # away/draw members belong to one of them; `home + away + draw`
+                # would no longer sum to anything, so the triple stops being a
+                # partition at the exact moment it stops being one market's
+                # reading. Dropped rather than re-derived: the honest second slot
+                # for a composite is the one it has always had, the complement,
+                # and `BlendReading`'s contract is both members or neither.
+                #
+                # Unreachable today and asserted anyway — Kalshi's per-team pair
+                # is the devig, and a three-way game winner is a single market,
+                # so no production group is both. "Rare" is how the second copy
+                # of an invariant goes quietly out of step (#1951).
+                away_prob = draw_prob = None
                 contributors.append(sibling.market)
                 # `_home_probability_for_market` returns (prob, outcome, yes):
                 # the sibling's own row, which until #5661 was discarded here.
@@ -1036,6 +1101,8 @@ def compute_source_home_probability(
         outcome=outcome,
         yes_probability=yes_prob,
         devigged=devigged,
+        away_probability=away_prob,
+        draw_probability=draw_prob,
         contributing_outcomes=tuple(contributing_outcomes),
         # `speaker.market`, never `primary.market`: the loop above falls through
         # the group until a market can speak, so those are not always the same

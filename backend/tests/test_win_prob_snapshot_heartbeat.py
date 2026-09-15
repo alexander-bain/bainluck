@@ -210,11 +210,26 @@ def _refresher_session(existing):
     return sess
 
 
-def _reading():
+def _reading(away_probability=None, draw_probability=None):
+    """A two-way `BlendReading` stand-in — and the second slot is set EXPLICITLY.
+
+    🔴 IT USED TO BE OMITTED, AND THAT MADE THE DEDUP CONTROL BELOW VACUOUS
+    (#6277 / CERT-2894). `MagicMock` auto-creates any attribute it is asked for,
+    so `reading.away_probability` answered a MagicMock rather than `None`;
+    `_second_slot` took that for a real partition and the row went to the writer
+    carrying a number no venue produced. It was invisible while sameness was
+    decided on the home price alone. Now that the second slot is part of the
+    value, the omission shows up as the control failing — correctly.
+
+    A two-way source has `None` on both members, which is what `_second_slot`
+    turns into the complement. Pass real numbers for the three-way case.
+    """
     return MagicMock(
         market=MagicMock(name="m", id=7),
         outcome=MagicMock(id=9),
         yes_probability=0.60,
+        away_probability=away_probability,
+        draw_probability=draw_probability,
     )
 
 
@@ -241,3 +256,34 @@ async def test_ws_fast_lane_still_dedups_a_fresh_point():
 
     assert refresher.stats["snapshots_written"] == 0
     assert refresher.stats["snapshots_deduped"] == 1
+
+
+async def test_ws_fast_lane_writes_a_point_when_only_the_draw_moved_6277():
+    """A three-way board that held its home price but moved its draw.
+
+    Both directions in one test, because the dedup control above passes equally
+    well on a lane whose second slot is ignored — the two together are what pin
+    it (#6277 / CERT-2894). Same age, same home price, same source; the ONLY
+    difference between the two calls is the split behind the home number.
+    """
+    from app.tasks.live_blend_refresh import LiveBlendRefresher
+
+    existing = _existing(age_seconds=5)
+    existing.away_win_probability = 0.25
+    existing.draw_probability = 0.15
+
+    # Unchanged split -> one observation.
+    same = LiveBlendRefresher("kalshi")
+    await same._maybe_snapshot(
+        _refresher_session(existing), 1, 0.60,
+        _reading(away_probability=0.25, draw_probability=0.15), now=1_000.0,
+    )
+    assert (same.stats["snapshots_written"], same.stats["snapshots_deduped"]) == (0, 1)
+
+    # The draw drains into the away side -> a different board, a new point.
+    moved = LiveBlendRefresher("kalshi")
+    await moved._maybe_snapshot(
+        _refresher_session(existing), 1, 0.60,
+        _reading(away_probability=0.32, draw_probability=0.08), now=1_000.0,
+    )
+    assert (moved.stats["snapshots_written"], moved.stats["snapshots_deduped"]) == (1, 0)

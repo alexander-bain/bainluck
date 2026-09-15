@@ -79,6 +79,31 @@ PREMATCH_LADDER: tuple[str, ...] = PREDICTION_MARKET_SOURCES + (BOOKS_SOURCE,)
 # that two unrelated numbers never pass.
 _COMPLEMENT_TOLERANCE = 0.01
 
+# How far a THREE-WAY reading's three members may miss 1.0 and still be read as
+# one partition (#6277).
+#
+# THIS IS THE READ SIDE OF `prediction_market_matching._THREE_WAY_SUM_BAND` AND
+# IT IS DELIBERATELY NO NARROWER. A reader tighter than its writer accepts the
+# row into the table and then throws it away at serve time — the number changes
+# in the database, every test passes, and the card does not move: exactly the
+# inertness `_pair` already caused once here, one gate further along. The two are
+# pinned to each other by a test rather than by sitting near each other.
+#
+# The band itself is measured (see that constant): 380 of 381 live three-way
+# boards on production sum within 0.10 of one. Wider than `_COMPLEMENT_TOLERANCE`
+# because a venue quoting three legs spreads its vig across three rather than
+# two, and still far tighter than the mass it must distinguish itself from — the
+# draw this exists to account for runs 22-30 points.
+#
+# STRICTLY wider than the writer's 0.10 rather than equal to it, and the extra
+# point is not slack in the rule — it is slack in the ARITHMETIC. The writer's
+# band is inclusive at 1.10 and `1.10 - 1.0` is 0.1000000000000000888 in binary
+# floating point, so an equal tolerance rejects the writer's own endpoint. The
+# pinning test found that on its first run, which is the argument for having
+# written it. Nothing reaches the extra point: this gate only fires on a stored
+# draw, and only the writer stores one.
+_PARTITION_TOLERANCE = 0.11
+
 
 def _as_probability(value: Any) -> Optional[float]:
     """A usable probability, or ``None``.
@@ -101,15 +126,44 @@ def _as_probability(value: Any) -> Optional[float]:
     return number
 
 
-def _pair(home: Any, away: Any) -> Optional[tuple[float, float]]:
-    """``(home, away)`` as a coherent pair, anchored on home."""
+def _pair(home: Any, away: Any, draw: Any = None) -> Optional[tuple[float, float]]:
+    """``(home, away)`` as a coherent pair, anchored on home.
+
+    ── WHY A THREE-WAY READING IS NOT RE-COMPLEMENTED (#6277) ──────────────────
+    The fallback below is a coherence guard: two numbers that do not sum to one
+    are not the two sides of one question, so the away slot is rebuilt from the
+    side we trust. That is right for the case it was written for — a stale or
+    unrelated value — and it is exactly wrong for a soccer game winner, where the
+    two named sides are MEANT to fall short of one because a draw holds the rest.
+
+    So the guard became the defect's last line. Fixing the writers alone is
+    completely inert: with the venue's true prices in the row
+    (Villarreal .495 / Real Betis .245) this function returned .495/.505 — the
+    same fabricated complement, rebuilt at serve time, and the card would not
+    have moved by a pixel. Measured before the writer was touched, by calling it.
+
+    ``draw`` is what tells the two cases apart, and it is evidence rather than a
+    flag: a third member that closes the partition to 1.0 proves the shortfall is
+    accounted for, and no stale or unrelated pair can produce one. Absent (every
+    two-way source, and every row written before #6277 shipped) the old rule
+    applies unchanged — which is the whole reason this is safe to land while the
+    table is still almost entirely two-way.
+    """
     home_prob = _as_probability(home)
     if home_prob is None:
         return None
     away_prob = _as_probability(away)
-    if away_prob is None or abs(home_prob + away_prob - 1.0) > _COMPLEMENT_TOLERANCE:
-        away_prob = round(1.0 - home_prob, 6)
-    return home_prob, away_prob
+    if away_prob is None:
+        return home_prob, round(1.0 - home_prob, 6)
+    if abs(home_prob + away_prob - 1.0) <= _COMPLEMENT_TOLERANCE:
+        return home_prob, away_prob
+    draw_prob = _as_probability(draw)
+    if (
+        draw_prob is not None
+        and abs(home_prob + away_prob + draw_prob - 1.0) <= _PARTITION_TOLERANCE
+    ):
+        return home_prob, away_prob
+    return home_prob, round(1.0 - home_prob, 6)
 
 
 def opening_consensus_has_frozen(
@@ -213,9 +267,13 @@ def resolve_prematch_reading(
     """The first rung of the ladder that has a coherent pre-match pair.
 
     ``by_source`` maps a prediction-market source id to ``(home, away)`` — the
-    last snapshot at or before ``commence_time`` for that source. The books rung
-    is passed separately because it lives on the event row rather than in the
-    snapshot table.
+    last snapshot at or before ``commence_time`` for that source — or, on a
+    three-way game, to ``(home, away, draw)`` (#6277). The third member is
+    optional at every call site and is only ever the EVIDENCE that the first two
+    are a genuine sub-unit pair; see :func:`_pair`. The books rung is passed
+    separately because it lives on the event row rather than in the snapshot
+    table, and it never carries one: ``Event.opening_*`` has no draw column,
+    which is #1011 and is not this fix.
 
     Returns ``{"home_probability", "away_probability", "source"}``, or ``None``
     when no rung has a reading. ``None`` means "we hold nothing", which is the
@@ -230,10 +288,14 @@ def resolve_prematch_reading(
             if served is None:
                 continue
             if isinstance(served, Mapping):
-                pair = _pair(served.get("home"), served.get("away"))
+                pair = _pair(
+                    served.get("home"), served.get("away"), served.get("draw"),
+                )
             else:
-                home, away = (list(served) + [None, None])[:2]
-                pair = _pair(home, away)
+                # Padded to THREE so a two-element tuple — every caller before
+                # #6277, and every two-way source after it — unpacks unchanged.
+                home, away, draw = (list(served) + [None, None, None])[:3]
+                pair = _pair(home, away, draw)
         if pair is None:
             continue
         return {
@@ -285,15 +347,21 @@ def resolve_prematch_reading(
 #     another game's prices — a wrong answer no latency measurement would
 #     notice. They are therefore built by ONE pass, in
 #     `settled_prematch_cutoffs`, and never assembled at the call site.
+#   * `draw_probability` (#6277) rides the SAME row and adds no join, no filter
+#     and no ordering term: it is a column of the row already being selected.
+#     It is deliberately NOT in the `IS NOT NULL` guard — it is NULL on every
+#     two-way source and on every row written before that fix, and requiring it
+#     would silently empty this read of almost everything it serves.
 PREMATCH_PRIOR_SQL = """
     SELECT x.event_id, x.source,
-           x.home_win_probability, x.away_win_probability
+           x.home_win_probability, x.away_win_probability, x.draw_probability
     FROM unnest(cast(:ids as integer[]), cast(:cutoffs as timestamptz[]))
          AS t(event_id, cutoff)
     CROSS JOIN LATERAL (
         SELECT DISTINCT ON (s.source)
                s.event_id, s.source,
-               s.home_win_probability, s.away_win_probability
+               s.home_win_probability, s.away_win_probability,
+               s.draw_probability
         FROM win_prob_snapshots s
         WHERE s.event_id = t.event_id
           AND s.source = ANY(:sources)
@@ -302,6 +370,35 @@ PREMATCH_PRIOR_SQL = """
         ORDER BY s.source, s.captured_at DESC
     ) x
 """
+
+def prematch_row_to_reading(row: Any) -> tuple:
+    """One ``PREMATCH_PRIOR_SQL`` row as the ``(home, away, draw)`` the ladder eats.
+
+    Lives here, beside the statement that produces it, because it is the SHAPE
+    CONTRACT between them and a shape contract with two authors drifts. It was
+    written inline in `_score_events`, which made it the one link in this chain
+    no unit test could reach: a fix that stored an honest draw and then dropped
+    it on the way out of the cursor would pass every test in the suite and change
+    nothing on the card. That is the same inertness `_pair` caused (#6277), one
+    gate further along, and this is the guard for it.
+
+    Floats, not Decimals: the column is ``Numeric(5,4)`` and psycopg hands back
+    ``Decimal``, which `_as_probability` would take but which compares badly with
+    the float arithmetic every consumer downstream does.
+    """
+    return (
+        float(row.home_win_probability),
+        (
+            float(row.away_win_probability)
+            if row.away_win_probability is not None
+            else None
+        ),
+        # The third member of a three-way game, and the only thing that stops
+        # `_pair` rebuilding the away slot as `1 - home`. NULL on every two-way
+        # source, which is every source but a soccer or cricket game winner.
+        float(row.draw_probability) if row.draw_probability is not None else None,
+    )
+
 
 #: The statuses whose cards print a pre-match reading. A scheduled or live card
 #: does not, so its snapshots are never fetched. Held here rather than inlined
