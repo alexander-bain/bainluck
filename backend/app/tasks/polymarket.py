@@ -3522,7 +3522,42 @@ def _is_placeholder_outcome(market) -> bool:
 
     # Additional heuristic: no trading activity AND price is exactly 1.0
     # (real 100% favorites still have lastTradePrice > 0)
-    if market.outcome_prices and market.outcome_prices[0] >= 0.995:
+    #
+    # ── #6110: ...AND THE VENUE HAS NOT SETTLED THE LEG ────────────────────
+    #
+    # "A real 100% favorite has traded" is a claim about a market that is still
+    # BEING MADE. Once the venue closes a negRisk leg, ``outcomePrices[0]`` stops
+    # being a quote and becomes the RESULT — and a winner nobody ever traded has
+    # no last trade to show for itself. So a settled champion and a reserved slot
+    # arrive here byte-identical, and this heuristic cannot tell them apart:
+    #
+    #     groupItemTitle "Other"   ("Will any other rider win the 2026 Vuelta?")
+    #     closed=True  outcomePrices=["1","0"]  bestBid=0  lastTradePrice=0
+    #
+    # That leg is Enric Mas Nicolau winning the Vuelta a España 2026, confirmed
+    # at BOTH venues (Kalshi settled ``KXCYCLING-26VLTA-EMAS`` ``result=yes``,
+    # 1 of 184; Polymarket resolved this leg Yes, 1 of 71). We dropped it, so
+    # market 58675941 stored 30 riders — every one of them correctly a loser —
+    # and no champion at all. ``all_losers`` then said so in writing ("the
+    # winning outcome isn't in our DB"), and a Grand Tour that finished showed
+    # no winner.
+    #
+    # ``closed`` is the venue's own discriminator, already parsed onto the DTO:
+    # a reserved slot is never closed while its event still trades. Read through
+    # ``getattr`` so a duck-typed caller that carries no such field keeps exactly
+    # the old behaviour rather than silently gaining the carve-out.
+    #
+    # The name patterns above are deliberately NOT relaxed. They run first and
+    # unconditionally, so a settled ``Player AD`` is still suppressed; only a
+    # NAMED leg the venue has settled at ~1.0 is admitted. A negRisk partition
+    # settles exactly one such leg — measured on that event, 1 of 71 clears
+    # 0.995 and it is the winner, while all 40 unused ``Rider N`` slots settle
+    # at 0 and are dropped by the caller's ``prob <= 0`` test.
+    if (
+        not getattr(market, "closed", False)
+        and market.outcome_prices
+        and market.outcome_prices[0] >= 0.995
+    ):
         has_trading = (
             (market.best_bid is not None and market.best_bid > 0)
             or (market.last_trade_price is not None and market.last_trade_price > 0)
