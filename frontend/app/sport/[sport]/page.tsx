@@ -9,7 +9,7 @@ import { describeLoadFailure, type LoadFailure } from "@/lib/loadFailure";
 import PageLoadFailureScreen from "@/components/PageLoadFailureScreen";
 import type { SportHierarchy, SportLeague, SportShowcaseEvent, GolfTournament } from "@/lib/types";
 import TournamentCard from "@/components/TournamentCard";
-import { tournamentHubHref } from "@/lib/tournamentHubs";
+import ShowcaseEventCard from "@/components/ShowcaseEventCard";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import LoadingState from "@/components/LoadingState";
 
@@ -72,23 +72,6 @@ const LEAGUE_COLORS: Record<string, { bg: string; accent: string; icon: string }
 };
 
 const DEFAULT_LEAGUE_COLOR = { bg: "bg-surface-elevated", accent: "text-text-primary", icon: "\ud83c\udfc6" };
-
-// Showcase event estimated dates (approximate, for display when no odds yet)
-const SHOWCASE_DATES: Record<string, string> = {
-  "The Masters": "April 2026",
-  "PGA Championship": "May 2026",
-  "U.S. Open": "June 2026",
-  "The Open Championship": "July 2026",
-  "Chevron Championship": "April 2026",
-  "KPMG Women's PGA Championship": "June 2026",
-  "U.S. Women's Open": "June 2026",
-  "AIG Women's Open": "August 2026",
-  "The Evian Championship": "July 2026",
-  "Ryder Cup": "September 2027",
-  "Presidents Cup": "September 2026",
-  "Walker Cup": "September 2027",
-  "Solheim Cup": "September 2027",
-};
 
 export default function SportHubPage() {
   const params = useParams();
@@ -287,49 +270,15 @@ export default function SportHubPage() {
                   );
                 }
 
-                // #2560: THE HUB, WHEN THERE IS ONE. Checked before the "odds
-                // later" card, because that card is a claim — and it was live
-                // and false on `US Open` on day two of the US Open, beside a
-                // built hub nothing linked to. A tournament with a hub has its
-                // draw, its prices and its results there now.
-                const hubHref = tournamentHubHref(sportSlug, event.name);
-                if (hubHref) {
-                  return (
-                    <Link
-                      key={event.name}
-                      href={hubHref}
-                      className="bg-surface-card border border-surface-border rounded-xl p-5 hover:shadow-md hover:-translate-y-0.5 transition-all group"
-                      data-testid="showcase-hub-link"
-                    >
-                      <h3 className="text-text-primary font-medium group-hover:underline">
-                        {event.name}
-                      </h3>
-                      {/* Ruling 138: the word is PROBABILITY, never "price" —
-                          "Draw, live prices and results" tripped the shipped-copy
-                          ban on the first build, which is the guard doing its job
-                          on a card written in trading vocabulary out of habit. */}
-                      <p className="text-text-muted text-sm mt-1">
-                        Draw, live probabilities and results
-                      </p>
-                    </Link>
-                  );
-                }
-
-                // Fallback card for events without odds yet
-                const estimatedDate = SHOWCASE_DATES[event.name];
+                // The hub, the market we hold, or the honest empty card —
+                // one component, so the branch order is in one place and can
+                // be rendered in a test (#2560, #6249).
                 return (
-                  <div
+                  <ShowcaseEventCard
                     key={event.name}
-                    className="bg-surface-card border border-surface-border rounded-xl p-5"
-                  >
-                    <h3 className="text-text-primary font-medium">{event.name}</h3>
-                    <p className="text-text-muted text-sm mt-1">
-                      {estimatedDate || "Date TBD"}
-                    </p>
-                    <p className="text-text-muted text-xs mt-2">
-                      Odds available closer to the event
-                    </p>
-                  </div>
+                    sportSlug={sportSlug}
+                    event={event}
+                  />
                 );
               })}
             </div>
