@@ -1140,6 +1140,32 @@ export function computeSharedChartDomain(
         if (!isNaN(t) && t >= endFloorMs) gameEndTs.push(t);
       }
     }
+    // #6349 — THE SCORE IS A GAME-END SOURCE, AND LEAVING IT OUT INVERTED THE
+    // WINDOW. `score_history` is StatPal's livescore series: the most direct
+    // evidence this page holds of when the game was actually being played, and
+    // one of the four series `maxPostStartSeriesPoints` counts when it picks
+    // "Since Start" for the page. This ladder counted the other three and not
+    // this one, so a game whose odds stopped before kickoff chose "Since Start"
+    // on the strength of its score points and then derived `end` from the
+    // sportsbook tail — an end BEFORE the start it had just chosen.
+    //
+    // Measured on /events/15296797 (Banfield 1-1 Barracas Central, FINAL,
+    // 2026-09-15): commence 22:00:00Z, every one of 1,907 betting points, 2,741
+    // aggregate points, 638 Polymarket and 497 Kalshi points ends 02:08Z — 19h52m
+    // BEFORE kickoff, zero post-start points on every series the ladder could
+    // see. Only `score_history` was in the game: 22:03Z 0-0, 22:49Z 1-0, 23:26Z
+    // 1-1. The window came out 22:00Z → 02:08Z, `fillMinuteGaps` no-opped on it,
+    // and the reader got a Win Probability grid whose three `<path>` elements
+    // carried an EMPTY `d`, over a "Score Differential" heading with no SVG
+    // under it at all.
+    //
+    // The `endFloorMs` guard above applies to these the same as to the rest: a
+    // score row stamped before the pregame margin is the mis-attribution case,
+    // not a game end.
+    for (const pt of historyData.score_history ?? []) {
+      const t = new Date(pt.timestamp).getTime();
+      if (!isNaN(t) && t >= endFloorMs) gameEndTs.push(t);
+    }
 
     if (gameEndTs.length > 0) {
       const lastGameEnd = Math.max(...gameEndTs);
@@ -1248,9 +1274,49 @@ export function computeSharedChartDomain(
     }
   }
 
-  const start = chartTimeRange === "live" ? liveStart : allModeStart;
+  // #6349 — THE START SNAPS DOWN, THE END SNAPS UP, SO THE LAST OBSERVATION IS
+  // INSIDE THE WINDOW IT DEFINED. Both used to truncate, which silently drops
+  // any point in the final partial minute — including, now, the very row the
+  // game-end ladder above derived `end` FROM. On 15296797 the equaliser is
+  // stamped 23:26:54Z; truncating to 23:26:00Z put it outside the window and
+  // left a 1-1 match drawing a score line that ends 1-0. Ceiling is at most 59
+  // seconds of extra window and is not the trailing buffer L2-131 removed — it
+  // is the difference between including the final snapshot and excluding it.
+  const snapEndUp = (d: Date): Date => {
+    const snapped = new Date(d);
+    snapped.setSeconds(0, 0);
+    if (snapped.getTime() < d.getTime()) snapped.setTime(snapped.getTime() + 60_000);
+    return snapped;
+  };
+  let start = chartTimeRange === "live" ? liveStart : allModeStart;
   start.setSeconds(0, 0);
-  end.setSeconds(0, 0);
+  end = snapEndUp(end);
+
+  // #6349 — A WINDOW MAY NOT END BEFORE IT STARTS. The FLOOR above is the same
+  // invariant measured against `allStart`, the first point of the whole event;
+  // it cannot see this one, because the end that inverts "Since Start" is a
+  // real, later timestamp that simply falls before the chosen start. On
+  // 15296797 `end` (02:08Z, the last sportsbook tick) was 15 days AFTER
+  // `allStart` and 19h52m BEFORE `start` — the earlier floor passed, and the
+  // chart drew nothing.
+  //
+  // The score-history clause above is the honest repair for the case we
+  // measured. This is the backstop for the arm it does not reach: a completed
+  // game whose only post-kickoff series is a win-prob source deliberately kept
+  // OUT of `GAME_END_SOURCES` (Kalshi and Polymarket keep quoting past the
+  // final whistle, which is exactly why they are excluded), and which holds no
+  // score rows. There `gameEndTs` is still empty, `end` still comes off the
+  // sportsbook tail, and the window still inverts.
+  //
+  // An inverted window is never a narrower truth — it is a window the match was
+  // not played in. Fall back to the honest full extent, the same remedy and the
+  // same reasoning as the floor above: a visible journey beats a precisely
+  // trimmed empty one.
+  if (end.getTime() <= start.getTime() && allEnd.getTime() > allStart.getTime()) {
+    start = new Date(allStart);
+    start.setSeconds(0, 0);
+    end = snapEndUp(allEnd);
+  }
 
   // Compute explicit X-axis ticks at clean time boundaries.
   //

@@ -95,10 +95,22 @@ function render(history: unknown[]) {
 }
 
 describe("OddsChart period chips need a probability line under them", () => {
-  test("null-only history draws NO period chip", () => {
+  test("null-only history draws NO period chip — and since #6349, no plot either", () => {
     // The defect. Three timestamped rows, zero ink: bounding against the data
     // extent puts both chips comfortably "inside" a plot with nothing on it.
-    expect(boundaryCount(render(NULL_ONLY_HISTORY))).toBe(0);
+    //
+    // #6349 STRENGTHENED THIS, IT DID NOT WEAKEN IT. The chip count used to be
+    // read off a wrapper this arm still rendered — an empty grid with zero
+    // chips on it. `drawnExtent` is now the component's own "is there anything
+    // to draw" test, so zero ink means no plot at all and the wrapper is gone
+    // with it. Asserting the wrapper's ABSENCE is the stronger statement: it
+    // cannot be satisfied by a chart that draws a blank grid, which is exactly
+    // what the old assertion permitted and what a reader was getting on
+    // /events/15296797.
+    const html = render(NULL_ONLY_HISTORY);
+    expect(html).not.toMatch(/data-period-boundaries=/);
+    // And nothing that looks like a chip survives by another route.
+    expect(html).not.toMatch(/\b1H\b|\b2H\b/);
   });
 
   test("the control — the same rows WITH probabilities draw both chips", () => {
