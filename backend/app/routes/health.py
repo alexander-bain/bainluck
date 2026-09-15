@@ -86,11 +86,39 @@ async def api_health_check():
     except Exception:
         db_ok = False
 
+    # 🔴 #6404 — A FALSE HERE USED TO NAME NOTHING, AND THE FLAP IS INTERMITTENT.
+    #
+    # Measured by integrator/int375 17:06–17:09Z on `355ca6dc`: 4 of 19 samples
+    # `redis: false`, `db: true` throughout, and — the detail that makes it a
+    # question rather than a sick dyno — a true→false flip on the SAME
+    # `process_id` 21 s apart. A bare `except Exception` cannot tell any of these
+    # apart, and they want opposite responses:
+    #
+    #   * `ConnectionError`  — a TLS handshake EOF on a fresh connection. This is
+    #     #1197's documented churn, and `get_redis_client` mints a NEW client and
+    #     a NEW pool on every call (275 call sites, no cache anywhere), so every
+    #     probe is an independent handshake. Independent trials is exactly the
+    #     shape one process flipping produces.
+    #   * `TimeoutError`     — Redis answered too slowly, bounded at
+    #     `_DEFAULT_REDIS_SOCKET_TIMEOUT`. `elapsed_ms` near the bound is the
+    #     tell, and this one is a real degradation.
+    #   * anything else      — a probe bug, and a `degraded` that does not mean
+    #     degraded trains every lane to ignore the field.
+    #
+    # ⚠️ THE CLASS NAME, NEVER THE MESSAGE. `/api/health` is UNAUTHENTICATED, and
+    # a redis-py exception string can carry the connection URL — which on Heroku
+    # embeds the password. `str(exc)` here would publish a live credential to an
+    # open endpoint on the one code path nobody reads until it fires. The class
+    # name plus the elapsed time is the whole diagnostic and carries no secret.
+    redis_error = None
+    _redis_t0 = time.monotonic()
     try:
         from app.tasks.redis_state import get_redis_client
         get_redis_client().ping()
-    except Exception:
+    except Exception as exc:
         redis_ok = False
+        redis_error = type(exc).__name__
+    redis_elapsed_ms = int((time.monotonic() - _redis_t0) * 1000)
 
     status = "ok" if (db_ok and redis_ok) else "degraded"
     code = 200 if (db_ok or redis_ok) else 503
@@ -102,6 +130,14 @@ async def api_health_check():
             "status": status,
             "db": db_ok,
             "redis": redis_ok,
+            # Additive. `redis` stays the bool every monitor already reads; this
+            # says WHY it is what it is. Present on success too, so a healthy
+            # probe's latency is a baseline the next flap can be read against
+            # rather than a number with nothing to compare to.
+            "redis_check": {
+                "error": redis_error,
+                "elapsed_ms": redis_elapsed_ms,
+            },
             "commit": GIT_COMMIT,
             "uptime_seconds": int(time.time() - _PROCESS_START),
             "dyno": DYNO,
