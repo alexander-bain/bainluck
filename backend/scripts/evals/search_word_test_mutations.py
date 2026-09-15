@@ -401,9 +401,13 @@ MUTANTS: list[tuple[str, Path, str, str, str, str]] = [
     (
         "collapse-never-reported",
         EVENTS,
+        # RE-TARGETED for #6327, which split the shipped page from the page dedup
+        # produced: this verdict now reads `_deduped_page` so that a deliberate
+        # price withdrawal is never reported as a bucket collapse. The mutant and
+        # its oracle are unchanged — only the needle moved.
         """    _futures_collapsed = (
         len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW
-        and len(futures_markets) < _SEARCH_FUTURES_PAGE
+        and max(len(_deduped_page), _headline_promoted) < _SEARCH_FUTURES_PAGE
     )""",
         """    _futures_collapsed = False""",
         DEDUP_ORACLE,
