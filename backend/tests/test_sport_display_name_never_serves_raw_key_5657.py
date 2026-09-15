@@ -305,6 +305,50 @@ def test_every_raw_named_key_resolves_through_a_family_web_also_knows():
         assert sport_display_name(key, key) == expected, key
 
 
+# ── the one surface that must KEEP serving a raw name ───────────────────────
+
+
+def test_the_sports_detail_route_still_signals_raw():
+    """🔴 A raw name is load-bearing on exactly one surface. Do not "finish" this.
+
+    `getSportGroupLabel` (`frontend/lib/sportCategories.ts`) reads "is the served
+    name raw?" as its signal that the served `group` is machine-derived too, and
+    corrects it.  The signal is real: the same 15 rows carry `Americanfootball`,
+    `Icehockey` and `Mma` in `sports.group` (measured on production
+    2026-09-15) while their branded siblings carry "Ice Hockey" and
+    "Aussie Rules".
+
+    `GET /api/sports/{key}` is the only route that serves that `group`, and it
+    is therefore the only one where humanising the name SILENTLY BREAKS a label
+    — web would start trusting "Mma".  #5657 changed `_format_event` and the
+    search facet, neither of which serves a group, and deliberately left this
+    route alone.
+
+    So this guard fails the day someone extends the helper to `sports.py`
+    without fixing `group` in the same ship.  If you are that person: fix both,
+    then change this test on purpose.
+    """
+    source = (
+        Path(__file__).resolve().parents[1] / "app" / "routes" / "sports.py"
+    ).read_text()
+    tree = ast.parse(source)
+
+    detail = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "get_sport"
+    )
+    returned = ast.dump(detail)
+
+    assert '"group"' in source, "the group field vanished — re-read this guard"
+    assert "sport_display_name" not in returned, (
+        "app/routes/sports.py::get_sport now humanises the sport name. It also "
+        "serves `group`, whose machine-derived values ('Mma', 'Icehockey') web "
+        "only corrects while the NAME reads raw. Fix `group` in the same ship."
+    )
+
+
 # ── gotcha #3 ───────────────────────────────────────────────────────────────
 
 
