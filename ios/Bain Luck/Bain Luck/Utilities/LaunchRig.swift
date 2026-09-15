@@ -134,6 +134,36 @@ enum LaunchRig {
         return points
     }
 
+    // MARK: - Keeping a robot's taps out of the personalization data
+
+    /// Launch-argument key that stops the app POSTing Discover interactions.
+    ///
+    /// `xcrun simctl launch <sim> <bundle> -launch_no_interaction_upload YES`.
+    static let suppressInteractionUploadKey = "launch_no_interaction_upload"
+
+    /// Whether this process may report Discover interactions to the server.
+    ///
+    /// EVERY OTHER RIG AFFORDANCE HERE IS READ-ONLY WITH RESPECT TO PRODUCTION,
+    /// AND THE TAP PATHS ARE NOT. A swipe, a card open and a share each POST a
+    /// row to `/api/feed/interactions` under an anonymous `x-session-id`
+    /// (`DiscoverView.recordInteraction`, `ShareInstrumentation`). For a reader
+    /// that is the point — it is the downrank signal #1221 designed. For an
+    /// unattended test that taps twenty cards a night it is a robot minting
+    /// "what people are doing" rows, which is the exact failure standing notice
+    /// 39 exists to prevent: our own robots are TAGGED, never minted.
+    ///
+    /// So a tap-driven rig passes this and the POST is not made. Off unless
+    /// asked for, so a reader's swipe is unchanged and still counts.
+    ///
+    /// Deliberately NOT a "disable analytics" flag and not a network switch.
+    /// Killing the transport would also kill the GETs the screen needs, and a
+    /// test cannot tell a suppressed feed from a broken one. This is one
+    /// endpoint, named, at the one choke point all four call sites already go
+    /// through.
+    static func suppressesInteractionUpload(defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: suppressInteractionUploadKey)
+    }
+
     /// How long to wait AFTER the route before scrolling.
     ///
     /// Longer than ``routeDelay`` and additional to it, because the two waits

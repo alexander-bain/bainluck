@@ -86,4 +86,12 @@ nonisolated struct UpdatePushPreferencesResponse: Decodable, Sendable {
 /// Generic backend status response for preference mutations.
 nonisolated struct StatusResponse: Decodable, Sendable {
     let status: String
+
+    /// What a call answers when the launch rig asked for the write NOT to be made.
+    ///
+    /// A distinct value rather than `"ok"`, because the two are different facts
+    /// and a caller that logs one of them should not be able to report a
+    /// suppressed write as a completed one. Nothing in the app branches on
+    /// `status` from this endpoint today; the name is for the reader of a log.
+    static let suppressedByLaunchRig = StatusResponse(status: "suppressed_by_launch_rig")
 }

@@ -201,6 +201,30 @@ struct DiscoverView: View {
     @State private var dismissVersion = 0
     @State private var profileVersion = 0
 
+    /// How many times the reader's pull-to-refresh has actually run.
+    ///
+    /// Drawn ONLY in the rig badge (`-launch_debug_counts`), and it exists
+    /// because pull-to-refresh had no witness at all. Both obvious ones are
+    /// blind, measured 2026-09-14 rather than assumed:
+    ///
+    ///   * **The spinner is not in the accessibility tree.** Zero activity and
+    ///     zero progress indicators over a four-second sample taken WHILE the
+    ///     finger was down — not just here but on Sports and Browse, which are
+    ///     `List`s, where `.refreshable` is the canonical case. So "no spinner"
+    ///     is a fact about the tree, not about the feature, and a test asserting
+    ///     on one files a defect against a working page.
+    ///   * **The content offset springs straight back on every surface**,
+    ///     Discover and the two `List`s alike, so the refreshing-hold signature
+    ///     is not observable either.
+    ///   * `vm.itemsVersion` looked like a witness and is not a VALIDATED one:
+    ///     its positive control failed, because the feed arrives complete (48
+    ///     served) and scrolling to the end reloads nothing, so the version
+    ///     sitting still proves nothing about whether a refresh ran.
+    ///
+    /// A counter incremented inside the refresh closure has no such ambiguity:
+    /// it can only move if the closure ran. Invisible to a reader.
+    @State private var rigRefreshCount = 0
+
     /// #1883: was a second, drifted copy of the classifier. Both copies now
     /// delegate to `DiscoverCategory`, so they cannot disagree (gotcha #129).
     private var sportsCats: Set<String> { DiscoverCategory.sportsCategories }
@@ -1070,7 +1094,16 @@ struct DiscoverView: View {
     @ViewBuilder
     private var debugCountsBadge: some View {
         if LaunchRig.showsDebugCounts() {
-            Text("SERVED \(vm.items.count) · DRAWN \(groupedItems.count)")
+            // FEED is `vm.itemsVersion` (one bump per `items` reassign) and
+            // PULLS is `rigRefreshCount` (one bump per pull-to-refresh). The two
+            // are NOT redundant and the difference is the point: FEED can sit
+            // still through a refresh that reloaded identical cards, so only
+            // PULLS answers "did the reader's gesture reach the closure". See
+            // `rigRefreshCount` for the three witnesses that turned out blind.
+            //
+            // All four are drawn from one render, so a reader of the photograph
+            // cannot pair one refresh's version with another's count.
+            Text("SERVED \(vm.items.count) · DRAWN \(groupedItems.count) · FEED \(vm.itemsVersion) · PULLS \(rigRefreshCount)")
                 .font(.system(size: 13, weight: .bold).monospacedDigit())
                 .foregroundStyle(.white)
                 .padding(.horizontal, 12)
@@ -1653,6 +1686,10 @@ struct DiscoverView: View {
     /// gesture it replaced would have done — not an approximation of it.
     @MainActor
     private func refreshFeed() async {
+        // First statement on purpose: the counter answers "did the reader's pull
+        // reach this closure", which must not depend on anything below it
+        // succeeding. See `rigRefreshCount`.
+        rigRefreshCount &+= 1
         visibleCount = 20
         // A refresh AGES the dismiss store; it does not empty it (#5951).
         dismissedAt = Self.dismissStoreAfterRefresh(dismissedAt)

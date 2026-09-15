@@ -1179,7 +1179,15 @@ actor APIClient {
 
     /// Records a Discover card interaction for feed personalization.
     /// Native Discover stamps 'user' at source via X-Discover-Provenance (ruling: native Discover is user, Play is play, never infer from surface after receipt).
+    ///
+    /// The one choke point every interaction POST goes through, which is why the
+    /// rig's suppression is HERE and not at the four call sites
+    /// (`DiscoverView.recordInteraction` ×3, `ShareInstrumentation`): a fifth
+    /// call site added later is covered without anyone remembering to cover it.
+    /// See `LaunchRig.suppressesInteractionUpload` for why a tap-driven test must
+    /// not mint personalization rows.
     func recordDiscoverInteraction(_ event: DiscoverInteractionEvent) async throws -> StatusResponse {
+        if LaunchRig.suppressesInteractionUpload() { return StatusResponse.suppressedByLaunchRig }
         return try await postEncodableWithProvenance("/api/feed/interactions", body: DiscoverInteractionRequest(interactions: [event]), provenance: "user")
     }
 
