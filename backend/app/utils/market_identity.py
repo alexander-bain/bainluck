@@ -338,6 +338,41 @@ def identity_quarantine_ctes(
     and :func:`market_identity_disputed` over one corpus and fails on any
     disagreement — so the expression form stays available for tests and ad-hoc
     reads without the population paying for it.
+
+    🔴 :data:`IDENTITY_DISPUTED_CTE` IS ``AS MATERIALIZED`` AND THAT IS THE WHOLE
+    COST OF THIS CHAIN (#6275, CAL-P1300). A CTE referenced exactly once is
+    INLINED by PostgreSQL 12+, and the one consumer joins it deep inside
+    ``ranked_outcomes``. Read off the production planner for the real staged unit
+    statement (``EXPLAIN``, plan only, 2026-09-15 14:4xZ), the inlined form put
+    the regex-and-date predicate here:
+
+        Nested Loop Left  (x11, nested 12 deep inside CTE ranked_outcomes)
+          -> CTE Scan on market_info   Parent Relationship: INNER
+             Filter: (event_commence_time IS NOT NULL) AND substring(...) ...
+
+    An inner-side ``CTE Scan`` has no index, so every outer row rescans the WHOLE
+    materialised ``market_info`` and re-evaluates the regex on every one of its
+    rows: O(outcomes x markets) regex evaluations per unit instead of O(markets).
+    At the measured ~15 us/row (the 4.6 s / 309,964-row figure above) that is
+    ~350 s of pure re-derivation on a roster-sized chunk — which is the whole of
+    the 2026-09-15 stall: unit cost went from a ~130-165 s mean over 24 beats to
+    cancelling at the 483 s fence, 0 units completed, on the beat #6275 reached
+    ``bainluck-heavy`` (11:48:44Z) and every beat after.
+
+    ``MATERIALIZED`` makes the chain one evaluation per unit — the planner emits
+    it as its own ``CTE identity_disputed_markets`` node with ``market_info`` as
+    an InitPlan beneath it, and the join then scans a small market-id set. The
+    ESTIMATE does not move (29,205.65 both ways): the planner has this chain at
+    1-5 rows where production has thousands, which is exactly why it chose the
+    rescan. So the guard asserts the plan's SHAPE, never its cost.
+
+    Only the last CTE carries the keyword. Materialising it pins the whole
+    inlined subtree above it to one evaluation, and ``identity_ticker_token`` /
+    ``identity_ticker_parsed`` are each read exactly once by the next link — a
+    second and third materialisation buys nothing and spools two more
+    intermediates. If a future consumer references either of them directly they
+    stop being single-reference and can inline into a loop of their own: the
+    guard reads the built plan rather than this sentence.
     """
     month_num = " ".join(f"WHEN '{mon}' THEN {num}" for mon, num in _MONTHS.items())
     return f"""{IDENTITY_TOKEN_CTE} AS (
@@ -386,8 +421,13 @@ def identity_quarantine_ctes(
                 ) p
                 WHERE t.tok IS NOT NULL
             ),
-            {IDENTITY_DISPUTED_CTE} AS (
-                -- Step 3: the disagreement. The round-trip check is what rejects
+            {IDENTITY_DISPUTED_CTE} AS MATERIALIZED (
+                -- Step 3: the disagreement. MATERIALIZED is load-bearing and is
+                -- not a hint -- see the docstring. Referenced once, this chain
+                -- inlines onto the INNER side of a nested loop inside
+                -- `ranked_outcomes` and the regex is then re-derived once per
+                -- OUTCOME over every market in the chunk. That is the #6275
+                -- stall, and the keyword is the fix. The round-trip check is what rejects
                 -- a rolled-over date (PostgreSQL turns Feb 30 into Mar 2 where
                 -- the Python raises and returns None), so an unreadable date
                 -- stays UNKNOWN

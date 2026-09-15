@@ -863,7 +863,7 @@
     },
     {
       "covered_by_value": false,
-      "definition_sha16": "490dfa494b72ff43",
+      "definition_sha16": "23b30dd2bf2a03b4",
       "impact": "sql_shaping",
       "name": "identity_quarantine_ctes",
       "origin": "app.utils.market_identity:identity_quarantine_ctes",
