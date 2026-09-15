@@ -6767,9 +6767,15 @@ async def search_events(
     #      MIN_CONTENDER_PROBABILITY`), so the lane can never put a dashes-only
     #      card back on the page this filter just cleared.
     #   2. THE `bucket_collapse` VERDICT — see its own note below.
+    #
+    # #3412 widened WHAT is withdrawn, not HOW: `_futures_card_has_no_answer` is
+    # the #6327 predicate unioned with the no-outcome-rows population it fenced
+    # out as unmeasured. Every note above — filter-then-slice, `deduped_futures`
+    # left whole for concept derivation, `_deduped_page` for the two decisions
+    # that must see the unfiltered page — is unchanged and load-bearing for both.
     _deduped_page = deduped_futures[:_SEARCH_FUTURES_PAGE]
     futures_markets = [
-        m for m in deduped_futures if not _futures_market_is_wholly_unpriced(m)
+        m for m in deduped_futures if not _futures_card_has_no_answer(m)
     ][:_SEARCH_FUTURES_PAGE]  # flat list (unchanged shape)
 
     # UX-P259/#2579: the tournament a player can win is reachable by their name.
@@ -7008,8 +7014,10 @@ async def search_events(
     # wider deduped set — so a card withdrawn from the flat bucket above would
     # walk straight back in through a family. Same predicate, same reason; the
     # event concepts below still read the unfiltered `deduped_futures`.
+    # #3412: same predicate still, now the wider one — a family is exactly the
+    # back door a half-applied withdrawal leaves open.
     futures_families = _compose_futures_families(
-        [m for m in deduped_futures if not _futures_market_is_wholly_unpriced(m)],
+        [m for m in deduped_futures if not _futures_card_has_no_answer(m)],
         expanded,
         lambda m: _formatted_by_id[m.id],
         {m.id for m in futures_markets},
@@ -8922,6 +8930,26 @@ async def typeahead_search(
     for market in ta_futures_ranked:
         if len(futures_pool) >= 5:
             break
+        # #3412: a dropdown row whose market holds no outcome row at all can only
+        # ever be a bare title sitting beside siblings that read "Lakers 62% ·
+        # Cavs 18%", and it spends one of just FIVE slots to do it. Measured on
+        # production today: 2 of 19 futures rows across `pats` / `niners` /
+        # `red sox` / `chiefs` / `lakers`.
+        #
+        # ONLY the no-rows population (#3412), NOT `_futures_card_has_no_answer`.
+        # An empty `top_outcomes` here has two causes and the other one is
+        # unmeasured on this surface: `60768956` ("TX-04 House election: Pat
+        # Fallon vote percent") draws an empty dropdown ladder while HOLDING
+        # outcome rows, so a truthiness test on the rendered list would withdraw
+        # it too, on no evidence. That is the exact mistake #6327's fence exists
+        # to prevent — measure the surface before you widen on it.
+        #
+        # Filtered HERE and not out of `ta_futures_ranked`, because the event
+        # CONCEPT pool below reads that same ranked list and an unpriced winner
+        # field is still a real tournament (see /search's note on
+        # `deduped_futures`).
+        if _futures_market_has_no_outcome_rows(market):
+            continue
         dedup_key = _normalize_futures_dedup_key(market)
         if dedup_key in seen_futures_keys:
             continue
@@ -21442,10 +21470,75 @@ def _futures_market_is_wholly_unpriced(market: "FuturesMarket") -> bool:
     with a different remedy, they are more than twice this ship's population, and
     withdrawing them would have been an unmeasured suppression riding a measured
     one. `market.outcomes and ...` is the whole guard against that.
+
+    THAT FENCE STILL STANDS HERE, and #3412 has since measured what it fenced out:
+    `_futures_market_has_no_outcome_rows` is that population's own predicate, and
+    `_futures_card_has_no_answer` is what the call sites actually ask. This
+    function is unchanged and still means exactly what its name says — do not
+    widen it to cover the other population, or the two become one number again
+    and neither can be re-measured on its own.
     """
     return bool(market.outcomes) and not any(
         o.current_probability is not None for o in market.outcomes
     )
+
+
+def _futures_market_has_no_outcome_rows(market: "FuturesMarket") -> bool:
+    """This market holds no `futures_outcomes` row whatsoever (#3412).
+
+    The population #6327 deliberately fenced out as unmeasured. It is measured
+    now, on production, 2026-09-15, and the fence was the right call for that
+    ship and the wrong end state for this surface:
+
+    * 10,771 open markets hold zero outcome rows. 10,763 are Polymarket; Kalshi
+      has fallen 480 -> 8 since the issue was filed, so this is now effectively
+      a one-source defect.
+    * They are NOT rows that were emptied — 10,730 of them were touched again
+      after creation and still carry nothing, across six months of `created_at`.
+      Never populated, re-visited, still silent (gotcha #18's decomposition gap
+      is the standing suspicion; the ingest half stays open on #3412).
+    * REACH, which is why this predicate exists at all: replaying the 30
+      most-frequent real reader queries of the last 14 days against production
+      search served 342 futures rows, and 52 of them — 13 of the 30 queries —
+      had no outcomes. Not a tail: `pats`, `niners`, `red sox`, `chiefs`,
+      `lakers`. "Patriots vs. Bills", "Jets vs. Patriots", "49ers vs. Seahawks",
+      and a tier-1 "Boston Red Sox vs. Texas Rangers - 9th Inning Winner".
+
+    What the reader got for it (LOOK, /search?q=pats at 390px,
+    `artifacts-latency-423/pats-390-futures.png`): a full-height card with the
+    same purple border and trophy chrome as its priced siblings, no count badge,
+    and the grey words "No outcomes available" centred where the ladder goes. It
+    costs a card slot to say nothing — and 26 of the 40 such rows name a fixture
+    the SAME response already answers, priced, in its `results` section. The
+    withdrawal takes away no number the reader could otherwise have had.
+
+    Every other reader surface already closed this: `/api/leagues/{key}` at the
+    serving layer (`42aaf067`, declaring the drop as `no_outcomes`) and the hubs
+    at the render layer (PR #3409). Verified clean again today against the full
+    10,771-id set — Discover feed, /api/politics, /api/economics and
+    /api/entertainment serve zero of them. Search was the holdout, not the
+    pioneer.
+    """
+    return not market.outcomes
+
+
+def _futures_card_has_no_answer(market: "FuturesMarket") -> bool:
+    """The card this market would draw can state no number at all.
+
+    The union the search surfaces actually want, and the ONLY thing the call
+    sites should ask. Two independently measured populations, two predicates,
+    one question:
+
+        no outcome rows whatsoever   -> #3412, `_..._has_no_outcome_rows`
+        rows, none of them priced    -> #6327, `_..._is_wholly_unpriced`
+
+    They are kept apart on purpose so either can be re-measured or reverted
+    without disturbing the other; composing them here is what keeps the two
+    call sites from drifting into two different rules.
+    """
+    return _futures_market_has_no_outcome_rows(
+        market
+    ) or _futures_market_is_wholly_unpriced(market)
 
 
 def _build_search_top_outcomes(
