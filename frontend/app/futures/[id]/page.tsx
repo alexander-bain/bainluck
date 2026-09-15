@@ -42,6 +42,7 @@ import RelatedByTag from "@/components/RelatedByTag";
 import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
 import {
   asOfLabel,
+  gradedWinner,
   movementExplanation as movementExplanationHelper,
   heroOutcomeLabel,
   movementWindowLabel,
@@ -530,8 +531,52 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // #883 L2-49: on a resolved market the hero features the actual WINNER (which
   // may differ from the highest-probability outcome), labeled as final — not a
   // live probability. Falls back to the leader if no winner is flagged yet.
-  const resolvedWinner = isResolved ? pickHeroOutcome(market.outcomes, leader, true) : null;
+  //
+  // #6301 — RENAMED from `resolvedWinner`, which is what this variable was called
+  // while it held a rider who lost. It is the FEATURED row on a settled market and
+  // the fallback means it is frequently not a winner at all; the old name read as
+  // a guarantee the value never made, and every misuse below started by trusting it.
+  const resolvedFeatured = isResolved ? pickHeroOutcome(market.outcomes, leader, true) : null;
   const heroOutcome = pickHeroOutcome(market.outcomes, leader, isResolved);
+  // #6301 — the GRADE, asked for BY NAME through the one helper that owns the test.
+  // `gradedWinner` returns the featured row only when `is_winner === true`, and null
+  // on every settled field that never graded one. `layout.tsx` adopted it under #6079
+  // and this page did not, which is the whole of why the unfurl title was right about
+  // the Vuelta while the page it links to was wrong.
+  const gradedChampion = gradedWinner(market.outcomes, leader, market.status);
+  // #6301 — A SETTLED FIELD WITH NO WINNER NAMES NOBODY.
+  //
+  // `pickHeroOutcome` answers "which row does this surface feature", and on a
+  // resolved market with nothing graded it answers with the price leader. That
+  // is the right answer to its question (#6079 settled this: the subject and
+  // the verdict are two questions) and it is the wrong thing to print in 24px
+  // above a table whose first row says that rider LOST.
+  //
+  // Production, `/futures/58675941` — *Vuelta a Espana 2026: Winner*:
+  //
+  //     Tadej Pogacar   RESOLVED
+  //     Final Results
+  //      1  Tadej Pogacar   Lost   0%   Settled
+  //
+  // All 30 outcomes carry `is_winner:false` and `probability:0.0`; the only
+  // thing that singled him out is `rank: 1`, a stale PRE-RACE rank frozen from
+  // when he was the favourite. Enric Mas Nicolau won that race, and we crown him
+  // correctly on our Kalshi copy of the same question.
+  //
+  // The chip was already honest — it reads grey "Resolved", not "Won", because
+  // `resolvedWon` has always been gated on the grade. The NAME beside it was
+  // not, and a name in the hero position IS the crowning.
+  //
+  // 🔴 NOT a blanket suppression on settled markets, and the difference is the
+  // whole fix: this declines only when the grade is ABSENT. A field with a real
+  // champion still names them. `all_losers`' own producer comment says it means
+  // "the winning outcome isn't in our DB" — a statement of absence, which this
+  // page was reading as an answer (#4923: no verdict beats a wrong one).
+  //
+  // Declined SILENTLY (notice 34): `FuturesHero` already guards its name on
+  // `outcomeName &&`, so withholding it leaves the title and the grey chip and
+  // no hole. The "Final Results" table below is honest and carries the page.
+  const heroNamesNobody = isResolved && gradedChampion === null;
   // L2-161 Hero C: the hero outcome's own 7-day curve, drawn as ambient texture
   // behind the numeral. Empty ⇒ the hero falls back to a plain numeral.
   const ambientPoints = buildAmbientPoints(historyOutcomes, heroOutcome?.id ?? null);
@@ -607,8 +652,26 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       {/* Probability Hero — design spec FD-1 (resolved-aware, #883 L2-49) */}
       <FuturesHero
         name={market.name}
-        probability={heroOutcome?.probability ?? null}
-        outcomeName={heroOutcome ? heroOutcomeLabel(heroOutcome.name) : undefined}
+        probability={heroNamesNobody ? null : heroOutcome?.probability ?? null}
+        // #6301 — the number travels with the name, and this half is DEFENSIVE
+        // rather than a visible repair. Measured before writing it: every `pct`
+        // site in `FuturesHero` is gated on `!resolved` (the 64px numeral, the
+        // Yes/No bar) or on `resolvedWon` (the "Markets gave this just X%" note),
+        // and `heroNamesNobody` implies `resolved && !resolvedWon` — so on today's
+        // component this ternary changes no pixel and no test can kill it. It is
+        // stated as an equivalent mutant in the PR rather than counted as a guard.
+        //
+        // It is kept because the coupling is the thing that stops a REOPENING: the
+        // settled hero is one design change away from carrying a numeral again, and
+        // `/futures/60010606` (Vuelta Stage 3, void at the venue, 184 legs, 0
+        // winners) serves its rank-1 loser at `probability: 0.35` — not the 0.0 the
+        // all-losers fields serve. The day that branch prints a number, it would
+        // print "35%" under no name at all.
+        outcomeName={
+          heroNamesNobody || !heroOutcome
+            ? undefined
+            : heroOutcomeLabel(heroOutcome.name)
+        }
         movement={!isResolved && leader?.probability_change_24h != null ? leader.probability_change_24h * 100 : null}
         // UX-P233 (board item 11): the pill used to render a bare "↓ 71.5 pts"
         // with no window at all, directly above a caption reading "Amazon up 13.5
@@ -638,7 +701,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         isMultiOutcome={(market.outcome_count ?? 0) > 2}
         sparklinePoints={ambientPoints}
         resolved={isResolved}
-        resolvedWon={resolvedWinner?.is_winner === true}
+        resolvedWon={gradedChampion !== null}
       />
 
       {/* L2-65 / B7 L2-91: breadcrumb UP into the richer event-concept surface
@@ -837,9 +900,13 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               {movementExplanation}
             </p>
           )}
-          {isResolved && resolvedWinner && (
+          {isResolved && resolvedFeatured && (
             <p className="text-[13px] leading-relaxed text-text-secondary mt-3">
-              Settled{resolvedWinner.is_winner === true ? ` — ${heroOutcomeLabel(resolvedWinner.name)} won.` : "."}
+              {/* #6301 — the caption's own verdict comes from the grade, never from
+                  the featured row. Unchanged in behaviour (it already tested
+                  `is_winner`); it now asks the same helper as the hero above it so
+                  the two can never drift into naming different champions. */}
+              Settled{gradedChampion ? ` — ${heroOutcomeLabel(gradedChampion.name)} won.` : "."}
             </p>
           )}
         </div>

@@ -74,10 +74,22 @@ export function FuturesHero({
       {resolved && (
         <div className="mb-3">
           <div className="flex items-center gap-2 flex-wrap">
+            {/* #6301 — the settled hero's crowned name, addressable. The loser's
+                name is legitimately printed in the results table three inches
+                below, so a whole-page assertion cannot tell "the hero declined to
+                crown anyone" from "the row is on the page somewhere" — the guard
+                has to be able to ask THIS element. Same convention as
+                `hero-movement` above. */}
             {outcomeName && (
-              <span className="text-2xl font-semibold text-text-primary tracking-tight">{outcomeName}</span>
+              <span
+                data-testid="hero-resolved-name"
+                className="text-2xl font-semibold text-text-primary tracking-tight"
+              >
+                {outcomeName}
+              </span>
             )}
             <span
+              data-testid="hero-resolved-chip"
               className={`text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${
                 resolvedWon
                   ? "bg-accent-live/15 text-accent-live"
