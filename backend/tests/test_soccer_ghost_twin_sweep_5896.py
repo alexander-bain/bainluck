@@ -301,12 +301,23 @@ class TestTheSweepRunsWithoutAHuman:
 
     def test_the_window_covers_the_whole_decidable_population(self):
         """The lookback has to reach at least as far back as the widest lag the
-        judgement will accept, or the sweep can plan a pair it never read."""
+        judgement will accept, or the sweep can plan a pair it never read.
+
+        Asserted on the MODULE constants, not on the beat kwargs it used to
+        read. The entry pinned `lookback: 5` of its own, which made it a second
+        copy of the window and left `DEFAULT_LOOKBACK_DAYS` read by nothing that
+        runs (#3813); the entry now passes neither and the task resolves both.
+        The assertion is unchanged — only where the effective value lives.
+        `test_the_beat_entry_pins_no_window_of_its_own` guards the other half.
+        """
+        from app.tasks.soccer_ghost_twin_sweep import (
+            DEFAULT_LOOKAHEAD_DAYS,
+            DEFAULT_LOOKBACK_DAYS,
+        )
         from app.utils.soccer_ghost_twins import MAX_GHOST_LAG
 
-        entry = self._schedule()["soccer-ghost-twin-sweep"]
-        assert entry["kwargs"]["lookback"] >= MAX_GHOST_LAG.days
-        assert entry["kwargs"]["lookahead"] >= 1
+        assert DEFAULT_LOOKBACK_DAYS >= MAX_GHOST_LAG.days
+        assert DEFAULT_LOOKAHEAD_DAYS >= 1
 
 
 def test_it_is_enrolled_in_enforced_tasks():

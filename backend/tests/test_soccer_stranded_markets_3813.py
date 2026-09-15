@@ -389,6 +389,55 @@ class TestItCannotUndoTheThreePassesAboveIt:
         assert tags == []
 
 
+class TestTheWidenedWindowActuallyReachesProduction:
+    """🔴 The constant was read by nothing on the path that runs.
+
+    `soccer_ghost_twin_sweep_task` was declared `lookback: int = 5` and the beat
+    entry passed `{"lookback": 5, "lookahead": 5}`, so widening
+    `DEFAULT_LOOKBACK_DAYS` to 45 would have moved the constant, this suite and
+    three docstrings while the scheduled run kept reading five days — a ship
+    that is green everywhere and inert in production. Two tests, because there
+    are two places the literal can come back.
+    """
+
+    def test_the_beat_entry_pins_no_window_of_its_own(self):
+        from app.tasks import celery_app
+
+        kwargs = celery_app.conf.beat_schedule["soccer-ghost-twin-sweep"]["kwargs"]
+        assert "lookback" not in kwargs and "lookahead" not in kwargs, (
+            "a window pinned here shadows DEFAULT_LOOKBACK_DAYS and the sweep "
+            "silently keeps reading the old one"
+        )
+        assert kwargs["apply"] is True
+
+    def test_an_unspecified_window_resolves_to_the_modules_constants(self):
+        import app.tasks as tasks
+        from app.tasks import soccer_ghost_twin_sweep as mod
+
+        seen = {}
+
+        async def _fake(*, apply, lookback, lookahead):
+            seen.update(apply=apply, lookback=lookback, lookahead=lookahead)
+            return {"terminal": "no_work"}
+
+        original_run = mod.run_soccer_ghost_twin_sweep
+        original_tracked = tasks._tracked_run
+        mod.run_soccer_ghost_twin_sweep = _fake
+        tasks._tracked_run = lambda _name, coro: __import__("asyncio").run(coro)
+        try:
+            tasks.soccer_ghost_twin_sweep_task(apply=True)
+        finally:
+            mod.run_soccer_ghost_twin_sweep = original_run
+            tasks._tracked_run = original_tracked
+
+        assert seen["lookback"] == mod.DEFAULT_LOOKBACK_DAYS
+        assert seen["lookahead"] == mod.DEFAULT_LOOKAHEAD_DAYS
+        assert mod.DEFAULT_LOOKBACK_DAYS > 5, (
+            "the whole point of the widening: the stranded backlog spans weeks, "
+            "and at 5 days the sweep saw 2 of the 19 measured pairs"
+        )
+
+
 class TestThePlanReportsTheFourthPassOnItsOwnNumbers:
     def test_the_specimen_reaches_the_plan_and_is_counted_separately(self):
         plan = plan_ghost_tags([played(), copy_holding_prices()], now=NOW)
