@@ -6,7 +6,9 @@ import logging
 import re
 from typing import Any
 
+from app.utils.feed_market_quality import GOLF_TOURNAMENT_STORY_PREFIX
 from app.utils.feed_market_quality import _story_key as compute_story_key
+from app.utils.feed_market_quality import golf_tournament_display_name
 
 logger = logging.getLogger(__name__)
 
@@ -656,6 +658,49 @@ def _members_span_multiple_seasons(items: list[dict[str, Any]]) -> bool:
     return len(seasons) > 1
 
 
+# ── A DERIVED KEY CANNOT BE AUTHORED, SO ITS COPY IS CUT FROM THE MEMBERS ────
+#
+# #6423 mints one story key PER GOLF TOURNAMENT, which means the key did not
+# exist when this file was written and can never appear in AUTHORED_STORY_TITLES
+# or AUTHORED_STORY_QUESTIONS. Both fallbacks below it are wrong here:
+#
+#   `_derive_story_title` un-slugifies the key   -> "Golf Tournament:bmw PGA Championship"
+#   `_shared_member_phrase` lower-cases and stri -> "nationwide children s hospital championship"
+#
+# and either would be the bundle's HEADLINE on a reader's screen (notice 34).
+# So the tournament is cut verbatim out of a member's own name by the same
+# grammar that minted the key, and the question is authored once for the
+# prefix.
+#
+# 🔴 THE QUESTION IS "WHAT HAPPENS AT", NOT "WHO WINS", AND THAT IS #4147's
+# RULE APPLIED BEFORE IT COULD BITE. A shared question is a claim about the
+# members, and these members are not all about winning: the family is winner,
+# the cut, top-5/10/20, each round's leader, a hole-in-one, a playoff and an
+# albatross. "Who wins the BMW PGA Championship?" — the phrasing the neighbouring
+# authored golf key uses — is false of the hole-in-one row sitting right under
+# it. "What happens at the BMW PGA Championship?" is true of every member, which
+# is the bar clause (c) actually sets.
+def _golf_tournament_bundle_copy(
+    story_key: str, member_names: list[str]
+) -> tuple[str, str] | None:
+    """``(label, question)`` for a derived golf-tournament family, or None."""
+    names = [
+        tournament
+        for tournament in (golf_tournament_display_name(n) for n in member_names)
+        if tournament
+    ]
+    if not names:
+        # Fail closed: no member states a tournament we can name, so there is
+        # no honest headline and the members compete on their own.
+        return None
+    # Members of one key slugify identically, so this only ever picks between
+    # spellings of the same tournament; the most common wins, ties by first
+    # appearance (i.e. by the best-scoring member).
+    label = max(names, key=lambda t: (names.count(t), -names.index(t)))
+    article = "" if _LABEL_LEAD_RE.match(label) else "the "
+    return label, f"What happens at {article}{label}?"
+
+
 def _make_theme_bundle_item(
     story_key: str, items: list[dict[str, Any]]
 ) -> dict[str, Any] | None:
@@ -684,6 +729,12 @@ def _make_theme_bundle_item(
     member_ids = [_futures_data(item).get("id") for item in ranked]
     member_names = [str(_futures_data(item).get("name") or "") for item in ranked]
     question, question_source = resolve_story_question(story_key, member_names)
+    if story_key.startswith(GOLF_TOURNAMENT_STORY_PREFIX):
+        resolved = _golf_tournament_bundle_copy(story_key, member_names)
+        if resolved is None:
+            return None
+        label, question = resolved
+        title_source = question_source = "golf_tournament"
     if not question:
         return None
     if _members_span_multiple_seasons(ranked):
