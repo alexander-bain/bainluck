@@ -65,3 +65,14 @@ frontend/lib/analytics/sanitize.ts
 # classified `frontend`, skip this shard, and silently leave the backend
 # suppressing sentences about rows the reader can now see.
 frontend/components/discover/FuturesCard.tsx
+
+# #6381. `test_venue_settled_payload_6381.py` reads `hasNoReportedResult` out of
+# this file and asserts it still has exactly the two arms the server's
+# `venue_settlement_is_askable` mirrors. "No result reported" is defined HERE and
+# nowhere else; the backend gate decides which rows get told the venue already
+# graded them, so the day the web side grows a third way to say the sentence, the
+# server ships #6381's fix to a subset of its own class and nothing says so.
+# That guard is worth having only if it RUNS on the change that breaks it — and
+# adding an arm to this file is precisely the frontend-only edit that would
+# otherwise be classified `frontend` and skip the shard that holds it.
+frontend/lib/eventState.ts

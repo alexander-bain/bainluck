@@ -66,6 +66,7 @@ from app.utils.hero_probability import resolve_hero
 # left with #3903 — see `utils/hero_probability`.
 from app.utils.settled_hero import resolve_settled_hero
 from app.utils.settledness import market_assigned_settled
+from app.utils.venue_settlement import venue_settlement_is_askable
 from app.utils.standings_shape import public_standings
 from app.utils import (
     moneyline_to_probability,
@@ -12002,6 +12003,75 @@ async def _pinned_live_probability(db: AsyncSession, event) -> dict | None:
     }
 
 
+async def _venue_settlement(db: AsyncSession, event) -> dict | None:
+    """#6381's producer half: did the venue already grade this event?
+
+    Returns ``None`` — the keys are then absent — for every event that is not
+    about to print "No result reported"; see
+    :func:`venue_settlement_is_askable` for that scope and why ``closed`` is
+    not in it. The caller does the gate, so this function is never reached on
+    the hot path: measured on production 2026-09-15, 1,344 rows sitewide can
+    ask it at all.
+
+    Additive and advisory, exactly like `_pinned_live_probability` above. It
+    never touches `event.status`, never writes, and never derives a winner —
+    the hero sentence and the countdown are ux's under notice 41 (#6381 is the
+    consumer issue).
+
+    🔴 POSITIVE GRADES ONLY — ``is_winner IS TRUE``, never a count of graded
+    legs and never a loss. A graded loss decides the other side only when some
+    leg of that market WON: on a voided market every leg reads as a loss, and a
+    reader handed "the other one must have won" gets a fabricated 100%. This is
+    also what keeps the #1868 / #3617 class out: those are mass
+    ``is_winner=FALSE`` grades stamped on games nobody played, and a predicate
+    that only ever reads ``TRUE`` cannot see them. The positives are the ones
+    that corroborate — 2 of the 2 checkable specimens on #6381 agree with an
+    independently completed twin's real score (``Draw 0-0`` vs ``0–0``,
+    ``Brighton wins 5-0`` vs ``0–5``).
+
+    ``is_(True)`` and not ``== True``: the column is nullable and NULL means
+    "nobody graded this", which is a third answer rather than a false one.
+    """
+    from app.utils.venue_settlement import (
+        VENUE_SETTLEMENT_SOURCE,
+        choose_settled_score,
+        is_full_scope_score_market,
+    )
+
+    try:
+        graded = (
+            await db.execute(
+                select(FuturesMarket.name, FuturesOutcome.name)
+                .join(FuturesOutcome, FuturesOutcome.market_id == FuturesMarket.id)
+                .where(
+                    FuturesMarket.event_id == event.id,
+                    FuturesOutcome.is_winner.is_(True),
+                    FuturesOutcome.resolution_source == VENUE_SETTLEMENT_SOURCE,
+                )
+            )
+        ).all()
+    except Exception:
+        # A refusal, not a default. The page keeps whatever it said before this
+        # key existed rather than being told the venue said nothing.
+        return None
+
+    if not graded:
+        return {"venue_settled": False, "venue_settled_result": None}
+
+    # Unbounded row read, and that is measured rather than assumed: across the
+    # 1,344 events that can reach here the graded-row count is max 84, p99 20,
+    # mean 3.2. A LIMIT would bound a read that is already bounded, at the cost
+    # of silently truncating the one market whose name carries the score.
+    return {
+        "venue_settled": True,
+        "venue_settled_result": choose_settled_score(
+            outcome_name
+            for market_name, outcome_name in graded
+            if is_full_scope_score_market(market_name)
+        ),
+    }
+
+
 @router.get("/{event_id}")
 async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     """Get event details with aggregated odds from all bookmakers."""
@@ -12466,6 +12536,30 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     _pinned = await _pinned_live_probability(db, event)
     if _pinned is not None:
         response["live_probability_pinned"] = _pinned
+
+    # ── #6381: the page stops denying a result the venue already gave us ─────
+    #
+    # `/events/15310639` served `status: scheduled`, both scores null, a ticking
+    # refresh countdown and the hero chip "No result reported" — while its own
+    # `Correct Score` market, on the same row, read `Draw 0-0 · Won`, graded
+    # `api_settlement` three days earlier. 426 scheduled rows were in that state
+    # and ≥411 of them have no completed counterpart anywhere, so the grade we
+    # hold is the only result they will ever have.
+    #
+    # ASKED OF THE RESPONSE, not of the row. The gate reads `status`,
+    # `started_without_result` and the scores back out of `response` — the
+    # values the page is about to be served — so this key cannot disagree with
+    # the keys it sits beside about what the page is about to say. The third arm
+    # is `hasNoReportedResultForShare`'s unbacked-`live` one, hence `_pinned`.
+    #
+    # AFTER the pinned block, necessarily: that block is one of the three inputs.
+    if venue_settlement_is_askable(
+        response,
+        live_claim_is_unbacked=bool(_pinned and _pinned.get("pinned")),
+    ):
+        _settlement = await _venue_settlement(db, event)
+        if _settlement is not None:
+            response.update(_settlement)
 
     # Box score data for player props display
     if event.box_score_data and not event.box_score_data.get("error"):
