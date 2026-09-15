@@ -159,7 +159,20 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: is "keep a bank that cannot advance, or re-key one that can". The version is
 #: NOT bumped: the published population is unchanged, so there is nothing for a
 #: reader to be told and q271 still names the right rows.
-LIVE_INPUT_FINGERPRINT = "1a1d9a914a4824381d8132498197bb34"
+#: The digest as of the change that owns this file. It is re-pinned ONLY by a
+#: ship that deliberately moves the population, and the bump is the ship's to
+#: explain — a silent re-pin would turn this tripwire into bookkeeping.
+#:
+#: MOVED 2026-09-15 by #6211 (1a1d9a91… -> ce063bf0…). ``market_info`` gained a
+#: second withholding predicate (``datagolf_recovery_unverified``), and
+#: ``_calibration_population_ctes`` is a hashed root, so the digest moved by
+#: design: "Any edit to any query invalidates every carried read, which is the
+#: only safe default." THE CONSEQUENCE IS THE ONE THIS FILE'S HEADER WARNS
+#: ABOUT — deploying it discards every banked unit and the staged futures build
+#: re-converges from zero (~13 beats at the CAL-P024 per-unit cost). That is not
+#: a cost this test can prevent, only one it can make impossible to miss, which
+#: is why the constant is a literal rather than a computed value.
+LIVE_INPUT_FINGERPRINT = "ce063bf08a7733e09a9df82513f81203"
 
 
 class _Db:
