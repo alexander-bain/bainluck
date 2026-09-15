@@ -1,0 +1,19 @@
+#1459 native half — cold open, RELEASE build, iPhone 17 Pro simulator, 2026-09-15 07:0xZ PDT
+sha 9c431a459 (master d220d3aac + this branch). Screenshot every ~0.5s from the simctl launch call.
+
+RUN A — first launch after install (worst case)
+  t=3.76s  blank white, no chrome
+  t=4.97s  blank white, no chrome
+  t=6.75s  CHROME UP: "Discover", Today's Challenge, tab bar, "Loading predictions..."
+  t=7.72s  real cards
+RUN B — relaunch, warm container
+  t=1.16s  previous-session snapshot (iOS restores it)
+  t=2.11s  blank white
+  t=2.62s  real cards
+
+READ: first frame lands between 4.97s and 6.75s on the worst case; the feed adds ~1s on top of it
+here, and that ~1s is NOT representative — this session curled /api/feed repeatedly, so the server's
+response cache was warm (the trap #1459's own comment records). The white window is the app's own
+start, not the feed.
+CAVEAT, load-bearing: a simulator's first launch after install pays page-in and dyld costs a phone
+does not. This number bounds the simulator, not the device.
