@@ -7,6 +7,18 @@ issues: #1544 · #683
 
 **DO NOT REMOVE (CI-guarded).**
 
+> ✅ **THIS FREEZE WAS LIFTED 2026-09-15T07:59Z (2026-09-15 00:59 PDT).** The lift condition below was
+> met and recorded by calibration/1273 — freeze score **22/24, `CONDITION_MET`**, window
+> `2026-09-14T08:35:05Z → 2026-09-15T07:34:25Z`, `0 excluded as pre-baseline`, both misses the two
+> oldest slots so the window is also **22 consecutive** clean beats; no-regression at the closing beat
+> `self_check.ok: true`, `headline_pass: true`, `mce_closing_line 1.49 pp ≤ 2.0`. **The numbers and the
+> lift are recorded in `.claude/handoff/PROGRAM-CALIBRATION-REPORT-2.md`, entry `CAL-P1273`** — that
+> entry, not this line, is the lift; this is a pointer so a lane grepping the ruling does not read a
+> freeze that is over. 🔴 **The lift is NOT an activation trigger** (codex: *"no activation merely
+> because the freeze lifts"*): #6090/#6092 and #6275 stay HELD on their own grounds.
+>
+> The freeze text below is kept verbatim and unedited — it is the thing that was satisfied.
+
 > `backend/app/tasks/precompute_calibration.py` is **FROZEN**. No commits to it until
 > `calibration:main` **publishes fresh post-CAL-P024 AND converges**.
 
