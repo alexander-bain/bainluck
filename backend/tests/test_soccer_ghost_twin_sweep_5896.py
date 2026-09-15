@@ -72,6 +72,7 @@ class _Row:
         espn_id=None,
         statpal_fixture_id=None,
         tags=None,
+        kalshi_tickers=None,
     ):
         self.id = id
         self.sport_key = sport_key
@@ -84,6 +85,11 @@ class _Row:
         self.espn_id = espn_id
         self.statpal_fixture_id = statpal_fixture_id
         self.tags_text = tags or "[]"
+        #: `string_agg` of this row's Kalshi market tickers, or None when it
+        #: holds none — the column `build_plan` turns into the third pass's
+        #: `ticker_sport_key`. Named here so dropping it from the SELECT breaks
+        #: these tests rather than silently making that pass inert.
+        self.kalshi_tickers = kalshi_tickers
 
 
 def ghost(**kw):
@@ -247,9 +253,9 @@ class TestTheSweepRunsWithoutAHuman:
 
         entry = self._schedule()["soccer-ghost-twin-sweep"]
         assert entry["task"] == "app.tasks.soccer_ghost_twin_sweep"
-        assert entry["task"] in celery_app.tasks, (
-            "the beat names a task nobody registered — it would fire into the void"
-        )
+        assert (
+            entry["task"] in celery_app.tasks
+        ), "the beat names a task nobody registered — it would fire into the void"
 
     def test_it_applies_rather_than_dry_running(self):
         """A dry-run schedule measures the defect every half hour and leaves the
@@ -370,7 +376,7 @@ class TestTheTwoZerosDoNotShareAVerdict:
         assert "append_tag" not in session.calls
 
     def test_a_read_that_raises_is_failed_and_unmeasured(self, monkeypatch):
-        """"I could not look" is not "there was nothing to do" (gotcha #53)."""
+        """ "I could not look" is not "there was nothing to do" (gotcha #53)."""
         summary, _ = _run(_filler(400), monkeypatch, read_raises=True)
 
         assert summary["terminal"] == "failed"
@@ -496,14 +502,68 @@ class TestTheWriteRail:
             (15307681, 15306857)
         ]
 
+    def test_the_third_pass_reads_the_tickers_the_query_projects(self):
+        """#5896/#3813 — Mallorca v Sabadell, the stranded specimen, end to end.
+
+        The la_liga row's own markets are `KXLALIGA2` contracts, which is
+        Kalshi's name for the Segunda; the canonical is the played Segunda row.
+        Two block coordinates differ at once, so nothing but the third pass
+        reaches them. This goes through `build_plan` rather than the planner so
+        the column → `ticker_sport_key` wiring is what is being asserted: drop
+        `kalshi_tickers` from the SELECT and this is the test that fails.
+        """
+        rows = [
+            _Row(
+                id=15308726,
+                sport_key="soccer_spain_la_liga",
+                home="Mallorca",
+                away="Sabadell",
+                at=GHOST_AT,
+                status="suspended",
+                kalshi_tickers="KXLALIGA2GAME-26SEP13MALSAB",
+            ),
+            _Row(
+                id=15306010,
+                sport_key="soccer_spain_segunda_division",
+                home="Mallorca",
+                away="Sabadell FC",
+                at=CANON_AT,
+                status="completed",
+                home_score=2,
+                away_score=0,
+                statpal_fixture_id="9545042",
+            ),
+            *_filler(400),
+        ]
+
+        plan = sweep.build_plan(rows, now=NOW)
+
+        assert plan.blocks_examined == 0, "the narrow key must not see this pair"
+        assert plan.residual_blocks_examined == 0, "nor may the loose-name key"
+        assert plan.ticker_blocks_examined == 1
+        assert plan.ticker_tags == 1
+        assert [(t.ghost_id, t.canonical_id) for t in plan.tags] == [
+            (15308726, 15306010)
+        ]
+
+    def test_a_row_with_no_kalshi_markets_reads_as_no_opinion(self):
+        """The aggregate is NULL for a row holding none, and `None.split` raises.
+
+        Most of the window is this row, so a crash here is the whole sweep.
+        """
+        plan = sweep.build_plan([ghost(), canonical(), *_filler(400)], now=NOW)
+
+        assert plan.ticker_tags == 0
+        assert [t.ghost_id for t in plan.tags] == [GHOST_ID]
+
     def test_the_undo_reads_the_table_the_sweep_banks_into(self):
         """One constant, imported, not two strings that agree today."""
         import scripts.restore_5896_soccer_ghost_tags as undo
 
         assert undo.BAK_TABLE is sweep.BAK_TABLE
-        assert undo.BAK_TABLE != "bak_2878_twin_ghost_tags", (
-            "sharing the tennis sweep's table would make the two undos inseparable"
-        )
+        assert (
+            undo.BAK_TABLE != "bak_2878_twin_ghost_tags"
+        ), "sharing the tennis sweep's table would make the two undos inseparable"
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -564,7 +624,9 @@ class TestNoFoldNoTags:
 )
 def test_the_band_boundaries(rows_considered, tags, expected_substring):
     plan = GhostPlan(
-        tags=[GhostTag(ghost_id=i, canonical_id=i + 1, reason="x") for i in range(tags)],
+        tags=[
+            GhostTag(ghost_id=i, canonical_id=i + 1, reason="x") for i in range(tags)
+        ],
         rows_considered=rows_considered,
     )
 
