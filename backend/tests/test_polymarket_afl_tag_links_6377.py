@@ -216,3 +216,144 @@ def test_the_sport_category_resolves_to_a_prefix_that_reaches_both_real_keys():
     assert prefix is not None
     assert all(key.startswith(prefix) for key in REAL_AFL_KEYS)
     assert not any(_is_cross_sport_link(prefix, key) for key in REAL_AFL_KEYS)
+
+
+# --------------------------------------------------------------------------
+# CERT-2924's required repair — `6411-READ-AFL-WOMEN-VENUE-LABEL`
+#
+# 🔴 THE MISS, AND IT IS A METHOD ERROR WORTH THE SPACE. The first cut of this
+# file invented its tag inputs (`"AFLW"`) from a venue read of the tag **slug**,
+# while `_parse_event` stores `tag.get("label", "")`. Gamma's two codes do not
+# agree — `afl` sends label `AFL`, `aflw` sends label `AFL Women` — so the AFLW
+# half matched nothing in production and every invented-input arm above still
+# went green. 8 of the 10 fixtures the venue currently lists are AFLW.
+#
+# THE GENERAL FORM: a test that builds its own input cannot discover that the
+# field it read is not the field the code reads. The arms below therefore start
+# at the RAW GAMMA TAG OBJECTS and run the shipped parser, so the only way they
+# can pass is if the real response shape reaches the real map.
+# --------------------------------------------------------------------------
+
+
+def _gamma_tag(label, slug):
+    """A Gamma tag object, shaped as the API actually sends it."""
+    return {"id": "1", "label": label, "slug": slug, "forceShow": False}
+
+
+# Verbatim from Gamma 2026-09-15. 1021565 is the event CERT-2924 named; 1011735
+# is its men's-code control. Both carry `Sports` and `Games` ahead of the sport
+# tag, which is why tag ORDER is part of the specimen and not tidied away.
+GAMMA_EVENTS = {
+    "aflw": {
+        "id": "1021565",
+        "title": "Hawthorn Hawks vs. North Melbourne Kangaroos",
+        "slug": "aflw-haw-nmk-2026-09-18",
+        "tags": [
+            _gamma_tag("Sports", "sports"),
+            _gamma_tag("Games", "games"),
+            _gamma_tag("AFL Women", "aflw"),
+        ],
+        "markets": [
+            {
+                "id": "4548450",
+                "question": "Hawthorn Hawks vs. North Melbourne Kangaroos",
+                "outcomes": '["Hawthorn Hawks", "North Melbourne Kangaroos"]',
+                "outcomePrices": '["0.105", "0.895"]',
+                "conditionId": "0x505159d12560aa3b5e44d9ae6d61e50a26750a7c2ada5",
+                "active": True,
+            }
+        ],
+    },
+    "afl": {
+        "id": "1011735",
+        "title": "Hawthorn Hawks vs. Brisbane Lions",
+        "slug": "afl-haw-bri-2026-09-19",
+        "tags": [
+            _gamma_tag("Sports", "sports"),
+            _gamma_tag("Games", "games"),
+            _gamma_tag("AFL", "afl"),
+        ],
+        "markets": [
+            {
+                "id": "4548451",
+                "question": "Hawthorn Hawks vs. Brisbane Lions",
+                "outcomes": '["Hawthorn Hawks", "Brisbane Lions"]',
+                "outcomePrices": '["0.38", "0.62"]',
+                "conditionId": "0x505159d12560aa3b5e44d9ae6d61e50a26750a7c2ada5b",
+                "active": True,
+            }
+        ],
+    },
+}
+
+
+def _parse_gamma(code):
+    """Run the SHIPPED parser over a verbatim Gamma event."""
+    from app.services.polymarket_api import PolymarketAPIService
+
+    return PolymarketAPIService()._parse_event(GAMMA_EVENTS[code])
+
+
+def test_the_parser_keeps_the_label_not_the_slug():
+    """The premise the miss turned on, asserted so it can never be assumed again.
+
+    If Gamma or the parser ever starts supplying slugs, this fails and the
+    tests below stop being about the right thing.
+    """
+    assert _parse_gamma("aflw").tags == ["Sports", "Games", "AFL Women"]
+    assert _parse_gamma("afl").tags == ["Sports", "Games", "AFL"]
+
+
+@pytest.mark.parametrize("code", ["afl", "aflw"])
+def test_gamma_afl_women_label_links_real_aflw_fixture_6411(code):
+    """CERT-2924's required test: raw Gamma -> parser -> cascade -> sport gate.
+
+    The whole chain, starting from bytes the venue actually sends. Both codes,
+    because the men's arm is the control that proves the women's arm is not
+    passing for some reason that has nothing to do with the label.
+    """
+    event = _parse_gamma(code)
+
+    category, sport, arm = resolve_event_category(
+        *_tags_to_category(event.tags),
+        event.title,
+        [event.title] + [m.question for m in event.markets],
+    )
+
+    assert sport == "aussierules"
+    assert category == "championship"
+    assert arm == "tag"
+
+    # And the candidate gate — the thing that decides whether the real fixture
+    # is reachable at all — now admits both AFL competitions for this event.
+    prefix = LLM_CATEGORY_TO_SPORT_PREFIX[sport]
+    assert not any(_is_cross_sport_link(prefix, key) for key in REAL_AFL_KEYS)
+
+
+def test_the_womens_code_would_still_be_basketball_without_its_label():
+    """The strawman guard for the repair itself.
+
+    Strip the `AFL Women` tag from the real payload and the row falls back to
+    the nickname guess — so this arm fails the moment the label entry is
+    dropped, and it cannot be rescued by the `afl` or `aflw` keys.
+    """
+    import copy
+
+    payload = copy.deepcopy(GAMMA_EVENTS["aflw"])
+    payload["tags"] = [t for t in payload["tags"] if t["slug"] != "aflw"]
+
+    from app.services.polymarket_api import PolymarketAPIService
+
+    event = PolymarketAPIService()._parse_event(payload)
+    assert "AFL Women" not in event.tags
+
+    _, sport, arm = resolve_event_category(
+        *_tags_to_category(event.tags), event.title, [event.title]
+    )
+    assert (sport, arm) == ("basketball", "fallback")
+
+
+def test_every_sport_tag_key_is_lowercase_so_a_label_can_match_it():
+    """`_tags_to_category` lowercases the tag before the lookup, so a key with
+    any uppercase in it is unreachable — a silent no-op of exactly this class."""
+    assert all(key == key.lower() for key in _TAG_TO_CATEGORY)

@@ -203,7 +203,25 @@ _TAG_TO_CATEGORY: dict[str, str] = {
     # present (30 `aussierules_afl` + 18 `aussierules_aflw`, read 2026-09-15).
     # Distinguishing the two here would put a competition in a sport-category
     # field, and `LLM_CATEGORY_TO_SPORT_PREFIX` has no key to receive it.
+    # CERT-2924's required repair, `6411-READ-AFL-WOMEN-VENUE-LABEL`. THE KEYS
+    # HERE ARE MATCHED AGAINST TAG **LABELS**, NOT SLUGS: `_parse_event` stores
+    # `tag.get("label", "")` (polymarket_api.py), so the slug never reaches this
+    # map. Read off Gamma 2026-09-15, the two codes do NOT agree —
+    #
+    #     afl-haw-bri-2026-09-19   label 'AFL'         slug 'afl'
+    #     aflw-haw-nmk-2026-09-18  label 'AFL Women'   slug 'aflw'
+    #
+    # — so `aflw` alone matched nothing and the women's code, which is 8 of the
+    # 10 fixtures the venue currently lists and 2 of this ship's 3 named
+    # specimens, kept falling through to the basketball guess. The map's own
+    # convention already anticipated this: every hyphenated slug it carries has
+    # its spoken label beside it (`table tennis` / `table-tennis`, `horse
+    # racing` / `horse-racing`). `aflw` was a slug with no label twin.
+    #
+    # The slug forms are kept because `_parse_event` also accepts a raw list of
+    # strings, and nothing guarantees which shape an endpoint sends.
     "afl": "aussierules",
+    "afl women": "aussierules",
     "aflw": "aussierules",
     "motorsports": "motorsports",
     "f1": "motorsports",
