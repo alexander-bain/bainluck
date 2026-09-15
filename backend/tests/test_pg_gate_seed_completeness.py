@@ -141,6 +141,19 @@ COVERED = (
     # broken seed — the band would simply come back empty and every "the repair
     # declined it" assertion would pass having declined nothing.
     "test_polymarket_redate_atomicity_6073_pg.py",
+    # #6221's cross-sport net follow-up. Seeds `sports`, two `events` and three
+    # `futures_markets` by raw INSERT, and it names both of the Python-side
+    # defaults this file exists to catch — `sports.active` and
+    # `futures_markets.mutually_exclusive`.
+    #
+    # Its seed also carries a vacuity hazard the NOT-NULL arm cannot see, so it
+    # is written down rather than left to be rediscovered: the whole gate turns
+    # on the ghost and the canonical holding DIFFERENT `sport_id`s. If both
+    # `_sport_id` calls ever returned one row, the first arm of the net would
+    # match on its own, every assertion would pass, and the arm under test
+    # would never be reached. The seed asserts `kleague != other` in place for
+    # that reason — legal DDL is not the same thing as a seed that can fail.
+    "test_folded_market_sport_net_6221_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"

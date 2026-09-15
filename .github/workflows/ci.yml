@@ -494,6 +494,33 @@ jobs:
             exit 1
           fi
 
+      - name: "#6221 folded market cross-sport net (real Postgres)"
+        # The follow-up CERT-2879 named. #6221 made the soccer fold cross sport
+        # KEYS, so `folded_event_ids` now hands `_build_game_markets` an id
+        # whose markets carry a different `sport_id` — which makes the net's
+        # first arm false by construction and leaves `llm_sport_category`
+        # carrying them alone. The arm added here asks what the fold already
+        # answered, and the row it exists for is `llm_sport_category IS NULL`.
+        #
+        # Only a real Postgres can grade it. The fold is read out of
+        # `events.event_tags`, a jsonb `@>` containment against the duplicate
+        # tag; under sqlite `event_tags` is shimmed to JSON and `@>` does not
+        # exist, so the fold returns nothing, every market is dropped for the
+        # right answer by the wrong route, and the foreign-sport CONTROL passes
+        # having refused a market the query never selected.
+        #
+        # Same skip detection as every gate in this job: pytest exits 0 when
+        # each test skips, and a gate that silently did not run reads exactly
+        # like one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_folded_market_sport_net_6221_pg.py \
+            -v -rs 2>&1 | tee /tmp/foldednet6221.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/foldednet6221.txt; then
+            echo "::error::#6221 folded market cross-sport net gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#5779 duplicate-sweep look-back reach (real Postgres)"
         # The reach fix is a SQL predicate — `GROUP BY statpal_fixture_id HAVING
         # count(*) > 1` inside a window, an equality plan for a one-key league
