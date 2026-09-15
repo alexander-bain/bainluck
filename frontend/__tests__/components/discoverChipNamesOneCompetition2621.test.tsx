@@ -148,8 +148,12 @@ const COLLIDED: Array<[string, string]> = [
 
 describe("#2621(a) — the chip stops naming more than one competition", () => {
   it("no two of the thirteen keys that collided render the same chip", () => {
-    const chips = COLLIDED.map(([k, n]) => chipText(render(k, n)));
-    expect(new Set(chips).size).toBe(COLLIDED.length);
+    // Asserted on the WORDS, not on `chipText`. Two of these pairs sit in
+    // different categories and so carry different glyphs — a distinctness test
+    // over the whole pill is satisfiable by the emoji alone while both chips
+    // still say the same thing, which is the defect.
+    const labels = COLLIDED.map(([k, n]) => chipLabel(render(k, n)));
+    expect(new Set(labels).size).toBe(COLLIDED.length);
   });
 
   it("the nine sports that all read OTHER each name their own sport", () => {
@@ -162,8 +166,12 @@ describe("#2621(a) — the chip stops naming more than one competition", () => {
   });
 
   it("the handball Bundesliga is not the football Bundesliga", () => {
-    expect(chipText(render("handball_germany_bundesliga", "Handball-Bundesliga")))
-      .not.toBe(chipText(render("soccer_germany_bundesliga", "Bundesliga - Germany")));
+    // 🔴 This assertion was VACUOUS on `chipText` and only the red-first pass
+    // said so: handball and soccer draw different glyphs, so "🤾 COLLIDING" and
+    // "⚽ COLLIDING" compare unequal while both chips read the same WORD. The
+    // emoji is not the claim — the competition name is.
+    expect(chipLabel(render("handball_germany_bundesliga", "Handball-Bundesliga")))
+      .not.toBe(chipLabel(render("soccer_germany_bundesliga", "Bundesliga - Germany")));
   });
 
   it("🔴 the served label is NOT read — the collision cannot come back through it", () => {
