@@ -55,10 +55,12 @@ from app.utils.polymarket_champion_mint import (
     REFUSED_FIELD_HAS_WINNER,
     REFUSED_NAME_TOO_LONG,
     REFUSED_NOT_A_FIELD,
+    REFUSED_NOT_CLOSED,
     REFUSED_NOT_TERMINAL,
     REFUSED_UNNAMED,
     is_anonymous_slot,
     mint_verdict,
+    venue_has_closed_the_leg,
 )
 
 EVENT_ID = "815313"
@@ -82,22 +84,26 @@ STORED_RIDERS = [
 UNHELD_LOSER_CID = "0x06756fcd16d0aaaa0000000000000000000000000000000000000000000000ab"
 
 
-def _leg(condition_id, title, yes_price, *, question=None):
+def _leg(condition_id, title, yes_price, *, question=None, closed=True):
     """One Gamma sub-market, in the venue's own wire shape.
 
     ``outcomePrices`` is a JSON-encoded STRING, which is how Gamma sends it —
-    a list here would test a payload the venue does not produce.
+    a list here would test a payload the venue does not produce. ``closed`` is a
+    native JSON boolean, which is how Gamma sends THAT: measured over all 71
+    legs of event 815313 on 2026-09-15, every one ``true``.
     """
     return {
         "conditionId": condition_id,
         "groupItemTitle": title,
         "question": question or f"Will {title} win the 2026 Vuelta a Espana?",
         "outcomePrices": json.dumps([f"{yes_price}", f"{1 - yes_price}"]),
-        "closed": True,
+        "closed": closed,
     }
 
 
-def _vuelta_event(*, winner_title=WINNER_TITLE, winner_price=1.0):
+def _vuelta_event(
+    *, winner_title=WINNER_TITLE, winner_price=1.0, winner_closed=True
+):
     return {
         "id": EVENT_ID,
         "title": "Vuelta a Espana 2026: Winner",
@@ -107,7 +113,7 @@ def _vuelta_event(*, winner_title=WINNER_TITLE, winner_price=1.0):
             [_leg(cid, name, 0.0) for cid, name in STORED_RIDERS]
             + [_leg(UNHELD_LOSER_CID, "Brady Gilmore", 0.0)]
             + [_leg(WINNER_CID, winner_title, winner_price,
-                    question=WINNER_QUESTION)]
+                    question=WINNER_QUESTION, closed=winner_closed)]
         ),
     }
 
@@ -395,6 +401,89 @@ class TestTheVueltaGetsItsChampion:
 
 
 # ---------------------------------------------------------------------------
+# CERT-2893's counterexample: the defect, inverted
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("open_price", [0.96, 1.0])
+async def test_open_high_price_leg_is_never_minted_6110(monkeypatch, open_price):
+    """An OPEN leg is a quote, however high, and a quote is never crowned.
+
+    THE COUNTEREXAMPLE. CERT-2893 drove this same rail with an open child at
+    0.96 and it was inserted with ``is_winner=True``: a runaway favourite made
+    champion while the race was still being run. That is #6110 running
+    backwards — the shipped defect lost a champion, this one invents one, and
+    inventing is worse because no later rail contradicts a row that already
+    says it won.
+
+    Neither condition that reaches the mint is evidence of settlement. The
+    ``is_winner`` gate above it is ``price >= 0.90``, and on an open leg the
+    price is the market's opinion; the SELECT above THAT is our own
+    ``futures_markets.status = 'resolved'``, which can be written from an
+    elapsed resolution date with no winner behind it. Only Gamma's per-leg
+    ``closed`` says the venue is finished, which is the same discriminator
+    #6110's forward half is keyed on.
+
+    1.0 is in the parameters on purpose: a reader may assume the terminal price
+    makes the flag redundant, and an open leg at 1.0 is precisely the shape
+    (fully-priced, untraded, not yet closed) that ``_is_placeholder_outcome``
+    suppresses at ingest. If the price alone were enough, this arm would mint.
+    """
+    recorder = _Recorder(STORED_RIDERS)
+    _install(
+        monkeypatch,
+        recorder,
+        _vuelta_event(winner_price=open_price, winner_closed=False),
+    )
+
+    stats = await bw._backfill_polymarket_winners_from_api(limit=10)
+
+    assert recorder.inserts == [], recorder.inserts
+    assert stats["champions_minted"] == 0, stats
+    # And it says WHY, rather than reporting a silent zero (gotcha #53).
+    assert stats["champion_mint"] == {REFUSED_NOT_CLOSED: 1}, stats["champion_mint"]
+
+
+@pytest.mark.asyncio
+async def test_the_closed_vuelta_arm_still_mints_beside_that_control(monkeypatch):
+    """The positive arm of the same test, on the same rig.
+
+    A refusal rule proves nothing on its own: a mint function that refused
+    everything would pass the control above. This is the specimen as the venue
+    really sends it — measured 2026-09-15, all 71 legs of event 815313 carry
+    ``closed: true`` as a native boolean and the winner is one of them — so the
+    repair costs the ship nothing.
+    """
+    recorder = _Recorder(STORED_RIDERS)
+    _install(monkeypatch, recorder, _vuelta_event())
+
+    stats = await bw._backfill_polymarket_winners_from_api(limit=10)
+
+    assert stats["champions_minted"] == 1, stats
+    assert [r["external_id"] for r in recorder.inserts] == [WINNER_CID]
+
+
+@pytest.mark.asyncio
+async def test_a_leg_with_no_closed_flag_at_all_is_refused_not_assumed(monkeypatch):
+    """Absence is not consent — and a payload can simply omit the field.
+
+    Fail-closed is load-bearing for a CREATE specifically: a refusal is a
+    counted fact a later run can revisit once the venue does close the leg,
+    while a row wrongly minted is a champion nobody is looking for.
+    """
+    recorder = _Recorder(STORED_RIDERS)
+    event = _vuelta_event()
+    event["markets"][-1].pop("closed")
+    _install(monkeypatch, recorder, event)
+
+    stats = await bw._backfill_polymarket_winners_from_api(limit=10)
+
+    assert recorder.inserts == []
+    assert stats["champion_mint"] == {REFUSED_NOT_CLOSED: 1}
+
+
+# ---------------------------------------------------------------------------
 # Reaching the named row — the targeted form
 # ---------------------------------------------------------------------------
 
@@ -507,6 +596,7 @@ class TestATargetedRepairReachesTheRowWithoutMovingTheSweep:
 class TestMintVerdict:
     def _ask(self, **over):
         kwargs = dict(
+            venue_closed=True,
             price=1.0,
             group_item_title=WINNER_TITLE,
             question=WINNER_QUESTION,
@@ -522,6 +612,37 @@ class TestMintVerdict:
 
     def test_a_held_leg_belongs_to_the_update_above_us(self):
         assert self._ask(leg_already_held=True) == (REFUSED_ALREADY_HELD, None)
+
+    def test_an_open_leg_is_refused_whatever_it_is_quoted_at(self):
+        assert self._ask(venue_closed=False, price=0.96)[0] == REFUSED_NOT_CLOSED
+        assert self._ask(venue_closed=False, price=1.0)[0] == REFUSED_NOT_CLOSED
+
+    def test_the_closed_test_runs_before_the_price_test(self):
+        # An open leg at 0.5 fails both. It must be reported as the venue not
+        # having finished, not as a threshold miss — the two send a reader after
+        # very different things, and only one of them will ever resolve itself.
+        assert self._ask(venue_closed=None, price=0.5)[0] == REFUSED_NOT_CLOSED
+
+    def test_a_held_leg_is_still_the_callers_row_even_when_open(self):
+        assert self._ask(leg_already_held=True, venue_closed=False) == (
+            REFUSED_ALREADY_HELD,
+            None,
+        )
+
+    def test_the_flag_is_required_so_a_new_call_site_cannot_omit_it(self):
+        # A default would let the CERT-2893 defect be re-inherited by silence:
+        # "the caller forgot" and "the venue settled it" would arrive as one
+        # argument.
+        kwargs = dict(
+            price=1.0,
+            group_item_title=WINNER_TITLE,
+            question=WINNER_QUESTION,
+            stored_legs=30,
+            stored_winners=0,
+            leg_already_held=False,
+        )
+        with pytest.raises(TypeError):
+            mint_verdict(**kwargs)
 
     def test_a_price_below_the_mint_threshold_is_refused(self):
         # Grading uses 0.90 and creation uses 0.95: a row that does not exist
@@ -558,11 +679,42 @@ class TestMintVerdict:
         # after the wrong thing.
         assert self._ask(
             leg_already_held=True,
+            venue_closed=False,
             price=None,
             group_item_title=None,
             stored_legs=0,
             stored_winners=9,
         ) == (REFUSED_ALREADY_HELD, None)
+
+
+class TestTheVenueClosedFlagIsReadStrictly:
+    """A CREATE may not be authorised by a value we had to interpret.
+
+    Gamma sends a native boolean here (all 71 legs of event 815313, measured
+    2026-09-15). The string arm exists because the same field is a string on
+    Gamma's query side — ``polymarket_api`` writes ``params["closed"] =
+    str(closed).lower()`` — so a caller reading it back off a filtered response
+    is foreseeable rather than hypothetical.
+    """
+
+    def test_the_venues_own_boolean_is_accepted(self):
+        assert venue_has_closed_the_leg(True) is True
+
+    def test_the_string_form_gamma_uses_on_the_query_side_is_accepted(self):
+        assert venue_has_closed_the_leg("true") is True
+        assert venue_has_closed_the_leg(" True ") is True
+
+    def test_the_string_false_is_not_truthy_here(self):
+        # The whole reason this is a function and not `bool(closed)`: a
+        # truthiness test reads "false" as closed, which would crown a leg the
+        # venue explicitly says is open.
+        assert venue_has_closed_the_leg("false") is False
+
+    @pytest.mark.parametrize(
+        "value", [None, False, 0, 1, "", "yes", "closed", [], {}, object()]
+    )
+    def test_everything_else_refuses_without_guessing(self, value):
+        assert venue_has_closed_the_leg(value) is False
 
 
 # ---------------------------------------------------------------------------

@@ -6612,6 +6612,7 @@ async def _mint_missing_champion_leg(
     *,
     market_id: int,
     condition_id: str,
+    venue_closed,
     price: float | None,
     group_item_title: str | None,
     question: str | None,
@@ -6634,6 +6635,16 @@ async def _mint_missing_champion_leg(
     column — "the winning outcome isn't in our DB" — and no rail could act on
     it, because ``clob_resolve``, ``_sync_polymarket_resolved_status`` and this
     one all re-grade rows that exist.
+
+    IT MINTS ONLY A LEG THE VENUE HAS CLOSED. ``venue_closed`` is Gamma's own
+    per-leg flag, passed through raw. Neither of the two conditions that get us
+    into this branch is evidence of settlement: the ``is_winner`` test above is
+    a price test (``>= 0.90``) and prices on an OPEN leg are quotes, while the
+    selection above that is our own ``futures_markets.status = 'resolved'``,
+    which can be written from an elapsed resolution date with no winner behind
+    it. Without the flag this rail crowns a runaway favourite mid-event — the
+    #6110 defect inverted, and the CERT-2893 counterexample that sent the first
+    version of this function back.
 
     THE DECISION IS NOT HERE. :func:`app.utils.polymarket_champion_mint.mint_verdict`
     holds it, pure and without a session, and every refusal it can return is
@@ -6674,6 +6685,7 @@ async def _mint_missing_champion_leg(
     ).one()
 
     verdict, name = mint_verdict(
+        venue_closed=venue_closed,
         price=price,
         group_item_title=group_item_title,
         question=question,
@@ -7338,6 +7350,16 @@ async def _backfill_polymarket_winners_from_api(
                                         session,
                                         market_id=row.id,
                                         condition_id=m_cid,
+                                        # The venue's own per-leg flag, raw from
+                                        # the Gamma payload and normalised by
+                                        # the decision module. `is_winner` above
+                                        # is a PRICE test (>= 0.90) and the
+                                        # selection above that is our own
+                                        # `status = 'resolved'` bookkeeping —
+                                        # neither is evidence the venue has
+                                        # settled this leg, and a mint needs
+                                        # that evidence (CERT-2893).
+                                        venue_closed=m.get("closed"),
                                         price=settlement_price,
                                         group_item_title=m.get("groupItemTitle"),
                                         question=m.get("question"),

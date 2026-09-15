@@ -38,6 +38,31 @@ the result Polymarket published. We are storing an answer, not guessing one.
 
 WHERE IT REFUSES, AND WHY EACH ONE IS THERE
 
+``REFUSED_NOT_CLOSED``
+    **The venue has not finished with this leg.** Added by the CERT-2893 repair
+    ``6110-MINT-ONLY-A-VENUE-CLOSED-LEG``: the first version of this module
+    asked only about price, and the grader's exact-SHA counterexample inserted
+    an OPEN leg quoted at 0.96 as ``is_winner=True`` — a runaway favourite
+    crowned mid-race. That is the #6110 defect running backwards, and it is
+    worse than the one being repaired: the original lost a champion, this
+    invents one.
+
+    Nothing in the selection can stand in for the flag. The rail selects on OUR
+    ``futures_markets.status = 'resolved'``, which is local bookkeeping and can
+    be written from an elapsed ``resolution_date`` with no winner evidence
+    behind it at all; ``outcomePrices[0]`` on an open leg is a QUOTE, and a
+    quote at 0.96 is a market's opinion, not a result. ``closed`` is the venue's
+    own statement that the leg is settled and its price has stopped being a
+    price — the same discriminator #6110's forward half is keyed on in
+    ``_is_placeholder_outcome``, which is where this rule should have come from
+    in the first place.
+
+    It fails CLOSED: absent, ``None``, ``False`` or unparseable all refuse. A
+    mint is a creation, so "the venue did not say" must never read as "the venue
+    said yes". Measured on the specimen (Gamma ``/events?id=815313``,
+    2026-09-15): all 71 legs carry ``closed: true`` as a native JSON boolean and
+    the winning leg is one of them, so the positive arm is not paid for by this.
+
 ``REFUSED_NOT_TERMINAL``
     The leg is not at the venue's terminal price. Grading uses 0.90; creation
     uses :data:`MINT_TERMINAL_PRICE` (0.95, the same envelope
@@ -112,6 +137,7 @@ ANONYMOUS_SLOT_QUESTION_RE = re.compile(r"\bPlayer\s+[A-Z]+\b")
 MAX_NAME_LEN = 300
 
 MINTED = "minted"
+REFUSED_NOT_CLOSED = "refused_not_closed"
 REFUSED_NOT_TERMINAL = "refused_not_terminal"
 REFUSED_ANONYMOUS_SLOT = "refused_anonymous_slot"
 REFUSED_UNNAMED = "refused_unnamed"
@@ -124,6 +150,7 @@ REFUSED_NAME_TOO_LONG = "refused_name_too_long"
 #: module rather than from a caller's memory of it.
 VERDICTS = (
     MINTED,
+    REFUSED_NOT_CLOSED,
     REFUSED_NOT_TERMINAL,
     REFUSED_ANONYMOUS_SLOT,
     REFUSED_UNNAMED,
@@ -147,8 +174,32 @@ def is_anonymous_slot(group_item_title: str | None, question: str | None) -> boo
     return bool(ANONYMOUS_SLOT_QUESTION_RE.search(question or ""))
 
 
+def venue_has_closed_the_leg(closed) -> bool:
+    """Has Polymarket itself declared this sub-market finished?
+
+    The Gamma payload sends ``closed`` as a native JSON boolean (measured over
+    all 71 legs of event ``815313`` on 2026-09-15), and the string form is
+    accepted only because the same field is sent as ``"true"``/``"false"`` on
+    Gamma's QUERY side (``polymarket_api`` writes ``params["closed"] =
+    str(closed).lower()``), so a future caller reading it back off a filtered
+    response is not a surprise.
+
+    Everything else is False, deliberately and without a guess: ``None``,
+    absent, ``0``, ``1``, ``"yes"``, an object. A truthiness test would read the
+    string ``"false"`` as closed, which is the exact shape of the bug this
+    function exists to prevent — and for a CREATE, an unreadable flag must cost
+    us a refusal we can count, never a row we cannot unwrite.
+    """
+    if closed is True:
+        return True
+    if isinstance(closed, str):
+        return closed.strip().lower() == "true"
+    return False
+
+
 def mint_verdict(
     *,
+    venue_closed,
     price: float | None,
     group_item_title: str | None,
     question: str | None,
@@ -168,9 +219,21 @@ def mint_verdict(
     names what the venue said rather than what our table looks like; the
     field-shape tests come last, because they are the ones a reader will want
     to see attached to a market id.
+
+    ``venue_closed`` leads the venue-side tests and is a REQUIRED keyword with
+    no default. That is the point of it: a default would let the next call site
+    inherit the CERT-2893 defect by saying nothing, and "the caller forgot" and
+    "the venue settled it" would arrive here as the same argument. A price is
+    only a result on a leg the venue has closed, so asking about the price of an
+    open leg is asking the wrong question — hence this test runs before it, and
+    an open 0.96 is reported as ``REFUSED_NOT_CLOSED`` rather than as a
+    threshold miss it would clear.
     """
     if leg_already_held:
         return REFUSED_ALREADY_HELD, None
+
+    if not venue_has_closed_the_leg(venue_closed):
+        return REFUSED_NOT_CLOSED, None
 
     if price is None or price < MINT_TERMINAL_PRICE:
         return REFUSED_NOT_TERMINAL, None
