@@ -46,6 +46,30 @@ writers whose observations are at the SAME position both land, last one wins.
 That is correct and deliberate — a same-moment correction is news, not a
 reversion, and `live_write_would_revert` accepts ties for the same reason.
 
+── AMENDED BY #6251: ON A SCORE WRITER, THE SCORES ARE PART OF THE PREDICATE ──
+
+That paragraph is still true of the POSITION. It stopped being the whole story
+once `live_write_would_revert` gained its tie-break, because on a position tie
+the decision now reads the row's two score columns as well — and a decision is
+only atomic with its write if the write re-asserts everything the decision read.
+A tie-break taken on a score another writer has already moved is the same class
+of mistake this module exists to close, one column over.
+
+So the three writers that WRITE a score pass what they read of it, and it joins
+the predicate. Two things follow, and the second is a cost worth stating:
+
+  * The tie decision is now genuinely atomic, on the same READ COMMITTED
+    argument as the position.
+  * The predicate is fractionally stricter than the decision strictly needs. At
+    a NON-tie the score was never consulted, so a concurrent score commit does
+    not invalidate that decision, yet it will now refuse the write. The refusal
+    is a counted no-op and the beat is 30 seconds, so the price is one skipped
+    update in a window that has to be measured in milliseconds to hit at all —
+    against a tie-break that would otherwise arbitrate on a stale number.
+
+A writer that does not write a score (`mlb_sync`'s win-probability pass) passes
+none, predicates on position alone, and is untouched by any of this.
+
 ── THE FAILURE MODE IS A REFUSAL, WHICH IS WHY IT IS COUNTED ──
 
 A lost race means "we were current when we looked and stale by the time we
@@ -166,6 +190,13 @@ async def write_row_if_unmoved(
     return False
 
 
+#: "This caller did not read that column", which is a different claim from "it
+#: read it and it was NULL" — and on a live row a NULL score is the common case,
+#: so the two must not collapse. A plain `None` default would have made every
+#: score-less caller silently predicate on `home_score IS NULL`.
+_UNREAD = object()
+
+
 async def write_live_state_if_unmoved(
     session,
     event,
@@ -173,19 +204,42 @@ async def write_live_state_if_unmoved(
     *,
     observed_period: str | None,
     observed_clock: str | None,
+    observed_home_score: Any = _UNREAD,
+    observed_away_score: Any = _UNREAD,
     what: str = "live state",
 ) -> bool:
-    """Write `values` onto `event` only if its POSITION has not moved since.
+    """Write `values` onto `event` only if the state it decided on has not moved.
 
-    The position-predicated spelling of :func:`write_row_if_unmoved`, and the one
-    the four score-and-clock producers use: their decision is
-    `live_write_would_revert`, which reads exactly these two columns, so exactly
-    these two are what the write must re-assert.
+    The spelling of :func:`write_row_if_unmoved` the four score-and-clock
+    producers use. Their decision is `live_write_would_revert`, so the columns
+    that decision reads are exactly the columns this write re-asserts: always
+    the two position columns, and — for the three producers that write a score,
+    whose tie-break reads them (#6251) — the two score columns as well.
+
+    A producer that writes no score passes neither and predicates on position
+    alone. Passing one of the two alone is a programming error rather than a
+    half-measure: `_score_would_regress` needs all four sides to say anything,
+    so a decision that read one score read both.
     """
+    observed: dict[str, Any] = {
+        "period": observed_period,
+        "game_clock": observed_clock,
+    }
+    supplied = (observed_home_score is not _UNREAD, observed_away_score is not _UNREAD)
+    if any(supplied) and not all(supplied):
+        raise ValueError(
+            f"#6251: {what} offered one observed score and not the other — the "
+            "tie-break reads both or neither, so a one-sided predicate would "
+            "guard a decision that was never taken"
+        )
+    if all(supplied):
+        observed["home_score"] = observed_home_score
+        observed["away_score"] = observed_away_score
+
     return await write_row_if_unmoved(
         session,
         event,
         values,
-        observed={"period": observed_period, "game_clock": observed_clock},
+        observed=observed,
         what=what,
     )
