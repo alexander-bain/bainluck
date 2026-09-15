@@ -46,6 +46,27 @@ final class AReaderCanSwipeAndRefreshDiscoverTests: XCTestCase {
             "CHECK 5 FAILS: Discover mounted but drew no event card within \(UITestLaunch.contentTimeout)s. "
             + "A screenshot of this state looks like a slow load and is not distinguishable from an empty feed."
         )
+
+        // EXISTS IS NOT REACHES THE READER, and the gap is not hypothetical.
+        // Measured 2026-09-15 with the first-run sheet re-armed
+        // (`--rearm-first-run-gates`): Discover mounted, drew its cards, and every
+        // one of them sat under a modal the reader had not answered yet. The
+        // assertion above was true; the sibling test failed on the same build at
+        // `card.tap()` with "Failed to not hittable … identifier:
+        // 'discover-card-event'". So check 5 — the check this whole file is named
+        // for — reported PASS on a feed nobody could touch.
+        //
+        // Hittability is the cheapest property that separates "cards are in the
+        // accessibility tree" from "a reader can engage with them", and it is the
+        // one a first-run gate, a stray overlay or a full-screen spinner all
+        // break. The first card is the topmost one, so it is on screen whenever
+        // the feed drew at all — this does not flake on content below the fold.
+        XCTAssertTrue(
+            card.isHittable,
+            "CHECK 5 FAILS: Discover drew an event card and the reader cannot touch it — "
+            + "the card exists at \(card.frame) but reports `isHittable == false`, which is what a modal, "
+            + "an overlay or a blocking spinner on top of the feed looks like from here."
+        )
     }
 
     // MARK: - Swipe: the page
@@ -186,11 +207,8 @@ final class AReaderCanSwipeAndRefreshDiscoverTests: XCTestCase {
     /// cards is a correct refresh, and asserting otherwise would red this test
     /// whenever the API is doing its job.
     func testPullingDownRunsTheRefresh() throws {
-        let app = XCUIApplication()
-        app.launchArguments += UITestLaunch.arguments
         // LaunchRig.debugCountsKey — draws the counter this test reads.
-        app.launchArguments += ["-launch_debug_counts", "YES"]
-        app.launch()
+        let app = UITestLaunch.launchApp(extra: ["-launch_debug_counts", "YES"])
 
         JourneyPrecondition.tabBar(of: app)
         _ = try JourneyPrecondition.firstEventCard(in: app)

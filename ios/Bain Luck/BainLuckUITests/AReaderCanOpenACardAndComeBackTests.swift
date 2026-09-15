@@ -75,6 +75,31 @@ final class AReaderCanOpenACardAndComeBackTests: XCTestCase {
         )
 
         JourneyPrecondition.openTab("Browse", in: app)
+
+        // THE ASSERTION THIS TEST WAS MISSING, and the only one here that a
+        // stationary app can fail. The other three — a tab bar exists, the
+        // Discover navigation bar exists, it exists again at the end — are all
+        // equally true of an app that never moved, so without this line "came
+        // back to Discover" is also satisfied by never having left it.
+        //
+        // Nothing here was checking the tab CHANGED. That was delegated entirely
+        // to `openTab`, and `openTab` answers a different question: it waits for
+        // the tab BUTTON to report `isSelected`, which is a property of the tab
+        // bar rather than of the screen. The destination is what the tab was
+        // for, so the destination is what gets asserted.
+        //
+        // Proved load-bearing by mutation (2026-09-15) rather than by the
+        // `--rearm-first-run-gates` control, which cannot block this particular
+        // test: its first tap does land nowhere (`Computed hit point {-1, -1}`),
+        // but XCUITest clears the sheet as an interrupting element before
+        // `openTab`'s one retry, so the app is genuinely unblocked by then. The
+        // mutant that kills it is pointing `openTab` at the already-selected
+        // Discover tab — no navigation, and this line goes red.
+        XCTAssertTrue(
+            app.navigationBars["Discover"].waitForNonExistence(timeout: UITestLaunch.contentTimeout),
+            "Tapped the Browse tab and the Discover navigation bar is still on screen — the app never left Discover, so the return below would prove nothing."
+        )
+
         JourneyPrecondition.openTab("Discover", in: app)
 
         XCTAssertTrue(
