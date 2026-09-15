@@ -512,9 +512,30 @@ export default function EventCard({
                   numeric pair on the card reading the other way, and it shipped
                   an inverted score on production (event 15293347: "last score
                   6-3" for a 3-6 match, directly under the HOME team's name). */}
+              {/* #6361 — AND ITS DATE, AFTER THE WORDS AND ATTACHED TO THEM.
+                  live/262 photographed six of these stacked on one search page
+                  with no date, between an "Aug 18 FINAL" and an "Aug 23 FINAL"
+                  that both had one; two of the six were the same fixture pair,
+                  so a reader could not tell them apart at all.
+
+                  ORDER IS THE WHOLE CARE HERE, and it is what reconciles this
+                  with #3211. That issue removed a BARE commence stamp from this
+                  slot — "a date three days gone, in the position a reader reads
+                  as 'when this begins'". Its objection is positional, so the
+                  date returns only as the tail of the past-tense sentence
+                  ("No result reported · Sep 13"), never as a standalone token
+                  that could be read as a kickoff. The comment above still
+                  refuses `dateTimeStr`, which is the UPCOMING branch's
+                  future-tense start time and a different string entirely.
+
+                  `finishedDateStr` is the already-computed, date-only label the
+                  settled sibling below prints, so this carries the same gotcha
+                  #14 guard: a row whose `commence_time` is really a Kalshi close
+                  stamp renders "" — no date — rather than a future one. */}
               {isSuspended && (
                 <span className="text-micro-xs text-text-muted">
                   {suspendedSummary(event.away_score, event.home_score, "home-away")}
+                  {finishedDateStr && <> · {finishedDateStr}</>}
                 </span>
               )}
               {!isLive && !isFinished && !isSuspended && hasGameTime && (

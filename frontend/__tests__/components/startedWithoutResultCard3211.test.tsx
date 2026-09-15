@@ -127,15 +127,38 @@ describe("#3211 · a past-kickoff scheduled card states what is not known", () =
 
   it("does NOT advertise a start time", () => {
     // The defect in one assertion. The old card printed the commence stamp in
-    // this slot — a date three days gone, in the position a reader reads as
-    // "when this begins".
+    // this slot — "Sep 1 5:00 PM", a date three days gone, in the position a
+    // reader reads as "when this begins".
+    //
+    // ═══ NARROWED BY #6361, AND THE CONTRACT IS UNCHANGED ═══
+    //
+    // This case used to assert the date string appeared NOWHERE in the markup.
+    // That is broader than the defect it was written for: the objection above is
+    // POSITIONAL ("in this slot", "in the position a reader reads as when this
+    // begins"), and the blanket form also forbids the date in positions that
+    // cannot be misread. #6361 is the bill for that — six of these cards stacked
+    // undated on one search page between two dated FINALs, two of them the same
+    // fixture pair, with nothing to tell them apart.
+    //
+    // So the contract is now asserted as what it always meant, in two halves
+    // that are each STRICTER than the old line where it counts:
+    //   (a) NO TIME OF DAY, anywhere. The old assertion never tested this
+    //       directly, and "5:00 PM" is the half of "Sep 1 5:00 PM" that does the
+    //       lying — doubly so here, where the stamp is a Kalshi midnight-UTC
+    //       ticker artifact (gotcha #14) whose clock was never real.
+    //   (b) the date may appear EXACTLY ONCE, and only as the tail of the
+    //       past-tense sentence. A second copy, or one not attached to those
+    //       words, is the pregame slot coming back and fails this case.
     const rendered = text(render(makeEvent()));
     const started = new Date(WELL_PAST_KICKOFF);
     const dateLabel = `${started.toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
     })}`;
-    expect(rendered).not.toContain(dateLabel);
+
+    expect(rendered).not.toMatch(/\d{1,2}:\d{2}\s?(AM|PM)/i);
+    expect(rendered.split(dateLabel).length - 1).toBe(1);
+    expect(rendered).toContain(`${SUSPENDED_LABEL} · ${dateLabel}`);
   });
 
   it("does not claim a Final", () => {
