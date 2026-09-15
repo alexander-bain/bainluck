@@ -48,16 +48,17 @@ final class LeagueGridViewModel: ObservableObject {
 
     var visibleTeams: [GridTeam] {
         guard let grid else { return [] }
-        if let grouped = grid.groupedTeams {
-            if let filter = conferenceFilter {
-                return grouped[filter] ?? []
-            }
-            return grouped.values.flatMap { $0 }
-        }
-        if let filter = conferenceFilter {
-            return grid.teams.filter { $0.conference == filter }
-        }
-        return grid.teams
+        return GridLadderOrder.visibleTeams(in: grid, conferenceFilter: conferenceFilter)
+    }
+
+    /// The ranked ladder — the list whose index becomes the rank number on each card.
+    func rankedTeams(_ columns: [GridColumn]) -> [GridTeam] {
+        guard let grid else { return [] }
+        return GridLadderOrder.ranked(
+            visibleTeams,
+            serverTeams: grid.teams,
+            columns: columns
+        )
     }
 
     /// In-memory cache shared across instances

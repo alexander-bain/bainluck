@@ -237,22 +237,11 @@ struct LeagueGridView: View {
 
     // MARK: - Ladder ordering (design 2c)
 
-    /// The championship column key — the widest-net milestone (highest column
-    /// `order`), used to rank the per-team ladder cards.
-    private func championshipColumnKey(_ columns: [GridColumn]) -> String? {
-        columns.max(by: { $0.order < $1.order })?.key
-    }
-
-    /// Visible teams ranked by championship probability (desc) — the design's
-    /// "sort by championship probability" for the ranked ladder list. Teams with no
-    /// championship cell sink to the bottom.
+    /// The ranked ladder list. The ordering itself lives on the view model, where a
+    /// test can reach it — the rank number a reader reads is a product decision, not
+    /// a rendering detail.
     private func rankedTeams(_ columns: [GridColumn]) -> [GridTeam] {
-        let key = championshipColumnKey(columns)
-        return viewModel.visibleTeams.sorted { a, b in
-            let pa = key.flatMap { a.cells[$0]?.mergedProbability } ?? -1
-            let pb = key.flatMap { b.cells[$0]?.mergedProbability } ?? -1
-            return pa > pb
-        }
+        viewModel.rankedTeams(columns)
     }
 
     // MARK: - Helpers
