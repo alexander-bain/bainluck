@@ -643,6 +643,64 @@ def _is_champion_ticker(external_id: str | None, config: LeagueConfig) -> bool |
     return False if matched_league else None
 
 
+# "AFC East Division Winner", "NHL Pacific Division Winner", "Division Champion",
+# "Win the AFC West Division", "Division Title". NOT "… Undefeated in their
+# Division", NOT "Division with the Most Total Wins" — ``wins`` is not ``winner``,
+# and the second alternative is ORDERED (win … division), so a name that counts
+# wins inside a division never reaches it.
+_DIVISION_TITLE_RE = re.compile(
+    r"\bdivision\s+(?:winner|champion|champions|championship|title|crown)\b"
+    r"|\b(?:win|winning|wins)\s+(?:\w+\s+){0,3}?division\b",
+    re.IGNORECASE,
+)
+
+# "Most Wins in the AL West Division" would satisfy the ordered alternative
+# above; a quantity in front of the win word means the market counts wins
+# rather than awarding the title.
+_COUNTS_WINS_RE = re.compile(
+    r"\b(?:most|least|fewest|total|number\s+of|over|under|exact)\b"
+    r"[^.?!]{0,20}?\b(?:win|wins|winning)\b",
+    re.IGNORECASE,
+)
+
+
+def _asks_who_wins_the_division(market_name: str) -> bool:
+    """Does a market that SAYS "division" ask who WINS one? (#6245)
+
+    The NFL, NHL and MLB configs all match the Division column on a bare
+    ``\\bDivision\\b``, and ``classify_market_stage``'s football/hockey/baseball
+    sub-stages carry the same bare word (``tournament_stages.py:484``), so the
+    word alone is the whole test on both paths. Kalshi lists three NFL series
+    that contain it and answer a different question:
+
+      * ``KXNFLDIVUNDEFEATED-27`` "Pro Football Teams to go Undefeated in their
+        Division" — a strictly rarer event, priced ~0.06 where the division
+        title is ~0.55
+      * ``KXNFLDIVMOSTWINS-27``  "Division with the Most Total Wins"
+      * ``KXNFLDIVLEASTWINS-27`` "Division with the Least Total Wins"
+
+    Measured on production 2026-09-15: all three were in the column, every one
+    of the 8 divisions summed to 0.63-0.68, and the undefeated market did not
+    merely drag the number down — the per-source dedup at :3793 keeps the
+    LOWEST probability, so 0.06 *displaced* Kansas City's genuine 0.555 from
+    ``KXNFLAFCWEST-27`` and the reader was told a 33.5% favourite was a 20% one.
+
+    Deliberately narrow: this refuses only names that say "division" without
+    asking who wins it. A market that reached the column some other way —
+    Polymarket's "Pro Football: AFC West Champion", which matches the config's
+    ``(?:AFC|NFC)\\s+(?:East|West|North|South)`` pattern and never says the word
+    — is untouched, so the gate cannot drop a title market it has not enumerated.
+    All 22 live division-column markets carrying the word (NFL 8, NHL 4, MLB 6,
+    NBA 6) are "… Division Winner" and pass.
+    """
+    low = market_name.lower()
+    if not re.search(r"\bdivisions?\b", low):
+        return True  # entered the column without the word — not this gate's business
+    if _COUNTS_WINS_RE.search(low):
+        return False
+    return bool(_DIVISION_TITLE_RE.search(low))
+
+
 def _match_market_to_column(
     market: FuturesMarket,
     config: LeagueConfig,
@@ -659,6 +717,12 @@ def _match_market_to_column(
         # #1059 champion-ticker gate: a sub-competition ticker of this league
         # (conference/game/prop) must never land in the Champion column.
         if col == "championship" and _is_champion_ticker(market.external_id, config) is False:
+            return None
+        # #6245 division gate: a market that says "division" but does not ask
+        # who WINS one must never populate the Division column. Both the config
+        # rules and the classify_market_stage fallback funnel through here, so
+        # this is the one place that closes both doors.
+        if col == "division" and not _asks_who_wins_the_division(name):
             return None
         return col
 
