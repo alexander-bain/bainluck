@@ -80,6 +80,36 @@ export default function SourceComparisonRow({
         >
           No outcomes in this cohort &mdash; see &ldquo;{toggleLabel}&rdquo;.
         </td>
+      ) : row.state === "censored" ? (
+        /* #6211. The outcome COUNT is kept in its own column — 36 is a real
+           count — and only the three metric columns are replaced, because the
+           issue's item 3 is explicit that hiding the row deletes the only
+           visible alarm for a censored population.
+
+           What stood here was `36 | 36.5pp | 35.8pp | 0.1424`, beside Kalshi's
+           318,956 at 0.9pp, in the same columns and with no caveat. Every one
+           of those 36 outcomes is a winner, so the 36.5pp is the average
+           distance from a 0.44-0.83 price to certainty and nothing else: it
+           cannot move on how the questions resolved, because they all resolved
+           the same way. Printing it ranked a named third-party provider last on
+           a figure that measures our own read-side censoring.
+
+           One line, the fact only — the grammar of the no-data cell above, and
+           notice 34 / D102: no method note, no apology, nothing written for a
+           reviewer. */
+        <>
+          <td className="py-2.5 pr-1 sm:pr-4 text-right tabular-nums">{row.n.toLocaleString()}</td>
+          <td
+            className="py-2.5 text-right text-xs text-text-muted"
+            colSpan={3}
+            data-testid="calibration-provider-censored"
+            data-provider-winners={row.winners ?? ""}
+          >
+            {row.winners === 0
+              ? `All ${row.n.toLocaleString()} lost — no wins to measure against.`
+              : `All ${row.n.toLocaleString()} won — no losses to measure against.`}
+          </td>
+        </>
       ) : (
         <>
           <td className="py-2.5 pr-1 sm:pr-4 text-right tabular-nums">{row.n.toLocaleString()}</td>
