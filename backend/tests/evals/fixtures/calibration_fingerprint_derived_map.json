@@ -863,7 +863,7 @@
     },
     {
       "covered_by_value": false,
-      "definition_sha16": "e07ae873350e619d",
+      "definition_sha16": "490dfa494b72ff43",
       "impact": "sql_shaping",
       "name": "identity_quarantine_ctes",
       "origin": "app.utils.market_identity:identity_quarantine_ctes",
@@ -876,7 +876,7 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "17ccf5f19247844a1689d78c33cda7f71550346502126db1237633cc26f2a07b",
+  "source_sha256": "e633a8b1b88c1d39982a8ebfce2fb1680d1b2e889e97a6c1d450072de7d9bdb0",
   "uncovered_behavior_or_evidence": 34,
   "uncovered_count": 61,
   "uncovered_sql_shaping": 27

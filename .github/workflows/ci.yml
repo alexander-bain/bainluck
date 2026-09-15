@@ -1501,6 +1501,25 @@ jobs:
             exit 1
           fi
 
+      - name: Identity quarantine reads the LINKED EVENT's date (real Postgres)
+        # #6275 / CERT-2902's required repair gate. The differential above hands
+        # the chain a `commence_time` directly, so it cannot see WHICH of two
+        # tables the population reads that date from — and the first cut read
+        # the market's own copy, which on the ruling's specimen is copied from
+        # the very ticker it is being compared against. This seeds a market and
+        # an event that DISAGREE, runs the real rendered population chain, and
+        # asserts both directions; it also reverts the fix by textual surgery
+        # and proves the reverted chain reproduces the finding, so a green run
+        # means red-first was executed here rather than assumed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_identity_quarantine_linked_event_date_6275_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/identityeventdate.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/identityeventdate.txt; then
+            echo "::error::#6275 linked-event-date gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Stand-in event starts get the published hour (real Postgres)
         # #3544, the repair CERT-2075 named. `_kalshi_commence_time` stores the
         # venue's published `occurrence_datetime` on the MARKET; the user reads

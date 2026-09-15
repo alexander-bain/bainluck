@@ -115,16 +115,28 @@ async def pg_conn():
 def _chain_over_corpus_sql() -> str:
     """The SHIPPED chain, pointed at a VALUES corpus instead of ``market_info``.
 
-    ``identity_quarantine_ctes`` is called with the same keyword the calibration
+    ``identity_quarantine_ctes`` is called with the same keywords the calibration
     task calls it with, so what runs here is the text that decides the curve —
     not a paraphrase of it. Only ``source_relation`` moves.
+
+    ⚠️ THIS GATE CANNOT SEE WHICH TABLE THE POPULATION READS THE DATE FROM, and
+    CERT-2902 is why that is written down here. The corpus supplies
+    ``commence_time`` itself, so the differential proves the two forms of the
+    PREDICATE agree on a pair of dates it hands them — while the published chain
+    was handing the SQL form the market's own copy of the start time instead of
+    the linked event's. Both forms were right and the curve was wrong. That
+    question is relational and belongs to
+    ``test_identity_quarantine_linked_event_date_6275_pg.py``, which seeds a
+    market and an event that disagree; do not widen this corpus to chase it.
     """
     from app.utils.market_identity import (
         IDENTITY_DISPUTED_CTE,
         identity_quarantine_ctes,
     )
 
-    ctes = identity_quarantine_ctes(source_relation="corpus")
+    ctes = identity_quarantine_ctes(
+        source_relation="corpus", commence_time_col="commence_time"
+    )
     return f"""
         WITH corpus AS (
             SELECT v.market_id, v.external_id, v.commence_time

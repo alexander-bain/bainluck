@@ -165,6 +165,18 @@ COVERED = (
     # sibling gates survive it only because each inserts one sport the shared
     # database already holds. This gate needs three, so it names its own ids.
     "test_folded_market_sport_net_6221_pg.py",
+    # #6275 (CERT-2902's required gate). Seeds `sports`, three `events`, three
+    # `futures_markets` and their outcomes by raw INSERT, and it names both of
+    # the Python-side defaults this file exists to catch — `sports.active` and
+    # `futures_markets.mutually_exclusive`.
+    #
+    # Its seed also carries a vacuity hazard the NOT-NULL arm cannot see, so it
+    # is written down rather than left to be rediscovered: every arm turns on
+    # the three markets reaching `normalized`, and a book seeded bid-only fails
+    # the q270 writer bar, publishes nothing, and makes "the quarantine held it"
+    # true of a market the liquidity gate had already dropped. The gate asserts
+    # the candidate set up front for that reason.
+    "test_identity_quarantine_linked_event_date_6275_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"

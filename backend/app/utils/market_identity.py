@@ -299,15 +299,32 @@ IDENTITY_DISPUTED_CTE = "identity_disputed_markets"
 def identity_quarantine_ctes(
     *,
     source_relation: str,
+    commence_time_col: str,
     market_id_col: str = "market_id",
     external_id_col: str = "external_id",
-    commence_time_col: str = "commence_time",
 ) -> str:
     """The quarantine as a FLAT CTE chain: the form the published curve uses.
 
     Returns three comma-separated CTE definitions (no leading ``WITH``, no
     trailing comma), the last of which — :data:`IDENTITY_DISPUTED_CTE` — is one
     row per market whose own ticker disagrees with its event's game date.
+
+    🔴 ``commence_time_col`` IS REQUIRED, AND IT USED TO CARRY THE DEFAULT
+    ``"commence_time"`` (#6275, CERT-2902). That default is the whole defect and
+    it is an instance of a class worth naming: a default that is a REAL,
+    resolvable value stores a plausible wrong answer instead of raising. The one
+    caller that decides the published curve renders over ``market_info``, which
+    has a column literally called ``commence_time`` — the MARKET's own copy of
+    the start time — so the default bound cleanly, the SQL was valid, every test
+    was green, and the predicate compared the ticker's date against a date
+    COPIED FROM THAT SAME TICKER. On the specimen the ruling is written about
+    (market 58609021, linked to event 15187509) both are Aug 5 Eastern while the
+    linked EVENT is Aug 6, so the row the quarantine exists to hold was the one
+    row it declared clean.
+
+    The date this predicate means is always the LINKED EVENT's. There is no
+    caller for which the market's own copy is the right operand, so there is no
+    default that is safe to have.
 
     WHY A CHAIN AND NOT THE ONE-LINE EXPRESSION. :func:`ticker_game_date_sql` is
     a three-deep scalar subquery, and PostgreSQL does not flatten it: over the

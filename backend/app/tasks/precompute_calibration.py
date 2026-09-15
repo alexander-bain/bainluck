@@ -3627,6 +3627,28 @@ def _calibration_population_ctes(
                     -- the quarantine runs on the same chunk-scoped population as
                     -- every other exclusion (the C14 drift lesson).
                     fm.external_id,
+                    -- #6275 / CERT-2902: the LINKED EVENT's start, which is the
+                    -- other half of the identity comparison. `fm.commence_time`
+                    -- above is the MARKET's own copy and is NOT the same fact:
+                    -- on the specimen the ruling names (market 58609021,
+                    -- `KXMLBTOTAL-26AUG051940MINKC`, linked to event 15187509)
+                    -- the market's copy is Aug 5 Eastern and the EVENT is Aug 6,
+                    -- so comparing the ticker against the market's own copy
+                    -- agrees with itself and lets the wrong-game row through.
+                    -- The census that measured the 2,069 rows joins `events` for
+                    -- exactly this reason (`census_settlement_contamination.py`),
+                    -- and a quarantine keyed on a different date than the census
+                    -- is a different predicate, not a narrower one.
+                    --
+                    -- LEFT, not INNER as the census has it, because the census
+                    -- only ever looks at event-linked markets while this
+                    -- population deliberately includes unlinked ones — the
+                    -- horizon variant scopes itself to `fm.event_id IS NULL`, so
+                    -- an INNER JOIN would empty it. A market with no event has
+                    -- no event date to disagree with, and the quarantine's own
+                    -- NULL rule already reads that as unknown rather than
+                    -- disputed.
+                    ev.commence_time AS event_commence_time,
                     -- CAL-P168 (#1978): R3 matches the market's own TITLE. Named
                     -- `market_name` rather than `name` because `futures_outcomes`
                     -- also has a `name` and an unqualified one in a downstream
@@ -3647,6 +3669,11 @@ def _calibration_population_ctes(
                     fm.market_metadata->'shape'->>'expected_winners' AS shape_expected_winners,
                     fm.market_metadata->'shape'->>'outcome_relation' AS shape_relation
                 FROM futures_markets fm
+                -- #6275 / CERT-2902. Row-preserving: `events.id` is the primary
+                -- key, so this multiplies nothing and the population is the same
+                -- set it was before. It exists only to carry
+                -- `event_commence_time` above.
+                LEFT JOIN events ev ON ev.id = fm.event_id
                 WHERE fm.status = 'resolved'
                   {market_info_extra}
                   -- #994 symmetric exclusion: DataGolf markets whose full field
@@ -3675,7 +3702,17 @@ def _calibration_population_ctes(
             -- ONE implementation — that module was lifted out of the census
             -- script for exactly this consumer and then never consumed by it,
             -- which is the defect #6275 reports.
-            {identity_quarantine_ctes(source_relation="market_info")},
+            --
+            -- `commence_time_col` is passed EXPLICITLY (CERT-2902). The
+            -- renderer's default is the bare name `commence_time`, and
+            -- `market_info` carries a column by that name — the market's own
+            -- copy — so the default silently resolved to the wrong date and the
+            -- comparison became the ticker against itself. Naming the column
+            -- here is what makes "the event it is linked to" true.
+            {identity_quarantine_ctes(
+                source_relation="market_info",
+                commence_time_col="event_commence_time",
+            )},
             -- Queue 299: ONE per-market structural scan feeding every shape and
             -- result-authority rung. Counts are over ALL outcomes of the market
             -- (never the eligibility-filtered subset) — the same basis the

@@ -128,7 +128,19 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: 2026-09-14 18:37 PDT: "production fingerprint reset/rebuild/enable not yet
 #: authorized"). Re-anchoring the pin RECORDS the move; it does not decide when
 #: to pay for it.
-LIVE_INPUT_FINGERPRINT = "c0a825a6269f563c817f4488a13247c2"
+#:
+#: RE-ANCHORED WITHIN #6275 for CERT-2902's required repair: ``c0a825a6…`` ->
+#: ``80a180b0…``. Not a second rebuild — the branch it sits on has never been
+#: deployed, so this supersedes the anchor above rather than adding to it, and
+#: the cost paragraph above is unchanged and still the operative one. The move
+#: is again the EXPECTED one: the repair edits ``_calibration_population_ctes``
+#: (``market_info`` now carries the LINKED EVENT's start and the quarantine is
+#: pointed at it) AND ``identity_quarantine_ctes`` (``commence_time_col`` is no
+#: longer defaulted), and both are hashed inputs. An UNMOVED fingerprint here
+#: would have meant the repair never reached the population SQL — which is
+#: precisely the shape of the defect CERT-2902 found, so it is worth saying that
+#: this pin moving is evidence and not paperwork.
+LIVE_INPUT_FINGERPRINT = "80a180b082f22181a326dfcfb20429b2"
 
 
 class _Db:
