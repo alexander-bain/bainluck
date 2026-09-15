@@ -153,6 +153,17 @@ COVERED = (
     # match on its own, every assertion would pass, and the arm under test
     # would never be reached. The seed asserts `kleague != other` in place for
     # that reason — legal DDL is not the same thing as a seed that can fail.
+    #
+    # It also paid for a hazard worth reading before writing the NEXT gate that
+    # seeds a lookup table, because this file's arms cannot see it either:
+    # `search-recall` shares ONE database across all ~55 gates, and the earlier
+    # ones seed `sports` with EXPLICIT ids, which never advances the sequence.
+    # `INSERT INTO sports (key, ...) ON CONFLICT (key) DO NOTHING` draws
+    # `nextval` BEFORE it evaluates the conflict, so a genuinely new key dies on
+    # `sports_pkey` — `Key (id)=(1) already exists` — a pkey collision reported
+    # by a statement whose whole point was to tolerate a key collision. The
+    # sibling gates survive it only because each inserts one sport the shared
+    # database already holds. This gate needs three, so it names its own ids.
     "test_folded_market_sport_net_6221_pg.py",
 )
 

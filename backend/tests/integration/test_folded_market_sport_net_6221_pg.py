@@ -84,6 +84,12 @@ KLEAGUE = "soccer_korea_kleague1"
 OTHER = "soccer_other"           # the ingest catch-all the ghost lands in
 BASEBALL = "baseball_mlb"        # the foreign sport the net must keep refusing
 
+#: Reserved `sports.id`s. Explicit so this gate never draws from the shared
+#: database's id sequence — see `_sport_id` for the CI failure that costs.
+S_KLEAGUE = 90_006_231
+S_OTHER = 90_006_232
+S_BASEBALL = 90_006_233
+
 #: The market ids under test, one per arm of the net.
 M_CATEGORY = 90_006_221          # llm_sport_category='soccer'  — today's population
 M_NULL_CATEGORY = 90_006_222     # llm_sport_category IS NULL   — the row it drops
@@ -123,17 +129,45 @@ async def pg_engine():
     await engine.dispose()
 
 
-async def _sport_id(conn, key, name):
+async def _sport_id(conn, key, name, reserved_id):
+    """Get or create one sport, WITHOUT drawing from the `sports` id sequence.
+
+    🔴 The explicit id is not tidiness, it is the difference between this gate
+    running and not. `search-recall` shares ONE database (`bl_searchtest`)
+    across all ~55 of its gates, and the ones that ran first seeded `sports`
+    with EXPLICIT ids — which does not advance the sequence. So `nextval`
+    still returns 1, and `INSERT ... ON CONFLICT (key) DO NOTHING` draws it
+    before it evaluates the conflict: a key that is genuinely new dies on
+    `UniqueViolationError: Key (id)=(1) already exists` against `sports_pkey`,
+    never against the key this statement guards.
+
+    The sibling gates get away with the sequence form because each inserts a
+    single sport the shared database already holds, so `DO NOTHING` fires and
+    nothing is drawn. This gate needs THREE — including `soccer_other` and a
+    foreign `baseball_mlb` — so a genuinely new key is the normal case here,
+    not the edge. Measured both ways: green against a fresh local database,
+    red in CI on exactly this, and the CI failure reproduced locally by
+    seeding an explicit-id row and rewinding the sequence.
+
+    `ON CONFLICT DO NOTHING` is deliberately untargeted so it absorbs an id
+    collision as well as a key one; the SELECT below is then the real check,
+    and it asserts rather than returning None into arithmetic.
+    """
     await conn.execute(
         text(
-            "INSERT INTO sports (key, name, active) VALUES (:k, :n, true) "
-            "ON CONFLICT (key) DO NOTHING"
+            "INSERT INTO sports (id, key, name, active) "
+            "VALUES (:i, :k, :n, true) ON CONFLICT DO NOTHING"
         ),
-        {"k": key, "n": name},
+        {"i": reserved_id, "k": key, "n": name},
     )
-    return (
+    sport_id = (
         await conn.execute(text("SELECT id FROM sports WHERE key = :k"), {"k": key})
     ).scalar()
+    assert sport_id is not None, (
+        f"sport {key!r} is neither present nor insertable — reserved id "
+        f"{reserved_id} is likely taken by a different key, so pick another"
+    )
+    return sport_id
 
 
 async def _seed(conn):
@@ -149,9 +183,9 @@ async def _seed(conn):
         {"ids": [CANONICAL_ID, GHOST_ID]},
     )
 
-    kleague = await _sport_id(conn, KLEAGUE, "K League 1")
-    other = await _sport_id(conn, OTHER, "Other")
-    baseball = await _sport_id(conn, BASEBALL, "MLB")
+    kleague = await _sport_id(conn, KLEAGUE, "K League 1", S_KLEAGUE)
+    other = await _sport_id(conn, OTHER, "Other", S_OTHER)
+    baseball = await _sport_id(conn, BASEBALL, "MLB", S_BASEBALL)
     assert kleague != other, "the two sport ids must differ or the gate is vacuous"
 
     kickoff = dt.datetime(2026, 9, 12, 10, 30, tzinfo=dt.timezone.utc)
