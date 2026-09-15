@@ -6607,8 +6607,154 @@ def _next_gamma_cursor_decision(selected_ids, completed_ids, limit):
     return ("set", max(selected))
 
 
+async def _mint_missing_champion_leg(
+    session,
+    *,
+    market_id: int,
+    condition_id: str,
+    price: float | None,
+    group_item_title: str | None,
+    question: str | None,
+) -> str:
+    """Store the champion of a settled field we never ingested (#6110).
+
+    THE ONE LEG NO RAIL CAN RECOVER. Phase B below grades a negRisk parent by
+    walking the venue's sub-markets and ``UPDATE``-ing our outcome with the
+    matching ``condition_id``. A leg we never stored matches nothing, so the
+    update reports zero rows and the loop moves on — and the leg that can be
+    missing is precisely the winner, because the ingest filter mistook a settled
+    champion (``closed``, ``outcomePrices ["1","0"]``, never traded) for one of
+    Polymarket's reserved slots, which look byte-identical (#6110 stops that
+    forward; this is the half that repairs what it already cost us).
+
+    Polymarket's Vuelta a España 2026 field is the specimen: 30 riders stored,
+    every one correctly a loser, no champion, and a hero that therefore fell
+    back to the top probability and crowned "Tadej Pogacar" over a first row
+    reading "Tadej Pogacar · Lost". ``all_losers`` had already said so in the
+    column — "the winning outcome isn't in our DB" — and no rail could act on
+    it, because ``clob_resolve``, ``_sync_polymarket_resolved_status`` and this
+    one all re-grade rows that exist.
+
+    THE DECISION IS NOT HERE. :func:`app.utils.polymarket_champion_mint.mint_verdict`
+    holds it, pure and without a session, and every refusal it can return is
+    documented there. This function does the two things that need a database:
+    read the market's shape, and write the row. A verdict string comes back
+    either way, so a run that mints nothing says WHICH refusal it hit rather
+    than reporting a silent zero (gotcha #53).
+
+    The write is a settlement write and it asks the shared clause for its price
+    (#5246, ``settled_price_values``): the grade, the terminal price and the
+    change stamp land in one statement, so a champion cannot be stored holding a
+    price nobody can ever correct. It is also the reason this is a Core
+    ``insert`` rather than a raw ``text()`` one — the settlement-writer census
+    in ``test_settled_outcomes_carry_no_price_5246`` recognises a SQL assignment
+    and a ``.values()`` entry, and a hand-rolled ``INSERT … VALUES`` would have
+    been a settlement writer that its own census could not see. A writer
+    invisible to the guard is the failure that guard exists to prevent, so the
+    statement is written in a form the population can be read from.
+    ``opening_probability`` and ``calibration_probability`` are left
+    NULL — we hold no forecast for a leg we never ingested, and inventing one
+    would put a fabricated point on the published curve (gotcha #144).
+    """
+    from sqlalchemy import insert
+
+    from app.utils.polymarket_champion_mint import MINTED, mint_verdict
+
+    shape = (
+        await session.execute(
+            text("""
+                SELECT COUNT(*) AS legs,
+                       COUNT(*) FILTER (WHERE fo.is_winner) AS winners,
+                       COUNT(*) FILTER (WHERE fo.external_id = :cid) AS held
+                  FROM futures_outcomes fo
+                 WHERE fo.market_id = :mid
+            """),
+            {"mid": market_id, "cid": condition_id},
+        )
+    ).one()
+
+    verdict, name = mint_verdict(
+        price=price,
+        group_item_title=group_item_title,
+        question=question,
+        stored_legs=shape.legs or 0,
+        stored_winners=shape.winners or 0,
+        leg_already_held=bool(shape.held),
+    )
+    if verdict != MINTED:
+        return verdict
+
+    await session.execute(
+        insert(FuturesOutcome).values(
+            market_id=market_id,
+            external_id=condition_id,
+            name=name,
+            is_winner=True,
+            resolution_source="api_settlement",
+            last_updated=func.now(),
+            # `price_changed_at` is NOW() rather than the shared
+            # `price_changed_at_value` predicate, and an INSERT is the one place
+            # that is right: that helper answers "would this write change what
+            # is stored", and for a row that does not exist yet the answer is
+            # unconditionally yes. There is no prior value to compare against.
+            price_changed_at=func.now(),
+            **settled_price_values(True),
+        )
+    )
+    logger.info(
+        "Polymarket champion minted: market %s leg %s -> %r",
+        market_id, condition_id, name,
+    )
+    return MINTED
+
+
+def _log_poly_api_run(stats: dict, last_max_id) -> None:
+    """The Gamma winner rail's two closing lines, written from one place.
+
+    #6110 gave the rail a second exit (a targeted run returns before the cursor
+    decision), and a second exit with its own copy of the logging is how the two
+    drift. Both paths call this, so a targeted repair and a scheduled sweep are
+    read the same way in the dyno log.
+    """
+    logger.info(
+        "Polymarket API winner backfill: cursor %s -> %s (selected %d, "
+        "completed %d, deferred %d)",
+        last_max_id,
+        stats.get("cursor_value"),
+        stats.get("selected", 0),
+        stats.get("completed", 0),
+        stats.get("deferred", 0),
+    )
+    logger.info(
+        "Polymarket API winner backfill: %d checked, %d winners, %d losers, "
+        "%d prices_synced, %d api_miss, %d no_match, %d not_settled, %d errors, "
+        "%d champions minted %s",
+        stats["markets_checked"],
+        stats["winners_set"],
+        stats["losers_set"],
+        stats["prices_synced"],
+        stats["api_miss"],
+        stats["no_match"],
+        stats["not_settled"],
+        len(stats["errors"]),
+        stats["champions_minted"],
+        # The verdict tally rides the same line as the count so a log reader
+        # never has to ask why a run minted nothing (#6110).
+        stats["champion_mint"],
+    )
+
+
+#: How many markets a TARGETED invocation may name (#6110). This is a repair
+#: tool for rows a sentinel filed by id, not a second sweep — the scheduled,
+#: cursor-paced form is the sweep, and a targeted run deliberately leaves its
+#: cursor alone.
+_TARGETED_MARKET_CAP = 500
+
+
 async def _backfill_polymarket_winners_from_api(
-    limit: int = 500, deadline: float | None = None
+    limit: int = 500,
+    deadline: float | None = None,
+    market_ids: list[int] | None = None,
 ):
     """Phase 3: Fetch settlement prices from Polymarket Gamma API.
 
@@ -6630,6 +6776,7 @@ async def _backfill_polymarket_winners_from_api(
     import asyncio
     import json as _json
     from app.services.polymarket_api import PolymarketAPIService
+    from app.utils.polymarket_champion_mint import MINTED as _CHAMPION_MINTED
 
     stats = {
         "markets_checked": 0,
@@ -6640,6 +6787,13 @@ async def _backfill_polymarket_winners_from_api(
         "not_settled": 0,
         "no_match": 0,
         "unsupported_lookup": 0,
+        # #6110. Champions this run STORED for a field that held none, and the
+        # verdict tally behind that number. Both, because "minted 0" alone
+        # cannot tell a run that found no holes from one that found them and
+        # refused every candidate — and the refusals are where a wrong rule
+        # would show first (gotcha #53).
+        "champions_minted": 0,
+        "champion_mint": {},
         "errors": [],
     }
 
@@ -6671,9 +6825,25 @@ async def _backfill_polymarket_winners_from_api(
     _offset_key = "bainluck:pm_winner_backfill_offset"
     _last_max_id = int(_rc.get(_offset_key) or 0)
 
+    # #6110 — the TARGETED form, and the reason it exists. The scheduled form
+    # is cursor-paced over 353,473 eligible rows ascending by id (measured
+    # 2026-09-15), so a market in the middle of that order is reached when the
+    # sweep gets there and not before. That is the right behaviour for a drain
+    # and the wrong one for a named defect: the Settled Sentinel files ONE
+    # market id, and the repair for it should not be "wait for the cursor".
+    #
+    # When `market_ids` is given this selects exactly those rows, in id order,
+    # and — the load-bearing half — it neither READS nor WRITES the cursor. A
+    # targeted run that advanced the shared cursor would skip every row between
+    # it and the target, which is the CAL-P086A defect (selection is not
+    # completion) arriving through a new door.
+    _targeted = [int(m) for m in (market_ids or [])][:_TARGETED_MARKET_CAP]
+    if _targeted:
+        _last_max_id = 0
+
     async with get_task_session() as session:
         stuck = await session.execute(
-            text(r"""
+            text(rf"""
                 SELECT fm.id, fm.external_id, fm.group_type,
                        fm.market_metadata->>'polymarket_event_id' AS poly_event_id
                 FROM futures_markets fm
@@ -6681,6 +6851,7 @@ async def _backfill_polymarket_winners_from_api(
                 WHERE fm.source = 'polymarket'
                   AND fm.status = 'resolved'
                   AND fm.id > :last_id
+                  {"AND fm.id = ANY(:target_ids)" if _targeted else ""}
                 GROUP BY fm.id, fm.mutually_exclusive, fm.resolution_date, fm.name
                 HAVING BOOL_OR(
                     COALESCE(fo.resolution_source, '') NOT IN ('api_settlement', 'clean_resolution')
@@ -6703,11 +6874,25 @@ async def _backfill_polymarket_winners_from_api(
                 ORDER BY fm.id ASC
                 LIMIT :limit
             """),
-            {"limit": limit, "last_id": _last_max_id},
+            {
+                "limit": limit,
+                "last_id": _last_max_id,
+                **({"target_ids": _targeted} if _targeted else {}),
+            },
         )
         markets = stuck.all()
 
     if not markets:
+        if _targeted:
+            # A targeted run that matched nothing has NOT drained the sweep, and
+            # deleting the shared cursor here would silently restart the whole
+            # 353k-row drain from the oldest id.
+            stats["targeted_no_match"] = True
+            logger.info(
+                "Polymarket API winner backfill: targeted run matched none of %s",
+                _targeted,
+            )
+            return _finish(stats)
         # Wrapped around — reset cursor for next run
         _rc.delete(_offset_key)
         logger.info("Polymarket API winner backfill: nothing to do (reset cursor)")
@@ -7139,6 +7324,30 @@ async def _backfill_polymarket_winners_from_api(
                                         stats["winners_set"] += r.rowcount
                                     else:
                                         stats["losers_set"] += r.rowcount
+                                elif is_winner:
+                                    # #6110 — the update matched nothing and the
+                                    # venue says this leg WON. That is the one
+                                    # shape this rail could never repair: the
+                                    # champion of a field we ingested without
+                                    # him. Every other zero-row update is a
+                                    # loser we do not hold, which is ordinary
+                                    # (a 71-leg event against 30 stored legs)
+                                    # and must stay ordinary — we never mint a
+                                    # loss.
+                                    _verdict = await _mint_missing_champion_leg(
+                                        session,
+                                        market_id=row.id,
+                                        condition_id=m_cid,
+                                        price=settlement_price,
+                                        group_item_title=m.get("groupItemTitle"),
+                                        question=m.get("question"),
+                                    )
+                                    stats["champion_mint"][_verdict] = (
+                                        stats["champion_mint"].get(_verdict, 0) + 1
+                                    )
+                                    if _verdict == _CHAMPION_MINTED:
+                                        market_resolved = True
+                                        stats["champions_minted"] += 1
 
                             if not market_resolved:
                                 stats["no_match"] += 1
@@ -7289,6 +7498,17 @@ async def _backfill_polymarket_winners_from_api(
     stats["selected"] = len(_selected_ids)
     stats["completed"] = len(_completed_ids)
     stats["deferred"] = len(_deferred_ids)
+    if _targeted:
+        # #6110: a targeted run never touches the shared cursor. It selected an
+        # arbitrary slice of the id order, so every cursor decision below —
+        # advance, hold, wrap — would be a statement about a page the sweep
+        # never read.
+        stats["cursor_op"] = "skipped_targeted"
+        stats["cursor_value"] = None
+        stats["cursor_held"] = False
+        stats["targeted"] = len(_targeted)
+        _log_poly_api_run(stats, _last_max_id)
+        return _finish(stats)
     try:
         _cursor_op, _cursor_value = _next_gamma_cursor_decision(
             _selected_ids, _completed_ids, limit
@@ -7307,28 +7527,7 @@ async def _backfill_polymarket_winners_from_api(
     # page and a skipped page produced the same single number before this.
     stats["cursor_held"] = bool(_deferred_ids)
 
-    logger.info(
-        "Polymarket API winner backfill: cursor %s -> %s (selected %d, "
-        "completed %d, deferred %d)",
-        _last_max_id,
-        stats.get("cursor_value"),
-        stats["selected"],
-        stats["completed"],
-        stats["deferred"],
-    )
-
-    logger.info(
-        "Polymarket API winner backfill: %d checked, %d winners, %d losers, "
-        "%d prices_synced, %d api_miss, %d no_match, %d not_settled, %d errors",
-        stats["markets_checked"],
-        stats["winners_set"],
-        stats["losers_set"],
-        stats["prices_synced"],
-        stats["api_miss"],
-        stats["no_match"],
-        stats["not_settled"],
-        len(stats["errors"]),
-    )
+    _log_poly_api_run(stats, _last_max_id)
     return _finish(stats)
 
 

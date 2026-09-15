@@ -1951,10 +1951,18 @@ def backfill_kalshi_trades(self, limit: int = 500):
 
 
 @celery_app.task(bind=True, soft_time_limit=840, time_limit=900, name="app.tasks.backfill_polymarket_winners")
-def backfill_polymarket_winners(self, limit: int = 10000):
-    """Resolve Polymarket winners from Gamma API settlement data."""
+def backfill_polymarket_winners(self, limit: int = 10000, market_ids: list | None = None):
+    """Resolve Polymarket winners from Gamma API settlement data.
+
+    #6110: `market_ids` targets named markets instead of the cursor-paced sweep,
+    for a defect a sentinel filed by id — the scheduled call passes none and is
+    unchanged. A targeted run never moves the shared cursor.
+    """
     from app.tasks.backfill_winners import _backfill_polymarket_winners_from_api
-    return _tracked_run("polymarket_winners", _backfill_polymarket_winners_from_api(limit))
+    return _tracked_run(
+        "polymarket_winners",
+        _backfill_polymarket_winners_from_api(limit, market_ids=market_ids),
+    )
 
 
 @celery_app.task(bind=True, soft_time_limit=840, time_limit=900, name="app.tasks.clob_resolve_drain")
