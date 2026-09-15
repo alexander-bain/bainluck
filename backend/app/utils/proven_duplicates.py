@@ -470,6 +470,58 @@ def series_row_for_each_source(
     return chosen
 
 
+def latest_snapshot_for_each_bookmaker(snapshots, canonical_event_id: int) -> list:
+    """One snapshot per bookmaker across the folded rows — the FRESHEST.
+
+    `latest_odds_per_bookmaker_query` returns the latest row per
+    ``(event, bookmaker)``, which is the right grouping for a PAGE of events and
+    the wrong one for a folded pair: hand it two ids that both priced the fixture
+    and Pinnacle comes back twice. That is not a cosmetic duplicate — the list
+    feeds `aggregate_bookmaker_odds`, so a book present on both rows would be
+    counted twice in the consensus and inflate the `bookmaker_count` the
+    attribution mark prints ("Kalshi · Polymarket · 7 sportsbooks", D91).
+
+    FRESHEST rather than `series_row_for_each_source`'s "richest", because these
+    two pickers answer different questions. There the unit is a SERIES and the
+    poorer row is a stub to be discarded whole; here the unit is one current
+    price, and `captured_at` is the entire meaning of "latest" — the same key
+    `latest_odds_per_bookmaker_query` already orders by WITHIN an event. Ties
+    break to the canonical, then to the higher snapshot id, so a page does not
+    depend on row order.
+
+    🔴 **Orientation is the caller's job and it is not optional.** An
+    `odds_snapshots` row stores `home_moneyline` / `home_win_probability` /
+    `home_spread` — numbers whose meaning comes from ITS OWN event row's
+    `home_team_name`, exactly like the `win_prob_snapshots` row in the section
+    above. Fed ids from :func:`folded_event_ids` (the market fold, which does not
+    check orientation, because a market names its own outcomes) this would print
+    a crossed pair's prices with the two sides swapped: a confident, exactly
+    inverted price rather than a missing one. Callers pass
+    :func:`folded_series_event_ids`.
+
+    `captured_at` is dereferenced without a guard because the call site already
+    does (`s.captured_at.isoformat()`, and `max(...)` over the same rows); a
+    guard here would only move a crash three lines later while reading as safety.
+    """
+    chosen: dict[str, object] = {}
+    for snap in snapshots:
+        best = chosen.get(snap.bookmaker)
+        if best is None or (
+            snap.captured_at,
+            snap.event_id == canonical_event_id,
+            snap.id,
+        ) > (
+            best.captured_at,
+            best.event_id == canonical_event_id,
+            best.id,
+        ):
+            chosen[snap.bookmaker] = snap
+    # Bookmaker-ascending, which is the order the recursive walk already emits
+    # for a single event — so an unfolded page's list is unchanged, element for
+    # element, rather than merely equivalent as a set.
+    return [chosen[book] for book in sorted(chosen)]
+
+
 # ── Folding a READING is not folding a SERIES (#3810 Fold A) ─────────────────
 #
 # The series fold above gave the CHART the ghost's rows. The hero number is a

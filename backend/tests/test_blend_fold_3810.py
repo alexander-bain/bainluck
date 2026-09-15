@@ -339,7 +339,11 @@ class TestFoldedProbabilitySources:
 #: `get_event_odds_history`: it cost four red tests in that module. The fix is
 #: at the source — `is_series_fold` is now EXCLUSIVE of this projection — so a
 #: rig inherits the distinction instead of having to know about it.
-from tests.test_series_fold_3810 import is_blend_fold  # noqa: E402
+from tests.test_series_fold_3810 import (  # noqa: E402
+    fold_row,
+    is_blend_fold,
+    is_series_fold,
+)
 
 
 class _Result:
@@ -373,6 +377,14 @@ class _RouteSession:
         if is_blend_fold(sql):
             self.fold_lookups += 1
             return _Result(self.twin_rows)
+        # #6390 Fold C put a THIRD `events` read on this route — the oriented id
+        # lookup feeding the price table. This rig is not testing it, so it gets
+        # the neutral answer `fold_row` exists for: the event's own row, i.e.
+        # unfolded, leaving every Fold A assertion below unchanged. Without this
+        # the blanket `FROM events` arm hands a three-column lookup an `Event`
+        # object and `folded_series_event_ids` raises on `r[0]`.
+        if is_series_fold(sql):
+            return _Result([fold_row(self.event)])
         if "FROM events" in sql and "odds_snapshots" not in sql:
             return _Result([self.event])
         return _Result([])

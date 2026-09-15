@@ -81,10 +81,26 @@ def test_list_events_delegates_to_the_shared_enrichment_query():
 
 
 def test_event_detail_delegates_to_the_shared_enrichment_query():
-    """`GET /api/events/{event_id}` — one event, so a one-element list."""
+    """`GET /api/events/{event_id}`.
+
+    It stopped being "one event, so a one-element list" at #6390 (Fold C): the
+    detail page reads prices from the canonical AND from the rows proven to
+    duplicate it. The contract this guards is unchanged — the route must not
+    grow a bespoke snapshot query of its own — so the spelling moves with the
+    ship rather than the assertion relaxing to a bare
+    `latest_odds_per_bookmaker_query(`, which would pass on any argument at all.
+    """
     assert (
-        "latest_odds_per_bookmaker_query([event_id])" in DETAIL_CODE
+        "latest_odds_per_bookmaker_query(odds_event_ids)" in DETAIL_CODE
     ), "get_event no longer builds its odds enrichment from the shared helper"
+    # The ORIENTATION-checked fold specifically. `folded_event_ids` would compile,
+    # pass every test above, and serve a crossed pair's prices with the two sides
+    # swapped — a defect whose only witness is a pair production does not
+    # currently hold, so nothing behavioural on today's population would catch
+    # the substitution.
+    assert (
+        "folded_series_event_ids(db, event_id)" in DETAIL_CODE
+    ), "get_event's odds ids no longer come from the orientation-checked fold"
 
 
 def test_no_call_site_reintroduces_the_window_scan():

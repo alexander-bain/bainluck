@@ -12237,10 +12237,41 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     # `tests/integration/test_search_odds_enrichment_equivalence.py`; the only
     # change is the `id DESC` tiebreak, which is deterministic where the window's
     # tie was arbitrary.
-    latest_snapshots = list(
-        (await db.execute(latest_odds_per_bookmaker_query([event_id])))
-        .scalars()
-        .all()
+    # ── #6390 Fold C: the PRICE TABLE reads the rows we declined to print ─────
+    #
+    # #2693 folded the market book, #3810 Fold B the chart's series and Fold A
+    # the blend's sources. `odds_snapshots` is the member of that family nobody
+    # folded, and it is the one that leaves a page with NOTHING on it: markets
+    # are rescued onto the canonical, prices are not. Measured on production
+    # 2026-09-15 over all 46 tagged soccer pairs — 3 canonicals serve fewer
+    # bookmakers than their own hidden ghost, and on one of them the odds were
+    # the whole page:
+    #
+    #   15311919  Brest v Paris Saint-Germain   canonical 0 books, ghost 10
+    #   15310934  Mainz v Eintracht Frankfurt   canonical 0 books, ghost 10
+    #   15298413  Lazio v AC Milan              canonical 1 book,  ghost 10
+    #
+    # `folded_series_event_ids`, NOT `folded_event_ids`: a snapshot's
+    # `home_*` columns are oriented by its own row's `home_team_name`, so this
+    # needs the orientation-checked set for the same reason the chart does. All
+    # three pairs above agree (`Brest`/`Brest`, `Mainz` ⊂ `FSV Mainz 05`), so the
+    # gate is measured to pass here, not hoped over.
+    #
+    # AFTER the Q050 drain above, which repoints `event_id` — folding the id the
+    # caller asked for rather than the row being rendered would fold the wrong
+    # twins. One indexed lookup, read-side only.
+    from app.utils.proven_duplicates import (
+        folded_series_event_ids,
+        latest_snapshot_for_each_bookmaker,
+    )
+    odds_event_ids = await folded_series_event_ids(db, event_id)
+    latest_snapshots = latest_snapshot_for_each_bookmaker(
+        list(
+            (await db.execute(latest_odds_per_bookmaker_query(odds_event_ids)))
+            .scalars()
+            .all()
+        ),
+        event_id,
     )
 
     # Load GEI percentiles for formatting
