@@ -555,7 +555,15 @@ describe('getLeagueDisplay', () => {
       ['tennis_atp_us_open', 'ATP US Open', 'US Open'],
       ['tennis_atp_wimbledon', 'ATP Wimbledon', 'Wimbledon'],
       ['tennis_atp_french_open', 'ATP French Open', 'French Open'],
-      ['basketball_euroleague', 'Basketball Euroleague', 'EuroLeague'],
+      // #6330 replaced `basketball_euroleague` here. Its served name is
+      // "Basketball Euroleague" — the key one title-case later — which
+      // `servedSportNameIsRaw` now correctly calls a non-name, so even the
+      // server-first rule this block exists to catch would have fallen through
+      // to the curated "EuroLeague" and agreed. The pair stopped being a
+      // specimen, so it is replaced rather than deleted, exactly as the control
+      // below instructs. The NBA pair disagrees on a served name that is a real
+      // brand, which is the property this block needs.
+      ['basketball_nba_championship_winner', 'NBA Championship Winner', 'NBA Finals'],
       ['icehockey_nhl_championship_winner', 'NHL Championship Winner', 'Stanley Cup'],
       ['basketball_ncaab_championship_winner', 'NCAAB Championship Winner', 'March Madness'],
       ['baseball_mlb_world_series_winner', 'MLB World Series Winner', 'World Series'],
@@ -951,5 +959,63 @@ describe('SPORT_CATEGORIES', () => {
   test('no overlapping prefixes', () => {
     const allPrefixes = SPORT_CATEGORIES.flatMap(c => c.prefixes);
     expect(new Set(allPrefixes).size).toBe(allPrefixes.length);
+  });
+});
+
+// =============================================================================
+// #6330 — the served name that is the key one title-case later
+// =============================================================================
+describe('#6330 servedSportNameIsRaw catches the machine-derived spelling', () => {
+  // Frozen from the 2026-09-15T08:55Z read of all 177 `sports` rows. These four
+  // store the key as their name in title case, so they are non-names in exactly
+  // the way the 15 `name === key` rows are — and each carries a machine-derived
+  // GROUP beside it ("tennis", "icehockey"), which is the independent signal
+  // that they are the same class rather than four brands that look alike.
+  // These three are NOT in the curated map, so `getSportLabel` reaches the raw
+  // test and this widening is what decides the label a reader sees.
+  test.each([
+    ['tennis_atp', 'Tennis Atp', 'ATP'],
+    ['tennis_wta', 'Tennis Wta', 'WTA'],
+    ['icehockey_ncaa', 'Icehockey Ncaa', 'NCAA'],
+  ])('%s serves %s, which is not a brand, so the reader gets %s', (key, served, expected) => {
+    expect(hasCuratedLeagueName(key)).toBe(false);
+    expect(servedSportNameIsRaw(key, served)).toBe(true);
+    expect(getSportLabel(key, served)).toBe(expected);
+  });
+
+  // `basketball_euroleague` is the fourth row of the class, but it IS curated,
+  // so its label is decided by the map before the raw test is ever consulted.
+  // Asserting "the reader gets EuroLeague" here would pass with this whole
+  // change reverted — the predicate is the only part of it this ship moves.
+  test('basketball_euroleague is the same class, but only its predicate moves', () => {
+    expect(servedSportNameIsRaw('basketball_euroleague', 'Basketball Euroleague')).toBe(true);
+    expect(hasCuratedLeagueName('basketball_euroleague')).toBe(true);
+  });
+
+  // 🔴 THE CONTROL THAT PICKED THE RULE. A normalised compare (letters only,
+  // punctuation and spacing dropped) also calls this row raw — "Ice Hockey -
+  // Olympics" and "icehockey_olympics" are the same letters — and demotes a
+  // name a person wrote to the key parse "OLYMPICS". If this flips, the
+  // widening has stopped discriminating and is eating real brands.
+  test('a human-written brand that is the same LETTERS as its key is spared', () => {
+    expect(servedSportNameIsRaw('icehockey_olympics', 'Ice Hockey - Olympics')).toBe(false);
+    expect(getSportLabel('icehockey_olympics', 'Ice Hockey - Olympics')).toBe('Ice Hockey - Olympics');
+  });
+
+  test('the 15 rows that store the key verbatim are still caught', () => {
+    expect(servedSportNameIsRaw('soccer_other', 'soccer_other')).toBe(true);
+    expect(servedSportNameIsRaw('esports', 'esports')).toBe(true);
+  });
+
+  test('real brands are still returned verbatim', () => {
+    expect(servedSportNameIsRaw('soccer_spain_la_liga', 'La Liga - Spain')).toBe(false);
+    expect(servedSportNameIsRaw('icehockey_sweden_allsvenskan', 'HockeyAllsvenskan')).toBe(false);
+    expect(servedSportNameIsRaw('soccer_germany_liga3', '3. Liga - Germany')).toBe(false);
+  });
+
+  test('an empty or absent name is raw', () => {
+    expect(servedSportNameIsRaw('tennis_atp', '')).toBe(true);
+    expect(servedSportNameIsRaw('tennis_atp', null)).toBe(true);
+    expect(servedSportNameIsRaw('tennis_atp', undefined)).toBe(true);
   });
 });

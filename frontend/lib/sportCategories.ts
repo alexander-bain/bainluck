@@ -843,9 +843,39 @@ export function getLeagueDisplay(leagueKey: string): string {
 }
 
 /**
+ * The key rewritten the way a machine writes it: segments split on `_`, each
+ * title-cased, joined with a space. `tennis_atp` -> "Tennis Atp".
+ */
+function machineDerivedName(sportKey: string): string {
+  return sportKey
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+/**
  * True when a served sport row has no name — it stores its own key where a
- * brand belongs ("mma_other", "esports"). 15 of the 176 rows `/api/sports`
- * serves are like this; the other 161 carry a real brand.
+ * brand belongs ("mma_other", "esports"), in either of the two spellings the
+ * catalogue uses. 19 of the 177 rows `/api/sports` serves are like this; the
+ * other 158 carry a real brand.
+ *
+ * #6330: this used to test `name === key` and nothing else, so it caught the 15
+ * rows that store the key verbatim and missed 4 that store the SAME
+ * non-name one title-case later — `tennis_atp` -> "Tennis Atp", `tennis_wta` ->
+ * "Tennis Wta", `icehockey_ncaa` -> "Icehockey Ncaa", `basketball_euroleague`
+ * -> "Basketball Euroleague". Those four read as real brands, so `getSportLabel`
+ * returned them verbatim and a reader got "Tennis Atp" where "ATP" belongs, on
+ * 331 of the 2,133 events in the NOW-2d..+7d window. The rows prove their own
+ * case: all four carry a machine-derived GROUP beside the machine-derived name
+ * ("tennis", "icehockey") while every branded sibling carries "Ice Hockey" —
+ * raw in both fields or neither, exactly as `getSportGroupLabel` below assumes.
+ *
+ * The test is equality against that one spelling and NOT a normalised compare
+ * (letters only, punctuation dropped), which was measured first and rejected:
+ * it also swallowed `icehockey_olympics` -> "Ice Hockey - Olympics", a name a
+ * person wrote, and demoted it to the key parse "OLYMPICS". Measured over all
+ * 177 rows: this rule catches those 4 and spares that 1.
  */
 export function servedSportNameIsRaw(
   sportKey: string,
@@ -854,7 +884,12 @@ export function servedSportNameIsRaw(
   if (!servedName || !servedName.trim()) {
     return true;
   }
-  return servedName.trim().toLowerCase() === sportKey.trim().toLowerCase();
+  const served = servedName.trim();
+  const key = sportKey.trim();
+  if (served.toLowerCase() === key.toLowerCase()) {
+    return true;
+  }
+  return served.toLowerCase() === machineDerivedName(key).toLowerCase();
 }
 
 /**
