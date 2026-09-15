@@ -1095,6 +1095,17 @@ def _derive_race_label(names: list[str]) -> str:
     🔴 THE FALLBACK MAKES THIS WRONG FOR ANY CALLER THAT HAS NOT ALREADY PROVEN
     ITS MEMBERS BELONG TOGETHER. Callers keying on `group_id` have; a story-key
     cluster has not. Those want `_shared_member_phrase` above.
+
+    🔴 AND "BELONG TOGETHER" WAS NEVER ENOUGH TO NAME A CONTEST. The paragraph
+    above cleared `group_id` callers, and that clearance was read as licence to
+    wrap this label in `f"Who wins {label}?"`. Proving the members are one
+    Polymarket event does NOT prove the phrase they share is a noun phrase
+    naming something anyone WINS: measured over all 48 live entertainment
+    clusters, this returns "Have a" (24 members), "In 2026", "1", "Be evicted"
+    and "Mark Ruffalo as Hulk" (the shortest-member fallback, inside a
+    `group_id` caller). So this stays what it is — a SHORT CHIP LABEL, best
+    effort — and no caller may build a sentence out of it. The question comes
+    from `_award_group_question`, which reads the venue's own parent market.
     """
     cleaned = [n.strip() for n in names if n and n.strip()]
     if not cleaned:
@@ -1111,6 +1122,52 @@ def _derive_race_label(names: list[str]) -> str:
     return label[:1].upper() + label[1:]
 
 
+def _award_group_question(members: list[dict[str, Any]]) -> str | None:
+    """The VENUE'S OWN question for a Polymarket event cluster, or None.
+
+    A Polymarket event stores its question once, on the parent row
+    (`group_type="polymarket_event"`), and prices it on the children
+    (`polymarket_sub_market`). That parent name is the question the members are
+    all answers to, authored by the venue — "Who will be evicted from Big
+    Brother? (Week 10)", "Which characters will appear in Avengers: Doomsday?",
+    "Oscars 2027: Best Actor Nominations". We never have to derive it, and any
+    derivation we attempt is strictly worse than reading it.
+
+    🔴 THIS REPLACES `f"Who wins {label}?"`, WHICH WAS A CLAIM WE MANUFACTURED
+    AND MOST OF THESE MARKETS CONTRADICT. Of the 48 live entertainment clusters
+    (production, 2026-09-15), the template asserted a contest-with-a-winner over
+    markets pricing who is EVICTED, who DIES ("Who wins Witcher season 5?"), who
+    is merely NOMINATED, who PARTICIPATES and who is CAST — and it read as
+    nonsense on the fragments `_derive_race_label` returns ("Who wins Have a?",
+    "Who wins 1?"). The live specimen was "Who wins Be evicted?" on Discover
+    page one, over four Big Brother eviction markets, with the most-likely
+    EVICTEE shown at 62% under the word "wins".
+
+    Why the discriminator is `group_type` and not `market_type`: the parent is
+    whichever row carries the Polymarket EVENT id in `external_id` while the
+    children carry condition hashes, and `group_type` records exactly that.
+    `market_type` does not — it reads `unshaped` on the "#1 Show on Netflix"
+    parent and `field` on that cluster's child, picking the wrong row. Measured
+    over the same 48 clusters: `group_type` names exactly one parent in 47 and
+    agrees with the `external_id` anchor on 47/47; the 48th has no parent row at
+    all, and that is the `None` below.
+
+    None means we cannot state the question, NOT that the bundle dies: the
+    caller still folds, and both bundle cards already render the member count
+    when `shared_question` is absent. #4147 ruled that trade explicitly — an
+    uninformative count is honest, a wrong sentence is not.
+    """
+    authored = [
+        _futures_data(item).get("name")
+        for item in members
+        if str(_futures_data(item).get("group_type") or "") == "polymarket_event"
+    ]
+    names = [str(name).strip() for name in authored if name and str(name).strip()]
+    if len(names) != 1:
+        return None
+    return names[0]
+
+
 def _make_awards_bundle_item(
     group_id: str, members: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -1119,16 +1176,17 @@ def _make_awards_bundle_item(
     sort_time = max(float(item.get("_sort_time") or 0) for item in ranked)
     member_ids = [_futures_data(item).get("id") for item in ranked]
     names = [str(_futures_data(item).get("name") or "") for item in ranked]
+    # The chip's short subject. Best effort and NOT a sentence — see the 🔴 on
+    # `_derive_race_label`. The chip is `whitespace-nowrap`, so the venue's full
+    # question cannot go here; it goes in the heading below.
     label = _derive_race_label(names)
-    # D1 clause c (#4066): an awards cluster's shared question is the race its
-    # members literally share, which `_derive_race_label` already extracted —
-    # "Best Actor at the 99th Academy Awards" becomes "Who wins Best Actor at
-    # the 99th Academy Awards?". Nothing else here changes.
-    question = f"Who wins {label}?"
+    # D1 clause c (#4066): the heading is the one sentence saying why these
+    # members belong together. It is the venue's own parent question, or absent.
+    question = _award_group_question(ranked)
     return {
         "type": "bundle",
         "score": score,
-        "reason": question,
+        "reason": question or "",
         "headline": label,
         "data": {
             "id": f"theme:{group_id}:{'-'.join(str(m) for m in member_ids)}",
@@ -1144,6 +1202,10 @@ def _make_awards_bundle_item(
                 "group_id": group_id,
                 "member_ids": member_ids,
                 "member_names": names,
+                # Mirrors `resolve_story_question`'s `source`: a cluster folding
+                # with no stateable question is visible in ops rather than
+                # having to be inferred from a missing heading.
+                "question_source": "venue_parent" if question else "none",
             },
         },
         "_sort_time": sort_time,

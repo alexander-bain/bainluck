@@ -187,19 +187,32 @@ def test_an_unfoldable_family_leaves_its_members_in_the_feed():
     assert served_ids == {201, 202}
 
 
-def test_an_awards_cluster_asks_who_wins_the_race_it_shares():
+def test_an_awards_cluster_asks_the_venue_s_own_question():
+    """#4066's ship, restated after #6353 replaced the derived question.
+
+    This asserted `f"Who wins {headline}?"` until 2026-09-15, when that template
+    was measured manufacturing a claim the markets contradict (see
+    `test_discover_bundle_awards_venue_question_6353.py`). #4066's actual ship —
+    a bundle states the question its members share instead of counting them — is
+    unchanged and is what this still guards; only the source of the sentence
+    moved, from our token heuristic to the venue's own parent row.
+    """
+    parent = _member(300, "Oscars 2027: Best Actor Nominations")
+    parent["data"]["group_type"] = "polymarket_event"
     members = [
-        _member(301, "Best Actor at the 99th Academy Awards"),
-        _member(302, "Best Actress at the 99th Academy Awards"),
+        parent,
+        _member(301, "Will Adam Driver be nominated for Best Actor?"),
+        _member(302, "Will Brad Pitt be nominated for Best Actor?"),
     ]
 
     bundle = _make_awards_bundle_item("group:oscars99", members)
 
-    assert bundle["reason"].startswith("Who wins ")
-    assert bundle["reason"].endswith("?")
-    assert bundle["reason"] == f"Who wins {bundle['headline']}?"
+    assert bundle["reason"] == "Oscars 2027: Best Actor Nominations"
     assert "related markets" not in bundle["reason"]
     assert bundle["data"]["shared_question"] == bundle["reason"]
+    # The nominations market is NOT a contest with a winner, and the retired
+    # template said it was.
+    assert not bundle["reason"].startswith("Who wins ")
 
 
 @pytest.mark.parametrize("story_key", sorted(AUTHORED_STORY_QUESTIONS))
