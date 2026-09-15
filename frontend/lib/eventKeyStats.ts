@@ -250,7 +250,61 @@ export function formatCountdown(targetTime: string): string {
 export const REFRESH_COUNTDOWN_WINDOW_MS = 3 * 60 * 60 * 1000;
 
 /**
- * Should the event header draw its "Next update: NN" ring? (#3802)
+ * How long PAST its own kickoff an event with no reported result can still
+ * promise an update. (#6381, from live/266's reading)
+ *
+ * ── WHY THE OTHER END OF THE WINDOW WAS MISSING ──
+ *
+ * `REFRESH_COUNTDOWN_WINDOW_MS` above bounds the ring BEFORE a match. Nothing
+ * bounded it after: `isSuspended` is
+ * `hasNoReportedResult(status, commence_time)`, whose `startedWithoutResult`
+ * disjunct fires from {@link UPCOMING_GRACE_MS} past kickoff *onwards, forever*,
+ * and whose `isSuspendedStatus` disjunct reads the literal status with no clock
+ * at all. So `/events/15310639` (Liverpool–Fulham, 3.6 days past kickoff) and
+ * `/events/15304840` (Sabalenka, 9.6 days) each ran a live `Next update: 105`
+ * dial — a true sentence about our poll and a false one about the match, which
+ * is the same lie #3802 removed from the pregame end.
+ *
+ * ── WHERE 12 HOURS COMES FROM ──
+ *
+ * The longest a match on this site can plausibly still be running is the
+ * largest entry in the backend's own `SPORT_MAX_DURATIONS`
+ * (`app/tasks/config.py`) — golf, 8 hours — and a result can lag the final
+ * whistle by a few more. 12h is that maximum plus a deliberate reporting
+ * margin, so no in-progress event loses its ring, and every row in #6381's
+ * 426-event census (all ≥6h past kickoff, most days past it) is well outside.
+ * `__tests__/lib/countdownReachClearsTheLongestSport6381.test.ts` reads the
+ * Python and fails if a sport is ever given a maximum this does not clear,
+ * because a comment asking two languages to stay in step is not a mechanism
+ * (the #3211 guard's rule).
+ *
+ * 🔴 THIS DOES NOT BOUND A `live` EVENT, deliberately. A cricket Test or a golf
+ * round genuinely delivers updates for days, and a stale LIVE claim is already
+ * withdrawn one branch above by #5459's `liveClaimUnbacked`. The defect is a
+ * page with NO result promising one, not a long event.
+ */
+export const REFRESH_COUNTDOWN_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+
+/**
+ * Is this event recent enough that a poll could still bring its result? (#6381)
+ *
+ * Only ever narrows: a start time we cannot read is not a licence to promise an
+ * update (the same call this function's caller makes three branches below), and
+ * a start still ahead of us is left alone — a row can call itself `suspended`
+ * before its own kickoff, and that is the pregame case, not this one.
+ */
+function startedWithinCountdownReach(
+  commenceTime: string | null | undefined,
+  now?: Date,
+): boolean {
+  if (!commenceTime) return false;
+  const startMs = new Date(commenceTime).getTime();
+  if (isNaN(startMs)) return false;
+  return (now ?? new Date()).getTime() - startMs <= REFRESH_COUNTDOWN_MAX_AGE_MS;
+}
+
+/**
+ * Should the event header draw its "Next update: NN" ring? (#3802, #6381)
  *
  * The ring counts down the page's own poll, and the page polls every two
  * minutes whether the match is in ten minutes or in three days. Gated only on
@@ -263,9 +317,12 @@ export const REFRESH_COUNTDOWN_WINDOW_MS = 3 * 60 * 60 * 1000;
  *
  * A countdown earns its place when an update could plausibly land while the
  * reader is looking: the event is live, it is past its start with no reported
- * result, or it starts within the window above. A pregame match days out is
- * told when it starts by the hero ("Starts in 1d 10h") — the poll clock adds
- * nothing there and costs the header its layout.
+ * result *and still within {@link REFRESH_COUNTDOWN_MAX_AGE_MS} of it* (#6381),
+ * or it starts within the window above. A pregame match days out is told when
+ * it starts by the hero ("Starts in 1d 10h") — the poll clock adds nothing
+ * there and costs the header its layout; a fixture days PAST its kickoff with
+ * no result is the same sentence told backwards, and #6381 photographed it on
+ * a 3.6-day-old EPL fixture whose own markets were graded one screen below.
  *
  * Pure and exported because a Next.js page may not carry named exports, so
  * this is the only seam a guard can hold.
@@ -300,9 +357,24 @@ export function shouldShowRefreshCountdown(args: {
   // states an unbacked page is in — checked after them it would never fire.
   if (args.liveClaimUnbacked) return false;
 
-  // An event that is live, or past its start with no result reported, is
-  // exactly the case the ring was written for.
-  if (isLive || isSuspended) return true;
+  // An event that is live is exactly the case the ring was written for, and it
+  // keeps it however long it runs (see REFRESH_COUNTDOWN_MAX_AGE_MS).
+  if (isLive) return true;
+
+  // #6381 — past its start with no result reported is the OTHER case the ring
+  // was written for, but only while an update could still plausibly land. Read
+  // the bound rather than returning `true`: on a fixture days past its kickoff
+  // the dial promises something that is never coming, and this population is
+  // precisely the one #5459's `liveClaimUnbacked` guard cannot reach — that
+  // one measures how old OUR NUMBER is, and a dead fixture whose markets are
+  // still being polled has a perfectly fresh blend.
+  //
+  // 🔴 Bounded HERE and not inside `hasNoReportedResult`, which answers a
+  // different question — "print a start time or print *No result reported*?" —
+  // and whose answer stays right forever. #3211 rescued 171 US Open matches
+  // onto the league rails with that predicate; teaching it a clock un-rescues
+  // them into the both-rails hole. Only the ring needs to stop promising.
+  if (isSuspended) return startedWithinCountdownReach(commenceTime, args.now);
 
   // No start time is not a licence to promise an update — an event we cannot
   // place in time is the last one that should carry a confident clock.
