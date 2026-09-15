@@ -45,14 +45,23 @@ class _FakeSession:
     The real query filters to covered leagues in SQL; returning them all here
     means the test grades the EXACT-MATCH logic, which is the part that decides
     MLB from NPB, rather than re-testing SQLAlchemy's `startswith`.
+
+    Ignoring the predicate is deliberate and it has a PRICE, paid by
+    `TestTheQueryIsBoundedToCoveredLeagues` below: because the rows handed back
+    do not depend on the WHERE clause, no arm in this file that merely calls the
+    resolver can observe that clause at all. So the statement is RECORDED here
+    and read back there. Recording it changes no behaviour — every caller still
+    gets every row — it only stops the SQL being unobservable.
     """
 
     def __init__(self, rows):
         self._rows = rows
         self.calls = 0
+        self.last_statement = None
 
-    async def execute(self, _statement):
+    async def execute(self, statement):
         self.calls += 1
+        self.last_statement = statement
         return list(self._rows)
 
 
@@ -236,6 +245,65 @@ class TestCaseAndWhitespace:
         assert await covered_league_for_matchup(
             _session(), "  Milwaukee Brewers ", "Pittsburgh Pirates  "
         ) == "baseball_mlb"
+
+
+class TestTheQueryIsBoundedToCoveredLeagues:
+    """THE ANTI-VACUITY ARM FOR THE SQL BOUND. #5544, added lane1/351.
+
+    MEASURED, 2026-09-15: deleting the resolver's whole
+    ``.where(or_(*[Sport.key.startswith(p) for p in ODDS_API_COVERED_PREFIXES]))``
+    left this file at **27 passed**, and `test_placement_season_guard_6392.py`
+    at 42 passed. The only arm in the suite that noticed was
+    `TestTheListItself::test_the_query_actually_bounds_itself_to_the_new_keys`
+    in `test_aussierules_covered_league_6377.py` — a file named for a DIFFERENT
+    ship, whose subject is two AFL keys.
+
+    That is the fragility this closes. The bound is load-bearing for #5544 and
+    the guard for it lived somewhere a reader closing out the Aussie Rules work
+    would have no reason to keep. The failure mode is not a missed refusal but
+    an OVER-refusal: with no bound the resolver loads every club in `teams`, so
+    `shared` can settle on a league the Odds API does not carry, and the minting
+    gate then drops exactly the ~15 real NPB/CPBL, European-hockey and FIBA rows
+    that `covered_league_for_matchup`'s docstring exists to protect.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_where_clause_reaches_the_sql(self):
+        """The ship's own key, stated in this file's own words, and the
+        catch-all that must never be swept in beside it."""
+        session = _session()
+        await covered_league_for_matchup(
+            session, "Milwaukee Brewers", "Pittsburgh Pirates"
+        )
+        assert session.last_statement is not None, (
+            "the resolver did not execute a statement at all"
+        )
+        rendered = str(
+            session.last_statement.compile(compile_kwargs={"literal_binds": True})
+        )
+        assert "WHERE" in rendered.upper(), (
+            "the query is unbounded — it will load every club in `teams`"
+        )
+        assert "baseball_mlb" in rendered
+        assert "baseball_other" not in rendered
+
+    @pytest.mark.asyncio
+    async def test_every_covered_prefix_reaches_the_sql(self):
+        """The list→SQL relation is TOTAL, so a key added to the tuple that
+        never reaches the query is caught here rather than in production.
+
+        This arm names the relation, not a key set, on purpose: a hardcoded
+        list would have to be edited in lockstep with the tuple and would then
+        agree with it by construction, which is the trap
+        `test_placement_season_guard_6392.py` calls out in its own fake.
+        """
+        session = _session()
+        await covered_league_for_matchup(session, "Athletics", "Tampa Bay Rays")
+        rendered = str(
+            session.last_statement.compile(compile_kwargs={"literal_binds": True})
+        )
+        missing = [p for p in ODDS_API_COVERED_PREFIXES if p not in rendered]
+        assert not missing, f"covered prefixes never reach the query: {missing}"
 
 
 class TestTheRefusalIsWiredToTheBoundary:
