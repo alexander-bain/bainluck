@@ -42,7 +42,6 @@ await page.waitForTimeout(2500);
 const box = await page.evaluate((label) => {
   const card = document.querySelector('[data-card-format="event"]');
   if (!card) return null;
-  const hero = card.firstElementChild?.nextElementSibling ?? card.querySelector('div');
   const chip = [...card.querySelectorAll('div')].find((d) => {
     const cs = getComputedStyle(d);
     return cs.position === 'absolute' && cs.borderRadius.includes('9999')

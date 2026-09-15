@@ -116,11 +116,22 @@ function render(sportKey: string | null, sportName: string | null, opts: Opts = 
   );
 }
 
-/** The chip's own text, read out of the rendered pill rather than the whole card. */
+/**
+ * The chip's own text, read out of the rendered pill rather than the whole card.
+ *
+ * The capture is `[^<]*` — everything up to the first tag — rather than `.*?`
+ * followed by a tag strip. The chip renders one text node (`{emoji} {label}`),
+ * so there is nothing to strip, and CodeQL is right that a one-pass
+ * `replace(/<[^>]*>/g, "")` is incomplete tag removal
+ * (`js/incomplete-multi-character-sanitization`, high). Not matching tags at all
+ * beats removing them badly. If markup ever does appear inside the pill the
+ * capture stops dead at it, and the by-value assertions below fail loudly rather
+ * than reading a half-stripped string.
+ */
 function chipText(html: string): string {
-  const m = html.match(/rounded-full backdrop-blur-sm[^>]*>(.*?)<\/div>/);
+  const m = html.match(/rounded-full backdrop-blur-sm[^>]*>([^<]*)</);
   if (!m) throw new Error("no chip pill in the render");
-  return m[1].replace(/<[^>]*>/g, "").replace(/&#x27;/g, "'").trim();
+  return m[1].replace(/&#x27;/g, "'").replace(/&amp;/g, "&").trim();
 }
 
 /** The chip's text with the sport glyph dropped — the words, on their own. */
