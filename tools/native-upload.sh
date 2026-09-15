@@ -529,9 +529,106 @@ fi
 if [ "$MODE" = "validate" ]; then
   step "validating with App Store Connect; log: $DELIVER_LOG"
   ALTOOL_VERB="--validate-app"
+  ITMS_MODE="verify"
 else
   step "uploading to App Store Connect (TestFlight); log: $DELIVER_LOG"
   ALTOOL_VERB="--upload-app"
+  ITMS_MODE="upload"
+fi
+
+# ─── WHICH DELIVERY TOOL, AND WHY IT IS NOT ALWAYS altool ────────────────────
+#
+# `altool` delivers through a Transporter child process that does NOT inherit
+# this shell's proxy environment. On a machine whose only egress is an HTTP
+# proxy — every lane VM here (`HTTPS_PROXY=http://localhost:10054`) — that child
+# cannot reach Apple, and the failure it prints is:
+#
+#     Error: (null) 'The file "Defaults.properties" couldn't be opened.'
+#
+# which is a lie in the most expensive direction available. The file EXISTS
+# (`~/Library/Caches/com.apple.amp.itmstransporter/Defaults.properties`, 1,120
+# bytes) and is readable by this shell; the message describes the local artefact
+# the network step was going to refresh, not the thing that went wrong. Measured
+# 2026-09-15: fourteen consecutive sessions read that sentence and concluded the
+# upload was attended-only, so every build since #8 was carried to Apple by hand.
+# It is not attended-only. `curl https://www.apple.com` from the same shell
+# returns 200 through the proxy, and `iTMSTransporter` — the same delivery
+# engine, invoked directly — takes the proxy as a JVM argument and uploads in
+# three seconds.
+#
+# Two things were tried first and did NOT work, recorded so nobody pays for them
+# again: exporting `_JAVA_OPTIONS`/`JAVA_TOOL_OPTIONS` with the proxy properties
+# (altool's child does not read them either), and running with the agent's
+# command sandbox disabled (identical failure — the sandbox was never the cause).
+#
+# So: proxy present ⇒ iTMSTransporter with explicit proxy args. No proxy ⇒
+# altool, unchanged, which is the path on Alex's own Mac.
+PROXY_URL="${HTTPS_PROXY:-${https_proxy:-${HTTP_PROXY:-${http_proxy:-}}}}"
+PROXY_HOST=""
+PROXY_PORT=""
+if [ -n "$PROXY_URL" ]; then
+  PROXY_HOSTPORT="${PROXY_URL#*://}"
+  PROXY_HOSTPORT="${PROXY_HOSTPORT%/}"
+  PROXY_HOST="${PROXY_HOSTPORT%%:*}"
+  PROXY_PORT="${PROXY_HOSTPORT##*:}"
+  case "$PROXY_PORT" in
+    ''|*[!0-9]*) PROXY_HOST=""; PROXY_PORT="" ;;  # not host:port — treat as no proxy
+  esac
+fi
+
+ITMS="$(xcode-select -p)/usr/bin/iTMSTransporter"
+
+# `-m verify` takes `-f <package directory>` — an `.itmsp`, which nothing here
+# builds — while `-m upload` takes `-assetFile <ipa>`. So the proxy route covers
+# delivery and NOT validation, and says so rather than composing a command that
+# fails on a missing `-f` and reads like a broken script.
+if [ -n "$PROXY_HOST" ] && [ -x "$ITMS" ] && [ "$MODE" = "validate" ]; then
+  echo "FAIL: --validate is not available on a proxied machine."
+  echo "  iTMSTransporter's verify mode wants an .itmsp package (-f), not the .ipa,"
+  echo "  and altool cannot reach Apple through this shell's proxy at all."
+  echo "  Use --upload: App Store Connect validates on ingest and reports the result"
+  echo "  as the build's processingState (INVALID rather than VALID)."
+  exit 1
+fi
+
+if [ -n "$PROXY_HOST" ] && [ -x "$ITMS" ]; then
+  echo "  route   : iTMSTransporter via proxy $PROXY_HOST:$PROXY_PORT (altool's child cannot see it)"
+  "$ITMS" -m "$ITMS_MODE" \
+    -assetFile "$IPA" \
+    -apiKey "$ASC_KEY_ID" \
+    -apiIssuer "$ASC_ISSUER_ID" \
+    -Dhttp.proxyHost="$PROXY_HOST" -Dhttp.proxyPort="$PROXY_PORT" \
+    -Dhttps.proxyHost="$PROXY_HOST" -Dhttps.proxyPort="$PROXY_PORT" \
+    > "$DELIVER_LOG" 2>&1
+  echo "  iTMSTransporter exit: $?  (a fact, not the verdict)"
+
+  # Graded as a DOCUMENT, like altool's below: this tool logs `ERROR` lines and
+  # keeps going, and its summary sentence is the only thing that means delivered.
+  if [ ! -s "$DELIVER_LOG" ]; then
+    echo "FAIL: iTMSTransporter wrote nothing at all."
+    exit 1
+  fi
+  if /usr/bin/grep -qE "(uploaded|verified) successfully" "$DELIVER_LOG"; then
+    echo
+    if [ "$MODE" = "validate" ]; then
+      echo "VALIDATE: PASS — build $EFFECTIVE_BUILD would be accepted."
+    else
+      echo "UPLOAD: PASS — build $EFFECTIVE_BUILD delivered."
+      note "Processing takes ~10 minutes before it appears in TestFlight."
+      note "Confirm it landed rather than assuming: the ASC builds endpoint"
+      note "should list it with processingState VALID."
+    fi
+    note "log: $DELIVER_LOG"
+    exit 0
+  fi
+  echo "FAIL: iTMSTransporter did not report a successful $ITMS_MODE — read $DELIVER_LOG."
+  /usr/bin/grep -E "ERROR|error:" "$DELIVER_LOG" | tail -5
+  exit 1
+fi
+
+if [ -n "$PROXY_HOST" ]; then
+  echo "  route   : altool — a proxy is set but $ITMS is not executable, so the"
+  echo "            'Defaults.properties' failure is expected. Read the comment above."
 fi
 
 xcrun altool "$ALTOOL_VERB" \
