@@ -3551,8 +3551,28 @@ def _is_placeholder_outcome(market) -> bool:
     # unconditionally, so a settled ``Player AD`` is still suppressed; only a
     # NAMED leg the venue has settled at ~1.0 is admitted. A negRisk partition
     # settles exactly one such leg — measured on that event, 1 of 71 clears
-    # 0.995 and it is the winner, while all 40 unused ``Rider N`` slots settle
-    # at 0 and are dropped by the caller's ``prob <= 0`` test.
+    # 0.995 and it is the winner.
+    #
+    # 🔴 CORRECTION (lane1b, 2026-09-15, self-reported before CERT-2892 was
+    # graded and merged over; int368's ledger row carries the desk's reasoning).
+    # This comment used to end "…while all 40 unused ``Rider N`` slots settle at
+    # 0 and are dropped by the caller's ``prob <= 0`` test." **That sentence was
+    # false about this event and the population was carried across from #953
+    # unread.** Re-read of Gamma ``/events?id=815313``: 71 legs, **zero** legs
+    # matching an anonymous-slot pattern, and all 70 non-winning legs are NAMED
+    # riders at ``outcomePrices[0] == 0``. ``_parent_outcome_data`` returns 31
+    # rows rather than 1 because thirty of those legs price off a *last trade*
+    # (0.005, 0.004, 0.002…), not off ``outcomePrices[0]`` — which is the
+    # correct explanation of the row count and not the one that shipped here.
+    # The load-bearing claim above is untouched and re-verified. One consequence
+    # worth stating: because this event carries no anonymous slots at all, the
+    # "a settled ``Player AD`` is still suppressed" paragraph has no specimen
+    # here and its proof is synthetic: closed-and-settled ``Player B``/``AD``/
+    # ``XX`` legs built by hand in
+    # ``tests/test_polymarket_settled_champion_leg_6110.py``
+    # (``test_a_settled_anonymised_slot_is_still_suppressed``).
+    # Left as a correction rather than a silent deletion: the next reader
+    # deserves to know the comment was wrong once, and about what.
     if (
         not getattr(market, "closed", False)
         and market.outcome_prices
