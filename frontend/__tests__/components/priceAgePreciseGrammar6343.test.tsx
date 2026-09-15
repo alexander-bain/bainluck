@@ -69,6 +69,22 @@ const HOUR = 60 * MIN;
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
 
 /**
+ * `ago()` above is anchored to the frozen `NOW`, which is right for `mark()`:
+ * that helper passes `nowMs={NOW}`, so fixture and renderer read ONE clock.
+ *
+ * `bar()` does not. It renders the real `ActionBar`, which takes no `nowMs`
+ * and so falls through to `Date.now()`. Handing it a `NOW`-anchored fixture is
+ * two clocks: `ago(77 * HOUR)` is not "77 hours old", it is the absolute
+ * instant 2026-09-11T19:30Z, which stopped being "3d ago" at 2026-09-15T19:30Z
+ * and reddened `frontend-build` on master for every lane (#6425).
+ *
+ * A fixture for a surface must be relative to the clock that surface reads.
+ * 77h is 5h clear of the 3d floor and 19h clear of the 4d one, so this renders
+ * "3d ago" whatever the wall clock says.
+ */
+const realAgo = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+/**
  * The production specimen's own stamp, and the reason the strings below are
  * exact rather than shaped: this instant is the one `ios/…/SourceAge.swift`
  * quotes ("12 Sep, 3:51 AM") when it documents the field order web is adopting.
@@ -245,7 +261,7 @@ describe("CONTROL: an empty liquidity payload cannot hide the age (#6343)", () =
     // The production specimen end to end: feed index 1, 77 hours old, `liq {}`.
     // Green on both sides — the disclosure was never liquidity-gated on web,
     // and this is what says so if someone ever gates it.
-    const html = bar(ago(77 * HOUR));
+    const html = bar(realAgo(77 * HOUR));
     expect(html).toContain('data-testid="price-age-mark"');
     expect(visible(html)).toContain("3d ago");
     expect(titleOf(html)).not.toBeNull();
