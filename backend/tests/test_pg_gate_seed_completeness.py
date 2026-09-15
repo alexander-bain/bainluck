@@ -89,6 +89,13 @@ COVERED = (
     "test_link_tennis_already_linked_pg.py",
     "test_link_tennis_statpal_real_postgres.py",
     "test_null_statpal_live_space_3094_real_postgres.py",
+    # #6215 (CERT-2880's required gate). Seeds `sports` and one `teams` row by
+    # raw INSERT to prove the repair's backup/restore round-trips a real JSONB
+    # `alternate_names` — the script's first cut declared that backup column
+    # `text[]`, so `--backup` raised and the whole repair was unrunnable.
+    # `sports.active` is exactly the Python-side default this file is named
+    # after, and the seed names it.
+    "test_backup_round_trip_jsonb_6215_pg.py",
     "test_polymarket_resolved_candidate_sql_pg.py",
     # #6073's stuck-status rescue. Seeds `sports` and four `events` by raw
     # INSERT, and `sports.active` plus `events.status` are both the Python-side
@@ -161,6 +168,24 @@ _INSERT_RE = re.compile(r"INSERT\s+INTO\s+(\w+)\s*\(([^()]*)\)\s*VALUES", re.IGN
 #: subset and nothing else in this file can tell.
 _INSERT_ANY_RE = re.compile(r"INSERT\s+INTO", re.IGNORECASE)
 
+#: `INSERT INTO <table> (<cols>) SELECT ...` — an insert whose values come from
+#: a query, not from a literal row. EXCLUDED from the count above, and it is an
+#: exclusion rather than a hole (#6215):
+#:
+#: this file exists because `text("INSERT ...")` does not run a Python-side
+#: `default=`, so a hand-written VALUES row can omit a NOT NULL column and only
+#: find out on a runner. An `INSERT ... SELECT` writes whatever its SELECT
+#: produced, so it cannot omit a column the source row had — and if the source
+#: itself is short of one, the SELECT is the bug and the NOT NULL violation is
+#: the correct, immediate report of it. There is no silent class here to guard.
+#:
+#: Narrow on purpose: the `SELECT` must follow the column list directly, so a
+#: `VALUES` statement can never be waved through by this arm.
+_INSERT_SELECT_RE = re.compile(
+    r"INSERT\s+INTO\s+[\w{}]+\s*\(([^()]*)\)\s*(?:\"\s*\n?\s*\")?\s*SELECT",
+    re.IGNORECASE,
+)
+
 
 def _columns(raw: str) -> set[str]:
     """Column names out of an INSERT's column list."""
@@ -179,7 +204,16 @@ def _inserts(path: Path):
 
 
 def _insert_keywords(path: Path) -> int:
-    return len(_INSERT_ANY_RE.findall(_joined_source(path)))
+    """Literal `INSERT INTO`s this file is responsible for reading.
+
+    `INSERT ... SELECT` is subtracted rather than left to fail the
+    parse-everything tripwire — see `_INSERT_SELECT_RE` for why that is an
+    exclusion and not a hole.
+    """
+    source = _joined_source(path)
+    return len(_INSERT_ANY_RE.findall(source)) - len(
+        _INSERT_SELECT_RE.findall(source)
+    )
 
 
 def _required(table_name: str) -> set[str]:
@@ -261,6 +295,37 @@ def test_pg_gate_inserts_supply_every_not_null_column(filename):
         "NotNullViolationError before reaching its assertion, and because it is "
         "skipped without a Postgres you will only find out in CI, on a job "
         "`deploy` needs."
+    )
+
+
+def test_the_insert_select_exclusion_cannot_wave_through_a_values_seed():
+    """The #6215 exclusion is narrow, asserted rather than asserted-about.
+
+    `_insert_keywords` subtracts `INSERT ... SELECT` so a gate whose SUBJECT is
+    such a statement can satisfy the parse-everything tripwire. The risk of any
+    subtraction is that it grows and starts excusing the very seeds this file
+    exists for, so both directions are pinned here, and the fired-count is
+    measured rather than hoped: the exclusion currently matches in exactly ONE
+    covered file — the one it was written for.
+    """
+    assert not _INSERT_SELECT_RE.search(
+        'INSERT INTO teams (name, sport_id) VALUES (:n, :s)'
+    ), "a VALUES seed is being excused — the exclusion has stopped being narrow"
+    assert _INSERT_SELECT_RE.search(
+        'INSERT INTO bak (team_id, name) SELECT id, name FROM teams'
+    )
+
+    fired = {
+        name: len(_INSERT_SELECT_RE.findall(_joined_source(path)))
+        for name in COVERED
+        if (path := INTEGRATION_DIR / name).exists()
+    }
+    assert {k: v for k, v in fired.items() if v} == {
+        "test_backup_round_trip_jsonb_6215_pg.py": 1
+    }, (
+        "the INSERT...SELECT exclusion now fires somewhere new. That is not "
+        "automatically wrong, but it means another gate's statements stopped "
+        f"being read by the column check — say why here: {fired}"
     )
 
 

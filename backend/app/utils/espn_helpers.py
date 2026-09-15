@@ -17,7 +17,11 @@ from app.utils.event_completion import authority_may_settle, play_resumes
 # plain module-level import rather than five function-local ones dodging a cycle.
 from app.utils.game_state import _sanitize_period, live_write_would_revert
 from app.utils.live_state_write import write_live_state_if_unmoved
-from app.utils.name_normalization import names_match as _canonical_names_match
+from app.utils.name_normalization import (
+    names_match as _canonical_names_match,
+    normalize_name as _normalize_name,
+    shared_token_rivals as _shared_token_rivals,
+)
 from app.utils.espn_candidate_selection import (
     select_authorized_espn_candidate as _select_authorized_espn_candidate,
 )
@@ -356,6 +360,97 @@ def espn_terminal_write_is_fold(event_commence, now, slack=_FOLD_GUARD_SLACK) ->
 # Team upsert
 # ---------------------------------------------------------------------------
 
+#: The ESPN fields that NAME A CLUB. `abbreviation` is deliberately absent: a
+#: three-letter code carries no name to compare, and feeding it to a
+#: token-overlap matcher buys nothing but false agreement.
+_ESPN_CLUB_NAME_FIELDS = (
+    "display_name",
+    "name",
+    "short_name",
+    "nickname",
+)
+
+#: `location` NAMES A CITY, NOT A CLUB, and it is the one field the rival veto
+#: cannot protect (#6215, CERT-2881 follow-through). Manchester City's payload
+#: carries `location = "Manchester"`, and `Manchester` sits inside
+#: `Manchester United` with nothing left over — so it is not a "rival" by any
+#: token test, it is a strict subset, and `names_match` accepts it. A guard that
+#: lets the city vouch therefore hands United's row City's badge no matter how
+#: good the rival rule above it is.
+#:
+#: So the city may only corroborate by EXACT normalized equality — `Leeds
+#: United`/`Leeds United`, where ESPN happens to put the full club name in the
+#: field. It can never establish identity on its own by containment.
+#:
+#: THE ALTERNATIVE WAS MEASURED AND REJECTED. Requiring "their name is at least
+#: as specific as ours" across all fields refuses 188 of 1,000 legitimate
+#: adopters — `Seattle Seahawks` vs `Seattle`, `New England Patriots` vs
+#: `New England` — because location-is-a-prefix is the NORMAL shape for US
+#: clubs. Those rows keep their identity here because `display_name` carries the
+#: club name and answers first; only a payload with no club-naming field at all
+#: is refused, and that costs a missing crest, which is visible and reversible.
+_ESPN_IDENTITY_LOCATION_FIELD = "location"
+
+
+def espn_identity_corresponds(team_name, existing_alternate_names, espn_team) -> bool:
+    """Does this ESPN payload name the club we are about to stamp it onto?
+
+    The question ``upsert_team``'s own guard has always meant to ask and could
+    never reach (#6215): that guard is written ``if team.espn_id and ...``, so
+    it is unreachable for a row with no ESPN id — which is precisely the
+    wrong-event-match case its comment names, because a brand-new row is created
+    without one twelve lines earlier.
+
+    Measured on production 2026-09-14: **1,077 team rows carry ESPN identity
+    fields with no ESPN id, and ~1,010 of them are wearing another club's
+    identity** — MLS 581, NCAAB 168, EPL 162, WNCAAB 26. Fluminense is stored as
+    ``ARS · 19-7-3 · Arsenal`` under ``soccer_epl``; Marist Red Foxes wears
+    ``OSU · 18-11 · Ohio State``. 143 of the EPL cohort are bound to real events
+    by FK, so the borrowed badge travels to every surface that resolves a team
+    off ``home_team_id``.
+
+    Both sides are plural on purpose. Ours is the name we were handed plus any
+    alias the row already carries, so the answer is RECOVERABLE: once
+    ``Internazionale`` is a known alternate of ``Inter Milan``, ESPN's spelling
+    corresponds and enrichment resumes. Theirs is every field ESPN uses to name
+    a club, because which one is populated varies by endpoint.
+
+    FAIL-CLOSED, INCLUDING ON SILENCE: a payload carrying no name at all cannot
+    be shown to be about this club, so it does not get to rewrite its identity.
+    The cost of a wrong refusal is a missing crest — visible and reversible. The
+    cost of a wrong acceptance is a lie on an event-bound row, which is what
+    #6215 is.
+
+    🔴 **`names_match` ALONE ADMITS EVERY CROSS-TOWN RIVAL (CERT-2881).** It is a
+    recall instrument — stage 3 accepts any pair with ≥0.5 token overlap — so
+    `names_match("Manchester United", "Manchester City")` is True, as are
+    Real Madrid/Real Sociedad, Jets/Giants and Lakers/Clippers. Meanwhile the
+    legitimate alias this function's own paragraph above promises,
+    `Inter Milan`/`Internazionale`, is False. On exactly the pairs that decide an
+    identity the house matcher is backwards, so `shared_token_rivals` vetoes in
+    front of it. Measured on 1,000 legitimate adopters the veto costs ONE row,
+    and that row (`Qarabag FK` wearing `Viking FK`) is itself borrowed.
+    """
+    ours = [o for o in [team_name, *(existing_alternate_names or [])] if o]
+    club_names = [
+        v
+        for v in (getattr(espn_team, f, None) for f in _ESPN_CLUB_NAME_FIELDS)
+        if v
+    ]
+    if any(
+        _canonical_names_match(o, t) and not _shared_token_rivals(o, t)
+        for o in ours
+        for t in club_names
+    ):
+        return True
+
+    # The city, exact only — see `_ESPN_IDENTITY_LOCATION_FIELD`.
+    city = getattr(espn_team, _ESPN_IDENTITY_LOCATION_FIELD, None)
+    if not city:
+        return False
+    return any(_normalize_name(o) == _normalize_name(city) for o in ours)
+
+
 async def upsert_team(session, team_name, espn_team, sport_id, team_cache=None, stats=None):
     """Create or update a Team record with ESPN enrichment data.
 
@@ -401,6 +496,36 @@ async def upsert_team(session, team_name, espn_team, sport_id, team_cache=None, 
                     break
 
     if not team:
+        # REFUSE THE MINT, not just the enrichment (#6215, CERT-2877). The
+        # caller's `sport_id` is the EVENT's, so a wrong event-level match does
+        # not merely borrow a badge — it creates the club under the wrong
+        # league, and THAT is what the reader sees: `Deportivo Achuapa · EPL`
+        # is `teams.sport_id`, not `abbreviation`. Clearing the badge on a row
+        # minted under `soccer_epl` leaves the caption exactly as wrong.
+        #
+        # The payload not corresponding is the only evidence available at this
+        # point that the caller's sport is not this club's, so it has to stop
+        # the row from existing rather than stop it from being decorated.
+        # Refusing here cannot strand an event: both call sites already write
+        # the FK behind `if home_team and ...`, because this function has
+        # always been able to return None.
+        if not espn_identity_corresponds(team_name, None, espn_team):
+            logger.warning(
+                "ESPN mint refused for %r under sport_id=%s: payload names "
+                "%r/%r/%r do not correspond, so this is a wrong event-level "
+                "match and the club would be created under the wrong league",
+                team_name,
+                sport_id,
+                espn_team.display_name,
+                espn_team.name,
+                espn_team.location,
+            )
+            if stats is not None:
+                stats["teams_espn_mint_refused"] = (
+                    stats.get("teams_espn_mint_refused", 0) + 1
+                )
+            return None
+
         team = Team(
             name=team_name,
             sport_id=sport_id,
@@ -418,6 +543,31 @@ async def upsert_team(session, team_name, espn_team, sport_id, team_cache=None, 
     if team.espn_id and team.espn_id != espn_team.espn_id:
         # ESPN ID mismatch — skip all ESPN data updates
         if stats is not None:
+            stats["teams_upserted"] = stats.get("teams_upserted", 0) + 1
+        return team
+
+    # The same guard for a row that has no ESPN id to disagree with (#6215).
+    # Above, the id is the witness; here there is none, so the NAMES are —
+    # see `espn_identity_corresponds`. Only this arm can reach a row created
+    # moments ago, which is the wrong-event-match case both arms exist for.
+    if not team.espn_id and not espn_identity_corresponds(
+        team_name, team.alternate_names, espn_team
+    ):
+        logger.warning(
+            "ESPN identity refused for team %r (sport_id=%s): payload names "
+            "%r/%r/%r (abbr %r, record %r) do not correspond",
+            team_name,
+            sport_id,
+            espn_team.display_name,
+            espn_team.name,
+            espn_team.location,
+            espn_team.abbreviation,
+            espn_team.record,
+        )
+        if stats is not None:
+            stats["teams_espn_identity_refused"] = (
+                stats.get("teams_espn_identity_refused", 0) + 1
+            )
             stats["teams_upserted"] = stats.get("teams_upserted", 0) + 1
         return team
 
@@ -1707,7 +1857,11 @@ async def backfill_missing_scores(session, stats):
     from app.models.models import Event, Team
     from app.tasks.config import ESPN_SPORT_MAPPING
     from app.tasks.espn_sync import get_event_name_variations
-    from app.utils.name_normalization import names_match as _canonical_names_match
+    from app.utils.name_normalization import (
+    names_match as _canonical_names_match,
+    normalize_name as _normalize_name,
+    shared_token_rivals as _shared_token_rivals,
+)
     from sqlalchemy.orm import selectinload
 
     def names_match(our_names: list, espn_name: str) -> bool:

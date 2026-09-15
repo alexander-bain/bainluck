@@ -418,3 +418,129 @@ def names_match(name_a: str, name_b: str) -> bool:
 
     # 3. Token overlap scoring (>=0.5 to catch single-token names like UCLA/VCU)
     return token_overlap_score(name_a, name_b) >= 0.5
+
+
+#: Words that name an INSTITUTION TYPE rather than an institution. A token from
+#: this set can never be the thing that distinguishes two clubs: `Hobart College`
+#: and `Hobart Statesmen` are one school, `Athletic Club` and `Athletic Bilbao`
+#: are one club. Measured — each entry below is here because it produced a false
+#: rival on the 2026-09-14 holdout described in :func:`shared_token_rivals`.
+#:
+#: `ac`, `fc`, `fk`, `cf`, `sc` are DELIBERATELY ABSENT even though they are also
+#: club-type prefixes. Adding `ac` re-admits `AC Milan` as `Inter Milan`, which is
+#: exactly the class this predicate exists to refuse, and it buys nothing:
+#: `Athletic Club` is already rescued by `club`, and `Qarabag FK` / `Viking FK`
+#: must stay rivals. The generic token only has to be absent from ONE side's
+#: distinctive set for the pair to stop being rivals, so a shorter list is the
+#: safer list.
+_INSTITUTION_TYPE_WORDS = frozenset(
+    {
+        "university", "univ", "college", "academy", "institute", "school",
+        "club", "team", "sports", "athletic", "athletics",
+        "and", "the", "of",
+    }
+)
+
+
+def _token_stems_agree(a: str, b: str) -> bool:
+    """One token is the other's abbreviation or inflection.
+
+    `st`/`state`, `bull`/`bulls`, `se`/`southeast`, `nottm`/`nottingham`. A
+    difference that is only a spelling of the same word is not a difference
+    between two clubs.
+
+    SUBSEQUENCE, not prefix, and `Nottm Forest` is why. A prefix test reads
+    `nottm` and `nottingham` as two different words — the abbreviation drops the
+    MIDDLE — and that one row is enough to make the veto refuse a real club.
+    The same widening fixes `se`/`southeast`.
+
+    Two guards keep the subsequence from becoming a wildcard: the abbreviation
+    must share the other's first letter, and it must be at least two characters.
+    Without them a one-letter token would agree with everything containing it.
+    Measured on the 2026-09-14 holdout, the pairs this now spares are exactly
+    the abbreviation shapes; `city`/`manchester` and `state`/`seattle` are still
+    unrelated, because a subsequence must keep its ORDER.
+    """
+    short, long = (a, b) if len(a) <= len(b) else (b, a)
+    if len(short) < 2 or not long.startswith(short[0]):
+        return False
+    it = iter(long)
+    return all(ch in it for ch in short)
+
+
+def shared_token_rivals(name_a: str, name_b: str) -> bool:
+    """Do these two names share a token but name DIFFERENT clubs?
+
+    #6215 / CERT-2881. `names_match` is a RECALL instrument — stage 3 accepts any
+    pair with ≥0.5 token overlap — and that is right for finding a candidate and
+    catastrophic for deciding an IDENTITY. Measured, all True today:
+
+        names_match("Manchester United", "Manchester City")     -> True
+        names_match("Real Madrid",       "Real Sociedad")       -> True
+        names_match("New York Jets",     "New York Giants")     -> True
+        names_match("Los Angeles Lakers","Los Angeles Clippers") -> True
+
+    ...while the legitimate alias it is supposed to admit is refused:
+
+        names_match("Inter Milan", "Internazionale")            -> False
+
+    So on exactly the pairs that matter the house matcher is BACKWARDS, and a
+    guard built on it accepts a cross-town rival's ESPN payload as this club's
+    own identity. This is the refusal that sits in front of it.
+
+    THE RULE. The two are rivals when they share at least one token AND each
+    side keeps a distinctive token the other lacks — after discounting two kinds
+    of non-difference: a token that is only the other's abbreviation or
+    inflection (:func:`_token_stems_agree`), and a token naming an institution
+    TYPE (:data:`_INSTITUTION_TYPE_WORDS`). `Manchester` is shared, `United` and
+    `City` are both distinctive and unrelated ⇒ rivals. `Kansas` is shared,
+    `State` and `St Wildcats` are related ⇒ not rivals.
+
+    NO SHARED TOKEN ⇒ NOT RIVALS, and that is not an oversight. This predicate
+    only ever REFUSES; it is a veto in front of a matcher, never a matcher. Two
+    names with nothing in common are `names_match`'s question, not this one.
+
+    ═══ MEASURED COST, 2026-09-14, and why both rails needed measuring ═══
+
+    Holdout: 1,000 `teams` rows with an ESPN id and a location — i.e. rows that
+    adopted an identity and are presumed legitimate.
+
+    * **Writer rail** (`espn_helpers.espn_identity_corresponds`): 963 accepted
+      today, 962 with this veto. The single row it costs is `Qarabag FK` wearing
+      `Viking FK` — itself a borrowed identity, so the measured cost is zero.
+    * **Repair rail** (`location_corresponds`): 938 called clean today, 919 with
+      this veto. 🔴 **The naive form of this rule cost 86 rows here and would
+      have been a destructive repair on real clubs** — `Kansas St Wildcats` vs
+      `Kansas State`, `New York Red Bulls` vs `Red Bull New York`. Both relief
+      clauses above exist because of that measurement, not by anticipation; the
+      writer-rail number did NOT transfer, and assuming it would was the trap.
+
+    Of the 19 rows the repair rail newly calls borrowed, 17 read as real defects
+    on inspection (`Morehead State` wearing `Illinois State`, `Michigan State`
+    wearing `Western Michigan`, `Wichita State` wearing `Oklahoma State`) — on a
+    population with an ESPN id, which was supposed to be the clean one. Two are
+    false: `Prairie View Panthers`/`Prairie View A&M` and
+    `Sporting Lisbon`/`Sporting CP`. The repair is attended, plans before it
+    applies and banks a restore, so an operator sees those two in the plan.
+
+    KNOWN RESIDUE, so nobody reads this as complete: two clubs whose names share
+    no token are invisible here (`Fluminense` wearing `Arsenal` is caught by
+    `names_match` returning False, not by this), and a rival pair distinguished
+    only by an institution-type word would be missed by construction.
+    """
+    tokens_a = set(normalize_name(name_a or "").split())
+    tokens_b = set(normalize_name(name_b or "").split())
+    if not tokens_a or not tokens_b or not (tokens_a & tokens_b):
+        return False
+
+    only_a, only_b = tokens_a - tokens_b, tokens_b - tokens_a
+
+    def _distinctive(own, other):
+        return [
+            t
+            for t in own
+            if t not in _INSTITUTION_TYPE_WORDS
+            and not any(_token_stems_agree(t, o) for o in other)
+        ]
+
+    return bool(_distinctive(only_a, only_b)) and bool(_distinctive(only_b, only_a))

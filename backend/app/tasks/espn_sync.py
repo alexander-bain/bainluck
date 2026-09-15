@@ -1741,6 +1741,36 @@ async def _backfill_team_logos():
     return stats
 
 
+#: Everything on a Team row that came out of an ESPN payload, EXCEPT the
+#: ``espn_id`` itself — its write stays at the call site so the #2693 espn_id
+#: write census keeps seeing it where it has always been.
+#:
+#: Module-level rather than a closure so a test can call it. A clear whose only
+#: witness is a source scan is a clear nobody can prove covers a field.
+ESPN_SOURCED_IDENTITY_FIELDS = (
+    "logo_url_small",
+    "logo_url_large",
+    "primary_color",
+    "secondary_color",
+    # Contaminated alternate_names may hold the wrong club's ESPN names.
+    "alternate_names",
+    # The reader-visible three (#6215): badge, record and location.
+    "abbreviation",
+    "current_record",
+    "location",
+)
+
+
+def clear_espn_sourced_identity(team) -> None:
+    """Drop every ESPN-sourced identity field from ``team``.
+
+    See :data:`ESPN_SOURCED_IDENTITY_FIELDS`. Named as a list rather than eight
+    statements so the set is one thing a reader and a test can both point at.
+    """
+    for field in ESPN_SOURCED_IDENTITY_FIELDS:
+        setattr(team, field, None)
+
+
 async def _cleanup_bad_espn_matches():
     """One-time cleanup for Team records with incorrect ESPN ID assignments.
 
@@ -1769,7 +1799,25 @@ async def _cleanup_bad_espn_matches():
     cleared_team_ids = []
 
     def _clear_espn_data(team, reason, extra=None):
-        """Clear all ESPN-sourced data from a team record."""
+        """Clear all ESPN-sourced data from a team record.
+
+        "All" was three fields short of all until #6215, and the three it
+        omitted are the ones a reader actually sees. Production 2026-09-14:
+        Fluminense, Grêmio, Colo Colo and 141 other clubs sit under
+        ``soccer_epl`` reading ``ARS · 19-7-3 · Arsenal`` with no ESPN id, no
+        logo, no colours and no alternate names — the exact fingerprint of a
+        row this function cleared. It detected the bad match correctly and then
+        left the badge, the record and the location behind, so the alarm was
+        silenced while the lie stayed on the page.
+
+        Every writer of these three is ESPN-sourced, checked rather than
+        assumed: ``espn_helpers.upsert_team`` (all three, from the payload),
+        ``admin_providers.sync_espn_teams`` (abbreviation and record, from the
+        same payloads), and ``routes/user.py``'s auto-create, which copies
+        ``location`` from a donor Team that got it from one of the first two.
+        There is no non-ESPN source for them to lose, which is why clearing
+        them here is a clear and not a deletion.
+        """
         info = {
             "team": team.name,
             "team_id": team.id,
@@ -1781,12 +1829,7 @@ async def _cleanup_bad_espn_matches():
         stats["cleared_teams"].append(info)
         cleared_team_ids.append(team.id)
         team.espn_id = None
-        team.logo_url_small = None
-        team.logo_url_large = None
-        team.primary_color = None
-        team.secondary_color = None
-        # Clear contaminated alternate_names — they may contain wrong ESPN names
-        team.alternate_names = None
+        clear_espn_sourced_identity(team)
 
     try:
         async with get_task_session() as session:
