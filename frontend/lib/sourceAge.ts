@@ -37,6 +37,10 @@
  * constructing a stamp relative to whenever the suite happens to run.
  */
 
+// The one precise-stamp formatter on this platform — see `formatSourceStamp`.
+// `lib/liquidity` imports nothing, so this cannot close a cycle.
+import { preciseObservedAt } from "@/lib/liquidity";
+
 /**
  * The age past which a source's number is treated as no longer updating.
  *
@@ -218,17 +222,46 @@ export function oldestSourceStamp(
  * Notice 34 puts the method note in the tooltip and never in the page body, so
  * the visible string stays the short relative age and the exact time lives
  * here. `null` propagates for the same reason as above.
+ *
+ * ═══ ONE PRECISE-STAMP FORMATTER ON THIS PLATFORM (#6343) ═══
+ *
+ * 🔴 This used to hand-roll `toLocaleString("en-US", { month, day, … })` and so
+ * printed "Sep 12, 3:51 AM" while `lib/liquidity.preciseObservedAt` — written
+ * to Alex's 2026-08-29 "precisely when" ruling — printed "12 Sep, 3:51 AM" for
+ * the same instant. Two precise stamps, two field orders, on the same web page:
+ * a card's age mark and the illiquidity mark beside it disagreed about how to
+ * spell a date. That is the exact failure `lib/sourceAge`'s own header warns
+ * about for RELATIVE ages ("a fifth is how a reader learns that two spellings
+ * are two different facts"), and it had quietly grown in the absolute ones.
+ *
+ * So this DELEGATES rather than formats. `preciseObservedAt` is the one
+ * precise-stamp formatter web has, and `ios/…/Utilities/SourceAge.swift`
+ * resolves the same way on the phone — its `preciseStamp` calls
+ * `Liquidity.preciseObservedAt` rather than copying it, and its header names
+ * this field-order split as the divergence to close. Closing it here is the web
+ * half of #6343; the phone half shipped in PR #6366.
+ *
+ * Two consequences worth stating, because both are improvements and neither is
+ * incidental:
+ *
+ *  - the field order moves to day-first everywhere web prints an absolute
+ *    stamp, which is the sportsbook table and `/events/{id}/models` as well as
+ *    the card mark — one vocabulary, not a special case for the card;
+ *  - the LOCALE stays pinned and the TIMEZONE stays the reader's. This function
+ *    used to hardcode `"en-US"` and so does `preciseObservedAt`, deliberately:
+ *    it assembles the stamp from `en-US` parts so the month name and the
+ *    meridiem are stable for every reader of an English-only site, and asking
+ *    for the reader's own locale is what put the field order wrong in the first
+ *    place (see that function's own note). What is the reader's own — and is
+ *    the whole point of a precise stamp — is the TIME ZONE: no `timeZone`
+ *    option is passed, so the clock they can check is their own.
  */
 export function formatSourceStamp(
   iso: string | null | undefined,
 ): string | null {
+  // `typeof` first, not `preciseObservedAt`'s falsy guard: the two agree on
+  // every value either can receive, and this keeps the null contract above
+  // readable at the call site rather than one file away.
   if (typeof iso !== "string") return null;
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return null;
-  return new Date(t).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  return preciseObservedAt(iso);
 }

@@ -105,8 +105,27 @@ const render = (
   );
 
 /** Tags stripped, entities decoded — what a reader actually sees. */
+/**
+ * What a SIGHTED reader sees — which is not the same as "the text nodes".
+ *
+ * 🔴 NARROWED FOR #6343, and narrowed rather than relaxed. This used to strip
+ * tags only, so an `sr-only` span — zero pixels, screen-reader only — counted
+ * as page body and the notice-34 assertion below ("the exact stamp is NOT in
+ * the page body") read as a violation of itself when the stamp was added to the
+ * accessibility layer. The contract notice 34 states is about what a reader
+ * SEES; the helper was asserting it in a blanket form that could not tell a
+ * visible caption from an invisible one.
+ *
+ * Measured before changing it: `SpecialEventMarkets`, `ConceptCard`,
+ * `shared.tsx` and `PriceAgeMark` carried ZERO `sr-only` spans before this
+ * ship, so no existing assertion in this file or its siblings loses anything —
+ * the only span this drops is the one #6343 adds. The positive half is asserted
+ * directly (`srOnly` below), so the text being dropped here cannot go missing
+ * without a test failing.
+ */
 const visible = (html: string) =>
   html
+    .replace(/<span class="sr-only">.*?<\/span>/g, " ")
     .replace(/<[^>]*>/g, " ")
     .replace(/&#x27;/g, "'")
     .replace(/&quot;/g, '"')
@@ -153,8 +172,13 @@ describe("SHIP: a live price that has gone quiet says so on the card", () => {
     expect(visible(html)).toContain("3h ago");
     // … and the absolute time lives in `title`, which notice 34 names as the
     // place a method note may go.
-    expect(html).toMatch(/title="Last seen [^"]+"/);
-    expect(visible(html)).not.toMatch(/Last seen/);
+    //
+    // The stem moved "Last seen" → "Last number:" in #6343 so web and the phone
+    // spell one fact one way (notice 35); what this assertion is FOR — the
+    // absolute stamp is revealed, never printed in the sighted body — is
+    // unchanged, and is what the two lines below say.
+    expect(html).toMatch(/title="Last number: [^"]+"/);
+    expect(visible(html)).not.toMatch(/Last number:/);
   });
 
   /* The OVER half of the threshold. Lives here and not beside its UNDER twin

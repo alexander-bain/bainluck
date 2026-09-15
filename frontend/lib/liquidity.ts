@@ -149,12 +149,34 @@ export function preciseObservedAt(observedAt: string | null | undefined): string
   if (!observedAt) return null;
   const at = new Date(observedAt);
   if (Number.isNaN(at.getTime())) return null;
-  return at.toLocaleString(undefined, {
-    day: "numeric",
-    month: "short",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  // 🔴 THE ORDER OF THE OPTIONS OBJECT DOES NOT ORDER THE OUTPUT (#6343).
+  //
+  // This read `toLocaleString(undefined, { day, month, hour, minute })` and the
+  // docstring above has said "27 Aug, 2:14 PM" since it shipped — but
+  // `Intl.DateTimeFormat` takes field ORDER from the LOCALE, never from the key
+  // order, so an `en-US` reader got "Aug 27, 2:14 PM" and always had. The
+  // docstring was not describing the code; it was describing the intent, and
+  // nothing asserted the difference.
+  //
+  // Three things agree on day-first and only the implementation disagreed: this
+  // function's own docstring, its native mirror
+  // (`LiquidityMarkView.preciseObservedAt`, `dateFormat = "d MMM, h:mm a"` —
+  // hardcoded, so the phone is day-first for every reader), and the house date
+  // style elsewhere on the site ("Thursday 27 August, 12:00 ET"). #6343 makes
+  // web and the phone spell one fact one way, so the implementation moves to
+  // where the other three already were.
+  //
+  // ASSEMBLED FROM PARTS rather than handed a different locale tag: `en-GB`
+  // would order it correctly and then lowercase the meridiem ("3:51 am") and
+  // risk a 24-hour clock, which is a second divergence bought to fix the first.
+  // The parts are `en-US` so the month name and the meridiem are stable for
+  // every reader of an English-only site; the TIMEZONE is still the reader's
+  // own, which is the part of this that was always right and is the whole point
+  // of a precise stamp.
+  const day = at.toLocaleString("en-US", { day: "numeric" });
+  const month = at.toLocaleString("en-US", { month: "short" });
+  const time = at.toLocaleString("en-US", { hour: "numeric", minute: "2-digit" });
+  return `${day} ${month}, ${time}`;
 }
 
 /**
