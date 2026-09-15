@@ -1628,3 +1628,153 @@ class TestColumnSumSanity:
         normalize_column_sums(teams, columns, "nba")
         champ_sum = sum(t["cells"]["championship"]["merged_probability"] for t in teams)
         assert abs(champ_sum - 1.0) < 0.01
+
+
+# ============================================================================
+# #6245 — the Division column only answers "who wins the division?"
+# ============================================================================
+
+
+class TestDivisionColumnAsksWhoWins:
+    """A market that says "division" but asks a different question is refused.
+
+    Measured on production 2026-09-15 (``GET /api/playoffs/nfl?debug=true``):
+    all 8 NFL divisions summed to 0.63-0.68 because three Kalshi series were in
+    the Division column beside the 8 genuine ``… Division Winner`` markets. The
+    undefeated market did not merely drag the number down — the per-source dedup
+    (``playoffs.py``, "keep the LOWEST probability") let its 0.06 *displace*
+    Kansas City's real 0.555, so a 33.5% favourite rendered as 20%.
+
+    Every name below is a real production market name, not an invention.
+    """
+
+    # The three offenders, with their real tickers and tier.
+    NFL_IMPOSTORS = [
+        ("Pro Football Teams to go Undefeated in their Division", "KXNFLDIVUNDEFEATED-27"),
+        ("Division with the Most Total Wins", "KXNFLDIVMOSTWINS-27"),
+        ("Division with the Least Total Wins", "KXNFLDIVLEASTWINS-27"),
+    ]
+
+    # Every market that WAS legitimately in a live division column, all four
+    # leagues. The fix must not move one of them.
+    LIVE_DIVISION_MARKETS = [
+        # NFL — Kalshi, the genuine title markets the impostors were displacing
+        ("AFC East Division Winner", "KXNFLAFCEAST-27", NFL_CONFIG),
+        ("AFC North Division Winner", "KXNFLAFCNORTH-27", NFL_CONFIG),
+        ("AFC South Division Winner", "KXNFLAFCSOUTH-27", NFL_CONFIG),
+        ("AFC West Division Winner", "KXNFLAFCWEST-27", NFL_CONFIG),
+        ("NFC East Division Winner", "KXNFLNFCEAST-27", NFL_CONFIG),
+        ("NFC North Division Winner", "KXNFLNFCNORTH-27", NFL_CONFIG),
+        ("NFC South Division Winner", "KXNFLNFCSOUTH-27", NFL_CONFIG),
+        ("NFC West Division Winner", "KXNFLNFCWEST-27", NFL_CONFIG),
+        # NFL — Polymarket, which never says the word and so must pass through
+        ("Pro Football: AFC West Champion", "232614", NFL_CONFIG),
+        ("Pro Football: NFC North Champion", "232622", NFL_CONFIG),
+        # NHL
+        ("NHL Metropolitan Division Winner", "KXNHLMETROPOLITAN-27", NHL_CONFIG),
+        ("NHL Pacific Division Winner", "KXNHLPACIFIC-27", NHL_CONFIG),
+        # MLB — Kalshi says the word, Polymarket does not
+        ("AL East Division Winner", "KXMLBALEAST-26", MLB_CONFIG),
+        ("NL Central Division Winner", "KXMLBNLCENT-26", MLB_CONFIG),
+        ("MLB: 2026 AL West Champion", "215886", MLB_CONFIG),
+        # NBA
+        ("Pro Basketball Pacific Division Winner", "KXNBAPACIFIC-26", NBA_CONFIG),
+        ("Pro Basketball Southeast Division Winner", "KXNBASOUTHEAST-26", NBA_CONFIG),
+    ]
+
+    @pytest.mark.parametrize("name,ticker", NFL_IMPOSTORS)
+    def test_a_market_that_says_division_but_asks_something_else_is_refused(self, name, ticker):
+        m = _make_market(name, source="kalshi", external_id=ticker, market_tier=4)
+        assert _match_market_to_column(m, NFL_CONFIG) != "division", (
+            f"{name!r} is not a division-title market and must not populate the column"
+        )
+
+    @pytest.mark.parametrize("name,ticker,config", LIVE_DIVISION_MARKETS)
+    def test_every_live_division_market_still_lands_in_the_division_column(self, name, ticker, config):
+        source = "polymarket" if ticker.isdigit() else "kalshi"
+        m = _make_market(name, source=source, external_id=ticker, market_tier=4)
+        assert _match_market_to_column(m, config) == "division", (
+            f"{name!r} was in the live {config.slug} division column and must stay there"
+        )
+
+    def test_the_refusal_also_closes_the_classify_market_stage_fallback(self):
+        """Narrowing the league config alone would have been inert.
+
+        ``_match_market_to_column`` falls back to ``classify_market_stage``,
+        whose football sub-stage carries its own bare ``\\bdivision\\b``
+        (``tournament_stages.py``). This exercises that second door by handing
+        the matcher an NFL config with its division rule removed: the impostor
+        must still be refused, and a genuine title market must still arrive.
+        """
+        from dataclasses import replace
+
+        no_div_rule = replace(
+            NFL_CONFIG,
+            matching_rules=tuple(r for r in NFL_CONFIG.matching_rules if r.column != "division"),
+        )
+        assert not any(r.column == "division" for r in no_div_rule.matching_rules)
+
+        impostor = _make_market(
+            "Pro Football Teams to go Undefeated in their Division",
+            source="kalshi", external_id="KXNFLDIVUNDEFEATED-27", market_tier=4,
+        )
+        assert _match_market_to_column(impostor, no_div_rule) != "division"
+
+        genuine = _make_market(
+            "AFC West Division Winner", source="kalshi",
+            external_id="KXNFLAFCWEST-27", market_tier=4,
+        )
+        assert _match_market_to_column(genuine, no_div_rule) == "division", (
+            "the fallback is the only door left open here — if it stops admitting "
+            "the real market this test is no longer proving anything"
+        )
+
+    def test_the_gate_is_scoped_to_the_division_column(self):
+        """It refuses a column, not a market: other columns are untouched."""
+        from app.routes.playoffs import _asks_who_wins_the_division
+
+        # A championship market that happens to say the word keeps its column.
+        m = _make_market(
+            "2027 Pro Football Champion", source="kalshi", external_id="KXSB-27", market_tier=1
+        )
+        assert _match_market_to_column(m, NFL_CONFIG) == "championship"
+        # And a name with no "division" in it is never this gate's business.
+        assert _asks_who_wins_the_division("Pro Football: AFC West Champion") is True
+        assert _asks_who_wins_the_division("Pro Football Playoff Qualifiers") is True
+
+    def test_win_the_division_phrasings_are_title_markets(self):
+        from app.routes.playoffs import _asks_who_wins_the_division
+
+        for name in (
+            "Will the Chiefs win the AFC West Division?",
+            "Team to Win Their Division",
+            "AFC East Division Champion",
+            "NFC North Division Title",
+        ):
+            assert _asks_who_wins_the_division(name) is True, name
+
+    def test_wins_is_not_winner(self):
+        """The one-letter difference the impostors turn on."""
+        from app.routes.playoffs import _asks_who_wins_the_division
+
+        assert _asks_who_wins_the_division("Division with the Most Total Wins") is False
+        assert _asks_who_wins_the_division("AFC East Division Winner") is True
+
+    def test_a_name_that_counts_wins_inside_a_division_is_not_a_title_market(self):
+        """The ordered "win … division" clause must not swallow a wins count.
+
+        The first two names below are the ones ``_COUNTS_WINS_RE`` exists for:
+        they put the win word within three words of "division", so the title
+        regex alone would admit them. Deleting that clause turns both True —
+        checked with the clause removed, which is the only way to know a guard
+        is load-bearing rather than shadowed by the one above it.
+        """
+        from app.routes.playoffs import _asks_who_wins_the_division
+
+        for name in (
+            "Most Wins in the Division",
+            "Team with the Fewest Wins in a Division",
+            "Most Wins in the AL West Division",
+            "Total Wins by the AFC North Division",
+        ):
+            assert _asks_who_wins_the_division(name) is False, name
