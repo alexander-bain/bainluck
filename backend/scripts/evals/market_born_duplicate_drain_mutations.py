@@ -58,9 +58,9 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M1",
         "a row a real schedule named is drained anyway (game anchor ignored)",
-        """        verdict["game_anchors"]
-        or verdict["provenance"] not in MARKET_BORN_COMMENCE_SOURCES""",
-        """        verdict["provenance"] not in MARKET_BORN_COMMENCE_SOURCES""",
+        """            verdict["game_anchors"]
+            or verdict["provenance"] not in MARKET_BORN_COMMENCE_SOURCES""",
+        """            verdict["provenance"] not in MARKET_BORN_COMMENCE_SOURCES""",
         CHANNEL,
     ),
     (
@@ -93,8 +93,8 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
         "destinations counted by ROW instead of by value, so a segment that "
         "moved three markets off one ghost reads as a three-way ambiguity — "
         "the clearest evidence the system can produce, refused",
-        """    (SELECT count(DISTINCT target) FROM mkt""",
-        """    (SELECT count(target) FROM mkt""",
+        """    (SELECT count(DISTINCT mkt.target) FROM mkt""",
+        """    (SELECT count(mkt.target) FROM mkt""",
         CHANNEL,
     ),
     (
