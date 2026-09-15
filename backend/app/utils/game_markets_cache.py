@@ -82,6 +82,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from app.utils.db_session_identity import UNKNOWN_BUILD, current_build_id
 from app.utils.event_concept_cache import (
     AVAILABILITY_LIVE,
     AVAILABILITY_STALE_OK,
@@ -141,6 +142,41 @@ FINAL_STATUSES = frozenset({"completed", "closed"})
 #: `served_event_status`' presentation value and not the row's.
 SOURCE_STATUS_FIELD = "source_status"
 
+#: Additive envelope field: WHICH DEPLOY BUILT THIS PAYLOAD (#6355).
+#:
+#: 🔴 A RELEASE DEFEATS ITS OWN CACHE CLEAR, and this field is the fix.
+#:
+#: Timestamped on production 2026-09-15: #6312 merged at 10:44:23Z, release
+#: v4579 came up at 10:59:23Z with an EMPTY L1 dict — and that is exactly the
+#: moment this Redis slot is most likely to still hold a PRE-SHIP body, because
+#: a deploy restarts the process and does nothing at all to Redis. The first
+#: read after the release re-warmed L1 *from* the stale slot, and
+#: `/api/events/15306857/game-markets` went on serving `spreads: 0` at `db=0.0`
+#: while the release containing the fix that makes it 4 was the running release.
+#:
+#: The two tiers' invalidation was ANTI-CORRELATED with the deploy. Age alone
+#: cannot express "built by code that no longer exists", because the payload was
+#: young — it was WRONG. So the slot carries the build that produced it and
+#: `read` refuses a slot from another build.
+#:
+#: Absent on every payload written before this shipped, which is why
+#: `payload_is_current_build` FAILS OPEN — see its note.
+#:
+#: WHY NOT `generation`, WHICH ALREADY REFUSES PAYLOADS "BUILT BY CODE WE NO
+#: LONGER RUN"? Because that one is bumped BY HAND, and deliberately so: it
+#: versions the payload's SHAPE and MEANING, and `event_concept_cache` bumps it
+#: when e.g. `quality` changed what it meant (2 -> 3). #6355's payload had the
+#: right shape and the right meaning. It was built by code with a BUG, and the
+#: fix changed only its CONTENT — so nobody would have bumped `generation` for
+#: #6312, and a mechanism that depends on remembering is the failure mode, not
+#: the fix. The two are complements: `generation` is the deliberate, curated
+#: break; `build_id` is the automatic one that costs no one a decision. Both are
+#: additive envelope fields, and `envelope_defect` validates the five contract
+#: fields by presence rather than rejecting extras, so this one rides along the
+#: way `source_status` and `quality_reasons` already do.
+BUILD_FIELD = "build_id"
+
+
 def is_final(status: Any) -> bool:
     """True when `status` is a finished game, by the tier's own definition."""
     return str(status or "").lower() in FINAL_STATUSES
@@ -181,8 +217,50 @@ def stamp(
     )
     envelope = dict(enveloped.get(ENVELOPE_FIELD) or {})
     envelope[SOURCE_STATUS_FIELD] = str(source_status or "")
+    envelope[BUILD_FIELD] = current_build_id()
     enveloped[ENVELOPE_FIELD] = envelope
     return enveloped
+
+
+def build_id_of(payload: Any) -> str:
+    """The build that produced a stored payload, or `""` when it does not say."""
+    if not isinstance(payload, dict):
+        return ""
+    envelope = payload.get(ENVELOPE_FIELD)
+    if not isinstance(envelope, dict):
+        return ""
+    return str(envelope.get(BUILD_FIELD) or "")
+
+
+def payload_is_current_build(payload: Any) -> bool:
+    """Was this payload built by the code that is running right now? (#6355)
+
+    🔴 FAILS OPEN, DELIBERATELY, IN BOTH DIRECTIONS. Either side being unknown
+    means "we cannot tell", and the only safe reading of that is the pre-#6355
+    behaviour — serve it.
+
+    * **The stored side** is unknown for every payload written before this
+      shipped, and for anything a future writer forgets to stamp. Reading that
+      as a mismatch would invalidate the entire tier at the moment this ship
+      deploys and again on any writer bug — a self-inflicted thundering herd on
+      one of the four north-star pages.
+    * **The running side** is unknown wherever the platform sets no build
+      identity: local dev, CI, and any Heroku app without dyno metadata (see
+      `current_build_id`). Reading that as a mismatch would mean EVERY read is a
+      miss and the cache is dead in exactly the environments that cannot notice.
+
+    So this can only ever turn a serve into a rebuild when both builds are known
+    AND they differ — which is the one case #6355 is about. The cost of the
+    fail-open is bounded and self-healing: the first rebuild after this ships
+    stamps the slot, and from then on the check is live.
+    """
+    stored = build_id_of(payload)
+    if not stored or stored == UNKNOWN_BUILD:
+        return True
+    running = current_build_id()
+    if not running or running == UNKNOWN_BUILD:
+        return True
+    return stored == running
 
 
 def source_status_of(payload: Any) -> str:
@@ -228,9 +306,15 @@ def mirror_is_servable(
 def read(event_id: int, rc=None) -> tuple[dict[str, Any] | None, str]:
     """Read the tier for `event_id`. Returns `(body, state)`.
 
-    `state` is one of `live`, `stale_ok`, `stale_too_old`, `miss` — the serve
-    decision, made here and published in the body's envelope, never re-derived
-    by a consumer (contract rule 1).
+    `state` is one of `live`, `stale_ok`, `stale_too_old`, `stale_build`, `miss`
+    — the serve decision, made here and published in the body's envelope, never
+    re-derived by a consumer (contract rule 1).
+
+    `stale_build` (#6355) is its own state and not folded into `miss` on
+    purpose: "there was nothing cached" and "there was something cached and a
+    deploy made it a lie" are different facts about the tier, and only the
+    second one is supposed to be rare. A counter on the wrong one of those reads
+    as a healthy cache.
 
     Never raises: every Redis helper below is best-effort by construction, and a
     cache that cannot be read must cost a rebuild, not a 500.
@@ -242,11 +326,35 @@ def read(event_id: int, rc=None) -> tuple[dict[str, Any] | None, str]:
 
     primary = read_slot(client, keys.primary)
     if primary is not None:
-        return with_availability(primary, AVAILABILITY_LIVE), "live"
+        if payload_is_current_build(primary):
+            return with_availability(primary, AVAILABILITY_LIVE), "live"
+        # #6355: young, and built by code that is no longer running. NOT demoted
+        # to the mirror path — the mirror is the same bytes from the same dead
+        # build, so serving it stale would launder the pre-ship payload through
+        # a second door and call it a policy. A rebuild is the only honest exit.
+        #
+        # Affordable, and measured rather than assumed: eight cold builds on
+        # production 2026-09-15 ran 73 / 110 / 159 / 170 / 207 / 299 / 722 /
+        # 2013 ms — a ~190 ms median, not the 2.25 s this tier was built for.
+        # It is paid once per event per release, by the small set of events
+        # whose slot is still fresh at the moment of a deploy.
+        logger.info(
+            "game-markets slot for %s refused (stale_build %s != %s) — rebuilding",
+            event_id,
+            build_id_of(primary),
+            current_build_id(),
+        )
+        return None, "stale_build"
 
     mirror = read_slot(client, keys.stale)
     if mirror is None:
         return None, "miss"
+    if not payload_is_current_build(mirror):
+        logger.info(
+            "game-markets mirror for %s refused (stale_build) — reader will rebuild",
+            event_id,
+        )
+        return None, "stale_build"
     servable, reason = mirror_is_servable(mirror)
     if not servable:
         logger.info(

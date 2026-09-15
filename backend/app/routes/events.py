@@ -3279,11 +3279,26 @@ def _serve_stale_and_refresh(name: str, rebuild) -> bool:
     task.add_done_callback(_STALE_REFRESH_TASKS.discard)
     return True
 
-# In-memory cache for game-markets responses (roster queries are expensive)
-# Completed games: cached indefinitely. Live/scheduled: 30s TTL.
-_game_markets_cache: dict[int, tuple[float, str, dict]] = {}  # event_id → (timestamp, status, response)
+# In-memory cache for game-markets responses (roster queries are expensive).
+# Live/scheduled: 30s TTL. Completed: `game_markets_cache.FRESH_TTL_FINAL`,
+# which is the L2 tier's own number — NOT "indefinitely", see #6355 and the note
+# on `_read_game_markets_memo`.
+_game_markets_cache: dict[int, tuple[float, str, str, dict]] = {}
+# event_id → (timestamp, source_status, build_id, response)
 _GAME_MARKETS_LIVE_TTL = 30
 _GAME_MARKETS_MAX_SIZE = 30
+
+
+def _current_build_id() -> str:
+    """This deploy's identity, for the L1 stamp (#6355).
+
+    The SAME helper `game_markets_cache` stamps L2 with, imported rather than
+    re-derived: two tiers that disagree about what deploy they are on would
+    reintroduce the bug in a harder-to-see place.
+    """
+    from app.utils.db_session_identity import current_build_id
+
+    return current_build_id()
 
 # Sport-specific expected game-total threshold ranges.
 # Thresholds outside these bounds are from a different sport (cross-game
@@ -14744,8 +14759,11 @@ async def get_game_markets(
 
     Serve order, fastest first:
 
-      L1  in-memory dict  — same process, same 30 s rule. Kept: it is faster
-                            than a Redis round trip and it was never the defect.
+      L1  in-memory dict  — same process. 30 s for a live game, and since #6355
+                            `gmc.FRESH_TTL_FINAL` for a finished one rather than
+                            forever. Kept because it is faster than a Redis round
+                            trip; it was not the #1587 defect, but its unbounded
+                            final entry was half of #6355's.
       L2  Redis primary   — SHARED across every worker and dyno. This is the new
                             one, and it is what makes the second person to open
                             a game anywhere not pay for it.
@@ -14755,7 +14773,8 @@ async def get_game_markets(
     """
     from app.utils import game_markets_cache as gmc
 
-    # L1 — in-memory (completed games cached indefinitely, live 30s).
+    # L1 — in-memory. Live 30 s, completed `gmc.FRESH_TTL_FINAL` (#6355), and a
+    # miss whenever the entry was built by another release.
     cached = _read_game_markets_memo(event_id)
     if cached is not None:
         return cached
@@ -14784,27 +14803,64 @@ async def get_game_markets(
 
 
 def _read_game_markets_memo(event_id: int):
-    """The L1 read. Extracted so the policy above reads as a ladder."""
+    """The L1 read. Extracted so the policy above reads as a ladder.
+
+    🔴 A FINAL GAME'S ENTRY IS AGE-BOUNDED (#6355). It used to be returned
+    forever:
+
+        if is_final or (now - cached_ts) < _GAME_MARKETS_LIVE_TTL:
+
+    — so once a worker had warmed L1 for a completed event it NEVER consulted
+    Redis for that event again, and the whole L2 ladder below (mirror,
+    `stale_ok`, exactly-one-rebuild, and #6355's own build check) was
+    unreachable from behind it. The only exits were eviction
+    (`_GAME_MARKETS_MAX_SIZE = 30`, oldest-first) or the process dying, and
+    neither of those is a clock: it could not be waited out.
+
+    That was never a decision — it is what a dict with no expiry does, and
+    `game_markets_cache.FRESH_TTL_FINAL` already records what the tier thinks a
+    finished game's payload is worth (an hour: a final game's markets stop
+    moving except for winner backfill, which runs every 6h). L1 now uses that
+    same number, so the two tiers agree instead of one of them pinning.
+
+    The build check is here too. A per-process dict is usually emptied by the
+    release anyway — this covers the case where a worker outlives the deploy
+    that invalidated its contents, and costs one string compare.
+    """
     import time as _time
+
+    from app.utils import game_markets_cache as gmc
 
     entry = _game_markets_cache.get(event_id)
     if entry is None:
         return None
-    cached_ts, cached_status, cached_response = entry
-    is_final = cached_status in ("completed", "closed")
-    if is_final or (_time.time() - cached_ts) < _GAME_MARKETS_LIVE_TTL:
+    cached_ts, cached_status, cached_build, cached_response = entry
+    if cached_build != _current_build_id():
+        return None
+    age = _time.time() - cached_ts
+    ttl = (
+        gmc.FRESH_TTL_FINAL
+        if cached_status in ("completed", "closed")
+        else _GAME_MARKETS_LIVE_TTL
+    )
+    if age < ttl:
         return cached_response
     return None
 
 
 def _write_game_markets_memo(event_id: int, source_status, response) -> None:
-    """The L1 write, with its size bound. Behaviour unchanged."""
+    """The L1 write, with its size bound. Now stamped with the build (#6355)."""
     import time as _time
 
     if len(_game_markets_cache) >= _GAME_MARKETS_MAX_SIZE:
         oldest_key = min(_game_markets_cache, key=lambda k: _game_markets_cache[k][0])
         del _game_markets_cache[oldest_key]
-    _game_markets_cache[event_id] = (_time.time(), str(source_status or ""), response)
+    _game_markets_cache[event_id] = (
+        _time.time(),
+        str(source_status or ""),
+        _current_build_id(),
+        response,
+    )
 
 
 async def _publish_game_markets(

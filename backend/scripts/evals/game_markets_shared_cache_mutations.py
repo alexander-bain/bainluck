@@ -48,6 +48,10 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE = ROOT / "app" / "utils" / "game_markets_cache.py"
 ROUTE = ROOT / "app" / "routes" / "events.py"
 SUITE = ROOT / "tests" / "test_game_markets_shared_cache.py"
+#: #6355's guards live in their own file, and the registry has to run BOTH or
+#: the M16-M19 mutants below would survive against a suite that cannot see them
+#: — a "19/19 killed" line that proves less than the old "15/15" did.
+SUITES = (SUITE, ROOT / "tests" / "test_a_release_does_not_pin_its_own_pre_ship_payload_6355.py")
 
 #: (id, description, target, old, new). `old` must appear EXACTLY once in
 #: `target` — a mutation that matches zero or many places is a harness bug
@@ -182,12 +186,45 @@ MUTANTS: list[tuple[str, str, pathlib.Path, str, str]] = [
             return body
         return body""",
     ),
+    # ── #6355: a release must not be able to pin its own pre-ship payload ──
+    # The tier's age bounds were all correct and none of them could express
+    # "built by code that no longer exists". These four are the properties that
+    # closed it; they are here rather than only in pytest so this registry's
+    # kill count keeps meaning "the tier's rules are all load-bearing".
+    (
+        "M16",
+        "L1 pins a final game forever again — the original #6355 defect",
+        ROUTE,
+        "    if age < ttl:\n        return cached_response",
+        '    if cached_status in ("completed", "closed") or age < ttl:\n        return cached_response',
+    ),
+    (
+        "M17",
+        "L2 serves a fresh primary slot built by a DIFFERENT release",
+        CACHE,
+        "        if payload_is_current_build(primary):\n            return with_availability(primary, AVAILABILITY_LIVE), \"live\"",
+        "        if True:\n            return with_availability(primary, AVAILABILITY_LIVE), \"live\"",
+    ),
+    (
+        "M18",
+        "the mirror becomes a SECOND DOOR for the same dead build's bytes",
+        CACHE,
+        "    if not payload_is_current_build(mirror):",
+        "    if False:",
+    ),
+    (
+        "M19",
+        "the fail-open goes — an unknown running build kills the cache everywhere",
+        CACHE,
+        "    running = current_build_id()\n    if not running or running == UNKNOWN_BUILD:\n        return True",
+        "    running = current_build_id()",
+    ),
 ]
 
 
 def _run_suite() -> int:
     return subprocess.run(
-        [sys.executable, "-m", "pytest", str(SUITE), "-q", "--no-header", "-x"],
+        [sys.executable, "-m", "pytest", *[str(s) for s in SUITES], "-q", "--no-header", "-x"],
         cwd=ROOT,
         capture_output=True,
         text=True,
