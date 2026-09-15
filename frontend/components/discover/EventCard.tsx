@@ -6,7 +6,7 @@ import Link from "next/link";
 import { formatProbability } from "@/lib/api";
 import { buildDiscoverShareUrl } from "@/lib/share";
 import type { FeedItem, FeedEventData } from "@/lib/types";
-import { CATEGORY_GRADIENTS, getCat } from "./constants";
+import { CATEGORY_GRADIENTS, chipCategory, getCat } from "./constants";
 import { feedContextSnippet, feedExpandedContext } from "./utils";
 import { DismissBtn, TrendBadge, ActionBar, ExpandableContextText, SignalBars, ForYouChip } from "./shared";
 import { forYouCue } from "@/lib/discover/forYouCue";
@@ -111,8 +111,13 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   // the fork is gone rather than corrected. One phrase, owned by
   // `prematchReading`, so this card and `FeedCard` cannot drift apart.
   const prematchSaid = PREMATCH_SAID;
-  const catStyle = getCat(data.sport?.split("_")[0]);
-  const sportCat = data.sport?.split("_")[0] || "sports";
+  // #6247 — the WHOLE sport key, resolved to a shelf. The split segment
+  // (`americanfootball`, `icehockey`) is not a shelf name, so every NFL and
+  // NHL card wore the grey fallback chip and lost its gradient; and the
+  // prefixes `chipCategory` matches on carry the underscore, so passing the
+  // segment here would leave the fix inert.
+  const sportCat = chipCategory(data.sport) || "sports";
+  const catStyle = getCat(sportCat);
 
   // #5245(b) — THE CONTEXT SLOT NEVER SPEAKS THE STATE. `contextSnippet` below
   // falls back to this string, so a finished game whose wire carried no caption
