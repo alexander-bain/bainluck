@@ -74,11 +74,37 @@ The contribution to that issue is a **cause cross-link nobody had made**. Its ML
 | 15201192/93/94/95 | four fixtures, all 08-18 | **`completed_at IS NULL`** | ✗ (different mechanism) |
 
 Three of three datable rows sit in an 88–90 minute band. **#2480** — "a 90-minute timer closes
-live games and stamps the current score as final", **p0**, cause `MIN_HOURS_BEFORE_STALENESS_CHECK
-= 1.5` with `get_max_duration_for_sport()` never called — already lists two of them **by id**.
-So #5841 is p2 on rows a p0 owns, and neither issue referenced the other. That is the
-triage-relevant fact: the p0 is the fix, #5841 is what the reader sees when it fires, and it
-is on the first page of `yank` on the build Alex is walking.
+live games and stamps the current score as final", **p0** — already lists two of them **by id**.
+So #5841 is p2 on rows a p0 owns, and neither issue referenced the other.
+
+**That cross-link is historical, and this receipt originally stated its cause in the present
+tense. Corrected — the producer is fixed and the recurrence is measured at zero.**
+
+`b90f97fa` ("a game is not over because 90 minutes passed", 2026-09-01 10:43Z) is an **ancestor
+of master**, so #2480's title and PR #2502's still-OPEN state are stale as code-presence
+signals. Read on `origin/master` rather than inherited: `detect_and_close_stale_events` now
+calls `get_max_duration_for_sport` **and** `game_may_still_be_running`, and its elapsed-time arm
+marks a row `suspended`, not `closed` — only a StatPal end time closes one. `MIN_HOURS_BEFORE_
+STALENESS_CHECK` survives as the query floor only.
+
+Measured against production, MLB, `completed_at − commence_time` inside the 80–100 min band:
+
+| month | finished rows | in band | avg min | `0 - 0` |
+|---|---|---|---|---|
+| 2026-06 | — | 60 | — | — |
+| 2026-07 | — | 23 | — | — |
+| 2026-08 | 370 | 25 | 181 | 3 |
+| 2026-09 | 270 | **0** | 178 | **0** |
+
+The band's last row commences **2026-09-01 01:40Z**, nine hours before the fix released, and
+nothing has joined it since. The denominator is carried deliberately so the zero cannot read as
+an empty population: **270 MLB rows finished in September** at a 178-minute average — a real
+ballgame — and none of them is in the band or scored 0–0.
+
+So the two halves separate: **the producer is not recurring; the 18 old rows are residual data
+that no backfill has repaired**, and they are what the reader still meets on the first page of
+`yank` on the build Alex is walking. The repair is a data repair, not a guard rebuild — nobody
+should rebuild that guard from the old issue title.
 
 The other four (`15201192/93/94/95`) are **not** #2480: no `completed_at` at all, so no
 90-minute stamp ever happened, yet each carries an `espn_id` while `external_id IS NULL`. A
