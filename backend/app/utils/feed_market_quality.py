@@ -579,6 +579,32 @@ _ENTERTAINMENT_METRIC_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Kalshi alternative-data series: one market shell repeated per brand, where
+# the subject is the ONLY token that varies. Matched against `_normalized_text`
+# output (hence the literal `<month>` placeholder and the lowercase alphabet),
+# not against the raw name.
+#
+# `family_key` defaults to the normalized name, so "costco credit card spend in
+# <month>" and "sephora credit card spend in <month>" are two families of one
+# and `exact_family_cap=1` never fires. Measured on production 2026-09-15
+# through the web client's OWN query — `/api/feed?limit=20&offset=N&
+# event_pct=0.15`, the pagination the page issues, `has_more=True` throughout —
+# 14 of these cards were served: positions 37, 38, 60, 74, 75 (app downloads),
+# 93, 95, 96, 101, 102, 105, 107 (credit card spend) and 115, 118 (AI
+# adoption), adjacent at 37/38, 74/75, 95/96 and 101/102. 57 markets in the
+# same three shells were `status='open'` at the time, so which brands surface
+# is only a function of that hour's scores — the wall is structural rather than
+# one bad afternoon. Keying on the metric phrase alone makes them one family
+# each, and the cap then keeps the highest-scoring brand and drops the rest —
+# the same move `_ENTERTAINMENT_METRIC_RE` already makes for streaming/chart
+# metrics above.
+#
+# Three keys, not one: "credit card spend" and "app downloads" are different
+# questions about different things, and `group(0)` yields one key per phrase.
+_ALT_DATA_METRIC_RE = re.compile(
+    r"\b(credit card spend|app downloads|ai adoption)\s+in\s+<month>"
+)
+
 # --- Alex interview 2026-06-15 rules (R2/R6/R8), audit-verifiable ----------
 # R2: asset price-LEVEL markets are never interesting — "will <asset> close/
 # trade/hit above/below $X" on stocks/crypto/commodities. Broader than the
@@ -1749,6 +1775,14 @@ def classify_market_quality(
     if ladder_or_bucket:
         family_key = re.sub(r"<num>(?:\s*(?:to|and|-)\s*<num>)+", "<range>", normalized)
         family_key = re.sub(r"<num>", "<num>", family_key)
+    alt_data_metric = _ALT_DATA_METRIC_RE.search(normalized)
+    if alt_data_metric:
+        # AFTER the ladder rewrite, deliberately. Every one of these markets
+        # carries numeric threshold outcomes ("Above 67", "Above 58", ...), so
+        # `ladder_or_bucket` is True for all of them and that branch reassigns
+        # `family_key` from `normalized` — which still carries the brand.
+        # Assigning before it would be silently inert.
+        family_key = f"altdata:{alt_data_metric.group(0)}"
     if not family_key:
         family_key = "unknown"
     story_key = persisted_story_key or _story_key(name, category)
