@@ -266,12 +266,14 @@ struct DiscoverView: View {
         if let f = item.futures {
             if FeedLifecycle.futuresIsSettled(f, now: now) { return true }
         }
+        // #6440: the finished-game age-out now runs through the SAME shared
+        // predicate the Sports tab reads, which is web's rule rather than this
+        // gate's third opinion — 8h from the whistle (`ended_at`), 14h for a
+        // marquee final Discover kept on purpose, falling back to kickoff when
+        // the payload carries no whistle. Ageing from kickoff charged every card
+        // for its own duration and dropped a marquee final six hours early.
         if let e = item.event {
-            if EventState.isFinished(e.status) {
-                if let ct = e.commenceTime, let d = ct.asDate {
-                    return now.timeIntervalSince(d) > 8 * 3600
-                }
-            }
+            if FeedLifecycle.finishedEventIsExpired(e, now: now) { return true }
         }
         // L2-225: tournaments had NO branch here. Decode and the WHAT-HIT render were
         // repaired in L2-224, but nothing gated a tournament that is simply over —
