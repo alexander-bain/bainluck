@@ -315,12 +315,21 @@ struct OddsChartView: View {
     /// offering more readings to come. It takes the served flag and the clock
     /// rather than a precomputed boolean, so the test stays in `EventState`
     /// where every other native reading of "is it over?" comes from.
+    ///
+    /// `now` is injected for the reason gotcha #44 exists: the settled reading
+    /// asks the CLOCK, so a test that could not pass one would be asserting
+    /// against whatever today is. It caught itself here — the first draft took
+    /// no `now`, and the "yet survives on a future fixture" case passed the
+    /// real date into a fixed-anchor test and went red.
     static func noReadingsLine(
-        status: String?, venueSettled: Bool = false, commenceTime: Date? = nil
+        status: String?,
+        venueSettled: Bool = false,
+        commenceTime: Date? = nil,
+        now: Date = Date()
     ) -> String {
         let over = EventState.isFinished(status)
             || EventState.showsVenueSettledVerdict(
-                status, venueSettled: venueSettled, commenceTime: commenceTime)
+                status, venueSettled: venueSettled, commenceTime: commenceTime, now: now)
         return over
             ? "No win probability readings for this game."
             : "No win probability readings for this game yet."

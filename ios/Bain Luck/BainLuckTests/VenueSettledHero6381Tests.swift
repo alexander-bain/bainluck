@@ -169,7 +169,8 @@ final class VenueSettledHero6381Tests: XCTestCase {
     func testAVenueGradedGameDropsTheFalsePromise() {
         XCTAssertEqual(
             OddsChartView.noReadingsLine(
-                status: "scheduled", venueSettled: true, commenceTime: Self.played),
+                status: "scheduled", venueSettled: true, commenceTime: Self.played,
+                now: Self.now),
             "No win probability readings for this game.")
     }
 
@@ -178,7 +179,8 @@ final class VenueSettledHero6381Tests: XCTestCase {
         // that never sends the key must not have its copy changed.
         XCTAssertEqual(
             OddsChartView.noReadingsLine(
-                status: "scheduled", venueSettled: true, commenceTime: Self.notYet),
+                status: "scheduled", venueSettled: true, commenceTime: Self.notYet,
+                now: Self.now),
             "No win probability readings for this game yet.")
         XCTAssertEqual(
             OddsChartView.noReadingsLine(status: "scheduled"),

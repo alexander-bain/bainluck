@@ -855,7 +855,7 @@ describe("#6381 — the hero stops denying a result the venue already gave us", 
     expect(chart).toMatch(/init\(eventId: Int[\s\S]{0,400}?\n\s*venueSettled: Bool = false,/);
     expect(chart).toMatch(/self\.venueSettled = venueSettled/);
     expect(chart).toMatch(
-      /static func noReadingsLine\(\s*status: String\?, venueSettled: Bool = false, commenceTime: Date\? = nil\s*\)/,
+      /static func noReadingsLine\(\s*status: String\?,\s*venueSettled: Bool = false,\s*commenceTime: Date\? = nil,\s*now: Date = Date\(\)\s*\)/,
     );
     expect(chart).toMatch(
       /Text\(Self\.noReadingsLine\(\s*status: status,\s*venueSettled: venueSettled,\s*commenceTime: commenceTime\?\.asDate\)\)/,
