@@ -574,6 +574,64 @@ UNREACHABLE_SUSPENDED_TERMINAL = "voided"
 UNREACHABLE_SUSPENDED_MARGIN = timedelta(hours=24)
 
 
+#: The one ``commence_time_source`` whose ``external_id`` is not a door out of
+#: ``suspended``. Named rather than inlined because the relaxation below is
+#: scoped to this exact word and to nothing else.
+ODDS_API_COMMENCE_SOURCE = "odds_api"
+
+
+def _provider_id_present(provider_id) -> bool:
+    """Is this column carrying an id at all? Empty string is not an id."""
+    return provider_id is not None and str(provider_id).strip() != ""
+
+
+def _odds_api_external_id_is_inert(commence_time_source, market_anchored) -> bool:
+    """Is a PRESENT ``external_id`` incapable of reaching this row? (#6347)
+
+    :func:`suspended_row_is_unreachable` refuses any non-empty provider id, and
+    for ``espn_id`` and ``statpal_fixture_id`` that is exactly right — both
+    dereference to a feed that can still speak. ``external_id`` was swept into
+    the same test and it does not belong there, because the writer that puts a
+    row into ``suspended`` in the first place is the one that stamped it.
+
+    🔴 THE ROWS ARE REFUSED FOR HOLDING AN ID THAT CANNOT REACH THEM, and the
+    docstring above already contains the proof: ``odds_polling``'s scores path
+    "write[s] a terminal only ``if event.status == 'live'``, so neither is a
+    door out of ``suspended`` at all". Measured on production 2026-09-15 —
+    ``suspended`` + a present ``external_id`` + no ``espn_id`` + no
+    ``statpal_fixture_id`` + no score + no ``completed_at`` past the floor is
+    **711 rows, every single one of them ``odds_api``**. Not one Kalshi or
+    Polymarket row is in the population, which is why this is a test on a named
+    provenance and not a general widening: nothing else NEWLY matches.
+
+    TWO CONDITIONS, BOTH REQUIRED, AND ``market_anchored`` IS THE ONE THAT
+    EARNS ITS KEEP. ``polymarket`` (``:1200/:1241/:1425/:1929``) and
+    ``kalshi_resolution_sweep`` (``:286``) both admit ``status='suspended'``
+    explicitly, so a row carrying one of those markets has a live door however
+    it was minted. **150 of the 711 do.** Retiring those would close a door that
+    is still open; they are refused here and the caller's SELECT refuses them
+    again, because a rule that only ever exists as a WHERE clause is a rule no
+    test can put a counter-example to.
+
+    Keyword-only and REQUIRED at the call site, with no default: a caller that
+    has not been taught to ask these two questions gets a ``TypeError``, never a
+    silently permissive answer. That is the same fail-closed shape the budget
+    read and the backup-table gate already use — "the caller is out of date" and
+    "the row is genuinely inert" must not look alike.
+
+    The remaining door is the scores fetch itself, which IS keyed on
+    ``external_id`` (``odds_polling:1760``) and is bounded by
+    ``get_scores(..., days_from=3)``. That bound is a FLOOR question, not an id
+    question, and it is answered by the caller deriving its floor from
+    :data:`~app.tasks.odds_polling.ODDS_SCORES_LOOKBACK` rather than from the
+    resume window alone.
+    """
+    return (
+        commence_time_source == ODDS_API_COMMENCE_SOURCE
+        and market_anchored is False
+    )
+
+
 def suspended_row_is_unreachable(
     status,
     commence_time,
@@ -586,8 +644,11 @@ def suspended_row_is_unreachable(
     anchor_acquirable,
     now,
     floor,
+    *,
+    commence_time_source,
+    market_anchored,
 ) -> bool:
-    """Can anything, ever, change this suspended row again? (#5532/#5130)
+    """Can anything, ever, change this suspended row again? (#5532/#5130/#6347)
 
     ``suspended`` is documented above as escapable, and the claim is conditional
     on a precondition it never states: **both doors need something upstream to
@@ -650,9 +711,13 @@ def suspended_row_is_unreachable(
     # nothing. `or None` would be the terser spelling and would also swallow a
     # literal 0; these columns are strings, but the explicit test says what it
     # means without depending on that.
-    for provider_id in (external_id, espn_id, statpal_fixture_id):
+    for provider_id in (espn_id, statpal_fixture_id):
         if provider_id is not None and str(provider_id).strip() != "":
             return False
+    if _provider_id_present(external_id) and not _odds_api_external_id_is_inert(
+        commence_time_source, market_anchored
+    ):
+        return False
     if home_score is not None or away_score is not None:
         return False
     if completed_at is not None:

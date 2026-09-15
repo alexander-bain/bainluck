@@ -92,10 +92,14 @@ NOW = datetime(2026, 9, 12, 18, 0, tzinfo=timezone.utc)
 
 
 def _floor():
-    """The floor exactly as the caller derives it — never a hand-typed 72h."""
-    from app.tasks.espn_sync import SUSPENDED_RESUME_WINDOW
+    """The floor exactly as the caller derives it — never a hand-typed 72h.
 
-    return SUSPENDED_RESUME_WINDOW + UNREACHABLE_SUSPENDED_MARGIN
+    #6347 widened it to the LATEST of the two enforced doors; mirrored here from
+    the same constants the arm reads, so the two can still never drift.
+    """
+    from app.tasks.espn_sync import unreachable_suspended_floor
+
+    return unreachable_suspended_floor()
 
 
 def _row(**over):
@@ -112,6 +116,12 @@ def _row(**over):
         anchor_acquirable=False,
         now=NOW,
         floor=_floor(),
+        # #6347 made these required keyword-only arguments. The original
+        # specimen is id-less, so its provenance is irrelevant to its verdict
+        # and these two carry the values that change NOTHING for it — any
+        # regression they cause is a regression in the new branch alone.
+        commence_time_source="polymarket",
+        market_anchored=False,
     )
     base.update(over)
     return base
@@ -339,10 +349,33 @@ class TestTheArmSpendsTheSharedPredicateRatherThanACopyOfIt:
             "the terminal is a constant so D-live176 option B is one line"
         )
 
-    def test_the_arm_derives_its_floor_from_the_resume_window(self):
+    def test_the_arm_derives_its_floor_from_every_door_it_admits(self):
+        """#6347: the floor is the LAST door to shut, plus the margin.
+
+        The assertion used to name one constant. It names both now, because the
+        arm admits a second class whose open door is a different window — and a
+        floor derived from only one of two doors is a hand-typed number wearing
+        a constant's name.
+        """
+        import inspect as _inspect
+
+        from app.tasks.espn_sync import (
+            SUSPENDED_RESUME_WINDOW,
+            unreachable_suspended_floor,
+        )
+        from app.tasks.odds_polling import ODDS_SCORES_LOOKBACK
+
         src = self._arm_source()
-        assert "SUSPENDED_RESUME_WINDOW + UNREACHABLE_SUSPENDED_MARGIN" in src
-        assert "hours=72" not in src, "the floor must never be restated"
+        assert "unreachable_floor = unreachable_suspended_floor()" in src
+        for restated in ("hours=72", "hours=96", "days=3", "days=4"):
+            assert restated not in src, "the floor must never be restated"
+
+        # Behavioural, not a scan: the value itself clears BOTH doors.
+        assert unreachable_suspended_floor() > SUSPENDED_RESUME_WINDOW
+        assert unreachable_suspended_floor() > ODDS_SCORES_LOOKBACK
+        floor_src = _inspect.getsource(unreachable_suspended_floor)
+        for restated in ("hours=72", "hours=96", "days=4"):
+            assert restated not in floor_src
 
     @pytest.mark.parametrize(
         "clause",

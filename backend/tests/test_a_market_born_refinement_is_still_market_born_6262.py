@@ -248,6 +248,22 @@ _COMMENCE_SOURCE_CONST = re.compile(
 )
 
 
+#: Constants matching the scan below that a person has ruled NOT market-born,
+#: with the reason. The scan exists to redden on a new name; this is where the
+#: decision it demands gets written down, so the next reader finds a ruling
+#: rather than an omission.
+#:
+#: ``ODDS_API_COMMENCE_SOURCE`` (#6347, live/260) — the Odds API is a SCHEDULE
+#: source, not a market provider. ``_SOURCE_PRIORITY`` already ranks ``odds_api``
+#: at 1, above every market-born value, and
+#: ``test_every_market_born_source_ranks_below_every_schedule_source_6262``
+#: asserts that gap in both directions — so admitting it would contradict a
+#: guard in this same file rather than merely widen a set. It is declared in
+#: ``event_completion`` because that is where the predicate spending it lives
+#: (``_odds_api_external_id_is_inert``), not because it names a market.
+_RULED_NOT_MARKET_BORN = frozenset({"ODDS_API_COMMENCE_SOURCE"})
+
+
 def test_no_fourth_commence_source_constant_decides_this_by_omission_6262():
     """The scan is here to FAIL on a new constant, never to adopt one.
 
@@ -257,6 +273,13 @@ def test_no_fourth_commence_source_constant_decides_this_by_omission_6262():
     explicitly NOT inheritable — so this asserts the vocabulary is the size it
     was reasoned about. A new entry reddens here and a person decides, which is
     the only mechanism that would have caught #6262 at the time.
+
+    #6347 was the first new entry and the mechanism worked exactly as written:
+    it reddened in CI, a person decided, and the decision is recorded in
+    `_RULED_NOT_MARKET_BORN` above. The assertion is now "every declared name is
+    accounted for" rather than a literal 3 — a fifth, unruled name still reddens
+    here, which is the whole property. Do NOT add a name to that set to make
+    this pass; adding one IS the decision, and it owes the reason beside it.
     """
     text = (
         Path(__file__).resolve().parents[1]
@@ -265,13 +288,28 @@ def test_no_fourth_commence_source_constant_decides_this_by_omission_6262():
     found = dict(
         (name, value) for name, value in _COMMENCE_SOURCE_CONST.findall(text)
     )
-    assert len(found) == 3, (
-        f"event_completion declares {sorted(found)} — the scan expected the "
-        "three market-provider time fields. A new *_COMMENCE_SOURCE constant "
-        "must be ruled into or out of MARKET_BORN_COMMENCE_SOURCES by hand."
+    unruled = {
+        name: value
+        for name, value in found.items()
+        if name not in _RULED_NOT_MARKET_BORN
+    }
+    assert len(unruled) == 3, (
+        f"event_completion declares {sorted(found)}, of which {sorted(unruled)} "
+        "are unruled — the scan expected the three market-provider time fields. "
+        "A new *_COMMENCE_SOURCE constant must be ruled into or out of "
+        "MARKET_BORN_COMMENCE_SOURCES by hand."
     )
-    assert set(found.values()) <= MARKET_BORN_COMMENCE_SOURCES, (
-        f"{sorted(set(found.values()) - MARKET_BORN_COMMENCE_SOURCES)} is a "
+    assert set(unruled.values()) <= MARKET_BORN_COMMENCE_SOURCES, (
+        f"{sorted(set(unruled.values()) - MARKET_BORN_COMMENCE_SOURCES)} is a "
         "declared market-provider time field that Q050 does not read as "
         "market-born"
+    )
+    ruled_out = {found[name] for name in _RULED_NOT_MARKET_BORN if name in found}
+    assert not (ruled_out & MARKET_BORN_COMMENCE_SOURCES), (
+        f"{sorted(ruled_out & MARKET_BORN_COMMENCE_SOURCES)} is ruled NOT "
+        "market-born here and IS in the set — the ruling and the code disagree"
+    )
+    assert _RULED_NOT_MARKET_BORN <= set(found), (
+        f"{sorted(_RULED_NOT_MARKET_BORN - set(found))} is ruled out but no "
+        "longer declared — delete the stale ruling so the scan keeps its teeth"
     )
