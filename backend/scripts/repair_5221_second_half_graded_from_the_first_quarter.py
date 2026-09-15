@@ -50,6 +50,31 @@ exactly. Candidate counts have GROWN since #5236 was filed (its table read 6,100
 1H candidates against 6,870 here) because the beat keeps grading while the
 producer fix waits to deploy; the clearable set is what this repair is sized on.
 
+RE-MEASURED ON PRODUCTION 2026-09-15 12:18Z, FOUR DAYS AFTER THE PRODUCER FIX
+DEPLOYED, AND THE COHORT HAS HALVED BECAUSE IT IS BEING FIXED:
+
+    candidates  9,439   clear 632   unlock 173   spare 7,195   refuse 1,439
+    write scope = clear + unlock = 805 rows across 250 whole markets
+    of the 1,439 refusals: 1,410 already CORRECT, 4 truly unexplained
+
+The 1,558 fell to 632 and not one of the missing rows is lost. The fixed
+producer's own `score_resolution` pass has been re-grading this cohort every
+six hours since: all 821 `KXNBA1HTOTAL` legs that were clearable on 9/11 now
+store the correct verdict, written 2026-09-11 21:45Z, and the newest writes
+across five candidate series are 2026-09-15 09:45Z — the beat, on the minute.
+
+WHAT IT CANNOT REACH IS THE WHOLE POINT. Split the candidate markets by whether
+they hold a TRUE `game_score` leg — the producer's own HAVING blocker:
+
+    holds a TRUE `game_score` leg   markets   re-graded today
+    no                                  112       110  (98%)
+    yes                               1,155         1  (0.09%)
+
+So the producer fixes everything it is allowed to touch, within one cycle, and
+touches essentially nothing it is locked out of. The 632 that remain all sit on
+the locked side. That is this repair's entire remaining job, and it is also the
+measurement that says the `unlock` cohort is load-bearing rather than defensive.
+
 🔴 CLEARING IS ONLY HALF A REPAIR (CERT-2631, first presentation BLOCK).
 The producer's candidate scan admits a market only when
 
@@ -246,6 +271,13 @@ BAK_TABLE = "bak_5221_futures_outcomes"
 #: restore can only ask "does the live row differ from its backup?", which is
 #: also true of a row the producer has legitimately re-graded since.
 MANIFEST_TABLE = "bak_5221_repair_manifest"
+
+#: The refusal reason for a row the bug did not write because the PRODUCER has
+#: since written it correctly. Named rather than spelled at the call site: the
+#: floor's third branch counts these, and a literal in two places is how the
+#: count and the label drift apart.
+REGRADED_REASON = ("already re-graded CORRECTLY since the bug — the producer's "
+                   "own fix arriving, not a defect")
 
 #: The sanity floor. 1,558 clearable outcomes were measured at ~16:0xZ across
 #: both cohorts (248 on 2H, 1,310 on 1H). The population can only GROW until the
@@ -603,8 +635,24 @@ def classify(legs):
             # whatever is wrong with it is not the defect this repair was
             # measured on. It is reported under its own heading because that is
             # where #5237 came from.
-            refuse.append(_refuse([leg], "the bug does not explain the stored "
-                                         "verdict — a DIFFERENT defect")[0])
+            #
+            # 🔴 BUT "the bug did not write it" IS TWO POPULATIONS, and only one
+            # of them is a defect. Once the producer fix deployed, its own
+            # passes began re-grading every market they could reach, and a row
+            # it has since put RIGHT also fails `buggy == stored` — it lands in
+            # this bucket looking exactly like #5237's genuinely-wrong rows.
+            # Measured on production 2026-09-15 12:29Z: 1,410 of 1,439 refusals
+            # were already correct and 4 were truly unexplained, reported as one
+            # number. That is the thing this script's own doctrine forbids — a
+            # refusal bucket is where a defect hides, and burying 4 real ones
+            # under 1,410 successes hides them just as well as a bare count did.
+            # Both stay in `refuse` so every market-level decision below is
+            # unchanged; they are only told apart in the report and in the floor.
+            refuse.append(_refuse(
+                [leg],
+                REGRADED_REASON if correct.get(oid) == stored else
+                "the bug does not explain the stored verdict — a DIFFERENT defect"
+            )[0])
         elif correct.get(oid) == stored:
             spare.append(leg)
         else:
@@ -693,13 +741,35 @@ def backup_is_exact(recon) -> bool:
     return bool(recon) and all(n == 0 for n in recon.values())
 
 
-def explain_small_plan(plan_count: int, manifest_rows: int) -> str:
+def explain_small_plan(plan_count: int, manifest_rows: int,
+                       regraded_rows: int = 0) -> str:
     """Why is the plan below the floor — a broken filter, or a done job?
 
     A sanity floor that names two causes needs a DISCRIMINATOR, not an override
     flag: `--allow-small` would let the broken-filter case through wearing the
     completed-run case's clothes. The manifest is the discriminator, because
     only a successful forward write puts a row in it.
+
+    🔴 THERE WAS A THIRD CAUSE AND IT HAD NO BRANCH, so for four days this
+    function called it the second one. The floor was set from 1,558 clearable
+    rows measured 2026-09-11, BEFORE the producer fix deployed. Every pass the
+    fixed producer has run since has correctly re-graded every market it could
+    reach, and a row it put right leaves the clear cohort. Measured on
+    production 2026-09-15 12:2xZ: 632 clearable, 1,410 already re-graded
+    correctly, 4 truly unexplained. The rows did not vanish — they were FIXED,
+    which is the outcome this repair exists to buy — and the script answered
+    "FILTER BROKE … Do NOT lower the floor; find the rows."
+
+    So the third branch does what that sentence demands: it FINDS the rows and
+    names them, rather than lowering the floor. `regraded_rows` is measured in
+    the same run, by the same graders, over the same candidate scan — it is not
+    a constant someone re-tuned, and it cannot be supplied by a flag.
+
+    It keeps the floor's teeth. A regression that narrows the scan back to the
+    2H-only cohort takes the regraded count down with the clears (both are
+    computed from the same rows), so 248 + a 2H-sized remainder is still short
+    of the floor and still STOPS. What it no longer does is stop on the repair's
+    own success.
     """
     if plan_count >= SANITY_FLOOR:
         return ""
@@ -709,13 +779,36 @@ def explain_small_plan(plan_count: int, manifest_rows: int) -> str:
             f"{plan_count} remain clearable; together they clear the floor of "
             f"{SANITY_FLOOR}. This is a drained backlog, not a broken filter."
         )
+    if manifest_rows + plan_count + regraded_rows >= SANITY_FLOOR:
+        return (
+            f"PRODUCER GOT THERE FIRST — {plan_count} remain clearable, "
+            f"{manifest_rows} are in {MANIFEST_TABLE}, and {regraded_rows} more "
+            f"carry a verdict the bug does not explain and the CORRECT reading "
+            f"does; together they clear the floor of {SANITY_FLOOR}. Those rows "
+            f"were re-graded by the fixed producer on a market it could reach. "
+            f"This is the cohort shrinking because it is being FIXED, not a "
+            f"broken filter — the remaining {plan_count} sit on markets the "
+            f"producer's own scan is locked out of, which is what this repair "
+            f"is for."
+        )
     return (
-        f"FILTER BROKE — only {plan_count} rows are clearable and "
-        f"{manifest_rows} were ever applied, so {plan_count + manifest_rows} of "
-        f"an expected {SANITY_FLOOR}+ are accounted for. Either the cohort SQL "
-        f"stopped matching or a grader changed its mind. Do NOT lower the "
+        f"FILTER BROKE — only {plan_count} rows are clearable, "
+        f"{manifest_rows} were ever applied and {regraded_rows} were re-graded "
+        f"correctly elsewhere, so {plan_count + manifest_rows + regraded_rows} "
+        f"of an expected {SANITY_FLOOR}+ are accounted for. Either the cohort "
+        f"SQL stopped matching or a grader changed its mind. Do NOT lower the "
         f"floor; find the rows."
     )
+
+
+def regraded_count(refuse) -> int:
+    """How many refusals are the producer's own correct verdicts arriving.
+
+    Keyed on the named constant rather than a substring of the printed reason,
+    so a reworded message can never silently zero the floor's third branch.
+    """
+    return sum(1 for leg in refuse
+               if leg.get("refuse_reason") == REGRADED_REASON)
 
 
 async def backup(session, outcome_ids):
@@ -839,6 +932,9 @@ async def run(args) -> None:
         print(f"  CORRECT, but locks its market out of re-grading      : {len(unlock)}")
         print(f"  computed wrong, lands right, LEFT ALONE              : {len(spare)}")
         print(f"  the filter would be guessing, REFUSED                : {len(refuse)}")
+        already_regraded = regraded_count(refuse)
+        print(f"    of those, the producer has ALREADY FIXED           : "
+              f"{already_regraded}")
         print(f"  already applied in {MANIFEST_TABLE}: {applied_before}")
 
         print("\nby series (candidates / clear / unlock / spare / refuse):")
@@ -883,7 +979,7 @@ async def run(args) -> None:
                       "drained backlog, it is a filter that matches nothing. STOP.")
             return
 
-        small = explain_small_plan(len(clear), applied_before)
+        small = explain_small_plan(len(clear), applied_before, already_regraded)
         if small:
             print(f"\n⚠️  plan is below the sanity floor of {SANITY_FLOOR}.")
             print(f"    {small}")
