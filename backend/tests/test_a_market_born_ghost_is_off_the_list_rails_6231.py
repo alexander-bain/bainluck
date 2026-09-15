@@ -228,7 +228,7 @@ _PATCHES = (
 )
 
 
-async def _list_payload(rows, **db_kwargs):
+async def _list_payload(rows, *, status=None, **db_kwargs):
     with (
         patch(_PATCHES[0], new=AsyncMock(return_value={})),
         patch(_PATCHES[1], new=AsyncMock(return_value={})),
@@ -236,7 +236,7 @@ async def _list_payload(rows, **db_kwargs):
     ):
         return await list_events(
             sport=None,
-            status=None,
+            status=status,
             days=7,
             limit=200,
             offset=0,
@@ -296,6 +296,63 @@ async def test_the_live_now_ghost_is_off_the_events_list():
         "the scoreless LIVE ghost is still on the events list — this is the "
         f"Sports tab bug, served ids {_ids(payload)}"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_status_filtered_page_holding_ONLY_the_ghost_serves_nothing():
+    """CERT-2882's named follow-up, `6231-STATUS-FILTERED-SINGLETON-GUARD`.
+
+    🔴 **THE SHIP'S OWN SHAPE, WHICH THE TESTS ABOVE DO NOT EXERCISE.** They
+    pass `status=None` and put BOTH rows on the page, so an in-page fold keyed
+    on names or kickoff could pass them. The reader's actual request was
+    `GET /api/events?status=live`, and on that page **the canonical is excluded
+    by the filter itself** — it is `completed`. One row in, and the only correct
+    answer is zero rows out.
+
+    That is the whole argument for a DB-backed id-keyed verdict over a better
+    fold key: with nothing to fold against, an in-page algorithm has no
+    information at all, while the verdict asks the database which row a market
+    already decided this one belongs to. If this ever passes because the
+    canonical was quietly added to the page, the assertion below has stopped
+    testing the ship — hence `rows` is a one-element list, asserted as such.
+    """
+    rows = [_ghost()]
+    assert len(rows) == 1, "this guard is about a SINGLETON page"
+
+    payload = await _list_payload(
+        rows, status="live", verdict_rows=_resolves_ghost()
+    )
+
+    assert _ids(payload) == [], (
+        "the Sports tab's 'Live Now' still has a card in it — the ghost was "
+        f"the only row on the page, served ids {_ids(payload)}"
+    )
+    assert payload["count"] == 0, (
+        f"'Live Now ({payload['count']})' over an empty list is the header "
+        "Alex saw; count must follow the served rows"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_status_filtered_singleton_that_RESOLVES_NOTHING_survives():
+    """The other direction, so the guard above cannot pass by emptying pages.
+
+    Same page, same filter, same single row — and a verdict that refuses. An
+    implementation that drops every candidate it queried passes the test above
+    and fails this one.
+    """
+    payload = await _list_payload(
+        [_ghost()],
+        status="live",
+        verdict_rows=[_verdict_mapping(GHOST, candidate=None,
+                                       sport_key=LA_LIGA.key)],
+    )
+
+    assert _ids(payload) == [GHOST], (
+        "a row the verdict refused was suppressed anyway — the rail is "
+        f"dropping candidates, not duplicates; served ids {_ids(payload)}"
+    )
+    assert payload["count"] == 1
 
 
 @pytest.mark.asyncio
