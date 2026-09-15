@@ -247,9 +247,14 @@ export function oldestSourceStamp(
  *  - the field order moves to day-first everywhere web prints an absolute
  *    stamp, which is the sportsbook table and `/events/{id}/models` as well as
  *    the card mark — one vocabulary, not a special case for the card;
- *  - the hardcoded `"en-US"` goes with it. `preciseObservedAt` passes
- *    `undefined`, i.e. the READER's own locale, which is the point of a precise
- *    stamp: the clock they can check is their own.
+ *  - the LOCALE stays pinned and the TIMEZONE stays the reader's. This function
+ *    used to hardcode `"en-US"` and so does `preciseObservedAt`, deliberately:
+ *    it assembles the stamp from `en-US` parts so the month name and the
+ *    meridiem are stable for every reader of an English-only site, and asking
+ *    for the reader's own locale is what put the field order wrong in the first
+ *    place (see that function's own note). What is the reader's own — and is
+ *    the whole point of a precise stamp — is the TIME ZONE: no `timeZone`
+ *    option is passed, so the clock they can check is their own.
  */
 export function formatSourceStamp(
   iso: string | null | undefined,
