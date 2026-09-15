@@ -67,9 +67,27 @@ WINNER_TICKER = "KXATPMATCH-26AUG30VALMON"
 #: and every test steering the witness would silently be testing the no-witness
 #: branch instead. Asserted against the map itself in the gap B suite.
 SOCCER_TICKER = "KXEPLGAME-26SEP14ARSMCI"        # -> soccer_epl    -> soccer
-#: A series in NEITHER ticker map, so it yields no witness at all. This is the
-#: production row gap B does NOT fold; see the gap B suite.
-UNMAPPED_TICKER = "KXNFLFG-26SEP14DENKC"         # -> None          -> no witness
+#: A series in NEITHER ticker map, so it yields no witness at all.
+#:
+#: 🔴 THIS CONSTANT USED TO BE `KXNFLFG-26SEP14DENKC` AND THE #6262 FOLLOW-UP
+#: MAPPED THAT SERIES, so it is no longer unmapped and can no longer stand for
+#: "silence". Left in place it would not have gone red everywhere — two of its
+#: five uses would have kept passing while quietly testing the OPPOSITE branch,
+#: which is the failure this comment exists to stop happening again.
+#:
+#: The replacement is chosen so a FUTURE mapping cannot make it vacuous either:
+#: no test in this suite plants table tennis, so even if `kxttelitematch` were
+#: mapped one day it could agree with neither a planted ghost nor a planted
+#: canonical. Read at the venue 2026-09-15 06:5xZ
+#: (`GET /trade-api/v2/series/KXTTELITEMATCH`, HTTP 200) —
+#: title "TT Elite Series Match", category Sports, tags ['Table Tennis'] —
+#: 4,935 markets on production, and no `kxtt*` key exists in either map.
+UNMAPPED_TICKER = "KXTTELITEMATCH-26AUG261730KSUMPI"   # -> None    -> no witness
+#: The row gap B named as the one it could NOT fold, for want of a map entry.
+#: The #6262 follow-up added `kxnflfg` to `KALSHI_TICKER_TO_SPORT_KEY`, so it now
+#: yields a football witness and folds. Kept as a named constant because a revert
+#: of that literal must say which reader-visible row comes back.
+MAPPED_NFL_PROP_TICKER = "KXNFLFG-26SEP14DENKC"  # -> americanfootball_nfl
 
 SPORT_TENNIS_ATP = 41
 SPORT_TENNIS_US_OPEN = 77

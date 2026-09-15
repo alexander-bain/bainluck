@@ -105,6 +105,7 @@ from app.utils.sport_keys import get_sport_key_from_ticker
 from tests.test_market_born_duplicate_reads_as_canonical_q050 import (
     CANONICAL,
     GHOST,
+    MAPPED_NFL_PROP_TICKER,
     SOCCER_TICKER,
     SPORT_SOCCER,
     SPORT_TENNIS_ATP,
@@ -171,6 +172,15 @@ def test_the_tickers_these_tests_steer_with_are_real_ones_6262():
         assert get_sport_key_from_ticker(ticker) == "americanfootball_nfl", ticker
     # ...and the one that is deliberately absent from both maps.
     assert get_sport_key_from_ticker(UNMAPPED_TICKER) is None
+    # ...and the one the #6262 follow-up moved from that set into the mapped
+    # one. This assertion is the whole reason `UNMAPPED_TICKER` had to change
+    # value: it WAS this ticker, and a suite that kept steering "silence" with a
+    # ticker that had started speaking would have gone on passing.
+    assert (
+        get_sport_key_from_ticker(MAPPED_NFL_PROP_TICKER)
+        == "americanfootball_nfl"
+    )
+    assert MAPPED_NFL_PROP_TICKER != UNMAPPED_TICKER
 
 
 # =============================================================================
@@ -197,21 +207,34 @@ def test_a_stale_mint_time_sport_does_not_outvote_the_anchor_ticker_6262(row, ti
     )
 
 
-def test_the_fifth_production_row_stays_refused_for_want_of_a_map_entry_6262():
-    """15311150 is NOT folded, and that is stated rather than rounded away.
+def test_the_fifth_production_row_now_folds_on_its_mapped_ticker_6262():
+    """15311150 — the row gap B named as the one it could NOT fold.
 
-    `kxnflfg` is in neither ticker map, so `get_sport_key_from_ticker` answers
-    `None`, there is no second witness, and the `soccer_other` ghost falls back
-    to its own key against an NFL canonical: refused. Mapping the series is a
-    `sport_keys.py` change with its own blast radius and is not smuggled in
-    under this one.
+    Gap B shipped with this test asserting `is None`, and said so out loud:
+    `kxnflfg` was in neither ticker map, so `get_sport_key_from_ticker` answered
+    `None`, there was no second witness, and the `soccer_other` ghost fell back
+    to its own key against an NFL canonical. The #6262 follow-up added that one
+    literal, having measured its blast radius separately, and the assertion
+    flips with it.
 
-    This is the honest 4-of-5. A build claiming 5 of 5 — or the blocked build's
-    42 of 42 — goes red here.
+    🔴 THIS IS NOT A WEAKENED CONTROL. The shape it used to pin — no witness,
+    cross-sport, refused — is still pinned, by
+    :func:`test_an_unmapped_ticker_cannot_rescue_a_cross_sport_pair_6262` and
+    :func:`test_the_ghost_rows_own_key_is_still_a_witness_on_its_own_6262`,
+    which now steer with a ticker that is genuinely in neither map. What changed
+    is which real-world row is the example, and that is a fact about the maps,
+    not about the drain.
+
+    Planted exactly as production holds it: `soccer_other` ghost (the name rules
+    read "Team Field **Goals**" as soccer at mint time), NFL canonical, one
+    market anchor carrying the raw ticker.
     """
     conn = _connect()
-    _plant_nfl_ghost(conn, UNMAPPED_TICKER, ghost_sport=SPORT_SOCCER)
-    assert _resolve(conn) is None
+    _plant_nfl_ghost(conn, MAPPED_NFL_PROP_TICKER, ghost_sport=SPORT_SOCCER)
+    assert _resolve(conn) == CANONICAL, (
+        "15311150 (soccer_other, minted by KXNFLFG-26SEP14DENKC) is still "
+        "refused — the NFL game keeps rendering a second time as soccer"
+    )
 
 
 def test_the_ghost_rows_own_key_is_still_a_witness_on_its_own_6262():
