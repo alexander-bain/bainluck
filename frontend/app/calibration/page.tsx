@@ -1187,9 +1187,19 @@ export default function CalibrationPage() {
                       ? "text-text-secondary"
                       : (row.mce ?? 0) < 4 ? "text-green-600" : (row.mce ?? 0) < 6 ? "text-blue-600" : "text-orange-600"
                   }`}>
-                    {isRange ? `${row.rangeLow}-${row.rangeHigh}pp` : `${(row.mce ?? 0).toFixed(1)}pp`}
-                    {row.ci ? ` (95% CI: ${row.ci})` : ""}
-                    {row.n ? ` | ${row.n.toLocaleString()} outcomes` : ""}
+                    {/* CAL-P1261 after-LOOK: each figure is its own unbreakable
+                        token. The value span must still wrap — our own row
+                        carries a CI and an outcome count and is three fragments
+                        long at 390px — but a wrap INSIDE a figure reads as a
+                        different number: the range rendered as "2-" / "5pp"
+                        across two lines on production. Breaking between the
+                        fragments (at the spaces below) is fine; breaking at the
+                        hyphen of "2-5pp" or "0.3-1.2pp" is not. */}
+                    <span className="whitespace-nowrap">
+                      {isRange ? `${row.rangeLow}-${row.rangeHigh}pp` : `${(row.mce ?? 0).toFixed(1)}pp`}
+                    </span>
+                    {row.ci ? <> <span className="whitespace-nowrap">{`(95% CI: ${row.ci})`}</span></> : ""}
+                    {row.n ? <> | <span className="whitespace-nowrap">{`${row.n.toLocaleString()} outcomes`}</span></> : ""}
                   </span>
                 </div>
                 <div className="h-2 bg-surface-secondary rounded-full overflow-hidden">
