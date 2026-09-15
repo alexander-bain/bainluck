@@ -936,7 +936,13 @@ export default function CalibrationPage() {
             <p>
               Population: <span className="tabular-nums text-text-secondary">{cohortN.toLocaleString()}</span>{" "}
               resolved outcomes{cohortN !== fullN && <> of <span className="tabular-nums text-text-secondary">{fullN.toLocaleString()}</span> total</>}
-              {" "}&middot; {sources.length} sources &middot; {categories.length} categories.{" "}
+              {/* #6265 — PROVIDERS, like the stat card, because both say "sources".
+                  This line used `sources.length` (7 raw payload keys) while the
+                  card two inches above used `providerGroups.length` (4), so the
+                  page answered one question with two numbers under one word. The
+                  raw count is not suppressed — it is still printed, as "keys",
+                  where the shapes are actually broken out. */}
+              {" "}&middot; {providerGroups.length} sources &middot; {categories.length} categories.{" "}
               <a href="#methodology" className="text-accent-brand hover:underline">
                 How we measure this
               </a>{" "}
@@ -2473,9 +2479,13 @@ export default function CalibrationPage() {
             data.total_outcomes, so the number it names as "total" is the SAME
             number the card prints (page.tsx:263-264). The counts also travel as
             data attributes so a probe reads numbers, not prose (notice 34). */}
+        {/* #6265 — PROVIDERS here too; see the note at the population line above.
+            The count travels as `data-source-n` for the same reason the two
+            population counts do: a probe should read the number, not the prose,
+            and this page has now had the same contradiction twice. */}
         <p data-testid="calibration-footer-population"
-          data-cohort-n={cohortN} data-full-n={fullN}>
-          {footerPopulationPhrase(cohortN, fullN)} &middot; {sources.length} sources &middot; {categories.length} categories
+          data-cohort-n={cohortN} data-full-n={fullN} data-source-n={providerGroups.length}>
+          {footerPopulationPhrase(cohortN, fullN)} &middot; {providerGroups.length} sources &middot; {categories.length} categories
           {priceCohort !== "all" && ` (${priceCohort === "closing" ? "closing line" : "opening price"} cohort)`}
         </p>
         <p className="mt-1">
