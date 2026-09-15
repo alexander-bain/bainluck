@@ -872,9 +872,17 @@ def derive_response_ttl_s(
 # ---------------------------------------------------------------------------
 
 #: `worker-background`'s celery `--concurrency`, from `backend/Procfile`.
-#: Mirrored, and pinned against the Procfile by
+#: Pinned against the Procfile by
 #: `test_background_concurrency_mirror_matches_the_procfile`.
-BACKGROUND_WORKER_CONCURRENCY = 2
+#:
+#: LAT-P242 (#3466): DERIVED from `schedule_adherence.QUEUE_SLOTS` rather than
+#: written again. Two modules now price capacity against this number — the
+#: period arithmetic here and the queue-demand total on the adherence surface —
+#: and a second transcription is a second thing to forget. The import is of a
+#: pure, import-free module, so it cannot cycle.
+from app.utils.schedule_adherence import QUEUE_SLOTS as _QUEUE_SLOTS
+
+BACKGROUND_WORKER_CONCURRENCY = _QUEUE_SLOTS["background"]
 
 
 def background_slot_occupancy(
