@@ -164,6 +164,7 @@ from app.utils.futures_liveness import (
     LIVE_MARKET_SQL,
     VENUE_SETTLED_KEY,
     VENUE_SETTLED_NOW_SQL,
+    venue_answered,
 )
 from app.utils.polymarket_settlement_scan import GAMMA_EVENT_ID_EXPR
 
@@ -1264,18 +1265,12 @@ async def _write_prices(
 # --- source adapters ---------------------------------------------------------
 
 
-def _venue_answered(result) -> bool:
-    """Has Kalshi declared this contract's outcome?
-
-    ``result`` is ``'yes'`` / ``'no'`` once the venue settles and the EMPTY
-    STRING while the contract trades — not ``None``. So the test is truthiness
-    after a strip, never ``is not None``: `result is not None` is true of every
-    active market Kalshi sends and would retire the whole book.
-
-    Read off whichever shape the caller holds (raw dict value or the parsed
-    ``KalshiMarket.result``); both carry the venue's own word verbatim.
-    """
-    return bool(str(result or "").strip())
+#: ``venue_answered`` used to be defined here as ``_venue_answered``. #5896
+#: moved the body to ``app.utils.futures_liveness`` — the module whose whole
+#: purpose is that a predicate two callers read has ONE definition — because
+#: ``kalshi._refresh_linked_game_books`` now asks the same question of the same
+#: payload. Imported by its real name rather than aliased back: two names for
+#: one function is how the next reader ends up copying the wrong one.
 
 
 async def _fetch_kalshi_prices(service, external_id: str):
@@ -1357,7 +1352,7 @@ async def _fetch_kalshi_prices(service, external_id: str):
     if not raw_markets:
         return VENUE_SETTLED
     # #5771 shape (2). Over the RAW list, for the reason the docstring gives.
-    if all(_venue_answered(m.get("result")) for m in raw_markets):
+    if all(venue_answered(m.get("result")) for m in raw_markets):
         return VENUE_SETTLED
     event = service._parse_event(raw)
     if not event:
@@ -1367,7 +1362,7 @@ async def _fetch_kalshi_prices(service, external_id: str):
     for market in event.markets:
         if not market.ticker:
             continue
-        if _venue_answered(market.result):
+        if venue_answered(market.result):
             # A mixed event's answered leg. Its quote is a settlement artifact,
             # not a price — see the docstring.
             continue
