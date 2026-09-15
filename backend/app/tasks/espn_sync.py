@@ -1094,6 +1094,63 @@ UNREACHABLE_SUSPENDED_INFLIGHT_KEY = "events:unreachable_suspended_inflight"
 UNREACHABLE_SUSPENDED_INFLIGHT_TTL = 360
 
 
+def unreachable_suspended_floor():
+    """How long past kick-off before the last door is agreed to be shut? (#6347)
+
+    A FUNCTION, and not an expression inlined in the arm, because a test cannot
+    call an expression. Written as a local, the derivation could only be checked
+    by scanning the arm's source for the word ``max`` — and a mutation that
+    swapped it for ``min`` survived that scan while the test's own copy of the
+    formula went on reporting the right answer. A floor the guard reimplements
+    is a floor the guard cannot guard.
+
+    THE FLOOR IS THE LAST DOOR TO SHUT, PLUS THE MARGIN. Two doors are enforced
+    on the populations this arm retires, and they are different windows:
+
+      * ``SUSPENDED_RESUME_WINDOW`` — the ``suspended → live`` resume arm, which
+        is what the id-less #5532 population waits out;
+      * :data:`~app.tasks.odds_polling.ODDS_SCORES_LOOKBACK` — the scores fetch,
+        which IS keyed on ``external_id`` and so is the door the #6347
+        ``odds_api`` population waits out.
+
+    ``max`` rather than either name, so admitting a further class later cannot
+    silently leave its own door open.
+    """
+    from app.tasks.odds_polling import ODDS_SCORES_LOOKBACK
+    from app.utils.event_completion import UNREACHABLE_SUSPENDED_MARGIN
+
+    return (
+        max(SUSPENDED_RESUME_WINDOW, ODDS_SCORES_LOOKBACK)
+        + UNREACHABLE_SUSPENDED_MARGIN
+    )
+
+
+async def _row_has_market_anchor(session, event_id) -> bool:
+    """Does any prediction market hang off this event? (#6347)
+
+    The verdict's ``market_anchored`` argument. It is a separate read rather
+    than a flag carried off the screen's JOIN on purpose: the screen's job is to
+    be a cheap filter, and ``suspended_row_is_unreachable`` is written so that
+    every refusal it makes can be given a counter-example by a test. A boolean
+    smuggled out of a WHERE clause cannot be.
+
+    Any source counts, not just ``kalshi``/``polymarket``. The two named doors
+    are the ones measured open today; a market of any provenance is evidence
+    something upstream still holds this row, and this arm writes a terminal.
+    """
+    from app.models import FuturesMarket
+
+    return bool(
+        (
+            await session.execute(
+                select(FuturesMarket.id)
+                .where(FuturesMarket.event_id == event_id)
+                .limit(1)
+            )
+        ).scalar()
+    )
+
+
 def _unreachable_suspended_budget() -> int:
     """How many rows may this pass retire? 0 unless an attended step said so.
 
@@ -3342,9 +3399,11 @@ async def _transition_event_statuses_impl() -> dict:
         # game-end time, never a backend processing timestamp).
         from sqlalchemy import text as _sql_text
 
+        from app.models import FuturesMarket
         from app.utils.event_completion import (
             EVENT_SUSPENDED,
             LAST_POST_COMMENCE_SNAPSHOT_SQL,
+            ODDS_API_COMMENCE_SOURCE,
             UNREACHABLE_SUSPENDED_MARGIN,
             UNREACHABLE_SUSPENDED_TERMINAL,
             event_has_never_been_observed,
@@ -3511,7 +3570,11 @@ async def _transition_event_statuses_impl() -> dict:
         # the arm above uses, computed from that constant, so the two can never
         # drift into a gap where a row is unreachable by one rule and still
         # resumable by the other.
-        unreachable_floor = SUSPENDED_RESUME_WINDOW + UNREACHABLE_SUSPENDED_MARGIN
+        #
+        # #6347 WIDENED THE POPULATION, SO THE FLOOR HAD TO GROW WITH IT — and
+        # it is a named function so a test can call the real one instead of
+        # keeping a copy of the formula. See `unreachable_suspended_floor`.
+        unreachable_floor = unreachable_suspended_floor()
         stats["unreachable_suspended_retired"] = 0
         (
             stats["unreachable_suspended_budget"],
@@ -3575,11 +3638,33 @@ async def _transition_event_statuses_impl() -> dict:
             # newest-first starves the tail (gotcha #41). The floor is the other
             # half of that bound: the population is not expiring, so a floor plus
             # oldest-first is the whole ordering question here.
+            #
+            # #6347 — THE SCREEN ADMITS A SECOND CLASS, AND THE MARKET TEST IS
+            # PART OF THE SCREEN BECAUSE THE PREDICATE CANNOT GO AND LOOK. An
+            # `odds_api` row's remaining doors are `polymarket` and
+            # `kalshi_resolution_sweep`, both of which admit `suspended`
+            # explicitly and both of which reach a row only through a market
+            # hanging off it. That is a JOIN, not a column, so the screen asks
+            # it and hands the answer to the verdict as `market_anchored`.
+            # Measured: 150 of the 711 `odds_api` rows carry such a market and
+            # are refused here.
+            market_anchored_exists = (
+                select(FuturesMarket.id)
+                .where(FuturesMarket.event_id == Event.id)
+                .exists()
+            )
             unreachable_result = await session.execute(
                 select(Event)
                 .where(
                     Event.status == EVENT_SUSPENDED,
-                    Event.external_id.is_(None),
+                    or_(
+                        Event.external_id.is_(None),
+                        and_(
+                            Event.commence_time_source
+                            == ODDS_API_COMMENCE_SOURCE,
+                            ~market_anchored_exists,
+                        ),
+                    ),
                     Event.espn_id.is_(None),
                     Event.statpal_fixture_id.is_(None),
                     Event.home_score.is_(None),
@@ -3604,6 +3689,14 @@ async def _transition_event_statuses_impl() -> dict:
                     event.sport_id in espn_covered_ids,
                     now,
                     unreachable_floor,
+                    commence_time_source=event.commence_time_source,
+                    # The screen already excluded market-anchored rows, so this
+                    # is the second asking of the same question — deliberately,
+                    # per the comment above the SELECT: the verdict never trusts
+                    # the WHERE clause to have carried a rule for it.
+                    market_anchored=await _row_has_market_anchor(
+                        session, event.id
+                    ),
                 ):
                     continue
                 # BACKUP FIRST, IN THE SAME TRANSACTION. If this insert raises,

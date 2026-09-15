@@ -50,6 +50,21 @@ from app.tasks.redis_state import (
 
 logger = logging.getLogger(__name__)
 
+#: How far back the Odds API scores fetch below reaches (#6347).
+#:
+#: This was a bare ``3`` at the ``get_scores`` call site and nothing else could
+#: read it. It is the ENFORCED bound on the one door out of ``suspended`` that
+#: is keyed on ``external_id`` rather than on a provider id we hold: the scores
+#: pass selects ``Event.external_id.in_(...)`` over whatever the fetch returned,
+#: so a row older than this can never appear in that list again.
+#:
+#: Named because ``espn_sync``'s unreachable-suspended arm derives its retirement
+#: floor from it. Retiring a row while this door is open would take the row away
+#: from the pass that was about to settle it, and a floor that merely EQUALS the
+#: window has no margin at all — which is what the 72h floor sized off
+#: ``SUSPENDED_RESUME_WINDOW`` alone happened to be.
+ODDS_SCORES_LOOKBACK = timedelta(days=3)
+
 # Ruling 051 (#1841), Alex 2026-08-14: the sportsbook consensus floors at THREE
 # books. At or above the floor `betting` is written as the median; below it the
 # key is DROPPED from `Event.win_probability_sources` and the blend re-weights
@@ -1732,7 +1747,9 @@ async def _poll_all_odds():
 
                 try:
                     pre_used = service.last_requests_used
-                    scores_data = await service.get_scores(sport_key, days_from=3)
+                    scores_data = await service.get_scores(
+                        sport_key, days_from=ODDS_SCORES_LOOKBACK.days
+                    )
 
                     # Track score API quota usage
                     if service.last_requests_remaining is not None:
