@@ -33,6 +33,7 @@ const EMPTY_INPUT: SourceRowInput = {
   ece: 0,
   mce: 0,
   brier: 0,
+  buckets: [],
 };
 
 const KALSHI_INPUT: SourceRowInput = {
@@ -43,6 +44,7 @@ const KALSHI_INPUT: SourceRowInput = {
   ece: 1.25,
   mce: 1.25,
   brier: 0.1712,
+  buckets: [{ n: 287922, winners: 107971 }],
 };
 
 const SPORTSBOOKS_INPUT: SourceRowInput = {
@@ -53,6 +55,7 @@ const SPORTSBOOKS_INPUT: SourceRowInput = {
   ece: 1.4,
   mce: 1.4,
   brier: 0.2011,
+  buckets: [{ n: 136173, winners: 75848 }],
 };
 
 /** Render one or more inputs through the real ordering, as the table does. */
@@ -247,5 +250,109 @@ describe("SourceComparisonRow — the whole table, in order", () => {
 
     expect(order).toEqual(["kalshi", "odds_api_family", "datagolf"]);
     expect(html.split("calibration-provider-no-data").length - 1).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #6211 — the censored row, asserted as the HTML a reader receives.
+//
+// With the cohort toggle ON, this cell printed `36 | 36.5pp | 35.8pp | 0.1424`
+// beside Kalshi's 318,956 at 0.9pp. All 36 outcomes are winners, so the 36.5pp
+// is the n-weighted distance from a 0.44-0.83 price to certainty and cannot
+// respond to how anything resolved. The three published figures below are
+// production's, from #6211.
+// ---------------------------------------------------------------------------
+const CENSORED_INPUT: SourceRowInput = {
+  provider: "datagolf",
+  label: "DataGolf",
+  sources: ["datagolf"],
+  n: 36,
+  ece: 36.5,
+  mce: 35.8,
+  brier: 0.1424,
+  buckets: [
+    { n: 3, winners: 3 },
+    { n: 9, winners: 9 },
+    { n: 14, winners: 14 },
+    { n: 9, winners: 9 },
+    { n: 1, winners: 1 },
+  ],
+};
+
+describe("SourceComparisonRow — a source whose population has one side (#6211)", () => {
+  const html = renderRows(CENSORED_INPUT);
+  const text = textOf(html);
+
+  test("prints none of the three price-determined figures", () => {
+    // THE BUG, pinned as text. All three were on the live page.
+    expect(text).not.toContain("36.5pp");
+    expect(text).not.toContain("35.8pp");
+    expect(text).not.toContain("0.1424");
+  });
+
+  test("keeps the row and its real outcome count — item 3, do not hide it", () => {
+    // The count is honestly arrived at and is the alarm. Dropping the row
+    // behind a min-sample floor "would delete the alarm and keep the defect".
+    expect(text).toContain("DataGolf");
+    expect(html).toContain('data-provider="datagolf"');
+    expect(html).toContain('data-provider-n="36"');
+    expect(text).toContain("36");
+  });
+
+  test("states the population instead, in one line", () => {
+    expect(text).toContain("All 36 won");
+    expect(text).toContain("no losses to measure against");
+  });
+
+  test("says which way it fell — an all-LOSER population reads the other way", () => {
+    const lost = textOf(renderRows({
+      ...CENSORED_INPUT,
+      buckets: [{ n: 36, winners: 0 }],
+    }));
+    expect(lost).toContain("All 36 lost");
+    expect(lost).toContain("no wins to measure against");
+    expect(lost).not.toContain("36.5pp");
+  });
+
+  test("does not explain itself — notice 34 / D102", () => {
+    // Same ban the no-data cell carries. The fact, and nothing written for a
+    // reviewer: no method note, no "censored", no "not ranked", no apology.
+    for (const jargon of ["censored", "not measured", "not ranked", "sample", "ECE", "population"]) {
+      expect(text.toLowerCase()).not.toContain(jargon.toLowerCase());
+    }
+  });
+
+  test("carries no colour grade — 36.5pp was being printed in orange", () => {
+    expect(html).not.toContain("text-green-600");
+    expect(html).not.toContain("text-blue-600");
+    expect(html).not.toContain("text-orange-600");
+  });
+
+  test("publishes its state and its winner count for the audit rail", () => {
+    expect(html).toContain('data-row-state="censored"');
+    expect(html).toContain('data-testid="calibration-provider-censored"');
+    expect(html).toContain('data-provider-winners="36"');
+  });
+
+  test("spans the three metric columns only, so the count keeps its own", () => {
+    // colSpan 3, not 4: the outcome count is a real number in a real column.
+    expect(html).toContain('colSpan="3"');
+    expect(html).not.toContain('colSpan="4"');
+  });
+
+  test("is not the no-cohort-data cell wearing a different hat", () => {
+    // The two absences render two different sentences, and the censored row
+    // must not offer the toggle as a remedy — the reader already used it.
+    expect(html).not.toContain("calibration-provider-no-data");
+    expect(text).not.toContain("No outcomes in this cohort");
+    expect(text).not.toContain(TOGGLE);
+  });
+
+  test("leaves the measured rows untouched beside it", () => {
+    const both = renderRows(KALSHI_INPUT, CENSORED_INPUT);
+    expect(textOf(both)).toContain("1.3pp");
+    expect(textOf(both)).toContain("0.1712");
+    expect(both).toContain('data-row-state="measured"');
+    expect(both).toContain('data-row-state="censored"');
   });
 });

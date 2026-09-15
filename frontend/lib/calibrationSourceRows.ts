@@ -59,10 +59,82 @@
  *
  * Ruling 003 is untouched: nothing here derives a calibration number. It
  * decides which numbers are real and where the unreal ones stop being printed.
+ *
+ * ── THE THIRD STATE: A POPULATION WITH ONLY ONE OUTCOME CLASS (#6211) ───────
+ *
+ * The same row came back, in the other direction. With the cohort toggle on,
+ * `datagolf` published **36 outcomes and a 36.5pp ECE**, beside Kalshi's
+ * 318,956 at 0.9pp, in the same table and the same columns, with no caveat.
+ *
+ * **Every one of those 36 outcomes is a winner.** All five published buckets,
+ * no exceptions, confirmed by two independent payload fields (the `winners`
+ * count, and `sum_sq_err`, which matches the all-won prediction to within 0.6%
+ * in every bucket and is nowhere near the all-lost one). The losers exist —
+ * 14,581 resolved rows survive every eligibility predicate at a plausible 16.7%
+ * win rate — and are dropped on the read side, in a `deduped` CTE frozen under
+ * ruling 009 / D45. Fixing that population is issue #6211 item 2 and is not
+ * this module's to touch.
+ *
+ * What this module can decide is whether the resulting number is publishable as
+ * a peer measurement, and it is not — **as a theorem rather than a judgement
+ * about sample size.** When every outcome falls on one side, observed frequency
+ * is 1 in every bucket (or 0 in every bucket), so
+ *
+ *     ECE = Σ nᵢ·|1 − p̄ᵢ| / N        (all won)
+ *     ECE = Σ nᵢ·|0 − p̄ᵢ| / N        (all lost)
+ *
+ * is a function of the PRICES ALONE. Nothing about how the questions resolved
+ * can move it, because they all resolved the same way. DataGolf's 36.5pp is the
+ * average distance from a 0.44–0.83 price to certainty; it measures the
+ * censoring and would read the same if the source were perfect or worthless.
+ * That is why the gate is exact — `winners === n` or `winners === 0` — and not
+ * a threshold: at 99% winners the figure is a real measurement with a skew, and
+ * a tunable constant here would be a dial someone later turns until the row
+ * goes away.
+ *
+ * This generalises `TestLoneClaimSymmetryGate` (D112,
+ * `app/utils/resolution_authority.py`), which already states the doctrine —
+ * *"THE PAIR IS ADMITTED TOGETHER OR NOT AT ALL … Admitting the loser-only
+ * channel by itself does not widen the population, it BIASES it"* — but is
+ * scoped to one ingest arm. DataGolf is the same defect in the winner
+ * direction, at the curve's OUTPUT, where no gate was watching.
+ *
+ * ── WHY THE ROW IS STATED, NOT DROPPED (#6211 item 3) ───────────────────────
+ *
+ * Item 3 of the issue is explicit: *"Do not simply hide the row. The 36.5pp is
+ * currently the only visible alarm for a censored population; suppressing it
+ * behind a min-sample floor and calling it done would delete the alarm and keep
+ * the defect."*
+ *
+ * So the row stays, the outcome COUNT stays — 36 is a real count, honestly
+ * arrived at — and the three metric columns are replaced by the fact that
+ * produced them. That is a louder alarm than 36.5pp was, not a quieter one: a
+ * reader could read 36.5pp as "DataGolf is badly calibrated", which is a claim
+ * we cannot support about a named third party. "All 36 outcomes won" is a claim
+ * about our own population, which is the true one.
+ *
+ * Same grammar as the `no-cohort-data` cell above it: the fact, and nothing
+ * written to satisfy a reviewer (notice 34 / D102).
  */
 
-/** Whether a row carries a real measurement or an explicit absence. */
-export type SourceRowState = "measured" | "no-cohort-data";
+/**
+ * Whether a row carries a real measurement, an explicit absence, or a
+ * population that cannot produce a measurement (#6211).
+ */
+export type SourceRowState = "measured" | "no-cohort-data" | "censored";
+
+/**
+ * The part of a pooled bucket the censoring verdict reads.
+ *
+ * Structurally typed on the two fields it needs rather than importing
+ * `AggBucket`, so the page hands over exactly what `aggregateBuckets` already
+ * returns and a test can state a two-field literal without inventing a
+ * midpoint, a CI or an error term it is not asserting anything about.
+ */
+export interface SourceRowBucket {
+  n: number;
+  winners: number;
+}
 
 /** A row as the page computes it, before this module judges it. */
 export interface SourceRowInput {
@@ -75,6 +147,61 @@ export interface SourceRowInput {
   ece: number;
   mce: number;
   brier: number;
+  /**
+   * The provider's pooled buckets for the active cohort — the same
+   * `aggregateBuckets(...)` array the metrics above were computed from.
+   *
+   * REQUIRED, deliberately. The censoring verdict is not computable without
+   * it, and an optional field would mean a caller that forgot the wiring kept
+   * publishing censored rows as measurements with every test still green —
+   * the exact failure mode #6211 is. Required makes the compiler the guard: a
+   * call site that omits it cannot build.
+   */
+  buckets: readonly SourceRowBucket[];
+}
+
+/** What the pooled buckets say about whether this row can be a measurement. */
+export interface CensoringVerdict {
+  /** Outcomes pooled across the buckets. */
+  n: number;
+  /** Of those, the ones that won. */
+  winners: number;
+  /**
+   * True when every pooled outcome fell on the same side, so the metrics over
+   * them are a function of the prices alone. See the module header.
+   */
+  censored: boolean;
+}
+
+/**
+ * Pool the buckets and decide whether the population has two sides in it.
+ *
+ * Exact, not a threshold, and the module header says why: one-sidedness makes
+ * the metric price-determined as a matter of arithmetic, whereas 99%-one-sided
+ * is a real measurement of a skewed population.
+ *
+ * Non-finite and negative bucket fields are floored to 0, and `winners` is
+ * clamped to its own bucket's `n`. A bucket claiming more winners than
+ * outcomes is corrupt, and the clamp makes it read as all-winners — censored,
+ * withheld from the ranking. That is the fail-closed direction: the cost of
+ * being wrong is a row that states its population instead of publishing a
+ * number, which is recoverable; the other direction publishes the lie.
+ */
+export function censoringVerdict(
+  buckets: readonly SourceRowBucket[] | null | undefined
+): CensoringVerdict {
+  let n = 0;
+  let winners = 0;
+  for (const b of buckets ?? []) {
+    if (!b) continue;
+    const bn = Number.isFinite(b.n) && b.n > 0 ? b.n : 0;
+    const bw = Number.isFinite(b.winners) && b.winners > 0 ? Math.min(b.winners, bn) : 0;
+    n += bn;
+    winners += bw;
+  }
+  // `n > 0` first: an empty bucket list is not a censored population, it is no
+  // population, and that case is already `no-cohort-data`.
+  return { n, winners, censored: n > 0 && (winners === n || winners === 0) };
 }
 
 /** A row as the page should render it. */
@@ -85,8 +212,15 @@ export interface SourceRow {
   n: number;
   state: SourceRowState;
   /**
-   * `null` on a `no-cohort-data` row — the empty reduction's `0` never reaches
-   * a formatter. A caller that renders these without a null check gets
+   * Winners pooled across the cohort's buckets, so the censored cell can say
+   * WHICH side the population fell on without recomputing it. `null` when
+   * there are no buckets to pool.
+   */
+  winners: number | null;
+  /**
+   * `null` on any row that is not `measured` — the empty reduction's `0`, and
+   * the censored population's price-determined figure, never reach a
+   * formatter. A caller that renders these without a null check gets
    * `Cannot read properties of null`, which is the point: the failure is loud
    * at the call site rather than silent on the page.
    */
@@ -103,8 +237,11 @@ export interface SourceRow {
  * `0` on empty input, so the metric can never report its own absence. Only the
  * count can.
  */
-function stateOf(n: number): SourceRowState {
-  return Number.isFinite(n) && n > 0 ? "measured" : "no-cohort-data";
+function stateOf(n: number, buckets: readonly SourceRowBucket[] | undefined): SourceRowState {
+  if (!(Number.isFinite(n) && n > 0)) return "no-cohort-data";
+  // Absence beats censoring: a row with no outcomes in the cohort is withheld,
+  // not one-sided, and `withheldSourcesNote`'s remedy is the true one for it.
+  return censoringVerdict(buckets).censored ? "censored" : "measured";
 }
 
 /**
@@ -115,6 +252,14 @@ function stateOf(n: number): SourceRowState {
  * break ties with, and an unstable tail would make the table's row order depend
  * on the payload's source ordering — a difference a reader would read as a
  * change in the data.
+ *
+ * A `censored` row joins that same tail, for the same reason and one more.
+ * "Sorted by ECE, lower is better" makes POSITION a published claim, so ranking
+ * a price-determined figure publishes a verdict on a named third party that our
+ * population cannot support — and DataGolf's 36.5pp would have taken LAST
+ * place, which reads as "the worst source we carry" just as surely as the old
+ * fabricated 0.0 read as the best. Both directions are the same error: a number
+ * that is not a measurement occupying a rank.
  */
 export function orderSourceRows(
   rows: readonly SourceRowInput[] | null | undefined
@@ -124,7 +269,8 @@ export function orderSourceRows(
   const judged: SourceRow[] = rows
     .filter(r => r && Array.isArray(r.sources))
     .map(r => {
-      const state = stateOf(r.n);
+      const verdict = censoringVerdict(r.buckets);
+      const state = stateOf(r.n, r.buckets);
       const measured = state === "measured";
       const keep = (v: number) =>
         measured && typeof v === "number" && Number.isFinite(v) ? v : null;
@@ -134,6 +280,7 @@ export function orderSourceRows(
         sources: [...r.sources],
         n: Number.isFinite(r.n) && r.n > 0 ? r.n : 0,
         state,
+        winners: verdict.n > 0 ? verdict.winners : null,
         ece: keep(r.ece),
         mce: keep(r.mce),
         brier: keep(r.brier),
@@ -161,6 +308,23 @@ export function sourceRowsExcludedFromRollup(
   rows: readonly SourceRow[]
 ): SourceRow[] {
   return rows.filter(r => r.state === "no-cohort-data");
+}
+
+/**
+ * The rows withheld from the ranking because their population has one side
+ * (#6211). Deliberately NOT folded into `sourceRowsExcludedFromRollup`.
+ *
+ * Both sets leave the ordering, so folding them looks like a tidy-up. It would
+ * make `withheldSourcesNote` say of DataGolf that it "has no outcomes in this
+ * cohort … use the toggle to measure it" — and with the toggle already ON, that
+ * sentence is false twice over: there are 36 outcomes, and the named remedy is
+ * the control the reader just used. The two absences are different absences,
+ * which is the distinction this whole module exists to keep (see the header on
+ * why the `n === 0` row is stated rather than dropped). Same names, same
+ * derivation, different sentence.
+ */
+export function censoredSourceRows(rows: readonly SourceRow[]): SourceRow[] {
+  return rows.filter(r => r.state === "censored");
 }
 
 /**

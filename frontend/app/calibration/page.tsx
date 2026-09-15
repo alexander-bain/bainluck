@@ -54,6 +54,7 @@ import {
 // UX-P128: which Source Comparison rows are measurements, in what order, and
 // the sentence By Source owes for the ones the cohort emptied.
 import {
+  censoredSourceRows,
   orderSourceRows,
   sourceRowsExcludedFromRollup,
   withheldSourcesNote,
@@ -459,6 +460,11 @@ export default function CalibrationPage() {
         mce: mce(groupBuckets),
         ece: ece(groupBuckets),
         brier: brierScore(normalized, match),
+        // #6211. The SAME pooled buckets the three metrics above are computed
+        // from, so the censoring verdict cannot disagree with the numbers it
+        // is judging. No new query and no payload change: `AggBucket` has
+        // carried `n` and `winners` since `calibrationParity.ts`.
+        buckets: groupBuckets,
       };
     });
   }, [normalized, sources, cohortFilter]);
@@ -1059,7 +1065,14 @@ export default function CalibrationPage() {
       </div>
 
       {/* Source Comparison */}
-      <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
+      {/* #6211, #4340's rule: the fact travels as DATA from the same derivation
+          the cell is built from, so a probe can tell "no source is censored"
+          from "the section did not render" (gotcha #53). Empty string = none. */}
+      <section
+        className="bg-surface-card rounded-xl p-5 border border-surface-border"
+        data-testid="calibration-source-comparison-section"
+        data-censored-sources={censoredSourceRows(sourceRows).map(r => r.label).join("|")}
+      >
         <h2 className="text-title-3 text-text-primary mb-1">Source Comparison<CohortTag cohort={cohort} /></h2>
         {/* Notice 34. The caption a reader needs to read the table is which way
             is better and what it is sorted by — one line. Everything else that
