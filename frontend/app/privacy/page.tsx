@@ -298,7 +298,7 @@ export default function PrivacyPage() {
                 It sets no cookie, reads nothing from your browser and carries
                 no cross-site identifier, so it cannot follow you here from
                 anywhere else or recognise you on your next visit. Because it
-                identifies nobody, it runs on every visit and is <em>not</em>
+                identifies nobody, it runs on every visit and is <em>not</em>{" "}
                 covered by the analytics choice — a declined visit is still
                 counted. Without that, the only visitors we could count would
                 be the ones who had already said yes to a banner, which is not
