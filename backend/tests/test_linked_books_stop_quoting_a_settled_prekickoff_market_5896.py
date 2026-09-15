@@ -57,6 +57,7 @@ from app.services.kalshi_api import KalshiAPIService
 from app.tasks import kalshi as k
 from app.tasks.futures_price_refresh import (
     _KALSHI_WITHDRAW_EVENT_HERO_SQL,
+    _KALSHI_WITHDRAW_PRE_KICKOFF_LEG_SQL,
     _KALSHI_WITHDRAW_PRE_KICKOFF_SQL,
 )
 from app.utils import futures_liveness as liveness
@@ -113,11 +114,14 @@ class _Session:
     so.
     """
 
-    def __init__(self, selector_rows, existing, *, withdrawn_rows, hero_rows):
+    def __init__(
+        self, selector_rows, existing, *, withdrawn_rows, hero_rows, leg_rows=((7,),)
+    ):
         self._selector_rows = selector_rows
         self._existing = existing
         self._withdrawn_rows = withdrawn_rows
         self._hero_rows = hero_rows
+        self._leg_rows = leg_rows
         self.writes: list[object] = []
         #: (statement, params) in execution order, for the text statements.
         self.text_calls: list[tuple[object, dict]] = []
@@ -145,6 +149,8 @@ class _Session:
                 return _Result(self._withdrawn_rows)
             if stmt is _KALSHI_WITHDRAW_EVENT_HERO_SQL:
                 return _Result(self._hero_rows)
+            if stmt is _KALSHI_WITHDRAW_PRE_KICKOFF_LEG_SQL:
+                return _Result(list(self._leg_rows))
             return _Result(self._selector_rows)
         if isinstance(stmt, Select):
             return _Result([(eid, win) for eid, win in self._existing.items()])
@@ -228,6 +234,7 @@ async def _run(
     pre_kickoff,
     withdrawn_rows=((1,), (2,), (3,)),
     hero_rows=((15298075,),),
+    leg_rows=((7,),),
 ):
     row = _Row(
         60482103,
@@ -241,6 +248,7 @@ async def _run(
         existing,
         withdrawn_rows=list(withdrawn_rows),
         hero_rows=list(hero_rows),
+        leg_rows=list(leg_rows),
     )
     service = _Service(legs)
 
@@ -482,10 +490,10 @@ async def test_a_mixed_book_prices_the_live_leg_and_skips_the_answered_one(
     monkeypatch,
 ):
     """Kalshi settles a game's legs together, so this is rare — one of the 36
-    candidates. The withdrawal statement is market-grain, so spending it here
-    would take a trading leg's real price down; the answered leg is skipped
-    instead, and the residual (its stored artifact survives until the venue
-    answers the whole book) is counted rather than hidden."""
+    candidates. The MARKET-grain withdrawal is never spent here, because it
+    would take a trading leg's real price down with the settled one; the
+    answered leg is skipped by the price loop and withdrawn leg-grain instead
+    (section 8)."""
     stats, session = await _run(
         monkeypatch,
         [
@@ -551,6 +559,7 @@ async def test_the_counters_are_reported_even_when_nothing_fires(monkeypatch):
         "pre_kickoff_heroes_cleared",
         "pre_kickoff_settled_mixed",
         "pre_kickoff_settled_legs_skipped",
+        "pre_kickoff_settled_legs_withdrawn",
     ):
         assert stats[key] == 0, key
 
@@ -798,3 +807,208 @@ async def test_a_live_book_still_commits_exactly_once_at_the_bottom(monkeypatch)
     assert session.journal.count("commit") == 1
     assert session.journal.count("withdraw-hero") == 0
     assert session.journal[-1] == "commit"
+# 8. the mixed book's answered leg is WITHDRAWN, not merely skipped
+#
+# CERT-2933's other named follow-up,
+# `5896-CLEAR-ANSWERED-LEGS-IN-MIXED-BOOKS-WITHOUT-HARMING-LIVE-SIBLINGS`.
+#
+# 🔴 A GATE THAT ONLY REFUSES TO WRITE LEAVES THE OLD NUMBER WHERE IT WAS.
+# That is the lesson #5031, #5273 and #5771 each paid for, and section 4 above
+# shipped it knowingly on one population: in a MIXED book the answered leg is
+# skipped by the price loop, so this pass stops re-writing its settlement
+# artifact every hour — and the artifact it wrote on some earlier hour stays on
+# the row, which is the number the ladder renders. The reader sees a rung of a
+# game their own header says has not started, priced at the answer.
+#
+# It could not be fixed with the statement section 2 uses, and that is the
+# whole reason it was a residual rather than an oversight:
+# `_KALSHI_WITHDRAW_PRE_KICKOFF_SQL` is MARKET-grain (`fo.market_id =
+# :market_id`), so spending it on a mixed book takes the trading siblings'
+# real prices down with the settled leg's. The repair is a leg-grain sibling —
+# the same statement with `AND fo.external_id = :external_id` — so exactly the
+# legs the venue has answered lose their quote and the ones still trading are
+# never touched.
+#
+# THE SPECIMEN: `KXEREDIVISIETOTAL-26SEP13EXCFCU`, the 1 MIXED of the 36
+# pre-kick-off books read at the venue on 2026-09-13 12:32Z — finalized rungs
+# beside an `inactive` one.
+# --------------------------------------------------------------------------
+
+
+def _mixed_book():
+    """One answered leg, one still trading. The shape section 4 describes."""
+    return [
+        _leg(_SAN, "finalized", "yes", last=0.99),
+        _leg(_ALA, "active", "", bid=0.40, ask=0.42),
+    ]
+
+
+def _bound_values(stmt) -> set:
+    """Every literal bound into a statement, WHERE clause included.
+
+    `_values_of` reads the SET list only, which cannot say WHICH row a write
+    lands on — and "which row" is the entire claim of this section.
+    """
+    return set(stmt.compile().params.values())
+
+
+async def test_a_mixed_books_answered_leg_has_its_stored_price_withdrawn(monkeypatch):
+    """The ship. The venue answered this leg, so the quote we stored for it
+    goes — on a game our own row says has not kicked off."""
+    stats, session = await _run(
+        monkeypatch, _mixed_book(), {_SAN: None, _ALA: None}, pre_kickoff=True
+    )
+
+    assert _text_of(session, _KALSHI_WITHDRAW_PRE_KICKOFF_LEG_SQL) == [
+        {"market_id": 60482103, "external_id": _SAN}
+    ]
+    assert stats["pre_kickoff_settled_legs_withdrawn"] == 1
+    assert stats["pre_kickoff_settled_legs_skipped"] == 1
+
+
+async def test_the_trading_sibling_keeps_its_real_price(monkeypatch):
+    """The other half of the ship's name, and the reason the market-grain
+    statement could not be used here: `KXEREDIVISIETOTAL`'s live rung is a
+    real price on a real contract and must survive its settled neighbour."""
+    _stats, session = await _run(
+        monkeypatch, _mixed_book(), {_SAN: None, _ALA: None}, pre_kickoff=True
+    )
+
+    priced = _price_writes(session)
+    assert len(priced) == 1, "the trading leg lost its price"
+    # Asserted on WHICH leg, not on the count: a repair that withdrew the
+    # wrong leg and priced the settled one writes exactly one price too.
+    assert _ALA in _bound_values(priced[0])
+    assert _SAN not in _bound_values(priced[0])
+
+
+async def test_the_market_grain_statement_is_never_spent_on_a_mixed_book(monkeypatch):
+    """The failure mode this ship had to avoid, asserted directly rather than
+    inferred from the price count: one `fo.market_id = :market_id` UPDATE here
+    would withdraw every rung of a ladder whose other rungs still trade."""
+    stats, session = await _run(
+        monkeypatch, _mixed_book(), {_SAN: None, _ALA: None}, pre_kickoff=True
+    )
+
+    assert _text_of(session, _KALSHI_WITHDRAW_PRE_KICKOFF_SQL) == []
+    assert stats["pre_kickoff_quotes_withdrawn"] == 0
+
+
+async def test_the_event_hero_is_left_standing_on_a_mixed_book(monkeypatch):
+    """`_KALSHI_WITHDRAW_EVENT_HERO_SQL` is market-grain too, and its first arm
+    fires on nothing but `eligibility.market_id`. On a mixed book that arm
+    cannot tell the answered leg's stamp from a trading leg's, so running it
+    here would delete a live Kalshi speaker from the event. The event-level
+    key is a separate, named residual — not something to take on the way
+    past."""
+    stats, session = await _run(
+        monkeypatch, _mixed_book(), {_SAN: None, _ALA: None}, pre_kickoff=True
+    )
+
+    assert _text_of(session, _KALSHI_WITHDRAW_EVENT_HERO_SQL) == []
+    assert stats["pre_kickoff_heroes_cleared"] == 0
+
+
+async def test_after_kickoff_the_answered_leg_keeps_its_closing_line(monkeypatch):
+    """SETTLED MEANS SETTLED (gotcha #21). The event's own clock scopes this
+    exactly as it scopes every other branch in this file: once the contest has
+    started, the answer IS the number, and it is calibration's evidence."""
+    stats, session = await _run(
+        monkeypatch, _mixed_book(), {_SAN: None, _ALA: None}, pre_kickoff=False
+    )
+
+    assert _text_of(session, _KALSHI_WITHDRAW_PRE_KICKOFF_LEG_SQL) == []
+    assert stats["pre_kickoff_settled_legs_withdrawn"] == 0
+    assert len(_price_writes(session)) == 2
+
+
+async def test_a_wholly_answered_book_does_not_also_pay_the_leg_statement(monkeypatch):
+    """Anti-double-spend. Section 2's market-grain path `continue`s before the
+    price loop, so the two withdrawals can never both run on one market — and
+    if the market-level `continue` were ever dropped, this is the assertion
+    that says the same rows were withdrawn twice."""
+    stats, session = await _run(
+        monkeypatch, _settled_book(), {_SAN: None, _ALA: None}, pre_kickoff=True
+    )
+
+    assert _text_of(session, _KALSHI_WITHDRAW_PRE_KICKOFF_LEG_SQL) == []
+    assert stats["pre_kickoff_settled_legs_withdrawn"] == 0
+    assert stats["pre_kickoff_quotes_withdrawn"] == 3
+
+
+async def test_a_leg_we_never_stored_is_not_withdrawn(monkeypatch):
+    """There is no artifact to take back on a leg we do not hold, and the
+    statement is not run to discover that. The skip still counts: the decision
+    happened, the row did not."""
+    stats, session = await _run(
+        monkeypatch, _mixed_book(), {_ALA: None}, pre_kickoff=True
+    )
+
+    assert _text_of(session, _KALSHI_WITHDRAW_PRE_KICKOFF_LEG_SQL) == []
+    assert stats["pre_kickoff_settled_legs_withdrawn"] == 0
+    assert stats["pre_kickoff_settled_legs_skipped"] == 1
+
+
+async def test_the_counter_counts_rows_and_the_skip_counts_the_decision(monkeypatch):
+    """The discipline section 5 sets, applied to the new pair. The statement
+    is idempotent (`fo.current_probability IS NOT NULL`), so on the second
+    hour it changes nothing and must SAY so — a counter that reported the
+    decision would claim a withdrawal every hour forever."""
+    stats, session = await _run(
+        monkeypatch,
+        _mixed_book(),
+        {_SAN: None, _ALA: None},
+        pre_kickoff=True,
+        leg_rows=[],
+    )
+
+    assert _text_of(session, _KALSHI_WITHDRAW_PRE_KICKOFF_LEG_SQL) == [
+        {"market_id": 60482103, "external_id": _SAN}
+    ]
+    assert stats["pre_kickoff_settled_legs_withdrawn"] == 0
+    assert stats["pre_kickoff_settled_legs_skipped"] == 1
+
+
+async def test_a_withdrawn_leg_writes_no_chart_point(monkeypatch):
+    """A snapshot for a price we have just taken back is the same fiction as
+    the price itself — section 2's rule, on the leg-grain path."""
+    _stats, session = await _run(
+        monkeypatch, _mixed_book(), {_SAN: None, _ALA: None}, pre_kickoff=True
+    )
+
+    for snap in _snapshot_writes(session):
+        assert _SAN not in _bound_values(snap)
+
+
+def test_the_leg_statement_differs_from_its_sibling_by_exactly_one_clause():
+    """🔴 THE SAFETY OF THIS STATEMENT IS ENTIRELY ITS SCOPE, SO THE SCOPE IS
+    WHAT GETS ASSERTED — and asserting the two clauses as substrings is the
+    vacuous version, because they are true of any statement that pasted them
+    in beside a widened WHERE.
+
+    The claim is stronger and it is the one that matters: this statement IS
+    `_KALSHI_WITHDRAW_PRE_KICKOFF_SQL` with a leg filter added. Anything else
+    someone adds or drops later — a relaxed clock, a dropped
+    `current_probability IS NOT NULL`, a second column in the SET list —
+    changes the diff and reddens this.
+    """
+    market_grain = str(_KALSHI_WITHDRAW_PRE_KICKOFF_SQL)
+    leg_grain = str(_KALSHI_WITHDRAW_PRE_KICKOFF_LEG_SQL)
+
+    assert leg_grain != market_grain
+    market_lines = [ln.strip() for ln in market_grain.splitlines() if ln.strip()]
+    leg_lines = [ln.strip() for ln in leg_grain.splitlines() if ln.strip()]
+
+    added = [ln for ln in leg_lines if ln not in set(market_lines)]
+    assert added == ["AND fo.external_id = :external_id"], added
+    # Both directions. "Added exactly one clause" is silent about a clause
+    # that went MISSING, and every clause in the sibling is load-bearing:
+    # dropping `e.commence_time > NOW()` would widen this to every settled
+    # game we hold and would add nothing to `added`.
+    removed = [ln for ln in market_lines if ln not in set(leg_lines)]
+    assert removed == [], removed
+
+    # And the clock the whole file is scoped by is present, stated once here
+    # so a reader of this test does not have to diff two strings to see it.
+    assert "e.status = 'scheduled'" in leg_grain
+    assert "e.commence_time > NOW()" in leg_grain
