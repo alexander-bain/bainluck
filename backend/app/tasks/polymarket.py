@@ -167,6 +167,62 @@ _TAG_TO_CATEGORY: dict[str, str] = {
     "cricket": "cricket",
     "ipl": "cricket",
     "rugby": "rugby",
+    # #6411 (#6377's follow-up). Polymarket tags every Aussie Rules event with the code
+    # it is actually played under — `afl` or `aflw`, read off Gamma 2026-09-15
+    # (`afl-haw-bri-2026-09-19` tags `[sports, games, afl]`; `aflw-haw-nmk-
+    # 2026-09-18` tags `[sports, games, aflw]`) — and NEITHER was read here, so
+    # `_tags_to_category` fell through to the `sports` catch-all and the sport
+    # was then GUESSED from the club nicknames. Hawks, Suns, Kangaroos read as
+    # basketball; measured over 30 days, 17 fixtures scattered across THREE
+    # unrelated catch-alls (`basketball_other` 11, `americanfootball_other` 4,
+    # `motorsport_other` 3) — the Q453 unmapped-series signature.
+    #
+    # #6377 stopped the MINT (both keys are in `ODDS_API_COVERED_PREFIXES`, so
+    # `covered_league_for_matchup` refuses). It could not make the market LINK,
+    # because the guess survives in the stored category. Measured 2026-09-15,
+    # and this is the user-visible half — 3 of 3 upcoming AFL/AFLW fixtures:
+    #
+    #     15312400 aussierules_aflw  Hawthorn v North Melbourne   0 markets
+    #     15312509 basketball_other  Hawthorn v North Melbourne   1 market
+    #     15310885 aussierules_afl   Hawthorn v Brisbane          0 markets
+    #     15311099 basketball_other  Hawthorn v Brisbane          1 market
+    #     15312406 aussierules_aflw  Essendon v Gold Coast        0 markets
+    #     15312508 basketball_other  Essendon v Gold Coast        1 market
+    #
+    # The real game shows no Polymarket price; its phantom twin holds it. That
+    # is #5544's defect one competition over, against the marquee axiom.
+    #
+    # Honouring the tag is what links it: the rows that already reach
+    # `llm_sport_category='aussierules'` — by the title fallback, which gets it
+    # right only some of the time — DO land on the real fixture (market 59487691
+    # -> 15290839 `aussierules_afl`; 60359740 -> 15306868 `aussierules_aflw`).
+    # The tag makes that outcome deterministic instead of a coin toss.
+    #
+    # Both codes map to the one category because `aussierules` is the sport; the
+    # COMPETITION is resolved downstream off `teams`, where all 48 clubs are
+    # present (30 `aussierules_afl` + 18 `aussierules_aflw`, read 2026-09-15).
+    # Distinguishing the two here would put a competition in a sport-category
+    # field, and `LLM_CATEGORY_TO_SPORT_PREFIX` has no key to receive it.
+    # CERT-2924's required repair, `6411-READ-AFL-WOMEN-VENUE-LABEL`. THE KEYS
+    # HERE ARE MATCHED AGAINST TAG **LABELS**, NOT SLUGS: `_parse_event` stores
+    # `tag.get("label", "")` (polymarket_api.py), so the slug never reaches this
+    # map. Read off Gamma 2026-09-15, the two codes do NOT agree —
+    #
+    #     afl-haw-bri-2026-09-19   label 'AFL'         slug 'afl'
+    #     aflw-haw-nmk-2026-09-18  label 'AFL Women'   slug 'aflw'
+    #
+    # — so `aflw` alone matched nothing and the women's code, which is 8 of the
+    # 10 fixtures the venue currently lists and 2 of this ship's 3 named
+    # specimens, kept falling through to the basketball guess. The map's own
+    # convention already anticipated this: every hyphenated slug it carries has
+    # its spoken label beside it (`table tennis` / `table-tennis`, `horse
+    # racing` / `horse-racing`). `aflw` was a slug with no label twin.
+    #
+    # The slug forms are kept because `_parse_event` also accepts a raw list of
+    # strings, and nothing guarantees which shape an endpoint sends.
+    "afl": "aussierules",
+    "afl women": "aussierules",
+    "aflw": "aussierules",
     "motorsports": "motorsports",
     "f1": "motorsports",
     "formula 1": "motorsports",
@@ -297,6 +353,14 @@ _SPORT_CATEGORIES = {
     "basketball", "football", "baseball", "hockey", "mma", "soccer",
     "golf", "tennis", "boxing", "cricket", "rugby", "motorsports",
     "olympics", "esports", "horse_racing", "lacrosse",
+    # #6411 (#6377's follow-up), and the same reason `table_tennis` is below: without it
+    # the `afl`/`aflw` entries above would return ("aussierules", "aussierules")
+    # rather than ("championship", "aussierules"), putting a SPORT name in the
+    # internal category field. `championship` is what these rows already carry
+    # when the title fallback classifies them (production 2026-09-15: 20
+    # `aussierules` markets on `championship`, 3 on `game_prop`), so honouring
+    # the tag must be byte-identical to the fallback's answer, not a new shape.
+    "aussierules",
     # Q493: present so a "Table Tennis" tag yields ("championship",
     # "table_tennis") — byte-identical to what arm 1 has always returned. This
     # set is read ONLY by _tags_to_category above; the link-rate denominator is
