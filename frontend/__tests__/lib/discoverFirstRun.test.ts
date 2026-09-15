@@ -21,6 +21,22 @@ import {
   type FirstRunStorage,
 } from "@/lib/discoverFirstRun";
 
+/**
+ * #6445 — the module as it behaves when the challenge surfaces are shipping.
+ * Used by the `areGamesUnlocked` describe only; every other describe here tests
+ * a function the launch flag does not touch and imports it normally above.
+ */
+function loadWithGamesShipping(): typeof import("@/lib/discoverFirstRun") {
+  let mod!: typeof import("@/lib/discoverFirstRun");
+  jest.isolateModules(() => {
+    jest.doMock("@/lib/launchSurfaces", () => ({ CHALLENGE_SURFACES_ENABLED: true }));
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    mod = require("@/lib/discoverFirstRun");
+  });
+  jest.dontMock("@/lib/launchSurfaces");
+  return mod;
+}
+
 const FRESH: FirstRunStorage = {
   oriented: false,
   swiped: false,
@@ -125,6 +141,23 @@ describe("the orientation line cannot expire on a timer (the P3 trap)", () => {
 });
 
 describe("areGamesUnlocked", () => {
+  // #6445 — THESE ARMS DESCRIBE THE COHORT RULE, WHICH IS UNCHANGED AND IS NOT
+  // WHAT SHIPS TODAY.
+  //
+  // The game surfaces are hidden for the initial release, so the live function
+  // answers `false` for every reader and five arms below went red. That red is
+  // an artefact of the suppression, not a broken rule: nothing about who earns
+  // games was edited. Rewriting them to expect `false` would delete the only
+  // test of the Queue 309 gate and leave a restored feature unguarded — so the
+  // describe binds the module with the launch flag forced ON and keeps asking
+  // the question it was written to ask.
+  //
+  // The gate itself is asserted in
+  // `__tests__/lib/challengeSurfacesHiddenForLaunch6445.test.ts`, which walks
+  // the whole input space against the REAL flag. Neither file can go green on
+  // the other's failure: this one would miss the gate being deleted, that one
+  // would miss the cohort rule being deleted.
+  const { areGamesUnlocked } = loadWithGamesShipping();
   const SCROLLED = { hasScrolled: true, engagedThisSession: false };
 
   it("is TRUE immediately for anyone who is not a first-run reader", () => {

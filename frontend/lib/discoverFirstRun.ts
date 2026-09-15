@@ -1,5 +1,10 @@
 // Discover first-run orientation cohort + game gating (Queue 309, Items 1-3).
 //
+// #6445: the game surfaces are hidden for the initial release. `areGamesUnlocked`
+// reads `CHALLENGE_SURFACES_ENABLED` before it reads anything about the reader,
+// so every arm below is currently unreachable — kept intact, not deleted, so the
+// cohort logic is whole the moment the flag flips back.
+//
 // All of the DECISION logic lives here as pure functions taking plain data, for
 // two reasons:
 //
@@ -12,6 +17,8 @@
 //     orientation line vanish while a first-time reader is still reading it.
 //     The persistence mechanism is copied; the timer deliberately is not. A
 //     state that cannot be derived from elapsed time cannot expire on one.
+
+import { CHALLENGE_SURFACES_ENABLED } from "./launchSurfaces";
 
 export const ORIENTATION_STORAGE_KEY = "discover_oriented";
 export const GAMES_UNLOCKED_STORAGE_KEY = "discover_games_unlocked";
@@ -115,6 +122,12 @@ export function areGamesUnlocked(input: {
   engagedThisSession: boolean;
 }): boolean {
   const { firstRun, storage, cardsSeen, hasScrolled, engagedThisSession } = input;
+  // #6445 — the product question comes before the reader question, and it
+  // dominates every arm below. This function answers "should this reader see
+  // games"; "we are not shipping games yet" is an answer to that, and putting
+  // it anywhere else would leave the two `true` shortcuts (a returning reader,
+  // an engaged session) still opening the surfaces the release is hiding.
+  if (!CHALLENGE_SURFACES_ENABLED) return false;
   if (!firstRun) return true;
   if (engagedThisSession) return true;
   if (storage?.gamesUnlocked) return true;
