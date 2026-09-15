@@ -1095,8 +1095,45 @@ def compute_highlight(
                 result.score += WEIGHTS["favorite_switched"]
                 result.reasons.append("favorite_switched")
 
-                # If finished with upset, big bonus
-                if flags.is_recently_finished:
+                # If finished with upset, big bonus.
+                #
+                # #6279 — "Recent upset" NAMES THE FIELD, SO THE SCOREBOARD HAS
+                # TO AGREE. That is #4580's rule for the live capsule
+                # ("Upset brewing"), applied to the finished chip, which never
+                # got it: this branch is reached purely on `favorite_switched`,
+                # a PRICE event, and a final price does not settle to 0/1.
+                #
+                # Served on production 2026-09-15T02:19Z: event 15307167,
+                # Orebro SK 1 - 1 Nordic United FC, `status=completed`, chipped
+                # `Recent upset` over a scoreline where nobody won. Its price
+                # had drifted to 0.425/0.575 against an opening favourite of
+                # `home`, so the switch fired on the drift alone. The caption
+                # one line below it was already silent (#6204 gave that sentence
+                # its tie branch this morning) — one card, one question, two
+                # answers, and the only thing separating them was which module
+                # got the guard.
+                #
+                # `someone_is_leading` is `score_is_decided`, computed once at
+                # the top of this function, and its third state is why the test
+                # is `is not False` rather than a truthiness check: `None` means
+                # the scoreboard is UNREADABLE (both columns NULL), not that the
+                # match was level. Collapsing it would silently withdraw the
+                # chip from every final we cannot score, which is a different
+                # defect and has no specimen. Only a KNOWN draw is refused here.
+                #
+                # Deliberately NOT gated on the card's printed `Pre-match` row:
+                # on a three-way soccer card that row hands the whole draw to
+                # the away side (#6277), so on 15298124 (Villarreal 1 - 2 Real
+                # Betis) the chip is the only TRUE statement on the card. A
+                # disagreement rule there deletes the alarm and keeps the lie.
+                #
+                # This gate is not display-only and is not pretending to be:
+                # `is_upset` also carries `WEIGHTS["recent_finish_upset"]`, the
+                # `"upset"` keyword that escapes the Discover event demotion
+                # (`routes/feed.py`), `should_highlight`, the `signal:upset`
+                # taxonomy tag and the served `is_upset` field. A drawn match
+                # earns none of them.
+                if flags.is_recently_finished and flags.someone_is_leading is not False:
                     flags.is_upset = True
                     result.score += WEIGHTS["recent_finish_upset"]
                     result.reasons.append("upset")
