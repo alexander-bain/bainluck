@@ -340,7 +340,28 @@ class DataGolfAPIService(BaseAPIClient):
         Uses the historical-raw-data/rounds endpoint which provides per-round
         scoring data for any completed event.
 
-        Returns an empty list if the event is not found or the endpoint errors.
+        Returns an empty list ONLY when DataGolf itself says the event is not in
+        its historical index (404, or a 200 carrying no rows). Every other
+        failure RAISES.
+
+        #6211: this method used to fold 403 and ReadTimeout into the same ``[]``
+        as a 404, and its only caller — ``_datagolf_recovery`` — reads ``[]`` as
+        "event genuinely not found" and writes a PERMANENT
+        ``datagolf_recovery_residual`` flag that removes the whole market from the
+        published calibration curve. So a plan/entitlement refusal or one slow
+        response was being recorded as a durable truth claim about whether a
+        tournament ever happened. Measured on production 2026-09-15: 322 of 340
+        resolved DataGolf markets (94.7%) carried the flag, against a code comment
+        in ``precompute_calibration`` that says the residual "is expected to be
+        ~0", leaving a 36-row winner-only residue published as a 36.5pp accuracy
+        figure about a named third-party provider.
+
+        This is gotcha #36 (never catch-all in an API client returning an
+        "absent" sentinel — ``[]`` may only mean 404) and gotcha #53 (an empty
+        response is a response SHAPE, not an absence). A 403 is the venue
+        declining to answer and a timeout is no answer at all; neither is
+        evidence that the event does not exist, and the caller cannot tell them
+        apart from a real absence once they share a return value.
         """
         params: dict = {"tour": _historical_tour(tour)}
         if event_id:
@@ -351,16 +372,14 @@ class DataGolfAPIService(BaseAPIClient):
         try:
             data = await self._get("historical-raw-data/rounds", params)
         except httpx.HTTPStatusError as e:
-            if e.response.status_code in (404, 403):
+            if e.response.status_code == 404:
                 logger.info(
-                    "DataGolf historical results unavailable: tour=%s event=%s year=%s status=%d",
-                    tour, event_id, year, e.response.status_code,
+                    "DataGolf historical results: event not in index "
+                    "tour=%s event=%s year=%s",
+                    tour, event_id, year,
                 )
                 return []
             raise
-        except httpx.ReadTimeout:
-            logger.warning("DataGolf historical results timeout: tour=%s event=%s", tour, event_id)
-            return []
 
         # The endpoint returns a list of player-round rows.  Aggregate to get
         # each player's final position — take the row with the highest round

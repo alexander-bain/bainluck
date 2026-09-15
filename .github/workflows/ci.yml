@@ -1259,6 +1259,31 @@ jobs:
             exit 1
           fi
 
+      - name: Calibration DataGolf symmetric exclusion (real Postgres)
+        # #6211. `market_info` withholds a DataGolf market whose field we cannot
+        # establish, WHOLE — winners and losers together. Its comment said that
+        # flag "is expected to be ~0"; production 2026-09-15 read 322 of 340
+        # markets (94.7%), leaving a 36-row all-winners residue published as a
+        # 36.5pp accuracy figure about a named third-party provider.
+        #
+        # A population claim, so rows rather than strings: the sibling suite
+        # `tests/test_datagolf_recovery.py` guards this area with
+        # `inspect.getsource` assertions and every one of them was green for the
+        # whole life of the defect. Three-armed — a clean control that must
+        # publish BOTH winners and losers (without it an empty result proves
+        # nothing), the terminal `residual` state, and the new retryable
+        # `unverified` state, which must be withheld just as symmetrically or it
+        # becomes the same censoring in the other direction (D112).
+        run: |
+          set -o pipefail
+          python -m pytest \
+            tests/integration/test_calibration_datagolf_symmetric_exclusion_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/dgsym.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/dgsym.txt; then
+            echo "::error::DataGolf symmetric-exclusion contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Calibration mode-price source scope, peer sites (real Postgres)
         # #2098 / ruling 125, sites TWO and THREE — CAL-P091. The step above
         # guards the PRODUCER. The same three-line defect also sat in
