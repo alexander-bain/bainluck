@@ -190,3 +190,56 @@ export function buildLeagueSections(
   }
   return sections;
 }
+
+/**
+ * ux/1282 — #3246: THE SUBTITLE NAMES ONLY THE SECTIONS THAT ARE ACTUALLY THERE.
+ *
+ * The header sentence was unconditional prose — "Win probabilities for live and
+ * upcoming games. Finished games below." — beside a section list that has been
+ * conditional since #2948. Measured on production at 390px, 2026-09-14:
+ * `/sports/soccer_uefa_nations_league` printed the clause over `Upcoming 30` and
+ * no finished section at all.
+ *
+ * ⚠️ THE TWO ARMS ARE DIFFERENT DEFECTS WITH ONE SYMPTOM, and only this one
+ * covers both. #3246 was filed off tennis, where the finished bucket exists and
+ * `/api/events` clips it at yesterday 00:00 — widening that floor (the issue's
+ * option 2) fixes that arm. The soccer arm has nothing to widen TO: the league
+ * holds 2 completed rows, both 2026-03-26, so it renders zero finished cards at
+ * every floor short of six months. Any league in an off-season or between
+ * international windows is in that state. Option 2 remains worth having for the
+ * tennis arm and for reuniting this page with `/sport/{sport}/{league}`; it is
+ * not what makes the sentence true.
+ *
+ * The #2948 comment on the sentence it replaced records the reasoning: the old
+ * subtitle "was false of 17 of the 32 cards below it", so it was replaced with
+ * one true of "every composition". The compositions that reasoning did not reach
+ * are the ones where a promised bucket is EMPTY — which is most of the calendar
+ * for most leagues.
+ *
+ * Derived from `sections` rather than from the raw events, deliberately: the
+ * page renders `sections`, so reading the same value is the only way the
+ * sentence and the headings cannot disagree. A second partition of `events`
+ * here would be a third copy of the bucket rule (the module docblock's
+ * load-bearing paragraph) and could drift from what is on screen.
+ *
+ * Returns "" when there is nothing to describe — an empty payload emits no
+ * sections, and the empty state below it already says what the page is for.
+ */
+export function leagueSubtitle(sections: LeagueSection[]): string {
+  // The card count, not just the key: `LeagueSection` documents that a section
+  // is never emitted empty, and this function is the one place where trusting
+  // that would put a promise on screen with nothing behind it. The predicate
+  // that decides a sentence should not be the one borrowing an invariant.
+  const has = (key: LeagueSectionKey) =>
+    sections.some((s) => s.key === key && s.events.length > 0);
+  const sentences: string[] = [];
+  // One sentence for both, because they render as one list of games you can
+  // still watch or still wait for, and a league mid-round has both.
+  if (has("live") || has("upcoming")) {
+    sentences.push("Win probabilities for live and upcoming games.");
+  }
+  if (has("finished")) {
+    sentences.push("Finished games below.");
+  }
+  return sentences.join(" ");
+}

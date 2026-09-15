@@ -8,7 +8,7 @@ import EventCard from "@/components/EventCard";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
-import { buildLeagueSections } from "@/lib/sports/leagueSections";
+import { buildLeagueSections, leagueSubtitle } from "@/lib/sports/leagueSections";
 import {
   LEAGUE_WINDOW_DAYS,
   LEAGUE_OFFSEASON_HORIZON_DAYS,
@@ -115,6 +115,13 @@ export default function SportPage({ params }: SportPageProps) {
   // and My Stuff so the three cannot drift.
   const sections = useMemo(() => buildLeagueSections(events), [events]);
 
+  // #3246 — the header sentence is composed FROM `sections`, the same value the
+  // headings below are rendered from, so the page cannot promise a section it
+  // does not render. The clause and the reasoning live with the section rule in
+  // `lib/sports/leagueSections.ts`.
+  const subtitle = useMemo(() => leagueSubtitle(sections), [sections]);
+  const headerLine = [groupLabel, subtitle].filter(Boolean).join(" • ");
+
   return (
     <div className="space-y-6">
       {/* Back link */}
@@ -153,11 +160,19 @@ export default function SportPage({ params }: SportPageProps) {
         {/* #2948 — the old subtitle read "Upcoming games with win
             probabilities", which was false of 17 of the 32 cards below it.
             What is true of every composition is the ORDER, which is also the
-            thing a reader needs told. */}
-        <p className="text-text-secondary">
-          {groupLabel && `${groupLabel} • `}
-          Win probabilities for live and upcoming games. Finished games below.
-        </p>
+            thing a reader needs told.
+
+            #3246 — and it is only true of the compositions that HAVE both
+            halves. The sentence was unconditional beside a section list that
+            has been conditional since #2948, so an off-season league printed
+            "Finished games below" over nothing at all. It is now built from
+            `sections`; when there is nothing to describe the line is the
+            league's own name, and the empty state below says the rest. */}
+        {headerLine && (
+          <p className="text-text-secondary" data-league-subtitle>
+            {headerLine}
+          </p>
+        )}
         {/* #3028 — the widened window says so. A reader who lands on an NBA
             page in September and sees an October fixture at the top is owed
             the reason; the alternative is a page that silently answers a
