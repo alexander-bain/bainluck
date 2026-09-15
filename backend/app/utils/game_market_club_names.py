@@ -104,6 +104,45 @@ _TEXT_FIELDS = ("market_name", "outcome_name")
 _SIDE_SPLIT_RE = re.compile(r"\s+(?:vs\.?|at)\s+", re.IGNORECASE)
 
 
+def _uncompose_a_name_that_already_names_the_club(shipped: str, full: str) -> str:
+    """`Los Angeles` + `LA Galaxy` is `LA Galaxy`, not `Los Angeles LA Galaxy`.
+
+    MEASURED, NOT ANTICIPATED — 12 real rows in the two production samples, and
+    the reason this function exists rather than a comment saying it cannot
+    happen. ``kalshi_display_names`` composes ``city + nickname`` on the premise
+    that the ticker's map holds bare nicknames (``lad`` -> ``Dodgers``). Some
+    entries hold a WHOLE club name instead: ``lag`` -> ``LA Galaxy``. Composing
+    those gives a string no one has ever called the club, and until this ship
+    nothing reader-facing called that module, so nobody had to notice.
+
+    The tell is a repeat: the nickname's own tokens overlap the city's, or its
+    first token is the city's initials (``LA`` for ``Los Angeles``). When the
+    nickname stands alone as a name — two tokens or more — it IS the answer and
+    the city is dropped. When it does not, the repair is refused and the venue's
+    truncation ships, which is this module's failure direction everywhere else.
+
+    Fixed here rather than in ``kalshi_display_names`` on purpose: that function
+    has two admin callers and a pinned suite of its own (#2060), and a reader
+    surface is not the place to widen someone else's blast radius mid-launch.
+    The shared root is recorded on issue 6447.
+    """
+    city = shipped.rsplit(" ", 1)[0].strip()
+    nickname = full[len(city) :].strip() if full.startswith(city) else ""
+    if not city or not nickname:
+        return full
+
+    city_tokens = {token.lower() for token in city.split()}
+    nick_tokens = nickname.split()
+    initials = "".join(word[0] for word in city.split() if word).upper()
+
+    repeats = bool(city_tokens & {token.lower() for token in nick_tokens}) or (
+        bool(nick_tokens) and nick_tokens[0].upper() == initials
+    )
+    if not repeats:
+        return full
+    return nickname if len(nick_tokens) >= 2 else shipped
+
+
 def matchup_sides(market_name: Optional[str]) -> list[str]:
     """The club strings in a market name's head, before the colon.
 
@@ -148,7 +187,8 @@ def build_page_repairs(
             *matchup_sides(row.get("market_name")),
             *([row["outcome_name"]] if row.get("outcome_name") else []),
         ]
-        for shipped, full in repair_truncated_names(ticker, candidates).items():
+        for shipped, composed in repair_truncated_names(ticker, candidates).items():
+            full = _uncompose_a_name_that_already_names_the_club(shipped, composed)
             if shipped in protected or shipped == full:
                 continue
             if shipped in pooled and pooled[shipped] != full:

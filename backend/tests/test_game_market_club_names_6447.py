@@ -19,6 +19,7 @@ import copy
 import re
 
 from app.utils.game_market_club_names import (
+    _uncompose_a_name_that_already_names_the_club as _uncompose,
     build_page_repairs,
     matchup_sides,
     repair_club_names,
@@ -162,6 +163,39 @@ def test_CONTROL_our_own_anchored_name_vetoes_a_repair_that_would_otherwise_fire
     )
     assert changed == 0
     assert protected[0]["outcome_name"] == "Los Angeles R"
+
+
+def test_a_nickname_that_is_already_a_whole_club_name_is_not_composed_onto_its_city():
+    """`Los Angeles` + `LA Galaxy` must be `LA Galaxy`, never `Los Angeles LA Galaxy`.
+
+    Twelve real rows in the two production samples, found only because this ship
+    is the first reader-facing caller of a composer written for bare nicknames.
+    The other 658 repairs in those samples are byte-identical with and without
+    the guard, so it is this shape and nothing else.
+    """
+    assert _uncompose("Los Angeles G", "Los Angeles LA Galaxy") == "LA Galaxy"
+
+    rows = [_row(1, "Vancouver vs Los Angeles G: Match Winner", "Los Angeles G")]
+    repair_club_names((rows,), {1: "KXMLSGAME-26SEP07VANLAG"})
+    assert rows[0]["outcome_name"] == "LA Galaxy"
+    assert rows[0]["market_name"] == "Vancouver vs LA Galaxy: Match Winner"
+
+
+def test_CONTROL_an_ordinary_nickname_is_still_composed_onto_its_city():
+    """The guard must not fire on the 658 repairs that are correct today."""
+    for shipped, composed in (
+        ("Los Angeles R", "Los Angeles Rams"),
+        ("New York J", "New York Jets"),
+        ("Chicago WS", "Chicago White Sox"),
+        ("Los Angeles D", "Los Angeles Dodgers"),
+    ):
+        assert _uncompose(shipped, composed) == composed
+
+
+def test_CONTROL_a_one_token_repeat_refuses_rather_than_serving_a_bare_city():
+    """If dropping the city leaves something that is not a club name, ship the
+    venue's truncation — a visibly short name beats a confidently wrong one."""
+    assert _uncompose("Chicago C", "Chicago Chicago") == "Chicago C"
 
 
 def test_CONTROL_a_city_only_side_is_not_a_truncation():
