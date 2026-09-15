@@ -426,6 +426,11 @@ async def run_soccer_ghost_twin_sweep(
             {
                 "rows_read": len(rows),
                 "blocks_examined": plan.blocks_examined,
+                # Reported beside the first pass's, never folded into it: the two
+                # keys reach different populations and a single total cannot say
+                # which of them stopped reaching its own.
+                "residual_blocks_examined": plan.residual_blocks_examined,
+                "residual_pairs_found": plan.residual_tags,
                 "pairs_found": len(plan.tags),
                 "already_tagged": len(plan.tags) - len(todo),
                 "tags_to_write": len(todo),

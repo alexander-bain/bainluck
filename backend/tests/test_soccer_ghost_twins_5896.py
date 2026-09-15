@@ -49,6 +49,7 @@ from app.utils.soccer_ghost_twins import (  # noqa: E402
     block_key,
     classify_block,
     fold_unclassified_blocks,
+    loose_block_key,
     plan_ghost_tags,
     row_has_final_score,
     row_is_fixture_anchored,
@@ -864,3 +865,215 @@ def test_every_soccer_key_shares_one_llm_category():
         == "soccer"
     )
     assert SPORT_PREFIX_TO_LLM_CATEGORY.get("soccer") == "soccer"
+
+
+# ── 7. the second pass: the same rule, with the club's legal suffix folded ───
+#
+# What the first pass leaves behind was measured by lane1 on production
+# 2026-09-14 (comment 5670673213 on #3813): 18 ghosts holding 59 markets whose
+# canonical serves zero, and the reader-visible failure is not a duplicate card —
+# it is /events/15307330, Sligo Rovers 1-3 Galway United, Final, chart, and then
+# no market rail at all, because its settled goal-total rungs sit on a row the
+# page never reads.
+#
+# The tests below pin the three things that make the second pass safe: it can
+# only ADD, it still refuses to cross two NAMED competitions, and the suffix it
+# strips is a legal form and never a squad.
+
+
+#: The production specimen the second pass exists for, 2026-09-14. One character
+#: of difference — `FC` — put these two rows in different blocks.
+GWANGJU_GHOST = row(
+    15307681,
+    "Gwangju",
+    "FC Anyang",
+    datetime(2026, 9, 13, 8, 30, tzinfo=timezone.utc),
+    status="suspended",
+    sport_key=UNCLASSIFIED_SPORT_KEY,
+)
+GWANGJU_REAL = real_row(
+    15306857,
+    "Gwangju FC",
+    "FC Anyang",
+    datetime(2026, 9, 13, 5, 30, tzinfo=timezone.utc),
+    sport_key="soccer_korea_kleague1",
+)
+GWANGJU_NOW = datetime(2026, 9, 14, 20, 0, tzinfo=timezone.utc)
+
+
+def test_the_suffix_specimen_is_decided_by_the_second_pass():
+    """Gwangju: the first pass cannot see this pair, the second can.
+
+    `Gwangju` and `Gwangju FC` are one club, so the narrow key puts the ghost and
+    its canonical in different blocks and `classify_block` is never handed them.
+    """
+    plan = plan_ghost_tags([GWANGJU_GHOST, GWANGJU_REAL], now=GWANGJU_NOW)
+
+    assert [(t.ghost_id, t.canonical_id) for t in plan.tags] == [(15307681, 15306857)]
+    assert plan.residual_tags == 1, "it must be the SECOND pass that found it"
+    assert plan.blocks_examined == 0, "the narrow key must still see two blocks"
+
+
+def test_the_first_pass_is_what_the_second_one_cannot_touch():
+    """The whole safety argument, as an assertion: adding rows the second pass
+    can reach never changes what the first pass decided.
+
+    Sevilla is decidable today. This is the exact pair the rejected design — one
+    widened `block_key` instead of two passes — turned into a refusal, by merging
+    two blocks that had each already resolved.
+    """
+    sevilla_suffixed_ghost = ghost_row(
+        15400010,
+        "Sevilla FC",
+        "Valencia CF",
+        datetime(2026, 9, 13, 20, 0, tzinfo=timezone.utc),
+    )
+
+    alone = plan_ghost_tags([SEVILLA_GHOST, SEVILLA_REAL], now=NOW)
+    crowded = plan_ghost_tags(
+        [SEVILLA_GHOST, SEVILLA_REAL, sevilla_suffixed_ghost], now=NOW
+    )
+
+    assert [(t.ghost_id, t.canonical_id) for t in alone.tags] == [(15298125, 15298233)]
+    assert (15298125, 15298233) in [(t.ghost_id, t.canonical_id) for t in crowded.tags]
+
+
+def test_a_block_the_first_pass_refused_is_never_resolved_by_the_second():
+    """Ambiguity is monotone, and that is what makes re-blocking safe at all.
+
+    Two candidate ghosts under one narrow key are refused. The second pass sees
+    the same two rows plus a suffixed third; a larger block can only add pairs,
+    so it must refuse too and must never pick one.
+    """
+    ghost_a = ghost_row(
+        15400011, "Sevilla", "Valencia", datetime(2026, 9, 13, 19, 0, tzinfo=timezone.utc)
+    )
+    ghost_b = ghost_row(
+        15400012, "Sevilla", "Valencia", datetime(2026, 9, 13, 21, 0, tzinfo=timezone.utc)
+    )
+    ghost_c = ghost_row(
+        15400013,
+        "Sevilla FC",
+        "Valencia",
+        datetime(2026, 9, 13, 22, 0, tzinfo=timezone.utc),
+    )
+
+    plan = plan_ghost_tags([ghost_a, ghost_b, ghost_c, SEVILLA_REAL], now=NOW)
+
+    assert plan.tags == []
+    assert plan.refusals, "a refusal is reported, never silently dropped"
+
+
+def test_the_second_pass_still_refuses_to_cross_two_named_competitions():
+    """The Köln pair, and the reason the sport key did not leave the key.
+
+    Measured on production 2026-09-14 over 365 days of played, scored soccer
+    (8,838 rows, anchoring NOT required — requiring it is what hid this):
+
+        15293467  1. FC Köln v TSG Hoffenheim  08-28 16:30Z  1-0  ..._bundesliga_women
+        14970278  1. FC Köln v TSG Hoffenheim  08-29 13:30Z  3-2  ..._bundesliga
+
+    Two real fixtures, 21 hours apart, different results, the same two club names
+    in the same orientation, separated by nothing but the sport key. A second
+    pass that dropped the key would call the women's fixture a ghost.
+    """
+    womens_ghost = row(
+        15293467,
+        "1. FC Köln",
+        "TSG Hoffenheim",
+        datetime(2026, 8, 28, 16, 30, tzinfo=timezone.utc),
+        status="scheduled",
+        sport_key="soccer_germany_bundesliga_women",
+    )
+    mens_real = real_row(
+        14970278,
+        "1. FC Köln",
+        "TSG Hoffenheim",
+        datetime(2026, 8, 27, 13, 30, tzinfo=timezone.utc),
+        sport_key="soccer_germany_bundesliga",
+    )
+
+    plan = plan_ghost_tags([womens_ghost, mens_real], now=GWANGJU_NOW)
+
+    assert plan.tags == [], "a women's fixture is not a copy of the men's"
+    assert plan.residual_blocks_examined == 0
+
+
+def test_the_suffix_strip_is_a_legal_form_and_never_a_squad():
+    """`Sabadell FC` is `Sabadell`; `Real Sociedad B` is NOT `Real Sociedad`.
+
+    The reserve side is a different team that plays a different competition, and
+    it is the one trailing token that must survive the strip. `b` is absent from
+    CLUB_LEGAL_SUFFIXES for exactly this reason.
+    """
+    assert loose_block_key("Sabadell FC", "Andorra CF") == ("sabadell", "andorra")
+    assert loose_block_key("Sligo Rovers FC", " GALWAY UNITED FC ") == (
+        "sligo rovers",
+        "galway united",
+    )
+    assert loose_block_key("Real Sociedad B", "x") == ("real sociedad b", "x")
+    assert loose_block_key("Real Sociedad", "x") != loose_block_key("Real Sociedad B", "x")
+
+
+def test_the_strip_is_trailing_only_and_takes_one_token():
+    """A LEADING `FC` is not a legal form we can drop: nothing measured says
+    `FC Zurich` and `Zurich` are one club, and each extra strip is another shape
+    the precision measurement never examined."""
+    assert loose_block_key("FC Zurich", "x") == ("fc zurich", "x")
+    assert loose_block_key("FC Sion", "x") != loose_block_key("Sion", "x")
+    assert loose_block_key("Real Madrid CF SC", "x") == ("real madrid cf", "x")
+
+
+def test_a_reverse_fixture_never_shares_a_block_under_the_loose_key_either():
+    """Orientation is load-bearing in the precision measurement, so it has to
+    survive the relaxation that the measurement was re-run for."""
+    assert loose_block_key("Sabadell FC", "Mallorca") != loose_block_key(
+        "Mallorca", "Sabadell FC"
+    )
+
+
+def test_the_second_pass_does_not_re_report_a_block_the_first_one_examined():
+    """A block whose rows already share one narrow key was decided by the first
+    pass. Re-reading it would double-count the block and restate its refusal in
+    different words."""
+    plan = plan_ghost_tags([SEVILLA_GHOST, SEVILLA_REAL], now=NOW)
+
+    assert plan.blocks_examined == 1
+    assert plan.residual_blocks_examined == 0
+    assert len(plan.refusals) == len(set(plan.refusals))
+
+
+def test_one_played_fixture_may_have_two_id_less_copies():
+    """A canonical is NOT withheld from the second pass.
+
+    Ghost 15305187 and ghost 15307878 are both copies of Andorra CF v Real
+    Sociedad B. Withholding the canonical once the first pass has used it drops
+    the second ghost for no reason but bookkeeping.
+    """
+    exact_ghost = ghost_row(
+        15305187,
+        "Andorra CF",
+        "Real Sociedad B",
+        datetime(2026, 9, 13, 19, 0, tzinfo=timezone.utc),
+        sport_key=UNCLASSIFIED_SPORT_KEY,
+    )
+    suffixed_ghost = row(
+        15307878,
+        "Andorra",
+        "Real Sociedad B",
+        datetime(2026, 9, 13, 20, 0, tzinfo=timezone.utc),
+        status="suspended",
+        sport_key=UNCLASSIFIED_SPORT_KEY,
+    )
+    real = real_row(
+        15305059,
+        "Andorra CF",
+        "Real Sociedad B",
+        datetime(2026, 9, 11, 19, 0, tzinfo=timezone.utc),
+        sport_key="soccer_spain_segunda_division",
+    )
+
+    plan = plan_ghost_tags([exact_ghost, suffixed_ghost, real], now=NOW)
+
+    assert sorted(t.ghost_id for t in plan.tags) == [15305187, 15307878]
+    assert {t.canonical_id for t in plan.tags} == {15305059}
