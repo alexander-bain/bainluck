@@ -430,7 +430,34 @@ struct NativeEventDiscoverCard: View {
             navigationPath.append(Route.eventDetail(id: event.id))
             onOpen?()
         }
+        // The card opens on `.onTapGesture`, not a Button or a NavigationLink,
+        // so it carries no trait a tap-driven test can find it by: in the
+        // accessibility tree it is an unnamed `Other` among ~40 of them. A test
+        // that instead located it by some label inside it ("the element holding
+        // a StaticText with ' @ '") would be keyed on the card's COPY, so a
+        // formatting ship would red the navigation journey.
+        //
+        // `.contain` is load-bearing and was MEASURED, not assumed. An
+        // identifier on its own INHERITS down to every leaf in the subtree, so
+        // one card became 20-odd matching elements and the query's `.firstMatch`
+        // resolved to whichever leaf came first — on a live feed, the ⚾ emoji, a
+        // 104pt-wide StaticText. Tapping it still worked (the gesture bubbles),
+        // which is the trap: the navigation test passed while the SWIPE test
+        // failed, because a 104pt element cannot be dragged the 120pt
+        // `DiscoverSwipeState.commitDistance` needs, and the count-the-cards
+        // assertions were counting leaves (48 of them across the page).
+        //
+        // `.contain` makes the card one accessibility CONTAINER, so the
+        // identifier lands once, on an element with the card's own frame. It
+        // does not hide or merge the children — a VoiceOver reader still hears
+        // every label in the same order; the card is additionally navigable as
+        // the group it visually already is.
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(Self.tapTargetIdentifier)
     }
+
+    /// How a tap-driven test finds this card. See the `onTapGesture` above.
+    static let tapTargetIdentifier = "discover-card-event"
 
     /// #3430 — the card draws BOTH competitors side by side, so their labels
     /// are resolved together and handed in. Deriving each from its own name
