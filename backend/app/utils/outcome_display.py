@@ -283,7 +283,11 @@ def normalize_display_probs(
 
 
 def leader_pick_order(
-    outcomes: list[dict], name_key: str = "name", prob_key: str = "probability"
+    outcomes: list[dict],
+    name_key: str = "name",
+    prob_key: str = "probability",
+    *,
+    is_winner_of: Callable[[dict], bool | None] | None = None,
 ) -> list[dict]:
     """If a generic Field/Other outcome sorts first (holds plurality), demote it
     below the top NAMED outcome so the answer leads with a real name — the field's
@@ -296,9 +300,20 @@ def leader_pick_order(
     below it at served position 2 — inside every top-N the card renders. A field
     outcome at ~100% is an untraded/no-bid artifact, never a real answer, so it goes
     to the END of the list rather than one rung down.
+
+    ``is_winner_of`` (#6110): a GRADED winner is neither demoted nor stepped over.
+    BOTH clauses have to honour it or the carve-out is half a fix — the second one
+    ("a field row must not headline") would quietly reinstate the first by pushing
+    a settled champion below a rider who lost. On a finished race the field row IS
+    the answer, and "Other · Won" leading the list is the venue's own verdict, not
+    a plurality artifact.
     """
-    demote_dominant_field(outcomes, name_key=name_key, prob_key=prob_key)
-    if outcomes and is_field_outcome(outcomes[0].get(name_key, "")):
+    demote_dominant_field(
+        outcomes, name_key=name_key, prob_key=prob_key, is_winner_of=is_winner_of
+    )
+    if outcomes and is_field_outcome(outcomes[0].get(name_key, "")) and not (
+        is_winner_of(outcomes[0]) if is_winner_of else False
+    ):
         named_idx = next(
             (i for i, o in enumerate(outcomes)
              if not is_field_outcome(o.get(name_key, ""))),
@@ -310,15 +325,21 @@ def leader_pick_order(
 
 
 def demote_dominant_field(
-    outcomes: list[dict], name_key: str = "name", prob_key: str = "probability"
+    outcomes: list[dict],
+    name_key: str = "name",
+    prob_key: str = "probability",
+    *,
+    is_winner_of: Callable[[dict], bool | None] | None = None,
 ) -> list[dict]:
     """Move every field outcome priced ``>= _FIELD_DOMINANT_MIN`` to the END, in
-    place. Dict-shaped wrapper over :func:`display_rank_order`."""
+    place. Dict-shaped wrapper over :func:`display_rank_order`, including its
+    ``is_winner_of`` carve-out (#6110)."""
     outcomes[:] = display_rank_order(
         outcomes,
         lambda o: o.get(name_key, ""),
         lambda o: o.get(prob_key),
         drop_placeholders=False,
+        is_winner_of=is_winner_of,
     )
     return outcomes
 
@@ -327,6 +348,8 @@ def drop_dominant_field_outcomes(
     items: Sequence[_T],
     name_of: Callable[[_T], str | None],
     prob_of: Callable[[_T], float | None],
+    *,
+    is_winner_of: Callable[[_T], bool | None] | None = None,
 ) -> list[_T]:
     """Remove field outcomes priced ``>= _FIELD_DOMINANT_MIN`` from a list that is
     about to be SLICED and SCALED into a card.
@@ -355,12 +378,38 @@ def drop_dominant_field_outcomes(
     item is a dominant field outcome the input is returned unchanged, because an
     honest-empty decision belongs to the surface and a silent zero-outcome card is a
     worse artifact than a labelled one.
+
+    🔴 A SETTLED WINNER IS NOT A NO-BID ASK (#6110, measured on production
+    2026-09-15). Every justification above is about a market that is still BEING
+    MADE: "Other 1.0" is an ask nobody is bidding against (gotcha #17/#19), so it
+    is not an answer and it poisons the divisor. Once the venue settles the field,
+    the same row is the RESULT — and on `/futures/58675941` (Vuelta a España 2026)
+    this rule deleted it. The repaired data was correct in the database (31 legs,
+    one winner, ``Other`` at 1.0, ``resolution_source='api_settlement'``) and the
+    payload served **30 outcomes and no winner at all**, so a finished Grand Tour
+    still showed thirty riders who lost and nobody who won.
+
+    Pass ``is_winner_of`` and a row the caller vouches for as GRADED is kept.
+    Optional and defaulting to ``None`` so no existing call site changes
+    behaviour; the sibling :func:`drop_incoherent_near_certain` takes the same
+    argument in the same shape, and for the same reason. What counts as "graded"
+    is deliberately the CALLER's decision — ``is_winner`` is
+    ``boolean NULL DEFAULT false``, so a bare `True` means more on a payload that
+    also carries ``resolution_source`` than on one that does not (#4788).
+
+    CALL SITES NOT YET PASSING IT, so nobody reads this carve-out as class-wide:
+    `routes/futures.py` browse-list (~:908), `routes/events.py` (~:21172) and the
+    two `routes/feed.py` card serializers (~:9447, ~:10910). Whether a settled
+    field champion can reach those surfaces is the open question in the issue, not
+    something this docstring should assert either way.
     """
     kept = [
         i
         for i in items
         if not (
-            is_field_outcome(name_of(i)) and (prob_of(i) or 0) >= _FIELD_DOMINANT_MIN
+            is_field_outcome(name_of(i))
+            and (prob_of(i) or 0) >= _FIELD_DOMINANT_MIN
+            and not (is_winner_of(i) if is_winner_of else False)
         )
     ]
     return kept if kept else list(items)
@@ -594,6 +643,8 @@ def display_rank_order(
     name_of: Callable[[_T], str | None],
     prob_of: Callable[[_T], float | None],
     drop_placeholders: bool = True,
+    *,
+    is_winner_of: Callable[[_T], bool | None] | None = None,
 ) -> list[_T]:
     """Order any outcome-shaped sequence so nothing UNRANKABLE holds a leader or
     top-N slot: anonymized placeholders are dropped, and a field outcome priced
@@ -607,6 +658,14 @@ def display_rank_order(
     or every item is a dominant field outcome, the input order is returned unchanged.
     An honest-empty decision belongs to the surface, not to a sort helper — and a
     silent zero-outcome card is a worse artifact than a labelled one.
+
+    ``is_winner_of`` (#6110, optional, default-off so no existing caller moves):
+    a row the caller vouches for as the venue's GRADED winner is not demoted. The
+    demote-not-delete contract above is about a live artifact — "a field outcome
+    at ~100% is an untraded/no-bid artifact, never a real answer" — and that
+    sentence stops being true the moment the field settles. Demoting the winner of
+    a finished race to the end of a 31-row list puts the only row that answers the
+    question behind the page's fold.
     """
     kept = list(items)
     if drop_placeholders:
@@ -617,7 +676,9 @@ def display_rank_order(
     dominant = {
         n
         for n, i in enumerate(kept)
-        if is_field_outcome(name_of(i)) and (prob_of(i) or 0) >= _FIELD_DOMINANT_MIN
+        if is_field_outcome(name_of(i))
+        and (prob_of(i) or 0) >= _FIELD_DOMINANT_MIN
+        and not (is_winner_of(i) if is_winner_of else False)
     }
     if not dominant or len(dominant) == len(kept):
         return kept

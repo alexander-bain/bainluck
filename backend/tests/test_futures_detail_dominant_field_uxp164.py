@@ -216,7 +216,14 @@ class TestBothSerializersMoved:
         src = inspect.getsource(futures._format_market_detail)
         drop_at = src.index("outcomes = drop_dominant_field_outcomes(")
         norm_at = src.index("normalize_display_probs(\n")
-        pick_at = src.index("leader_pick_order(outcomes)")
+        # Anchored WITHOUT the closing paren (#6110): the ordering this test is
+        # about is unchanged, but the call now carries an argument —
+        # `leader_pick_order(outcomes, is_winner_of=...)`, the settled-champion
+        # carve-out — and `"leader_pick_order(outcomes)"` stopped matching a
+        # correct file. That is the same brittle-anchor failure the docstring
+        # above already records UX-P163 paying for once; loosening the anchor by
+        # one character keeps the assertion and drops the false red.
+        pick_at = src.index("leader_pick_order(outcomes")
         assert norm_at < drop_at < pick_at, (
             "the drop must judge the RENDERED number (after normalization) and "
             "agree with the demotion (before leader-pick)"
