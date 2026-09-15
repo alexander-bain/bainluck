@@ -37,6 +37,143 @@ def _historical_tour(tour: str) -> str:
     return _HISTORICAL_TOUR_ALIASES.get((tour or "").lower(), tour)
 
 
+# #6211 / CERT-2930. The row list `historical-raw-data/rounds` actually answers
+# with, measured against the live provider key on 2026-09-15 (tour=pga,
+# event_id=100, year=2023 -> HTTP 200, 208,858 bytes):
+#
+#     top-level keys: event_completed, event_id, event_name, SCORES, season,
+#                     sg_categories, tour, traditional_stats, year
+#     scores: 156 rows, row0 keys dg_id, fin_text, player_name,
+#             round_1..round_4 (each a nested per-round dict carrying `score`
+#             and `course_par`)
+#
+# `scores` was not in the list this module read, so a real 200 carrying 156
+# players parsed to zero rows. Its caller reads zero rows as "DataGolf says the
+# event is not in its index" and writes a PERMANENT residual flag, so the fix
+# for #6211 would itself have entrenched the very defect it exists to remove.
+_HISTORICAL_ROW_KEYS = ("scores", "data", "rounds")
+
+
+class DataGolfUnknownEnvelope(RuntimeError):
+    """A 200 whose body carries content in a shape we do not recognise.
+
+    Raised rather than degraded to an empty list because the empty list is a
+    TRUTH CLAIM in this module's contract ("DataGolf's historical index has no
+    such event") and an unrecognised envelope is evidence of nothing except
+    that the provider's shape moved. Gotcha #53: an empty response is a
+    response SHAPE, not an absence — and here the emptiness would be entirely
+    manufactured by our own parser.
+    """
+
+
+# DataGolf answers a genuinely absent event with HTTP 400 and a prose body, not
+# a 404 and not an empty 200 (measured 2026-09-15, same key):
+#
+#   event_id=999999 -> 400 "event number 999999 is not available in the 2023
+#                      pga calendar year, please input a valid event number."
+#   year=1899       -> 400 "we don't have any historical raw data for 1899 -
+#                      please choose from the following: 1983, 1984, ..."
+#
+# Only the FIRST is evidence about the event. The second is a statement about
+# our own request being outside the provider's data range, and a 400 from a bad
+# tour code (#994) is the same kind of thing. So the absence channel matches the
+# provider's own event-number sentence and nothing else; every other 400 stays
+# in the retryable class, where it is withheld from the curve but never recorded
+# as a claim that the tournament did not happen.
+_EVENT_ABSENT_400_MARKERS = ("is not available in the", "calendar year")
+
+
+def _is_evidenced_absent_400(body: str) -> bool:
+    """True when a 400 body is DataGolf saying THIS EVENT is not in its index."""
+    lowered = (body or "").lower()
+    return all(marker in lowered for marker in _EVENT_ABSENT_400_MARKERS)
+
+
+def _historical_result_rows(data: object) -> list:
+    """Return the player-row list from a `historical-raw-data/rounds` 200 body.
+
+    An empty list here means the provider answered with a row list that is
+    empty — the only 200 this module is willing to read as an absence. A body
+    carrying content we cannot locate rows in raises, so it reaches the caller
+    as our failure (retryable) rather than as the provider's answer (terminal).
+    """
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for key in _HISTORICAL_ROW_KEYS:
+            value = data.get(key)
+            if isinstance(value, list):
+                return value
+        raise DataGolfUnknownEnvelope(
+            "historical-raw-data/rounds returned 200 with no recognised row "
+            f"list (looked for {_HISTORICAL_ROW_KEYS}); top-level keys="
+            f"{sorted(str(k) for k in data)[:12]}"
+        )
+    raise DataGolfUnknownEnvelope(
+        f"historical-raw-data/rounds returned 200 with a {type(data).__name__} "
+        "body, which carries no row list"
+    )
+
+
+def _round_entries(row: dict) -> list[dict]:
+    """The nested per-round dicts of a `scores`-shaped player row, in order."""
+    rounds = []
+    for key, value in row.items():
+        if not isinstance(value, dict):
+            continue
+        name = str(key)
+        if not name.startswith("round_"):
+            continue
+        try:
+            rounds.append((int(name.split("_", 1)[1]), value))
+        except (IndexError, ValueError):
+            continue
+    return [value for _, value in sorted(rounds)]
+
+
+def _player_row_from_scores(row: dict) -> Optional[dict]:
+    """Normalise ONE `scores`-shaped row (one player, rounds nested) .
+
+    `scores` carries no total; the tournament figure is summed over the rounds
+    the player actually completed, to par, which is the semantic the flat shape
+    supplied under `total_to_par` and the one the leaderboard entries downstream
+    already hold.
+    """
+    dg_id = row.get("dg_id")
+    if dg_id is None:
+        return None
+
+    to_par: Optional[int] = None
+    for entry in _round_entries(row):
+        score, par = entry.get("score"), entry.get("course_par")
+        if score is None or par is None:
+            continue
+        try:
+            to_par = (to_par or 0) + int(score) - int(par)
+        except (TypeError, ValueError):
+            continue
+
+    return {
+        "dg_id": dg_id,
+        "name": normalize_player_name(row.get("player_name", "")),
+        "position": row.get("fin_text", row.get("current_pos", row.get("position"))),
+        "total_score": to_par,
+    }
+
+
+def _is_scores_shaped(rows: list) -> bool:
+    """True when rows are one-per-PLAYER with nested rounds, not one-per-ROUND.
+
+    Decided on the rows themselves rather than on which key they arrived under,
+    so a provider that moves the shape between keys cannot silently select the
+    wrong aggregation.
+    """
+    for row in rows:
+        if isinstance(row, dict) and _round_entries(row):
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Data models
 # ---------------------------------------------------------------------------
@@ -340,7 +477,37 @@ class DataGolfAPIService(BaseAPIClient):
         Uses the historical-raw-data/rounds endpoint which provides per-round
         scoring data for any completed event.
 
-        Returns an empty list if the event is not found or the endpoint errors.
+        Returns an empty list ONLY when DataGolf itself says the event is not in
+        its historical index — a 404, its 400 "event number N is not available
+        in the YYYY TOUR calendar year", or a 200 whose own row list is empty.
+        Every other failure RAISES, including a 200 whose envelope we cannot
+        find rows in: a shape we do not recognise is evidence about our parser,
+        never about the tournament.
+
+        #6211 / CERT-2930: the recognised-envelope list did not include
+        `scores`, which is the key the live endpoint actually answers under, so
+        a 200 carrying 156 players parsed to zero rows and was about to be
+        recorded as a permanent absence. See `_HISTORICAL_ROW_KEYS` and
+        `_EVENT_ABSENT_400_MARKERS` above for the measured provider shapes.
+
+        #6211: this method used to fold 403 and ReadTimeout into the same ``[]``
+        as a 404, and its only caller — ``_datagolf_recovery`` — reads ``[]`` as
+        "event genuinely not found" and writes a PERMANENT
+        ``datagolf_recovery_residual`` flag that removes the whole market from the
+        published calibration curve. So a plan/entitlement refusal or one slow
+        response was being recorded as a durable truth claim about whether a
+        tournament ever happened. Measured on production 2026-09-15: 322 of 340
+        resolved DataGolf markets (94.7%) carried the flag, against a code comment
+        in ``precompute_calibration`` that says the residual "is expected to be
+        ~0", leaving a 36-row winner-only residue published as a 36.5pp accuracy
+        figure about a named third-party provider.
+
+        This is gotcha #36 (never catch-all in an API client returning an
+        "absent" sentinel — ``[]`` may only mean 404) and gotcha #53 (an empty
+        response is a response SHAPE, not an absence). A 403 is the venue
+        declining to answer and a timeout is no answer at all; neither is
+        evidence that the event does not exist, and the caller cannot tell them
+        apart from a real absence once they share a return value.
         """
         params: dict = {"tour": _historical_tour(tour)}
         if event_id:
@@ -351,23 +518,39 @@ class DataGolfAPIService(BaseAPIClient):
         try:
             data = await self._get("historical-raw-data/rounds", params)
         except httpx.HTTPStatusError as e:
-            if e.response.status_code in (404, 403):
+            status = e.response.status_code
+            body = ""
+            try:
+                body = e.response.text or ""
+            except Exception:  # noqa: BLE001 — a body we cannot read is not an absence
+                body = ""
+            if status == 404 or (status == 400 and _is_evidenced_absent_400(body)):
                 logger.info(
-                    "DataGolf historical results unavailable: tour=%s event=%s year=%s status=%d",
-                    tour, event_id, year, e.response.status_code,
+                    "DataGolf historical results: event not in index "
+                    "tour=%s event=%s year=%s status=%d provider_said=%r",
+                    tour, event_id, year, status, body[:200],
                 )
                 return []
             raise
-        except httpx.ReadTimeout:
-            logger.warning("DataGolf historical results timeout: tour=%s event=%s", tour, event_id)
+
+        rows = _historical_result_rows(data)
+        if not rows:
             return []
 
-        # The endpoint returns a list of player-round rows.  Aggregate to get
-        # each player's final position — take the row with the highest round
-        # number for each dg_id.
-        raw_rows = data if isinstance(data, list) else data.get("data", data.get("rounds", []))
-        if not raw_rows or not isinstance(raw_rows, list):
-            return []
+        # Two shapes reach here. `scores` is one row PER PLAYER with the rounds
+        # nested inside it; the flat shape is one row per player-ROUND and needs
+        # the highest round kept per dg_id. Picking the wrong one silently
+        # returns a plausible, wrong leaderboard, so the shape decides.
+        if _is_scores_shaped(rows):
+            return [
+                player
+                for player in (
+                    _player_row_from_scores(row) for row in rows if isinstance(row, dict)
+                )
+                if player is not None
+            ]
+
+        raw_rows = rows
 
         # Group by dg_id, keep the latest round
         by_player: dict[int, dict] = {}

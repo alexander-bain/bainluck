@@ -5558,6 +5558,139 @@ async def _backfill_datagolf_leaderboards():
 # retag1 can be taught to leave it alone. is_winner is NEVER touched (gotcha #21).
 DATAGOLF_PLAYED_LOST_SOURCE = "datagolf_played_lost"
 
+#: #6211. The market_metadata keys the DataGolf participation recovery writes, and
+#: the ONLY two states it may leave a market in. They are different claims and are
+#: read differently by ``precompute_calibration._calibration_population_ctes``:
+#: the first is evidence about the EVENT, the second is a fact about OUR RUN.
+DATAGOLF_RESIDUAL_KEY = "datagolf_recovery_residual"
+DATAGOLF_UNVERIFIED_KEY = "datagolf_recovery_unverified"
+
+#: How many failed attempts before a market stops being re-asked. It stays
+#: EXCLUDED either way — exhausting the budget spends no further quota, it does
+#: not promote the market into the curve — so this bounds cost, not honesty.
+DATAGOLF_RECOVERY_MAX_ATTEMPTS = 5
+
+#: Minimum gap between two attempts at the same market, so one sustained outage
+#: cannot burn the whole retry budget inside a single hour.
+DATAGOLF_RECOVERY_COOLOFF_HOURS = 24
+
+
+async def _mark_datagolf_residual(session_factory, market_id: int, reason: str) -> bool:
+    """Record an EVIDENCED absence: DataGolf's index has no such event.
+
+    Terminal — once this has written a ``_reason`` the sweep's own SELECT skips
+    the market, so it is never asked again. Returns True if the market was not
+    already flagged, so the caller counts a market once rather than once per
+    sweep.
+
+    #6211: the ``reason`` is not decoration, and it is written even when the
+    boolean is ALREADY true. That is the legacy-flag upgrade path: the 322 flags
+    the conflating writer left on production carry no reason, the sweep re-asks
+    exactly those, and this call is what converts a re-confirmed one into an
+    evidenced, provenance-bearing flag. Returning early on the boolean would
+    leave it reasonless and re-ask it forever.
+    """
+    import json as _json
+
+    async with session_factory() as session:
+        meta = (await session.execute(
+            text("SELECT market_metadata FROM futures_markets WHERE id = :mid"),
+            {"mid": market_id},
+        )).scalar()
+        m = dict(meta or {})
+        was_flagged = bool(m.get(DATAGOLF_RESIDUAL_KEY))
+        m[DATAGOLF_RESIDUAL_KEY] = True
+        m[f"{DATAGOLF_RESIDUAL_KEY}_reason"] = reason
+        m[f"{DATAGOLF_RESIDUAL_KEY}_at"] = datetime.now(timezone.utc).isoformat()
+        # A market that now has an answer is no longer merely unverified.
+        m.pop(DATAGOLF_UNVERIFIED_KEY, None)
+        await session.execute(
+            text(
+                "UPDATE futures_markets SET market_metadata = CAST(:meta AS jsonb) "
+                "WHERE id = :mid"
+            ),
+            {"meta": _json.dumps(m), "mid": market_id},
+        )
+        await session.commit()
+        return not was_flagged
+
+
+async def _clear_datagolf_withholding(session_factory, market_id: int) -> bool:
+    """DataGolf answered for this market, so drop every reason we withheld it.
+
+    #6211. Returns True if anything was actually cleared. Both keys go: the
+    terminal flag (which, for the 322 legacy rows, was never evidence) and the
+    retryable one. Touches ``market_metadata`` only — resolutions and
+    ``is_winner`` are never mutated here (gotcha #21); what changes is whether
+    the published curve is allowed to see rows it already holds.
+    """
+    import json as _json
+
+    async with session_factory() as session:
+        meta = (await session.execute(
+            text("SELECT market_metadata FROM futures_markets WHERE id = :mid"),
+            {"mid": market_id},
+        )).scalar()
+        m = dict(meta or {})
+        before = len(m)
+        for key in (
+            DATAGOLF_RESIDUAL_KEY,
+            f"{DATAGOLF_RESIDUAL_KEY}_reason",
+            f"{DATAGOLF_RESIDUAL_KEY}_at",
+            DATAGOLF_UNVERIFIED_KEY,
+        ):
+            m.pop(key, None)
+        if len(m) == before:
+            return False
+        await session.execute(
+            text(
+                "UPDATE futures_markets SET market_metadata = CAST(:meta AS jsonb) "
+                "WHERE id = :mid"
+            ),
+            {"meta": _json.dumps(m), "mid": market_id},
+        )
+        await session.commit()
+        return True
+
+
+async def _mark_datagolf_unverified(
+    session_factory, market_id: int, *, status: int | None, detail: str
+) -> tuple[bool, int]:
+    """Record that OUR CALL failed — never that the event does not exist.
+
+    Returns ``(is_first_attempt, attempts)``. The attempt counter is what the
+    sweep's SELECT reads to stop re-asking after
+    ``DATAGOLF_RECOVERY_MAX_ATTEMPTS``; the timestamp is what spaces the retries.
+    #6211: this is the state that used to be written as
+    ``datagolf_recovery_residual``, i.e. as a permanent claim about the
+    tournament.
+    """
+    import json as _json
+
+    async with session_factory() as session:
+        meta = (await session.execute(
+            text("SELECT market_metadata FROM futures_markets WHERE id = :mid"),
+            {"mid": market_id},
+        )).scalar()
+        m = dict(meta or {})
+        prev = m.get(DATAGOLF_UNVERIFIED_KEY) or {}
+        attempts = int(prev.get("attempts") or 0) + 1
+        m[DATAGOLF_UNVERIFIED_KEY] = {
+            "attempts": attempts,
+            "last_status": status,
+            "last_error": detail[:200],
+            "at": datetime.now(timezone.utc).isoformat(),
+        }
+        await session.execute(
+            text(
+                "UPDATE futures_markets SET market_metadata = CAST(:meta AS jsonb) "
+                "WHERE id = :mid"
+            ),
+            {"meta": _json.dumps(m), "mid": market_id},
+        )
+        await session.commit()
+        return attempts == 1, attempts
+
 
 async def _recover_datagolf_participation(limit: int = 150, deadline: float | None = None):
     """#994 recover-first: reclassify wrongly-VOIDed DataGolf losers.
@@ -5575,15 +5708,58 @@ async def _recover_datagolf_participation(limit: int = 150, deadline: float | No
       * player's dg_id IS in the field  → played-and-lost → resolution_source =
         'datagolf_played_lost' (re-enters the curve as a real loss).
       * player's dg_id NOT in the field → true DNP/WD → stays voided.
-      * API returns nothing (event not found) → mark the whole market a recovery
-        residual so precompute can symmetrically exclude it (winners AND losers),
-        never a one-sided restore.
+      * DataGolf says the event is not in its historical index (404 / empty) →
+        mark the whole market a recovery residual so precompute can symmetrically
+        exclude it (winners AND losers), never a one-sided restore.
+      * our call FAILED (refusal, transport, schema) → mark it UNVERIFIED, which
+        precompute excludes just as symmetrically but which the next sweep
+        RETRIES. See below.
     Bounded + resumable (Redis cursor by external_id) + quota-polite. Idempotent:
     retag1 is taught to skip 'datagolf_played_lost', so a re-run re-checks only
     the still-DNP tail. NEVER mutates is_winner (gotcha #21).
+
+    #6211 — A FAILED CALL IS NOT AN ANSWER, AND THE FLAG MUST SAY WHICH IT WAS.
+    -------------------------------------------------------------------------
+    This function used to write ONE boolean, ``datagolf_recovery_residual``, from
+    two completely different events: DataGolf answering "no such event", and any
+    non-429 exception on our side. ``get_historical_results`` made that worse by
+    folding 403 and ReadTimeout into the same ``[]`` a 404 returns, so a plan
+    refusal or a slow response became a permanent claim that a tournament never
+    happened — and the cursor advanced past it, so nothing ever re-checked.
+
+    ``market_info`` drops a flagged market whole, and its comment says the
+    residual "is expected to be ~0 (golf history never ages out)". Measured on
+    production 2026-09-15 (``artifacts-calibration-1310/``):
+
+        resolved DataGolf markets ................. 340
+        of which flagged residual ................. 322  (94.7%)
+        reaching market_info ......................  18
+        priced + truth-eligible in those .......... 36, ALL winners
+
+    and those 36 were published on /calibration as a 36.5pp accuracy figure about
+    a named third-party provider, beside a 318,956-outcome Kalshi row.
+
+    So the two states are now separate, each carrying its own provenance:
+
+        datagolf_recovery_residual = true
+            EVIDENCED absence. DataGolf's historical index has no such event.
+            Terminal; never retried. Reason recorded in
+            ``datagolf_recovery_residual_reason``.
+
+        datagolf_recovery_unverified = {attempts, last_status, last_error, at}
+            WE could not establish the field. Not a statement about the event.
+            Retried by later sweeps up to MAX_RECOVERY_ATTEMPTS.
+
+    BOTH are excluded from the published curve, symmetrically and whole. That is
+    deliberate and is NOT a population change: a market whose field we cannot
+    establish has leaderboard-graded WINNERS that are truth-eligible and an
+    unknown number of real LOSERS still sitting under ``did_not_play``, so
+    publishing it admits one side only — the same censoring in the other
+    direction, and the defect D112 measured on the lone-claim arm. What changes
+    here is that an unverified market can now become verified; before, it could
+    not.
     """
     import asyncio
-    import json as _json
     from app.services.datagolf_api import DataGolfAPIService
     from app.tasks.redis_state import get_redis_client
 
@@ -5593,6 +5769,15 @@ async def _recover_datagolf_participation(limit: int = 150, deadline: float | No
         "true_dnp_kept": 0,
         "residual_markets": 0,
         "api_miss": 0,
+        # #6211: the retryable class, counted separately from the terminal one so
+        # "we could not reach DataGolf 300 times" can never again read as
+        # "DataGolf has no record of 300 tournaments".
+        "unverified_markets": 0,
+        "unverified_exhausted": 0,
+        # #6211: markets whose withholding was LIFTED because DataGolf answered.
+        # This is the number that means the ship is happening; a sweep reporting
+        # healthy with this at 0 forever has recovered nothing (gotcha #53).
+        "withholding_cleared": 0,
         "errors": [],
     }
 
@@ -5615,6 +5800,38 @@ async def _recover_datagolf_participation(limit: int = 150, deadline: float | No
                       AND fm.status = 'resolved'
                       AND fm.external_id LIKE 'datagolf:%:%:%'
                       AND fm.external_id > :cursor
+                      -- #6211: an EVIDENCED absence is terminal — skipping it
+                      -- here, rather than re-asking DataGolf about an event it
+                      -- has already said it does not hold, is what makes the
+                      -- retry budget below affordable.
+                      --
+                      -- But ONLY an evidenced one. The 322 flags already on
+                      -- production were written by the conflating code path,
+                      -- which could not tell a 404 from a 403 or a timeout, so
+                      -- they are not evidence of anything and entrenching them
+                      -- would freeze the defect permanently. The new writer
+                      -- always records `_reason`; a flag WITHOUT one is by
+                      -- construction a legacy flag, and is re-asked exactly once
+                      -- more (it then gets a reason, or joins the retryable
+                      -- class). No backfill, no bulk metadata rewrite — the
+                      -- absence of the provenance field IS the discriminator.
+                      AND fm.market_metadata->>'datagolf_recovery_residual_reason'
+                          IS NULL
+                      -- #6211: the retryable class IS re-asked, but not forever
+                      -- and not every sweep. A market we have failed on
+                      -- MAX_RECOVERY_ATTEMPTS times stops consuming quota; one we
+                      -- tried within the cool-off waits its turn. Both stay
+                      -- excluded from the curve meanwhile.
+                      AND COALESCE(
+                          (fm.market_metadata->'datagolf_recovery_unverified'
+                              ->>'attempts')::int, 0) < :max_attempts
+                      AND (
+                          fm.market_metadata->'datagolf_recovery_unverified'
+                              ->>'at' IS NULL
+                          OR (fm.market_metadata->'datagolf_recovery_unverified'
+                                  ->>'at')::timestamptz
+                              < NOW() - make_interval(hours => :cooloff_hours)
+                      )
                       AND EXISTS (
                           SELECT 1 FROM futures_outcomes fo
                           WHERE fo.market_id = fm.id
@@ -5624,7 +5841,12 @@ async def _recover_datagolf_participation(limit: int = 150, deadline: float | No
                     ORDER BY fm.external_id
                     LIMIT :limit
                 """),
-                {"cursor": cursor, "limit": limit},
+                {
+                    "cursor": cursor,
+                    "limit": limit,
+                    "max_attempts": DATAGOLF_RECOVERY_MAX_ATTEMPTS,
+                    "cooloff_hours": DATAGOLF_RECOVERY_COOLOFF_HOURS,
+                },
             )).all()
 
         if not rows:
@@ -5673,22 +5895,16 @@ async def _recover_datagolf_participation(limit: int = 150, deadline: float | No
                     )
 
                     if not historical:
-                        # Event genuinely not found → residual; symmetric-exclude.
+                        # #6211: reachable ONLY for an evidenced absence now —
+                        # ``get_historical_results`` returns [] for a 404 or a 200
+                        # with no rows, and RAISES for everything else, so this
+                        # branch can no longer be entered by a refusal or a
+                        # timeout. Terminal; symmetric-exclude.
                         stats["api_miss"] += 1
-                        async with get_task_session() as session:
-                            _meta = await session.execute(
-                                text("SELECT market_metadata FROM futures_markets WHERE id = :mid"),
-                                {"mid": row.id},
-                            )
-                            _m = dict(_meta.scalar() or {})
-                            if not _m.get("datagolf_recovery_residual"):
-                                _m["datagolf_recovery_residual"] = True
-                                await session.execute(
-                                    text("UPDATE futures_markets SET market_metadata = CAST(:meta AS jsonb) WHERE id = :mid"),
-                                    {"meta": _json.dumps(_m), "mid": row.id},
-                                )
-                                await session.commit()
-                                stats["residual_markets"] += 1
+                        if await _mark_datagolf_residual(
+                            get_task_session, row.id, "event_not_in_index"
+                        ):
+                            stats["residual_markets"] += 1
                         continue
 
                     played_dg_ids = [
@@ -5713,6 +5929,13 @@ async def _recover_datagolf_participation(limit: int = 150, deadline: float | No
                         )
                         await session.commit()
                         stats["played_lost_recovered"] += r_played.rowcount
+                    # #6211: DataGolf answered, so neither withholding claim
+                    # holds any more. Clearing them is the whole ship — a market
+                    # that keeps a stale legacy `residual` here is one
+                    # `market_info` withholds FOREVER, recovered losers and all,
+                    # which is the defect wearing the fix's clothes.
+                    if await _clear_datagolf_withholding(get_task_session, row.id):
+                        stats["withholding_cleared"] += 1
                     _advance = True  # processed cleanly → move cursor past it
                 except Exception as _me:
                     _resp = getattr(_me, "response", None)
@@ -5729,10 +5952,14 @@ async def _recover_datagolf_participation(limit: int = 150, deadline: float | No
                         _rate_limited = True
                         _advance = False  # resume at THIS market next run
                         break
-                    # Deterministic error (e.g. 400 'invalid tour' for tour=alt):
-                    # the market can never be verified via this endpoint → mark it
-                    # a residual so precompute symmetrically excludes it, and
-                    # advance the cursor.
+                    # #6211: OUR CALL FAILED. That is a fact about this run, not
+                    # about the tournament, so it may not be written as the
+                    # terminal residual — the market is marked UNVERIFIED (still
+                    # symmetrically excluded from the curve) and re-asked by a
+                    # later sweep until the attempt budget is spent. A 400
+                    # 'invalid tour' will simply exhaust its five attempts and
+                    # stop; a refusal or an outage will clear on its own and the
+                    # market's real losers will re-enter with its winners.
                     _detail = type(_me).__name__
                     if _resp is not None:
                         try:
@@ -5744,20 +5971,13 @@ async def _recover_datagolf_participation(limit: int = 150, deadline: float | No
                     stats["errors"].append(f"{ext_id}: {_detail}")
                     logger.warning("DataGolf recovery: skipping %s (%s)", ext_id, _me)
                     try:
-                        async with get_task_session() as session:
-                            _meta = await session.execute(
-                                text("SELECT market_metadata FROM futures_markets WHERE id = :mid"),
-                                {"mid": row.id},
-                            )
-                            _m = dict(_meta.scalar() or {})
-                            if not _m.get("datagolf_recovery_residual"):
-                                _m["datagolf_recovery_residual"] = True
-                                await session.execute(
-                                    text("UPDATE futures_markets SET market_metadata = CAST(:meta AS jsonb) WHERE id = :mid"),
-                                    {"meta": _json.dumps(_m), "mid": row.id},
-                                )
-                                await session.commit()
-                                stats["residual_markets"] += 1
+                        _first, _attempts = await _mark_datagolf_unverified(
+                            get_task_session, row.id, status=_status, detail=_detail
+                        )
+                        if _first:
+                            stats["unverified_markets"] += 1
+                        if _attempts >= DATAGOLF_RECOVERY_MAX_ATTEMPTS:
+                            stats["unverified_exhausted"] += 1
                     except Exception:
                         pass
                     _advance = True
