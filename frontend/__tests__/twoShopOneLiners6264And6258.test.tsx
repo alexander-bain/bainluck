@@ -83,10 +83,24 @@ const ANALYTICS_HOOKS = {
   useEngagementTime: () => {},
 };
 
-/** Strip tags so the assertion reads what a PERSON reads. */
-function visibleText(markup: string): string {
+/**
+ * Strip tags the way an INLINE element actually renders — to nothing.
+ *
+ * 🔴 The first version of this file used the house `visibleText`, which
+ * replaces every tag with a SPACE. Against a defect that IS a missing space
+ * that helper manufactures the answer: `is <em>not</em>covered` becomes
+ * `is  not covered`, so the pre-fix page passed `toContain("is not covered")`
+ * and M1 — reverting the fix — survived the whole sweep green. The helper is
+ * right for every other file (it keeps block-level siblings from gluing) and
+ * wrong for exactly this one.
+ *
+ * An inline tag contributes no whitespace in a browser, so `""` is the faithful
+ * model here. Everything asserted below lives inside a single `<li>`, so the
+ * block-gluing the house helper exists to prevent cannot reach it.
+ */
+function inlineText(markup: string): string {
   return markup
-    .replace(/<[^>]*>/g, " ")
+    .replace(/<[^>]*>/g, "")
     .replace(/[“”]/g, '"')
     .replace(/[’]/g, "'")
     .replace(/&#x27;|&apos;/g, "'")
@@ -109,15 +123,54 @@ describe("#6264 — /privacy does not glue a word to the end of an emphasis", ()
     return markup;
   }
 
-  it("renders the analytics bullet at all", () => {
-    // Without this, both assertions below pass vacuously on an empty render.
-    const text = visibleText(renderPrivacy());
-    expect(text).toContain("Vercel Web Analytics");
-    expect(text).toContain("a declined visit is still counted");
+  /**
+   * The ONE bullet under test.
+   *
+   * 🔴 The privacy page carries two near-identical sentences, in adjacent
+   * bullets, and only one was broken:
+   *
+   *   :291  Speed Insights  `<em>not</em> covered` — space on the same line, fine
+   *   :301  Web Analytics   `<em>not</em>\ncovered` — the newline JSX deletes
+   *
+   * The first version of this file asserted over the whole page, so the healthy
+   * Speed Insights bullet satisfied every claim about the broken Web Analytics
+   * one — M2, which deleted the `<em>` from :301 entirely, survived green on
+   * :291's surviving tag. Scoped to the bullet, neither mutant can hide behind
+   * its neighbour.
+   */
+  /**
+   * Keyed on the `<strong>` heading, NOT on the vendor's name in prose.
+   *
+   * `split("<li")[0]` is everything BEFORE the first bullet, and the Analytics
+   * section up there says "See Vercel Speed Insights and Vercel Web Analytics
+   * in the third-party list below" — so a `.find` on the bare vendor name
+   * returns the preamble, which contains neither sentence. The vacuity row
+   * below caught it; the marker is what fixes it.
+   */
+  function bulletFor(markup: string, vendor: string): string {
+    return (
+      markup
+        .split("<li")
+        .find((chunk) => chunk.includes(`<strong>${vendor}</strong>`)) ?? ""
+    );
+  }
+
+  function webAnalyticsBullet(markup: string): string {
+    return bulletFor(markup, "Vercel Web Analytics");
+  }
+
+  it("finds the Web Analytics bullet, and finds it apart from its twin", () => {
+    // Without this, every assertion below passes vacuously on "".
+    const bullet = webAnalyticsBullet(renderPrivacy());
+    expect(bullet).not.toBe("");
+    expect(inlineText(bullet)).toContain("a declined visit is still counted");
+    // The neighbouring Speed Insights bullet must NOT be in this slice, or the
+    // scoping bought nothing.
+    expect(bullet).not.toContain("Speed Insights");
   });
 
   it("reads 'is not covered', not 'is notcovered'", () => {
-    const text = visibleText(renderPrivacy());
+    const text = inlineText(webAnalyticsBullet(renderPrivacy()));
 
     // The photographed defect.
     expect(text).not.toContain("notcovered");
@@ -127,8 +180,18 @@ describe("#6264 — /privacy does not glue a word to the end of an emphasis", ()
   it("the emphasis survives — the fix is a space, not a deleted tag", () => {
     // Deleting `<em>` would satisfy the row above and lose the emphasis that
     // carries the sentence's meaning: it is *not* covered.
-    const markup = renderPrivacy();
-    expect(markup).toContain("<em>not</em>");
+    expect(webAnalyticsBullet(renderPrivacy())).toContain("<em>not</em>");
+  });
+
+  it("the healthy twin bullet is untouched", () => {
+    // Speed Insights says the same thing one bullet up and was always correct.
+    // A repair that reflowed the whole list, or "fixed" both, would show here.
+    const speedInsights = bulletFor(renderPrivacy(), "Vercel Speed Insights");
+    expect(speedInsights).not.toBe("");
+    expect(inlineText(speedInsights)).toContain(
+      "it runs on every visit and is not covered by the analytics choice"
+    );
+    expect(speedInsights).toContain("<em>not</em>");
   });
 });
 
