@@ -208,6 +208,24 @@ describe('Vercel Web Analytics is cookieless and mounts pre-consent (D96)', () =
       ['app/privacy/page.tsx', read(PRIVACY)],
     ];
 
+    // The sentence that carries D96's promise, and the shape that makes it
+    // true. The promise is a NEGATION, so it is falsified by deleting one
+    // word — which means the check has to be anchored on the CLAIM, not on
+    // the provider name that happens to introduce it.
+    const CLAIM = /covered by the analytics choice/g;
+    // Between the "not" and the word it negates, JSX may put a closing tag, a
+    // `{" "}` spacer and a line break, and nothing else. Both live phrasings
+    // are in this shape (`<em>not</em> covered` inline, and `<em>not</em>{" "}`
+    // before a wrap). Anything other than markup in that gap is prose, and
+    // prose between a negation and its object is how a negation goes missing.
+    const NEGATED =
+      /\bnot\b(?:<\/em>|<\/strong>|\{" "\}|\s)*covered by the analytics choice/;
+
+    // Counted across all three surfaces, because the sentence lives on only
+    // one of them. If this ever reads 0, the per-occurrence check below
+    // examined nothing anywhere and this test is green for want of a subject.
+    let claimsSeen = 0;
+
     for (const [name, code] of surfaces) {
       // Control: this really is the file that talks about the choice. If a
       // surface stops mentioning analytics at all, that is a change worth
@@ -219,17 +237,62 @@ describe('Vercel Web Analytics is cookieless and mounts pre-consent (D96)', () =
       expect(code).not.toContain('Decline and neither of them loads');
       expect(code).not.toContain('Neither of those loads');
       expect(code).not.toMatch(
-        /Vercel (Web )?Analytics[^.]{0,80}\bis\b[^.]{0,40}covered by the analytics choice/,
-      );
-      expect(code).not.toMatch(
         /Google Analytics and Vercel (Web )?Analytics[^.]{0,60}(load|loads) on this site/,
       );
+
+      // Every sentence that says the provider is covered by the choice must
+      // carry the "not" that makes it true.
+      //
+      // WHAT STOOD HERE AND WHY IT IS GONE. The previous matcher anchored on
+      // "Vercel Web Analytics" and allowed no full stop between that anchor
+      // and the claim. On the real page three descriptive sentences sit in
+      // between, so the period-free window could never span them: measured on
+      // the live file, it fired neither on the true text nor on the false one.
+      // Deleting the "not" left it green. It was not a loose guard, it was an
+      // unreachable one — the failure mode this file's own header calls out at
+      // point 2, "a guard whose regex silently misses".
+      for (const hit of code.matchAll(CLAIM)) {
+        claimsSeen += 1;
+        const sentence = code.slice(
+          Math.max(0, hit.index - 80),
+          hit.index + hit[0].length,
+        );
+        expect(`${name}: ${sentence}`).toMatch(NEGATED);
+      }
+
+      // REACHABILITY, measured on this file's own bytes rather than against a
+      // hand-written strawman: delete the negation the way a careless edit
+      // would, and require every occurrence to FAIL the assertion the real
+      // file just passed. A guard that cannot go red on its own file's
+      // mutation is not reading the file.
+      const mutated = code.replace(
+        new RegExp(NEGATED.source, 'g'),
+        'covered by the analytics choice',
+      );
+      if (mutated !== code) {
+        for (const hit of mutated.matchAll(CLAIM)) {
+          const sentence = mutated.slice(
+            Math.max(0, hit.index - 80),
+            hit.index + hit[0].length,
+          );
+          expect(`${name}: ${sentence}`).not.toMatch(NEGATED);
+        }
+      }
+
       // A guard is only as good as its own reachability: prove the matchers
       // above would fire on the text they name, using this same file's content
       // as the negative-control substrate.
       expect(`${name}: Decline and neither of them loads`).toContain(
         'Decline and neither of them loads',
       );
+      expect(
+        `${name}: Google Analytics and Vercel Web Analytics both\n      load on this site.`,
+      ).toMatch(
+        /Google Analytics and Vercel (Web )?Analytics[^.]{0,60}(load|loads) on this site/,
+      );
     }
+
+    // Both live phrasings, on `app/privacy/page.tsx`.
+    expect(claimsSeen).toBe(2);
   });
 });
