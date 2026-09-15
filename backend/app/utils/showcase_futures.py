@@ -118,6 +118,19 @@ SHOWCASE_MARKET_IDENTITIES: dict[tuple[str, str], tuple[MarketIdentity, ...]] = 
 }
 
 
+#: Everything a slug may contribute to a log line. `sport_slug` arrives from the
+#: URL path, and the route only 404s on an unknown one AFTER this module can be
+#: called directly — so a newline in it would write a second, forged log line
+#: (CodeQL `py/log-injection`, medium, on the first cut of this file). The
+#: truncation is part of the fix: a 4KB slug is a log-flooding line, not a
+#: diagnostic.
+_LOGGABLE = re.compile(r"[^a-z0-9_-]")
+
+
+def _loggable(sport_slug: str) -> str:
+    return _LOGGABLE.sub("", sport_slug.lower())[:40] or "(unprintable)"
+
+
 @dataclass(frozen=True)
 class ShowcaseCandidate:
     """An open market that matched a declared identity."""
@@ -248,7 +261,9 @@ async def attach_showcase_markets(
                 event["futures_priced_outcomes"] = chosen.priced_outcomes
     except Exception:  # noqa: BLE001 — a hub page outlives its enrichment
         logger.warning(
-            "showcase market lookup failed for sport_slug=%s", sport_slug, exc_info=True
+            "showcase market lookup failed for sport_slug=%s",
+            _loggable(sport_slug),
+            exc_info=True,
         )
         return [
             {**event, "futures_market_id": None, "futures_priced_outcomes": None}

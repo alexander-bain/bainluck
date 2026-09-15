@@ -11,12 +11,13 @@ read off production on 2026-09-14; they are real siblings that a looser rule
 (a name pattern, a tier, a canonical key) admits today.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import pytest
 
 from app.utils.showcase_futures import (
     MIN_PRICED_OUTCOMES,
+    _loggable,
     SHOWCASE_MARKET_IDENTITIES,
     ShowcaseCandidate,
     attach_showcase_markets,
@@ -201,6 +202,23 @@ class TestChoosingAmongOpenMarkets:
         small = ShowcaseCandidate(181, 50, same_date)
         big = ShowcaseCandidate(9962834, 109, same_date)
         assert choose_candidate([small, big], now=NOW) is big
+
+
+class TestTheFailureLogCannotBeForged:
+    """`sport_slug` comes off the URL path (CodeQL `py/log-injection`)."""
+
+    def test_a_newline_cannot_write_a_second_log_line(self):
+        forged = "soccer\nWARNING:root:transfer approved"
+        assert "\n" not in _loggable(forged)
+        assert _loggable(forged).startswith("soccer")
+
+    def test_a_real_slug_survives_intact(self):
+        for slug in ("soccer", "american-football", "march_madness"):
+            assert _loggable(slug) == slug
+
+    def test_a_flood_is_truncated_and_an_empty_one_still_prints(self):
+        assert len(_loggable("x" * 4000)) == 40
+        assert _loggable("\r\n\r\n") == "(unprintable)"
 
 
 class FakeResult:
