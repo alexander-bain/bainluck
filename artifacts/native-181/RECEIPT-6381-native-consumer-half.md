@@ -5,7 +5,7 @@ fixture that has not been played.* Product check 1 / 6 (games show the correct s
 and charts tell a consistent story), milestone 3 (the phone experience) — the surface Alex walks in
 checklist item 6, "open a recent result for your team".
 
-Written 2026-09-15 13:2x PT (stamped from `TZ=America/Los_Angeles date`), native lane,
+Written 2026-09-15 13:47 PT (stamped from `TZ=America/Los_Angeles date`), native lane,
 worktree `/Users/bain/bainluck-dev/native`, branch `native/181-6381-native-consumer-half`.
 
 ---
@@ -101,8 +101,8 @@ was found — running mutants without first reading the baseline would have scor
 | gate | result |
 |---|---|
 | macOS build (`native-gates.sh`) | PASS |
-| `BainLuckTests` | `Executed 2417 tests, with 0 failures (0 unexpected)` |
-| recompile proof | all 6 changed Swift files compiled by the gated build |
+| `BainLuckTests` | `Executed 2413 tests, with 0 failures (0 unexpected) in 36.878 (37.714) seconds` — sha `3b0a6caba` |
+| recompile proof | **all 6 changed Swift files compiled in ONE run**, after `touch`ing every one of them: the first attempt printed `NOT SEEN  EventModels.swift`, because an incremental build only proves the files it happened to rebuild |
 | `frontend/__tests__/ios/eventStatusSingleSource` | 40 passed / 0 failed |
 | `npm run build` (ESLint gate) | exit 0 |
 | `npm run typecheck` (TS gate) | exit 0 — 70 errors, baseline 70 |
