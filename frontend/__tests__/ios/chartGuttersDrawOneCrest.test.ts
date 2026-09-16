@@ -181,6 +181,122 @@ d("iOS chart gutters draw one shared crest", () => {
     expect(offenders).toEqual([]);
   });
 
+  /**
+   * #6612 — the crest is drawn UPRIGHT, not just drawn.
+   *
+   * The assertions above are exactly why this section exists. #4117 made the
+   * crest universal across all three gutters and pinned its presence; nothing
+   * pinned its orientation, so what went universal was a crest lying on its
+   * side. `ChartGutterLabel` turns its whole content `-90°` — right for an
+   * abbreviation that has to run along the axis, wrong for an image — and the
+   * crest is composed inside that content. Photographed on the live
+   * Cardinals–Giants game (15313231, `Bottom 9th`, 2026-09-16): the
+   * interlocking `StL` and `SF` wordmarks drew as illegible tangles of strokes
+   * beneath perfectly upright `STL` / `SF` text, in both gutters of one page.
+   *
+   * These read the SOURCE because that is the only thing that can see it.
+   * `ChartGutterCrestTests` proves `resolvedURL` and stays green with the
+   * counter-rotation deleted; a Swift test cannot reach a view body, and CI
+   * compiles no Swift (#4302) so it would not run if it could.
+   */
+  describe("the crest stands up inside the rotated gutter (#6612)", () => {
+    it("the gutter's turn is ONE named constant, not a literal per site", () => {
+      // The fix is only durable if both halves read the same number. Two
+      // literals is #1832's shape — free to drift, healthy copy hides the
+      // broken one.
+      expect(stripComments(canonical())).toMatch(
+        /static let rotationDegrees: Double = -90/
+      );
+    });
+
+    it("the LABEL's rotation reads that constant", () => {
+      // Without this the crest's derivation is anchored to nothing: the
+      // constant could say -90 while the label turned by a literal -90, and
+      // changing the constant would rotate the crest alone.
+      expect(stripComments(canonical())).toMatch(
+        /\.rotationEffect\(\.degrees\(ChartGutter\.rotationDegrees\)\)/
+      );
+    });
+
+    it("the CREST counter-rotates, and by the negation of that same constant", () => {
+      const code = stripComments(canonical());
+      expect(code).toMatch(
+        /static var counterRotationDegrees: Double \{ -ChartGutter\.rotationDegrees \}/
+      );
+      expect(code).toMatch(
+        /\.rotationEffect\(\.degrees\(Self\.counterRotationDegrees\)\)/
+      );
+    });
+
+    it("the crest's turn is not written as a bare number anywhere", () => {
+      // The mutant this kills: `.rotationEffect(.degrees(90))` on the crest.
+      // It renders correctly TODAY and silently stops tracking the label.
+      const crest = stripComments(canonical()).slice(
+        stripComments(canonical()).indexOf("struct ChartGutterCrest")
+      );
+      expect(crest).not.toMatch(/\.rotationEffect\(\.degrees\(-?\d/);
+    });
+
+    it("the two turns cancel — stated as arithmetic the reader can check", () => {
+      // Deliberately NOT the load-bearing assertion, and saying so matters:
+      // `counterRotationDegrees` is DEFINED as the negation, so this can only
+      // fail if someone writes a literal — which the scan above is what
+      // actually catches. What this adds is the other half, which is not
+      // derivable: that the label turns AT ALL. A `rotationDegrees` of 0 makes
+      // every assertion in this block pass while no gutter is sideways and no
+      // crest needs righting.
+      const code = stripComments(canonical());
+      const degrees = Number(
+        /static let rotationDegrees: Double = (-?\d+)/.exec(code)?.[1]
+      );
+      expect(degrees).toBe(-90);
+      expect(-degrees + degrees).toBe(0);
+    });
+
+    it("fires on the REAL pre-fix crest body", () => {
+      // Copied verbatim from ChartGutterLabel.swift at origin/master
+      // c21df0409 — the code #6612 was filed about. Frozen: a control
+      // re-snapshotted from a fixed tree contains no defect (notice 50).
+      const preFix = `
+    var body: some View {
+        AsyncImage(url: url) { phase in
+            if let image = phase.image {
+                image.resizable().scaledToFit().frame(width: Self.side, height: Self.side)
+            } else if phase.error != nil {
+                EmptyView()
+            } else {
+                Color.clear.frame(width: Self.side, height: Self.side)
+            }
+        }
+    }
+`;
+      expect(preFix).not.toMatch(
+        /\.rotationEffect\(\.degrees\(Self\.counterRotationDegrees\)\)/
+      );
+    });
+
+    it("does NOT fire on a crest righted with a literal — it fires for the RIGHT reason", () => {
+      // The negative control that isolates the clause. This body renders
+      // upright, so a scan that merely looked for "some rotation on the crest"
+      // would pass it. The drift clause is what must reject it, and only that
+      // clause: it fails the bare-number rule and nothing else.
+      const literal = `
+struct ChartGutterCrest: View {
+    var body: some View {
+        AsyncImage(url: url) { phase in
+            EmptyView()
+        }
+        .rotationEffect(.degrees(90))
+    }
+}
+`;
+      expect(literal).toMatch(/\.rotationEffect\(\.degrees\(-?\d/);
+      expect(literal).not.toMatch(
+        /\.rotationEffect\(\.degrees\(Self\.counterRotationDegrees\)\)/
+      );
+    });
+  });
+
   it("the check fires on the REAL pre-fix source", () => {
     // Copied verbatim from ScoreDifferentialChartView.swift at origin/master
     // 4c419cb7 — the code this issue was filed about. A guard is only proven by
