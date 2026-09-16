@@ -149,7 +149,7 @@ final class NativeScoringRaceOverflowIsReachable5133Tests: XCTestCase {
     private func otherMarketsCategory(
         _ rows: [GameMarketOther]
     ) throws -> SpecialEventMarketsView.MarketCategory {
-        let view = SpecialEventMarketsView(markets: rows, eventStatus: nil)
+        let view = SpecialEventMarketsView(markets: rows, eventStatus: nil, commenceTime: nil)
         let cat = view.categories.first { $0.title == Self.otherMarkets }
         return try XCTUnwrap(cat, "the payload produced no \(Self.otherMarkets) category at all")
     }
@@ -227,7 +227,7 @@ final class NativeScoringRaceOverflowIsReachable5133Tests: XCTestCase {
     /// A category that fits shows everything either way, and grows no control.
     func testACategoryUnderTheCapIsUnaffected() {
         let short = (1...3).map { row("Market \($0)", "Yes", 0.4) }
-        let view = SpecialEventMarketsView(markets: short, eventStatus: nil)
+        let view = SpecialEventMarketsView(markets: short, eventStatus: nil, commenceTime: nil)
         let cat = view.categories.first { $0.title == Self.otherMarkets }
 
         let items = try? XCTUnwrap(cat).items

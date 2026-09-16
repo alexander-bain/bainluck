@@ -287,7 +287,8 @@ final class AQuietLegOnALiveCardSaysSoTests: XCTestCase {
                     observedAt: stamp(minutesAgo: 1)
                 ),
             ],
-            eventStatus: "live"
+            eventStatus: "live",
+            commenceTime: nil
         )
         let entries = view.categories.first?.items.first?.outcomes ?? []
         XCTAssertEqual(entries.count, 1, "one label is one row")
