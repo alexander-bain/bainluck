@@ -5908,6 +5908,68 @@ async def search_events(
     # Folding a one-row page remains a no-op by construction (a group of one
     # elects itself and drops nobody), so nothing about the collapse changes;
     # `test_a_single_row_page_is_untouched` pins that and still passes.
+    #
+    # ── #6568 acceptance 2, the LIST half: search answered one fighter's name
+    # ── with two cards, and dated the wrong one later so it sorted first ──────
+    #
+    # `/search?q=Orobio` at 390px on 2026-09-16, banked as this ship's BEFORE:
+    #
+    #     BOXING                                    Tomorrow 3:00 PM
+    #     JO  Jhon Orobio     No price yet     AM  Antonio Moran
+    #
+    #     BOXING                            No result reported · Sep 3
+    #     JO  Jhon Orobio  90%              AM  Antonio Moran  10%
+    #     Pre-match · sportsbooks
+    #
+    # One fight, two cards, and the card promising "Tomorrow" is the one with
+    # nothing in it. Kalshi fought and graded that bout on September 3 — the
+    # honest row is the second card, which carries the real pre-match reading.
+    # The lie sorts ABOVE it precisely because its date is fabricated fourteen
+    # days into the future, so the surface that exists to answer a question
+    # leads with the answer that is wrong.
+    #
+    # The correction is the same one `/api/events/{id}` and the league rail
+    # already run, and it has to be here because the mechanism they reach it
+    # through cannot be: `fold_twin_events` recovers a kick-off at its own top
+    # (#5905), but it is SYNCHRONOUS and this correction needs the event's
+    # Kalshi markets, i.e. a query. So the fold cannot host it and the route
+    # must. Measured reach at this surface before building: eight of eight
+    # cohort events probed by fighter name on production 2026-09-16 were served
+    # here, every one of them carrying the fabricated date, and four of the
+    # eight sat directly above their honest twin in the same result list.
+    #
+    # BEFORE THE FOLD, deliberately. The fold's key includes the commence
+    # MINUTE, so folding on a fabricated minute can only mis-group; this is the
+    # same ordering #5905 chose when it put the soccer pad at the fold's top.
+    #
+    # NOTHING IS DROPPED HERE, and that is the difference from the league rail.
+    # There the drop was the rail's own `commence_time > now` filter being
+    # applied to the corrected value instead of the stored one. Search has no
+    # such filter and no such claim: a reader who searches a fighter's name
+    # wants the fight, and this bout is real and was fought. Withholding it
+    # would answer a question with silence in order to avoid answering it
+    # wrongly. Correcting the date is the whole ship.
+    #
+    # THE RESIDUAL, because the fix is partial and says so. A recovered row
+    # claims a DATE and no hour (midnight UTC, `commence_time_source`
+    # `kalshi_ticker`), which a wall-clock formatter renders as the evening
+    # before for a Pacific reader — so the two cards above become "Sep 2" and
+    # "Sep 3" rather than one card. That is one day apart instead of fourteen
+    # and no longer a countdown to a finished fight, but it is still two cards:
+    # collapsing them needs a day-tolerant twin key, which is #2693's durable
+    # matching work and is not smuggled in here.
+    try:
+        await recover_kalshi_expiration_starts(db, events)
+    except Exception:  # noqa: BLE001 — see the gotcha #42 note above
+        # `q` is NOT in this line, for the reason the fold's own log below
+        # spells out: CodeQL grades changed code and a user-provided value in a
+        # log entry is `py/log-injection` at medium severity, which notice 32
+        # refuses. The traceback names the route.
+        logger.exception(
+            "search: kalshi expiration recovery failed; "
+            "serving the stored kick-offs"
+        )
+
     _twin_duplicates_dropped = 0
     if events:
         try:
@@ -11491,6 +11553,53 @@ async def list_events(
     # Gotcha #42 applied to a whole stage: the fold improves the page, it is
     # never a precondition for having one. If it raises, the unfolded page is
     # served — today's bug — rather than nothing.
+    #
+    # ── #6568 acceptance 2: ten of this route's thirty boxing rows were dated
+    # ── by a settlement backstop rather than by the contest ───────────────────
+    #
+    # Measured on production 2026-09-16, `?sport=boxing_boxing&status=scheduled
+    # &days=14`: 30 rows, and **all ten** events of the #6568 cohort were in
+    # them — four September 3 fights sitting at the top of the list under
+    # September 17, and two September 5 fights under September 19. The stored
+    # hour on each is byte-identical to its attached Kalshi contract's
+    # expiration instant, which is the ~14-day settlement backstop Kalshi hangs
+    # on a combat card (gotcha #14), not a start.
+    #
+    # Here for the same reason it is in `search_events` above: the correction
+    # needs the event's Kalshi markets, so it needs a query, so the synchronous
+    # `fold_twin_events` cannot host it however well that is where the kick-off
+    # recovery it partners already lives (#5905). Before the fold, so the fold's
+    # commence-MINUTE key is never computed on a fabricated minute.
+    #
+    # NOTHING IS DROPPED, AND THIS ROUTE HAS ALREADY RULED THAT QUESTION —
+    # against dropping, forty lines above, in its own words:
+    #
+    #     "a row still wearing `scheduled` hours past its own kickoff renders
+    #      blank too ... `TERMINAL_STATUSES` deliberately excludes it — a
+    #      scheduled row may yet be played, and suppressing it would empty the
+    #      front door instead of cleaning it. Those rows stay, and #3016 stays
+    #      open for them."
+    #
+    # I checked that predicate rather than assuming it: `not_a_blank_card`
+    # requires `status IN TERMINAL_STATUSES`, and every row in this cohort is
+    # `scheduled`, so the route's existing suppression does not reach them and
+    # a drop here would be a NEW policy against a decision this route already
+    # took. A corrected row joins the population #3016 (open) owns — a
+    # scheduled row past its own kickoff — instead of being a scheduled row in
+    # the FUTURE that will never arrive. That is strictly one lie fewer.
+    #
+    # The list does not shrink and no reader loses a fixture: all 30 rows are
+    # still served, ten of them now dated by the venue's own ticker.
+    try:
+        await recover_kalshi_expiration_starts(db, events)
+    except Exception:  # noqa: BLE001 — the same bargain as the fold below
+        # `sport` is a query parameter and is deliberately not interpolated
+        # (notice 32, `py/log-injection`); the traceback names the route.
+        logger.exception(
+            "events list: kalshi expiration recovery failed; "
+            "serving the stored kick-offs"
+        )
+
     try:
         _fold = fold_twin_events(events)
         if _fold.dropped_ids:
