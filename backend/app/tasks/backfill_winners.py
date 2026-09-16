@@ -2231,15 +2231,25 @@ async def _resolve_kalshi_from_scores(scan_out: dict | None = None):
                     name_lower = (out.name or "").lower()
                     name_tokens = set(name_lower.split())
 
-                    is_home = bool(home_tokens & name_tokens)
-                    is_away = bool(away_tokens & name_tokens)
-
-                    if is_home and not is_away:
-                        won = home_won
-                    elif is_away and not is_home:
-                        won = not home_won
-                    else:
+                    # #6590: a draw leg is not a team, and its name may embed
+                    # both clubs — the token test below would side it.
+                    draw_verdict = _draw_leg_verdict(out.name)
+                    if draw_verdict == "refuse":
                         continue
+                    if draw_verdict is False:
+                        # This branch only runs on a non-level score, which
+                        # decides a bare draw.
+                        won = False
+                    else:
+                        is_home = bool(home_tokens & name_tokens)
+                        is_away = bool(away_tokens & name_tokens)
+
+                        if is_home and not is_away:
+                            won = home_won
+                        elif is_away and not is_home:
+                            won = not home_won
+                        else:
+                            continue
 
                     await session.execute(
                         text(
@@ -2424,6 +2434,59 @@ _FIRST_HALF_PERIODS = {
     "1st period",
     "2nd period",
 }
+
+
+#: A leg that asks "did this segment end level?" rather than naming a team.
+#: `\b` is load-bearing: real clubs `Tienen` and `Drawsko` must stay on the team
+#: path, and no row in `teams` starts with either word (measured, #6590).
+_DRAW_OUTCOME_RE = re.compile(r"^(?:draw|tie)\b", re.IGNORECASE)
+
+#: ...and one that asks it about THE SAME segment, so a not-level segment
+#: decides it. The optional parenthetical is the match name, not a qualifier
+#: ("Draw (SK Beveren vs. Oud-Heverlee Leuven)").
+_BARE_DRAW_OUTCOME_RE = re.compile(
+    r"^(?:draw|tie)\s*(?:\([^)]*\))?$", re.IGNORECASE
+)
+
+
+def _draw_leg_verdict(name):
+    """How a team-vs-team loop must treat one outcome: ``None``/``False``/skip.
+
+    Returns ``None`` when the leg names a team and the caller's own token
+    matching should proceed; ``False`` when the leg is a draw the caller's
+    segment has already decided; and the string ``"refuse"`` when it is a draw
+    about SOME OTHER segment, which the caller may neither grade nor side.
+
+    ── WHY THE TEAM LOOPS NEEDED THIS (#6590) ───────────────────────────────
+
+    Both 2-outcome loops decide a leg by intersecting whitespace tokens of its
+    name with the home/away team names, on the assumption that BOTH legs name a
+    team. A draw leg breaks the assumption, and a draw leg that embeds the two
+    club names breaks it silently, because `.split()` leaves punctuation
+    attached::
+
+        home="SK Beveren" -> {sk, beveren};  away="Leuven" -> {leuven}
+        "Draw (SK Beveren vs. Oud-Heverlee Leuven)"
+            home hit = {beveren}   away hit = {}   <-- "leuven)" != "leuven"
+            is_home=True -> won = home_won = True
+
+    So production served **two winners on one mutually-exclusive market**:
+    `/futures/60015154` printed "Settled — SK Beveren won." above a Final
+    Results card badging BOTH `SK Beveren` and `Draw (…)` as `Won · 100%
+    Settled`, on a match that finished 3–0. `game_score` is not in
+    ``OVERWRITABLE_WINNER_SOURCES_SQL``, so such a row is PERMANENT.
+
+    A bare draw is graded rather than refused because both callers already
+    guarantee the segment is not level, which DECIDES it — and the honest
+    ``False`` reads better than a withheld row. A qualified draw is refused for
+    the #4923 reason: `tie 1st half`, `draw 2-2`, `draw 1h 1-1`,
+    `tie 9th inning` and `draw/no contest` are all real measured shapes that
+    ask about a different segment than the one the caller holds a score for,
+    and a final score may not answer them.
+    """
+    if not _DRAW_OUTCOME_RE.match(name or ""):
+        return None
+    return False if _BARE_DRAW_OUTCOME_RE.match(name or "") else "refuse"
 
 
 def _decide_three_way_winner(outcome_names, home_team_name, away_team_name,
@@ -3313,18 +3376,28 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
                         home_won = h_score > a_score
                         for oc in outcomes_list:
                             oc_tokens = set((oc.name or "").lower().split())
-                            is_home = bool(oc_tokens & home_tokens) and not bool(
-                                oc_tokens & away_tokens
-                            )
-                            is_away = bool(oc_tokens & away_tokens) and not bool(
-                                oc_tokens & home_tokens
-                            )
-                            if is_home:
-                                won = home_won
-                            elif is_away:
-                                won = not home_won
-                            else:
+                            # #6590: same hole as the moneyline loop — the
+                            # measured specimen reached production through
+                            # THIS one. `h_score != a_score` is guaranteed
+                            # above, so a bare draw is decided.
+                            draw_verdict = _draw_leg_verdict(oc.name)
+                            if draw_verdict == "refuse":
                                 continue
+                            if draw_verdict is False:
+                                won = False
+                            else:
+                                is_home = bool(oc_tokens & home_tokens) and not bool(
+                                    oc_tokens & away_tokens
+                                )
+                                is_away = bool(oc_tokens & away_tokens) and not bool(
+                                    oc_tokens & home_tokens
+                                )
+                                if is_home:
+                                    won = home_won
+                                elif is_away:
+                                    won = not home_won
+                                else:
+                                    continue
                             await session.execute(
                                 text(
                                     "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid"
