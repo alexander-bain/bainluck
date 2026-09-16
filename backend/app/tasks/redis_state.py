@@ -60,6 +60,15 @@ _DEFAULT_REDIS_SOCKET_TIMEOUT = 5.0
 # envelope from the Procfile itself, so a ``--concurrency`` bump fails the gate
 # instead of quietly eating the budget.
 #
+# READ THE BOUND HONESTLY: the cap is per POOL, and the cache below keys on the
+# parameter set, so one process holds one pool per distinct signature it uses
+# (today: the 5s default, the 2s variant, and two fast-fail ones). The guard's
+# envelope-times-cap arithmetic therefore bounds the PRIMARY pool per process,
+# not the process total, and the async client is uncached on top of that. That
+# is precisely why the cap is small and why exhaustion queues instead of
+# raising: neither the arithmetic nor a bigger constant can make a hard ceiling
+# out of a number that is multiplied by a signature count nobody enumerates.
+#
 # A cap this small is only SAFE because of the wait below it: exhaustion must
 # not turn a server-side rejection into a client-side failure (see
 # ``_build_bounded_client``). The cap is a ceiling, not a target — a prefork

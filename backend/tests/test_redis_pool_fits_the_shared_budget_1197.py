@@ -83,6 +83,11 @@ class TestTheCeilingFitsThePlanLimit:
         ``--concurrency`` (or adding a dyno type) fails here instead of quietly
         eating a budget that is shared with the other app and with Celery's own
         broker connections.
+
+        What it does NOT claim: the cap is per pool and a process holds one pool
+        per client signature, so this bounds the primary pool per process rather
+        than the process total. The blocking wait, not this arithmetic, is what
+        makes the residual safe.
         """
         processes = _pool_holding_processes(_procfile_path().read_text())
         ceiling = processes * redis_state._REDIS_MAX_CONNECTIONS
