@@ -402,7 +402,13 @@ def test_the_binary_card_says_down_for_a_collapsed_affirmative():
         now=NOW,
     )
     assert copy.headline == "Down 84 points since Feb 19"
-    assert copy.context_summary == "Down 84 points since Feb 19 — now 7% chance"
+    # Feb 19 is past the news horizon from NOW, so D1 clause (a) (#4066) puts the
+    # standing answer first and keeps the dated move behind it. This test's own
+    # thesis is the DIRECTION word, not the clause order: both halves are still
+    # here and they still agree, which is the contradiction it was written to catch.
+    assert copy.context_summary == "7% chance, down 84 points since Feb 19"
+    assert "down 84 points" in copy.context_summary
+    assert "up 84 points" not in copy.context_summary.lower()
 
 
 # --------------------------------------------------------------------------

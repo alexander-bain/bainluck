@@ -756,6 +756,46 @@ _MONTH_ABBR = (
 )
 
 
+#: How old a lifetime baseline may be and still read as the card's NEWS.
+#:
+#: D1 clause (a), #4066, verbatim: "'From opening' becomes context and always
+#: carries its date; it is never the headline reason." The dated-and-demoted
+#: branch below already runs after every time-anchored signal, so a card only
+#: reaches it when nothing has happened lately — and then it led its caption
+#: with the move anyway, because the move was the only sentence it had.
+#:
+#: Seven days is the horizon the module already uses for "soon" elsewhere
+#: (`resolving_soon_7d`), so a move is news for exactly as long as a resolution
+#: is imminent. Measured on the served page 2026-09-16: of the eight dated
+#: baselines in `/api/feed?limit=60`, seven were older than 30 days and five
+#: cited one day, Feb 19 — a bulk capture date, i.e. when we first saw the
+#: outcome, not a day anything happened to it. The two at the very top of page
+#: one read "Down 22.5 points since Feb 3" and "Down 7.7 points since Feb 19".
+_LIFETIME_MOVE_NEWS_HORIZON_DAYS = 7
+
+
+def _baseline_is_older_than_news(
+    when: Optional[datetime],
+    now: Optional[datetime] = None,
+) -> bool:
+    """Is this baseline too old for its move to be stated as today's news?
+
+    Same naive-is-UTC reading as :func:`format_baseline_date`, and deliberately
+    a separate function from it: that one answers "what day is this" and is
+    used by branches that are already anchored to a recent instant, while this
+    answers "may the caption LEAD with it". A baseline we cannot date at all is
+    not old — it is unsayable, and the caller drops the clause entirely.
+    """
+    if when is None:
+        return False
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    return (reference - when).days > _LIFETIME_MOVE_NEWS_HORIZON_DAYS
+
+
 def format_baseline_date(
     when: Optional[datetime],
     now: Optional[datetime] = None,
@@ -933,10 +973,28 @@ def compose_binary_card_copy(
     since = format_baseline_date(top_surprise_opened_at, now=now)
     if since and top_surprise_change is not None:
         direction = "Up" if top_surprise_change > 0 else "Down"
-        return composed(
-            f"{direction} {_points(top_surprise_change)} since {since}",
-            f"{direction} {_points(top_surprise_change)} since {since} — now {answer}",
-        )
+        move = f"{direction} {_points(top_surprise_change)} since {since}"
+        # D1 clause (a), #4066: a move measured from seven months ago is not why
+        # the card is here this morning. Past the news horizon the caption stops
+        # ASSERTING the move and states the standing answer first, keeping the
+        # move — still dated, never dropped — behind it as context. Inside the
+        # horizon nothing changes: "Down 5 points since Sep 10 — now 58% chance"
+        # is a sentence about this week and leads exactly as it did.
+        #
+        # 🔴 THE HEADLINE IS BYTE-IDENTICAL IN BOTH ARMS, AND THAT IS LOAD-BEARING,
+        # not a stylistic choice. `routes/feed.py` feeds the headline to
+        # `explanation_score_rank`, where `has_specific_explanation` decides
+        # between the card's raw score and a 93/80/60 cap — so a headline that
+        # changed here would move the card's ORDER as well as its words. The
+        # reader-visible string on a binary card is the CONTEXT slot (measured
+        # on production 2026-09-16: the Taiwan card renders "Down 7.7 points
+        # since Feb 19 — now 4% chance" and nothing else), so reordering the
+        # context alone is the whole ship and the ranking input never moves.
+        if _baseline_is_older_than_news(top_surprise_opened_at, now=now):
+            context = f"{answer}, {move[0].lower()}{move[1:]}"
+        else:
+            context = f"{move} — now {answer}"
+        return composed(move, context)
 
     # #4056 — nothing about the world is true of this market right now: it has not
     # moved, it is not resolving, and it has no dated lifetime move. The rung that

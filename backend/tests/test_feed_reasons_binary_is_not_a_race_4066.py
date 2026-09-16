@@ -168,7 +168,10 @@ def test_a_yes_no_card_never_names_its_own_question_as_a_runner():
         now=NOW,
     )
 
-    assert copy.context_summary == "Up 37.5 points since Jan 4 — now 59% chance"
+    # Jan 4 is past the news horizon from NOW, so clause (a) of this very program
+    # states the answer first and keeps the dated move as context. The assertions
+    # this test exists for — no runner, no "from opening" — are below and unchanged.
+    assert copy.context_summary == "59% chance, up 37.5 points since Jan 4"
     assert copy.headline == "Up 37.5 points since Jan 4"
     assert PHILIPPINES_OUTCOME not in copy.context_summary
     assert "from opening" not in copy.context_summary
