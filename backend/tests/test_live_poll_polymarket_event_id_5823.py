@@ -139,11 +139,16 @@ class _Market:
 
 
 class _Event:
-    def __init__(self, eid: int, status="live"):
+    def __init__(self, eid: int, status="live", completed_at=None):
         self.id = eid
         self.status = status
         self.home_team_name = "Johor Darul Ta'zim"
         self.away_team_name = "Buriram United"
+        # #6608 — the beat's blend group now carries #5820's tri-state, read off
+        # this row. `None` is faithful for a double modelling a live game: we
+        # have no result for it. Absent, the read raises inside the per-event
+        # `except` and the beat books a session recovery it never needed.
+        self.completed_at = completed_at
         # Outside `_PREGAME_MARK_LEAD_MINUTES` by any clock, so the pregame pin
         # is not quietly also under test here.
         self.commence_time = _now() + timedelta(hours=2, minutes=30)

@@ -8691,8 +8691,43 @@ async def _poll_live_prediction_market_prices():
                 m = pop.markets_by_id.get(mid)
                 if m is None:
                     continue
+                # #6608 — THE HOLDOUT CALL SITE OF #5820'S CLAUSE. The settled-
+                # speaker rule lives in `admissible_as_blend_speaker` and is
+                # armed by a SCOPE FIELD, not by its predicate: the tri-state
+                # `event_has_result` is None here, so the clause abstained and
+                # this writer went on republishing a settled book as a live
+                # observation. Both of the blend's other writers already supply
+                # it — the 15-minute matcher on `_LinkedMarketRef`, the WS fast
+                # lane from its own joined Event row — so this was the one
+                # surface the rule could not reach, and the two writers
+                # alternated: the matcher retired the leg, this pass re-added it
+                # ~90 s later, and the reader's number blinked out between
+                # passes. Measured 2026-09-16 20:00Z, 11 live events with
+                # `completed_at IS NULL` citing a `status='resolved'` market,
+                # every one stamped at the identical microsecond
+                # (19:57:09.172215) — one batch writer, this one.
+                #
+                # `None` WHEN THE EVENT IS NOT RESOLVABLE, never False. False is
+                # the ARMED state ("we measured, there is no result"); an event
+                # we could not look up is unmeasured, and collapsing the two
+                # would arm the clause on no evidence. This is the same
+                # tri-state discipline `MarketOutcomes` documents.
+                #
+                # `event_commence_time` IS DELIBERATELY STILL WITHHELD. It arms
+                # a DIFFERENT rule — #4854's unobserved-since-kickoff clause —
+                # over a population this change has not measured, and adopting
+                # two rules on a new surface in one step is how a fix's blast
+                # radius stops being the thing that was measured. That adoption
+                # is its own ship.
+                ev = pop.event_by_market_id.get(mid)
                 groups.append(
-                    _LiveBlendGroup(market=m, outcomes=pop.outcomes_by_market.get(mid, []))
+                    _LiveBlendGroup(
+                        market=m,
+                        outcomes=pop.outcomes_by_market.get(mid, []),
+                        event_has_result=(
+                            None if ev is None else ev.completed_at is not None
+                        ),
+                    )
                 )
             return groups
 
