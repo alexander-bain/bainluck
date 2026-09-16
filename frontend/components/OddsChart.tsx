@@ -27,6 +27,7 @@ import {
   chartAxisPercents,
   computeWinProbYAxis,
 } from "@/lib/eventKeyStats";
+import { chartTooltipPair } from "@/lib/drawPricedWinner";
 import { separateLinesLabel, sourceHex, sourceLabel } from "@/lib/sourceColors";
 import { teamShortNames } from "@/lib/teamShortName";
 import { teamTextColor } from "@/lib/teamColors";
@@ -254,6 +255,17 @@ interface OddsChartProps {
   onTimeRangeChange?: (range: "all" | "live") => void;
   /** Authoritative game end time from the backend (set when any source confirms game over) */
   completedAt?: string;
+  /**
+   * #6238 — this sport's winner market prices a draw, so the tooltip may not
+   * print an away percentage: every one it could print is `100 − home`, which
+   * on a three-way market is "the home team does not win" (away win OR draw).
+   *
+   * Decided ONCE by the page (`awaySlotWithheld`, from `sportPricesADraw`) and
+   * handed down, rather than re-derived here from a sport key. Two derivations
+   * of one rule is how the hero and the card below this chart came to print
+   * different answers in the first place. Absent means two-sided.
+   */
+  awayWithheld?: boolean;
 }
 
 type TimeRange = "all" | "live";
@@ -371,6 +383,7 @@ export default function OddsChart({
   externalTimeRange,
   onTimeRangeChange,
   completedAt,
+  awayWithheld = false,
 }: OddsChartProps) {
   // #3419: the axis is categorical on this label, so it must be spelled the
   // same way the parent spelled its ticks. Absent a parent domain the window is
@@ -1370,11 +1383,15 @@ export default function OddsChart({
     label?: string;
   }) => {
     if (active && payload && payload.length) {
-      const formatProb = (delta: number) => {
-        const homeProb = delta; // 0–100 axis: value is the home probability
-        const awayProb = 100 - homeProb;
-        return `${homeTeam}: ${homeProb.toFixed(1)}% | ${awayTeam}: ${awayProb.toFixed(1)}%`;
-      };
+      // #6238 — the `100 - homeProb` that stood here is the same subtraction the
+      // readout under this chart was making, in a different format: on a
+      // draw-priced sport it is "the home team does not win", not the away
+      // side's chances. Both callers now read one rule in
+      // `drawPricedWinner.ts`, so the tooltip and the readout cannot drift into
+      // saying different things about the same match on the same card.
+      // `delta` is the 0–100 axis value and IS the home probability.
+      const formatProb = (delta: number) =>
+        chartTooltipPair(homeTeam, delta, awayTeam, awayWithheld);
 
       // Look up game state from chartData for this time label
       const matchingPoint = chartData.find((d) => d.time === label);
