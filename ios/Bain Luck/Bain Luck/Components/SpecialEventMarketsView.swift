@@ -3,6 +3,13 @@ import SwiftUI
 struct SpecialEventMarketsView: View {
     let markets: [GameMarketOther]
     let eventStatus: String?
+    /// #6595 native half — the clock ``PreKickoffCertainty`` needs to tell a row
+    /// that is about THIS game from one that was already decided before it began.
+    ///
+    /// NO DEFAULT, deliberately. A `nil` default would compile every present and
+    /// future call site while silently disarming the guard on all of them, which
+    /// is the one failure of this change that nothing would report.
+    let commenceTime: Date?
 
     /// Internal, not `private`, for the reason given on `isWinProbabilityMarket`
     /// below and pressed by CERT-2620: a guard that claims a market is REACHABLE
@@ -118,6 +125,54 @@ struct SpecialEventMarketsView: View {
 
     private var isGameFinished: Bool {
         SettledQuote.isSettled(eventStatus)
+    }
+
+    /// Does THIS row get the frozen-quote treatment even though the game is not
+    /// over? (#6595, native half.)
+    ///
+    /// ``isGameFinished`` asks about the EVENT and is the right question for a
+    /// whole card. It cannot see a single row that stopped being a forecast
+    /// before the game even started — which is what a stale container attached
+    /// to a live event serves, and what this card drew as a filled bar at 100%
+    /// over a tied 13th inning on 2026-09-16. ``PreKickoffCertainty`` carries the
+    /// predicate and the measurement behind both of its clauses.
+    ///
+    /// Internal, not `private`, for CERT-2620's reason one step along: this view
+    /// binds the predicate to its OWN `commenceTime` and `eventStatus`, and a
+    /// test that can only reach `PreKickoffCertainty` directly cannot tell a
+    /// correctly-wired card from one that never passes its clock through.
+    func isFrozen(_ o: OutcomeEntry) -> Bool {
+        PreKickoffCertainty.isFrozen(
+            probability: o.prob,
+            observedAt: o.observedAt,
+            commenceTime: commenceTime,
+            eventStatus: eventStatus
+        )
+    }
+
+    /// Which of `outcomeRow`'s two pictures a row gets.
+    ///
+    /// Named and internal so the branch is a THING A TEST CAN HOLD. With the
+    /// condition written inline in the body, a mutant that simply deletes
+    /// `isFrozen(o)` from it leaves every test in
+    /// `APreKickoffCertaintyIsNotALivePriceTests` green — they would all still be
+    /// asking the predicate, which still answers correctly, about a card that had
+    /// stopped listening. The body calls this and nothing else, so that mutant now
+    /// has to come through here.
+    ///
+    /// It does not close the gap entirely and says so: a mutant that edits the
+    /// BODY's two arms — swapping which branch draws the bar — is not reachable
+    /// from any test in this target, because nothing here can render SwiftUI and
+    /// read it back. That one is covered by the production LOOK, not by a test.
+    enum RowTreatment: Equatable {
+        /// A bar and a percent: a picture of a live distribution.
+        case livePrice
+        /// `SettledQuote.prefix` and no bar — the number, declared as frozen.
+        case frozenQuote
+    }
+
+    func treatment(for o: OutcomeEntry) -> RowTreatment {
+        (isGameFinished || isFrozen(o)) ? .frozenQuote : .livePrice
     }
 
     /// Only a LIVE event's card can go quiet — web's
@@ -399,10 +454,14 @@ struct SpecialEventMarketsView: View {
             // they agree (`ageDecision`). Drawn before the bar, as web draws it,
             // and only on a row that is still a live price: `isGameFinished`
             // returns below, so a settled card never reaches this line.
+            // #4970's mark STAYS on a frozen row (#6595): "17h ago" beside "last
+            // quote 100%" is the whole evidence that the number is not about the
+            // game in progress. The finished-card suppression below is a
+            // different case — that card says it once, in its own header.
             if showAge, !isGameFinished {
                 PriceAgeMarkView(observedAt: o.observedAt, cadence: .live)
             }
-            if isGameFinished {
+            if treatment(for: o) == .frozenQuote {
                 Text("\(SettledQuote.prefix) \(percent)%")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)

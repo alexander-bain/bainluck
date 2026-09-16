@@ -452,7 +452,8 @@ struct EventDetailView: View {
                        otherMarkets.count >= 3 {
                         SpecialEventMarketsView(
                             markets: otherMarkets,
-                            eventStatus: event.status
+                            eventStatus: event.status,
+                            commenceTime: event.commenceTime?.asDate
                         )
                     }
                     // Graceful empty state: a market-less game (e.g. an aged-out
