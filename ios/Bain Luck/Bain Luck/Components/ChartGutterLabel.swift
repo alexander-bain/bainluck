@@ -62,7 +62,7 @@ struct ChartGutterLabel<Content: View>: View {
             // Pre-rotation width IS the post-rotation height: bound the run here
             // so an over-long name truncates rather than clips.
             .frame(width: run)
-            .rotationEffect(.degrees(-90))
+            .rotationEffect(.degrees(ChartGutter.rotationDegrees))
             // Post-rotation footprint, stated to the layout system so the gutter
             // reserves it instead of letting the pixels spill over the heading.
             .frame(width: width, height: run)
@@ -87,6 +87,38 @@ struct ChartGutterCrest: View {
     /// chart's edge, not a width across the gutter, and 14 clears the narrower
     /// (22pt) of the two gutters as comfortably as the wider one.
     static let side: CGFloat = 14
+
+    /// The turn that puts the crest back upright inside a rotated gutter.
+    ///
+    /// **WHY THIS EXISTS (#6612).** The crest is composed INSIDE
+    /// `ChartGutterLabel`'s content, so it was turned `-90°` along with the
+    /// abbreviation beside it and drew lying on its side. Photographed on the
+    /// live Cardinals–Giants game (15313231, `Bottom 9th`, 2026-09-16): the
+    /// Cardinals' interlocking `StL` and the Giants' interlocking `SF` are
+    /// orientation-bearing wordmarks, so on their side they are not a small logo
+    /// but an illegible tangle of strokes — directly beneath a perfectly upright
+    /// `STL` / `SF`. Counter-rotating the photographed pixels by `+90°` resolves
+    /// both into clean marks, which is what proves the cause.
+    ///
+    /// **THE ROTATION IS RIGHT FOR THE TEXT AND WRONG FOR THE IMAGE**, and that
+    /// is the whole of it. An abbreviation has to run along the axis; a crest
+    /// means the same thing whichever way the axis runs, and a mark on its side
+    /// is not a smaller mark, it is a different one. So the label keeps its turn
+    /// and the crest undoes it, rather than the gutter giving up its sideways
+    /// labels.
+    ///
+    /// **DERIVED, NEVER A SECOND LITERAL.** Writing `+90` here would be #1832's
+    /// shape — two copies of one fact, free to drift, the healthy copy hiding the
+    /// broken one. Negating ``ChartGutter/rotationDegrees`` — the same constant
+    /// the label's own `.rotationEffect` reads — means a gutter that ever turns a
+    /// different way carries its crest with it.
+    ///
+    /// **GEOMETRY IS UNTOUCHED, because the crest is a square.** Rotating a
+    /// `side × side` frame by a quarter turn leaves an identical layout box, so
+    /// #2903's careful "state the post-rotation footprint" arithmetic in
+    /// `ChartGutterLabel` sees exactly the same box it saw before. This is why
+    /// the fix can live on the crest instead of restructuring the gutter.
+    static var counterRotationDegrees: Double { -ChartGutter.rotationDegrees }
 
     let url: URL
 
@@ -129,11 +161,26 @@ struct ChartGutterCrest: View {
                 Color.clear.frame(width: Self.side, height: Self.side)
             }
         }
+        // Undo the gutter's turn so the mark stands up (#6612). Outside the
+        // phase switch on purpose: all three arms are square or empty, so one
+        // site cannot leave an arm behind the way three sites could.
+        .rotationEffect(.degrees(Self.counterRotationDegrees))
     }
 }
 
 /// Geometry shared by every chart gutter.
 enum ChartGutter {
+    /// The turn that stands a gutter label on its edge, in degrees.
+    ///
+    /// Named rather than written twice (#6612). `ChartGutterCrest` has to undo
+    /// exactly this turn to stay upright, and a second `+90` literal over there
+    /// is the #1832 shape: two copies of one fact, free to drift, with the
+    /// healthy copy hiding the broken one. It lives on `ChartGutter` rather than
+    /// on `ChartGutterLabel` because the label is generic over its content — a
+    /// static read off it needs a witness type at every call site, which is a
+    /// worse invitation to write the literal than the literal was.
+    static let rotationDegrees: Double = -90
+
     /// The gap left between the two labels so a long home name and a long away
     /// name cannot meet in the middle of the axis.
     static let interLabelGap: CGFloat = 16
