@@ -1,6 +1,7 @@
 "use client";
 
-import { probColor, type EventMarket } from "./data";
+import { probColor, weatherProbability, type EventMarket } from "./data";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { SourceBadge } from "./SourceBadge";
 
 export default function HurricaneTracker({ items }: { items: EventMarket[] }) {
@@ -146,7 +147,12 @@ export default function HurricaneTracker({ items }: { items: EventMarket[] }) {
                 textAlign: "right",
               }}
             >
-              {item.prob}%
+              {/* UX-P046 on the value (#6616): "Hurricane Marie category? —
+                  Category 1 or above" printed `100%` over a book that does not
+                  close until December. */}
+              {formatProbabilityPercent(weatherProbability(item), {
+                rendered: item.prob,
+              })}
             </span>
           </div>
         ))}

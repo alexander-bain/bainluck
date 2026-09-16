@@ -1,11 +1,43 @@
 "use client";
 
 import Link from "next/link";
-import { type CityData, tempColorC, toC, SOURCES, tomorrowDateStr } from "./data";
+import {
+  type CityData,
+  type TempBucket,
+  tempColorC,
+  toC,
+  SOURCES,
+  tomorrowDateStr,
+  weatherProbability,
+} from "./data";
 import { SourceBadge, CrossSourceBadge } from "./SourceBadge";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 
 interface DistributionPanelProps {
   city: CityData;
+}
+
+/** The percent this bucket prints — UX-P046 on the raw value, the server's
+ *  integer on the digits (#6616). */
+function bucketPercent(bucket: TempBucket): string {
+  return formatProbabilityPercent(weatherProbability(bucket), {
+    rendered: bucket.prob,
+  });
+}
+
+/**
+ * Does the venue quote this bucket at all?
+ *
+ * #6616 — THIS WAS `bucket.prob > 0`, AND THAT IS A ROUNDING, NOT A PRICE. 96
+ * buckets across 42 cities serve `prob: 0` over live quotes; Los Angeles prices
+ * both "63°F or below" and "64-65°F" at 0.000500. Under the old test each of
+ * them lost its bar's minimum height, its hover tooltip and its pointer cursor
+ * — so the panel told a reader the outcome was impossible by saying nothing
+ * about it at all, which is the same claim the `0%` makes out loud on the cards
+ * above. A priced bucket is a bucket the reader may interrogate, however small.
+ */
+function isPriced(bucket: TempBucket): boolean {
+  return weatherProbability(bucket) > 0;
 }
 
 export default function DistributionPanel({ city }: DistributionPanelProps) {
@@ -65,7 +97,7 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
 
       <div className="flex items-baseline" style={{ marginTop: 8, gap: 8 }}>
         <span className="font-mono" style={{ fontSize: 20, fontWeight: 600, color: "var(--text-secondary)" }}>
-          {peak.prob}%
+          {bucketPercent(peak)}
         </span>
         <span style={{ fontSize: 12, color: "var(--text-muted)" }}>most likely bucket</span>
       </div>
@@ -131,7 +163,7 @@ function SingleSourceHistogram({
   peakIdx,
   color,
 }: {
-  dist: Array<{ label: string; prob: number }>;
+  dist: TempBucket[];
   maxProb: number;
   peakIdx: number;
   color: string;
@@ -142,32 +174,33 @@ function SingleSourceHistogram({
         {dist.map((bucket, i) => {
           const isPeak = i === peakIdx;
           const barHeight = maxProb > 0 ? (bucket.prob / maxProb) * 100 : 0;
+          const priced = isPriced(bucket);
           return (
             <div
               key={i}
               className="flex-1 flex flex-col items-center justify-end group relative"
-              style={{ height: "100%", cursor: bucket.prob > 0 ? "pointer" : "default" }}
+              style={{ height: "100%", cursor: priced ? "pointer" : "default" }}
             >
               {/* Tooltip on hover */}
-              {bucket.prob > 0 && (
+              {priced && (
                 <div
                   className="absolute -top-6 left-1/2 -translate-x-1/2 hidden group-hover:block font-mono px-1.5 py-0.5 rounded bg-gray-800 text-white whitespace-nowrap z-10"
                   style={{ fontSize: 10, fontWeight: 600 }}
                 >
-                  {bucket.prob}%
+                  {bucketPercent(bucket)}
                 </div>
               )}
               {/* Always-visible label on peak */}
               {isPeak && (
                 <div className="font-mono" style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 4 }}>
-                  {bucket.prob}%
+                  {bucketPercent(bucket)}
                 </div>
               )}
               <div
                 style={{
                   width: "100%",
                   height: `${barHeight}%`,
-                  minHeight: bucket.prob > 0 ? 3 : 0,
+                  minHeight: priced ? 3 : 0,
                   backgroundColor: color,
                   opacity: isPeak ? 1 : 0.35 + (bucket.prob / maxProb) * 0.45,
                   borderRadius: "3px 3px 0 0",
@@ -196,8 +229,8 @@ function GroupedBarHistogram({
   kalshiDist,
   maxProb,
 }: {
-  polyDist: Array<{ label: string; prob: number }>;
-  kalshiDist: Array<{ label: string; prob: number }>;
+  polyDist: TempBucket[];
+  kalshiDist: TempBucket[];
   maxProb: number;
 }) {
   const polyColor = SOURCES.polymarket.color;
@@ -212,7 +245,9 @@ function GroupedBarHistogram({
   const kalshiPerSlot = polyDist.length / kalshiDist.length;
   const kalshiByPolyIdx = polyDist.map((_, pi) => {
     const ki = Math.min(Math.floor(pi / kalshiPerSlot), kalshiDist.length - 1);
-    return { prob: kalshiDist[ki].prob, isPeak: ki === kalshiPeakIdx, ki };
+    // The whole bucket travels, not just its integer: the percent this slot
+    // prints and the "is it priced" test both need the raw value (#6616).
+    return { bucket: kalshiDist[ki], isPeak: ki === kalshiPeakIdx, ki };
   });
 
   return (
@@ -221,7 +256,7 @@ function GroupedBarHistogram({
         {polyDist.map((bucket, i) => {
           const polyH = maxProb > 0 ? (bucket.prob / maxProb) * 100 : 0;
           const kalshi = kalshiByPolyIdx[i];
-          const kalshiH = maxProb > 0 ? (kalshi.prob / maxProb) * 100 : 0;
+          const kalshiH = maxProb > 0 ? (kalshi.bucket.prob / maxProb) * 100 : 0;
           const polyIsPeak = i === polyPeakIdx;
 
           const containerH = Math.max(polyH, kalshiH);
@@ -232,17 +267,17 @@ function GroupedBarHistogram({
                 className="absolute -top-7 left-1/2 -translate-x-1/2 hidden group-hover:flex items-center gap-1.5 font-mono px-2 py-1 rounded bg-gray-800 text-white whitespace-nowrap z-10"
                 style={{ fontSize: 10, fontWeight: 600 }}
               >
-                <span style={{ color: "#93C5FD" }}>{bucket.prob}%</span>
+                <span style={{ color: "#93C5FD" }}>{bucketPercent(bucket)}</span>
                 <span style={{ color: "var(--text-secondary)" }}>/</span>
-                <span style={{ color: "#86EFAC" }}>{kalshi.prob}%</span>
+                <span style={{ color: "#86EFAC" }}>{bucketPercent(kalshi.bucket)}</span>
               </div>
 
               {/* Peak labels */}
               {(polyIsPeak || kalshi.isPeak) && (
                 <div className="flex gap-0.5 mb-1" style={{ fontSize: 9, fontWeight: 600 }}>
-                  {polyIsPeak && <span style={{ color: SOURCES.polymarket.fg }}>{bucket.prob}%</span>}
+                  {polyIsPeak && <span style={{ color: SOURCES.polymarket.fg }}>{bucketPercent(bucket)}</span>}
                   {kalshi.isPeak && i === polyDist.findIndex((_, j) => kalshiByPolyIdx[j].ki === kalshiPeakIdx) && (
-                    <span style={{ color: SOURCES.kalshi.fg }}>{kalshi.prob}%</span>
+                    <span style={{ color: SOURCES.kalshi.fg }}>{bucketPercent(kalshi.bucket)}</span>
                   )}
                 </div>
               )}
@@ -253,7 +288,7 @@ function GroupedBarHistogram({
                   style={{
                     flex: 1,
                     height: polyH > 0 && containerH > 0 ? `${(polyH / containerH) * 100}%` : 0,
-                    minHeight: bucket.prob > 0 ? 3 : 0,
+                    minHeight: isPriced(bucket) ? 3 : 0,
                     backgroundColor: polyColor,
                     opacity: 0.4 + (bucket.prob / maxProb) * 0.5,
                     borderRadius: "2px 0 0 0",
@@ -263,9 +298,9 @@ function GroupedBarHistogram({
                   style={{
                     flex: 1,
                     height: kalshiH > 0 && containerH > 0 ? `${(kalshiH / containerH) * 100}%` : 0,
-                    minHeight: kalshi.prob > 0 ? 3 : 0,
+                    minHeight: isPriced(kalshi.bucket) ? 3 : 0,
                     backgroundColor: kalshiColor,
-                    opacity: 0.35 + (kalshi.prob / maxProb) * 0.5,
+                    opacity: 0.35 + (kalshi.bucket.prob / maxProb) * 0.5,
                     borderRadius: "0 2px 0 0",
                   }}
                 />

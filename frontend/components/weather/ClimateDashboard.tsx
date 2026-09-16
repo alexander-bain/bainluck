@@ -1,7 +1,8 @@
 "use client";
 
 import useSWR from "swr";
-import { probColor, type ClimateMarket } from "./data";
+import { probColor, weatherProbability, type ClimateMarket } from "./data";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { fetchClimate } from "@/lib/weatherApi";
 import { SourceBadge } from "./SourceBadge";
 
@@ -114,7 +115,12 @@ function ClimateColumn({
                     textAlign: "right",
                   }}
                 >
-                  {item.prob}%
+                  {/* UX-P046 on the value, the server's integer on the digits
+                      (#6616). A bare `{item.prob}%` printed `100%` over an open
+                      book quoted at 0.995. */}
+                  {formatProbabilityPercent(weatherProbability(item), {
+                    rendered: item.prob,
+                  })}
                 </span>
               </div>
 

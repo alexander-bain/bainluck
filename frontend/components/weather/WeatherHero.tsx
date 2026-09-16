@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import useSWR from "swr";
-import { SOURCES, probColor, probLabel, realSpark } from "./data";
+import { SOURCES, probColor, probLabel, realSpark, weatherProbability } from "./data";
 import type { FeaturedMarket } from "./data";
 import { fetchWeatherFeatured } from "@/lib/weatherApi";
 import Sparkline from "@/components/Sparkline";
@@ -160,7 +160,11 @@ export default function WeatherHero() {
             {/* Probability + sparkline row */}
             <div className="flex items-end justify-between gap-4">
               <div style={{ minWidth: 0 }}>
-                <ProbabilityNumber value={current.prob} size={64} />
+                <ProbabilityNumber
+                  value={current.prob}
+                  probability={weatherProbability(current)}
+                  size={64}
+                />
                 {/* What the number is ABOUT. Under "Where will it rain on Aug
                     29, 2026?" a bare 78% answers nothing; "78% Minneapolis"
                     answers the question that was asked. Omitted entirely when
