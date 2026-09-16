@@ -1,0 +1,36 @@
+native/191 — #2975 mutation battery
+started 2026-09-16 07:14:35 PDT
+bound per run: 420s
+
+M1  a stalled child is reported as HEALTHY (return 1 -> return 0)
+   KILLED   (--selftest rc=1, 1 failing arm(s))
+       FAIL  a child whose log never grows is reported as STALLED -> got 0, wanted 1
+
+M2  the stall is REPORTED but the child is never killed
+   REFUSED-HUNG — the selftest itself did not finish in 420s
+
+M3  the watchdog trips on EVERY poll (growth never resets the clock)
+   KILLED   (--selftest rc=1, 2 failing arm(s))
+       FAIL  a child that keeps writing is left alone, even past the limit -> got 1, wanted 0
+       FAIL  and it ran to completion (all 12 lines) -> got 10, wanted 12
+
+M4  the limit is ignored — any quiet poll is a stall
+   *** SURVIVED *** (--selftest rc=0, every arm ok)
+
+M5  the watchdog never loops (the child is never watched at all)
+   REFUSED-HUNG — the selftest itself did not finish in 420s
+
+M6  the test goes back to `await Task.yield()` — the exact #2975 regression
+   KILLED   (suite did not pass; see log)
+         /Users/bain/bainluck-dev/native/ios/Bain Luck/BainLuckTests/FeedViewModelSportsLoadTests.swift:522: error: -[BainLuckTests.FeedViewModelSportsLoadTests testSupersededLoadDiscardsLateMainResponse] : XCTAssertEqual failed: ("0") is not equal to ("1") - exactly one main call is in flight — if this is 0 the gate is about to be taken by load B and the old shape would have hung here instead of failing
+         Test Case '-[BainLuckTests.FeedViewModelSportsLoadTests testSupersededLoadDiscardsLateMainResponse]' failed (0.985 seconds).
+       BainLuckTests: FAIL (exit 65)   no notice-10 line — see above
+
+CONTROL  clean head, no mutant applied
+   SURVIVED (correct — --selftest rc=0 on the clean tree)
+
+killed=3  survived=1  refused=2
+tree restored:
+  native-gates.sh  IDENTICAL
+  FeedViewModelSportsLoadTests.swift  IDENTICAL
+finished 2026-09-16 07:33:47 PDT

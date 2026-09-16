@@ -475,17 +475,25 @@ if [ -n "$SELFTEST" ]; then
   watch_for_stall "$ST_HANG_PID" "$ST_DIR/hang.log" 10
   ST_HANG_RC=$?
   ST_ELAPSED=$(( $(date +%s) - ST_T0 ))
+  # 🔴 LIVENESS IS READ AND THE CHILD IS KILLED **BEFORE** `wait`, AND THE ORDER
+  # IS THE WHOLE POINT. This arm first read liveness after an unconditional
+  # `wait`, so a watchdog that reported the stall and failed to kill left `wait`
+  # blocking for the child's full 600 s — the arm HUNG instead of failing. A guard
+  # against hanging that can itself hang is not a guard. Found by this ship's own
+  # battery: M2 (report, never kill) and M5 (never watch at all) both came back
+  # REFUSED-HUNG rather than KILLED until this was reordered.
+  if kill -0 "$ST_HANG_PID" 2>/dev/null; then
+    ST_HANG_STATE=alive
+    kill -KILL -"$ST_HANG_PID" 2>/dev/null || kill -KILL "$ST_HANG_PID" 2>/dev/null
+  else
+    ST_HANG_STATE=dead
+  fi
   wait "$ST_HANG_PID" 2>/dev/null
   rc_check "a child whose log never grows is reported as STALLED" "$ST_HANG_RC" 1
   # The child must actually be GONE. A watchdog that returns 1 and leaves the
   # process running would still wedge the machine, and the return code alone
   # cannot tell the difference.
-  if kill -0 "$ST_HANG_PID" 2>/dev/null; then
-    rc_check "and the hung child is actually dead, not merely reported" alive dead
-    kill -KILL "$ST_HANG_PID" 2>/dev/null
-  else
-    rc_check "and the hung child is actually dead, not merely reported" dead dead
-  fi
+  rc_check "and the hung child is actually dead, not merely reported" "$ST_HANG_STATE" dead
   # ~10s limit + one 5s poll + the 5s TERM->KILL grace. A bound, not a target:
   # this only has to prove it does not sit there for the 600s the child asked for.
   if [ "$ST_ELAPSED" -lt 60 ]; then
@@ -505,6 +513,33 @@ if [ -n "$SELFTEST" ]; then
   rc_check "a child that keeps writing is left alone, even past the limit" "$ST_ALIVE_RC" 0
   rc_check "and it ran to completion (all 12 lines)" \
     "$(/usr/bin/grep -c '^line ' "$ST_DIR/alive.log")" 12
+
+  # 🔴 THE ARM THAT SEPARATES "QUIET" FROM "STUCK", which the two above cannot.
+  # The arms above only ever exercise a log that grows on EVERY poll or on NONE,
+  # so a watchdog that trips on the first quiet poll — ignoring its limit
+  # entirely — passes both of them. That mutant (M4: `elif true`) SURVIVED run 1
+  # of this ship's battery, and it is the dangerous direction: on a Mac at load
+  # 750 a healthy suite goes quiet for seconds at a time between classes, and a
+  # watchdog like that would red every gate on the machine.
+  #
+  # So: a child that stops writing for 14 s — comfortably under its 30 s limit,
+  # and long enough to be seen by two or three 5 s polls — then resumes and
+  # finishes. Correct: untouched. M4: killed on the first quiet poll.
+  : > "$ST_DIR/quiet.log"
+  set -m
+  bash -c 'printf "pre 1\n"; printf "pre 2\n"; sleep 14; for i in 1 2 3; do printf "post %s\n" "$i"; sleep 1; done' \
+    > "$ST_DIR/quiet.log" 2>&1 &
+  ST_QUIET_PID=$!
+  set +m
+  watch_for_stall "$ST_QUIET_PID" "$ST_DIR/quiet.log" 30
+  ST_QUIET_RC=$?
+  if kill -0 "$ST_QUIET_PID" 2>/dev/null; then
+    kill -KILL -"$ST_QUIET_PID" 2>/dev/null || kill -KILL "$ST_QUIET_PID" 2>/dev/null
+  fi
+  wait "$ST_QUIET_PID" 2>/dev/null
+  rc_check "a child quiet for 14s under a 30s limit is NOT killed" "$ST_QUIET_RC" 0
+  rc_check "and it got to write again after the quiet spell" \
+    "$(/usr/bin/grep -c '^post ' "$ST_DIR/quiet.log")" 3
 
   rm -rf "$ST_DIR"
   say "done (--selftest) — $([ $ST_FAIL -eq 0 ] && echo 'all cases passed' || echo 'FAILURES ABOVE'); nothing was built"
