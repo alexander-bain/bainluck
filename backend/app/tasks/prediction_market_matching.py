@@ -7445,6 +7445,12 @@ _LIVE_POLL_VENUE_CALL_TIMEOUT_SECONDS = 20
 #: reserves 1/101 of the window — about 1.4 s — which is less than a single
 #: call, so the "reserve" could not buy even one fetch. A share is only a floor
 #: once it cannot be smaller than the work it is reserved for.
+#:
+#: BOTH VENUES, since #6514. For three revisions this bound the reserve only
+#: and the other venue took the remainder clamped at zero, so the sentence
+#: above was true of whichever venue was in the majority and false of the other
+#: — 18 Kalshi calls against 134 Polymarket keys admitted the Kalshi arm for
+#: 0.0 s on production. A floor that one side cannot fall through is a share.
 _LIVE_POLL_MIN_VENUE_FLOOR_SECONDS = 20
 
 #: The share of the budget the VENUE-FETCH stages may spend. The stages after
@@ -7920,21 +7926,97 @@ async def _poll_live_prediction_market_prices():
         # Polymarket row missing its event id, no Kalshi rows), so this total
         # is NOT the row count's guaranteed-positive one — guard the divide.
         _venue_total = _kalshi_calls + _polymarket_calls
+        # Each venue's two per-venue quantities, named once and used by both
+        # sides of the split below: the floor it may not be pushed under, and
+        # the wall the OTHER venue must leave for its own last admitted item.
+        # Zero when a venue has no calls to make — the single-venue common case
+        # must keep the whole window, or this repair costs every ordinary beat.
+        _polymarket_floor = (
+            _LIVE_POLL_MIN_VENUE_FLOOR_SECONDS if _polymarket_calls else 0.0
+        )
+        _polymarket_wall = (
+            _LIVE_POLL_VENUE_CALL_TIMEOUT_SECONDS if _polymarket_calls else 0.0
+        )
         _polymarket_reserve = (
             max(
                 _venue_fetch_window * (_polymarket_calls / _venue_total),
-                _LIVE_POLL_MIN_VENUE_FLOOR_SECONDS,
+                _polymarket_floor,
             )
             if _polymarket_calls
             else 0.0
         )
-        # A venue with no CALLS TO MAKE reserves NOTHING — the single-venue
-        # common case must keep the whole window, or this repair costs every
-        # ordinary beat.
-        _kalshi_admission_window = _venue_fetch_window - _polymarket_reserve - (
-            _LIVE_POLL_VENUE_CALL_TIMEOUT_SECONDS if _polymarket_calls else 0.0
+        # #6514 — AND THE FLOOR IS TWO-SIDED, which it had never been. Every
+        # revision above applied `_LIVE_POLL_MIN_VENUE_FLOOR_SECONDS` to the
+        # reserve only, and handed the OTHER venue the remainder clamped at
+        # ZERO. The constant's own docstring promises "the smallest fetch
+        # window a venue with ANY rows is allowed to be left with" and it was
+        # implemented for exactly one of the two venues, so the guarantee held
+        # for whichever venue happened to be in the majority. Measured on
+        # `worker-realtime` 2026-09-16, four consecutive passes 08:14–08:20Z:
+        #
+        #     kalshi_fetched=0   kalshi_outcomes_updated=0
+        #     budget_stops={'kalshi_fetch': 18}
+        #
+        # `budget_stops == len(kalshi_ids)` means `_out_of_budget` was true at
+        # `_seen = 0`: the loop broke before its first request. With k=18 and
+        # p=134 keys, `144 - max(144 x 134/152, 20) - 20 = -2.9 -> 0`. Kalshi's
+        # window was positive only while `p < 6.2k`. #6179 measured the same
+        # arithmetic with the populations the other way round and fitted, which
+        # is why it read as correct: the loser is whoever is in the minority.
+        #
+        # What a zero-second arm costs is NOT stale prices — the `worker-ws`
+        # socket keeps those rows fresh, and 0 of the beat's own population sat
+        # over 30 min behind. It is that two REFUSE-TO-WRITE gates live only
+        # inside this loop: #5896's pre-kickoff settled-book refusal and
+        # #4356's `_clear_withdrawn_outcome`. A starved arm cannot fire either,
+        # and neither can it restore the artifact, so the counters read exactly
+        # like a clean pass — `kalshi_pre_kickoff_settled_legs: 0` means "the
+        # refusal held" and "the stage never started" alike (gotcha #53).
+        #
+        # So the remainder is floored at one call's worth rather than at zero.
+        # The floor beats the share, in both directions: the majority venue's
+        # PROPORTIONAL claim yields, its FLOOR does not.
+        #
+        # AND THE FLOOR IS ITSELF CAPPED, because a floor is a claim on a
+        # window and cannot exceed the window it is claimed from. Two things
+        # the cap holds, neither theoretical:
+        #
+        #   1. the venue that runs SECOND keeps its own floor. Polymarket runs
+        #      against the full window, so its worst case is whatever Kalshi
+        #      holds plus Kalshi's per-item wall. Capping Kalshi at
+        #      `window - polymarket_floor - wall` is what makes the guarantee
+        #      two-sided rather than merely relocated.
+        #   2. a beat whose clock is ALREADY SPENT has a zero-length fetch
+        #      window, and a 20-second floor taken out of a window that does
+        #      not exist would admit fetches the budget has no room for at all.
+        #      #5767's own arms reach this — `test_it_stops_before_the_first_
+        #      fetch_and_returns_partial` and its two siblings go red against
+        #      an uncapped floor, which is how this branch was found rather
+        #      than reasoned about.
+        #
+        # Below `window >= 2 x floor + wall` the cap starts clipping Kalshi's
+        # floor and #6514 returns in a quieter form, so that relationship
+        # between four constants declared hundreds of lines apart is asserted
+        # in `test_live_poll_venue_floor_6514.py` rather than restated here.
+        # The trailing `0.0` is the degenerate case only: it can now be reached
+        # solely when the cap has already forced the floor to zero or below,
+        # never — as in #6514 — with a floor that the window could afford.
+        #
+        # `if _kalshi_calls` mirrors the reserve above and is INERT, said here
+        # so nobody hunts for the test that holds it: this deadline is read in
+        # one place, the Kalshi loop, which has no items to admit when the
+        # count is zero. It is symmetry for the reader, not a branch — and a
+        # test arm asserting it would be vacuous.
+        _kalshi_floor = min(
+            _LIVE_POLL_MIN_VENUE_FLOOR_SECONDS if _kalshi_calls else 0.0,
+            _venue_fetch_window - _polymarket_floor - _polymarket_wall,
         )
-        _kalshi_fetch_deadline = _started_at + max(_kalshi_admission_window, 0.0)
+        _kalshi_admission_window = max(
+            _venue_fetch_window - _polymarket_reserve - _polymarket_wall,
+            _kalshi_floor,
+            0.0,
+        )
+        _kalshi_fetch_deadline = _started_at + _kalshi_admission_window
         # The FULL window, deliberately: Polymarket runs second, so its deadline
         # is the global one and it inherits every second Kalshi did not use.
         _polymarket_fetch_deadline = _started_at + _venue_fetch_window
