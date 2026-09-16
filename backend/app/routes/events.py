@@ -18592,6 +18592,75 @@ def _event_started_long_ago_unsettled(event, now, hours: int) -> bool:
     return event.commence_time < now - timedelta(hours=hours)
 
 
+#: Every `game_state` key a client actually reads off a served win-prob point.
+#:
+#: Read out of both client trees 2026-09-16 (#6546), by grepping every access of
+#: the dict rather than by reasoning about what it is for:
+#:
+#:   web    `OddsChart.tsx` reads `time_source` (the wall-clock stat-model
+#:          suppression) and `home_score`/`away_score`/`period`/`clock` (the
+#:          score supplement); `periodMarkers.ts` reads `period` and the MLB
+#:          arm's `inning`/`inning_half`.
+#:   native `WinProbGameState` is a five-field struct — `period`, `clock`,
+#:          `inning`, `homeScore`, `awayScore` — and is the WHOLE of what the
+#:          phone can decode. `ScoreDifferentialChartView` and `OddsChartView`
+#:          read scores and period off it; nothing reaches any other key.
+#:
+#: Everything else the column holds is market provenance — `market_id`,
+#: `market_name`, `outcome_name`, `poll_type`, `yes_probability`, `yes_bid`,
+#: `yes_ask`, `backfill_source`, `backfill`, `backfilled`, `pregame_spread`,
+#: `mlb_game_pk`, `seconds_left` — repeated in full on every point of every
+#: series and read by no client.
+_SERVED_GAME_STATE_KEYS = frozenset({
+    "period",
+    "clock",
+    "inning",
+    "inning_half",
+    "home_score",
+    "away_score",
+    "time_source",
+})
+
+
+def _project_served_game_state(win_prob_history: dict) -> None:
+    """Narrow every point's `game_state` to the keys a client reads.
+
+    On the specimen (#6546: Broncos at Chiefs, FINAL, four months of pre-match
+    market history) this is 909,121 of 2,691,217 bytes — 33.8% of the response —
+    for 961 values a client can read against 31,619 it cannot. The provenance is
+    per-point and near-constant within a series, so the longer the chart, the
+    larger the share of the payload that is the same market name written again.
+
+    Two things this must not do, both of which decide where it is called:
+
+      * It must run LAST. `settled_chart.market_ids_in_series` reads
+        `game_state.market_id` off this very dict to decide what the chart may
+        show, and the period-marker fallback and the ESPN score supplement read
+        it too. Project before them and the response changes what a reader sees;
+        project after them and no reader can tell.
+      * It must not touch the stored dict. `game_state` is handed over straight
+        off the ORM row, so the projection is a NEW dict assigned to the point —
+        never a mutation of the JSONB the session is holding (gotcha #4).
+
+    An empty projection serves `None`, which is the shape this route already
+    serves whenever the column itself is NULL, so no client meets a new shape.
+    A non-dict `game_state` is left exactly as it is: the column is JSONB and a
+    row may hold a list or a string, no client parses one, and rewriting it here
+    would be a second change hiding inside a size fix.
+    """
+    for points in (win_prob_history or {}).values():
+        for point in points or []:
+            state = point.get("game_state")
+            if not isinstance(state, dict):
+                continue
+            projected = {
+                key: value
+                for key, value in state.items()
+                if key in _SERVED_GAME_STATE_KEYS
+            }
+            point["game_state"] = projected or None
+
+
 def _served_point_bounds(win_prob_history: dict, history: list):
     """(earliest, latest) timestamp across every series this response serves.
 
@@ -20319,6 +20388,12 @@ async def get_event_odds_history(
             "on-demand chart backfill consideration failed for event %s: %s",
             event_id, exc,
         )
+
+    # LAST, deliberately: every server-side reader of `game_state` — the
+    # settled-chart market-id read, the period-marker fallback, the ESPN score
+    # supplement, the live-edge extension — has now run against the whole dict.
+    # See `_project_served_game_state` (#6546).
+    _project_served_game_state(win_prob_history)
 
     return {
         "event_id": event_id,
