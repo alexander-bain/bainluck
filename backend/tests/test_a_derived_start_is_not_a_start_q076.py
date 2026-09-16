@@ -230,11 +230,13 @@ class _Row:
 
 class _NetSession:
     def __init__(self, scheduled):
-        # scheduled, live, suspended, bogus-completed, future-settled — the
-        # net's five selects, in the order it issues them. `suspended → live`
-        # is live/048's door back out of the state the staleness net now writes
-        # instead of `closed`.
-        self._selects = [scheduled, [], [], [], []]
+        # scheduled, live, suspended, bogus-completed, future-settled,
+        # illegal-tennis-score — the net's six selects, in the order it issues
+        # them. `suspended → live` is live/048's door back out of the state the
+        # staleness net now writes instead of `closed`; the last is #2772's
+        # withdrawal of a settled tennis score no match could end on, and it is
+        # empty here because this suite seeds no tennis row.
+        self._selects = [scheduled, [], [], [], [], []]
 
     async def execute(self, stmt, params=None):
         sql = str(stmt)

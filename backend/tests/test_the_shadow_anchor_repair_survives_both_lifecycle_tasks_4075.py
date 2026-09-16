@@ -135,10 +135,17 @@ class _Ev:
 
 
 class _EspnSession:
-    """The five selects `_transition_event_statuses_impl` issues, in order."""
+    """The six selects `_transition_event_statuses_impl` issues, in order.
+
+    Positional by design, so a new arm in that function lands here as an
+    ``IndexError`` rather than as silence — which is what happened when #2772's
+    illegal-tennis-score withdrawal was added as the sixth. The entry below is
+    that arm's, and it is empty because this suite's specimen is a soccer row:
+    nothing it seeds can be selected by a tennis-scoped query.
+    """
 
     def __init__(self, live):
-        self._selects = [[], live, [], [], []]
+        self._selects = [[], live, [], [], [], []]
 
     async def execute(self, stmt, params=None):
         sql = str(stmt)

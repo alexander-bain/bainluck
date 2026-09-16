@@ -494,6 +494,37 @@ jobs:
             exit 1
           fi
 
+      - name: "#2772 illegal settled tennis score recall (real Postgres)"
+        # The arm withdraws a SCORE from a settled row, and its judgement — can
+        # a completed tennis match have ended on this set count — is a rule
+        # about two integers that a unit suite covers in full. What a unit suite
+        # cannot execute is the half that decides which rows the judgement ever
+        # SEES: a `LIKE 'tennis%'` join (the only thing between this arm and the
+        # 200-odd settled 0-0 SOCCER rows, where nil-all is an ordinary result),
+        # a status set that must exclude `suspended` (CERT-752: a paused match's
+        # partial score is TRUE), and `greatest(...) IN (2,3)` evaluated by
+        # Postgres rather than by Python's `max`.
+        #
+        # A recall fails SILENTLY — a row it never returns cannot fail any test
+        # about the rule — so this gate asserts the returned id SET against the
+        # production census, never a count.
+        #
+        # Same skip detection as every gate in this job: pytest exits 0 when
+        # each test skips, and a gate that silently did not run reads exactly
+        # like one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_illegal_settled_tennis_score_recall_2772_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/tennisscore.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/tennisscore.txt; then
+            echo "::error::#2772 illegal tennis score recall SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -E "^#2772 RECALL" /tmp/tennisscore.txt || {
+            echo "::error::no #2772 RECALL summary line — cannot quote the result"
+            exit 1
+          }
+
       - name: "#5779 duplicate-sweep look-back reach (real Postgres)"
         # The reach fix is a SQL predicate — `GROUP BY statpal_fixture_id HAVING
         # count(*) > 1` inside a window, an equality plan for a one-key league

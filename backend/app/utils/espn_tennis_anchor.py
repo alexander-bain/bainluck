@@ -766,6 +766,69 @@ SCORED_STATES = ("in_progress", "decided")
 #: nothing downstream doubts.
 COMPLETED_WINNER_SET_COUNTS = (2, 3)
 
+
+def settled_tennis_score_is_impossible(*, home_score: Any, away_score: Any) -> bool:
+    """Could a completed tennis match have ended on the set score OUR row holds?
+
+    The same legality rule :func:`authority_score` applies to an ESPN
+    competition, asked of a stored row instead — and it reads
+    :data:`COMPLETED_WINNER_SET_COUNTS`, the constant that rule is written
+    against, rather than restating ``(2, 3)`` a second time.  One rule, one
+    place to change it.
+
+    ═══ WHY IT IS THE SAME RULE ASKED TWICE ═══
+
+    :func:`authority_score` is the rule applied at the moment the AUTHORITY
+    speaks, and it works: measured on production 2026-09-16 over all 720 settled
+    tennis rows carrying a score, **0 of the 254 anchored rows hold an illegal
+    one**.  It has no reach at all to the rest.  The authority channel runs only
+    through an ``espn_id`` (#2772), so the three other writers that can put a
+    number in that column — the Odds API scores feed, the two staleness nets
+    that settle a row around whatever it was carrying — are judged by nothing.
+    All **26** illegal rows are unanchored, and they are unanchored 26 of 26.
+
+    ═══ WHAT COUNTS AS IMPOSSIBLE ═══
+
+    A completed match's score is SETS won.  The winner holds 2 or 3 and leads,
+    so a legal stored pair is exactly ``max in (2, 3)`` with the two unequal.
+    Measured over those same 720 rows, the split is clean::
+
+        LEGAL    0-2 197 · 2-0 159 · 1-2 109 · 2-1 104 · 3-0 34 · 1-3 22
+                 3-1 22 · 0-3 19 · 2-3 16 · 3-2 12            = 694
+        ILLEGAL  0-0 11 · 1-0 8 · 1-1 4 · 0-1 3                =  26
+
+    ``0-0`` is the headline and it is not the whole class.  ``1-0`` is a
+    mid-match score frozen by whichever poll happened last — the defect named
+    beside ``15293702`` in :func:`authority_score`'s own docstring — and ``1-1``
+    says a match both players led.  A reader cannot tell any of the four from a
+    result; each is a sentence we cannot support.
+
+    **The caller owes the status.**  This function judges a SCORE and knows
+    nothing about when it is entitled to.  ``1-0`` is exactly what a live second
+    set looks like and exactly what a suspended match truthfully holds, so a
+    caller that asks this question of anything but a row asserting a FINAL is
+    deleting true numbers — see the arm in
+    ``espn_sync._transition_event_statuses_impl`` and its
+    ``TENNIS_STATUSES_CLAIMING_A_RESULT``.
+
+    A missing half is not an illegal score — there is no claim to refute — so a
+    ``None`` on either side returns ``False`` rather than raising or guessing.
+    """
+    if home_score is None or away_score is None:
+        return False
+    try:
+        home = int(home_score)
+        away = int(away_score)
+    except (TypeError, ValueError):
+        # A non-numeric score is not a set count, so it is not a legal one
+        # either. Named rather than swallowed: the column is an integer and
+        # anything else arriving here is a finding of its own.
+        return True
+    if home < 0 or away < 0:
+        return True
+    return not (max(home, away) in COMPLETED_WINNER_SET_COUNTS and home != away)
+
+
 #: The four tournaments whose men's singles main draw is played over five sets,
 #: as :func:`board_tournaments` tokens.  Roland Garros is carried under both of
 #: the names ESPN has used for it.

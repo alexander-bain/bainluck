@@ -262,7 +262,11 @@ class _NetSession:
     """Dispatches on statement shape and select order, which is deterministic."""
 
     def __init__(self, live, snapshots, suspended=None):
-        self._selects = [[], live, suspended or [], [], []]
+        # scheduled, live, suspended, bogus-completed, future-settled, and
+        # #2772's illegal-settled-tennis-score withdrawal last. The final entry
+        # is empty on purpose: this suite's specimens are `live`/`suspended`,
+        # and that arm may reach neither — which is the guard, not an omission.
+        self._selects = [[], live, suspended or [], [], [], []]
         self._snapshots = snapshots
         self.raw_updates = []
 
