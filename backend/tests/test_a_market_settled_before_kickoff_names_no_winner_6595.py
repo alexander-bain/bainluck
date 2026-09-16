@@ -126,12 +126,26 @@ def _out(is_winner=True, resolution_source="api_settlement"):
     return outcome
 
 
-def _grade(settled_at, *, commence=KICKOFF, finished=False, status="resolved"):
+def _grade(
+    settled_at,
+    *,
+    commence=KICKOFF,
+    finished=False,
+    status="resolved",
+    event_status="live",
+):
+    """`event_status` defaults to the specimen's own state.
+
+    15313117 was LIVE — a game in the bottom of the 2nd — so "live" is the
+    faithful default rather than a convenience. The states this gate must NOT
+    touch get their own tests below (CERT-2980).
+    """
     return _settled_grade_fields(
         _mkt(settled_at, status),
         _out(),
         event_commence=commence,
         event_is_finished=finished,
+        event_status=event_status,
     )
 
 
@@ -213,14 +227,69 @@ def test_a_missing_signal_never_strips_a_verdict(kwargs, why):
 def test_a_non_datetime_settled_at_is_no_signal():
     """A MagicMock attribute, a string, a stray int — none of them is a clock."""
     for junk in ("2026-09-16T05:36:00Z", 1758000000, MagicMock()):
-        assert _settled_before_its_event_began(_mkt(junk), KICKOFF, False) is False
+        assert _settled_before_its_event_began(_mkt(junk), KICKOFF, False, "live") is False
 
 
 def test_naive_timestamps_are_compared_as_utc_not_crashed_on():
     """Mixed tz-awareness must not raise — the comparison is the whole gate."""
     assert _settled_before_its_event_began(
-        _mkt(SAW_IT_SETTLE.replace(tzinfo=None)), KICKOFF.replace(tzinfo=None), False
+        _mkt(SAW_IT_SETTLE.replace(tzinfo=None)),
+        KICKOFF.replace(tzinfo=None),
+        False,
+        "live",
     ) is True
+
+
+# ── A POSTPONED FIXTURE KEEPS ITS RESULT (CERT-2980's required repair) ───────
+#
+# The BLOCK, and it was right: `_event_is_really_finished` admits only
+# `completed`/`closed`, so `suspended` and `voided` rows read as UNFINISHED and
+# the first version of this gate erased their verdicts. Production 2026-09-16
+# carries 1,692 such verdict rows on 155 events, and their
+# `settled_at < commence_time` is EXPLAINED — a postponement moved the kick-off
+# after a settlement we had already observed — not defective.
+
+
+@pytest.mark.parametrize(
+    "event_status",
+    ["suspended", "voided", "postponed", "completed", "closed", None, ""],
+)
+def test_a_state_this_gate_does_not_admit_keeps_its_verdict(event_status):
+    """Every state outside `scheduled`/`live` fails OPEN, on the exact shape that
+    triggers the refusal — settled 12h before a kick-off, event not finished.
+
+    Parametrised over the two states measured (`suspended`, `voided`), a state
+    nobody has reasoned about (`postponed`), the terminal pair, and two junk
+    values, because the repair is "admit a NAMED set" and the property that
+    matters is about everything the set does not name.
+    """
+    fields = _grade(SAW_IT_SETTLE, event_status=event_status)
+    assert fields["is_winner"] is True, (
+        f"a {event_status!r} event's authoritative verdict was erased — its early "
+        "settlement is explained by a moved commence_time, not by a foreign market"
+    )
+    assert fields["resolution_source"] == "api_settlement"
+
+
+def test_the_admitted_states_are_exactly_the_two_that_were_measured():
+    """Reads the set itself, so widening it is a deliberate act with a diff.
+
+    `voided` in particular must stay OUT until it has its own measurement and
+    its own ship — CERT-2980 named that separation explicitly, and a set that
+    quietly grew would be the same mistake in the other direction.
+    """
+    from app.routes.events import _UNPLAYED_EVENT_STATES
+
+    assert _UNPLAYED_EVENT_STATES == frozenset({"scheduled", "live"})
+
+
+def test_the_two_admitted_states_still_withhold():
+    """The negative controls above are worthless if the gate now refuses
+    everything — an all-open gate passes every one of them."""
+    for admitted in ("scheduled", "live"):
+        assert _grade(SAW_IT_SETTLE, event_status=admitted)["is_winner"] is None, (
+            f"{admitted} is the population this ship exists for"
+        )
 
 
 # ── The older gate still decides first ──────────────────────────────────────
@@ -444,4 +513,110 @@ async def test_the_mid_game_period_market_still_states_its_result(live_game_clie
     assert any(r.get("is_winner") is True for r in rows), (
         "a first-inning market that settled 20 minutes into the game is honest "
         f"and must keep its verdict — #4788/#6082: {rows}"
+    )
+
+
+# ── The route-level postponed specimen (CERT-2980's required repair) ─────────
+
+
+@pytest.fixture
+async def postponed_game_client():
+    """A postponed fixture: settled BEFORE the kick-off its row now carries.
+
+    The 155-event production shape, at the route. A postponement moves
+    `commence_time` FORWARD, so a settlement we observed at the original date
+    lands before the new one — `settled_at < commence_time` with no foreign
+    market and nothing wrong. `_event_is_really_finished` answers False for
+    `suspended`, so this row is indistinguishable from the Yankees one on every
+    signal the first version of the gate read.
+    """
+    from app.main import app
+    from app.routes.events import _game_markets_cache
+
+    _game_markets_cache.clear()
+
+    event = _make_event(
+        id=15290001,
+        home_team="Minnesota Twins",
+        away_team="New York Yankees",
+        status="suspended",
+        sport_key="baseball_mlb",
+    )
+    # The MOVED kick-off. Deliberately in the PAST: the production condition is
+    # `settled_at < commence_time`, not "the kick-off is ahead of us", and a
+    # fixture postponed from Monday to Tuesday satisfies it on Wednesday. A
+    # future kick-off would also send the route down its unstarted path and
+    # serve no markets at all, which would make this specimen pass for a reason
+    # that has nothing to do with the gate under test.
+    event.commence_time = datetime.now(timezone.utc) - timedelta(days=1)
+    event.completed_at = None
+
+    graded = _make_futures_market(
+        id=60597999, name="New York Yankees vs. Minnesota Twins", source="polymarket"
+    )
+    graded.status = "resolved"
+    graded.event_id = event.id
+    graded.llm_sport_category = "baseball"
+    # Observed at the ORIGINAL date, days before the row's current commence_time.
+    graded.settled_at = datetime.now(timezone.utc) - timedelta(days=3)
+    graded.resolution_date = datetime.now(timezone.utc) - timedelta(days=3)
+
+    outcomes = [
+        _make_outcome(
+            id=11, market_id=60597999, name="New York Yankees",
+            probability=1.0, is_winner=True, resolution_source="api_settlement",
+        ),
+        _make_outcome(
+            id=12, market_id=60597999, name="Minnesota Twins",
+            probability=0.0, is_winner=False, resolution_source="api_settlement",
+        ),
+    ]
+
+    mock_session = _make_event_detail_session(
+        event=event, futures=[graded], outcomes=outcomes
+    )
+
+    async def _mock_get_db():
+        yield mock_session
+
+    async def _mock_get_optional_user():
+        return None
+
+    app.dependency_overrides[get_db] = _mock_get_db
+    app.dependency_overrides[get_db_rw] = _mock_get_db
+    app.dependency_overrides[get_optional_user] = _mock_get_optional_user
+
+    with patch("app.main.init_db", new_callable=AsyncMock):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            yield ac
+
+    _game_markets_cache.clear()
+    app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_a_postponed_fixture_keeps_its_verdict_on_the_page(
+    postponed_game_client,
+):
+    """CERT-2980's specimen, at the route rather than at the function.
+
+    The unit controls above prove the predicate; only this proves the served
+    PAYLOAD, which is where the BLOCK reproduced both verdict fields reading
+    null while the parent served the winner. A gate wired with the wrong key —
+    or wired at four call sites and not the fifth — passes every unit control
+    and still erases this.
+    """
+    payload = (
+        await postponed_game_client.get("/api/events/15290001/game-markets")
+    ).json()
+    rows = _named(_all_rows(payload), "New York Yankees")
+    assert rows, f"the postponed fixture's market vanished entirely: {payload}"
+    assert any(r.get("is_winner") is True for r in rows), (
+        "a postponed fixture's authoritative verdict was erased — its early "
+        f"settlement is explained by the moved kick-off, not defective: {rows}"
+    )
+    assert any(r.get("resolution_source") for r in rows), (
+        f"the verdict survived but its source did not: {rows}"
     )

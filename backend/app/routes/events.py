@@ -13957,8 +13957,28 @@ def _disambiguate_twin_stat(stat: str, player_stats: Optional[dict]) -> Optional
     return [stat]
 
 
+#: The only event states in which "we saw this settle before kick-off" is
+#: evidence of anything (CERT-2980's required repair).
+#:
+#: 🔴 THE FIRST VERSION OF THIS GATE HAD NO SUCH SET, AND ITS OWN DOCSTRING GOT
+#: THE REASON WRONG. It argued that the unfinished-event half kept the 1,692
+#: verdict rows on 155 `suspended`/`voided` events out of scope. It does not:
+#: `_event_is_really_finished` admits only `completed`/`closed`, so a suspended
+#: row is "unfinished" by that predicate and the refusal reached every one of
+#: them — newly erasing an authoritative verdict on exactly the fixtures whose
+#: `settled_at < commence_time` is EXPLAINED, because a postponement moved the
+#: `commence_time` after the settlement we had already observed.
+#:
+#: So the admitted states are named positively rather than inferred from the
+#: absence of a terminal one. A postponed fixture keeps its result; anything this
+#: list does not name — including a future change of mind about `voided`, which
+#: needs its own measurement and its own ship — fails open and is left alone.
+_UNPLAYED_EVENT_STATES = frozenset({"scheduled", "live"})
+
+
 def _settled_grade_fields(
     market, outcome, *, event_commence=None, event_is_finished=None,
+    event_status=None,
 ) -> dict:
     """The authoritative settlement verdict for a game-market row (#2089).
 
@@ -14002,15 +14022,23 @@ def _settled_grade_fields(
     conservative in the safe direction, and NULL — "we did not see it settle" —
     fails open on its own.
 
-    ** BOTH HALVES OF THIS GATE ARE LOAD-BEARING TOO, and the second one is what
-    keeps #4788/#6082 alive. ** A market that settles DURING a live game is
-    legitimate and deliberately supported — a first-quarter or first-inning
-    question answers itself while the game runs. The unfinished-event half alone
-    would withhold every one of those. What no period market of this game can do
-    is settle BEFORE first pitch. Symmetrically, the settled-before-kick-off half
-    alone would reach 1,692 verdict rows on `suspended`/`voided` events, whose
-    settlements are explained by a postponed fixture moving its `commence_time`
-    and which this ship has NOT established as defective.
+    ** ALL THREE KEYS ARE LOAD-BEARING, and the live one is what keeps
+    #4788/#6082 alive. ** A market that settles DURING a live game is legitimate
+    and deliberately supported — a first-quarter or first-inning question
+    answers itself while the game runs. The unfinished-event half alone would
+    withhold every one of those. What no period market of this game can do is
+    settle BEFORE first pitch.
+
+    ** `event_status` IS WHAT KEEPS THE POSTPONED FIXTURES OUT, AND THE FIRST
+    VERSION OF THIS DOCSTRING WAS WRONG ABOUT IT (CERT-2980). ** It claimed the
+    unfinished-event half held the 1,692 verdict rows on 155 `suspended`/`voided`
+    events out of scope. It did not: `_event_is_really_finished` admits only
+    `completed`/`closed`, so a suspended row reads as UNFINISHED and the refusal
+    erased its authoritative verdict — on precisely the population whose
+    `settled_at < commence_time` is EXPLAINED, because a postponement moved the
+    kick-off after a settlement we had already observed. `_UNPLAYED_EVENT_STATES`
+    now names the admitted states positively instead of inferring them from the
+    absence of a terminal one, so a state nobody reasoned about fails open.
 
     Measured on production 2026-09-16: **82 outcome rows across 29 unfinished
     events**, 19 of them declaring a winner. Five MLB games named a winner before
@@ -14037,7 +14065,9 @@ def _settled_grade_fields(
     )
     if not authoritative:
         return {"is_winner": None, "resolution_source": None}
-    if _settled_before_its_event_began(market, event_commence, event_is_finished):
+    if _settled_before_its_event_began(
+        market, event_commence, event_is_finished, event_status
+    ):
         return {"is_winner": None, "resolution_source": None}
     return {
         "is_winner": bool(getattr(outcome, "is_winner", None)),
@@ -14046,15 +14076,25 @@ def _settled_grade_fields(
 
 
 def _settled_before_its_event_began(
-    market, event_commence, event_is_finished,
+    market, event_commence, event_is_finished, event_status=None,
 ) -> bool:
     """True when we saw this market settle before its event started, and that
-    event has still not finished. See `_settled_grade_fields` for the reasoning.
+    event is one we still expect to be PLAYED. See `_settled_grade_fields`.
 
     Fails open on every missing signal — no `settled_at` (NULL is "we did not see
-    it settle", never "not settled"), no `commence_time`, or an unknown
-    finished-state — because an over-refusing gate silently strips real results.
+    it settle", never "not settled"), no `commence_time`, an unknown
+    finished-state, or a status outside :data:`_UNPLAYED_EVENT_STATES` — because
+    an over-refusing gate silently strips real results, which is the defect
+    CERT-2980 caught here.
+
+    The status test is not redundant with the finished test and that is the
+    whole point of having both: `_event_is_really_finished` answers False for
+    `suspended` and `voided` as well as for `scheduled` and `live`, so on its own
+    it admitted 1,692 verdict rows on 155 postponed fixtures whose early
+    settlement is explained rather than defective.
     """
+    if event_status not in _UNPLAYED_EVENT_STATES:
+        return False
     if event_commence is None or event_is_finished is None or event_is_finished:
         return False
     settled_at = getattr(market, "settled_at", None)
@@ -15512,6 +15552,7 @@ async def _build_game_markets(
     _grade_ctx = {
         "event_commence": event.commence_time,
         "event_is_finished": event_is_finished,
+        "event_status": getattr(event, "status", None),
     }
 
     # #2693 — read the markets of the rows we have declined to PRINT as well as
