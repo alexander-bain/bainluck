@@ -1575,6 +1575,53 @@ _KALSHI_WITHDRAW_PRE_KICKOFF_SQL = text(
 )
 
 
+#: The same withdrawal, one LEG at a time —
+#: `5896-CLEAR-ANSWERED-LEGS-IN-MIXED-BOOKS-WITHOUT-HARMING-LIVE-SIBLINGS`,
+#: CERT-2933's other named follow-up.
+#:
+#: 🔴 THE MARKET-GRAIN STATEMENT ABOVE CANNOT BE SPENT ON A MIXED BOOK. Kalshi
+#: usually settles a game's legs together, but not always: of the 36
+#: pre-kick-off books read at the venue on 2026-09-13 12:32Z, one
+#: (`KXEREDIVISIETOTAL-26SEP13EXCFCU`) carried finalized rungs beside a leg the
+#: venue had not answered. ``fo.market_id = :market_id`` withdraws every rung of
+#: that ladder, so using it there would take real prices off contracts that are
+#: still trading — the precise harm the ship's name refuses.
+#:
+#: So ``_refresh_linked_game_books`` skips such a leg in its price loop (it must
+#: not write the settlement back) and calls THIS to take back what an earlier
+#: hour already wrote. Without it the skip is the half-fix #5031, #5273 and
+#: #5771 each paid for: a gate that only refuses to write leaves the old number
+#: exactly where the ladder renders it.
+#:
+#: IT IS ITS SIBLING PLUS ONE CLAUSE, AND THAT IS THE WHOLE DESIGN. Every other
+#: line — the event's own clock, the ``current_probability IS NOT NULL``
+#: idempotence, the two columns in the SET list, the deliberate absence of an
+#: ``is_winner`` exclusion and of a ``last_updated`` stamp — is load-bearing for
+#: the reasons written above it, and a mixed book has no claim to a different
+#: answer than a whole one. A guard asserts the two statements differ by exactly
+#: ``AND fo.external_id = :external_id``, in both directions.
+#:
+#: It lives here rather than in the caller for the reason its sibling is
+#: IMPORTED rather than copied: one place decides when withdrawing a
+#: pre-kick-off quote is safe, or the two writers drift into two opinions.
+_KALSHI_WITHDRAW_PRE_KICKOFF_LEG_SQL = text(
+    """
+    UPDATE futures_outcomes fo
+       SET current_probability = NULL,
+           current_american_odds = NULL
+      FROM futures_markets fm
+      JOIN events e ON e.id = fm.event_id
+     WHERE fo.market_id = :market_id
+       AND fo.external_id = :external_id
+       AND fm.id = :market_id
+       AND fo.current_probability IS NOT NULL
+       AND e.status = 'scheduled'
+       AND e.commence_time > NOW()
+ RETURNING fo.id
+    """
+)
+
+
 #: CERT-2772's required repair, `5771-WITHDRAW-THE-EVENT-KALSHI-HERO`.
 #:
 #: 🔴 WITHDRAWING THE LEG IS NOT WITHDRAWING THE NUMBER A READER SEES. The event

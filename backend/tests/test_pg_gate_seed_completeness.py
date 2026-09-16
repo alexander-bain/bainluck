@@ -185,6 +185,21 @@ COVERED = (
     # true of a market the liquidity gate had already dropped. The gate asserts
     # the candidate set up front for that reason.
     "test_identity_quarantine_linked_event_date_6275_pg.py",
+    # #5896's leg-grain withdrawal. Seeds `sports`, four `events`, five
+    # `futures_markets` and seven `futures_outcomes` by raw INSERT, and it names
+    # every Python-side default this file exists to catch — `sports.active`,
+    # `events.status`, `futures_markets.category` / `.mutually_exclusive` /
+    # `.status`.
+    #
+    # Its seed also carries a vacuity hazard the NOT-NULL arm cannot see, so it
+    # is written down rather than left to be rediscovered: the statement under
+    # test says `e.commence_time > NOW()`, so every event is dated from the
+    # SERVER's clock with an interval. A literal timestamp would be a correct
+    # seed on the day it was written and, once past, would put the whole corpus
+    # outside the window — at which point the withdrawal arm passes having
+    # withdrawn nothing and every "the sibling survived" assertion is true of a
+    # row nothing could have reached.
+    "test_prekickoff_leg_withdrawal_5896_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"

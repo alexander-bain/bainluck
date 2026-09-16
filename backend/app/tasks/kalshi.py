@@ -3608,7 +3608,13 @@ async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
         "pre_kickoff_quotes_withdrawn": 0,
         "pre_kickoff_heroes_cleared": 0,
         "pre_kickoff_settled_mixed": 0,
+        # `skipped` is the decision (we declined to price an answered leg),
+        # `withdrawn` is the row (its stored artifact actually went). Kept
+        # apart for the reason the pair above is: collapsing them reports a
+        # decision as an effect, which is the reading that made #5771 look
+        # done while four pages still served 99%.
         "pre_kickoff_settled_legs_skipped": 0,
+        "pre_kickoff_settled_legs_withdrawn": 0,
         "snapshots_written": 0,
         "books_unreadable": 0,
         "deadline_hit": False,
@@ -3760,13 +3766,12 @@ async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
                         # legs together, so this is rare — one of the 36
                         # candidates read at 12:32Z on 2026-09-13
                         # (`KXEREDIVISIETOTAL-26SEP13EXCFCU`, finalized rungs
-                        # beside an `inactive` one). The answered legs are
-                        # skipped below rather than withdrawn: the withdrawal
-                        # statement is market-grain, and spending it on a
-                        # market whose other legs still trade would take real
-                        # prices down. The residual is named rather than
-                        # hidden — such a market keeps its stored artifact
-                        # until the venue answers the whole book.
+                        # beside an `inactive` one). The MARKET-grain
+                        # withdrawal above is never spent here: it would take
+                        # the trading legs' real prices down with the settled
+                        # one. Each answered leg is skipped by the price loop
+                        # and withdrawn LEG-grain instead, one statement per
+                        # leg, so the siblings are never touched.
                         stats["pre_kickoff_settled_mixed"] += 1
 
                     existing = {
@@ -3802,6 +3807,54 @@ async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
                         # evidence (gotcha #21).
                         if row.pre_kickoff and venue_answered(venue_market.result):
                             stats["pre_kickoff_settled_legs_skipped"] += 1
+                            # Skipping is only half of it. The artifact an
+                            # EARLIER hour wrote is still on the row, and the
+                            # row is what the ladder renders — the same
+                            # half-fix #5031, #5273 and #5771 each paid for.
+                            # So take it back, LEG-grain: the market-grain
+                            # statement two branches up would withdraw this
+                            # market's trading rungs as well
+                            # (`5896-CLEAR-ANSWERED-LEGS-IN-MIXED-BOOKS-WITHOUT-HARMING-LIVE-SIBLINGS`).
+                            #
+                            # Only for a leg we actually hold: there is no
+                            # artifact to take back on one we have never
+                            # stored, and the statement is not run to discover
+                            # that. Imported, not re-written, for the reason
+                            # its sibling is — the scope is the safety.
+                            if venue_market.ticker in existing:
+                                from app.tasks.futures_price_refresh import (
+                                    _KALSHI_WITHDRAW_PRE_KICKOFF_LEG_SQL,
+                                )
+
+                                cleared = (
+                                    await session.execute(
+                                        _KALSHI_WITHDRAW_PRE_KICKOFF_LEG_SQL,
+                                        {
+                                            "market_id": row.id,
+                                            "external_id": venue_market.ticker,
+                                        },
+                                    )
+                                ).fetchall()
+                                stats["pre_kickoff_settled_legs_withdrawn"] += len(
+                                    cleared
+                                )
+                                if cleared:
+                                    logger.info(
+                                        "refresh_linked_game_books: withdrew the "
+                                        "stored quote on settled leg %s of mixed "
+                                        "book %s (market %s) — the venue answered "
+                                        "this contract on a game that has not "
+                                        "started (#5896)",
+                                        venue_market.ticker,
+                                        row.external_id,
+                                        row.id,
+                                    )
+                            # The event's Kalshi hero is NOT touched here. Its
+                            # statement is market-grain too and its first arm
+                            # keys on `eligibility.market_id` alone, so on a
+                            # mixed book it cannot tell this leg's stamp from a
+                            # trading leg's and would delete a live speaker
+                            # from the event. Named residual, not an omission.
                             continue
 
                         withdrawn = _is_withdrawn_leg(venue_market.status)
