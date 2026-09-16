@@ -46,6 +46,7 @@ from app.dependencies.auth import get_optional_user
 # Admission bounds for the shared candidate base live WITH the base (they exist
 # to bound its Redis key + process-local map), so there is one definition.
 from app.utils import candidate_base as _cb_limits
+from app.utils.canonical_market_key import canonical_key_identifies_one_question
 from app.utils.discover_provenance import PROVENANCE_HEADER, normalize_provenance
 # The state vocabulary has ONE definition (live/048). Discovery imports the name
 # rather than spelling the literal so a widened vocabulary is a rename here, not
@@ -2911,7 +2912,7 @@ def _dedupe_futures_by_canonical(futures_items: list[dict]) -> list[dict]:
     seen_canonical: dict[str, dict] = {}
     deduped: list[dict] = []
     for fitem, key in zip(futures_items, _canonical_dedupe_keys(futures_items)):
-        if key is None or not _canonical_key_safe_for_dedupe(key):
+        if key is None or not _canonical_key_identifies_one_question(key):
             deduped.append(fitem)
             continue
         if key not in seen_canonical:
@@ -2928,31 +2929,14 @@ def _dedupe_futures_by_canonical(futures_items: list[dict]) -> list[dict]:
     return deduped
 
 
-def _canonical_key_safe_for_dedupe(key: str | None) -> bool:
-    """Reject broad generated keys that are too weak for feed dedupe."""
-    if not key:
-        return False
-    parts = key.split(":")
-    if len(parts) < 4:
-        return True
-    sport, league, category, _season = parts[:4]
-    sports_like_categories = {
-        "baseball",
-        "basketball",
-        "football",
-        "golf",
-        "hockey",
-        "mma",
-        "olympics",
-        "soccer",
-        "tennis",
-    }
-    generic_market_categories = {"championship", "prediction", "other", "general"}
-    return bool(
-        league
-        or sport in sports_like_categories
-        or category not in generic_market_categories
-    )
+# #6517 — SINGLE HOME. This predicate used to live here as
+# `_canonical_key_safe_for_dedupe`, named for its only caller. It moved to
+# `app/utils/canonical_market_key.py` when it gained its second one (the
+# interestingness precompute task, which is the writer that actually owns the
+# ranking number), and is named for the property it tests rather than for who
+# asks. Re-exported under a module-private alias so this file's call sites read
+# unchanged.
+_canonical_key_identifies_one_question = canonical_key_identifies_one_question
 
 
 _EXTERNAL_CURATOR_RECALL_SCORE_BONUS = 25
@@ -12030,6 +12014,14 @@ async def _query_canonical_source_counts(
     still groups. See ``_canonical_source_pairs_stmt``.
     """
     if keys is not None:
+        # #6517: a key that does not denote one question cannot say how many
+        # venues carry that question. Dropped BEFORE the query, so the coarse
+        # buckets — which are also the expensive ones, 1,419 rows behind
+        # `politics::championship:2027` alone — are not scanned to discover it.
+        # Every caller already falls back to `1` / `[market.source]` on a
+        # missing key, which is the honest answer.
+        keys = {key for key in keys if _canonical_key_identifies_one_question(key)}
+
         # An empty candidate set means "nothing to ask", never "ask about
         # everything". Falling through would emit the unkeyed group-by over all
         # 345,334 keyed rows on behalf of a caller that wanted zero of them.
@@ -12048,7 +12040,14 @@ async def _query_canonical_source_counts(
         return counts, names
 
     result = await db.execute(_canonical_source_counts_unkeyed_stmt())
-    rows = result.all()
+    # #6517: the same refusal as the keyed branch above. This branch feeds the
+    # admin trace (`/api/admin/discover-quality/trace`), which must report the
+    # source count the feed actually scored on, not a second opinion about it.
+    rows = [
+        row
+        for row in result.all()
+        if _canonical_key_identifies_one_question(row.canonical_market_key)
+    ]
     counts = {row.canonical_market_key: row.source_count for row in rows}
     names = {
         row.canonical_market_key: sorted(row.sources) if row.sources else []
