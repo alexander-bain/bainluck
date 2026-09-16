@@ -77,10 +77,27 @@ from app.utils.aggregation import _UNCAPPED_SOURCES
 # So the assertion is SPLIT, which is what that ruling asks for. The scan below
 # — the `for point in points: if ... else: break` restart, the bucket
 # enumeration, the timezone derivation, the duplicate/unsorted handling — is
-# still verbatim and is still the control. The weighting block carries the
-# #6461 rule, mirrored inline rather than imported, so that the two
-# implementations remain independent and this file keeps failing if the scan
-# ever disagrees. #6461's own behaviour is proved next door, in
+# still verbatim and is still the control, and it is the only thing this file
+# has ever been able to prove.
+#
+# Be precise about how independent the rest of it is, because "mirrored" would
+# be a bigger claim than this file can pay. The DERIVATION is mirrored: which
+# candidates set the reference, that `final_result` is excluded from it and
+# exempt from decay, and that the age is a difference against that reference —
+# all written out here rather than called, so a change to any of it in
+# `aggregation.py` reddens this test. The CURVE is imported
+# (`_relative_staleness_multiplier`), exactly as `_staleness_weight` was
+# imported before #6461: that helper was never part of the control either, and
+# copying its constants now would fabricate an independence this file did not
+# have yesterday and does not need.
+#
+# One deliberate asymmetry, and it earns its place: the shipped code dropped its
+# negative-age clamp as unreachable, and this copy keeps `max(0.0, ...)`. So if
+# the reference epoch ever stops being the max of the values it is compared
+# against, the two disagree and this test says so — the clamp is retained here
+# precisely BECAUSE it is dead in the shipped path.
+#
+# #6461's own behaviour is proved next door, in
 # `test_chart_blend_source_switch_6461.py`; it is not this file's job and never
 # was.
 # ---------------------------------------------------------------------------
