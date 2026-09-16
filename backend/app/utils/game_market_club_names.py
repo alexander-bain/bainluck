@@ -84,6 +84,28 @@ runs, every predicate that reads that column is unchanged — including
 and history is repaired the moment the page is built rather than for rows a
 sweep happened to reach. Web and native both render ``market_name`` and
 ``outcome_name`` off this payload, so one repair here serves both tiers.
+
+THE EVENT PAGE WAS NOT THE ONLY SCREEN (#6447 residual)
+=======================================================
+
+Measured on production 2026-09-16, the morning the page repair went live: a
+reader who searches ``Jets`` is handed a card titled ``GB Packers vs NY Jets``
+whose two options read ``Green Bay`` and ``New York J``. One card, two
+vocabularies — the same defect, on the surface a reader reaches FIRST.
+
+The page repair could not reach it. It runs inside ``_build_game_markets`` and
+rewrites ``market_name``/``outcome_name``; the search and typeahead payloads are
+a different shape assembled by a different formatter, so the fix was complete
+for the screen it was measured on and silent everywhere else.
+
+Reader-side count, twenty club queries, before the search half::
+
+    distinct futures cards inspected                  187
+    cards printing a club that does not exist           6   (all Week-3 NFL)
+
+:func:`repair_card_club_names` is that half. It shares this module's engine and
+its refusal rules; what it does NOT share is the pool, and the reason is written
+on the function.
 """
 
 from __future__ import annotations
@@ -102,6 +124,19 @@ _TEXT_FIELDS = ("market_name", "outcome_name")
 #: sometimes `A at B`; everything after the first colon is the venue's
 #: threshold/period/prop subject and is never a club.
 _SIDE_SPLIT_RE = re.compile(r"\s+(?:vs\.?|at)\s+", re.IGNORECASE)
+
+#: A side that ends in a lone capital letter — the venue's width truncation.
+#: Used only as the CHEAP PRE-TEST on the search paths (see
+#: :func:`any_truncated_side`); it never decides a repair, which is always the
+#: ticker's job.
+_LONE_TRAILING_CAPITAL_RE = re.compile(r"\S+ [A-Z]$")
+
+#: `(title field, id field)` for the two served CARD shapes. `/search` futures
+#: cards title themselves ``name`` and key on ``id``; the typeahead's dropdown
+#: rows title themselves ``text`` and key on ``market_id``. Nothing else about
+#: the question differs, so one engine serves both rather than two that drift.
+SEARCH_CARD_FIELDS = ("name", "id")
+TYPEAHEAD_CARD_FIELDS = ("text", "market_id")
 
 
 def _uncompose_a_name_that_already_names_the_club(shipped: str, full: str) -> str:
@@ -241,4 +276,143 @@ def repair_club_names(
     return changed
 
 
-__all__ = ["build_page_repairs", "matchup_sides", "repair_club_names"]
+def _card_rows(
+    cards: Iterable[Mapping], title_field: str, id_field: str
+) -> list[dict]:
+    """A card's title and its outcome labels as ``build_page_repairs`` rows.
+
+    A card is one market, so every row it yields carries that market's id and
+    the pooling engine reaches the same ticker for all of them. The title is
+    emitted ONCE rather than beside every outcome: ``build_page_repairs`` splits
+    it into sides on every row it appears on, and a five-outcome card would pay
+    for that five times for one identical answer.
+    """
+    rows: list[dict] = []
+    for card in cards:
+        if not isinstance(card, Mapping):
+            continue
+        market_id = card.get(id_field)
+        rows.append({"_market_id": market_id, "market_name": card.get(title_field)})
+        for outcome in card.get("top_outcomes") or []:
+            if isinstance(outcome, Mapping) and outcome.get("name"):
+                rows.append(
+                    {"_market_id": market_id, "outcome_name": outcome["name"]}
+                )
+    return rows
+
+
+def any_truncated_side(cards: Iterable[Mapping], *, title_field: str) -> bool:
+    """Could anything on these cards be a width truncation? Pure string work.
+
+    The search paths need this because their veto is not free. On the event page
+    the protected names are already loaded — they are the event being rendered.
+    A search response mixes markets from many events and none of them is loaded
+    (the futures query eager-loads ``sport`` and ``outcomes``, never ``event``),
+    so honouring the same veto costs one keyed read of ``events``.
+
+    Measured on production 2026-09-16, twenty club queries: **6 of 187 distinct
+    futures cards** carry a truncated side. This predicate is what keeps the
+    other 181 — and every non-sport query, which is most of them — paying
+    nothing at all on the hottest path in the API.
+
+    Deliberately over-inclusive. It answers "is there anything shaped like a
+    truncation here", and `Real Sociedad B` answers yes; the ticker then
+    resolves nothing and no repair is made. A false yes costs one indexed query.
+    A false no would be a silent hole, so the shape is the loose half on purpose.
+    """
+    for card in cards:
+        if not isinstance(card, Mapping):
+            continue
+        sides = list(matchup_sides(card.get(title_field)))
+        sides.extend(
+            outcome["name"]
+            for outcome in card.get("top_outcomes") or []
+            if isinstance(outcome, Mapping) and isinstance(outcome.get("name"), str)
+        )
+        if any(_LONE_TRAILING_CAPITAL_RE.search(side or "") for side in sides):
+            return True
+    return False
+
+
+def repair_card_club_names(
+    cards: Iterable[Mapping],
+    ticker_by_market_id: Mapping[int, Optional[str]],
+    *,
+    title_field: str,
+    id_field: str,
+    protected_names: Sequence[Optional[str]] = (),
+) -> int:
+    """Complete every truncated club on one RESPONSE's cards, in place.
+
+    The sibling of :func:`repair_club_names` for the two search surfaces, and
+    the reason it is a separate entry point rather than a flag: the payload
+    shape differs (``name``/``text`` + ``top_outcomes[].name`` against
+    ``market_name``/``outcome_name``) and, more importantly, so does the POOL.
+
+    WHY THE POOL IS THE WHOLE RESPONSE
+    ==================================
+
+    #5181's criterion is one vocabulary per screen, and on a results page the
+    screen is the response, not the card. Searching ``Jets`` can return both
+    ``GB Packers vs NY Jets`` and ``NY Jets vs Detroit``; if one ticker resolves
+    and the other does not, per-card pooling prints the club two ways in one
+    list — exactly the objection the event-page version was built to avoid, one
+    level up. So the map is built across every card and then applied to every
+    card.
+
+    The risk that buys is one card inheriting another's expansion for an
+    identical shipped string. ``build_page_repairs`` already answers it: a key
+    two markets expand DIFFERENTLY is dropped rather than resolved, and a key is
+    the whole truncated side including its city, so two clubs colliding on one
+    key is a contradiction and leaves the venue's text. That guard was a
+    future-proofing measure on the event page (zero occurrences on 158 pages);
+    here it is load-bearing, because the pool really does span leagues.
+
+    Returns the number of FIELDS rewritten, which is what a guard test and a log
+    line can both assert on. The cards are mutated in place because the search
+    response hands the SAME dict to more than one bucket — ``futures`` and
+    ``futures_families`` both hold ``_formatted_by_id[m.id]`` — and rebuilding
+    would repair one bucket and not the other.
+    """
+    cards = [card for card in cards if isinstance(card, Mapping)]
+    if not cards:
+        return 0
+
+    repairs = build_page_repairs(
+        _card_rows(cards, title_field, id_field),
+        ticker_by_market_id,
+        protected_names=protected_names,
+    )
+    if not repairs:
+        return 0
+
+    changed = 0
+    for card in cards:
+        title = card.get(title_field)
+        if isinstance(title, str) and title:
+            after = apply_name_repairs(title, repairs)
+            if after != title:
+                card[title_field] = after
+                changed += 1
+        for outcome in card.get("top_outcomes") or []:
+            if not isinstance(outcome, Mapping):
+                continue
+            before = outcome.get("name")
+            if not isinstance(before, str) or not before:
+                continue
+            after = apply_name_repairs(before, repairs)
+            if after != before:
+                outcome["name"] = after
+                changed += 1
+    return changed
+
+
+__all__ = [
+    "SEARCH_CARD_FIELDS",
+    "TYPEAHEAD_CARD_FIELDS",
+    "any_truncated_side",
+    "build_page_repairs",
+    "matchup_sides",
+    "repair_card_club_names",
+    "repair_club_names",
+]

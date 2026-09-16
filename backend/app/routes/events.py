@@ -14,7 +14,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-from typing import Annotated, Optional
+from typing import Annotated, Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select, and_, or_, union, func, case, cast, any_, literal, Date, Integer, String, literal_column, text, true
@@ -34,7 +34,13 @@ from app.services.anchor_channel import (
 )
 from app.utils.agent_origin import ORIGIN_HEADER, ORIGIN_USER
 from app.utils.feed_reasons import _points as format_movement_points
-from app.utils.game_market_club_names import repair_club_names
+from app.utils.game_market_club_names import (
+    SEARCH_CARD_FIELDS,
+    TYPEAHEAD_CARD_FIELDS,
+    any_truncated_side,
+    repair_card_club_names,
+    repair_club_names,
+)
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 from app.utils.prematch_reading import opening_consensus_has_frozen
 from app.utils.period_window_grade import grade_period_window
@@ -7075,6 +7081,24 @@ async def search_events(
     }
     formatted_futures = [_formatted_by_id[m.id] for m in futures_markets]
 
+    # #6447 RESIDUAL — THE RESULTS STOP NAMING A CLUB THAT DOES NOT EXIST.
+    #
+    # `Jets` returned a card titled `GB Packers vs NY Jets` whose two options
+    # read `Green Bay` and `New York J`. The page repair merged hours earlier
+    # could not reach this: it lives in `_build_game_markets` and rewrites a
+    # different payload shape.
+    #
+    # Placed HERE, on `_formatted_by_id`, because it is the one place both
+    # reader buckets meet — `formatted_futures` above and `futures_families`
+    # below hold the SAME dicts, so repairing the map repairs both, and
+    # repairing either list alone would repair one and not the other.
+    await _repair_search_card_club_names(
+        db,
+        list(_formatted_by_id.values()),
+        [_market_facts(m) for m in (*deduped_futures, *futures_markets)],
+        card_fields=SEARCH_CARD_FIELDS,
+    )
+
     # #993 L2-41: backend-composed topical families (additive; flat `futures`
     # above is unchanged for compatibility). Composed from the full deduped set,
     # which is WIDER than the ten rows shipped above and is meant to be — it is
@@ -9001,6 +9025,9 @@ async def typeahead_search(
 
     futures_pool = []
     seen_futures_keys: set[str] = set()
+    #: `(market id, kalshi ticker, event id)` for every row that reaches the
+    #: dropdown — plain scalars, read while the ORM row is live. #6447 residual.
+    _ta_market_facts: list[tuple[int, Optional[str], Optional[int]]] = []
     for market in ta_futures_ranked:
         if len(futures_pool) >= 5:
             break
@@ -9030,6 +9057,13 @@ async def typeahead_search(
         if dedup_key in seen_futures_keys:
             continue
         seen_futures_keys.add(dedup_key)
+        # #6447 residual: the two scalars the club-name repair needs, read HERE
+        # while the row is certainly live and kept as plain data. The repair
+        # itself runs 400 lines below, past an `attach_season_answers` and the
+        # private-key strip, and gotcha #6 is explicit that a live ORM row may
+        # not be carried across that distance — an expired attribute would be a
+        # lazy refresh inside async on the hottest path in the API.
+        _ta_market_facts.append(_market_facts(market))
         label = _TIER_LABELS.get(market.market_tier, None)
         if not label and market.sport_id is None:
             label = (market.llm_sport_category or market.category or "Market").replace("_", " ").title()
@@ -9494,6 +9528,24 @@ async def typeahead_search(
         _evidence_echo = [
             _ev_wire(_by_payload[id(_s)]) for _s in suggestions
         ]
+
+    # #6447 RESIDUAL — THE DROPDOWN STOPS NAMING A CLUB THAT DOES NOT EXIST.
+    #
+    # Typing `Jets` offered a row reading `Green Bay 62% · New York J 37%`. This
+    # is the first surface a reader reaches, so it is the first one that has to
+    # spell the club.
+    #
+    # Placed AFTER the private-key strip and BEFORE `result` is assembled, which
+    # is also before the Redis write below: the cached body then holds the
+    # repaired text, so a warm keystroke is not a second, slower code path
+    # serving the old string. Entries written before this shipped age out on the
+    # 45-65s TTL rather than being invalidated — an hour's difference to nobody.
+    await _repair_search_card_club_names(
+        db,
+        [_s for _s in suggestions if _s.get("type") == "futures"],
+        _ta_market_facts,
+        card_fields=TYPEAHEAD_CARD_FIELDS,
+    )
 
     result: dict = {"suggestions": suggestions, "query": q}
 
@@ -22612,6 +22664,109 @@ def _served_prices_as_of(
     if not stamps:
         return None
     return min(stamps).isoformat()
+
+
+def _market_facts(market) -> tuple[Optional[int], Optional[str], Optional[int]]:
+    """`(id, kalshi ticker, event id)` for the #6447 search repair.
+
+    `getattr` with a default, which is this module's house idiom for reading a
+    row inside the search formatters — `_served_prices_as_of` says why in full:
+    these are mapped columns and are always there on a real row, the doubles
+    that reach this path are not, and a serializer must not be the thing that
+    500s a search page.
+
+    Not defensiveness for its own sake. Reading `market.event_id` directly
+    turned 22 green tests in `test_route_typeahead_intent_5060.py` into 500s the
+    first time this ran, because their fixtures predate the column being read
+    here — and a fixture that stops matching is a signal about the contract, not
+    a fixture to go and edit in twenty-two places.
+    """
+    return (
+        getattr(market, "id", None),
+        getattr(market, "external_id", None),
+        getattr(market, "event_id", None),
+    )
+
+
+async def _repair_search_card_club_names(
+    db: AsyncSession,
+    cards: list[dict],
+    market_facts: Sequence[tuple[int, Optional[str], Optional[int]]],
+    *,
+    card_fields: tuple[str, str],
+) -> int:
+    """#6447 on the two search surfaces: complete the venue's truncated clubs.
+
+    Both call sites hand this the served cards and, as ``(market id, kalshi
+    ticker, event id)`` triples, the two scalars the repair needs beyond the
+    strings. Triples rather than the ORM rows on purpose: the typeahead reads
+    them 400 lines before this runs and gotcha #6 forbids carrying a live row
+    that far, so the shape that is safe for the harder caller is the shape both
+    use.
+
+    THE ORDER IS THE POINT, AND IT IS A LATENCY ORDER
+    =================================================
+
+    ``any_truncated_side`` is pure string work and runs first. Only if something
+    on the page is even SHAPED like a truncation do we pay for the veto, which
+    is one keyed read of ``events`` for the markets in hand. The futures query
+    eager-loads ``sport`` and ``outcomes`` and never ``event``, so reading
+    ``market.event`` here would be a lazy load inside async — `MissingGreenlet`,
+    on the hottest path in the API — and a per-row load would be N queries even
+    when it worked. One ``IN`` on the primary key, once, or nothing.
+
+    Measured on production 2026-09-16: 6 of 187 distinct futures cards across
+    twenty club queries carry a truncated side, so the common answer is `False`
+    and the common cost is a regex over a handful of short strings.
+
+    THE VETO IS THE EVENT PAGE'S, UNCHANGED
+    =======================================
+
+    ``protected_names`` are the anchored ``home_team_name``/``away_team_name`` of
+    the events these markets belong to — a refusal lock, never a source
+    (``game_market_club_names`` carries the why). Taking them response-wide
+    rather than per card is deliberate and is the safe direction: a real club
+    that matches the truncation shape anywhere in this response stops the
+    rewrite everywhere in it, and the failure mode of an over-wide veto is the
+    venue's own text, which is what a reader sees today.
+
+    Returns the number of fields rewritten, for the guard tests and the log line.
+    """
+    title_field, id_field = card_fields
+    if not cards or not any_truncated_side(cards, title_field=title_field):
+        return 0
+
+    ticker_by_market_id = {
+        market_id: ticker for market_id, ticker, _ in market_facts
+    }
+    event_ids = {
+        event_id for _, _, event_id in market_facts if event_id is not None
+    }
+
+    protected_names: list[Optional[str]] = []
+    if event_ids:
+        club_rows = await db.execute(
+            select(Event.home_team_name, Event.away_team_name).where(
+                Event.id.in_(event_ids)
+            )
+        )
+        for home, away in club_rows.all():
+            protected_names.extend((home, away))
+
+    changed = repair_card_club_names(
+        cards,
+        ticker_by_market_id,
+        title_field=title_field,
+        id_field=id_field,
+        protected_names=protected_names,
+    )
+    if changed:
+        logger.info(
+            "#6447 search club-name repair rewrote %d field(s) across %d card(s)",
+            changed,
+            len(cards),
+        )
+    return changed
 
 
 def _format_futures_for_search(market: FuturesMarket) -> dict:
