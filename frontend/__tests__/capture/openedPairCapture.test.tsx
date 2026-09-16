@@ -374,11 +374,82 @@ describe("UX-P166 — the fixture reproduces what production served", () => {
   });
 });
 
+
+/**
+ * ═══ #6238 — THREE OF THESE FIVE SPECIMENS ARE SOCCER, AND SOCCER NOW PRINTS
+ *     ONE NUMBER IN THIS FOOTER ═══
+ *
+ * On a sport whose winner market prices a draw, the opening pair is the same
+ * `1 − home` complement the live chips stopped printing — "the home team does
+ * not win", i.e. away win OR draw — so `FeedCard` withholds the away half and
+ * names the survivor (`Opened Barcelona 85%`) rather than printing an unnamed
+ * number in the away position.
+ *
+ * 🔴 WHY THAT COSTS THIS FILE ITS DEFECT POPULATION, AND WHAT IS DONE ABOUT IT.
+ *
+ * All three 101 specimens are soccer, and for Barcelona the UX-P166 fix landed
+ * on the AWAY side (naive `[85, 16]` → shipped `[85, 15]`). The home number is
+ * 85 on both arms. So on the card as served, the rounding fix is no longer
+ * OBSERVABLE — "no longer prints the 101 it used to" would pass on a card that
+ * had never been fixed.
+ *
+ * Retiring the specimens was the wrong answer and so was moving their sport key:
+ * the payloads are verbatim production and their sport is part of what they
+ * record. Instead each 101 specimen is rendered TWICE from the same floats —
+ * once as served, which pins the new single-sided truth, and once on a two-way
+ * key, which keeps the pair assertions exactly as strong as they were. The
+ * rounding rule is unchanged by #6238; only how many of its two outputs reach
+ * this particular footer is.
+ */
+const TWO_WAY_KEY = "americanfootball_nfl";
+
+/** The same specimen on a sport that prices no draw, so the footer draws a pair. */
+function asTwoWay(s: Spec): Spec {
+  return { ...s, sport: TWO_WAY_KEY };
+}
+
+/**
+ * The one number a withholding footer prints, with the team it names.
+ *
+ * Deliberately NOT tolerant of a second number: the whole claim is that the
+ * away half is gone, so a card that printed both would fall through to an error
+ * rather than quietly returning the first one it found.
+ */
+function printedOpenedSingle(html: string): [string, number] {
+  // The LIVE locus: the footer's accessible sentence.
+  const said = html.match(/data-testid="feed-card-opened"[^>]*aria-label="([^"]+)"/);
+  if (said) {
+    const sides = Array.from(said[1].matchAll(/(.+?) opened at (\d+)%/g)).map(
+      (m) => [m[1].replace(/^,\s*/, ""), Number(m[2])] as [string, number],
+    );
+    expect(sides).toHaveLength(1);
+    return sides[0];
+  }
+
+  // The SETTLED locus: the per-team cells. Four of the five specimens are
+  // finished, and `printedOpened` reads both loci for the reason its own
+  // docstring gives — scoping this to the live footer would retire most of the
+  // census while calling it a pass. Same applies to the withheld arm.
+  const text = visibleText(html);
+  const cells = Array.from(
+    text.matchAll(
+      new RegExp(
+        `${PREMATCH_SAID.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} (.+?) (\\d+)%`,
+        "g",
+      ),
+    ),
+  ).map((m) => [m[1].trim(), Number(m[2])] as [string, number]);
+  expect(cells).toHaveLength(1);
+  return cells[0];
+}
+
 describe("UX-P166 — the shipped feed card's footer", () => {
   it.each(ALL_101.map((s) => [`${s.away_team} @ ${s.home_team}`, s] as const))(
     "AFTER: %s prints a pair that adds up",
     (_name, s) => {
-      const printed = printedOpened(renderFeedCard(s));
+      // #6238 — on the two-way arm, which is where this footer still draws two
+      // numbers. Same floats, same rounding, same expected integers.
+      const printed = printedOpened(renderFeedCard(asTwoWay(s)));
       expect(printed).toEqual(s.expected_opened_home_away);
       expect(printed[0] + printed[1]).toBe(100);
     },
@@ -387,8 +458,27 @@ describe("UX-P166 — the shipped feed card's footer", () => {
   it.each(ALL_101.map((s) => [`${s.away_team} @ ${s.home_team}`, s] as const))(
     "BEFORE/AFTER: %s no longer prints the 101 it used to",
     (_name, s) => {
-      const printed = printedOpened(renderFeedCard(s));
+      const printed = printedOpened(renderFeedCard(asTwoWay(s)));
       expect(printed).not.toEqual(s.naive_opened_home_away);
+    },
+  );
+
+  it.each(ALL_101.map((s) => [`${s.away_team} @ ${s.home_team}`, s] as const))(
+    "#6238 AS SERVED: %s is soccer, so the footer names one side and withholds the other",
+    (_name, s) => {
+      // The specimens as production actually served them. What is asserted is
+      // the pair-rounded HOME integer — the same number the two-way arm above
+      // puts at index 0 — reached through a sentence that NAMES the team, which
+      // is what replaces the positional attribution a pair had.
+      const [team, percent] = printedOpenedSingle(renderFeedCard(s));
+      expect(team).toBe(s.home_team);
+      expect(percent).toBe(s.expected_opened_home_away[0]);
+      // And the withheld side is really gone, not merely unnamed. Both loci: a
+      // live card must print no `Opened H/A` pair, and a settled one must not
+      // print the away team's own pre-match cell.
+      const text = visibleText(renderFeedCard(s));
+      expect(text).not.toMatch(/Opened\s+\d+\s*\/\s*\d+/);
+      expect(text).not.toContain(`${PREMATCH_SAID} ${s.away_team}`);
     },
   );
 
@@ -400,7 +490,7 @@ describe("UX-P166 — the shipped feed card's footer", () => {
       const homeIsFavourite =
         s.opening_odds.home_probability >= s.opening_odds.away_probability;
       const idx = homeIsFavourite ? 0 : 1;
-      const printed = printedOpened(renderFeedCard(s));
+      const printed = printedOpened(renderFeedCard(asTwoWay(s)));
       expect([s.id, printed[idx]]).toEqual([s.id, s.naive_opened_home_away[idx]]);
     }
   });
@@ -445,8 +535,11 @@ describe("UX-P166 — the shipped feed card's footer", () => {
         Math.round(home * 100),
         Math.round(away * 100),
       ];
+      // #6238 — the two-way arm, because this assertion reads a PAIR and
+      // BARCELONA is a soccer row whose away half is now withheld. The boundary
+      // rounding under test is sport-independent.
       const s = {
-        ...BARCELONA,
+        ...asTwoWay(BARCELONA),
         opening_odds: { home_probability: home, away_probability: away },
       } as unknown as Spec;
       const printed = printedOpened(renderFeedCard(s));
@@ -467,14 +560,17 @@ describe("UX-P166 — the shipped sports/search event card's footer", () => {
   // `EventCard`'s footer is gated on `isLive` only, so the live specimen is the
   // one that reaches it. The finished specimens are covered on the feed card above.
   it("AFTER: the live game prints a pair that adds up", () => {
-    const printed = printedOpened(renderEventCard(MITO));
+    // #6238 — MITO is a J-League row and soccer prices a draw, so as served this
+    // footer now names one side. The PAIR rule is asserted on the two-way arm,
+    // from the identical floats; the withheld arm is pinned below.
+    const printed = printedOpened(renderEventCard(asTwoWay(MITO)));
     expect(printed).toEqual([31, 69]);
     expect(printed[0] + printed[1]).toBe(100);
     expect(printed).not.toEqual(MITO.naive_opened_home_away);
   });
 
   it("AFTER: the favourite keeps its own 69 and the underdog absorbs the point", () => {
-    expect(printedOpened(renderEventCard(MITO))[1]).toBe(
+    expect(printedOpened(renderEventCard(asTwoWay(MITO)))[1]).toBe(
       MITO.naive_opened_home_away[1],
     );
   });
@@ -489,10 +585,22 @@ describe("UX-P166 — the shipped sports/search event card's footer", () => {
     // would silently remove the defect's precondition rather than fix it. Pinned
     // because the fix reads the derived value and a future edit could drop it.
     const noAway = {
-      ...MITO,
+      ...asTwoWay(MITO),
       opening_odds: { home_probability: 0.315, away_probability: undefined },
     } as unknown as Spec;
     expect(printedOpened(renderEventCard(noAway))).toEqual([31, 69]);
+  });
+
+  it("#6238 AS SERVED: the soccer row names its survivor instead of a pair", () => {
+    // `EventCard` lists HOME first and its footer was always home-first, so the
+    // withheld form is `Opened <home short name> 31%` — the underdog here, since
+    // on this row the FAVOURITE is the away side and the away figure is exactly
+    // what #6238 refuses to print. That is the rule working, not a regression:
+    // `1 - home` is not a legitimate away price at 69 any more than at 31.
+    const text = visibleText(renderEventCard(MITO));
+    expect(text).toMatch(/Opened\s+\S.*?31%/);
+    expect(text).not.toMatch(/Opened\s+\d+\s*\/\s*\d+/);
+    expect(text).not.toContain("69%");
   });
 });
 
@@ -500,9 +608,25 @@ describe("UX-P166 — the two cards cannot disagree with each other", () => {
   it("both surfaces print the same pair for the same event", () => {
     // Two components, one rule. Before this queue they agreed only by both being
     // wrong in the same way.
-    expect(printedOpened(renderEventCard(MITO))).toEqual(
-      printedOpened(renderFeedCard(MITO)),
+    expect(printedOpened(renderEventCard(asTwoWay(MITO)))).toEqual(
+      printedOpened(renderFeedCard(asTwoWay(MITO))),
     );
+  });
+
+  it("#6238 — and they still cannot disagree once one side is withheld", () => {
+    // The agreement claim is the point of this block, so it has to survive the
+    // change of shape rather than only being asserted on the arm that kept two
+    // numbers.
+    //
+    // The two footers are read differently ON PURPOSE. `FeedCard` states its
+    // sides in an accessible sentence ("<team> opened at 31%"); `EventCard`'s
+    // footer is plain visible text ("Opened <short name> 31%"). Reading each
+    // surface the way it actually speaks is the point — a shared extractor that
+    // normalised them could agree with itself while the two cards disagreed.
+    const fromFeed = printedOpenedSingle(renderFeedCard(MITO))[1];
+    const fromCard = visibleText(renderEventCard(MITO)).match(/Opened\s+\D*?(\d+)%/);
+    expect(fromCard).not.toBeNull();
+    expect(Number(fromCard![1])).toBe(fromFeed);
   });
 
   it("and both agree with the shared helper the contract suite proves", () => {
@@ -515,6 +639,34 @@ describe("UX-P166 — the two cards cannot disagree with each other", () => {
     }
   });
 });
+
+/**
+ * WHATEVER THE CARD ACTUALLY PRINTED, for the artifact's prose only.
+ *
+ * The panels below render the specimens AS PRODUCTION SERVED THEM, so since
+ * #6238 three of the six print one number and three print a pair, and the two
+ * components phrase it differently on top of that. An artifact is a picture of
+ * the real thing, so this reads the rendered text rather than re-deriving the
+ * numbers — a blurb computed from the floats could describe a card the page is
+ * not drawing, which is the one thing a capture artifact must never do.
+ *
+ * Assertions never call this. They use the strict readers above, which fail
+ * loudly on a shape they do not recognise.
+ */
+function openedBlurb(html: string): string {
+  const text = visibleText(html);
+  const footer = text.match(/Opened\s+(\d+\s*\/\s*\d+|\D+?\s\d+%)/);
+  if (footer) return footer[1].trim();
+  const cells = Array.from(
+    text.matchAll(
+      new RegExp(
+        `${PREMATCH_SAID.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} (.+?) (\\d+)%`,
+        "g",
+      ),
+    ),
+  ).map((m) => `${m[1].trim()} ${m[2]}%`);
+  return cells.length ? cells.join(", ") : "(no opening line)";
+}
 
 describe("UX-P166 — the artifact", () => {
   it("renders every panel", () => {
@@ -532,7 +684,7 @@ describe("UX-P166 — the artifact", () => {
         "Athletic Bilbao @ Barcelona — the exemplar",
         `Served <code>opening_odds</code> and <code>current_odds</code> hold the same two floats.
          The strip printed <b>85/15</b>; the footer printed <b>Opened 85/16</b>.
-         Now the opening pair reads <b>${printedOpened(renderFeedCard(BARCELONA)).join("/")}</b>
+         Now the opening pair reads <b>${openedBlurb(renderFeedCard(BARCELONA))}</b>
          — and since ux/1036 it reads it beside each team's name rather than in a footer.`,
         renderFeedCard(BARCELONA),
       ),
@@ -540,7 +692,7 @@ describe("UX-P166 — the artifact", () => {
         "FC Machida Zelvia @ Mito HollyHock — LIVE when measured",
         `The single live 101 in the census. Away is the favourite, so the derived point
          lands on HOME: was <b>Opened 32/69</b>, now
-         <b>Opened ${printedOpened(renderFeedCard(MITO)).join("/")}</b> — still a footer,
+         <b>Opened ${openedBlurb(renderFeedCard(MITO))}</b> — still a footer,
          because this one is LIVE.`,
         renderFeedCard(MITO),
       ),
@@ -548,13 +700,13 @@ describe("UX-P166 — the artifact", () => {
         "Lyngby @ AC Horsens — the exactly-representable pair",
         `0.625 / 0.375: both sides land on a true <code>.5</code> with no floating-point
          excuse, and both rounded up. Was <b>Opened 38/63</b>, now
-         <b>${printedOpened(renderFeedCard(LYNGBY)).join("/")}</b>, per team.`,
+         <b>${openedBlurb(renderFeedCard(LYNGBY))}</b>, per team.`,
         renderFeedCard(LYNGBY),
       ),
       panel(
         "Boston Red Sox @ New York Yankees — LEFT ALONE",
         `23,910 of the 24,117 measured events are this case: an ordinary complement pair
-         off the boundary. Prints <b>${printedOpened(renderFeedCard(YANKEES)).join("/")}</b>,
+         off the boundary. Prints <b>${openedBlurb(renderFeedCard(YANKEES))}</b>,
          exactly the numbers it printed before.`,
         renderFeedCard(YANKEES),
       ),
@@ -562,13 +714,13 @@ describe("UX-P166 — the artifact", () => {
         "A thin book — ALSO LEFT ALONE",
         `A pair summing to 0.97 is not two halves of one question. Forcing it to 100 would
          invent three points of probability, so it keeps
-         <b>Opened ${printedOpened(renderFeedCard(THIN)).join("/")}</b> — total 97, on purpose.`,
+         <b>Opened ${openedBlurb(renderFeedCard(THIN))}</b> — total 97, on purpose.`,
         renderFeedCard(THIN),
       ),
       panel(
         "The live card on /sports and /search",
         `A second component, the same rule:
-         <b>Opened ${printedOpened(renderEventCard(MITO)).join("/")}</b>.`,
+         <b>Opened ${openedBlurb(renderEventCard(MITO))}</b>.`,
         renderEventCard(MITO),
       ),
     ].join("\n");

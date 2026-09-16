@@ -16,6 +16,7 @@ import { teamColorStyle } from "@/lib/teamColors";
 import TeamNameLink from "./TeamNameLink";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
+import { sportPricesADraw } from "@/lib/drawPricedWinner";
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { teamCrestInitials, teamShortNames } from "@/lib/teamShortName";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
@@ -255,6 +256,28 @@ export default function EventCard({
   // rounding tie.
   const [chipAwayPct, chipHomePct] = renderedDuelPercents(awayProb, homeProb);
 
+  // ═══ #6238 — NO AWAY NUMBER ON A SPORT THAT PRICES A DRAW ═══
+  //
+  // The shared card: `/sport/[sport]/[league]`, team pages, search. Every away
+  // figure it can print — the live/pregame chip, the `Opened X/Y` footer, the
+  // settled per-team prior — is `1 − home`, which on soccer is "home does not
+  // win": away win OR draw, wearing the away team's name. The argument, the
+  // payload checks and the production specimens are in `lib/drawPricedWinner.ts`.
+  //
+  // `awayProb` itself is deliberately NOT nulled here. It feeds `noReading`,
+  // `homeFavorite` and the rounding pair, and blanking it at the top would make
+  // a priced match look unpriced and hand every draw-priced card a permanent
+  // "home favourite". The question this rule asks is only ever "may this surface
+  // PRINT the away number", so it is asked at the print sites.
+  const awayWithheld = sportPricesADraw(event.sport);
+
+  // With the away side withheld there is no pair, so there is no favourite to
+  // name — `homeProb >= awayProb` is a comparison against the very number this
+  // ship refuses to state. This file already has the answer for that shape
+  // (`noReading`, a suspended card, a finished card with no winner): equal
+  // weight is the only honest pair when the comparison is missing.
+  const favoriteKnown = !awayWithheld;
+
   const handleCardClick = () => {
     trackEventCardClick(event, sourceSection, positionIndex);
   };
@@ -370,14 +393,17 @@ export default function EventCard({
   // outright: an opening line and a last live blend disagree about the
   // favourite often enough that the card would bold one side while the number
   // beside it named the other.
+  //
+  // #6238 — `!favoriteKnown` joins that list for the same reason: on a
+  // draw-priced sport the card no longer holds a second number to be ahead of.
   const homeNameClass = isFinished
     ? finishedNameClass(homeWon)
-    : isSuspended || noReading || homeFavorite
+    : isSuspended || noReading || !favoriteKnown || homeFavorite
       ? "text-text-primary"
       : "text-text-secondary";
   const awayNameClass = isFinished
     ? finishedNameClass(awayWon)
-    : isSuspended || noReading || !homeFavorite
+    : isSuspended || noReading || !favoriteKnown || !homeFavorite
       ? "text-text-primary"
       : "text-text-secondary";
 
@@ -650,7 +676,13 @@ export default function EventCard({
                   percent={chipHomePct}
                   className={cn(
                     "font-mono tabular-nums",
-                    homeFavorite ? "text-prob-md text-text-primary" : "text-prob-sm text-text-secondary",
+                    // #6238 — when the away side is withheld this is the only
+                    // number on the card, so it takes the full treatment. The
+                    // small/secondary size means "the other one is bigger", and
+                    // there is no other one.
+                    !favoriteKnown || homeFavorite
+                      ? "text-prob-md text-text-primary"
+                      : "text-prob-sm text-text-secondary",
                   )}
                 />
               )}
@@ -669,6 +701,10 @@ export default function EventCard({
               <ProbabilityBar
                 homeProbability={homeProb}
                 homeFavorite={homeFavorite}
+                // #6238 — the bar derives its away half as the remainder, which
+                // is the same complement the chips above stopped printing. Left
+                // whole it would keep saying it in pixels.
+                awayWithheld={awayWithheld}
                 homeColor={event.home_team_data?.primary_color ?? undefined}
                 awayColor={event.away_team_data?.primary_color ?? undefined}
                 height={isLive ? 3 : 5}
@@ -710,8 +746,11 @@ export default function EventCard({
                     awayNameClass,
                   )}
                 />
-                {/* #2764 — the away side's prior (see the home row above). */}
-                {prematch && prematch.awayPercent !== null && (
+                {/* #2764 — the away side's prior (see the home row above).
+                    #6238 — withheld on a draw-priced sport: it is the opening
+                    complement, and this row names itself, so it costs the home
+                    prior nothing to leave the slot empty. */}
+                {prematch && prematch.awayPercent !== null && !awayWithheld && (
                   <span
                     className="flex-shrink-0 font-mono text-[11px] tabular-nums text-text-muted"
                     data-testid="event-card-prematch-away"
@@ -729,8 +768,15 @@ export default function EventCard({
                   <span className="font-mono text-sm font-bold text-accent-live ml-auto" aria-label={`${event.away_team} score: ${event.away_score}`}>{event.away_score}</span>
                 )}
               </div>
-              {/* Probability chip — scheduled/live only (see home team above). */}
-              {!isLive && !isFinished && !isSuspended && !noReading && (
+              {/* Probability chip — scheduled/live only (see home team above).
+
+                  #6238 — and not at all on a draw-priced sport. This row names
+                  itself (crest · team · number), so the withheld side simply
+                  renders nothing and the surviving home number keeps its own
+                  row and its own name: native's rule for a self-naming row
+                  (`EventCardView.probabilityWithMovement`). Only the surfaces
+                  that collapse a POSITIONAL pair have to name a survivor. */}
+              {!isLive && !isFinished && !isSuspended && !noReading && !awayWithheld && (
                 <AnimatedProbability
                   percent={chipAwayPct}
                   className={cn(
@@ -739,7 +785,7 @@ export default function EventCard({
                   )}
                 />
               )}
-              {isLive && !noReading && (
+              {isLive && !noReading && !awayWithheld && (
                 <AnimatedProbability
                   percent={chipAwayPct}
                   className="font-mono tabular-nums text-xs text-text-muted"
@@ -783,6 +829,22 @@ export default function EventCard({
               {!isLive && odds && odds.projected_home_score != null && odds.projected_away_score != null ? (
                 <span className="text-text-muted">
                   Proj <span className="font-mono text-text-secondary">{Math.round(odds.projected_home_score)}-{Math.round(odds.projected_away_score)}</span>
+                </span>
+              ) : isLive && opening && openedHomePct !== null && awayWithheld ? (
+                /* #6238 — the opening pair is the same complement at an earlier
+                   instant, so the away half goes with the current one. The
+                   footer is KEPT, not dropped: the home opening figure is as
+                   legitimate as the home current one, and it is the only
+                   pre-match context a live card carries. Losing the pair loses
+                   the positional attribution that let both numbers go unnamed,
+                   so it names its survivor, in native's words
+                   (`EventCardView.footerRow`). Short name via the PAIR helper,
+                   never per side — #3430. */
+                <span className="text-text-muted">
+                  Opened{" "}
+                  <span className="font-mono text-text-secondary">
+                    {teamShortNames({ name: event.home_team }, { name: event.away_team }).home} {openedHomePct}%
+                  </span>
                 </span>
               ) : isLive && opening && openedHomePct !== null && openedAwayPct !== null ? (
                 <span className="text-text-muted">

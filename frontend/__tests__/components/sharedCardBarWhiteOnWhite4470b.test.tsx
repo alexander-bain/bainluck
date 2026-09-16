@@ -170,15 +170,16 @@ function segments(event: Event): { home: Segment; away: Segment } {
 function makeEvent(
   awayPrimary: string | null,
   homePrimary: string | null,
-  homeProb: number
+  homeProb: number,
+  sport = TWO_SEGMENT_SPORT
 ): Event {
   const teamData = (primary: string | null) =>
     primary === null ? null : { primary_color: primary, logo_small: "l.png" };
   return {
     id: 15301293,
     external_id: "evt-15301293",
-    sport: "soccer_epl",
-    sport_name: "Premier League",
+    sport,
+    sport_name: "League",
     home_team: "Chelsea",
     away_team: "Leeds United",
     commence_time: "2030-01-01T12:00:00Z",
@@ -191,6 +192,29 @@ function makeEvent(
     },
   } as unknown as Event;
 }
+
+/**
+ * ⚠️ THE SPORT KEY IS LOAD-BEARING, AND IT USED TO BE `soccer_epl`.
+ *
+ * This file's subject is COLOUR — may a segment be painted in something a reader
+ * cannot see — and that rule is sport-independent. But #6238 made the number of
+ * SEGMENTS sport-dependent: on a sport whose winner market prices a draw, the
+ * away figure is `1 − home` ("the home team does not win", i.e. away win OR
+ * draw), so the card withholds it and the bar paints one segment against a
+ * neutral track. `segments()` below requires exactly two, and on the old
+ * `soccer_epl` key it began finding one — every assertion here throwing rather
+ * than failing on a colour.
+ *
+ * So the two-segment specimens run on a two-way key. The white/gold/slate values
+ * are the measured production colours and are untouched; only the league they
+ * are hung on moves, because the contrast arithmetic never read it.
+ *
+ * The real Leeds and Sevilla cards ARE soccer and now take the one-segment path,
+ * so that path is not left unguarded: the `#6238` block at the bottom pins that
+ * the surviving home segment is still rescued from white.
+ */
+const TWO_SEGMENT_SPORT = "americanfootball_nfl";
+const DRAW_PRICED_SPORT = "soccer_epl";
 
 // Real production specimens, all read off bainluck.com on 2026-09-09.
 const WHITE = "#ffffff"; // Sevilla, Valencia, Leeds, Fulham, Real Madrid, Augsburg…
@@ -335,5 +359,63 @@ describe("#4470b — the shared card's bar never paints an invisible segment", (
     expect(code).not.toContain("useCSSVars");
     // …and the module that owns the rule is genuinely reached.
     expect(code).toContain("probabilityBarPair");
+  });
+
+  /**
+   * #6238 — THE ONE-SEGMENT BAR IS STILL A PAINTED SEGMENT.
+   *
+   * The production specimens this file was written about (Sevilla, Leeds,
+   * Fulham, Real Madrid — all white, all soccer) now render a single home
+   * segment against a neutral track. That is a smaller bar, not an exempt one:
+   * a white home segment on a white card is exactly as invisible as it was
+   * before, and the colour rule has to survive the change in shape.
+   */
+  describe("#6238 — a withheld away side does not exempt the segment that remains", () => {
+    function loneSegment(homePrimary: string, homeProb: number) {
+      const html = renderToStaticMarkup(
+        <EventCard event={makeEvent(SLATE, homePrimary, homeProb, DRAW_PRICED_SPORT)} />
+      );
+      const meter = html.indexOf('role="meter"');
+      if (meter < 0) {
+        throw new Error(`the card rendered no probability bar.\n${html.slice(0, 1200)}`);
+      }
+      const found = [
+        ...html
+          .slice(meter)
+          .matchAll(/style="background-color:([^";]+);opacity:([^";]+)[^"]*"/g),
+      ].map((m) => ({ color: m[1].trim(), opacity: Number(m[2]) }));
+      // Exactly one PAINTED segment: the unattributed remainder carries no
+      // inline background at all, it takes the neutral track class. Asserting
+      // the count is what stops this probe silently reading zero segments and
+      // passing every `not.toBe(WHITE)` below on an empty array.
+      if (found.length !== 1) {
+        throw new Error(
+          `expected exactly one painted segment, found ${found.length}.\n` +
+            html.slice(meter, meter + 900)
+        );
+      }
+      return found[0];
+    }
+
+    it("white is still rescued on the surviving home segment", () => {
+      const home = loneSegment(WHITE, HOME_FAVOURITE);
+      expect(home.color.toLowerCase()).not.toBe(WHITE);
+      expect(visibleAt(home.color, home.opacity)).toBe(true);
+    });
+
+    it("and when home is the UNDERDOG it is painted at full strength, not dimmed", () => {
+      // There is no pair left, so there is no underdog to recede. Dimming the
+      // only number on the card would be a comparison the bar has stopped
+      // making — and at 0.4 the white rescue has a different threshold, which
+      // is the axis this whole file turns on.
+      const home = loneSegment(WHITE, AWAY_FAVOURITE);
+      expect(home.opacity).toBe(FAVORITE_OPACITY);
+      expect(visibleAt(home.color, home.opacity)).toBe(true);
+    });
+
+    it("a visible colour is left alone here too — no re-branding", () => {
+      const home = loneSegment(SLATE, HOME_FAVOURITE);
+      expect(home.color.toLowerCase()).toBe(SLATE.toLowerCase());
+    });
   });
 });

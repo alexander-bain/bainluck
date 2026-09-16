@@ -189,9 +189,23 @@ describe("the BEFORE state, from the verbatim served payload", () => {
     // header's count: the count block is gated on the same emptiness the empty
     // state is, so asserting its absence is unfalsifiable through the page's
     // own data path — a mutation that invents a count cannot make it appear.
-    // "Opened NN/NN" is printed by every FeedCard footer and by nothing else.
-    expect(visibleText(render(SERVED_BEFORE))).not.toMatch(/Opened \d+\/\d+/);
-    expect(visibleText(render(SERVED_AFTER))).toMatch(/Opened \d+\/\d+/);
+    // "Opened …" is printed by every live FeedCard footer and by nothing else.
+    //
+    // ⚠️ #6238 gave that footer a SECOND shape, and this anchor had to widen or
+    // it would have started reporting "not one card is rendered" about a page
+    // full of cards. On a sport whose winner market prices a draw the opening
+    // pair is the same `1 − home` complement the chips stopped printing, so the
+    // footer loses the pair — and with it the positional attribution that let
+    // both numbers go unnamed — and names its survivor instead:
+    // `Opened Coventry City 74%`. The AFTER payload here is a soccer slug, so
+    // every one of its live cards takes that arm.
+    //
+    // Both forms are admitted rather than the new one replacing the old: this
+    // page's AFTER fixture is verbatim served JSON and the two-way form is still
+    // what a non-soccer category renders.
+    const OPENED_FOOTER = /Opened (?:\d+\/\d+|\D+? \d+%)/;
+    expect(visibleText(render(SERVED_BEFORE))).not.toMatch(OPENED_FOOTER);
+    expect(visibleText(render(SERVED_AFTER))).toMatch(OPENED_FOOTER);
   });
 
   it("every other slug is equally empty — this was never soccer-specific", () => {

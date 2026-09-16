@@ -10,6 +10,7 @@
 import { useEffect, useState } from "react";
 import { formatProbability } from "@/lib/api";
 import { matchupKickoffLabel } from "@/lib/eventConceptDisplay";
+import { sportPricesADraw } from "@/lib/drawPricedWinner";
 import type { EventConceptChild, EventConceptMatchupSide } from "@/lib/types";
 
 /** National-team crest. Renders the logo when the team resolved (honest gap → a
@@ -118,9 +119,12 @@ function TeamRow({
 function DuelSplit({
   home,
   away,
+  awayWithheld = false,
 }: {
   home: EventConceptMatchupSide | undefined;
   away: EventConceptMatchupSide | undefined;
+  /** #6238 — see `MatchupDuel`. */
+  awayWithheld?: boolean;
 }) {
   const hp = home?.probability;
   const ap = away?.probability;
@@ -128,11 +132,25 @@ function DuelSplit({
   const h = typeof hp === "number" ? hp : 0;
   const a = typeof ap === "number" ? ap : 0;
   const total = h + a;
-  const hPct = total > 0 ? Math.round((h / total) * 100) : 50;
+  // #6238 — with the away side withheld there is no pair to take a share OF, so
+  // the home segment is its own probability. Renormalising would paint a full
+  // brand-coloured bar on every draw-priced match. The rest of the track is
+  // already `bg-surface-elevated` and is simply left showing: the remainder is
+  // unattributed, which is what we know, rather than handed to the away team.
+  const hPct = awayWithheld
+    ? Math.round(Math.max(0, Math.min(1, h)) * 100)
+    : total > 0
+      ? Math.round((h / total) * 100)
+      : 50;
   return (
-    <div className="mt-2.5 flex h-1.5 rounded-full overflow-hidden bg-surface-elevated">
+    <div
+      className="mt-2.5 flex h-1.5 rounded-full overflow-hidden bg-surface-elevated"
+      data-away-withheld={awayWithheld ? "true" : undefined}
+    >
       <div className="h-full bg-accent-brand" style={{ width: `${hPct}%` }} />
-      <div className="h-full bg-text-muted/40" style={{ width: `${100 - hPct}%` }} />
+      {!awayWithheld && (
+        <div className="h-full bg-text-muted/40" style={{ width: `${100 - hPct}%` }} />
+      )}
     </div>
   );
 }
@@ -140,9 +158,25 @@ function DuelSplit({
 export default function MatchupDuel({
   child,
   featured = false,
+  sport,
 }: {
   child: EventConceptChild;
   featured?: boolean;
+  /**
+   * #6238 — the concept this matchup belongs to, so the card can ask whether the
+   * winner market prices a draw.
+   *
+   * The child payload carries no sport of its own, and the container does: the
+   * event-concept page passes `event.domain`, which `sportVocab` resolves
+   * through its declared `soccer` row. It is passed rather than inferred here
+   * for the reason `drawPricedWinner.ts` gives — a `startsWith("soccer")` at a
+   * call site is a spelling test standing in for a semantic one, and it puts the
+   * declaration wherever the last person happened to need it.
+   *
+   * This is the soccer bracket card, so in practice the rule fires on most of
+   * what it draws; absent or undeclared, the card keeps its two-sided reading.
+   */
+  sport?: string | null;
 }) {
   const [now, setNow] = useState<number | null>(null);
   useEffect(() => {
@@ -179,6 +213,15 @@ export default function MatchupDuel({
 
   const crestSize = featured ? 44 : 28;
 
+  // #6238 — the away side's win probability on a draw-priced sport is the home
+  // side's complement, i.e. "home does not win" (away win OR draw) printed under
+  // the away crest. These rows name themselves — crest, then team, then the
+  // number — so the withheld side simply renders nothing and the surviving home
+  // figure keeps its own row and its own name. That is native's rule for a
+  // self-naming row (`EventCardView.probabilityWithMovement`); only the surfaces
+  // where POSITION did the naming had to name a survivor instead.
+  const awayWithheld = sportPricesADraw(sport);
+
   return (
     <div
       className={`bg-surface-card rounded-card border border-surface-border ${
@@ -212,12 +255,12 @@ export default function MatchupDuel({
           side={away}
           isFinal={isFinal}
           isWinner={awayWon}
-          showProbability
+          showProbability={!awayWithheld}
           crestSize={crestSize}
           big={featured}
         />
       </div>
-      {!isFinal && <DuelSplit home={home} away={away} />}
+      {!isFinal && <DuelSplit home={home} away={away} awayWithheld={awayWithheld} />}
     </div>
   );
 }

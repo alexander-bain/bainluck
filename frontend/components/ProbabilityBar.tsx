@@ -24,6 +24,26 @@ interface ProbabilityBarProps {
   awayColor?: string;
   /** Whether home team is the favorite (brighter segment) */
   homeFavorite?: boolean;
+  /**
+   * #6238 — may this bar paint an AWAY segment at all?
+   *
+   * This bar has always derived its away half as the remainder (`awayProbability
+   * ?? 1 - homeProb`, then both normalised over their own total), which is
+   * exactly right on a two-outcome sport and is the defect on a three-outcome
+   * one: the remainder is "the home team does not win", i.e. away win OR draw,
+   * and painting it in the away team's colour hands the whole draw mass to the
+   * away side. A bar is the element a reader parses without reading, so leaving
+   * it whole while the numerals beside it are withheld keeps the claim and loses
+   * only the evidence for it.
+   *
+   * When set, the home segment is painted at its OWN width — not renormalised,
+   * because there is no second value to share a total with — and the rest of the
+   * track is left neutral. The reader sees how much of the question home owns
+   * and that the remainder is unattributed, which is what we actually know.
+   *
+   * Defaults false, so every existing caller paints exactly as before.
+   */
+  awayWithheld?: boolean;
   /** Bar height in px (overrides size) */
   height?: number;
   /** Animate width transitions (default true) */
@@ -63,14 +83,25 @@ export default function ProbabilityBar({
   size = "md",
   animated = true,
   className,
+  awayWithheld = false,
 }: ProbabilityBarProps) {
   const homeProb = homeProbability ?? 0.5;
   const awayProb = awayProbability ?? (1 - homeProb);
   const total = homeProb + awayProb;
-  const homeWidth = total > 0 ? (homeProb / total) * 100 : 50;
+  // #6238 — a withheld away side has no value to share a total with, so the home
+  // share is its own probability rather than its share of a pair. Renormalising
+  // here would paint 100% home on every draw-priced card.
+  const homeWidth = awayWithheld
+    ? Math.max(0, Math.min(100, homeProb * 100))
+    : total > 0
+      ? (homeProb / total) * 100
+      : 50;
   const awayWidth = 100 - homeWidth;
 
-  const isFav = homeFavorite ?? homeWidth >= 50;
+  // With no away reading there is no pair, so there is no favourite to brighten.
+  // The one segment we do paint is painted at full strength — dimming it would
+  // say "underdog", which is a comparison this bar has explicitly stopped making.
+  const isFav = awayWithheld ? true : (homeFavorite ?? homeWidth >= 50);
   const barHeight = height ?? SIZE_TO_HEIGHT[size] ?? 6;
 
   // Which half is dimmed. Derived once and then used BOTH to decide the colours
@@ -139,15 +170,22 @@ export default function ProbabilityBar({
             animate={{ width: `${homeWidth}%` }}
             transition={{ duration: 0.5, ease: [0.25, 0.1, 0.25, 1] }}
           />
+          {/* #6238 — the unattributed remainder, in the same neutral this
+              component already uses for its no-data track. */}
           <motion.div
-            className="rounded-full"
-            style={{
-              backgroundColor: aColor,
-              opacity: awayOpacity,
-              boxShadow: glowFor(aColor, !isFav),
-            }}
+            className={awayWithheld ? "rounded-full bg-surface-border/30" : "rounded-full"}
+            style={
+              awayWithheld
+                ? undefined
+                : {
+                    backgroundColor: aColor,
+                    opacity: awayOpacity,
+                    boxShadow: glowFor(aColor, !isFav),
+                  }
+            }
             animate={{ width: `${awayWidth}%` }}
             transition={{ duration: 0.5, ease: [0.25, 0.1, 0.25, 1] }}
+            data-bar-remainder={awayWithheld ? "unattributed" : undefined}
           />
         </>
       ) : (
@@ -161,14 +199,24 @@ export default function ProbabilityBar({
               boxShadow: glowFor(hColor, isFav),
             }}
           />
+          {/* #6238 — see the animated branch above. */}
           <div
-            className="rounded-full transition-all duration-300"
-            style={{
-              width: `${awayWidth}%`,
-              backgroundColor: aColor,
-              opacity: awayOpacity,
-              boxShadow: glowFor(aColor, !isFav),
-            }}
+            className={
+              awayWithheld
+                ? "rounded-full transition-all duration-300 bg-surface-border/30"
+                : "rounded-full transition-all duration-300"
+            }
+            style={
+              awayWithheld
+                ? { width: `${awayWidth}%` }
+                : {
+                    width: `${awayWidth}%`,
+                    backgroundColor: aColor,
+                    opacity: awayOpacity,
+                    boxShadow: glowFor(aColor, !isFav),
+                  }
+            }
+            data-bar-remainder={awayWithheld ? "unattributed" : undefined}
           />
         </>
       )}

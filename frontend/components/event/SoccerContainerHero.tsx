@@ -14,8 +14,12 @@ import MatchupDuel from "./MatchupDuel";
 
 export default function SoccerContainerHero({
   matchups,
+  sport,
 }: {
   matchups: EventConceptChild[];
+  /** #6238 — the container's domain, so the duel can ask whether the winner
+   *  market prices a draw. See `MatchupDuel`. */
+  sport?: string | null;
 }) {
   const headliner = headlinerMatchup(matchups);
   if (!headliner) return null;
@@ -26,7 +30,7 @@ export default function SoccerContainerHero({
       <h2 className="text-[11px] font-semibold uppercase tracking-widest text-text-muted">
         {isLive ? "Live now" : "Up next"}
       </h2>
-      <MatchupDuel child={headliner} featured />
+      <MatchupDuel child={headliner} featured sport={sport} />
     </section>
   );
 }
