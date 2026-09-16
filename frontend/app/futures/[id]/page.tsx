@@ -521,9 +521,15 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // back to this very table and draws them again. That is exactly how #4483's
   // specimen (a resolved `quantity` market) ends up with four identical `A5` chips:
   // the avatar was fixed on the ladder path and left standing on the fallback path.
+  //
+  // #6632: the names are the THIRD input, and deliberately the same whole set
+  // `marketShape` was resolved from above — `market.outcomes`, not
+  // `displayedOutcomes`. The "show more" toggle must not be able to change what the
+  // board IS, and #4416's rule is all-or-nothing over the shipped set.
   const showEntityImage = outcomeRowShowsEntityImage(
     market.llm_sport_category,
     marketShape,
+    (market.outcomes ?? []).map((o) => o.name),
   );
   // UX-P233 (board item 11): "as of Aug 28" when the prices are older than a day,
   // null when they are current. One line for the whole table — see the render.
