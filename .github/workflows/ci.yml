@@ -2291,6 +2291,40 @@ jobs:
             exit 1
           fi
 
+      - name: Live blend concurrent stamp, two socket arms (real Postgres)
+        # live/305's hero flicker, #836/#837/#5661. `worker-ws` runs the Kalshi
+        # and Polymarket consumers under one `asyncio.gather`, each with its own
+        # `LiveBlendRefresher`, and both stamp `events.win_probability_sources`
+        # on the same row. Read-modify-write meant the later writer DROPPED the
+        # sibling's key — measured 2026-09-16, `{'betting','kalshi'}` and
+        # `{'betting','polymarket'}` written 250 ms apart, the row keeping only
+        # the second — so the same question published two hero numbers 89 ms
+        # apart and the page took whichever landed last.
+        #
+        # Only a real server can grade the fix. The claim is that `a || b` on
+        # JSONB is evaluated INSIDE the UPDATE, so a concurrent writer blocks and
+        # then re-evaluates against the committed row — a session double has no
+        # row lock and calls both shapes correct. Under sqlite the column is
+        # shimmed to JSON, `||` is string concatenation, and gotcha #4 is that a
+        # JSONB write which reads correctly can silently fail to persist.
+        #
+        # The file carries its own strawman control: the old read-modify-write
+        # shape run through the same interleaving, asserting it still loses the
+        # key. If that control ever stops failing, the harness has stopped
+        # reproducing the hazard and the rest of the file is vacuous.
+        #
+        # Same skip detection as every gate in this job: pytest exits 0 when
+        # each test skips, and a gate that silently did not run reads exactly
+        # like one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_live_blend_concurrent_stamp_pg.py \
+            -v -rs 2>&1 | tee /tmp/liveblendrace.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/liveblendrace.txt; then
+            echo "::error::live blend concurrent stamp gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

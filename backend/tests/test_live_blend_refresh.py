@@ -424,6 +424,242 @@ class TestSnapshotContainment:
         assert r.stats["errors"] == 1, "a failing event must not retry every flush"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# live/305 — the SSE frame carries the aggregate of what the DATABASE kept.
+#
+# The race itself is graded against a real server in
+# `tests/integration/test_live_blend_concurrent_stamp_pg.py`. This is the other
+# half, and it needs no server: even with the write made atomic, publishing an
+# aggregate computed from this arm's PRIVATE copy would leave the row right and
+# the wire wrong — which is the half a reader actually sees.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class _Result:
+    """Just enough of a SQLAlchemy Result for the three shapes used here."""
+
+    def __init__(self, rows=None, scalar=None):
+        self._rows = rows or []
+        self._scalar = scalar
+
+    def all(self):
+        return self._rows
+
+    def scalars(self):
+        return iter(self._rows)
+
+    def scalar_one(self):
+        return self._scalar
+
+    def scalar_one_or_none(self):
+        return self._scalar
+
+
+class _RecordingSession:
+    """A session whose UPDATE ... RETURNING hands back a chosen dict.
+
+    The returned dict deliberately DISAGREES with anything this arm could have
+    assembled locally — it carries a `betting` key (weight 3.0) the arm never
+    saw. That is the sibling-writer situation in miniature, and it is the only
+    way to tell "published from the server's copy" apart from "published from
+    my own", which are identical whenever the two happen to match.
+    """
+
+    def __init__(self, market_rows, outcomes, returned):
+        self._market_rows = market_rows
+        self._outcomes = outcomes
+        self._returned = returned
+        self._selects = 0
+        self.updates = []
+
+    async def execute(self, statement, *args, **kwargs):
+        from sqlalchemy.sql.dml import Update
+
+        if isinstance(statement, Update):
+            self.updates.append(statement)
+            return _Result(scalar=self._returned)
+        self._selects += 1
+        if self._selects == 1:
+            return _Result(rows=self._market_rows)
+        return _Result(rows=self._outcomes)
+
+    def add(self, row):
+        pass
+
+
+class TestTheFrameCarriesTheStoredBlend:
+    @pytest.mark.asyncio
+    async def test_the_published_aggregate_comes_from_the_returned_row(
+        self, monkeypatch
+    ):
+        from contextlib import asynccontextmanager
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+
+        from app.tasks.live_blend_refresh import LiveBlendRefresher
+        from app.utils.aggregation import compute_aggregate_probability
+
+        fresh = datetime.now(timezone.utc).isoformat()
+        # What the server kept: this arm's kalshi reading PLUS a sportsbook
+        # reading it never had in hand. Weight 3.0 against kalshi's 0.8, so the
+        # two candidate aggregates are nowhere near each other.
+        returned = {
+            "kalshi": {"value": 0.9, "updated_at": fresh},
+            "betting": {"value": 0.1, "updated_at": fresh},
+        }
+        private = {"kalshi": {"value": 0.9, "updated_at": fresh}}
+
+        event = SimpleNamespace(
+            id=1,
+            home_team_name="Twins",
+            away_team_name="Yankees",
+            completed_at=None,
+            status="live",
+            espn_win_prob_home=None,
+            opening_home_probability=None,
+        )
+        market = SimpleNamespace(id=10, event_id=1, name="Twins vs Yankees")
+        session = _RecordingSession([(market, event)], [], returned)
+
+        @asynccontextmanager
+        async def _fake_session():
+            yield session
+
+        monkeypatch.setattr(
+            "app.tasks.base.get_task_session", _fake_session
+        )
+        monkeypatch.setattr(
+            "app.utils.live_blend.compute_source_home_probability",
+            lambda group, home, away: SimpleNamespace(
+                home_probability=0.9,
+                away_probability=None,
+                draw_probability=None,
+                eligibility=None,
+                market=market,
+                outcome=SimpleNamespace(name="Twins"),
+                yes_probability=0.9,
+            ),
+        )
+
+        async def _no_inversion(session, event_id, home_prob, source):
+            return home_prob
+
+        monkeypatch.setattr(
+            "app.tasks.prediction_market_matching._check_and_fix_inversion",
+            _no_inversion,
+        )
+
+        async def _no_snapshot(session, **kwargs):
+            return object(), False
+
+        monkeypatch.setattr(
+            "app.tasks.snapshots._create_or_update_win_prob_snapshot", _no_snapshot
+        )
+
+        published = []
+
+        async def _capture(frames):
+            published.extend(frames)
+
+        r = LiveBlendRefresher("kalshi")
+        monkeypatch.setattr(r, "_publish", _capture)
+
+        await r.refresh([1])
+
+        assert len(published) == 1, "the fast lane published nothing"
+        # `p` is the aggregate the hero renders — the field live/305's capture
+        # showed disagreeing with itself 89 ms apart.
+        got = published[0]["p"]
+
+        def _aggregate(sources):
+            return compute_aggregate_probability(
+                SimpleNamespace(
+                    win_probability_sources=sources,
+                    status="live",
+                    espn_win_prob_home=None,
+                    opening_home_probability=None,
+                ),
+                "live",
+            )
+
+        from_private = _aggregate(private)
+        from_returned = _aggregate(returned)
+        assert from_private != pytest.approx(from_returned), (
+            "the fixture no longer distinguishes the two copies"
+        )
+        assert got == pytest.approx(from_returned), (
+            f"published {got}, the blend the row holds is {from_returned}; "
+            f"this arm's private copy would have said {from_private}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_vanished_row_publishes_nothing_and_does_not_raise(
+        self, monkeypatch
+    ):
+        """An UPDATE that matches no row has no stored blend to publish.
+
+        Reachable only if the event disappears between the join and the stamp.
+        It must not raise on the dyno whose actual job is streaming prices
+        (gotcha #42), and it must not publish a number the database never kept.
+        """
+        from contextlib import asynccontextmanager
+        from types import SimpleNamespace
+
+        from app.tasks.live_blend_refresh import LiveBlendRefresher
+
+        event = SimpleNamespace(
+            id=1,
+            home_team_name="Twins",
+            away_team_name="Yankees",
+            completed_at=None,
+            status="live",
+            espn_win_prob_home=None,
+            opening_home_probability=None,
+        )
+        market = SimpleNamespace(id=10, event_id=1, name="Twins vs Yankees")
+        session = _RecordingSession([(market, event)], [], returned=None)
+
+        @asynccontextmanager
+        async def _fake_session():
+            yield session
+
+        monkeypatch.setattr("app.tasks.base.get_task_session", _fake_session)
+        monkeypatch.setattr(
+            "app.utils.live_blend.compute_source_home_probability",
+            lambda group, home, away: SimpleNamespace(
+                home_probability=0.9,
+                away_probability=None,
+                draw_probability=None,
+                eligibility=None,
+                market=market,
+                outcome=SimpleNamespace(name="Twins"),
+                yes_probability=0.9,
+            ),
+        )
+
+        async def _no_inversion(session, event_id, home_prob, source):
+            return home_prob
+
+        monkeypatch.setattr(
+            "app.tasks.prediction_market_matching._check_and_fix_inversion",
+            _no_inversion,
+        )
+
+        published = []
+
+        async def _capture(frames):
+            published.extend(frames)
+
+        r = LiveBlendRefresher("kalshi")
+        monkeypatch.setattr(r, "_publish", _capture)
+
+        stats = await r.refresh([1])
+
+        assert published == [], "published a blend the database does not hold"
+        assert stats["errors"] == 0, "a benign race must not log a traceback"
+        assert stats["stamped"] == 0
+
+
 def _snapshot_spy(monkeypatch, *, snapshot_interval_s=25.0, is_new=True):
     """A refresher whose snapshot helper records its kwargs instead of writing."""
     calls = []
@@ -455,6 +691,31 @@ class TestTheFastLaneActuallyCallsTheSnapshot:
         src = inspect.getsource(LiveBlendRefresher._refresh_batch)
         assert "_maybe_snapshot" in src, (
             "the fast lane no longer writes a chart point"
+        )
+
+    def test_the_stamp_is_a_server_side_merge_that_returns_the_row(self):
+        """live/305's race. `_refresh_batch` must not read-modify-write.
+
+        The real proof is `tests/integration/test_live_blend_concurrent_stamp_pg.py`,
+        which interleaves two arms against a real server. It exercises
+        `atomic_stamp_expression` directly, though, so on its own it would stay
+        green if this call site quietly went back to SELECT-merge-write — the
+        helper would simply be dead code and the flicker would be back. This is
+        the wire between the two.
+        """
+        import inspect
+
+        from app.tasks.live_blend_refresh import LiveBlendRefresher
+
+        src = inspect.getsource(LiveBlendRefresher._refresh_batch)
+        assert "atomic_stamp_expression" in src, (
+            "the fast lane is read-modify-writing the blend column again"
+        )
+        assert ".returning(" in src, (
+            "the published frame must be built from the row the server kept"
+        )
+        assert "stamp_source_reading" not in src, (
+            "the Python merge cannot be reintroduced beside the SQL one"
         )
 
     def test_the_snapshot_follows_a_successful_stamp(self):
