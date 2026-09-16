@@ -216,6 +216,75 @@ async def topup_outcome_clob_tokens(
     if not addressable:
         return {}
 
+    # WHAT IS ALREADY STORED IS RETURNED, NEVER RE-ASKED. The cap below keeps the
+    # lexicographically lowest condition ids, and the caller drops a market from
+    # `outcomes` only when it carries the MARKET-level `clob_token_ids` — it never
+    # reads `OUTCOME_TOKEN_METADATA_KEY`, the key this function writes. So without
+    # this read the ask never shrinks: every recycle re-derives the same set, sorts
+    # it the same way, and re-asks the same head, while everything above the
+    # boundary is starved permanently rather than "deferred to the next recycle".
+    #
+    # Measured on production 2026-09-16 22:39-22:47Z (#6634): 1,706 addressable
+    # outcomes against a cap of 300 — the constant was sized as "~4x headroom" for
+    # a slate an order of magnitude smaller — boundary `0x2b8f76c0…`. Of nine live
+    # MLB hero legs, the one below the boundary (Red Sox/Rangers `0x0614…`) carried
+    # its token and streamed off-beat at 22:42:06.181160, while eight above it sat
+    # on the 120 s poll sawtooth, six sharing the identical stamp 22:40:58.322131.
+    # Gamma answered the misses with the shape #6617 handles and names that match
+    # verbatim, so the cap was the whole difference.
+    #
+    # Seeded into `filled` rather than merely skipped: the return value IS the
+    # socket's subscription list, so dropping a stored outcome would unsubscribe
+    # the very legs this module exists to keep streaming.
+    stored_filled: dict[int, tuple[int, str]] = {}
+    try:
+        stored_rows = await session.execute(
+            select(FuturesMarket.id, FuturesMarket.market_metadata).where(
+                FuturesMarket.id.in_({mid for mid, _oid in addressable.values()})
+            )
+        )
+        for stored_market_id, metadata in stored_rows.all():
+            stored = (metadata or {}).get(OUTCOME_TOKEN_METADATA_KEY)
+            if not isinstance(stored, dict):
+                continue
+            for raw_outcome_id, token in stored.items():
+                if not token:
+                    continue
+                try:
+                    stored_filled[int(raw_outcome_id)] = (
+                        stored_market_id,
+                        str(token),
+                    )
+                except (TypeError, ValueError):
+                    # A key we cannot read is left to be re-asked, which is the
+                    # behaviour that predates this block.
+                    continue
+    except Exception:
+        # Never take the socket's token pass down for a bookkeeping read: without
+        # it the whole slate is asked again, which is today's behaviour rather
+        # than a new failure.
+        logger.exception(
+            "Polymarket outcome token top-up: stored-token read failed; "
+            "re-asking the whole slate this pass"
+        )
+        stored_filled = {}
+
+    if stored_filled:
+        addressable = {
+            cid: entry
+            for cid, entry in addressable.items()
+            if entry[1] not in stored_filled
+        }
+        if not addressable:
+            # Everything on the slate is already known. Still a full answer, so
+            # the caller subscribes exactly as it would have.
+            logger.info(
+                "Polymarket outcome token top-up: 0 outcomes to ask, %d already "
+                "stored",
+                len(stored_filled),
+            )
+            return stored_filled
+
     if len(addressable) > max_outcomes:
         kept = sorted(addressable)[:max_outcomes]
         logger.warning(
@@ -266,7 +335,9 @@ async def topup_outcome_clob_tokens(
         if own_service:
             await service.close()
 
-    filled: dict[int, tuple[int, str]] = {}
+    # Seeded with what is already stored so the caller subscribes to those legs
+    # too; `by_market` stays empty for them, so a known token is never rewritten.
+    filled: dict[int, tuple[int, str]] = dict(stored_filled)
     by_market: dict[int, dict[str, str]] = {}
     named_fallback = 0
     for market in fetched:
@@ -313,14 +384,20 @@ async def topup_outcome_clob_tokens(
     # head-to-head path is reaching anything". A pass with `mapped` high and
     # `named` 0 on an MLB evening is the fallback having gone dark, and the
     # total would report that pass as a good one.
+    # `stored` is kept apart from `mapped` for the same reason `named` is: a pass
+    # that asked nothing because everything was already known, and a pass that
+    # asked and filled, are different events, and one total reports them alike.
     logger.info(
         "Polymarket outcome token top-up: %d outcomes asked, %d returned by "
-        "Gamma, %d mapped across %d markets (%d via the outcome-name fallback)",
+        "Gamma, %d newly mapped across %d markets (%d via the outcome-name "
+        "fallback), %d already stored, %d subscribable",
         len(addressable),
         len(fetched),
-        len(filled),
+        len(filled) - len(stored_filled),
         len(by_market),
         named_fallback,
+        len(stored_filled),
+        len(filled),
     )
     return filled
 
