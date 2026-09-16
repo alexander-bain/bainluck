@@ -21,6 +21,15 @@ work or blocking call would put feed latency behind stream fanout for every
 other request on the same loop. After the one live-gate lookup at connect there
 is no database access on this path at all: frames carry their own values, and
 the client's initial state comes from the REST payload the page already fetched.
+
+AND IT MUST NOT OPEN A REDIS CONNECTION PER STREAM (#6515). It used to: the
+uncached `get_async_redis_client()` lived inside `_stream`, so N readers meant N
+pools and N sockets held for up to `MAX_CONNECTION_S`, against a plan limit of
+80 connections shared by every process of both apps. `MAX_CONNECTIONS` below is
+200 per worker, so this endpoint could exhaust the whole budget — and take the
+feed cache, the rate limiter and the Celery workers down with it — long before
+its own 503 gate could refuse anything. Subscriptions now come from the
+process-wide `utils/live_fanout` hub: one connection, every stream.
 """
 
 from __future__ import annotations
@@ -60,10 +69,21 @@ MAX_CONNECTION_S = float(os.getenv("SSE_MAX_CONNECTION_S", "900"))
 #: Concurrent streams allowed per uvicorn worker. Over this, connect is refused
 #: with 503 and the client polls. Refusing loudly is the whole point: the
 #: alternative is degrading `/api/feed` for everyone, silently, under load.
+#:
+#: #6515: this number is a bound on THIS LOOP's fanout work, and since the hub
+#: it is no longer a multiplier on Redis connections — the process holds one for
+#: any number of streams. While each stream built its own pool, 200 here was a
+#: promise the 80-connection budget could not keep, and the gate refused at a
+#: number the server had passed 120 readers earlier.
 MAX_CONNECTIONS = int(os.getenv("SSE_MAX_CONNECTIONS", "200"))
 
 #: Reconnect delay handed to the client via the SSE `retry:` field.
 RETRY_MS = int(os.getenv("SSE_RETRY_MS", "5000"))
+
+#: How long one pass waits for a frame before rechecking the clock and the
+#: client. It is the loop's tick, not a delivery deadline: a frame that arrives
+#: mid-wait ends the wait immediately.
+FRAME_WAIT_S = 1.0
 
 #: Statuses that get a push. Everything else polls, per the ruling. This keys
 #: off `Event.status` deliberately and inherits whatever that column means —
@@ -109,14 +129,14 @@ async def _stream(event_id: int, request: Request) -> AsyncIterator[str]:
     """Yield SSE frames for one event until the client leaves or time is up."""
     global _open_connections
 
-    from app.tasks.redis_state import get_async_redis_client
+    from app.utils.live_fanout import CLOSED, fanout
 
-    redis_client = get_async_redis_client()
-    pubsub = redis_client.pubsub()
+    hub = fanout()
+    subscription = None
     started = asyncio.get_event_loop().time()
     _open_connections += 1
     try:
-        await pubsub.subscribe(event_channel(event_id))
+        subscription = await hub.subscribe(event_channel(event_id))
         yield f"retry: {RETRY_MS}\n\n"
         yield sse_encode(json.dumps({"event_id": event_id}), event="open")
 
@@ -137,11 +157,21 @@ async def _stream(event_id: int, request: Request) -> AsyncIterator[str]:
             # when the market is completely silent, and what keeps this
             # coroutine yielding control back to the loop that is also serving
             # `/api/feed`.
-            message = await pubsub.get_message(
-                ignore_subscribe_messages=True, timeout=1.0
-            )
-            if message and message.get("type") == "message":
-                frame = parse_frame(message.get("data"))
+            payload = await subscription.next(timeout=FRAME_WAIT_S)
+            if payload is CLOSED:
+                # The shared reader stopped, so no frame will ever arrive on
+                # this subscription again. Saying so is not optional: the
+                # heartbeat below is generated HERE, not by Redis, so a stream
+                # left running on a dead hub would look healthy forever while
+                # the number on screen froze. `reconnect` is the event the
+                # client already treats as a rollover, and reconnecting is what
+                # rebuilds the hub.
+                yield sse_encode(
+                    json.dumps({"reason": "upstream"}), event="reconnect"
+                )
+                return
+            if payload is not None:
+                frame = parse_frame(payload)
                 if frame is not None and _frame_is_fresh(
                     frame, datetime.now(timezone.utc)
                 ):
@@ -189,22 +219,17 @@ async def _stream(event_id: int, request: Request) -> AsyncIterator[str]:
         )
     finally:
         _open_connections -= 1
-        # Both wrapped: teardown of a connection that is already gone must not
-        # raise out of the generator and turn a normal disconnect into an error.
-        try:
-            await pubsub.unsubscribe(event_channel(event_id))
-            await pubsub.close()
-        except Exception:
-            # Deliberately swallowed: the subscription is being abandoned either
-            # way, and the client has already gone. Re-raising here would turn a
-            # routine disconnect into a 500 on a response that is already sent.
-            pass
-        try:
-            await redis_client.aclose()
-        except Exception:
-            # Same: the connection is being discarded. A failure to close one
-            # that is already broken is not information anyone can act on.
-            pass
+        # NOT AWAITED, AND THAT IS THE POINT (#6515). This `finally` commonly
+        # runs while the task is being cancelled, where the first `await`
+        # re-raises `CancelledError` and nothing after it executes. When each
+        # stream owned its own client that only risked an untidy close; with a
+        # shared hub a skipped release would strand this subscriber forever —
+        # the hub would never go idle and its channel would keep being
+        # delivered to nobody. `release()` is synchronous, so it cannot be
+        # interrupted and cannot raise out of the generator; the hub's reader
+        # sends the `UNSUBSCRIBE` on its next pass.
+        if subscription is not None:
+            hub.release(subscription)
 
 
 @router.get("/{event_id}/stream")
