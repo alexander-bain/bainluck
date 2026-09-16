@@ -22,7 +22,7 @@ from app.utils.game_pairing import (
     clockless_write_defers_to_authority,
     external_id_currency,
 )
-from app.utils.odds_math import moneyline_to_probability, project_scores
+from app.utils.odds_math import h2h_pair_on_the_full_board, project_scores
 from app.utils.polling_config import compute_effective_interval
 from app.tasks.base import get_task_session, run_async
 from app.tasks.config import (
@@ -519,12 +519,45 @@ def _parse_snapshot_values(bookmaker: dict, event_data: dict) -> dict:
             values["away_moneyline"] = away_outcome.get("price")
 
             if values["home_moneyline"] and values["away_moneyline"]:
-                home_prob, away_prob = moneyline_to_probability(
+                # #1011 — DE-VIG OVER THE WHOLE BOARD, NOT THE NAMED PAIR.
+                #
+                # This read the two named sides and normalized them against each
+                # other, which silently asserts they are the entire market. On a
+                # soccer game winner they are not: the book quotes a draw, we
+                # never looked at it, and dividing it out inflated both sides.
+                #
+                # Measured from THIS table, 2 days (2026-09-16): raw implied
+                # home+away averages 0.743-0.808 across 25 soccer leagues, while
+                # all 17 non-soccer sports sit at 1.043-1.110. A market a book
+                # really offers sums ABOVE 1 — the excess is the vig — so ~0.79
+                # is not a thin market, it is a quarter of the mass sitting in an
+                # outcome we declined to read. Downstream, `betting` carries
+                # weight 3.0 against 0.8, so that put the blended hero ~8pp onto
+                # the home team on every soccer match with a sportsbook line.
+                #
+                # The draw is NOT named here and no sport is consulted; every
+                # outcome that is not one of the two matched teams is passed
+                # through as residual mass. `outcomes` is keyed by name, so the
+                # leftovers are whatever else this book priced.
+                other_prices = [
+                    outcome.get("price")
+                    for name, outcome in outcomes.items()
+                    if name not in (home_team, away_team)
+                ]
+                pair = h2h_pair_on_the_full_board(
                     values["home_moneyline"],
                     values["away_moneyline"],
+                    other_prices,
                 )
-                values["home_win_probability"] = round(home_prob, 4)
-                values["away_win_probability"] = round(away_prob, 4)
+                # None is a REFUSAL, and the fields stay None with it. A board
+                # that does not sum to a market is one we cannot read, so this
+                # book contributes nothing to the consensus rather than
+                # contributing a fragment rescaled to 1.0 — which is the defect
+                # above, re-created one book at a time.
+                if pair is not None:
+                    home_prob, away_prob = pair
+                    values["home_win_probability"] = round(home_prob, 4)
+                    values["away_win_probability"] = round(away_prob, 4)
 
         elif market_key == "spreads":
             home_outcome = outcomes.get(home_team, {})
