@@ -90,6 +90,24 @@ export interface ChartSeriesPath {
    * bracket it. Drawn faint and dotted — this is not data.
    */
   bridges: string[];
+  /**
+   * The observations that stand alone — every run of exactly one point, in the
+   * order they occur. A subset of what `runs` already describes, named
+   * separately because of what #6331 measured: the zero-length subpath above is
+   * painted at the LINE's own weight, so on `/futures/58675941` the settled
+   * champion's only point came out a 1.5px speck at the top-right corner of a
+   * 600px-wide plot, under a full-size legend swatch. A reader read that as
+   * "the red series draws nothing", and they were right to.
+   *
+   * A line is legible because it is long; a point of the same thickness is not.
+   * So the caller marks these explicitly instead — the geometry of the split
+   * stays here, where the threshold that decides a hole already lives, and the
+   * caller never re-derives which points are alone.
+   *
+   * Empty for every healthy series, which is the contract that matters: the six
+   * surfaces plotting unbroken lines get no marks at all.
+   */
+  dots: PlottedPoint[];
 }
 
 /** `L x y`, or the two-stroke step idiom the caller may have asked for. */
@@ -123,24 +141,36 @@ export function chartSeriesPath(
   points: readonly PlottedPoint[],
   { step = false }: { step?: boolean } = {},
 ): ChartSeriesPath {
-  if (points.length === 0) return { runs: [], bridges: [] };
-  if (points.length === 1) return { runs: [runFrom(points, step)], bridges: [] };
+  if (points.length === 0) return { runs: [], bridges: [], dots: [] };
+  if (points.length === 1) {
+    return { runs: [runFrom(points, step)], bridges: [], dots: [points[0]] };
+  }
 
   const threshold = seriesGapThresholdMs(points.map((p) => p.t));
 
   // No cadence to grade against — too few points, or none of them datable. The
   // honest move is to draw exactly what we drew yesterday rather than to invent
   // a threshold, so this returns the old single run unchanged.
-  if (threshold === null) return { runs: [runFrom(points, step)], bridges: [] };
+  if (threshold === null) {
+    return { runs: [runFrom(points, step)], bridges: [], dots: [] };
+  }
 
   const runs: string[] = [];
   const bridges: string[] = [];
+  const dots: PlottedPoint[] = [];
   let current: PlottedPoint[] = [points[0]];
+
+  // Closing a run is the only place that knows how long it turned out to be, so
+  // it is the only place that can say whether it stands alone.
+  const close = (run: readonly PlottedPoint[]) => {
+    runs.push(runFrom(run, step));
+    if (run.length === 1) dots.push(run[0]);
+  };
 
   for (let i = 1; i < points.length; i += 1) {
     const gap = points[i].t - points[i - 1].t;
     if (Number.isFinite(gap) && gap > threshold) {
-      runs.push(runFrom(current, step));
+      close(current);
       bridges.push(
         `M ${points[i - 1].x} ${points[i - 1].y} ${segmentTo(points[i], step)}`,
       );
@@ -149,7 +179,7 @@ export function chartSeriesPath(
       current.push(points[i]);
     }
   }
-  runs.push(runFrom(current, step));
+  close(current);
 
-  return { runs, bridges };
+  return { runs, bridges, dots };
 }

@@ -173,13 +173,14 @@ describe("#3659 chartSeriesPath — a hole is not drawn through", () => {
 
 describe("#3659 chartSeriesPath — every input produces an answer", () => {
   test("no points", () => {
-    expect(chartSeriesPath([])).toEqual({ runs: [], bridges: [] });
+    expect(chartSeriesPath([])).toEqual({ runs: [], bridges: [], dots: [] });
   });
 
   test("one point is a dot", () => {
     expect(chartSeriesPath(at([0]))).toEqual({
       runs: [`M 50 100 L 50 100`],
       bridges: [],
+      dots: [at([0])[0]],
     });
   });
 
@@ -198,5 +199,85 @@ describe("#3659 chartSeriesPath — every input produces an answer", () => {
 
     expect(bridges).toEqual([]);
     expect(runs[0]).toBe(oldInlinePathD(points, false));
+  });
+});
+
+/**
+ * #6331 — WHICH OBSERVATIONS STAND ALONE.
+ *
+ * The runs above already carry every isolated point as a zero-length subpath.
+ * What they cannot do is tell the caller which ones those are without it
+ * re-deriving the split, and the split is the one thing that must not be
+ * computed twice: the threshold that decides a hole lives here, beside the
+ * caption that describes it.
+ *
+ * So `dots` names them. The load-bearing half is the NEGATIVE one — a healthy
+ * series yields none, so no chart drawing an unbroken line gains a mark.
+ */
+describe("#6331 chartSeriesPath — an isolated observation is named", () => {
+  const HOLED = at([0, 345.6, ...Array.from({ length: 19 }, (_, i) => 346.6 + i)]);
+
+  test("a healthy series names no dots at all", () => {
+    const points = at(Array.from({ length: 40 }, (_, i) => i));
+    expect(chartSeriesPath(points).dots).toEqual([]);
+  });
+
+  test("a healthy series names no dots under step interpolation either", () => {
+    const points = at(Array.from({ length: 40 }, (_, i) => i));
+    expect(chartSeriesPath(points, { step: true }).dots).toEqual([]);
+  });
+
+  test("the lonely point on the far side of a hole is named, and only it", () => {
+    // HOLED is the measured shape: one observation, a 345.6h hole, then 19
+    // hourly readings. The 19 are a run; the one is alone.
+    const { dots } = chartSeriesPath(HOLED);
+
+    expect(dots).toEqual([HOLED[0]]);
+  });
+
+  test("a hole between two healthy runs names nothing — a break is not a dot", () => {
+    // Twelve hourly readings, a 300h hole, twelve more. Both sides are runs, so
+    // the split alone must never manufacture a mark.
+    const points = at([
+      ...Array.from({ length: 12 }, (_, i) => i),
+      ...Array.from({ length: 12 }, (_, i) => 311 + i),
+    ]);
+    const { bridges, dots } = chartSeriesPath(points);
+
+    expect(bridges).toHaveLength(1);
+    expect(dots).toEqual([]);
+  });
+
+  test("a one-point series names its only point", () => {
+    // The `/futures/58675941` champion: #6110 mints the leg the venue graded
+    // and we never priced, so it carries exactly one observation.
+    const only = at([0])[0];
+    expect(chartSeriesPath([only]).dots).toEqual([only]);
+  });
+
+  test("the empty series names nothing", () => {
+    expect(chartSeriesPath([]).dots).toEqual([]);
+  });
+
+  test("too few points to grade a cadence: still one run, still no dot", () => {
+    // 3 points, no measurable cadence — the module draws them as one run rather
+    // than guessing a threshold, so none of them is alone.
+    const points = at([0, 400, 800]);
+    expect(seriesGapThresholdMs(points.map((p) => p.t))).toBeNull();
+    expect(chartSeriesPath(points).dots).toEqual([]);
+  });
+
+  test("every named dot is a point the caller handed over, at its own pixels", () => {
+    // A dot is an OBSERVATION, never an interpolation: its coordinates must be
+    // the ones that came in, not a midpoint or an edge of the plot.
+    const { dots } = chartSeriesPath(HOLED);
+    for (const d of dots) expect(HOLED).toContainEqual(d);
+  });
+
+  test("dots are a subset of what the runs already draw", () => {
+    // The two outputs may never disagree about where a point is.
+    const { runs, dots } = chartSeriesPath(HOLED);
+    const drawn = runs.join(" ");
+    for (const d of dots) expect(drawn).toContain(`M ${d.x} ${d.y} L ${d.x} ${d.y}`);
   });
 });
