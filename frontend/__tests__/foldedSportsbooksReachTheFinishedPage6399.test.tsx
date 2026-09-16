@@ -198,16 +198,19 @@ describe("#6399 — the folded price table reaches the finished page", () => {
     expect(html).toContain(DISCLOSURE);
   });
 
-  it("is the HISTORY fold that unlocks it, not the prices alone", () => {
+  it("is the HISTORY fold that unlocks the CARD, and only the card", () => {
     // The CERT-2925 state exactly: #6390 has landed, so ten books are in the
-    // detail payload, and the history route is still unfolded. This is the
-    // BEFORE, and it must be able to fail — a fixture that reached the
-    // disclosure here would mean the two arms are not testing the fold.
+    // detail payload, and the history route is still unfolded. The card is the
+    // half the fold owns, and it must be able to fail here — a fixture that
+    // reached the card would mean the two arms are not testing the fold.
+    //
+    // The disclosure is NOT that half any more (#6421), which is why this case
+    // no longer asserts its absence: see the block below, where its presence in
+    // exactly this state is the ship.
     historyPayload = NO_HISTORY;
     const html = draw();
     expectPageRendered(html);
     expect(html).not.toContain(CARD);
-    expect(html).not.toContain(DISCLOSURE);
   });
 
   it("still needs prices: a folded chart with no book rows shows no disclosure", () => {
@@ -222,7 +225,7 @@ describe("#6399 — the folded price table reaches the finished page", () => {
   });
 });
 
-// 🔴 THE RESIDUAL, HELD HERE SO THE ux SHIP HAS SOMETHING TO INVERT — #6421.
+// 🔴 THE RESIDUAL CERT-2925 NAMED, CLOSED — #6421.
 //
 // CERT-2925's REQUIRED TEST named this shape:
 //
@@ -230,25 +233,59 @@ describe("#6399 — the folded price table reaches the finished page", () => {
 //     disclosure_6390 — detail has ten folded bookmaker_odds; history has every
 //     series empty; assert the disclosure and ten rows are reachable.
 //
-// The repair it required named two routes, and #6399 takes the history one,
-// which is the route that works for the named specimen (ghost `15297786` holds
-// 1,236 points). That route does NOT deliver this shape, and saying so is the
-// point of the assertion below rather than quietly shipping a differently-named
-// test.
+// The repair it required named two routes. #6399 took the history one, which
+// works for the named specimen (ghost `15297786` holds 1,236 points) and does
+// NOT deliver this shape: for a finished event the history query caps at
+// `_finished_event_end_cap` while the detail route's current-odds read applies
+// no cap, so a book whose only reading was captured after the cap lands in
+// `bookmaker_odds` and in no series at all. #6421 takes the other route — the
+// table renders OUTSIDE the card (ux's layout file, notice 41).
 //
-// The shape stays reachable after #6399: for a finished event the history query
-// caps at `_finished_event_end_cap` while the detail route's current-odds read
-// applies no cap, so a book whose only reading was captured after the cap lands
-// in `bookmaker_odds` and in no series. Closing it means rendering the table
-// OUTSIDE the card — ux's layout file, notice 41.
-describe("#6421 — the residual CERT-2925 named, not closed by the history fold", () => {
-  it("BOUNDARY: ten prices and no series are still hidden — invert this in #6421", () => {
+// THE SHIP IS TWO ASSERTIONS THAT MUST BOTH HOLD, and either alone is the wrong
+// fix. The disclosure appears (prices we hold are reachable) AND the card does
+// not (ux/1205's suppression is untouched; un-suppressing would put back the
+// empty chart that promises tracking). A patch that deleted the suppression
+// would pass the first and fail the second.
+const OWN_CARD = 'data-testid="sportsbook-prices-card"';
+
+describe("#6421 — ten prices and no series: the table stands outside the card", () => {
+  beforeEach(() => {
     historyPayload = NO_HISTORY;
+  });
+
+  it("renders the Sportsbooks disclosure with every series empty", () => {
     const html = draw();
     expectPageRendered(html);
-    // When #6421 lands, these two become `toContain` and this block's name
-    // loses the word BOUNDARY. Nothing else in the file changes.
-    expect(html).not.toContain(DISCLOSURE);
+    expect(html).toContain(DISCLOSURE);
+    expect(html).toContain(OWN_CARD);
+  });
+
+  it("does NOT bring back the win probability card to do it", () => {
+    const html = draw();
+    expectPageRendered(html);
     expect(html).not.toContain(CARD);
+  });
+
+  it("stays absent when there are no prices either — no empty container", () => {
+    // The standalone card is gated on the same conjunct as the footer was. A
+    // suppressed page with nothing to show must show nothing, not a chrome
+    // shell with a toggle that opens an empty table.
+    eventPayload = { ...BASE, commence_time: past(), bookmaker_odds: [] };
+    const html = draw();
+    expectPageRendered(html);
+    expect(html).not.toContain(DISCLOSURE);
+    expect(html).not.toContain(OWN_CARD);
+    expect(html).not.toContain(CARD);
+  });
+
+  it("does not ALSO stand alone when the card is there to carry it", () => {
+    // One disclosure on the page, never two. With the folded history the card
+    // mounts and the footer placement is the one that renders.
+    historyPayload = FOLDED_HISTORY;
+    const html = draw();
+    expectPageRendered(html);
+    expect(html).toContain(CARD);
+    expect(html).not.toContain(OWN_CARD);
+    expect(html.split(DISCLOSURE).length - 1).toBe(1);
   });
 });

@@ -637,6 +637,79 @@ export default function EventPage({ params }: EventPageProps) {
   const eventHasBegun = hasStarted || !isPregameStatus(event?.status);
   const suppressWinProbabilityCard = hasNoPriceHistoryAtAll && eventHasBegun;
 
+  /* ═══ #6421: HISTORY ABSENCE IS NOT PRICE ABSENCE ═══
+
+     The per-sportsbook price table used to be written inline as the win
+     probability card's footer, so `suppressWinProbabilityCard` took it away
+     with the chart. Those are two different questions. The suppression above
+     is right about the CHART — an empty chart must not promise tracking, and
+     ux/1205's sentence stays gone — but the table beneath it shows prices we
+     are holding RIGHT NOW, and a reader who cannot see one of ten books is
+     being told we have nothing when we have ten.
+
+     The class is not hypothetical after #6399's history fold, which fixes the
+     named specimen and not the shape: for a finished event the history query
+     caps at `_finished_event_end_cap` while the detail route's current-odds
+     read applies no cap, so a book whose only reading was captured after the
+     cap reaches `bookmaker_odds` and no series at all. Ten prices, every
+     series empty, card suppressed.
+
+     ONE DEFINITION, TWO PLACEMENTS — never two copies. The markup below is the
+     page's only sportsbook disclosure; it renders as the chart's footer when
+     the card is there and as its own card when the card is not. A second
+     inline copy would be two places to keep in step, which is the failure the
+     #4083 note at the render site was written about.
+
+     `placement` changes chrome only, never content. As a footer it keeps the
+     divider that separates it from the chart above and stays right-aligned
+     under it; standing alone it has nothing to be divided from and reads as
+     the card's own heading, so the rule is left. */
+  const hasBookmakerOdds = (event?.bookmaker_odds?.length ?? 0) > 0;
+
+  const sportsbooksDisclosure = (placement: "chart-footer" | "own-card") => {
+    // Narrowed off the array itself, not off `hasBookmakerOdds` — a boolean
+    // computed elsewhere tells the compiler nothing about this field, and the
+    // same emptiness test has to be the one the render sites gate on.
+    const odds = event?.bookmaker_odds;
+    if (!event || !odds || odds.length === 0) return null;
+    const isFooter = placement === "chart-footer";
+    return (
+      <>
+        <div
+          className={`px-4 sm:px-5 py-2 flex items-center gap-2 ${
+            isFooter ? "border-t border-surface-border justify-end" : "justify-start"
+          }`}
+        >
+          <button
+            onClick={() => setSourcesOpen(!sourcesOpen)}
+            className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-md hover:bg-surface-elevated transition-colors"
+          >
+            <span className="text-[10px] text-text-muted font-medium">Sportsbooks</span>
+            <svg
+              className={`w-3 h-3 text-text-muted transition-transform duration-200 ${sourcesOpen ? 'rotate-180' : ''}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Sources panel (collapsible) */}
+        {sourcesOpen && (
+          <div className="border-t border-surface-border">
+            <div className="px-4 py-3">
+              <BookmakerTable
+                bookmakerOdds={odds}
+                homeTeam={event.home_team}
+                awayTeam={event.away_team}
+              />
+            </div>
+          </div>
+        )}
+      </>
+    );
+  };
+
   // Game-level markets (totals spectrum, player props)
   const { data: gameMarkets } = useSWR(
     ["game-markets", eventId],
@@ -2091,10 +2164,16 @@ export default function EventPage({ params }: EventPageProps) {
           ) : null}
         </div>
 
-        {/* Chart footer: the per-sportsbook table's disclosure */}
-        {event.bookmaker_odds && event.bookmaker_odds.length > 0 && (
-          <>
-            {/* ═══ #4083 (D91's RESTORE): ONE SOURCE LEGEND, AND IT IS THE
+        {/* Chart footer: the per-sportsbook table's disclosure.
+
+            #6421 moved the MARKUP to `sportsbooksDisclosure` (defined beside
+            `suppressWinProbabilityCard`) so the same disclosure can also stand
+            on its own when this card is suppressed — history absence is not
+            price absence. Nothing about it changed; the rationale below is
+            still the rationale, and it stays here because here is where a
+            reviewer of the chart card will look for it. */}
+        {sportsbooksDisclosure("chart-footer")}
+        {/* ═══ #4083 (D91's RESTORE): ONE SOURCE LEGEND, AND IT IS THE
                 CHART'S OWN ═══
 
                 A second legend used to stand here — seven always-on chips
@@ -2153,38 +2232,25 @@ export default function EventPage({ params }: EventPageProps) {
                 group is gone, so the overflow has no source — but the button
                 keeps `shrink-0`, and its guard now holds the rule that no chip
                 group returns to this row without wrapping. */}
-            <div className="px-4 sm:px-5 py-2 border-t border-surface-border flex items-center justify-end gap-2">
-              <button
-                onClick={() => setSourcesOpen(!sourcesOpen)}
-                className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-md hover:bg-surface-elevated transition-colors"
-              >
-                <span className="text-[10px] text-text-muted font-medium">Sportsbooks</span>
-                <svg
-                  className={`w-3 h-3 text-text-muted transition-transform duration-200 ${sourcesOpen ? 'rotate-180' : ''}`}
-                  fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Sources panel (collapsible) */}
-            {sourcesOpen && (
-              <div className="border-t border-surface-border">
-                <div className="px-4 py-3">
-                  <BookmakerTable
-                    bookmakerOdds={event.bookmaker_odds}
-                    homeTeam={event.home_team}
-                    awayTeam={event.away_team}
-                  />
-                </div>
-              </div>
-            )}
-          </>
-        )}
       </div>
 
       </SectionErrorBoundary>
+      )}
+
+      {/* #6421: the same disclosure, standing on its own, when the card that
+          used to carry it is suppressed. The prices are current and we hold
+          them; only the CHART had nothing to draw. `suppressWinProbabilityCard`
+          is untouched — this is the table finding its way out of the container,
+          not the container coming back. */}
+      {suppressWinProbabilityCard && hasBookmakerOdds && (
+        <SectionErrorBoundary label="The sportsbook prices" resetKey={event}>
+          <div
+            className="bg-surface-card rounded-card shadow-card overflow-hidden"
+            data-testid="sportsbook-prices-card"
+          >
+            {sportsbooksDisclosure("own-card")}
+          </div>
+        </SectionErrorBoundary>
       )}
 
       {/* Source Comparison removed — not useful, sources already visible in OddsChart */}
