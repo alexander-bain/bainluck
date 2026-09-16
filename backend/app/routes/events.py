@@ -18695,6 +18695,16 @@ def _pin_blend_edge(
         return False
 
 
+#: The one key the folded score series groups under (#6462).
+#:
+#: `series_row_for_each_source` is keyed by source because the rails it was
+#: written for carry one; `score_snapshots` does not — it has a single producer
+#: (StatPal livescores) and no source column. So the whole series is one group,
+#: and naming that group here rather than inline says it is a property of the
+#: table instead of a literal a later reader has to weigh.
+_SCORE_SERIES_KEY = "score"
+
+
 @router.get("/{event_id}/history")
 async def get_event_odds_history(
     event_id: int,
@@ -19010,14 +19020,59 @@ async def get_event_odds_history(
 
     # Build score history from ScoreSnapshots
     # Wrap in try/except in case the table doesn't exist yet (migration not run)
+    #
+    # #6462 — folded, like every other series in this route. `score_snapshots`
+    # carries no source column, so on a tagged pair this rail does not lose a
+    # venue from a legend, it loses the entire score line. Measured on
+    # production 2026-09-16, `/events/15196980` (Raiders v Cardinals, completed
+    # NFL): `score_history` 0 while suppressed twin 15191796 held 8 points — on
+    # a page whose prices #6390/#6399 had already repaired, so the reader was
+    # served a price curve, ten sportsbooks, and no score at all.
+    #
+    # It is also more than the line. `lib/eventKeyStats.ts` calls this the most
+    # direct in-game series and derives `computeRealStartTime` and
+    # `defaultChartTimeRange` from it, and `ScoreDifferentialChart`'s
+    # `hasPostStartData` reads it to choose the game window over "all" — so an
+    # empty one also widens the chart off the real game duration.
+    #
+    # ONE row's series, never the union of two: two rows' snapshots are two
+    # partial recordings of one game, and concatenating them by timestamp
+    # interleaves a stale reading into a monotonic line — a score that visibly
+    # goes BACKWARDS. That is `series_row_for_each_source`'s question, reused
+    # rather than restated so the tiebreak (richest, then the canonical, then
+    # the lowest id) cannot drift from the one the odds series above uses.
+    # Richest matters for the same reason it does there: the canonical is the
+    # poorer row, which is the defect itself.
+    #
+    # The series keys under one fixed name because a score series has exactly
+    # one producer (StatPal livescores) and the table has no source column —
+    # a fact about this rail, not a trick to reach the helper.
+    #
+    # Orientation is already gated by `folded_series_event_ids` at the top of
+    # this route, and it matters here as much as for a probability: a
+    # `ScoreSnapshot` stores `home_score`, whose meaning comes from its OWN
+    # row's team slots, so a crossed twin would print the loser winning.
+    #
+    # Skipped entirely for an untagged event, where the picker is a no-op over
+    # one id — that page's payload is unchanged point for point, by
+    # construction rather than by equivalence.
     score_history = []
     try:
         score_result = await db.execute(
             select(ScoreSnapshot)
-            .where(ScoreSnapshot.event_id == event_id)
+            .where(ScoreSnapshot.event_id.in_(series_event_ids))
             .order_by(ScoreSnapshot.captured_at)
         )
         score_snapshots = score_result.scalars().all()
+
+        if len(series_event_ids) > 1:
+            score_series_row = series_row_for_each_source(
+                Counter((_SCORE_SERIES_KEY, s.event_id) for s in score_snapshots),
+                event_id,
+            ).get(_SCORE_SERIES_KEY)
+            score_snapshots = [
+                s for s in score_snapshots if s.event_id == score_series_row
+            ]
 
         score_history = [
             {
