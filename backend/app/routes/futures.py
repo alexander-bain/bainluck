@@ -29,6 +29,7 @@ from app.utils.futures_unsupported_price import (
 )
 from app.utils.hook_staleness import hook_names_unpriced_outcome, is_hook_stale
 from app.utils.leader_order import leader_first_outcomes
+from app.utils.market_display_name import clean_market_display_name
 from app.utils.event_rails import live_scheduled_settled_order
 from app.utils.event_twin_fold import fold_twin_events
 from app.utils.lifecycle import served_event_status
@@ -5378,7 +5379,15 @@ def _format_market_detail(
 
     return {
         "id": market.id,
-        "name": market.name,
+        # #3513: the card and the page it links to must ask the SAME question.
+        # `/api/feed` has served the cleaned name since #6267, so a reader who
+        # tapped "Netflix (NFLX) closes week of Sep 14?" landed on an H1 reading
+        # "…closes week of Sep 14 at ___?" — photographed on /futures/115349 at
+        # 390px on 2026-09-15. This is the same display boundary, not a new one:
+        # the clients that interpret this key (frontend `marketEventKey`,
+        # `conceptDisplayLabel`) already receive the cleaned string from the feed
+        # card payload, so the two surfaces now agree rather than diverge.
+        "name": clean_market_display_name(market.name),
         "description": market.description,
         "sport": market.sport.key if market.sport else None,
         "sport_name": market.sport.name if market.sport else None,

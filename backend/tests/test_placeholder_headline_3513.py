@@ -30,11 +30,37 @@ else does it touch". Three populations are asserted UNCHANGED:
 
 Corpora below are REAL PRODUCTION NAMES read from `futures_markets` on
 2026-09-15, not invented fixtures.
+
+────────────────────────────────────────────────────────────────────────────
+SECOND SHIP, 2026-09-15 (the residual): THE OBJECT-SLOT BLANK.
+
+The rule above only reaches a blank at the END. Re-measured on production at
+23:24Z after v4555, `/api/feed` offsets 0/50/100/150: a blank with real text
+after it is untouched, and a reader still meets
+
+    What will Gold (GC) hit__ by end of December?     <- /futures/115349 H1,
+    Microsoft (MSFT) closes above ___ on September 16?   photographed 390px
+
+Whole-table census by Postgres regex (2026-09-16 02:2xZ): 2,626 rows carry a
+blank (372 open, 2,254 resolved), of which 37 open rows put the blank straight
+after a verb. 35 of those are rewritten from a yes/no question into the
+wh-question they were always asking ("What will OpenAI's valuation hit by
+December 31?"), which is Polymarket's OWN phrasing for the same family — 558 of
+our rows (52 open) already arrive that way, blank-free.
+
+Applied to the live open population: **87 rows printed a hole after the trailing
+rule alone, 52 after both.** Every one of the 35 rewrites was read back off
+production before this shipped, as were the 49 the rule reaches in the resolved
+population; none produces a broken sentence.
+
+The remaining 52 are the DIRECTIONAL (37), ADJECTIVE-SLOT (2) and EMBEDDED (13)
+controls below. They wait for the ingest join, which stays open on #3513.
 """
 
 import ast
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -95,7 +121,11 @@ DIRECTIONAL_UNTOUCHED = [
     "Will Apple (AAPL) finish week of September 7 above___?",
 ]
 
-# The blank is mid-sentence with real words after it.
+# The blank is mid-sentence with real words after it, and NO rule here reaches
+# it. "Claude Code Commits hit ___ by May 31?" is the interesting member: the
+# object-slot rewrite would read fine, but the sentence has no "Will" to turn
+# into "What will", and inventing one is composing copy rather than re-voicing
+# the venue's. One measured row; it keeps the hole.
 EMBEDDED_UNTOUCHED = [
     "Will Apple (AAPL) close above ___ end of September?",
     "Will any AI model reach ___ Overall Arena Score by December 31?",
@@ -103,6 +133,61 @@ EMBEDDED_UNTOUCHED = [
     "Claude Code Commits hit ___ by May 31?",
     "Will a Chinese company have a top ___ AI model by December 31?",
     "North Korea x South Korea diplomatic meeting by...? (direct or indirect)",
+    "Will Claude go down on __ days in September?",
+    "Will US crude oil reserves fall to __ by September 25?",
+]
+
+# (stored name, what a reader should see) for the OBJECT-SLOT rule. Real rows,
+# covering every shape the census found: 2- and 3-underscore blanks, the blank
+# glued to the verb, a name that is ALREADY a wh-question, both apostrophes
+# Polymarket writes (U+0027 and U+2019), and both measured tail openers.
+OBJECT_SLOT_REWRITTEN = [
+    (
+        "Will OpenAI's valuation hit __ by December 31?",
+        "What will OpenAI's valuation hit by December 31?",
+    ),
+    (
+        "Will Anthropic’s valuation hit __ by September 30?",
+        "What will Anthropic’s valuation hit by September 30?",
+    ),
+    ("Will EUR/USD hit __ in 2026?", "What will EUR/USD hit in 2026?"),
+    ("Will SOFR hit __ in February?", "What will SOFR hit in February?"),
+    (
+        "Will the 30-year Mortgage Rate hit __ in 2026?",
+        "What will the 30-year Mortgage Rate hit in 2026?",
+    ),
+    ("Will gas hit __ by end of September?", "What will gas hit by end of September?"),
+    # Already a wh-question upstream; only the glued blank has to go.
+    (
+        "What will Gold (GC) hit__ by end of December?",
+        "What will Gold (GC) hit by end of December?",
+    ),
+    ("Will gas hit__ by end of March?", "What will gas hit by end of March?"),
+    # Three underscores, and a subject with no possessive at all.
+    (
+        "Will Alien arrests in New York hit ___ by June 30?",
+        "What will Alien arrests in New York hit by June 30?",
+    ),
+    (
+        "Will Gold (GC) hit __ by end of March?",
+        "What will Gold (GC) hit by end of March?",
+    ),
+]
+
+# 🔴 THE OBJECT-SLOT CONTROL. Each of these MATCHES the object-slot pattern and
+# is refused by its TAIL test, because the blank qualifies the words after it
+# instead of standing in for them. 19 distinct production names; the rewrite
+# would print "What will MrBeast hit Billion views by June 30?".
+#
+# The last two are the ones that prove the tail test is doing work rather than
+# describing the first two: they were found in the RESOLVED population after
+# the rule was written against the open one.
+ADJECTIVE_SLOT_UNTOUCHED = [
+    "Will MrBeast hit ___ Billion views by September 30?",
+    "Will MrBeast hit ___ Million subscribers by September 30?",
+    "Will USD hit ___ Iranian rials by March 31?",
+    "Will USD hit ___ Indonesian rupiah by June 30?",
+    "Will Crude Oil (CL) hit__ Week of March 16?",
 ]
 
 # Real open markets with no placeholder — the overwhelming majority of the
@@ -182,6 +267,96 @@ class TestTheEmbeddedBlankIsLeftAlone:
     @pytest.mark.parametrize("name", EMBEDDED_UNTOUCHED)
     def test_byte_identical(self, name):
         assert clean_market_display_name(name) == name
+
+
+class TestTheObjectSlotQuestionIsRevoiced:
+    """A yes/no question becomes the wh-question it was always asking.
+
+    "Will X hit __ by D?" -> "What will X hit by D?".
+
+    The verb is NOT dropped — that is the whole difference from the directional
+    class. "hit" is what the question asks; "above" is the comparator the ladder
+    is built from. Deleting a verb leaves nonsense, deleting a comparator leaves
+    a lie, and only one of those is repairable by re-voicing the sentence.
+    """
+
+    @pytest.mark.parametrize("stored,shown", OBJECT_SLOT_REWRITTEN)
+    def test_the_reader_gets_the_wh_question(self, stored, shown):
+        assert clean_market_display_name(stored) == shown
+
+    @pytest.mark.parametrize("stored,shown", OBJECT_SLOT_REWRITTEN)
+    def test_no_blank_survives(self, stored, shown):
+        result = clean_market_display_name(stored)
+        assert not re.search(r"(_{2,}|\.{3,})", result)
+
+    @pytest.mark.parametrize("stored,shown", OBJECT_SLOT_REWRITTEN)
+    def test_exactly_one_question_mark_and_it_is_last(self, stored, shown):
+        result = clean_market_display_name(stored)
+        assert result.count("?") == 1
+        assert result.endswith("?")
+
+    @pytest.mark.parametrize("stored,shown", OBJECT_SLOT_REWRITTEN)
+    def test_the_verb_survives_the_rewrite(self, stored, shown):
+        """Dropping "hit" would give "What will EUR/USD in 2026?"."""
+        assert " hit" in clean_market_display_name(stored)
+
+    @pytest.mark.parametrize("stored,shown", OBJECT_SLOT_REWRITTEN)
+    def test_it_is_no_longer_a_yes_no_question(self, stored, shown):
+        """A ladder of eight prices under "Will …?" is the original defect.
+
+        "Will OpenAI's valuation hit by December 31?" would be worse than the
+        blank: a yes/no sentence over a list of candidate answers.
+        """
+        assert clean_market_display_name(stored).startswith("What will ")
+
+    def test_the_phrasing_is_the_venue_s_own(self):
+        """558 of our rows (53 open) already arrive in exactly this form.
+
+        This is a re-voicing of Polymarket's sibling titles, not copy we wrote:
+        "What will Fed Rate hit before 2027?" and "What will S&P 500 (SPX) hit
+        by end of December?" are stored, blank-free, from the same ingest.
+        Those must pass through untouched, which also pins the rule's shape:
+        an already-clean wh-question is not rewritten twice.
+        """
+        for venue_name in (
+            "What will Fed Rate hit before 2027?",
+            "What will S&P 500 (SPX) hit by end of December?",
+            "What will Apple (AAPL) hit in February 2026?",
+        ):
+            assert clean_market_display_name(venue_name) == venue_name
+
+
+class TestTheAdjectiveSlotIsLeftAlone:
+    """🔴 DO NOT "FIX" THIS CLASS BY WIDENING THE TAIL LIST.
+
+    "Will MrBeast hit ___ Billion views by June 30?" reaches the object-slot
+    pattern, but the blank is a quantity qualifying "Billion views" — it is not
+    the object. Re-voicing it gives "What will MrBeast hit Billion views by June
+    30?", which is not a sentence, so the tail test refuses it and the reader
+    keeps the (honest) hole until the ingest join lands.
+
+    The tail test was written against two open rows and then, re-measured on
+    2026-09-16, refused seventeen distinct names in the resolved population it
+    had never seen — "Iranian rials", "Indonesian rupiah", "Week of March 16".
+    That is the reason it is a rule about the tail and not a list of names.
+    """
+
+    @pytest.mark.parametrize("name", ADJECTIVE_SLOT_UNTOUCHED)
+    def test_byte_identical(self, name):
+        assert clean_market_display_name(name) == name
+
+    @pytest.mark.parametrize("name", ADJECTIVE_SLOT_UNTOUCHED)
+    def test_the_control_actually_reaches_the_rule_it_is_refused_by(self, name):
+        """Guards the control against going vacuous.
+
+        If the object-slot PATTERN stops matching these — a tightened verb
+        list, a changed anchor — `test_byte_identical` still passes while
+        proving nothing about the tail test. Assert the refusal happens at the
+        tail, i.e. that the pattern really did match first.
+        """
+        from app.utils.market_display_name import _OBJECT_SLOT
+
+        assert _OBJECT_SLOT.match(name.strip()) is not None
 
 
 class TestEverythingElseIsUntouched:
@@ -318,3 +493,158 @@ class TestTheCardPayloadAndTheAdminTraceDisagreeOnPurpose:
         source = FEED_PY.read_text()
         # build_discover_market_trace + build_effective_settlement_followup_item
         assert source.count('"name": market.name,') == 2
+
+
+# ---------------------------------------------------------------------------
+# The card and the page it links to ask the SAME question
+# ---------------------------------------------------------------------------
+
+
+def _holed_market(name: str):
+    """A futures market as production stores one, with a template blank."""
+    return SimpleNamespace(
+        id=115349,
+        name=name,
+        description=None,
+        category="economics",
+        source="polymarket",
+        external_id="192787",
+        status="open",
+        sport=None,
+        sport_id=None,
+        event_id=None,
+        market_type=None,
+        market_tier=2,
+        llm_sport_category="economics",
+        mutually_exclusive=False,
+        commence_time=None,
+        resolution_date=None,
+        created_at=None,
+        updated_at=None,
+        group_id="polymarket:192787",
+        canonical_market_key=None,
+        hook_description=None,
+        image_url=None,
+        category_tags=[],
+        market_metadata=None,
+        outcomes=[],
+    )
+
+
+class TestTheDetailPageAsksTheSameQuestionAsTheCard:
+    """#6267 cleaned the card and left the page it links to holed.
+
+    Photographed 2026-09-15 at 390px: `/futures/115349`'s H1 read "What will
+    Gold (GC) hit__ by end of December?" while the Discover card for the same
+    market had already been cleaned. A reader who taps a question should not be
+    shown a different, broken one — and the divergence is worse than the
+    original defect, because it makes the two surfaces look like different
+    markets.
+    """
+
+    @pytest.fixture
+    def detail(self):
+        from app.routes.futures import _format_market_detail
+
+        return lambda market: _format_market_detail(market, None, set())
+
+    @pytest.mark.parametrize(
+        "stored,shown",
+        [
+            OBJECT_SLOT_REWRITTEN[6],  # the photographed H1
+            (
+                "Netflix (NFLX) closes week of Sep 14 at ___?",
+                "Netflix (NFLX) closes week of Sep 14?",
+            ),
+        ],
+    )
+    def test_the_detail_payload_serves_the_cleaned_question(
+        self, detail, stored, shown
+    ):
+        assert detail(_holed_market(stored))["name"] == shown
+
+    @pytest.mark.parametrize("name", DIRECTIONAL_UNTOUCHED + ADJECTIVE_SLOT_UNTOUCHED)
+    def test_the_carve_outs_reach_the_detail_page_unchanged(self, detail, name):
+        """The route must not acquire a second, looser opinion of its own."""
+        assert detail(_holed_market(name))["name"] == name
+
+    def test_a_name_with_no_blank_is_served_byte_identical(self, detail):
+        name = "Who will win the 2026 World Series?"
+        assert detail(_holed_market(name))["name"] == name
+
+
+# ---------------------------------------------------------------------------
+# The one thing that makes cleaning a PAYLOAD field safe
+# ---------------------------------------------------------------------------
+
+#: Mirrors of the only two client tests that READ `name` to make a decision
+#: rather than to print it (`frontend/lib/eventKey.ts`): `isWinnerMarketName`
+#: (WINNER_RE minus MATCHUP_RE) and `awardsEventKey`'s name stems. Restated
+#: here rather than imported because they live in TypeScript; they are pinned
+#: against drift by the companion jest test named in the class docstring.
+_WINNER_RE = re.compile(r"\b(winner|champion|champ|to win)\b", re.I)
+_MATCHUP_RE = re.compile(r"\b(vs\.?|v\.?|def\.?|beats?)\b", re.I)
+_AWARDS_STEMS = ("academy award", "oscar", "emmy", "grammy", "tony award")
+
+
+def _interpreted_verdicts(name: str) -> tuple[bool, tuple[bool, ...]]:
+    """Every decision a client makes FROM this string, as a comparable value."""
+    winner = bool(_WINNER_RE.search(name)) and not _MATCHUP_RE.search(name)
+    lowered = name.lower()
+    return winner, tuple(stem in lowered for stem in _AWARDS_STEMS)
+
+
+class TestCleaningNeverChangesADecisionAClientMakesFromTheName:
+    """🔴 THE CONSTRAINT THIS MODULE'S OWN DOCTRINE IMPOSES ON THE ROUTE.
+
+    `_format_market_detail` serves `name` as a PAYLOAD field, and
+    `frontend/app/futures/[id]/page.tsx` passes the whole payload to
+    `marketEventKey()` — so this is a string the client interprets, not only
+    one it prints. Cleaning it is safe only because every interpreting step is
+    invariant under the cleaning:
+
+      * `combatCardKey` reads `external_id` only — name-independent.
+      * `awardsEventKey` tests for a ceremony stem; no rule here can add or
+        remove one (both rules only delete a blank, a preposition, or promote
+        "Will" to "What will").
+      * `marketEventKey` reaches the name-derived `cleanSlug` ONLY when
+        `llm_sport_category == "tennis"` AND the name is a winner field.
+        Measured 2026-09-16: of 133,033 tennis rows, exactly ONE carries a
+        blank — "Will Novak Djokovic announce his retirement by...?" — and it
+        has no winner word before or after cleaning, so it returns null at the
+        winner gate and never reaches the slug.
+
+    This test pins the general property rather than that one row: a rule added
+    later that rewrites "champion" or drops "to win" would change a LINK, not
+    just a label, and must fail here first.
+    """
+
+    @pytest.mark.parametrize(
+        "name",
+        [stored for stored, _ in CLEANED]
+        + DIRECTIONAL_UNTOUCHED
+        + EMBEDDED_UNTOUCHED
+        + ADJECTIVE_SLOT_UNTOUCHED
+        + NO_PLACEHOLDER_UNTOUCHED
+        + [stored for stored, _ in OBJECT_SLOT_REWRITTEN]
+        + [
+            # The live specimens, carried so the corpus cannot lose them.
+            "Will Novak Djokovic announce his retirement by...?",
+            "Republicans favored to win the Senate on Nate Silver's Bulletin by...?",
+        ],
+    )
+    def test_the_verdicts_are_identical_before_and_after(self, name):
+        assert _interpreted_verdicts(name) == _interpreted_verdicts(
+            clean_market_display_name(name)
+        )
+
+    def test_the_mirror_is_not_vacuous(self):
+        """A corpus that trips neither test would pass while asserting nothing."""
+        winners = [
+            n
+            for n in NO_PLACEHOLDER_UNTOUCHED
+            + ["Republicans favored to win the Senate on Nate Silver's Bulletin by...?"]
+            if _interpreted_verdicts(n)[0]
+        ]
+        assert winners, "no winner-field name in the corpus — the guard is asleep"
+        assert _interpreted_verdicts("Oscar winner: Best Picture?")[1][1] is True
