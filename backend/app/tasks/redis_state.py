@@ -37,12 +37,58 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 # op — none exist in this codebase today: no blpop/brpop, pubsub is WS not Redis).
 _DEFAULT_REDIS_SOCKET_TIMEOUT = 5.0
 
-# #1197: bound the connection pool. The E-class TLS-handshake churn
-# (`[SSL: UNEXPECTED_EOF]`) can be aggravated by an unbounded pool cycling a large
-# number of connections through Heroku Redis's idle-reap window. A finite cap keeps
-# reuse tight (fewer idle connections to be reaped) and matches the plan's 40-conn
-# budget. Override via REDIS_MAX_CONNECTIONS.
-_REDIS_MAX_CONNECTIONS = int(os.getenv("REDIS_MAX_CONNECTIONS", "40"))
+# ---------------------------------------------------------------------------
+# #1197: THE POOL CAP IS A SHARE OF A SHARED BUDGET, NOT A PER-PROCESS ALLOWANCE.
+#
+# The cap below used to be 40 and was described as matching "the plan's 40-conn
+# budget". Two things were wrong with that, and only the second one mattered
+# while every call minted a throwaway pool:
+#
+#   * the plan's limit is 80, not 40; and
+#   * the limit is on the SERVER. It is shared by every process of BOTH Heroku
+#     apps — and, since the client cache below, each of those processes holds a
+#     pool that RATCHETS to its cap and never gives a connection back
+#     (redis-py's ConnectionPool has no idle reaper, so a pool's connection
+#     count is a high-water mark).
+#
+# The Procfile declares 14 pool-holding processes across the two apps (web 1 +
+# realtime 1+4 + background 1+2 + heavy 1+2 + scheduler 1 + ws 1 — a prefork
+# parent and each of its children is its own process, and the pid is in the
+# cache key). At 40 apiece that is a 560-connection ceiling against a limit of
+# 80: the cap bound nothing before the cache and binds incoherently after it.
+# ``tests/test_redis_pool_fits_the_shared_budget_1197.py`` re-derives the
+# envelope from the Procfile itself, so a ``--concurrency`` bump fails the gate
+# instead of quietly eating the budget.
+#
+# A cap this small is only SAFE because of the wait below it: exhaustion must
+# not turn a server-side rejection into a client-side failure (see
+# ``_build_bounded_client``). The cap is a ceiling, not a target — a prefork
+# child runs one task at a time and needs one connection.
+_REDIS_PLAN_CONNECTION_LIMIT = int(os.getenv("REDIS_PLAN_CONNECTION_LIMIT", "80"))
+_REDIS_MAX_CONNECTIONS = int(os.getenv("REDIS_MAX_CONNECTIONS", "4"))
+
+# How long a caller waits for a free connection before the pool gives up.
+#
+# ``ConnectionPool`` raises ``MaxConnectionsError`` the instant the cap is
+# reached, and ``Redis._execute_command`` takes the connection OUTSIDE
+# ``conn.retry.call_with_retry(...)`` — so a pool-exhaustion error is never
+# retried by the ``retry``/``retry_on_error`` policies above it. Lowering the
+# cap on a plain pool would therefore buy a smaller connection count by paying
+# in hard client failures at exactly the busy moments the budget is for.
+# ``BlockingConnectionPool`` instead queues the caller for ``timeout`` seconds,
+# which is the right trade: Redis ops are round trips of about a millisecond, so
+# a burst of concurrent callers on a cap of four costs milliseconds of queueing,
+# not an exception. The wait is still BOUNDED (#969) — it degrades to a
+# ``ConnectionError`` the existing fail-open paths already handle.
+_REDIS_POOL_WAIT = float(os.getenv("REDIS_POOL_WAIT", "2.0"))
+# The hot request path must never spend two seconds queueing for a connection:
+# its clients already trade robustness for latency (``fast_fail``), and its
+# callers fail open. Kept under the 0.5s socket_timeout those callers pass.
+_REDIS_POOL_WAIT_FAST_FAIL = float(os.getenv("REDIS_POOL_WAIT_FAST_FAIL", "0.25"))
+
+# Captured before any test can patch ``redis.from_url``: the real factory is the
+# signal that we are building a production client and may install our own pool.
+_REAL_REDIS_FROM_URL = redis.from_url
 
 
 def _redis_retry():
@@ -90,6 +136,29 @@ def _redis_retry_on_errors():
     return [_ConnErr, _TmoErr]
 
 
+def _build_bounded_client(url: str, pool_wait: float, **kwargs):
+    """A sync client on a bounded, BLOCKING pool (#1197 follow-through).
+
+    ``redis.from_url`` always builds a plain ``ConnectionPool``, whose only
+    answer to a full pool is to raise ``MaxConnectionsError`` — and that raise
+    happens in ``Redis._execute_command`` before the retry wrapper, so none of
+    the retry hardening on this client applies to it. Building the pool here
+    lets us use ``BlockingConnectionPool``, which waits ``pool_wait`` seconds for
+    a connection to come back before it gives up; with a per-process cap small
+    enough to fit the shared budget, that turns "too busy" into a few
+    milliseconds of queueing instead of an exception on a caller's path.
+
+    ``BlockingConnectionPool.from_url`` reuses redis-py's own URL parsing, so the
+    connection class (TLS or plain), credentials and db come out identical to
+    what ``from_url`` would have produced.
+    """
+    pool = redis.BlockingConnectionPool.from_url(url, timeout=pool_wait, **kwargs)
+    client = redis.Redis(connection_pool=pool)
+    # Parity with redis.from_url, which sets this on every client it returns.
+    client.auto_close_connection_pool = True
+    return client
+
+
 # ---------------------------------------------------------------------------
 # #1197: ONE CLIENT PER PROCESS PER PARAMETER SET, NOT ONE PER CALL.
 #
@@ -102,7 +171,10 @@ def _redis_retry_on_errors():
 # ``[SSL: UNEXPECTED_EOF_WHILE_READING]`` churn flat.
 #
 # Caching also makes ``_REDIS_MAX_CONNECTIONS`` mean something: a per-call pool
-# bounded at 40 bounded nothing, because there was a fresh one each time.
+# bounded nothing, because there was a fresh one each time. It is the cache that
+# turns the cap into a real per-process ceiling — and that is why the cap had to
+# be re-sized to a share of the plan's 80 connections rather than left at the 40
+# it was worth when nothing was reused.
 #
 # Three properties this cache has to hold, all of them load-bearing:
 #
@@ -169,6 +241,12 @@ def get_redis_client(
     The client is CACHED per process per parameter set (#1197), so repeat callers
     share one warm connection pool instead of opening a fresh TLS connection each
     time. See the block above this function for the fork/patching/thread rules.
+
+    That pool is bounded at ``_REDIS_MAX_CONNECTIONS`` and BLOCKING: when every
+    connection is busy the next caller queues for up to ``_REDIS_POOL_WAIT``
+    (``_REDIS_POOL_WAIT_FAST_FAIL`` on the request path) rather than being handed
+    an immediate ``MaxConnectionsError``. The cap exists because the plan's 80
+    connections are shared by every process of both apps.
     """
     import ssl
 
@@ -210,12 +288,17 @@ def get_redis_client(
     kwargs["max_connections"] = _REDIS_MAX_CONNECTIONS
 
     if REDIS_URL.startswith("rediss://"):
-        client = factory(
+        kwargs["ssl_cert_reqs"] = ssl.CERT_NONE
+
+    if factory is _REAL_REDIS_FROM_URL:
+        client = _build_bounded_client(
             REDIS_URL,
-            ssl_cert_reqs=ssl.CERT_NONE,
+            _REDIS_POOL_WAIT_FAST_FAIL if fast_fail else _REDIS_POOL_WAIT,
             **kwargs,
         )
     else:
+        # A test has patched the factory to hand the caller a mock or a fake.
+        # It gets the same kwargs; there is no pool of ours to bound.
         client = factory(REDIS_URL, **kwargs)
 
     # The entry holds the factory itself, not its id: a strong reference is what
@@ -250,12 +333,25 @@ def get_async_redis_client():
     if _ka:
         stability["socket_keepalive_options"] = _ka
     if REDIS_URL.startswith("rediss://"):
-        return aioredis.from_url(
-            REDIS_URL,
-            ssl_cert_reqs=ssl.CERT_NONE,
-            **stability,
-        )
-    return aioredis.from_url(REDIS_URL, **stability)
+        stability["ssl_cert_reqs"] = ssl.CERT_NONE
+    # #1197 follow-through: the same bounded, BLOCKING pool as the sync client,
+    # and for the same reason — `utils/request_cache.py` and the rate limiter
+    # each keep ONE process-shared async client for the whole request path, so
+    # a plain pool's `MaxConnectionsError` would surface on a user's request the
+    # moment concurrency touched the cap. Queueing is the right back-pressure:
+    # the wait is cancellable (the rate-limit path already wraps its op in
+    # `asyncio.wait_for`) and it is bounded.
+    pool = aioredis.BlockingConnectionPool.from_url(
+        REDIS_URL, timeout=_REDIS_POOL_WAIT, **stability
+    )
+    client = aioredis.Redis(connection_pool=pool)
+    # ``aioredis.from_url`` set this; ``Redis(connection_pool=...)`` does not,
+    # and ``aclose()`` only disconnects the pool when it is true. Leaving it
+    # false would make every closed SSE stream and every lifespan shutdown
+    # ABANDON its pool's sockets — a connection leak, which is the opposite of
+    # what the cap above is for.
+    client.auto_close_connection_pool = True
+    return client
 
 
 # ---------------------------------------------------------------------------
