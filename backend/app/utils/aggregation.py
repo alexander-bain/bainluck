@@ -692,44 +692,73 @@ def compute_aggregated_probability(
 
     sorted_buckets = sorted(all_timestamps)
 
-    # Build per-source sorted lists for efficient carry-forward lookup
-    source_sorted: dict[str, list[TimestampedProb]] = {}
+    # ── ONE PASS PER SOURCE, NOT ONE PER BUCKET (#6546) ──────────────────────
+    #
+    # The carry-forward search used to restart at each source's first point for
+    # every bucket — O(buckets x points) — and recomputed
+    # ``point.timestamp.timestamp()`` on every visit. On a finished NFL game
+    # with four months of pre-match market history (3,009 Kalshi + 2,405
+    # Polymarket points over 4,607 one-minute buckets) that is ~14 million
+    # datetime conversions, measured at 1.18 s on a laptop and ~4 s of app time
+    # on the dyno — for a chart the reader watches spin.
+    #
+    # The buckets are ascending and each source's points are sorted, so the
+    # answer for bucket N+1 can only be at or after the answer for bucket N: a
+    # cursor per source turns the whole scan into O(points + buckets). Epochs
+    # are computed ONCE per point, which is the other half of the cost.
+    #
+    # This is a pure speed change and the equivalence is tested rather than
+    # asserted: ``test_event_history_aggregation_is_linear_6546.py`` runs the
+    # previous implementation, kept verbatim as an oracle, against this one on
+    # randomised multi-source series and requires identical output.
+    source_scan: dict[str, tuple[list[float], list[TimestampedProb]]] = {}
     for source_key, points in sources.items():
-        source_sorted[source_key] = sorted(points, key=lambda p: p.timestamp)
+        ordered = sorted(points, key=lambda p: p.timestamp)
+        source_scan[source_key] = (
+            [p.timestamp.timestamp() for p in ordered],
+            ordered,
+        )
+    cursors: dict[str, int] = {source_key: 0 for source_key in source_scan}
+
+    # The bucket's timezone came from the first non-empty source, re-derived
+    # inside the bucket loop. It cannot change between buckets, and there is
+    # always such a source here: an all-empty `sources` produced no timestamps
+    # and returned above.
+    bucket_tz = None
+    for pts in sources.values():
+        if pts:
+            bucket_tz = pts[0].timestamp.tzinfo
+            break
 
     # For each bucket, find latest reading per source
     aggregated: list[TimestampedProb] = []
 
     for bucket_ts in sorted_buckets:
-        bucket_time = datetime.fromtimestamp(bucket_ts, tz=None)
-        # Use timezone from the first source's first point
-        for pts in sources.values():
-            if pts:
-                bucket_time = datetime.fromtimestamp(
-                    bucket_ts, tz=pts[0].timestamp.tzinfo
-                )
-                break
+        bucket_time = datetime.fromtimestamp(bucket_ts, tz=bucket_tz)
 
         readings: list[SourceReading] = []
+        limit = bucket_ts + bucket_seconds
 
-        for source_key, points in source_sorted.items():
+        for source_key, (epochs, ordered) in source_scan.items():
             base_weight = weights.get(
                 source_key, 0.5
             )  # Default weight for unknown sources
 
-            # Find latest reading at or before this bucket
-            latest: Optional[TimestampedProb] = None
-            for point in points:
-                if point.timestamp.timestamp() <= bucket_ts + bucket_seconds:
-                    latest = point
-                else:
-                    break
+            # Find latest reading at or before this bucket. The cursor only
+            # ever moves forward, so across all buckets each point is visited
+            # once.
+            index = cursors[source_key]
+            while index < len(epochs) and epochs[index] <= limit:
+                index += 1
+            cursors[source_key] = index
 
-            if latest is None:
+            if index == 0:
                 continue
+            latest = ordered[index - 1]
+            latest_epoch = epochs[index - 1]
 
             # Calculate staleness
-            stale_seconds = bucket_ts - latest.timestamp.timestamp()
+            stale_seconds = bucket_ts - latest_epoch
             if stale_seconds < 0:
                 stale_seconds = 0
 
