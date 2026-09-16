@@ -7362,6 +7362,83 @@ def _clear_outcome_price(outcome, now) -> bool:
     return True
 
 
+#: How many stranded heroes one beat may take back. A bound rather than a
+#: rotation because this population is a TRANSIENT — it exists only between a
+#: venue's answer and its contest's kick-off — so there is no tail to starve
+#: and no oldest-first floor to hold (gotcha #41 does not apply). Measured
+#: 2026-09-16 08:5xZ on production: the whole population was **0 rows**, and
+#: the one specimen that produced #6511 was a single event. The limit is here
+#: so a matching outage that stranded thousands could not turn this backstop
+#: into the thing that blows the beat's budget.
+_STRANDED_HERO_SWEEP_LIMIT = 200
+
+#: #6511 — THE HERO THE CLEAR ONLY STOPPED REFRESHING.
+#:
+#: 🔴 A SKIPPED WRITE IS NOT A WITHDRAWAL, and :func:`_clear_pre_kickoff_settled_outcome`
+#: is built on the belief that it is. Its docstring states the coupling: clear
+#: the leg, and the blend stage "leaves ``_compute_source_home_probability``
+#: nothing to speak from and the ``win_probability_sources`` write is skipped".
+#: That is true and it is not enough. Skipping stops a NEW grade being written;
+#: it leaves the grade an EARLIER pass already stored exactly where it is, and
+#: that stored key is the number the reader sees — the hero and the chart read
+#: :attr:`Event.win_probability_sources`, never these rows. The same half-fix
+#: #5031, #5273 and #5771 each paid for.
+#:
+#: Measured on production 2026-09-16 (#6511): ``/events/15313113`` served
+#: **"Starts in 19m"** over a hero of **99% – 1%** for a doubles match the venue
+#: had finalized 68 minutes earlier. Both legs read NULL the whole time — the
+#: clear had worked perfectly — while the event went on carrying
+#: ``{'kalshi': {'value': 0.99, …}}`` stamped at 07:01:13Z. **79 minutes**, ending
+#: only when its own kick-off passed and "settled means settled" made the number
+#: true again.
+#:
+#: SELECTED ON THE INVARIANT, NOT ON THE PATH, and that is the whole design. The
+#: question this asks — *is a pre-kick-off event carrying a Kalshi hero that no
+#: Kalshi leg on it backs?* — is decidable from the rows alone, so it is blind to
+#: WHICH writer stranded the key and WHETHER that writer ran at all. It therefore
+#: covers the four clearers that exist today (this beat's two, the hourly pass's
+#: whole-book pair) plus ``kalshi_ws``, whose #5411 guard keys on
+#: ``resolution_source`` and is inert on exactly this class because a contest we
+#: have not started has nothing graded on it (#5419). A backstop keyed on a path
+#: would have to be re-derived every time a fifth writer arrived.
+#:
+#: 🔴 AND IT FIRES ON A BOOK THAT IS ALREADY QUIET, which every path-keyed clear
+#: cannot: #6511's specimen had been NULL for 67 minutes before the reader saw
+#: it, so a withdrawal hung off "this pass cleared a leg" arrives exactly one
+#: pass too late, forever. Nothing here reads what this pass did.
+#:
+#: The JOIN is the scope: an event with NO linked Kalshi market at all is the
+#: PHANTOM-ORPHAN class, which :func:`_cleanup_orphaned_blend_sources` has owned
+#: since #1163, and two sweeps with two opinions about one key is how they drift.
+#: ``MIN(fm.id)`` only has to name a market that belongs to the event — the
+#: withdrawal's own second arm decides whether the key goes, and that arm is
+#: already true for every row this returns.
+_KALSHI_STRANDED_PRE_KICKOFF_HERO_SQL = text(
+    """
+    SELECT e.id AS event_id,
+           MIN(fm.id) AS market_id
+      FROM events e
+      JOIN futures_markets fm
+        ON fm.event_id = e.id
+       AND fm.source = 'kalshi'
+     WHERE e.status = 'scheduled'
+       AND e.commence_time > NOW()
+       AND jsonb_exists(e.win_probability_sources, 'kalshi')
+       AND NOT EXISTS (
+             SELECT 1
+               FROM futures_markets fm2
+               JOIN futures_outcomes fo2 ON fo2.market_id = fm2.id
+              WHERE fm2.event_id = e.id
+                AND fm2.source = 'kalshi'
+                AND fo2.current_probability IS NOT NULL
+           )
+     GROUP BY e.id, e.commence_time
+     ORDER BY e.commence_time
+     LIMIT :limit
+    """
+)
+
+
 def _clear_pre_kickoff_settled_outcome(outcome, now, stats: dict) -> bool:
     """Take back a settlement this poller wrote as a price. #5896.
 
@@ -7375,13 +7452,22 @@ def _clear_pre_kickoff_settled_outcome(outcome, now, stats: dict) -> bool:
     — as Python tests on the ORM object rather than as a SQL ``WHERE``, because
     this poller updates through attribute assignment (gotcha #5).
 
-    Clearing the leg is also what stops the HERO, with no second statement: the
-    blend stage later in this same beat reads these very ORM objects out of
-    ``pop.outcomes_by_market``, so a leg with no price leaves
-    ``_compute_source_home_probability`` nothing to speak from and the
-    ``win_probability_sources`` write is skipped for the event. That is the
-    same coupling that makes the price clear sufficient, and it is why this
-    function does not go near the event row.
+    🔴 CLEARING THE LEG DOES NOT STOP THE HERO, and this docstring said it did
+    (#6511). The blend stage later in this same beat reads these very ORM
+    objects out of ``pop.outcomes_by_market``, so a leg with no price does
+    leave ``_compute_source_home_probability`` nothing to speak from and the
+    ``win_probability_sources`` write IS skipped for the event. All true — and
+    a skipped write is not a withdrawal. It stops a NEW grade being stored; the
+    grade an earlier pass already stored stays exactly where it is, and that
+    key is the number the page renders. Measured on production: 79 minutes of
+    "Starts in 19m" over a 99% hero with both legs NULL throughout.
+
+    So this function still does not go near the event row — but not because the
+    coupling makes it unnecessary. The event row is taken back by
+    :data:`_KALSHI_STRANDED_PRE_KICKOFF_HERO_SQL` at the end of the beat, keyed
+    on the INVARIANT rather than on this clear, so that a book already quiet
+    when the beat starts is covered too. Read that statement's note before
+    reasoning about who withdraws the hero.
     """
     if not _clear_outcome_price(outcome, now):
         return False
@@ -7787,6 +7873,15 @@ async def _poll_live_prediction_market_prices():
         # alone would invite.
         "kalshi_pre_kickoff_settled_legs": 0,
         "kalshi_pre_kickoff_settled_cleared": 0,
+        # #6511. The event-row half of the two counters above, and it is a
+        # SEPARATE number on purpose: those two describe legs in
+        # `futures_outcomes`, which no reader has ever seen, and this one
+        # describes the key in `win_probability_sources`, which is the hero on
+        # the page. The specimen had `_cleared` working perfectly and the page
+        # still wrong for 79 minutes, so a run where these disagree is the
+        # normal case, not an alarm — and collapsing them would have reported
+        # that run as a clean one.
+        "kalshi_stranded_heroes_cleared": 0,
         "futures_snapshots_written": 0,
         "snapshots_written": 0,
         "snapshots_deduped": 0,
@@ -7958,6 +8053,12 @@ async def _poll_live_prediction_market_prices():
             # the VENUE said (this contract is answered), which stays true
             # whatever the database does with our write.
             "kalshi_pre_kickoff_settled_cleared",
+            # #6511. A prune this pass made, so it belongs here for exactly the
+            # reason its sibling above does: a rollback that threw the DELETE
+            # away must take the number with it, or the beat reports a hero
+            # withdrawn that is still on the page — the one direction of lie
+            # that hides this defect instead of showing it.
+            "kalshi_stranded_heroes_cleared",
             "futures_snapshots_written",
             "snapshots_written",
             "snapshots_deduped",
@@ -8742,6 +8843,65 @@ async def _poll_live_prediction_market_prices():
                 await _commit_boundary()
             except Exception as e:
                 await _recover(f"pregame_mark_{market_id}", e)
+
+        # #6511 — TAKE BACK THE HERO, NOT JUST THE LEG.
+        #
+        # LAST, and after the clears above rather than beside them, for the
+        # reason CERT-2772 gave the hourly pass's pair: the withdrawal asks
+        # whether any Kalshi price is still standing on the event, and that
+        # answer has to already exclude everything this beat withdrew.
+        #
+        # It runs whatever the fetch stages did — including on a beat where
+        # they did nothing at all. That is deliberate and it is currently
+        # load-bearing: #6514 has the Kalshi arm admitted for zero seconds
+        # (`kalshi_fetched: 0`, `budget_stops: {'kalshi_fetch': 18}` on every
+        # pass measured 2026-09-16), so a backstop hung off the Kalshi loop
+        # would be dead code on production right now. This one reads the
+        # database and nothing else, so it is reachable while that holds and
+        # stays correct after latency repairs it.
+        try:
+            _stranded = (
+                await session.execute(
+                    _KALSHI_STRANDED_PRE_KICKOFF_HERO_SQL,
+                    {"limit": _STRANDED_HERO_SWEEP_LIMIT},
+                )
+            ).all()
+        except Exception as e:
+            _stranded = []
+            await _recover("stranded_hero_scan", e)
+
+        for _stranded_event_id, _stranded_market_id in _stranded:
+            # Per-event, so one bad row cannot cost the others theirs
+            # (gotcha #42) — and IMPORTED, never re-written, for the reason
+            # `kalshi.py` imports it: one place decides when withdrawing a
+            # pre-kick-off hero is safe, or the writers drift into two
+            # opinions. Its own WHERE re-checks `scheduled` and
+            # `commence_time > NOW()` against the database clock, so a beat
+            # that started before kick-off and reaches this line after it
+            # withdraws nothing — settled means settled.
+            try:
+                from app.tasks.futures_price_refresh import (
+                    _KALSHI_WITHDRAW_EVENT_HERO_SQL,
+                )
+
+                _cleared = (
+                    await session.execute(
+                        _KALSHI_WITHDRAW_EVENT_HERO_SQL,
+                        {"market_id": _stranded_market_id},
+                    )
+                ).fetchall()
+                stats["kalshi_stranded_heroes_cleared"] += len(_cleared)
+                if _cleared:
+                    logger.info(
+                        "Live poll: withdrew the stranded Kalshi hero on event "
+                        "%s (market %s) — the key was on the row with no Kalshi "
+                        "leg left to back it before kick-off (#6511, #5771)",
+                        _stranded_event_id,
+                        _stranded_market_id,
+                    )
+                await _commit_boundary()
+            except Exception as e:
+                await _recover(f"stranded_hero_{_stranded_event_id}", e)
 
         try:
             await session.commit()

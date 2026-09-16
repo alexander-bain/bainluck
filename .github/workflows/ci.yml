@@ -2291,6 +2291,42 @@ jobs:
             exit 1
           fi
 
+      - name: "#6511 stranded pre-kick-off HERO withdrawal (real Postgres)"
+        # The EVENT-row half of the gate above, and the half the reader can
+        # actually see. #5896's clear works — on the specimen both legs read
+        # NULL for 79 minutes — while `/events/15313113` served 99% – 1% under
+        # "Starts in 19m" the whole time, because the hero renders
+        # `events.win_probability_sources` and clearing a leg only makes the
+        # blend stage SKIP its write. A skipped write leaves the stored key
+        # exactly where it is.
+        #
+        # Two properties only a server can decide, and the unit suite cannot:
+        # whether the selector fires on a book that was ALREADY quiet when the
+        # pass began (the specimen had been NULL for 67 minutes, so anything
+        # keyed on "this pass cleared a leg" is one pass too late forever), and
+        # whether it can be made to delete a hero that is still speaking — the
+        # silent-stored-speaker-beside-a-trading-sibling row the hourly pass
+        # documented when it refused to run this statement on a mixed book.
+        #
+        # Measured non-vacuous: dropping `e.status = 'scheduled'`,
+        # `e.commence_time > NOW()`, the `NOT EXISTS`, the JOIN's
+        # `fm.source = 'kalshi'`, or the sweep's wiring each turns this file
+        # red. The `live` control is FUTURE-dated for that reason — dated in
+        # the past it fails both clock clauses and isolates neither, and the
+        # status mutant passed 11/11 before it was re-dated.
+        #
+        # Same skip detection as every gate in this job; this file's premise
+        # arm runs WITHOUT a database by design, so a fully-skipped run still
+        # reports skips here and trips the detector.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_stranded_prekickoff_hero_6511_pg.py \
+            -v -rs 2>&1 | tee /tmp/strandedhero6511.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/strandedhero6511.txt; then
+            echo "::error::#6511 stranded-hero gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Live blend concurrent stamp, two socket arms (real Postgres)
         # live/305's hero flicker, #836/#837/#5661. `worker-ws` runs the Kalshi
         # and Polymarket consumers under one `asyncio.gather`, each with its own
