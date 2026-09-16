@@ -141,7 +141,13 @@ struct MyStuffView: View {
                 VStack(spacing: 12) {
                     Text("🍀")
                         .font(.system(size: 48))
-                    Text("Your Predictions,\nYour Teams")
+                    // #6501: the headline is the loudest half of the pitch, and
+                    // it led with the surface `ReleaseSurfaces` switched off.
+                    // The two perks below that survive the flag are teams and
+                    // the feed, so that is what the headline promises.
+                    Text(ReleaseSurfaces.predictionsExperienceEnabled
+                         ? "Your Predictions,\nYour Teams"
+                         : "Your Teams,\nYour Feed")
                         .font(.largeTitle.weight(.black))
                         .multilineTextAlignment(.center)
                     Text("Sign in to unlock everything")
@@ -153,8 +159,14 @@ struct MyStuffView: View {
                 VStack(spacing: 12) {
                     signInPerk(icon: "heart.fill", color: .red, title: "Follow your teams", desc: "See all your teams' probabilities, futures, and playoff paths in one place")
                     signInPerk(icon: "safari.fill", color: .blue, title: "Personalized Discover", desc: "Your feed learns what you care about and surfaces more of it")
-                    signInPerk(icon: "flame.fill", color: .orange, title: "Prediction streaks", desc: "Track your Higher/Lower accuracy and streaks across devices")
-                    signInPerk(icon: "chart.line.uptrend.xyaxis", color: .purple, title: "Prediction history", desc: "See your accuracy, category breakdowns, and badges")
+                    // #6501: the sign-in wall is the third entry point to the
+                    // experience #6445 hid — it SELLS it. A reader who signed in
+                    // on the strength of these two rows found neither, because
+                    // the same build gates the summary they promise.
+                    if ReleaseSurfaces.predictionsExperienceEnabled {
+                        signInPerk(icon: "flame.fill", color: .orange, title: "Prediction streaks", desc: "Track your Higher/Lower accuracy and streaks across devices")
+                        signInPerk(icon: "chart.line.uptrend.xyaxis", color: .purple, title: "Prediction history", desc: "See your accuracy, category breakdowns, and badges")
+                    }
                 }
                 .padding(.horizontal, 24)
 
