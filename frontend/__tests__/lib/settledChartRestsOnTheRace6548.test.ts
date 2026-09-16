@@ -80,8 +80,6 @@ describe("#6548 — a decided question rests on its race, not on its dead end", 
     const atRest = { ...PHONE, scrollLeft: anchorScrollLeft(PHONE, { settled: true }) };
     expect(atRest.scrollLeft).toBe(0);
     const edges = edgeOverflowFor(atRest);
-    // Had `edgeOverflowFor` kept calling the anchor, maxScroll would be 0 here
-    // and `right` would be false — no fade over 210px of hidden race.
     expect(edges.right).toBe(true);
     expect(edges.left).toBe(false);
   });
@@ -91,6 +89,40 @@ describe("#6548 — a decided question rests on its race, not on its dead end", 
     const edges = edgeOverflowFor(atRest);
     expect(edges.left).toBe(true);
     expect(edges.right).toBe(false);
+  });
+
+  // The split is the ship's second half, and it is NOT behavioural today:
+  // `edgeOverflowFor` passes only `metrics`, so `anchorScrollLeft(metrics)`
+  // falls through to `maxScrollLeft` and re-coupling the two is an EQUIVALENT
+  // mutant — measured, by re-coupling them and watching all 24 tests stay green.
+  // The hazard is latent rather than absent: the day any caller hands the
+  // anchor an `opts`, a re-coupled `edgeOverflowFor` computes a settled chart's
+  // maximum scroll as 0 and withdraws the right-hand fade from 210px of hidden
+  // race. A behavioural test cannot reach that, so the structure is pinned
+  // directly — the same source-scan idiom this file already uses on the
+  // component, and the only assertion here that fails on the re-coupled tree.
+  test("the fades read GEOMETRY, not the editorial anchor", () => {
+    const LIB = require("fs")
+      .readFileSync(
+        require("path").join(__dirname, "../../lib/chartScroll.ts"),
+        "utf8",
+      )
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    // Sliced declaration-to-next-export rather than matched to the first
+    // `\n}`: this function's RETURN TYPE is an inline object literal, so a
+    // lazy brace match stops at the end of the signature and captures a body
+    // that contains neither call. That near-miss passed a bare truthiness
+    // check, so the non-vacuity assertion below is on `return {` — the one
+    // token that proves the body itself was captured.
+    const start = LIB.indexOf("export function edgeOverflowFor");
+    expect(start).toBeGreaterThanOrEqual(0);
+    const after = LIB.slice(start + 1);
+    const nextExport = after.indexOf("\nexport ");
+    const body = nextExport === -1 ? after : after.slice(0, nextExport);
+    expect(body).toContain("return {");
+    expect(body).toContain("maxScrollLeft(metrics)");
+    expect(body).not.toContain("anchorScrollLeft");
   });
 
   test("CONTROL: the edge tolerance is untouched by this ship", () => {
