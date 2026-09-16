@@ -80,11 +80,39 @@ interface SpecialEventMarketsProps {
  * a live game without a defaulted `false` crowning a loser (#4788/#6082).
  * `settled` — `isSettledStatus(eventStatus)`, this section's own predicate —
  * is the `isResolved` argument.
+ *
+ * ═══ #6595 — AND A VERDICT MAY NOT ANSWER THE HERO'S OWN QUESTION ═══
+ *
+ * The `!isResolved` arm above is what lets a first-quarter market state its
+ * result during a live game, and it checks WHO graded the row (tier 3) without
+ * ever checking WHAT the row was asked. On `/events/15313117` at 20:56Z
+ * 2026-09-16 that printed `New York Yankees — Won` under a hero reading
+ * `Bottom 11th · 3-3 · Twins 38% / Yankees 62%` — a tied game, in extra
+ * innings, with a winner declared. The grade was a stale weekly Polymarket
+ * container settled at 04:08Z, before the 17:40Z first pitch;
+ * `marketIsTheGamesOwnQuestion` has the full mechanism and the reason the
+ * redundancy filter upstream could not see it.
+ *
+ * So the scope test is added HERE and not inside `outcomeRowVerdict`. That
+ * function serves the futures surfaces too, where a tier-3 leg standing on an
+ * open market is the ORDINARY state of a threshold ladder (#6082) and nothing
+ * is being contradicted. What is wrong is narrower than the rule: on a game
+ * page, while the game is unfinished, the one question no market may answer is
+ * the game's own — because the hero is answering it, differently, on the same
+ * screen.
+ *
+ * WITHHELD, NOT DROPPED, and only the VERDICT. The row keeps its label and its
+ * price and falls through to the branches below, so a settled container still
+ * shows what the venue is quoting; a card whose only market is this one is
+ * still a card (#5540's floor). And `settled` still ends it: once the game is
+ * over the question is the game's own AND answerable, and settled means
+ * settled — the crown comes back.
  */
 function outcomeVerdict(
   outcome: MarketCard["outcomes"][0],
   settled: boolean,
 ): "won" | "lost" | null {
+  if (!settled && outcome.gamesOwnQuestion) return null;
   return outcomeRowVerdict(
     { is_winner: outcome.isWinner, resolution_source: outcome.resolutionSource },
     settled,

@@ -482,6 +482,72 @@ export function canonicalMatchupTitle(
 }
 
 /**
+ * Is this market asking the GAME'S OWN question — the one the hero answers?
+ *
+ * ═══ #6595 — A LIVE GAME PAGE DECLARED A WINNER ═══
+ *
+ * `/events/15313117` (Twins v Yankees) at 20:56Z 2026-09-16, read at 390px:
+ * the hero said `live · Bottom 11th · 3-3 · Twins 38% / Yankees 62%` and one
+ * screen below, Additional Markets said `New York Yankees — Won`. A tied game
+ * in extra innings, with the page crowning one side of it.
+ *
+ * ### The row was real and the filter that should have eaten it is shape-keyed
+ *
+ * `other[]` carried TWO markets for the same question:
+ *
+ *   | market_name | rows | probs | is_winner |
+ *   |---|---|---|---|
+ *   | `New York Yankees vs Minnesota`       | 2 | 0.62 / 0.38 | null |
+ *   | `New York Yankees vs. Minnesota Twins`| 1 | 1.0         | TRUE |
+ *
+ * The first is the live moneyline and `findWinProbMarkets` removes it exactly
+ * as designed: two complementary rows summing to ~1.0 ⇒ this is the hero's
+ * question, already answered above. The second is a stale weekly Polymarket
+ * container (`api_settlement`, observed 04:08Z — before the 17:40Z first pitch)
+ * whose losing leg is gone, so it arrives as a SINGLE row, `probs.length === 1`
+ * fails the `=== 2` test, and it sails through to render.
+ *
+ * 🔴 THAT IS THE GENERAL SHAPE, NOT A ONE-OFF. The redundancy filter recognises
+ * the hero's question by its two-sided PRICE shape, and a fully-settled market
+ * collapses to one leg — so precisely the rows that carry a `Won` are the ones
+ * least visible to it. Widening `findWinProbMarkets` to eat single legs would
+ * DROP the card (#5540's floor is the warning: dropping blanks pages), and a
+ * price a venue really is showing is not the lie. The lie is the VERDICT, so
+ * the verdict is what gets withheld, one layer up, where the event's status is
+ * known.
+ *
+ * ### Why this is `canonicalMatchupTitle` and not a vocabulary of period words
+ *
+ * "Narrower than the game" already has an answer in this module and it is the
+ * title function directly above: it REFUSES on a colon (`Set 1 Winner: A vs B`,
+ * `…: Race to 7 Points` — the name carries more than the matchup), it splits a
+ * spaced-dash qualifier off and KEEPS it (`A vs B - 1st Half`), and it demands
+ * exactly two `vs` sides. So a market's question is the game's own question
+ * exactly when that function yields the BARE matchup — no qualifier, both our
+ * names, nothing else. A word list of period nouns would be a second, private
+ * definition of narrowness, drifting from the one the cards are titled by; this
+ * cannot drift from it, because it IS it.
+ *
+ * Returns FALSE whenever the title function declines, which is the fail-safe
+ * direction: an unrecognised name keeps today's behaviour and a graded prop
+ * keeps its verdict mid-game (codex, 19:15Z: "preserve legitimate graded props
+ * during a live game; do not blanket suppress all settled markets while live").
+ *
+ * Says nothing about WHETHER a verdict may stand — that needs the event status,
+ * which this module is not told. `SpecialEventMarkets` holds it and makes the
+ * call, the same split `isWinner`/`resolutionSource` are carried raw for.
+ */
+export function marketIsTheGamesOwnQuestion(
+  marketName: string | null | undefined,
+  homeTeam: string | null | undefined,
+  awayTeam: string | null | undefined,
+): boolean {
+  const canonical = canonicalMatchupTitle(marketName, homeTeam, awayTeam);
+  if (canonical === null) return false;
+  return canonical === `${(homeTeam ?? "").trim()} vs ${(awayTeam ?? "").trim()}`;
+}
+
+/**
  * A SCORING RACE — "…: Race to 14 Points" — which side reaches a score first.
  *
  * The Swift twin is `SpecialEventMarketsView.isScoringRaceMarket` and the
@@ -650,6 +716,13 @@ export interface LabeledRow {
   /** #6138. Carried from the wire; see `OtherMarketRow.is_winner`. */
   isWinner?: boolean | null;
   resolutionSource?: string | null;
+  /**
+   * #6595. Does this row's market ask the GAME'S own question — the one the
+   * hero answers? Computed here because this is where the two team names are;
+   * acted on in `SpecialEventMarkets`, which knows whether the game is over.
+   * See `marketIsTheGamesOwnQuestion`.
+   */
+  gamesOwnQuestion?: boolean;
 }
 
 export interface MergedOutcome {
@@ -723,6 +796,15 @@ export interface MergedOutcome {
    */
   isWinner?: boolean | null;
   resolutionSource?: string | null;
+  /**
+   * #6595. True when ANY contributing row's market asks the game's own
+   * question. Merged with OR rather than by agreement — unlike the grade pair
+   * above, where disagreement means "we cannot say" and carrying nothing is the
+   * honest answer. Here the two directions are not symmetric: a wrongly-set
+   * flag withholds a verdict and leaves a price, a wrongly-cleared one crowns a
+   * team mid-game. So the merge takes the withholding side.
+   */
+  gamesOwnQuestion?: boolean;
 }
 
 export interface OutcomeMergeResult {
@@ -814,6 +896,10 @@ export function mergeOutcomes(rows: LabeledRow[]): OutcomeMergeResult {
       ...(grade !== null
         ? { isWinner: grade.isWinner, resolutionSource: grade.resolutionSource }
         : {}),
+      // #6595, OR not agreement — see the field's own note for why the two
+      // merge differently. Omitted entirely when no contributing row set it, so
+      // a caller that never passes team names is byte-identical to before.
+      ...(group.some((r) => r.gamesOwnQuestion) ? { gamesOwnQuestion: true } : {}),
     });
   }
 
@@ -1302,6 +1388,15 @@ export function buildMarketSection(
       // keeps today's behaviour through a deploy. Carried as-is.
       isWinner: row.is_winner,
       resolutionSource: row.resolution_source,
+      // #6595. Read off the WIRE name, not `cardName`: the card title is
+      // already canonicalised (and a scoped-winner card is rebuilt from
+      // `periodWinnerParts` entirely), so asking the title would be asking a
+      // string this module wrote rather than the question the venue posed.
+      gamesOwnQuestion: marketIsTheGamesOwnQuestion(
+        row.market_name,
+        options.homeTeam,
+        options.awayTeam,
+      ),
     });
   }
 
