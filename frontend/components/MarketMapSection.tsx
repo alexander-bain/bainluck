@@ -430,12 +430,41 @@ export default function MarketMapSection({
     const density = buildDensityFromSpreads(parsed, rangeMin, rangeMax, 12);
     const bandDrawsShape = densityDrawsShape(density, MARGIN_ACCENT);
 
+    /* #6359: AND THE BADGE OVER THIS CARD IS TENSED TOO — IT WAS THE LAST OF
+       THE THREE THAT WAS NOT.
+       `/events/15306857` (Gwangju FC 1 – 1 FC Anyang, FINAL) printed `ANY 62%`
+       in the top-right, directly over its own PRE-GAME Tied / FINAL Tied tiles
+       and four `not cleared` rungs. Anyang did not win; nothing on the badge
+       said which tense it was in.
+       The routed diagnosis — a stale pre-match snapshot — does not hold, and
+       the distinction is why the fix is here rather than upstream. That event's
+       `current_odds.captured_at` is 11:51:27Z against a 10:00Z kickoff and an
+       11:56Z finish, so the quote is IN-PLAY, five minutes from full time. It
+       is not stale. It is a win probability, which is a question a settled card
+       has already answered — a fresher capture would not have helped, because
+       on a DRAW no team's probability can converge and the last honest reading
+       is whatever the market thought while it was still a question. A decisive
+       result hides this: the last capture converges to ~100% for the winner, so
+       the badge reads as a result everywhere except the one class (~25% of
+       soccer fixtures) where the reader cannot tell.
+       So it is a tense defect, and the file already rules it twice — the pace
+       card's `headlineValue` (#5206) and the totals card's `headlineVal`
+       (`isDone ? "" : …`, in the SAME "expected vs final" family two cards
+       below this one, which is why the production screenshot shows one card
+       tensed and its neighbour not). `isDone`, the same predicate the rungs
+       below grade on, so the card's two halves cannot disagree about which
+       tense it is in.
+       A settled card says nothing here rather than saying it carefully: the
+       result is already on the card twice (the FINAL tile and the graded
+       ladder), so a label would only add a second voice, and notice 34's rule
+       for the empty case is to leave it empty. `live` and `pre` keep the badge
+       — there it is a current reading of an open question. */
     const homeFavored = (homeWinProb ?? 0) > 0.5;
     const favoredAbbr = homeFavored ? hAbbr : aAbbr;
     const favoredProb = homeFavored ? homeWinProb : awayWinProb;
-    const headline = favoredProb != null
-      ? `${favoredAbbr} ${Math.round(favoredProb * 100)}%`
-      : "";
+    const headline = isDone || favoredProb == null
+      ? ""
+      : `${favoredAbbr} ${Math.round(favoredProb * 100)}%`;
 
     const markers: MarketMapMarker[] = [];
 
@@ -704,7 +733,7 @@ export default function MarketMapSection({
       markers,
       ladder,
     };
-  }, [gameMarkets.spreads, status, homeScore, awayScore, homeWinProb, awayWinProb, homeSpread, openingHomeSpread, homeTeam, awayTeam, hAbbr, aAbbr, homeLogo, awayLogo, sportKey, vocab]);
+  }, [gameMarkets.spreads, status, isDone, homeScore, awayScore, homeWinProb, awayWinProb, homeSpread, openingHomeSpread, homeTeam, awayTeam, hAbbr, aAbbr, homeLogo, awayLogo, sportKey, vocab]);
 
   // ── Total Map ──
   const totalData = useMemo(() => {
