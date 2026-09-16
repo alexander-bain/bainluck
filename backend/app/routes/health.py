@@ -4,6 +4,7 @@ import os
 import subprocess
 import time
 import uuid
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -59,6 +60,36 @@ def _get_git_commit():
     return "unknown"
 
 GIT_COMMIT = _get_git_commit()
+
+
+def _error_label(exc: Exception) -> str:
+    """THE CLASS NAME, NEVER THE MESSAGE — on an endpoint that needs no auth.
+
+    #6404 ruled this for `/api/health` and wrote the reason into this file:
+    an exception string can carry the connection URL, and on Heroku that URL
+    embeds the password. The rule was built on ONE of the two unauthenticated
+    probes here. `/health/ready` — same file, same router, same open door —
+    went on interpolating `f"error: {e}"` on three branches, and one of them
+    is strictly worse than the Redis case #6404 was written about:
+
+        `OddsAPIService.check_quota()` sends the key as a QUERY PARAMETER
+        (`params={"apiKey": self.api_key}`) and calls `raise_for_status()`.
+        httpx puts the full request URL in that exception's message, so
+        `str(exc)` reads:
+
+            Client error '401 Unauthorized' for url
+            'https://api.the-odds-api.com/v4/sports/?apiKey=<the live key>'
+
+        Verified by constructing the error, not recalled: the planted key is
+        in `str(exc)`, and `TestTheMessageIsNeverPublished` asserts both that
+        it is (so the guard is not vacuous) and that it never reaches the body.
+
+    That is our most quota-constrained credential (5M/month) published on an
+    open endpoint, on the failure path — the one nobody reads until it fires.
+    The class name plus the branch it came from is the whole diagnostic and
+    carries nothing.
+    """
+    return f"error: {type(exc).__name__}"
 
 
 @router.get("/health")
@@ -148,7 +179,13 @@ async def api_health_check():
 
 @router.get("/health/ready")
 async def readiness_check(db: AsyncSession = Depends(get_db)):
-    """Readiness check for Kubernetes/container orchestration."""
+    """Readiness check for Kubernetes/container orchestration.
+
+    🔴 THIS ENDPOINT IS UNAUTHENTICATED — measured, not assumed: an
+    `Authorization`-free GET answers 200 on production. So nothing in this body
+    may carry a secret, and nothing in it may state a fact it cannot support.
+    Both halves of that were being broken; see the two blocks below (#4196).
+    """
     checks = {}
     all_ok = True
 
@@ -157,7 +194,7 @@ async def readiness_check(db: AsyncSession = Depends(get_db)):
         await db.execute(text("SELECT 1"))
         checks["database"] = "ok"
     except Exception as e:
-        checks["database"] = f"error: {e}"
+        checks["database"] = _error_label(e)
         all_ok = False
 
     # Check Redis connectivity
@@ -167,25 +204,57 @@ async def readiness_check(db: AsyncSession = Depends(get_db)):
         _redis.ping()
         checks["redis"] = "ok"
     except Exception as e:
-        checks["redis"] = f"error: {e}"
+        checks["redis"] = _error_label(e)
         all_ok = False
 
-    # Check last poll timestamps per source
+    # Last poll recency — #4196.
+    #
+    # THE FIVE KEYS THIS USED TO READ ARE WRITTEN BY NOTHING IN THIS TREE.
+    # `last_poll:odds`, `last_poll:espn`, `last_poll:kalshi`, `last_poll:polymarket`
+    # and `last_poll:statpal` have no writer at any call site; the only stamp
+    # anything sets is odds polling's `bainluck:last_poll:{sport_key}` —
+    # PREFIXED, and per SPORT rather than per source. So the block could only
+    # ever return five nulls, and it did, on production, in the same response
+    # whose `odds_api.updated_at` was eleven seconds old.
+    #
+    # A null here reads as "this source has never polled". Five of them, under
+    # the word `ready`, is the #4196 failure exactly: a probe whose reading is
+    # wrong in the reassuring direction is worse than no probe, because the one
+    # that means it gets ignored too.
+    #
+    # So report the key space that IS written, and report only it. The four
+    # sources nobody stamps are ABSENT, not null — absent is "we do not measure
+    # this", null is "measured, never seen", and a readiness probe that cannot
+    # tell those apart is how this bug was born. One MGET, not one GET per
+    # sport: this is a liveness path, not a dashboard (`/api/admin/providers`
+    # already serves the per-sport breakdown for anyone who wants it).
+    #
+    # The writer sets `ex=3600`, which is what makes a null here MEANINGFUL
+    # rather than unknowable: it means no sport has been polled in an hour.
     try:
         from app.tasks.redis_state import get_redis_client
+        from app.utils.sport_keys import SPORT_LEAGUE_MAP
         _redis = get_redis_client()
-        poll_keys = {
-            "odds_api": "last_poll:odds",
-            "espn": "last_poll:espn",
-            "kalshi": "last_poll:kalshi",
-            "polymarket": "last_poll:polymarket",
-            "statpal": "last_poll:statpal",
+        _stamps = _redis.mget(
+            [f"bainluck:last_poll:{sport_key}" for sport_key in sorted(SPORT_LEAGUE_MAP)]
+        )
+        _newest = None
+        for _raw in _stamps or []:
+            if not _raw:
+                continue
+            try:
+                _ts = float(_raw.decode() if isinstance(_raw, bytes) else _raw)
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if _newest is None or _ts > _newest:
+                _newest = _ts
+        checks["last_polls"] = {
+            "odds_api": (
+                datetime.fromtimestamp(_newest, tz=timezone.utc).isoformat()
+                if _newest is not None
+                else None
+            ),
         }
-        poll_times = {}
-        for source, key in poll_keys.items():
-            val = _redis.get(key)
-            poll_times[source] = val.decode() if val else None
-        checks["last_polls"] = poll_times
     except Exception:
         checks["last_polls"] = "unavailable"
 
@@ -214,7 +283,8 @@ async def readiness_check(db: AsyncSession = Depends(get_db)):
                 "source": "cached",
             }
     except Exception as e:
-        checks["odds_api"] = f"error: {e}"
+        # The branch the helper's docstring is about: this one can hold the key.
+        checks["odds_api"] = _error_label(e)
         all_ok = False
 
     # Check queue lengths
