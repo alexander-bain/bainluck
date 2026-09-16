@@ -447,6 +447,73 @@ def _score_would_regress(
     return ih < sh or ia < sa
 
 
+def _authority_is_correcting_itself(incoming_is_authority: bool) -> bool:
+    """At a span tie, is this the authority feed correcting its OWN reading?
+
+    ── THE HOLE #6251's FIRST PASS LEFT, AND WHY IT IS THIS SHAPE ──
+
+    The tie-break above rests on one premise: at a span tie, a LOWER score means
+    a LAGGING feed is overwriting an AHEAD one. That premise is true of a
+    secondary feed and false of the authority, because a feed cannot lag behind
+    ITSELF. When ESPN publishes a run and then takes it back, the second reading
+    is not an older observation arriving late — it is the authority's latest
+    word, and it is the closest thing to ground truth we have.
+
+    Refusing it does not protect the reader; it PINS THE ERROR. Measured on the
+    specimen that failed #6251's after-check (event 15312655, Twins v Yankees,
+    2026-09-16, read back out of the append-only `espn_snapshots`):
+
+        02:00:25  Bottom 8th  home 2   <- ESPN publishes a phantom run
+        02:01:25  Bottom 8th  home 2
+        02:03:25  Bottom 8th  home 1   <- ESPN corrects itself, REFUSED here
+        02:04:25  Bottom 8th  home 1      (still refused: same half-inning)
+        02:14:25  Top 9th     home 1
+
+    `score_snapshots` carries the 2 at `02:00:25.518390` — the same timestamp to
+    the microsecond as the ESPN snapshot, i.e. the same transaction, which is
+    how we know ESPN wrote the standing value it was then refused permission to
+    correct. ESPN's own mistake lived three minutes. Ours lived nine, and the
+    extra six were this guard's doing. That is the whole defect.
+
+    ── WHY EXEMPTING THE AUTHORITY DOES NOT UNWIND THE FIX ──
+
+    The fear is obvious: if the authority may always step down, does it not
+    simply follow every flicker, re-opening the 19x collapse #6251 bought? It
+    does not, and this is measured rather than argued. Over 2026-09-13 to
+    2026-09-16, MLB rows in `espn_snapshots` (append-only, so this is a history
+    of writes and not a snapshot of current values):
+
+        262 consecutive pairs across 42 events   <- the probe is not dead
+         58 of them at the SAME inning-state     <- the tie population
+        152 upward steps                         <- it sees real movement
+          1 downward step at a same-inning tie   <- the whole exposure
+          0 of those bounced back up             <- it was a correction
+
+    So ESPN does not flicker on MLB scores; it corrects, rarely, and when it
+    corrected it was right. This exemption fires about once every three days,
+    and on the only occasion it had to fire it would have been correct. The
+    population #6251 actually collapsed — 221 same-inning reversions in three
+    days — was never this: it was a clockless secondary feed overwriting the
+    authority, and that path does not pass this flag and is untouched.
+
+    ── SCOPE ──
+
+    Baseball-only in effect, without a sport check anywhere: the caller reaches
+    this line only at a tie on a position that `_position_names_a_span` accepts,
+    and the inning ladder is the only such position. A clocked tie never gets
+    here. The strictly-earlier rule is above this and is not exempted — an
+    authority observation from a genuinely earlier inning is still refused,
+    which is the one case where accepting it is provably wrong.
+
+    THE SAMPLE IS THIN AND SAYING SO IS PART OF THE CLAIM. `espn_snapshots` is a
+    win-probability capture table, roughly six observations per event, so 58
+    same-inning pairs is what three days buys. The direction is unambiguous and
+    the control pays, but this is not a 10,000-row result and must not be quoted
+    as one.
+    """
+    return bool(incoming_is_authority)
+
+
 def live_write_would_revert(
     stored_period: str | None,
     stored_clock: str | None,
@@ -457,6 +524,7 @@ def live_write_would_revert(
     stored_away_score: object = None,
     incoming_home_score: object = None,
     incoming_away_score: object = None,
+    incoming_is_authority: bool = False,
 ) -> bool:
     """Is this incoming live observation from EARLIER in the game than the row?
 
@@ -472,6 +540,10 @@ def live_write_would_revert(
     reversions, not to gatekeep live updates. The four score arguments are
     keyword-only and default to absent, so a caller that does not write scores
     — and therefore cannot revert one — asks the same question it always did.
+
+    ``incoming_is_authority`` exempts the SPAN TIE-BREAK ONLY — see
+    `_authority_is_correcting_itself`. It never touches the strictly-earlier
+    rule above it.
     """
     incoming = live_progress_position(incoming_period, incoming_clock)
     if incoming is None:
@@ -486,6 +558,8 @@ def live_write_would_revert(
         and _position_names_a_span(stored_period)
         and _position_names_a_span(incoming_period)
     ):
+        if _authority_is_correcting_itself(incoming_is_authority):
+            return False
         return _score_would_regress(
             stored_home_score,
             stored_away_score,

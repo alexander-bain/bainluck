@@ -793,6 +793,18 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
         stored_away_score=_observed_away_score,
         incoming_home_score=ee.home_score,
         incoming_away_score=ee.away_score,
+        # #6251 SECOND PASS: this is the AUTHORITY feed, so the span tie-break
+        # does not apply to it — a feed cannot lag behind itself, and refusing
+        # ESPN's correction of its own phantom run is what kept one on the page
+        # for nine minutes instead of three (specimen 15312655; the measurement
+        # and its controls are in `_authority_is_correcting_itself`).
+        #
+        # ONLY THE TIE-BREAK IS EXEMPTED. An ESPN fetch from a strictly earlier
+        # inning is still refused by the rule above it, which is the case that
+        # is provably a reversion. And this flag is not a general "ESPN wins":
+        # StatPal and the odds feed keep the tie-break in full, because they are
+        # the lagging writers the 221-reversion population was actually made of.
+        incoming_is_authority=True,
     )
     if _live_state_is_stale:
         logger.info(
