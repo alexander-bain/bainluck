@@ -1,0 +1,88 @@
+native/192 — #6574 mutation battery
+started 2026-09-16 09:11:37 PDT
+bound per swift run: 600s
+
+M1  the card joins the pair itself again — the exact 'Final · Final' line
+   KILLED   (rc=65, 9 failing assertion(s))
+     /Users/bain/bainluck-dev/native/ios/Bain Luck/BainLuckTests/GamePlayCardTimeDisplayTests.swift:72: error: -[BainLuckTests.GamePlayCardTimeDisplayTests testBaseballKeepsTheHalfInningWithNoClock] : XCTAssertEqual failed: ("7th") is not equal to ("Bottom 7th")
+     /Users/bain/bainluck-dev/native/ios/Bain Luck/BainLuckTests/GamePlayCardTimeDisplayTests.swift:49: error: -[BainLuckTests.GamePlayCardTimeDisplayTests testCollisionIsCaseInsensitive] : XCTAssertEqual failed: ("Final · FINAL") is not equal to ("FINAL")
+     /Users/bain/bainluck-dev/native/ios/Bain Luck/BainLuckTests/GamePlayCardTimeDisplayTests.swift:65: error: -[BainLuckTests.GamePlayCardTimeDisplayTests testLiveFootballKeepsBothWhenTheyDiffer] : XCTAssertEqual failed: ("Q4 · 5:13") is not equal to ("Q4 5:13")
+     /Users/bain/bainluck-dev/native/ios/Bain Luck/BainLuckTests/GamePlayCardTimeDisplayTests.swift:66: error: -[BainLuckTests.GamePlayCardTimeDisplayTests testLiveFootballKeepsBothWhenTheyDiffer] : XCTAssertEqual failed: ("Q1 · 14:54") is not equal to ("Q1 14:54")
+
+M2  the clock is dropped entirely (period only) — kills the defect, deletes the game clock
+   KILLED   (rc=65, 6 failing assertion(s))
+     /Users/bain/bainluck-dev/native/ios/Bain Luck/BainLuckTests/GamePlayCardTimeDisplayTests.swift:72: error: -[BainLuckTests.GamePlayCardTimeDisplayTests testBaseballKeepsTheHalfInningWithNoClock] : XCTAssertEqual failed: ("7th") is not equal to ("Bottom 7th")
+     /Users/bain/bainluck-dev/native/ios/Bain Luck/BainLuckTests/GamePlayCardTimeDisplayTests.swift:49: error: -[BainLuckTests.GamePlayCardTimeDisplayTests testCollisionIsCaseInsensitive] : XCTAssertEqual failed: ("Final") is not equal to ("FINAL")
+     /Users/bain/bainluck-dev/native/ios/Bain Luck/BainLuckTests/GamePlayCardTimeDisplayTests.swift:65: error: -[BainLuckTests.GamePlayCardTimeDisplayTests testLiveFootballKeepsBothWhenTheyDiffer] : XCTAssertEqual failed: ("Q4") is not equal to ("Q4 5:13")
+     /Users/bain/bainluck-dev/native/ios/Bain Luck/BainLuckTests/GamePlayCardTimeDisplayTests.swift:66: error: -[BainLuckTests.GamePlayCardTimeDisplayTests testLiveFootballKeepsBothWhenTheyDiffer] : XCTAssertEqual failed: ("Q1") is not equal to ("Q1 14:54")
+
+M3  the period is dropped entirely (clock only) — kills the defect, deletes the state
+   KILLED   (rc=65, 6 failing assertion(s))
+     /Users/bain/bainluck-dev/native/ios/Bain Luck/BainLuckTests/GamePlayCardTimeDisplayTests.swift:72: error: -[BainLuckTests.GamePlayCardTimeDisplayTests testBaseballKeepsTheHalfInningWithNoClock] : XCTAssertEqual failed: ("") is not equal to ("Bottom 7th")
+     /Users/bain/bainluck-dev/native/ios/Bain Luck/BainLuckTests/GamePlayCardTimeDisplayTests.swift:65: error: -[BainLuckTests.GamePlayCardTimeDisplayTests testLiveFootballKeepsBothWhenTheyDiffer] : XCTAssertEqual failed: ("5:13") is not equal to ("Q4 5:13")
+     /Users/bain/bainluck-dev/native/ios/Bain Luck/BainLuckTests/GamePlayCardTimeDisplayTests.swift:66: error: -[BainLuckTests.GamePlayCardTimeDisplayTests testLiveFootballKeepsBothWhenTheyDiffer] : XCTAssertEqual failed: ("14:54") is not equal to ("Q1 14:54")
+     /Users/bain/bainluck-dev/native/ios/Bain Luck/BainLuckTests/GamePlayCardTimeDisplayTests.swift:86: error: -[BainLuckTests.GamePlayCardTimeDisplayTests testZeroClockIsNotPrinted] : XCTAssertEqual failed: ("0:00") is not equal to ("Q4")
+
+M4  the collision test becomes case-SENSITIVE (Final vs FINAL prints twice)
+   KILLED   (rc=65, 2 failing assertion(s))
+     /Users/bain/bainluck-dev/native/ios/Bain Luck/BainLuckTests/GamePlayCardTimeDisplayTests.swift:49: error: -[BainLuckTests.GamePlayCardTimeDisplayTests testCollisionIsCaseInsensitive] : XCTAssertEqual failed: ("Final FINAL") is not equal to ("FINAL")
+     /Users/bain/bainluck-dev/native/ios/Bain Luck/BainLuckTests/LiveStatusTextTests.swift:111: error: -[BainLuckTests.LiveStatusTextTests testTheLabelIsDroppedNeverTheClock] : XCTAssertEqual failed: ("Optional("HT ht")") is not equal to ("Optional("ht")")
+
+M5  a 0:00 clock is printed again (the interval reads 'HT 0:00')
+   KILLED   (rc=65, 4 failing assertion(s))
+     /Users/bain/bainluck-dev/native/ios/Bain Luck/BainLuckTests/GamePlayCardTimeDisplayTests.swift:86: error: -[BainLuckTests.GamePlayCardTimeDisplayTests testZeroClockIsNotPrinted] : XCTAssertEqual failed: ("Q4 0:00") is not equal to ("Q4")
+     /Users/bain/bainluck-dev/native/ios/Bain Luck/BainLuckTests/LiveStatusTextTests.swift:71: error: -[BainLuckTests.LiveStatusTextTests testAMeaninglessClockIsDroppedNotPrinted] : XCTAssertEqual failed: ("Optional("Bottom 7th 0:00")") is not equal to ("Optional("Bottom 7th")") - clock "0:00" is not a reading a person can use
+     /Users/bain/bainluck-dev/native/ios/Bain Luck/BainLuckTests/LiveStatusTextTests.swift:99: error: -[BainLuckTests.LiveStatusTextTests testNothingToSayReturnsNil] : XCTAssertNil failed: "0:00"
+     /Users/bain/bainluck-dev/native/ios/Bain Luck/BainLuckTests/PeriodColumnLabelTests.swift:179: error: -[BainLuckTests.PeriodColumnLabelTests testThePlayCardDropsAZeroClockAtHalftime] : XCTAssertEqual failed: ("HT 0:00") is not equal to ("HT")
+
+M6  on a collision the CLOCK is dropped instead of the label
+   KILLED   (rc=65, 2 failing assertion(s))
+     /Users/bain/bainluck-dev/native/ios/Bain Luck/BainLuckTests/GamePlayCardTimeDisplayTests.swift:49: error: -[BainLuckTests.GamePlayCardTimeDisplayTests testCollisionIsCaseInsensitive] : XCTAssertEqual failed: ("Final") is not equal to ("FINAL")
+     /Users/bain/bainluck-dev/native/ios/Bain Luck/BainLuckTests/LiveStatusTextTests.swift:111: error: -[BainLuckTests.LiveStatusTextTests testTheLabelIsDroppedNeverTheClock] : XCTAssertEqual failed: ("Optional("HT")") is not equal to ("Optional("ht")")
+
+M7  the renamed-join tell is deleted from the scan (only the old gameClock tell remains)
+   *** SURVIVED *** (jest rc=0)
+
+M8  the tell goes back to requiring the literal identifier gameClock
+   KILLED   (jest rc=1)
+
+M9  GamePlayCardView drops off the named pair-printer list
+   *** SURVIVED *** (jest rc=0)
+
+CONTROL  clean head, no mutant applied
+   SURVIVED (correct — clean tree, rc=0, 0 failing assertions)
+     	 Executed 2531 tests, with 0 failures (0 unexpected) in 44.539 (45.741) seconds
+   jest control SURVIVED (correct — rc=0)
+     Tests:       24 passed, 24 total
+
+killed=7  survived=2  refused=0
+tree restored:
+  GamePlayCardView.swift  IDENTICAL
+  PeriodLabel.swift  IDENTICAL
+  periodLabelSingleSource.test.ts  IDENTICAL
+finished 2026-09-16 09:25:57 PDT
+
+═══ SECOND PASS — the two survivors, after the guard was repaired ═══
+M7 and M9 both survived pass 1, and both were real holes in MY OWN guard rather
+than in the ship:
+
+  M7  the "can actually fail" tests fed the drifted source to the REGEX, so
+      deleting the tell from the SCAN LOOP left every one of them green. A tell
+      the scan does not call is this file's own failure mode one level up.
+      REPAIR: `pairJoinOffenders()` is now the single decision point, and the
+      can-fail test drives THAT, asserting which message fired.
+
+  M9  `it.each(PAIR_PRINTERS)` shrinks silently when the list does, so the list
+      documented the eight call sites without pinning them.
+      REPAIR: the list is derived in BOTH directions against the files that
+      actually contain `PeriodLabel.liveStatusText(` — a ninth site cannot be
+      added without the list growing, and none of the eight can be dropped.
+
+M7 (rerun) — the renamed-join tell is deleted from the scan
+   KILLED (jest rc=1)
+M9 (rerun) — GamePlayCardView drops off the named pair-printer list
+   KILLED (jest rc=1)
+CONTROL
+   SURVIVED (correct)
+     Tests:       25 passed, 25 total
+tree restored: IDENTICAL
