@@ -144,7 +144,7 @@ struct LeaguesView: View {
             ForEach(featuredTournaments) { tournament in
                 BrowseFeatureCard(
                     title: tournament.title,
-                    subtitle: tournament.subtitle,
+                    subtitle: tournament.subtitle(),
                     icon: tournament.icon,
                     color: .yellow,
                     route: .tournamentHub(slug: tournament.slug, name: tournament.title)

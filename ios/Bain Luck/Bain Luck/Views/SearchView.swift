@@ -975,7 +975,7 @@ struct SearchView: View {
                 Text(hub.title)
                     .font(.subheadline)
                     .fontWeight(.semibold)
-                Text(hub.subtitle)
+                Text(hub.subtitle())
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
