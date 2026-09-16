@@ -305,6 +305,43 @@ export function outcomeRowShowsEntityImage(
  *
  * So the common case stays on one line with a readable name, the moving case grows a
  * second line, and neither case can starve the name again.
+ *
+ * ## #4592 — the common case could still starve the name, because `flex-1` is basis-0
+ *
+ * #3358's change 1 returns ~92px by dropping an empty column, and its arithmetic above
+ * says that is enough. Measured at 390px on 2026-09-16, with `Last move` already
+ * dropped, it is not — the name node is **92px** on `/futures/112854` and `/112860`
+ * (date rungs) and on `/futures/25924714` (senators), so `December 31, 2026` (needs
+ * 132px) prints `December 31, ...` on a board whose whole question is *which year*,
+ * and `June 30, 2026` (94px) clips by 2px. Budget of one 318px row, measured:
+ * checkbox 20 + rank 32 + name cell 124.3 + numbers 79.7 + three 12px gaps = the
+ * 294px content box, exactly. Nothing is wasted; the name is simply last in line.
+ *
+ * The reason change 2 did not cover this is a flexbox detail rather than a width:
+ * **`flex-1` is `flex: 1 1 0%`**, so the name cell's *hypothetical main size* — the
+ * number multi-line flex uses to decide where a line breaks — is **0**, whatever the
+ * name is. A cell that measures 0 can never push a sibling onto the next line, so the
+ * numbers group stays on line 1 and the name absorbs the whole shortfall. That is why
+ * the starvation survived a change explicitly written to stop it.
+ *
+ * `flex-auto` is `flex: 1 1 auto`: same grow, same shrink, but the hypothetical size
+ * is the cell's CONTENT — avatar + gap + the full name, which is nowrap under
+ * `truncate`. So the wrap decision is now made against the width the name actually
+ * needs, and the three cases fall out of one class rather than out of a threshold:
+ *
+ *   - short name (`Mike Lee`, 57px): everything still fits, the row stays on ONE line
+ *     and is not made taller — #3358's common case, preserved by construction;
+ *   - long name (`December 31, 2026`, 132px): the sum exceeds the line, the numbers
+ *     group wraps exactly as it does under `Last move`, and the name is re-measured
+ *     against the row — 186px, so it fits;
+ *   - name longer than a whole line (>186px): `min-w-0` and `flex-shrink: 1` are
+ *     untouched, so the cell still shrinks and still ellipsises. This is the case a
+ *     `min-w-[Npx]` floor gets wrong — a floor clamps the hypothetical size for EVERY
+ *     row (wrapping the short ones too, taking the density change #3358 declined) and
+ *     then refuses to shrink, overflowing the row instead of truncating.
+ *
+ * A row that does not wrap is therefore a row whose name fits: the test is the name's
+ * own width, so there is no tuned constant here to drift.
  */
 export default function OutcomeRow({
   outcome,
@@ -472,8 +509,8 @@ export default function OutcomeRow({
         </>
       )}
 
-      {/* Name */}
-      <div className="flex items-center gap-2 flex-1 min-w-0">
+      {/* Name. #4592: `flex-auto`, NOT `flex-1` — see the layout contract above. */}
+      <div className="flex items-center gap-2 flex-auto min-w-0">
         {outcomeFlag ? (
           <img
             src={outcomeFlag}
@@ -525,10 +562,19 @@ export default function OutcomeRow({
           line of its own WHEN the `Last move` column is in it, so the name is sized
           against the row instead of against the 80px column's leftovers. At `sm` and
           up, and whenever `Last move` is dropped, `basis-auto` puts it straight back
-          on the name's line and this row renders exactly as it did before. */}
+          on the name's line and this row renders exactly as it did before.
+
+          #4592: `ml-auto` so the two ways this group can reach a second line look the
+          same. #3358's `basis-full` line right-aligns its contents with `justify-end`,
+          but a group that wraps on its own is `basis-auto shrink-0` and sits at the
+          START of line 2 — measured at 390px, `OPEN 43% LATEST 13%` landed under the
+          checkbox while the identical two-line row on a `Last move` board put it under
+          the price. It costs nothing on line 1: auto margins are only fed the free
+          space LEFT AFTER flex-grow, and the name cell's `flex-auto` has already taken
+          all of it, so a single-line row is byte-identical to before. */}
       <div
         data-testid="outcome-numbers"
-        className={`flex items-center justify-end gap-3 shrink-0 ${
+        className={`flex items-center justify-end gap-3 shrink-0 ml-auto ${
           showLastMove ? "basis-full sm:basis-auto" : "basis-auto"
         }`}
       >
