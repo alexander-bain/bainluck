@@ -140,6 +140,30 @@ nonisolated enum SourceAge {
         return seconds > after
     }
 
+    /// The OLDEST of a set of stamps, or nil when none of them can be read.
+    /// Mirrors web's `oldestSourceStamp`.
+    ///
+    /// 🔴 COMPARED AS PARSED TIME, NEVER AS TEXT, which is the whole reason this
+    /// is a function and not a `.min()` at the call site:
+    /// `2026-09-11T20:00:00-04:00` is LATER than `2026-09-11T23:00:00+00:00` and
+    /// sorts earlier as a string. Production serves both offset spellings.
+    ///
+    /// The oldest and not the newest, for the card mark's reason: one stamp
+    /// speaking for several rows may only claim an age every one of them has
+    /// actually reached.
+    static func oldestStamp(_ stamps: [String?]) -> String? {
+        var best: String?
+        var bestAt: Date?
+        for stamp in stamps {
+            guard let stamp, let at = stamp.asDate else { continue }
+            if bestAt == nil || at < bestAt! {
+                best = stamp
+                bestAt = at
+            }
+        }
+        return best
+    }
+
     // MARK: - The reveal
 
     /// "12 Sep, 3:51 AM" in the READER's own timezone — delegated, never copied.

@@ -102,6 +102,21 @@ const NOT_PERIOD_PARSERS = new Map([
     // "what do I call ESPN's clock string", which is a different question.
     "reads MARKET NAMES for contest SCOPE ('1st Half …', '1st Quarter …') to pick which totals rungs share one ladder — returns indices, never labels a period",
   ],
+  [
+    join(IOS_ROOT, "Utilities/SettledQuote.swift"),
+    // #6588. A third kind of non-labelling mention, and the narrowest of the
+    // three: this file holds the EVENT-STATUS vocabulary — the `status` string
+    // on the event payload — and `halftime` is one of its values, beside
+    // `live`, `delayed` and `suspended`. It answers "is this contest in play",
+    // a question with no period in it; the file has no `raw` clock string, no
+    // interpolation and no output a reader ever sees. Its values are pinned
+    // character-for-character against `frontend/lib/settledQuote.ts`'s
+    // `LIVE_STATUSES`, which is the reason dropping the word to satisfy this
+    // scan would be the wrong repair: it would leave native reading a
+    // `halftime` event as PREGAME while web reads it as live, which is the
+    // one-state-two-vocabularies defect (#1650) the file exists to prevent.
+    "holds the EVENT-STATUS vocabulary ('live', 'halftime', 'suspended') pinned to web's LIVE_STATUSES — answers whether a contest is in play, never labels a period",
+  ],
 ]);
 
 // The whole suite is meaningless if it is pointed at nothing — a path typo
