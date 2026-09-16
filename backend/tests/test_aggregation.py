@@ -136,17 +136,55 @@ class TestComputeAggregatedProbability:
         # Weighted median should be near betting/ESPN, NOT pulled by Kalshi outlier
         assert result[0].home_probability < 0.70
 
-    def test_stale_source_dropped(self):
-        """Source >5 min stale should be ignored."""
+    def test_a_source_left_far_behind_its_peers_is_dropped(self):
+        """A source that falls far behind the rest stops counting.
+
+        REWRITTEN FOR #6461, and the rewrite is the point. This asserted
+        "source >5 min stale should be ignored" against the WALL CLOCK, which
+        was the defect: at 5 minutes absolute, every source polling slower than
+        that dropped out of the pool between its own writes and rejoined on the
+        next one, and the chart's blend line stepped between whichever subset
+        happened to be inside the window — 29 jumps of 5+ points on event
+        15305465, the worst of them 42.6 points in 120 seconds.
+
+        The rule is now #1829's, the one the hero already used: uniform age is
+        cadence, not staleness, so a reading is aged against the FRESHEST
+        observation in its own bucket. A source is dropped when it is 40 minutes
+        behind peers who are still observing — which is what this fixture now
+        builds, and which the old five-minute version could not distinguish from
+        a sportsbook that simply polls every six minutes.
+
+        It still passed after the change, at the same value, for the wrong
+        reason (betting's weight decides a two-source median either way), so it
+        is rewritten rather than deleted: a guard that cannot fail is not a
+        guard. `test_chart_blend_source_switch_6461.py` holds the rest of the
+        class.
+        """
         sources = {
-            "betting": [_tp(0, 0.50), _tp(10, 0.60)],
-            "kalshi": [_tp(0, 0.90)],  # Only has t=0 data, will be stale at t=10
+            # Observing throughout, every 2 minutes.
+            "betting": [_tp(m, 0.60) for m in range(0, 61, 2)],
+            # One reading at the start and never heard from again.
+            "kalshi": [_tp(0, 0.90)],
         }
         result = compute_aggregated_probability(sources, bucket_seconds=30)
-        # At t=10, Kalshi is 10 min stale → fully dropped, leaving only betting.
-        # With no smoothing (ruling #4) the last point IS betting's current 0.60.
-        last = result[-1]
-        assert last.home_probability == pytest.approx(0.60)
+
+        # An hour behind a source that is still observing: gone, so the line is
+        # betting's own reading (no smoothing, ruling #4).
+        assert result[-1].home_probability == pytest.approx(0.60)
+
+        # ...and the contrast that makes that mean something. Same shape, but
+        # the slow source is merely SLOW (6-minute cadence) rather than gone,
+        # and it is decisive: with it in the pool the crossing sits at 0.90,
+        # without it at 0.20. Under the old absolute rule it was deleted in
+        # every bucket more than five minutes after each of its own writes, so
+        # this line swung 70 points on the polling schedule alone.
+        cadence = {
+            "espn": [_tp(m, 0.20) for m in range(0, 25)],
+            "mlb": [_tp(m, 0.90) for m in range(0, 25)],
+            "kalshi": [_tp(m, 0.95) for m in range(0, 25, 6)],
+        }
+        line = compute_aggregated_probability(cadence, bucket_seconds=30)
+        assert all(p.home_probability == pytest.approx(0.90) for p in line)
 
     def test_empty_sources(self):
         result = compute_aggregated_probability({})

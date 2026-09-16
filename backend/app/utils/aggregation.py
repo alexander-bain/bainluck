@@ -470,21 +470,35 @@ def _relative_decay_applies(status: Optional[str]) -> bool:
     return (status or "").lower() not in _PREGAME_STATUSES
 
 
-def _relative_staleness_multiplier(relative_age_seconds: float) -> float:
+def _relative_staleness_multiplier(
+    relative_age_seconds: float,
+    floor: float = HERO_MIN_STALENESS_MULTIPLIER,
+) -> float:
     """Weight multiplier for a reading that is `relative_age` older than the
     freshest reading on the same event.
 
     0-10 min behind:   1.0
     10-40 min behind:  linear from 1.0 down to the floor
     40+ min behind:    the floor
+
+    ``floor`` is the terminal multiplier, and it is a parameter because the two
+    surfaces that use this shape want different endings for reasons that are
+    about the surface, not about recency. The HERO is one number at one instant:
+    demoting a lapsed arm to 10% keeps "we stopped hearing from Kalshi" distinct
+    from "Kalshi does not exist" (#1829, and #5542 on why that floor still has
+    teeth by position). The CHART is an unbounded time axis: a floor there would
+    carry a source that went dark at the first pitch across every remaining
+    bucket of a four-hour game, which is indefinite carry-forward, so the series
+    passes ``floor=0.0`` and a source that falls 40 minutes behind its peers
+    leaves. Default keeps the hero bit-for-bit.
     """
     if relative_age_seconds <= HERO_RELATIVE_GRACE_SECONDS:
         return 1.0
     past_grace = relative_age_seconds - HERO_RELATIVE_GRACE_SECONDS
     if past_grace >= HERO_RELATIVE_DECAY_SECONDS:
-        return HERO_MIN_STALENESS_MULTIPLIER
+        return floor
     decayed = 1.0 - (past_grace / HERO_RELATIVE_DECAY_SECONDS)
-    return max(HERO_MIN_STALENESS_MULTIPLIER, decayed)
+    return max(floor, decayed)
 
 
 def cap_weight_shares(
@@ -659,12 +673,77 @@ def compute_aggregated_probability(
     Aggregate multiple probability sources into a single time series.
 
     For each time bucket:
-    1. Find the latest reading from each source (carry-forward up to 5 min)
-    2. Apply staleness-based weight decay
+    1. Find the latest reading from each source (carried forward)
+    2. Decay each reading's weight by how far it is behind the FRESHEST reading
+       in the same bucket — relative age, never the wall clock
     3. Compute weighted median across all active sources
 
     No smoothing is applied (standing ruling #4) — each bucket is the honest
     weighted median of what the sources actually said in that bucket.
+
+    ── #6461: THE DENOMINATOR USED TO CHANGE EVERY MINUTE ────────────────────
+
+    Specimen: Red Sox @ Orioles, event 15305465, ``/api/events/15305465/history``.
+    The blend line zigzagged; **29** of its 261 points moved 5+ points from the
+    one before, and the worst pair moved **42.6 points in 120 seconds** —
+    18:05 0.572 -> 18:07 0.146 — on a game where every individual source's own
+    series was smooth. Nothing in the market had moved that far.
+
+    The cause was this step 2, which aged each reading against the BUCKET's own
+    clock: full weight for 2 minutes, linear decay, gone at 5. Measured cadences
+    on that game: espn 185 s median between observations, mlb 240 s, stat_model
+    282 s, betting 240 s median but a p90 of 1500 s. So every bucket weighted the
+    same four sources differently from the last one purely because of when each
+    poller happens to run, and betting — the heaviest source — dropped out of the
+    pool entirely between writes and rejoined on the next one. A weighted median
+    returns one contributor's actual value, so as the weights breathed the
+    crossing point walked from "what ESPN thinks" to "what the sportsbooks and
+    the stat model think", once a minute, across a 40-point disagreement.
+
+    #6461 reported this as a membership effect. Membership is the extreme case,
+    not the whole of it: replaying the served payload, only 9 of the 29 jumps
+    change the eligible-source set and the other 20 happen with the set
+    unchanged. Weight churn is the defect; a source hitting zero is weight churn
+    that went all the way.
+
+    THE RULE IS ALREADY RULED. #1829 settled this same question for the hero and
+    the argument transfers verbatim: *uniform age is cadence, not staleness; only
+    disagreement in age is staleness.* Each reading is therefore aged against the
+    freshest observation in its own bucket. A source polling every four minutes
+    alongside one polling every three is 60 seconds behind, not "stale", and
+    keeps full weight; every source within ``HERO_RELATIVE_GRACE_SECONDS`` of the
+    freshest carries its base weight, so on a healthy event the weights are
+    CONSTANT across buckets and the line moves only when a source's VALUE moves.
+    It also puts the chart on the same recency policy as the hero it has to agree
+    with (standing ruling #1, card == hero == chart) — the T1 blending review
+    named "same algorithm name, different answers" as its own finding.
+
+    Measured on the specimen, whole game, nothing else changed: jumps >=5pp
+    29 -> **3**, total variation 3.997 -> 1.643, endpoints unmoved (0.450 first,
+    0.000 last). The three survivors are real and are the point of the exercise:
+    17:56->17:58 is the 1-0 home run (score at 17:55:43; betting .460->.581, mlb
+    .510->.632, stat_model .363->.499 all move together), 18:05->18:07 is the
+    away two-run inning at 18:07:41 — where the repaired line goes straight to
+    the real .264 instead of overshooting to .146 and bouncing back — and
+    19:13->19:15 is genuine betting drift .253->.188. A real move still lands in
+    full, in one bucket. Nothing is smoothed, averaged, delayed or invented.
+
+    NO INDEFINITE CARRY-FORWARD, which is the reason this does not simply call
+    the hero's helper on its default. The hero floors a lapsed arm at
+    ``HERO_MIN_STALENESS_MULTIPLIER`` because it renders one instant; a floor on
+    an unbounded time axis would carry a source that went dark in the first
+    inning through every remaining bucket of the game. The series passes
+    ``floor=0.0``: a source that falls ``HERO_RELATIVE_GRACE_SECONDS +
+    HERO_RELATIVE_DECAY_SECONDS`` (40 min) behind its peers leaves the pool and
+    its trace ends. Sources that ALL stop together are not penalised and cannot
+    be — no more observations means no more buckets.
+
+    The hazard ``_relative_staleness_multiplier`` warns about (a source that is
+    dead but still transmitting re-stamps itself fresh and decays the honest
+    sources against it) is inherited, and it is strictly rarer here than what it
+    replaces: a transmitting-but-dead source already kept full weight under
+    absolute age. This change only ever decays a source that is behind a peer
+    that IS still observing, so it adds no new way for a liar to win.
 
     Args:
         sources: Dict mapping source key → list of timestamped probabilities
@@ -739,11 +818,12 @@ def compute_aggregated_probability(
         readings: list[SourceReading] = []
         limit = bucket_ts + bucket_seconds
 
-        for source_key, (epochs, ordered) in source_scan.items():
-            base_weight = weights.get(
-                source_key, 0.5
-            )  # Default weight for unknown sources
+        # Pass 1: what each source is saying in this bucket, and WHEN it said
+        # it. No weighting yet — the reference the weights are measured against
+        # is not known until every candidate has been collected.
+        candidates: list[tuple[str, TimestampedProb, float]] = []
 
+        for source_key, (epochs, ordered) in source_scan.items():
             # Find latest reading at or before this bucket. The cursor only
             # ever moves forward, so across all buckets each point is visited
             # once.
@@ -754,25 +834,67 @@ def compute_aggregated_probability(
 
             if index == 0:
                 continue
-            latest = ordered[index - 1]
-            latest_epoch = epochs[index - 1]
+            candidates.append((source_key, ordered[index - 1], epochs[index - 1]))
 
-            # Calculate staleness
-            stale_seconds = bucket_ts - latest_epoch
-            if stale_seconds < 0:
-                stale_seconds = 0
+        if not candidates:
+            continue
 
-            # Apply staleness decay
-            stale_mult = _staleness_weight(stale_seconds)
+        # The reference is the freshest OBSERVATION in this bucket, not the
+        # bucket's clock — #6461, under #1829's rule. `final_result` neither
+        # sets it nor is aged by it, exactly as the hero excludes the uncapped
+        # sources from its decay stamps: a graded outcome is not a forecast that
+        # can fall behind, and letting it set the reference would age every live
+        # source against a result.
+        decay_epochs = [
+            epoch
+            for source_key, _point, epoch in candidates
+            if source_key not in _UNCAPPED_SOURCES
+        ]
+        reference_epoch = max(decay_epochs) if decay_epochs else None
+
+        # Pass 2: weight each candidate by how far behind that reference it is.
+        for source_key, latest, latest_epoch in candidates:
+            base_weight = weights.get(
+                source_key, 0.5
+            )  # Default weight for unknown sources
+
+            if reference_epoch is None or source_key in _UNCAPPED_SOURCES:
+                relative_age = 0.0
+            else:
+                # Cannot go negative, so there is no clamp to write: every
+                # decayed source's own epoch is one of the values
+                # `reference_epoch` was the max OF, and the sources excluded
+                # from that max take the branch above. A clamp here would be an
+                # arm no test could reach.
+                relative_age = reference_epoch - latest_epoch
+
+            # Decay to ZERO, not to the hero's floor — see the docstring: this
+            # axis is unbounded, so a lapsed source must be able to leave.
+            stale_mult = _relative_staleness_multiplier(relative_age, floor=0.0)
             effective_weight = base_weight * stale_mult
 
+            # A source decayed to zero is excluded rather than admitted at zero
+            # weight. Mutation-tested and it is REDUNDANT, which is worth the
+            # line so nobody removes the wrong one of the two: deleting this
+            # gate changes no output, because `cap_weight_shares` counts only
+            # POSITIVE weights before deciding whether the #1829 share cap
+            # applies, and `_weighted_median` can never return a zero-weight
+            # entry (the cumulative sum does not advance at one, and the tie
+            # branch skips them when choosing the interval's far end). Both
+            # defences are deliberate; the one that is load-bearing is
+            # `cap_weight_shares`'. Without it, a weightless arm would be enough
+            # to make a two-source event look like three, switch the cap on, and
+            # hand the median to the lighter source — #5542's "a dead arm
+            # decides by position" with the weight taken all the way to zero.
             if effective_weight > 0:
                 readings.append(
                     SourceReading(
                         source=source_key,
                         probability=latest.home_probability,
                         weight=effective_weight,
-                        stale_seconds=stale_seconds,
+                        # The age the weight was actually derived from, so this
+                        # record cannot disagree with the number beside it.
+                        stale_seconds=relative_age,
                     )
                 )
 
@@ -783,8 +905,9 @@ def compute_aggregated_probability(
         # that is deliberate: the hero and this series answer the same question,
         # so a cap on one and not the other is exactly the two-verdicts-for-one-
         # rule shape that produced the 87-13-header-vs-~0-chart contradiction in
-        # the first place. This path already decays by absolute age (it has real
-        # per-bucket timestamps), so it needs the cap and not the relative rule.
+        # the first place. Since #6461 this path runs the relative rule as well,
+        # so the two surfaces now share BOTH halves of #1829 rather than one
+        # each — same question, same recency policy, same cap.
         values = [r.probability for r in readings]
         wts = cap_weight_shares(
             [r.weight for r in readings],
