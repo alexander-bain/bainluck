@@ -60,6 +60,30 @@ from app.utils.prediction_market_matching import (
 #: or more letters.
 _TRUNCATED_TAIL_RE = re.compile(r"^(?P<city>.+?)\s+(?P<tail>[A-Z]{1,3})$")
 
+#: A CLUB NAME, NOT A SENTENCE THAT ENDS IN CAPITALS (#6540).
+#:
+#: `_TRUNCATED_TAIL_RE` was written against side names, where everything before
+#: the tail is a city. #6447 then began feeding it whole OUTCOME strings, and an
+#: outcome is a sentence: `Denver scores first TD` splits into city
+#: `Denver scores first` + tail `TD`, the ticker's `den` code matches the string,
+#: and the repair composed **`Denver scores first Broncos`** — served on
+#: `/events/14638896` (Broncos 10 @ Chiefs 31, MNF, Final) as a settled prop row.
+#: Its two siblings were untouched, because only this one's opening words matched
+#: a ticker code, so the card printed one mangled row beside two correct ones.
+#:
+#: The head is therefore required to be club-SHAPED: every word begins with a
+#: capital or a digit, as `Los Angeles`, `Kansas City`, `New York` and `Bayer 04`
+#: all do, and as any sentence containing `scores`, `first`, `team`, `a` or `to`
+#: does not. Shape rather than a stop-word list, which is the criterion #5181 set
+#: for this family and the one the pooling engine already follows — a list would
+#: need a new entry for every market template the venue invents.
+#:
+#: It fails CLOSED. A club whose name really does carry a lowercase particle
+#: (`sc Heerenveen`, `de Graafschap`) is refused a repair and keeps the venue's
+#: text, which is this module's documented safe direction: a short name is
+#: visibly short, a wrong one is not.
+_CLUB_SHAPED_HEAD_RE = re.compile(r"^(?:[A-Z0-9]\S*)(?:\s+[A-Z0-9]\S*)*$")
+
 _WS = re.compile(r"\s+")
 
 
@@ -135,6 +159,13 @@ def repair_truncated_names(
             continue  # not truncated — correct data, left alone
         tail = match.group("tail")
         city = match.group("city").strip()
+
+        # #6540 — the head has to be a city, not the opening of a sentence.
+        # Without this the repair rewrites the last word of any outcome whose
+        # first words happen to match a ticker code: `Denver scores first TD` ->
+        # `Denver scores first Broncos`, live on a marquee NFL event page.
+        if not _CLUB_SHAPED_HEAD_RE.match(city):
+            continue
 
         # FIRST the ticker code, because it is the stronger signal and the one
         # gotcha #16 tells us to prefer. Only if the codes cannot separate the two
