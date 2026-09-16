@@ -20,8 +20,11 @@ import {
 } from "@/lib/chartTimeline";
 import {
   hasProbabilitySourceReading,
+  readProbabilitySourceValues,
   shouldWithholdProbability,
 } from "@/lib/probabilityEvidence";
+import type { WinProbabilitySources } from "@/lib/probabilityEvidence";
+import { PROBABILITY_SOURCE_KEYS } from "@/lib/confidence";
 import { renderedDuelPercents, renderedPercent } from "@/lib/renderedPercent";
 
 // ---------------------------------------------------------------------------
@@ -797,6 +800,73 @@ function withRenderedPercents(
 }
 
 /**
+ * Which of the chart's rail series does the live bag still stand behind?
+ *
+ * #6563. `historyData.win_prob_sources` is the RAIL's own list — every source
+ * with rows in `win_prob_snapshots`, which is immutable history. The event's
+ * `win_probability_sources` is the LIVE CLAIM, and every backend withdrawal
+ * works by taking a key out of it. So the two lists come apart the moment a
+ * source is withdrawn, and their difference is exactly "who has stopped
+ * speaking while their line is still on the chart".
+ *
+ * Filtered to `PROBABILITY_SOURCE_KEYS` on the rail side for the same reason
+ * `readProbabilitySourceValues` filters the bag side: one definition of "a
+ * source" serves both halves of the comparison, so a non-source key present on
+ * one side and absent from the other can never read as a withdrawal.
+ */
+export function railSourceStanding(
+  historyData: EventHistoryResponse | null | undefined,
+  sources: WinProbabilitySources,
+): { living: string[]; withdrawn: string[] } {
+  const railKeys = Object.keys(historyData?.win_prob_sources ?? {}).filter(
+    (key) => PROBABILITY_SOURCE_KEYS.has(key),
+  );
+  const bag = new Set(readProbabilitySourceValues(sources).map(([name]) => name));
+  return {
+    living: railKeys.filter((key) => bag.has(key)),
+    withdrawn: railKeys.filter((key) => !bag.has(key)),
+  };
+}
+
+/**
+ * The newest reading on a rail the bag still stands behind.
+ *
+ * #6563 — the substitute for the chart's own last point when that point cannot
+ * be trusted. `aggregate_line` is computed BACKEND-SIDE from `win_prob_history`
+ * (`routes/events.py`, the `agg_sources` block), so it blends every rail
+ * including the withdrawn ones; its right edge is therefore not attributable to
+ * any one source and cannot be cleared by naming one. Reading the living rails
+ * directly is the only reading here that has a name attached to it.
+ *
+ * Newest-wins across the living rails, on the series' own timestamps. Points
+ * with no `home_probability` are skipped rather than ending the scan — a
+ * series' tail can carry a null reading (a row written before the price
+ * arrived), and that is an absence, not a stop.
+ */
+export function livingRailReading(
+  historyData: EventHistoryResponse | null | undefined,
+  living: string[],
+): { homeProb: number; source: string; timestamp: string } | null {
+  const wpHistory = historyData?.win_prob_history;
+  if (!wpHistory) return null;
+  let best: { homeProb: number; source: string; timestamp: string } | null = null;
+  for (const source of living) {
+    const points = wpHistory[source];
+    if (!points?.length) continue;
+    for (let i = points.length - 1; i >= 0; i--) {
+      const home = points[i].home_probability;
+      if (home === null || home === undefined) continue;
+      const timestamp = points[i].timestamp;
+      if (!best || timestamp > best.timestamp) {
+        best = { homeProb: home, source, timestamp };
+      }
+      break;
+    }
+  }
+  return best;
+}
+
+/**
  * Determine the probability to display based on game status.
  *
  *   - Scheduled: current betting consensus
@@ -1080,25 +1150,83 @@ export function resolveProbability(
   // sayable on a live match than a dark one, and UX-P042 above already refuses
   // an untraded placeholder the row DOES carry. The callers render
   // "No price"/"No price yet", which is what the API is already saying.
+  // #6563 — AND "STILL HAS A SOURCE" IS ASKED PER SOURCE, NOT OF THE BAG.
+  //
+  // #5890's gate is bag-level: it refuses when NOBODY still speaks. It cannot
+  // see the case where somebody else does. On production 2026-09-16,
+  // /events/15307696 (Port FC v Kobe, AFC Champions League):
+  //
+  //   win_probability_sources   polymarket only — kalshi WITHDRAWN at 14:18:34Z
+  //   win_prob_snapshots        kalshi 461 rows, last 0.0100 @ 14:17:57Z
+  //   GET /api/events/15307696  hero_probability 0.0005, source "blend"
+  //   the page at 390px         1 % · "Kalshi"
+  //
+  // A LIVING POLYMARKET SOURCE AUTHORISED A WITHDRAWN KALSHI POINT. The bag
+  // passed the #5890 test with one key in it, and the number that came back up
+  // the rail belonged to the key that had been taken out — and the caption then
+  // named it, which is the same tell #5890 read the other way round (a row with
+  // no sources cannot name two; a row that has dropped Kalshi cannot name it).
+  //
+  // The reading is not re-attributed by inspecting `lastChartPoint`, because it
+  // cannot be: with two or more rails the backend serves an `aggregate_line`
+  // blended from `win_prob_history` — withdrawn series included — and
+  // `computeLastChartPoint` reads that edge first. It is one number derived from
+  // several sources, so no amount of looking at it says whose it is.
+  //
+  // So the rule is scoped by the only fact that IS decidable here: has anything
+  // been withdrawn at all?
+  //
+  //   nothing withdrawn  -> unchanged, to the byte. The rail list and the bag
+  //                         agree, the blend edge is a blend of living sources,
+  //                         and #4015's dark-match fallback keeps its number and
+  //                         its caption. This is the overwhelming majority.
+  //   something withdrawn -> the blend edge is contaminated by a price nobody
+  //                         stands behind, so it is replaced by the newest
+  //                         reading from a rail that IS still speaking, captioned
+  //                         with the living sources only. No living reading ->
+  //                         no number, which is #5890's answer to the same
+  //                         question one degree further along.
+  //
+  // On the specimen that resolves to Polymarket's own last point, 0.0005 — which
+  // is exactly the `hero_probability` the payload was already serving, so the
+  // page stops disagreeing with its own API as a side effect of telling the
+  // truth about the source.
+  const standing = railSourceStanding(historyData, event.win_probability_sources);
+  const contaminated = standing.withdrawn.length > 0;
+  const livingReading = contaminated
+    ? livingRailReading(historyData, standing.living)
+    : null;
+  const fallbackHome = contaminated
+    ? (livingReading?.homeProb ?? null)
+    : (lastChartPoint?.homeProb ?? null);
+  const fallbackAway = contaminated
+    ? livingReading
+      ? 1 - livingReading.homeProb
+      : null
+    : (lastChartPoint?.awayProb ?? null);
+
   if (
     !withheld &&
     homeProb === null &&
     hasProbabilitySourceReading(event.win_probability_sources) &&
     lastChartPoint &&
     lastChartPoint.probKnown !== false &&
-    !(
-      isFinished &&
-      (lastChartPoint.homeProb > 0.95 || lastChartPoint.homeProb < 0.05)
-    )
+    fallbackHome !== null &&
+    fallbackAway !== null &&
+    !(isFinished && (fallbackHome > 0.95 || fallbackHome < 0.05))
   ) {
-    homeProb = lastChartPoint.homeProb;
-    awayProb = lastChartPoint.awayProb;
+    homeProb = fallbackHome;
+    awayProb = fallbackAway;
     // #2085 — a chart point, not `current_odds`. Same override rule as the
     // history branch above.
     fromCurrentOdds = false;
-    const wpSources = historyData?.win_prob_sources;
-    if (wpSources && Object.keys(wpSources).length > 0) {
-      const sourceNames = Object.keys(wpSources).map((s) =>
+    // #6563 — the caption names who is still speaking. On an uncontaminated
+    // event that is the rail list verbatim, which is what it has always been.
+    const captionSources = contaminated
+      ? standing.living
+      : Object.keys(historyData?.win_prob_sources ?? {});
+    if (captionSources.length > 0) {
+      const sourceNames = captionSources.map((s) =>
         s === "stat_model"
           ? "Model"
           : s === "espn"

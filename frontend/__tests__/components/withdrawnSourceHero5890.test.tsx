@@ -134,15 +134,41 @@ describe("🔴 an emptied bag is a WITHDRAWAL, and the hero may not undo it", ()
 });
 
 describe("🟢 an event that still HAS a source keeps the fallback (#4015)", () => {
+  // #6563 AMENDED THESE TWO FIXTURES, AND THE AMENDMENT IS THE POINT.
+  //
+  // They were written with `RAIL` — whose `win_prob_sources` is
+  // `{kalshi, polymarket}`, copied from 15310861 — over a bag holding kalshi
+  // ALONE, and asserted the caption "Kalshi, Polymarket". That shape is not
+  // #4015's. It is #6563's: a rail naming a source the bag has withdrawn, and a
+  // caption printing the withdrawn name. Jodar v Bu's own rail carried the one
+  // source its bag carried, so the preservation these tests exist for is the
+  // rail-equals-bag case, which `SAME_SOURCE_RAIL` below now states literally.
+  //
+  // The withdrawn-sibling case is kept as its own test rather than deleted,
+  // because it is a real production shape — it just has a different right
+  // answer, and asserting the old one here would have pinned the defect.
+
+  /** Jodar v Bu's shape: the rail carries the one source the bag carries. */
+  const SAME_SOURCE_RAIL = {
+    ...RAIL,
+    win_prob_sources: { kalshi: [] },
+  } as unknown as EventHistoryResponse;
+
   test("a stale bag entry still hands the hero to the chart's last point", () => {
     // The #4015 ruling: a dark match whose `current_odds` stopped being written
     // reads the chart rather than contradicting it. That population has a source
     // — Jodar v Bu carried `kalshi 0.895` — so this fix must not touch it.
-    const resolved = heroFor(
+    const resolved = resolveProbability(
       withdrawnEvent({ win_probability_sources: { kalshi: decorated(0.895) } }),
+      SAME_SOURCE_RAIL,
+      RAIL_TAIL,
+      false,
+      false,
+      true,
+      false,
     );
     expect(resolved.homePct).toBe(99);
-    expect(resolved.probSourceLabel).toBe("Kalshi, Polymarket");
+    expect(resolved.probSourceLabel).toBe("Kalshi");
   });
 
   test("the bare-number wire shape counts as a source too", () => {
@@ -150,10 +176,41 @@ describe("🟢 an event that still HAS a source keeps the fallback (#4015)", () 
     // decorated shape. A gate that read only the decorated one would blank every
     // hero on the other surface — the both-shapes failure `readSourceValue`
     // exists for.
-    const resolved = heroFor(
+    const resolved = resolveProbability(
       withdrawnEvent({ win_probability_sources: { kalshi: 0.9 } }),
+      SAME_SOURCE_RAIL,
+      RAIL_TAIL,
+      false,
+      false,
+      true,
+      false,
     );
     expect(resolved.homePct).toBe(99);
+  });
+
+  test("a rail sibling the bag has dropped costs the caption, not the number", () => {
+    // The old fixture, with the rail series a real payload would carry beside
+    // its `win_prob_sources` list. Kalshi still speaks, so the hero still has a
+    // number — read off Kalshi's OWN newest point rather than off a blend edge
+    // that Polymarket's withdrawn series is still weighing — and the caption
+    // stops naming Polymarket.
+    const resolved = resolveProbability(
+      withdrawnEvent({ win_probability_sources: { kalshi: decorated(0.895) } }),
+      {
+        ...RAIL,
+        win_prob_history: {
+          kalshi: [{ timestamp: "2026-09-13T03:55:00+00:00", home_probability: 0.9945 }],
+          polymarket: [{ timestamp: "2026-09-13T03:56:00+00:00", home_probability: 0.12 }],
+        },
+      } as unknown as EventHistoryResponse,
+      RAIL_TAIL,
+      false,
+      false,
+      true,
+      false,
+    );
+    expect(resolved.homePct).toBe(99);
+    expect(resolved.probSourceLabel).toBe("Kalshi");
   });
 
   test("a bag entry with no value yet is not a source", () => {
