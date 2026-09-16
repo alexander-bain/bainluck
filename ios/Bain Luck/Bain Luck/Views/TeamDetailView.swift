@@ -141,10 +141,31 @@ struct TeamDetailView: View {
         #endif
     }
 
+    /// One row of the Upcoming or Recent rail.
+    ///
+    /// #6444 — every one of these drew a percentage from
+    /// `event.currentOdds?.homeProbability`, and **`/api/teams/{slug}` has never
+    /// served `current_odds`**: its brief carries `win_probability` and
+    /// `pregame_win_probability` (see ``SearchEvent/winProbability``). So the
+    /// `else if` could not bind on any row of any team page, and the whole rail
+    /// drew no number — the state Alex reported, including on a game an hour
+    /// from first pitch.
+    ///
+    /// The `DrawPricedWinner` call that lived here is gone rather than repointed,
+    /// and that is deliberate. #5363's hazard was a CLIENT-SIDE `1 − P(home)` on
+    /// a raw three-way book price; this route serves neither the raw price nor a
+    /// home-oriented number — the server already oriented it off the two-way
+    /// normalised blend (`teams.py:559`). Putting the served number through the
+    /// draw guard would be asking a question about an input that is not here, and
+    /// its answer would silently blank the soccer rows it was built to protect.
     private func gameRow(_ event: SearchEvent, teamName: String) -> some View {
-        let isHome = event.homeTeam == teamName
-        let opponent = isHome ? event.awayTeam : event.homeTeam
+        let isHome = TeamGameRow.isHome(event, teamName: teamName)
+        let opponent = TeamGameRow.opponent(event, teamName: teamName)
         let prefix = isHome ? "vs" : "@"
+        let score = TeamGameRow.score(event, teamName: teamName)
+        let result = TeamGameRow.result(event, teamName: teamName)
+        let price = TeamGameRow.livePrice(event)
+        let expectation = TeamGameRow.expectation(event, teamName: teamName)
 
         return HStack {
             VStack(alignment: .leading, spacing: 2) {
@@ -156,31 +177,41 @@ struct TeamDetailView: View {
                         RelativeTimeText(dateString: commence)
                     }
                 }
+                // The grade-our-call line, the web card's own words.
+                if let expectation {
+                    expectationLine(expectation)
+                }
             }
             Spacer()
-            if let home = event.homeScore, let away = event.awayScore {
-                let teamScore = isHome ? home : away
-                let oppScore = isHome ? away : home
-                let won = teamScore > oppScore
-                Text("\(teamScore)–\(oppScore)")
-                    .font(.subheadline).bold().monospacedDigit()
-                    .foregroundStyle(won ? .primary : .secondary)
-            } else if let odds = event.currentOdds, let homeProb = odds.homeProbability,
-                      // #5363 — this row's number is THIS PAGE'S TEAM's chance,
-                      // and for an away fixture it was derived as `1 − P(home)`.
-                      // On a draw-priced sport that is *away win or draw*, so a
-                      // soccer team's own page overstated every away fixture by
-                      // the draw — 20–30pp pre-match. There is no second slot
-                      // and no other side to name here: the number belongs to
-                      // the team whose page this is, so when we do not hold that
-                      // team's price the row simply carries no number, the same
-                      // as a fixture with no odds at all.
-                      let prob = isHome
-                        ? homeProb
-                        : DrawPricedWinner.printablePair(
-                            away: 1 - homeProb, home: homeProb, sport: event.sport)?.away {
-                Text(formatPct(prob)).font(.subheadline).bold().monospacedDigit().foregroundStyle(.blue)
+            VStack(alignment: .trailing, spacing: 2) {
+                if let score {
+                    // A score is drawn whenever both sides arrived; the WIN/LOSS
+                    // styling is drawn only where a final may be claimed, so a
+                    // suspended or live row shows the numbers without the verdict.
+                    Text("\(score.team)–\(score.opp)")
+                        .font(.subheadline).bold().monospacedDigit()
+                        .foregroundStyle(result.map { $0.won ? Color.primary : Color.secondary } ?? Color.primary)
+                }
+                if let price {
+                    Text(formatPct(price))
+                        .font(.subheadline).bold().monospacedDigit().foregroundStyle(.blue)
+                }
             }
+        }
+    }
+
+    /// "we had them at 63%" / "Upset — beat 78% odds" — `TeamGameCards.tsx`'s two
+    /// sentences, character for character, asserted against that file by
+    /// `TeamGameRowWebParity6444Tests` rather than kept in step by hand.
+    @ViewBuilder
+    private func expectationLine(_ expectation: TeamGameRow.Expectation) -> some View {
+        switch expectation {
+        case .had(let pre):
+            Text("we had them at \(formatPct(pre))")
+                .font(.caption).foregroundStyle(.secondary)
+        case .upset(let pre):
+            Text("Upset — beat \(formatPct(1 - pre)) odds")
+                .font(.caption).fontWeight(.medium).foregroundStyle(.blue)
         }
     }
 

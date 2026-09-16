@@ -90,6 +90,50 @@ nonisolated struct SearchEvent: Decodable, Identifiable, Sendable {
     /// `.convertFromSnakeCase`, so naming them IS the decode.
     let heroProbability: Double?
     let heroProbabilityAway: Double?
+
+    /// The TEAM-PAGE rails' own probability pair, and the two orientation fields
+    /// that come with them (`routes/teams.py::_format_event_brief`).
+    ///
+    /// #6444 — **this is #4967 exactly, one route over.** That fix named the two
+    /// fields `/api/events` serves; the team brief serves two *differently named*
+    /// ones and kept the bug. Its whole key set is
+    ///
+    ///     id · home_team · away_team · home_score · away_score · status
+    ///     commence_time · sport_key · is_home · opponent · win_probability
+    ///     pregame_win_probability · completed_at
+    ///
+    /// — no `current_odds`, no `hero_probability` — so the row that drew a
+    /// percentage only from `currentOdds?.homeProbability` could never bind, and
+    /// every Upcoming row on every team page drew no number at all, including a
+    /// game an hour from first pitch. Measured on production 2026-09-15:
+    /// `/api/teams/boston-red-sox-mlb` served a number on 8 of the 10 rows Alex
+    /// saw blank.
+    ///
+    /// **`winProbability` is already THIS PAGE'S TEAM's number.** The server
+    /// applies the away complement itself (`teams.py:559`) off the two-way
+    /// normalised blend, so a client complement would be the #5363 defect
+    /// re-introduced rather than avoided: do not take `1 −` it, and do not put it
+    /// through `DrawPricedWinner`, whose input was the raw three-way book price
+    /// this route does not serve. Cross-checked on a draw-priced league: Arsenal
+    /// away at Brighton serves `win_probability` 0.730 beside a
+    /// `pregame_win_probability` of 0.737 — the complement of the blend and the
+    /// stored away column, two independent derivations, agreeing.
+    ///
+    /// 🔴 **`winProbability` IS NOT A RESULT.** On a settled row it is the last
+    /// mid-game blend, frozen where capture stopped, and it contradicts the event
+    /// page one tap away: measured 2026-09-15, 15309637 reads 0.079 here and
+    /// `hero_probability: 0.0, source: "settled"` there; 15311111 reads 0.999
+    /// against 1.0; 15312924 reads 0.036 against 0.0. A settled row prints
+    /// `pregameWinProbability` as the call we made, which is what the web card
+    /// does and why its docstring refuses the current number. ``TeamGameRow``
+    /// owns that rule so no second surface has to rediscover it.
+    let winProbability: Double?
+    let pregameWinProbability: Double?
+    /// Served orientation. Preferred over comparing `homeTeam` to the page's team
+    /// name: one name variant flips the row to the wrong side silently, and the
+    /// payload states the answer outright.
+    let isHome: Bool?
+    let opponent: String?
 }
 
 /// Futures market result returned by search endpoints.
