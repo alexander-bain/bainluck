@@ -16,7 +16,7 @@ import { teamColorStyle } from "@/lib/teamColors";
 import TeamNameLink from "./TeamNameLink";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
-import { sportPricesADraw } from "@/lib/drawPricedWinner";
+import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { teamCrestInitials, teamShortNames } from "@/lib/teamShortName";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
@@ -269,7 +269,12 @@ export default function EventCard({
   // a priced match look unpriced and hand every draw-priced card a permanent
   // "home favourite". The question this rule asks is only ever "may this surface
   // PRINT the away number", so it is asked at the print sites.
-  const awayWithheld = sportPricesADraw(event.sport);
+  // PER PAIR — see `awayIsTheComplement`. The chips read `current_odds`, which
+  // production serves as an exact complement on every soccer row measured; the
+  // `Opened` footer below reads `opening_odds`, which since #1011 is de-vigged
+  // over the whole board and usually is NOT a complement. Asking once for the
+  // whole card would delete a real opening away price on 11 of 13 live rows.
+  const awayWithheld = awayIsTheComplement(awayProb, homeProb, event.sport);
 
   // With the away side withheld there is no pair, so there is no favourite to
   // name — `homeProb >= awayProb` is a comparison against the very number this
@@ -277,6 +282,15 @@ export default function EventCard({
   // (`noReading`, a suspended card, a finished card with no winner): equal
   // weight is the only honest pair when the comparison is missing.
   const favoriteKnown = !awayWithheld;
+
+  // The OPENING pair is its own question — see the note on `awayWithheld`. On
+  // 11 of 13 live soccer rows measured this answers FALSE where `awayWithheld`
+  // answers true, and the footer keeps printing the honest `Opened 62/38`.
+  const openedAwayWithheld = awayIsTheComplement(
+    opening?.away_probability,
+    opening?.home_probability,
+    event.sport,
+  );
 
   const handleCardClick = () => {
     trackEventCardClick(event, sourceSection, positionIndex);
@@ -750,7 +764,13 @@ export default function EventCard({
                     #6238 — withheld on a draw-priced sport: it is the opening
                     complement, and this row names itself, so it costs the home
                     prior nothing to leave the slot empty. */}
-                {prematch && prematch.awayPercent !== null && !awayWithheld && (
+                {prematch &&
+                  prematch.awayPercent !== null &&
+                  !awayIsTheComplement(
+                    prematch.awayProbability,
+                    prematch.homeProbability,
+                    event.sport,
+                  ) && (
                   <span
                     className="flex-shrink-0 font-mono text-[11px] tabular-nums text-text-muted"
                     data-testid="event-card-prematch-away"
@@ -830,7 +850,7 @@ export default function EventCard({
                 <span className="text-text-muted">
                   Proj <span className="font-mono text-text-secondary">{Math.round(odds.projected_home_score)}-{Math.round(odds.projected_away_score)}</span>
                 </span>
-              ) : isLive && opening && openedHomePct !== null && awayWithheld ? (
+              ) : isLive && opening && openedHomePct !== null && openedAwayWithheld ? (
                 /* #6238 — the opening pair is the same complement at an earlier
                    instant, so the away half goes with the current one. The
                    footer is KEPT, not dropped: the home opening figure is as

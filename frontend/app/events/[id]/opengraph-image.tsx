@@ -15,7 +15,7 @@ import {
 } from "@/lib/eventShareMeta";
 import { resolveEventOutcome } from "@/lib/eventOutcome";
 import { prematchReading } from "@/lib/prematchReading";
-import { sportPricesADraw } from "@/lib/drawPricedWinner";
+import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { suspendedSummary, venueSettledSummary } from "@/lib/eventState";
 
 export const runtime = "edge";
@@ -180,7 +180,11 @@ export default async function Image({ params }: { params: { id: string } }) {
   // #6238 — may this card print an away probability at all? Precedence matches
   // the league label below (`sport_key` then `sport`), so no row changes which
   // key it is read by. `sportVocab` holds the declaration.
-  const awayWithheld = sportPricesADraw(event.sport_key || event.sport);
+  const awayWithheld = awayIsTheComplement(
+    event.current_odds?.away_probability,
+    event.current_odds?.home_probability,
+    event.sport_key || event.sport,
+  );
   const [awayRendered, homeRendered] = servedDuelPercents(
     awayProbability,
     homeProbability,

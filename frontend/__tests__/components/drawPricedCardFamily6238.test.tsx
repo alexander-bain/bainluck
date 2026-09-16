@@ -74,7 +74,7 @@ import EventCard from "@/components/EventCard";
 import { EventCard as DiscoverEventCard } from "@/components/discover/EventCard";
 import { DuelKernel } from "@/components/discover/kernels/DuelKernel";
 import MatchupDuel from "@/components/event/MatchupDuel";
-import { sportPricesADraw } from "@/lib/drawPricedWinner";
+import { awayIsTheComplement, sportPricesADraw } from "@/lib/drawPricedWinner";
 
 /**
  * A draw-priced league and a two-way one.
@@ -117,6 +117,86 @@ describe("#6238 the two arms are genuinely different", () => {
   it("the draw-priced key is declared and the control key is not", () => {
     expect(sportPricesADraw(DRAW_SPORT)).toBe(true);
     expect(sportPricesADraw(TWO_WAY_SPORT)).toBe(false);
+  });
+});
+
+/**
+ * ═══ THE SECOND HALF OF THE RULE, AND IT CAME FROM LOOKING AT THE PAGE ═══
+ *
+ * The first cut of this ship withheld the away figure on every draw-priced
+ * sport, full stop. A BEFORE screenshot of `/sports` showed the cost: the Lyon
+ * v Anderlecht card's footer read `Opened 40/32`, which sums to 72 — that pair
+ * is NOT a complement, it is de-vigged across the whole quoted board (#1011),
+ * and the missing ~28 points ARE the draw. A blanket withhold deleted a real,
+ * sourced away price.
+ *
+ * Measured the same minute over all 13 live soccer cards:
+ *
+ *   `current_odds`  — 13/13 sum to exactly 1.0000  → derived, withhold
+ *   `opening_odds`  — 11/13 sum to 0.68–0.94       → sourced, KEEP
+ *
+ * So the question is per PAIR, not per sport, and the two pairs on one card
+ * legitimately answer differently. `awayIsTheComplement` is the predicate; these
+ * are the assertions that stop the blanket version coming back.
+ */
+describe("#6238 a genuinely priced away leg is KEPT — withholding is for the complement", () => {
+  it("the predicate separates the two pairs the same card carries", () => {
+    // Lyon @ Anderlecht as production served it, both pairs.
+    expect(awayIsTheComplement(0.041, 0.959, DRAW_SPORT)).toBe(true); // current
+    expect(awayIsTheComplement(0.4, 0.329, DRAW_SPORT)).toBe(false); // opening
+  });
+
+  it("an absent away IS withheld, so the surface keeps its shape", () => {
+    expect(awayIsTheComplement(null, 0.74, DRAW_SPORT)).toBe(true);
+  });
+
+  it("but an absent away on a TWO-WAY sport is not — that render is untouched", () => {
+    expect(awayIsTheComplement(null, 0.74, TWO_WAY_SPORT)).toBe(false);
+  });
+
+  it("FeedCard prints the whole opening pair when it is not a complement", () => {
+    // The Lyon card. `Opened 40/32` is an honest line and must survive — this
+    // repo already keeps a pair summing to 97 on purpose (openedPairCapture's
+    // THIN specimen), for exactly this reason.
+    const html = renderToStaticMarkup(
+      <FeedCard
+        item={feedCard(DRAW_SPORT, {
+          status: "live",
+          opening_odds: { home_probability: 0.329, away_probability: 0.4 },
+        } as unknown as Partial<FeedEventData>)}
+      />,
+    );
+    expect(text(html)).toContain("40/33");
+    expect(text(html)).not.toMatch(/Opened \D+ \d+%$/);
+  });
+
+  it("and still withholds it when the opening pair IS a complement", () => {
+    const html = renderToStaticMarkup(
+      <FeedCard
+        item={feedCard(DRAW_SPORT, {
+          status: "live",
+          opening_odds: { home_probability: 0.71, away_probability: 0.29 },
+        } as unknown as Partial<FeedEventData>)}
+      />,
+    );
+    expect(text(html)).not.toContain("71/29");
+    expect(text(html)).toContain("71%");
+  });
+
+  it("the chips still withhold on the same card, because THAT pair is derived", () => {
+    // The two loci on one card, answering differently and both correctly. This
+    // is the assertion that would fail if anyone re-simplified the rule back to
+    // one per-card question.
+    const html = renderToStaticMarkup(
+      <FeedCard
+        item={feedCard(DRAW_SPORT, {
+          status: "live",
+          opening_odds: { home_probability: 0.329, away_probability: 0.4 },
+        } as unknown as Partial<FeedEventData>)}
+      />,
+    );
+    expect(html).toContain('data-testid="feed-card-away-withheld"');
+    expect(text(html)).not.toContain(AWAY_TEXT);
   });
 });
 
@@ -444,7 +524,7 @@ describe("#6238 the share image asks the rule", () => {
   );
 
   it("decides `awayWithheld` from the declaration, not from a key test", () => {
-    expect(OG).toMatch(/const awayWithheld = sportPricesADraw\(/);
+    expect(OG).toMatch(/const awayWithheld = awayIsTheComplement\(/);
     expect(OG).not.toMatch(/sport.*\.startsWith\(["']soccer/);
   });
 

@@ -35,7 +35,7 @@ import {
   suspendedSummary,
 } from "@/lib/eventState";
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
-import { sportPricesADraw } from "@/lib/drawPricedWinner";
+import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { probabilityBarPair, SEGMENT_OPACITY } from "@/lib/probabilityBarPair";
 import { teamCrestInitials, teamShortNames } from "@/lib/teamShortName";
 import TeamNameLink from "./TeamNameLink";
@@ -430,7 +430,14 @@ function EventFeedCard({
   // the `Opened X/Y` footer, and the two-colour bar — a bar split 74/26 is the
   // same claim in pixels. Doing one and not the others is how a card comes to
   // contradict itself in a single frame (#5696's lesson on the hero).
-  const awayWithheld = sportPricesADraw(data.sport);
+  // PER PAIR, not per sport. The chips and the `Opened` footer below read two
+  // DIFFERENT pairs and legitimately answer differently: measured on production
+  // 2026-09-16, all 13 live soccer cards carried a `current_odds` pair summing
+  // to exactly 1.0000 while 11 of the 13 carried an `opening_odds` pair summing
+  // to 0.68–0.94 — de-vigged across the whole board since #1011, with the draw
+  // as the residual. That opening away figure is a REAL away price, and a
+  // sport-keyed withhold deleted it. See `awayIsTheComplement`.
+  const awayWithheld = awayIsTheComplement(displayAwayProb, displayHomeProb, data.sport);
   // UX-P114 — the chips below print BOTH sides of one question, and the feed
   // derives away as `1 - home`, so rounding them independently printed 101
   // whenever the blend landed on a half-percent (34 of 414 live/upcoming events,
@@ -617,9 +624,14 @@ function EventFeedCard({
   // (`EventCardView.footerRow`): `Opened LIV 71%`. Short names come from the
   // PAIR helper, never per side — #3430, because "Tigers" is not a name when
   // both sides shorten to it.
+  const openedAwayWithheld = awayIsTheComplement(
+    data.opening_odds?.away_probability,
+    data.opening_odds?.home_probability,
+    data.sport,
+  );
   const openedLine =
-    isLive && openedHomePct !== null && (openedAwayPct !== null || awayWithheld)
-      ? awayWithheld
+    isLive && openedHomePct !== null && (openedAwayPct !== null || openedAwayWithheld)
+      ? openedAwayWithheld
         ? [{ team: data.home_team, percent: openedHomePct }]
         : [
             { team: data.away_team, percent: openedAwayPct! },
@@ -627,7 +639,7 @@ function EventFeedCard({
           ]
       : null;
   const openedContext = openedLine
-    ? awayWithheld
+    ? openedAwayWithheld
       ? `Opened ${teamShortNames({ name: data.home_team }, { name: data.away_team }).home} ${openedHomePct}%`
       : `Opened ${openedLine.map((side) => side.percent).join("/")}`
     : null;
@@ -809,7 +821,13 @@ function EventFeedCard({
                   surviving number nothing. That is native's rule for a
                   self-naming row (`EventCardView.probabilityWithMovement`) and
                   the reason the chips above had to do something different. */}
-              {prematch && prematch.awayPercent !== null && !awayWithheld && (
+              {prematch &&
+                prematch.awayPercent !== null &&
+                !awayIsTheComplement(
+                  prematch.awayProbability,
+                  prematch.homeProbability,
+                  data.sport,
+                ) && (
                 <span
                   className="flex-shrink-0 font-mono text-[11px] tabular-nums text-text-muted"
                   data-testid="feed-card-prematch-away"

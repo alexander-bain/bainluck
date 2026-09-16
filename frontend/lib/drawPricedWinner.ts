@@ -1,4 +1,5 @@
 import { sportVocab } from "@/lib/marketMapUtils";
+import { isComplementPair } from "@/lib/renderedPercent";
 
 /**
  * WHAT A MATCH SURFACE MAY PRINT WHEN THE WINNER MARKET HAS THREE OUTCOMES.
@@ -146,4 +147,61 @@ export function chartTooltipPair(
   const home = `${homeTeam}: ${homePercent.toFixed(1)}%`;
   if (awayWithheld) return home;
   return `${home} | ${awayTeam}: ${(100 - homePercent).toFixed(1)}%`;
+}
+
+/**
+ * Must this surface withhold the away figure for THIS pair?
+ *
+ * ═══ WHY THE SPORT ALONE IS THE WRONG QUESTION, MEASURED ═══
+ *
+ * `sportPricesADraw` asks whether a draw is a real outcome. That is necessary
+ * and it is not sufficient, because it says nothing about whether the away
+ * NUMBER IN HAND is the derived complement or a genuine, independently sourced
+ * price. Withholding is only right for the first.
+ *
+ * Measured on production 2026-09-16, `/api/feed?mode=sports`, 13 soccer cards:
+ *
+ * | pair | sums to 1.0000 | sums to 0.68 – 0.94 |
+ * |---|---|---|
+ * | `current_odds` | **13 / 13** | 0 |
+ * | `opening_odds` | 2 / 13 | **11 / 13** |
+ *
+ * So the two pairs on one card are not the same kind of object. The CURRENT
+ * pair is an exact complement — `routes/feed.py` derives away as `1 - home` —
+ * and its away half really is "the home team does not win". The OPENING pair
+ * mostly is not: since #1011 it is de-vigged across the whole quoted board, so
+ * `home + away ≈ 0.73` and the missing ~0.27 IS the draw. That away figure is a
+ * real away price, and Lyon @ Anderlecht's `Opened 40/32` was an honest line.
+ *
+ * A blanket sport-keyed withhold deleted it on 11 of 13 live cards. That is the
+ * mirror image of the defect this file exists to fix — printing a number we
+ * cannot source is one failure, deleting one we can is the other — and this
+ * repo already has the precedent for keeping such a pair: `openedPairCapture`'s
+ * THIN specimen sums to 97 and is left alone on purpose, because "a pair summing
+ * to 0.97 is not two halves of one question".
+ *
+ * ═══ THE PREDICATE ═══
+ *
+ * Withhold when the sport prices a draw AND the away value either is absent or
+ * completes the home value to 1. `isComplementPair`'s [0.99, 1.01] band is the
+ * repo's existing measured definition of "these two are one question" and is
+ * reused rather than restated.
+ *
+ * The ABSENT arm matters: on a draw-priced sport a missing away figure is
+ * withheld rather than merely missing, so the surface keeps its home number and
+ * its layout instead of collapsing. On a two-way sport an absent away is NOT
+ * withheld, which preserves every existing "one side has no reading" render.
+ *
+ * Each locus asks about its OWN pair — a card's chips and its `Opened` footer
+ * can legitimately answer differently, because they are two different pairs
+ * taken at two different instants by two different producers.
+ */
+export function awayIsTheComplement(
+  away: number | null | undefined,
+  home: number | null | undefined,
+  sportKey: string | null | undefined,
+): boolean {
+  if (!sportPricesADraw(sportKey)) return false;
+  if (away === null || away === undefined) return true;
+  return isComplementPair([away, home]);
 }

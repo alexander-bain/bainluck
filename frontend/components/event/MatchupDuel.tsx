@@ -10,7 +10,7 @@
 import { useEffect, useState } from "react";
 import { formatProbability } from "@/lib/api";
 import { matchupKickoffLabel } from "@/lib/eventConceptDisplay";
-import { sportPricesADraw } from "@/lib/drawPricedWinner";
+import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import type { EventConceptChild, EventConceptMatchupSide } from "@/lib/types";
 
 /** National-team crest. Renders the logo when the team resolved (honest gap → a
@@ -220,7 +220,7 @@ export default function MatchupDuel({
   // figure keeps its own row and its own name. That is native's rule for a
   // self-naming row (`EventCardView.probabilityWithMovement`); only the surfaces
   // where POSITION did the naming had to name a survivor instead.
-  const awayWithheld = sportPricesADraw(sport);
+  const awayWithheld = awayIsTheComplement(away?.probability, home?.probability, sport);
 
   return (
     <div

@@ -24,7 +24,7 @@ import {
 } from "@/lib/eventState";
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { probabilityBarPair } from "@/lib/probabilityBarPair";
-import { sportPricesADraw } from "@/lib/drawPricedWinner";
+import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 
 /**
  * This card's bar is painted at full opacity — no `opacity` style on either
@@ -84,7 +84,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   // right, under the home crest, exactly where the pair already put it. The
   // surfaces that had to name a survivor are the ones where position was doing
   // the naming and collapsing moved the number.
-  const awayWithheld = sportPricesADraw(data.sport);
+  const awayWithheld = awayIsTheComplement(awayProb, homeProb, data.sport);
   // UX-P114 — the two numbers below are two sides of ONE question (the feed
   // derives away as `1 - home`), so they are decided together or they sum to 101.
   // Measured 2026-08-21: 34 of 414 live/upcoming events printed 101 here, all 101
@@ -126,6 +126,15 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   // the fork is gone rather than corrected. One phrase, owned by
   // `prematchReading`, so this card and `FeedCard` cannot drift apart.
   const prematchSaid = PREMATCH_SAID;
+  // #6238 — the settled pair comes off `opening_odds`, which is a different pair
+  // from the live one and usually NOT a complement since #1011. Asked separately
+  // so this card does not delete a real opening away price. See
+  // `awayIsTheComplement`.
+  const prematchAwayWithheld = awayIsTheComplement(
+    prematch?.awayProbability,
+    prematch?.homeProbability,
+    data.sport,
+  );
   // #6247 — the WHOLE sport key, resolved to a shelf. The split segment
   // (`americanfootball`, `icehockey`) is not a shelf name, so every NFL and
   // NHL card wore the grey fallback chip and lost its gradient; and the
@@ -428,13 +437,13 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
             instant earlier, so the away half goes with the live one. Same
             `justify-between` geometry, so the home figure stays hard right and
             keeps its attribution. */}
-        {isDone && prematch && prematch.homePercent !== null && (prematch.awayPercent !== null || awayWithheld) && (
+        {isDone && prematch && prematch.homePercent !== null && (prematch.awayPercent !== null || prematchAwayWithheld) && (
           <div
             className="mt-2 flex items-center justify-between text-sm"
             data-testid="event-card-prematch"
             data-prematch-source={prematch.source}
           >
-            {!awayWithheld && (
+            {!prematchAwayWithheld && (
             <span
               className="font-mono tabular-nums text-text-muted"
               data-testid="event-card-prematch-away"
