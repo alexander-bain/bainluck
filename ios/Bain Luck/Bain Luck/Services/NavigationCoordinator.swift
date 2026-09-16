@@ -117,6 +117,41 @@ final class NavigationCoordinator: ObservableObject {
             }
             return true
 
+        // A club's own page — `bainluck://team/boston-red-sox-mlb`, and the web's
+        // `https://bainluck.com/sport/baseball/mlb/team/boston-red-sox`.
+        //
+        // #6444 — the app has rendered `TeamDetailView` for as long as search
+        // could push it, and NO URL could reach it. Two costs, and the second is
+        // why this ships beside the probability fix rather than after it: a team
+        // link shared out of the web app opened the default tab, and the page was
+        // unphotographable, so the before/after LOOK on a team-page change had
+        // nowhere to stand (notice 4). A screen with no route is a screen no lane
+        // can show Alex.
+        //
+        // The slug is passed through rather than parsed: web reads only the last
+        // component of its own URL (`lib/teamRouteSport.ts`) and lets the server
+        // resolve it, so a client-side sport/league check here would be a second,
+        // stricter rule about a string this app does not own.
+        case "team", "teams":
+            if let slug = pathComponents.dropFirst().first, !slug.isEmpty {
+                navigate(to: .teamDetail(slug: slug), tab: .feed)
+                return true
+            }
+            return false
+
+        case "sport":
+            // Only the team URL under `/sport/...` is a screen this app has. Any
+            // other `/sport/<sport>/<league>` path falls through to `false`
+            // exactly as it did before, rather than opening a page that answers a
+            // different question than the link asked.
+            if let marker = pathComponents.firstIndex(of: "team"),
+               marker + 1 < pathComponents.count,
+               !pathComponents[marker + 1].isEmpty {
+                navigate(to: .teamDetail(slug: pathComponents[marker + 1]), tab: .feed)
+                return true
+            }
+            return false
+
         case "my-stuff":
             selectedTab = .myStuff
             return true
