@@ -862,6 +862,7 @@ async def browse_futures(
     from app.utils.outcome_display import (
         drop_dominant_field_outcomes,
         drop_incoherent_near_certain,
+        drop_unbacked_legs,
         is_placeholder_outcome_name,
         leader_pick_order,
     )
@@ -874,6 +875,17 @@ async def browse_futures(
         # answer and becomes the browse card's subtitle. FIRST, so the placeholder
         # filter's `or list(market.outcomes)` fallback can never resurrect one.
         deduped = drop_duplicate_legs(market.outcomes, lambda o: o.external_id)
+        # #6524: a leg with no venue id is not a quote. Browse needs this MORE than
+        # the other two surfaces, not less: market 3821229 (*GPT-5.5 released by…?*)
+        # carries its unbacked leg at **rank 1**, so the frozen `April 8 1.0` is
+        # exactly what a browse card prints as its subtitle. BEFORE the sort and the
+        # `[:3]` slice for the reason the sibling's docstring gives.
+        deduped = drop_unbacked_legs(
+            deduped,
+            lambda o: o.external_id,
+            market_is_open=getattr(market, "status", None) == "open",
+            is_winner_of=lambda o: bool(o.is_winner),
+        )
         # NEVER EMPTIES, matching `display_rank_order`/`drop_dominant_field_outcomes`:
         # a market whose every outcome is a placeholder keeps its rows rather than
         # rendering a card with no subtitle at all.
@@ -5054,6 +5066,7 @@ def _format_market_detail(
         leader_pick_order,
         drop_dominant_field_outcomes,
         drop_incoherent_near_certain,
+        drop_unbacked_legs,
     )
 
     # Q480: one condition, one outcome. Dropped here, on the ORM rows, because the
@@ -5084,14 +5097,35 @@ def _format_market_detail(
     # every superseded row prices 0.0, so no card surfaces one today (checked on
     # all five boards via `/api/events/search`). Applying it there as well would
     # put a ranking-path serializer in scope for no reader-visible gain.
+    #
+    # #6524 runs in the same comprehension, on the ORM rows, and AFTER the two
+    # helpers above rather than beside them. It is the third row-level correctness
+    # drop on this board and the only one keyed on the absence of a venue id:
+    # `drop_duplicate_legs` folds two rows that share an id, `drop_superseded_name_twins`
+    # needs both rows to be id-anchored to establish the correspondence, and neither
+    # can say anything about a row that has no id at all. On 113545 the unbacked
+    # `May 31 1.0` sits directly above an id-anchored `May 31 0.02`, so this also
+    # resolves that board's duplicate label — but by removing the row that is not a
+    # quote, never by picking a survivor on a sort key.
+    #
+    # HERE, and not at the `drop_incoherent_near_certain` line further down, because
+    # this must land before `normalize_display_probs` puts the fabricated 1.0 in the
+    # divisor. It is a no-op on today's six boards (all non-ME, so the squeeze
+    # returns early) and the placement is what keeps it a no-op on the first ME
+    # board that grows one.
     valid_outcomes = [
         o
-        for o in drop_superseded_name_twins(
-            drop_duplicate_legs(market.outcomes, lambda o: o.external_id),
-            name_of=lambda o: o.name,
-            external_id_of=lambda o: o.external_id,
-            is_winner_of=lambda o: o.is_winner,
-            resolution_source_of=lambda o: o.resolution_source,
+        for o in drop_unbacked_legs(
+            drop_superseded_name_twins(
+                drop_duplicate_legs(market.outcomes, lambda o: o.external_id),
+                name_of=lambda o: o.name,
+                external_id_of=lambda o: o.external_id,
+                is_winner_of=lambda o: o.is_winner,
+                resolution_source_of=lambda o: o.resolution_source,
+            ),
+            lambda o: o.external_id,
+            market_is_open=getattr(market, "status", None) == "open",
+            is_winner_of=lambda o: bool(o.is_winner),
         )
         if not is_placeholder_outcome_name(o.name)
     ]
