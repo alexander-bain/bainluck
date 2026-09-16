@@ -245,6 +245,50 @@ final class APreKickoffCertaintyIsNotALivePriceTests: XCTestCase {
         )
     }
 
+    // MARK: - The production call site is armed
+
+    /// 🔴 THE MUTANT EVERY OTHER TEST HERE SURVIVES.
+    ///
+    /// Measured by `tools/native-197-mutations-6595.py`: changing
+    /// `EventDetailView`'s call to `commenceTime: nil` leaves this file 13/13
+    /// green while the guard is completely inert in production. Every test above
+    /// constructs its own `SpecialEventMarketsView`, so not one of them can see
+    /// what the real page passes — the predicate stays correct and stops being
+    /// asked. That is the shape where a shipped guard is disarmed by a field
+    /// rather than by its predicate, and it is invisible from inside the type.
+    ///
+    /// So the call site is read as text. The same idiom as
+    /// `TeamLabelSingleSourceAcrossTargetsTests` and the settled-quote parity
+    /// test, for the same reason: the fact is about a FILE, and no runtime value
+    /// in this target carries it.
+    func testTheEventPagePassesItsRealKickoffToTheCard() throws {
+        let view = Self.projectDirectory
+            .appendingPathComponent("Bain Luck/Views/EventDetailView.swift")
+        let source = try String(contentsOf: view, encoding: .utf8)
+
+        let call = try XCTUnwrap(
+            source.range(of: "SpecialEventMarketsView("),
+            "EventDetailView no longer builds a SpecialEventMarketsView. If the card moved, move this test with it."
+        )
+        let arguments = source[call.upperBound...].prefix(240)
+
+        XCTAssertTrue(
+            arguments.contains("commenceTime: event.commenceTime"),
+            "The event page is not handing the card its kick-off, so PreKickoffCertainty can never fire on a "
+            + "real page however right it is here. Found instead:\n\(arguments)"
+        )
+        XCTAssertFalse(
+            arguments.contains("commenceTime: nil"),
+            "The card is built with an explicit nil clock — the guard is shipped disarmed."
+        )
+    }
+
+    private static var projectDirectory: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // BainLuckTests
+            .deletingLastPathComponent()   // Bain Luck (project dir)
+    }
+
     // MARK: - Fixture
 
     private static func specimenCard(commenceTime: Date?) -> SpecialEventMarketsView {
