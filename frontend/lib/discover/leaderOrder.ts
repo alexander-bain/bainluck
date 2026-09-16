@@ -23,6 +23,37 @@
 type Probable = { probability?: number | null };
 
 /**
+ * Can a card print a percentage for this row? (#6505)
+ *
+ * The other half of the sentence this module's header already ends on — "an
+ * unpriced row is never the leader". It is never a ROW either, and the two
+ * clauses live in one file so they cannot drift apart.
+ *
+ * This is verbatim the test the leaderboard's value cell has always made
+ * (`probability > 0 ? pct : "—"`), lifted out of the leaf. Measured on
+ * production `/api/feed?limit=200`, 2026-09-16 07:2xZ: five cards drew a board
+ * whose rows print `—` where the percentage goes, because the row LIST was
+ * built from everything the payload carried while only the value CELL asked
+ * whether there was a number — so every unanswerable row was still laid out,
+ * ranked, given a bar and counted against the card's minimum-row bar. "Velo
+ * Point of Sale Growth in September" drew eight rungs and one number.
+ *
+ * ZERO IS UNPRINTABLE ON PURPOSE, not an oversight inherited from the truthiness
+ * test it replaces. The backend already serves `probability: null` for a
+ * `0.000000` outcome on the `top_outcomes` carrier (`_outcome_prints_a_price`
+ * reads a Kalshi row at `0.00 bid / 1.00 ask` as an empty book, not a settled
+ * zero) while `distribution_outcomes` passes the same row through as `0.0`. One
+ * predicate over both carriers is what stops them disagreeing on screen. A
+ * genuine settled zero is a RESULT and belongs to the settled rendering, which a
+ * Discover board card is not.
+ */
+export function printsAPercent(
+  probability: number | null | undefined
+): probability is number {
+  return typeof probability === "number" && Number.isFinite(probability) && probability > 0;
+}
+
+/**
  * Leader-first copy of `rows`, highest probability first. Stable; never mutates
  * the input. Always call this before slicing an outcome list for display.
  */

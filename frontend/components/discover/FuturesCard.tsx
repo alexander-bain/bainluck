@@ -6,7 +6,7 @@ import { BarChart3 } from "lucide-react";
 import { buildDiscoverShareUrl, buildLadderShareText, formatShareProbability } from "@/lib/share";
 import type { LadderKind } from "@/lib/share";
 import { marketEventKey, eventPath } from "@/lib/eventKey";
-import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
+import { leaderFirstSlice, printsAPercent } from "@/lib/discover/leaderOrder";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
 import { rowAnswerLabel } from "@/lib/discover/rowAnswerLabel";
 import { buildHeroSrcSet, HERO_IMAGE_SIZES } from "@/lib/discover/heroSrcSet";
@@ -162,7 +162,46 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   const shareText = leader && leaderProbability
     ? `${leader.name} is at ${leaderProbability} in ${data.name} on Bain Luck.`
     : `Track ${data.name} on Bain Luck.`;
-  const heatmapRows = buildHeatmapRows(data);
+  // #6505 — A ROW THE CARD CANNOT PUT A NUMBER ON IS NOT A ROW.
+  //
+  // Measured on production `/api/feed?limit=200`, 2026-09-16 07:2xZ, over the 123
+  // futures cards served: FIVE draw a board whose rows print `—` where the
+  // percentage goes, and on two of them three of the four rows are dashes.
+  // The worst is "Velo Point of Sale Growth in September" (market 59699855, idx
+  // 49, DOM-read at 390px): a nine-rung threshold ladder where eight rungs have
+  // `current_probability = NULL` in the row itself, so the reader gets
+  //
+  //     Above 175 — · Above 190 — · Above 200 — · Above 210 — · Above 220 —
+  //     Above 230 — · Above 240 73% · Above 250 —
+  //
+  // — eight rows of blank, one number. The dash is not a disclosure a reader can
+  // use (notice 34: if a number cannot be shown honestly, leave the space empty;
+  // do not fill it and then explain it), and `leaderFirstSlice` already states
+  // the half of this rule that was written down — "an unpriced row is never the
+  // leader". It is never a ROW either.
+  //
+  // The cut is made here rather than in the payload deliberately: the serializer
+  // keeps serving every outcome (`distribution_outcomes` and `threshold_points`
+  // are read by `discover_bundles` for the bundle measure key, which is a feed
+  // composition decision and not this card's to make). What changes is only what
+  // is drawn.
+  const allHeatmapRows = buildHeatmapRows(data);
+  const heatmapRows = allHeatmapRows.filter((row) => printsAPercent(row.probability));
+  // The `>= 2` bar below asks "is there a ladder here at all". It was written
+  // against rungs that all carry prices, and applied to a ladder whose other
+  // rungs are unpriced it deletes the field a second time — CERT-2456's argument
+  // exactly, one branch over. The hero it falls to is measurably worse for THIS
+  // shape: the composer refuses to name a threshold rung as a subject (#4640
+  // `_no_leader_subject`), so the Velo card's served caption is "Resolves within
+  // a month" and the hero prints a bare `73%` with nothing saying 73% of WHAT.
+  //
+  // So the bar bends ONLY where this ship's own drop is what took the card under
+  // it: a market that simply has one rung is the shape the bar was written for
+  // and keeps it. Stated as "it cleared the bar before the drop and not after",
+  // not as "something was dropped", so no card that renders correctly today
+  // changes shape.
+  const heatmapMinRows =
+    allHeatmapRows.length >= 2 && heatmapRows.length < 2 ? 1 : 2;
   // UX-P248 / CERT-678 repair — computed ONCE, above the variant fork, because
   // the fork is the defect. The first version of this ship read `forYouCue(item)`
   // inline at the single place it remembered to render, and this component has
@@ -178,7 +217,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // (ruling 2026-07-30). Volume still does its job in ranking and gating; it
   // stops being printed as money. `SignalBars` remains the confidence signal.
 
-  if (data.discover_card?.suggested_format === "threshold_heatmap" && heatmapRows.length >= 2) {
+  if (data.discover_card?.suggested_format === "threshold_heatmap" && heatmapRows.length >= heatmapMinRows) {
     const shownCells = heatmapRows.slice(0, 8);
     const above50 = shownCells.filter((r) => (r.probability ?? 0) >= 0.5);
     const lastAbove50Label = above50.length > 0 ? above50[above50.length - 1].label : null;
@@ -310,7 +349,14 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // Typed locally: `data.discover_card` is still untyped debt (see the frontend
   // tsc baseline), so without this annotation these rows arrive as `any` and
   // leaderFirstSlice's generic widens them to its own constraint.
-  const distributionRows: DistributionRow[] = data.discover_card?.distribution_outcomes ?? [];
+  const allDistributionRows: DistributionRow[] = data.discover_card?.distribution_outcomes ?? [];
+  // #6505, the same cut as the ladder above and for the same reason. Production
+  // specimens, same read: "NASCAR: Food City 300 Winner" (61131240) drew
+  // `Anthony Alfredo 47% · Patrick Staropoli — · Justin Allgaier — · Dawson
+  // Cram —`, and "Premier Lacrosse League Championship Winner" (16757299) drew
+  // two priced rows over `Boston Cannons —` and `California Redwoods —`.
+  //
+  const distributionRows = allDistributionRows.filter((row) => printsAPercent(row.probability));
   // CERT-2456 — a ladder whose rungs contradict each other is served as a
   // distribution BECAUSE the backend refused to say which rung is wrong (#4610).
   // Such a card has three rows, not four, and the `>= 4` bar was written for a
@@ -327,7 +373,16 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   const ladderTreatmentRefused =
     (data as { discover_card?: { ladder_treatment_refused?: boolean } }).discover_card
       ?.ladder_treatment_refused === true;
-  const distributionMinRows = ladderTreatmentRefused ? 2 : 4;
+  // #6505 — the same bend as the ladder above, on the same condition and for
+  // the same reason: a board that HAD enough rows to be a board, and lost them
+  // only because we cannot price them, is still a board. Premier Lacrosse is the
+  // specimen — eight rows, two priced at 53/47 with a final four days out, six
+  // sitting at `0.00 bid / 1.00 ask`. Dropping the six and then falling to the
+  // hero for want of a fourth row would delete "Denver Outlaws 47%", which is
+  // the whole interest of that card. A board that was under four rows to begin
+  // with is untouched and still falls through exactly as it does today.
+  const droppedBelowTheBar = allDistributionRows.length >= 4 && distributionRows.length < 4;
+  const distributionMinRows = ladderTreatmentRefused || droppedBelowTheBar ? 2 : 4;
   if (data.discover_card?.suggested_format === "outcome_distribution" && distributionRows.length >= distributionMinRows) {
     // #1526: sort BEFORE slicing. `slice(0, 4)` on an array that is not
     // leader-first drops the leader — the Fed September card showed four
@@ -335,7 +390,10 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     // The rank column below is `index + 1` and titled "Rank N by probability",
     // so an unsorted slice mislabels the rows as well as losing the answer.
     const shownRows = leaderFirstSlice(distributionRows, 4);
-    const remainingCount = data.discover_card.remaining_outcome_count + Math.max(0, distributionRows.length - shownRows.length);
+    // #6505 — counted off the UNFILTERED list, so a row we declined to draw is
+    // still a row the reader is told exists. Filtering the total too would make
+    // the card claim a smaller field than the market has.
+    const remainingCount = data.discover_card.remaining_outcome_count + Math.max(0, allDistributionRows.length - shownRows.length);
 
     // `data-card-format` added by the CERT-678 repair: this was the only one of
     // the four `<article>` roots with no marker, so a render-path test could not
@@ -450,7 +508,13 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
                         />
                       </div>
                     </div>
-                    <span className="text-right font-mono text-xs font-bold tabular-nums text-text-primary">{probability > 0 ? pct : "—"}</span>
+                    {/* #6505 — the same predicate the row list is filtered by,
+                        so this cell can no longer be reached with a dash. Kept
+                        rather than deleted: it is the definition the filter
+                        reads, and a card built from an unfiltered list (a future
+                        caller, a test) must still fail closed on a number it
+                        cannot print. */}
+                    <span className="text-right font-mono text-xs font-bold tabular-nums text-text-primary">{printsAPercent(row.probability) ? pct : "—"}</span>
                   </div>
                 );
               })}
