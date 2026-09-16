@@ -616,6 +616,23 @@ class TestNothingElseChanged:
         that replaced the frontend's seeded sparkline generator. It is listed
         here rather than tolerated by a subset check so the next key to appear
         has to be argued for in this test too.
+
+        `probability` joined it in #6616, and this is the argument. `prob` is
+        `round(p * 100)`, so the route was publishing an integer and the page
+        had nothing left to reason with: four cities stored at ``0.995000`` on
+        OPEN markets printed ``100%``, and 96 city-ladder rows priced as low as
+        ``0.000500`` printed ``0`` — the boundary crossing
+        ``lib/probabilityDisplay.ts`` exists to refuse. Unlike `/entertainment`
+        (#6610), no client-side fix was possible: an integer cannot be
+        un-rounded. So the RAW probability now travels beside the integer on
+        every weather row that prints a percent, and the page applies the
+        boundary rule to the value while keeping this integer as the digits.
+
+        The key is ALWAYS present, for the reason `leader` and `history` are:
+        an absent one means "payload predates the field", which the hourly
+        weather cache really does serve for up to an hour after a deploy, and
+        the page falls back to `prob / 100` — precisely the pre-#6616
+        rendering.
         """
         _serve(mock_db, [
             _market(
@@ -629,5 +646,15 @@ class TestNothingElseChanged:
 
         assert set(item) == {
             "q", "prob", "src", "tag", "closes", "market_id", "leader",
-            "history",
+            "history", "probability",
         }
+        # Named as well as counted: the key has to carry the UNROUNDED price,
+        # or it is a second copy of `prob` wearing a new name and the page's
+        # boundary rule would have nothing to run on. This fixture's leader is
+        # quoted at 0.785 — a half-cent value, which is the whole population
+        # #6616 is about — so `prob / 100` is 0.78 and the two differ. The
+        # integer is still a rounding OF the value, which is the relationship
+        # the page's `rendered` override depends on.
+        assert item["probability"] == 0.785
+        assert item["probability"] != item["prob"] / 100
+        assert round(item["probability"] * 100) == item["prob"]

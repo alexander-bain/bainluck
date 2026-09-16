@@ -698,6 +698,12 @@ class TestCategoryMockedDataContracts:
             {
                 "q": "Will a hurricane make landfall in Florida?",
                 "prob": 62,
+                # #6616: the UNROUNDED price `prob` is a rounding of. `prob`
+                # alone could not be un-rounded, so `/weather` printed `100%`
+                # over four cities quoted at 0.995 and `0` over live 0.0005
+                # ladder rows. The page now applies the boundary rule to this
+                # value and keeps `prob` as the digits.
+                "probability": 0.62,
                 # UX-P186: which outcome `prob` prices. Null here, and that is
                 # the answer rather than an omission — the leader of this market
                 # is "Yes", which only restates the question. The key is always
