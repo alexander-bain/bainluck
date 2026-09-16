@@ -4,7 +4,12 @@ import type { FuturesOutcome } from "@/lib/types";
 import { formatProbability } from "@/lib/api";
 import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 import EntityImage from "@/components/EntityImage";
-import { isNonSportsCategory, isInternationalSport, flagUrl } from "@/lib/images";
+import {
+  isNonSportsCategory,
+  isInternationalSport,
+  isNumericLadder,
+  flagUrl,
+} from "@/lib/images";
 import { SHAPE_QUANTITY, type MarketShape } from "@/lib/marketShape";
 import { isAuthoritativeResolution } from "@/lib/resolutionAuthority";
 
@@ -252,26 +257,57 @@ export function outcomeRowPrintsMove(
  * from the shape rather than re-derived from the outcome text — re-deriving shape
  * from names is the very defect `futuresLadder`'s queue closed.
  *
- * Deliberately NOT extended to the other shapes. `duel`, `field`, `participation`
- * and `container_member` all have genuine entity outcomes (candidates, teams,
- * nominees) and their pictures are the point. `claim` would qualify on principle —
- * "Yes"/"No" are not entities either — but a census of the eight non-sports
- * categories returns **no `claim` rows at all**, so that arm would be unreachable
- * and unprovable; `unshaped` keeps today's behaviour because unknown is not the
- * same as "known to be a threshold".
+ * ## #6632 — a `field` can be a ladder too, and the card already knew it
  *
- * Shape is resolved by the CALLER, once, over the whole outcome set — the same
- * division as `showLastMove` below, and for the same reason: `resolveShape()` owns
- * the `market_type`-then-fallback preference order (`lib/types.ts`: "callers must
- * not re-derive shape themselves") and its fallback needs every outcome name, which
- * a single row does not have.
+ * The paragraph that used to stand here said the other shapes are safe because
+ * "`duel`, `field`, `participation` and `container_member` all have genuine entity
+ * outcomes (candidates, teams, nominees) and their pictures are the point". That is
+ * a statement about what a shape USUALLY holds, and `/futures/112854` ("NATO/EU
+ * troops fighting in Ukraine?") refutes it: `market_type = 'field'`, three outcomes,
+ * and they are **dates** — `December 31, 2026`, `June 30, 2026`, `December 31, 2025`
+ * drew `D3` · `J3` · `D3`, two of them the identical chip, on production at 390px.
+ * A shape says how a board is ORDERED, not whether its rungs have faces.
+ *
+ * So the gate asks the outcome SET whether it is a ladder, and it does not have to
+ * invent a way to ask: `isNumericLadder` (#4416) is exactly that question, and
+ * `FuturesCard` has gated its own avatar on `isNonSports && !numericLadder` since
+ * that queue. The detail page simply never adopted it — the same predicate, one
+ * call site short. Its test is a shared SKELETON, not a numeric look: `50 Cent` and
+ * `Drake` reduce to two different things, so a field of rappers keeps its faces,
+ * while `Democrats, 2+ pts` and `Democrats, 5+ pts` reduce to one.
+ *
+ * Measured over the FULL live population (2026-09-16, 9,476 open non-sports markets,
+ * every non-`quantity` one scanned): **907 flip** — 860 `field`, 47 `duel`, 0
+ * `container_member`, 0 `unshaped`. Every flip read by hand in two passes (all 47
+ * duels; the 33 whose outcome text matches no threshold/date vocabulary at all) and
+ * **no false positive found**: they are margins-of-victory, ballot-measure numbers,
+ * rate-cut counts, quarters and dates. The 47 `duel` rows are the reason this is not
+ * scoped to `field` — the shape a census once measured at 0% now flips 47, which is
+ * the same lesson twice.
+ *
+ * `quantity` keeps its own unconditional arm above: the shape is *known* to be
+ * thresholds even where the names are too irregular to share a skeleton.
+ * `claim` and `unshaped` are unchanged — unknown is not "known to be a threshold".
+ *
+ * Nothing renumbers. Unlike the card, where the avatar and the rank badge share one
+ * slot, this row draws its badge separately, so a withheld picture leaves the rung's
+ * position, name, prices and verdict exactly where they were.
+ *
+ * Shape and names are supplied by the CALLER, once, over the whole outcome set — the
+ * same division as `showLastMove` below, and for the same reason: `resolveShape()`
+ * owns the `market_type`-then-fallback preference order (`lib/types.ts`: "callers
+ * must not re-derive shape themselves") and both tests need every outcome name,
+ * which a single row does not have. `outcomeNames` is REQUIRED for the reason
+ * `showEntityImage` is: an optional one would let the next surface inherit the bug.
  */
 export function outcomeRowShowsEntityImage(
   marketCategory: string | null | undefined,
   shape: MarketShape | null,
+  outcomeNames: readonly string[],
 ): boolean {
   if (!isNonSportsCategory(marketCategory ?? null)) return false;
-  return shape !== SHAPE_QUANTITY;
+  if (shape === SHAPE_QUANTITY) return false;
+  return !isNumericLadder(outcomeNames);
 }
 
 /**
