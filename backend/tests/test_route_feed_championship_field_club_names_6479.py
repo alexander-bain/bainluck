@@ -456,3 +456,155 @@ def test_the_matching_predicates_still_read_the_raw_provider_name_6479():
         assert "_team_name_matches(team_name, o.name)" in src, (
             f"{fn_name}: the saved-team predicate stopped reading the raw name"
         )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# #6552, int390's hold: `leader_name` was NOT print-only, and repairing it in
+# place changed what the feed SURFACES and what it SCORES.
+#
+# Two consumers match the leader by string equality against text that is still
+# raw: `outcomes_data[*]["name"]` (built from `o.name`, in both serializers) and
+# the stored `hook_leader_at_generation` (written raw by
+# `enrich_markets.py:726`). So the repair made the lookup MISS on exactly the
+# rows it fires on — the card this ship exists to fix was the card that
+# disappeared. These four tests are red against `leader_name =
+# _card_outcome_name(leader)` and green against the two-name split.
+# ──────────────────────────────────────────────────────────────────────────────
+
+#: Leader at 95% (>= the 0.90 sports resolved threshold) whose OPENING price is
+#: 30% (< the 0.70 opening threshold), i.e. a genuine long-shot that came in —
+#: the population the "effectively resolved" gate is written to KEEP. One rung
+#: carries real 24h movement so `sports_effectively_settled` stays False; with
+#: everything flat the card is dropped for a reason that has nothing to do with
+#: this ship.
+SETTLED_RUNGS = [
+    (643828, "KXSB-27-LAR", "Los Angeles R", 0.95),
+    (643833, "KXSB-27-BUF", "Buffalo", 0.03),
+    (643841, "KXSB-27-BAL", "Baltimore", 0.01),
+    (643832, "KXSB-27-LAC", "Los Angeles C", 0.01),
+]
+
+
+def _settled_board():
+    """A board whose leader IS repaired, sitting on the resolved-gate boundary."""
+    board = _board(SETTLED_RUNGS)
+    for o in board.outcomes:
+        o.opening_probability = 0.30 if o.name == "Los Angeles R" else 0.20
+        o.probability_change_24h = 0.05 if o.name == "Los Angeles R" else 0.0
+    return board
+
+
+def _outcomes_data_for(board):
+    """The scoring list as both serializers build it — raw provider names."""
+    return [
+        {
+            "name": o.name,
+            "team_id": None,
+            "team_name": None,
+            "probability": float(o.current_probability),
+            "probability_change_24h": o.probability_change_24h,
+            "rank": None,
+            "rank_change_24h": None,
+            "opening_probability": o.opening_probability,
+        }
+        for o in board.outcomes
+    ]
+
+
+def test_the_gate_drops_a_leader_name_it_cannot_find_6552():
+    """Why the serializers must hand this helper the PROVIDER's text.
+
+    `_market_runtime_filter_trace` resolves `leader_opening` by string equality
+    against `outcomes_data`, which is built from raw `o.name`. Handed a
+    completed label it finds nothing — and `None` is not neutral there, it is
+    the drop branch of both the effectively-resolved and the
+    soft-settled-binary gates.
+
+    This pins the helper's behaviour rather than asking it to change: it cannot
+    know that two strings are one club, and teaching it would put the repair
+    inside a predicate. The fix is that its CALLERS pass the raw name; the three
+    tests below prove they do. This one exists so that if someone later "tidies"
+    a caller back onto the completed label, the reason it breaks is written down
+    right here.
+    """
+    from app.routes.feed import _market_runtime_filter_trace
+
+    board = _settled_board()
+    outcomes_data = _outcomes_data_for(board)
+    now = datetime.now(timezone.utc)
+
+    def verdict(leader_name):
+        return _market_runtime_filter_trace(
+            board,
+            outcomes_data,
+            leader_name,
+            0.95,
+            now,
+            sport_category="football",
+            newest_outcome_at=now,
+        )
+
+    raw = verdict("Los Angeles R")
+    repaired = verdict("Los Angeles Rams")
+
+    # The control: the raw name is the one the gate was written against, and on
+    # this fixture it KEEPS the card. Without this the test passes on two
+    # equally-dropped verdicts.
+    assert raw["eligible"] is True, (
+        "the fixture is not exercising the keep path — the rig, not the ship"
+    )
+    assert "effectively_resolved" not in raw["blockers"]
+
+    assert raw["checks"]["leader_opening_probability"] == 0.30
+
+    # Handed the completed label, the same market on the same prices is dropped.
+    # This is the defect int390 held `949549db5` on, reproduced at the helper.
+    assert repaired["eligible"] is False
+    assert "effectively_resolved" in repaired["blockers"]
+    assert repaired["checks"]["leader_opening_probability"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_settled_board_with_a_repaired_leader_still_surfaces_on_sports_6552():
+    """`_score_sports_mode_futures` carries its own inline copy of the gate."""
+    items = await _serve_sports([_settled_board()])
+    assert items, (
+        "the card vanished: completing the leader's label made the "
+        "opening-price lookup miss, and the resolved gate dropped it"
+    )
+    # …and it is the repaired label that reaches the reader.
+    assert "Los Angeles Rams" in _prose(_card(items))
+
+
+@pytest.mark.asyncio
+async def test_a_settled_board_with_a_repaired_leader_still_surfaces_on_discover_6552():
+    """The `_score_futures` twin, which reaches the gate via the shared helper."""
+    items = await _serve_discover([_settled_board()])
+    assert items, (
+        "the card vanished on the discover serializer for the same reason"
+    )
+    assert "Los Angeles Rams" in _prose(_card(items))
+
+
+@pytest.mark.asyncio
+async def test_completing_the_leader_name_does_not_suppress_the_hook_6552():
+    """A rename is not a leader CHANGE, and must not cost the card its hook.
+
+    `hook_leader_at_generation` is written raw by `enrich_markets`. Compared
+    against a completed serve-time label it never matches, so `is_hook_stale`
+    step 2 fires, `effective_hook` becomes None and `base_score` moves through
+    `apply_explanation_quality_score` — on a market whose leader never changed.
+    """
+    board = _board()
+    board.hook_description = "The Rams have not led this board since March."
+    board.hook_generated_at = datetime.now(timezone.utc) - timedelta(days=1)
+    board.hook_leader_at_generation = "Los Angeles R"  # raw, as stored
+    board.market_metadata = {"hook_policy_version": 2}
+
+    for serve in (_serve_discover, _serve_sports):
+        items = await serve([board])
+        card = _card(items)
+        assert card["data"]["hook_description"] == board.hook_description, (
+            f"{serve.__name__}: the hook was suppressed because our spelling of "
+            "the leader changed, not because the leader did"
+        )

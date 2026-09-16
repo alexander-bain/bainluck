@@ -6146,6 +6146,51 @@ def _card_outcome_name(outcome) -> Optional[str]:
     return repair_field_outcome_name(outcome.external_id, outcome.name) or outcome.name
 
 
+def _card_display_names(outcomes) -> dict[str, str]:
+    """Map each rung's RAW provider name to the label a reader should see.
+
+    🔴 **A name that is printed is also, three times over, a lookup key**
+    (#6552, int390's hold on `949549db5`). `leader_name`, `top_mover_name` and
+    `top_surprise_name` are each matched by string equality against
+    `outcomes_data[*]["name"]` — which is raw `o.name` — and `leader_name` is
+    additionally compared with the stored `hook_leader_at_generation`, written
+    raw by `enrich_markets`. Completing any of them IN PLACE therefore makes
+    the lookup miss on exactly the rows the repair fires on: `leader_opening`
+    falls to `None`, which is the DROP branch of both the effectively-resolved
+    and the soft-settled-binary gates, and the hook is judged stale so
+    `base_score` moves. The card this ship exists to fix was the card that
+    vanished.
+
+    So the variables stay raw and the completion happens once, HERE, at the
+    print step. The map is keyed on the raw name because that is what every
+    producer of those three values hands back.
+
+    Built from the ORM rows rather than from `outcomes_data` because the repair
+    is id-anchored: the ticker lives on the outcome, not in the scoring dict.
+    """
+    display: dict[str, str] = {}
+    for o in outcomes:
+        raw = getattr(o, "name", None)
+        if raw:
+            display[raw] = _card_outcome_name(o) or raw
+    return display
+
+
+def _printed_outcome_name(
+    raw_name: Optional[str], display_names: dict[str, str], market_name: str
+) -> Optional[str]:
+    """The completed, humanized label for a name that is about to be PRINTED.
+
+    Falsy in, falsy out — the callers' `if name else name` idiom, kept so a
+    `None` leader still reaches the headline generators as `None`.
+    """
+    if not raw_name:
+        return raw_name
+    return humanize_binary_outcome_name(
+        display_names.get(raw_name, raw_name), market_name
+    )
+
+
 def _normalize_feed_probabilities(
     top_outcomes: list[dict],
     all_sorted_outcomes: list,
@@ -9527,6 +9572,8 @@ async def _score_sports_mode_futures(
         outcomes_data = []
         leader_name = None
         leader_prob = None
+        # #6552 — completion happens at the print step, never in place.
+        display_names = _card_display_names(sorted_outcomes[:10])
 
         for o in sorted_outcomes[:10]:
             prob = float(o.current_probability) if o.current_probability else None
@@ -9552,9 +9599,10 @@ async def _score_sports_mode_futures(
 
         if sorted_outcomes:
             leader = sorted_outcomes[0]
-            # #6479's engine, fourth reader path: the headline and the context
-            # summary print this name, so it is a label (see `_card_outcome_name`).
-            leader_name = _card_outcome_name(leader)
+            # RAW: `leader_name` is a lookup key here, not only a label — see
+            # `_card_display_names`. The reader's spelling is applied at the
+            # print step (`_h_leader`), which is #6479's fourth reader path.
+            leader_name = leader.name
             leader_prob = (
                 float(leader.current_probability)
                 if leader.current_probability
@@ -9822,20 +9870,12 @@ async def _score_sports_mode_futures(
             top_outcomes_data, _raw_card_names
         )
 
-        _h_leader = (
-            humanize_binary_outcome_name(leader_name, market.name)
-            if leader_name
-            else leader_name
-        )
-        _h_mover = (
-            humanize_binary_outcome_name(top_mover_name, market.name)
-            if top_mover_name
-            else top_mover_name
-        )
-        _h_surprise = (
-            humanize_binary_outcome_name(top_surprise_name, market.name)
-            if top_surprise_name
-            else top_surprise_name
+        # THE PRINT STEP (#6552). These three are the only completed copies;
+        # every predicate above keeps the raw `*_name` it matched on.
+        _h_leader = _printed_outcome_name(leader_name, display_names, market.name)
+        _h_mover = _printed_outcome_name(top_mover_name, display_names, market.name)
+        _h_surprise = _printed_outcome_name(
+            top_surprise_name, display_names, market.name
         )
 
         headline = (
@@ -11014,6 +11054,9 @@ async def _score_futures(
                 ),
             )
 
+            # #6552 — completion happens at the print step, never in place.
+            display_names = _card_display_names(sorted_outcomes[:10])
+
             for o in sorted_outcomes[:10]:  # Score based on top 10 outcomes
                 prob = float(o.current_probability) if o.current_probability else None
                 change = (
@@ -11038,8 +11081,10 @@ async def _score_futures(
 
             if sorted_outcomes:
                 leader = sorted_outcomes[0]
-                # The twin of the sports-mode site: headline + context copy.
-                leader_name = _card_outcome_name(leader)
+                # RAW, the twin of the sports-mode site. Here the equality match
+                # lives inside `_market_runtime_filter_trace`, which is handed
+                # `outcomes_data` (raw) and this name.
+                leader_name = leader.name
                 leader_prob = (
                     float(leader.current_probability)
                     if leader.current_probability
@@ -11256,20 +11301,14 @@ async def _score_futures(
             # Scoring/filtering above uses the raw names; display-facing
             # generators below use humanized versions so headlines read
             # "Anthropic leads at 69%" instead of "Yes leads at 69%".
-            _h_leader = (
-                humanize_binary_outcome_name(leader_name, market.name)
-                if leader_name
-                else leader_name
+            # …and #6552's completed club label is applied in the same step,
+            # so the raw `*_name` above stays the lookup key it has to be.
+            _h_leader = _printed_outcome_name(leader_name, display_names, market.name)
+            _h_mover = _printed_outcome_name(
+                top_mover_name, display_names, market.name
             )
-            _h_mover = (
-                humanize_binary_outcome_name(top_mover_name, market.name)
-                if top_mover_name
-                else top_mover_name
-            )
-            _h_surprise = (
-                humanize_binary_outcome_name(top_surprise_name, market.name)
-                if top_surprise_name
-                else top_surprise_name
+            _h_surprise = _printed_outcome_name(
+                top_surprise_name, display_names, market.name
             )
 
             headline = (
@@ -11828,7 +11867,8 @@ async def _score_futures(
             # Add resolved metadata for markets that have effectively settled
             if is_effectively_resolved:
                 futures_data["resolved"] = True
-                futures_data["winner"] = leader_name
+                # Printed as the winner's name on the card (#6552).
+                futures_data["winner"] = display_names.get(leader_name, leader_name)
                 futures_data["winner_opening_probability"] = leader_opening
 
             # Sort time: higher-tier markets and markets resolving soon get priority.
