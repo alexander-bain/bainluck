@@ -27,6 +27,7 @@ from app.models import (
 )
 from app.services import get_db
 from app.utils.db_cancellation import is_query_canceled
+from app.utils.futures_unsupported_price import price_refuted_by_live_book  # #6532
 from app.utils.tournament_stages import classify_market_stage, get_stages_for_sport
 from app.utils.static_divisions import lookup_division as _static_lookup_division
 from app.utils.grid_register import GridRegister, load_register
@@ -3703,6 +3704,11 @@ async def get_playoff_grid(
         # Use a much longer cutoff for these columns.
         _settled_cutoff = datetime.now(timezone.utc) - timedelta(days=60)
         _stale_skipped = 0
+        # #6532. A SEPARATE counter from `_stale_skipped` on purpose: staleness is
+        # a clock fact about a row nobody refreshed, and this is a row that IS
+        # being refreshed — its book columns are current and its price is not —
+        # so collapsing the two would report the loud case as the quiet one.
+        _book_refuted_skipped = 0
 
         # Resolve every market to its column FIRST (market fields only), then load
         # outcomes for just the survivors — phase 2 of the #1484 bounded load.
@@ -3725,6 +3731,46 @@ async def get_playoff_grid(
             for outcome in outcomes_by_market.get(market.id, ()):
                 if outcome.last_updated and outcome.last_updated < cutoff:
                     _stale_skipped += 1
+                    continue
+                # #6532 — A PRICE THE ROW'S OWN BOOK PRICES OUT IS NOT A CELL.
+                #
+                # This is the surface the defect was FOUND on, not a rider.
+                # `/events/15312074` printed "Relegated 99%" for Real Sociedad
+                # under Season context, beneath that club's own 2-1-3 record, on
+                # a fixture four days from kick-off; `/sport/soccer/laliga`
+                # printed the same number in a column summing to 8.24 where
+                # exactly three clubs go down. Both read THIS grid through
+                # `services/league_context`, never `/api/futures/{id}`, so the
+                # serve-side withholding the futures ladder gained in the same
+                # ship would have left every surface the reader complained about
+                # unchanged.
+                #
+                # Row-local and no query: the predicate reads the served price
+                # against the two book columns beside it, three fields of one
+                # write. Everything measured about it, and why a graded winner is
+                # never touched, is in
+                # `app.utils.futures_unsupported_price.price_refuted_by_live_book`.
+                #
+                # BEFORE the bid/ask fallback below, which is the order that
+                # matters: that branch AVERAGES the book, so its result can never
+                # exceed the ask and asking it this question would always answer
+                # no. Only a stored price can be priced out by the book it was
+                # stored beside.
+                if price_refuted_by_live_book(
+                    market.source,
+                    outcome.resolution_source,
+                    outcome.is_winner,
+                    float(outcome.current_probability)
+                    if outcome.current_probability is not None
+                    else None,
+                    float(outcome.current_yes_bid)
+                    if outcome.current_yes_bid is not None
+                    else None,
+                    float(outcome.current_yes_ask)
+                    if outcome.current_yes_ask is not None
+                    else None,
+                ):
+                    _book_refuted_skipped += 1
                     continue
                 if outcome.current_probability is not None:
                     prob = float(outcome.current_probability)
@@ -3778,6 +3824,12 @@ async def get_playoff_grid(
             logger.info(
                 "Playoff grid %s: skipped %d stale outcomes (>7 days old)",
                 league_slug, _stale_skipped,
+            )
+        if _book_refuted_skipped:
+            logger.info(
+                "Playoff grid %s: skipped %d outcomes whose own book prices the "
+                "stored price out (#6532)",
+                league_slug, _book_refuted_skipped,
             )
 
         # Backfill empty columns from resolved markets (e.g., make_playoffs after

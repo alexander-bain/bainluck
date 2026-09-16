@@ -222,6 +222,17 @@ COVERED = (
     # event with no `kalshi` key at all, at which point `jsonb_exists` selects
     # nothing and the whole file passes having withdrawn nothing.
     "test_stranded_prekickoff_hero_6511_pg.py",
+    # #6532. Seeds `futures_markets` and `futures_outcomes` by raw INSERT and
+    # drives the whole playoff-grid route over them. Two columns carry the
+    # lesson: `futures_markets.llm_sport_category`, which is NULLABLE and is
+    # therefore invisible to the NOT-NULL arm below — yet la-liga configures no
+    # Kalshi ticker prefix, so it is the ONLY way the corpus reaches the grid at
+    # all, and a seed without it makes every "the refused leg is gone"
+    # assertion true of rows nothing could have served; and
+    # `futures_outcomes.last_updated`, taken from the server because the ingest
+    # loop drops anything older than seven days before the arm under test ever
+    # sees it.
+    "test_grid_book_refuted_price_6532_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"

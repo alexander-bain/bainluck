@@ -25,6 +25,7 @@ from app.utils.futures_unsupported_price import (
     needs_trade_disconfirmation,
     needs_trade_evidence,
     price_is_unsupported,
+    price_refuted_by_live_book,
     snapshot_price_is_unsupported,
 )
 from app.utils.game_market_club_names import repair_field_outcome_name
@@ -2896,18 +2897,25 @@ def _drop_unsupported_snapshot_points(snapshots: list, outcomes) -> list:
     always load the outcomes whose ids they queried, so this is a guard against a
     future caller, not a live branch.
     """
-    grades = {o.id: o.resolution_source for o in outcomes}
+    # #6532: the verdict rides along with the grade because the third arm needs
+    # BOTH — a graded winner keeps every point whatever its stale book says, and
+    # only an affirmative loser is asked the question at all. One dict, so an
+    # outcome we did not load still fails the `in` test above and keeps its points.
+    grades = {o.id: (o.resolution_source, o.is_winner) for o in outcomes}
     kept = []
     for snapshot in snapshots:
-        if snapshot.outcome_id in grades and snapshot_price_is_unsupported(
-            snapshot.bookmaker,
-            grades[snapshot.outcome_id],
-            _as_float(snapshot.probability),
-            _as_float(getattr(snapshot, "yes_bid", None)),
-            _as_float(getattr(snapshot, "yes_ask", None)),
-            _as_float(getattr(snapshot, "last_price", None)),
-        ):
-            continue
+        if snapshot.outcome_id in grades:
+            resolution_source, is_winner = grades[snapshot.outcome_id]
+            if snapshot_price_is_unsupported(
+                snapshot.bookmaker,
+                resolution_source,
+                _as_float(snapshot.probability),
+                _as_float(getattr(snapshot, "yes_bid", None)),
+                _as_float(getattr(snapshot, "yes_ask", None)),
+                _as_float(getattr(snapshot, "last_price", None)),
+                is_winner=is_winner,
+            ):
+                continue
         kept.append(snapshot)
     return kept
 
@@ -3084,6 +3092,35 @@ async def _refuted_midpoint_outcome_ids(
     }
 
 
+def _book_refuted_outcome_ids(market: FuturesMarket) -> set[int]:
+    """Which of this market's outcomes serve a price their own book prices out.
+
+    #6532, the third arm, and the only one of the three that costs NOTHING. Its
+    two siblings each need the newest snapshot to answer "did this ever trade" or
+    "what did it last trade at", so each runs a query. This one reads the served
+    price against the book columns sitting on the same row — three fields of one
+    write — so it is a pass over outcomes already in memory, no query, no index,
+    and synchronous for that reason rather than by omission.
+
+    The rule and everything measured about it are in
+    :func:`app.utils.futures_unsupported_price.price_refuted_by_live_book`,
+    including why a graded winner is never touched and why a graded loser is asked
+    only half the predicate.
+    """
+    return {
+        o.id
+        for o in market.outcomes
+        if price_refuted_by_live_book(
+            market.source,
+            o.resolution_source,
+            o.is_winner,
+            _as_float(o.current_probability),
+            _as_float(getattr(o, "current_yes_bid", None)),
+            _as_float(getattr(o, "current_yes_ask", None)),
+        )
+    }
+
+
 @router.get("/{market_id}")
 async def get_futures_market(
     market_id: int,
@@ -3126,6 +3163,7 @@ async def get_futures_market(
     # Polymarket's asks whether the newest trade refutes it.
     unsupported_price_ids = await _unsupported_price_outcome_ids(db, market)
     unsupported_price_ids |= await _refuted_midpoint_outcome_ids(db, market)
+    unsupported_price_ids |= _book_refuted_outcome_ids(market)
 
     detail = _format_market_detail(market, bookmakers, unsupported_price_ids)
     if len(bookmakers) > 1 and source_breakdown:

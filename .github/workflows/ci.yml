@@ -2327,6 +2327,40 @@ jobs:
             exit 1
           fi
 
+      - name: "#6532 a price the row's own book prices out, at the GRID (real Postgres)"
+        # `/events/15312074` printed "Relegated 99%" for Real Sociedad beneath
+        # that club's own 2-1-3 record, four days before kick-off, while its row
+        # carried `current_yes_ask 0.4900` — you can buy the outcome at 49c.
+        # Same number on `/events/15312073` and on `/sport/soccer/laliga`, in a
+        # column summing to 8.24 where exactly three clubs go down.
+        #
+        # All three of those surfaces read `routes/playoffs.get_playoff_grid`
+        # through `services/league_context`; none reads `/api/futures/{id}`. So
+        # the unit file `tests/test_futures_book_refuted_price_6532.py` would go
+        # on passing on the day the grid stopped calling the predicate, and every
+        # surface the reader complained about would be unchanged. This step takes
+        # its assertions off the payload the page renders, with the route running
+        # its own SQL — including the raw `SET LOCAL statement_timeout` it opens
+        # with, the bounded outcome load (#1484) and the cross-source merge below
+        # the arm.
+        #
+        # Measured non-vacuous, seven mutants, each killed by the control named
+        # for it: unwiring the grid's `continue`; making a graded WINNER
+        # withholdable (which would delete a result); giving a graded loser the
+        # mirror bid arm (110 production legs); dropping the Kalshi scoping (the
+        # Polymarket control, gotcha #19); zeroing the shared half-cent
+        # tolerance; dropping `yes_ask > 0`; and dropping the ungraded bid arm.
+        #
+        # Same skip detection as every gate in this job.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_grid_book_refuted_price_6532_pg.py \
+            -v -rs 2>&1 | tee /tmp/bookrefuted6532.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/bookrefuted6532.txt; then
+            echo "::error::#6532 book-refutation grid gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Live blend concurrent stamp, two socket arms (real Postgres)
         # live/305's hero flicker, #836/#837/#5661. `worker-ws` runs the Kalshi
         # and Polymarket consumers under one `asyncio.gather`, each with its own
