@@ -2,15 +2,54 @@ import { getSourceColor } from "@/lib/sourceColors";
 
 export type Source = "kalshi" | "polymarket";
 
+/**
+ * #6616 — WHAT `prob` LOST, AND WHERE IT COMES BACK.
+ *
+ * Every weather row carries `prob`, a WHOLE PERCENT the route rounded before it
+ * served it. That rounding moves a probability across a boundary it is not on,
+ * which is the one thing `lib/probabilityDisplay.ts` exists to refuse: four
+ * cities quoted at 0.995 on OPEN monthly-rain markets printed `100%`, and 96
+ * temperature buckets priced as low as 0.000500 arrived as a flat `0`. Unlike
+ * `/entertainment` (#6610), the page could not fix this alone — an `int` cannot
+ * be un-rounded, so the raw value had to start travelling.
+ *
+ * `probability` is that raw value, in [0, 1], on every row that prints a
+ * percent. It is OPTIONAL for the reason `leader` and `history` are: the hourly
+ * Redis cache can serve a payload built before the field existed. Read it
+ * through {@link weatherProbability}, never directly — the fallback belongs in
+ * one place, and `prob / 100` is precisely the pre-#6616 rendering, so a stale
+ * cached payload degrades to exactly today's picture rather than to a wrong one.
+ */
+export type ServedPercent = {
+  prob: number;
+  probability?: number | null;
+};
+
+/** The probability a weather row's percent stands for, in [0, 1].
+ *
+ *  Hand this to `probabilityParts` / `formatProbabilityPercent` together with
+ *  `rendered: row.prob`, so the boundary rule runs on the VALUE while the
+ *  integer stays the one the server decided (`probabilityDisplay.ts` line 99:
+ *  "a claim about the value, not about which arithmetic produced the integer").
+ *  The two rules compose; neither is a substitute for the other. */
+export function weatherProbability(row: ServedPercent): number {
+  const raw = row.probability;
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  return row.prob / 100;
+}
+
+/** One bucket of a city's temperature ladder. Named because four call sites
+ *  spelled it out longhand and #6616 had to widen every one of them. */
+export type TempBucket = ServedPercent & { label: string };
+
 // `leader` is the name of the outcome `prob` belongs to — "Minneapolis" under
 // "Where will it rain on Aug 29, 2026?". Null when the market is binary and the
 // question already carries its own answer; OPTIONAL because the hourly Redis
 // cache can serve a payload built before the field existed, and a hero that
 // printed "undefined" for an hour after deploy would be a worse bug than the
 // one this fixes.
-export type FeaturedMarket = {
+export type FeaturedMarket = ServedPercent & {
   q: string;
-  prob: number;
   src: Source;
   tag: string;
   closes: string;
@@ -36,29 +75,28 @@ export type CityData = {
   high: {
     unit: "C" | "F";
     mode: number;
-    dist: Array<{ label: string; prob: number }>;
+    dist: TempBucket[];
   };
   kalshiHigh?: {
     unit: "C" | "F";
     mode: number;
-    dist: Array<{ label: string; prob: number }>;
+    dist: TempBucket[];
   };
   low?: {
     unit: "C" | "F";
     mode: number;
-    dist: Array<{ label: string; prob: number }>;
+    dist: TempBucket[];
   };
   rainToday?: number;
 };
 
-export type RainDay = {
+export type RainDay = ServedPercent & {
   day: string;
   date: string;
   /** The day this probability is about, `YYYY-MM-DD`, from the market's own
    *  ticker. Optional because a cached payload written before ux/1078 (#3219)
    *  has no such field; a row without one is never labelled "Today". */
   iso?: string;
-  prob: number;
   icon: string;
 };
 
@@ -77,35 +115,31 @@ export function nycToday(now: Date = new Date()): string {
   }).format(now);
 }
 
-export type MonthlyRain = {
+export type MonthlyRain = ServedPercent & {
   city: string;
   /** The month the market resolves for ("Nov 2026"). Not the current month —
    *  a city's surviving row can be any future month, so the card is told. */
   period?: string | null;
-  prob: number;
   src: Source;
   delta24h?: number;
 };
 
-export type EventMarket = {
+export type EventMarket = ServedPercent & {
   q: string;
-  prob: number;
   src: Source;
   closes: string;
   /** See {@link FeaturedMarket.leader} — same field, same contract. */
   leader?: string | null;
 };
 
-export type ClimateMarket = {
+export type ClimateMarket = ServedPercent & {
   q: string;
-  prob: number;
   src: Source;
   scale: "2026" | "2030" | "2050";
 };
 
-export type WildCard = {
+export type WildCard = ServedPercent & {
   q: string;
-  prob: number;
   src: Source;
   tag: string;
   /** See {@link FeaturedMarket.leader} — same field, same contract. */

@@ -76,14 +76,34 @@ def _format_closes(dt: datetime | None) -> str | None:
     return dt.strftime("%a, %b %d").replace(" 0", " ")
 
 
-def _highest_prob(market: FuturesMarket) -> float:
-    """Return the highest current_probability among a market's outcomes, as 0-100 int."""
+def _highest_probability(market: FuturesMarket) -> float:
+    """Highest ``current_probability`` among a market's outcomes, 0-1.
+
+    #6616 — THE RAW VALUE IS THE ONE THE PAGE CANNOT RECOVER. Every weather card
+    prints a whole percent, and the rounding that produces it moves a probability
+    across a boundary it is not on: four cities stored at ``0.995000`` on OPEN
+    markets printed ``100%``, and 96 city-distribution rows priced as low as
+    ``0.000500`` printed ``0``. That is the class ``lib/probabilityDisplay.ts``
+    exists to refuse ("rounding may never move a probability across a boundary it
+    is not on"), and the client could not apply the rule here because this route
+    served an ``int`` — a served ``100`` and a genuine certainty are the same
+    bytes once the decimal is gone.
+
+    So the scan is split: the raw probability is what the payload carries beside
+    the integer, and the integer is derived from it here rather than computed a
+    second time somewhere else.
+    """
     best = 0.0
     for o in market.outcomes:
         p = float(o.current_probability or 0)
         if p > best:
             best = p
-    return round(best * 100)
+    return best
+
+
+def _highest_prob(market: FuturesMarket) -> float:
+    """Return the highest current_probability among a market's outcomes, as 0-100 int."""
+    return round(_highest_probability(market) * 100)
 
 
 def _market_source(market: FuturesMarket) -> str:
@@ -288,13 +308,22 @@ def _resolve_city(name: str) -> str | None:
 # Rain helpers
 # ---------------------------------------------------------------------------
 
-def _rain_icon(prob: int) -> str:
-    """Return an icon based on rain probability."""
-    if prob >= 100:
+def _rain_icon(probability: float) -> str:
+    """Return an icon based on rain probability, 0-1.
+
+    #6616 — THE ICON IS A CLAIM TOO. This took the ROUNDED percent, so its top
+    arm (``>= 100``, the umbrella that says "it is raining, full stop") fires on
+    a 99.5¢ book: the same half-cent quote that makes the text print ``100%``
+    also draws the certainty glyph beside it. Keying the arm on the raw value
+    puts the icon under the same rule as the number — a market strictly inside
+    (0, 1) is never certain — and leaves every other threshold exactly where it
+    was.
+    """
+    if probability >= 1:
         return "\u2614"   # ☔
-    if prob >= 65:
+    if probability >= 0.65:
         return "\U0001F327"  # 🌧️
-    if prob >= 35:
+    if probability >= 0.35:
         return "\u26C5"   # ⛅
     return "\u2600\uFE0F"  # ☀️
 
@@ -419,6 +448,19 @@ def _card_outcome(market: FuturesMarket):
     return _leader_outcome(market)
 
 
+def _card_probability(market: FuturesMarket) -> float:
+    """The probability a card is about, 0-1, for the outcome it is about.
+
+    The unrounded twin of ``_card_prob`` and the value the payload carries
+    beside it — see ``_highest_probability`` (#6616) for why the integer alone
+    cannot be un-rounded by the page.
+    """
+    outcome = _card_outcome(market)
+    if outcome is None or outcome.current_probability is None:
+        return _highest_probability(market)
+    return float(outcome.current_probability)
+
+
 def _card_prob(market: FuturesMarket) -> float:
     """The probability a card prints, 0-100, for the outcome it is about.
 
@@ -427,10 +469,7 @@ def _card_prob(market: FuturesMarket) -> float:
     cannot reach a card at all (``_open_weather_query``), so the floor is
     unreachable defence rather than a displayed number.
     """
-    outcome = _card_outcome(market)
-    if outcome is None or outcome.current_probability is None:
-        return _highest_prob(market)
-    return round(float(outcome.current_probability) * 100)
+    return round(_card_probability(market) * 100)
 
 
 def _leader_outcome_name(market: FuturesMarket) -> str | None:
@@ -834,6 +873,13 @@ async def get_featured(db: AsyncSession):
         items.append({
             "q": m.name,
             "prob": _card_prob(m),
+            # The unrounded value `prob` is a rounding OF, so the page can apply
+            # the boundary rule the integer has already destroyed (#6616). Every
+            # weather row that prints a percent carries this beside it; the
+            # client falls back to `prob / 100` when it is absent, because the
+            # hourly Redis cache can serve a payload built before the field
+            # existed — the same contract `leader` and `history` carry below.
+            "probability": _card_probability(m),
             # Real captures for the outcome the card is about (`_card_outcome`,
             # the same one `prob` and `leader` read), oldest first — the ONLY
             # thing the hero sparkline may draw. Empty when the market has
@@ -912,9 +958,18 @@ async def get_cities(db: AsyncSession):
         sources.add(_market_source(chosen))
 
         for o in chosen.outcomes:
-            p = round(float(o.current_probability or 0) * 100)
+            raw = float(o.current_probability or 0)
+            p = round(raw * 100)
             sort_key = _extract_sort_temp(o.name)
-            dist.append({"label": o.name, "prob": p, "_sort": sort_key})
+            # `probability` is the raw twin of `prob` (#6616). The tails of a
+            # city's ladder are where this matters most: 96 rows across 42
+            # cities serve `prob: 0` over live prices — Los Angeles quotes both
+            # "63°F or below" and "64-65°F" at 0.000500 — and a bucket the panel
+            # reads as a flat zero draws no bar and offers no tooltip, which
+            # tells a reader the outcome is impossible by omission.
+            dist.append(
+                {"label": o.name, "prob": p, "probability": raw, "_sort": sort_key}
+            )
             if float(o.current_probability or 0) > mode_prob:
                 mode_prob = float(o.current_probability or 0)
                 mode_label = o.name
@@ -1056,6 +1111,9 @@ async def get_rain(db: AsyncSession):
     for m in daily_markets:
         if not m.resolution_date:
             continue
+        raw = _nyc_rain_probability_raw(m)
+        # Read through the named helper rather than rounding here, so the tile's
+        # integer has exactly one definition (#6616).
         prob = _nyc_rain_probability(m)
         # None means we hold no NYC price for that day. The card must skip it.
         # This is ux/1075's rule one level down: the multi-city event can be
@@ -1090,7 +1148,10 @@ async def get_rain(db: AsyncSession):
             # clock, so the clock needs a date to compare with.
             "iso": day_key.isoformat(),
             "prob": prob,
-            "icon": _rain_icon(prob),
+            # The raw twin of `prob` (#6616), and the value the icon is chosen
+            # from — a 99.5¢ day is not an umbrella day.
+            "probability": raw,
+            "icon": _rain_icon(raw),
         })
 
     # --- Monthly city rain ---
@@ -1104,6 +1165,7 @@ async def get_rain(db: AsyncSession):
 
     monthly_rain = []
     for city_name, (_, m, period) in city_best.items():
+        raw = _get_yes_probability_raw(m)
         prob = _get_yes_probability(m)
         delta = 0
         best_prob = 0.0
@@ -1120,6 +1182,10 @@ async def get_rain(db: AsyncSession):
             "city": city_name,
             "period": period,
             "prob": prob,
+            # The raw twin of `prob` (#6616). This card is where the defect was
+            # loudest: Miami, Seattle, NYC and Houston all store 0.995000 on an
+            # OPEN "Above 1 inch" market and all four printed a flat 100%.
+            "probability": raw,
             "src": _market_source(m),
             "delta24h": delta,
         })
@@ -1286,6 +1352,19 @@ def _nyc_rain_outcome(market: FuturesMarket):
     return None
 
 
+def _nyc_rain_probability_raw(market: FuturesMarket) -> Optional[float]:
+    """NYC's chance of rain, 0-1, or None if we hold no price for it.
+
+    The unrounded twin of ``_nyc_rain_probability`` — see
+    ``_highest_probability`` (#6616). None keeps its meaning exactly: absence,
+    never a zero.
+    """
+    outcome = _nyc_rain_outcome(market)
+    if outcome is None or outcome.current_probability is None:
+        return None
+    return float(outcome.current_probability)
+
+
 def _nyc_rain_probability(market: FuturesMarket) -> Optional[int]:
     """NYC's chance of rain from either stored shape, or None if we hold none.
 
@@ -1293,10 +1372,24 @@ def _nyc_rain_probability(market: FuturesMarket) -> Optional[int]:
     row — an unpriced leg is an absence, never a zero, and never an excuse to
     print another city's number under an NYC label (ux/1075, ux/1076).
     """
-    outcome = _nyc_rain_outcome(market)
-    if outcome is None or outcome.current_probability is None:
+    raw = _nyc_rain_probability_raw(market)
+    if raw is None:
         return None
-    return round(float(outcome.current_probability) * 100)
+    return round(raw * 100)
+
+
+def _get_yes_probability_raw(market: FuturesMarket) -> float:
+    """The 'Yes' probability of a binary market, 0-1.
+
+    The unrounded twin of ``_get_yes_probability`` — see
+    ``_highest_probability`` (#6616). This is the scan behind the monthly
+    rainfall card, where four cities quoted at ``0.995`` printed ``100%``.
+    """
+    for o in market.outcomes:
+        if o.name and o.name.lower() in ("yes", "y"):
+            return float(o.current_probability or 0)
+    # Fallback: use highest probability
+    return _highest_probability(market)
 
 
 def _get_yes_probability(market: FuturesMarket) -> int:
@@ -1305,11 +1398,7 @@ def _get_yes_probability(market: FuturesMarket) -> int:
     For binary markets (will it rain?), return the Yes probability.
     Falls back to highest probability outcome if no 'Yes' found.
     """
-    for o in market.outcomes:
-        if o.name and o.name.lower() in ("yes", "y"):
-            return round(float(o.current_probability or 0) * 100)
-    # Fallback: use highest probability
-    return _highest_prob(market)
+    return round(_get_yes_probability_raw(market) * 100)
 
 
 # ============================================================================
@@ -1351,6 +1440,10 @@ async def get_events(db: AsyncSession):
         item = {
             "q": m.name,
             "prob": _card_prob(m),
+            # The raw twin of `prob` (#6616). "Hurricane Marie category?" and
+            # "Number of tornadoes in Sep 2026?" both print 100% here over open,
+            # tradeable books.
+            "probability": _card_probability(m),
             # The sharpest instance of the defect on the whole page: "Hurricane
             # Marie category? — 95%" is 95% of "Category 4 or above", and
             # Category 4 and Category 5 are not the same forecast.
@@ -1441,6 +1534,8 @@ async def get_climate(db: AsyncSession):
         items.append({
             "q": m.name,
             "prob": _card_prob(m),
+            # The raw twin of `prob` (#6616).
+            "probability": _card_probability(m),
             "src": _market_source(m),
             "closes": _format_closes(m.resolution_date),
             "scale": scale,
@@ -1508,6 +1603,12 @@ async def get_wildcards(db: AsyncSession):
         items.append({
             "q": m.name,
             "prob": _card_prob(m),
+            # The raw twin of `prob` (#6616). This card REFUTED ITSELF inside one
+            # payload object: "Lowest daily Arctic sea ice extent in summer 2026"
+            # served `prob: 100` beside its own `history` of 99.5s, because the
+            # sparkline keeps a decimal (`round(p * 100, 1)` below) and the
+            # headline did not. One market, one price, two renderings.
+            "probability": _card_probability(m),
             # See the hero's: real captures only, empty when there are too few.
             "history": histories.get(m.id, []),
             # Same defect as the hero's, on the same page: "Min Arctic sea ice

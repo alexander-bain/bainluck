@@ -1,8 +1,9 @@
 "use client";
 
 import useSWR from "swr";
-import { probColor, nycToday } from "./data";
+import { probColor, nycToday, weatherProbability } from "./data";
 import type { RainDay, MonthlyRain as MonthlyRainType } from "./data";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { SourceBadge } from "./SourceBadge";
 import { fetchRain } from "@/lib/weatherApi";
 import { rainCardHeading, rainGridStyle } from "@/lib/rainCardHeading";
@@ -213,7 +214,12 @@ export default function RainForecast() {
                           className="font-mono font-bold"
                           style={{ fontSize: 20, color: txtCol }}
                         >
-                          {d.prob}%
+                          {/* UX-P046 on the value (#6616). The tile's icon is
+                              chosen from the same raw number server-side, so a
+                              99.5¢ day cannot draw an umbrella over a `>99%`. */}
+                          {formatProbabilityPercent(weatherProbability(d), {
+                            rendered: d.prob,
+                          })}
                         </span>
                         <div className="w-full mt-2 px-1">
                           <div
@@ -310,7 +316,13 @@ export default function RainForecast() {
                         className="text-right font-mono font-bold text-sm"
                         style={{ color: col }}
                       >
-                        {m.prob}%
+                        {/* UX-P046 on the value (#6616). Miami, Seattle, NYC
+                            and Houston are all stored at 0.995000 on OPEN
+                            "Above 1 inch" markets and all four printed a flat
+                            `100%` — four cities the card called settled rain. */}
+                        {formatProbabilityPercent(weatherProbability(m), {
+                          rendered: m.prob,
+                        })}
                       </span>
                       <span
                         className="text-right font-mono text-[10px]"

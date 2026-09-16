@@ -1,4 +1,5 @@
-import { type EventMarket, probColor } from "./data";
+import { type EventMarket, probColor, weatherProbability } from "./data";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { SourceBadge } from "./SourceBadge";
 
 interface EventListProps {
@@ -129,7 +130,12 @@ export default function EventList({ title, sub, icon, items, accent }: EventList
                     textAlign: "right",
                   }}
                 >
-                  {item.prob}%
+                  {/* UX-P046 on the value (#6616): "Number of tornadoes in Sep
+                      2026? — Above 25" printed `100%` while the market was
+                      still open and quoted at 0.995. */}
+                  {formatProbabilityPercent(weatherProbability(item), {
+                    rendered: item.prob,
+                  })}
                 </span>
               </div>
             </div>
