@@ -182,6 +182,113 @@ async def test_the_surface_is_still_a_surface():
     )
 
 
+async def test_a_lone_kalshi_series_is_withdrawn_anyway_and_that_is_the_point():
+    """🔴 THE FAMILY'S `NEVER EMPTIES` RULE DOES NOT APPLY HERE, DELIBERATELY.
+
+    Raised by int392 at merge: `drop_unbacked_legs`, `drop_incoherent_near_certain`
+    and `drop_dominant_field_outcomes` (`utils/outcome_display.py`) each carry an
+    explicit NEVER EMPTIES clause, so a later reader comparing the four finds
+    three that refuse to empty and one that does. This is the line saying which
+    is deliberate.
+
+    **It is the dominant case, not an edge.** Measured on production
+    2026-09-16 17:2xZ: of the 5 events in the withdraw population, **4 carry
+    Kalshi as their ONLY snapshot source**. An arm that quietly declined to
+    withdraw whenever Kalshi stood alone would be inert on four fifths of the
+    ship.
+
+    **And the family's own reasoning is why it does not transfer.**
+    `drop_dominant_field_outcomes` gives the rule as: *"an honest-empty decision
+    belongs to the surface, and a silent zero-outcome card is a worse artifact
+    than a labelled one."* Those three are list filters feeding a card that
+    renders whatever it is handed, so emptying the list produces exactly that
+    silent zero-outcome card. This is the other case: the surface **has** the
+    honest-empty decision and exercises it —
+    `frontend/app/events/[id]/page.tsx` computes `hasNoPriceHistoryAtAll` and
+    renders the chart card's own empty state, and on a page whose header reads
+    "Starts in 50m" that state is the TRUE sentence. So the rule is honoured, not
+    broken: the decision is left to the surface, which is precisely what the
+    clause asks for.
+
+    What the reader gets instead of the withdrawn curve is an empty chart on a
+    match that has not started — and per #6535, that beats a vertical spike to a
+    99% grade the hero has already disowned.
+    """
+    now = datetime.now(UTC)
+
+    payload, _ = await _history(
+        _pre_kickoff_event(now), _stranded_curve(now), hours=24,
+        kalshi_book_silent=True,
+    )
+
+    assert payload["win_prob_history"] == {}, (
+        "a lone stranded Kalshi series must still be withdrawn — four fifths of "
+        "the population has no sibling to fall back on"
+    )
+    assert payload["win_prob_sources"] == {}
+    # The route must still answer, not fail closed, with nothing left to draw.
+    assert payload["event_id"] == _SPECIMEN_ID
+    assert payload["status"] == "scheduled"
+
+
+def _flat(now, value, source):
+    """A second source that DISAGREES with the grade, so the aggregate can move.
+
+    Three identical curves make every aggregate assertion vacuous — removing one
+    of three equal sources changes no average. That is exactly the shape my first
+    probe of this had, and it reported A == B == C, which reads as "the
+    withdrawal is clean" and is really "nothing here could have differed".
+    """
+    start = now - timedelta(hours=6)
+    return [
+        _snapshot(start + timedelta(minutes=10 * step), value, source=source)
+        for step in range(21)
+    ]
+
+
+async def test_the_withdrawn_grade_leaves_the_AGGREGATE_line_too():
+    """🔴 The bigger half, and it is not the Kalshi curve.
+
+    `aggregate_line` is built from `win_prob_history` further down this same
+    route, so before this repair the withdrawn settlement was also driving the
+    chart's **Bain Luck aggregate** — the line a reader takes as our answer.
+    Measured through the real route: with Polymarket and ESPN both flat at 0.50
+    and the stranded Kalshi series ending at its 0.995 grade, the aggregate's
+    last point reads **0.995** unrepaired and **0.50** repaired.
+
+    The assertion is byte-identity against a payload that NEVER HELD the Kalshi
+    rows, not merely "the number moved": a partial withdrawal that left one
+    bucket behind would still move it.
+
+    This also keeps the repair consistent with #6522 rather than merely adjacent
+    to it — the blend dropped Kalshi from `win_probability_sources` at the same
+    moment, and the chart's own aggregate was the one place still averaging it in.
+    """
+    now = datetime.now(UTC)
+    stranded = _stranded_curve(now)
+    others = _flat(now, 0.50, "polymarket") + _flat(now, 0.50, "espn")
+
+    withdrawn, _ = await _history(
+        _pre_kickoff_event(now), stranded + others, hours=24, kalshi_book_silent=True
+    )
+    never_had_it, _ = await _history(
+        _pre_kickoff_event(now), others, hours=24, kalshi_book_silent=True
+    )
+    unrepaired, _ = await _history(
+        _pre_kickoff_event(now), stranded + others, hours=24, kalshi_book_silent=False
+    )
+
+    assert withdrawn["aggregate_line"] == never_had_it["aggregate_line"], (
+        "the withdrawn grade left residue in the aggregate line"
+    )
+    assert withdrawn["aggregate_line"][-1]["home_probability"] == 0.50
+
+    # The rig can see a difference at all — without this the assertion above
+    # would pass against a route that never computed an aggregate.
+    assert unrepaired["aggregate_line"][-1]["home_probability"] == 0.995
+    assert unrepaired["aggregate_line"] != withdrawn["aggregate_line"]
+
+
 # ---------------------------------------------------------------------------
 # The controls. Each fails EXACTLY ONE clause, so each isolates one of them.
 # ---------------------------------------------------------------------------
