@@ -41,11 +41,11 @@ trace. Both are asserted here, so removing either filter reddens this file.
 """
 
 import json
-from datetime import datetime, timezone
 
 import pytest
 
 import app.routes.feed as feed_module
+import app.tasks.precompute_interestingness as task_module
 from app.utils.canonical_market_key import canonical_key_identifies_one_question
 
 from tests.test_interestingness_chunking import (
@@ -194,9 +194,7 @@ async def test_the_cached_score_carries_no_multi_source_for_a_topic_year_key(
     )
     _patch(monkeypatch, session, redis)
 
-    from app.tasks.precompute_interestingness import _precompute_interestingness
-
-    result = await _precompute_interestingness()
+    result = await task_module._precompute_interestingness()
     assert result["status"] == "ok"
 
     reasons = _reasons_by_market(redis)
@@ -230,9 +228,7 @@ async def test_the_refusal_is_worth_the_measured_points(monkeypatch):
     )
     _patch(monkeypatch, session, redis)
 
-    from app.tasks.precompute_interestingness import _precompute_interestingness
-
-    await _precompute_interestingness()
+    await task_module._precompute_interestingness()
 
     scores = _scores_by_market(redis)
     assert scores[108622] > scores[108621], (
@@ -360,8 +356,6 @@ async def test_a_refused_key_falls_back_to_the_markets_own_source():
 def test_both_writers_read_the_same_predicate():
     """The defect was one guarded caller and one unguarded one. A second copy of
     the rule is how that comes back."""
-    import app.tasks.precompute_interestingness as task_module
-
     assert (
         feed_module.canonical_key_identifies_one_question
         is canonical_key_identifies_one_question
@@ -379,11 +373,12 @@ def test_both_writers_read_the_same_predicate():
 def test_the_utility_module_imports_nothing_from_the_app():
     """`sport_keys.py` idiom: both a route and a task read this, so it must not
     be able to close an import cycle."""
+    import inspect
     from pathlib import Path
 
-    import app.utils.canonical_market_key as mod
-
-    source = Path(mod.__file__).read_text()
+    # Resolved from the function under test, so this can never read a different
+    # file than the one the other tests exercise.
+    source = Path(inspect.getsourcefile(canonical_key_identifies_one_question)).read_text()
     offenders = [
         line
         for line in source.splitlines()
