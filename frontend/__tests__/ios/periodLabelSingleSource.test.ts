@@ -186,9 +186,16 @@ d("iOS period labels have exactly one implementation", () => {
 
   it("the two files fixed by #3273 delegate to the shared parser", () => {
     // Named explicitly so a revert is loud rather than merely un-discovered.
+    //
+    // #6574 moved GamePlayCardView from `normalize` to `liveStatusText`. That is
+    // not a weakening of this assertion: #3273 pointed the card at the shared
+    // PARSER and left it joining the parsed label to the clock itself, which is
+    // how it came to print "Final · Final". `liveStatusText` IS the parser —
+    // it calls `liveBadgeLabel`, which calls `normalize` — plus the join rule
+    // the card was missing, so requiring it here is strictly the stronger claim.
     for (const [file, call] of [
       ["Views/EventDetailView.swift", "PeriodLabel.columnLabel("],
-      ["Components/GamePlayCardView.swift", "PeriodLabel.normalize("],
+      ["Components/GamePlayCardView.swift", "PeriodLabel.liveStatusText("],
     ]) {
       expect(readFileSync(join(IOS_ROOT, file), "utf8")).toContain(call);
     }
@@ -263,6 +270,15 @@ const PAIR_PRINTERS: Array<[string, string]> = [
   [join(WATCH_ROOT, "WatchFeedModels.swift"), "the watch feed row's clockText"],
   [join(WATCH_ROOT, "WatchLiveView.swift"), "the watch live game row"],
   [join(WIDGET_ROOT, "WidgetAPIClient.swift"), "the widget"],
+  // #6574. The eighth, and the one `RAW_JOIN` could not find: the pair is
+  // RENAMED at this struct's boundary — `EventDetailView` builds a
+  // `GamePlayPoint(period: espn.period, clock: espn.gameClock)` — so the join
+  // reads `[periodStr, clock]` and the identifier `gameClock` never appears in
+  // the file. Served payload for 14638896 (MNF, Final) carries
+  // `period: "Final", game_clock: "Final"`, so the badge under the
+  // win-probability chart read "Final · Final". `RAW_JOIN_RENAMED` below is the
+  // tell that makes the rename unable to hide the ninth site.
+  [join(IOS_ROOT, "Components/GamePlayCardView.swift"), "the play card under the chart"],
 ];
 
 /**
@@ -290,6 +306,73 @@ const RAW_JOIN = /\[[^\]]*\bperiod\b[^\]]*\bgameClock\b[^\]]*\]/;
  */
 const RAW_FALLBACK = /\bperiod\b[^\n]*\?\?[^\n]*\bgameClock\b/;
 
+/**
+ * #6574 — the join with the pair RENAMED, which `RAW_JOIN` is blind to.
+ *
+ * `RAW_JOIN` keys on the identifier `gameClock`, so it only ever sees a site
+ * that reads the API model directly. `GamePlayCardView` does not: the pair is
+ * copied into a view struct whose fields are `period` and **`clock`**, and the
+ * join there reads `[periodStr, clock]`. Nothing in the file says `gameClock`,
+ * the scan passed it for two months, and the card printed "Final · Final" on
+ * every settled game ESPN covers — `period` and `game_clock` are both the word
+ * "Final" on the last row of a finished game.
+ *
+ * So the tell is the SHAPE of the pair, not the names #4880 happened to meet:
+ * an array literal holding a `period`-ish identifier and a `clock`-ish one.
+ * Both orders, because `[clock, period]` prints the same two strings.
+ * Single-line (`[^\]\n]*`) so a multi-line literal elsewhere in a file cannot
+ * pair an unrelated `period` with an unrelated `clock`.
+ *
+ * MEASURED across all three targets at the fix (224 .swift files): exactly one
+ * hit, which was the defect, and zero after it. The tell is narrow because it
+ * requires both halves inside one bracket — a file may still name a period and
+ * a clock freely, as long as it does not print them side by side itself.
+ */
+const RAW_JOIN_RENAMED = [
+  /\[[^\]\n]*\bperiod\w*\b[^\]\n]*\b\w*[Cc]lock\w*\b[^\]\n]*\]/,
+  /\[[^\]\n]*\b\w*[Cc]lock\w*\b[^\]\n]*\bperiod\w*\b[^\]\n]*\]/,
+];
+
+/**
+ * The ONE place that decides a file is an offender, so the tree scan and its own
+ * can-fail proof run the SAME code.
+ *
+ * #6574, and this function exists because a mutation battery found the hole
+ * rather than because anyone reasoned it out. Deleting the `RAW_JOIN_RENAMED`
+ * branch from the scan loop SURVIVED: the "can actually fail" tests fed the
+ * drifted source to the REGEX directly, so every one of them stayed green while
+ * the scan no longer consulted that regex at all, and on a clean tree the scan
+ * has no offender to miss. A tell that the scan does not call is exactly this
+ * file's own stated failure mode — "an empty scan reads as a clean pass" — one
+ * level up: a pass that proves the regex, not the check.
+ *
+ * Returns the offending messages, so a can-fail test asserts on WHICH tell fired
+ * and not merely that something did.
+ */
+function pairJoinOffenders(path: string, rawSource: string): string[] {
+  const offenders: string[] = [];
+  const code = stripComments(rawSource);
+  if (RAW_JOIN.test(code)) {
+    offenders.push(`${path} — joins period to gameClock instead of calling liveStatusText`);
+  }
+  // #6574. The same join with the pair renamed on the way into a view struct.
+  // Reported separately so the message names the reason the older tell missed it.
+  if (RAW_JOIN_RENAMED.some((re) => re.test(code))) {
+    offenders.push(`${path} — joins a period to a clock under LOCAL names; use liveStatusText`);
+  }
+  // #5057. Coalescing the pair is the same decision as joining it.
+  if (RAW_FALLBACK.test(code)) {
+    offenders.push(`${path} — falls back from period to gameClock itself; use liveStatusText`);
+  }
+  // `liveBadgeLabel` is handed ONE string and cannot see what is printed next to
+  // it. Outside the canonical file, asking for it is asking for the half of the
+  // rule that produced this defect.
+  if (/liveBadgeLabel/.test(code)) {
+    offenders.push(`${path} — calls liveBadgeLabel directly; use liveStatusText`);
+  }
+  return offenders;
+}
+
 const iosTargetsPresent = ALL_TARGET_ROOTS.every((root) => existsSync(root));
 const t = iosTargetsPresent ? describe : describe.skip;
 
@@ -314,22 +397,7 @@ t("a live period is printed beside its clock in exactly one place (#4880)", () =
     for (const root of ALL_TARGET_ROOTS) {
       for (const path of swiftFiles(root)) {
         if (path === CANONICAL) continue;
-        const code = stripComments(readFileSync(path, "utf8"));
-        if (RAW_JOIN.test(code)) {
-          offenders.push(`${path} — joins period to gameClock instead of calling liveStatusText`);
-        }
-        // #5057. Coalescing the pair is the same decision as joining it.
-        if (RAW_FALLBACK.test(code)) {
-          offenders.push(
-            `${path} — falls back from period to gameClock itself; use liveStatusText`
-          );
-        }
-        // `liveBadgeLabel` is handed ONE string and cannot see what is printed
-        // next to it. Outside the canonical file, asking for it is asking for
-        // the half of the rule that produced this defect.
-        if (/liveBadgeLabel/.test(code)) {
-          offenders.push(`${path} — calls liveBadgeLabel directly; use liveStatusText`);
-        }
+        offenders.push(...pairJoinOffenders(path, readFileSync(path, "utf8")));
       }
     }
 
@@ -354,6 +422,48 @@ t("a live period is printed beside its clock in exactly one place (#4880)", () =
       return parts.joined(separator: " ")
     `);
     expect(RAW_JOIN.test(drifted)).toBe(true);
+  });
+
+  it("the renamed-join check can actually fail — through the SCAN, not the regex", () => {
+    // #6574. Driven through `pairJoinOffenders`, which is what the tree scan
+    // calls, so deleting the tell from the scan fails HERE. Asserting the regex
+    // directly is what let that mutant survive.
+    //
+    // The exact line that shipped "Final · Final".
+    const drifted = `
+      let parts = [periodStr, clock].compactMap { $0?.isEmpty == false ? $0 : nil }
+      return parts.joined(separator: " · ")
+    `;
+    expect(pairJoinOffenders("drifted.swift", drifted)).toEqual([
+      "drifted.swift — joins a period to a clock under LOCAL names; use liveStatusText",
+    ]);
+
+    // Reversed, because the two strings print the same either way round.
+    expect(pairJoinOffenders("reversed.swift", `let parts = [clock, periodLabel]`)).toHaveLength(1);
+
+    // And the fix must be clean under it, or the next author is pushed back to
+    // hand-rolling the pair to get a green suite (#5057's lesson).
+    const delegating = `
+      var timeDisplay: String {
+          PeriodLabel.liveStatusText(period: period, gameClock: clock) ?? ""
+      }
+    `;
+    expect(pairJoinOffenders("fixed.swift", delegating)).toEqual([]);
+  });
+
+  it("the named pair-printer list cannot be quietly shortened", () => {
+    // #6574. Removing a file from `PAIR_PRINTERS` SURVIVED the battery — an
+    // `it.each` over a list shrinks silently when the list does, so the list
+    // documented the sites without pinning them. Derived in BOTH directions
+    // instead: a file that delegates the join must be named here, and a file
+    // named here must delegate. A ninth call site then cannot be added without
+    // this list growing, and the eight cannot be dropped without it failing.
+    const delegating = ALL_TARGET_ROOTS.flatMap((root) =>
+      swiftFiles(root).filter(
+        (path) => path !== CANONICAL && readFileSync(path, "utf8").includes(CANONICAL_JOIN)
+      )
+    );
+    expect(new Set(delegating)).toEqual(new Set(PAIR_PRINTERS.map(([path]) => path)));
   });
 
   it("the fallback check can actually fail — and does not fire on delegation", () => {

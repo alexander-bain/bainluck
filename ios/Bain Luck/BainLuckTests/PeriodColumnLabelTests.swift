@@ -144,21 +144,39 @@ final class PeriodColumnLabelTests: XCTestCase {
             clock: "5:10"
         )
 
-        XCTAssertEqual(point.timeDisplay, "Q2 · 5:10")
+        // #6574 moved the SEPARATOR, not this claim: the card now joins through
+        // `PeriodLabel.liveStatusText`, which prints the pair with the space the
+        // hero capsule on the same page uses. What #3273 asserted here — the raw
+        // ESPN string does not reach the badge, and the clock appears once — is
+        // unchanged and still asserted below.
+        XCTAssertEqual(point.timeDisplay, "Q2 5:10")
         XCTAssertFalse(
             point.timeDisplay.contains("- 2nd Quarter"),
             "the raw ESPN string reached the badge"
         )
     }
 
-    func testThePlayCardStillShowsAClockWhenThePeriodIsUnreadable() {
-        // The period drops out, the clock survives — the badge degrades to the
-        // half it can still stand behind rather than disappearing.
+    /// #6574. This test's NAME and its INPUT disagreed, and the fix exposed it:
+    /// `"Halftime"` is not an unreadable period, it normalizes to `HT`, so the
+    /// case it claimed to cover — the period dropping out and the clock carrying
+    /// the badge alone — was never exercised. Both are now, separately.
+    func testThePlayCardShowsTheClockAloneWhenThePeriodSaysNothing() {
+        let noPeriod = GamePlayPoint(
+            timestamp: "", homeProb: 0.5, awayProb: 0.5,
+            period: "", clock: "5:10"
+        )
+        XCTAssertEqual(noPeriod.timeDisplay, "5:10")
+    }
+
+    func testThePlayCardDropsAZeroClockAtHalftime() {
+        // Was `"HT · 0:00"`. ESPN sends the literal `"0:00"` at the interval and
+        // it is a clock the reader cannot use — `liveStatusText` has dropped it
+        // since #4880, measured then. The badge says the state and stops.
         let point = GamePlayPoint(
             timestamp: "", homeProb: 0.5, awayProb: 0.5,
             period: "Halftime", clock: "0:00"
         )
-        XCTAssertEqual(point.timeDisplay, "HT · 0:00")
+        XCTAssertEqual(point.timeDisplay, "HT")
     }
 
     // MARK: - The live status badge (hero + every sports feed card)
