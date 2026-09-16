@@ -177,7 +177,10 @@ async def test_probe_count_is_bounded_by_keys_times_sources():
     without bound (871,381 rows on 2026-08-26 and rising), the number of
     canonical keys does not (747), and the number of sources really does not
     (4)."""
-    keys = {f"sport::championship:20{n:02d}" for n in range(12)}
+    # #6517: the keys carry a league segment because the keyed branch now drops
+    # topic-and-year catch-alls BEFORE the query. This test is about the SHAPE
+    # of the statement, so it needs keys that reach the statement at all.
+    keys = {f"soccer:EPL:championship:20{n:02d}" for n in range(12)}
     db = _RecordingSession([])
 
     await feed_module._query_canonical_source_counts(db, keys)
@@ -240,7 +243,9 @@ async def test_the_probe_stays_inside_a_lateral():
     than remembered."""
     db = _RecordingSession([])
 
-    await feed_module._query_canonical_source_counts(db, {"tech::championship:2026"})
+    # #6517: a key that denotes a question — `tech::championship:2026` is now
+    # dropped before the query and would emit no statement to inspect.
+    await feed_module._query_canonical_source_counts(db, {"tech:NASDAQ:earnings:2026"})
 
     sql = _compiled(db.statements[-1]).lower()
     assert "lateral" in sql, (
@@ -261,7 +266,8 @@ async def test_source_universe_is_read_from_the_table():
     reports it (gotcha #53: the wrong answer has the right type)."""
     db = _RecordingSession([])
 
-    await feed_module._query_canonical_source_counts(db, {"politics::championship:2026"})
+    # #6517: as above — a question key, not a topic-and-year catch-all.
+    await feed_module._query_canonical_source_counts(db, {"politics:US:senate-ga:2026"})
 
     sql = _compiled(db.statements[-1]).lower()
     for source in _MEASURED_SOURCES:

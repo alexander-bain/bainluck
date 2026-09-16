@@ -67,6 +67,8 @@ import logging
 import time
 from datetime import datetime, timezone
 
+from app.utils.canonical_market_key import canonical_key_identifies_one_question
+
 logger = logging.getLogger(__name__)
 
 #: Markets materialised per chunk. CHOSEN BY MEASUREMENT, not by arithmetic —
@@ -193,8 +195,19 @@ async def _precompute_interestingness() -> dict:
                 .where(FuturesMarket.canonical_market_key.in_(canonical_keys))
                 .group_by(FuturesMarket.canonical_market_key)
             )
+            # #6517: a topic-and-year catch-all key (empty league + generic
+            # category) does not denote one question, so the number of distinct
+            # sources sharing it is not the number of venues carrying THIS
+            # question. Dropping the key leaves `source_counts.get(key, 1)`
+            # below to answer 1 — which is what we can actually show.
+            #
+            # THIS is the writer that owns the ranking number: `/api/feed` reads
+            # the score this task caches in Redis, so the identical refusal in
+            # `routes/feed.py` would have been inert on its own.
             source_counts = {
-                row.canonical_market_key: row.cnt for row in count_result.all()
+                row.canonical_market_key: row.cnt
+                for row in count_result.all()
+                if canonical_key_identifies_one_question(row.canonical_market_key)
             }
 
         # Keyset pagination on the primary key. Keyset rather than OFFSET
