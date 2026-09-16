@@ -81,6 +81,7 @@ class _PagingFakeRedis:
                 "keyspace_hits": 5,
                 "keyspace_misses": 1,
                 "rejected_connections": 0,
+                "total_connections_received": 918_273,
             },
             "clients": {"connected_clients": 26, "blocked_clients": 0},
         }[section]
@@ -276,6 +277,27 @@ async def test_complete_census_says_complete(monkeypatch):
     assert out["truncated"] is False
     assert out["truncated_reason"] is None
     assert out["coverage_pct"] == 100.0
+
+
+@pytest.mark.asyncio
+async def test_the_clients_block_carries_the_churn_counter_not_just_the_gauge(
+    monkeypatch,
+):
+    """#1197: `connected_clients` is a gauge and cannot tell held from churned.
+
+    45 connections held open by pools and 45 re-opened every few seconds read
+    identically on the gauge. `total_connections_received` is monotonic, so two
+    census reads give a per-hour connection RATE — which is the quantity the TLS
+    churn this issue is about actually moves. Asserted by VALUE, not presence: a
+    `.get()` on a section that never carried the key would serve `null` and a
+    presence check would pass on a permanently blind field.
+    """
+    out = await _census(monkeypatch, _PagingFakeRedis(["a:1"]))
+
+    assert out["clients"]["total_connections_received"] == 918_273
+    # the gauge is not replaced by the counter — the census owes both
+    assert out["clients"]["connected_clients"] == 26
+    assert out["clients"]["rejected_connections"] == 0
 
 
 @pytest.mark.asyncio
