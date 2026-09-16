@@ -623,6 +623,161 @@ class TestTheInningTieIsBrokenByTheScore6251:
         )
 
 
+class TestTheAuthorityMayCorrectItselfAtATie6251:
+    """#6251 SECOND PASS — the hole the first pass left, which failed its own
+    after-check.
+
+    The tie-break assumes a lower score at a span tie means a LAGGING feed is
+    overwriting an AHEAD one. A feed cannot lag behind itself, so that premise
+    is false for the authority, and refusing ESPN's correction of its own
+    phantom run pinned the error instead of the reader's view of it.
+
+    The specimen these tests are cut from is event 15312655 (Twins v Yankees,
+    2026-09-16), read back out of the append-only `espn_snapshots`: ESPN
+    published `home 2` at 02:00/02:01 inside `Bottom 8th` and corrected to
+    `home 1` at 02:03/02:04, still inside `Bottom 8th`. Ours carried the phantom
+    until 02:09 — nine minutes against ESPN's own three.
+    """
+
+    #: The specimen, as the guard sees it: same half-inning, home run taken off.
+    SPECIMEN = dict(
+        stored_home_score=2,
+        stored_away_score=7,
+        incoming_home_score=1,
+        incoming_away_score=7,
+    )
+
+    def test_the_authoritys_own_correction_lands_at_the_tie(self):
+        """THE SHIP. This is the exact pair that failed the after-check."""
+        assert not live_write_would_revert(
+            "Bottom 8th",
+            None,
+            "Bottom 8th",
+            None,
+            incoming_is_authority=True,
+            **self.SPECIMEN,
+        )
+
+    def test_a_secondary_feed_is_STILL_refused_on_the_very_same_pair(self):
+        """THE FENCE, and the whole reason this is not "ESPN always wins".
+
+        Identical positions, identical scores, one flag apart. If this ever goes
+        green the exemption has stopped being an exemption and the 221-reversion
+        population — which was a clockless secondary overwriting the authority,
+        not ESPN correcting itself — is back.
+        """
+        assert live_write_would_revert(
+            "Bottom 8th",
+            None,
+            "Bottom 8th",
+            None,
+            incoming_is_authority=False,
+            **self.SPECIMEN,
+        )
+
+    def test_an_unadopted_call_site_keeps_the_refusing_answer(self):
+        """The default is the SAFE side. A producer that never learns the new
+        keyword behaves exactly as it did before this change — the exemption has
+        to be asked for, so it can never arrive at a call site by accident.
+        """
+        assert live_write_would_revert(
+            "Bottom 8th", None, "Bottom 8th", None, **self.SPECIMEN
+        )
+
+    def test_the_exemption_does_not_reach_the_strictly_earlier_rule(self):
+        """The load-bearing limit. An authority observation from an EARLIER
+        inning is still refused: that is the case which is provably a reversion
+        whoever sent it, and the flag must not launder it."""
+        assert live_write_would_revert(
+            "Bottom 8th",
+            None,
+            "Top 8th",
+            None,
+            incoming_is_authority=True,
+            **self.SPECIMEN,
+        )
+        assert live_write_would_revert(
+            "Top 9th",
+            None,
+            "Bottom 8th",
+            None,
+            incoming_is_authority=True,
+            **self.SPECIMEN,
+        )
+
+    def test_the_flag_never_turns_an_acceptance_into_a_refusal(self):
+        """It is one-directional by construction: it can only ever decline to
+        refuse. A rising score and a later inning are accepted with the flag set
+        exactly as they are without it."""
+        rising = dict(
+            stored_home_score=1,
+            stored_away_score=7,
+            incoming_home_score=2,
+            incoming_away_score=7,
+        )
+        for flag in (True, False):
+            assert not live_write_would_revert(
+                "Bottom 8th", None, "Bottom 8th", None,
+                incoming_is_authority=flag, **rising,
+            )
+            assert not live_write_would_revert(
+                "Bottom 8th", None, "Top 9th", None,
+                incoming_is_authority=flag, **self.SPECIMEN,
+            )
+
+    def test_a_clocked_tie_is_unaffected_in_both_directions(self):
+        """The exemption lives strictly inside the span-tie branch, so on a
+        clocked sport — where a tie is two feeds agreeing to the second and a
+        lower score is a correction that already landed — nothing moves."""
+        for flag in (True, False):
+            assert not live_write_would_revert(
+                "5:21 - 4th Quarter", "5:21",
+                "5:21 - 4th Quarter", "5:21",
+                incoming_is_authority=flag, **self.SPECIMEN,
+            )
+
+    def test_only_the_authority_producer_claims_the_exemption(self):
+        """THE CALL-SITE GUARD, the sibling of the unadopted-call-site scan.
+
+        The exemption is a property of WHO IS CALLING, so no behavioural test on
+        the function can catch it being pasted into the wrong producer. ESPN
+        must claim it; the two StatPal producers must not, because they are the
+        lagging writers the tie-break exists for.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        import app.tasks.statpal_sync as statpal_sync
+        import app.utils.espn_helpers as espn_helpers
+
+        def _authority_flags(fn):
+            tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+            return [
+                kw.value
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "live_write_would_revert"
+                for kw in node.keywords
+                if kw.arg == "incoming_is_authority"
+            ]
+
+        espn_flags = _authority_flags(espn_helpers.update_event_fields_from_espn)
+        assert len(espn_flags) == 1, (
+            "the ESPN producer no longer claims the authority exemption — "
+            "#6251's specimen regresses silently and the phantom run is back"
+        )
+        assert espn_flags[0].value is True
+
+        for name in ("_sync_statpal_livescores", "_sync_statpal_schedules"):
+            assert not _authority_flags(getattr(statpal_sync, name)), (
+                f"{name} claims the authority exemption. StatPal is the lagging "
+                "feed the tie-break was built against; exempting it re-opens the "
+                "population #6251 closed."
+            )
+
+
 # ---------------------------------------------------------------------------
 # 3. The ESPN writer, driven through the real function
 # ---------------------------------------------------------------------------
