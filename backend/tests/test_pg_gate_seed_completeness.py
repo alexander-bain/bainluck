@@ -117,6 +117,21 @@ COVERED = (
     # at which point every "declined" arm passes because nothing was selected.
     # A seed can be legal DDL and still be vacuous.
     "test_polymarket_stuck_status_atomicity_6073_pg.py",
+    # #836/#837 (live/317). Seeds `sports` and one `events` row by raw INSERT to
+    # drive two concurrent blend stampers. Both of this file's named traps are
+    # present and named in the seed: `sports.active` and `events.created_at`
+    # carry Python-side ORM defaults with no server default, so a raw INSERT
+    # that omits either dies on a runner and reads as "the blend-race gate is
+    # broken" rather than "the seed is short a column".
+    #
+    # A third hazard this file's NOT-NULL arm cannot see, written down rather
+    # than left to be rediscovered: that gate does NOT drop its tables. CI's
+    # `bl_searchtest` is shared by every real-Postgres step in `search-recall`,
+    # and `events` has dependent tables whose foreign keys make a drop raise
+    # `DependentObjectsStillExistError` — measured on this gate's first CI run.
+    # It creates what is missing and deletes only the rows it seeded, keyed on a
+    # marker in `sports.key`.
+    "test_live_blend_concurrent_stamp_pg.py",
     "test_rekey_statpal_anchors_real_postgres.py",
     "test_repair_3672_bind_contract.py",
     # #5789. Seeds `sports`, `events` and `futures_markets` by raw INSERT with

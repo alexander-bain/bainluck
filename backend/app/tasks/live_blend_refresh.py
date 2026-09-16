@@ -99,6 +99,82 @@ DEFAULT_SNAPSHOT_INTERVAL_S = 25.0
 DEFAULT_SNAPSHOT_MAX_GAP_S = 60.0
 
 
+def atomic_stamp_expression(
+    source: str, value: float, stamped_at, eligibility=None,
+):
+    """The SET expression that stamps ONE source key WITHOUT reading it first.
+
+    live/305's defect, reproduced against real Postgres 2026-09-16: the Kalshi
+    and Polymarket consumers run under one `asyncio.gather`
+    (`run_kalshi_ws.py`), each owning its own `LiveBlendRefresher`, and each was
+    doing SELECT -> merge in Python -> write the whole column back. Two arms
+    that read the same snapshot and write 250 ms apart produce this:
+
+        kalshi arm's private view : {'betting': 0.5, 'kalshi': 0.53}
+        pm arm's private view     : {'betting': 0.5, 'polymarket': 0.52}
+        WHAT THE DATABASE KEPT    : {'betting': 0.5, 'polymarket': 0.52}
+
+    The later writer does not merely overwrite a stale sibling VALUE — it drops
+    the sibling key the earlier writer just created, because the dict it merged
+    into never contained it. That is the whole of the reported hero flicker: the
+    same question published 89 ms apart as 0.51 and 0.475, each arm blending its
+    own fresh price against a view of the other that the database no longer
+    holds. It also explains the direction, which a simple staleness story cannot
+    — the Kalshi arm held the HIGHER own price (0.53 vs 0.52) and published the
+    LOWER aggregate, because its private copy had no Polymarket reading in it at
+    all.
+
+    So the merge moves to the server. ``a || b`` on JSONB is evaluated inside the
+    UPDATE, and under READ COMMITTED a concurrent UPDATE on the same row blocks,
+    then re-evaluates this expression against the row the winner committed —
+    the same reason ``SET n = n + 1`` is safe where read-modify-write is not.
+    Two arms can no longer erase each other no matter how they interleave.
+
+    The semantics are `aggregation.stamp_source_reading`'s, expressed in SQL,
+    and they must stay that way: the top-level `||` copies every sibling SOURCE
+    through untouched, and the inner `||` copies every sibling KEY inside this
+    source's own entry through untouched (`weight`, `home_probability`, and the
+    eligibility record a writer that has not adopted it must never strip). A
+    `None` eligibility omits the key rather than writing a null, so it cannot
+    clear a record another writer left — the same non-destructive rule the
+    Python helper documents.
+    """
+    import json
+
+    from sqlalchemy import Text, case, cast, func, literal
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    from app.models.models import Event
+    from app.utils.probability_eligibility import ELIGIBILITY_KEY
+
+    entry: dict = {"value": value, "updated_at": stamped_at.isoformat()}
+    if eligibility is not None:
+        entry[ELIGIBILITY_KEY] = eligibility.to_entry()
+
+    empty = cast(literal("{}"), JSONB)
+
+    def as_object(expression):
+        """`isinstance(x, dict)`, in SQL. COALESCE is NOT enough here.
+
+        The column is nullable with no default, so it can hold SQL NULL *or*
+        the JSONB scalar `null` — and `||` does not treat the second as empty,
+        it PROMOTES it: `'null'::jsonb || '{"k":"v"}'::jsonb` evaluates to
+        `[null, {"k": "v"}]`. A COALESCE-only guard would therefore turn the
+        blend column into an ARRAY on the first stamp of such a row, which the
+        Python helper's `dict(sources or {})` / `isinstance(existing, dict)`
+        never could. Caught by the real-Postgres gate, not by review.
+        """
+        return case((func.jsonb_typeof(expression) == "object", expression), else_=empty)
+
+    column = Event.win_probability_sources
+    merged_entry = as_object(column[source]).concat(
+        cast(literal(json.dumps(entry)), JSONB)
+    )
+    return as_object(column).concat(
+        func.jsonb_build_object(cast(literal(source), Text), merged_entry)
+    )
+
+
 def heartbeat_deadline(max_gap_s: float, sample_interval_s: float) -> float:
     """The age at which an unchanged value must be re-recorded, given sampling.
 
@@ -223,7 +299,7 @@ class LiveBlendRefresher:
         from app.models.models import Event, FuturesMarket, FuturesOutcome
         from app.tasks.base import get_task_session
         from app.utils.aggregation import (
-            compute_aggregate_probability, stamp_source_reading,
+            compute_aggregate_probability,
         )
         from app.utils.live_blend import (
             MarketOutcomes, compute_source_home_probability,
@@ -308,29 +384,47 @@ class LiveBlendRefresher:
                         self.stats["unchanged_skipped"] += 1
                         continue
 
-                    current = (
+                    # ONE stamp instant, shared by the JSONB write and the frame
+                    # the client reads its "live · Ns ago" from. Letting the
+                    # stamp default its own `now` would put a different
+                    # timestamp in the column than on the wire, and the age on
+                    # screen would be quietly wrong.
+                    stamped_at = datetime.now(timezone.utc)
+                    # Core update, never ORM attribute assignment (gotcha #4),
+                    # and a server-side merge rather than a read-modify-write:
+                    # the sibling arm streaming the OTHER venue writes this same
+                    # column concurrently (see `atomic_stamp_expression`).
+                    #
+                    # RETURNING is load-bearing, not a convenience. The frame
+                    # below must carry the aggregate of what the database KEPT,
+                    # including whatever the sibling arm committed a moment ago.
+                    # Publishing the aggregate of this arm's own private copy is
+                    # the second half of live/305's flicker: the row would be
+                    # right and the wire still wrong.
+                    new_sources = (
                         await session.execute(
-                            select(Event.win_probability_sources).where(
-                                Event.id == event_id
+                            update(Event)
+                            .where(Event.id == event_id)
+                            .values(
+                                win_probability_sources=atomic_stamp_expression(
+                                    self.source,
+                                    value,
+                                    stamped_at,
+                                    eligibility=reading.eligibility,
+                                )
                             )
+                            .returning(Event.win_probability_sources)
                         )
                     ).scalar_one_or_none()
-                    # ONE stamp instant, shared by the JSONB write and the frame
-                    # the client reads its "live · Ns ago" from. Letting
-                    # `stamp_source_reading` default its own `now` would put a
-                    # different timestamp in the column than on the wire, and
-                    # the age on screen would be quietly wrong.
-                    stamped_at = datetime.now(timezone.utc)
-                    new_sources = stamp_source_reading(
-                        current, self.source, value, now=stamped_at,
-                        eligibility=reading.eligibility,
-                    )
-                    # Core update, never ORM attribute assignment — gotcha #4.
-                    await session.execute(
-                        update(Event)
-                        .where(Event.id == event_id)
-                        .values(win_probability_sources=new_sources)
-                    )
+                    if new_sources is None:
+                        # The UPDATE matched nothing, so there is no stored blend
+                        # to publish an aggregate of. Reachable only if the row
+                        # went away between the join above and here; `_or_none`
+                        # rather than `scalar_one` because that is a benign race
+                        # to skip, not a traceback to log on the dyno whose job
+                        # is streaming prices.
+                        self.stats["no_reading"] += 1
+                        continue
                     self._last_write_at[event_id] = now
                     self._last_written_value[event_id] = value
                     self.stats["stamped"] += 1
@@ -339,13 +433,17 @@ class LiveBlendRefresher:
                         session, event_id, value, reading, now,
                     )
 
-                    # The AGGREGATE, computed off the sources dict we just
-                    # wrote — the number the hero renders, not this one
+                    # The AGGREGATE, computed off the sources JSONB the server
+                    # RETURNED — the number the hero renders, not this one
                     # source's price ("the blend is the product"). The shim
-                    # carries the post-write JSONB with the event's own
+                    # carries that post-write JSONB with the event's own
                     # fallback fields; `compute_aggregate_probability` reads
                     # all of them through `getattr`, so a namespace is a
                     # faithful stand-in for the row without re-reading it.
+                    #
+                    # `new_sources` is the database's copy, so it already
+                    # contains the sibling arm's latest reading. That is what
+                    # makes two frames published 89 ms apart agree.
                     #
                     # Attributes are pulled off the ORM object HERE, inside the
                     # session — after it closes they are expired and touching

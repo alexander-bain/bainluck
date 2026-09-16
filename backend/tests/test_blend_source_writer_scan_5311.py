@@ -99,6 +99,23 @@ APP_ROOT = Path(__file__).resolve().parents[1] / "app"
 COLUMN = "win_probability_sources"
 MODEL = "Event"
 STAMP = "stamp_source_reading"
+
+#: The SANCTIONED STAMPERS, each mapped to the positional index of its source
+#: key. There are two because a reading can be stamped in Python or in SQL.
+#:
+#: live/305 (#836/#837) moved the WS fast lane's stamp server-side: the Kalshi
+#: and Polymarket consumers write this column concurrently on the same row, and
+#: a read-modify-write let the later writer DROP the sibling's key, so one event
+#: published two hero numbers 89 ms apart. `atomic_stamp_expression` builds the
+#: `jsonb || jsonb` SET expression that fixes it, and it is a MINT exactly as
+#: `stamp_source_reading` is: it writes `value` and `updated_at` together and
+#: takes the same `eligibility` record.
+#:
+#: It is listed here rather than in `KNOWN_NON_READING_WRITES` because that
+#: ledger is for writes that are NOT readings. Parking a real reading there
+#: would exempt the fast lane from #1829's recency contract — the precise
+#: protection this file exists to hold — while looking like housekeeping.
+STAMPERS: dict[str, int] = {STAMP: 1, "atomic_stamp_expression": 0}
 PRUNE = "prune_blend_source"
 UPDATE_FUNCS = {"update", "sa_update"}
 
@@ -269,6 +286,24 @@ def _aliases(tree: ast.AST, names: set[str]) -> set[str]:
                 if alias.name in names:
                     found.add(alias.asname or alias.name)
     return found
+
+
+def _stamper_aliases(tree: ast.AST) -> dict[str, int]:
+    """Local name -> positional index of that stamper's source key.
+
+    `_aliases` answers "which spellings reach this name" but discards WHICH
+    name, and the two stampers do not agree on where the source key sits:
+    `stamp_source_reading(sources, source, ...)` puts it second because it takes
+    the column in, while `atomic_stamp_expression(source, value, ...)` puts it
+    first because the column stays on the server. Resolving per stamper keeps
+    both keys readable; a single flat set would silently read `<dynamic>` for
+    every SQL mint and exempt it from the record requirement.
+    """
+    out: dict[str, int] = {}
+    for name, key_index in STAMPERS.items():
+        for alias in _aliases(tree, {name}):
+            out[alias] = key_index
+    return out
 
 
 def _is_model_ref(node: ast.AST, model_aliases: set[str]) -> bool:
@@ -531,7 +566,7 @@ def _sites_in_tree(rel: str, tree: ast.AST):
     owner = _function_of(tree)
     model_aliases = _aliases(tree, {MODEL})
     upd = _aliases(tree, UPDATE_FUNCS)
-    stamp_aliases = _aliases(tree, {STAMP})
+    stamp_aliases = set(_stamper_aliases(tree))
     prune_aliases = _aliases(tree, {PRUNE})
 
     for node in ast.walk(tree):
@@ -578,7 +613,7 @@ def _mints_in_tree(rel: str, tree: ast.AST):
     real gaps in the tree is exactly that shape.
     """
     owner = _function_of(tree)
-    stamp_aliases = _aliases(tree, {STAMP})
+    stamp_key_index = _stamper_aliases(tree)
     constants = _module_constants(tree)
 
     for node in ast.walk(tree):
@@ -588,13 +623,17 @@ def _mints_in_tree(rel: str, tree: ast.AST):
         name = func.id if isinstance(func, ast.Name) else (
             func.attr if isinstance(func, ast.Attribute) else None
         )
-        if name not in stamp_aliases:
+        if name not in stamp_key_index:
             continue
-        # `sources, source, value` — the key is the second positional, or the
-        # `source=` keyword if a caller ever spells it out.
+        # The source key's position depends on WHICH stamper this is:
+        # `stamp_source_reading(sources, source, ...)` second, because it takes
+        # the column in; `atomic_stamp_expression(source, value, ...)` first,
+        # because the column stays on the server. Either way a caller may spell
+        # it `source=` instead.
+        index = stamp_key_index[name]
         key_node: ast.AST | None = None
-        if len(node.args) >= 2:
-            key_node = node.args[1]
+        if len(node.args) > index:
+            key_node = node.args[index]
         else:
             for kw in node.keywords:
                 if kw.arg == "source":
@@ -621,7 +660,9 @@ def _record_required(key: str) -> bool:
 def _walk_app():
     for path in sorted(APP_ROOT.rglob("*.py")):
         text_value = path.read_text(encoding="utf-8")
-        if COLUMN not in text_value and STAMP not in text_value:
+        if COLUMN not in text_value and not any(
+            stamper in text_value for stamper in STAMPERS
+        ):
             continue
         rel = str(path.relative_to(APP_ROOT.parent.parent))
         yield rel, ast.parse(text_value)
