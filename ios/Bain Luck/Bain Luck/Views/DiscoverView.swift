@@ -1633,9 +1633,17 @@ struct DiscoverView: View {
         .navigationBarTitleDisplayMode(.large)
         #endif
         .toolbar {
-            ToolbarItem(placement: .automatic) {
-                NavigationLink(value: Route.predictionStats) {
-                    Label("Stats", systemImage: "chart.bar.fill")
+            // #6501: the fourth entry point, and the one on the first screen a
+            // reader ever sees. #6445 took the digest and the challenge card out
+            // of the feed BODY and left this button in the navigation bar,
+            // pointing at the same `PredictionStatsView`. The destination stays
+            // reachable by route, as `ReleaseSurfaces` intends; what it must not
+            // keep is an advertised tap target.
+            if ReleaseSurfaces.predictionsExperienceEnabled {
+                ToolbarItem(placement: .automatic) {
+                    NavigationLink(value: Route.predictionStats) {
+                        Label("Stats", systemImage: "chart.bar.fill")
+                    }
                 }
             }
         }
