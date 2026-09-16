@@ -124,6 +124,30 @@ interface EventHeroProbabilityPairProps {
    * Defaults false, so every existing caller keeps the exact string it has.
    */
   started?: boolean;
+  /**
+   * #6438 — has the VENUE graded this contest?
+   *
+   * `started` was the only state the no-reading slot knew, so a match that
+   * finished four days ago printed "No price" in the largest type on the page
+   * while the pill in the same card read `Settled · Draw 0-0`. That copy is
+   * right for #5890's case — a started match whose prices were withdrawn — and
+   * is simply the wrong question once the contest is graded: a settled market
+   * having no price is its normal end state, not a deficiency to announce.
+   *
+   * WHY THE SLOT GOES EMPTY RATHER THAN PRINTING THE RESULT. The result is
+   * already on this card, in the pill roughly 150px above, from the same two
+   * payload keys. Printing it again between the crests states one fact twice in
+   * one card. Alex's ruling is the other half: if a number cannot be shown
+   * honestly, leave the space empty and do not explain the emptiness. So the
+   * reader is left with the crests, the names and the settled pill, which is
+   * the whole honest statement — and the container stays in the DOM, because
+   * `hero-clip-probe` and `felt-load` anchor on its `data-testid`.
+   *
+   * Pass the page's OWN settled answer, not a second reading of the payload:
+   * one state, one derivation (the lesson `venueSettledSummary` itself exists
+   * for). Defaults false, so every existing caller keeps the string it has.
+   */
+  venueSettled?: boolean;
 }
 
 /** How long the count takes. Comfortably under the 5s minimum between updates. */
@@ -222,6 +246,7 @@ export default function EventHeroProbabilityPair({
   animate = false,
   awayWithheld = false,
   started = false,
+  venueSettled = false,
 }: EventHeroProbabilityPairProps) {
   // #5696 — THE BIGGEST NUMBER ON THE SITE, PAINTED WHITE ON A WHITE CARD.
   //
@@ -285,9 +310,13 @@ export default function EventHeroProbabilityPair({
         data-probability=""
         data-probability-source={probSourceLabel ?? ""}
       >
-        <span className="text-lg font-semibold text-text-muted leading-none">
-          {started ? "No price" : "No price yet"}
-        </span>
+        {/* #6438 — a graded contest says nothing here; the settled pill in this
+            same card already carries the result. See the `venueSettled` prop. */}
+        {!venueSettled && (
+          <span className="text-lg font-semibold text-text-muted leading-none">
+            {started ? "No price" : "No price yet"}
+          </span>
+        )}
       </div>
     );
   }
