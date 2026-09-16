@@ -31,14 +31,42 @@ export interface ScrollMetrics {
 export const EDGE_TOLERANCE_PX = 1;
 
 /**
- * The resting scroll offset for a time-series plot: the right edge, i.e. the
- * most recent data. Clamped at 0 so a plot that does not overflow (desktop, or
- * a short domain) stays put rather than being handed a negative offset.
+ * How far this plot CAN be scrolled — pure geometry, no editorial. Clamped at 0
+ * so a plot that does not overflow (desktop, or a short domain) is never handed
+ * a negative offset.
+ *
+ * #6548 split this out of `anchorScrollLeft`. The two were one function only
+ * because the resting anchor happened to BE the maximum offset; `edgeOverflowFor`
+ * was already calling the anchor to mean "max scroll". The moment the anchor
+ * became conditional, that shared call would have made a settled chart compute
+ * its fades against 0 and report no right-hand overflow on a plot that has a
+ * screen and a half of it.
  */
-export function anchorScrollLeft(
+export function maxScrollLeft(
   metrics: Pick<ScrollMetrics, "scrollWidth" | "clientWidth">,
 ): number {
   return Math.max(0, metrics.scrollWidth - metrics.clientWidth);
+}
+
+/**
+ * The resting scroll offset for a time-series plot.
+ *
+ * LIVE (#3035): the RIGHT edge — the news on a running race is the newest point,
+ * and a reader who opened the US Open title race landed on January.
+ *
+ * SETTLED (#6548): the LEFT edge. #3035's premise inverts once a question is
+ * decided — the right edge is then a flat run to the resolution and the race
+ * itself is behind the left edge. Measured on `/futures/110141` (South Dakota
+ * GOP governor, resolved 7/28): at 390px the phone rested on Jun 18 → Sep 16,
+ * a single blue line already at 100%, while the whole contest — Dusty Johnson
+ * leading ~50-70% from Mar 20 and the June crossover that decided it — sat
+ * off-screen left. The legend still drew his red key, pointing at no line.
+ */
+export function anchorScrollLeft(
+  metrics: Pick<ScrollMetrics, "scrollWidth" | "clientWidth">,
+  opts?: { settled?: boolean },
+): number {
+  return opts?.settled ? 0 : maxScrollLeft(metrics);
 }
 
 /**
@@ -49,7 +77,8 @@ export function edgeOverflowFor(metrics: ScrollMetrics): {
   left: boolean;
   right: boolean;
 } {
-  const maxScroll = anchorScrollLeft(metrics);
+  // `maxScrollLeft`, NOT `anchorScrollLeft` — see the note on the split above.
+  const maxScroll = maxScrollLeft(metrics);
   return {
     left: metrics.scrollLeft > EDGE_TOLERANCE_PX,
     right: metrics.scrollLeft < maxScroll - EDGE_TOLERANCE_PX,

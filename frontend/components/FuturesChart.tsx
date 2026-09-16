@@ -181,13 +181,17 @@ export function FuturesChart({
     // Re-anchors whenever the series changes — the 1D/1W/1M/All switch filters
     // client-side and hands down a new historyData, so a range change lands on
     // "now" too rather than inheriting the previous range's scroll offset.
-    el.scrollLeft = anchorScrollLeft(el);
+    // #6548: a decided question rests on the LEFT — its race is behind that
+    // edge, not ahead of the right one. `settled` is in the deps because the
+    // page can hydrate before resolution is known, and a chart that anchored
+    // while it still believed itself live must re-anchor when it learns.
+    el.scrollLeft = anchorScrollLeft(el, { settled });
     syncEdgeOverflow();
     // A rotate or resize changes clientWidth, and with it whether either edge
     // still has plot behind it.
     window.addEventListener("resize", syncEdgeOverflow);
     return () => window.removeEventListener("resize", syncEdgeOverflow);
-  }, [mini, displayedOutcomes, syncEdgeOverflow]);
+  }, [mini, displayedOutcomes, settled, syncEdgeOverflow]);
 
   if (displayedOutcomes.length === 0) {
     if (mini) return null;
