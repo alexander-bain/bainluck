@@ -926,7 +926,7 @@ def _catchall_name_variant_merges(
             for target, target_key in league_by_minute.get(identity[2], ()):
                 if target == index or not target_key.startswith(prefix):
                     continue
-                if not soccer_pair_matches(names(index), names(target)):
+                if not _pair_matches_after_transliteration(names(index), names(target)):
                     continue
                 if _names_a_different_squad(names(index), names(target)):
                     logger.info(
@@ -1242,6 +1242,78 @@ def _merge_catchall_leagues(clusters: list[list], identities: dict) -> list[list
     return out
 
 
+#: The ASCII digraphs that spell the letters :func:`strip_diacritics` already
+#: folds to a SINGLE letter, mapped back to that letter.
+#:
+#: `ø`, `ö`, `å` have two conventional ASCII spellings and the providers do not
+#: agree on which to use: `strip_diacritics` writes the single letter
+#: (`Lillestrøm` → `Lillestrom`, the Odds API's own spelling), while Kalshi
+#: writes the digraph (`Lillestroem`). Both are the same club and neither is
+#: wrong, so the squash has to be asked the question a second way.
+#:
+#: MEASURED, NOT REASONED ABOUT — and it is why `ss` is absent. Over every
+#: distinct soccer club name in the table, all 9,471 of them, collapsing each
+#: digraph and counting the squashed forms that newly collide:
+#:
+#:     oe -> o   5 groups   bodo(e)glimt · br(o|oe)ndby · lillestr(o|oe)m
+#:                          s(o|oe)nderjyske · troms(o|oe)   — all one club
+#:     aa -> a   1 group    vaster(a|aa)ssk (Västerås SK)    — one club
+#:     ae -> a   0 groups   inert on this population
+#:     ue -> u   0 groups   inert on this population
+#:     ss -> s   2 groups   alnasr/alnassr · progreso/progresso
+#:
+#: `ae`/`ue` are left out because they buy nothing here; `ss` is left out
+#: because it is WRONG — Al Nasr and Al Nassr are different clubs, and the
+#: guard file pins that pair so nobody adds the rule back by symmetry.
+_TRANSLITERATION_DIGRAPHS = re.compile(r"oe|aa", re.IGNORECASE)
+
+
+def _collapse_transliteration(name: Optional[str]) -> Optional[str]:
+    """`Lillestroem` → `Lillestrom`. Case is preserved, not folded.
+
+    The replacement keeps the case of the digraph's first letter so the string
+    handed back has the same shape as the one that came in — `soccer_team_matches`
+    reads capitals when it falls back to initials, and a blanket `.lower()` here
+    would quietly change what that half of the predicate sees.
+
+    It collapses inside any word, not only Nordic ones — `Phoenix` becomes
+    `Phonix` — and that is deliberate rather than tolerated. This form is only
+    ever compared against another string put through the same function, so a
+    mangling both sides share cannot separate them; and the census above is what
+    says it cannot JOIN two clubs either, `Phoenix` included.
+    """
+    if not name:
+        return name
+    return _TRANSLITERATION_DIGRAPHS.sub(lambda m: m.group(0)[0], name)
+
+
+def _pair_matches_after_transliteration(left: tuple, right: tuple) -> bool:
+    """:func:`soccer_pair_matches`, retried once on the collapsed spellings.
+
+    STRICTLY ADDITIVE BY CONSTRUCTION, which is the whole reason it is a retry
+    rather than a new normaliser inside the squash. The strict call is asked
+    first and its `True` is returned untouched, so no pair that folds today can
+    stop folding — the failure mode that killed the club-suffix fold proposed on
+    #6221, where `Sevilla v Valencia` was decidable before the widening and
+    ambiguous after it, is unreachable from this shape.
+
+    It is also why this lives here and not in
+    :func:`app.utils.soccer_team_matching.soccer_pair_matches`. That predicate is
+    also the match rule for `stamp_v1_statpal_fixtures`, which WRITES anchors;
+    widening a writer is a different class of change with a different bar, and
+    this ship does not need it. The fold is a serve-time pass over rows that are
+    already on the page.
+    """
+    if soccer_pair_matches(left, right):
+        return True
+    folded_left = tuple(_collapse_transliteration(name) for name in left)
+    folded_right = tuple(_collapse_transliteration(name) for name in right)
+    if folded_left == tuple(left) and folded_right == tuple(right):
+        # Nothing collapsed, so the retry is the same question. Most pairs.
+        return False
+    return soccer_pair_matches(folded_left, folded_right)
+
+
 @lru_cache(maxsize=4096)
 def _pair_matches(left: tuple, right: tuple) -> bool:
     """:func:`soccer_pair_matches`, memoized on the two name pairs.
@@ -1273,7 +1345,7 @@ def _pair_matches(left: tuple, right: tuple) -> bool:
     The sliding window in :func:`_name_clusters` is what keeps that from being a
     cross product; without it the same page cost 16.2ms cold.
     """
-    return soccer_pair_matches(left, right)
+    return _pair_matches_after_transliteration(left, right)
 
 
 def _name_clusters(bucket_keys: list[tuple], groups: dict[tuple, list]) -> list[list]:
