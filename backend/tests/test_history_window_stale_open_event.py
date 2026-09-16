@@ -96,6 +96,16 @@ class _Result:
         return self._rows[0] if self._rows else None
 
 
+class _ScalarResult:
+    """A one-cell answer, for the statements the route reads with `.scalar()`."""
+
+    def __init__(self, value):
+        self._value = value
+
+    def scalar(self):
+        return self._value
+
+
 # #3810: the fold adds a second read of `events`; `is_series_fold` tells it
 # apart from the route's own entity lookup. Defined beside the fold's own tests
 # so five rigs cannot drift apart — see `tests/test_series_fold_3810`.
@@ -115,15 +125,27 @@ class _DispatchingSession:
     "no datetime bound was compiled" is what makes the unwindowed arm differ.
     """
 
-    def __init__(self, event, win_prob_rows):
+    def __init__(self, event, win_prob_rows, *, kalshi_book_silent=False):
         self.event = event
         self.win_prob_rows = win_prob_rows
         self.win_prob_time_bounds: list[datetime] = []
+        # #6535 added a THIRD read of `events` — the stranded-chart question,
+        # "does any Kalshi leg on this event still carry a price?". It defaults
+        # to False because the action it gates is a WITHDRAWAL and every rig
+        # that predates it is describing a healthy book; a default of True would
+        # silently delete the Kalshi series out from under those tests.
+        self.kalshi_book_silent = kalshi_book_silent
+        self.kalshi_silence_asked = 0
 
     async def execute(self, statement, *_a, **_kw):
         sql = str(statement)
         if _is_series_fold(sql):
             return _Result([_fold_row(self.event)])
+        # Before the generic `FROM events` arm: this statement reads `events`
+        # too, and the arm below would hand it an Event where it expects a bool.
+        if "AS silent" in sql:
+            self.kalshi_silence_asked += 1
+            return _ScalarResult(self.kalshi_book_silent)
         # #3911 put a SECOND fold on this route — the blend fold, read before
         # the chart's right edge is pinned. Answered with the row's own sources,
         # which folds to exactly the number this module already expects.
@@ -202,8 +224,8 @@ def _backfilled_curve(now):
     return rows
 
 
-async def _history(event, rows, hours):
-    session = _DispatchingSession(event, rows)
+async def _history(event, rows, hours, *, kalshi_book_silent=False):
+    session = _DispatchingSession(event, rows, kalshi_book_silent=kalshi_book_silent)
     payload = await get_event_odds_history(
         event_id=event.id, hours=hours, response=MagicMock(headers={}), db=session
     )
