@@ -121,6 +121,59 @@ def test_the_two_cards_on_the_reported_frame_now_agree():
     assert texas_tech == "Texas Tech leads at 36%"
 
 
+def test_all_three_strings_production_serves_for_market_181_are_repaired():
+    """The specimen, read back from the live trace and reproduced byte for byte.
+
+    `GET /api/admin/discover-quality/trace/181`, 2026-09-16 13:20Z, before this
+    change (the market had drifted to 15% since the issue was filed):
+
+        headline        'Texas lead at 15%'
+        context_summary 'Texas lead at 15%'
+        reason          'Texas (15%) lead College Football National Championship Winner'
+
+    Three strings from three generators, so a repair that reached one of them
+    would leave the defect on the other two surfaces. `context_summary` and
+    `headline` are what the Discover card prints; `reason` is what /sports
+    prints, and it is the string beside which `Texas Tech (36%) leads` was drawn.
+    """
+    common = dict(
+        highlight_reasons=[],
+        leader_name="Texas",
+        leader_probability=0.1518,
+        rendered_leader_percent=15,
+        leader_is_team=True,
+        market_name="College Football National Championship Winner",
+    )
+    # Unrepaired, i.e. exactly what the trace returned — the BEFORE is asserted
+    # too, so a change that silently stops reproducing the specimen cannot pass
+    # this file off as still measuring the reported defect.
+    assert generate_futures_headline(**common) == "Texas lead at 15%"
+    assert (
+        generate_futures_reason(**common)
+        == "Texas (15%) lead College Football National Championship Winner"
+    )
+
+    headline = generate_futures_headline(**common, leader_team_name="Texas Longhorns")
+    assert headline == "Texas leads at 15%"
+    assert (
+        generate_futures_reason(**common, leader_team_name="Texas Longhorns")
+        == "Texas (15%) leads College Football National Championship Winner"
+    )
+    assert (
+        generate_futures_context_summary(
+            headline=headline,
+            highlight_reasons=[],
+            market_name=common["market_name"],
+            leader_name="Texas",
+            leader_probability=0.1518,
+            rendered_leader_percent=15,
+            leader_is_team=True,
+            leader_team_name="Texas Longhorns",
+        )
+        == "Texas leads at 15%"
+    )
+
+
 def test_unknown_team_name_keeps_4700s_rule():
     """FAIL TO TODAY'S WORDING, not to singular.
 
