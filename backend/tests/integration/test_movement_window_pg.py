@@ -112,6 +112,34 @@ async def _reset_and_seed(rows):
             session.add(market)
             await session.flush()
 
+            # A row that relies on the DEFAULT price may not be self-refuting.
+            #
+            # #6536 added a sweep that retires a delta when
+            # `current_probability - probability_change_24h` lands outside
+            # [0, 1], and the default price is 0.5 — so any case seeding a delta
+            # beyond +-0.5 and saying nothing about the price was silently
+            # asking for an impossible row. Two of them existed, both in
+            # `test_a_stale_delta_is_retired_and_a_fresh_one_is_not`, and the
+            # damage ran both ways: its FRESH row was retired by A3 (a real
+            # red), and its STALE row would have been retired by A3 too, so the
+            # age sweep could have been deleted with that test still green.
+            #
+            # Stating a price is the opt-in. A case that names
+            # `current_probability` is being deliberate — that is how the A3
+            # cases seed their liars — and is left alone. A case that does not
+            # gets this assertion, so the trap cannot be walked into twice.
+            if len(row) <= 6 and delta is not None:
+                implied_prior = 0.5 - delta
+                assert 0.0 <= implied_prior <= 1.0, (
+                    f"case {label!r} seeds delta {delta} against the default "
+                    f"price 0.5, which implies a previous price of "
+                    f"{implied_prior:.3f} — not a probability. A3 will retire "
+                    "this row whatever its age or grading, so the case proves "
+                    "nothing about the sweep it was written for. State a "
+                    "`current_probability` (7th element) that makes the pair "
+                    "possible, or state one deliberately to seed a liar."
+                )
+
             outcome = FuturesOutcome(
                 market_id=market.id,
                 external_id=f"OUT-{label}",
@@ -261,8 +289,14 @@ def test_a_stale_delta_is_retired_and_a_fresh_one_is_not() -> None:
     ids = asyncio.run(
         _reset_and_seed(
             [
-                ("dead", "open", 73, -0.715, 0.715),
-                ("live", "open", 1, -0.715, 0.715),
+                # Priced at 0.20, so each row's delta implies a previous price
+                # of 0.915 — a real quote. Both rows are therefore POSSIBLE, and
+                # age is the only thing that can separate them. Before #6536
+                # both carried the default 0.5, which implies 1.215: A3 would
+                # have retired the stale row as well, and this case would have
+                # stayed green with the age sweep deleted.
+                ("dead", "open", 73, -0.715, 0.715, None, 0.20),
+                ("live", "open", 1, -0.715, 0.715, None, 0.20),
             ]
         )
     )
@@ -314,7 +348,7 @@ def test_a_market_whose_last_delta_expired_goes_null_not_stale() -> None:
     moment its only delta is retired — so without statement C it keeps 0.715
     forever and goes on ranking as a top mover.
     """
-    ids = asyncio.run(_reset_and_seed([("dead", "open", 73, -0.715, 0.715)]))
+    ids = asyncio.run(_reset_and_seed([("dead", "open", 73, -0.715, 0.715, None, 0.20)]))
     _run_task()
     after = asyncio.run(_read(ids))
 
@@ -356,14 +390,21 @@ def test_a_stale_leg_stops_dominating_a_market_that_still_moves() -> None:
             )
             session.add(market)
             await session.flush()
-            for label, hours, delta in (("old", 73, 0.90), ("new", 2, 0.11)):
+            for label, hours, delta, price in (
+                ("old", 73, 0.90, 0.95),
+                ("new", 2, 0.11, 0.50),
+            ):
                 session.add(
                     FuturesOutcome(
                         market_id=market.id,
                         external_id=f"OUT-{label}",
                         name=label,
                         is_winner=False,
-                        current_probability=0.5,
+                        # Priced so `price - delta` is a real probability: the
+                        # stale leg must be reachable only by AGE, never by
+                        # #6536's self-refuting sweep, or deleting the age
+                        # sweep would leave this case green.
+                        current_probability=price,
                         probability_change_24h=delta,
                         last_updated=now - timedelta(hours=hours),
                     )
@@ -403,7 +444,7 @@ def test_the_superset_identity_holds_after_a_run() -> None:
     asyncio.run(
         _reset_and_seed(
             [
-                ("dead", "open", 73, -0.715, 0.715),
+                ("dead", "open", 73, -0.715, 0.715, None, 0.20),
                 ("live", "open", 1, 0.22, 0.05),
                 ("also_dead", "active", 200, 0.31, 0.31),
                 ("fresh_zero", "open", 3, 0.0, 0.9),
@@ -433,7 +474,7 @@ def test_a_bounded_run_retires_the_biggest_liar_first() -> None:
         _reset_and_seed(
             [
                 ("small", "open", 73, 0.03, 0.03),
-                ("huge", "open", 73, 0.88, 0.88),
+                ("huge", "open", 73, 0.88, 0.88, None, 0.90),
             ]
         )
     )
@@ -517,7 +558,7 @@ def test_a_graded_leg_stops_dominating_a_market_that_still_trades() -> None:
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
     ids = asyncio.run(
-        _reset_and_seed([("mixed", "open", 0, 0.88, 0.88, "api_settlement")])
+        _reset_and_seed([("mixed", "open", 0, 0.88, 0.88, "api_settlement", 0.90)])
     )
     market_id, _ = ids["mixed"]
 
@@ -576,10 +617,10 @@ def test_the_superset_identity_survives_the_graded_sweep() -> None:
     asyncio.run(
         _reset_and_seed(
             [
-                ("all-graded", "open", 0, 0.70, 0.70, "game_score"),
-                ("part-graded", "open", 0, 0.60, 0.60, "api_settlement"),
+                ("all-graded", "open", 0, 0.70, 0.70, "game_score", 0.75),
+                ("part-graded", "open", 0, 0.60, 0.60, "api_settlement", 0.65),
                 ("live", "open", 1, 0.20, 0.20, None),
-                ("stale", "open", 96, 0.90, 0.90, None),
+                ("stale", "open", 96, 0.90, 0.90, None, 0.95),
             ]
         )
     )
@@ -600,7 +641,7 @@ def test_a_market_whose_only_leg_was_graded_goes_null() -> None:
     keep its old maximum forever.
     """
     ids = asyncio.run(
-        _reset_and_seed([("settled-only", "open", 0, 0.55, 0.55, "api_settlement")])
+        _reset_and_seed([("settled-only", "open", 0, 0.55, 0.55, "api_settlement", 0.60)])
     )
     _run_task()
     out = asyncio.run(_read(ids))
@@ -616,7 +657,7 @@ def test_the_graded_sweep_is_bounded_and_takes_the_biggest_first() -> None:
     ids = asyncio.run(
         _reset_and_seed(
             [
-                ("big", "open", 0, 0.80, 0.80, "api_settlement"),
+                ("big", "open", 0, 0.80, 0.80, "api_settlement", 0.85),
                 ("small", "open", 0, 0.05, 0.05, "api_settlement"),
             ]
         )
