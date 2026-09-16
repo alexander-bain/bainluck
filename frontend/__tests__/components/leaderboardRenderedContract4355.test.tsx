@@ -224,11 +224,14 @@ describe("#4355 — the leaderboard card renders 4 bars and one remainder row", 
     expect(namedRowRanks(markup)).toEqual([1, 2, 3, 4]);
   });
 
-  it("folds the two undrawn outcomes into a remainder row reading +2", () => {
+  it("folds the two undrawn outcomes into a remainder row reading 2", () => {
     const markup = render(aiCard);
-    expect(markup).toContain("Field and remaining outcomes");
-    expect(markup).toContain("+2");
-    // remaining_outcome_count is 0 here, so the +2 can ONLY have come from the
+    expect(markup).toContain('data-row="field-remainder"');
+    // #6586 reworded this row from "Field and remaining outcomes" + a `+2` in
+    // the PERCENTAGE column to a single labelled count. The count itself is the
+    // contract #4355 pins; where it is printed is #6586's.
+    expect(markup).toContain("Field and 2 more outcomes");
+    // remaining_outcome_count is 0 here, so the 2 can ONLY have come from the
     // `distributionRows.length - shownRows.length` term — the term a
     // payload-only reading of this card misses.
     expect(markup).toContain(">5</span>"); // the remainder row's rank cell, 4 + 1
@@ -265,8 +268,10 @@ describe("#4355 — the leaderboard card renders 4 bars and one remainder row", 
     expect(markup).toContain('data-card-format="leaderboard"');
     expect(namedRowRanks(markup)).toEqual([1, 2, 3, 4]);
     // The photographed number. 22 from the backend + 4 sent-but-undrawn rows.
-    expect(markup).toContain("+26");
-    expect(markup).not.toContain("+22");
+    // #6586 moved it out of the percentage column and into the row's own label;
+    // the arithmetic this test pins is unchanged.
+    expect(markup).toContain("Field and 26 more outcomes");
+    expect(markup).not.toContain("Field and 22 more outcomes");
     expect(markup).toContain('title="Los Angeles Dodgers"');
     expect(markup).not.toContain('title="Atlanta Braves"'); // row 5 of 8
   });
@@ -296,8 +301,10 @@ describe("#4355 — the leaderboard card renders 4 bars and one remainder row", 
     // Positive first: prove something rendered and prove WHICH path.
     expect(markup).toContain('data-card-format="comparison"');
     expect(markup).not.toContain('data-card-format="leaderboard"');
-    // ...and only then the absence that is the point.
-    expect(markup).not.toContain("Field and remaining outcomes");
+    // ...and only then the absence that is the point. Keyed on the structural
+    // marker (#6586), not on copy: this arm went vacuous the moment the row's
+    // wording changed, and nothing would have reddened to say so.
+    expect(markup).not.toContain('data-row="field-remainder"');
   });
 
   /**
@@ -319,7 +326,7 @@ describe("#4355 — the leaderboard card renders 4 bars and one remainder row", 
       })
     );
     expect(markup).not.toContain('data-card-format="leaderboard"');
-    expect(markup).not.toContain("Field and remaining outcomes");
+    expect(markup).not.toContain('data-row="field-remainder"'); // #6586: marker, not copy
     // Paired positive: the card still rendered, it just took another path.
     expect(markup).toContain("A three-horse field");
   });

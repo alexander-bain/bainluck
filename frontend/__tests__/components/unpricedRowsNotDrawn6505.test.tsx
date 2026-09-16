@@ -152,8 +152,8 @@ describe("#6505 — the leaderboard draws only the rows it can price", () => {
 
     // …and they are still counted, so the card does not shrink the field it
     // claims. Six undrawn rows, none of them already in `remaining`.
-    expect(markup).toContain("Field and remaining outcomes");
-    expect(markup).toContain("+6");
+    expect(markup).toContain('data-row="field-remainder"');
+    expect(markup).toContain("Field and 6 more outcomes"); // #6586 reworded; the 6 is #6505's contract
   });
 
   it("test_nascar_board_with_one_priced_driver_falls_to_its_own_hero", () => {
@@ -212,7 +212,7 @@ describe("#6505 — the leaderboard draws only the rows it can price", () => {
     // backend `remaining_outcome_count` is 17 over 25 outcomes: four drawn, four
     // dropped by this ship, 17 never sent — 21.
     const markup = render(specimen("us_open_women_distribution"));
-    expect(markup).toContain("+21");
+    expect(markup).toContain("Field and 21 more outcomes"); // #6586 reworded the row; 21 is #6505's contract
   });
 });
 

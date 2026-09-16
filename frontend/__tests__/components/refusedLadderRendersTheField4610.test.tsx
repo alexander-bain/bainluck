@@ -128,7 +128,9 @@ describe("#4610 — a refused three-rung ladder renders its field", () => {
     // The drop was REFUSED, so every rung is on the card. A "+N more" row here
     // would be the card claiming a field it is already showing in full.
     const markup = render(servedCard());
-    expect(markup).not.toContain("Field and remaining outcomes");
+    // #6586: keyed on the structural marker, not the copy — this arm is an
+    // ABSENCE, so a reworded row would have silenced it without reddening.
+    expect(markup).not.toContain('data-row="field-remainder"');
   });
 
   // ── the control that makes the flag load-bearing ────────────────────────────
