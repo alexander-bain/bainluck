@@ -1,0 +1,27 @@
+=== 10 mutants — a kill requires BUILD SUCCEEDED and a failing test ===
+M1  the defect restored: the slot prints the full summary again
+    rc=65  KILLED  testAPartialScoreIsNotAScore testAScoredRowWithNoDateStillPrintsTheScore testAScoredSuspendedRowKeepsItsScoreAndDropsTheLabel testNothingToAddDrawsNot
+M2  nil unconditionally — the tidy-looking deletion that loses the date
+    rc=65  KILLED  testAPartialScoreIsNotAScore testAScoredRowWithNoDateStillPrintsTheScore testAScoredSuspendedRowKeepsItsScoreAndDropsTheLabel testTheSpecimensDetailDo
+M3  the date is dropped from the slot (#6361 left unbuilt on native)
+    rc=65  REFUSED-DID-NOT-COMPILE  .swift:270:44: error: no exact matches in call to instance method 'joined'
+M4  the score tail is dropped
+    rc=65  REFUSED-DID-NOT-COMPILE  .swift:270:44: error: no exact matches in call to instance method 'joined'
+M5  empty joins to "" — an empty Text that still costs its 6pt of spacing
+    rc=143  KILLED  
+M6  a partial score reaches the card (CERT-752's trap)
+    rc=65  KILLED  testAPartialScoreIsNotAScore 
+M7  the Discover summary loses its label (the sibling must not move)
+    rc=65  KILLED  testAnAbandonedGameIsStillNotFinished testTheDiscoverSummaryStillSaysTheWholeSentence 
+M8  the card reverts to the summary
+    rc=65  KILLED  testTheTrailingSlotCallsTheDetailHelperWithThePastTenseDate 
+M9  the card advertises a start time again (live/048)
+    rc=65  KILLED  testTheTrailingSlotCallsTheDetailHelperWithThePastTenseDate 
+M10 the badge stops saying the words the slot gave up (the omission)
+    rc=65  KILLED  testTheBadgeStillSaysTheWordsTheSlotStoppedSaying 
+
+=== clean-head control, run LAST (expect SURVIVED) ===
+M0  clean head  rc=0  SURVIVED
+
+killed=8 survived=0 refused=2 (of 10)
+tree restored byte-identical

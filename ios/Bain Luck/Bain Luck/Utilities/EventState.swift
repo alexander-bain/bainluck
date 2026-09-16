@@ -206,16 +206,68 @@ enum EventState {
     /// result was ever reported, so that is what the badge says.
     static let suspendedLabel = "No result reported"
 
-    /// The one line every card prints for a suspended event.
+    /// The score half of a suspended row's line, or nil when we hold no score.
     ///
     /// Side order is AWAY-HOME, matching the web summary and every native card:
     /// the away crest is drawn first and the title reads "{away} @ {home}". A
-    /// partial line (one side known, the other nil) prints the badge alone —
-    /// half a score under a "last score" label is the same partial-line trap
-    /// that graded the CERT-752 specimen 1.0/0.0, told smaller.
+    /// partial line (one side known, the other nil) yields nil — half a score
+    /// under a "last score" label is the same partial-line trap that graded the
+    /// CERT-752 specimen 1.0/0.0, told smaller.
+    ///
+    /// Lifted out of ``suspendedSummary`` so the card detail below spells "last
+    /// score" from the same place. Two literals would be two chances to drift,
+    /// and this pair of strings is read side by side on one row.
+    static func lastScoreFragment(away: Int?, home: Int?) -> String? {
+        guard let away, let home else { return nil }
+        return "last score \(away)-\(home)"
+    }
+
+    /// The one line a card prints for a suspended event when nothing else on
+    /// that card has said the state. Discover's hero card is the caller: its
+    /// corner chip says "PAUSED", so this line is where the words live.
     static func suspendedSummary(away: Int?, home: Int?) -> String {
-        guard let away, let home else { return suspendedLabel }
-        return "\(suspendedLabel) · last score \(away)-\(home)"
+        guard let fragment = lastScoreFragment(away: away, home: home) else { return suspendedLabel }
+        return "\(suspendedLabel) · \(fragment)"
+    }
+
+    /// What the feed/search/team card's TRAILING slot prints for a suspended
+    /// row — everything about that row EXCEPT the state, which the card's own
+    /// `StatusBadge` has already said in the same 6pt-spaced `HStack`.
+    ///
+    /// 🔴 THE DEFECT THIS EXISTS FOR IS A DUPLICATE, AND IT WAS THE WHOLE LINE.
+    /// `EventCardView.topBar` drew `StatusBadge` on the left and
+    /// ``suspendedSummary`` on the right, and `suspendedSummary` OPENS with
+    /// ``suspendedLabel`` — the badge's exact four words. Measured on production
+    /// 2026-09-16: of 1,788 events `status='suspended'` inside 30 days,
+    /// **1,786 carry both scores null**, so the summary degenerates to the bare
+    /// label and 99.9% of these cards said "No result reported · No result
+    /// reported". Photographed on the Sports tab, MMA 15310788 (Hunt v Perea),
+    /// `artifacts/native-189/02-sports.png`.
+    ///
+    /// The web card does not have this problem for a structural reason worth
+    /// keeping in mind before "fixing" it there: `FeedCard.tsx` draws NO
+    /// suspended badge at all, so its right-hand slot is the only statement and
+    /// correctly carries the full sentence. Native's card family says the state
+    /// in a chip (LIVE · FINAL · Settled · No result reported) and the detail on
+    /// the right — so the chip keeps the words and this slot keeps the detail.
+    /// That is the card's own grammar, not a third opinion about the state.
+    ///
+    /// The DATE is #6361's finding, built on native for the first time here. Web
+    /// added it because an undated "No result reported" row sits directly above
+    /// a sibling reading "Sep 13 FINAL" and a reader cannot age the result-less
+    /// one. Identical on the phone, and the primitive is the same one the
+    /// finished arm of this very slot already uses. live/048's refusal stands
+    /// untouched: this is the PAST-TENSE date, never `formattedDateTime`'s
+    /// "Today 7:00 PM", which would re-advertise a start time that has passed.
+    ///
+    /// Returns nil — the slot draws nothing — when we hold neither a score nor a
+    /// date. The badge has already spoken; an empty slot beside it is quiet,
+    /// where a second copy of the badge is noise.
+    static func suspendedCardDetail(away: Int?, home: Int?, date: String?) -> String? {
+        let parts = [lastScoreFragment(away: away, home: home), date]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     /// What the player-props card calls the number on each rung.

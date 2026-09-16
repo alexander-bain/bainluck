@@ -1,0 +1,9 @@
+=== pass 2 — the three mutants pass 1 could not grade ===
+M3  the date is dropped from the slot (#6361 left unbuilt on native)
+    rc=65  KILLED  testAPartialScoreIsNotAScore testAScoredSuspendedRowKeepsItsScoreAndDropsTheLabel testTheSpecimensDetailDoesNotRepeatTheBadge 
+M4  the score tail is dropped
+    rc=65  KILLED  testAScoredRowWithNoDateStillPrintsTheScore testAScoredSuspendedRowKeepsItsScoreAndDropsTheLabel 
+M5  empty joins to "" — an empty Text that still costs its 6pt of spacing
+    rc=65  KILLED  testNothingToAddDrawsNothing 
+
+tree restored byte-identical
