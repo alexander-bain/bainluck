@@ -225,39 +225,53 @@ def test_both_market_moves_serve_sites_route_through_the_helper():
 # ── 🔴 the two surfaces that must STAY raw, each for its own reason ─────────
 
 
-def test_the_feed_still_serves_the_raw_name_because_ranking_reads_it():
-    """🔴 Do not "finish" this one either. Read this before you touch feed.py.
+def test_the_feed_write_sites_stay_raw_and_the_boundary_does_the_humanising():
+    """This tripwire has been SPENT, on purpose. Its successor is named below.
 
-    `_review_decision_scope_keys` builds a manual-review scope key out of the
-    very field these serializers write:
+    It used to read "do not finish this one" and forbid `sport_display_name` in
+    feed.py outright, because `_review_decision_scope_keys` builds a
+    manual-review scope key out of the very field the three feed serializers
+    write:
 
         category = data.get("llm_sport_category") or data.get("sport_name") or …
         keys.append(f"category:{str(category).lower()}")
 
-    and the `data` it reads is the dict `_score_events` / `_score_futures` /
-    `_score_sports_mode_futures` produce.  Humanising `sport_name` there silently
-    re-keys every stored review decision from `category:tennis_other` to
-    `category:other tennis` — they stop matching, and the only symptom is
-    suppressed cards quietly coming back.
+    Humanising at those write sites re-keys every stored review decision from
+    `category:tennis_other` to `category:other tennis`; they stop matching and
+    the only symptom is suppressed cards quietly coming back.
 
-    That is a ranking change, which is a REVIEWED class under jkl=A, and it
-    needs the scope key repointed at the machine `sport` key in the same ship.
-    #6444 deliberately stayed out of it.  If you are doing that ship: repoint
-    the scope key, then change this test on purpose.
+    The successor ship did not repoint the scope key — repointing would have
+    moved the key for the BRANDED rows instead (`category:mlb` ->
+    `category:baseball_mlb`), trading one silent re-key for another. It put the
+    transform at the publish boundary, downstream of every ranking consumer, so
+    the scope keys are unchanged by construction.
+
+    So the exemption survives but NARROWS: the three write sites must still bind
+    the raw name (ranking reads them), and the reader is served later.
+    `test_feed_humanises_sport_name_at_the_publish_boundary_6444` owns the
+    ordering assertion — that module, not this one, is the tripwire now.
     """
     source = (ROUTES / "feed.py").read_text()
 
     assert "_review_decision_scope_keys" in source, (
         "the consumer this guard is about has gone — re-read the guard, then "
-        "decide whether feed.py can now be converted"
+        "decide whether the write sites can now be converted directly"
     )
     assert 'data.get("sport_name")' in source, (
-        "the review scope key no longer reads sport_name. If it now reads the "
-        "machine `sport` key, feed.py is safe to convert — do it, and delete this."
+        "the review scope key no longer reads sport_name; the constraint that "
+        "shaped this placement is gone, so re-derive it before trusting either "
+        "guard module"
     )
-    assert "sport_display_name" not in source, (
-        "feed.py now humanises sport_name while _review_decision_scope_keys "
-        "still keys on it: stored manual review decisions will stop matching."
+    # The write sites stay raw — that is the point, and the coverage scan below
+    # still uses them as its anti-vacuity specimen.
+    assert _raw_sport_name_sites(ROUTES / "feed.py"), (
+        "the feed's serializers no longer bind the raw name. If they were "
+        "converted directly, stored review decisions are re-keyed — see the "
+        "successor module"
+    )
+    assert "sport_display_name" in source, (
+        "the feed no longer humanises sport_name anywhere, so readers are back "
+        "to being shown machine keys on Discover cards"
     )
 
 
@@ -275,8 +289,10 @@ def test_the_sports_detail_route_is_still_the_5657_exemption():
 #: Every route module allowed to serve `sport_name` without the helper, with the
 #: measured reason.  Adding a name here is a decision, not a formality.
 EXEMPT = {
-    # ranking reads this field as a scope key — see the tripwire above.
-    "feed.py": "_review_decision_scope_keys keys on sport_name",
+    # The WRITE sites stay raw because ranking reads them as a scope key; the
+    # feed humanises at its publish boundary instead. Narrowed, not lifted —
+    # see the tripwire above and the successor guard module it names.
+    "feed.py": "_review_decision_scope_keys keys on sport_name; boundary humanises",
     # serves `group` too, which web only corrects while the name reads raw.
     "sports.py": "#5657's group trap",
 }
