@@ -201,6 +201,34 @@ export function outcomeRowPrintsMove(
   // row that STATES a verdict, not merely one on a resolved market — an ungraded
   // row has no result to print instead, so it keeps its movement like any other.
   if (outcomeRowVerdict(outcome, isResolved) !== null) return false;
+  // #6488 — AND A SETTLED MARKET NEVER ADVERTISES A LIVE MOVE, GRADED OR NOT.
+  //
+  // The line above is #4788's and is about the VERDICT cell: an ungraded leg must
+  // not print a confident `Lost`, and must not be blanked either. It left the
+  // ungraded arm printing a movement badge, so `/futures/61120482` rendered
+  // `Draw … LAST MOVE +0.5 pts` underneath a banner reading "This market has been
+  // settled" and a heading reading "Final Results" — the page telling a reader
+  // it is over and that the price is still moving, in one glance. Alex flagged
+  // exactly that juxtaposition from his phone (2026-09-15 intake).
+  //
+  // THIS IS THE PAGE'S OWN RULE, NOT A NEW ONE. The detail page already answers
+  // "may a resolved market show movement?" three times and answers no every time:
+  // it declines to pass `movement` to the hero at all (`page.tsx:675`,
+  // `!isResolved && …`), `FuturesHero` suppresses the pill a second time on its
+  // own `resolved` prop — whose doc states the rule outright, "so a settled market
+  // never reads like an ongoing 58%" — and the movement explanation is gated the
+  // same way (`page.tsx:898`). The table was the one widget that missed it.
+  //
+  // #4788's stated cost does not arise here. Its objection was that a row with no
+  // result "has nothing to trade [the cell] for", i.e. a hole; but `showLastMove`
+  // (#3358, `page.tsx:511`) asks this same predicate across the WHOLE table, so a
+  // settled market now drops the column outright and hands its fixed 80px back to
+  // the name — which at 390px is the difference between a name and `Pe…`.
+  //
+  // Narrow by construction, in both directions: a GRADED row already returned
+  // false one line up, and #6082's genuinely-settled leg on an OPEN market has
+  // `isResolved === false` and keeps its movement exactly as before.
+  if (isResolved) return false;
   const change = outcome.probability_change_24h;
   // UX-P275: the gate asks whether a move PRINTS, not whether the wire fraction is
   // nonzero — anything that rounds to zero is no move.
