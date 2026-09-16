@@ -188,8 +188,10 @@ export default function PropDivergenceDetail({ playerProps, status }: Props) {
               The questions themselves still all appear — completeness is this
               view's contract (V3). */}
           <p className="text-[11px] text-text-muted pb-1.5">
-            {SETTLED_NO_GRADE_LABEL} — these questions settled without a published
-            outcome, so there is no result to show against their mark.
+            {SETTLED_NO_GRADE_LABEL} —{" "}
+            {result.ungraded.length === 1
+              ? "this question settled without a published outcome, so there is no result to show against its mark."
+              : "these questions settled without a published outcome, so there is no result to show against their mark."}
           </p>
           <ul className="space-y-1">
             {result.ungraded.map((row) => (

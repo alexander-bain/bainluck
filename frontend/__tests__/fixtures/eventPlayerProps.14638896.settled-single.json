@@ -1,0 +1,21 @@
+[
+ {
+  "market_name": "Denver vs Kansas City: Touchdowns",
+  "outcome_name": "Lil'Jordan Humphrey: 1+",
+  "observed_at": "2026-09-15T03:25:47.896734+00:00",
+  "threshold": 1.0,
+  "over_probability": 0.07,
+  "opening_over_probability": 0.055,
+  "pregame_mark": 0.045,
+  "_inverted": false,
+  "source": "kalshi",
+  "movement": 0.015,
+  "_market_id": 60282689,
+  "actual": null,
+  "hit": null,
+  "is_winner": null,
+  "resolution_source": null,
+  "player_headshot": "https://a.espncdn.com/i/headshots/nfl/players/full/4039057.png",
+  "player_team": "away"
+ }
+]

@@ -67,6 +67,7 @@ const PropsSection = dynamic(() => import("@/components/event/PropsSection"), { 
 import type { PropMark } from "@/components/event/PropsSection";
 import { indexPropRowsByScriptKey, verifyScriptGrade } from "@/lib/propGrade";
 import { isChildTitleMark } from "@/lib/propFamily";
+import { countOf } from "@/lib/plural";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import SectionErrorBoundary from "@/components/SectionErrorBoundary";
@@ -2419,7 +2420,7 @@ export default function EventPage({ params }: EventPageProps) {
             <SectionErrorBoundary label="Player props" resetKey={gameMarkets}>
             <details className="group bg-surface-card rounded-card shadow-card overflow-hidden">
               <summary className="cursor-pointer select-none px-4 sm:px-5 py-3 text-[13px] font-semibold text-text-primary marker:content-none">
-                All {gameMarkets.player_props.length} props
+                All {countOf(gameMarkets.player_props.length, "prop", "props")}
                 <span className="ml-1.5 text-[11px] font-normal text-text-muted group-open:hidden">
                   show
                 </span>
