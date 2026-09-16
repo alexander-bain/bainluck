@@ -7317,14 +7317,19 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
 # =============================================================================
 
 
-def _clear_withdrawn_outcome(outcome, now, stats: dict) -> bool:
-    """Take the price off a leg the venue has withdrawn. #4356, CERT-2384's repair.
+def _clear_outcome_price(outcome, now) -> bool:
+    """Take the price off one leg, or decline to. The shared body of the two
+    clears below; it owns the CONDITIONS and the writes, never the reason.
 
-    The twin of the CLEAR in ``_refresh_linked_game_books``, carrying the same
-    three conditions for the same three reasons — but written as Python tests
-    on the ORM object rather than as a SQL ``WHERE``, because this poller
-    updates through ORM attribute assignment and mixing a Core ``update()`` into
-    its flush ordering is gotcha #5.
+    Split out for #5896's third-writer refusal. Two callers now clear a leg on
+    this poller for two different reasons — the venue withdrew the contract
+    (#4356) and the venue answered it before our row says kick-off (#5896) —
+    and those reasons must keep separate counters (see the stats block: a fact
+    about the listing and a fact about the settlement are not one number). The
+    conditions, though, are identical and must stay identical, so they live in
+    ONE function rather than being restated per reason. Returns whether the
+    price was actually taken off, so each caller increments only on a real
+    write and an already-clear leg is never double-counted.
 
     * ``is_winner is not True`` — never un-price a graded row (gotcha #21).
     * ``calibration_probability is None`` — never wipe a captured closing line,
@@ -7354,6 +7359,51 @@ def _clear_withdrawn_outcome(outcome, now, stats: dict) -> bool:
     # Same finding as the sibling clear's #2024 consumer audit.
     outcome.probability_change_24h = None
     outcome.last_updated = now
+    return True
+
+
+def _clear_pre_kickoff_settled_outcome(outcome, now, stats: dict) -> bool:
+    """Take back a settlement this poller wrote as a price. #5896.
+
+    The venue has declared this contract's ``result`` on a contest our own
+    event row still calls ``scheduled`` with a future ``commence_time``. The
+    number on the leg is therefore a GRADE, not a quote, and this beat is the
+    writer that keeps putting it there.
+
+    The twin of ``_refresh_linked_game_books``'s whole-book withdrawal and of
+    ``_KALSHI_WITHDRAW_PRE_KICKOFF_LEG_SQL``, written — like its #4356 sibling
+    — as Python tests on the ORM object rather than as a SQL ``WHERE``, because
+    this poller updates through attribute assignment (gotcha #5).
+
+    Clearing the leg is also what stops the HERO, with no second statement: the
+    blend stage later in this same beat reads these very ORM objects out of
+    ``pop.outcomes_by_market``, so a leg with no price leaves
+    ``_compute_source_home_probability`` nothing to speak from and the
+    ``win_probability_sources`` write is skipped for the event. That is the
+    same coupling that makes the price clear sufficient, and it is why this
+    function does not go near the event row.
+    """
+    if not _clear_outcome_price(outcome, now):
+        return False
+    stats["kalshi_pre_kickoff_settled_cleared"] += 1
+    return True
+
+
+def _clear_withdrawn_outcome(outcome, now, stats: dict) -> bool:
+    """Take the price off a leg the venue has withdrawn. #4356, CERT-2384's repair.
+
+    The twin of the CLEAR in ``_refresh_linked_game_books``, carrying the same
+    three conditions for the same three reasons — but written as Python tests
+    on the ORM object rather than as a SQL ``WHERE``, because this poller
+    updates through ORM attribute assignment and mixing a Core ``update()`` into
+    its flush ordering is gotcha #5.
+
+    The three conditions and the writes now live in ``_clear_outcome_price``,
+    which #5896's sibling clear shares — behaviour here is unchanged, and the
+    conditions being one object rather than two copies is the point.
+    """
+    if not _clear_outcome_price(outcome, now):
+        return False
     stats["kalshi_outcomes_withdrawn_cleared"] += 1
     return True
 
@@ -7725,6 +7775,18 @@ async def _poll_live_prediction_market_prices():
         # the venue has WITHDRAWN is a fact about the listing, an unreadable
         # book is a fact about the quote, and one number cannot say both.
         "kalshi_outcomes_withdrawn_cleared": 0,
+        # #5896, and kept apart from the withdrawn counter for the same reason
+        # that one is kept apart from `books_unreadable`. A leg the venue took
+        # BACK and a leg the venue ANSWERED are opposite facts: the first has
+        # no result and can never have one, the second has nothing BUT a
+        # result. `_legs` counts every answered leg this beat declined to
+        # price; `_cleared` counts the subset where an artifact was actually on
+        # the row and came off. `_legs` high with `_cleared` 0 is the healthy
+        # steady state (the refusal holding, nothing left to take back) and is
+        # NOT a dead branch — which is the reading `kalshi_outcomes_updated: 0`
+        # alone would invite.
+        "kalshi_pre_kickoff_settled_legs": 0,
+        "kalshi_pre_kickoff_settled_cleared": 0,
         "futures_snapshots_written": 0,
         "snapshots_written": 0,
         "snapshots_deduped": 0,
@@ -7965,6 +8027,14 @@ async def _poll_live_prediction_market_prices():
             # are real is the whole defect CERT-2384 blocked on.
             from app.tasks.kalshi import _is_withdrawn_leg, _kalshi_yes_probability
 
+            # #5896, and the same rule one line up: ONE definition of "the
+            # venue has answered this contract" and ONE of "our row says it has
+            # not started", shared with the two hourly writers rather than
+            # restated here. Two writers that disagreed about which legs are
+            # real is what CERT-2384 blocked on; two that disagree about which
+            # legs are OVER is the same defect with the sign flipped.
+            from app.utils.futures_liveness import event_pre_kickoff, venue_answered
+
             service = KalshiAPIService()
             try:
                 for _seen, market_id in enumerate(kalshi_ids):
@@ -8018,7 +8088,72 @@ async def _poll_live_prediction_market_prices():
                         # counted the request. `parse_markets` already owns
                         # the dollars-then-cents cascade, and the parsed
                         # values are DECIMAL probabilities — do not scale them.
+                        # #5896. Read ONCE per market, not once per leg: the
+                        # event clock cannot change inside a book, and a
+                        # per-leg call would be the same question asked N
+                        # times with N chances to drift.
+                        pre_kickoff = event_pre_kickoff(
+                            pop.event_by_market_id.get(market_id), now=now
+                        )
+
                         for km in service.parse_markets(markets_data):
+                            # #5896. The venue has ANSWERED this contract on a
+                            # contest OUR OWN row still says has not started.
+                            # The number it is holding is therefore a GRADE,
+                            # and writing a grade into the price column is the
+                            # whole defect — before kick-off there is nothing
+                            # for it to be the closing line OF.
+                            #
+                            # THE RULE IS NOT NEW; THIS IS ITS UNBUILT HALF.
+                            # The #4356 branch immediately below already
+                            # reached this conclusion in these words: "Clearing
+                            # the leg in `_refresh_linked_game_books` alone is
+                            # therefore not the ship: this poller would restore
+                            # it exactly when the reader is most likely to be
+                            # looking. Both writers have to agree." That was
+                            # built for the WITHDRAWN-leg class. The
+                            # settled-book class is structurally identical and
+                            # never got it.
+                            #
+                            # Measured end to end on production 2026-09-16, on
+                            # `KXATPCHALLENGERDOUBLES-26SEP15DERLOMMATSHA`
+                            # (market 61143994, event 15313044, both legs
+                            # `finalized` at the venue, our row `scheduled`
+                            # with a 06:00Z commence_time): the :20 heavy pass
+                            # withdrew both quotes and the event hero at
+                            # 05:24:43Z, and THIS beat wrote 0.99 and the hero
+                            # back at 05:25:44Z. The ship lived 61 seconds. The
+                            # two writers that refuse are hourly; this one is
+                            # every two minutes, so the artifact was on the row
+                            # ~98% of the time and the reader's page never
+                            # changed.
+                            #
+                            # Ordered before the price policy rather than after
+                            # it on purpose: an answered book is not a quote
+                            # this beat should be forming an opinion about at
+                            # all, so it must not reach `_kalshi_yes_probability`
+                            # and must not mint a snapshot. A chart point for a
+                            # settlement is the same fiction as the price, and
+                            # that is the #4356 branch's argument too.
+                            if pre_kickoff and venue_answered(km.result):
+                                stats["kalshi_pre_kickoff_settled_legs"] += 1
+                                settled_outcome = pop.outcome_lookup.get(
+                                    (market_id, km.ticker or "")
+                                )
+                                # NO single-outcome fallback here, for the same
+                                # reason the withdrawn branch refuses one: that
+                                # fallback exists to land a PRICE that has
+                                # nowhere else to go, and reusing it to CLEAR
+                                # would take the price off a row the venue
+                                # never named.
+                                if settled_outcome is not None:
+                                    _clear_pre_kickoff_settled_outcome(
+                                        settled_outcome, now, stats
+                                    )
+                                else:
+                                    stats["kalshi_outcome_unmatched"] += 1
+                                continue
+
                             yes_bid = km.yes_bid
                             yes_ask = km.yes_ask
                             last_price = km.last_price

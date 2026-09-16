@@ -121,13 +121,22 @@ def venue_answered(result) -> bool:
     Read off whichever shape the caller holds (raw dict value or the parsed
     ``KalshiMarket.result``); both carry the venue's own word verbatim.
 
-    🔴 IT LIVES HERE BECAUSE TWO WRITERS NOW ASK IT (#5771, then #5896).
+    🔴 IT LIVES HERE BECAUSE THREE WRITERS NOW ASK IT (#5771, then #5896 twice).
     ``futures_price_refresh`` asks it to refuse a settlement as a price;
     ``kalshi._refresh_linked_game_books`` — the hourly pass that actually owns
     the linked game rows, and the one that was writing the artifact back every
     :20 while #5771's gate held — asks the same question of the same payload.
     A second copy would be a second opinion, which is the drift this module's
     docstring exists to refuse.
+
+    The THIRD is ``_poll_live_prediction_market_prices``, and it is the one
+    that decides whether any of this reaches a reader. Both writers above run
+    HOURLY; that beat runs every two minutes, so it outnumbers them ~30:1 and
+    its opinion is the one on the row almost all of the time. Measured on
+    production 2026-09-16: the :20 pass withdrew market 61143994's two settled
+    legs at 05:24:43Z and the two-minute beat wrote 0.99 back at 05:25:44Z.
+    **The fix lived 61 seconds.** A refusal that only the slow writers make is
+    not a refusal.
 
     Deliberately keyed on ``result`` and NOT on a status allowlist. The venue's
     status vocabulary is open: the 36 pre-kick-off candidates read on
@@ -138,6 +147,45 @@ def venue_answered(result) -> bool:
     hide it.
     """
     return bool(str(result or "").strip())
+
+
+def event_pre_kickoff(event, *, now) -> bool:
+    """Does OUR OWN row say this contest has not started?
+
+    The Python twin of the clause the two hourly writers carry in SQL —
+    ``e.status = 'scheduled' AND e.commence_time > NOW()`` — computed once in
+    ``kalshi._LINKED_GAME_BOOKS_SQL`` and re-checked inside
+    ``_KALSHI_WITHDRAW_PRE_KICKOFF_SQL``'s own ``WHERE``.
+
+    🔴 IT EXISTS BECAUSE THE THIRD WRITER CANNOT ASK IN SQL.
+    ``_poll_live_prediction_market_prices`` — the two-minute beat — updates
+    through ORM attribute assignment, so reusing those statements would mix a
+    Core ``update()`` into its flush ordering (gotcha #5). That is the same
+    reason ``_clear_withdrawn_outcome`` restates #4356's three conditions as
+    Python tests rather than importing the SQL, and this function is here
+    rather than inline so the restatement is ONE object the guard tests can
+    pin, not a copy per call site.
+
+    ``now`` is keyword-only and has no default on purpose. Every caller already
+    holds its beat's single clock, and a ``datetime.now()`` reached for in here
+    would be a second opinion about when kick-off is — the shape gotcha #44 is
+    about. A naive ``now`` raises on the comparison rather than guessing, which
+    is the honest failure: ``commence_time`` is ``timestamptz``.
+
+    Returns ``False`` for a missing event and for a missing ``commence_time``.
+    Both mean "we cannot say this contest is still ahead of us", and the only
+    action gated on this function is a WITHDRAWAL — so the unknown case must
+    decline to act, never act on a guess.
+    """
+    if event is None:
+        return False
+    if event.status != "scheduled":
+        return False
+    commence_time = event.commence_time
+    if commence_time is None:
+        return False
+    return commence_time > now
+
 
 #: SQL that formats "now, minus the confirmation window" in the same shape the
 #: stamp is written in, so the two can be compared as text.
