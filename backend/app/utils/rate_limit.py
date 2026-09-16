@@ -148,6 +148,15 @@ def _get_rate_limiter():
                 # lib passes these kwargs straight through to the redis client.
                 "retry": _redis_fast_fail_retry(),
                 "retry_on_error": _redis_retry_on_errors(),
+                # NOTE (#1197 follow-through): `limits` builds this pool itself,
+                # so it is a PLAIN pool — it answers a full pool with
+                # `MaxConnectionsError`, not with the short wait
+                # `get_redis_client()` now gets, and the cap is now small. That
+                # is tolerable only because this branch is a degenerate fallback
+                # (prod runs the async counter below; reaching this needs
+                # REDIS_URL set AND the async client to have failed to build)
+                # and its one caller is wrapped in a fail-open try/except. Do not
+                # promote it back to the hot path without a blocking pool.
                 "max_connections": _REDIS_MAX_CONNECTIONS,
             }
             _ka = socket_keepalive_options()
