@@ -18951,6 +18951,59 @@ async def get_event_odds_history(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
+    # ── The chart reads the same kick-off the page does (#6568) ───────────────
+    #
+    # WHAT A READER SAW. `/events/15307696` (Port FC v Kobe, AFC Champions
+    # League) served TWO kick-offs three hours apart in one page load, measured
+    # 2026-09-16 15:30:30Z, both reads inside the same second:
+    #
+    #     GET /api/events/15307696            commence_time 12:15:00Z
+    #     GET /api/events/15307696/history    commence_time 15:15:00Z
+    #
+    # #5905's own docstring names why the detail route needed this and, in the
+    # same breath, why this route was missed: "every LIST-shaped surface reaches
+    # the correction through `fold_twin_events` … the detail route folds nothing
+    # — there is one row and nothing to fold it against — so it served the raw
+    # column". THIS route folds nothing either. It resolves duplicates through
+    # `folded_series_event_ids`, an id lookup that never constructs the fold, so
+    # the correction has never run here and the raw column is what every
+    # consumer below sees. Same rule, second surface that escapes it.
+    #
+    # 🔴 IT IS NOT THE LABEL, WHICH IS WHY THIS SITS ABOVE EVERYTHING. Four
+    # readers downstream take `event.commence_time` and reason about STATE with
+    # it — `_event_is_really_finished`, `_event_started_long_ago_unsettled`,
+    # the `commence_cap` that bounds the series, and `_game_state_window`. On
+    # the specimen the stored hour is three hours late, so at 15:30Z the route
+    # read a match that had in fact kicked off at 12:15Z and been graded by the
+    # venue at 14:16Z as fifteen minutes old: not stale-open, freshly started,
+    # and windowed accordingly. Correcting the served field alone and leaving
+    # those four on the raw column would have made the page agree with itself
+    # about the hour while still reasoning from the wrong one.
+    #
+    # Placed after the 404 and before the first consumer, for the reason the
+    # detail route places its own call after the duplicate resolution: the row
+    # we are about to serve is the row whose kick-off has to be right.
+    #
+    # Safe on every other row (the module's own gates, not a promise made here):
+    # serve-time only via `set_committed_value`, so nothing is marked dirty and
+    # no later flush can persist it (gotcha #4); soccer-only, because the exact
+    # 180-minute pad is a soccer constant and a fabrication anywhere else; never
+    # a row a schedule provider stamped (`external_id`), which stays a reported
+    # start; and idempotent through `KALSHI_RECOVERY_STAMP`, so it cannot stack
+    # a second pad if a caller above ever starts folding this row too.
+    try:
+        recover_kalshi_occurrence_starts([event])
+    except Exception:
+        # Gotcha #42, and the identical bargain the detail route strikes: this
+        # correction improves the chart and is never a precondition for having
+        # one. The ROW's id and never the path parameter — `event_id` is
+        # user-provided and CodeQL grades interpolating it `py/log-injection` at
+        # medium severity, which notice 32 refuses.
+        logger.exception(
+            "event history: kalshi occurrence recovery failed for %s",
+            getattr(event, "id", None),
+        )
+
     # ── The odds series is folded too, not just the win-prob one (#6399) ──────
     #
     # #3810 Fold B gave `win_prob_snapshots` this treatment further down and
