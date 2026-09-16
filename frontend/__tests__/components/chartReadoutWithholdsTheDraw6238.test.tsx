@@ -99,16 +99,42 @@ function render(
   );
 }
 
-/** The readout paragraph's text, tags stripped — what the reader actually reads. */
+/**
+ * The readout paragraph's text — every run of characters outside a tag.
+ *
+ * 🔴 NOT `replace(/<[^>]+>/g, "")`, and this is the repo's standing ruling, not
+ * a preference: that is the shape of an HTML sanitizer and CodeQL calls it a
+ * high-severity `js/incomplete-multi-character-sanitization`. It refused this
+ * ship's first sha exactly as it refused `compactRowNamesItsAnswer4396`'s
+ * (alert 2267 there, 2589 here), and a standing gate refusal is not something
+ * to argue with in a test helper. The index walk is the same reading with
+ * nothing sanitizer-shaped in it. No entity decoding is needed:
+ * `renderToStaticMarkup` escapes only `& < > " '`, and none of the strings
+ * asserted below contain one.
+ */
+function visibleText(fragment: string): string {
+  let out = "";
+  let i = 0;
+  for (;;) {
+    const open = fragment.indexOf("<", i);
+    out += open < 0 ? fragment.slice(i) : fragment.slice(i, open);
+    if (open < 0) break;
+    const close = fragment.indexOf(">", open);
+    if (close < 0) break;
+    i = close + 1;
+  }
+  return out.split(/\s+/).filter(Boolean).join(" ");
+}
+
+/** What the reader actually reads in the probability line. */
 function readout(html: string): string {
-  const m = html.match(
-    /data-testid="game-play-card-probability"[^>]*>([\s\S]*?)<\/p>/,
-  );
-  if (!m) return "";
-  return m[1]
-    .replace(/<[^>]+>/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const marker = 'data-testid="game-play-card-probability"';
+  const at = html.indexOf(marker);
+  if (at < 0) return "";
+  const opens = html.indexOf(">", at);
+  const closes = html.indexOf("</p>", opens);
+  if (opens < 0 || closes < 0) return "";
+  return visibleText(html.slice(opens + 1, closes));
 }
 
 describe("#6238 the chart readout withholds the away slot on a draw-priced sport", () => {
