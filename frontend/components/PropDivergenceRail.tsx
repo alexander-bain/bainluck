@@ -18,6 +18,7 @@ import {
   type PropDropReason,
 } from "@/lib/propDivergence";
 import type { PlayerPropRow } from "@/lib/playerPropsGrouping";
+import { countOf } from "@/lib/plural";
 import PropTravelBar from "./PropTravelBar";
 import PropDivergenceDetail from "./PropDivergenceDetail";
 
@@ -97,9 +98,15 @@ export default function PropDivergenceRail({ playerProps, status }: Props) {
             filling five slots with "grading unavailable" or vanishing. */}
         {result.emptyReason === "ungraded" && (
           <p className="text-[12px] leading-snug text-text-secondary">
-            {result.ungraded} {result.ungraded === 1 ? "question" : "questions"} settled
-            here, and none has a published outcome yet — so there is nothing to
-            rank. They are all listed below.
+            {/* UX-P265's helper, adopted. The noun already agreed here; the
+                VERB and the PRONOUN did not, so a one-question game said
+                "none has ... They are all listed below" about a single prop.
+                A page with exactly one settled prop is not an edge case — the
+                Chiefs–Broncos MNF page was one the morning this was written. */}
+            {countOf(result.ungraded, "question", "questions")} settled here, and{" "}
+            {result.ungraded === 1
+              ? "it has no published outcome yet — so there is nothing to rank. It is listed below."
+              : "none has a published outcome yet — so there is nothing to rank. They are all listed below."}
           </p>
         )}
 
@@ -148,7 +155,7 @@ export default function PropDivergenceRail({ playerProps, status }: Props) {
             >
               {expanded
                 ? "Show fewer"
-                : `See all ${result.eligible} questions`}
+                : `See all ${countOf(result.eligible, "question", "questions")}`}
             </button>
             {expanded && (
               <PropDivergenceDetail playerProps={playerProps} status={status} />
