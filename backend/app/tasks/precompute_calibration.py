@@ -3743,14 +3743,48 @@ def _calibration_population_ctes(
                 LEFT JOIN events ev ON ev.id = fm.event_id
                 WHERE fm.status = 'resolved'
                   {market_info_extra}
-                  -- #994 symmetric exclusion: DataGolf markets whose full field
-                  -- the historical API genuinely can't return (event not found)
-                  -- are dropped ENTIRELY — winners AND losers — so participation
-                  -- can never be one-sidedly assumed. Recovery flags these; the
-                  -- residual is expected to be ~0 (golf history never ages out).
+                  -- #994 symmetric exclusion: a DataGolf market whose full field
+                  -- we cannot establish is dropped ENTIRELY — winners AND losers
+                  -- — so participation is never one-sidedly assumed. Its
+                  -- leaderboard-graded winners are truth-eligible while an
+                  -- unknown number of its real losers still sit under
+                  -- `did_not_play`, so admitting it admits one side only.
+                  --
+                  -- 🔴 #6211 — THE COMMENT HERE SAID THE RESIDUAL "is expected
+                  -- to be ~0 (golf history never ages out)". IT WAS 94.7%.
+                  -- Measured on production 2026-09-15
+                  -- (`artifacts-calibration-1310/prod_datagolf_bisect.py`): 322
+                  -- of 340 resolved DataGolf markets carried the flag, 18 reached
+                  -- this CTE, and the 36 priced truth-eligible rows inside them
+                  -- were ALL winners — published on /calibration as a 36.5pp
+                  -- accuracy figure about a named third-party provider, beside a
+                  -- 318,956-outcome Kalshi row. The wrong sentence is kept and
+                  -- marked rather than deleted (CAL-P150): it is what stopped
+                  -- the next reader looking.
+                  --
+                  -- The cause was upstream, not here: `get_historical_results`
+                  -- folded 403 and ReadTimeout into the same `[]` a 404 returns
+                  -- (gotcha #36/#53), and `_recover_datagolf_participation` wrote
+                  -- that `[]` — and separately ANY non-429 exception — as this
+                  -- one permanent boolean. A refused or timed-out call became a
+                  -- durable claim that a tournament never happened, and the
+                  -- cursor advanced past it forever.
+                  --
+                  -- Those are now two states with two meanings, and BOTH are
+                  -- excluded here, because both are "the field is not
+                  -- established" and the exclusion must stay symmetric:
+                  --
+                  --   datagolf_recovery_residual   evidenced absence, terminal
+                  --   datagolf_recovery_unverified our call failed, retryable
+                  --
+                  -- Excluding both is deliberately population-NEUTRAL today: a
+                  -- market the old catch-all flagged residual is still withheld.
+                  -- What changes is that it can now be re-asked and, when
+                  -- DataGolf answers, re-enter WITH its losers.
                   AND NOT COALESCE(
                       (fm.market_metadata->>'datagolf_recovery_residual')::boolean,
                       false)
+                  AND fm.market_metadata->'datagolf_recovery_unverified' IS NULL
             ),
             -- #6275 / #1902, queue 363 item 4 (ALEX RULING): the identity
             -- quarantine. A market whose own ticker names a different game date

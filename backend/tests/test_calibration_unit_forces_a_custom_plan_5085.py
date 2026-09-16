@@ -182,7 +182,36 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: publish, or keep rebuilding one that cannot". The version is again NOT
 #: bumped: Rule 2 passed at -4.72%, inside its band, so nothing about q271's
 #: rows is being redefined and there is nothing for a reader to be told.
-LIVE_INPUT_FINGERPRINT = "3f20f26f9cd859c33a14a04cf5711e5a"
+#:
+#: RE-ANCHORED for #6211 (CAL-P1310, the DataGolf population repair), composed
+#: on the master that already carries the CAL-P1318 anchor above:
+#: ``3f20f26f…`` -> ``8ddaa1ea…``. ``market_info`` gains a second withholding
+#: predicate (``datagolf_recovery_unverified``) and ``_calibration_population_ctes``
+#: is a hashed root, so the digest moves by design: "Any edit to any query
+#: invalidates every carried read, which is the only safe default." An UNMOVED
+#: fingerprint here would have meant the new predicate never reached the
+#: population SQL.
+#:
+#: THE RECOMPOSE IS WHY THIS VALUE IS NOT ``ce063bf0…``. #6211 measured that
+#: digest against the pre-#6275 tree (``1a1d9a91…`` -> ``ce063bf0…``). #6275's
+#: publish-gate repair then landed on master and moved the same pin to
+#: ``3f20f26f…``, so the composed tree hashes to neither: the two edits are
+#: independent inputs to one function and the digest is over both. Coordinator
+#: 2026-09-16 15:11Z lifted the sequencing-only hold for exactly this reason —
+#: two re-keys landing in ONE heavy release cost ONE rebuild between them
+#: instead of two, and #6275's repair restarts the calculation regardless.
+#:
+#: WHAT THIS RE-KEY COSTS, asked the way the notes above insist. Nothing extra
+#: beyond what #6275 already spends. The bank that ``1a1d9a91…`` carried to
+#: 128/128 was REFUSED by the publish gate at 12:29:54Z on 2026-09-16
+#: (``category_collapse``), and a refusal clears the checkpoint, so the
+#: generation in flight is already rebuilding from zero and is heading for the
+#: identical verdict until #6275 is live. Riding the same release is therefore
+#: the cheap slot, not an extra bill. The version is NOT bumped: this repair is
+#: deliberately population-neutral today (``market_info`` withholds both
+#: DataGolf states symmetrically), so q271 still names the right rows and there
+#: is nothing for a reader to be told.
+LIVE_INPUT_FINGERPRINT = "8ddaa1ea408615b81599c385593d83a1"
 
 
 class _Db:
