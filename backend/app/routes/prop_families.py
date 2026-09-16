@@ -594,6 +594,18 @@ async def build_prop_families(
                     "source": market.source,
                     "group_id": market.group_id,
                     "status": market.status,
+                    # #6630: the sport scope. Six live markets key to
+                    # `defensive player of the year` across basketball,
+                    # football and the WNBA, so the family key alone cannot
+                    # tell two sports' awards apart. Only splits a family when
+                    # two different sports are actually present.
+                    # `getattr`, not attribute access: this loop is driven by
+                    # test doubles as well as ORM rows, and a missing scope
+                    # degrades to today's behaviour (no split) rather than a
+                    # 500. `test_the_scope_column_exists_on_the_model` is the
+                    # guard that keeps the default from silently becoming the
+                    # only path if the column is ever renamed.
+                    "sport": getattr(market, "llm_sport_category", None),
                     "resolution_date": (
                         market.resolution_date.isoformat()
                         if market.resolution_date else None
