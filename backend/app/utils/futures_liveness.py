@@ -187,6 +187,55 @@ def event_pre_kickoff(event, *, now) -> bool:
     return commence_time > now
 
 
+#: The BOOK half of #6522's stranded-hero test: is there no Kalshi leg on this
+#: event still carrying a price? Written as a fragment against the caller's
+#: ``events`` alias ``e``, the same way :data:`_VENUE_SETTLED_CUTOFF_SQL` is
+#: written against ``fm``.
+#:
+#: 🔴 IT IS A CONSTANT BECAUSE THE SECOND CALLER ARRIVED (#6535), AND A COPY IS
+#: THE FAILURE MODE THIS MODULE EXISTS TO REFUSE.
+#: ``_KALSHI_STRANDED_PRE_KICKOFF_HERO_SQL`` asks it to take the withdrawn grade
+#: off ``Event.win_probability_sources``; ``get_event_odds_history`` asks the
+#: identical question to stop the CHART drawing the same grade one table over.
+#: #6535's own scope note names that hazard by name — "a third opinion about the
+#: same key in ``win_prob_snapshots`` is the same hazard" — so the two share one
+#: object rather than one sentence each.
+#:
+#: 🔴 THE CHEAP SUBSTITUTE IS NOT EQUIVALENT, MEASURED RATHER THAN ASSUMED.
+#: ``NOT jsonb_exists(e.win_probability_sources, 'kalshi')`` needs no join and is
+#: true of exactly the rows the hero withdrawal has already drained, which makes
+#: it look like a free way to ask this. On production 2026-09-16 16:xxZ, over the
+#: 345 pre-kick-off events carrying a Kalshi chart series: the two agree on 4,
+#: and the cheap form fires on **13 more whose Kalshi book is live** — it would
+#: hide a legitimate curve on thirteen pages to repair four. An absent blend key
+#: means the blend is not speaking; it does not mean the venue has gone quiet.
+#:
+#: ``current_probability IS NOT NULL`` and nothing else, because that is the
+#: column every clearer in the #4356 / #5896 family writes ``None`` into — the
+#: question is "did a withdrawal happen", not "is the price any good".
+KALSHI_BOOK_SILENT_SQL = """
+           NOT EXISTS (
+                 SELECT 1
+                   FROM futures_markets fm2
+                   JOIN futures_outcomes fo2 ON fo2.market_id = fm2.id
+                  WHERE fm2.event_id = e.id
+                    AND fm2.source = 'kalshi'
+                    AND fo2.current_probability IS NOT NULL
+               )
+"""
+
+#: The same question as a standalone read for one event, for callers holding a
+#: session rather than composing a sweep. Returns exactly one row: a row that
+#: does not exist cannot be pre-kick-off either, and the only action gated on
+#: this is a WITHDRAWAL — so ``None`` must read as "decline to act", which is
+#: what a falsy scalar does.
+KALSHI_BOOK_SILENT_FOR_EVENT_SQL = f"""
+    SELECT{KALSHI_BOOK_SILENT_SQL.rstrip()} AS silent
+      FROM events e
+     WHERE e.id = :event_id
+"""
+
+
 #: SQL that formats "now, minus the confirmation window" in the same shape the
 #: stamp is written in, so the two can be compared as text.
 _VENUE_SETTLED_CUTOFF_SQL = (

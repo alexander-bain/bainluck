@@ -26,6 +26,7 @@ from app.utils.event_completion import (
     commence_time_is_a_reported_start,
 )
 from app.utils.sport_keys import is_kalshi_shadowed_futures_ticker
+from app.utils.futures_liveness import KALSHI_BOOK_SILENT_SQL
 from app.utils.prediction_market_matching import (
     is_game_level_market,
     _KALSHI_GAME_TICKER_PREFIXES,
@@ -7413,8 +7414,12 @@ _STRANDED_HERO_SWEEP_LIMIT = 200
 #: ``MIN(fm.id)`` only has to name a market that belongs to the event — the
 #: withdrawal's own second arm decides whether the key goes, and that arm is
 #: already true for every row this returns.
+#: The book arm is interpolated from :data:`KALSHI_BOOK_SILENT_SQL` rather than
+#: written here (#6535). It used to be inline; the chart repair needed the same
+#: question against the same alias, and the module that owns it says why a
+#: second copy is the drift rather than the convenience.
 _KALSHI_STRANDED_PRE_KICKOFF_HERO_SQL = text(
-    """
+    f"""
     SELECT e.id AS event_id,
            MIN(fm.id) AS market_id
       FROM events e
@@ -7424,14 +7429,7 @@ _KALSHI_STRANDED_PRE_KICKOFF_HERO_SQL = text(
      WHERE e.status = 'scheduled'
        AND e.commence_time > NOW()
        AND jsonb_exists(e.win_probability_sources, 'kalshi')
-       AND NOT EXISTS (
-             SELECT 1
-               FROM futures_markets fm2
-               JOIN futures_outcomes fo2 ON fo2.market_id = fm2.id
-              WHERE fm2.event_id = e.id
-                AND fm2.source = 'kalshi'
-                AND fo2.current_probability IS NOT NULL
-           )
+       AND{KALSHI_BOOK_SILENT_SQL.rstrip()}
      GROUP BY e.id, e.commence_time
      ORDER BY e.commence_time
      LIMIT :limit
