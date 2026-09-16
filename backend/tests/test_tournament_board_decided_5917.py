@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import copy
 from datetime import datetime, timezone
+from itertools import permutations
 
 import pytest
 
@@ -39,7 +40,7 @@ from app.utils.tournament_board import (
     apply_final_result,
     build_boards,
 )
-from app.utils.tournament_progress import DrawProgress
+from app.utils.tournament_progress import ROUND_INDEX, DrawProgress
 
 NOW = datetime(2026, 9, 13, 13, 7, 0, tzinfo=timezone.utc)
 
@@ -166,8 +167,14 @@ def _row(board, entity_key):
     return next(r for r in board["rows"] if r["entity_key"] == entity_key)
 
 
-def _decided(champion=RYBAKINA, draw="womens-singles"):
-    return {draw: DrawProgress(champion=champion)}
+def _decided(champion=RYBAKINA, draw="womens-singles", reached=None):
+    """The progress object `apply_final_result` reads.
+
+    `reached` defaults to empty because that is the honest worst case and the
+    one the callers above were written against: a champion we can name and a
+    draw whose rounds we cannot prove. #6628's tests pass a real depth map.
+    """
+    return {draw: DrawProgress(champion=champion, reached=dict(reached or {}))}
 
 
 # ── THE FIXTURE ITSELF IS THE DEFECT, SO ASSERT IT BEFORE FIXING IT ──────────
@@ -347,8 +354,12 @@ def test_the_champion_is_ranked_first_even_when_they_were_ranked_last():
     assert board["rows"][0]["entity_key"] == POTAPOVA
     assert board["rows"][0]["rank"] == 1
     assert board["rows"][0]["state"] == TERMINAL_WON
-    # The rest keep their order relative to each other.
-    assert [r["entity_key"] for r in board["rows"][1:]] == [RYBAKINA, SABALENKA]
+    # The tail is alphabetical, NOT the arrival order this line asserted until
+    # #6628. No depth is proven here, so there is nothing to rank the rest BY;
+    # what changed is that they no longer keep the dead outright prices' order,
+    # which is the defect that printed a losing finalist 21st of 36. The
+    # alphabetical tail is stated, deterministic and admits it knows nothing.
+    assert [r["entity_key"] for r in board["rows"][1:]] == [SABALENKA, RYBAKINA]
 
 
 def test_the_board_names_the_champion_and_is_silent_otherwise():
@@ -686,3 +697,128 @@ async def test_a_first_only_request_serves_the_board_already_decided(routed):
     # And `results` is genuinely absent from this fragment — the fact that makes
     # this test the one that catches it.
     assert "results" not in first
+
+
+# ── #6628: A DECIDED BOARD IS ORDERED BY THE RESULT, NOT BY A DEAD PRICE ─────
+#
+# `_rank_rows` sorts on `(probability is None, -probability)`. Once
+# `_settle_row` has blanked every price that key is the constant `(True, -0.0)`
+# for every row, `list.sort` is stable, and `1..N` is stamped on arrival order.
+# On production that printed Ben Shelton — who played the final — 21st of 36,
+# and Aryna Sabalenka 32nd of 44, while the women's tail ran alphabetically.
+#
+# Every test below feeds a depth map through the real `DrawProgress`, because
+# the fix's whole claim is that the key it needs was already in hand.
+
+_F = ROUND_INDEX["F"]
+_SF = ROUND_INDEX["SF"]
+_R16 = ROUND_INDEX["R16"]
+
+
+def _arrival(boards, keys):
+    """Put the women's rows in a stated arrival order, in place.
+
+    The defect is invisible to any test that feeds rows in the right order
+    already — that is the acceptance criterion's own wording — so the arrival
+    order is something these tests SET rather than inherit.
+    """
+    board = _womens(boards)
+    by_key = {row["entity_key"]: row for row in board["rows"]}
+    assert set(keys) == set(by_key), keys
+    board["rows"] = [by_key[key] for key in keys]
+    return boards
+
+
+def test_the_losing_finalist_ranks_second_however_the_prices_left_the_board():
+    """The headline defect, at the smallest size that can show it.
+
+    Potapova is the cheapest outright on this fixture, so the builder puts her
+    LAST — exactly where the real board had its losing finalists. She is the
+    one who reached the final, so she ranks 2.
+    """
+    boards = _boards()
+    before = [r["entity_key"] for r in _womens(boards)["rows"]]
+    # The vacuity gate: if the finalist already arrived second, a stable sort
+    # on a constant key would pass this test without ordering anything.
+    assert before.index(POTAPOVA) == len(before) - 1, before
+
+    apply_final_result(
+        boards,
+        _decided(
+            champion=RYBAKINA,
+            reached={RYBAKINA: _F, POTAPOVA: _F, SABALENKA: _R16},
+        ),
+        now=NOW,
+    )
+    board = _womens(boards)
+
+    assert [r["entity_key"] for r in board["rows"]] == [RYBAKINA, POTAPOVA, SABALENKA]
+    assert [r["rank"] for r in board["rows"]] == [1, 2, 3]
+
+
+def test_the_champion_outranks_a_finalist_who_is_alphabetically_first():
+    """Why the champion is pinned SEPARATELY from the depth.
+
+    `build_progress` gives the final's winner and its loser the SAME depth —
+    both are proven to have reached `F`, and the winner's index is not bumped
+    past it because no round follows the final. So the depth alone cannot
+    separate them, and the tiebreak below it is the name: delete the pin and
+    "Aryna" tops the board that exists to say Elena won.
+    """
+    boards = _boards()
+    apply_final_result(
+        boards,
+        _decided(
+            champion=RYBAKINA,
+            reached={RYBAKINA: _F, SABALENKA: _F, POTAPOVA: _SF},
+        ),
+        now=NOW,
+    )
+    board = _womens(boards)
+
+    assert board["rows"][0]["entity_key"] == RYBAKINA
+    assert board["rows"][0]["state"] == TERMINAL_WON
+    assert [r["entity_key"] for r in board["rows"]] == [RYBAKINA, SABALENKA, POTAPOVA]
+
+
+def test_a_player_whose_run_we_cannot_prove_sorts_below_one_we_can():
+    """No proven depth is a claim about us, so it goes to the tail.
+
+    Sabalenka carries the higher outright price of the two non-champions here;
+    ranking her above a proven semi-finalist on the strength of it would be the
+    dead price steering the board again, one row further down.
+    """
+    boards = _boards()
+    apply_final_result(
+        boards,
+        _decided(champion=RYBAKINA, reached={RYBAKINA: _F, POTAPOVA: _SF}),
+        now=NOW,
+    )
+    board = _womens(boards)
+
+    assert [r["entity_key"] for r in board["rows"]] == [RYBAKINA, POTAPOVA, SABALENKA]
+    assert board["rows"][2]["rank"] == 3
+
+
+@pytest.mark.parametrize("arrival", list(permutations([RYBAKINA, SABALENKA, POTAPOVA])))
+def test_the_order_is_the_same_whatever_order_the_rows_arrive_in(arrival):
+    """The class guard, and the one that fails on the code this replaces.
+
+    A stable sort on a constant key returns its input untouched, so the old
+    board's order was a function of the outright market's last prices. Six
+    arrival orders, one published order: the ranking is now a function of the
+    result alone.
+    """
+    boards = _arrival(_boards(), list(arrival))
+    apply_final_result(
+        boards,
+        _decided(
+            champion=RYBAKINA,
+            reached={RYBAKINA: _F, POTAPOVA: _F, SABALENKA: _R16},
+        ),
+        now=NOW,
+    )
+    board = _womens(boards)
+
+    assert [r["entity_key"] for r in board["rows"]] == [RYBAKINA, POTAPOVA, SABALENKA]
+    assert [r["rank"] for r in board["rows"]] == [1, 2, 3]

@@ -336,6 +336,56 @@ def _rank_rows(rows: list[dict[str, Any]]) -> None:
         row["rank"] = index
 
 
+def _decided_order_key(
+    row: dict[str, Any],
+    winner_row: dict[str, Any],
+    reached: dict[str, int],
+) -> tuple[bool, bool, int, str, str]:
+    """Where one row sits on a board the RESULT has decided (#6628).
+
+    A finished draw is ordered by what happened: champion, losing finalist,
+    semi-finalists, and so on.  ``_rank_rows`` cannot produce that order and
+    never could — on a decided board ``_settle_row`` has blanked every
+    ``probability``, so its key is the constant ``(True, -0.0)``, its stable
+    sort returns the rows in arrival order, and ``1..N`` is stamped on top of
+    whatever the outright market's last prices happened to leave behind.  That
+    is how a losing finalist came to be printed 21st of 36 and 32nd of 44.
+
+    The depth is ``DrawProgress.reached`` — entity_key -> deepest ROUNDS index
+    PROVEN reached — which is already in hand here (it is what supplies
+    ``winner_key``) and is already serialised per row as the grid's ``note``.
+    No new source, and nothing inferred from a price.
+
+    The champion is pinned SEPARATELY rather than left to the depth, and the
+    two are not redundant: ``build_progress`` records the final's winner and
+    its loser at the SAME depth (both are proven to have reached ``F``; the
+    winner's index is not bumped past it because there is no round after the
+    final).  Ordering on depth alone would put the champion and the runner-up
+    in alphabetical order — an upset would print the beaten finalist first on
+    the board that exists to say who won.
+
+    Rows with no proven depth sort to the tail rather than to the top, which is
+    the honest place for them: they are players whose result we cannot prove,
+    and on a finished draw that is a claim about us, not a standing.  ``None``
+    is carried as its own element instead of as a sentinel depth so no real
+    round index can ever collide with it.
+
+    The last two elements make the order TOTAL, and that is the point rather
+    than a nicety: a key that leaves ties resorts to arrival order, which is
+    the defect this replaces.  ``entity_key`` is the backstop for two rows that
+    share a display name.
+    """
+    key = str(row.get("entity_key"))
+    depth = reached.get(key)
+    return (
+        row is not winner_row,
+        depth is None,
+        -(depth or 0),
+        (row.get("display_name") or "").casefold(),
+        key,
+    )
+
+
 def _board_summary(rows: list[dict[str, Any]], now: datetime) -> dict[str, Any]:
     """The board-level freshness verdict and its counts, from the rows as served.
 
@@ -1143,12 +1193,17 @@ def apply_final_result(
             _settle_row(row, TERMINAL_WON if row is winner_row else TERMINAL_ELIMINATED)
             changed += 1
 
-        # The champion tops the board. `_rank_rows` cannot do this on its own:
-        # with every probability `None` its sort key is equal for every row, so
-        # a stable sort would leave the winner wherever the outright market's
-        # last prices happened to put them — first for a favourite, far down for
-        # an upset, which is the case that matters.
-        rows.sort(key=lambda row: row is not winner_row)
+        # The board is ordered by the RESULT: champion, then the losing
+        # finalist, then the semi-finalists (#6628). `_rank_rows` cannot do
+        # this on its own — with every probability `None` its sort key is equal
+        # for every row, so a stable sort would leave each row wherever the
+        # outright market's last prices happened to put it. `_decided_order_key`
+        # states why each element of the key is there; the ordering is total,
+        # so the `_rank_rows` below re-sorts on a constant key and PRESERVES
+        # this order rather than competing with it.
+        rows.sort(
+            key=lambda row: _decided_order_key(row, winner_row, draw_progress.reached)
+        )
         board["rows"] = rows
         # ABSENT on an undecided board, never `None`: a reader testing
         # `board.decided` gets one answer, and there is no second falsy shape to
