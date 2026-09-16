@@ -245,10 +245,15 @@ export function FuturesChart({
   // is the only kind of hole the drawn chart is lying about. A plain
   // computation, not a hook — it sits below the early returns above, same as
   // `combinedPoints` and for the same reason.
+  // #6542: `settled` is handed over so a decided board stops reporting how long
+  // ago its last number arrived — of course it is old; the question is answered.
+  // The hole warning is unaffected (see the `stale` branch in `seriesFreshness`).
   const freshness = seriesFreshness(
     displayedOutcomes.flatMap((o) =>
       o.history.filter((p) => p.probability !== null).map((p) => p.timestamp),
     ),
+    undefined,
+    { settled },
   );
 
   // L2-164: the raw series max (before any axis pinning) drives the zoom chip.
