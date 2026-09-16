@@ -2259,6 +2259,38 @@ jobs:
             exit 1
           fi
 
+      - name: "#5896 pre-kick-off LEG withdrawal grain (real Postgres)"
+        # `5896-CLEAR-ANSWERED-LEGS-IN-MIXED-BOOKS-WITHOUT-HARMING-LIVE-SIBLINGS`
+        # promises one thing: on a mixed book the answered leg's stored artifact
+        # goes and the trading sibling's real price stays. That promise is one
+        # clause — `AND fo.external_id = :external_id`.
+        #
+        # The unit suite for this ship drives the writer against a RECORDING
+        # fake session, so it can see which statement was issued with which
+        # binds and can never see what the statement DOES. Measured: deleting
+        # that clause — re-introducing the exact harm the ship's name refuses —
+        # left `test_the_trading_sibling_keeps_its_real_price` GREEN and was
+        # caught only by a string comparison. This gate executes production's
+        # own statement object against a seeded mixed book, so the grain is
+        # graded on rows; with it, the same mutant fails the withdrawal arm.
+        #
+        # Two-armed: it also runs the MARKET-grain sibling over the same corpus
+        # and requires it to take the trading leg down. If that arm fails the
+        # corpus has stopped holding a mixed book and every "the sibling
+        # survived" assertion has gone vacuous.
+        #
+        # Same skip detection as every gate in this job. Note this file's
+        # premise arm runs WITHOUT a database by design, so a fully-skipped run
+        # still reports skips here and trips the detector.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_prekickoff_leg_withdrawal_5896_pg.py \
+            -v -rs 2>&1 | tee /tmp/legwithdrawal5896.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/legwithdrawal5896.txt; then
+            echo "::error::#5896 leg-grain withdrawal gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
