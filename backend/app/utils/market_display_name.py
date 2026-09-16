@@ -176,12 +176,19 @@ def clean_market_display_name(name: str | None) -> str | None:
     return _rewrite_object_slot(_strip_trailing_blank(name))
 
 
-def _strip_trailing_blank(name: str) -> str:
-    """The trailing-blank rule: drop the blank AND the preposition governing it."""
+def _trailing_blank_parts(name: str) -> tuple[str, str, str] | None:
+    """``(head, preposition, question_mark)`` when the trailing rule fires, else None.
+
+    Split out of :func:`_strip_trailing_blank` for #6470, which needs the WORD
+    this rule deletes rather than the string it leaves behind. One grammar with
+    two readers rather than two grammars: a name whose blank is stripped here
+    and a name whose deadline is named there are by construction the same set,
+    so the caption can never restore a preposition the title still carries.
+    """
     stripped = name.rstrip()
     match = _TRAILING_BLANK.search(stripped)
     if match is None:
-        return name
+        return None
 
     head = stripped[: match.start()].rstrip()
     lowered = head.lower()
@@ -193,12 +200,50 @@ def _strip_trailing_blank(name: str) -> str:
         # A blank we recognise governed by a word we have not measured. Leave
         # the name alone rather than guess: "X above?" reads worse than the
         # blank it replaced.
-        return name
+        return None
 
     head = head.rstrip(" ,;:-")
     if not head:
         # The question was nothing but a preposition and a blank. Nothing here
         # is better than an empty headline.
-        return name
+        return None
 
-    return head + (match.group(1) or "")
+    return head, preposition, match.group(1) or ""
+
+
+def _strip_trailing_blank(name: str) -> str:
+    """The trailing-blank rule: drop the blank AND the preposition governing it."""
+    parts = _trailing_blank_parts(name)
+    if parts is None:
+        return name
+    head, _preposition, question_mark = parts
+    return head + question_mark
+
+
+def elided_trailing_preposition(name: str | None) -> str | None:
+    """The preposition :func:`clean_market_display_name` DELETES, or ``None``.
+
+    "Anthropic IPO by __?"              -> "by"
+    "GPT-5.5 released on...?"           -> "on"
+    "Amazon 2026 capex above ___?"      -> None   (not a strippable word)
+    "Will Trump issue rebates by Election Day?"
+                                        -> None   (no blank: nothing is elided)
+
+    #6470 — this is the VENUE telling us what its outcome list means. Polymarket
+    writes the group template as the market name and the members fill the slot,
+    so "… by <blank>?" with a dated leg is that venue's own statement that the
+    leg is a DEADLINE and not a window. That is the notice-26/27 standard —
+    membership read off the venue's structure — rather than a guess from the
+    shape of the label, which cannot tell "by December 31" from "during
+    December" and must therefore stay silent.
+
+    Returns the preposition exactly as it appears in
+    :data:`_STRIPPABLE_PREPOSITIONS` (lower case), and ``None`` for every name
+    this module leaves byte-identical. A caller may only act on a word it has
+    reasoned about: the list is closed, but this function does NOT rank its
+    members, so a caller wanting deadline semantics tests for ``"by"`` itself.
+    """
+    if not name:
+        return None
+    parts = _trailing_blank_parts(name)
+    return None if parts is None else parts[1]

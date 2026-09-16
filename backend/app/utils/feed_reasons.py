@@ -172,6 +172,105 @@ def _weak_outcome_label(name: str | None) -> bool:
     return False
 
 
+#: #6470 — the preposition whose elision this module knows how to repay. The
+#: display rule (`market_display_name`) deletes one of six words; only this one
+#: makes the outcome a DEADLINE, which is the only claim the level clause below
+#: is licensed to make. "on"/"at" name a point rather than a bound and would
+#: turn "40% by December 31" into a different, unmeasured sentence, so they are
+#: left silent exactly as today.
+DEADLINE_PREPOSITION = "by"
+
+
+def _date_outcome_label(name: str | None) -> str | None:
+    """The label when it is a bare calendar date, else ``None``.
+
+    The POSITIVE half of the `_MONTH_DAY_RE` arm of :func:`_weak_outcome_label`,
+    and deliberately the same pattern rather than a second one: this function
+    may only speak about labels that function refuses, so sharing the regex is
+    what makes "names a date" and "is unnameable as a subject" the same set.
+    """
+    label = (name or "").strip()
+    if not label or not _MONTH_DAY_RE.match(label):
+        return None
+    return label
+
+
+def leader_deadline_clause(
+    leader_name: str | None,
+    pct: int | None,
+    *,
+    deadline_preposition: str | None,
+) -> str:
+    """`60% chance by December 31, 2026` — the LEVEL of a dated leg, or "".
+
+    #6470. Six of the sixty cards on production page one (2026-09-15) arrived
+    with no caption at all — `reason`, `headline`, `card_sum_reason` and
+    `hook_description` all empty, so both clients' `firstMeaningful([...])` chain
+    had nothing to print. Every one was a Polymarket deadline board whose leading
+    leg is a bare date, and every one died at :func:`_weak_outcome_label`: the
+    label "December 31" cannot be the SUBJECT of a sentence, because standing
+    alone it does not say whether the market means *by* that date or *during* it.
+
+    🔴 THE REFUSAL IT REPLACES WAS CORRECT AND IS UNCHANGED. #4640 is right that
+    "December 31 leads at 27%" is a false claim, and nothing here reopens it.
+    This clause is a LEVEL, not a comparative: it names one leg's own price and
+    asserts nothing about any other leg, so it is true whatever the rest of the
+    board is doing — which matters, because these boards are not all coherent.
+    Alito's rungs (measured the same morning: Sep 30 · Dec 31 · Feb 28 · Mar 31 ·
+    Jun 30 2027 · Jul 15, priced 0.6% · 5.5% · 0.6% · 0.2% · 31.5% · 0.1%) are
+    NOT monotonic in the date under any year assignment, so a sentence ranking
+    them would be printing a broken board as news. "31.5% chance by June 30,
+    2027" restates the row the card already draws and stays true regardless.
+
+    THE MISSING WORD COMES FROM THE VENUE, NEVER FROM THE LABEL.
+    ``deadline_preposition`` is :func:`market_display_name.elided_trailing_preposition`
+    — the word the display rule DELETED from the title. Polymarket publishes the
+    group template as the market name ("Anthropic IPO by __?") and its members
+    fill the slot, so that "by" is the venue's own statement that the legs are
+    deadlines. #3513 strips it to stop the card asking a holed question, which
+    left the reader with "Anthropic IPO?" and no deadline anywhere on the card;
+    this puts the word back where it is true — bound to the date it governs.
+    Where the title never carried it, we cannot know the leg is a bound, and the
+    caption stays empty exactly as today.
+    """
+    if deadline_preposition != DEADLINE_PREPOSITION or pct is None:
+        return ""
+    label = _date_outcome_label(leader_name)
+    if label is None:
+        return ""
+    return f"{pct}% chance {DEADLINE_PREPOSITION} {label}"
+
+
+def _deadline_fallback(
+    leader_name: str | None,
+    leader_probability: Optional[float],
+    rendered_leader_percent: Optional[int],
+    *,
+    leader_is_ladder_rung: bool,
+    leader_deadline_preposition: str | None,
+) -> str:
+    """The level clause a generator prints INSTEAD of falling silent, or "".
+
+    One composition point for all three generators, for the reason
+    :func:`leader_standing_clause` is one: the headline, the reason and the
+    context summary are near-copies maintained by hand, and three chances to
+    widen this gate is three chances to print a deadline the venue never
+    asserted.
+
+    ``leader_is_ladder_rung`` still wins. A proven cumulative ladder (#4640) is
+    refused here as well as above — its rungs nest, so the loosest is dearest by
+    arithmetic and a level clause would hand the reader the same non-contest with
+    a preposition in front of it.
+    """
+    if leader_is_ladder_rung or leader_probability is None:
+        return ""
+    return leader_deadline_clause(
+        leader_name,
+        _display_pct(leader_probability, rendered_leader_percent),
+        deadline_preposition=leader_deadline_preposition,
+    )
+
+
 def _leader_is_unnameable(name: str | None, is_ladder_rung: bool) -> bool:
     """Should this leader label be replaced by the market's own title?
 
@@ -1393,6 +1492,11 @@ def generate_futures_reason(
     # #4640: is `leader_name` a rung of ONE cumulative ladder? Defaults False so
     # an uninformed caller's copy is unchanged unless nestedness is proven.
     leader_is_ladder_rung: bool = False,
+    # #6470: the preposition the display rule elided from the title
+    # (`market_display_name.elided_trailing_preposition`). Defaults None so an
+    # uninformed caller stays silent exactly as before — see
+    # `leader_deadline_clause`.
+    leader_deadline_preposition: Optional[str] = None,
     source_count: int = 1,
     affirmative_probability: Optional[float] = None,
     rendered_affirmative_percent: Optional[int] = None,
@@ -1410,6 +1514,15 @@ def generate_futures_reason(
     _verb = leader_agreement_verb(leader_name, leader_is_team)
     # #4640: likewise resolved once — see `_leader_is_unnameable`.
     _no_leader_subject = _leader_is_unnameable(leader_name, leader_is_ladder_rung)
+    # #6470: resolved once beside the refusal it answers, so a template can
+    # never print the level clause without having consulted that refusal.
+    _deadline = _deadline_fallback(
+        leader_name,
+        leader_probability,
+        rendered_leader_percent,
+        leader_is_ladder_rung=leader_is_ladder_rung,
+        leader_deadline_preposition=leader_deadline_preposition,
+    )
     # #6187: and likewise — may any template below use a comparative at all?
     _lead_visible = lead_is_printable(
         rendered_leader_percent, rendered_runner_up_percent
@@ -1573,7 +1686,12 @@ def generate_futures_reason(
     # both clients render as absent (see the note in `compose_binary_card_copy`).
     if leader_name and leader_probability is not None:
         if _no_leader_subject:
-            return ""
+            # #6470 — the label cannot be a SUBJECT, but where the venue's own
+            # title said "by <blank>" it can still be a DEADLINE, and the level
+            # clause is the true sentence this rung was always owed. Empty
+            # whenever that word is absent, i.e. every case that reached here
+            # before.
+            return _deadline
         pct = _display_pct(leader_probability, rendered_leader_percent)
         # #6187 — the only leader template whose subject is followed by the
         # market rather than by a percent, so it takes "in" where the others
@@ -1606,6 +1724,11 @@ def generate_futures_headline(
     leader_is_team: bool = False,
     # #4640: see `generate_futures_reason`. Defaults False -> copy unchanged.
     leader_is_ladder_rung: bool = False,
+    # #6470: the preposition the display rule elided from the title
+    # (`market_display_name.elided_trailing_preposition`). Defaults None so an
+    # uninformed caller stays silent exactly as before — see
+    # `leader_deadline_clause`.
+    leader_deadline_preposition: Optional[str] = None,
     source_count: int = 1,
     market_name: Optional[str] = None,
     affirmative_probability: Optional[float] = None,
@@ -1619,6 +1742,15 @@ def generate_futures_headline(
     _verb = leader_agreement_verb(leader_name, leader_is_team)
     # #4640: likewise resolved once — see `_leader_is_unnameable`.
     _no_leader_subject = _leader_is_unnameable(leader_name, leader_is_ladder_rung)
+    # #6470: resolved once beside the refusal it answers, so a template can
+    # never print the level clause without having consulted that refusal.
+    _deadline = _deadline_fallback(
+        leader_name,
+        leader_probability,
+        rendered_leader_percent,
+        leader_is_ladder_rung=leader_is_ladder_rung,
+        leader_deadline_preposition=leader_deadline_preposition,
+    )
     # #6187: likewise — see `generate_futures_reason`.
     _lead_visible = lead_is_printable(
         rendered_leader_percent, rendered_runner_up_percent
@@ -1748,7 +1880,11 @@ def generate_futures_headline(
             # of a clause that adds a fact ("… odds up 5 points", "… resolving soon");
             # this one had no clause. Falls through to the empty terminal below, and
             # from there to `primary_reason` in `routes/feed.py`.
-            return ""
+            #
+            # #6470 — unless the venue's title named a deadline, in which case the
+            # clause this rung was missing exists after all. Still empty for
+            # every name that carried no "by <blank>".
+            return _deadline
         return leader_standing_clause(
             leader_name,
             _display_pct(leader_probability, rendered_leader_percent),
@@ -1773,6 +1909,11 @@ def generate_futures_context_summary(
     leader_is_team: bool = False,
     # #4640: see `generate_futures_reason`. Defaults False -> copy unchanged.
     leader_is_ladder_rung: bool = False,
+    # #6470: the preposition the display rule elided from the title
+    # (`market_display_name.elided_trailing_preposition`). Defaults None so an
+    # uninformed caller stays silent exactly as before — see
+    # `leader_deadline_clause`.
+    leader_deadline_preposition: Optional[str] = None,
     source_count: int = 1,
     affirmative_probability: Optional[float] = None,
     rendered_affirmative_percent: Optional[int] = None,
@@ -1826,8 +1967,20 @@ def generate_futures_context_summary(
         # can emit is composed here, so a ladder rung is refused once. #6187
         # rides the same gate: one place to drop the comparative, and the
         # "resolves within a week/month" suffixes below inherit it.
+        #
+        # #6470 rides it too, on the far side: where the label is unnameable but
+        # the venue's title elided a "by", the level clause replaces the silence
+        # and the suffixes append to it ("60% chance by December 31, 2026;
+        # resolves within a month"). Every other unnameable leader is as empty
+        # as it was.
         if _leader_is_unnameable(leader_name, leader_is_ladder_rung):
-            return ""
+            return _deadline_fallback(
+                leader_name,
+                leader_probability,
+                rendered_leader_percent,
+                leader_is_ladder_rung=leader_is_ladder_rung,
+                leader_deadline_preposition=leader_deadline_preposition,
+            )
         if leader_name and leader_probability is not None:
             return leader_standing_clause(
                 leader_name,

@@ -94,7 +94,10 @@ from app.utils.aggregation import (
     compute_aggregate_probability as _compute_aggregate_probability,
 )
 from app.utils.event_taxonomy import compute_event_tags, compute_market_tags
-from app.utils.market_display_name import clean_market_display_name
+from app.utils.market_display_name import (
+    clean_market_display_name,
+    elided_trailing_preposition,
+)
 from app.utils.hero_probability import resolve_hero
 from app.utils.probability_eligibility import is_refused
 from app.utils.feed_event_candidates import (
@@ -6844,6 +6847,10 @@ def _score_market_trace(
     # string the card prints; the raw stored `name` is served separately by
     # `build_discover_market_trace`.
     display_name = clean_market_display_name(market.name)
+    # #6470 — read off the RAW name: `display_name` is that string with
+    # this very word removed, so deriving it from the cleaned title would
+    # ask the question after deleting the answer.
+    deadline_preposition = elided_trailing_preposition(market.name)
 
     highlight_result = compute_futures_highlight(
         market_tier=market.market_tier,
@@ -6895,6 +6902,7 @@ def _score_market_trace(
             leader_name=leader_name,
             leader_is_team=_leader_outcome_is_team(outcomes_data),
             leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
+            leader_deadline_preposition=deadline_preposition,
             leader_probability=leader_prob,
             source_count=source_count,
             market_name=display_name,
@@ -6911,6 +6919,7 @@ def _score_market_trace(
         leader_name=leader_name,
         leader_is_team=_leader_outcome_is_team(outcomes_data),
         leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
+        leader_deadline_preposition=deadline_preposition,
         leader_probability=leader_prob,
         source_count=source_count,
         affirmative_probability=affirmative_probability,
@@ -7060,6 +7069,7 @@ def _score_market_trace(
                 leader_name=leader_name,
                 leader_is_team=_leader_outcome_is_team(outcomes_data),
                 leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
+                leader_deadline_preposition=deadline_preposition,
                 leader_probability=leader_prob,
                 source_count=source_count,
                 affirmative_probability=affirmative_probability,
@@ -9602,6 +9612,10 @@ async def _score_sports_mode_futures(
         # every decision we make is still made from `market.name` — printed vs
         # interpreted, see `clean_market_display_name`.
         display_name = clean_market_display_name(market.name)
+        # #6470 — read off the RAW name: `display_name` is that string with
+        # this very word removed, so deriving it from the cleaned title would
+        # ask the question after deleting the answer.
+        deadline_preposition = elided_trailing_preposition(market.name)
 
         highlight_result = compute_futures_highlight(
             market_tier=market.market_tier,
@@ -9724,6 +9738,7 @@ async def _score_sports_mode_futures(
                 leader_name=_h_leader,
                 leader_is_team=_leader_outcome_is_team(outcomes_data),
                 leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
+                leader_deadline_preposition=deadline_preposition,
                 leader_probability=display_leader_prob,
                 rendered_leader_percent=_printed_leader,
                 rendered_runner_up_percent=_printed_runner_up,
@@ -9743,6 +9758,7 @@ async def _score_sports_mode_futures(
             leader_name=_h_leader,
             leader_is_team=_leader_outcome_is_team(outcomes_data),
             leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
+            leader_deadline_preposition=deadline_preposition,
             leader_probability=display_leader_prob,
             rendered_leader_percent=_printed_leader,
             rendered_runner_up_percent=_printed_runner_up,
@@ -9831,6 +9847,7 @@ async def _score_sports_mode_futures(
             leader_name=_h_leader,
             leader_is_team=_leader_outcome_is_team(outcomes_data),
             leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
+            leader_deadline_preposition=deadline_preposition,
             leader_probability=display_leader_prob,
             rendered_leader_percent=_printed_leader,
             rendered_runner_up_percent=_printed_runner_up,
@@ -10993,6 +11010,10 @@ async def _score_futures(
 
             # #3513: printed vs interpreted — see `_score_sports_mode_futures`.
             display_name = clean_market_display_name(market.name)
+            # #6470 — read off the RAW name: `display_name` is that string with
+            # this very word removed, so deriving it from the cleaned title would
+            # ask the question after deleting the answer.
+            deadline_preposition = elided_trailing_preposition(market.name)
 
             highlight_result = compute_futures_highlight(
                 market_tier=market.market_tier,
@@ -11136,6 +11157,7 @@ async def _score_futures(
                     leader_name=_h_leader,
                     leader_is_team=_leader_outcome_is_team(outcomes_data),
                     leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
+                    leader_deadline_preposition=deadline_preposition,
                     leader_probability=display_leader_prob,
                     rendered_leader_percent=_printed_leader,
                     rendered_runner_up_percent=_printed_runner_up,
@@ -11155,6 +11177,7 @@ async def _score_futures(
                 leader_name=_h_leader,
                 leader_is_team=_leader_outcome_is_team(outcomes_data),
                 leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
+                leader_deadline_preposition=deadline_preposition,
                 leader_probability=display_leader_prob,
                 rendered_leader_percent=_printed_leader,
                 rendered_runner_up_percent=_printed_runner_up,
@@ -11511,6 +11534,7 @@ async def _score_futures(
                 leader_name=_h_leader,
                 leader_is_team=_leader_outcome_is_team(outcomes_data),
                 leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
+                leader_deadline_preposition=deadline_preposition,
                 leader_probability=display_leader_prob,
                 rendered_leader_percent=_printed_leader,
                 rendered_runner_up_percent=_printed_runner_up,
