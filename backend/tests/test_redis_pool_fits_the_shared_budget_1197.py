@@ -352,7 +352,16 @@ class TestExhaustionIsNotRetriedByTheClientRetryPolicy:
 
 
 class _TinyRespServer:
-    """Answers ``+PONG`` to every command and counts accepted connections."""
+    """Answers every command and counts the connections it accepted.
+
+    It has to answer ``HELLO`` as well as ``+PONG``, and that is not a detail:
+    redis-py only sends ``HELLO`` when the connection speaks RESP3, so a server
+    that ignores it passes locally on a RESP2 default and fails wherever the
+    library's default is RESP3 — the client reads ``+PONG`` where it expects a
+    handshake map and dies on ``'bytes' object has no attribute 'get'``. Our
+    requirement is an unpinned ``redis>=5.0.1``, so the protocol the tests run
+    under is not ours to assume; both are exercised below.
+    """
 
     def __init__(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -395,13 +404,14 @@ class _TinyRespServer:
                 # One reply per complete RESP command, so the client never
                 # desynchronizes; a reply per recv() would.
                 while True:
-                    consumed = _resp_command_length(buf)
-                    if consumed is None:
+                    parsed = _parse_resp_command(buf)
+                    if parsed is None:
                         break
+                    consumed, args = parsed
                     buf = buf[consumed:]
                     if self.hold:
                         time.sleep(self.hold)
-                    conn.sendall(b"+PONG\r\n")
+                    conn.sendall(_reply_to(args))
         except OSError:
             return
         finally:
@@ -420,8 +430,8 @@ class _TinyRespServer:
             pass
 
 
-def _resp_command_length(buf: bytes):
-    """Bytes consumed by the first complete ``*N\\r\\n$len\\r\\n...`` command, or None."""
+def _parse_resp_command(buf: bytes):
+    """``(bytes consumed, [args])`` for the first complete command, or None."""
     if not buf.startswith(b"*"):
         return None
     end = buf.find(b"\r\n")
@@ -432,6 +442,7 @@ def _resp_command_length(buf: bytes):
     except ValueError:
         return None
     pos = end + 2
+    args = []
     for _ in range(argc):
         if not buf[pos:].startswith(b"$"):
             return None
@@ -442,10 +453,30 @@ def _resp_command_length(buf: bytes):
             size = int(buf[pos + 1 : end])
         except ValueError:
             return None
-        pos = end + 2 + size + 2
+        start = end + 2
+        pos = start + size + 2
         if len(buf) < pos:
             return None
-    return pos
+        args.append(buf[start : start + size])
+    return pos, args
+
+
+def _reply_to(args):
+    """``HELLO`` gets a handshake map; everything else gets ``+PONG``.
+
+    redis-py checks ``handshake_metadata.get(b"proto") == self.protocol``, so the
+    version we echo has to be the one it asked for, as an integer — which is
+    what ``Connection(protocol=...)`` holds.
+    """
+    if args and args[0].upper() == b"HELLO":
+        proto = int(args[1]) if len(args) > 1 else 3
+        return (
+            b"%3\r\n"
+            b"$6\r\nserver\r\n$5\r\nredis\r\n"
+            b"$7\r\nversion\r\n$5\r\n7.4.0\r\n"
+            b"$5\r\nproto\r\n:" + str(proto).encode() + b"\r\n"
+        )
+    return b"+PONG\r\n"
 
 
 @pytest.fixture
@@ -457,11 +488,20 @@ def resp_server():
         server.close()
 
 
-@pytest.fixture
-def real_client(resp_server, monkeypatch):
+#: Both RESP versions, because ``redis>=5.0.1`` is unpinned and the library's
+#: default has moved before: RESP3 adds a HELLO handshake to every connection
+#: this pool opens. Leaving it to the default meant CI exercised a path the
+#: laptop never did.
+_PROTOCOLS = ["2", "3"]
+
+
+@pytest.fixture(params=_PROTOCOLS, ids=lambda p: f"resp{p}")
+def real_client(request, resp_server, monkeypatch):
     """A production-path client pointed at the toy server."""
     monkeypatch.setattr(
-        redis_state, "REDIS_URL", f"redis://127.0.0.1:{resp_server.port}/0"
+        redis_state,
+        "REDIS_URL",
+        f"redis://127.0.0.1:{resp_server.port}/0?protocol={request.param}",
     )
     redis_state.reset_redis_client_cache()
     try:
@@ -514,13 +554,16 @@ class TestTheBudgetHoldsOnRealSockets:
             "minting connections rather than reusing them"
         )
 
+    @pytest.mark.parametrize("protocol", _PROTOCOLS, ids=lambda p: f"resp{p}")
     def test_a_saturated_pool_queues_the_caller_instead_of_raising(
-        self, resp_server, monkeypatch
+        self, resp_server, monkeypatch, protocol
     ):
         """On a plain pool the 3rd of 3 callers gets MaxConnectionsError the
         instant the cap is reached. Here it waits and is served."""
         monkeypatch.setattr(
-            redis_state, "REDIS_URL", f"redis://127.0.0.1:{resp_server.port}/0"
+            redis_state,
+            "REDIS_URL",
+            f"redis://127.0.0.1:{resp_server.port}/0?protocol={protocol}",
         )
         monkeypatch.setattr(redis_state, "_REDIS_MAX_CONNECTIONS", 2)
         redis_state.reset_redis_client_cache()
