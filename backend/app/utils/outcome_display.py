@@ -422,6 +422,71 @@ def leader_pick_order(
     return outcomes
 
 
+def assign_display_ranks(
+    outcomes: list[dict],
+    rank_key: str = "rank",
+    prob_key: str = "probability",
+) -> int:
+    """#2556: number the badges in the order the READER sees the rows. In place;
+    returns how many badges moved (for a test or a probe — no caller serves it).
+
+    ``rank`` is a STORED column (``futures_outcomes.rank``) written by fourteen
+    sites across three ingest modules, and nothing keeps it a permutation of the
+    board in price order:
+
+      - ``_poll_futures_odds`` numbers THIS POLL'S RESPONSE (``enumerate(..., 1)``
+        over ``outcome_odds``), so an outcome missing from one response keeps the
+        number an earlier pass gave it over a different subset;
+      - ``futures_price_refresh`` writes ``current_probability`` and never touches
+        ``rank`` at all, so it moves a price out from under a number that stays;
+      - the stale-zeroing branch sets a vanished leg to 0.0 and deliberately leaves
+        its rank, so a settled-NO rung sits at 0.0 still wearing badge 5.
+
+    The reader meets the result as a numbered list that cannot count: production
+    2026-09-16, ``/api/futures/40533`` served 11 inverted adjacent pairs of 31 and
+    ``/api/futures/113486`` served **badge 1 twice on five rows**.
+
+    ⚠️ THE ORDER THE READER SEES IS NOT THE ARRAY ORDER, AND THAT IS THE WHOLE
+    REASON THIS IS A SORT AND NOT AN ``enumerate``. ``_format_market_detail``
+    serves outcomes in raw ``current_probability`` order and nulls a withheld price
+    IN PLACE without re-sorting (its own ``reader_leader`` comment says so). The
+    client then applies a stable sort on ``probability ?? 0`` descending
+    (``sortFuturesOutcomes``, the page default), so a withheld row sinks to the
+    bottom of the page while sitting mid-array on the wire. Numbering the array
+    would fix the boards with no withheld price and leave the badge disagreeing
+    with the page on exactly the rows #2556's last specimen is about.
+
+    So this MIRRORS the client comparator instead: a stable sort on
+    ``probability or 0``, descending. Stability is load-bearing in both languages
+    and the two agree — Python's ``sorted(reverse=True)`` and JS's stable
+    ``Array.sort`` with a negated comparator both keep the input order among equal
+    keys — so tied rows are numbered in the order the page stacks them, which is
+    what "deterministic tie handling" has to mean here. A tie-break of our own
+    (id, name) would be deterministic and WRONG: it would renumber tied rows in an
+    order the page does not render them in, which is this defect again.
+
+    Not scoped to open markets, because it does not need to be: a settled board
+    draws no badge at all (``OutcomeRow.printsRank = !isResolved``, #6325), and
+    #6325's "do not renumber the settled rows by display position" is an argument
+    about asserting a FINISH order nobody graded. On an open board the display
+    position IS the price order, so numbering it asserts nothing new.
+
+    ``rank_change_24h`` is deliberately untouched. It is a different column with a
+    different writer (``old_rank - new_rank``, per poll), so it is neither repaired
+    nor falsified by this — and blanking an arrow whose row's badge moved would
+    have removed 23 of the 30 arrows live on #2556's six specimen boards on the
+    strength of a coherence the reader cannot see.
+    """
+    moved = 0
+    for position, outcome in enumerate(
+        sorted(outcomes, key=lambda o: o.get(prob_key) or 0, reverse=True), 1
+    ):
+        if outcome.get(rank_key) != position:
+            moved += 1
+        outcome[rank_key] = position
+    return moved
+
+
 def demote_dominant_field(
     outcomes: list[dict],
     name_key: str = "name",

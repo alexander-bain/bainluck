@@ -5061,6 +5061,7 @@ def _format_market_detail(
     from app.utils.superseded_name_twins import drop_superseded_name_twins
     from app.utils.field_opening_coherence import field_openings_publishable
     from app.utils.outcome_display import (
+        assign_display_ranks,
         is_placeholder_outcome_name,
         normalize_display_probs,
         leader_pick_order,
@@ -5177,6 +5178,11 @@ def _format_market_detail(
             "name": repair_field_outcome_name(o.external_id, o.name) or o.name,
             "probability": float(o.current_probability) if o.current_probability is not None else None,
             "american_odds": o.current_american_odds,
+            # The stored column is the SEED here, not the served answer: #2556
+            # overwrites this from the display order at `assign_display_ranks`
+            # below, once the drops and the demotion have settled which rows are
+            # on the board and in what order. Left reading `o.rank` so a row the
+            # pipeline never reaches still carries something.
             "rank": o.rank,
             "rank_change_24h": o.rank_change_24h,
             "probability_change_24h": float(o.probability_change_24h) if o.probability_change_24h else None,
@@ -5413,6 +5419,26 @@ def _format_market_detail(
     # so exempting the drop alone would have moved the champion of a finished race
     # from "deleted" to "last of 31, behind the page's fold". Half a carve-out.
     leader_pick_order(outcomes, is_winner_of=_is_graded_winner)
+
+    # #2556: THE BADGES ARE NUMBERED HERE, FROM THE ORDER THE READER SEES, BECAUSE
+    # THE STORED COLUMN IS NOT AN ORDERING. `rank` above is `o.rank` straight off
+    # the row, and its fourteen ingest writers cannot keep it a permutation of the
+    # board — the rule and its three mechanisms are on `assign_display_ranks`.
+    # Production 2026-09-16: `/futures/40533` ran 11 inverted adjacent pairs of 31,
+    # `/futures/1` printed `… 22, 19 …` in the tail Alex photographed five times,
+    # and `/futures/113486` served **badge 1 twice on five rows**.
+    #
+    # LAST, and that is load-bearing in both directions. Every line above can still
+    # change which rows are on the board (`drop_incoherent_near_certain`,
+    # `drop_dominant_field_outcomes`) or where a tied row sits (`leader_pick_order`
+    # reorders in place, and the client's stable sort preserves that order among
+    # equal prices) — so numbering any earlier numbers a list the reader never
+    # sees. And nothing below this line touches `outcomes`: the hook block reads
+    # it, the return serves it.
+    #
+    # Prices and eligibility are untouched by design — this only overwrites the one
+    # field whose whole job is to say where the row sits, using the list it sits in.
+    assign_display_ranks(outcomes)
 
     # #5906: THE HOOK GOES THROUGH THE SAME GATE THE DISCOVER CARD HAS ALWAYS
     # USED. `routes/feed.py` has run every stored hook past `is_hook_stale`
