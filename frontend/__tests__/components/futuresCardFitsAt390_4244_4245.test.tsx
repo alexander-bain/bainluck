@@ -90,7 +90,11 @@ function outcome(id: number, name: string, probability: number): FeedFuturesOutc
  * issues were open — the longest real leader name on the rail paired with a full
  * `Resolves <Month> <D>, <YYYY>` date, which is the pairing #4244 says is the population.
  */
-function volkanovskiCard(over: Partial<FeedFuturesData> = {}, headline?: string): FeedItem {
+function volkanovskiCard(
+  over: Partial<FeedFuturesData> = {},
+  headline?: string,
+  contextSummary?: string,
+): FeedItem {
   const data: FeedFuturesData = {
     id: 201,
     name: "Who will be the UFC Featherweight Title Holder on Dec 31, 2026?",
@@ -116,6 +120,7 @@ function volkanovskiCard(over: Partial<FeedFuturesData> = {}, headline?: string)
     data,
     reason: "Alexander Volkanovski (48%) leads Featherweight Title Holder",
     headline: headline ?? "Alexander Volkanovski leads at 48%",
+    context_summary: contextSummary ?? null,
   } as unknown as FeedItem;
 }
 
@@ -202,8 +207,17 @@ describe("#4244 — the leader pill yields, the resolution date does not", () =>
     // unchanged and still matters — a pill that survives is variable-length and
     // must yield to the date — so the specimen is swapped for a headline that
     // says something the reason does not, rather than the assertion weakened.
+    //
+    // #6560 — and the caption beneath the pill is now `context_summary` when the
+    // payload serves one, so the specimen serves one too: a pill survives only
+    // when it adds something to the sentence UNDER it, and with no
+    // `context_summary` that sentence would be this very headline. The pair is
+    // the live `/sports` shape (`Biltmore Championship Asheville: Playoff`
+    // serves a `context_summary` its headline does not contain).
     const headline = "Volkanovski odds up 12 points today";
-    const nodes = all(render(volkanovskiCard({}, headline)));
+    const nodes = all(
+      render(volkanovskiCard({}, headline, "Alexander Volkanovski leads at 48%")),
+    );
 
     const pill = nodes.find((n) => n.tag === "span" && n.text === headline);
     expect(pill).toBeDefined();
