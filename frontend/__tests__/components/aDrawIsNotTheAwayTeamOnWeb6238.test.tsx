@@ -294,28 +294,38 @@ describe("#6238 the event page is actually wired to the rule", () => {
   });
 });
 
-describe("#6238 the chart readout is NOT covered by this ship", () => {
+describe("#6238 the chart readout — the gap this ship named, now CLOSED", () => {
   /**
-   * 🔴 FOR WHOEVER TAKES THE REST OF #6238 — the measurement, so it is not
-   * rediscovered.
+   * ✅ CLOSED by ux/1292 (2026-09-16). This block used to pin the gap OPEN — it
+   * asserted that `GamePlayCard` still re-derived its away percent — and it is
+   * rewritten rather than deleted so the two halves of #6238 stay legible from
+   * one file.
    *
-   * `/events/15305024` (Daejeon Citizen v Pohang Steelers, finished **2–2**)
-   * prints `Citizen 63% — Steelers 37%` in the chart readout off terminal odds of
-   * +600 / +950 — both long shots, because the draw won. That readout is
-   * `GamePlayCard`, and it does NOT read the page's `awayProb`: it takes
-   * `point.awayProb` off `lastChartPoint`.
+   * It is NOT a frozen verbatim control (notice 50): its content was never the
+   * defect, it was a NOTE saying "not yet covered", and a note whose subject is
+   * covered is simply false. The evidence it carried is preserved in
+   * `chartReadoutWithholdsTheDraw6238.test.tsx`, which owns the behaviour; this
+   * keeps only the structural fact that the card was told at all, so deleting
+   * the prop cannot go green here.
    *
-   * ⚠️ AND IT CANNOT SIMPLY BE FED `null`. `GamePlayCard.tsx:79` is
-   * `awayPct ?? Math.round(point.awayProb * 100)` — a hard re-derivation, so a
-   * null away price renders **`NaN%`**, not an em-dash. Covering it means making
-   * `GamePlayPoint.awayProb` nullable and giving that card its own withheld
-   * render, which is a second component decision and a separate ship.
-   *
-   * Native did cover its equivalent (`OddsChartView.swift:1602`), so the web is
-   * the client still behind here.
+   * What the second half found, worth keeping in one sentence: the readout had
+   * moved on from the `Citizen 63% — Steelers 37%` recorded above. Re-shot on
+   * 2026-09-16 the same page read **`2 - 2   Citizen 1% — Steelers 99%`** — the
+   * blend's last point is `home 0.01`, so the complement handed the whole draw
+   * price to a team the page's own markets card marks `Lost`.
    */
-  it("GamePlayCard still re-derives its away percent — the named gap", () => {
+  it("GamePlayCard takes the withholding decision, and takes it as a prop", () => {
     const card = readFileSync(join(__dirname, "..", "..", "components", "GamePlayCard.tsx"), "utf8");
-    expect(card).toMatch(/Math\.round\(point\.awayProb \* 100\)/);
+    expect(card).toMatch(/awayWithheld\?: boolean/);
+    expect(card).toMatch(/!awayWithheld && \(/);
+  });
+
+  it("the away half is the ONLY thing gated — the home number is unconditional", () => {
+    // The failure mode of a withheld pair is withholding the wrong half, or
+    // both. The reader keeps the one number we can source.
+    const card = readFileSync(join(__dirname, "..", "..", "components", "GamePlayCard.tsx"), "utf8");
+    const gated = card.match(/!awayWithheld && \(/g) || [];
+    expect(gated).toHaveLength(1);
+    expect(card).not.toMatch(/awayWithheld && [\s\S]{0,40}homeProb/);
   });
 });

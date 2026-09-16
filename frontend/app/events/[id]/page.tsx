@@ -2139,6 +2139,7 @@ export default function EventPage({ params }: EventPageProps) {
               awayTeamLogo={event.away_team_data?.logo_small || undefined}
               homeTeamAbbrev={event.home_team_data?.abbreviation || undefined}
               awayTeamAbbrev={event.away_team_data?.abbreviation || undefined}
+              awayWithheld={awaySlotWithheld}
               onActivePointChange={setActiveChartPoint}
               onRenderedDomain={handleRenderedDomain}
               chartStartTime={sharedChartDomain?.start}
@@ -2160,6 +2161,11 @@ export default function EventPage({ params }: EventPageProps) {
               homeTeamLogo={event.home_team_data?.logo_small || undefined}
               awayTeamLogo={event.away_team_data?.logo_small || undefined}
               lastPoint={lastChartPoint}
+              /* #6238 — the same single derivation the hero reads, handed to
+                 the readout below the chart. On `/events/15305024` (2–2 final)
+                 this card printed `Citizen 1% — Steelers 99%` two cards above
+                 its own "Tie — Won" markets row. */
+              awayWithheld={awaySlotWithheld}
             />
           ) : null}
         </div>
@@ -2710,6 +2716,9 @@ export default function EventPage({ params }: EventPageProps) {
               awayTeamLogo={event.away_team_data?.logo_small || undefined}
               homeTeamAbbrev={event.home_team_data?.abbreviation || undefined}
               awayTeamAbbrev={event.away_team_data?.abbreviation || undefined}
+              /* #6238 — the fullscreen chart is the same chart. A reader who
+                 taps expand must not get the withheld number back. */
+              awayWithheld={awaySlotWithheld}
             />
           </div>
         </div>

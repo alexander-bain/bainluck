@@ -17,6 +17,36 @@ interface GamePlayCardProps {
   awayTeamLogo?: string;
   /** Most recent chart point (shown when not hovering) */
   lastPoint?: ActiveChartPoint | null;
+  /**
+   * #6238 — DON'T DRAW THE AWAY HALF: THIS SPORT'S WINNER MARKET PRICES A DRAW.
+   *
+   * Every away figure reaching this card is `1 − home` by construction (both
+   * producers say so in their own comments). On a two-outcome sport that is
+   * exactly right. In soccer, `1 − P(home wins)` is "the home team does not
+   * win" — *away win **or** draw* — so the number under the away name silently
+   * absorbs the whole draw price.
+   *
+   * Photographed on production 2026-09-16 at 390px, `/events/15305024` (Daejeon
+   * Citizen v Pohang Steelers, **finished 2–2**): this card read
+   * **`2 - 2   Citizen 1% — Steelers 99%`**, and the same page's Additional
+   * Markets card read `Tie — Won`, `Pohang Steelers — Lost`. The 99% was not
+   * stale; it was the freshest reading the match had, and correct arithmetic on
+   * the wrong question — the draw took all of it.
+   *
+   * A BOOLEAN, NOT A NULL `awayProb`, and that is a decision rather than a
+   * convenience. `ActiveChartPoint` is also read by `resolveProbability`, where
+   * a null away price already means "we hold no reading for this side" and
+   * renders an em-dash. Folding "withheld" into that value domain would make
+   * one value mean two things a layer up — the mistake `probKnown` exists to
+   * undo (#3459). ux/1266 took the same shape for the hero (`awayWithheld`
+   * there too), so this follows the sibling rather than inventing a second
+   * answer. Native can and does null the field instead
+   * (`OddsChartView.swift:1631`); its point type has no second reader.
+   *
+   * Absent means two-sided, never withhold — the same opt-in polarity
+   * `sportPricesADraw` documents.
+   */
+  awayWithheld?: boolean;
 }
 
 /** Format period number into display string */
@@ -48,6 +78,7 @@ export default function GamePlayCard({
   homeTeamLogo,
   awayTeamLogo,
   lastPoint,
+  awayWithheld = false,
 }: GamePlayCardProps) {
   const point = activePoint || lastPoint;
   if (!point) return null;
@@ -211,11 +242,21 @@ export default function GamePlayCard({
               <span className="font-semibold" style={{ color: teamTextColor(homeTeamColor) || "var(--text-secondary)" }}>
                 {homeProb}%
               </span>
-              {" — "}
-              {awayShort}{" "}
-              <span className="font-semibold" style={{ color: teamTextColor(awayTeamColor) || "var(--text-secondary)" }}>
-                {awayProb}%
-              </span>
+              {/* #6238 — the separator belongs to the slot it separates. Left
+                  behind, this reads `Citizen 1% —` and a reader takes it for a
+                  half-loaded card rather than a decision (#5696 caught the same
+                  thing on the hero, where the em-dash at `text-[48px]` drew a
+                  41px redaction bar). The home half still names its side, so
+                  one number alone is still attributed. */}
+              {!awayWithheld && (
+                <>
+                  {" — "}
+                  {awayShort}{" "}
+                  <span className="font-semibold" style={{ color: teamTextColor(awayTeamColor) || "var(--text-secondary)" }}>
+                    {awayProb}%
+                  </span>
+                </>
+              )}
             </p>
           )}
         </div>

@@ -116,3 +116,34 @@ export function sportPricesADraw(sportKey: string | null | undefined): boolean {
 export function printableAway<T>(away: T | null, sportKey: string | null | undefined): T | null {
   return sportPricesADraw(sportKey) ? null : away;
 }
+
+/**
+ * The win-probability chart tooltip's one line per source — both sides, or just
+ * the one we can source.
+ *
+ * ═══ WHY THE CHART'S TOOLTIP IS IN THIS FILE AT ALL ═══
+ *
+ * #6238's second half (ux/1292) covers the readout under the chart. The tooltip
+ * on the chart ITSELF says the same thing in a different format — one line per
+ * source, `Team: 62.4% | Other: 37.6%` — and it derived its away half as
+ * `100 - homeProb` inline, four hundred lines from the readout it contradicts.
+ *
+ * Shipping the readout alone would have left the split this repo keeps paying
+ * for: one surface tensed and its neighbour not, in a single frame. So the rule
+ * lives once, here, beside the argument for it, and both callers read it.
+ *
+ * `homePercent` is on the 0–100 AXIS, not 0–1 — it is the value recharts hands
+ * the tooltip, passed through rather than reconverted, for the reason
+ * `renderedDuelPercents` documents: a surface that re-derives its own number
+ * locally is how two surfaces on one page come to disagree.
+ */
+export function chartTooltipPair(
+  homeTeam: string,
+  homePercent: number,
+  awayTeam: string,
+  awayWithheld: boolean,
+): string {
+  const home = `${homeTeam}: ${homePercent.toFixed(1)}%`;
+  if (awayWithheld) return home;
+  return `${home} | ${awayTeam}: ${(100 - homePercent).toFixed(1)}%`;
+}
