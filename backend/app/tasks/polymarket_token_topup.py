@@ -98,6 +98,65 @@ def yes_token_of(market) -> Optional[str]:
     return None
 
 
+def token_for_outcome(market, outcome_name: Optional[str]) -> Optional[str]:
+    """The CLOB token that is the book for ONE of our outcome rows.
+
+    ``yes_token_of`` first, unchanged, and its answer wins whenever it has one.
+    This adds the one shape it cannot read: a head-to-head market whose Gamma
+    ``outcomes`` are the CONTENDERS THEMSELVES rather than ``["Yes","No"]``.
+
+    WHY THIS EXISTS — Q500 taught the fast lane to address a parent row one
+    level down, through its outcomes' condition ids, and that closed the
+    three-way soccer case: each outcome resolves to its own *"Will <team> win on
+    <date>?"* market, outcomes ``["Yes","No"]``, and ``yes_token_of`` reads it.
+    A two-way head-to-head does not decompose that way. Gamma answers
+    ``0xc72411a3…`` with question *"Detroit Tigers vs. Toronto Blue Jays"*,
+    ``outcomes ["Detroit Tigers","Toronto Blue Jays"]`` and two ``clobTokenIds``
+    — real tokens on a real book — and ``yes_token_of`` finds no ``"Yes"``, so
+    it correctly refuses rather than guessing, and the leg is never subscribed.
+
+    Measured on production 2026-09-16 20:4xZ, hero-speaking markets on the
+    live+6h slate that carry no ``clob_token_ids``: Gamma answered 20 outcome
+    conditions, **10 fill through the Yes path and 10 fill only through this
+    one** — Tigers/Blue Jays, Dodgers/Reds, Brewers/Pirates, Athletics/Rays.
+    Every MLB game on the board was in the second half. Their hero legs sat on
+    the 120 s poll sawtooth (eight live events sharing the identical stamp
+    ``20:38:58.300``) while the Kalshi arm of the SAME events streamed at
+    sub-30 s, and Gamma moved Detroit 0.255 -> 0.195 inside one poll interval.
+
+    STILL BY NAME, NEVER BY POSITION. Q489's lesson is not "look for Yes", it is
+    "attribute a token to the leg it is actually the book for, or drop the
+    tick": a mis-attributed token does not make a card stale, it makes it
+    *inverted*. So the fallback matches OUR outcome's own name against Gamma's
+    outcome list and takes the index-aligned token, and it refuses on anything
+    it cannot prove — no match, or more than one, returns None exactly as today.
+
+    PURELY ADDITIVE, and that is the safety argument rather than a hope: this
+    function can only return a token where ``yes_token_of`` returned None, so no
+    leg that streams today can be moved, re-attributed or lost by it. The worst
+    case is the present behaviour.
+    """
+    token = yes_token_of(market)
+    if token:
+        return token
+
+    tokens = [str(t) for t in (getattr(market, "clob_token_ids", None) or []) if str(t)]
+    outcomes = [str(o) for o in (getattr(market, "outcomes", None) or [])]
+    if not tokens or not outcome_name:
+        return None
+
+    want = outcome_name.strip().lower()
+    if not want:
+        return None
+    hits = [i for i, name in enumerate(outcomes) if name.strip().lower() == want]
+    # Exactly one, or nothing. Two outcomes sharing a name is a shape we cannot
+    # resolve, and picking the first would be the positional guess this whole
+    # module refuses to make.
+    if len(hits) != 1 or hits[0] >= len(tokens):
+        return None
+    return tokens[hits[0]]
+
+
 async def topup_outcome_clob_tokens(
     session,
     outcomes: list[tuple[int, int, Optional[str]]],
@@ -129,15 +188,21 @@ async def topup_outcome_clob_tokens(
     ``0xfa91ccd0…`` → *"Will Wolfsberger AC win on 2026-09-01?"*, outcomes
     ``["Yes","No"]``, two ``clobTokenIds``.
 
-    ONLY THE YES TOKEN IS RETURNED. On a binary sub-market the NO token's book
-    is P(not this outcome), and on a three-way market that is not any other
-    outcome row — it is the other two combined. There is no leg to write it to,
-    so it is never subscribed rather than written somewhere plausible.
+    ONLY ONE TOKEN PER OUTCOME IS RETURNED, and only the one that IS that
+    outcome's book. On a ``["Yes","No"]`` sub-market that is the YES token: the
+    NO book is P(not this outcome), and on a three-way market that is not any
+    other outcome row — it is the other two combined — so there is no leg to
+    write it to and it is never subscribed rather than written somewhere
+    plausible. On a two-way head-to-head, whose Gamma ``outcomes`` are the
+    contenders themselves, it is the token index-aligned with OUR outcome's own
+    name; the other contender's token is that market's other leg and is left to
+    the outcome row that owns it. ``token_for_outcome`` holds both rules and
+    refuses anything it cannot attribute by name.
     """
-    from sqlalchemy import cast, func, literal, update
+    from sqlalchemy import cast, func, literal, select, update
     from sqlalchemy.dialects.postgresql import JSONB
 
-    from app.models.models import FuturesMarket
+    from app.models.models import FuturesMarket, FuturesOutcome
 
     # condition id -> (market_id, outcome_id). Keyed by condition id because
     # that is what Gamma echoes back, and it de-dupes an outcome accidentally
@@ -162,6 +227,30 @@ async def topup_outcome_clob_tokens(
         )
         addressable = {cid: addressable[cid] for cid in kept}
 
+    # Our own name for each outcome, for the head-to-head shape whose Gamma
+    # `outcomes` are the contenders rather than ["Yes","No"] — see
+    # `token_for_outcome`. Read HERE rather than widened into the `outcomes`
+    # argument on purpose: the caller is `polymarket_ws`, another lane's file,
+    # and this keeps the repair inside one module. One batched `IN` bounded by
+    # `max_outcomes`, and a name we cannot read simply leaves that outcome on
+    # the Yes path exactly as before.
+    name_by_outcome: dict[int, str] = {}
+    try:
+        name_rows = await session.execute(
+            select(FuturesOutcome.id, FuturesOutcome.name).where(
+                FuturesOutcome.id.in_([oid for _mid, oid in addressable.values()])
+            )
+        )
+        name_by_outcome = {oid: (name or "") for oid, name in name_rows.all()}
+    except Exception:
+        # Never take the socket's token pass down for a name lookup: without it
+        # every outcome falls through to the Yes path, which is today's
+        # behaviour, not a new failure.
+        logger.exception(
+            "Polymarket outcome token top-up: outcome-name read failed; "
+            "continuing with the Yes path only"
+        )
+
     own_service = service is None
     if own_service:
         from app.services.polymarket_api import PolymarketAPIService
@@ -179,14 +268,17 @@ async def topup_outcome_clob_tokens(
 
     filled: dict[int, tuple[int, str]] = {}
     by_market: dict[int, dict[str, str]] = {}
+    named_fallback = 0
     for market in fetched:
         entry = addressable.get(getattr(market, "condition_id", "") or "")
         if entry is None:
             continue
         market_id, outcome_id = entry
-        token = yes_token_of(market)
+        token = token_for_outcome(market, name_by_outcome.get(outcome_id))
         if not token:
             continue
+        if not yes_token_of(market):
+            named_fallback += 1
         filled[outcome_id] = (market_id, token)
         by_market.setdefault(market_id, {})[str(outcome_id)] = token
 
@@ -216,13 +308,19 @@ async def topup_outcome_clob_tokens(
             )
         )
 
+    # `named` is kept APART from the total for the reason every other counter in
+    # this module is: one number cannot say "the Yes path is healthy" and "the
+    # head-to-head path is reaching anything". A pass with `mapped` high and
+    # `named` 0 on an MLB evening is the fallback having gone dark, and the
+    # total would report that pass as a good one.
     logger.info(
         "Polymarket outcome token top-up: %d outcomes asked, %d returned by "
-        "Gamma, %d mapped to a YES token across %d markets",
+        "Gamma, %d mapped across %d markets (%d via the outcome-name fallback)",
         len(addressable),
         len(fetched),
         len(filled),
         len(by_market),
+        named_fallback,
     )
     return filled
 

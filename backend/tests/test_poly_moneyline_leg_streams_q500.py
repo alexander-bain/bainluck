@@ -106,13 +106,40 @@ class _FakeService:
         self.closed = True
 
 
+class _NameRows:
+    """What `session.execute(select(...))` hands back, minimally.
+
+    #6617 gave `topup_outcome_clob_tokens` a batched read of our own outcome
+    NAMES (the head-to-head shape attributes its token by name).  Returning a
+    bare `None` here would send that read down its own except-branch on every
+    Q500 test — the tests would still pass, on the fallback, which is exactly
+    the kind of green that proves nothing.  Empty by default: these tests are
+    about the Yes path, and no names means every one of them reaches it.
+    """
+
+    def __init__(self, rows=()):
+        self._rows = list(rows)
+
+    def all(self):
+        return list(self._rows)
+
+
 class _CapturingSession:
-    def __init__(self):
+    def __init__(self, name_rows=()):
         self.updates: list = []
+        self.reads: list = []
+        self._name_rows = list(name_rows)
 
     async def execute(self, stmt):
-        self.updates.append(stmt)
-        return None
+        # WRITES ONLY in `.updates`.  The #6617 name read is a SELECT through
+        # the same method, and letting it land in the same list would turn
+        # "this pass persisted nothing" (line 285) into a false failure and
+        # hand `updates[0]` the wrong statement.  Two questions, two lists.
+        if isinstance(stmt, Update):
+            self.updates.append(stmt)
+        else:
+            self.reads.append(stmt)
+        return _NameRows(self._name_rows)
 
 
 # ------------------------------------------- which token is the YES book ----
