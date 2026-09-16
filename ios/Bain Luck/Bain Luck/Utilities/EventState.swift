@@ -148,6 +148,31 @@ enum EventState {
         return hasStarted(commenceTime: commenceTime, now: now)
     }
 
+    /// Whether a LIST ROW prints the date and time the event starts.
+    ///
+    /// #6444 — Alex photographed search for "Boston Red Sox" and got three rows
+    /// reading **"Boston Red Sox vs Baltimore Orioles · MLB · FINAL"**, one
+    /// under the other, with nothing on any of them saying which game it was.
+    /// They are the September 3, 4 and 6 games of one series; the payload has
+    /// carried `commence_time` on every row throughout. The row printed it only
+    /// when `status == "scheduled"`, so the date was drawn on exactly the rows
+    /// whose badge already says "In 3h" and withheld from every row where the
+    /// reader has no other way to tell one fixture from the next.
+    ///
+    /// A DATE IS IDENTITY, NOT DECORATION, which is why the rule is stated
+    /// positively for every state rather than extended one status at a time:
+    /// `completed`, `closed`, `suspended`, `postponed` and an unrecognised
+    /// status all need it, and the denylist shape that left them out is the one
+    /// `isSuspendedAndStarted` above exists to stop repeating.
+    ///
+    /// `live` is the single exclusion and it is not "the date does not matter
+    /// there": a live row's badge is already the clock — "Bottom 7th", "Q1
+    /// 5:11" — which answers *when* better than a start time does, and it is
+    /// the widest badge on the row. Nothing that had a date loses one.
+    static func listRowPrintsDate(_ status: String?) -> Bool {
+        status != "live"
+    }
+
     /// The short badge an event the venue has already graded wears.
     ///
     /// Deliberately not "Final": a final has a score from something that
