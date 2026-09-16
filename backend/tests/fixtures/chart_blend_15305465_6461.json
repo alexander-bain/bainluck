@@ -1,0 +1,1323 @@
+{
+ "_provenance": {
+  "endpoint": "GET https://api.bainluck.com/api/events/15305465/history",
+  "captured_utc": "2026-09-16T14:10Z",
+  "event": "Red Sox @ Orioles, 2026-09-06, final",
+  "why": "#6461 specimen. Trimmed to the two keys routes/events.py hands compute_aggregated_probability: `history` (sportsbook consensus -> `betting`) and `win_prob_history`. Only timestamp + home_probability are kept; nothing is rounded, reordered or filled.",
+  "served_aggregate_points": 262,
+  "served_jumps_ge_5pp": 29
+ },
+ "event_id": 15305465,
+ "status": "completed",
+ "history": [
+  {
+   "timestamp": "2026-09-05T19:09:00+00:00",
+   "home_probability": 0.4498
+  },
+  {
+   "timestamp": "2026-09-05T19:32:00+00:00",
+   "home_probability": 0.4472
+  },
+  {
+   "timestamp": "2026-09-05T20:02:00+00:00",
+   "home_probability": 0.449
+  },
+  {
+   "timestamp": "2026-09-05T20:08:00+00:00",
+   "home_probability": 0.4472
+  },
+  {
+   "timestamp": "2026-09-05T20:14:00+00:00",
+   "home_probability": 0.4472
+  },
+  {
+   "timestamp": "2026-09-05T20:37:00+00:00",
+   "home_probability": 0.4472
+  },
+  {
+   "timestamp": "2026-09-05T20:47:00+00:00",
+   "home_probability": 0.4467
+  },
+  {
+   "timestamp": "2026-09-05T20:59:00+00:00",
+   "home_probability": 0.4451
+  },
+  {
+   "timestamp": "2026-09-05T22:08:00+00:00",
+   "home_probability": 0.4464
+  },
+  {
+   "timestamp": "2026-09-05T22:12:00+00:00",
+   "home_probability": 0.4464
+  },
+  {
+   "timestamp": "2026-09-05T22:19:00+00:00",
+   "home_probability": 0.45
+  },
+  {
+   "timestamp": "2026-09-05T22:44:00+00:00",
+   "home_probability": 0.4532
+  },
+  {
+   "timestamp": "2026-09-05T23:00:00+00:00",
+   "home_probability": 0.4494
+  },
+  {
+   "timestamp": "2026-09-05T23:08:00+00:00",
+   "home_probability": 0.4472
+  },
+  {
+   "timestamp": "2026-09-05T23:12:00+00:00",
+   "home_probability": 0.4453
+  },
+  {
+   "timestamp": "2026-09-05T23:24:00+00:00",
+   "home_probability": 0.4446
+  },
+  {
+   "timestamp": "2026-09-05T23:29:00+00:00",
+   "home_probability": 0.4494
+  },
+  {
+   "timestamp": "2026-09-05T23:40:00+00:00",
+   "home_probability": 0.4453
+  },
+  {
+   "timestamp": "2026-09-05T23:47:00+00:00",
+   "home_probability": 0.4453
+  },
+  {
+   "timestamp": "2026-09-06T00:08:00+00:00",
+   "home_probability": 0.4458
+  },
+  {
+   "timestamp": "2026-09-06T00:09:00+00:00",
+   "home_probability": 0.4458
+  },
+  {
+   "timestamp": "2026-09-06T00:40:00+00:00",
+   "home_probability": 0.4458
+  },
+  {
+   "timestamp": "2026-09-06T00:43:00+00:00",
+   "home_probability": 0.4458
+  },
+  {
+   "timestamp": "2026-09-06T01:09:00+00:00",
+   "home_probability": 0.4458
+  },
+  {
+   "timestamp": "2026-09-06T01:10:00+00:00",
+   "home_probability": 0.4458
+  },
+  {
+   "timestamp": "2026-09-06T01:13:00+00:00",
+   "home_probability": 0.4474
+  },
+  {
+   "timestamp": "2026-09-06T01:16:00+00:00",
+   "home_probability": 0.4536
+  },
+  {
+   "timestamp": "2026-09-06T01:18:00+00:00",
+   "home_probability": 0.4494
+  },
+  {
+   "timestamp": "2026-09-06T01:21:00+00:00",
+   "home_probability": 0.4494
+  },
+  {
+   "timestamp": "2026-09-06T01:25:00+00:00",
+   "home_probability": 0.4494
+  },
+  {
+   "timestamp": "2026-09-06T01:32:00+00:00",
+   "home_probability": 0.4494
+  },
+  {
+   "timestamp": "2026-09-06T01:37:00+00:00",
+   "home_probability": 0.4468
+  },
+  {
+   "timestamp": "2026-09-06T01:39:00+00:00",
+   "home_probability": 0.4468
+  },
+  {
+   "timestamp": "2026-09-06T01:42:00+00:00",
+   "home_probability": 0.4489
+  },
+  {
+   "timestamp": "2026-09-06T01:45:00+00:00",
+   "home_probability": 0.4489
+  },
+  {
+   "timestamp": "2026-09-06T01:48:00+00:00",
+   "home_probability": 0.4489
+  },
+  {
+   "timestamp": "2026-09-06T01:57:00+00:00",
+   "home_probability": 0.4506
+  },
+  {
+   "timestamp": "2026-09-06T02:05:00+00:00",
+   "home_probability": 0.4473
+  },
+  {
+   "timestamp": "2026-09-06T02:09:00+00:00",
+   "home_probability": 0.4464
+  },
+  {
+   "timestamp": "2026-09-06T02:12:00+00:00",
+   "home_probability": 0.4464
+  },
+  {
+   "timestamp": "2026-09-06T02:18:00+00:00",
+   "home_probability": 0.446
+  },
+  {
+   "timestamp": "2026-09-06T02:32:00+00:00",
+   "home_probability": 0.4415
+  },
+  {
+   "timestamp": "2026-09-06T02:34:00+00:00",
+   "home_probability": 0.4455
+  },
+  {
+   "timestamp": "2026-09-06T02:38:00+00:00",
+   "home_probability": 0.4474
+  },
+  {
+   "timestamp": "2026-09-06T02:39:00+00:00",
+   "home_probability": 0.4476
+  },
+  {
+   "timestamp": "2026-09-06T03:07:00+00:00",
+   "home_probability": 0.4476
+  },
+  {
+   "timestamp": "2026-09-06T03:13:00+00:00",
+   "home_probability": 0.4476
+  },
+  {
+   "timestamp": "2026-09-06T03:38:00+00:00",
+   "home_probability": 0.4476
+  },
+  {
+   "timestamp": "2026-09-06T03:41:00+00:00",
+   "home_probability": 0.4476
+  },
+  {
+   "timestamp": "2026-09-06T03:58:00+00:00",
+   "home_probability": 0.4573
+  },
+  {
+   "timestamp": "2026-09-06T04:09:00+00:00",
+   "home_probability": 0.4476
+  },
+  {
+   "timestamp": "2026-09-06T04:13:00+00:00",
+   "home_probability": 0.448
+  },
+  {
+   "timestamp": "2026-09-06T04:20:00+00:00",
+   "home_probability": 0.4436
+  },
+  {
+   "timestamp": "2026-09-06T04:33:00+00:00",
+   "home_probability": 0.4441
+  },
+  {
+   "timestamp": "2026-09-06T04:34:00+00:00",
+   "home_probability": 0.4441
+  },
+  {
+   "timestamp": "2026-09-06T04:38:00+00:00",
+   "home_probability": 0.4464
+  },
+  {
+   "timestamp": "2026-09-06T04:41:00+00:00",
+   "home_probability": 0.4464
+  },
+  {
+   "timestamp": "2026-09-06T04:50:00+00:00",
+   "home_probability": 0.4478
+  },
+  {
+   "timestamp": "2026-09-06T04:56:00+00:00",
+   "home_probability": 0.4451
+  },
+  {
+   "timestamp": "2026-09-06T05:01:00+00:00",
+   "home_probability": 0.4417
+  },
+  {
+   "timestamp": "2026-09-06T05:04:00+00:00",
+   "home_probability": 0.4436
+  },
+  {
+   "timestamp": "2026-09-06T05:38:00+00:00",
+   "home_probability": 0.4464
+  },
+  {
+   "timestamp": "2026-09-06T05:41:00+00:00",
+   "home_probability": 0.447
+  },
+  {
+   "timestamp": "2026-09-06T06:08:00+00:00",
+   "home_probability": 0.4464
+  },
+  {
+   "timestamp": "2026-09-06T06:12:00+00:00",
+   "home_probability": 0.4464
+  },
+  {
+   "timestamp": "2026-09-06T06:39:00+00:00",
+   "home_probability": 0.4464
+  },
+  {
+   "timestamp": "2026-09-06T06:41:00+00:00",
+   "home_probability": 0.4464
+  },
+  {
+   "timestamp": "2026-09-06T07:03:00+00:00",
+   "home_probability": 0.4436
+  },
+  {
+   "timestamp": "2026-09-06T07:16:00+00:00",
+   "home_probability": 0.4461
+  },
+  {
+   "timestamp": "2026-09-06T07:38:00+00:00",
+   "home_probability": 0.4478
+  },
+  {
+   "timestamp": "2026-09-06T08:06:00+00:00",
+   "home_probability": 0.445
+  },
+  {
+   "timestamp": "2026-09-06T08:11:00+00:00",
+   "home_probability": 0.445
+  },
+  {
+   "timestamp": "2026-09-06T08:37:00+00:00",
+   "home_probability": 0.4408
+  },
+  {
+   "timestamp": "2026-09-06T09:02:00+00:00",
+   "home_probability": 0.4435
+  },
+  {
+   "timestamp": "2026-09-06T09:08:00+00:00",
+   "home_probability": 0.4435
+  },
+  {
+   "timestamp": "2026-09-06T09:32:00+00:00",
+   "home_probability": 0.4435
+  },
+  {
+   "timestamp": "2026-09-06T09:38:00+00:00",
+   "home_probability": 0.4435
+  },
+  {
+   "timestamp": "2026-09-06T10:03:00+00:00",
+   "home_probability": 0.4435
+  },
+  {
+   "timestamp": "2026-09-06T10:09:00+00:00",
+   "home_probability": 0.4435
+  },
+  {
+   "timestamp": "2026-09-06T11:38:00+00:00",
+   "home_probability": 0.44
+  },
+  {
+   "timestamp": "2026-09-06T12:15:00+00:00",
+   "home_probability": 0.4351
+  },
+  {
+   "timestamp": "2026-09-06T12:40:00+00:00",
+   "home_probability": 0.4359
+  },
+  {
+   "timestamp": "2026-09-06T13:07:00+00:00",
+   "home_probability": 0.4385
+  },
+  {
+   "timestamp": "2026-09-06T14:10:00+00:00",
+   "home_probability": 0.4466
+  },
+  {
+   "timestamp": "2026-09-06T14:16:00+00:00",
+   "home_probability": 0.4488
+  },
+  {
+   "timestamp": "2026-09-06T14:23:00+00:00",
+   "home_probability": 0.4557
+  },
+  {
+   "timestamp": "2026-09-06T14:35:00+00:00",
+   "home_probability": 0.4578
+  },
+  {
+   "timestamp": "2026-09-06T14:38:00+00:00",
+   "home_probability": 0.4547
+  },
+  {
+   "timestamp": "2026-09-06T14:41:00+00:00",
+   "home_probability": 0.4542
+  },
+  {
+   "timestamp": "2026-09-06T14:47:00+00:00",
+   "home_probability": 0.4573
+  },
+  {
+   "timestamp": "2026-09-06T14:58:00+00:00",
+   "home_probability": 0.4564
+  },
+  {
+   "timestamp": "2026-09-06T15:03:00+00:00",
+   "home_probability": 0.4534
+  },
+  {
+   "timestamp": "2026-09-06T15:08:00+00:00",
+   "home_probability": 0.4533
+  },
+  {
+   "timestamp": "2026-09-06T15:09:00+00:00",
+   "home_probability": 0.451
+  },
+  {
+   "timestamp": "2026-09-06T15:19:00+00:00",
+   "home_probability": 0.4506
+  },
+  {
+   "timestamp": "2026-09-06T15:28:00+00:00",
+   "home_probability": 0.4472
+  },
+  {
+   "timestamp": "2026-09-06T15:34:00+00:00",
+   "home_probability": 0.4414
+  },
+  {
+   "timestamp": "2026-09-06T15:37:00+00:00",
+   "home_probability": 0.4533
+  },
+  {
+   "timestamp": "2026-09-06T15:47:00+00:00",
+   "home_probability": 0.4533
+  },
+  {
+   "timestamp": "2026-09-06T16:07:00+00:00",
+   "home_probability": 0.4533
+  },
+  {
+   "timestamp": "2026-09-06T16:11:00+00:00",
+   "home_probability": 0.4509
+  },
+  {
+   "timestamp": "2026-09-06T16:15:00+00:00",
+   "home_probability": 0.4518
+  },
+  {
+   "timestamp": "2026-09-06T16:21:00+00:00",
+   "home_probability": 0.4358
+  },
+  {
+   "timestamp": "2026-09-06T16:27:00+00:00",
+   "home_probability": 0.4532
+  },
+  {
+   "timestamp": "2026-09-06T16:31:00+00:00",
+   "home_probability": 0.4477
+  },
+  {
+   "timestamp": "2026-09-06T16:35:00+00:00",
+   "home_probability": 0.4527
+  },
+  {
+   "timestamp": "2026-09-06T16:37:00+00:00",
+   "home_probability": 0.4378
+  },
+  {
+   "timestamp": "2026-09-06T16:41:00+00:00",
+   "home_probability": 0.4458
+  },
+  {
+   "timestamp": "2026-09-06T16:44:00+00:00",
+   "home_probability": 0.4625
+  },
+  {
+   "timestamp": "2026-09-06T16:46:00+00:00",
+   "home_probability": 0.4563
+  },
+  {
+   "timestamp": "2026-09-06T16:52:00+00:00",
+   "home_probability": 0.4512
+  },
+  {
+   "timestamp": "2026-09-06T16:54:00+00:00",
+   "home_probability": 0.4605
+  },
+  {
+   "timestamp": "2026-09-06T16:57:00+00:00",
+   "home_probability": 0.4509
+  },
+  {
+   "timestamp": "2026-09-06T17:00:00+00:00",
+   "home_probability": 0.4675
+  },
+  {
+   "timestamp": "2026-09-06T17:05:00+00:00",
+   "home_probability": 0.4654
+  },
+  {
+   "timestamp": "2026-09-06T17:08:00+00:00",
+   "home_probability": 0.4545
+  },
+  {
+   "timestamp": "2026-09-06T17:11:00+00:00",
+   "home_probability": 0.4545
+  },
+  {
+   "timestamp": "2026-09-06T17:16:00+00:00",
+   "home_probability": 0.4625
+  },
+  {
+   "timestamp": "2026-09-06T17:17:00+00:00",
+   "home_probability": 0.4654
+  },
+  {
+   "timestamp": "2026-09-06T17:20:00+00:00",
+   "home_probability": 0.4429
+  },
+  {
+   "timestamp": "2026-09-06T17:24:00+00:00",
+   "home_probability": 0.4531
+  },
+  {
+   "timestamp": "2026-09-06T17:26:00+00:00",
+   "home_probability": 0.4509
+  },
+  {
+   "timestamp": "2026-09-06T17:31:00+00:00",
+   "home_probability": 0.4567
+  },
+  {
+   "timestamp": "2026-09-06T17:35:00+00:00",
+   "home_probability": 0.4512
+  },
+  {
+   "timestamp": "2026-09-06T17:36:00+00:00",
+   "home_probability": 0.453
+  },
+  {
+   "timestamp": "2026-09-06T17:38:00+00:00",
+   "home_probability": 0.452
+  },
+  {
+   "timestamp": "2026-09-06T17:40:00+00:00",
+   "home_probability": 0.4515
+  },
+  {
+   "timestamp": "2026-09-06T17:43:00+00:00",
+   "home_probability": 0.4708
+  },
+  {
+   "timestamp": "2026-09-06T17:45:00+00:00",
+   "home_probability": 0.4643
+  },
+  {
+   "timestamp": "2026-09-06T17:46:00+00:00",
+   "home_probability": 0.4835
+  },
+  {
+   "timestamp": "2026-09-06T17:50:00+00:00",
+   "home_probability": 0.4846
+  },
+  {
+   "timestamp": "2026-09-06T17:53:00+00:00",
+   "home_probability": 0.4603
+  },
+  {
+   "timestamp": "2026-09-06T17:58:00+00:00",
+   "home_probability": 0.5808
+  },
+  {
+   "timestamp": "2026-09-06T18:00:00+00:00",
+   "home_probability": 0.5786
+  },
+  {
+   "timestamp": "2026-09-06T18:04:00+00:00",
+   "home_probability": 0.5724
+  },
+  {
+   "timestamp": "2026-09-06T18:07:00+00:00",
+   "home_probability": 0.2643
+  },
+  {
+   "timestamp": "2026-09-06T18:10:00+00:00",
+   "home_probability": 0.2745
+  },
+  {
+   "timestamp": "2026-09-06T18:13:00+00:00",
+   "home_probability": 0.2603
+  },
+  {
+   "timestamp": "2026-09-06T18:15:00+00:00",
+   "home_probability": 0.2525
+  },
+  {
+   "timestamp": "2026-09-06T18:16:00+00:00",
+   "home_probability": 0.2407
+  },
+  {
+   "timestamp": "2026-09-06T18:21:00+00:00",
+   "home_probability": 0.2072
+  },
+  {
+   "timestamp": "2026-09-06T18:25:00+00:00",
+   "home_probability": 0.209
+  },
+  {
+   "timestamp": "2026-09-06T18:28:00+00:00",
+   "home_probability": 0.2372
+  },
+  {
+   "timestamp": "2026-09-06T18:29:00+00:00",
+   "home_probability": 0.2438
+  },
+  {
+   "timestamp": "2026-09-06T18:31:00+00:00",
+   "home_probability": 0.2394
+  },
+  {
+   "timestamp": "2026-09-06T18:35:00+00:00",
+   "home_probability": 0.2611
+  },
+  {
+   "timestamp": "2026-09-06T18:37:00+00:00",
+   "home_probability": 0.2635
+  },
+  {
+   "timestamp": "2026-09-06T18:38:00+00:00",
+   "home_probability": 0.2498
+  },
+  {
+   "timestamp": "2026-09-06T18:41:00+00:00",
+   "home_probability": 0.2468
+  },
+  {
+   "timestamp": "2026-09-06T18:43:00+00:00",
+   "home_probability": 0.2259
+  },
+  {
+   "timestamp": "2026-09-06T18:44:00+00:00",
+   "home_probability": 0.225
+  },
+  {
+   "timestamp": "2026-09-06T18:45:00+00:00",
+   "home_probability": 0.2124
+  },
+  {
+   "timestamp": "2026-09-06T18:49:00+00:00",
+   "home_probability": 0.2385
+  },
+  {
+   "timestamp": "2026-09-06T18:50:00+00:00",
+   "home_probability": 0.2368
+  },
+  {
+   "timestamp": "2026-09-06T18:53:00+00:00",
+   "home_probability": 0.2399
+  },
+  {
+   "timestamp": "2026-09-06T18:54:00+00:00",
+   "home_probability": 0.2212
+  },
+  {
+   "timestamp": "2026-09-06T18:55:00+00:00",
+   "home_probability": 0.2109
+  },
+  {
+   "timestamp": "2026-09-06T18:56:00+00:00",
+   "home_probability": 0.2094
+  },
+  {
+   "timestamp": "2026-09-06T18:57:00+00:00",
+   "home_probability": 0.1958
+  },
+  {
+   "timestamp": "2026-09-06T19:01:00+00:00",
+   "home_probability": 0.1819
+  },
+  {
+   "timestamp": "2026-09-06T19:06:00+00:00",
+   "home_probability": 0.2116
+  },
+  {
+   "timestamp": "2026-09-06T19:07:00+00:00",
+   "home_probability": 0.2327
+  },
+  {
+   "timestamp": "2026-09-06T19:12:00+00:00",
+   "home_probability": 0.2529
+  },
+  {
+   "timestamp": "2026-09-06T19:16:00+00:00",
+   "home_probability": 0.1883
+  },
+  {
+   "timestamp": "2026-09-06T19:20:00+00:00",
+   "home_probability": 0.2102
+  },
+  {
+   "timestamp": "2026-09-06T19:21:00+00:00",
+   "home_probability": 0.2104
+  },
+  {
+   "timestamp": "2026-09-06T19:23:00+00:00",
+   "home_probability": 0.213
+  },
+  {
+   "timestamp": "2026-09-06T19:27:00+00:00",
+   "home_probability": 0.1761
+  },
+  {
+   "timestamp": "2026-09-06T19:28:00+00:00",
+   "home_probability": 0.1492
+  },
+  {
+   "timestamp": "2026-09-06T19:31:00+00:00",
+   "home_probability": 0.1611
+  },
+  {
+   "timestamp": "2026-09-06T19:33:00+00:00",
+   "home_probability": 0.1751
+  },
+  {
+   "timestamp": "2026-09-06T19:36:00+00:00",
+   "home_probability": 0.1761
+  },
+  {
+   "timestamp": "2026-09-06T19:39:00+00:00",
+   "home_probability": 0.1745
+  },
+  {
+   "timestamp": "2026-09-06T19:40:00+00:00",
+   "home_probability": 0.1432
+  },
+  {
+   "timestamp": "2026-09-06T19:45:00+00:00",
+   "home_probability": 0.1204
+  },
+  {
+   "timestamp": "2026-09-06T19:51:00+00:00",
+   "home_probability": 0.1165
+  },
+  {
+   "timestamp": "2026-09-06T19:57:00+00:00",
+   "home_probability": 0.1334
+  },
+  {
+   "timestamp": "2026-09-06T20:01:00+00:00",
+   "home_probability": 0.0831
+  },
+  {
+   "timestamp": "2026-09-06T20:06:00+00:00",
+   "home_probability": 0.0867
+  },
+  {
+   "timestamp": "2026-09-06T20:08:00+00:00",
+   "home_probability": 0.0896
+  },
+  {
+   "timestamp": "2026-09-06T20:11:00+00:00",
+   "home_probability": 0.09
+  },
+  {
+   "timestamp": "2026-09-06T20:14:00+00:00",
+   "home_probability": 0.0834
+  },
+  {
+   "timestamp": "2026-09-06T20:19:00+00:00",
+   "home_probability": 0.0779
+  },
+  {
+   "timestamp": "2026-09-06T20:20:00+00:00",
+   "home_probability": 0.0446
+  },
+  {
+   "timestamp": "2026-09-06T20:21:00+00:00",
+   "home_probability": 0.0
+  }
+ ],
+ "win_prob_history": {
+  "espn": [
+   {
+    "timestamp": "2026-09-06T17:35:00+00:00",
+    "home_probability": 0.0058
+   },
+   {
+    "timestamp": "2026-09-06T17:38:05.294118+00:00",
+    "home_probability": 0.0055
+   },
+   {
+    "timestamp": "2026-09-06T17:41:10.588235+00:00",
+    "home_probability": 0.0058
+   },
+   {
+    "timestamp": "2026-09-06T17:44:15.882353+00:00",
+    "home_probability": 0.0058
+   },
+   {
+    "timestamp": "2026-09-06T17:47:21.176471+00:00",
+    "home_probability": 0.0058
+   },
+   {
+    "timestamp": "2026-09-06T17:50:26.470588+00:00",
+    "home_probability": 0.0057
+   },
+   {
+    "timestamp": "2026-09-06T17:53:31.764706+00:00",
+    "home_probability": 0.0059
+   },
+   {
+    "timestamp": "2026-09-06T17:56:37.058824+00:00",
+    "home_probability": 0.0069
+   },
+   {
+    "timestamp": "2026-09-06T17:59:42.352941+00:00",
+    "home_probability": 0.0069
+   },
+   {
+    "timestamp": "2026-09-06T18:02:47.647059+00:00",
+    "home_probability": 0.0069
+   },
+   {
+    "timestamp": "2026-09-06T18:05:52.941176+00:00",
+    "home_probability": 0.0066
+   },
+   {
+    "timestamp": "2026-09-06T18:08:58.235294+00:00",
+    "home_probability": 0.0067
+   },
+   {
+    "timestamp": "2026-09-06T18:12:03.529412+00:00",
+    "home_probability": 0.0066
+   },
+   {
+    "timestamp": "2026-09-06T18:15:08.823529+00:00",
+    "home_probability": 0.0035
+   },
+   {
+    "timestamp": "2026-09-06T18:18:14.117647+00:00",
+    "home_probability": 0.0034
+   },
+   {
+    "timestamp": "2026-09-06T18:21:19.411765+00:00",
+    "home_probability": 0.0035
+   },
+   {
+    "timestamp": "2026-09-06T18:24:24.705882+00:00",
+    "home_probability": 0.0033
+   },
+   {
+    "timestamp": "2026-09-06T18:27:30+00:00",
+    "home_probability": 0.0031
+   },
+   {
+    "timestamp": "2026-09-06T18:30:35.294118+00:00",
+    "home_probability": 0.003
+   },
+   {
+    "timestamp": "2026-09-06T18:31:03.321337+00:00",
+    "home_probability": 0.309
+   },
+   {
+    "timestamp": "2026-09-06T18:33:40.588235+00:00",
+    "home_probability": 0.0026
+   },
+   {
+    "timestamp": "2026-09-06T18:36:45.882353+00:00",
+    "home_probability": 0.0029
+   },
+   {
+    "timestamp": "2026-09-06T18:39:51.176471+00:00",
+    "home_probability": 0.0032
+   },
+   {
+    "timestamp": "2026-09-06T18:42:56.470588+00:00",
+    "home_probability": 0.0031
+   },
+   {
+    "timestamp": "2026-09-06T18:46:01.764706+00:00",
+    "home_probability": 0.0034
+   },
+   {
+    "timestamp": "2026-09-06T18:49:07.058824+00:00",
+    "home_probability": 0.0032
+   },
+   {
+    "timestamp": "2026-09-06T18:52:12.352941+00:00",
+    "home_probability": 0.003
+   },
+   {
+    "timestamp": "2026-09-06T18:55:17.647059+00:00",
+    "home_probability": 0.0029
+   },
+   {
+    "timestamp": "2026-09-06T18:58:22.941176+00:00",
+    "home_probability": 0.003
+   },
+   {
+    "timestamp": "2026-09-06T19:01:28.235294+00:00",
+    "home_probability": 0.0031
+   },
+   {
+    "timestamp": "2026-09-06T19:04:33.529412+00:00",
+    "home_probability": 0.0031
+   },
+   {
+    "timestamp": "2026-09-06T19:07:38.823529+00:00",
+    "home_probability": 0.0028
+   },
+   {
+    "timestamp": "2026-09-06T19:10:44.117647+00:00",
+    "home_probability": 0.0026
+   },
+   {
+    "timestamp": "2026-09-06T19:13:49.411765+00:00",
+    "home_probability": 0.0025
+   },
+   {
+    "timestamp": "2026-09-06T19:16:54.705882+00:00",
+    "home_probability": 0.0021
+   },
+   {
+    "timestamp": "2026-09-06T19:20:00+00:00",
+    "home_probability": 0.0024
+   },
+   {
+    "timestamp": "2026-09-06T19:23:05.294118+00:00",
+    "home_probability": 0.0026
+   },
+   {
+    "timestamp": "2026-09-06T19:26:10.588235+00:00",
+    "home_probability": 0.0028
+   },
+   {
+    "timestamp": "2026-09-06T19:29:15.882353+00:00",
+    "home_probability": 0.0035
+   },
+   {
+    "timestamp": "2026-09-06T19:32:21.176471+00:00",
+    "home_probability": 0.0023
+   },
+   {
+    "timestamp": "2026-09-06T19:35:26.470588+00:00",
+    "home_probability": 0.0022
+   },
+   {
+    "timestamp": "2026-09-06T19:38:31.764706+00:00",
+    "home_probability": 0.0023
+   },
+   {
+    "timestamp": "2026-09-06T19:41:37.058824+00:00",
+    "home_probability": 0.0023
+   },
+   {
+    "timestamp": "2026-09-06T19:44:42.352941+00:00",
+    "home_probability": 0.0024
+   },
+   {
+    "timestamp": "2026-09-06T19:47:47.647059+00:00",
+    "home_probability": 0.0021
+   },
+   {
+    "timestamp": "2026-09-06T19:50:52.941176+00:00",
+    "home_probability": 0.0019
+   },
+   {
+    "timestamp": "2026-09-06T19:53:58.235294+00:00",
+    "home_probability": 0.0021
+   },
+   {
+    "timestamp": "2026-09-06T19:57:03.529412+00:00",
+    "home_probability": 0.0021
+   },
+   {
+    "timestamp": "2026-09-06T20:00:08.823529+00:00",
+    "home_probability": 0.0019
+   },
+   {
+    "timestamp": "2026-09-06T20:03:14.117647+00:00",
+    "home_probability": 0.002
+   },
+   {
+    "timestamp": "2026-09-06T20:06:19.411765+00:00",
+    "home_probability": 0.0019
+   },
+   {
+    "timestamp": "2026-09-06T20:09:24.705882+00:00",
+    "home_probability": 0.002
+   },
+   {
+    "timestamp": "2026-09-06T20:12:30+00:00",
+    "home_probability": 0.0016
+   },
+   {
+    "timestamp": "2026-09-06T20:15:35.294118+00:00",
+    "home_probability": 0.0014
+   },
+   {
+    "timestamp": "2026-09-06T20:18:40.588235+00:00",
+    "home_probability": 0.0012
+   },
+   {
+    "timestamp": "2026-09-06T20:21:45.882353+00:00",
+    "home_probability": 0.0011
+   },
+   {
+    "timestamp": "2026-09-06T20:24:51.176471+00:00",
+    "home_probability": 0.0013
+   },
+   {
+    "timestamp": "2026-09-06T20:27:56.470588+00:00",
+    "home_probability": 0.0014
+   },
+   {
+    "timestamp": "2026-09-06T20:31:01.764706+00:00",
+    "home_probability": 0.0015
+   },
+   {
+    "timestamp": "2026-09-06T20:34:07.058824+00:00",
+    "home_probability": 0.0011
+   },
+   {
+    "timestamp": "2026-09-06T20:37:12.352941+00:00",
+    "home_probability": 0.0009
+   },
+   {
+    "timestamp": "2026-09-06T20:40:17.647059+00:00",
+    "home_probability": 0.0008
+   },
+   {
+    "timestamp": "2026-09-06T20:43:22.941176+00:00",
+    "home_probability": 0.0009
+   },
+   {
+    "timestamp": "2026-09-06T20:46:28.235294+00:00",
+    "home_probability": 0.0008
+   },
+   {
+    "timestamp": "2026-09-06T20:49:33.529412+00:00",
+    "home_probability": 0.0009
+   },
+   {
+    "timestamp": "2026-09-06T20:21:00+00:00",
+    "home_probability": 0.0
+   }
+  ],
+  "mlb": [
+   {
+    "timestamp": "2026-09-06T17:38:00.996882+00:00",
+    "home_probability": 0.5
+   },
+   {
+    "timestamp": "2026-09-06T17:42:01.044209+00:00",
+    "home_probability": 0.522
+   },
+   {
+    "timestamp": "2026-09-06T17:46:01.114634+00:00",
+    "home_probability": 0.526
+   },
+   {
+    "timestamp": "2026-09-06T17:51:40.353039+00:00",
+    "home_probability": 0.51
+   },
+   {
+    "timestamp": "2026-09-06T17:55:40.337904+00:00",
+    "home_probability": 0.632
+   },
+   {
+    "timestamp": "2026-09-06T18:03:40.376253+00:00",
+    "home_probability": 0.621
+   },
+   {
+    "timestamp": "2026-09-06T18:08:40.268791+00:00",
+    "home_probability": 0.323
+   },
+   {
+    "timestamp": "2026-09-06T18:14:03.382987+00:00",
+    "home_probability": 0.317
+   },
+   {
+    "timestamp": "2026-09-06T18:16:03.310200+00:00",
+    "home_probability": 0.299
+   },
+   {
+    "timestamp": "2026-09-06T18:20:03.315827+00:00",
+    "home_probability": 0.24
+   },
+   {
+    "timestamp": "2026-09-06T18:30:03.316146+00:00",
+    "home_probability": 0.3
+   },
+   {
+    "timestamp": "2026-09-06T18:32:03.312926+00:00",
+    "home_probability": 0.293
+   },
+   {
+    "timestamp": "2026-09-06T18:38:03.323972+00:00",
+    "home_probability": 0.301
+   },
+   {
+    "timestamp": "2026-09-06T18:48:03.327823+00:00",
+    "home_probability": 0.302
+   },
+   {
+    "timestamp": "2026-09-06T19:00:24.062156+00:00",
+    "home_probability": 0.249
+   },
+   {
+    "timestamp": "2026-09-06T19:05:06.703196+00:00",
+    "home_probability": 0.27
+   },
+   {
+    "timestamp": "2026-09-06T19:09:06.677256+00:00",
+    "home_probability": 0.289
+   },
+   {
+    "timestamp": "2026-09-06T19:15:56.348681+00:00",
+    "home_probability": 0.257
+   },
+   {
+    "timestamp": "2026-09-06T19:17:56.388430+00:00",
+    "home_probability": 0.221
+   },
+   {
+    "timestamp": "2026-09-06T19:19:56.362526+00:00",
+    "home_probability": 0.251
+   },
+   {
+    "timestamp": "2026-09-06T19:23:56.324138+00:00",
+    "home_probability": 0.225
+   },
+   {
+    "timestamp": "2026-09-06T19:27:56.346297+00:00",
+    "home_probability": 0.22
+   },
+   {
+    "timestamp": "2026-09-06T19:29:56.361332+00:00",
+    "home_probability": 0.185
+   },
+   {
+    "timestamp": "2026-09-06T19:36:55.257158+00:00",
+    "home_probability": 0.204
+   },
+   {
+    "timestamp": "2026-09-06T19:38:55.205257+00:00",
+    "home_probability": 0.221
+   },
+   {
+    "timestamp": "2026-09-06T19:40:56.545174+00:00",
+    "home_probability": 0.181
+   },
+   {
+    "timestamp": "2026-09-06T19:42:55.195125+00:00",
+    "home_probability": 0.154
+   },
+   {
+    "timestamp": "2026-09-06T19:48:55.178838+00:00",
+    "home_probability": 0.138
+   },
+   {
+    "timestamp": "2026-09-06T19:55:28.913027+00:00",
+    "home_probability": 0.153
+   },
+   {
+    "timestamp": "2026-09-06T19:57:00.493147+00:00",
+    "home_probability": 0.167
+   },
+   {
+    "timestamp": "2026-09-06T19:58:53.422217+00:00",
+    "home_probability": 0.123
+   },
+   {
+    "timestamp": "2026-09-06T20:00:36.019370+00:00",
+    "home_probability": 0.093
+   },
+   {
+    "timestamp": "2026-09-06T20:05:46.277416+00:00",
+    "home_probability": 0.084
+   },
+   {
+    "timestamp": "2026-09-06T20:07:50.321880+00:00",
+    "home_probability": 0.086
+   },
+   {
+    "timestamp": "2026-09-06T20:17:50.371542+00:00",
+    "home_probability": 0.112
+   },
+   {
+    "timestamp": "2026-09-06T20:19:50.346192+00:00",
+    "home_probability": 0.124
+   },
+   {
+    "timestamp": "2026-09-06T20:21:00+00:00",
+    "home_probability": 0.0
+   }
+  ],
+  "stat_model": [
+   {
+    "timestamp": "2026-09-06T17:38:21.955678+00:00",
+    "home_probability": 0.3573
+   },
+   {
+    "timestamp": "2026-09-06T17:48:01.159732+00:00",
+    "home_probability": 0.3927
+   },
+   {
+    "timestamp": "2026-09-06T17:50:40.557968+00:00",
+    "home_probability": 0.3631
+   },
+   {
+    "timestamp": "2026-09-06T17:55:43.452704+00:00",
+    "home_probability": 0.4992
+   },
+   {
+    "timestamp": "2026-09-06T17:56:43.997329+00:00",
+    "home_probability": 0.4693
+   },
+   {
+    "timestamp": "2026-09-06T17:58:40.369882+00:00",
+    "home_probability": 0.5101
+   },
+   {
+    "timestamp": "2026-09-06T18:07:40.430664+00:00",
+    "home_probability": 0.1463
+   },
+   {
+    "timestamp": "2026-09-06T18:11:03.246676+00:00",
+    "home_probability": 0.1674
+   },
+   {
+    "timestamp": "2026-09-06T18:12:12.930408+00:00",
+    "home_probability": 0.1446
+   },
+   {
+    "timestamp": "2026-09-06T18:17:03.272193+00:00",
+    "home_probability": 0.1233
+   },
+   {
+    "timestamp": "2026-09-06T18:20:06.155840+00:00",
+    "home_probability": 0.1425
+   },
+   {
+    "timestamp": "2026-09-06T18:36:22.881101+00:00",
+    "home_probability": 0.1399
+   },
+   {
+    "timestamp": "2026-09-06T18:44:03.320657+00:00",
+    "home_probability": 0.1171
+   },
+   {
+    "timestamp": "2026-09-06T18:46:06.121513+00:00",
+    "home_probability": 0.1368
+   },
+   {
+    "timestamp": "2026-09-06T18:50:39.150969+00:00",
+    "home_probability": 0.1595
+   },
+   {
+    "timestamp": "2026-09-06T18:52:40.219541+00:00",
+    "home_probability": 0.133
+   },
+   {
+    "timestamp": "2026-09-06T18:58:34.045436+00:00",
+    "home_probability": 0.1282
+   },
+   {
+    "timestamp": "2026-09-06T19:07:10.389166+00:00",
+    "home_probability": 0.1225
+   },
+   {
+    "timestamp": "2026-09-06T19:16:04.579335+00:00",
+    "home_probability": 0.096
+   },
+   {
+    "timestamp": "2026-09-06T19:17:59.471963+00:00",
+    "home_probability": 0.1154
+   },
+   {
+    "timestamp": "2026-09-06T19:22:19.412334+00:00",
+    "home_probability": 0.1065
+   },
+   {
+    "timestamp": "2026-09-06T19:27:56.844433+00:00",
+    "home_probability": 0.078
+   },
+   {
+    "timestamp": "2026-09-06T19:29:59.243643+00:00",
+    "home_probability": 0.0955
+   },
+   {
+    "timestamp": "2026-09-06T19:34:58.300493+00:00",
+    "home_probability": 0.1171
+   },
+   {
+    "timestamp": "2026-09-06T19:37:58.923817+00:00",
+    "home_probability": 0.0815
+   },
+   {
+    "timestamp": "2026-09-06T19:44:59.098439+00:00",
+    "home_probability": 0.0637
+   },
+   {
+    "timestamp": "2026-09-06T19:54:25.503718+00:00",
+    "home_probability": 0.0791
+   },
+   {
+    "timestamp": "2026-09-06T19:55:31.734933+00:00",
+    "home_probability": 0.0413
+   },
+   {
+    "timestamp": "2026-09-06T20:00:38.341859+00:00",
+    "home_probability": 0.0157
+   },
+   {
+    "timestamp": "2026-09-06T20:03:23.749902+00:00",
+    "home_probability": 0.0157
+   },
+   {
+    "timestamp": "2026-09-06T20:09:52.711168+00:00",
+    "home_probability": 0.0129
+   },
+   {
+    "timestamp": "2026-09-06T20:12:42.026876+00:00",
+    "home_probability": 0.001
+   },
+   {
+    "timestamp": "2026-09-06T20:21:00+00:00",
+    "home_probability": 0.0
+   }
+  ]
+ },
+ "score_history": [
+  {
+   "timestamp": "2026-09-06T17:35:31.171867+00:00",
+   "home_score": 0,
+   "away_score": 0
+  },
+  {
+   "timestamp": "2026-09-06T17:55:43.452704+00:00",
+   "home_score": 1,
+   "away_score": 0
+  },
+  {
+   "timestamp": "2026-09-06T18:07:41.093212+00:00",
+   "home_score": 1,
+   "away_score": 3
+  }
+ ]
+}

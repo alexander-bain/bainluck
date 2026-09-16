@@ -45,7 +45,7 @@ from app.utils.aggregation import (
     SOURCE_WEIGHTS,
     SourceReading,
     TimestampedProb,
-    _staleness_weight,
+    _relative_staleness_multiplier,
     _weighted_median,
     cap_weight_shares,
     compute_aggregated_probability,
@@ -58,6 +58,31 @@ from app.utils.aggregation import _UNCAPPED_SOURCES
 # character inside the loop. DO NOT "fix" this file's copy — it is the BEFORE,
 # and a BEFORE that is quietly improved proves nothing (ruling on verbatim
 # controls, 2026-09-12).
+#
+# ── #6461 AMENDMENT: THE CONTROL IS THE SCAN, NOT THE WEIGHTING ─────────────
+#
+# One thing in this oracle was never the BEFORE it is guarding. #6546 changed
+# HOW the carry-forward finds each source's reading (restart-per-bucket ->
+# per-source cursor) and nothing else; the weighting that turns those readings
+# into a number was incidental to it, and is copied here only because it sat in
+# the same loop.
+#
+# #6461 changed exactly that weighting — a reading is now aged against the
+# freshest observation in its own bucket rather than against the bucket clock —
+# so a byte-for-byte oracle reddens on eight cases while saying nothing about
+# the scan it exists to protect. Refreshing the whole copy would destroy the
+# control (the 2026-09-12 ruling); leaving it red would strike a guard for
+# being correct.
+#
+# So the assertion is SPLIT, which is what that ruling asks for. The scan below
+# — the `for point in points: if ... else: break` restart, the bucket
+# enumeration, the timezone derivation, the duplicate/unsorted handling — is
+# still verbatim and is still the control. The weighting block carries the
+# #6461 rule, mirrored inline rather than imported, so that the two
+# implementations remain independent and this file keeps failing if the scan
+# ever disagrees. #6461's own behaviour is proved next door, in
+# `test_chart_blend_source_switch_6461.py`; it is not this file's job and never
+# was.
 # ---------------------------------------------------------------------------
 
 
@@ -100,9 +125,9 @@ def _oracle_aggregated_probability(
 
         readings: list[SourceReading] = []
 
+        # ── THE CONTROL: the pre-#6546 restart-per-bucket scan, verbatim ────
+        candidates: list[tuple[str, TimestampedProb]] = []
         for source_key, points in source_sorted.items():
-            base_weight = weights.get(source_key, 0.5)
-
             latest: Optional[TimestampedProb] = None
             for point in points:
                 if point.timestamp.timestamp() <= bucket_ts + bucket_seconds:
@@ -113,11 +138,28 @@ def _oracle_aggregated_probability(
             if latest is None:
                 continue
 
-            stale_seconds = bucket_ts - latest.timestamp.timestamp()
-            if stale_seconds < 0:
-                stale_seconds = 0
+            candidates.append((source_key, latest))
 
-            stale_mult = _staleness_weight(stale_seconds)
+        if not candidates:
+            continue
+
+        # ── NOT the control: #6461's weighting, mirrored (see the note above)
+        decay_epochs = [
+            point.timestamp.timestamp()
+            for source_key, point in candidates
+            if source_key not in _UNCAPPED_SOURCES
+        ]
+        reference_epoch = max(decay_epochs) if decay_epochs else None
+
+        for source_key, latest in candidates:
+            base_weight = weights.get(source_key, 0.5)
+
+            if reference_epoch is None or source_key in _UNCAPPED_SOURCES:
+                relative_age = 0.0
+            else:
+                relative_age = max(0.0, reference_epoch - latest.timestamp.timestamp())
+
+            stale_mult = _relative_staleness_multiplier(relative_age, floor=0.0)
             effective_weight = base_weight * stale_mult
 
             if effective_weight > 0:
@@ -126,7 +168,7 @@ def _oracle_aggregated_probability(
                         source=source_key,
                         probability=latest.home_probability,
                         weight=effective_weight,
-                        stale_seconds=stale_seconds,
+                        stale_seconds=relative_age,
                     )
                 )
 
