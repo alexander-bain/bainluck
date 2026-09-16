@@ -101,9 +101,14 @@ describe("#3035 arm B — FuturesChart actually wires the anchor and the fades",
 
   test("the scroll container is measured and its scroll is anchored", () => {
     expect(CODE).toContain("ref={scrollRef}");
-    expect(CODE).toContain("anchorScrollLeft(el)");
-    // The offset must be assigned, not merely computed and dropped.
-    expect(CODE).toMatch(/el\.scrollLeft\s*=\s*anchorScrollLeft\(el\)/);
+    // NARROWED, not deleted (#6548). This assertion's subject is that the
+    // component WIRES the anchor into scrollLeft — it was written as the exact
+    // one-argument call only because that was the only call there was. #6548
+    // passes `{ settled }` as a second argument, which the literal form read as
+    // a regression when the wiring is intact. The arity was never the claim.
+    // Still strictly stronger than "mentions the function": it pins the
+    // assignment, the element, and the direction of the assignment.
+    expect(CODE).toMatch(/el\.scrollLeft\s*=\s*anchorScrollLeft\(\s*el\b[^)]*\)/);
   });
 
   test("the fade state is recomputed on scroll, not frozen at mount", () => {
