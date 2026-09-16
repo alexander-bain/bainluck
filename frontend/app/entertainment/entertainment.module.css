@@ -408,34 +408,47 @@
   transition: width 0.4s cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 
-/* ── Yes/No bar ── */
+/* ── Yes/No bar ──
+   #2566: the YES fill used to BE the label's box, so a 2% market clipped its own
+   label mid-glyph inside this 28px `overflow: hidden` track. The fill is now an
+   absolutely-positioned layer and the two labels sit above it at their natural
+   width, which is why neither one can be clipped at any probability. */
 .ynBar {
+  position: relative;
   display: flex;
+  align-items: center;
   height: 28px;
   border-radius: 6px;
   overflow: hidden;
+  background: #F0F0F2;
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
   font-weight: 700;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
-.ynYes {
+.ynFill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
   background: rgba(34, 197, 94, 0.15);
+  pointer-events: none;
+}
+
+.ynYes {
+  position: relative;
   color: #16A34A;
-  display: flex;
-  align-items: center;
   padding: 0 10px;
+  white-space: nowrap;
 }
 
 .ynNo {
-  background: #F0F0F2;
+  position: relative;
   color: #9CA3AF;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
   padding: 0 10px;
   margin-left: auto;
+  white-space: nowrap;
 }
 
 /* ── Split bar (binary) ── */
