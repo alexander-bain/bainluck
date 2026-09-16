@@ -809,8 +809,69 @@ function parseStatOutcome(outcomeName: string): {
       direction: null,
     };
   }
-  // Fallback: just a name or unknown
-  return { playerName: outcomeName, line: null, isTeamTotal: false, direction: null };
+  // Fallback: a bare name ("Erling Haaland" on an anytime-scorer market) — or
+  // a whole question restated, which is not a subject at all (#6372).
+  return {
+    playerName: outcomeNamesASubject(outcomeName) ? outcomeName : null,
+    line: null,
+    isTeamTotal: false,
+    direction: null,
+  };
+}
+
+/**
+ * #6372: A DRAW IS NOT A PERSON, AND IT WAS GETTING A PERSON'S FACE.
+ *
+ * `/events/15312629` (Club Necaxa v CF América), Bigger Picture → `OTHER (1)`,
+ * drew one tile: a circular player-headshot avatar with the initials **`D(`**
+ * — the first two characters of `Draw (Club Necaxa vs. CF América)` — over the
+ * outcome's own text. A reader met a footballer called "D(".
+ *
+ * The cause is the branch above: with no colon and no leading Over/Under it
+ * returned `playerName: outcomeName`, so *every* unparsed string became a
+ * person, and `PlayerHeadshot`'s last fallback renders initials for a name it
+ * cannot resolve. Same principle as #6210 and #6253 — a prop row's subject is
+ * READ from the outcome, never invented — applied to the third branch.
+ *
+ * `playerName` is the answer to "is there a person here", so it is the field
+ * that must go null; the LABEL is unaffected, because every render site already
+ * falls back to `outcomeName` (the tile text, its `title`, and the dedup key
+ * all read `playerName || outcomeName`). Nothing a reader sees disappears
+ * except the face, and with it the box-score lookup that could never have
+ * matched.
+ *
+ * ═══ THE RULE IS NEGATIVE, AND ITS BLAST RADIUS WAS MEASURED, NOT GUESSED ═══
+ *
+ * Personhood cannot be proved from a string, so this does not try: it names
+ * the shapes that CANNOT be a person. The question that matters is who NEWLY
+ * loses a face, so the population was read on production (2026-09-16) — every
+ * outcome on an event-attached market with no colon and no Over/Under, i.e.
+ * exactly the branch above. The parenthesised part of it is three shapes and
+ * **not one person**:
+ *
+ *   · `Draw (Athletic Club vs. Elche CF)`      — the filed defect
+ *   · `CA Osasuna (-1.5)`, `AC Milan (-2.5)`   — a team plus a handicap
+ *   · `St. Thomas (MN)`, `Miami (OH)`          — a team plus its state
+ *
+ * A real player's outcome on these markets is a bare name (`Erling Haaland`)
+ * or the colon form handled above, and neither is touched.
+ *
+ * Deliberately NOT applied to the colon branch: its left-hand side is a name by
+ * construction, and the measurement above does not cover it.
+ */
+function outcomeNamesASubject(outcomeName: string): boolean {
+  const trimmed = outcomeName.trim();
+  if (!trimmed) return false;
+  // A qualifier in brackets — a handicap, a state, or the fixture a draw
+  // belongs to. None of the three is a person.
+  if (/[()]/.test(trimmed)) return false;
+  // A fixture restated. `vs`, `vs.` and `v.` only; a bare `v` would take
+  // "Trent Alexander-Arnold v" style truncations and, worse, any name with a
+  // standalone initial.
+  if (/\b(?:vs\.?|v\.)\s/i.test(trimmed)) return false;
+  // The result itself, on a three-way market that lists it beside two teams.
+  if (/^(draw|tie)$/i.test(trimmed)) return false;
+  return true;
 }
 
 /** Parsed stat row for display */
@@ -1026,8 +1087,14 @@ function StatPropsSection({
             // or "Under" — never the invented word "Team", which on an O/U
             // corners line names a thing that does not exist and, applied to
             // both halves of the pair, said nothing about either.
+            // #6372: `outcomeName` before the em-dash. `playerName` is now null
+            // for a row whose outcome is a whole question rather than a person
+            // ("Draw (Club Necaxa vs. CF América)"), and that row still has to
+            // say what it is — a face is what it loses, not its name. Without
+            // this the tile would read "—". The order is unchanged for every
+            // other row, so no existing label moves.
             const tileLabels = disambiguateLabels(
-              visibleRows.map((r) => r.playerName || r.direction || "—"),
+              visibleRows.map((r) => r.playerName || r.direction || r.outcomeName || "—"),
             );
             return (
             <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide">
