@@ -121,11 +121,17 @@ class _Market:
 
 
 class _Event:
-    def __init__(self, eid, *, status="scheduled", commence=None):
+    def __init__(self, eid, *, status="scheduled", commence=None, completed_at=None):
         self.id = eid
         self.status = status
         self.home_team_name = "Matsuda / Sharma"
         self.away_team_name = "Derepasko / Lomakin"
+        # #6608 — the beat's blend group now carries #5820's tri-state, read off
+        # this row. `None` is faithful for a pre-kickoff double: no result yet.
+        # Carried here even though no arm in this file currently reaches the
+        # blend stage, because the absence is a latent AttributeError for the
+        # next arm that does — which is exactly how it was found, twice.
+        self.completed_at = completed_at
         # Default: inside the poll's +3h population and comfortably clear of
         # the 15-minute pregame-pin window, so an arm aimed at the price loop
         # is not quietly also exercising the pin.

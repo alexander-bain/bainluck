@@ -128,11 +128,25 @@ class _Market:
 
 
 class _Event:
-    def __init__(self, eid: int, *, commence: Optional[datetime] = None, status="live"):
+    def __init__(
+        self,
+        eid: int,
+        *,
+        commence: Optional[datetime] = None,
+        status="live",
+        completed_at: Optional[datetime] = None,
+    ):
         self.id = eid
         self.status = status
         self.home_team_name = "Los Angeles R"
         self.away_team_name = "New York G"
+        # #6608 — the blend group now carries #5820's tri-state, which the poll
+        # reads off this row. `None` is the faithful default for a double that
+        # models a live or upcoming game: we have no result for it. That is the
+        # ARMED state for the settled-speaker clause, deliberately — these
+        # doubles' markets are not settled, so the clause stays inert on them,
+        # and an arm that wants it live sets a settled `_Market.status`.
+        self.completed_at = completed_at
         # Far enough out that the pregame-pin loop declines — the lead window
         # is `_PREGAME_MARK_LEAD_MINUTES` (15), so hours out is outside it by
         # any clock — and arms aimed at the fetch loops are therefore not also
