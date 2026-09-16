@@ -5,6 +5,7 @@ top-level keys, nested structure, and field types — even when the DB is empty.
 Uses the shared ``client`` fixture from conftest.py (mock empty DB session).
 """
 
+import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -535,30 +536,51 @@ class TestCalibrationPublicEndpoint:
             futures_rows=[_bucket_row(n=2, winners=1, avg_prob=0.55, sum_prob=1.1)],
             total_markets=3,
         )
+        started = time.monotonic()
         first_resp = await client.get("/api/calibration")
         assert first_resp.status_code == 200
         first_body = first_resp.json()
 
         mock_db.execute.reset_mock()
         second_resp = await client.get("/api/calibration", publish=False)
+        elapsed_s = time.monotonic() - started
 
         assert second_resp.status_code == 200
-        # CAL-P998 / D46: `scorecard.computed_at` is when the SCORE was taken,
-        # and two reads of one cached curve are legitimately scored at two
-        # different instants — so it is the one field that must differ here.
-        # Everything else, including every figure in the scorecard, is a pure
-        # function of the cached payload and must be identical: that is the
-        # claim this test is making, alongside `execute.assert_not_called()`.
+        # CAL-P998 / D46 and #1680: TWO fields here are measured at SERVE time
+        # rather than carried in the cached payload, and both are legitimately
+        # different between two reads of one cached curve —
+        #   * `scorecard.computed_at`, the instant the score was taken, and
+        #   * `producer.age_s`, the artifact's age against the real clock,
+        #     recomputed by `_serve()` on EVERY answer including a cache hit.
+        # `age_s` joined that set after this test was written (#6456: the old
+        # comment's "it is the one field that must differ" went false when the
+        # producer block became per-answer, and the equality then compared a
+        # field designed to vary — a flake whenever the two requests straddle a
+        # whole second). Everything else, including every other figure in the
+        # scorecard and the producer's static declaration, is a pure function of
+        # the cached payload and must be identical: that is the claim this test
+        # is making, alongside `execute.assert_not_called()`.
         second_body = second_resp.json()
-        # The two `.pop()`s are what make the `==` below meaningful, so they run
+        # The `.pop()`s are what make the `==` below meaningful, so they run
         # OUTSIDE the assert. Inside it they are a side-effect in an assert:
         # `python -O` strips the statement, the pops never happen, and the
-        # equality then compares two bodies that still carry the one field
+        # equality then compares two bodies that still carry the fields
         # designed to differ. CodeQL flags this class as an error and it is
         # right to — the test's correctness depended on an assert executing.
         second_computed_at = second_body["scorecard"].pop("computed_at")
         first_computed_at = first_body["scorecard"].pop("computed_at")
+        second_age_s = second_body["producer"].pop("age_s")
+        first_age_s = first_body["producer"].pop("age_s")
         assert second_computed_at != first_computed_at
+        # Popping a field weakens the equality, so each popped field is asserted
+        # on positively instead. Both answers date the SAME artifact, so their
+        # ages are two reads of one stopwatch: non-negative, never running
+        # backwards, and apart by no more than the wall-clock this test itself
+        # spent between them (+1 for the rounding at each end). No fudge factor
+        # — the bound is measured, so a slow shard cannot flake it and a genuine
+        # re-dating of the payload still fails it.
+        assert isinstance(first_age_s, int) and isinstance(second_age_s, int)
+        assert 0 <= first_age_s <= second_age_s <= first_age_s + int(elapsed_s) + 1
         assert second_body == first_body
         mock_db.execute.assert_not_called()
 
