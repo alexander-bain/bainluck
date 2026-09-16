@@ -140,16 +140,30 @@ class TestTheProductionSpecimen:
         assert live.id < final.id
         assert twin_identity_rank(final) > twin_identity_rank(live)
 
-        # The margin is real and doubled: the ESPN id at position 2, and — on
-        # these two rows, though not by design — source count at position 4.
-        # Strip BOTH and the election falls through to the id tiebreak, which
-        # points at the live row. That is the page #5532 would have served if
-        # the fold had elected on row order, and it is worse than serving two
+        # The margin is real and now TRIPLED: the ESPN id at position 2; the
+        # authority's `completed` at position 4 (#5841); and — on these two
+        # rows, though not by design — source count at position 5.
+        #
+        # Each is independently sufficient, which is the point of stripping
+        # them one at a time rather than all at once. The authority rung alone
+        # carries the election even off a Final with no ids and one venue:
+        anchorless = _the_final()
+        anchorless.espn_id = None
+        anchorless.external_id = None
+        anchorless.win_probability_sources = {"mlb": {"value": 0.826}}
+        assert twin_identity_rank(anchorless) > twin_identity_rank(live), (
+            "the authority rung should carry a Final that has lost every anchor"
+        )
+
+        # Strip ALL THREE and the election falls through to the id tiebreak,
+        # which points at the live row. That is the page #5532 would have served
+        # if the fold had elected on row order, and it is worse than serving two
         # cards: the Final would have been the row that disappeared.
         blinded = _the_final()
         blinded.espn_id = None
         blinded.external_id = None
         blinded.win_probability_sources = {"mlb": {"value": 0.826}}
+        blinded.status = "closed"
         assert twin_identity_rank(blinded) < twin_identity_rank(live)
 
 
@@ -179,7 +193,10 @@ class TestWhatItMustNeverDrop:
         """The Final loses the election (no ids, no score) — the live row is the
         survivor and must stay, even though it is the one on this rail."""
         weak_final = _Row(
-            15311888, "St. Louis Cardinals", "Chicago White Sox", KICKOFF,
+            15311888,
+            "St. Louis Cardinals",
+            "Chicago White Sox",
+            KICKOFF,
             status="completed",
         )
         results, _u, upcoming = _folded_past_rails([weak_final], [], [_the_live_row()])
@@ -201,9 +218,7 @@ class TestItNeverTakesThePageDown:
         assert [e.id for e in results] == [15311666]
         assert [e.id for e in upcoming] == [15311614]
 
-    def test_a_row_that_raises_while_keying_costs_only_its_own_drop(
-        self, monkeypatch
-    ):
+    def test_a_row_that_raises_while_keying_costs_only_its_own_drop(self, monkeypatch):
         """One bad item must never wipe the pass (gotcha #42).
 
         The key call this rule adds runs over rails that are already built, so a
@@ -243,9 +258,7 @@ class TestTheSlotItSpends:
         trade has to be argued again on its own merits.
         """
         source = inspect.getsource(league_futures)
-        fold_at = source.index(
-            "_r_events, _u_events, _g_events = _folded_past_rails("
-        )
+        fold_at = source.index("_r_events, _u_events, _g_events = _folded_past_rails(")
         # The needle is the STATEMENT, not the slice: the bare slice text also
         # appears in the docstring above explaining this very ordering, and
         # `str.index` would have graded that warning label instead of the code.

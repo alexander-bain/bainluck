@@ -393,9 +393,52 @@ def twin_identity_rank(event: Any) -> tuple:
        all. Serving the scoreless row would be a worse page than serving two.
     2. **An ESPN id**, then **any provider id**. An anchored row is the one the
        event page, the chart and the settlement path can all reach.
-    3. Only then source count, then a row that NAMES ITS LEAGUE over a `*_other`
+    3. **The authority's word** — `status == 'completed'` over anything else.
+       Two rows that both carry a score can carry DIFFERENT scores, and rung 1
+       cannot see that: it asks whether a score is present, not whether it is
+       final. See #5841 below.
+    4. Only then source count, then a row that NAMES ITS LEAGUE over a `*_other`
        catch-all, and finally the lower row id, so the election is deterministic
        across requests and the served `id` does not flicker between two polls.
+
+    #5841 — WHY THE AUTHORITY RUNG EXISTS AND WHY IT SITS BELOW BOTH ANCHORS.
+    `/api/events/search?q=Yankees` served `14877917` — a fabricated `0 - 0`,
+    `closed` — over `15295242`, the `0 - 6` the game actually finished, because
+    both satisfy rung 1 (a `0` is not `None`), both anchors tie, and
+    `_source_count` 6 vs 5 ended it. The reader lost the RESULT and gained one
+    extra probability source on a three-week-old game.
+
+    THE POSITION IS NOT A PREFERENCE — one measured group decides it. Of the 79
+    `completed`-vs-`closed` twin groups on production (2026-09-16), the existing
+    ordering ALREADY elects the `completed` row in 72; this rung agrees with the
+    incumbent in 72 of 72 and only speaks where the tuple previously fell
+    through to venue richness. Of the 7 it could change, six are improvements
+    and ONE is a loss: `15228847`/`15290802` (D'backs–Reds 08-23) hold the
+    IDENTICAL scoreline `5–11`, and the `completed` row has no `espn_id`. Placed
+    above rung 2 this rung would trade an anchor for nothing. Placed here it
+    cannot: `espn_id` still decides that pair and it does not move.
+
+    SO THE REACH IS SIX GROUPS, all `baseball_mlb`, each replacing a score
+    frozen mid-game with the final one — `3-1`→`5-4`, `3-2`→`5-2`, `1-3`→`1-5`,
+    `6-4`→`7-4`, `0-3`→`1-6`, and `0-0`→`0-6`. Two controls, both measured
+    rather than argued: no group changes `espn_id` presence, and in 6 of 6
+    NEITHER of the losing row's numbers exceeds the winner's — the signature of
+    a partial score, which is the class this beats. A flip count alone would not
+    have shown that; the DIRECTION of the disagreement is the test, and had one
+    `closed` row carried the higher score this rung would be wrong.
+
+    THE COMMITTING CALLER CHANGES NOTHING, AND UNLIKE `names_league` THAT IS NOT
+    BECAUSE IT CANNOT REACH IT. `tasks/reconcile_shared_fixture_ids.py` elects a
+    canonical row with this function and COMMITS, so this is a write-path change
+    too. Of its 35 `statpal_fixture_id` groups, 13 hold a `completed` row beside
+    a non-`completed` one — but 11 of those have no score on the other side at
+    all, so rung 1 decides them and this rung is inert. The remaining two
+    (`1027790` Hornets–Heat, `637968` Avalanche–Wild) are BOTH refused by
+    `_refuse`'s `KICKOFF_DIFFERS` before any tag is written: their members are a
+    day and two days apart respectively — they are different games wearing one
+    fixture id, not twins. Zero committed tags change. Re-measure this if
+    `_refuse` ever loosens its kickoff test; that guard, not this ordering, is
+    what keeps the write path still.
 
     #2866 — WHY THE CATCH-ALL CRITERION SITS SECOND-TO-LAST, AND WHY IT IS
     INERT EVERYWHERE EXCEPT THE GROUPS :func:`_merge_catchall_leagues` MAKES.
@@ -451,10 +494,12 @@ def twin_identity_rank(event: Any) -> tuple:
     away_score = getattr(event, "away_score", None)
     has_score = home_score is not None or away_score is not None
     names_league = _catchall_sport_prefix(loaded_sport_key(event)) is None
+    authority_called_it = getattr(event, "status", None) == "completed"
     return (
         1 if has_score else 0,
         1 if getattr(event, "espn_id", None) else 0,
         1 if getattr(event, "external_id", None) else 0,
+        1 if authority_called_it else 0,
         _source_count(event),
         1 if names_league else 0,
         -(getattr(event, "id", 0) or 0),
@@ -775,7 +820,9 @@ _DIFFERENT_SQUAD_TOKENS = frozenset({"jong", "amateurs"})
 def _names_a_different_squad(left: tuple, right: tuple) -> bool:
     """Does one side carry a named-squad marker the other does not? #2866 rung 3."""
     for left_name, right_name in zip(left, right):
-        disputed = set(club_alias_tokens(left_name)) ^ set(club_alias_tokens(right_name))
+        disputed = set(club_alias_tokens(left_name)) ^ set(
+            club_alias_tokens(right_name)
+        )
         if disputed & _DIFFERENT_SQUAD_TOKENS:
             return True
     return False
