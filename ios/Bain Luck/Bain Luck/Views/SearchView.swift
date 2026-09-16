@@ -153,6 +153,40 @@ struct SearchView: View {
             .navigationTitle("Search")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
+            // #6446 — Alex, 2026-09-15, on a physical iPhone: "When I went to
+            // leave the Search experience to click on the My Stuff tab, I
+            // couldn't get the keyboard to go away to make the My Stuff tab
+            // clickable."
+            //
+            // The field had a `@FocusState` and nothing that ever cleared it:
+            // no keyboard toolbar, no scroll dismissal, and the tab bar sits
+            // UNDER the keyboard on a phone. So focusing the field took the
+            // bottom of the app away and the only exits were the back gesture
+            // or force-quitting. Two dismissals, deliberately, because they
+            // answer two different gestures and each one alone leaves a reader
+            // stuck:
+            //
+            //   * Scrolling the suggestions — what Alex was doing when he hit
+            //     it. `.immediately` and not `.interactively`: the reader is
+            //     scrolling to READ, not to peel the keyboard down by hand, and
+            //     an interactive dismissal that needs a deliberate downward
+            //     drag is the affordance he already could not find.
+            //   * A Done button above the keys, for the reader who has typed
+            //     and wants the screen back without scrolling anything. This is
+            //     the one that is visible, which is what "obvious" means here.
+            //
+            // Neither touches `viewModel.query`: dismissing the keyboard must
+            // keep the typed text and the drawn results, or the reader has to
+            // retype to get back where he was.
+            .scrollDismissesKeyboard(.immediately)
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { isSearchFocused = false }
+                        .fontWeight(.semibold)
+                        .accessibilityLabel("Dismiss keyboard")
+                }
+            }
             #endif
             .navigationDestination(for: Route.self) { RouteDestination(route: $0) }
         }

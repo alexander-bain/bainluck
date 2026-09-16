@@ -177,6 +177,48 @@ struct DiscoverView: View {
     // thing the feed audit bans (`ladder/bucket-rate@20=0`). Collapsing a ladder
     // into one card is the feed working, not a filter starving it.
     static let groupExpansionFloor = 8
+
+    /// Which appearing card asks for the next page, given how many are drawn
+    /// (#6444, Alex's 2026-09-15 phone walkthrough).
+    ///
+    /// `max(pageCount - lookahead, 0)`, never the bare subtraction. The two
+    /// prefetch triggers were written `idx == pageGrouped.count - 3` and
+    /// `idx == pageGrouped.count - 5`, which are NEGATIVE on a page shorter than
+    /// the lookahead — and no index equals a negative number, so both triggers
+    /// were dead on exactly the short pages that need them. A reader looking at
+    /// three cards has nothing to scroll and no reason to swipe, and the only
+    /// other refill path is swipe-driven (`hideForSession`), so the page could
+    /// not grow: pull-to-refresh re-fetched page ONE, relaunch re-fetched page
+    /// ONE, force-quit re-fetched page ONE. Alex's words were "only 3 cards
+    /// load … there's no obvious way to get more", and his own client-reported
+    /// impression ranks that session never exceeded 3, across two different
+    /// feed payloads, while the footer drew neither the end card nor a spinner
+    /// — the signature of `hasMore == true` with page two never requested.
+    ///
+    /// Clamping to 0 makes the first card the trigger on any page below the
+    /// lookahead, which is the reading the `- lookahead` form already had for
+    /// every page above it.
+    static func prefetchTriggerIndex(pageCount: Int, lookahead: Int) -> Int {
+        max(pageCount - lookahead, 0)
+    }
+
+    /// Does the drawn page still owe the reader a server request? (#6444)
+    ///
+    /// The index trigger above fires from `onAppear`, which SwiftUI runs once
+    /// per card identity — so when page two lands and is ALSO filtered short,
+    /// the already-mounted first card does not re-appear and nothing asks for
+    /// page three. This rule is the standing one: while the server says it has
+    /// more and the drawn page is under `feedFloor`, keep asking. It terminates
+    /// on the server's own `has_more`, and `loadMoreIfNeeded` is a no-op while a
+    /// load is in flight and caps its own scan budget, so it cannot spin.
+    ///
+    /// `feedFloor` and not `groupExpansionFloor`: this is the same quantity the
+    /// dismiss floor defends — how many cards the reader can actually browse —
+    /// and #6444's acceptance is "10–15 genuinely varied cards".
+    static func needsMorePages(drawn: Int, hasMore: Bool, loadingMore: Bool) -> Bool {
+        hasMore && !loadingMore && drawn < feedFloor
+    }
+
     private static let dismissTTL: TimeInterval = 14 * 24 * 3600
     private static let dismissCap = 500
     @State private var scrollTarget: String? = nil
@@ -1063,10 +1105,11 @@ struct DiscoverView: View {
             // double emit.
             if idx == 0 { emitFirstRenderIfNeeded() }
             trackImpression(for: gi, rank: idx + 1)
-            if idx == pageGrouped.count - 3 && visibleCount < totalCount {
+            if idx == Self.prefetchTriggerIndex(pageCount: pageGrouped.count, lookahead: 3),
+               visibleCount < totalCount {
                 visibleCount += 20
             }
-            if idx == pageGrouped.count - 5 {
+            if idx == Self.prefetchTriggerIndex(pageCount: pageGrouped.count, lookahead: 5) {
                 Task { await vm.loadMoreIfNeeded() }
             }
         }
@@ -1304,26 +1347,31 @@ struct DiscoverView: View {
                 let grouped = groupedItems
                 // Resolution digest — collapse N resolution notes into ONE
                 // card (#902 item 8) instead of stacking up to 3 at feed top.
-                if !resolutions.isEmpty {
-                    NavigationLink(value: Route.predictionStats) {
-                        NativeResolutionDigestCard(
-                            total: resolutions.count,
-                            correct: resolutions.filter { $0.correct }.count
-                        )
+                // #6445: both of these are entry points to the unfinished
+                // predictions experience, and they were holding the top of the
+                // first screen a reader sees. See `ReleaseSurfaces`.
+                if ReleaseSurfaces.predictionsExperienceEnabled {
+                    if !resolutions.isEmpty {
+                        NavigationLink(value: Route.predictionStats) {
+                            NativeResolutionDigestCard(
+                                total: resolutions.count,
+                                correct: resolutions.filter { $0.correct }.count
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal)
                     }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal)
-                }
 
-                // Daily Challenge card
-                NativeDailyChallengeCard(guessesToday: dailyGuesses) {
-                    challengeIndex = 0
-                    challengeComplete = false
-                    showChallenge = true
-                    recordChallengeAction("challenge_start")
+                    // Daily Challenge card
+                    NativeDailyChallengeCard(guessesToday: dailyGuesses) {
+                        challengeIndex = 0
+                        challengeComplete = false
+                        showChallenge = true
+                        recordChallengeAction("challenge_start")
+                    }
+                        .padding(.horizontal)
+                        .padding(.bottom, 8)
                 }
-                    .padding(.horizontal)
-                    .padding(.bottom, 8)
 
                 // While the background recovery ladder runs (#3180) the failure card
                 // STAYS — its own retry attempts must not flicker the screen back to a
@@ -1478,6 +1526,23 @@ struct DiscoverView: View {
                             }
                     }
                 )
+                // #6444: the standing refill. The per-card `onAppear` trigger
+                // above runs once per card identity, so a page that lands and is
+                // ALSO filtered short re-mounts nothing and asks for nothing.
+                // Keyed on the served count so it re-fires exactly when a page
+                // arrives, and on the drawn count so a change in what survives
+                // the stale/dismiss gates is reckoned with too. Both terminals
+                // are the server's: `hasMore` going false, or `loadMoreIfNeeded`
+                // exhausting its own scan budget.
+                .task(id: "\(vm.items.count)-\(grouped.count)-\(vm.hasMore)") {
+                    if Self.needsMorePages(
+                        drawn: grouped.count,
+                        hasMore: vm.hasMore,
+                        loadingMore: vm.loadingMore
+                    ) {
+                        await vm.loadMoreIfNeeded()
+                    }
+                }
                 .padding(.horizontal)
                 .padding(.bottom)
 

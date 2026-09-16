@@ -358,7 +358,11 @@ struct MyStuffView: View {
 
     private var teamFeedList: some View {
         List {
-            if let stats = predictionStats, stats.total > 0 {
+            // #6445: the same unfinished experience Discover's challenge card
+            // and resolution digest promote. See `ReleaseSurfaces` — saved
+            // predictions and history are untouched, only this summary is.
+            if ReleaseSurfaces.predictionsExperienceEnabled,
+               let stats = predictionStats, stats.total > 0 {
                 Section {
                     NavigationLink(value: Route.predictionStats) {
                         HStack(spacing: 16) {
