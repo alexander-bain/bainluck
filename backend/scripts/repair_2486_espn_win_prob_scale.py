@@ -521,9 +521,19 @@ async def repair_one_event(session, service, cand: Candidate) -> dict:
         text(SQL["delete"]), {"ids": ids})).fetchall()]
     outcome["deleted"] = len(gone)
     outcome["declined"] = len(ids) - len(gone)
-    if not gone:
+    # 🔴 THE SWAP IS ALL OR NOTHING, AND A PARTIAL DECLINE IS THE DANGEROUS CASE
+    # (CERT-2973). The first draft rolled back only when EVERY row declined, so
+    # an event where 2 of 3 rows declined had its 1 removable row deleted and a
+    # FULL replacement series inserted beside the 2 that stayed — a rail drawn
+    # twice, part corrupt, which is worse than the flat line this repair exists
+    # to remove. "Fetch first" buys nothing if the swap can land half of itself.
+    if len(gone) != len(ids):
         await session.rollback()
-        outcome["skipped"] = "every row declined the swap — they moved under us"
+        outcome["deleted"] = 0
+        outcome["skipped"] = (
+            f"{outcome['declined']} of {len(ids)} rows declined the swap — they "
+            f"moved under us; the event is left exactly as it was"
+        )
         return outcome
 
     now = datetime.now(timezone.utc)
@@ -701,7 +711,7 @@ def main():
     ok_writer, writer_why = writer_is_corrected()
 
     if args.dry_run:
-        print(f"#2486 repair — dry run, no database connection opened")
+        print("#2486 repair — dry run, no database connection opened")
         print(f"  app gate        : {'PASS' if ok_app else 'REFUSE'} "
               f"({app_why or REQUIRED_APP})")
         print(f"  writer gate     : {'PASS' if ok_writer else 'REFUSE'} "

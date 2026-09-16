@@ -375,6 +375,33 @@ class TestNothingIsDeletedBeforeAValidatedRefetch:
         assert session.rolled_back and not session.committed
         assert "INSERT INTO win_prob_snapshots" not in " || ".join(session.log)
 
+    async def test_a_PARTIAL_decline_rolls_the_whole_event_back(self):
+        """🔴 CERT-2973's finding, and the arm that was missing. The first draft
+        rolled back only when EVERY row declined, so an event where 1 of 3 rows
+        moved had its other 2 deleted and a FULL 3-point series inserted beside
+        the survivor — a rail drawn twice, part of it still corrupt, which is
+        worse than the flat line this repair exists to remove.
+
+        The swap is all or nothing: three selected, two removable, nothing
+        written.
+        """
+        session = _StubSession(stored_ids=(11, 12, 13), delete_returns=(11, 12))
+        service = _StubESPN(_series([0.271, 0.402, 0.118]))
+        outcome = await repair.repair_one_event(
+            session, service, _candidate(rows_stored=3)
+        )
+
+        assert outcome["declined"] == 1
+        assert outcome["deleted"] == 0, "a rolled-back delete did not happen"
+        assert outcome["inserted"] == 0
+        assert session.rolled_back and not session.committed
+        log = " || ".join(session.log)
+        assert "INSERT INTO win_prob_snapshots" not in log
+        assert repair.MANIFEST_TABLE not in log, (
+            "a manifest row for an event that was rolled back would make the "
+            "undo lie about what the repair did"
+        )
+
 
 class TestTheWriteIsCompareAndSwapAndUndoable:
     """The SQL, read as the contract it is.
