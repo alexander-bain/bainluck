@@ -59,7 +59,7 @@ export default function EIBadge({
 
       <p className="text-white/90 text-xs leading-relaxed">
         Measures game excitement based on how much win probabilities swing during play.
-        Higher = more dramatic swings and lead changes.
+        Higher = more dramatic swings, and more times the odds flipped.
       </p>
 
       {ei.metadata && (
@@ -76,13 +76,20 @@ export default function EIBadge({
               </>
             )}
 
+            {/* #4882: the backend field is named `lead_changes` and counts
+                something else — `excitement_index.py:84` says so itself,
+                "Number of 50% crossings", as does `pulse.py:70`. The chart chip
+                carried the same misnomer and was renamed; this row is the same
+                words two components away, so it moves with it, to the word
+                `highlights.py:1328` already prints for this quantity. The field
+                name is untouched: only what a reader is shown changes. */}
             {ei.metadata.lead_changes > 0 && (
               <>
                 <div className="flex justify-between items-center">
-                  <span className="text-white/80">Lead Changes</span>
+                  <span className="text-white/80">Odds Flipped</span>
                   <span className="text-white font-mono">{ei.metadata.lead_changes}x</span>
                 </div>
-                <div className="text-white/60 text-[10px] -mt-1">Times the favorite flipped</div>
+                <div className="text-white/60 text-[10px] -mt-1">Times the win probability changed sides</div>
               </>
             )}
 

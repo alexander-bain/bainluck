@@ -123,7 +123,10 @@ describe("#3563 — and the chart spends it", () => {
   it("uses the composer in the sportsbooks-only legend", () => {
     // RAISE rather than pass if the block moved — see the file header.
     const legend = SOURCE.indexOf("{/* Bookmaker legend (sportsbooks-only mode) */}");
-    const nextLegend = SOURCE.indexOf("{/* Lead changes legend", legend);
+    // #4882 renamed this neighbour from "Lead changes legend" to "Odds-flip
+    // legend". It is only a bound — the block it delimits is unchanged — but
+    // the `throw` below is what turns a silent zero-width window into a stop.
+    const nextLegend = SOURCE.indexOf("{/* Odds-flip legend", legend);
     if (legend < 0 || nextLegend < 0) {
       throw new Error(
         "sportsbooks-only bookmaker legend not found in OddsChart — this guard " +

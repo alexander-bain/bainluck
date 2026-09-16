@@ -1510,10 +1510,12 @@ function percentile(sorted: number[], q: number): number {
  *    flattened today.
  *
  * 2. 50 is forced in IF THE SERIES TOUCHES IT, and only then. The chart stamps
- *    its lead-change diamonds at y=50 and draws a dashed reference line there,
+ *    its crossing diamonds at y=50 and draws a dashed reference line there,
  *    so a domain that excluded 50 while the line crossed it would clip a marker
- *    the "Lead changes (N)" chip is still counting. Conversely a market that
- *    never approaches 50 has no lead changes and no reason to spend axis on it;
+ *    the "Crossed 50% (N)" chip is still counting (#4882 renamed that chip from
+ *    "Lead changes", which is not what it counts; the coupling is unchanged).
+ *    Conversely a market that
+ *    never approaches 50 has no crossings and no reason to spend axis on it;
  *    the caller leaves recharts' `ifOverflow="discard"` to drop the reference
  *    line, because a reference line outside the plot is not a reference.
  *    The test is raw min/max, not the percentiles: a SINGLE crossing print is

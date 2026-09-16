@@ -424,9 +424,9 @@ export default function OddsChart({
   // the default stays "all" even when it should be "live"
   const [hasUserOverridden, setHasUserOverridden] = useState(false);
 
-  // Lead-change diamonds are OFF by default (L2-131): they clutter the one clean
-  // blend line. A toggle surfaces them for the games where they tell a story.
-  const [showLeadChanges, setShowLeadChanges] = useState(false);
+  // The 50%-crossing diamonds are OFF by default (L2-131): they clutter the one
+  // clean blend line. A toggle surfaces them for the games where they tell a story.
+  const [showCrossings, setShowCrossings] = useState(false);
 
   // Source legend collapses to "Bain Luck + N sources" by default (L2-163 Item 1,
   // Ruling 1/4): the blend is labeled and dominant; the faint source lines stay
@@ -1205,15 +1205,48 @@ export default function OddsChart({
     return computeWinProbYAxis(values);
   }, [chartData, plottedProbKeys]);
 
-  // ── Compute lead change points (50% crossings) ──
+  // ── Count the primary series' crossings of the 50% line ──
+  //
+  // ═══ #4882: THIS IS NOT A LEAD CHANGE, AND IT USED TO SAY IT WAS ═══
+  //
+  // It counted the same thing it counts now and called the chip "Lead changes".
+  // Alex, watching the NFL opener at 13–10: `Lead changes (9)` on a game with
+  // about three. A worse one: `/events/15296797` (Banfield v Central, FINAL
+  // 1–1) printed **138** — all of them crossings of a fifteen-day PRE-KICKOFF
+  // odds line, on a page carrying zero post-kickoff points. At 9-on-3 a reader
+  // can believe the number is merely wrong; at 138 on a 1–1 draw it is
+  // impossible as a fact about the score, so the chip was reading market churn
+  // in in-game vocabulary.
+  //
+  // So the fix is the NOUN, not the threshold — no tightening of a crossing
+  // count makes "lead changes" true of a pre-game price series. Two nouns that
+  // look right and are not, both rejected on the record (#4882):
+  //   · "Momentum swings" — a match that has not started has no momentum
+  //     either. Half the specimens here are pages reading "Starts in 3h".
+  //   · "Favorite flips" — true for NFL and tennis, an overclaim on a THREE-WAY
+  //     sport, where this axis is home-win% against everything else: home
+  //     crossing 50 means more-likely-than-not became less, while the favourite
+  //     may be the draw or the away side. The 138 specimen is soccer.
+  //
+  // ═══ AND THE WORD IS NOT MINE TO PICK: THE HOUSE ALREADY PICKED IT ═══
+  //
+  // `highlights.py:1312` ruled this exact class under #5439 (T10-1) — *"'Lead
+  // change' named a SPORTING event and was produced by a PRICE one … nobody
+  // scored, the favourite swapped"* — for a flag fed by the same 50%-crossing
+  // count (`TimeSeriesMetrics.lead_changes`). It prints **"Odds flipped"**, and
+  // iOS already classifies that string (`EventCardView.swift:531`). So the chip
+  // says "Odds flipped" too: one quantity, one name, on the card, the chart and
+  // the app. Inventing a second ("Crossed 50%", which was this branch's first
+  // answer) would have been correct English and a second vocabulary.
+  //
   // Instead of creating a separate data array (which breaks Recharts categorical
-  // X-axis domain), we stamp `leadChangeDelta` directly onto chartData points.
-  const leadChangeCount = useMemo(() => {
+  // X-axis domain), we stamp `crossingDelta` directly onto chartData points.
+  const crossingCount = useMemo(() => {
     if (chartData.length < 2) return 0;
     const key = primarySeriesKey;
     // Clear any previous stamps
     for (const pt of chartData) {
-      delete pt.leadChangeDelta;
+      delete pt.crossingDelta;
     }
     let count = 0;
     let prevDelta: number | null = null;
@@ -1221,9 +1254,9 @@ export default function OddsChart({
       const delta = primaryValueAt(pt);
       if (delta === null) continue;
       if (prevDelta !== null) {
-        // A lead change is a crossing of the 50% line (0–100 axis).
+        // A crossing is the primary series passing the 50% line (0–100 axis).
         if ((prevDelta > 50 && delta <= 50) || (prevDelta < 50 && delta >= 50)) {
-          pt.leadChangeDelta = 50; // Stamp at y=50 (the 50% line)
+          pt.crossingDelta = 50; // Stamp at y=50 (the 50% line)
           count++;
         }
       }
@@ -1606,23 +1639,24 @@ export default function OddsChart({
           );
         })}
 
-        {/* Lead-change toggle — only offered when there are crossings to show.
-            Hidden in the compact fillContainer (fullscreen) layout. */}
-        {!fillContainer && leadChangeCount > 0 && (
+        {/* Odds-flip toggle — only offered when there are crossings to show.
+            Hidden in the compact fillContainer (fullscreen) layout.
+            #4882: the label names the market, not the score — see the counter. */}
+        {!fillContainer && crossingCount > 0 && (
           <button
-            onClick={() => setShowLeadChanges((v) => !v)}
+            onClick={() => setShowCrossings((v) => !v)}
             className={`ml-auto flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
-              showLeadChanges
+              showCrossings
                 ? "bg-text-primary text-surface-deep"
                 : "bg-surface-elevated text-text-secondary hover:bg-surface-border"
             }`}
-            title={showLeadChanges ? "Hide lead changes" : "Show lead changes"}
-            aria-pressed={showLeadChanges}
+            title={showCrossings ? "Hide the odds flips" : "Show the odds flips"}
+            aria-pressed={showCrossings}
           >
             <svg width="9" height="9" viewBox="0 0 10 10" className="shrink-0">
               <polygon points="5,0 10,5 5,10 0,5" fill="currentColor" />
             </svg>
-            Lead changes ({leadChangeCount})
+            Odds flipped ({crossingCount})
           </button>
         )}
       </div>
@@ -1789,7 +1823,7 @@ export default function OddsChart({
                 chart's plot bounds. */}
             {/* #3973 pins `ifOverflow` rather than leaving it defaulted. The
                 axis is no longer always 0–100, so 50 is no longer always on it:
-                a market that never approaches 50 has no lead change, nothing
+                a market that never approaches 50 has no crossing, nothing
                 drawn at 50, and no use for a dashed rule welded to its plot
                 frame. `discard` (recharts' default, stated here because it is
                 now load-bearing) drops it in that case. The value that must
@@ -1993,13 +2027,13 @@ export default function OddsChart({
 
 
 
-            {/* Lead change markers — diamonds at 50% crossings (default off) */}
-            {showLeadChanges && leadChangeCount > 0 && (
+            {/* Crossing markers — diamonds at 50% crossings (default off) */}
+            {showCrossings && crossingCount > 0 && (
               <Scatter
-                dataKey="leadChangeDelta"
+                dataKey="crossingDelta"
                 fill="none"
                 shape={(props: { cx?: number; cy?: number; payload?: Record<string, unknown> }) => {
-                  if (props.payload?.leadChangeDelta == null) return <g />;
+                  if (props.payload?.crossingDelta == null) return <g />;
                   const { cx = 0, cy = 0 } = props;
                   return (
                     <g>
@@ -2275,14 +2309,14 @@ export default function OddsChart({
 
 
 
-        {/* Lead changes legend (only when the toggle is on) */}
-        {showLeadChanges && leadChangeCount > 0 && (
+        {/* Odds-flip legend (only when the toggle is on) */}
+        {showCrossings && crossingCount > 0 && (
           <div className="flex items-center gap-1.5">
             <svg width="10" height="10" className="shrink-0">
               <polygon points="5,1 9,5 5,9 1,5" fill="#fbbf24" />
             </svg>
             <span className="text-xs text-text-muted">
-              Lead change{leadChangeCount > 1 ? "s" : ""} ({leadChangeCount})
+              Odds flipped ({crossingCount})
             </span>
           </div>
         )}

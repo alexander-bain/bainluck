@@ -115,13 +115,15 @@ describe("#3425 the chart never renders a NaN attribute", () => {
   });
 
   test("control: the readers that survive still read the series", () => {
-    // `primaryValueAt` replaced the `!== null` guard in the lead-change count
+    // `primaryValueAt` replaced the `!== null` guard in the crossing count
     // and the current-probability callout too. Those must still SEE the data —
     // a reader that returns null for everything also emits no NaN.
+    // (#4882 renamed the chip from "Lead changes" to "Odds flipped"; the number
+    // this control reads is the same one, counted the same way.)
     const html = render({ ...SINGLE_SOURCE, ...DOMAIN_OPENS_EARLY });
-    const lead = /Lead changes \((\d+)\)/.exec(html);
-    expect(lead).not.toBeNull();
-    expect(Number(lead![1])).toBeGreaterThan(0);
+    const crossings = /Odds flipped \((\d+)\)/.exec(html);
+    expect(crossings).not.toBeNull();
+    expect(Number(crossings![1])).toBeGreaterThan(0);
   });
 
   test("control: a same-shape chart with NO early domain is unaffected", () => {
