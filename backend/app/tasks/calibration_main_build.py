@@ -2160,6 +2160,16 @@ def _unit_costs_from(runner: PhaseRunner) -> dict[str, dict[str, int]]:
 
     ``unit_ms_worst`` is folded in by :func:`save_phase_ledger` from the rolling
     ring, not from this beat alone — see :func:`_unit_worst_from`.
+
+    **CAL-P1301 (#6599): ``units_total`` is the PLAN's size, not the partition
+    constant.** They were the same number for as long as every plan was exactly
+    the base partition. A refined slot makes them differ — 127 base slots plus
+    the children of the one that was cut — and the constant would then publish a
+    total the build is not working toward, into the one field
+    (``unit_costs.futures``) an operator reads to ask how far along it is. The
+    gauge is written by the unit loop at the top of every beat; the constant
+    remains the fallback for a beat that never reached it, which is the same
+    number it published before.
     """
     mean_ms = runner.ledger.stage_completed_mean_ms(STAGED_UNIT_STAGE)
     if mean_ms is None or mean_ms <= 0:
@@ -2167,10 +2177,14 @@ def _unit_costs_from(runner: PhaseRunner) -> dict[str, dict[str, int]]:
     banked = int(runner.ledger.stages.get("staged:units_banked", 0) or 0)
     if banked <= 0:
         return {}
+    planned = int(
+        runner.ledger.stages.get("staged:units_planned_total", 0)
+        or STAGED_FUTURES_BUCKETS
+    )
     return {
         PHASE_FUTURES: {
             "unit_ms": int(mean_ms),
-            "units_total": STAGED_FUTURES_BUCKETS,
+            "units_total": planned,
             "units_done": banked,
         }
     }

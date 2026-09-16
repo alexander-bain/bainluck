@@ -340,6 +340,75 @@ STAGED_UNIT_OVERRUN_FACTOR = 4.0
 #: flip, a vacuum) and not one unit's, and no amount of continuing helps.
 STAGED_UNIT_MAX_CANCELLATIONS = 2
 
+#: **AMENDED CAL-P1301 (#6599): the paragraph above is still true and it is not
+#: the whole story.** "Skipping past it banks the other 127" is what the loop
+#: DOES per unit and what the beat as a whole then fails to do, because the skip
+#: and the budget compose: the cursor holds the banked units, so the first
+#: unbanked slot is the first one every beat attempts, and TWO reproducibly
+#: cancelling slots at the head spend the whole budget before the third unit is
+#: reached. Every later beat reproduces it exactly. Measured on production,
+#: 2026-09-16: 31 of 128 units banked, two admitted per beat, two cancelled per
+#: beat, ``staged:units_banked`` motionless at 31 across every beat of the day
+#: including the first one to run under a withdrawn unit level (#6275) — the
+#: tail of 95 healthy units was never attempted once. The budget is unchanged;
+#: what changed is the ORDER the loop attempts slots in
+#: (:data:`STAGED_UNIT_CANCEL_DEFERRAL`) and what happens to a slot that keeps
+#: earning cancellations (:data:`STAGED_UNIT_SPLIT_AFTER`).
+
+#: How many recorded cancellations move a slot to the BACK of the attempt order
+#: — CAL-P1301 (#6599).
+#:
+#: One, and the reason it is one is that the fact it keys on is already durable
+#: and already earned: the cursor records a cancellation against the slot that
+#: produced it, so a slot with a recorded cancellation is a slot this build has
+#: measured cancelling. There is nothing to wait for and nothing to average.
+#:
+#: This is a DEFERRAL, not a skip. Every planned unit is still attempted on every
+#: beat; a deferred one is attempted after every slot with fewer recorded
+#: cancellations, so a beat spends its cancellation budget only once the work
+#: that can progress has progressed. When the tail is exhausted the deferred
+#: slots are the only work left and a fresh beat attempts them first, with the
+#: whole window — which is what keeps them earning the evidence that splits them
+#: rather than parking them forever.
+STAGED_UNIT_CANCEL_DEFERRAL = 1
+
+#: How many recorded cancellations refine a slot into smaller ones —
+#: CAL-P1301 (#6599).
+#:
+#: Two, so that the split follows a REPRODUCTION rather than an event. One
+#: cancellation is also produced by a beat that met a lock, a vacuum or a plan
+#: flip, and re-cutting the partition on that would re-plan the population every
+#: time the database had a bad minute. Two says the cost belongs to the slot.
+#:
+#: The deferral at one and the split at two are deliberately different numbers:
+#: re-ordering the attempt costs nothing and can be done on the first sighting,
+#: while changing the plan is durable and is done on the second.
+STAGED_UNIT_SPLIT_AFTER = 2
+
+#: The largest refinement factor one split may apply — CAL-P1301 (#6599).
+#:
+#: The factor itself is computed from a measurement (``cancelled_after_ms`` over
+#: the measured completed unit cost, :func:`~app.utils.calibration_staged_futures.split_factor`)
+#: and this only caps it. 16 because the bound being divided is a floor, not a
+#: duration: a cancellation says the unit cost AT LEAST that much, so the ratio
+#: it produces is a lower bound on the division needed, and a single split is
+#: therefore never asked to be the last word. A slot whose children still cancel
+#: is refined again — recursion is the mechanism that reaches the true cost, and
+#: a cap keeps any one step from cutting a 128-way plan into thousands of units
+#: on the strength of one truncated observation.
+STAGED_UNIT_SPLIT_MAX_FACTOR = 16
+
+#: The finest partition a refinement chain may reach — CAL-P1301 (#6599).
+#:
+#: 128 x 16^3 = 524,288, i.e. three full-strength splits below the production
+#: partition. Past that the plan holds more slots than the population holds
+#: virtual questions and every further split is cutting empty air, which is a
+#: statement about the roster (or about a genuinely unservable question) and not
+#: about the partition. Reaching it is recorded and REFUSED, never widened in
+#: place: a refinement map that wants to go further is a fact for an operator,
+#: not a number for the planner to raise on its own.
+STAGED_UNIT_MAX_REFINEMENT_BUCKETS = 524_288
+
 #: One recorded observation of a phase is a measurement. Zero is a guess.
 MIN_OBSERVATIONS = 1
 
