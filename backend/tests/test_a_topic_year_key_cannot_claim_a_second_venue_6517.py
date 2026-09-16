@@ -79,13 +79,27 @@ MEASURED_UNSAFE_KEYS = {
     "geopolitics::championship:2026": 9,
 }
 
-#: Keys that DO denote a question and must keep their cross-source credit — the
-#: other branch, so this gate cannot be satisfied by refusing everything.
-MEASURED_SAFE_KEYS = [
-    "politics:US:championship:2027",  # the Senate card: differs only by league
-    "soccer::championship:2026",  # sports-like topic carries its own structure
-    "tech:NASDAQ:earnings:2026",  # a real league AND a specific category
-    "economics::cpi:2026",  # non-generic category
+#: Keys the predicate ACCEPTS — the other branch, so this gate cannot be
+#: satisfied by refusing everything.
+#:
+#: READ THIS BEFORE CITING IT: "accepted" here means "outside the class #6517
+#: refuses", NOT "this key's source count is correct". Two of these are
+#: themselves coarse — `politics:US:championship:2027` held 2,120 open markets
+#: on 2026-09-16 (every state's Senate race, and Brazil) and
+#: `soccer::championship:2026` held 7,148. They are accepted because they carry
+#: a league segment or a sports-like topic, which is the pre-existing dedupe
+#: predicate's test and is a weak proxy for "one question".
+#:
+#: #6526 carries that residual: across ALL >=2-source keys, 44 keys holding 200+
+#: rows account for 16,719 of 18,556 open markets, so the `multi_source` signal
+#: is broadly unearned site-wide. #6517 deliberately does not widen into it —
+#: that is a whole-feed ranking change, not a lane's unilateral call. This list
+#: pins the BOUNDARY of what #6517 claims, nothing more.
+MEASURED_ACCEPTED_KEYS = [
+    "politics:US:championship:2027",
+    "soccer::championship:2026",
+    "tech:NASDAQ:earnings:2026",
+    "economics::cpi:2026",
     "politics:US:senate-ga:2026",
 ]
 
@@ -104,17 +118,24 @@ def test_a_topic_year_bucket_does_not_denote_one_question(key):
     )
 
 
-@pytest.mark.parametrize("key", MEASURED_SAFE_KEYS)
-def test_a_question_key_keeps_its_cross_source_credit(key):
+@pytest.mark.parametrize("key", MEASURED_ACCEPTED_KEYS)
+def test_a_key_outside_the_refused_class_is_left_alone(key):
+    """#6517 refuses ONE named class. Everything else keeps whatever it had, so
+    this ship cannot be satisfied by refusing everything — and cannot be read as
+    a claim that these keys' counts are right (see the list's own note)."""
     assert canonical_key_identifies_one_question(key) is True, (
-        f"{key!r} names a question; refusing it would delete real two-venue "
-        "corroboration, which is the opposite defect"
+        f"{key!r} is outside the class #6517 refuses; changing its answer here "
+        "widens the ship past what was measured and reviewed"
     )
 
 
-def test_the_house_key_and_the_senate_key_differ_only_by_league():
-    """The one-character difference that decides it, pinned so a future
-    normalisation of the league segment cannot quietly re-admit the bucket."""
+def test_the_league_segment_is_what_decides_it():
+    """The two-character difference that decides it, pinned so a future
+    normalisation of the league segment cannot quietly re-admit the bucket.
+
+    It is also the honest limit of this ship: `politics:US:championship:2027` is
+    accepted and is itself a 2,120-market bucket. #6526.
+    """
     assert canonical_key_identifies_one_question("politics:US:championship:2027")
     assert not canonical_key_identifies_one_question("politics::championship:2027")
 
