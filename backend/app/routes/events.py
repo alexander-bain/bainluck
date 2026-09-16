@@ -13957,7 +13957,29 @@ def _disambiguate_twin_stat(stat: str, player_stats: Optional[dict]) -> Optional
     return [stat]
 
 
-def _settled_grade_fields(market, outcome) -> dict:
+#: The only event states in which "we saw this settle before kick-off" is
+#: evidence of anything (CERT-2980's required repair).
+#:
+#: 🔴 THE FIRST VERSION OF THIS GATE HAD NO SUCH SET, AND ITS OWN DOCSTRING GOT
+#: THE REASON WRONG. It argued that the unfinished-event half kept the 1,692
+#: verdict rows on 155 `suspended`/`voided` events out of scope. It does not:
+#: `_event_is_really_finished` admits only `completed`/`closed`, so a suspended
+#: row is "unfinished" by that predicate and the refusal reached every one of
+#: them — newly erasing an authoritative verdict on exactly the fixtures whose
+#: `settled_at < commence_time` is EXPLAINED, because a postponement moved the
+#: `commence_time` after the settlement we had already observed.
+#:
+#: So the admitted states are named positively rather than inferred from the
+#: absence of a terminal one. A postponed fixture keeps its result; anything this
+#: list does not name — including a future change of mind about `voided`, which
+#: needs its own measurement and its own ship — fails open and is left alone.
+_UNPLAYED_EVENT_STATES = frozenset({"scheduled", "live"})
+
+
+def _settled_grade_fields(
+    market, outcome, *, event_commence=None, event_is_finished=None,
+    event_status=None,
+) -> dict:
     """The authoritative settlement verdict for a game-market row (#2089).
 
     Returns both keys ALWAYS, so the payload shape never varies; `is_winner` is
@@ -13985,6 +14007,57 @@ def _settled_grade_fields(market, outcome) -> dict:
     The same rule already governs player props at the `_build_props_script`
     consumer below, for the same reason and after a live incident: WNBA props with
     `resolution_source=None` all rendered a confident "miss".
+
+    ── A SETTLEMENT WE SAW BEFORE THE GAME BEGAN IS NOT THIS GAME'S (#6595) ──
+
+    `event_commence` / `event_is_finished` add a THIRD refusal, and it is about
+    the event rather than the row: a market whose settlement we observed before
+    this event started cannot be reporting this event's result, so the verdict
+    is withheld while the game is still unfinished.
+
+    `settled_at` is an OBSERVATION stamp — "when status became 'resolved'", never
+    backfilled (see the column comment on `FuturesMarket.settled_at`). We notice
+    a settlement late or on time, never early, so `settled_at < commence_time`
+    puts the VENUE's settlement before kick-off too. That makes the test
+    conservative in the safe direction, and NULL — "we did not see it settle" —
+    fails open on its own.
+
+    ** ALL THREE KEYS ARE LOAD-BEARING, and the live one is what keeps
+    #4788/#6082 alive. ** A market that settles DURING a live game is legitimate
+    and deliberately supported — a first-quarter or first-inning question
+    answers itself while the game runs. The unfinished-event half alone would
+    withhold every one of those. What no period market of this game can do is
+    settle BEFORE first pitch.
+
+    ** `event_status` IS WHAT KEEPS THE POSTPONED FIXTURES OUT, AND THE FIRST
+    VERSION OF THIS DOCSTRING WAS WRONG ABOUT IT (CERT-2980). ** It claimed the
+    unfinished-event half held the 1,692 verdict rows on 155 `suspended`/`voided`
+    events out of scope. It did not: `_event_is_really_finished` admits only
+    `completed`/`closed`, so a suspended row reads as UNFINISHED and the refusal
+    erased its authoritative verdict — on precisely the population whose
+    `settled_at < commence_time` is EXPLAINED, because a postponement moved the
+    kick-off after a settlement we had already observed. `_UNPLAYED_EVENT_STATES`
+    now names the admitted states positively instead of inferring them from the
+    absence of a terminal one, so a state nobody reasoned about fails open.
+
+    Measured on production 2026-09-16: **82 outcome rows across 29 unfinished
+    events**, 19 of them declaring a winner. Five MLB games named a winner before
+    first pitch, and event 15313117 printed "New York Yankees — Won" in the
+    bottom of the 2nd over a hero reading Twins 56% (#6595). Its market, 60597404,
+    is a Polymarket weekly listing container for a different fixture: we saw it
+    resolve at 05:36Z against a 17:40Z kick-off.
+
+    The verdict is withheld, NOT the market — the two cohorts underneath these
+    rows disagree about which side is wrong. On the Polymarket ones the market is
+    foreign and the kick-off is right; on twelve Kalshi boxing bouts the market is
+    right and the event's clock is wrong (#6568's class). Dropping the market
+    would blank the page for those twelve, whose only market this is. "We cannot
+    say" is the one statement true of both, and no verdict beats a wrong one.
+
+    Callers that have already established the event is finished do not pass these
+    — `_settled_margin_is_provable` and the #5771 settled gate both require
+    `_event_is_really_finished` first, so this arm is unreachable from there by
+    construction rather than by omission.
     """
     authoritative = (
         getattr(market, "status", None) == "resolved"
@@ -13992,10 +14065,47 @@ def _settled_grade_fields(market, outcome) -> dict:
     )
     if not authoritative:
         return {"is_winner": None, "resolution_source": None}
+    if _settled_before_its_event_began(
+        market, event_commence, event_is_finished, event_status
+    ):
+        return {"is_winner": None, "resolution_source": None}
     return {
         "is_winner": bool(getattr(outcome, "is_winner", None)),
         "resolution_source": getattr(outcome, "resolution_source", None),
     }
+
+
+def _settled_before_its_event_began(
+    market, event_commence, event_is_finished, event_status=None,
+) -> bool:
+    """True when we saw this market settle before its event started, and that
+    event is one we still expect to be PLAYED. See `_settled_grade_fields`.
+
+    Fails open on every missing signal — no `settled_at` (NULL is "we did not see
+    it settle", never "not settled"), no `commence_time`, an unknown
+    finished-state, or a status outside :data:`_UNPLAYED_EVENT_STATES` — because
+    an over-refusing gate silently strips real results, which is the defect
+    CERT-2980 caught here.
+
+    The status test is not redundant with the finished test and that is the
+    whole point of having both: `_event_is_really_finished` answers False for
+    `suspended` and `voided` as well as for `scheduled` and `live`, so on its own
+    it admitted 1,692 verdict rows on 155 postponed fixtures whose early
+    settlement is explained rather than defective.
+    """
+    if event_status not in _UNPLAYED_EVENT_STATES:
+        return False
+    if event_commence is None or event_is_finished is None or event_is_finished:
+        return False
+    settled_at = getattr(market, "settled_at", None)
+    if not isinstance(settled_at, datetime) or not isinstance(event_commence, datetime):
+        return False
+    settled = settled_at if settled_at.tzinfo else settled_at.replace(tzinfo=timezone.utc)
+    commence = (
+        event_commence if event_commence.tzinfo
+        else event_commence.replace(tzinfo=timezone.utc)
+    )
+    return settled < commence
 
 
 #: A grade at this tier or above RECOMPUTES to the same winner from cited data —
@@ -15435,6 +15545,15 @@ async def _build_game_markets(
     # gate below must not disagree about "now" halfway down a long page build.
     _gm_now = datetime.now(timezone.utc)
     event_is_finished = _event_is_really_finished(event, _gm_now)
+    # #6595 — the event side of the settlement gate, computed once beside the
+    # clock it shares so no branch below can grade against a different event.
+    # Every `_settled_grade_fields` call in this build carries it; see that
+    # function for why both keys are load-bearing.
+    _grade_ctx = {
+        "event_commence": event.commence_time,
+        "event_is_finished": event_is_finished,
+        "event_status": getattr(event, "status", None),
+    }
 
     # #2693 — read the markets of the rows we have declined to PRINT as well as
     # our own. `not_a_proven_duplicate` suppresses a second card for one match;
@@ -15884,7 +16003,7 @@ async def _build_game_markets(
                 # `_inverted` is computed ONCE and handed to both helpers on
                 # purpose: the half-inverted row this repairs existed because
                 # the price was normalised here and the grade was spread raw.
-                _grade = _settled_grade_fields(market, o)
+                _grade = _settled_grade_fields(market, o, **_grade_ctx)
                 _inverted = bool(is_under and not is_over)
                 _market_settled = market.id in markets_with_a_winner
                 totals_thresholds.append({
@@ -15981,7 +16100,7 @@ async def _build_game_markets(
                     # whose 0.0 IS the answer "this line did not come in".
                     "probability": round(prob, 4) if prob is not None else None,
                     "source": market.source,
-                    **_settled_grade_fields(market, o),
+                    **_settled_grade_fields(market, o, **_grade_ctx),
                     "_market_id": market.id,
                 }
                 if _score_proved:
@@ -16035,7 +16154,7 @@ async def _build_game_markets(
                     "source": market.source,
                     "market_type": market_type,
                     "period": market_period,
-                    **_settled_grade_fields(market, o),
+                    **_settled_grade_fields(market, o, **_grade_ctx),
                     "_market_id": market.id,
                 })
 
@@ -16049,7 +16168,7 @@ async def _build_game_markets(
                         "name": o.name,
                         "probability": round(prob, 4),
                         "observed_at": _observed(o),
-                        **_settled_grade_fields(market, o),
+                        **_settled_grade_fields(market, o, **_grade_ctx),
                     })
             if outcomes_list:
                 matchups.append({
@@ -16172,7 +16291,7 @@ async def _build_game_markets(
                     "observed_at": _observed(o),
                     "probability": round(prob, 4) if prob else None,
                     "source": market.source,
-                    **_settled_grade_fields(market, o),
+                    **_settled_grade_fields(market, o, **_grade_ctx),
                     "_market_id": market.id,
                 })
 
