@@ -3826,10 +3826,17 @@ async def get_playoff_grid(
                 league_slug, _stale_skipped,
             )
         if _book_refuted_skipped:
+            # `config.slug` and not `league_slug`, and the difference is not
+            # cosmetic: the parameter is a path segment the caller controls and
+            # CodeQL reads a new line logging it as `py/log-injection` (medium).
+            # The two are the same string on every request that gets this far —
+            # `get_league_config` 404s otherwise — so the config object is the
+            # same value from a source we own. The neighbouring lines predate the
+            # rule and are left alone; this ship does not widen them.
             logger.info(
                 "Playoff grid %s: skipped %d outcomes whose own book prices the "
                 "stored price out (#6532)",
-                league_slug, _book_refuted_skipped,
+                config.slug, _book_refuted_skipped,
             )
 
         # Backfill empty columns from resolved markets (e.g., make_playoffs after

@@ -73,6 +73,21 @@ CORPUS = (
 )
 
 
+def _kalshi_legs():
+    """The Kalshi, priced rows of :data:`CORPUS`, in ladder order.
+
+    One reader for both ladder tests so the fixture and the expectation can never
+    be built from two different filters — the expectation below zips against this
+    list, and a second copy of the filter is how that zip comes to compare a row
+    with somebody else's verdict.
+    """
+    return [
+        (name, p, bid, ask, resolution_source, is_winner)
+        for name, source, resolution_source, is_winner, p, bid, ask, _refuted in CORPUS
+        if source == "kalshi" and p is not None
+    ]
+
+
 @pytest.mark.parametrize(
     "label,source,resolution_source,is_winner,p,bid,ask,refuted",
     CORPUS,
@@ -140,12 +155,7 @@ class TestTheLadder:
 
     @staticmethod
     def _market(source="kalshi"):
-        legs = [
-            (name, p, bid, ask, rs, w)
-            for name, src, rs, w, p, bid, ask, _ref in CORPUS
-            if src == "kalshi" and p is not None
-            for name, p, bid, ask, rs, w in ((name, p, bid, ask, rs, w),)
-        ]
+        legs = _kalshi_legs()
         return SimpleNamespace(
             id=56775508,
             name="La Liga Relegation",
@@ -197,13 +207,17 @@ class TestTheLadder:
         from app.routes.futures import _book_refuted_outcome_ids
 
         market = self._market()
+        # The verdicts are re-read from CORPUS under the SAME filter `_market`
+        # used, and zipped by position, so the expectation cannot drift from the
+        # fixture when a row is added in the middle.
+        verdicts = [
+            refuted
+            for _label, source, _rs, _w, p, _b, _a, refuted in CORPUS
+            if source == "kalshi" and p is not None
+        ]
+        assert len(verdicts) == len(market.outcomes)
         expected = {
-            o.id
-            for o, (_label, _src, _rs, _w, _p, _b, _a, refuted) in zip(
-                market.outcomes,
-                [row for row in CORPUS if row[1] == "kalshi" and row[4] is not None],
-            )
-            if refuted
+            o.id for o, refuted in zip(market.outcomes, verdicts) if refuted
         }
         assert _book_refuted_outcome_ids(market) == expected
 
