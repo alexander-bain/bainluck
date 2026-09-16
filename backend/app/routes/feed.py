@@ -6280,6 +6280,51 @@ def _leader_outcome_is_team(outcomes_data: list[dict]) -> bool:
     return bool(outcomes_data) and outcomes_data[0].get("team_id") is not None
 
 
+def _leader_outcome_team_name(outcomes_data: list[dict]) -> str | None:
+    """#6550: the FULL stored name of the team the card's leader is linked to.
+
+    Same contract as `_leader_outcome_is_team` directly above — `outcomes_data[0]`
+    IS the leader, and unknown reads `None`, which `leader_agreement_verb` takes
+    as "keep #4700's wording". The value is `teams.name`, resolved by
+    `_team_names_by_id` from the `team_id` this row already carries; it is NOT
+    `teams.location`, which authority/383 measured polluted (`North Texas` ->
+    `Chelsea`).
+    """
+    return outcomes_data[0].get("team_name") if outcomes_data else None
+
+
+async def _team_names_by_id(db: AsyncSession, outcomes: list[Any]) -> dict[int, str]:
+    """`{team_id: teams.name}` for the teams a candidate pool's outcomes name (#6550).
+
+    ONE indexed primary-key SELECT per scoring pass, over the `team_id`s already
+    loaded on the rows in hand — 832 distinct teams across EVERY futures outcome
+    on production, so a 120-market pool asks for a few hundred keys at most.
+
+    Deliberately NOT carried on `FuturesOutcome.team` and NOT added to the
+    snapshot wire. The relationship would lazy-load and raise `MissingGreenlet`
+    inside the per-item serializer, emptying the whole futures pool (gotcha #42),
+    and a rebuilt `FuturesOutcomeSnapshot` has no relationships at all; carrying
+    the name as a per-outcome derived column would put one more string per leg
+    into a size-capped shared artifact that is already at 62% of its node budget,
+    to answer a question about ONE leg per card. This map is plain data, holds no
+    ORM rows, and is rebuilt per request, so it can be read from the cached
+    snapshot path and the direct ORM path alike.
+
+    An unresolved id is simply absent: the caller reads `None` and keeps today's
+    copy, so a team row that vanishes between the two SELECTs cannot change a
+    verb.
+    """
+    team_ids = {
+        team_id
+        for outcome in outcomes
+        if (team_id := outcome.__dict__.get("team_id")) is not None
+    }
+    if not team_ids:
+        return {}
+    result = await db.execute(select(Team.id, Team.name).where(Team.id.in_(team_ids)))
+    return {team_id: name for team_id, name in result.all() if name}
+
+
 def _leader_is_ladder_rung(outcomes_data: list[dict]) -> bool:
     """#4640: is the card's LEADER a rung of ONE cumulative ladder?
 
@@ -6301,6 +6346,7 @@ def _leader_is_ladder_rung(outcomes_data: list[dict]) -> bool:
 
 def _top_outcomes_for_trace(
     market: FuturesMarket,
+    team_names: dict[int, str] | None = None,
 ) -> tuple[list[dict], str | None, float | None]:
     # Q480: one condition, one outcome. The TRACE must agree with the card it
     # explains — a debug view that still shows the dropped leg would send the next
@@ -6320,6 +6366,9 @@ def _top_outcomes_for_trace(
                 # #4700: the leader's subject-verb agreement is decided on THIS,
                 # not on the spelling of the name. See `_leader_outcome_is_team`.
                 "team_id": getattr(outcome, "team_id", None),
+                # #6550: and on whether the printed name reaches the nickname.
+                # See `_leader_outcome_team_name`.
+                "team_name": (team_names or {}).get(getattr(outcome, "team_id", None)),
                 "probability": (
                     float(outcome.current_probability)
                     if outcome.current_probability is not None
@@ -6844,8 +6893,15 @@ def _score_market_trace(
     source_count: int,
     *,
     is_external_curator_recall: bool = False,
+    team_names: dict[int, str] | None = None,
 ) -> dict:
-    outcomes_data, leader_name, leader_prob = _top_outcomes_for_trace(market)
+    # #6550: the trace exists to reproduce the card, so it takes the same team
+    # names the serializers resolve. Absent, the leader's verb is #4700's — a
+    # debug view that disagreed with the card about a word would send the next
+    # reader hunting the wrong rule.
+    outcomes_data, leader_name, leader_prob = _top_outcomes_for_trace(
+        market, team_names
+    )
     runtime_filters = _market_runtime_filter_trace(
         market,
         outcomes_data,
@@ -6915,6 +6971,7 @@ def _score_market_trace(
             top_mover_is_printed=top_mover_is_printed,
             leader_name=leader_name,
             leader_is_team=_leader_outcome_is_team(outcomes_data),
+            leader_team_name=_leader_outcome_team_name(outcomes_data),
             leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
             leader_deadline_preposition=deadline_preposition,
             leader_probability=leader_prob,
@@ -6932,6 +6989,7 @@ def _score_market_trace(
         market_name=display_name,
         leader_name=leader_name,
         leader_is_team=_leader_outcome_is_team(outcomes_data),
+        leader_team_name=_leader_outcome_team_name(outcomes_data),
         leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
         leader_deadline_preposition=deadline_preposition,
         leader_probability=leader_prob,
@@ -7082,6 +7140,7 @@ def _score_market_trace(
                 top_mover_is_printed=top_mover_is_printed,
                 leader_name=leader_name,
                 leader_is_team=_leader_outcome_is_team(outcomes_data),
+                leader_team_name=_leader_outcome_team_name(outcomes_data),
                 leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
                 leader_deadline_preposition=deadline_preposition,
                 leader_probability=leader_prob,
@@ -7373,6 +7432,7 @@ async def build_discover_market_trace(
             pool.get("name") == "external_curator_recall" and pool.get("included")
             for pool in candidate_pools.get("pools", [])
         ),
+        team_names=await _team_names_by_id(db, list(market.outcomes)),
     )
 
     rank_phases = await _discover_rank_phase_trace(
@@ -9378,6 +9438,11 @@ async def _score_sports_mode_futures(
         db, keys=candidate_canonical_keys
     )
 
+    # #6550: one PK SELECT for the whole pool, beside the canonical counts and
+    # for the same reason — the two serializers print the same card, so the verb
+    # has to be answerable in both or the fix lands on one surface only.
+    team_names = await _team_names_by_id(db, [o for m in markets for o in m.outcomes])
+
     user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
 
     scored_items: list[dict] = []
@@ -9444,6 +9509,8 @@ async def _score_sports_mode_futures(
                     "name": o.name,
                     # #4700 — see `_leader_outcome_is_team`.
                     "team_id": getattr(o, "team_id", None),
+                    # #6550 — see `_leader_outcome_team_name`.
+                    "team_name": team_names.get(getattr(o, "team_id", None)),
                     "probability": prob,
                     "probability_change_24h": change,
                     "rank": o.rank,
@@ -9751,6 +9818,7 @@ async def _score_sports_mode_futures(
                 top_mover_is_printed=top_mover_is_printed,
                 leader_name=_h_leader,
                 leader_is_team=_leader_outcome_is_team(outcomes_data),
+                leader_team_name=_leader_outcome_team_name(outcomes_data),
                 leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
                 leader_deadline_preposition=deadline_preposition,
                 leader_probability=display_leader_prob,
@@ -9771,6 +9839,7 @@ async def _score_sports_mode_futures(
             market_name=display_name,
             leader_name=_h_leader,
             leader_is_team=_leader_outcome_is_team(outcomes_data),
+            leader_team_name=_leader_outcome_team_name(outcomes_data),
             leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
             leader_deadline_preposition=deadline_preposition,
             leader_probability=display_leader_prob,
@@ -9860,6 +9929,7 @@ async def _score_sports_mode_futures(
             top_mover_is_printed=top_mover_is_printed,
             leader_name=_h_leader,
             leader_is_team=_leader_outcome_is_team(outcomes_data),
+            leader_team_name=_leader_outcome_team_name(outcomes_data),
             leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
             leader_deadline_preposition=deadline_preposition,
             leader_probability=display_leader_prob,
@@ -10682,6 +10752,14 @@ async def _score_futures(
     )
     mark_timing("canonical_counts")
 
+    # #6550: the leader's verb, resolved for the whole pool in one PK SELECT.
+    # Placed AFTER the snapshot is rebuilt rather than inside it on purpose —
+    # see `_team_names_by_id` for why this is not a column on the wire. Reads
+    # `market.outcomes` on rebuilt snapshot rows exactly as the scoring loop
+    # below does, so the cached and direct paths answer identically.
+    team_names = await _team_names_by_id(db, [o for m in markets for o in m.outcomes])
+    mark_timing("team_names")
+
     # --- Load precomputed interestingness scores from Redis ---
     try:
         # Queue 271: shared client + bounded ops (no per-request pool, no
@@ -10914,6 +10992,8 @@ async def _score_futures(
                         "name": o.name,
                         # #4700 — see `_leader_outcome_is_team`.
                         "team_id": getattr(o, "team_id", None),
+                        # #6550 — see `_leader_outcome_team_name`.
+                        "team_name": team_names.get(getattr(o, "team_id", None)),
                         "probability": prob,
                         "probability_change_24h": change,
                         "rank": o.rank,
@@ -11170,6 +11250,7 @@ async def _score_futures(
                     top_mover_is_printed=top_mover_is_printed,
                     leader_name=_h_leader,
                     leader_is_team=_leader_outcome_is_team(outcomes_data),
+                    leader_team_name=_leader_outcome_team_name(outcomes_data),
                     leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
                     leader_deadline_preposition=deadline_preposition,
                     leader_probability=display_leader_prob,
@@ -11190,6 +11271,7 @@ async def _score_futures(
                 market_name=display_name,
                 leader_name=_h_leader,
                 leader_is_team=_leader_outcome_is_team(outcomes_data),
+                leader_team_name=_leader_outcome_team_name(outcomes_data),
                 leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
                 leader_deadline_preposition=deadline_preposition,
                 leader_probability=display_leader_prob,
@@ -11547,6 +11629,7 @@ async def _score_futures(
                 top_mover_is_printed=top_mover_is_printed,
                 leader_name=_h_leader,
                 leader_is_team=_leader_outcome_is_team(outcomes_data),
+                leader_team_name=_leader_outcome_team_name(outcomes_data),
                 leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
                 leader_deadline_preposition=deadline_preposition,
                 leader_probability=display_leader_prob,

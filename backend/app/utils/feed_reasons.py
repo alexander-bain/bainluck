@@ -1544,20 +1544,81 @@ def generate_event_reason(
 # prove team-ness keeps today's wording verbatim. That is deliberate: `team_id`
 # is populated on only 3 of 45 served leader outcomes (measured on #4700), so
 # the unknown case is the COMMON one and it must not become a guess.
+#
+# ── #6550: THE LAST TOKEN OF A PROVEN TEAM IS NOT ALWAYS A NICKNAME ───────────
+#
+# Production `/sports`, 2026-09-16 12:30Z, two cards on ONE screen:
+#
+#   `Texas (10%) lead College Football National Championship Winner`   wrong
+#   `Texas Tech (36%) leads College Football Big 12 Championship …`    right
+#
+# and Discover served `Texas lead at 10%` for the same market. The
+# `leader_is_team` gate above is doing its job — outcome 834 carries
+# `team_id` — but the paragraph it guards assumes the printed subject ENDS IN
+# THE NICKNAME. In college and several pro markets the venue prints the bare
+# school or city and never the nickname at all, so the trailing-`s` test reads
+# a PLACE NAME as a plural: `Texas`, `Indianapolis`, `New Orleans`,
+# `Las Vegas`, `St. Louis`, `Dallas`, `Memphis`, `Rutgers`, `Leeds`,
+# `Olympiacos`. Measured on production: 66 rows over 16 (printed, team) pairs
+# of open markets, `Las Vegas Aces` among them at 0.87 — page-one leaders, not
+# a tail. `Ole Miss` escaped only by luck, because the `ss` guard below happens
+# to catch it.
+#
+# THE ANSWER IS STILL NOT A WORD LIST. No place-name dictionary, no orthography
+# for the new arm either: the signal is already in hand, because a proven team
+# has a `teams.name` and the printed name can be compared against it.
+#
+#   `Texas` is a strict prefix of `Texas Longhorns`   -> nickname stripped
+#   `Los Angeles Dodgers` EQUALS `Los Angeles Dodgers` -> nickname printed
+#
+# A stripped nickname leaves a place, and a place takes the singular; an equal
+# name is the case #4700 measured and keeps its rule unchanged. `teams.location`
+# is NOT the signal — authority/383 measured it polluted (`North Texas` carries
+# location `Chelsea`, `East Texas A&M Lions` carries `Duke`).
+#
+# FAIL TO TODAY'S WORDING, not to singular. `leader_team_name` defaults to None,
+# so a caller that cannot name the team gets #4700's rule verbatim. This arm can
+# therefore only ever turn a wrong "lead" into "leads"; it can never take the
+# plural away from `Los Angeles Dodgers`, which is the regression that would
+# undo #4700.
 
 #: Plural team nicknames that do not end in "s". `Sox` is the whole set in the
 #: leagues we carry (Red Sox, White Sox).
 _PLURAL_TEAM_NICKNAMES_WITHOUT_S = ("sox",)
 
 
+def _printed_name_omits_nickname(
+    leader_name: str, leader_team_name: Optional[str]
+) -> bool:
+    """Is the printed subject the team's name with its NICKNAME stripped? (#6550)
+
+    True only for a strict prefix ending on a word boundary — `Texas` within
+    `Texas Longhorns`, never `Texas` within a hypothetical `Texasville FC`. An
+    equal name is False: the nickname IS printed, so #4700's rule decides.
+
+    False whenever the team name is unknown, which is what keeps this arm unable
+    to change any line #4700 already gets right.
+    """
+    if not leader_team_name:
+        return False
+    printed = " ".join(leader_name.split()).casefold()
+    full = " ".join(leader_team_name.split()).casefold()
+    if not printed:
+        return False
+    return full.startswith(printed + " ")
+
+
 def leader_agreement_verb(
-    leader_name: Optional[str], leader_is_team: bool = False
+    leader_name: Optional[str],
+    leader_is_team: bool = False,
+    leader_team_name: Optional[str] = None,
 ) -> str:
-    """"lead" or "leads" for `{leader_name} <verb> at {pct}%` (#4700).
+    """"lead" or "leads" for `{leader_name} <verb> at {pct}%` (#4700, #6550).
 
     Returns the singular unless the caller has PROVEN the subject is a team and
-    the team's nickname is plural. See the block comment above for why spelling
-    alone is not consulted.
+    the team's PRINTED name ends in a plural nickname. See the block comment
+    above for why spelling alone is not consulted, and why a printed name that
+    stops short of the nickname is a place rather than a plural.
     """
     if not leader_is_team or not leader_name:
         return "leads"
@@ -1567,6 +1628,12 @@ def leader_agreement_verb(
     nickname = tokens[-1].lower()
     if nickname in _PLURAL_TEAM_NICKNAMES_WITHOUT_S:
         return "lead"
+    # #6550: asked BEFORE the orthographic test, which is the only test it is
+    # correcting. Asked AFTER the nickname list above so a printed plural
+    # nickname keeps its verb even if it were ever also a prefix of a longer
+    # stored name — the list is the stronger evidence of the two.
+    if _printed_name_omits_nickname(leader_name, leader_team_name):
+        return "leads"
     # "ss" guards a hypothetical singular nickname; "s" alone is the plural.
     if nickname.endswith("s") and not nickname.endswith("ss"):
         return "lead"
@@ -1707,6 +1774,10 @@ def generate_futures_reason(
     # #4700: proven team-ness of `leader_name`, for subject-verb agreement.
     # Defaults False so an uninformed caller keeps the singular verbatim.
     leader_is_team: bool = False,
+    # #6550: the team's FULL stored name (`teams.name`), so the verb can tell a
+    # printed nickname from a printed place. Defaults None so an uninformed
+    # caller keeps #4700's wording verbatim — see `leader_agreement_verb`.
+    leader_team_name: Optional[str] = None,
     # #4640: is `leader_name` a rung of ONE cumulative ladder? Defaults False so
     # an uninformed caller's copy is unchanged unless nestedness is proven.
     leader_is_ladder_rung: bool = False,
@@ -1729,7 +1800,7 @@ def generate_futures_reason(
     reasons = set(highlight_reasons)
     # #4700: resolved once, above every branch, so no template can disagree with
     # another about the same subject.
-    _verb = leader_agreement_verb(leader_name, leader_is_team)
+    _verb = leader_agreement_verb(leader_name, leader_is_team, leader_team_name)
     # #4640: likewise resolved once — see `_leader_is_unnameable`.
     _no_leader_subject = _leader_is_unnameable(leader_name, leader_is_ladder_rung)
     # #6470: resolved once beside the refusal it answers, so a template can
@@ -1945,6 +2016,10 @@ def generate_futures_headline(
     # #4700: proven team-ness of `leader_name`, for subject-verb agreement.
     # Defaults False so an uninformed caller keeps the singular verbatim.
     leader_is_team: bool = False,
+    # #6550: the team's FULL stored name (`teams.name`), so the verb can tell a
+    # printed nickname from a printed place. Defaults None so an uninformed
+    # caller keeps #4700's wording verbatim — see `leader_agreement_verb`.
+    leader_team_name: Optional[str] = None,
     # #4640: see `generate_futures_reason`. Defaults False -> copy unchanged.
     leader_is_ladder_rung: bool = False,
     # #6470: the preposition the display rule elided from the title
@@ -1962,7 +2037,7 @@ def generate_futures_headline(
     """Generate compact, specific card text for futures Discover cards."""
     reasons = set(highlight_reasons)
     # #4700: resolved once, above every branch (see `generate_futures_reason`).
-    _verb = leader_agreement_verb(leader_name, leader_is_team)
+    _verb = leader_agreement_verb(leader_name, leader_is_team, leader_team_name)
     # #4640: likewise resolved once — see `_leader_is_unnameable`.
     _no_leader_subject = _leader_is_unnameable(leader_name, leader_is_ladder_rung)
     # #6470: resolved once beside the refusal it answers, so a template can
@@ -2184,6 +2259,8 @@ def generate_futures_context_summary(
     rendered_runner_up_percent: Optional[int] = None,
     # #4700: see `generate_futures_reason`. Defaults False -> singular verbatim.
     leader_is_team: bool = False,
+    # #6550: see `generate_futures_reason`. Defaults None -> #4700's rule.
+    leader_team_name: Optional[str] = None,
     # #4640: see `generate_futures_reason`. Defaults False -> copy unchanged.
     leader_is_ladder_rung: bool = False,
     # #6470: the preposition the display rule elided from the title
@@ -2208,7 +2285,7 @@ def generate_futures_context_summary(
     headline = (headline or "").strip()
     reasons = set(highlight_reasons)
     # #4700: resolved once, above every branch (see `generate_futures_reason`).
-    _verb = leader_agreement_verb(leader_name, leader_is_team)
+    _verb = leader_agreement_verb(leader_name, leader_is_team, leader_team_name)
     # #6187: likewise — see `generate_futures_reason`.
     _lead_visible = lead_is_printable(
         rendered_leader_percent, rendered_runner_up_percent
