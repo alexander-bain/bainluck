@@ -87,7 +87,7 @@ class TestPropFamiliesSeeded:
         assert fam["family_key"] == "next team"
         assert fam["entity_count"] == 2
         assert isinstance(fam["rows"], list)
-        assert {r["entity"] for r in fam["rows"]} == {"Lebron James", "Kevin Durant"}
+        assert {r["entity"] for r in fam["rows"]} == {"LeBron James", "Kevin Durant"}
 
     async def test_empty_when_no_markets(self, client, mock_db):
         team = _mock_team()
@@ -133,7 +133,7 @@ class TestPropFamiliesBranchSplit:
         assert body["total_families"] == 1
         fam = body["families"][0]
         assert fam["family_key"] == "next team"
-        assert {r["entity"] for r in fam["rows"]} == {"Lebron James", "Kevin Durant"}
+        assert {r["entity"] for r in fam["rows"]} == {"LeBron James", "Kevin Durant"}
 
 
 class TestPropFamiliesHTTP:

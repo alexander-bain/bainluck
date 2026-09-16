@@ -103,6 +103,15 @@ _DESC_STOPWORDS = {
     "in", "and", "at", "least", "most", "over", "under", "this", "next",
 }
 
+#: Longest leading ``"<qualifier>: "`` head treated as a category prefix
+#: rather than part of the subject ("NBA Free Agency" is three).
+_MAX_QUALIFIER_WORDS = 4
+
+#: A trailing possessive on an entity lifted from "X's Next Team" /
+#: "Austin Reaves' Next Team" — both the ``'s`` and the bare apostrophe
+#: forms, straight and curly.
+_POSSESSIVE_SUFFIX_RE = re.compile(r"['’]s$|['’]$")
+
 _NEXT_TEAM_RE = re.compile(r"^(?P<entity>.+?)\s+(?:next|new)\s+team\b")
 _OF_THE_YEAR_RE = re.compile(r"\b(?P<role>[a-z][a-z ]*?)\s+of the year\b")
 _WILL_WIN_RE = re.compile(r"^will\s+(?P<entity>.+?)\s+(?:win|wins|to win)\b")
@@ -145,6 +154,66 @@ def _titlecase(text: str | None) -> str | None:
     return cleaned.title()
 
 
+def _strip_colon_qualifier(text: str) -> str:
+    """Drop a leading ``"<qualifier>: "`` segment from an entity label.
+
+    Venues prefix the CATEGORY, not the subject: "NBA: Jaylen Brown Next
+    Team", "NBA Free Agency: Mitchell Robinson Next Team", "MLB: Mike Trout
+    Next Team".  The subject is what follows the colon.  Bounded to a short
+    head so a colon inside a sentence-shaped title cannot eat the entity.
+    """
+    head, sep, rest = text.partition(":")
+    if not sep:
+        return text
+    rest = rest.strip()
+    if not rest or len(head.split()) > _MAX_QUALIFIER_WORDS:
+        return text
+    return rest
+
+
+def _clean_entity(raw: str | None, source_is_cased: bool) -> str | None:
+    """Normalise an entity span lifted out of a market title.
+
+    Three things, in order: collapse whitespace, drop a category qualifier
+    ("NBA Free Agency: X" → "X"), drop a trailing possessive ("Jaylen
+    Brown's" / "Austin Reaves'" → the player).  Casing is taken from the
+    SOURCE when the source is cased — venues write "LeBron James", "CJ
+    Abrams", "Robert Williams III", and ``str.title()`` destroys all three
+    (and upper-cases after an apostrophe: "Jaylen Brown'S").  Only an
+    all-lower or all-upper title is re-cased here.
+    """
+    if not raw:
+        return None
+    text = re.sub(r"\s+", " ", raw).strip()
+    text = _strip_colon_qualifier(text)
+    text = _POSSESSIVE_SUFFIX_RE.sub("", text).strip()
+    if not text:
+        return None
+    return text if source_is_cased else _titlecase(text)
+
+
+def _is_cased(text: str) -> bool:
+    """True when the source string carries deliberate casing (mixed case) —
+    an all-lower or SHOUTED title tells us nothing and gets title-cased."""
+    return any(c.islower() for c in text) and any(c.isupper() for c in text)
+
+
+def _entity_span(cleaned: str, low: str, match: re.Match, group: str = "entity") -> str | None:
+    """The matched group taken from the ORIGINAL-cased string.
+
+    ``low`` is ``cleaned.lower()``, which is length-preserving for every
+    character the venues actually use, so the match offsets transfer.  If a
+    lowercasing ever changes the length (a non-ASCII special case), fall
+    back to the lowered group rather than slicing at the wrong offsets.
+    """
+    raw = (
+        cleaned[match.start(group):match.end(group)]
+        if len(cleaned) == len(low)
+        else match.group(group)
+    )
+    return _clean_entity(raw, _is_cased(cleaned))
+
+
 def _strip_noise_prefix(text: str) -> str:
     toks = text.split()
     while toks and toks[0] in _NOISE_PREFIX_TOKENS:
@@ -161,16 +230,16 @@ def _family_descriptor(text: str) -> str:
     return " ".join(toks)
 
 
-def _award_entity(low: str) -> str | None:
+def _award_entity(low: str, cleaned: str) -> str | None:
     """Extract the subject of an award question when the market names one
     ("Will X win MVP" / "X to win MVP") — else None (candidate is in the
     outcome, e.g. a multi-outcome "NBA MVP" market)."""
     m = _WILL_WIN_RE.match(low)
     if m:
-        return _titlecase(m.group("entity"))
+        return _entity_span(cleaned, low, m)
     m = _TO_WIN_RE.match(low)
     if m:
-        return _titlecase(m.group("entity"))
+        return _entity_span(cleaned, low, m)
     return None
 
 
@@ -183,14 +252,18 @@ def _parse(market_name: str | None) -> tuple[str | None, str | None]:
     """
     if not market_name:
         return None, None
-    low = re.sub(r"\s+", " ", market_name.lower()).strip().rstrip("?").strip()
+    # ``cleaned`` keeps the venue's own casing; ``low`` is the matching
+    # surface.  They are the same length, so a match on ``low`` addresses
+    # the same span in ``cleaned`` (see :func:`_entity_span`).
+    cleaned = re.sub(r"\s+", " ", market_name).strip().rstrip("?").strip()
+    low = cleaned.lower()
     if not low:
         return None, None
 
     # 1. "<entity> Next Team"
     m = _NEXT_TEAM_RE.match(low)
     if m:
-        entity = _titlecase(m.group("entity"))
+        entity = _entity_span(cleaned, low, m)
         return ("next team", entity) if entity else (None, None)
 
     # 2. Award: "... of the year"
@@ -204,28 +277,29 @@ def _parse(market_name: str | None) -> tuple[str | None, str | None]:
             role_raw = vm.group(1)
         role = _strip_noise_prefix(role_raw).strip()
         fk = f"{role} of the year" if role else "of the year"
-        return fk, _award_entity(low)
+        return fk, _award_entity(low, cleaned)
 
     # 3. Standalone awards (MVP, Cy Young, Heisman, ...)
     for kw, canon in _STANDALONE_AWARDS:
         if re.search(r"\b" + re.escape(kw) + r"\b", low):
-            return canon, _award_entity(low)
+            return canon, _award_entity(low, cleaned)
 
     # 4. Threshold / total: "<entity> to <verb> N <unit>"
     m = _TO_VERB_RE.match(low)
     if m:
-        entity = _titlecase(m.group("entity"))
+        entity = _entity_span(cleaned, low, m)
         desc = _family_descriptor(m.group("rest"))
         if entity and desc:
             return f"to {desc}", entity
         return None, None
 
     # 5. Over/Under threshold ladder: "<entity> Over/Under N <unit>"
-    if _OVER_UNDER_RE.search(low) and _NUM_RE.search(low):
-        parts = re.split(r"\b(?:over|under)\b", low, maxsplit=1)
-        head = parts[0].strip() if parts else ""
-        unit = _family_descriptor(parts[1]) if len(parts) > 1 else ""
-        entity = _titlecase(head) if head else None
+    ou = _OVER_UNDER_RE.search(low)
+    if ou and _NUM_RE.search(low):
+        head_src = (cleaned if len(cleaned) == len(low) else low)[: ou.start()]
+        head = head_src.strip()
+        unit = _family_descriptor(low[ou.end():])
+        entity = _clean_entity(head, _is_cased(cleaned)) if head else None
         fk = ("over under " + unit).strip()
         return fk, entity
 
@@ -424,7 +498,13 @@ def _merge_rows(group: list[dict]) -> dict:
     settled_won = [r for r in group if r.get("settled") and r.get("result") == "won"]
     settled_any = [r for r in group if r.get("settled")]
     if settled_won:
-        primary = settled_won[0]
+        # Among rows that AGREE the question is graded won, take the one whose
+        # price says so most clearly (a graded winner reads 1.00; a stale book
+        # left at 0.99 is the less coherent field).  Positional choice here
+        # kept whichever source happened to be listed first — with the
+        # Jaylen Brown pair that was Kalshi's 0.99, so a settled row printed
+        # 99% beside its own WON badge.
+        primary = max(settled_won, key=prob_key)
     elif settled_any:
         primary = max(settled_any, key=prob_key)
     else:
