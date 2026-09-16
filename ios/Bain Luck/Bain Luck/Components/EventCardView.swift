@@ -244,10 +244,15 @@ struct EventCardView: View {
             } else if isFinished {
                 // Finished: Show date only "Mar 5"
                 formattedDate
-            } else if isSuspended {
-                // live/048: no start time, no Final — the shared summary, the
-                // same string the web card prints for the same row.
-                Text(EventState.suspendedSummary(away: event.awayScore, home: event.homeScore))
+            } else if isSuspended, let detail = EventState.suspendedCardDetail(
+                away: event.awayScore, home: event.homeScore, date: formattedDateString) {
+                // live/048: no start time, no Final. The words themselves now sit
+                // in the `StatusBadge` six points to the left — this slot carried
+                // a verbatim second copy of them on 1,786 of 1,788 suspended rows
+                // (both scores null ⇒ `suspendedSummary` IS `suspendedLabel`).
+                // `suspendedCardDetail` is where that reasoning lives, along with
+                // why the date arrives here and not from `formattedDateTime`.
+                Text(detail)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
