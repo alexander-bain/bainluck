@@ -18,7 +18,7 @@ from app.utils.season_variant_team import (
     choose_parent_league_row,
     wants_parent_league_row,
 )
-from app.utils.sport_keys import league_family_identity
+from app.utils.sport_keys import league_family_identity, sport_display_name
 from app.utils.standings_shape import public_standings
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -449,7 +449,11 @@ def _format_team(team: Team) -> dict:
         "name": team.name,
         "abbreviation": team.abbreviation,
         "sport_key": sport.key if sport else None,
-        "sport_name": sport.name if sport else None,
+        # #6444: a team in an uncurated league used to have its own machine key
+        # read back to it as a league name — `/api/teams/alabama-state-hornets`
+        # served `sport_name: "basketball_other"`. The helper rejects exactly one
+        # value, the key itself, so the 162 branded rows pass through untouched.
+        "sport_name": sport_display_name(sport.key, sport.name) if sport else None,
         "location": team.location,
         "primary_color": team.primary_color,
         "secondary_color": team.secondary_color,

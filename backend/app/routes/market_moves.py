@@ -18,6 +18,7 @@ from sqlalchemy.orm import selectinload
 from app.models import Event, Sport, FuturesMarket, FuturesOutcome
 from app.services import get_db
 from app.utils.highlights import LEAGUE_TIERS
+from app.utils.sport_keys import sport_display_name
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +132,12 @@ async def get_market_was_wrong(
             "score": round(wrongness_score, 1),
             "event_id": event.id,
             "sport": sport_key,
-            "sport_name": event.sport.name if event.sport else None,
+            # #6444 — the same rule as every other reader-facing serializer.
+            "sport_name": (
+                sport_display_name(event.sport.key, event.sport.name)
+                if event.sport
+                else None
+            ),
             "home_team": event.home_team_name,
             "away_team": event.away_team_name,
             "home_score": home_score,
@@ -203,7 +209,12 @@ async def get_market_was_wrong(
                 "market_name": market.name,
                 "market_tier": market.market_tier,
                 "sport": market.sport.key if market.sport else None,
-                "sport_name": market.sport.name if market.sport else None,
+                # #6444 — as above, for the futures half of the same response.
+                "sport_name": (
+                    sport_display_name(market.sport.key, market.sport.name)
+                    if market.sport
+                    else None
+                ),
                 "llm_sport_category": market.llm_sport_category,
                 "outcome_name": outcome.name,
                 "current_probability": round(current_prob, 3),
