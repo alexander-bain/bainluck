@@ -229,9 +229,14 @@ def _build_bounded_client(url: str, pool_wait: float, **kwargs):
 #     the count as an argument), so one client across threads carries no shared
 #     mutable state. The lock here guards the dict, nothing else.
 #
-# ``get_async_redis_client`` is deliberately NOT cached: ``routes/event_stream.py``
-# ``aclose()``s its client when an SSE stream ends, which would tear a shared
-# client out from under every other user of it.
+# ``get_async_redis_client`` is deliberately NOT cached: a caller that
+# ``aclose()``s what it was handed would tear a shared client out from under
+# every other user of it. That caller used to be ``routes/event_stream.py``,
+# once per SSE stream, which is how #6515 put one pool per open stream against
+# a shared 80-connection budget; since that fix the closing owner is
+# ``utils/live_fanout``, which holds ONE client for every stream in the process
+# and closes it only when the last one leaves. The reason to stay uncached is
+# unchanged — the owner is just no longer per reader.
 # ---------------------------------------------------------------------------
 _CLIENT_CACHE: dict = {}
 _CLIENT_CACHE_LOCK = threading.Lock()
