@@ -302,6 +302,30 @@ class TestTheChart:
         snapshots = [self._snapshot(99, 0.99, 0.00, 0.49)]
         assert _drop_unsupported_snapshot_points(snapshots, []) == snapshots
 
+    def test_a_snapshot_with_no_book_keeps_its_point(self):
+        """An ABSENT book is not a book of zero, and this one cost a CI shard.
+
+        `test_route_championship_field_chart_names_6479` builds its snapshots as
+        `MagicMock`s and names four attributes. `float(MagicMock())` is **1.0**,
+        so the unnamed `yes_bid` arrived here as a live bid of 100c beside a 0.1
+        probability — a genuinely refuted row, and the whole chart legend under
+        test went empty. The fixture was wrong, not the rule; but the rule's own
+        behaviour on a truly absent book is what made that diagnosable, so it is
+        pinned here rather than left to the other file.
+        """
+        from app.routes.futures import _drop_unsupported_snapshot_points
+
+        outcomes = [SimpleNamespace(id=1, resolution_source=None, is_winner=None)]
+        bookless = SimpleNamespace(
+            outcome_id=1,
+            bookmaker="kalshi",
+            probability=0.10,
+            yes_bid=None,
+            yes_ask=None,
+            last_price=None,
+        )
+        assert _drop_unsupported_snapshot_points([bookless], outcomes) == [bookless]
+
     def test_the_default_verdict_fails_open(self):
         """A caller that never learned about ``is_winner`` loses nothing.
 
