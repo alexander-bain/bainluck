@@ -2015,6 +2015,18 @@ async def _poll_all_odds():
                             # would slip through a check that read the computed
                             # value alone.
                             #
+                            # AND THE EFFECTIVE SCORE PAIR, NOT THE PAYLOAD
+                            # (CERT-2963). The two writes below are INDEPENDENT
+                            # statements, so a payload carrying one side lands
+                            # on top of whatever the row already holds: stored
+                            # `2-0` plus an incoming `home=1` stores `1-0`,
+                            # which is impossible, while the payload alone reads
+                            # as "one side missing, not a claim". The stored
+                            # halves are handed over so the judgment is about
+                            # the pair the row will HOLD. `event_obj` is the
+                            # pre-write row — this task writes through Core, so
+                            # nothing has refreshed it.
+                            #
                             # THE SCORE IS REFUSED AND THE STATUS IS NOT, the
                             # same trade the withdrawal arm makes: a match that
                             # finished, finished, and the honest rendering of a
@@ -2038,6 +2050,8 @@ async def _poll_all_odds():
                                     ),
                                     home_score=home_score,
                                     away_score=away_score,
+                                    stored_home_score=event_obj.home_score,
+                                    stored_away_score=event_obj.away_score,
                                 )
                             )
                             if _illegal_tennis_final:
@@ -2046,14 +2060,27 @@ async def _poll_all_odds():
                                     "#2772 refusing an illegal tennis FINAL "
                                     "score at the writer: event %s (%s vs %s) "
                                     "would be %s holding %s-%s, which no "
-                                    "completed tennis match could end on. "
+                                    "completed tennis match could end on "
+                                    "(payload %s-%s over stored %s-%s). "
                                     "Score declined; status left alone.",
                                     event_obj.id,
                                     event_obj.home_team_name,
                                     event_obj.away_team_name,
                                     event_status or event_obj.status,
+                                    (
+                                        home_score
+                                        if home_score is not None
+                                        else event_obj.home_score
+                                    ),
+                                    (
+                                        away_score
+                                        if away_score is not None
+                                        else event_obj.away_score
+                                    ),
                                     home_score,
                                     away_score,
+                                    event_obj.home_score,
+                                    event_obj.away_score,
                                 )
 
                             _skip_score_write = (

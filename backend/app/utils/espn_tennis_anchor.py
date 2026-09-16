@@ -858,8 +858,10 @@ def tennis_final_score_write_is_refused(
     event_status: Any,
     home_score: Any,
     away_score: Any,
+    stored_home_score: Any = None,
+    stored_away_score: Any = None,
 ) -> bool:
-    """May this writer put THIS score on a tennis row asserting a FINAL?
+    """May this writer leave THIS score on a tennis row asserting a FINAL?
 
     CERT-2958, and the other half of #2772. The withdrawal arm in
     ``espn_sync._transition_event_statuses_impl`` nulls an impossible settled
@@ -902,15 +904,50 @@ def tennis_final_score_write_is_refused(
     withdrawal arm makes, and the reason it leaves ``status`` and
     ``completed_at`` alone.
 
-    A ``None`` on either side is not a claim and cannot be refused; that falls
-    out of :func:`settled_tennis_score_is_impossible` returning ``False``.
+    ═══ IT JUDGES THE POST-WRITE PAIR, NOT THE PAYLOAD (CERT-2963) ═══
+
+    🔴 THE SECOND RACE, AND THE ONE THAT LOOKED CLOSED. The writer stores each
+    side INDEPENDENTLY — ``if home_score is not None`` and ``if away_score is
+    not None`` are two separate statements — so a payload carrying only one side
+    lands on top of whatever the row already holds. Asking this question of the
+    PAYLOAD therefore answers about a score that will never exist:
+
+        stored ``2-0`` (legal) + incoming ``home=1, away=None``
+            → payload judged: one side is None, so "not a claim", ALLOWED
+            → actually stored: ``1-0``, which this module's own rule calls
+              impossible.
+
+    So the pair judged is ``incoming if not None else stored``, on each side
+    independently — the value the row will HOLD once this write lands. Exactly
+    the same correction as the effective-status one above, applied to the
+    column instead of the state.
+
+    This is also why a one-sided write is not simply refused. A legal
+    correction arrives in precisely that shape: stored ``2-0`` plus an incoming
+    ``away=1`` is the true final ``2-1`` and must go through, and a one-sided
+    write onto a row whose other half is still NULL leaves a half-claim the
+    withdrawal arm deliberately ignores (its recall requires both sides
+    non-null). Refusing the shape rather than the RESULT would delete real
+    results to stop a defect the result test already stops.
+
+    A write carrying neither side is not a write, so it is never refused — it
+    would otherwise count a refusal on a pass that touched nothing, and the
+    counter is the only way to tell this guard holding from tennis being out of
+    season.
+
+    A ``None`` surviving on either side of the effective pair is not a claim and
+    cannot be refused; that falls out of
+    :func:`settled_tennis_score_is_impossible` returning ``False``.
     """
+    if home_score is None and away_score is None:
+        return False
     if not str(sport_key or "").startswith("tennis"):
         return False
     if event_status not in TENNIS_STATUSES_CLAIMING_A_RESULT:
         return False
     return settled_tennis_score_is_impossible(
-        home_score=home_score, away_score=away_score
+        home_score=home_score if home_score is not None else stored_home_score,
+        away_score=away_score if away_score is not None else stored_away_score,
     )
 
 

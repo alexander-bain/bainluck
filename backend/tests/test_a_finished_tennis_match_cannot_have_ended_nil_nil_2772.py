@@ -712,3 +712,171 @@ class TestTheWriterBoundaryActuallyConsultsIt:
         source = self._source()
         assert "if event_status is not None" in source
         assert "else event_obj.status" in source
+
+
+# ---------------------------------------------------------------------------
+# 7. THE POST-WRITE PAIR. CERT-2963.
+#
+# 🔴 THE SECOND RACE, AND THE ONE THAT LOOKED CLOSED. The writer stores each
+# side INDEPENDENTLY — `if home_score is not None` and `if away_score is not
+# None` are two separate statements — so a payload carrying one side lands on
+# top of whatever the row already holds. Judging the PAYLOAD answers a question
+# about a score that will never exist:
+#
+#     stored 2-0 (legal) + incoming home=1, away=None
+#         -> payload judged: one side None, "not a claim", ALLOWED
+#         -> actually stored: 1-0, which the shared rule calls impossible
+#
+# Section 6 shipped exactly that hole. These are the arms that close it, and
+# the ones that stop the obvious over-correction — refusing every one-sided
+# write would delete real results, because a legal CORRECTION arrives in
+# precisely that shape.
+# ---------------------------------------------------------------------------
+
+
+class TestItJudgesWhatTheRowWillHoldNotWhatThePayloadSays:
+
+    def test_the_cert_2963_reproduction_is_refused(self):
+        """The grader's exact specimen: stored legal ``2-0``, incoming
+        ``home=1`` alone, which stores ``1-0``."""
+        assert tennis_final_score_write_is_refused(
+            sport_key="tennis_atp",
+            event_status="completed",
+            home_score=1,
+            away_score=None,
+            stored_home_score=2,
+            stored_away_score=0,
+        )
+
+    def test_the_other_partial_direction_is_refused_too(self):
+        """Symmetry is not decoration here — the two writes are separate
+        statements and either one alone can land the lie."""
+        assert tennis_final_score_write_is_refused(
+            sport_key="tennis_atp",
+            event_status="completed",
+            home_score=None,
+            away_score=2,
+            stored_home_score=2,
+            stored_away_score=0,
+        )
+
+    @pytest.mark.parametrize(
+        "incoming_home,incoming_away,stored_home,stored_away,becomes",
+        [
+            (None, 1, 2, 0, "2-1"),
+            (3, None, 0, 1, "3-1"),
+            (None, 3, 2, 0, "2-3"),
+            (2, None, 0, 0, "2-0"),
+        ],
+    )
+    def test_a_one_sided_write_that_lands_a_LEGAL_pair_goes_through(
+        self, incoming_home, incoming_away, stored_home, stored_away, becomes
+    ):
+        """🔴 THE OVER-CORRECTION THIS STOPS. Refusing the SHAPE rather than the
+        RESULT would delete real results: a legal correction arrives as exactly
+        a one-sided write, and the last row here is a one-sided write that
+        REPAIRS an illegal stored ``0-0`` into a true ``2-0``."""
+        assert not tennis_final_score_write_is_refused(
+            sport_key="tennis_wta",
+            event_status="completed",
+            home_score=incoming_home,
+            away_score=incoming_away,
+            stored_home_score=stored_home,
+            stored_away_score=stored_away,
+        ), becomes
+
+    def test_a_one_sided_write_onto_a_null_half_is_a_half_claim_not_a_lie(self):
+        """The withdrawal arm's recall requires BOTH sides non-null, so a row
+        holding one number is not a claim it judges. The writer agrees, and the
+        NEXT poll's second half is caught by the arm above."""
+        assert not tennis_final_score_write_is_refused(
+            sport_key="tennis_atp",
+            event_status="completed",
+            home_score=1,
+            away_score=None,
+            stored_home_score=None,
+            stored_away_score=None,
+        )
+
+    def test_the_second_half_of_that_sequence_is_caught(self):
+        """NOT VACUOUS — it is what makes the arm above safe. The row now holds
+        ``1`` and nothing; the poll that supplies the other half would store
+        ``1-0``, and that is refused."""
+        assert tennis_final_score_write_is_refused(
+            sport_key="tennis_atp",
+            event_status="completed",
+            home_score=None,
+            away_score=0,
+            stored_home_score=1,
+            stored_away_score=None,
+        )
+
+    def test_a_write_carrying_neither_side_is_not_a_write(self):
+        """It would otherwise count a refusal on a pass that touched nothing,
+        and the counter is the only way to tell this guard holding from tennis
+        being out of season."""
+        assert not tennis_final_score_write_is_refused(
+            sport_key="tennis_atp",
+            event_status="completed",
+            home_score=None,
+            away_score=None,
+            stored_home_score=0,
+            stored_away_score=0,
+        )
+
+    @pytest.mark.parametrize("status", ["live", "suspended"])
+    def test_a_partial_update_to_a_match_still_being_played_is_untouched(
+        self, status
+    ):
+        """CERT-752's control, asked of the partial path: a live/suspended row
+        moving from ``1-0`` to ``1-1`` is a true score changing."""
+        assert not tennis_final_score_write_is_refused(
+            sport_key="tennis_atp_us_open",
+            event_status=status,
+            home_score=None,
+            away_score=1,
+            stored_home_score=1,
+            stored_away_score=0,
+        )
+
+    def test_a_partial_update_landing_nil_nil_in_soccer_is_a_real_final(self):
+        """The 634-row negative control, asked of the partial path."""
+        assert not tennis_final_score_write_is_refused(
+            sport_key="soccer_epl",
+            event_status="completed",
+            home_score=None,
+            away_score=0,
+            stored_home_score=0,
+            stored_away_score=1,
+        )
+
+    def test_the_stored_pair_alone_never_refuses_a_pass_that_writes_nothing(self):
+        """A row already holding an illegal score is the withdrawal arm's job,
+        not the writer's. The writer only ever judges a write it is making."""
+        for status in TENNIS_STATUSES_CLAIMING_A_RESULT:
+            assert not tennis_final_score_write_is_refused(
+                sport_key="tennis_other",
+                event_status=status,
+                home_score=None,
+                away_score=None,
+                stored_home_score=0,
+                stored_away_score=0,
+            )
+
+
+class TestTheWriterHandsOverTheStoredHalves:
+    """Structural: the effective-pair judgment is only real if the call site
+    supplies the stored values. Passing the payload alone is CERT-2963's
+    defect, and it leaves every behavioural test in section 6 green."""
+
+    def _source(self):
+        import textwrap
+
+        from app.tasks import odds_polling
+
+        return textwrap.dedent(inspect.getsource(odds_polling))
+
+    def test_the_stored_halves_are_passed_to_the_judgment(self):
+        source = self._source()
+        assert "stored_home_score=event_obj.home_score," in source
+        assert "stored_away_score=event_obj.away_score," in source
