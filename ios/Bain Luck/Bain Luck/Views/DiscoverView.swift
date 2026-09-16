@@ -267,6 +267,30 @@ struct DiscoverView: View {
     /// it can only move if the closure ran. Invisible to a reader.
     @State private var rigRefreshCount = 0
 
+    /// What the end card's Refresh control tells the reader it is doing (#1472).
+    ///
+    /// Unlike `rigRefreshCount` above, this one IS for the reader, and it exists
+    /// because none of the three signals a refresh normally produces reaches the
+    /// bottom of the feed — see `NativeFeedRefreshPhase` for which three and why.
+    @State private var footerRefreshPhase: NativeFeedRefreshPhase = .idle
+
+    /// Which refresh owns `footerRefreshPhase`.
+    ///
+    /// Two refreshes can overlap (a tap on the end card, then a pull at the top,
+    /// or the reverse), and without this the SLOWER one writes the control's last
+    /// word — so a failure that has already been superseded by a success stays on
+    /// screen offering a retry for a feed that is current. Each run claims the
+    /// control by stamping this and refuses to write the phase if a later run has
+    /// claimed it since.
+    @State private var footerRefreshGeneration = 0
+
+    /// How long "Checked just now" stays true enough to keep saying.
+    ///
+    /// A success confirmation that never expires becomes a lie by sitting still;
+    /// only `.refreshed` decays, because `.failed` is the reader's sole notice of
+    /// the failure and carries the retry.
+    static let refreshConfirmationWindow: TimeInterval = 4
+
     /// #1883: was a second, drifted copy of the classifier. Both copies now
     /// delegate to `DiscoverCategory`, so they cannot disagree (gotcha #129).
     private var sportsCats: Set<String> { DiscoverCategory.sportsCategories }
@@ -1596,7 +1620,10 @@ struct DiscoverView: View {
                     } else {
                         // The end card owns its own Refresh control now (#1773),
                         // so this branch no longer pairs it with a separate button.
-                        NativeFeedEndCard(onRefresh: { Task { await refreshFeed() } })
+                        NativeFeedEndCard(
+                            onRefresh: { Task { await refreshFeed() } },
+                            phase: footerRefreshPhase
+                        )
                             .frame(maxWidth: .infinity)
                             .padding(.horizontal)
                             .padding(.vertical, 24)
@@ -1616,8 +1643,13 @@ struct DiscoverView: View {
                     } else if !vm.hasMore {
                         // #1773: this is the bottom-of-feed call site — the one
                         // Alex hit. Pull-to-refresh is unreachable here, so the
-                        // card must carry the action it is asking for.
-                        NativeFeedEndCard(onRefresh: { Task { await refreshFeed() } })
+                        // card must carry the action it is asking for. #1472: and
+                        // it must say what that action is doing, because nothing
+                        // else on this half of the page does.
+                        NativeFeedEndCard(
+                            onRefresh: { Task { await refreshFeed() } },
+                            phase: footerRefreshPhase
+                        )
                             .padding(.horizontal)
                             .padding(.bottom, 24)
                     }
@@ -1661,7 +1693,11 @@ struct DiscoverView: View {
                 ScreenTimingSession.armScreen(surface: ScreenTimingSurface.discover)
                 await vm.load()
             }
-            if resolutions.isEmpty {
+            // Gated with the refresh path's copy (#1472): the only view that
+            // reads `resolutions` is the digest card above, and it is behind this
+            // same flag. Unflagged, this is a network request on every cold open
+            // of the first screen for a value nothing draws.
+            if ReleaseSurfaces.predictionsExperienceEnabled, resolutions.isEmpty {
                 if let r = try? await APIClient.shared.fetchResolutions() {
                     resolutions = r.resolutions
                 }
@@ -1765,13 +1801,56 @@ struct DiscoverView: View {
         // reach this closure", which must not depend on anything below it
         // succeeding. See `rigRefreshCount`.
         rigRefreshCount &+= 1
+
+        // #1472. Claimed and shown BEFORE the first `await`, so the press and the
+        // press landing are the same frame for the reader. `footerRefreshPhase`
+        // is read by the end card, which the pull-to-refresh reader cannot see —
+        // harmless there, and the whole point at the bottom of the feed.
+        footerRefreshGeneration &+= 1
+        let generation = footerRefreshGeneration
+        footerRefreshPhase = .refreshing
+
         visibleCount = 20
         // A refresh AGES the dismiss store; it does not empty it (#5951).
         dismissedAt = Self.dismissStoreAfterRefresh(dismissedAt)
         dismissVersion &+= 1
         seenImpressions.removeAll()
         await vm.load()
-        if let r = try? await APIClient.shared.fetchResolutions() {
+
+        // A later refresh claimed the control while this one was on the wire, so
+        // this one no longer speaks for it — including its own outcome.
+        guard generation == footerRefreshGeneration else { return }
+
+        // `load()` sets `error` to nil on success and to a sentence on failure,
+        // and leaves it alone on cancellation. Read it rather than catching,
+        // because the retry the model performs internally is part of "did the
+        // refresh succeed" and a throw never reaches here.
+        if vm.error == nil {
+            footerRefreshPhase = .refreshed
+            // Deliberately NOT awaited by this function: `.refreshable` holds the
+            // pull-to-refresh spinner — and the header with it — until the closure
+            // it is given returns, so sleeping here would pin the top of the page
+            // for the confirmation window on every pull.
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: UInt64(Self.refreshConfirmationWindow * 1_000_000_000))
+                guard generation == footerRefreshGeneration, footerRefreshPhase == .refreshed else { return }
+                footerRefreshPhase = .idle
+            }
+        } else {
+            footerRefreshPhase = .failed
+        }
+
+        // #1472, the other half of "pull refresh completes". This awaited a
+        // SECOND network round trip inside the `.refreshable` closure, which
+        // means the reader's header stayed pinned down for its duration — and
+        // nothing renders what it fetches. `resolutions` has exactly one reader
+        // (the digest card at the top of this file's body) and that reader is
+        // behind `ReleaseSurfaces.predictionsExperienceEnabled`, which is
+        // `false` for the launch build. So in the shipping app this was a
+        // write-only fetch holding a gesture open. Gated at both of its call
+        // sites, not just this one.
+        if ReleaseSurfaces.predictionsExperienceEnabled,
+           let r = try? await APIClient.shared.fetchResolutions() {
             resolutions = r.resolutions
         }
     }
