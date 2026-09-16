@@ -204,11 +204,14 @@ def test_the_mens_us_open_still_folds_across_two_venues():
 @pytest.mark.parametrize(
     "left,right",
     [
-        # Served two rows apart on 2026-09-15 — one question in a reader's eyes,
-        # refused by the matcher's numeric-token guard. Stated in #6400 as a
-        # known residual: widening the predicate "would move three category
-        # pages" (#4446), so this fold does not attempt it.
-        ("Which party will win the U.S. House?", "Which party will win the House in 2026?"),
+        # (The U.S. House pair that sat here as #6400's known residual — one
+        # question in a reader's eyes, refused by the numeric-token guard — was
+        # FIXED by #6537 and now folds. It moved to
+        # `test_feed_house_duplicate_year_qualifier_6537.py`, which asserts the
+        # fold rather than the refusal. It was never a real control here: this
+        # helper builds cards with no resolution_date, and #6537's rule is gated
+        # on the two rows resolving inside one cycle, so the row would have gone
+        # on passing for a reason that has nothing to do with the titles.)
         # Two different chambers.
         ("Which party will win the U.S. Senate?", "Which party will win the U.S. House?"),
         # Two different ceremonies.

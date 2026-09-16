@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime
 from typing import Any
 
 from app.utils.feed_market_quality import GOLF_TOURNAMENT_STORY_PREFIX
@@ -799,6 +800,16 @@ _LEADING_YEAR_RE = re.compile(r"^\s*(19|20)\d{2}\s+")
 _ANY_YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
 
 
+#: Two rows resolving closer together than this cannot be two consecutive annual
+#: editions of one title, which is the whole hazard removal 3 has to exclude
+#: (#6537). Half a year, DERIVED from the yearly repeat it must separate and not
+#: tuned against a specimen: the pair it admits resolves 90 days apart (a midterm
+#: settles on election night at one venue and at the seating of Congress at the
+#: other), the pair it must refuse — this year's Masters beside next year's —
+#: resolves 365.
+_SAME_CYCLE_MAX_DAYS = 182
+
+
 def _resolution_year(data: dict[str, Any]) -> int | None:
     """The year a market resolves in, or None if it does not say."""
     raw = data.get("resolution_date")
@@ -806,6 +817,54 @@ def _resolution_year(data: dict[str, Any]) -> int | None:
         return None
     match = _ANY_YEAR_RE.search(str(raw))
     return int(match.group(0)) if match else None
+
+
+def _resolution_date(data: dict[str, Any]) -> datetime | None:
+    """The instant a market resolves, or None if it does not say it parseably."""
+    raw = data.get("resolution_date")
+    if not raw:
+        return None
+    if isinstance(raw, datetime):
+        return raw
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _resolve_within_one_cycle(data: dict[str, Any], other: dict[str, Any]) -> bool:
+    """Do these two rows settle the SAME edition of a yearly question? (#6537)
+
+    Answered from the two resolution dates and nothing else: if they are less
+    than :data:`_SAME_CYCLE_MAX_DAYS` apart they cannot be consecutive annual
+    editions, whatever their titles say. A row that does not state a parseable
+    resolution date answers False — an absent date is not evidence.
+    """
+    left, right = _resolution_date(data), _resolution_date(other)
+    if left is None or right is None:
+        return False
+    if (left.tzinfo is None) != (right.tzinfo is None):
+        return False
+    return abs((left - right).days) < _SAME_CYCLE_MAX_DAYS
+
+
+def _priced_outcome_names(data: dict[str, Any]) -> frozenset[str]:
+    """The names of the outcomes a card actually PRICES, lowercased (#6537).
+
+    PRICED, not all: Polymarket's "Which party will win the House in 2026?"
+    carries seven legs a reader never sees — ``Party A`` … ``Party F`` and
+    ``Other``, every one with a NULL probability — beside the two it prices. A
+    naive "same outcomes" test reads that as a different question; the card
+    renders a single 88% hero off its priced legs, and so does its Kalshi twin.
+    """
+    names = set()
+    for outcome in data.get("top_outcomes") or ():
+        if not isinstance(outcome, dict) or outcome.get("probability") is None:
+            continue
+        name = str(outcome.get("name") or "").strip().lower()
+        if name:
+            names.add(name)
+    return frozenset(names)
 
 
 def _comparison_title(data: dict[str, Any], other: dict[str, Any]) -> str:
@@ -833,6 +892,35 @@ def _comparison_title(data: dict[str, Any], other: dict[str, Any]) -> str:
        agree that they mean the same edition. Without the resolution-date check
        an undated "Masters Winner" for next year's edition would fold onto a
        dated one for this year's.
+
+    3. **A year ANYWHERE in the title, on four gates that must all hold** (#6537).
+       Removal 2 reaches an edition PREFIX; a year can also sit inside the
+       sentence as a qualifier, and then it is not naming an edition at all:
+       Kalshi's "Which party will win the U.S. House?" and Polymarket's "Which
+       party will win the House **in 2026**?" are one question — same midterms,
+       same two priced parties, 86% beside 88% two cards apart on one Discover
+       load — and the matcher's ``left_num != right_num`` guard refuses them
+       because one side carries ``2026`` and the other carries nothing.
+
+       That guard is still untouched, and deliberately: it is what keeps "Fed
+       rate hike in 2026?" apart from "Fed rate hike in 2027?" and every
+       ``Above 40`` rung apart from ``Above 50``. This reaches only the case
+       where one side is SILENT about the year, and it must clear all four:
+
+       * the title names exactly one year, and the other title names none —
+         two stated years are two questions, always;
+       * the dated row's own resolution year is that year or the next, so the
+         venue's date agrees with the venue's title;
+       * the two rows resolve inside one cycle (:func:`_resolve_within_one_cycle`)
+         — this is what refuses the undated "Masters Winner" beside a dated one
+         a year later, the hazard removal 2's tighter date check exists for;
+       * the two rows price the SAME outcome names, non-empty — the independent,
+         row-level second signal a title match is only a candidate without.
+
+       The four rows on the same page that come closest to this shape all stay
+       refused, three of them on the first gate alone: ``#1 Paid App`` beside
+       ``#2``, the 2027 Women's World Cup beside the 2030 men's, the U.S. House
+       beside the U.S. Senate, Ankara's high temperature beside Dallas's.
 
     WHY THIS IS NOT A THRESHOLD MOVE, measured on the 23 same-bundle pairs served
     on page one at 13:30 PT 2026-09-09:
@@ -870,6 +958,19 @@ def _comparison_title(data: dict[str, Any], other: dict[str, Any]) -> str:
         year = int(_LEADING_YEAR_RE.match(title).group(0).strip())
         if _resolution_year(data) == year and _resolution_year(other) == year:
             title = _LEADING_YEAR_RE.sub("", title, count=1)
+
+    if _ANY_YEAR_RE.search(title) and not _ANY_YEAR_RE.search(other_stripped):
+        years = {match.group(0) for match in _ANY_YEAR_RE.finditer(title)}
+        if len(years) == 1:
+            year = int(years.pop())
+            priced = _priced_outcome_names(data)
+            if (
+                _resolution_year(data) in (year, year + 1)
+                and _resolve_within_one_cycle(data, other)
+                and priced
+                and priced == _priced_outcome_names(other)
+            ):
+                title = _ANY_YEAR_RE.sub("", title).strip()
 
     return title
 

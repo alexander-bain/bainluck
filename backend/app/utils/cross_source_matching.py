@@ -66,6 +66,16 @@ _TOKEN_ALIASES = {
 }
 _DIRECTION_TOKENS = {"over", "under"}
 
+#: A dotted acronym — ``u.s.``, ``u.k.``, ``a.m.`` — matched on the lowercased
+#: title so :func:`_near_match_tokens` can rejoin it into one token instead of
+#: letting ``_TOKEN_RE`` shatter it into single characters. Requires at least two
+#: dotted letters, so an ordinary sentence cannot match it.
+_DOTTED_ACRONYM_RE = re.compile(r"\b[a-z](?:\.[a-z])+\.?")
+
+
+def _join_acronym(match: re.Match) -> str:
+    return match.group(0).replace(".", "")
+
 
 def source(market: FuturesMarket) -> str:
     """Return the lowercased source name for a market."""
@@ -99,8 +109,30 @@ def normalize_question(q: str) -> str:
 
 
 def _near_match_tokens(q: str) -> set[str]:
+    """Tokenize a question, rejoining dotted acronyms first (#6537).
+
+    ``U.S.`` split into the two single-character tokens ``u`` and ``s``, which
+    are in neither side's meaning and cost a pair two union slots — the artefact
+    that refused Kalshi's "Which party will win the U.S. House?" beside
+    Polymarket's "Which party will win the House in 2026?" on the thresholds even
+    after the year qualifier was set aside. The EXACT arm never had this problem:
+    :func:`normalize_question` deletes the dots and inserts nothing, so it has
+    always read "U.S. House" and "US House" as one string. This is the near arm
+    agreeing with it about what a word is.
+
+    REJOINED, never dropped, and this is the whole safety of it: ``U.S.`` -> ``us``
+    and ``U.K.`` -> ``uk`` stay distinct, where deleting single-character tokens
+    would have collapsed two countries into the same question. It is also NOT
+    "tokenize the normalized string" — that would fuse ``men's`` into ``mens``,
+    and the measured 2027 Women's World Cup duplicate (Jaccard 0.75, one token of
+    room) falls under the bound when it loses its ``s``.
+
+    Effect on the controls this predicate is bound by is to move them AWAY from
+    the bound: the U.S. House beside the U.S. Senate reads 0.667 / 0.800 here
+    where it read 0.714 / 0.833.
+    """
     tokens = []
-    for token in _TOKEN_RE.findall(q.lower()):
+    for token in _TOKEN_RE.findall(_DOTTED_ACRONYM_RE.sub(_join_acronym, q.lower())):
         canonical = _TOKEN_ALIASES.get(token, token)
         if canonical not in _STOPWORDS:
             tokens.append(canonical)
