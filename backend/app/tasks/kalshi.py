@@ -3729,6 +3729,27 @@ async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
                                 len(withdrawn), len(heroes), row.id,
                                 row.external_id,
                             )
+                        # The withdrawal owns its own transaction
+                        # (`5896-COMMIT-WHOLE-BOOK-WITHDRAWAL-BEFORE-EARLY-CONTINUE`,
+                        # CERT-2933's named follow-up). The per-market commit
+                        # is the LAST statement of this loop's body and the
+                        # `continue` below jumps over it, so without this the
+                        # two UPDATEs above sit uncommitted in a session shared
+                        # with every later market: dropped outright when this
+                        # is the last market the run reaches, rolled back with
+                        # a later market whose own commit raises, or carried by
+                        # a transaction that is not theirs — which is the exact
+                        # coupling the per-market commit exists to prevent
+                        # (gotcha #13 / #42). Reported the same way as that
+                        # commit, because a deadlock here must cost one market
+                        # and not the pass.
+                        try:
+                            await session.commit()
+                        except Exception as exc:  # noqa: BLE001
+                            await session.rollback()
+                            stats["errors"].append(
+                                f"{row.external_id}: {str(exc)[:120]}"
+                            )
                         # Never fall through to the price loop: writing the
                         # artifact back is the defect, and a `continue` here
                         # is what makes the withdrawal hold for longer than

@@ -121,11 +121,26 @@ class _Session:
         self.writes: list[object] = []
         #: (statement, params) in execution order, for the text statements.
         self.text_calls: list[tuple[object, dict]] = []
+        #: Every execute AND every commit/rollback, in one ordered log.
+        #:
+        #: The two write lists above cannot see a transaction boundary, and a
+        #: boundary is the whole question CERT-2933's named follow-up asks: the
+        #: withdrawal's two statements run and then `continue` skips the
+        #: per-market commit at the bottom of the loop, so what they wrote sits
+        #: uncommitted in a session shared with every later market. It is
+        #: committed by whichever market commits next — or rolled back with
+        #: that market if its commit raises, or dropped entirely when the
+        #: withdrawn market is the last one the run reaches.
+        self.journal: list[str] = []
 
     async def execute(self, stmt, *args, **kwargs):
         if isinstance(stmt, TextClause):
             params = args[0] if args else kwargs.get("params") or {}
             self.text_calls.append((stmt, params))
+            if stmt is _KALSHI_WITHDRAW_PRE_KICKOFF_SQL:
+                self.journal.append("withdraw-quotes")
+            elif stmt is _KALSHI_WITHDRAW_EVENT_HERO_SQL:
+                self.journal.append("withdraw-hero")
             if stmt is _KALSHI_WITHDRAW_PRE_KICKOFF_SQL:
                 return _Result(self._withdrawn_rows)
             if stmt is _KALSHI_WITHDRAW_EVENT_HERO_SQL:
@@ -134,12 +149,15 @@ class _Session:
         if isinstance(stmt, Select):
             return _Result([(eid, win) for eid, win in self._existing.items()])
         self.writes.append(stmt)
+        self.journal.append("write")
         return _Result(rowcount=1)
 
     async def commit(self):
+        self.journal.append("commit")
         return None
 
     async def rollback(self):
+        self.journal.append("rollback")
         return None
 
 
@@ -583,3 +601,200 @@ def test_the_selector_reads_the_same_two_clauses_the_statements_enforce():
         "(e.status = 'scheduled' AND e.commence_time > NOW()) AS pre_kickoff"
         in selector
     )
+
+
+# --------------------------------------------------------------------------
+# 7. the withdrawal owns its own transaction
+#
+# CERT-2933's named follow-up,
+# `5896-COMMIT-WHOLE-BOOK-WITHDRAWAL-BEFORE-EARLY-CONTINUE`.
+#
+# 🔴 THE `continue` THAT MAKES THE WITHDRAWAL HOLD ALSO SKIPPED THE COMMIT.
+# The per-market `await session.commit()` is the LAST statement of the market
+# loop's body (gotcha #13 / #42: one bad market may not roll back a series'
+# worth of prices). The withdrawal branch jumps over it. The two UPDATEs are
+# therefore left uncommitted in a session shared with every later market, and
+# three things can happen to them, none of which is "the page changes":
+#
+#   * the withdrawn market is the LAST one the run reaches — the last series,
+#     or the deadline breaks the loop one market later — and the session closes
+#     with the writes never committed;
+#   * a later market's commit RAISES, and the `except` rolls the withdrawal
+#     back with it;
+#   * they are committed by a later market's transaction, which is precisely
+#     the coupling the per-market commit exists to prevent.
+#
+# The visible cost is the ship going intermittently inert: the hourly pass
+# reports `pre_kickoff_quotes_withdrawn: 3` while the page keeps serving 99%,
+# which reads as "the fix ran and the fix is wrong" rather than "the write was
+# dropped". Same class as #5771's `pre_kickoff_quotes_withdrawn: 0` — a
+# counter that counts the decision, not the durable row.
+# --------------------------------------------------------------------------
+
+
+def _journal_after(session, marker: str) -> list[str]:
+    """Everything the session did AFTER the last withdrawal statement."""
+    idx = len(session.journal) - 1 - session.journal[::-1].index(marker)
+    return session.journal[idx + 1 :]
+
+
+@pytest.mark.asyncio
+async def test_the_whole_book_withdrawal_commits_before_the_loop_moves_on(
+    monkeypatch,
+):
+    """The withdrawn market's transaction closes on the withdrawn market.
+
+    Asserted on the ORDER, not on a count: `commit` appearing anywhere in the
+    log is true of a run that committed only because some later market did.
+    """
+    _stats, session = await _run(monkeypatch, _settled_book(), {}, pre_kickoff=True)
+
+    assert session.journal.count("withdraw-hero") == 1
+    assert "commit" in _journal_after(session, "withdraw-hero"), (
+        "the withdrawal's two statements were never committed by their own "
+        f"market — journal: {session.journal}"
+    )
+    # And nothing was written between the hero statement and that commit: the
+    # transaction the withdrawal commits is the withdrawal's, not a later
+    # market's work that happens to carry it.
+    after = _journal_after(session, "withdraw-hero")
+    assert after[0] == "commit", after
+
+
+@pytest.mark.asyncio
+async def test_a_later_markets_failed_commit_cannot_take_the_withdrawal_with_it(
+    monkeypatch,
+):
+    """The load-bearing case, and the one a single-market fixture cannot see.
+
+    Two markets in one series: the first is withdrawn before kick-off, the
+    second is a live book whose commit raises. Without a commit of its own the
+    first market's two UPDATEs are still open when the `except` rolls back, so
+    the reader's page keeps the settled 99% and the counter still says 3.
+    """
+    withdrawn_row = _Row(
+        60482103,
+        "KXLALIGAGAME",
+        "KXLALIGAGAME-26SEP13SANALA",
+        "Racing Santander vs Alaves",
+        pre_kickoff=True,
+    )
+    live_row = _Row(
+        60482104,
+        "KXLALIGAGAME",
+        "KXLALIGAGAME-26SEP13BETVAL",
+        "Real Betis vs Valencia",
+        pre_kickoff=True,
+    )
+    live_legs = [
+        dict(leg, event_ticker=live_row.external_id, ticker=f"{live_row.external_id}-B")
+        for leg in _live_book()
+    ]
+    session = _Session(
+        [withdrawn_row, live_row],
+        {},
+        withdrawn_rows=[(1,), (2,)],
+        hero_rows=[(15298075,)],
+    )
+
+    real_commit = session.commit
+
+    async def _commit():
+        # The LIVE market's commit is the one that fails, identified by what
+        # it is carrying rather than by its ordinal: the withdrawal branch
+        # writes no `futures_outcomes` rows at all (it `continue`s before the
+        # price loop), so a non-empty `writes` means the live market's prices
+        # are in this transaction. Counting commits would make the fixture
+        # depend on the very commit under test.
+        carrying_live_prices = bool(session.writes)
+        await real_commit()
+        if carrying_live_prices:
+            raise RuntimeError("deadlock detected")
+
+    session.commit = _commit
+    service = _Service(_settled_book() + live_legs)
+
+    @asynccontextmanager
+    async def _fake_session():
+        yield session
+
+    monkeypatch.setattr(k, "get_task_session", _fake_session)
+    monkeypatch.setattr(
+        "app.services.kalshi_api.KalshiAPIService", lambda *a, **kw: service
+    )
+    stats = await k._refresh_linked_game_books()
+
+    assert stats["pre_kickoff_quotes_withdrawn"] == 2
+    assert "rollback" in session.journal, session.journal
+
+    # 🔴 THE ASSERTION IS THE GAP, NOT THE ORDER OF THE TWO WORDS.
+    # "a commit precedes the rollback" and "a commit follows the hero" are
+    # both TRUE of the unfixed code, because the live market commits and then
+    # fails: its own commit sits between them. The only claim that separates
+    # the two transactions is that the withdrawal's commit lands BEFORE the
+    # live market has written anything into the session.
+    after = _journal_after(session, "withdraw-hero")
+    first_write = after.index("write") if "write" in after else len(after)
+    assert "commit" in after[:first_write], (
+        "the withdrawal was still open when the live market started writing, "
+        f"so the failed commit rolled it back too — journal: {session.journal}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_failing_withdrawal_commit_is_recorded_and_the_run_continues(
+    monkeypatch,
+):
+    """A commit that raises is the per-market contract, not an exception path.
+
+    The bottom-of-loop commit catches, rolls back and records the market in
+    `errors` (gotcha #42: one bad item never wipes the pass). The new commit
+    is the same commit and answers the same way — otherwise the withdrawal
+    branch is the one place where a deadlock kills the whole run.
+    """
+    row = _Row(
+        60482103,
+        "KXLALIGAGAME",
+        "KXLALIGAGAME-26SEP13SANALA",
+        "Racing Santander vs Alaves",
+        pre_kickoff=True,
+    )
+    session = _Session([row], {}, withdrawn_rows=[(1,)], hero_rows=[])
+
+    async def _commit():
+        session.journal.append("commit")
+        raise RuntimeError("deadlock detected")
+
+    session.commit = _commit
+    service = _Service(_settled_book())
+
+    @asynccontextmanager
+    async def _fake_session():
+        yield session
+
+    monkeypatch.setattr(k, "get_task_session", _fake_session)
+    monkeypatch.setattr(
+        "app.services.kalshi_api.KalshiAPIService", lambda *a, **kw: service
+    )
+    stats = await k._refresh_linked_game_books()
+
+    assert stats["terminal"] == "complete"
+    assert any("KXLALIGAGAME-26SEP13SANALA" in e for e in stats["errors"]), stats[
+        "errors"
+    ]
+    assert "rollback" in session.journal
+
+
+@pytest.mark.asyncio
+async def test_a_live_book_still_commits_exactly_once_at_the_bottom(monkeypatch):
+    """Anti-vacuity for the three above: the control's commit did not move.
+
+    A market that is NOT withdrawn must still take exactly one commit, at the
+    end of its own body — a second commit added to the withdrawal branch must
+    not have been added to the shared path by mistake.
+    """
+    _stats, session = await _run(monkeypatch, _live_book(), {}, pre_kickoff=True)
+
+    assert session.journal.count("commit") == 1
+    assert session.journal.count("withdraw-hero") == 0
+    assert session.journal[-1] == "commit"
