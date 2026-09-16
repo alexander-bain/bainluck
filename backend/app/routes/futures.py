@@ -5008,6 +5008,7 @@ def _format_market_detail(
     leads with "Other 100%" while search shows "Cleveland Cavaliers 31%".
     """
     from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
+    from app.utils.superseded_name_twins import drop_superseded_name_twins
     from app.utils.field_opening_coherence import field_openings_publishable
     from app.utils.outcome_display import (
         is_placeholder_outcome_name,
@@ -5023,9 +5024,34 @@ def _format_market_detail(
     # `normalize_display_probs`'s divisor and squeezes every number the page
     # prints. That is the same mechanism as the "Other 1.0" halving documented
     # below, arriving from a different direction.
+    # #6508 — one question, one row. A prior cycle's leg stays attached to the
+    # board that replaced it, so `/futures/113486` printed `December 31` at 10%
+    # directly above `December 31` at 0%: one label, two answers, nothing on the
+    # page telling them apart. Five boards do this (112914, 113039, 113040,
+    # 113486, and 112938 twice over).
+    #
+    # Both rows are REAL — the venue's `end_date_iso` is 2026-01-01 on one leg
+    # and 2027-01-01 on the other — so this is emphatically NOT dedup by name,
+    # which would delete a true row and pick the survivor on an arbitrary sort
+    # key. It drops only a row the venue has already GRADED A LOSS while an
+    # unsettled, id-anchored sibling carries the same label; the whole
+    # correspondence argument, the three guards and the measurement that killed
+    # the two rival designs live on the helper.
+    #
+    # Here rather than in the summary serializer, and that is measured, not
+    # assumed: the card's `top_outcomes` takes the top 5 by probability and
+    # every superseded row prices 0.0, so no card surfaces one today (checked on
+    # all five boards via `/api/events/search`). Applying it there as well would
+    # put a ranking-path serializer in scope for no reader-visible gain.
     valid_outcomes = [
         o
-        for o in drop_duplicate_legs(market.outcomes, lambda o: o.external_id)
+        for o in drop_superseded_name_twins(
+            drop_duplicate_legs(market.outcomes, lambda o: o.external_id),
+            name_of=lambda o: o.name,
+            external_id_of=lambda o: o.external_id,
+            is_winner_of=lambda o: o.is_winner,
+            resolution_source_of=lambda o: o.resolution_source,
+        )
         if not is_placeholder_outcome_name(o.name)
     ]
     sorted_outcomes = sorted(
