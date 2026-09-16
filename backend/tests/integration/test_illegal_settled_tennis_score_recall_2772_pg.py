@@ -135,30 +135,57 @@ async def pg_engine():
     await engine.dispose()
 
 
+#: Explicit `sports.id` values for the keys this file has to create, taken from
+#: a range nothing else uses.
+#:
+#: 🔴 NOT `INSERT … RETURNING id`, AND NOT `ON CONFLICT (key)` EITHER — both were
+#: tried and both are red on CI for the same reason, which is the shared
+#: database again wearing a second face. A sibling step seeds `sports` with
+#: EXPLICIT ids, which never advances the serial sequence, so the sequence still
+#: reads 1 while rows 1..N exist: any insert that lets the default fire raises
+#: `UniqueViolationError` on `sports_pkey` — the PRIMARY key, which an
+#: `ON CONFLICT (key)` clause does not cover and cannot. Choosing the id removes
+#: the sequence from the question entirely, and makes the cleanup exact: these
+#: ids are the only `sports` rows this file may delete.
+SPORT_IDS = {
+    key: 992000 + i
+    for i, key in enumerate(sorted({row[1] for row in SEED}))
+}
+
+
 async def _clear(conn):
     """Remove only this file's own rows, by id. See the fixture for why."""
     await conn.execute(
         text("DELETE FROM events WHERE id = ANY(:ids)"),
         {"ids": [row[0] for row in SEED]},
     )
+    await conn.execute(
+        text("DELETE FROM sports WHERE id = ANY(:ids)"),
+        {"ids": sorted(SPORT_IDS.values())},
+    )
 
 
 async def _seed(conn):
     sport_ids = {}
-    for key in sorted({row[1] for row in SEED}):
-        # `ON CONFLICT` because the database is shared: a sibling step may have
-        # inserted `soccer_epl` or a tennis key already, and a plain INSERT
-        # would fail on the unique key rather than reuse the row.
-        sport_ids[key] = (
+    for key, chosen_id in SPORT_IDS.items():
+        # Reuse a sibling step's row when the key is already there — `soccer_epl`
+        # and the tennis keys are not ours alone — and otherwise create our own
+        # at a chosen id.
+        existing = (
+            await conn.execute(
+                text("SELECT id FROM sports WHERE key = :k"), {"k": key}
+            )
+        ).scalar_one_or_none()
+        if existing is None:
             await conn.execute(
                 text(
-                    "INSERT INTO sports (key, name, active) "
-                    "VALUES (:k, :k, true) "
-                    "ON CONFLICT (key) DO UPDATE SET active = true RETURNING id"
+                    "INSERT INTO sports (id, key, name, active) "
+                    "VALUES (:i, :k, :k, true)"
                 ),
-                {"k": key},
+                {"i": chosen_id, "k": key},
             )
-        ).scalar_one()
+            existing = chosen_id
+        sport_ids[key] = existing
     for event_id, sport_key, status, home, away, _ in SEED:
         await conn.execute(
             text(
