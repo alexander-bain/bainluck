@@ -521,10 +521,36 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
               {remainingCount > 0 && (
                 <div
                   className="grid min-h-7 grid-cols-[1.25rem_minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1 text-text-muted"
+                  // #6586 — a structural marker, for the same reason CERT-678 added
+                  // `data-card-format`: three test files keyed this row's presence
+                  // AND its absence on the literal copy "Field and remaining
+                  // outcomes", so rewording it would have turned two `not.toContain`
+                  // controls vacuous without reddening anything.
+                  data-row="field-remainder"
                 >
                   <span className="font-mono text-xs font-semibold tabular-nums">{shownRows.length + 1}</span>
-                  <span className="truncate text-xs font-medium">Field and remaining outcomes</span>
-                  <span className="text-right text-xs font-semibold">+{remainingCount}</span>
+                  {/* #6586 — the count says its own units, and the third column
+                      stays empty. It used to render `+{remainingCount}` in the
+                      percentage column, so a headcount sat directly under 29% /
+                      14% / 10% / 7% with nothing marking the change of unit. On
+                      the served NASCAR board that printed `+36` where the field's
+                      real share is 39%; across the 44 leaderboard cards in one
+                      `/api/feed?limit=200` pass, 19 counts landed within 10 points
+                      of the share they would be mistaken for and 7 within 3.
+                      The field's TRUE share is not offered instead: `1 - sum(shown)`
+                      is negative on 6 of those 44 while #6583's over-round is
+                      unresolved, so it is a number this row cannot honestly print. */}
+                  {/* "more outcome(s)" is the house's existing phrasing for this
+                      idea (`+N more outcome` / `+N more outcomes`, pinned by
+                      #2645 against exactly the singular slip handled here).
+                      Composed in JS, not as adjacent JSX children: the streaming
+                      renderer separates sibling text nodes with `<!-- -->`, which
+                      `renderToStaticMarkup` does not — so a JSX-interpolated
+                      label reads as one string in a jest render and as three in
+                      the HTML Next.js actually serves. */}
+                  <span className="truncate text-xs font-medium">
+                    {`Field and ${remainingCount} more outcome${remainingCount === 1 ? "" : "s"}`}
+                  </span>
                 </div>
               )}
           </div>

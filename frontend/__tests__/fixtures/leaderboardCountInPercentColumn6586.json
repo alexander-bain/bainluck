@@ -1,0 +1,284 @@
+{
+  "nascar_oreilly_36_vs_39": {
+    "data": {
+      "canonical_market_key": "motorsports:NASCAR:championship:2026",
+      "card_sum_reason": null,
+      "confidence_score": 0.5294,
+      "confidence_signals": {
+        "has_closing_line": false
+      },
+      "confidence_tier": "moderate",
+      "discover_card": {
+        "bundle_candidate": true,
+        "comparison_theme": "sports_paths",
+        "distribution_outcomes": [
+          {
+            "label": "Justin Allgaier",
+            "movement": null,
+            "probability": 0.2934
+          },
+          {
+            "label": "Carson Kvapil",
+            "movement": null,
+            "probability": 0.1364
+          },
+          {
+            "label": "Sheldon Creed",
+            "movement": null,
+            "probability": 0.1033
+          },
+          {
+            "label": "Jesse Love",
+            "movement": null,
+            "probability": 0.0744
+          },
+          {
+            "label": "Austin Hill",
+            "movement": null,
+            "probability": 0.0537
+          },
+          {
+            "label": "Corey Day",
+            "movement": null,
+            "probability": 0.0207
+          },
+          {
+            "label": "Sammy Smith",
+            "movement": null,
+            "probability": 0.0165
+          },
+          {
+            "label": "Brandon Jones",
+            "movement": null,
+            "probability": 0.0165
+          }
+        ],
+        "ladder_treatment_refused": false,
+        "public_source_disagreement": false,
+        "qa_signals": [
+          "multi_source_consistency_check"
+        ],
+        "reasons": [
+          "multi_outcome_distribution",
+          "bundle_candidate"
+        ],
+        "remaining_outcome_count": 32,
+        "suggested_format": "outcome_distribution",
+        "threshold_points": []
+      },
+      "group_id": "kalshi:KXNASCARAUTOPARTSSERIES-NAPS26",
+      "group_type": "kalshi_event",
+      "hook_description": null,
+      "id": 363922,
+      "image_height": 350,
+      "image_url": "https://images.pexels.com/photos/32290474/pexels-photo-32290474.jpeg?auto=compress&cs=tinysrgb&h=350",
+      "image_width": 525,
+      "interestingness_reasons": [
+        "decisive_but_not_settled",
+        "multi_source"
+      ],
+      "interestingness_score": 42.3,
+      "llm_sport_category": "motorsports",
+      "market_tags": [
+        "category:championship",
+        "market_status:open",
+        "source:kalshi",
+        "sport:motorsports",
+        "tier:1"
+      ],
+      "market_tier": 1,
+      "market_type": "field",
+      "name": "NASCAR O'Reilly Auto Parts Series Champion",
+      "outcome_count": 40,
+      "price_observed_at": "2026-09-16T16:50:27+00:00",
+      "resolution_date": "2026-11-09T15:00:00+00:00",
+      "source": "kalshi",
+      "source_count": 2,
+      "sources": [
+        "kalshi",
+        "polymarket"
+      ],
+      "sport": null,
+      "sport_name": null,
+      "status": "open",
+      "temporal_badge": null,
+      "top_outcomes": [
+        {
+          "id": 2842668,
+          "movement": null,
+          "name": "Justin Allgaier",
+          "probability": 0.2934,
+          "rank": 1,
+          "rendered_percent": 29
+        },
+        {
+          "id": 2842691,
+          "movement": null,
+          "name": "Carson Kvapil",
+          "probability": 0.1364,
+          "rank": 2,
+          "rendered_percent": 14
+        },
+        {
+          "id": 2842680,
+          "movement": null,
+          "name": "Sheldon Creed",
+          "probability": 0.1033,
+          "rank": 3,
+          "rendered_percent": 10
+        }
+      ]
+    },
+    "item": {
+      "context_summary": "Justin Allgaier leads at 29%",
+      "headline": "Justin Allgaier leads at 29%",
+      "reason": "Justin Allgaier (29%) leads NASCAR O'Reilly Auto Parts Series Champion",
+      "score": 49,
+      "type": "futures"
+    }
+  },
+  "press_secretary_40_vs_41": {
+    "data": {
+      "canonical_market_key": "politics::championship:2029",
+      "card_sum_reason": null,
+      "confidence_score": 0.3529,
+      "confidence_signals": {
+        "has_closing_line": false
+      },
+      "confidence_tier": "low",
+      "discover_card": {
+        "bundle_candidate": false,
+        "comparison_theme": null,
+        "distribution_outcomes": [
+          {
+            "label": "Anna Kelly",
+            "movement": null,
+            "probability": 0.2029
+          },
+          {
+            "label": "Scott Jennings",
+            "movement": null,
+            "probability": 0.184
+          },
+          {
+            "label": "Maria Bartiromo",
+            "movement": 0.0,
+            "probability": 0.1652
+          },
+          {
+            "label": "Alina Habba",
+            "movement": null,
+            "probability": 0.0401
+          },
+          {
+            "label": "Natalie Harp",
+            "movement": null,
+            "probability": 0.0236
+          },
+          {
+            "label": "Margo Martin",
+            "movement": null,
+            "probability": 0.0236
+          },
+          {
+            "label": "Elizabeth Pipko",
+            "movement": null,
+            "probability": 0.0236
+          },
+          {
+            "label": "Roma Daravi",
+            "movement": null,
+            "probability": 0.0142
+          }
+        ],
+        "ladder_treatment_refused": false,
+        "public_source_disagreement": false,
+        "qa_signals": [],
+        "reasons": [
+          "multi_outcome_distribution"
+        ],
+        "remaining_outcome_count": 36,
+        "suggested_format": "outcome_distribution",
+        "threshold_points": []
+      },
+      "discover_llm": {
+        "archetype": "other",
+        "audience_scope": "mainstream",
+        "comparison_axes": [],
+        "junk_flags": [],
+        "salience_score": 3,
+        "subtopic": "press secretary",
+        "topic": "politics"
+      },
+      "group_id": "kalshi:KXNEXTPRESSEC-29JAN21",
+      "group_type": "kalshi_event",
+      "hook_description": null,
+      "id": 108328,
+      "image_height": 350,
+      "image_url": "https://images.pexels.com/photos/5854416/pexels-photo-5854416.jpeg?auto=compress&cs=tinysrgb&h=350",
+      "image_width": 467,
+      "interestingness_reasons": [
+        "decisive_but_not_settled",
+        "fresh",
+        "trading_volume"
+      ],
+      "interestingness_score": 48.14,
+      "llm_sport_category": "politics",
+      "market_tags": [
+        "category:conference",
+        "market_status:open",
+        "source:kalshi",
+        "sport:politics",
+        "tier:2"
+      ],
+      "market_tier": 2,
+      "market_type": "field",
+      "name": "Who will be Trump's next Press Secretary?",
+      "outcome_count": 44,
+      "price_observed_at": "2026-09-12T01:01:04+00:00",
+      "resolution_date": "2029-01-21T15:00:00+00:00",
+      "source": "kalshi",
+      "source_count": 1,
+      "sources": [
+        "kalshi"
+      ],
+      "sport": null,
+      "sport_name": null,
+      "status": "open",
+      "temporal_badge": null,
+      "top_outcomes": [
+        {
+          "id": 219753403,
+          "movement": null,
+          "name": "Anna Kelly",
+          "probability": 0.2029,
+          "rank": 1,
+          "rendered_percent": 20
+        },
+        {
+          "id": 1591754,
+          "movement": null,
+          "name": "Scott Jennings",
+          "probability": 0.184,
+          "rank": 2,
+          "rendered_percent": 18
+        },
+        {
+          "id": 225921306,
+          "movement": null,
+          "name": "Maria Bartiromo",
+          "probability": 0.1652,
+          "rank": 3,
+          "rendered_percent": 17
+        }
+      ]
+    },
+    "item": {
+      "context_summary": "Anna Kelly leads at 20%",
+      "headline": "Anna Kelly leads at 20%",
+      "reason": "Anna Kelly (20%) leads Who will be Trump's next Press Secretary?",
+      "score": 65,
+      "type": "futures"
+    }
+  }
+}
