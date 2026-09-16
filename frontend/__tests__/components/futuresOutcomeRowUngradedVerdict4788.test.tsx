@@ -260,10 +260,28 @@ describe("#4788 the rendered row", () => {
     expect(html).toContain("99%");
   });
 
-  it("an ungraded settled row keeps its movement cell", () => {
-    // `outcomeRowPrintsMove` traded the move away for "the row prints its
-    // result". A row with no result has nothing to trade it for.
-    expect(outcomeRowPrintsMove(outcome(), true)).toBe(true);
+  it("#6488 SUPERSEDES: an ungraded row on a SETTLED market prints no movement", () => {
+    // WAS: `expect(outcomeRowPrintsMove(outcome(), true)).toBe(true)` — "a row
+    // with no result has nothing to trade [the movement cell] for".
+    //
+    // #4788's reading of the VERDICT cell is untouched and every assertion above
+    // still holds: this row states no verdict, keeps its name and its 99%, and is
+    // never crowned `Lost`. What changed is the MOVEMENT cell, which the detail
+    // page rules on separately and negatively at three sites (`page.tsx:675`,
+    // `FuturesHero.tsx:51`, `page.tsx:898`) — a settled market never advertises a
+    // live move. `/futures/61120482` printed `LAST MOVE +0.5 pts` under a heading
+    // reading "Final Results"; that is the defect #6488 removes.
+    //
+    // The hole this test was written to prevent does not appear: `showLastMove`
+    // (#3358) polls this predicate across the whole table, so the column is
+    // dropped rather than filled with dashes.
+    expect(outcomeRowPrintsMove(outcome(), true)).toBe(false);
+  });
+
+  it("#6488 CONTROL: the same ungraded row on an OPEN market still moves", () => {
+    // The direction that proves the gate is `isResolved` and not "ungraded".
+    // #6082's settled-leg-on-an-open-market case lives here and is unchanged.
+    expect(outcomeRowPrintsMove(outcome(), false)).toBe(true);
   });
 
   // ── CONTROLS ────────────────────────────────────────────────────────────────
