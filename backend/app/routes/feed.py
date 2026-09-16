@@ -108,6 +108,7 @@ from app.utils.feed_event_candidates import (
     event_candidate_ids,
 )
 from app.utils.discover_card_archetypes import classify_discover_card_archetype
+from app.utils.game_market_club_names import repair_field_outcome_name
 from app.utils.graded_card import (
     card_sum_reason,
     duel_percents_by_side,
@@ -6117,6 +6118,34 @@ def _scale_display_probability(prob, scale: float):
     return round(float(prob) / scale, 4)
 
 
+def _card_outcome_name(outcome) -> Optional[str]:
+    """The club a reader sees on a feed card, completed from the rung's ticker.
+
+    The feed is the FOURTH reader path of the #6479 engine, after the board
+    detail (#6479), search (#6447) and the chart legend (#6513) — and the only
+    one on page one. `2027 Pro Football Champion` led /sports with a headline
+    reading `Los Angeles R leads at 11%`, and `Pro Baseball Champion` with
+    `Los Angeles D leads at 31%`. Neither is a club.
+
+    ── WHY THIS IS A LABEL HELPER AND NOT AN UPSTREAM REPAIR ────────────────────
+
+    The obvious fix — repair the name once where the outcomes are loaded — is
+    the wrong one, because the same rows feed predicates that are matched
+    against PROVIDER text and must keep seeing it: `drop_dominant_field_outcomes`
+    dedups on the shipped string, `_team_name_matches` compares a saved team
+    against it, and the hook/feature-token derivations tokenise it. Those read
+    `o.name` directly and deliberately still do. Only the sites whose value is
+    printed go through here.
+
+    Returns the shipped name unchanged whenever the engine declines, which stays
+    the common case: it is id-anchored on the rung's own Kalshi outcome ticker
+    AND requires the venue's shipped text to agree, so `Chicago C` on a board
+    whose ticker says `CWS` is left truncated rather than renamed to the wrong
+    club.
+    """
+    return repair_field_outcome_name(outcome.external_id, outcome.name) or outcome.name
+
+
 def _normalize_feed_probabilities(
     top_outcomes: list[dict],
     all_sorted_outcomes: list,
@@ -9523,7 +9552,9 @@ async def _score_sports_mode_futures(
 
         if sorted_outcomes:
             leader = sorted_outcomes[0]
-            leader_name = leader.name
+            # #6479's engine, fourth reader path: the headline and the context
+            # summary print this name, so it is a label (see `_card_outcome_name`).
+            leader_name = _card_outcome_name(leader)
             leader_prob = (
                 float(leader.current_probability)
                 if leader.current_probability
@@ -9750,7 +9781,7 @@ async def _score_sports_mode_futures(
         top_outcomes_data = [
             {
                 "id": o.id,
-                "name": o.name,
+                "name": _card_outcome_name(o),
                 # #6256: `outcome_prints_a_price` is the SAME predicate
                 # `displayed_price_stamp` uses to decide which legs may date the
                 # age mark. Wire-identical to the truthiness test it replaces —
@@ -9955,7 +9986,8 @@ async def _score_sports_mode_futures(
         # so scaling here does not change the chosen card format.
         all_outcomes_for_card = [
             {
-                "name": o.name,
+                # Printed as `discover_card.distribution_outcomes[].label`.
+                "name": _card_outcome_name(o),
                 "probability": _scale_display_probability(
                     float(o.current_probability)
                     if o.current_probability is not None
@@ -11006,7 +11038,8 @@ async def _score_futures(
 
             if sorted_outcomes:
                 leader = sorted_outcomes[0]
-                leader_name = leader.name
+                # The twin of the sports-mode site: headline + context copy.
+                leader_name = _card_outcome_name(leader)
                 leader_prob = (
                     float(leader.current_probability)
                     if leader.current_probability
@@ -11170,7 +11203,7 @@ async def _score_futures(
             top_outcomes_data = [
                 {
                     "id": o.id,
-                    "name": o.name,
+                    "name": _card_outcome_name(o),
                     # #6256 — the twin of the `_score_sports_mode_futures` site.
                     # Same predicate as `displayed_price_stamp`, so the printed
                     # numbers and the age mark cannot drift apart here either.
@@ -11542,7 +11575,9 @@ async def _score_futures(
                     if is_match:
                         matched_outcomes_list.append(
                             {
-                                "name": o.name,
+                                # Served as `matched_outcomes` — a reader's own
+                                # team, so it may not be printed half-named.
+                                "name": _card_outcome_name(o),
                                 "probability": (
                                     float(o.current_probability)
                                     if o.current_probability
@@ -11658,7 +11693,8 @@ async def _score_futures(
             # magnitude, so scaling does not change the chosen card format.
             all_outcomes_for_card = [
                 {
-                    "name": o.name,
+                    # Printed as `discover_card.distribution_outcomes[].label`.
+                    "name": _card_outcome_name(o),
                     "probability": _scale_display_probability(
                         float(o.current_probability)
                         if o.current_probability is not None
