@@ -48,6 +48,7 @@ from app.utils.entity_page_tiers import (
     AVAILABILITY_EMPTY,
     conforming_availability,
 )
+from app.utils.event_esports import classify_esports_prop
 from app.utils.event_tennis import (
     classify_tennis_prop,
     is_tennis_feeder_circuit,
@@ -172,6 +173,11 @@ _PROP_CLASSIFIERS: dict[str, Callable[[str | None, str | None], str | None]] = {
     # linked-matches source does not fix: 55 season-long ranking props sat under
     # "MATCHES · 56" on production.
     "tennis": classify_tennis_prop,
+    # UX-P180 (#2167), the second domain: esports had the identical hole one
+    # domain over. `_INDIVIDUAL_MATCH_SPORTS` routes its `game_prop`s INTO
+    # "matches" and nothing routed them out, so `/hub/esports` printed
+    # "MATCHES · 104" over 104 rows of which zero were matches.
+    "esports": classify_esports_prop,
 }
 
 # Per-domain feeder-circuit predicates, keyed by the SAME `prop_classifier_domain`
@@ -292,6 +298,11 @@ HUB_CONFIGS: dict[str, HubConfig] = {
         ),
         sport_key="esports",
         concept_domain=None,
+        # UX-P180 (#2167): the line tennis got and esports did not. Without it
+        # the split above never runs for this hub, and every `game_prop`
+        # `_assign_section` files under "matches" for an individual sport stays
+        # there with no route out.
+        prop_classifier_domain="esports",
         # Neutral defaults. Esports printed "Fight Markets" over 98 markets until
         # UX-P167 (#2167). `upcoming_label` is declared even though this hub has
         # no rail today (no `concept_domain`), so wiring one later cannot
