@@ -54,6 +54,22 @@ export default function GamePlayCard({
 
   const hasScore = point.homeScore != null && point.awayScore != null;
   const hasScoringPlay = !!point.scoringPlay;
+  /* #6496 — the play sentence is rendered BELOW the badge/score row, not inside
+     it. Measured on production at 390px (live frontend `2ede802a7`): the row's
+     other two children are `shrink-0`, so the text column settles at exactly
+     159px on every game, while an NFL scoring play needs 375-472px on one line.
+     Four of four most-recent completed NFL games clipped, losing 58-66% of the
+     string, and the lost half is the informative one — the type label above
+     already says "Passing Touchdown", so what `Kenneth Walker III 2 Yd pa…`
+     dropped was "ss from Patrick Mahomes". There was no `title` attribute, so
+     the text was unreachable by any reader, and a phone reader could not hover
+     one anyway.
+     Full width here is 334px, so two lines hold 668px — every measured play
+     fits, worst case 472px. Keeping it in the column and merely clamping would
+     NOT have worked: 2 x 159px = 318px still clips the 418px specimen. */
+  const scoringPlayText = point.scoringPlay
+    ? point.scoringPlay.description || point.scoringPlay.short_text || ""
+    : "";
   /* #3295 — THE NINTH INSTANCE OF THE #2452 SHAPE, on the live event page.
      Seen on production during US Open R32, event 15304209, while Fritz was in
      his fourth set: the hero printed `62% – 38%` and this card, one scroll
@@ -178,9 +194,6 @@ export default function GamePlayCard({
                   </span>
                 )}
               </p>
-              <p className="text-xs text-text-primary mt-0.5 truncate">
-                {point.scoringPlay!.description || point.scoringPlay!.short_text || ""}
-              </p>
             </div>
           ) : point.probKnown === false ? (
             /* #3459 — no source has a probability for this event, so there is no
@@ -207,6 +220,24 @@ export default function GamePlayCard({
           )}
         </div>
       </div>
+
+      {/* #6496 — the play sentence, at the card's full width.
+          `line-clamp-2`, NEVER `truncate`: the two cannot be combined, because
+          `truncate` sets `white-space: nowrap` and silently defeats the clamp,
+          which would ship back the exact bug this fixes. That is #4342's finding
+          on the golf list (`UpcomingTournaments.tsx:96`), the same shape — a
+          `min-w-0` text column squeezed by `shrink-0` siblings — and
+          `line-clamp-2` is already the house idiom. The clamp keeps a
+          pathological string from growing the card without bound; nothing
+          measured reaches it. */}
+      {hasScoringPlay && scoringPlayText && (
+        <p
+          className="text-xs text-text-primary mt-1 line-clamp-2"
+          data-testid="game-play-card-description"
+        >
+          {scoringPlayText}
+        </p>
+      )}
     </div>
   );
 }
