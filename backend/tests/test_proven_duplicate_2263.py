@@ -41,6 +41,7 @@ WHAT THIS SUITE PINS, in the order the fix runs:
   Part E  the reader of the id columns cannot drift from their writer.
 """
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -72,7 +73,11 @@ from app.services.event_registry import (  # noqa: E402
     _structured_matches,
     EventClaim,
 )
-from app.utils.proven_duplicates import not_a_proven_duplicate  # noqa: E402
+from app.services.anchor_channel import is_drain_candidate_row  # noqa: E402
+from app.utils.proven_duplicates import (  # noqa: E402
+    canonical_id_from_tags,
+    not_a_proven_duplicate,
+)
 
 from tests.test_event_registry import _FakeRegistrySession  # noqa: E402
 
@@ -1024,3 +1029,303 @@ class TestTheFoldEndToEnd:
 
         assert market_ids == []
         assert response["other"] == []
+
+
+# ── Part H — the DETAIL route reads the tag (#2263 residual) ─────────────────
+#
+# Parts C and D pin every LIST surface. None of them can pin this one, and the
+# gap is structural rather than an oversight: `not_a_proven_duplicate()` is a
+# `WHERE` clause, and a detail page has one row and no list to filter — applying
+# it there answers "do not print this" and 404s a game that exists.
+#
+# So the ghost stayed addressable and stayed wrong. Measured on production
+# 2026-09-16 05:33Z: `/api/events/15308290` served `suspended`, no score, for a
+# Cardinals-Giants game that had finished 3-10 three hours earlier on 15312656 —
+# the id its own tag names — and 255 of 258 tagged rows sitewide are past-dated
+# the same way. Two reader paths reach it, both ending at this route: a shared
+# link, and a market card (1,766 markets hang off 188 tagged ghosts).
+#
+# The specimen below is that production pair, by its real ids.
+
+GHOST_15308290 = 15308290
+CANON_15312656 = 15312656
+
+
+class TestTheHelperReadsTheTag:
+    """Part H(i) — the pure half, every shape a driver can hand back."""
+
+    def test_the_production_specimen_resolves_to_its_canonical(self):
+        assert (
+            canonical_id_from_tags(
+                [
+                    "audience:local_interest",
+                    "competitive_structure:head_to_head",
+                    duplicate_tag(CANON_15312656),
+                    "provenance:source:statpal",
+                    "provenance:unanchored",
+                ]
+            )
+            == CANON_15312656
+        )
+
+    def test_the_serialised_text_form_resolves_identically(self):
+        """🔴 SQLite hands back the JSON text; asyncpg hands back a list.
+
+        Iterating the text would yield single CHARACTERS, find no tag, and
+        return None — a miss indistinguishable from a clean row, which is
+        exactly how this would have shipped looking green.
+        """
+        assert (
+            canonical_id_from_tags(json.dumps([duplicate_tag(CANON_15312656)]))
+            == CANON_15312656
+        )
+
+    def test_an_untagged_row_resolves_to_nothing(self):
+        """🔴 THE ANTI-VACUITY CONTROL. If this ever fails, every clean event
+        page on the site is swapping to some other game."""
+        assert canonical_id_from_tags(None) is None
+        assert canonical_id_from_tags([]) is None
+
+    def test_a_row_carrying_OTHER_provenance_tags_is_untouched(self):
+        """`provenance:source:statpal` and `provenance:unanchored` are not this
+        tag, and a prefix match on `provenance:` would swallow both.
+
+        🔴 THE THIRD TAG IS THE ONLY ONE THAT ACTUALLY TESTS THE PREFIX, and it
+        is here because the first two do not. Mutating the helper to match the
+        broad `provenance:` prefix and take the last colon-segment SURVIVED a
+        control built from the real vocabulary: the tails are `statpal` and
+        `unanchored`, neither is a digit string, so the loose matcher refuses
+        them for the wrong reason and the control passes green.
+
+        No provenance tag carries a numeric tail today — the writers are
+        `provenance:source:<name>`, `provenance:unanchored` and this one — so
+        that case is manufactured deliberately. The day one is added, a helper
+        matching the prefix loosely serves a reader some other game entirely;
+        this line is what stops that shipping green.
+        """
+        assert (
+            canonical_id_from_tags(
+                [
+                    "provenance:source:statpal",
+                    "provenance:unanchored",
+                    "provenance:source:15312656",
+                ]
+            )
+            is None
+        )
+
+    def test_a_malformed_tail_is_a_refusal_and_never_an_exception(self):
+        """A read path. A garbled tag prints the row it was given."""
+        assert canonical_id_from_tags(["provenance:duplicate-of:"]) is None
+        assert canonical_id_from_tags(["provenance:duplicate-of:abc"]) is None
+        assert canonical_id_from_tags(["provenance:duplicate-of:-5"]) is None
+        assert canonical_id_from_tags("not json at all") is None
+        assert canonical_id_from_tags(json.dumps({"not": "a list"})) is None
+        assert canonical_id_from_tags([None, 17, {"a": 1}]) is None
+
+    def test_it_reads_the_SAME_tag_its_writer_writes(self):
+        """The drift guard. `duplicate_tag` is the only writer of this element;
+        a helper that parsed a restated literal could not see it move."""
+        assert canonical_id_from_tags([duplicate_tag(4242)]) == 4242
+
+
+class TestTheDetailRouteSwapsTheRow:
+    """Part H(ii) — executed against a real engine, not asserted on a mock.
+
+    The route's swap is two steps: read the tag off the row in hand, then read
+    that id back. Both are executed here over the same SQLite engine Part C
+    uses, so what is pinned is the reader's outcome — the score and the state a
+    person actually sees — rather than the shape of a call.
+    """
+
+    @pytest.fixture
+    def detail_engine(self):
+        eng = create_engine("sqlite://")
+        Base.metadata.create_all(eng)
+        with Session(eng) as s:
+            s.add(Sport(id=S_MLB, key="baseball_mlb", name="MLB"))
+            # The ghost, exactly as production holds it: minted 5 days early,
+            # never scored, never completed, and correctly tagged.
+            s.add(
+                _row(
+                    GHOST_15308290,
+                    GOOD_TIME,
+                    event_tags=[
+                        "provenance:source:statpal",
+                        duplicate_tag(CANON_15312656),
+                    ],
+                    status="suspended",
+                )
+            )
+            s.add(
+                _row(
+                    CANON_15312656,
+                    GOOD_TIME,
+                    event_tags=None,
+                    status="completed",
+                    home_score=3,
+                    away_score=10,
+                )
+            )
+            s.commit()
+        return eng
+
+    def _served(self, eng, requested_id):
+        """What the route resolves `requested_id` to, by its own two steps."""
+        with Session(eng) as s:
+            row = s.execute(
+                select(Event).where(Event.id == requested_id)
+            ).scalar_one_or_none()
+            assert row is not None, "the fixture must hold the row under test"
+            canonical_id = canonical_id_from_tags(row.event_tags)
+            if canonical_id is not None and canonical_id != requested_id:
+                swapped = s.execute(
+                    select(Event).where(Event.id == canonical_id)
+                ).scalar_one_or_none()
+                if swapped is not None:
+                    row = swapped
+            return row.id, row.status, row.home_score, row.away_score
+
+    def test_the_ghosts_url_serves_the_finished_game(self, detail_engine):
+        """The ship: /events/15308290 stops saying `suspended, no score`."""
+        assert self._served(detail_engine, GHOST_15308290) == (
+            CANON_15312656,
+            "completed",
+            3,
+            10,
+        )
+
+    def test_the_canonicals_own_url_is_unchanged(self, detail_engine):
+        """🔴 THE CONTROL. The 99.9% of traffic that asks for a clean row must
+        get that row — a swap that fires here is a site-wide wrong-game bug."""
+        assert self._served(detail_engine, CANON_15312656) == (
+            CANON_15312656,
+            "completed",
+            3,
+            10,
+        )
+
+    def test_a_tag_naming_a_vanished_row_serves_what_was_asked_for(self):
+        """A refusal, not a 404: the row the caller asked for still exists.
+
+        258 of 258 targets resolved on production 2026-09-16, so this guards a
+        future race rather than today's data.
+        """
+        eng = create_engine("sqlite://")
+        Base.metadata.create_all(eng)
+        with Session(eng) as s:
+            s.add(Sport(id=S_MLB, key="baseball_mlb", name="MLB"))
+            s.add(
+                _row(
+                    GHOST_15308290,
+                    GOOD_TIME,
+                    event_tags=[duplicate_tag(404404)],
+                    status="suspended",
+                )
+            )
+            s.commit()
+        assert self._served(eng, GHOST_15308290)[0] == GHOST_15308290
+
+
+class TestTheRouteIsActuallyWired:
+    """Part H(iii) — the arm is in `get_event`'s body, and it is FIRST.
+
+    🔴 AN ORDERING CLAIM IS ONLY MEANINGFUL INSIDE ONE FUNCTION BODY. Comparing
+    two line numbers across a module measures text, not execution — a helper
+    DEFINED below a boundary may be CALLED from far above it. So the precondition
+    is asserted first and loudly: both calls must live in `get_event` itself.
+    Without that line this test could pass on code where neither call is reached.
+    """
+
+    def _get_event_body(self):
+        import ast
+        import inspect
+
+        from app.routes.events import get_event
+
+        tree = ast.parse(inspect.getsource(get_event))
+        called = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                called.setdefault(node.func.id, node.lineno)
+        return called
+
+    def test_both_arms_are_called_from_get_event_itself(self):
+        called = self._get_event_body()
+        assert "canonical_id_from_tags" in called, (
+            "the #2263 tag arm is not called from get_event — the ghost URL is "
+            "serving a wrong-state page again"
+        )
+        assert "is_drain_candidate_row" in called, (
+            "the Q050 arm left get_event; this test's ordering claim below is "
+            "no longer about two things that both run here"
+        )
+
+    def test_the_tag_arm_runs_before_the_inferred_one(self):
+        """The tag is a written proof; the other arm reconstructs one. Cheaper
+        too: the tag is on the row already in hand and costs no query on a miss.
+        """
+        called = self._get_event_body()
+        assert called["canonical_id_from_tags"] < called["is_drain_candidate_row"]
+
+    def test_both_arms_swap_the_SAME_names(self):
+        """🔴 WRITTEN BECAUSE A MUTANT SURVIVED. Part H(ii) executes the swap's
+        LOGIC — read the tag, read that id back — so it cannot see a defect in
+        the route's own swap statement. Deleting `event = canonical` while
+        leaving `event_id = canonical_id` kept all 59 tests green: the route
+        would then renumber the page and still render the ghost's `suspended`
+        and its missing score, which is the original bug wearing the right id.
+
+        The Q050 arm has had the correct pair for months, so the invariant is
+        "the two arms rebind the same names" rather than a restated literal —
+        a list this test kept for itself would be one more thing to drift.
+        """
+        import ast
+        import inspect
+
+        from app.routes.events import get_event
+
+        tree = ast.parse(inspect.getsource(get_event))
+        arms = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.If)
+            and isinstance(node.test, ast.Compare)
+            and isinstance(node.test.left, ast.Name)
+            and node.test.left.id == "canonical"
+        ]
+        assert len(arms) == 2, (
+            "expected exactly two `if canonical is not None:` swap arms in "
+            f"get_event, found {len(arms)} — this test no longer compares the "
+            "two things it was written to compare"
+        )
+        assigned = [
+            {
+                target.id
+                for stmt in ast.walk(arm)
+                if isinstance(stmt, ast.Assign)
+                for target in stmt.targets
+                if isinstance(target, ast.Name)
+            }
+            for arm in arms
+        ]
+        assert assigned[0] == assigned[1], (
+            f"the two swap arms rebind different names: {assigned[0]} vs "
+            f"{assigned[1]} — one of them renumbers the page without changing "
+            "the row it renders"
+        )
+        assert assigned[0] == {"event", "event_id"}
+
+    def test_the_gate_below_cannot_reach_the_specimens_own_source(self):
+        """WHY a second arm was needed at all, pinned so it cannot be forgotten.
+
+        `is_drain_candidate_row` admits only MARKET-born rows. The production
+        specimen is `commence_time_source='statpal'`, so the older arm never even
+        issues its query — 39 of the 258 tagged rows are excluded this way.
+        """
+        assert not is_drain_candidate_row(
+            commence_time_source="statpal",
+            home_score=None,
+            away_score=None,
+            completed_at=None,
+        )

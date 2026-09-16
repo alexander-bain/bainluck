@@ -129,6 +129,54 @@ def not_a_proven_duplicate():
     )
 
 
+def canonical_id_from_tags(event_tags) -> int | None:
+    """The id this row's ``provenance:duplicate-of:<id>`` tag names, or ``None``.
+
+    The IN-PYTHON counterpart to the SQL predicates above, for the one caller
+    shape they cannot serve: a surface that has already loaded exactly one row
+    and must decide what to print from it. A ``WHERE`` clause needs a list to
+    filter; :func:`not_a_proven_duplicate` on a detail page would answer "do not
+    print this" and leave the page with nothing, which is a 404 for a game that
+    exists. This answers the question that page actually asks — *"which row
+    should I have been given?"* — and costs no query at all.
+
+    🔴 **It reads the tag; it does not decide the tag is right.** The whole
+    warrant is upstream: ``reconcile_shared_fixture_ids`` writes this element
+    only on an id-anchored correspondence (ruling 048 arm B — both rows already
+    carry the same authority contest id), never on a name-and-time window. A
+    caller that swaps rows on this is trusting that proof and nothing weaker.
+
+    ONE HOP, DELIBERATELY. If the id returned is itself tagged, that is a
+    matching defect — a row cannot be the duplicate of a duplicate — and
+    chasing it would turn a two-row bug into an unbounded walk, with a cycle at
+    the end of it. Measured on production 2026-09-16: of 258 tagged rows,
+    **0 name a target that is itself tagged**, so the hop terminates on every
+    row that exists today; a chain that appears later renders the middle row
+    rather than hanging.
+
+    Tolerant of every shape the drivers hand back, for the reason ``_tags_of``
+    in ``reconcile_shared_fixture_ids`` is: asyncpg gives a real list and the
+    guard suite's SQLite gives serialised text, and iterating that text would
+    yield single CHARACTERS and quietly find no tag — a miss that reads exactly
+    like a clean row. A malformed or non-numeric tail is ``None`` (print what
+    you were given), never an exception on a read path.
+    """
+    if isinstance(event_tags, str):
+        try:
+            event_tags = json.loads(event_tags)
+        except ValueError:
+            return None
+    if not isinstance(event_tags, (list, tuple)):
+        return None
+    for tag in event_tags:
+        if not isinstance(tag, str) or not tag.startswith(DUPLICATE_TAG_PREFIX):
+            continue
+        tail = tag[len(DUPLICATE_TAG_PREFIX):]
+        if tail.isdigit():
+            return int(tail)
+    return None
+
+
 class _TaggedDuplicateOf(ColumnElement):
     """``events.event_tags`` carries ``provenance:duplicate-of:<canonical>``.
 
