@@ -22,7 +22,7 @@
     "compute_calibration_payload",
     "identity_quarantine_ctes"
   ],
-  "input_count": 74,
+  "input_count": 75,
   "inputs": [
     {
       "covered_by_value": false,
@@ -278,6 +278,17 @@
       "sql_interpolated": true,
       "used_in": [
         "_calibration_population_ctes"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "IDENTITY_QUARANTINE_DISCLOSED_CELLS",
+      "origin": "app.tasks.precompute_calibration:IDENTITY_QUARANTINE_DISCLOSED_CELLS",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
       ]
     },
     {
@@ -876,8 +887,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "e633a8b1b88c1d39982a8ebfce2fb1680d1b2e889e97a6c1d450072de7d9bdb0",
-  "uncovered_behavior_or_evidence": 34,
-  "uncovered_count": 61,
+  "source_sha256": "c96da98ac4b38eafb6f700def1f96c90545e117ee1b9d48054729a1215e75c94",
+  "uncovered_behavior_or_evidence": 35,
+  "uncovered_count": 62,
   "uncovered_sql_shaping": 27
 }

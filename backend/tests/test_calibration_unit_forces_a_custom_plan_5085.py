@@ -159,7 +159,30 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: is "keep a bank that cannot advance, or re-key one that can". The version is
 #: NOT bumped: the published population is unchanged, so there is nothing for a
 #: reader to be told and q271 still names the right rows.
-LIVE_INPUT_FINGERPRINT = "1a1d9a914a4824381d8132498197bb34"
+#:
+#: RE-ANCHORED for CAL-P1318, the #6275 publish-gate repair: ``1a1d9a91…`` ->
+#: ``3f20f26f…``. The moved input is ``compute_calibration_payload`` and the
+#: edit is a payload key: ``identity_quarantine_filter`` now states the cells
+#: the quarantine takes rows out of, so the publish gate can read the reshaping
+#: off the artifact instead of refusing it. NO SQL MOVED —
+#: ``population_predicate_fingerprint`` is unchanged, the derived-input map
+#: classifies the new constant ``behavior_or_evidence`` with
+#: ``sql_interpolated: false``, and ``uncovered_sql_shaping`` holds at 27. The
+#: digest moves only because the payload builder is hashed WHOLE, which is the
+#: safe default doing its job and not evidence of a population change.
+#:
+#: WHAT THIS RE-KEY COSTS, asked the way the note above insists. Nominally a
+#: bank. Measured, nothing that was going to publish: ``1a1d9a91…`` banked all
+#: the way to 128/128 and the gate REFUSED it at 12:29:54Z on 2026-09-16
+#: (``category_collapse``: esports -35.6%, mma -30.6%), which reset the bank to
+#: 0/128 by itself. The generation running when this lands is minutes old and
+#: is heading for the identical refusal — a refusal clears the checkpoint, so
+#: without this repair every ~14-beat generation pays the full rebuild and ends
+#: exactly where the last one did. The choice is "re-key a bank that cannot
+#: publish, or keep rebuilding one that cannot". The version is again NOT
+#: bumped: Rule 2 passed at -4.72%, inside its band, so nothing about q271's
+#: rows is being redefined and there is nothing for a reader to be told.
+LIVE_INPUT_FINGERPRINT = "3f20f26f9cd859c33a14a04cf5711e5a"
 
 
 class _Db:

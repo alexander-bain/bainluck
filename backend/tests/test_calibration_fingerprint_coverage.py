@@ -267,7 +267,17 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # no edit to the quarantine SQL can leave the fingerprint still. It is
         # counted uncovered here because this census reads `covered_by_value`
         # over names DEFINED in the build module, and these are imported.
-        assert artifact["input_count"] == 74
+        # CAL-P1318 (#6275, the publish-gate repair): 74 -> 75.
+        # `IDENTITY_QUARANTINE_DISCLOSED_CELLS` — the cells the quarantine rung
+        # states it empties, read by the publish gate off the artifact. It is
+        # defined IN the build module and reaches no SQL: the derived map
+        # classifies it `behavior_or_evidence` with `sql_interpolated: false`,
+        # and `uncovered_sql_shaping` holds at 27 across this change. It is
+        # counted uncovered for the ordinary reason — it is not hashed by value
+        # — and that is correct here rather than a hole: it is read once when
+        # the payload is assembled, never per unit, so two units can never be
+        # built under two different disclosures.
+        assert artifact["input_count"] == 75
         # CAL-P162: 4 -> 5. `MEX_NORMALIZE_THRESHOLD` joined the by-value set on
         # the deploy that made it decide PUBLICATION rather than only pricing.
         # CAL-P164 added no by-value input, so this stands still.
@@ -294,7 +304,15 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # a CTE name; the fifth, `identity_quarantine_ctes`, is a predicate — and
         # it is the one that does NOT widen the unguarded surface, because it was
         # added to the hashed-root list in the same commit that introduced it.
-        assert artifact["uncovered_count"] == 61
+        # CAL-P1318: 61 -> 62, `IDENTITY_QUARANTINE_DISCLOSED_CELLS`. It is
+        # neither prose nor a predicate but a DISCLOSURE — what the artifact
+        # says about a rung, not which rows that rung takes — so it cannot
+        # widen the unguarded surface in the sense this census measures: the
+        # hazard being tracked is a value that changes which rows qualify while
+        # a carried cursor stays resumable, and this one changes no row at all.
+        # The `population_predicate_fingerprint` is unmoved across the change
+        # that added it, which is the check that says so.
+        assert artifact["uncovered_count"] == 62
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -608,7 +626,12 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # 48 -> 49 at CAL-P1121: KALSHI_WRITER_BAR_RULE_TEXT is same-module
         # prose, so it lands in the non-cross tier and the cross list is
         # unchanged -- which is the property this line is really pinning.
-        assert len(cross) + 49 == artifact["uncovered_count"]
+        # 49 -> 50 at CAL-P1318: `IDENTITY_QUARANTINE_DISCLOSED_CELLS` is a
+        # same-module disclosure tuple, so it lands in the non-cross tier and
+        # the cross list is unchanged -- which is the property this line is
+        # really pinning, and the reason the repair could not have widened the
+        # unguarded tier without reddening it here.
+        assert len(cross) + 50 == artifact["uncovered_count"]
 
 
 class TestInterpolationDetectionCoversNonFStringSql:
