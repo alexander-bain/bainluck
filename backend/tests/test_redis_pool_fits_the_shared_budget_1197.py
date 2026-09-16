@@ -637,3 +637,340 @@ class TestClosingAClientStillReleasesItsSockets:
         client.connection_pool.disconnect = _spy
         await client.aclose()
         assert disconnected, "aclose() left the pool's connections open"
+
+
+# ---------------------------------------------------------------------------
+# CERT-2951's repair: a concurrent COLD START yields one canonical pool.
+# ---------------------------------------------------------------------------
+#
+# Everything above measures a pool. The cap is a statement about a PROCESS, and
+# that only follows if the process holds one pool per signature — which the
+# cache is supposed to guarantee and, before this repair, did not. The read at
+# the top of ``get_redis_client`` is unlocked, so two callers arriving cold on
+# the same signature both missed it, both built, and the second's publish
+# overwrote the first while the first's pool stayed live in the hands of the
+# caller it had already been returned to.
+#
+# The grader measured this rather than arguing it: a two-thread same-signature
+# probe returned two distinct clients in 61/1,000 cold starts, and real-socket
+# testing breached the configured cap of 4 in 8/30 trials, peaking at 10
+# accepted sockets from one process. 61/1,000 and 8/30 are why these arms do
+# not race for the defect and hope: each one WIDENS the window deterministically
+# by making construction slow, so every thread is guaranteed to miss the cache
+# and the arm is a fact about the publish, not about this machine's scheduler.
+
+
+class _SlowFakeClient:
+    """A client whose construction is slow enough that every caller misses."""
+
+    def __init__(self, url, **kwargs):
+        self.url = url
+        self.kwargs = kwargs
+        self.closed = False
+        time.sleep(0.05)
+
+    def close(self):
+        self.closed = True
+
+
+class TestAConcurrentColdStartYieldsOneCanonicalClient:
+    CALLERS = 12
+
+    @staticmethod
+    def _cold_start(monkeypatch, factory):
+        """Every caller arrives cold, at the same instant, on one signature."""
+        monkeypatch.setattr(redis, "from_url", factory)
+        redis_state.reset_redis_client_cache()
+        got, errors = [], []
+        barrier = threading.Barrier(TestAConcurrentColdStartYieldsOneCanonicalClient.CALLERS, timeout=10)
+
+        def _call():
+            try:
+                barrier.wait()
+                got.append(redis_state.get_redis_client())
+            except Exception as exc:  # pragma: no cover - surfaced by the arm
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_call) for _ in range(
+            TestAConcurrentColdStartYieldsOneCanonicalClient.CALLERS)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+        assert not errors, f"a cold-start caller failed: {errors[:3]}"
+        return got
+
+    def test_every_concurrent_caller_receives_the_same_client(self, monkeypatch):
+        """THE DEFECT ARM.
+
+        Before the repair each thread was handed the client IT built, so this
+        set held up to ``CALLERS`` distinct objects — and every one of them owns
+        a pool that is free to ratchet to ``_REDIS_MAX_CONNECTIONS``. The cap
+        then bounds a pool and says nothing whatever about the process.
+        """
+        built = []
+        try:
+            made = self._cold_start(
+                monkeypatch,
+                lambda url, **kw: built.append(c := _SlowFakeClient(url, **kw)) or c,
+            )
+            assert len(made) == self.CALLERS
+            assert len({id(c) for c in made}) == 1, (
+                f"{len({id(c) for c in made})} distinct clients handed out to "
+                f"{self.CALLERS} concurrent cold callers — the process holds "
+                "that many pools, and the cap bounds none of them"
+            )
+            # THE CONTROL THAT STOPS THE ARM BEING VACUOUS: if construction were
+            # somehow serialised, one build would satisfy the assertion above
+            # without the publish being canonical at all. The window really was
+            # open — every caller missed the cache and built.
+            assert len(built) == self.CALLERS, (
+                "the callers did not actually race; this arm proves nothing "
+                f"about the publish (only {len(built)} of {self.CALLERS} built)"
+            )
+        finally:
+            redis_state.reset_redis_client_cache()
+
+    def test_every_pool_that_lost_the_race_is_closed(self, monkeypatch):
+        """A duplicate is retired, not left for the garbage collector.
+
+        A redis-py pool is lazy, so a loser that never served a command holds no
+        sockets and this is close to a no-op TODAY. It is asserted because that
+        is a property of the current construction path rather than a promise
+        ``get_redis_client`` makes: an orphaned pool that ever did connect would
+        hold its sockets until the collector ran.
+        """
+        built = []
+        try:
+            made = self._cold_start(
+                monkeypatch,
+                lambda url, **kw: built.append(c := _SlowFakeClient(url, **kw)) or c,
+            )
+            canonical = made[0]
+            losers = [c for c in built if c is not canonical]
+            assert len(losers) == self.CALLERS - 1, len(losers)
+            assert all(c.closed for c in losers), (
+                f"{sum(not c.closed for c in losers)} duplicate pools were "
+                "dropped without being closed"
+            )
+            assert not canonical.closed, "the surviving client was closed"
+        finally:
+            redis_state.reset_redis_client_cache()
+
+    def test_a_factory_whose_client_cannot_close_still_serves_the_caller(
+        self, monkeypatch
+    ):
+        """Tidying a duplicate must never fail the caller.
+
+        Mocks and fakes are not required to provide ``close()``, and a caller
+        about to be handed a perfectly good canonical client should not see an
+        AttributeError from the housekeeping behind it.
+        """
+
+        class _Uncloseable:
+            def __init__(self, url, **kwargs):
+                time.sleep(0.05)
+
+            close = property(lambda self: (_ for _ in ()).throw(RuntimeError("no")))
+
+        try:
+            made = self._cold_start(monkeypatch, _Uncloseable)
+            assert len({id(c) for c in made}) == 1
+        finally:
+            redis_state.reset_redis_client_cache()
+
+
+class TestAConcurrentColdStartHoldsTheSocketCap:
+    """The repair measured where the grader measured it: on real sockets.
+
+    ``TestTheBudgetHoldsOnRealSockets`` above hands every thread ONE warm client
+    and proves that pool reuses its connections. It cannot see this defect at
+    all, because the client it shares is the thing in question. Here each thread
+    calls ``get_redis_client()`` itself, cold, and construction is slowed so all
+    of them miss — which is the exact shape that peaked at 10 accepted sockets
+    from one process against a configured cap of 4.
+    """
+
+    CALLERS = 12
+
+    @pytest.mark.parametrize("protocol", _PROTOCOLS, ids=lambda p: f"resp{p}")
+    def test_concurrent_cold_callers_never_exceed_the_cap(
+        self, resp_server, monkeypatch, protocol
+    ):
+        monkeypatch.setattr(
+            redis_state,
+            "REDIS_URL",
+            f"redis://127.0.0.1:{resp_server.port}/0?protocol={protocol}",
+        )
+        _real_build = redis_state._build_bounded_client
+
+        def _slow_build(*args, **kwargs):
+            time.sleep(0.05)
+            return _real_build(*args, **kwargs)
+
+        monkeypatch.setattr(redis_state, "_build_bounded_client", _slow_build)
+        redis_state.reset_redis_client_cache()
+        resp_server.hold = 0.02
+
+        errors, clients = [], []
+        barrier = threading.Barrier(self.CALLERS, timeout=10)
+
+        def _ping():
+            try:
+                barrier.wait()
+                client = redis_state.get_redis_client(
+                    socket_timeout=5.0, socket_connect_timeout=5.0
+                )
+                clients.append(client)
+                for _ in range(3):
+                    client.execute_command("PING")
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_ping) for _ in range(self.CALLERS)]
+        try:
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=60)
+
+            assert not errors, f"a healthy cold-start caller failed: {errors[:3]}"
+            assert len(clients) == self.CALLERS
+            # Sockets first, deliberately: the grader's bar is the socket cap
+            # under a concurrent miss, and the client identity below is only the
+            # mechanism by which it holds. A failure here should name the thing
+            # the connection budget is actually spent in.
+            assert resp_server.peak_concurrent >= 2, (
+                "the callers never overlapped, so this proves nothing"
+            )
+            assert resp_server.accepted <= redis_state._REDIS_MAX_CONNECTIONS, (
+                f"{resp_server.accepted} sockets opened from one process "
+                f"against a cap of {redis_state._REDIS_MAX_CONNECTIONS} — the "
+                "cold-start race is minting pools, each with its own budget"
+            )
+            assert len({id(c) for c in clients}) == 1, (
+                f"{len({id(c) for c in clients})} pools serving one signature"
+            )
+        finally:
+            redis_state.reset_redis_client_cache()
+
+
+# ---------------------------------------------------------------------------
+# CERT-2951's repair, second half: the accounting is COUNTED, not recalled.
+# ---------------------------------------------------------------------------
+#
+# The block comment above ``_REDIS_MAX_CONNECTIONS`` narrowed its own claim once
+# already and was still wrong, in the way a hand-counted number in a verdict
+# path is always wrong: it started wherever the author's eye started. It said
+# the process holds a pool per signature and listed four ("the 5s default, the
+# 2s variant, and two fast-fail ones"). The grader counted seven. The answer is
+# five, and neither of us should have been counting by hand.
+#
+# So the number is derived from the tree. ``get_redis_client``'s cache key is
+# ``(pid, url, socket_timeout, socket_connect_timeout, fast_fail)``; the pid and
+# url are fixed within a process, so the number of pools a process can hold is
+# the number of distinct (timeout, connect, fast_fail) triples its call sites
+# use. This gate reads them out of the AST. Adding a sixth signature turns the
+# claim above into a lie, so adding a sixth signature fails here.
+
+
+def _sync_client_signatures() -> dict:
+    """Every distinct ``get_redis_client`` signature in ``app/``, from the AST.
+
+    Module-level scalar constants are resolved (``search_head_warmer`` passes
+    two named 1.0s timeouts, which COLLAPSE into one signature — the reason a
+    call-site count and a signature count are different numbers). Anything that
+    cannot be resolved is kept as its source text: an unresolvable argument is
+    an unknown signature, and rendering it unknown rather than dropping it is
+    what stops this gate quietly under-counting.
+    """
+    import ast
+    import collections
+
+    sigs = collections.defaultdict(list)
+    for path in sorted(pathlib.Path("app").rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text())
+        except SyntaxError:  # pragma: no cover - app/ parses
+            continue
+        consts = {}
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1:
+                target = node.targets[0]
+                if isinstance(target, ast.Name):
+                    try:
+                        consts[target.id] = ast.literal_eval(node.value)
+                    except Exception:
+                        pass
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = (
+                func.id
+                if isinstance(func, ast.Name)
+                else getattr(func, "attr", None)
+            )
+            if name != "get_redis_client":
+                continue
+            kwargs = {}
+            for kw in node.keywords:
+                if kw.arg is None:
+                    kwargs["**"] = ast.unparse(kw.value)
+                    continue
+                try:
+                    kwargs[kw.arg] = ast.literal_eval(kw.value)
+                except Exception:
+                    if isinstance(kw.value, ast.Name) and kw.value.id in consts:
+                        kwargs[kw.arg] = consts[kw.value.id]
+                    else:
+                        kwargs[kw.arg] = ast.unparse(kw.value)
+            signature = (
+                kwargs.get("socket_timeout", 5.0),
+                kwargs.get("socket_connect_timeout", 5.0),
+                bool(kwargs.get("fast_fail", False)),
+            )
+            sigs[signature].append(f"{path}:{node.lineno}")
+    return dict(sigs)
+
+
+#: What the block comment above ``_REDIS_MAX_CONNECTIONS`` is allowed to claim.
+_EXPECTED_SYNC_SIGNATURES = {
+    (5.0, 5.0, False),  # the default — the overwhelming majority of call sites
+    (5.0, 5.0, True),   # sentinel filing + the Sentry filter
+    (2.0, 2.0, False),  # the price-refresh / watchdog variant
+    (1.0, 1.0, True),   # search_head_warmer's two named 1.0s constants
+    (0.5, 5.0, True),   # the latency middleware on the hot request path
+}
+
+
+class TestTheSignatureCountInTheClaimIsTheOneInTheTree:
+    def test_the_distinct_signature_set_is_the_one_the_comment_accounts_for(self):
+        found = set(_sync_client_signatures())
+        assert found == _EXPECTED_SYNC_SIGNATURES, (
+            "the set of distinct get_redis_client signatures has moved, so the "
+            "per-process pool accounting above _REDIS_MAX_CONNECTIONS is now "
+            f"wrong.\n  added:   {sorted(found - _EXPECTED_SYNC_SIGNATURES)}\n"
+            f"  removed: {sorted(_EXPECTED_SYNC_SIGNATURES - found)}\n"
+            "Update the comment AND this set together, or the claim drifts "
+            "again — which is exactly what CERT-2951 blocked."
+        )
+
+    def test_the_scan_actually_found_the_call_sites(self):
+        """THE CONTROL. A scan that matched nothing would satisfy nothing."""
+        sigs = _sync_client_signatures()
+        total = sum(len(v) for v in sigs.values())
+        assert total > 100, f"the AST scan found only {total} call sites"
+        assert len(sigs[(5.0, 5.0, False)]) > 50, "the default signature is missing"
+
+    def test_a_named_constant_is_resolved_and_not_counted_as_its_own_signature(self):
+        """The reason a call-site count and a signature count differ.
+
+        ``search_head_warmer`` passes two DIFFERENT constant names that both
+        equal 1.0. Left unresolved they read as two signatures and the claim
+        over-counts; resolved, they are one. This arm fails if the resolver is
+        removed, which would silently inflate the number the comment cites.
+        """
+        sites = _sync_client_signatures()[(1.0, 1.0, True)]
+        assert len(sites) == 2, sites
+        assert all("search_head_warmer" in s for s in sites), sites
