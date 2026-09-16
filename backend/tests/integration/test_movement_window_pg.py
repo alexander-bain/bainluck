@@ -73,6 +73,12 @@ async def _reset_and_seed(rows):
     marker a grading writer leaves and the predicate the GRADED sweep selects on
     (CERT-627). Five-tuples keep their original meaning exactly.
 
+    A seventh element, `current_probability`, defaults to 0.5 — the value every
+    pre-#6536 case was seeded with, so those cases are unchanged. It is a row
+    parameter because the SELF-REFUTING sweep (A3) reads BOTH columns: its whole
+    predicate is `current_probability - probability_change_24h` landing outside
+    [0, 1], which no fixture with a constant price can express.
+
     A market is created per label so each case is independent.
     """
     from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -92,6 +98,7 @@ async def _reset_and_seed(rows):
         for row in rows:
             label, status, hours, delta, seed_max = row[:5]
             resolution_source = row[5] if len(row) > 5 else None
+            current_probability = row[6] if len(row) > 6 else 0.5
             market = FuturesMarket(
                 source="kalshi",
                 external_id=f"KXWINDOW-{label}",
@@ -110,7 +117,7 @@ async def _reset_and_seed(rows):
                 external_id=f"OUT-{label}",
                 name=label,
                 is_winner=False,
-                current_probability=0.5,
+                current_probability=current_probability,
                 probability_change_24h=delta,
                 last_updated=now - timedelta(hours=hours),
                 resolution_source=resolution_source,
@@ -124,7 +131,11 @@ async def _reset_and_seed(rows):
     return ids
 
 
-def _run_task(batch: int | None = None, graded_batch: int | None = None):
+def _run_task(
+    batch: int | None = None,
+    graded_batch: int | None = None,
+    impossible_batch: int | None = None,
+):
     """Drive the REAL `update_max_movement` against this database."""
     import app.tasks.base as base_mod
     import app.tasks.futures_movers_warm as warm_mod
@@ -151,12 +162,15 @@ def _run_task(batch: int | None = None, graded_batch: int | None = None):
 
     real_batch = tasks_mod.STALE_DELTA_BATCH
     real_graded_batch = tasks_mod.GRADED_DELTA_BATCH
+    real_impossible_batch = tasks_mod.IMPOSSIBLE_PRIOR_BATCH
     base_mod.get_task_session = lambda: _Ctx()
     warm_mod.warm_futures_movers = _no_warm
     if batch is not None:
         tasks_mod.STALE_DELTA_BATCH = batch
     if graded_batch is not None:
         tasks_mod.GRADED_DELTA_BATCH = graded_batch
+    if impossible_batch is not None:
+        tasks_mod.IMPOSSIBLE_PRIOR_BATCH = impossible_batch
     try:
         return update_max_movement.run()
     finally:
@@ -164,6 +178,7 @@ def _run_task(batch: int | None = None, graded_batch: int | None = None):
         warm_mod.warm_futures_movers = real_warm
         tasks_mod.STALE_DELTA_BATCH = real_batch
         tasks_mod.GRADED_DELTA_BATCH = real_graded_batch
+        tasks_mod.IMPOSSIBLE_PRIOR_BATCH = real_impossible_batch
 
 
 async def _read(ids):
@@ -619,4 +634,177 @@ def test_the_graded_sweep_is_bounded_and_takes_the_biggest_first() -> None:
     assert out["small"][0] == 0.05, f"expected the tail to wait its turn: {out}"
     assert result["graded_backlog_drained"] is False, (
         f"a full graded batch reported the backlog drained: {result}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# A3 — the SELF-REFUTING sweep (#6536).
+#
+# Every row here is seeded FRESH (1 hour) and UNGRADED (`resolution_source`
+# None), which is the isolation the whole section rests on: a row that is also
+# stale, or also graded, would be retired by A or A2 and would prove nothing
+# about A3. A control that fails two clauses isolates neither.
+# ---------------------------------------------------------------------------
+
+
+def test_an_impossible_prior_is_retired_on_a_fresh_ungraded_row() -> None:
+    """THE ship, on rows: 8% cannot have risen 80 points.
+
+    `liar` is the production specimen in miniature — outcome 227786168
+    ("Vinted", #1 Free App in the US App Store) carried +0.800 against a stored
+    price of 0.080, implying a previous price of -0.72, and Discover page one
+    rendered it as a green "up 80 points" on 2026-09-16.
+
+    It is fresh and ungraded, so A and A2 both structurally decline it. If A3 is
+    removed, nothing else in the task can clear this row.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("liar", "open", 1, 0.800, 0.800, None, 0.08),
+                ("honest", "open", 1, 0.040, 0.040, None, 0.30),
+            ]
+        )
+    )
+    result = _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert after["liar"][0] is None, (
+        "a fresh, ungraded row whose two columns imply a previous price of "
+        "-0.72 survived the sweep — this is #6536 verbatim. got "
+        f"{after['liar'][0]}"
+    )
+    assert after["honest"][0] == pytest.approx(0.040), (
+        "0.30 against a +0.04 delta implies a previous price of 0.26, which is "
+        "an ordinary move. Retiring it deletes real movement from the strip. "
+        f"got {after['honest'][0]}"
+    )
+    assert result["impossible_retired"] == 1, (
+        "the run must report what it retired: this counter is the only way to "
+        f"see a price writer stranding deltas again. got {result}"
+    )
+
+
+def test_the_invariant_is_inclusive_at_zero_and_one() -> None:
+    """Exactly 0 and exactly 1 are PRICES, so they are kept.
+
+    Written `<= 0 or >= 1` the predicate would clear a delta describing a move
+    off a 0% or 100% quote, both of which venues publish. These two rows are the
+    negative control that tells the two predicates apart, and each fails exactly
+    one side of the bound rather than both.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                # prior exactly 0.0
+                ("prior_zero", "open", 1, 0.20, 0.20, None, 0.20),
+                # prior exactly 1.0
+                ("prior_one", "open", 1, -0.60, 0.60, None, 0.40),
+                # prior just under 0 — the smallest real violation, 0.05pp,
+                # which production carries 20 of.
+                ("prior_under", "open", 1, 0.2005, 0.2005, None, 0.20),
+            ]
+        )
+    )
+    _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert after["prior_zero"][0] == pytest.approx(0.20), (
+        "an implied prior of exactly 0.0 is a price, not an impossibility"
+    )
+    assert after["prior_one"][0] == pytest.approx(-0.60), (
+        "an implied prior of exactly 1.0 is a price, not an impossibility"
+    )
+    assert after["prior_under"][0] is None, (
+        "both columns are numeric(7,6), so a prior of -0.0005 is exact "
+        "arithmetic and the same non-simultaneity defect at a smaller "
+        f"magnitude — not rounding noise to be tolerated. got "
+        f"{after['prior_under'][0]}"
+    )
+
+
+def test_a_row_with_no_price_is_not_swept() -> None:
+    """`NULL - x` is NULL, which is neither < 0 nor > 1.
+
+    A withdrawn leg carries no price, so its delta cannot be shown to refute
+    anything and A3 must leave it to A's age predicate. Without the explicit
+    `current_probability IS NOT NULL` the row is silently never considered, and
+    the predicate would not say so.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("withdrawn", "open", 1, 0.90, 0.90, None, None),
+            ]
+        )
+    )
+    _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert after["withdrawn"][0] == pytest.approx(0.90), (
+        "a row with no stored price was swept by a predicate that cannot "
+        f"evaluate it. got {after['withdrawn'][0]}"
+    )
+
+
+def test_the_superset_identity_survives_the_impossible_sweep() -> None:
+    """`max_movement_24h == MAX(ABS(change))`, still exactly true after A3.
+
+    This is the property `/api/futures/movers` rests on (LAT-P108): the pool it
+    ranks is a provable SUPERSET of the answer only while the identity holds. A3
+    clears outcomes, so B and C must run over what it left — and a market whose
+    only delta A3 retired must go NULL, not keep its seeded maximum.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("swept_alone", "open", 1, 0.800, 0.800, None, 0.08),
+                ("kept", "open", 1, 0.120, 0.120, None, 0.40),
+            ]
+        )
+    )
+    _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert after["swept_alone"] == (None, None), (
+        "a market whose only surviving delta was retired kept its old maximum, "
+        f"so the superset bound is now false. got {after['swept_alone']}"
+    )
+    assert after["kept"][0] == pytest.approx(0.120)
+    assert after["kept"][1] == pytest.approx(0.120), (
+        "the market maximum must equal MAX(ABS(change)) over what survived. "
+        f"got {after['kept']}"
+    )
+
+
+def test_the_impossible_sweep_is_bounded_and_takes_the_biggest_first() -> None:
+    """Bounded like A and A2, and magnitude-ordered for the same reason.
+
+    The batch is a ceiling against one pathological writer, not a drain
+    schedule. Ordering matters for the same reason it does in A: the larger the
+    arithmetic impossibility, the more likely this task's own
+    `ORDER BY abs(probability_change_24h) DESC` picks the row as a card's
+    headline mover, so the first run must clear the loudest lie.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("loudest", "open", 1, 0.800, 0.800, None, 0.08),
+                ("quieter", "open", 1, 0.550, 0.550, None, 0.225),
+            ]
+        )
+    )
+    result = _run_task(impossible_batch=1)
+    after = asyncio.run(_read(ids))
+
+    assert result["impossible_retired"] == 1, (
+        f"the batch bound was not honoured. got {result['impossible_retired']}"
+    )
+    assert after["loudest"][0] is None, (
+        "a bounded run must retire the biggest liar first — the one most likely "
+        f"to be chosen as a headline mover. got {after['loudest'][0]}"
+    )
+    assert after["quieter"][0] == pytest.approx(0.550), (
+        "the smaller impossibility should still be waiting for the next run. "
+        f"got {after['quieter'][0]}"
     )

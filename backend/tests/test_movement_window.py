@@ -46,6 +46,7 @@ import pytest
 
 from app.tasks import (
     GRADED_DELTA_BATCH,
+    IMPOSSIBLE_PRIOR_BATCH,
     MOVEMENT_WINDOW_HOURS,
     STALE_DELTA_BATCH,
     update_max_movement,
@@ -353,7 +354,7 @@ def test_all_three_statements_share_one_transaction(run_task) -> None:
 
 def test_a_full_batch_reports_the_backlog_as_undrained(run_task) -> None:
     """A run that fills its batch means more are waiting; say so."""
-    result, _ = run_task([STALE_DELTA_BATCH, 11, 7, 3])
+    result, _ = run_task([STALE_DELTA_BATCH, 11, 0, 7, 3])
 
     assert result["expired"] == STALE_DELTA_BATCH
     assert result["backlog_drained"] is False, (
@@ -363,11 +364,17 @@ def test_a_full_batch_reports_the_backlog_as_undrained(run_task) -> None:
 
 
 def test_a_short_batch_reports_the_backlog_as_drained(run_task) -> None:
-    """And the day it comes up short, the sweep has caught up."""
-    result, _ = run_task([12, 6, 4, 2])
+    """And the day it comes up short, the sweep has caught up.
+
+    Five rowcounts because A3 (#6536) is the third statement to touch
+    `futures_outcomes`; the list is consumed in execution order, so the two
+    market statements are now positions 4 and 5.
+    """
+    result, _ = run_task([12, 6, 9, 4, 2])
 
     assert result["expired"] == 12
     assert result["graded_retired"] == 6
+    assert result["impossible_retired"] == 9
     assert result["cleared_markets"] == 2
     assert result["backlog_drained"] is True, (
         f"a short run did not report the backlog drained: {result}"
@@ -376,7 +383,7 @@ def test_a_short_batch_reports_the_backlog_as_drained(run_task) -> None:
 
 def test_the_result_still_carries_the_original_contract(run_task) -> None:
     """LAT-P115's keys survive: the warm is still reported, never swallowed."""
-    result, _ = run_task([5, 3, 9, 1])
+    result, _ = run_task([5, 3, 7, 9, 1])
 
     assert result["updated"] == 9, f"the recompute's rowcount moved key: {result}"
     assert result["movers_warm"] == {"terminal": "ok", "completed": 1}
@@ -502,18 +509,103 @@ def test_the_graded_sweep_retires_the_biggest_liars_first(run_task) -> None:
     )
 
 
+def _phase_a3(session: _RecordingSession) -> tuple[str, dict]:
+    """The SELF-REFUTING sweep: the third statement to touch futures_outcomes."""
+    hits = [(sql, params) for sql, params in session.calls
+            if "UPDATE futures_outcomes" in sql]
+    if len(hits) < 3:
+        raise AssertionError(
+            "only two statements update futures_outcomes, so the SELF-REFUTING "
+            "sweep is GONE. Without it a row whose price was rewritten by a "
+            "delta-blind writer keeps a delta describing a price it no longer "
+            "holds, and `current - change` names a probability no venue quoted "
+            "(#6536: an outcome at 8% wearing a green 'up 80 points' on "
+            "Discover page one). A and A2 cannot reach those rows — the writer "
+            "bumps `last_updated` hourly and they are not graded. "
+            "Statements seen: " + repr(_statements(session))
+        )
+    return hits[2]
+
+
+def test_the_self_refuting_sweep_reads_both_columns(run_task) -> None:
+    """A3's predicate is the invariant, and it needs BOTH columns to be one.
+
+    `probability_change_24h IS NOT NULL` alone is A's predicate; the subtraction
+    against `current_probability` is what makes this statement about
+    simultaneity rather than age. The NULL guard on the price is required and
+    not decorative: `NULL - x` is NULL, which is neither < 0 nor > 1, so without
+    it a withdrawn leg is silently never considered.
+    """
+    sql, _ = _phase_a3(run_task()[1])
+    flat = " ".join(sql.split())
+
+    assert "current_probability - probability_change_24h < 0" in flat, (
+        f"the sweep does not test for a negative implied prior: {flat}"
+    )
+    assert "current_probability - probability_change_24h > 1" in flat, (
+        f"the sweep does not test for an implied prior above 1: {flat}"
+    )
+    assert "current_probability IS NOT NULL" in flat, (
+        f"the sweep does not exclude rows with no stored price: {flat}"
+    )
+    assert "SET probability_change_24h = NULL" in flat, (
+        "the honest value for a self-refuting pair is NULL — the previous price "
+        f"is unknowable at sweep time and a recompute would fabricate one: {flat}"
+    )
+
+
+def test_the_self_refuting_sweep_is_inclusive_at_the_bounds(run_task) -> None:
+    """`< 0` and `> 1`, never `<= 0` or `>= 1`.
+
+    An implied prior of exactly 0 or exactly 1 is a price venues publish, so the
+    strict form is the difference between retiring lies and deleting real
+    movement off a 0% or 100% quote.
+    """
+    sql, _ = _phase_a3(run_task()[1])
+    flat = " ".join(sql.split())
+
+    assert "<= 0" not in flat, (
+        f"a prior of exactly 0.0 is a price, not an impossibility: {flat}"
+    )
+    assert ">= 1" not in flat, (
+        f"a prior of exactly 1.0 is a price, not an impossibility: {flat}"
+    )
+
+
+def test_the_self_refuting_sweep_is_bounded_and_magnitude_ordered(run_task) -> None:
+    """Bounded like its siblings, biggest liar first.
+
+    The ordering is not cosmetic: this task's own sweep and
+    `/api/futures/movers` both rank by `abs(probability_change_24h)`, so the
+    larger the impossibility the likelier the row is chosen as a card's headline
+    mover. A bounded run must clear the loudest lie first.
+    """
+    sql, params = _phase_a3(run_task()[1])
+    flat = " ".join(sql.split())
+
+    assert re.search(r"ORDER BY abs\(probability_change_24h\) DESC", flat), (
+        f"the self-refuting sweep is not magnitude-ordered: {flat}"
+    )
+    assert "LIMIT :batch" in flat, f"the sweep is unbounded: {flat}"
+    assert params.get("batch") == IMPOSSIBLE_PRIOR_BATCH, (
+        f"the sweep does not run on its own batch constant: {params}"
+    )
+
+
 def test_both_sweeps_run_before_either_market_statement(run_task) -> None:
     """B recomputes over what survived; C clears what has nothing left.
 
     If A2 landed after them the recompute would read rows A2 was about to
-    retire, and the market maximum would be a full run stale.
+    retire, and the market maximum would be a full run stale. #6536 adds a
+    THIRD outcome sweep (A3) under the same obligation, so the count is the
+    number of sweeps and the ordering claim is unchanged.
     """
     events = _statements(run_task()[1])
     outcome_idx = [i for i, s in enumerate(events) if "UPDATE futures_outcomes" in s]
     market_idx = [i for i, s in enumerate(events) if "UPDATE futures_markets" in s]
 
-    assert len(outcome_idx) == 2, (
-        f"expected both outcome sweeps, saw {len(outcome_idx)}: {events}"
+    assert len(outcome_idx) == 3, (
+        f"expected all three outcome sweeps, saw {len(outcome_idx)}: {events}"
     )
     assert max(outcome_idx) < min(market_idx), (
         "a market statement ran before an outcome sweep, so it recomputed over "
@@ -537,7 +629,7 @@ def test_a_full_graded_batch_reports_the_backlog_as_undrained(run_task) -> None:
     Reporting only the age sweep's would go true while 1.87 M graded deltas were
     still standing — a green light for the exact state A2 exists to end.
     """
-    result, _ = run_task([3, GRADED_DELTA_BATCH, 7, 1])
+    result, _ = run_task([3, GRADED_DELTA_BATCH, 0, 7, 1])
 
     assert result["graded_retired"] == GRADED_DELTA_BATCH
     assert result["graded_backlog_drained"] is False
@@ -549,7 +641,7 @@ def test_a_full_graded_batch_reports_the_backlog_as_undrained(run_task) -> None:
 
 def test_both_backlogs_empty_reports_drained(run_task) -> None:
     """And the day both come up short, the column is honest."""
-    result, _ = run_task([2, 3, 4, 5])
+    result, _ = run_task([2, 3, 4, 5, 6])
 
     assert result["backlog_drained"] is True, f"{result}"
     assert result["graded_backlog_drained"] is True, f"{result}"

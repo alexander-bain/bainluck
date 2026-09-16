@@ -1171,7 +1171,7 @@ async def _write_prices(
     from app.models.models import FuturesOddsSnapshot, FuturesOutcome
     from app.utils.odds_math import probability_to_american
     from app.utils.price_change_stamp import price_changed_at_value
-    from sqlalchemy import func, update as sa_update
+    from sqlalchemy import case, func, or_, update as sa_update
 
     if not priced:
         return 0
@@ -1242,6 +1242,58 @@ async def _write_prices(
                         FuturesOutcome.current_probability,
                         FuturesOutcome.price_changed_at,
                         side_prob,
+                    ),
+                    # #6536 — THIS TASK IS A DELTA-BLIND PRICE WRITER, and on
+                    # this population it is the dominant one. It writes
+                    # `current_probability` and leaves `probability_change_24h`
+                    # standing, but that column is `new - previous` from whichever
+                    # poll last wrote it, so the moment the price moves here the
+                    # stored pair stops describing the same instant. The reader
+                    # meets the result as a movement chip computed off
+                    # `current - change`: measured 2026-09-16, an outcome sitting
+                    # at 8% on Discover page one wearing a green "up 80 points".
+                    #
+                    # The two columns drift here BY CONSTRUCTION and not by
+                    # accident, which is why the guard belongs at this write. This
+                    # module exists (see the header) because the discovery polls
+                    # "structurally cannot reach" already-known futures markets —
+                    # so the writer that owns the delta and the writer that owns
+                    # the price for these rows never coincide, and no amount of
+                    # polling will refresh the delta.
+                    #
+                    # CLEARED, NOT RECOMPUTED, and the difference is the blast
+                    # radius. `side_prob - current_probability` would be a
+                    # perfectly honest delta, but it would also turn this column
+                    # into an HOURLY change for every market this hourly task
+                    # touches — which is most of the high-value open book,
+                    # including everything Discover page one is showing — and
+                    # `/api/futures/movers` plus this task's own
+                    # `ORDER BY abs(probability_change_24h)` rank on it. Rewriting
+                    # the ranking input for the whole served book is not a fix a
+                    # 47-row defect earns. NULL costs only the chip on the rows
+                    # that were lying.
+                    #
+                    # ONLY self-refuting rows are touched: the CASE tests the
+                    # invariant against the price being written on this pass, so a
+                    # row whose delta still describes a real previous price keeps
+                    # it, byte for byte. A row where it does not is cleared in the
+                    # same UPDATE, so the impossible pair is never stored at all —
+                    # `update_max_movement`'s statement A3 is the sweep that
+                    # repairs the backlog and catches the other delta-blind
+                    # writers, and this is the prevention.
+                    probability_change_24h=case(
+                        (
+                            or_(
+                                side_prob - FuturesOutcome.probability_change_24h
+                                < 0,
+                                side_prob - FuturesOutcome.probability_change_24h
+                                > 1,
+                            ),
+                            None,
+                        ),
+                        # A NULL delta stays NULL: `NULL - x` is NULL, the CASE
+                        # falls through, and the column keeps the value it has.
+                        else_=FuturesOutcome.probability_change_24h,
                     ),
                 )
             )

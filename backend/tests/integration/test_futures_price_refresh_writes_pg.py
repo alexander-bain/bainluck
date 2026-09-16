@@ -1014,3 +1014,254 @@ class TestTheVenueAnsweredAndThePageHasToStopSayingNinetyNine:
         ).scalar_one()
         assert "kalshi" not in (after.win_probability_sources or {})
         assert stats["pre_kickoff_heroes_cleared"] == 1
+
+
+# ---------------------------------------------------------------------------
+# #6536 — the delta this writer invalidates is cleared in the same UPDATE.
+# ---------------------------------------------------------------------------
+
+
+async def _seed_outcome_with_delta(
+    session,
+    *,
+    external_id,
+    current_probability,
+    probability_change_24h,
+):
+    """One open market + one outcome carrying a stored price AND a stored delta.
+
+    Separate from `_seed_market` on purpose: every other case in this file is
+    indifferent to `probability_change_24h`, and the whole subject here is the
+    relationship between that column and the price written over it.
+    """
+    from app.models.models import FuturesMarket, FuturesOutcome
+
+    market = FuturesMarket(
+        source=_BOOKMAKER,
+        external_id=f"KXDELTA-{external_id}",
+        name=f"Delta case {external_id}",
+        category="futures",
+        market_tier=1,
+        status="open",
+        resolution_date=datetime.now(timezone.utc) + timedelta(days=30),
+    )
+    session.add(market)
+    await session.flush()
+
+    outcome = FuturesOutcome(
+        market_id=market.id,
+        external_id=external_id,
+        name=external_id,
+        is_winner=False,
+        current_probability=current_probability,
+        probability_change_24h=probability_change_24h,
+    )
+    session.add(outcome)
+    await session.flush()
+    return market, outcome
+
+
+async def _read_delta(session, outcome_id):
+    from sqlalchemy import text
+
+    value = (
+        await session.execute(
+            text(
+                "SELECT probability_change_24h FROM futures_outcomes WHERE id = :oid"
+            ),
+            {"oid": outcome_id},
+        )
+    ).scalar()
+    return None if value is None else float(value)
+
+
+class TestTheWriterClearsTheDeltaItInvalidates:
+    """#6536 — this task writes the price and used to leave the delta standing.
+
+    `probability_change_24h` is `new - previous`, so `current_probability -
+    probability_change_24h` is the previous price. When this writer moves the
+    price and the delta stays, that subtraction stops naming a price any venue
+    quoted, and the reader meets it as a movement chip: measured on production
+    2026-09-16, an outcome sitting at 8% on Discover page one wearing a green
+    "up 80 points".
+
+    Real Postgres because the guard is a SQL `CASE` evaluated against the row's
+    own stored columns. A recording double reports the expression it was handed,
+    which is the assertion restated, not the behaviour.
+    """
+
+    async def test_the_impossible_pair_is_never_stored(self, db):
+        """THE ship. New price 0.08 against a stored +0.80 implies a prior of -0.72.
+
+        This is the production specimen's exact arithmetic (outcome 227786168,
+        "Vinted", #1 Free App in the US App Store).
+        """
+        from app.tasks.futures_price_refresh import _write_prices
+
+        market, outcome = await _seed_outcome_with_delta(
+            db,
+            external_id="VINTED",
+            current_probability=0.88,
+            probability_change_24h=0.80,
+        )
+
+        written = await _write_prices(
+            db,
+            market.id,
+            _BOOKMAKER,
+            _priced(external_id="VINTED", probability=0.08),
+            _stats(),
+        )
+        await db.commit()
+
+        assert written == 1, "the row was not written at all, so nothing is proved"
+        assert await _read_delta(db, outcome.id) is None, (
+            "the price moved to 0.08 under a +0.80 delta, which implies a "
+            "previous price of -0.72 — the pair refutes itself and the delta "
+            "must not survive the write"
+        )
+
+    async def test_the_price_still_lands_when_the_delta_is_cleared(self, db):
+        """The guard clears a delta; it must never cost the price write.
+
+        Without this, a `CASE` that raised or mis-compiled could satisfy the
+        test above by failing the whole UPDATE — the delta would read NULL
+        because nothing was written, and the ship would be a regression.
+        """
+        from sqlalchemy import text
+        from app.tasks.futures_price_refresh import _write_prices
+
+        market, outcome = await _seed_outcome_with_delta(
+            db,
+            external_id="PRICELANDS",
+            current_probability=0.88,
+            probability_change_24h=0.80,
+        )
+
+        await _write_prices(
+            db,
+            market.id,
+            _BOOKMAKER,
+            _priced(external_id="PRICELANDS", probability=0.08),
+            _stats(),
+        )
+        await db.commit()
+
+        row = (
+            await db.execute(
+                text(
+                    "SELECT current_probability, last_updated FROM futures_outcomes "
+                    "WHERE id = :oid"
+                ),
+                {"oid": outcome.id},
+            )
+        ).first()
+        assert float(row[0]) == pytest.approx(0.08, abs=1e-6)
+        assert row[1] is not None
+        assert await _snapshot_count(db, outcome.id) == 1
+
+    async def test_a_healthy_delta_survives_byte_for_byte(self, db):
+        """THE CONTROL, and the one that decides the blast radius.
+
+        0.30 written over a +0.05 delta implies a previous price of 0.25 — an
+        ordinary move, and the chip is true. A guard that cleared this would be
+        deleting real movement from the strip, which is the failure mode the
+        issue explicitly refused ("no blanket removal of all movement").
+        """
+        from app.tasks.futures_price_refresh import _write_prices
+
+        market, outcome = await _seed_outcome_with_delta(
+            db,
+            external_id="HEALTHY",
+            current_probability=0.25,
+            probability_change_24h=0.05,
+        )
+
+        await _write_prices(
+            db,
+            market.id,
+            _BOOKMAKER,
+            _priced(external_id="HEALTHY", probability=0.30),
+            _stats(),
+        )
+        await db.commit()
+
+        assert await _read_delta(db, outcome.id) == pytest.approx(0.05, abs=1e-9), (
+            "a delta whose implied prior is a real probability describes real "
+            "movement and must be left exactly as it was"
+        )
+
+    async def test_the_boundaries_are_kept_not_cleared(self, db):
+        """Exactly 0 and exactly 1 are PRICES, so the invariant is inclusive.
+
+        The predicate is `< 0 or > 1`. Written as `<= 0 or >= 1` it would clear
+        a delta describing a move off a 0% or 100% quote — both of which venues
+        publish — so the two boundary rows are seeded as the negative control
+        that tells those two predicates apart.
+        """
+        from app.tasks.futures_price_refresh import _write_prices
+
+        # prior exactly 0.0: 0.20 written over a +0.20 delta.
+        market_lo, outcome_lo = await _seed_outcome_with_delta(
+            db,
+            external_id="PRIORZERO",
+            current_probability=0.10,
+            probability_change_24h=0.20,
+        )
+        # prior exactly 1.0: 0.40 written over a -0.60 delta.
+        market_hi, outcome_hi = await _seed_outcome_with_delta(
+            db,
+            external_id="PRIORONE",
+            current_probability=0.50,
+            probability_change_24h=-0.60,
+        )
+
+        await _write_prices(
+            db,
+            market_lo.id,
+            _BOOKMAKER,
+            _priced(external_id="PRIORZERO", probability=0.20),
+            _stats(),
+        )
+        await _write_prices(
+            db,
+            market_hi.id,
+            _BOOKMAKER,
+            _priced(external_id="PRIORONE", probability=0.40),
+            _stats(),
+        )
+        await db.commit()
+
+        assert await _read_delta(db, outcome_lo.id) == pytest.approx(0.20, abs=1e-9), (
+            "an implied prior of exactly 0.0 is a price, not an impossibility"
+        )
+        assert await _read_delta(db, outcome_hi.id) == pytest.approx(-0.60, abs=1e-9), (
+            "an implied prior of exactly 1.0 is a price, not an impossibility"
+        )
+
+    async def test_a_null_delta_stays_null(self, db):
+        """`NULL - x` is NULL, so the CASE must fall through rather than fabricate.
+
+        The `else_` arm re-selects the column, so a row with no delta keeps
+        having no delta. An `else_` of `0` would invent a "no movement" claim on
+        every row this task touches.
+        """
+        from app.tasks.futures_price_refresh import _write_prices
+
+        market, outcome = await _seed_outcome_with_delta(
+            db,
+            external_id="NODELTA",
+            current_probability=0.40,
+            probability_change_24h=None,
+        )
+
+        await _write_prices(
+            db,
+            market.id,
+            _BOOKMAKER,
+            _priced(external_id="NODELTA", probability=0.45),
+            _stats(),
+        )
+        await db.commit()
+
+        assert await _read_delta(db, outcome.id) is None
