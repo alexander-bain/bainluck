@@ -40,7 +40,16 @@ final class AScoringRaceStaysVisible5133Tests: XCTestCase {
     private static let winner = "New Orleans vs Detroit Winner"
 
     private func row(_ market: String, _ outcome: String, _ p: Double?) -> GameMarketOther {
-        GameMarketOther(marketName: market, outcomeName: outcome, probability: p, source: "kalshi")
+        GameMarketOther(
+            marketName: market,
+            outcomeName: outcome,
+            probability: p,
+            source: "kalshi",
+            // #4970 — these suites are about the SCORING RACE filter, not the
+            // price age, so every row here is undatable and `ageDecision`
+            // stays silent over them.
+            observedAt: nil
+        )
     }
 
     /// The two-row family, verbatim from the wire.

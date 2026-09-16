@@ -61,6 +61,27 @@ nonisolated struct GameMarketOther: Decodable, Identifiable, Sendable {
     let outcomeName: String
     let probability: Double?
     let source: String?
+    /// WHEN THIS LEG'S PRICE WAS LAST ACTUALLY OBSERVED — absolute ISO, never an
+    /// age (#4970 / D132).
+    ///
+    /// `_serialize_other` has shipped `observed_at` on every one of these rows
+    /// since #4970, whose own comment in `routes/events.py` says why: "so a
+    /// reader can see that the spread is eight minutes old while the moneyline
+    /// is thirty hours old… The client derives the age." Web derived it
+    /// (`SpecialEventMarkets` + `PriceAgeMark`); this model did not decode the
+    /// key at all, so the phone's Additional Markets card could not tell a leg
+    /// quoted a minute ago from one quoted three hours ago and drew both as
+    /// equal members of one distribution.
+    ///
+    /// Measured on production 2026-09-16 16:5xZ, live soccer: event 15310931's
+    /// "Second Half Result" served 0.9955 / 0.525 / 0.0045 — **153%** — with
+    /// leg ages of 2 / 43 / 25 minutes, and 15313067's "Halftime Result" 182%
+    /// at 2 / 115 / 115. The excess is the stale leg, to within a point.
+    ///
+    /// Optional because absent is absent (gotcha #53): a leg with no priced
+    /// snapshot is served `null`, and `SourceAge` answers "not stale" for a
+    /// stamp it cannot read rather than inventing a fresh one.
+    let observedAt: String?
 }
 
 /// Live scoring pace context for totals and in-game markets.

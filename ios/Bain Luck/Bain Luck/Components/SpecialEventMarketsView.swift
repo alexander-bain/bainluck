@@ -26,6 +26,13 @@ struct SpecialEventMarketsView: View {
         let label: String
         var prob: Double
         var sourceCount: Int
+        /// When `prob` was last observed (#4970). Absolute ISO or nil.
+        ///
+        /// The FIRST wire row's stamp, deliberately, because `prob` is also the
+        /// first row's — two sources quoting one label are merged into one
+        /// entry here and only the first one's number survives, so taking a
+        /// different row's stamp would date a number that is not on screen.
+        var observedAt: String?
     }
 
     private static let categoryPatterns: [(pattern: String, category: String, subtitle: String)] = [
@@ -113,6 +120,18 @@ struct SpecialEventMarketsView: View {
         SettledQuote.isSettled(eventStatus)
     }
 
+    /// Only a LIVE event's card can go quiet — web's
+    /// `const live = !settled && !isPregameStatus(eventStatus)`.
+    ///
+    /// A scheduled game's game markets are polled on a far slower cadence than
+    /// the two-minute live one, so applying the live bound before kickoff would
+    /// mark every row on every upcoming page and the mark would stop meaning
+    /// anything (`SourceAge`: "an age has value exactly when it is surprising").
+    /// A settled card already says its prices are old, once, in its own header.
+    private var isLiveEvent: Bool {
+        !isGameFinished && !SettledQuote.isPregame(eventStatus)
+    }
+
     /// Internal since CERT-2620, same reason as the types above: the overflow
     /// guard has to build the REAL category list from the real wire rows and
     /// find the real card, not re-implement the grouping and grade its own copy.
@@ -156,13 +175,23 @@ struct SpecialEventMarketsView: View {
                     catMap[cat]!.items[idx].outcomes[oIdx].sourceCount += 1
                 } else {
                     catMap[cat]!.items[idx].outcomes.append(
-                        OutcomeEntry(label: label, prob: m.probability ?? 0, sourceCount: 1)
+                        OutcomeEntry(
+                            label: label,
+                            prob: m.probability ?? 0,
+                            sourceCount: 1,
+                            observedAt: m.observedAt
+                        )
                     )
                 }
             } else {
                 catMap[cat]!.items.append(
                     MarketItem(id: "\(cat)-\(name)", name: name, outcomes: [
-                        OutcomeEntry(label: m.outcomeName, prob: m.probability ?? 0, sourceCount: 1)
+                        OutcomeEntry(
+                            label: m.outcomeName,
+                            prob: m.probability ?? 0,
+                            sourceCount: 1,
+                            observedAt: m.observedAt
+                        )
                     ])
                 )
             }
@@ -171,6 +200,64 @@ struct SpecialEventMarketsView: View {
         return catMap.values
             .filter { !$0.items.isEmpty }
             .sorted { (categoryOrder.firstIndex(of: $0.title) ?? 99) < (categoryOrder.firstIndex(of: $1.title) ?? 99) }
+    }
+
+    /// WHERE THE AGE IS SAID ON ONE CARD — card header, every stale row, or
+    /// nowhere.
+    ///
+    /// #4970's native half, and a direct port of `PropMiniCard`'s rule in
+    /// `frontend/components/SpecialEventMarkets.tsx`. Read that component for
+    /// the measurement behind the shape; the short version is that a per-row
+    /// mark on a card whose rows are all equally stale is eight identical
+    /// `41m ago`s stacked down one card, which is the grey-text noise notice 34
+    /// bans — while ONE mark over a card holding a two-minute-old row and a
+    /// 115-minute-old one is false about one of them.
+    ///
+    /// 🔴 THE MIXED CASE IS NOT HYPOTHETICAL ON THIS PLATFORM, and it is the
+    /// defect that sent me looking. Production, 2026-09-16 16:5xZ, three live
+    /// soccer events read in one pass:
+    ///
+    ///   15310931 "Second Half Result"  0.9955 / 0.525 / 0.0045 = **153%**,
+    ///                                  ages 2 / 43 / 25 minutes
+    ///   15313067 "Halftime Result"     = **182%**, ages 2 / 115 / 115
+    ///   15307696 "First Team to Score" = **135%**, ages 49 / 284 / 284
+    ///
+    /// In every one of them the arithmetic excess IS the leg nothing refreshed,
+    /// and the phone drew it as a peer of the fresh ones. This does not
+    /// renormalise those numbers — narrowing a fresh 99.55% to make room for a
+    /// 43-minute-old 52.5% would delete the true one to flatter the stale one,
+    /// and display normalisation is `normalize_display_probs`' job upstream
+    /// (gotcha #23, #3949). It says which number stopped being current.
+    ///
+    /// `now` is an argument (gotcha #44).
+    struct AgeDecision: Equatable {
+        /// The stamp the card header speaks with, or nil when it must not speak.
+        let cardStamp: String?
+        /// Whether each stale row draws its own mark.
+        let showRowAges: Bool
+    }
+
+    static func ageDecision(
+        _ outcomes: [OutcomeEntry],
+        live: Bool,
+        now: Date = Date()
+    ) -> AgeDecision {
+        guard live, !outcomes.isEmpty else {
+            return AgeDecision(cardStamp: nil, showRowAges: false)
+        }
+        let stale = outcomes.filter {
+            SourceAge.isStale($0.observedAt, now: now, after: SourceAge.Cadence.live.staleAfter)
+        }
+        // "All of them" and not "any of them": a card may only speak with one
+        // voice when every row it speaks for has reached that age. Otherwise the
+        // rows speak for themselves and the fresh ones stay silent.
+        guard stale.count == outcomes.count else {
+            return AgeDecision(cardStamp: nil, showRowAges: !stale.isEmpty)
+        }
+        return AgeDecision(
+            cardStamp: SourceAge.oldestStamp(stale.map(\.observedAt)),
+            showRowAges: false
+        )
     }
 
     /// How many cards a category shows before it collapses the rest.
@@ -295,7 +382,12 @@ struct SpecialEventMarketsView: View {
     /// quietly become one the day a venue names an outcome after a sibling
     /// market. The identity stays the venue's; only the printing changes.
     @ViewBuilder
-    private func outcomeRow(_ o: OutcomeEntry, rank i: Int, under heading: String) -> some View {
+    private func outcomeRow(
+        _ o: OutcomeEntry,
+        rank i: Int,
+        under heading: String,
+        showAge: Bool
+    ) -> some View {
         let percent = Int((o.prob * 100).rounded())
         HStack(spacing: 6) {
             Text(labelWithoutRedundantHeading(o.label, under: heading))
@@ -303,6 +395,13 @@ struct SpecialEventMarketsView: View {
                 .foregroundStyle(i == 0 ? .primary : .secondary)
                 .lineLimit(2)
             Spacer()
+            // #4970, the MIXED case only — the card speaks for its rows whenever
+            // they agree (`ageDecision`). Drawn before the bar, as web draws it,
+            // and only on a row that is still a live price: `isGameFinished`
+            // returns below, so a settled card never reaches this line.
+            if showAge, !isGameFinished {
+                PriceAgeMarkView(observedAt: o.observedAt, cadence: .live)
+            }
             if isGameFinished {
                 Text("\(SettledQuote.prefix) \(percent)%")
                     .font(.system(size: 11, design: .monospaced))
@@ -324,6 +423,7 @@ struct SpecialEventMarketsView: View {
     private func propMiniCard(_ item: MarketItem) -> some View {
         let sorted = item.outcomes.sorted { $0.prob > $1.prob }
         let maxSources = sorted.map(\.sourceCount).max() ?? 1
+        let age = Self.ageDecision(sorted, live: isLiveEvent)
 
         return VStack(alignment: .leading, spacing: 4) {
             HStack {
@@ -332,6 +432,9 @@ struct SpecialEventMarketsView: View {
                     .fontWeight(.medium)
                     .lineLimit(2)
                 Spacer()
+                // #4970 CARD HALF — said once, for the card, when every row
+                // under it agrees about having gone quiet.
+                PriceAgeMarkView(observedAt: age.cardStamp, cadence: .live)
                 if maxSources > 1 {
                     Text("\(maxSources)x")
                         .font(.system(size: 10, weight: .semibold))
@@ -339,7 +442,7 @@ struct SpecialEventMarketsView: View {
                 }
             }
             ForEach(sorted.indices, id: \.self) { i in
-                outcomeRow(sorted[i], rank: i, under: item.name)
+                outcomeRow(sorted[i], rank: i, under: item.name, showAge: age.showRowAges)
             }
         }
         .padding(8)

@@ -47,4 +47,30 @@ enum SettledQuote {
     static func isSettled(_ status: String?) -> Bool {
         settledStatuses.contains((status ?? "").lowercased())
     }
+
+    /// Spelled as web's `LIVE_STATUSES` in `frontend/lib/settledQuote.ts` spells
+    /// it, value for value, and pinned by `SettledQuoteParityTests` for the same
+    /// reason the settled list is: one backend state must not wear two
+    /// vocabularies on two clients.
+    static let liveStatuses: Set<String> = [
+        "live",
+        "in_progress",
+        "inprogress",
+        "in progress",
+        "halftime",
+        "delayed",
+        "suspended",
+    ]
+
+    /// The event has not started. Web's `isPregameStatus`.
+    ///
+    /// NOT `!isSettled`, and not an allowlist of `scheduled` either: the status
+    /// vocabulary on this payload is provider-shaped, so it is a TRIPLE —
+    /// settled → landed, live → moving, anything else → pregame. An unknown
+    /// status lands on pregame, which is the safe end for every caller that
+    /// wants to make a claim about a clock.
+    static func isPregame(_ status: String?) -> Bool {
+        let s = (status ?? "").lowercased()
+        return !isSettled(s) && !liveStatuses.contains(s)
+    }
 }
