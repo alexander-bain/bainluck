@@ -553,7 +553,21 @@ export function FuturesChart({
                   return { t, x: xScale(t), y: yScale(p.probability!) };
                 });
 
-              if (points.length < 2) return null;
+              // #6331: ONE observation is still an observation. This read `< 2`,
+              // so a series with a single real point drew nothing at all — while
+              // its legend swatch sat beside the plot promising a line. On a
+              // settled field that series is the CHAMPION: #6110 mints the leg the
+              // venue graded and we never priced, so `Other` on
+              // `/futures/58675941` carries exactly one point (100% at
+              // 2026-09-14T04:51:16Z, frozen there by #6360) and the panel drew a
+              // red legend dot over an empty plot.
+              // `chartSeriesPath` has emitted a run for this since #3659 — its
+              // docstring specifies a zero-length subpath painted as a round dot
+              // under `stroke-linecap="round"`, and the helper's own test has
+              // covered it ("one point is a dot"). The guard here meant no call
+              // site could ever reach that arm. Only the truly empty series
+              // returns null now.
+              if (points.length === 0) return null;
 
               // #3659: the solid stroke touches only real observations. Any gap
               // wider than THIS outcome's own cadence is handed to a faint
@@ -562,7 +576,7 @@ export function FuturesChart({
               // different intervals. A series with no hole yields exactly one
               // run, byte-identical to what this expression produced inline
               // before, and no bridges at all.
-              const { runs, bridges } = chartSeriesPath(points, {
+              const { runs, bridges, dots } = chartSeriesPath(points, {
                 step: !!stepInterpolation,
               });
 
@@ -620,6 +634,27 @@ export function FuturesChart({
                       strokeDasharray={elim ? "4 3" : undefined}
                       strokeLinecap="round"
                       strokeLinejoin="round"
+                    />
+                  ))}
+                  {/* #6331: an observation that stands alone gets a mark a reader
+                      can actually see. The run above already paints it at the
+                      LINE's weight, and that is the whole defect — 1.5 CSS px in
+                      the corner of a 600px plot, under a full-size legend swatch.
+                      A line is legible because it is long.
+                      Deliberately the chart's EXISTING dot vocabulary (the hover
+                      dot at `r={4}` below), one size down so a permanent mark is
+                      never louder than the cursor's. Opacity is the line's own,
+                      so highlight-dimming and the eliminated fade carry through
+                      unchanged; `dots` is empty for every healthy series, so no
+                      chart that draws an unbroken line gains a single element. */}
+                  {dots.map((p, d) => (
+                    <circle
+                      key={`dot-${d}`}
+                      cx={p.x}
+                      cy={p.y}
+                      r={mini ? 2 : 3}
+                      fill={colorFor(outcome, idx)}
+                      fillOpacity={strokeOpacity}
                     />
                   ))}
                 </Fragment>
