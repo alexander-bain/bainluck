@@ -227,14 +227,15 @@ describe("CONTROL: settled means settled, and narrower questions keep their verd
     expect(rows.filter((r) => r.trim() === "New York Yankees Won")).toEqual([]);
   });
 
-  test("DIFFERENTIAL: with no team names on the wire the render does not move", () => {
+  test("DIFFERENTIAL: with no team names on the wire this ship is INERT", () => {
     // `marketIsTheGamesOwnQuestion` needs both names and returns false without
-    // them, so a payload that carries none must render byte-for-byte as it did
-    // before this ship — the mid-deploy and non-game-page case.
-    const before = render(
-      payload(WIRE, { home_team: null, away_team: null }) as GameMarketsResponse,
-    );
-    expect(before).toContain('data-verdict="won"');
+    // them, so a payload carrying neither renders exactly as it did before this
+    // ship — the same fail-open door `canonicalMatchupTitle` already holds for
+    // a caller with no event context (#5181). `undefined`, not `null`: absent
+    // from the wire is the shape the type allows and the one production sends.
+    const html = render(payload(WIRE, { home_team: undefined, away_team: undefined }));
+    expect(html).toContain('data-verdict="won"');
+    expect(verdictRows(html).some((r) => /New York Yankees\s+Won/.test(r))).toBe(true);
   });
 });
 
