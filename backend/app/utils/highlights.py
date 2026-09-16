@@ -1133,7 +1133,62 @@ def compute_highlight(
                 # (`routes/feed.py`), `should_highlight`, the `signal:upset`
                 # taxonomy tag and the served `is_upset` field. A drawn match
                 # earns none of them.
-                if flags.is_recently_finished and flags.someone_is_leading is not False:
+                #
+                # #6529 — AND THE SIDE THE PRICE SWITCHED TO HAS TO BE THE SIDE
+                # THAT WON. The clause above asks *did somebody win?*; the chip
+                # claims *the underdog did*. 15312650 (Cleveland Guardians 7 -
+                # 6 Chicago White Sox, served 2026-09-16 on the Sports tab)
+                # passes the draw clause and is still false: Cleveland opened
+                # the 58.78% favourite, their in-play blend fell to 0.201 while
+                # they were losing late, and then they won. A price crossing
+                # 0.5 and coming back is not an upset in any field.
+                #
+                # THE CARD'S OWN CAPTION WAS ALREADY SILENT ON IT — `reason` is
+                # `""` on the served item, because `feed_reasons` reads the
+                # scoreboard against the board and had nothing to say. Measured
+                # at the reader's scale (`/api/feed?mode=sports`, offsets
+                # 0/60/120/180 plus Discover 0/60/120, deduped, 2026-09-16
+                # 10:0xZ): 16 finished cards chipped `Recent upset`, 15 with a
+                # genuine underdog winner and each carrying its "won as N%
+                # underdog" sentence, ONE false — and it is exactly the one
+                # whose `reason` is empty. Perfect separation, and the
+                # separator was already computed on the same item.
+                #
+                # `underdog_is_leading` is that separator: `underdog_leads`,
+                # read ONCE at the top of this function beside its sibling, and
+                # on a final "leading" IS "won". #6279 named this gap and
+                # deferred it in a control test, on the grounds that a rule
+                # written against the card's printed `Pre-match` row would land
+                # on the wrong population — a three-way soccer row hands the
+                # whole draw to the away side (#6277). THIS IS NOT THAT RULE.
+                # It reads `opening_home_prob`, the column pair `opening_favorite`
+                # itself is derived from, and the two cannot disagree: over the
+                # 631 finished events of the seven days to 2026-09-16 (387 of
+                # them soccer), `opening_favorite = 'home'` with
+                # `opening_home_probability < 0.5` occurs 0 times, the mirror
+                # case 0 times, and the stored opening pair sums to ≥0.98 on
+                # every row — the fabrication #6277 names lives in the PRINTED
+                # kalshi three-way, not here. 15298124 (Villarreal 1 - 2 Real
+                # Betis, opening home 0.6535) therefore keeps the chip that is
+                # the only true statement on its card.
+                #
+                # BOTH CLAUSES, because the two helpers go unanswerable on
+                # different inputs and neither subsumes the other: a KNOWN draw
+                # with no opening price is `someone_is_leading is False` but
+                # `underdog_is_leading is None`, so dropping the first clause
+                # would re-admit #6279's own population through the hole. That
+                # row does not exist today (0 of the same 631 lack an opening
+                # price, 0 lack a score), which is the reason to keep the clause
+                # rather than to drop it: the guarantee costs nothing and does
+                # not depend on today's ingest staying complete.
+                #
+                # `None` is still tolerated on both, for #4580's reason: an
+                # unreadable scoreboard is not a denial.
+                if (
+                    flags.is_recently_finished
+                    and flags.someone_is_leading is not False
+                    and flags.underdog_is_leading is not False
+                ):
                     flags.is_upset = True
                     result.score += WEIGHTS["recent_finish_upset"]
                     result.reasons.append("upset")

@@ -207,17 +207,26 @@ class TestTheControls:
         assert result.flags.is_upset is True
         assert get_highlight_label(result) == "Recent upset"
 
-    def test_a_final_the_favourite_won_is_left_exactly_as_it_was(self):
-        """NOT IN SCOPE, PINNED SO THE GATE CANNOT QUIETLY GROW INTO IT.
+    def test_a_final_the_favourite_won_is_now_refused_too_6529(self):
+        """GAP 2, DEFERRED HERE AND CLOSED BY #6529. The assertion is inverted.
 
-        A final the opening favourite WON, whose price nonetheless drifted
-        across 0.5, is chipped today on the strength of that drift alone. That
-        is gap 2 of #6279 (and #2753's magnitude hole), and #6279 rules it
-        deferred: on a three-way soccer card the printed row is fabricated
-        (#6277), so a rule written against the row now would land on the wrong
-        population. Asking the scoreboard `underdog_leads` instead of
-        `score_is_decided` WOULD refuse this row — a strictly larger gate
-        wearing this fix's name. It stays chipped until #6277 lands.
+        This test used to pin a final the opening favourite WON as still
+        chipped — #6279 deferred that population on the grounds that a rule
+        written against the card's printed `Pre-match` row would land on the
+        wrong one, because a three-way soccer row hands the whole draw to the
+        away side (#6277).
+
+        #6529 found the specimen on the phone (15312650, Cleveland Guardians
+        7 - 6 Chicago White Sox, opening 58.78% Cleveland) and closed it
+        WITHOUT that rule: `underdog_leads` reads `opening_home_prob`, the
+        column pair `opening_favorite` is itself derived from, never the
+        printed row. Measured over 631 finished events in the seven days to
+        2026-09-16 the two notions of "favourite" disagree on 0 rows.
+
+        Kept in this file rather than moved: the deferral was recorded here, so
+        its lifting belongs here too, and `TestTheAlarmSurvives` two classes up
+        is the control that the #6277 population is still not the one being
+        refused.
         """
         result = _finished(
             home_score=7,
@@ -229,8 +238,8 @@ class TestTheControls:
         assert result.flags.favorite_switched is True
         assert result.flags.someone_is_leading is True
         assert result.flags.underdog_is_leading is False
-        assert result.flags.is_upset is True
-        assert get_highlight_label(result) == "Recent upset"
+        assert result.flags.is_upset is False
+        assert get_highlight_label(result) != "Recent upset"
 
     def test_a_level_final_with_no_price_switch_is_unchanged(self):
         """15307040, Rio Ave 3 - 3 CF Estrela on the same read: a draw that was
