@@ -54,6 +54,7 @@ class _Row:
         espn_id=None,
         external_id=None,
         sources=None,
+        status=None,
     ):
         self.id = id
         self.sport_id = sport_id
@@ -65,6 +66,7 @@ class _Row:
         self.espn_id = espn_id
         self.external_id = external_id
         self.win_probability_sources = sources
+        self.status = status
 
 
 def _cards():
@@ -179,6 +181,110 @@ def test_the_score_outranks_the_provider_ids_on_its_own():
     assert twin_identity_rank(scored_but_id_less) > twin_identity_rank(
         anchored_scoreless
     )
+
+
+def test_the_authoritys_result_beats_a_richer_row_holding_a_fabricated_score():
+    """#5841, the production row: search served `0 - 0` for a game that finished
+    `0 - 6`.
+
+    Rung 1 asks whether a score is PRESENT, not whether it is final, so a
+    fabricated `0 - 0` satisfies it and ties. Both rows are anchored, so rungs 2
+    and 3 tie too, and before the authority rung `_source_count` 6 vs 5 handed
+    the card to the row with no result on it.
+
+    The fixture is built so ONLY the authority rung can decide it: delete that
+    tuple element and the scoreless-but-richer row wins again.
+    """
+    fabricated = _Row(
+        14877917,
+        away="New York Yankees",
+        home="Boston Red Sox",
+        status="closed",
+        home_score=0,
+        away_score=0,
+        espn_id="401815659",
+        external_id="ff51…",
+        sources={f"s{i}": 0.5 for i in range(6)},
+    )
+    final = _Row(
+        15295242,
+        away="New York Yankees",
+        home="Boston Red Sox",
+        status="completed",
+        home_score=6,
+        away_score=0,
+        espn_id="401874913",
+        external_id="ef5a…",
+        sources={f"s{i}": 0.5 for i in range(5)},
+    )
+    assert twin_identity_rank(final) > twin_identity_rank(fabricated)
+    result = fold_twin_events([fabricated, final])
+    assert [e.id for e in result.events] == [15295242]
+    assert result.dropped_ids == [14877917]
+
+
+def test_the_authority_rung_never_outranks_an_anchor():
+    """Guards the rung's POSITION, not its presence — and it is the reason the
+    rung sits at 4 rather than 1.
+
+    `15228847`/`15290802` (D'backs–Reds 08-23) carry the IDENTICAL scoreline
+    `5–11`; the only difference is that the `closed` row is ESPN-anchored and
+    the `completed` row is not. There is no result to gain here, so promoting
+    the authority above rung 2 would trade the anchor the event page, the chart
+    and the settlement path all reach for a status word.
+
+    A rung placed too HIGH passes the test above and fails this one.
+    """
+    anchored_but_closed = _Row(
+        15228847,
+        away="Arizona Diamondbacks",
+        home="Cincinnati Reds",
+        status="closed",
+        home_score=11,
+        away_score=5,
+        espn_id="401813066",
+        sources={f"s{i}": 0.5 for i in range(3)},
+    )
+    completed_but_anchorless = _Row(
+        15290802,
+        away="Arizona Diamondbacks",
+        home="Cincinnati Reds",
+        status="completed",
+        home_score=11,
+        away_score=5,
+        external_id="9c0f…",
+        sources={f"s{i}": 0.5 for i in range(3)},
+    )
+    assert twin_identity_rank(anchored_but_closed) > twin_identity_rank(
+        completed_but_anchorless
+    )
+    result = fold_twin_events([anchored_but_closed, completed_but_anchorless])
+    assert [e.id for e in result.events] == [15228847]
+
+
+def test_the_authority_rung_is_inert_when_neither_row_is_completed():
+    """Two `closed` rows, and a row whose caller never loaded `status` at all,
+    must elect exactly as they did before the rung existed — otherwise this
+    change is not the six groups it was measured to be.
+
+    `_source_count` decides both pairs, which is the rung BELOW the new one.
+    """
+    poorer = _Row(600, status="closed", sources={"kalshi": 0.5})
+    richer = _Row(700, status="closed", sources={"betting": 0.7, "espn": 0.7})
+    assert twin_identity_rank(richer) > twin_identity_rank(poorer)
+    assert [e.id for e in fold_twin_events([poorer, richer]).events] == [700]
+
+    # A caller that never loaded `status` must rank identically to a `closed`
+    # row — every element but the id tiebreak, which can never match because two
+    # rows cannot share an id. Comparing the whole tuple here would be a test
+    # that passes for the wrong reason.
+    status_unloaded = _Row(700, sources={"betting": 0.7, "espn": 0.7})
+    assert twin_identity_rank(status_unloaded) == twin_identity_rank(richer)
+
+    # …and it loses to a `completed` row of the SAME shape, which is the only
+    # difference the rung is allowed to notice.
+    completed = _Row(700, status="completed", sources={"betting": 0.7, "espn": 0.7})
+    assert twin_identity_rank(completed) > twin_identity_rank(status_unloaded)
 
 
 def test_election_is_stable_under_input_order():
