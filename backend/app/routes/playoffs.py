@@ -29,6 +29,9 @@ from app.services import get_db
 from app.utils.db_cancellation import is_query_canceled
 from app.utils.futures_unsupported_price import price_refuted_by_live_book  # #6532
 from app.utils.tournament_stages import classify_market_stage, get_stages_for_sport
+from app.utils.static_divisions import canonical_conference as _canonical_conference
+from app.utils.static_divisions import canonical_division as _canonical_division
+from app.utils.static_divisions import grid_conference_key as _grid_conference_key
 from app.utils.static_divisions import lookup_division as _static_lookup_division
 from app.utils.grid_register import GridRegister, load_register
 from app.utils.odds_math import devig_consensus
@@ -1347,6 +1350,14 @@ async def _get_team_metadata(
                 meta["conference"] = static_conf
             if not meta["division"] and static_div:
                 meta["division"] = static_div
+
+        # #6246: one vocabulary, applied to BOTH arms above and here rather than
+        # at the grouping site alone — the event page's Championship Path reads
+        # this metadata without ever building `grouped_teams`, so a rule that
+        # lived only in the grid would let the two surfaces disagree about which
+        # conference a club is in.
+        meta["conference"] = _canonical_conference(league_slug, meta["conference"])
+        meta["division"] = _canonical_division(league_slug, meta["division"])
 
         # NCAA Tournament: look up region and seed from bracket data
         if league_slug == "ncaa-basketball" and team.name:
@@ -4532,17 +4543,12 @@ async def get_playoff_grid(
         for team_row in teams:
             conf = team_row.get("conference")
             if conf:
-                # Normalize conference names: "Eastern" → "Eastern Conference"
-                # Only add "Conference" suffix for directional names (Eastern/Western)
-                # and league names (American/National). Don't suffix named conferences
-                # like "SEC", "Big Ten", "ACC", etc.
-                conf_norm = conf.strip()
-                _CONF_SUFFIX_NAMES = {"eastern", "western", "american", "national"}
-                if (conf_norm
-                    and not conf_norm.lower().endswith("conference")
-                    and not conf_norm.lower().endswith("league")
-                    and conf_norm.lower() in _CONF_SUFFIX_NAMES):
-                    conf_norm = f"{conf_norm} Conference"
+                # #6246: the suffix rule that used to live here ("Eastern" →
+                # "Eastern Conference", never "SEC" → "SEC Conference") now lives
+                # in `canonical_conference` alongside the per-league aliases, so
+                # the grid and the event page cannot drift apart. Behaviour for
+                # leagues with no alias table is unchanged.
+                conf_norm = _grid_conference_key(config.slug, conf)
                 team_row["conference"] = conf_norm
                 groups[conf_norm].append(team_row)
             else:
