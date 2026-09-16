@@ -86,6 +86,7 @@ so, rather than guessing.
 from __future__ import annotations
 
 import hashlib
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
@@ -99,6 +100,8 @@ from app.utils.calibration_phase_ledger import (
     MAIN_BUILD_TASK,
     REFUSE,
     RESUME,
+    STAGED_UNIT_MAX_REFINEMENT_BUCKETS,
+    STAGED_UNIT_SPLIT_MAX_FACTOR,
     TERMINAL_PARTIAL,
     input_fingerprint,
 )
@@ -114,12 +117,19 @@ __all__ = [
     "INTEGER_ADDITIVE_COLUMNS",
     "NONEXCLUSIVE_BUNDLE_CELL_COLUMNS",
     "REPRESENTATIVE_TIE_COLUMN",
+    "SLOT_REF_SEPARATOR",
+    "SPLIT_ALREADY",
+    "SPLIT_APPLIED",
+    "SPLIT_ATOMIC",
+    "SPLIT_BANKED",
+    "SPLIT_TOO_DEEP",
     "STAGED_FUTURES_SCHEMA",
     "UNIT_KEY_VM_ID",
     "StagedFuturesCursor",
     "UnencodableValueError",
     "UnitChunk",
     "advance",
+    "attempt_order",
     "bucket_of",
     "can_advance",
     "collect_unit_results",
@@ -135,6 +145,14 @@ __all__ = [
     "is_encoded_accumulator",
     "is_encoded_unit_rows",
     "merge_futures_rows",
+    "note_unit_cancelled",
+    "parse_slot_ref",
+    "prune_unit_cancels",
+    "refine_unit",
+    "resolve_slot",
+    "sanitize_refinements",
+    "slot_ref",
+    "split_factor",
     "split_unit_rows",
     "new_staged_cursor",
     "plan_units",
@@ -754,6 +772,152 @@ def bucket_of(vm_id: Any, buckets: int) -> int:
     return int.from_bytes(digest[:8], "big") % buckets
 
 
+# -----------------------------------------------------------------------------
+# CAL-P1301 (#6599) — refining ONE slot of the partition
+# -----------------------------------------------------------------------------
+#
+# :func:`bucket_of` is ``h(vm_id) mod buckets``, so for any whole ``m``
+#
+#     (h mod (buckets * m)) mod buckets  ==  h mod buckets
+#
+# — a ``buckets * m``-way partition is an exact REFINEMENT of the ``buckets``-way
+# one. Slot ``i`` of 128 is exactly the union of slots ``i, i+128, ... i+127m``
+# of ``128m``, every ``vm_id`` lands in exactly one of them, and a ``vm_id`` is
+# still never split (:func:`plan_units`' one load-bearing dependency, which the
+# census sums rest on). So a slot too expensive to read in one statement can be
+# read as ``m`` smaller statements that are jointly the same census — using the
+# partition the build already has, rather than a second mechanism beside it.
+#
+# The children are ORDINARY planned units: their keys are ``(buckets, index)``
+# keys like every other, so the cursor banks them, ``retain_planned_units``
+# keeps them, ``roster_drift`` measures them and :func:`is_complete` counts them
+# with nothing changed. That is the whole reason to do it this way.
+
+#: Separates the two halves of a slot reference. A slot reference is
+#: ``"<buckets>:<index>"`` — the address of a slot in a partition, and the key of
+#: the two refinement maps the cursor carries. Deliberately NOT
+#: :attr:`UnitChunk.key`: that is a 16-character digest, and the planner has to
+#: be able to READ a reference back to find the slot it names.
+SLOT_REF_SEPARATOR = ":"
+
+
+def slot_ref(chunk: Any) -> str:
+    """``"<buckets>:<index>"`` for a chunk — the address the refinement maps use."""
+    return f"{int(chunk.buckets)}{SLOT_REF_SEPARATOR}{int(chunk.index)}"
+
+
+def parse_slot_ref(ref: Any) -> Optional[tuple[int, int]]:
+    """``(buckets, index)`` for a well-formed reference, else ``None``.
+
+    ``None`` rather than an exception: these references come off a durable
+    payload that a previous deploy wrote, and one unreadable entry must cost
+    that entry and nothing else. The caller drops it and says so.
+    """
+    if not isinstance(ref, str):
+        return None
+    head, sep, tail = ref.partition(SLOT_REF_SEPARATOR)
+    if not sep:
+        return None
+    try:
+        buckets, index = int(head), int(tail)
+    except ValueError:
+        return None
+    if buckets < 1 or index < 0 or index >= buckets:
+        return None
+    return buckets, index
+
+
+def sanitize_refinements(
+    raw: Any, *, base_buckets: int, max_buckets: int = STAGED_UNIT_MAX_REFINEMENT_BUCKETS
+) -> dict[str, int]:
+    """The refinement map, with every entry the planner cannot honour removed.
+
+    Refusals, each of which drops ONE entry rather than the map: a reference
+    that does not parse, a factor that is not a whole number above one, a slot
+    whose partition is not reachable from ``base_buckets`` by whole factors, and
+    a refinement that would take the plan past ``max_buckets``.
+
+    The last one is the bound that matters and it is enforced HERE rather than
+    inside the resolver, so an over-deep map is reported once at the top of a
+    beat instead of per roster row.
+    """
+    if not isinstance(raw, Mapping):
+        return {}
+    clean: dict[str, int] = {}
+    for ref, factor in raw.items():
+        parsed = parse_slot_ref(ref)
+        if parsed is None:
+            continue
+        buckets, _index = parsed
+        if not isinstance(factor, int) or isinstance(factor, bool) or factor < 2:
+            continue
+        if buckets < base_buckets or buckets % base_buckets:
+            # A slot of some other partition entirely. Not ours to cut.
+            continue
+        if buckets * factor > max_buckets:
+            continue
+        clean[str(ref)] = int(factor)
+    return clean
+
+
+def resolve_slot(
+    vm_id: Any, *, buckets: int, refinements: Optional[Mapping[str, int]] = None
+) -> tuple[int, int]:
+    """``(buckets, index)`` of the slot this ``vm_id`` belongs to under ``refinements``.
+
+    Walks down: a ``vm_id`` starts in its base slot and, each time that slot is
+    one the map refines, moves into the child slot of the finer partition that
+    contains it. Terminates because every step multiplies ``buckets`` by at
+    least two and :func:`sanitize_refinements` has already bounded the product —
+    the loop cannot cycle, because a refined slot is strictly coarser than its
+    own children.
+    """
+    index = bucket_of(vm_id, buckets)
+    if not refinements:
+        return buckets, index
+    while True:
+        factor = refinements.get(f"{buckets}{SLOT_REF_SEPARATOR}{index}")
+        if not factor:
+            return buckets, index
+        buckets = buckets * int(factor)
+        index = bucket_of(vm_id, buckets)
+
+
+def split_factor(
+    cancelled_after_ms: Any,
+    unit_ms: Any,
+    *,
+    max_factor: int = STAGED_UNIT_SPLIT_MAX_FACTOR,
+) -> int:
+    """Into how many children a slot that cancelled at ``cancelled_after_ms`` is cut.
+
+    ``ceil(cancelled_after_ms / unit_ms)`` — how many units of the build's own
+    MEASURED unit cost the cancelled slot is known to be worth — capped at
+    ``max_factor`` and never below two.
+
+    A multiple of a measurement, never a pinned number (ruling 075), and the
+    measurement is honest about being a floor: a cancellation says the slot cost
+    at least that long, so the ratio is a LOWER bound on the division needed and
+    one split is not promised to be enough. A child that cancels twice is split
+    again; that recursion, not this arithmetic, is what eventually fits the slot
+    inside a statement timeout.
+
+    With no measured unit cost there is nothing to divide, so this returns the
+    smallest refinement that is a refinement at all — two. That is not a guess
+    at the cost (ruling 075's second clause: "we have no measurement" must not
+    render as a number); it is the minimum step, taken so the build makes
+    progress toward one while the measurement is still absent.
+    """
+    try:
+        cancelled = float(cancelled_after_ms or 0.0)
+        measured = float(unit_ms or 0.0)
+    except (TypeError, ValueError):
+        return 2
+    if cancelled <= 0 or measured <= 0:
+        return 2
+    return max(2, min(int(max_factor), math.ceil(cancelled / measured)))
+
+
 @dataclass(frozen=True)
 class UnitChunk:
     """One Stage B unit: whole virtual questions and the markets inside them."""
@@ -886,8 +1050,21 @@ class UnitChunk:
         }
 
 
-def plan_units(rows: Iterable[Any], *, buckets: int) -> tuple[UnitChunk, ...]:
+def plan_units(
+    rows: Iterable[Any],
+    *,
+    buckets: int,
+    refinements: Optional[Mapping[str, int]] = None,
+) -> tuple[UnitChunk, ...]:
     """Cut the Stage A roster into chunks of WHOLE virtual questions.
+
+    **CAL-P1301 (#6599): ``refinements`` cuts NAMED slots finer**, and nothing
+    else about this function moves. An empty or absent map is the 128-way plan
+    this has always produced, chunk for chunk; a map naming slot ``128:31`` with
+    factor 4 produces 127 chunks of the 128-way partition plus the (at most)
+    four non-empty children of that slot in the 512-way one. The children are
+    ordinary chunks with ordinary keys — see the refinement note above
+    :data:`SLOT_REF_SEPARATOR` for why that is exact rather than approximate.
 
     **A ``vm_id`` is never split.** ``e:123`` on Kalshi and ``e:123`` on
     Polymarket land in the same unit; put them in different chunks and each
@@ -947,6 +1124,10 @@ def plan_units(rows: Iterable[Any], *, buckets: int) -> tuple[UnitChunk, ...]:
         raise ValueError("buckets must be an int")
     if buckets < 1:
         raise ValueError("buckets must be >= 1")
+    # Sanitized HERE rather than trusted from the caller: the map arrives off a
+    # durable payload, and a planner that raised on one bad entry would turn a
+    # readable cursor into a dead beat.
+    refinements = sanitize_refinements(refinements, base_buckets=buckets)
 
     # CAL-P036: accumulate per BUCKET, never per ``vm_id``. The output is
     # byte-identical to the per-``vm_id`` accumulator this replaces; the reason
@@ -983,8 +1164,13 @@ def plan_units(rows: Iterable[Any], *, buckets: int) -> tuple[UnitChunk, ...]:
     # 25 s ceiling), a change whose SIGN depends on it is not shippable.
     # ``market_ids`` is therefore derived from the members below, which the
     # chunk has to carry anyway.
-    by_bucket_vm: dict[int, set[str]] = {}
-    by_bucket_members: dict[int, set[str]] = {}
+    #
+    # CAL-P1301: keyed by the SLOT ``(buckets, index)`` rather than by the index
+    # alone, because a refined plan holds slots of more than one partition at
+    # once. With no refinements every key carries the same ``buckets`` and the
+    # containers, their count and the output are exactly what they were.
+    by_bucket_vm: dict[tuple[int, int], set[str]] = {}
+    by_bucket_members: dict[tuple[int, int], set[str]] = {}
     for row in rows:
         raw_vm = _get(row, UNIT_KEY_VM_ID)
         raw_market = _get(row, "market_id")
@@ -1006,12 +1192,12 @@ def plan_units(rows: Iterable[Any], *, buckets: int) -> tuple[UnitChunk, ...]:
         # Computed per ROW rather than memoised per ``vm_id``: a memo dict would
         # reintroduce exactly the per-``vm_id`` entry this change removes. It is
         # one short-string hash, and the beat is minutes long.
-        index = bucket_of(vm_id, buckets)
-        by_bucket_vm.setdefault(index, set()).add(vm_id)
+        slot = resolve_slot(vm_id, buckets=buckets, refinements=refinements)
+        by_bucket_vm.setdefault(slot, set()).add(vm_id)
         # The membership digest is per ROSTER ROW, not per market: source and
         # is_grouped are exactly what generation_fingerprint watches globally,
         # and a unit that resumes must be able to see them change.
-        by_bucket_members.setdefault(index, set()).add(
+        by_bucket_members.setdefault(slot, set()).add(
             MEMBER_SEPARATOR.join(
                 (
                     str(market_id),
@@ -1028,8 +1214,13 @@ def plan_units(rows: Iterable[Any], *, buckets: int) -> tuple[UnitChunk, ...]:
     # digest exists, and holding all 128 buckets' sets until the function
     # returns keeps the whole 57.9 MB alive across the chunk-building pass for
     # no reason. Popping frees each bucket as it is consumed.
-    for index in sorted(by_bucket_vm):
-        members = by_bucket_members.pop(index)
+    # CAL-P1301: sorted by ``(buckets, index)``. Every key carries the same
+    # ``buckets`` when nothing is refined, so this is the old ``sorted(index)``
+    # order — and when something IS refined it is still one total order, which is
+    # what the cursor's resumability rests on.
+    for slot in sorted(by_bucket_vm):
+        slot_buckets, index = slot
+        members = by_bucket_members.pop(slot)
         # The dedupe is per ``vm_id`` and deliberately NOT global. The roster
         # carries a row per (market, source), and ``vm_id`` is derived with
         # source-scoped group/event sizes, so one ``market_id`` can legitimately
@@ -1052,10 +1243,10 @@ def plan_units(rows: Iterable[Any], *, buckets: int) -> tuple[UnitChunk, ...]:
         # polices it anyway, against the pre-CAL-P036 accumulator).
         complete = UnitChunk(
             index=index,
-            vm_ids=tuple(sorted(by_bucket_vm.pop(index))),
+            vm_ids=tuple(sorted(by_bucket_vm.pop(slot))),
             market_ids=tuple(sorted(market for _vm, market in pairs)),
             members=tuple(sorted(members)),
-            buckets=buckets,
+            buckets=slot_buckets,
         )
         # ``complete`` has no stored digest, so this is the members-based path
         # of the public property — not a second derivation reached around it.
@@ -1526,6 +1717,29 @@ class StagedFuturesCursor:
     #: the plan.
     served_drift_units: int = 0
 
+    # -- CAL-P1301: what this build has learned about cost (#6599) -------------
+    #
+    #: Slot reference -> how many times a unit at that slot has been cancelled at
+    #: its own bound, across beats. The one fact the loop could never keep: a
+    #: cancellation was recorded in the beat's ledger and the next beat started
+    #: with no memory of it, so two stuck slots at the head of the plan spent
+    #: every beat's cancellation budget before a third unit was ever attempted.
+    #: Written on the cancellation itself, not at the end of a beat — the beats
+    #: that matter here bank nothing, and a beat that banks nothing used to write
+    #: no cursor at all.
+    unit_cancels: dict[str, int] = field(default_factory=dict)
+    #: Slot reference -> the factor that slot is cut into. Read by
+    #: :func:`plan_units`; see :data:`SLOT_REF_SEPARATOR`.
+    #:
+    #: **Sticky for the life of the cursor, deliberately.** Once a refinement is
+    #: in force its children are the planned units and the cursor banks THEM;
+    #: removing the entry would un-plan every banked child and
+    #: :func:`retain_planned_units` would fail closed on the whole bank. A
+    #: refinement is knowledge about what a slot costs, and the way to discard it
+    #: is to discard the cursor it belongs to, which is also what throws away the
+    #: units it produced.
+    unit_splits: dict[str, int] = field(default_factory=dict)
+
     def has(self, key: Any) -> bool:
         """Whether this unit is banked.
 
@@ -1580,6 +1794,14 @@ class StagedFuturesCursor:
             "served_at": self.served_at,
             "planned_units": list(self.planned_units),
             "served_drift_units": self.served_drift_units,
+            # CAL-P1301. Additive and OPTIONAL for the same reason CAL-P078's
+            # fields were: a cursor written before this change decodes with both
+            # at their defaults, which reads as "this build has not measured a
+            # slot cancelling yet" — true of every cursor that predates it — and
+            # the first cancellation after the deploy fills them in. No schema
+            # bump, so no dark window.
+            "unit_cancels": dict(self.unit_cancels),
+            "unit_splits": dict(self.unit_splits),
         }
 
 
@@ -1894,6 +2116,38 @@ def decode_staged_cursor_detailed(
         and raw_served_drift >= 0
         else 0
     )
+    # CAL-P1301. Both maps are carried across the read whole, with per-entry
+    # refusals and no whole-cursor consequence: an unreadable cancellation count
+    # costs the memory of that slot's cancellations (it is re-earned on the next
+    # one), and an unreadable refinement is dropped by
+    # :func:`sanitize_refinements` at plan time rather than here, so the plan and
+    # the payload cannot disagree about which entries are in force.
+    raw_cancels = raw.get("unit_cancels")
+    unit_cancels = (
+        {
+            str(ref): int(count)
+            for ref, count in raw_cancels.items()
+            if parse_slot_ref(ref) is not None
+            and isinstance(count, int)
+            and not isinstance(count, bool)
+            and count > 0
+        }
+        if isinstance(raw_cancels, dict)
+        else {}
+    )
+    raw_splits = raw.get("unit_splits")
+    unit_splits = (
+        {
+            str(ref): int(factor)
+            for ref, factor in raw_splits.items()
+            if parse_slot_ref(ref) is not None
+            and isinstance(factor, int)
+            and not isinstance(factor, bool)
+            and factor >= 2
+        }
+        if isinstance(raw_splits, dict)
+        else {}
+    )
     # Not carried across the read. The plan is re-derived and re-stamped by
     # retain_planned_units at the top of every beat, and a stale plan is the one
     # input that could make promote_if_complete promote a bank against a
@@ -1927,6 +2181,8 @@ def decode_staged_cursor_detailed(
             served_digests=served_digests,
             served_at=served_at,
             served_drift_units=served_drift_units,
+            unit_cancels=unit_cancels,
+            unit_splits=unit_splits,
         ),
         RESUME if resumable else FRESH,
         # CAL-P078: the action still describes the BUILDING bank, deliberately.
@@ -2215,12 +2471,19 @@ def retain_planned_units(
             dropped,
         )
     return (
-        replace(
-            cursor,
-            committed_units=kept,
-            unit_digests={name: digests[name] for name in kept if name in digests},
-            roster_drift_units=drift,
-            served_drift_units=served_moved,
+        # CAL-P1301: the cancellation map is pruned to the plan here, at the one
+        # place that already holds both the cursor and the plan. The refinement
+        # map is NOT pruned — see :attr:`StagedFuturesCursor.unit_splits` for why
+        # removing an entry would un-plan its banked children.
+        prune_unit_cancels(
+            replace(
+                cursor,
+                committed_units=kept,
+                unit_digests={name: digests[name] for name in kept if name in digests},
+                roster_drift_units=drift,
+                served_drift_units=served_moved,
+            ),
+            chunk_list,
         ),
         dropped,
     )
@@ -2320,6 +2583,132 @@ def advance(
     # after every advance, so the promotion is durable on the same write that
     # banks the unit which earned it. A no-op unless the plan is covered.
     return promote_if_complete(advanced)
+
+
+# -----------------------------------------------------------------------------
+# CAL-P1301 (#6599) — recording what a slot costs, and acting on it
+# -----------------------------------------------------------------------------
+
+#: :func:`refine_unit` cut the slot. The factor is in the returned cursor.
+SPLIT_APPLIED = "applied"
+#: The slot is ALREADY refined; its children are the planned units now, and a
+#: cancellation belongs to whichever child produced it. Not an error.
+SPLIT_ALREADY = "already"
+#: The slot holds exactly one virtual question, which :func:`plan_units` never
+#: splits and this must never pretend to. The build stays incomplete and says
+#: so — a question we cannot read inside a statement timeout is a defect to fix,
+#: never a unit to drop (``PARTIAL_GENERATION_PUBLISHED``).
+SPLIT_ATOMIC = "atomic"
+#: The slot is banked. Refining it would un-plan a unit whose rows are already
+#: folded into the accumulator, which :func:`retain_planned_units` answers by
+#: throwing the WHOLE bank away. Refused here so that can never be reached.
+SPLIT_BANKED = "banked"
+#: The chain has reached :data:`STAGED_UNIT_MAX_REFINEMENT_BUCKETS`. Recorded and
+#: refused; the planner never raises its own ceiling.
+SPLIT_TOO_DEEP = "too_deep"
+
+
+def note_unit_cancelled(cursor: StagedFuturesCursor, ref: str) -> StagedFuturesCursor:
+    """Record one cancellation against a slot, returning a NEW cursor.
+
+    The count is what :data:`~app.utils.calibration_phase_ledger.STAGED_UNIT_CANCEL_DEFERRAL`
+    and :data:`~app.utils.calibration_phase_ledger.STAGED_UNIT_SPLIT_AFTER` read,
+    so it must survive a beat that banks nothing — which is every beat of the
+    livelock this exists to end.
+    """
+    if parse_slot_ref(ref) is None:
+        return cursor
+    counts = dict(cursor.unit_cancels)
+    counts[ref] = int(counts.get(ref, 0)) + 1
+    return replace(cursor, unit_cancels=counts)
+
+
+def refine_unit(
+    cursor: StagedFuturesCursor,
+    chunk: Any,
+    *,
+    factor: int,
+    max_buckets: int = STAGED_UNIT_MAX_REFINEMENT_BUCKETS,
+) -> tuple[StagedFuturesCursor, str]:
+    """Cut one slot into ``factor`` children from the next beat on.
+
+    Returns ``(cursor, outcome)`` where ``outcome`` is one of the ``SPLIT_*``
+    tokens above — a token rather than a bool because the four refusals mean
+    four different things to an operator and collapsing them is gotcha #53 in a
+    return value. The cursor comes back unchanged on every refusal.
+
+    Takes the CHUNK, not just its reference, because two of the refusals are
+    properties of the chunk: whether it is banked, and whether it holds a single
+    virtual question. Both are cheaper to answer here than to re-derive.
+    """
+    ref = slot_ref(chunk)
+    parsed = parse_slot_ref(ref)
+    if parsed is None:
+        return cursor, SPLIT_TOO_DEEP
+    buckets, _index = parsed
+    if ref in cursor.unit_splits:
+        return cursor, SPLIT_ALREADY
+    if cursor.has(chunk.key):
+        return cursor, SPLIT_BANKED
+    if len(getattr(chunk, "vm_ids", ()) or ()) < 2:
+        return cursor, SPLIT_ATOMIC
+    factor = max(2, int(factor))
+    if buckets * factor > max_buckets:
+        return cursor, SPLIT_TOO_DEEP
+    splits = dict(cursor.unit_splits)
+    splits[ref] = factor
+    return replace(cursor, unit_splits=splits), SPLIT_APPLIED
+
+
+def prune_unit_cancels(
+    cursor: StagedFuturesCursor, chunks: Iterable[Any]
+) -> StagedFuturesCursor:
+    """Forget cancellations for slots that are neither planned nor split.
+
+    A refined parent keeps its count — it is the evidence that produced the
+    refinement, and dropping it would let a re-plan re-learn the same thing from
+    zero. Everything else goes, so the map is bounded by the plan rather than by
+    the history of every partition this cursor ever held.
+    """
+    live = {slot_ref(chunk) for chunk in chunks if isinstance(chunk, UnitChunk)}
+    live |= set(cursor.unit_splits)
+    kept = {ref: count for ref, count in cursor.unit_cancels.items() if ref in live}
+    if kept == cursor.unit_cancels:
+        return cursor
+    return replace(cursor, unit_cancels=kept)
+
+
+def attempt_order(
+    chunks: Iterable[Any], cursor: StagedFuturesCursor
+) -> tuple[Any, ...]:
+    """The plan, in the order a beat should ATTEMPT it — CAL-P1301 (#6599).
+
+    Ascending recorded cancellations, then ``(buckets, index)``. A slot this
+    build has measured cancelling is attempted after every slot it has not, so a
+    beat spends its two-cancellation budget
+    (:data:`~app.utils.calibration_phase_ledger.STAGED_UNIT_MAX_CANCELLATIONS`)
+    only once the work that can progress has progressed.
+
+    **This defers; it never skips.** Every planned unit is in the returned
+    tuple, every beat. The livelock it ends is not "a unit is too slow" — it is
+    that the two slowest slots sat at the head of the plan, so the budget was
+    spent before the third unit was reached and the same two slots led the next
+    beat, and the next. Measured stuck at 31 of 128 units for a full day.
+
+    With no recorded cancellations this is the plan order unchanged, which is
+    what every existing beat, test and cursor sees.
+    """
+    counts = cursor.unit_cancels if cursor else {}
+    return tuple(
+        sorted(
+            chunks,
+            key=lambda chunk: (
+                int(counts.get(slot_ref(chunk), 0)),
+                int(getattr(chunk, "buckets", 0) or 0),
+                int(getattr(chunk, "index", 0) or 0),
+            ),
+        )
+    )
 
 
 def is_complete(cursor: StagedFuturesCursor, chunks: Iterable[Any]) -> bool:

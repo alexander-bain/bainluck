@@ -5717,13 +5717,19 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
     )
     from app.utils.calibration_staged_futures import (
         DEFAULT_CENSUS_COLUMNS,
+        SPLIT_APPLIED,
         advance,
+        attempt_order,
         collect_unit_results,
         generation_fingerprint,
         is_complete,
         merge_futures_rows,
+        note_unit_cancelled,
         plan_units,
+        refine_unit,
         retain_planned_units,
+        slot_ref,
+        split_factor,
     )
 
     # The merge refuses a column it was not told the KIND of, on purpose — a
@@ -5750,6 +5756,7 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
         PHASE_FUTURES,
         REFUSE,
         STAGED_UNIT_MAX_CANCELLATIONS,
+        STAGED_UNIT_SPLIT_AFTER,
         TERMINAL_PARTIAL,
     )
 
@@ -5759,23 +5766,20 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
     await runner.commit(db)
 
     gen_digest = generation_fingerprint(roster)
-    chunks = plan_units(roster, buckets=STAGED_FUTURES_BUCKETS)
     # market_id -> its FROZEN assignment. The chunk knows which markets it owns;
     # this is what each one was assigned to when the generation was taken, and
     # it is what gets replayed into the chunk statement instead of re-derived.
     assignment = {
         int(row.market_id): (str(row.vm_id), bool(row.is_grouped)) for row in roster
     }
-    logger.info(
-        "calibration staged futures: generation %s — %d markets in %d units",
-        gen_digest, len(roster), len(chunks),
-    )
-    if not chunks:
-        # An empty population is a real answer, not a failure, and it is
-        # complete by definition. Returning [] lets the build publish the
-        # honest empty curve rather than stalling forever on zero units.
-        return []
 
+    # CAL-P1301 (#6599): THE CURSOR IS READ BEFORE THE PLAN IS CUT, and that
+    # ordering is the only structural change this queue makes to the beat. The
+    # plan is a function of the roster AND of what this build has learned about
+    # what its slots cost — a slot that has cancelled twice is cut into children
+    # (``unit_splits``), and the planner cannot know that until the cursor is in
+    # hand. Nothing else moves: the same roster, the same digest, the same
+    # partition key, and with an empty refinement map the same 128 chunks.
     cursor, action, reason = await load_staged_cursor(
         population_version=runner.population_version,
         # CAL-P205 (#2052), layer 1. The STAGED CURSOR keys off the statement its
@@ -5810,6 +5814,30 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
     # establish, because the ledger recorded only "invalidate".
     runner.ledger.record_stage(f"staged:cursor_reason:{reason}", 0)
     logger.info("calibration staged futures: cursor %s (%s)", action, reason)
+
+    # CAL-P1301: the plan, cut with whatever refinements the cursor carries. A
+    # cursor with none — every cursor before this deploy, and every one after it
+    # whose slots all fit — plans exactly the 128 units it always did.
+    chunks = plan_units(
+        roster, buckets=STAGED_FUTURES_BUCKETS, refinements=cursor.unit_splits
+    )
+    # Gauges, not stages: these are LEVELS (CAL-P024c). ``units_planned_total``
+    # is read back by ``_unit_costs_from``, which until now published the
+    # partition CONSTANT as ``units_total`` — true only while the plan is exactly
+    # the base partition, and a lie the moment one slot is cut finer.
+    runner.ledger.record_gauge("staged:units_planned_total", len(chunks))
+    if cursor.unit_splits:
+        runner.ledger.record_gauge("staged:units_refined_slots", len(cursor.unit_splits))
+    logger.info(
+        "calibration staged futures: generation %s — %d markets in %d units "
+        "(%d refined slot(s))",
+        gen_digest, len(roster), len(chunks), len(cursor.unit_splits),
+    )
+    if not chunks:
+        # An empty population is a real answer, not a failure, and it is
+        # complete by definition. Returning [] lets the build publish the
+        # honest empty curve rather than stalling forever on zero units.
+        return []
 
     # CAL-P016: the roster moves between every pair of hourly beats, so a cursor
     # is now kept and pruned per unit instead of discarded whole. Only units the
@@ -5874,11 +5902,22 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
         # Ruling 075, second clause: "we have no carried cost" must not render
         # identically to "the carried cost is zero".
         runner.ledger.record_gauge("staged:prior_unit_reason:unmeasured", 1)
+    # CAL-P1301 (#6599): the ATTEMPT order, which is the plan re-sorted so slots
+    # this build has recorded cancelling come last. Not a filter — every planned
+    # unit is in it — and identical to ``chunks`` until a cancellation is
+    # recorded against a slot. See :func:`attempt_order` for the livelock.
+    planned_order = attempt_order(chunks, cursor)
+    # Recorded on EVERY beat, including as a zero: "no slot is deferred" and "the
+    # beat never got as far as sorting" must not render the same (gotcha #53).
+    runner.ledger.record_gauge(
+        "staged:units_deferred",
+        sum(1 for chunk in chunks if cursor.unit_cancels.get(slot_ref(chunk), 0)),
+    )
     # D45(A): an EMPTY iterable, not a `break` inside the loop and not a `return`
     # above it. The loop body is untouched by this queue — every line of it still
     # runs, on the rebuild pass, exactly as it did — and Stage 3 below still gets
     # reached, which is what lets the publish pass fold the served bank.
-    for chunk in (() if defer_rebuild else chunks):
+    for chunk in (() if defer_rebuild else planned_order):
         if cursor.has(chunk.key):
             done += 1
             continue
@@ -5967,6 +6006,48 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
             # already classified (gotcha #6).
             with contextlib.suppress(Exception):
                 await db.rollback()
+            # -- CAL-P1301 (#6599): REMEMBER IT ------------------------------
+            #
+            # Everything above this block is a record of the cancellation in
+            # THIS beat's ledger, and the next beat starts with no memory of it.
+            # That is the livelock: two slots at the head of the plan, both
+            # cancelling, the budget spent before a third unit is attempted, and
+            # the same two slots leading the next beat — 31 of 128 units banked
+            # and motionless for a day. The count below is durable, so the slot
+            # is attempted LAST next beat (the tail moves) and is CUT FINER on
+            # its second cancellation (the slot itself eventually completes).
+            ref = slot_ref(chunk)
+            cursor = note_unit_cancelled(cursor, ref)
+            seen = cursor.unit_cancels.get(ref, 0)
+            runner.ledger.record_gauge(f"staged:unit_cancels:{ref}", seen)
+            if seen >= STAGED_UNIT_SPLIT_AFTER:
+                # The factor is a multiple of a measurement, and the measurement
+                # is a floor — one split is not promised to be enough, and a
+                # child that cancels twice is cut again on its own evidence.
+                cursor, outcome = refine_unit(
+                    cursor,
+                    chunk,
+                    factor=split_factor(cancelled_after_ms, prior_unit_ms),
+                )
+                runner.ledger.record_gauge(f"staged:unit_split:{outcome}:{ref}", seen)
+                logger.warning(
+                    "calibration staged futures: slot %s has cancelled %d times — "
+                    "refinement %s (%d virtual questions, %d markets)",
+                    ref, seen, outcome, len(chunk.vm_ids), chunk.market_count,
+                )
+                if outcome == SPLIT_APPLIED:
+                    runner.ledger.record_stage("staged:units_split", 1)
+            # Persisted HERE rather than with the next banked unit, because the
+            # beats this exists for bank NOTHING: the livelocked beat cancelled
+            # twice, banked zero, and wrote no cursor at all. A failed write
+            # costs the memory of this cancellation and nothing else — the bank
+            # is untouched — so it is logged and the beat carries on.
+            if not await save_staged_cursor(cursor, terminal=TERMINAL_PARTIAL):
+                runner.ledger.record_gauge("staged:unit_cancel_not_persisted", 1)
+                logger.warning(
+                    "calibration staged futures: cursor write failed after unit %s "
+                    "cancelled — the cancellation is not remembered", ref,
+                )
             if cancelled_this_beat >= STAGED_UNIT_MAX_CANCELLATIONS:
                 # The third one says the slowness belongs to the BEAT, not to a
                 # unit, and continuing cannot help. Recorded under its own name:
