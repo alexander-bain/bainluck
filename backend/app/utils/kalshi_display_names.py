@@ -156,10 +156,25 @@ def apply_name_repairs(text: Optional[str], repairs: dict[str, str]) -> Optional
     out from under it. Substring replacement rather than a re-parse of the title,
     because the title's shape varies by series (`X vs Y`, `X vs Y: Spread`) and the
     outcome names are the part we have actually verified.
+
+    A TRUNCATED NAME IS A PREFIX OF ITS OWN REPLACEMENT, SO THE REPLACEMENT MUST
+    NOT MATCH ITSELF (#6447). Longest-first orders the repair KEYS against each
+    other; it says nothing about a key sitting inside its own value. `Los Angeles
+    R` -> `Los Angeles Rams` applied to a string that already spells the club out
+    once yields `Los Angeles Ramsams`, and applying the same map twice to any
+    string does it unconditionally. The right boundary makes this idempotent: a
+    shipped name is rewritten only where the next character is not a letter, which
+    is every real occurrence of a truncation (it ends at `:`, ` vs `, a comma or
+    the end of the string) and none of the occurrences inside an already-correct
+    name. The two admin callers pass one title each and were never exposed to it;
+    the reader payload carries both forms in one string and is.
     """
     if not text or not repairs:
         return text
     out = str(text)
     for shipped in sorted(repairs, key=len, reverse=True):
-        out = out.replace(shipped, repairs[shipped])
+        full = repairs[shipped]
+        # A lambda, not a replacement string: `re.sub` reads `\g`, `\1` and a bare
+        # backslash out of the second argument, and a club name is data.
+        out = re.sub(re.escape(shipped) + r"(?![A-Za-z])", lambda _m: full, out)
     return out

@@ -259,6 +259,17 @@ _BASES = (
     "New York M vs Miami: Total Bases", "KXMLBTB-26SEP081840NYMMIA",
     "kalshi", REAL_TOTAL_BASES,
 )
+
+# STORED IS THE VENUE'S, SERVED IS THE READER'S (#6447). The two names above are
+# what Kalshi ships and what the row holds — `New York M` is its width-truncated
+# Mets. Since #6447 the endpoint completes the club from the ticker before it
+# answers, so an assertion about the RESPONSE has to read the repaired spelling.
+# Nothing about this file's subject changes: it is about which RAIL a quantity
+# lands on, and the name is only how a rung is identified. Keeping the venue's
+# text in the fixtures and the reader's in the assertions is what makes the
+# difference between the two visible instead of silently normalised away.
+_RUNS_SERVED = "New York Mets vs Miami: Total Runs"
+_BASES_SERVED = "New York Mets vs Miami: Total Bases"
 # Polymarket keys a market by `condition_id`, never by a Kalshi-style ticker, so
 # the ticker fallback in the classifier has nothing to read here — the NAME is
 # the only signal, which is the whole reason this family was missed.
@@ -278,7 +289,7 @@ class TestTheServedRunLadder:
         totals = _served(_engine([_RUNS, _BASES]))["totals"]
 
         names = {t["market_name"] for t in totals}
-        assert names == {"New York M vs Miami: Total Runs"}, (
+        assert names == {_RUNS_SERVED}, (
             f"a non-run quantity is on the run rail: {sorted(names)}"
         )
         assert [t["threshold"] for t in totals] == [t for t, _ in REAL_TOTAL_RUNS]
@@ -332,7 +343,7 @@ class TestTheServedRunLadder:
             for section in ("totals", "player_props", "team_totals", "other")
             for row in response.get(section) or []
         }
-        assert "New York M vs Miami: Total Bases" in served_anywhere
+        assert _BASES_SERVED in served_anywhere
 
 
 class TestTheProjectionPoolAgrees:

@@ -34,6 +34,7 @@ from app.services.anchor_channel import (
 )
 from app.utils.agent_origin import ORIGIN_HEADER, ORIGIN_USER
 from app.utils.feed_reasons import _points as format_movement_points
+from app.utils.game_market_club_names import repair_club_names
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 from app.utils.prematch_reading import opening_consensus_has_frozen
 from app.utils.period_window_grade import grade_period_window
@@ -16916,6 +16917,33 @@ async def _build_game_markets(
             period_markets = [r for r in period_markets if _not_redundant(r)]
             matchups = [r for r in matchups if _not_redundant(r)]
             other_markets = [r for r in other_markets if _not_redundant(r)]
+
+    # #6447 — THE CARDS STOP NAMING A CLUB THAT DOES NOT EXIST.
+    #
+    # `San Francisco vs Los Angeles R: First Touchdown` is the venue's own title
+    # (read at Kalshi, notice 26) and our stored row is faithful to it, so the
+    # repair is a display one and it belongs here rather than at ingest. It runs
+    # LAST, after every filter above and before the response literal, for two
+    # reasons: nothing below reads these strings to make a decision, and
+    # `props_script` is composed from `player_props` INSIDE that literal — its
+    # `key` is `f"{market_name}|{outcome_name}"`, so repairing afterwards would
+    # leave a key naming the truncated row while its label named the repaired one.
+    #
+    # The map is pooled across the whole page and the event's own club names veto
+    # a rewrite; `game_market_club_names` carries the measurement and the why.
+    repair_club_names(
+        (
+            game_totals,
+            player_props,
+            team_total_items,
+            spreads,
+            period_markets,
+            matchups,
+            other_markets,
+        ),
+        _ticker_by_market_id,
+        protected_names=(event.home_team_name, event.away_team_name),
+    )
 
     response = {
         "event_id": event_id,
