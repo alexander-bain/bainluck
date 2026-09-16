@@ -3328,16 +3328,15 @@ FUTURE_SETTLED_STATUSES = ("completed", "closed", "suspended")
 #: The statuses in which a tennis row's score is a claim about a FINISHED match,
 #: and so the only ones the illegal-score withdrawal below is allowed to reach.
 #:
-#: 🔴 ``suspended`` IS DELIBERATELY ABSENT, and it is the one entry whose absence
-#: has to be argued rather than assumed — `FUTURE_SETTLED_STATUSES` two lines up
-#: includes it and this does not. A suspended tennis match holding ``1-0`` is
-#: holding a TRUE partial score: CERT-752's six US Open matches were suspended
-#: mid-match at ``0-1, 2-1, 1-2, 0-0`` and ESPN had all six scheduled to resume
-#: that afternoon. Those numbers are the whole content of the "Live & Paused"
-#: card. A rule that judged them by the completed-match set counts would delete
-#: the score of every paused match on the site, which is the opposite ship.
-#: ``live`` and ``scheduled`` are absent for the same reason and need no argument.
-TENNIS_STATUSES_CLAIMING_A_RESULT = ("completed", "closed")
+#: MOVED to :mod:`app.utils.espn_tennis_anchor` by CERT-2958 and deliberately
+#: NOT re-exported here. It began beside the withdrawal arm because that was its
+#: only reader; the Odds API score writer is now a second one, so the tuple
+#: belongs beside the rule it qualifies rather than inside one of the two tasks
+#: that ask it. There is no module-scope import standing in for it because the
+#: anchor rail pulls :mod:`app.services.espn_tennis` in behind it — the same
+#: reason :func:`settled_tennis_score_is_impossible` is imported inside the
+#: function that uses it, a few hundred lines down. Readers import it from the
+#: anchor; the two call sites in this module do it in-function.
 
 #: How many illegal tennis scores one 60-second pass may withdraw. The measured
 #: standing population is 26 (production 2026-09-16), so the first pass clears it
@@ -3375,7 +3374,10 @@ def illegal_settled_tennis_score_recall():
     scan on ``ix_events_sport_id`` — and once the standing population is cleared
     the same query returns nothing for the same cost.
     """
-    from app.utils.espn_tennis_anchor import COMPLETED_WINNER_SET_COUNTS
+    from app.utils.espn_tennis_anchor import (
+        COMPLETED_WINNER_SET_COUNTS,
+        TENNIS_STATUSES_CLAIMING_A_RESULT,
+    )
 
     return (
         select(Event)

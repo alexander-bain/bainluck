@@ -266,8 +266,10 @@ async def test_postgres_greatest_and_the_python_judgment_agree_row_by_row(pg_eng
     produce the same set — ``greatest`` in Postgres and ``max`` in Python are
     different functions in different engines, and #4114's lesson is that the
     half which drifts is always the one no test executes."""
-    from app.utils.espn_tennis_anchor import settled_tennis_score_is_impossible
-    from app.tasks.espn_sync import TENNIS_STATUSES_CLAIMING_A_RESULT
+    from app.utils.espn_tennis_anchor import (
+        TENNIS_STATUSES_CLAIMING_A_RESULT,
+        settled_tennis_score_is_impossible,
+    )
 
     async with pg_engine.begin() as conn:
         mine, _ = await _served(conn)

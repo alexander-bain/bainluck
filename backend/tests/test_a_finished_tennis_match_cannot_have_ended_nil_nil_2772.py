@@ -66,13 +66,14 @@ import pytest
 from app.tasks.espn_sync import (
     FUTURE_SETTLED_STATUSES,
     MAX_ILLEGAL_TENNIS_SCORES_PER_PASS,
-    TENNIS_STATUSES_CLAIMING_A_RESULT,
     _transition_event_statuses_impl,
     illegal_settled_tennis_score_recall,
 )
 from app.utils.espn_tennis_anchor import (
     COMPLETED_WINNER_SET_COUNTS,
+    TENNIS_STATUSES_CLAIMING_A_RESULT,
     settled_tennis_score_is_impossible,
+    tennis_final_score_write_is_refused,
 )
 
 #: The Swiatek row's own completion stamp, fixed rather than derived from the
@@ -470,3 +471,244 @@ class TestTheArmWithdrawsTheScoreAndNothingElse:
         caplog.set_level(logging.WARNING)
         await _run([_Row(1, "completed", 0, 0)])
         assert not any("SATURATED" in r.getMessage() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# 6. THE OTHER END: THE WRITER REFUSES TOO. CERT-2958.
+#
+# The arm above is a CLEANUP, and CERT-2958's BLOCK is that a cleanup alone
+# does not hold the guarantee continuously. `espn_sync` withdraws once every 60
+# seconds; `odds_polling` writes `status='completed'` and a score in the SAME
+# update every five minutes, and the only deferral standing between it and the
+# score column — `clockless_write_defers_to_authority` — is
+# `status == "live" and bool(espn_id)`, which is False for a completed row with
+# or without an anchor. Tennis has no anchor at all (30,199 rows, zero
+# `espn_id`) and no tennis key is in `ESPN_SPORT_MAPPING`, so nothing upstream
+# skips it either.
+#
+# The reader loses that race: the withdrawal only ever arrives SECOND, so the
+# lie is visible for up to a minute out of every five, forever. These tests are
+# about the refusal that makes the guarantee hold at both ends.
+#
+# WHY THERE IS NO LIVE SPECIMEN FOR THIS HALF, AND WHY THAT IS NOT A LET-OFF.
+# Measured on production 2026-09-16 12:12Z: the illegal population is still
+# exactly 26 and NOTHING in it is newer than 2026-09-01 — the cleanup is not
+# deployed, so anything the writer had produced since would still be standing,
+# and none is. But the channel is not cold: `tennis_wta_guadalajara_open` holds
+# 11 completed, scored, UNANCHORED rows written that same day, which is exactly
+# the population this writer reaches and nothing judges. It is emitting legal
+# scores this week, that is all. So the class is seasonal, the guard is the
+# whole proof, and an empty live probe is not evidence of anything.
+# ---------------------------------------------------------------------------
+
+
+class TestTheWriterRefusesAnImpossibleTennisFinal:
+    """The judgment asked at the write boundary, not just after the fact."""
+
+    @pytest.mark.parametrize("home,away", [(0, 0), (1, 0), (0, 1), (1, 1)])
+    @pytest.mark.parametrize("status", TENNIS_STATUSES_CLAIMING_A_RESULT)
+    def test_every_illegal_pair_in_the_census_is_refused(self, home, away, status):
+        assert tennis_final_score_write_is_refused(
+            sport_key="tennis_wta_cincinnati_open",
+            event_status=status,
+            home_score=home,
+            away_score=away,
+        )
+
+    @pytest.mark.parametrize(
+        "home,away",
+        [(0, 2), (2, 0), (1, 2), (2, 1), (3, 0), (1, 3), (3, 1), (0, 3), (2, 3), (3, 2)],
+    )
+    def test_every_legal_pair_in_the_census_is_written(self, home, away):
+        """The ten legal shapes are 694 of the 720 settled rows. A refusal that
+        caught any of them would be deleting real results to fix 26."""
+        assert not tennis_final_score_write_is_refused(
+            sport_key="tennis_atp",
+            event_status="completed",
+            home_score=home,
+            away_score=away,
+        )
+
+    @pytest.mark.parametrize("status", ["live", "suspended", "scheduled"])
+    @pytest.mark.parametrize("home,away", [(0, 0), (1, 0), (1, 1), (0, 1)])
+    def test_a_match_still_being_played_keeps_its_partial_score(
+        self, status, home, away
+    ):
+        """CERT-752's control, asked of the writer. A suspended match holding
+        ``1-0`` holds a TRUE partial score, and a live second set looks exactly
+        like one. Refusing here would empty the "Live & Paused" card."""
+        assert not tennis_final_score_write_is_refused(
+            sport_key="tennis_atp_us_open",
+            event_status=status,
+            home_score=home,
+            away_score=away,
+        )
+
+    @pytest.mark.parametrize(
+        "sport_key",
+        ["soccer_epl", "soccer_uefa_champs_league", "baseball_mlb", "icehockey_nhl"],
+    )
+    def test_nil_nil_is_an_ordinary_final_in_every_other_sport(self, sport_key):
+        """🔴 THE NEGATIVE CONTROL WITH A REAL POPULATION BEHIND IT. Measured
+        2026-09-16: **634 settled soccer rows hold ``0-0``**, and every one of
+        them is a true result. The set-count rule is a statement about tennis
+        and nothing else, so it is keyed on the sport."""
+        assert not tennis_final_score_write_is_refused(
+            sport_key=sport_key,
+            event_status="completed",
+            home_score=0,
+            away_score=0,
+        )
+
+    @pytest.mark.parametrize("home,away", [(None, None), (0, None), (None, 0)])
+    def test_a_missing_half_is_not_a_claim_and_cannot_be_refused(self, home, away):
+        assert not tennis_final_score_write_is_refused(
+            sport_key="tennis_wta",
+            event_status="completed",
+            home_score=home,
+            away_score=away,
+        )
+
+    def test_a_missing_sport_key_does_not_crash_the_pass(self):
+        """One bad item must never wipe a scoring pass (gotcha #42). A row whose
+        sport did not load is not a tennis row, so it is not this rule's."""
+        assert not tennis_final_score_write_is_refused(
+            sport_key=None, event_status="completed", home_score=0, away_score=0
+        )
+
+    def test_it_reads_the_same_judgment_and_is_not_a_second_spelling_of_it(self):
+        """#4114's lesson: two spellings of one rule drift. Every pair the
+        shared judgment calls impossible, the writer refuses on a final — asked
+        across the whole small integer grid rather than the census shapes, so a
+        divergence outside the measured population is caught too."""
+        for home in range(0, 6):
+            for away in range(0, 6):
+                assert tennis_final_score_write_is_refused(
+                    sport_key="tennis_other",
+                    event_status="completed",
+                    home_score=home,
+                    away_score=away,
+                ) is settled_tennis_score_is_impossible(
+                    home_score=home, away_score=away
+                )
+
+
+class TestTheCleanupAndTheWriterHoldTheLineTogether:
+    """🔴 THE SEQUENCE CERT-2958 NAMED, run with both real functions.
+
+    Not two separate assertions about two separate halves: the actual order the
+    production race happens in — the 60-second cleanup nulls the score, then the
+    five-minute writer arrives with the same Odds API payload that produced it.
+    Before this ship the second step put the lie straight back.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_writer_does_not_put_back_what_the_cleanup_just_withdrew(self):
+        row = _Row(15258192, "completed", 0, 0)
+
+        # Step 1 — the real cleanup arm.
+        await _run([row])
+        assert (row.home_score, row.away_score) == (None, None)
+
+        # Step 2 — the real writer judgment, handed the SAME payload the Odds
+        # API served when it wrote the 0-0, against the row as it now stands.
+        refused = tennis_final_score_write_is_refused(
+            sport_key=row.sport.key,
+            event_status=row.status,
+            home_score=0,
+            away_score=0,
+        )
+        assert refused, (
+            "the writer would re-state the score the cleanup just withdrew — "
+            "this is CERT-2958's race, and the reader sees it for up to a "
+            "minute out of every five"
+        )
+        assert (row.home_score, row.away_score) == (None, None)
+
+    @pytest.mark.asyncio
+    async def test_the_same_sequence_lets_a_real_result_through(self):
+        """NOT VACUOUS. The test above passes for a refusal that refuses
+        everything; this is the arm that separates them. A legal final survives
+        the cleanup untouched and the writer states it."""
+        row = _Row(15258193, "completed", 2, 1)
+        await _run([row])
+        assert (row.home_score, row.away_score) == (2, 1)
+        assert not tennis_final_score_write_is_refused(
+            sport_key=row.sport.key,
+            event_status=row.status,
+            home_score=2,
+            away_score=1,
+        )
+
+
+class TestTheWriterBoundaryActuallyConsultsIt:
+    """A predicate is only worth testing if the loop reads it — and, since this
+    producer writes through an `update_values` dict and a Core statement, no ORM
+    scan can see it (the blind spot recorded in #6056's own suite). These are
+    structural on purpose: they are what stops the call being deleted or, worse,
+    left in place while the write stops being gated on it.
+    """
+
+    def _source(self):
+        import textwrap
+
+        from app.tasks import odds_polling
+
+        return textwrap.dedent(inspect.getsource(odds_polling))
+
+    def test_the_scores_feed_calls_the_refusal(self):
+        import ast
+
+        calls = {
+            node.func.id
+            for node in ast.walk(ast.parse(self._source()))
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        assert "tennis_final_score_write_is_refused" in calls, (
+            "the Odds API scores feed can state an impossible tennis final "
+            "again; the 60-second cleanup would only ever arrive second"
+        )
+
+    def test_both_score_writes_are_gated_on_the_same_flag(self):
+        """🔴 THE MUTANT THIS CATCHES. Calling the predicate and then writing
+        the score anyway leaves every behavioural test in this file green — the
+        judgment is correct, it is simply not consulted. So assert the gate: the
+        two `update_values` score lines are conditioned on `_skip_score_write`,
+        which carries BOTH refusal reasons, rather than on the #6056 deferral
+        alone."""
+        source = self._source()
+        for column in ("home_score", "away_score"):
+            assert (
+                f'if {column} is not None and not _skip_score_write:\n'
+                f'                                update_values["{column}"] '
+                f'= {column}'
+            ) in source, (
+                f"the {column} write is no longer gated on the combined "
+                "refusal flag"
+            )
+
+    def test_the_snapshot_is_gated_on_it_too(self):
+        """#6056's rule, inherited: a snapshot of a score this pass declined to
+        store would put a number in the Score Differential chart that the event
+        row never held."""
+        source = self._source()
+        assert "and not _skip_score_write\n" in source, (
+            "score_snapshots can record a refused illegal tennis final"
+        )
+
+    def test_the_refusal_is_counted_so_it_cannot_be_silently_off(self):
+        """An invisible refusal is indistinguishable from a guard that is off —
+        and this one is EXPECTED to read 0 for long stretches, so the counter is
+        the only thing that can tell those two states apart."""
+        source = self._source()
+        assert "scores_refused_illegal_tennis_final = 0" in source
+        assert '"scores_refused_illegal_tennis_final": (' in source
+
+    def test_the_effective_status_is_used_not_the_computed_one(self):
+        """🔴 THE SUBTLE MUTANT. `event_status` is None whenever the pass is not
+        CHANGING the status, and a row that is ALREADY completed is the one most
+        at risk — it would slip through a check that read the computed value
+        alone, which is precisely the standing population of 26."""
+        source = self._source()
+        assert "if event_status is not None" in source
+        assert "else event_obj.status" in source

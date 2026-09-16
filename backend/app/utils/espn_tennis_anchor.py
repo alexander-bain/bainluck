@@ -829,6 +829,91 @@ def settled_tennis_score_is_impossible(*, home_score: Any, away_score: Any) -> b
     return not (max(home, away) in COMPLETED_WINNER_SET_COUNTS and home != away)
 
 
+#: The statuses in which a tennis row's score is a claim about a FINISHED match,
+#: and so the only ones the illegal-score rule is allowed to reach.
+#:
+#: 🔴 ``suspended`` IS DELIBERATELY ABSENT, and it is the one entry whose absence
+#: has to be argued rather than assumed — `FUTURE_SETTLED_STATUSES` in
+#: ``espn_sync`` includes it and this does not. A suspended tennis match holding
+#: ``1-0`` is holding a TRUE partial score: CERT-752's six US Open matches were
+#: suspended mid-match at ``0-1, 2-1, 1-2, 0-0`` and ESPN had all six scheduled
+#: to resume that afternoon. Those numbers are the whole content of the "Live &
+#: Paused" card. A rule that judged them by the completed-match set counts would
+#: delete the score of every paused match on the site, which is the opposite
+#: ship. ``live`` and ``scheduled`` are absent for the same reason and need no
+#: argument.
+#:
+#: DEFINED HERE, NOT IN ``espn_sync``, since CERT-2958. It began beside the
+#: withdrawal arm because that was its only reader; the Odds API score writer is
+#: now a second one, and a constant that says WHICH STATUSES CLAIM A RESULT
+#: belongs beside the rule that judges the claim, not inside one of the two
+#: tasks that asks it. ``espn_sync`` imports it and re-exports it under its own
+#: name, so every existing reader and test still resolves.
+TENNIS_STATUSES_CLAIMING_A_RESULT = ("completed", "closed")
+
+
+def tennis_final_score_write_is_refused(
+    *,
+    sport_key: Any,
+    event_status: Any,
+    home_score: Any,
+    away_score: Any,
+) -> bool:
+    """May this writer put THIS score on a tennis row asserting a FINAL?
+
+    CERT-2958, and the other half of #2772. The withdrawal arm in
+    ``espn_sync._transition_event_statuses_impl`` nulls an impossible settled
+    tennis score once every 60 seconds; the Odds API scores feed
+    (``odds_polling``) writes ``status='completed'`` and a score **in the same
+    update**, every five minutes, and its only deferral —
+    :func:`~app.utils.game_pairing.clockless_write_defers_to_authority` — is
+    ``status == "live" and bool(espn_id)``, so it returns ``False`` for a
+    completed row with or without an anchor. A cleanup and an unrefused writer
+    is a race the reader can lose: the lie is visible for up to a minute, every
+    five minutes, and the cleanup only ever arrives second.
+
+    So the same judgment is asked at the write boundary, and this is the
+    predicate that asks it. **The rule is not restated** — it reads
+    :func:`settled_tennis_score_is_impossible`, which reads
+    :data:`COMPLETED_WINNER_SET_COUNTS`. One rule, one place to change it, now
+    enforced at both ends.
+
+    ═══ WHY EACH CONDITION IS LOAD-BEARING ═══
+
+    * **Tennis only.** The set-count rule is a statement about tennis and
+      nothing else. ``0-0`` is an ordinary, true final in soccer — 634 settled
+      soccer rows hold one — so a rule that reached them would delete real
+      results. Keyed on the sport, not on how the row was written.
+    * **A FINAL only.** :func:`settled_tennis_score_is_impossible` judges a
+      SCORE and says in its own docstring that the caller owes the status.
+      ``1-0`` is exactly what a live second set looks like and exactly what a
+      suspended match truthfully holds, so this reads
+      :data:`TENNIS_STATUSES_CLAIMING_A_RESULT` — the same tuple the withdrawal
+      arm reads — rather than restating ``("completed", "closed")``.
+    * **The EFFECTIVE status, which is the caller's job to pass.** In
+      ``odds_polling`` the computed ``event_status`` is ``None`` whenever this
+      pass is not changing the status, and a row that is ALREADY ``completed``
+      would then slip through a check that only read the computed value. The
+      caller passes ``event_status or event_obj.status``.
+
+    Returning ``True`` means **decline the score half of this write**. It never
+    means decline the status: a match that finished, finished. The honest
+    rendering of a score we cannot support is no score — the same trade the
+    withdrawal arm makes, and the reason it leaves ``status`` and
+    ``completed_at`` alone.
+
+    A ``None`` on either side is not a claim and cannot be refused; that falls
+    out of :func:`settled_tennis_score_is_impossible` returning ``False``.
+    """
+    if not str(sport_key or "").startswith("tennis"):
+        return False
+    if event_status not in TENNIS_STATUSES_CLAIMING_A_RESULT:
+        return False
+    return settled_tennis_score_is_impossible(
+        home_score=home_score, away_score=away_score
+    )
+
+
 #: The four tournaments whose men's singles main draw is played over five sets,
 #: as :func:`board_tournaments` tokens.  Roland Garros is carried under both of
 #: the names ESPN has used for it.
