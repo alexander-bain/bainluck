@@ -45,10 +45,36 @@ run killed on a hang leaves a partial log whose per-class `Executed N tests` lin
 a kill. So a verdict needs rc **and** the log, every run is bounded (a hang reports `REFUSED-HUNG`),
 a needle that does not apply reports `REFUSED`, and `INT`/`TERM` restore all four files.
 
-**One correction made mid-run and kept here rather than quietly fixed.** The first attempt's
-attribution column listed *every* test in the class for M1, which reads like a rout and is
-meaningless: xcodebuild prints the same `-[Class testName]` shape for `started`, `passed` and
-`failed`, so a grep on the class name matches all three. The run was stopped, `killers()` narrowed
-to `]' failed`, and `outsiders()` added so that a mutant killed only by a pre-existing test
-somewhere else in the suite cannot be banked as evidence about this guard. The battery below is the
-re-run.
+**Run 2 is the result: 10 mutants, 10 KILLED, 0 survived, 0 refused, control SURVIVED, tree
+restored byte-identical across all four files.** `mutants-run1-out.txt` is kept beside it, because
+run 1 is the run that found something and a battery that only ever shows its clean pass is not
+evidence.
+
+| | run 1 | run 2 |
+|---|---|---|
+| killed | 9 | **10** |
+| refused | 1 (M8, needle did not apply) | 0 |
+| control | SURVIVED | SURVIVED |
+
+Two corrections, both recorded rather than quietly folded in:
+
+* **The attribution column was lying, before either run.** It listed *every* test in the class for
+  M1, which reads like a rout and means nothing: xcodebuild prints the same `-[Class testName]`
+  shape for `started`, `passed` and `failed`, so a grep on the class name matches all three. That
+  attempt was stopped, `killers()` narrowed to `]' failed`, and `outsiders()` added so that a mutant
+  killed only by a pre-existing test elsewhere in the suite cannot be banked as evidence about this
+  guard. It pays out immediately: run 2's M8 reads `(+5 failing test(s) outside this file)`, which
+  is correct — `isSuspendedAndStarted` is load-bearing for #4021's guards too — and my own test
+  still killed it independently.
+* **🔴 The battery found a boundary race in the guard I had just written.** Five of run 1's nine
+  kills listed `testBothCopiesWereTheSameString` as a co-killer, including four mutants that do not
+  touch `formatCountdown` at all. The log:
+  `XCTAssertEqual failed: ("In 4d 12h") is not equal to ("In 4d 11h")`. The anchor was
+  `Date() + exactly 4d 12h` — 388,800 s is 6,480.0 minutes to the last bit, and `formatCountdown`
+  takes `Int(interval / 60)` — so it sat ON the rounding boundary and the microseconds elapsing
+  between constructing the date and reading it decided the answer. Gotcha #44 in its arithmetic
+  form. Re-anchored 30 minutes into the middle of the bucket, and the shape assertion made exact
+  (`"4d 12h"`) rather than a `hasPrefix` that was hiding the wobble. Note what the flake did and did
+  not do: it only ever *added* a killer, so no run-1 verdict was wrong — but a co-killer that fires
+  at random is not evidence, and five rows of it would have read as a guard doing work it was not
+  doing.

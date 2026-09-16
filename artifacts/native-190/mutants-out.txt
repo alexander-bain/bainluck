@@ -1,0 +1,26 @@
+=== native/190 #6544 — 10 mutants + a clean-head control ===
+
+M1  the centre column prints the countdown again, via formatCountdown
+    rc=65  KILLED  testTheHeroNeverPrintsACountdownItself 
+M2  the same duplicate, hand-rolled so it never calls formatCountdown
+    rc=65  KILLED  testTheHeroNeverPrintsACountdownItself 
+M3  the TimelineView is removed as a pointless wrapper — the chip freezes
+    rc=65  KILLED  testTheChipStillTicks 
+M4  the tick is coarsened to ten minutes
+    rc=65  KILLED  testTheChipStillTicks 
+M5  StatusBadge stops saying "In" — the chip becomes a bare duration
+    rc=65  KILLED  testTheChipStillSaysTheWordsTheCentreColumnStoppedSaying 
+M6  the chip is dropped from the hero entirely
+    rc=65  KILLED  testTheChipStillTicks 
+M7  the scheduled arm stops being handed a commence time
+    rc=65  KILLED  testTheChipStillSaysTheWordsTheCentreColumnStoppedSaying 
+M8  isSuspendedAndStarted forgets the clock
+    rc=65  KILLED  testEveryStateThatDrewTheDeletedCopyStillDrawsTheChip (+5 failing test(s) outside this file)
+M9  showsVenueSettledVerdict forgets the clock
+    rc=65  KILLED  testEveryStateThatDrewTheDeletedCopyStillDrawsTheChip 
+M10 formatCountdown loses its minute resolution
+    rc=65  KILLED  testTheCountdownChangesWithinOneMinuteSoTheTickIsSixtySeconds 
+C   clean head — MUST survive
+    rc=0  SURVIVED
+
+tree restored byte-identical (4 files)
