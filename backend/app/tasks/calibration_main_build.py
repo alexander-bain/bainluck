@@ -1395,6 +1395,15 @@ NULL_RUNNER = NullPhaseRunner()
 #: two have different lifetimes: the unit cost is a level the newest beat
 #: overwrites, this is a window the newest beat appends to.
 UNIT_WORST_HISTORY_KEY = "unit_worst_history"
+#: CAL-P1300 (#6275). Set on a phase's carried unit cost by
+#: :func:`_carry_unit_costs` when :func:`_level_refuted_by_cancellation` says
+#: every unit the beat admitted died at the level's own fence. It travels in
+#: ``unit_costs`` because that is the dict the refutation empties, and it is
+#: read in ONE other place — :func:`load_phase_measurements`, which must not
+#: fold the worst-unit ring back in over the top of it. `_decode_unit_cost` and
+#: `_decode_unit_worst` both read named keys, so this one rides along ignored by
+#: everything that does not ask for it.
+LEVEL_REFUTED_KEY = "level_refuted"
 
 
 def _bootstrap_worst_history(unit_costs: dict[str, Any]) -> dict[str, list[int]]:
@@ -1519,6 +1528,20 @@ async def load_phase_measurements() -> tuple[
     merged = {name: dict(cost) for name, cost in unit_costs.items() if isinstance(cost, dict)}
     for name, ring in worst_history.items():
         if not ring:
+            continue
+        # CAL-P1300 (#6275): a REFUTED level takes no worst-basis either. The
+        # fence is `max(mean_basis, worst_basis)`, so withdrawing only the mean
+        # would hand the next beat a fence of `1.5 * worst` -- on the #6275
+        # specimen 403,347 ms against the 483,000 ms that had just failed, i.e.
+        # TIGHTER than the bound already proven too small. Both references
+        # describe completions the fence has now been shown to be wrong about,
+        # and with neither measured the documented no-measurement path applies:
+        # `basis <= 0` and the unit gets the PHASE bound -- one honest attempt
+        # per beat, still inner to the beat's own deadline, which is the widest
+        # thing that was ever on offer. It extinguishes itself the moment a unit
+        # completes, because `_unit_costs_from` then builds a fresh dict with no
+        # marker in it and the ring resumes.
+        if merged.get(name, {}).get(LEVEL_REFUTED_KEY):
             continue
         merged.setdefault(name, {})["unit_ms_worst"] = max(ring)
     return history, floors, merged
@@ -2170,6 +2193,52 @@ def _level_self_blocked(runner: PhaseRunner) -> bool:
     return "staged:window_stop:unit_too_large" in runner.ledger.stages
 
 
+def _level_refuted_by_cancellation(runner: PhaseRunner) -> bool:
+    """Did every unit this beat ADMITTED die at the level's own fence?
+
+    CAL-P1300 (#6275). The sibling of :func:`_level_self_blocked`, for the case
+    that guard cannot see. That one fires when the level refuses to START a
+    unit; this one fires when the level lets units start and then kills every
+    one of them. Both are the same disease — a measurement that blocks the only
+    observation which could revise it — and the second is the worse of the two,
+    because from the outside it looks like a build doing work.
+
+    #6275 raised the true cost of a futures unit above the fence. The fence is
+    ``max(4.0 * mean, 1.5 * worst)`` over COMPLETED units, and widening it
+    "requires a COMPLETION at the wider size"
+    (:meth:`~app.utils.calibration_phase_ledger.PhaseLedger.statement_timeout_for_unit`),
+    so no unit could complete, no completion could be observed, and the fence
+    could never widen. Two beats measured it exactly: 2 units admitted, 0
+    completed, 2 cancelled at 483,862 ms and 484,266 ms against a 483,000 ms
+    fence, the SAME two unit hashes both times, ``units_banked`` pinned at
+    52/128. That is not a slow re-stage, it is a closed door, and it stays shut
+    for as many beats as the build has left.
+
+    THREE conditions, and the third is the one that keeps this honest:
+
+    * units RAN — with none admitted there is no cancellation to read, and the
+      state belongs to :func:`_level_self_blocked` instead.
+    * NONE completed — one completion is a live measurement and the level
+      stands, however many of its siblings were cancelled beside it.
+    * the fence that killed them was the LEVEL'S, not the window's. A unit
+      cancelled because the beat ran out of time says nothing about what a unit
+      intrinsically costs, and withdrawing a level on that evidence would throw
+      away a good measurement every time a beat ended busy. ``headroom`` is
+      ``remaining_ms - timeout`` recorded at the moment the fence was applied
+      (CAL-P163), so a positive value means the bound came from the measured
+      basis while window was still available — which is precisely "the level
+      did this". On the #6275 specimen it read 347,841 ms.
+    """
+    if not runner.ledger.stage_counts.get(STAGED_UNIT_STAGE, 0):
+        return False
+    if runner.ledger.stage_completed_mean_ms(STAGED_UNIT_STAGE) is not None:
+        return False
+    if not runner.ledger.stages.get("staged:units_cancelled"):
+        return False
+    headroom = runner.ledger.stages.get(f"staged:unit_bound_headroom_ms:{PHASE_FUTURES}")
+    return bool(headroom and headroom > 0)
+
+
 def _carry_unit_costs(runner: PhaseRunner, prior: dict[str, Any]) -> dict[str, Any]:
     """The prior beat's unit-cost level, still describing something true.
 
@@ -2216,6 +2285,28 @@ def _carry_unit_costs(runner: PhaseRunner, prior: dict[str, Any]) -> dict[str, A
     unreadable cursor are three different states and none of them is silence.
     """
     carried = {name: dict(cost) for name, cost in (prior or {}).items() if isinstance(cost, dict)}
+    # CAL-P1300 (#6275): BEFORE the `not futures` return, because a refutation
+    # has to suppress the worst-unit RING as well as the mean, and the ring
+    # lives in its own payload key — it can hold a fence-setting value on a beat
+    # whose `unit_costs` carries no futures entry at all. Returning early there
+    # would leave the fence exactly as wide as it was and the door exactly as
+    # shut.
+    if _level_refuted_by_cancellation(runner):
+        banked = runner.ledger.stages.get("staged:units_banked")
+        # The level goes, the PROGRESS facts stay: how many units exist and how
+        # many are banked are still true, and they are what the operator window
+        # reads. `_decode_unit_cost` is all-or-nothing across its three fields,
+        # so dropping `unit_ms` withdraws the quote on its own -- there is no
+        # second place to say it.
+        carried[PHASE_FUTURES] = {
+            "units_total": STAGED_FUTURES_BUCKETS,
+            "units_done": int(banked) if banked is not None else 0,
+            LEVEL_REFUTED_KEY: True,
+        }
+        runner.ledger.record_gauge(
+            f"{UNIT_COST_REASON_PREFIX}withdrawn_refuted_by_cancellation", 1
+        )
+        return carried
     futures = carried.get(PHASE_FUTURES)
     if not futures:
         return carried
