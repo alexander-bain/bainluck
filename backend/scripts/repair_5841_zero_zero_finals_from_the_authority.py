@@ -649,7 +649,6 @@ async def write_scores(session, plans: list[dict], rows_by_id: dict) -> tuple[in
 
 async def run(*, backup: bool, apply: bool, lookback_days: int, only_ids: list[int] | None) -> int:
     from app.services.espn_api import get_espn_service
-    from app.tasks.base import get_task_session
 
     now = datetime.now(timezone.utc)
     floor = horizon_floor(now, lookback_days)
@@ -660,6 +659,23 @@ async def run(*, backup: bool, apply: bool, lookback_days: int, only_ids: list[i
     print(f"horizon floor: {floor.isoformat()}")
 
     espn = get_espn_service()
+    # `try/finally`, not a trailing `await espn.close()`: THREE of the paths
+    # below RETURN from inside the session block (the band refusal, the dry run,
+    # the empty plan), so a close on the last line runs on the one path that
+    # needs it least and leaks the httpx client on every path a dry run takes.
+    try:
+        exit_code = await _run_inner(
+            espn=espn, params=params, only_ids=only_ids, apply=apply,
+            backup=backup, default_window=default_window,
+        )
+    finally:
+        await espn.close()
+    return exit_code
+
+
+async def _run_inner(*, espn, params, only_ids, apply, backup, default_window) -> int:
+    from app.tasks.base import get_task_session
+
     exit_code = 0
     async with get_task_session() as session:
         rows = (await session.execute(statement(_CANDIDATES_SQL), params)).all()
@@ -714,7 +730,6 @@ async def run(*, backup: bool, apply: bool, lookback_days: int, only_ids: list[i
         if failed:
             print(f"  FAILED ids: {failed}")
             exit_code = 1
-    await espn.close()
     return exit_code
 
 
