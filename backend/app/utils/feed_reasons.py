@@ -195,6 +195,29 @@ def _date_outcome_label(name: str | None) -> str | None:
     return label
 
 
+def deadline_level_label(
+    leader_name: str | None,
+    *,
+    leader_is_ladder_rung: bool = False,
+    deadline_preposition: str | None,
+) -> str | None:
+    """The dated label a level clause may be built on, or ``None``.
+
+    THE GATE, lifted out of :func:`leader_deadline_clause` so there is exactly
+    one of it. Two callers now need the same permission and they need it at
+    different points in the pipeline: the field templates want the finished
+    sentence, and `compose_binary_card_copy` wants only the LABEL, because it
+    already holds the percent it must print (see its own note). Restating these
+    three conditions beside the composer would have been a second gate, and the
+    whole safety argument of #6470 is that there is one.
+    """
+    if leader_is_ladder_rung:
+        return None
+    if deadline_preposition != DEADLINE_PREPOSITION:
+        return None
+    return _date_outcome_label(leader_name)
+
+
 def leader_deadline_clause(
     leader_name: str | None,
     pct: int | None,
@@ -233,9 +256,11 @@ def leader_deadline_clause(
     Where the title never carried it, we cannot know the leg is a bound, and the
     caption stays empty exactly as today.
     """
-    if deadline_preposition != DEADLINE_PREPOSITION or pct is None:
+    if pct is None:
         return ""
-    label = _date_outcome_label(leader_name)
+    label = deadline_level_label(
+        leader_name, deadline_preposition=deadline_preposition
+    )
     if label is None:
         return ""
     return f"{pct}% chance {DEADLINE_PREPOSITION} {label}"
@@ -946,14 +971,20 @@ def compose_binary_card_copy(
     top_mover_change: Optional[float] = None,
     top_surprise_change: Optional[float] = None,
     top_surprise_opened_at: Optional[datetime] = None,
+    deadline_label: Optional[str] = None,
     now: Optional[datetime] = None,
 ) -> BinaryCardCopy:
     """Compose a yes/no card's three strings, freshest real signal first.
 
     The order below IS the editorial rule: what moved, then what is about to
     resolve, then — only if nothing else is true — a dated lifetime move, then
-    the bare probability. A lifetime move never outranks a live one and never
-    appears undated.
+    the deadline this leg is a bound on, then nothing. A lifetime move never
+    outranks a live one and never appears undated.
+
+    ``deadline_label`` is :func:`deadline_level_label`'s verdict — the bare date
+    this single leg is a bound on, or None. Defaults to None so a caller that
+    does not know stays byte-identical, which is every caller of a genuine
+    Yes/No pair.
     """
     reasons = set(highlight_reasons or [])
     if "stale_past_resolution" in reasons:
@@ -1035,6 +1066,35 @@ def compose_binary_card_copy(
     # falls through to a curated signal label (`PRIMARY_REASON_LABELS`) and says
     # nothing only when there is no signal to name either. That is the design's own
     # honest terminal, not a new one.
+    #
+    # 🟢 #6470 REMAINDER — EXCEPT WHEN THE BOARD COLLAPSED TO ONE DATED RUNG, where
+    # something about the world IS true and sayable. #6470 gave every deadline board
+    # a level clause, but only on the FIELD path: a Polymarket deadline board whose
+    # sibling rungs have all expired arrives here with exactly ONE outcome, which
+    # `binary_affirmative_outcome` reads as a yes/no question, so the generators
+    # short-circuit into this composer above the level clause and the sentence is
+    # never consulted. Measured on production 2026-09-16 (v4612 `154be569`), three of
+    # #6470's own six cards were still blank for this reason and no other — 113013
+    # `NATO x Russia military clash by...?`, 113016 `Will Ukraine recapture Crimean
+    # territory by...?`, 114077 `European country agrees to give Ukraine security
+    # guarantee by...?` — each serving `reason: ''` / `headline: null` while
+    # `/api/admin/discover-quality/trace/{id}`, which does NOT drop expired rungs,
+    # composed "27% chance by December 31" for the same market in the same minute.
+    #
+    # 🔴 THE PERCENT IS THIS COMPOSER'S OWN `answer`, NOT A PRE-RENDERED CLAUSE.
+    # The field path builds its clause off `leader_probability`/`rendered_leader_percent`
+    # and this path off the AFFIRMATIVE's; on a one-leg board they are the same row, so
+    # handing the finished string across would agree today and drift the moment those two
+    # bases diverge. Taking only the LABEL and reusing `answer` makes the caption and the
+    # hero one number by construction rather than by coincidence.
+    #
+    # The refusals are unchanged and are all upstream of the label: `stale_past_resolution`
+    # returns fourteen lines above, a proven cumulative ladder (#4640) and a title that
+    # elided no "by" both yield no label at all, and a genuine Yes/No pair has no date to
+    # be a bound on. This can only speak where #6470 already ruled the sentence true.
+    if deadline_label:
+        level = f"{answer} {DEADLINE_PREPOSITION} {deadline_label}"
+        return composed(level, level)
     return BinaryCardCopy("", "", "")
 
 
@@ -1705,6 +1765,11 @@ def generate_futures_reason(
             top_mover_change=top_mover_change,
             top_surprise_change=top_surprise_change,
             top_surprise_opened_at=top_surprise_opened_at,
+            deadline_label=deadline_level_label(
+                leader_name,
+                leader_is_ladder_rung=leader_is_ladder_rung,
+                deadline_preposition=leader_deadline_preposition,
+            ),
             now=now,
         ).reason
 
@@ -1928,6 +1993,11 @@ def generate_futures_headline(
             top_mover_change=top_mover_change,
             top_surprise_change=top_surprise_change,
             top_surprise_opened_at=top_surprise_opened_at,
+            deadline_label=deadline_level_label(
+                leader_name,
+                leader_is_ladder_rung=leader_is_ladder_rung,
+                deadline_preposition=leader_deadline_preposition,
+            ),
             now=now,
         ).headline
 
@@ -2108,6 +2178,11 @@ def generate_futures_context_summary(
             top_mover_change=top_mover_change,
             top_surprise_change=top_surprise_change,
             top_surprise_opened_at=top_surprise_opened_at,
+            deadline_label=deadline_level_label(
+                leader_name,
+                leader_is_ladder_rung=leader_is_ladder_rung,
+                deadline_preposition=leader_deadline_preposition,
+            ),
             now=now,
         ).context_summary
 

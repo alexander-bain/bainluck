@@ -378,3 +378,211 @@ class TestTheCaptionNeverRestoresAWordTheTitleStillPrints:
     def test_the_sample_above_actually_contains_both_verdicts(self):
         verdicts = {elided_trailing_preposition(raw) is None for raw in self.NAMES}
         assert verdicts == {True, False}
+
+
+# ===========================================================================
+# THE REMAINDER, measured 2026-09-16 on release v4612 `154be569` — which already
+# carried #6470. Three of the six cards above were STILL blank.
+# ===========================================================================
+
+class TestABoardThatCollapsedToOneLiveRung:
+    """#6470's own remainder: the level clause never reached a one-leg board.
+
+    WHAT A READER SAW, production `/api/feed?limit=60` at 2026-09-16 05:5xZ,
+    with #6470 live: three of its six cards still served `reason: ''`,
+    `headline: null`, `context_summary: ''`, `hook_description: null`.
+
+        idx 34  European country agrees to give Ukraine security …?  Dec 31   8%
+        idx 41  NATO x Russia military clash?                        Dec 31  27%
+        idx 48  Will Ukraine recapture Crimean territory?            Dec 31   6%
+
+    WHY THOSE THREE AND NOT THE OTHER THREE. Nothing about the boards' titles or
+    their dates differs — what differs is how many rungs are still LIVE. The
+    serving path drops every rung whose own deadline has passed
+    (`_expired_ladder_rungs`), and on 2026-09-16 these three had exactly one
+    survivor each (measured: 113013 lost `June 30`, `March 31` and
+    `December 31, 2025`; 113016 and 114077 each lost `June 30`). A one-outcome
+    list is what `binary_affirmative_outcome` calls a yes/no question, so all
+    three generators short-circuit into `compose_binary_card_copy` — which sits
+    ABOVE the level clause and has no way to reach it. Anthropic IPO, Alito and
+    the Russia-mobilization board each kept two or more live rungs, stayed on the
+    field path, and got their caption from #6470 as designed.
+
+    The proof that this is the whole story, and not a story about these three
+    markets: `/api/admin/discover-quality/trace/{id}` recomposes from
+    `_top_outcomes_for_trace`, which does NOT drop expired rungs, and it printed
+    "27% chance by December 31" for 113013 in the same minute the feed served
+    "". Same market, same code, same release — the only difference is how many
+    legs survived into the call.
+    """
+
+    # (raw stored name, the one surviving leg, its price, the percent the card
+    # prints for it) — `futures_markets` 113013, 113016, 114077.
+    COLLAPSED = [
+        ("NATO x Russia military clash by...?", "December 31", 0.265, 27),
+        ("Will Ukraine recapture Crimean territory by...?", "December 31", 0.055, 6),
+        ("European country agrees to give Ukraine security guarantee by...? ",
+         "December 31", 0.075, 8),
+    ]
+
+    @staticmethod
+    def _slots(raw, leader, prob, pct, *, preposition, reasons=None,
+               leader_is_ladder_rung=False, **extra):
+        """As `routes/feed.py` calls it for a board with ONE live leg.
+
+        The difference from `_copy` above — and the reason that helper's cards
+        passed while production printed nothing — is `affirmative_probability`:
+        a single-leg list makes it the leg's own price instead of None, which is
+        the branch the three blank cards actually took.
+        """
+        shared = dict(
+            market_name=clean_market_display_name(raw),
+            highlight_reasons=list(reasons if reasons is not None else LIVE_REASONS),
+            leader_name=leader,
+            leader_probability=prob,
+            rendered_leader_percent=pct,
+            leader_is_ladder_rung=leader_is_ladder_rung,
+            leader_deadline_preposition=preposition,
+            affirmative_probability=prob,
+            rendered_affirmative_percent=pct,
+            **extra,
+        )
+        headline = generate_futures_headline(**shared)
+        return {
+            "reason": generate_futures_reason(**shared),
+            "headline": headline,
+            "context_summary": generate_futures_context_summary(
+                headline=headline or None, **shared
+            ),
+        }
+
+    @classmethod
+    def _served(cls, raw, leader, prob, pct, **kwargs):
+        slots = cls._slots(raw, leader, prob, pct, **kwargs)
+        for key in ("context_summary", "headline", "reason"):
+            if (slots[key] or "").strip():
+                return slots[key].strip()
+        return ""
+
+    @classmethod
+    def _live(cls, raw, leader, prob, pct, **kwargs):
+        return cls._served(raw, leader, prob, pct,
+                           preposition=elided_trailing_preposition(raw), **kwargs)
+
+    @pytest.mark.parametrize("raw,leader,prob,pct", COLLAPSED)
+    def test_the_card_now_carries_a_caption(self, raw, leader, prob, pct):
+        assert self._live(raw, leader, prob, pct) == f"{pct}% chance by {leader}"
+
+    @pytest.mark.parametrize("raw,leader,prob,pct", COLLAPSED)
+    def test_and_printed_nothing_before_this_shipped(self, raw, leader, prob, pct):
+        # `deadline_label` defaults to None, and with no elided "by" there is no
+        # label to pass — so this arm IS the released behaviour, byte for byte,
+        # not a reconstruction of it.
+        assert self._served(raw, leader, prob, pct, preposition=None) == ""
+
+    @pytest.mark.parametrize("raw,leader,prob,pct", COLLAPSED)
+    def test_the_web_cards_own_slot_is_the_one_that_fills(self, raw, leader, prob, pct):
+        # `FuturesCard.tsx` prints `context_summary`. A fix that filled only the
+        # reason would pass `_served` and change nothing a reader sees.
+        slots = self._slots(raw, leader, prob, pct,
+                            preposition=elided_trailing_preposition(raw))
+        assert slots["context_summary"] == f"{pct}% chance by {leader}"
+
+    @pytest.mark.parametrize("raw,leader,prob,pct", COLLAPSED)
+    def test_the_caption_states_no_comparative(self, raw, leader, prob, pct):
+        printed = self._live(raw, leader, prob, pct).lower()
+        for word in ("lead", "favorite", "favourite", "ahead", "top", "beats"):
+            assert word not in printed, printed
+
+
+class TestTheCollapsedBoardsPercentIsTheHerosOwn:
+    """The number in the caption is the AFFIRMATIVE's, never the leader basis.
+
+    The two bases are the same row on a one-leg board, so a composer that took a
+    pre-rendered clause built from `rendered_leader_percent` would agree today
+    and be wrong the first time they diverge. Feeding a deliberately different
+    leader percent proves which one the sentence is built from.
+    """
+
+    RAW = "NATO x Russia military clash by...?"
+
+    def test_the_sentence_follows_the_affirmative_percent(self):
+        slots = TestABoardThatCollapsedToOneLiveRung._slots(
+            self.RAW, "December 31", 0.265, 27,
+            preposition="by",
+        )
+        assert slots["context_summary"] == "27% chance by December 31"
+
+    def test_a_divergent_leader_percent_does_not_move_the_caption(self):
+        shared = dict(
+            market_name=clean_market_display_name(self.RAW),
+            highlight_reasons=list(LIVE_REASONS),
+            leader_name="December 31",
+            leader_probability=0.265,
+            # The card's hero prints 27; only the leader basis is perturbed.
+            rendered_leader_percent=99,
+            leader_deadline_preposition="by",
+            affirmative_probability=0.265,
+            rendered_affirmative_percent=27,
+        )
+        assert generate_futures_headline(**shared) == "27% chance by December 31"
+
+
+class TestTheCollapsedBoardControls:
+    """What the new arm must NOT reach. Each control asserts silence AND that the
+    silence is its own gate's doing — flip only that gate and the caption
+    appears — so none can pass vacuously when an unrelated branch changes."""
+
+    def _served(self, *a, **kw):
+        return TestABoardThatCollapsedToOneLiveRung._served(*a, **kw)
+
+    def test_a_genuine_yes_no_pair_has_no_date_to_be_a_bound_on(self):
+        # "Yes" is not a calendar label, so there is no level clause to print
+        # and the #4056 terminal still owns this card.
+        raw = "Will China invade Taiwan by...?"
+        assert self._served(raw, "Yes", 0.04, 4, preposition="by") == ""
+        # ...and the gate really is the LABEL: swap in a date and it speaks.
+        assert self._served(raw, "December 31", 0.04, 4,
+                            preposition="by") == "4% chance by December 31"
+
+    def test_a_proven_cumulative_ladder_is_still_refused(self):
+        # #4640's refusal outranks the clause on the binary path exactly as it
+        # does on the field path.
+        raw = "Fed cuts rates by...?"
+        assert self._served(raw, "December 31", 0.4, 40, preposition="by",
+                            leader_is_ladder_rung=True) == ""
+        assert self._served(raw, "December 31", 0.4, 40, preposition="by",
+                            leader_is_ladder_rung=False) == "40% chance by December 31"
+
+    @pytest.mark.parametrize("word", ["on", "at", "through", "as"])
+    def test_an_elided_word_that_is_not_by_stays_silent(self, word):
+        raw = "GPT-5.5 released on...?"
+        assert self._served(raw, "December 31", 0.4, 40, preposition=word) == ""
+        assert self._served(raw, "December 31", 0.4, 40,
+                            preposition="by") == "40% chance by December 31"
+
+    def test_a_market_past_its_resolution_stays_silent(self):
+        # `stale_past_resolution` returns above every arm in the composer, and
+        # must keep doing so: a dead market saying "40% chance by December 31"
+        # would be a truth defect, not a caption.
+        raw = "NATO x Russia military clash by...?"
+        assert self._served(raw, "December 31", 0.4, 40, preposition="by",
+                            reasons=["stale_past_resolution"]) == ""
+        assert self._served(raw, "December 31", 0.4, 40, preposition="by",
+                            reasons=["major_surprise"]) == "40% chance by December 31"
+
+    def test_a_live_signal_still_outranks_the_deadline(self):
+        # The deadline is the LAST rung before silence, never a promotion over a
+        # sentence about this morning. A board that moved today says so.
+        raw = "NATO x Russia military clash by...?"
+        assert self._served(
+            raw, "December 31", 0.265, 27, preposition="by",
+            reasons=["major_movement_24h"], top_mover_change=0.06,
+        ) == "Up 6 points today — now 27% chance"
+
+    def test_a_card_that_is_resolving_this_week_still_says_so(self):
+        raw = "NATO x Russia military clash by...?"
+        printed = self._served(raw, "December 31", 0.265, 27, preposition="by",
+                               reasons=["resolving_soon_7d"])
+        assert "resolving within a week" in printed
+        assert "by December 31" not in printed
