@@ -26,7 +26,7 @@ import EntityImage from "./EntityImage";
 import TournamentCard from "./TournamentCard";
 import { isNonSportsCategory, isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { useAnalyticsContext } from "@/components/Analytics";
-import { feedItemHasRenderableContent, resolvesLabel, formatConceptMovement } from "@/components/discover/utils";
+import { feedContextSnippet, feedItemHasRenderableContent, resolvesLabel, formatConceptMovement } from "@/components/discover/utils";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import {
   SUSPENDED_LABEL,
@@ -1022,12 +1022,45 @@ function FuturesFeedCard({
   // from the identical field rather than disagreeing by tab.
   const resolvesText = resolvesLabel(data.resolution_date);
 
+  // #6560 — the caption beneath the heading is the CARD FAMILY's caption, not the
+  // raw served `reason`.
+  //
+  // `reason` is built by `generate_futures_reason` to stand alone, so it ends in
+  // the market name — and this card prints that name one line ABOVE it as the
+  // heading. Measured on production `/sports` 2026-09-16 13:55Z: `data.name`
+  // appears verbatim inside `reason` on 27 of 27 futures cards, across six
+  // templates, while `headline`/`context_summary` restate it 0 of 27
+  // ("English Premier League Champion" / "Arsenal (49%) leads English Premier
+  // League Champion"). The `<p>` below is `line-clamp-2`, so those characters are
+  // not free: on 2 of the 27 the caption overflowed a third line and the sentence
+  // was cut mid-claim — "…1+ holes-in-one leads …", with the 48% the clause exists
+  // to deliver falling off the end.
+  //
+  // `feedContextSnippet` is the chain Discover and iOS already resolve for a
+  // futures card (`components/discover/utils.ts`, graded against
+  // `fixtures/discover/caption-chain-record-2026-09-09.json`), and its comment is
+  // this defect in almost these words. Calling the SAME function is what makes the
+  // two surfaces agree under notice 35 — a second copy of the preference order is
+  // how they would drift apart again. No new copy is minted here: every candidate
+  // is a string the backend already served.
+  const caption = feedContextSnippet(item);
+
   // #4403 — the header pill renders only when it is not a restatement of the
-  // reason line beneath it. Both strings come out of the same backend branch, so
-  // on today's page the pill is always the echo; the test lives in one place so a
-  // headline that genuinely says something new keeps its badge.
+  // sentence beneath it. Both strings come out of the same backend branch, so on
+  // today's page the pill is nearly always the echo; the test lives in one place
+  // so a headline that genuinely says something new keeps its badge.
+  //
+  // #6560 re-points the first half of that test at the string the card now PRINTS
+  // beneath the pill, which is the caption rather than `reason` — otherwise a
+  // caption drawn from `context_summary` ("Rory McIlroy leads at 7%; resolves
+  // within a week") would let its own near-twin headline ("Resolving soon: Rory
+  // McIlroy leads at 7%") back into the row that #4403 cleared. The `reason` test
+  // is KEPT beside it, so the pill can only lose ground, never gain it: a pill
+  // suppressed on today's page cannot be brought back by this change.
   const showHeadlinePill =
-    Boolean(item.headline) && !headlineEchoesReason(item.headline, item.reason);
+    Boolean(item.headline) &&
+    !headlineEchoesReason(item.headline, caption) &&
+    !headlineEchoesReason(item.headline, item.reason);
 
   const { track } = useAnalyticsContext();
 
@@ -1076,7 +1109,10 @@ function FuturesFeedCard({
                 duplicate sentence costs the reader nothing and returns the whole
                 left group to the chip. See lib/headlineEcho.ts. */}
             {showHeadlinePill && (
-              <span className="bg-accent-futures/15 text-accent-futures px-2 py-0.5 rounded text-[11px] font-semibold min-w-0 truncate">
+              <span
+                data-testid="futures-card-headline-pill"
+                className="bg-accent-futures/15 text-accent-futures px-2 py-0.5 rounded text-[11px] font-semibold min-w-0 truncate"
+              >
                 {item.headline}
               </span>
             )}
@@ -1120,7 +1156,12 @@ function FuturesFeedCard({
             <div className="text-sm font-medium text-text-primary line-clamp-2">
               {data.name}
             </div>
-            <p className="text-xs text-text-secondary mt-0.5 line-clamp-2">{item.reason}</p>
+            <p
+              data-testid="futures-card-caption"
+              className="text-xs text-text-secondary mt-0.5 line-clamp-2"
+            >
+              {caption}
+            </p>
             {data.resolved && data.winner && data.winner_opening_probability != null && (
               <p className="text-[11px] text-accent-live font-medium mt-0.5">
                 {data.winner}: {Math.round(data.winner_opening_probability * 100)}% → Won

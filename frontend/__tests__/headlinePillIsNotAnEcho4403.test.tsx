@@ -96,12 +96,17 @@ const REASON =
   "Alexander Volkanovski (48%) leads Featherweight Title Holder on Dec 31, 2026?";
 const ECHO_PILL = "Alexander Volkanovski leads at 48%";
 
-function futuresItem(headline: string | null, reason: string | null): FeedItem {
+function futuresItem(
+  headline: string | null,
+  reason: string | null,
+  contextSummary: string | null = null,
+): FeedItem {
   return {
     type: "futures",
     score: 80,
     headline,
     reason,
+    context_summary: contextSummary,
     data: {
       id: 4403,
       name: "Featherweight Title Holder on Dec 31, 2026?",
@@ -117,28 +122,70 @@ function futuresItem(headline: string | null, reason: string | null): FeedItem {
   } as unknown as FeedItem;
 }
 
-const card = (headline: string | null, reason: string | null) =>
-  renderToStaticMarkup(<FeedCard item={futuresItem(headline, reason)} />);
+const card = (
+  headline: string | null,
+  reason: string | null,
+  contextSummary: string | null = null,
+) =>
+  renderToStaticMarkup(
+    <FeedCard item={futuresItem(headline, reason, contextSummary)} />,
+  );
+
+/** The pill, by the attribute the component marks it with — not by its classes,
+ *  and not by "does this sentence appear anywhere in the markup", which after
+ *  #6560 cannot tell the pill from the caption that now carries the same words. */
+function pillText(html: string): string | null {
+  const m = html.match(
+    /data-testid="futures-card-headline-pill"[^>]*>([^<]*)</,
+  );
+  return m ? m[1] : null;
+}
+
+function captionText(html: string): string | null {
+  const m = html.match(/data-testid="futures-card-caption"[^>]*>([^<]*)</);
+  return m ? m[1] : null;
+}
 
 describe("#4403 the rendered header row", () => {
   test("an echo pill is dropped and the category NAME is printed in full", () => {
     const html = card(ECHO_PILL, REASON);
-    // The sentence survives exactly once — in the reason line, whole.
-    expect(html).toContain("Alexander Volkanovski (48%) leads Featherweight Title Holder");
-    expect(html).not.toContain(">Alexander Volkanovski leads at 48%<");
+    // #6560 — the sentence still survives exactly once, and the slot it survives
+    // in is now the CAPTION rather than the raw reason: the reason ends in the
+    // market name this card already prints as its heading, so the caption chain
+    // prefers the headline's own wording. The assertion that mattered to #4403 is
+    // unchanged — the pill is gone and the sentence is whole, in one place.
+    expect(pillText(html)).toBeNull();
+    expect(captionText(html)).toBe("Alexander Volkanovski leads at 48%");
     // …and the chip has its name back, which is the pixels the pill gave up.
     expect(html).toContain("MMA");
   });
 
   test("a non-echo pill still renders, and THEN the category name yields to it", () => {
-    const html = card("Volkanovski odds up 12 points today", REASON);
-    expect(html).toContain("Volkanovski odds up 12 points today");
+    // #6560 — "non-echo" is now measured against the caption the reader sees, so
+    // the specimen serves the `context_summary` the live payload serves on all 27
+    // futures cards; without one the caption IS the headline and no pill could
+    // ever be new. The headline still says something neither string says.
+    const html = card(
+      "Volkanovski odds up 12 points today",
+      REASON,
+      "Alexander Volkanovski leads at 48%",
+    );
+    expect(pillText(html)).toBe("Volkanovski odds up 12 points today");
+    expect(captionText(html)).toBe("Alexander Volkanovski leads at 48%");
     // The emoji still marks the category; the word does not compete for the row.
     expect(html).not.toContain("MMA");
   });
 
-  test("with no reason line the pill always renders — nothing else carries it", () => {
-    expect(card("New favorite: USA (65%)", null)).toContain("New favorite: USA (65%)");
+  test("with no reason line the headline still reaches the reader", () => {
+    // #4403 kept the pill here because nothing else carried the sentence. After
+    // #6560 something does: with no `reason` and no `context_summary` the caption
+    // chain falls through to the headline, so the card prints it on the wide line
+    // under the heading instead of in the ~150px header row. It is the same claim
+    // — the only copy on the card is never dropped — read off the slot that now
+    // holds it.
+    const html = card("New favorite: USA (65%)", null);
+    expect(html).toContain("New favorite: USA (65%)");
+    expect(captionText(html)).toBe("New favorite: USA (65%)");
   });
 
   test("the resolution date is never the thing that yields (#4244 held)", () => {
