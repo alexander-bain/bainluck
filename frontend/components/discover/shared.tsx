@@ -98,11 +98,27 @@ export function MovementBadge({ m, prob }: { m: number | null | undefined; prob?
   // L2-156 Item 3 — the arrow is a 24h PROBABILITY move, not a rank change. Casual
   // fans can't tell without a label, so spell it out on hover / for screen readers.
   const label = `${up ? "Up" : "Down"} ${pts} point${pts === 1 ? "" : "s"} in the last 24h`;
+  // #6579 — `shrink-0 whitespace-nowrap`, because this badge is the SHORT,
+  // FIXED-length item in its row and the thing beside it is the variable one.
+  // `TrendBadge` below carries the `shrink-0` half for the same reason; the
+  // `whitespace-nowrap` is needed here and not there because this badge's text is
+  // two words ("7 pts") and so it has an interior break to be squeezed onto.
+  //
+  // At the Discover futures row (`FuturesCard.tsx:502`) this sits in a
+  // `flex items-center gap-1.5` next to an outcome name that is `min-w-0 truncate`
+  // — deliberately, so a long label ellipsises (UX-P263). But a default flex item
+  // shrinks too, and this one's min-content is the widest of its own words, so on a
+  // long name it was squeezed until "7 pts" BROKE ACROSS TWO LINES: seen on
+  // production Discover at 390px, 2026-09-16 16:00Z (lane1b/292's frame, the
+  // "next government of Sweden" card) as a two-line pink oval reading "▼ 7 / pts"
+  // beside "Swedish Social Democrati…", while rows 3 and 4 drew "▲ 7 pts" inline.
+  // The row cannot fit both in full, so one of them has to yield, and it is the one
+  // that ALREADY has an ellipsis to say so — #4244's priority order, one card over.
   return (
     <span
       title={label}
       aria-label={label}
-      className={`inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${up ? "bg-green-500/15 text-green-600" : "bg-red-500/15 text-red-600"}`}
+      className={`inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap text-[10px] font-bold px-1.5 py-0.5 rounded-full ${up ? "bg-green-500/15 text-green-600" : "bg-red-500/15 text-red-600"}`}
     >
       <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" aria-hidden="true">{up ? <path d="M4 1L7 5H1z" /> : <path d="M4 7L1 3h6z" />}</svg>
       {pts} pts
