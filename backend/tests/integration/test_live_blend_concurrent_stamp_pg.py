@@ -22,8 +22,17 @@ publishing two hero numbers 89 ms apart — `polymarket p=0.51` then
 rendering whichever landed last. It also explains the direction, which a plain
 staleness story cannot: the Kalshi arm held the HIGHER own price (0.53 vs 0.52)
 and published the LOWER aggregate, because its private copy had no Polymarket
-reading in it at all. The fast-lane chart point comes off the same path, so the
-zigzag was drawn as well as pushed.
+reading in it at all.
+
+WHAT THIS IS NOT, because live/305's receipt said otherwise and the claim should
+not be inherited: this is not the chart's zigzag. The fast-lane chart point is
+written on the same path, but `_maybe_snapshot` writes
+`win_prob_snapshots.home_win_probability` from THIS ARM'S OWN oriented reading,
+not from the blended JSONB, and `aggregate_line` is re-derived at serve time from
+those per-source rows. The race never reached the historical series; only the
+pinned right edge comes off the stored blend. The reported chart example
+`/events/15305465` carries no Kalshi or Polymarket series at all and is a
+separate defect (#6461).
 
 ## why a real server, and not another unit test
 
@@ -62,6 +71,7 @@ import asyncio
 import json
 import os
 from datetime import datetime, timezone
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import select, text, update
@@ -86,12 +96,31 @@ SEEDED = {
 }
 
 
+#: Marks every `sports` row this gate seeds, so teardown can delete exactly its
+#: own rows and nothing else. See `pg_engine` for why it may not simply drop.
+MARKER = "blendrace-836"
+
+
 @pytest.fixture
 async def pg_engine():
-    """Real Postgres with the real `events` schema.
+    """Real Postgres with the real `events` schema — CREATED, never DROPPED.
 
-    Only the `events` subgraph is created, not `Base.metadata` whole: this gate
-    is about one column on one table, and the full metadata carries a
+    THIS FIXTURE MUST NOT DROP ITS TABLES, and the reason is worth stating
+    because the obvious drop/create fixture is what every sibling gate in this
+    directory uses. CI's `bl_searchtest` is shared by every real-Postgres step
+    in the `search-recall` job, and by the time this step runs the full
+    `Base.metadata` exists — so `events` has dependent tables
+    (`odds_snapshots`, `futures_markets`, `win_prob_snapshots`, …) whose foreign
+    keys make dropping it raise `DependentObjectsStillExistError`. Measured on
+    this gate's first CI run: green locally against a database that only ever
+    held these four tables, red on the runner. A drop that DID succeed would be
+    worse — it would silently wreck whichever sibling gate ran next.
+
+    So: create only what is missing, and delete only the rows this gate seeded,
+    keyed on `MARKER` in `sports.key`.
+
+    Only the `events` subgraph is named, not `Base.metadata` whole: this gate is
+    about one column on one table, and the full metadata carries a
     `NULLS NOT DISTINCT` index that needs PostgreSQL 15+, which would make the
     gate unrunnable on a 14 server for a reason that has nothing to do with it.
 
@@ -101,35 +130,47 @@ async def pg_engine():
     """
     from sqlalchemy.ext.asyncio import create_async_engine
 
-    import app.models.models as models
+    from app.models.models import Event, Sport, Team, Venue
     from app.services.database import Base
 
     tables = [
-        models.Event.__table__,
-        models.Sport.__table__,
-        models.Team.__table__,
-        models.Venue.__table__,
+        Sport.__table__,
+        Venue.__table__,
+        Team.__table__,
+        Event.__table__,
     ]
     engine = create_async_engine(DB_URL)
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all, tables=tables)
         await conn.run_sync(Base.metadata.create_all, tables=tables)
 
     yield engine
 
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all, tables=tables)
+        await conn.execute(
+            text(
+                "DELETE FROM events WHERE sport_id IN"
+                " (SELECT id FROM sports WHERE key LIKE :k)"
+            ),
+            {"k": f"{MARKER}%"},
+        )
+        await conn.execute(
+            text("DELETE FROM sports WHERE key LIKE :k"), {"k": f"{MARKER}%"}
+        )
     await engine.dispose()
 
 
 async def _seed_event(engine, sources=None) -> int:
     async with engine.begin() as conn:
+        # A unique key per seed: `sports.key` is unique, the database is shared
+        # and not reset between tests in this file, and a fixed key would make
+        # the second test in the module collide with the first.
         sport_id = (
             await conn.execute(
                 text(
                     "INSERT INTO sports (key, name, active) "
-                    "VALUES ('baseball_mlb', 'MLB', true) RETURNING id"
-                )
+                    "VALUES (:k, 'MLB', true) RETURNING id"
+                ),
+                {"k": f"{MARKER}-{uuid4().hex[:12]}"},
             )
         ).scalar_one()
         return (
