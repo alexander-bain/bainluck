@@ -47,7 +47,14 @@ struct SportCategoryView: View {
                     Spacer()
                 }
                 .padding(.horizontal, 40)
-            } else if viewModel.items.isEmpty {
+            } else if viewModel.drawsNoRows {
+                // #1471: `viewModel.items.isEmpty` used to gate this, which asks
+                // whether the PAYLOAD was empty rather than whether the page can
+                // show anything. A payload the sections could not place fell
+                // past this terminal into an empty `List` — a large title over
+                // white, with no spinner and no explanation. An honest "nothing
+                // here" beats a blank screen; the sections below are what stop
+                // us needing it.
                 VStack(spacing: 16) {
                     Spacer()
                     Image(systemName: sportIcon(for: categoryKey))
@@ -113,6 +120,12 @@ struct SportCategoryView: View {
             }
             if !viewModel.upcoming.isEmpty {
                 feedSection(title: "Upcoming", systemImage: "calendar", imageColor: .blue, items: viewModel.upcoming)
+            }
+            // #1471: event concepts and tournaments — a UFC fight night, a Grand
+            // Prix, a golf tournament. Placed ABOVE Markets because they are the
+            // thing happening; the futures are context for it.
+            if !viewModel.otherEvents.isEmpty {
+                feedSection(title: "Events", systemImage: "calendar.badge.clock", imageColor: .indigo, items: viewModel.otherEvents)
             }
             if !viewModel.topMarkets.isEmpty {
                 feedSection(title: "Markets", systemImage: "chart.bar.fill", imageColor: .purple, items: viewModel.topMarkets)
@@ -297,7 +310,96 @@ struct SportCategoryView: View {
                 FuturesCardView(futures: futures)
             }
             .buttonStyle(.plain)
+        } else if let tournament = item.tournament {
+            // #1471. A tournament has a real destination when it carries a slug;
+            // without one there is nowhere to go, so the row is plain rather
+            // than a link that does nothing. A tap that looks live and isn't is
+            // the defect one layer in.
+            if let slug = tournament.slug, !slug.isEmpty {
+                NavigationLink(value: Route.tournamentHub(slug: slug, name: tournament.name)) {
+                    conceptLikeRow(
+                        title: tournament.name,
+                        subtitle: [tournament.tourLabel, tournament.venue]
+                            .compactMap { $0 }.filter { !$0.isEmpty }
+                            .joined(separator: " · "),
+                        leaderName: tournament.golfers?.first?.name,
+                        leaderProbability: tournament.golfers?.first?.probability,
+                        badge: item.headline
+                    )
+                }
+                .buttonStyle(.plain)
+            } else {
+                conceptLikeRow(
+                    title: tournament.name,
+                    subtitle: [tournament.tourLabel, tournament.venue]
+                        .compactMap { $0 }.filter { !$0.isEmpty }
+                        .joined(separator: " · "),
+                    leaderName: tournament.golfers?.first?.name,
+                    leaderProbability: tournament.golfers?.first?.probability,
+                    badge: item.headline
+                )
+            }
+        } else if let concept = item.concept {
+            // #1471. An event concept has no detail screen of its own, and the
+            // only route it could take — the sport category — is the page the
+            // reader is already standing on. So this is a summary row and not a
+            // link: it shows the bout and the favourite, which is what the
+            // Discover card showed, instead of a tap that goes nowhere.
+            conceptLikeRow(
+                title: concept.name,
+                subtitle: concept.fightCount.map { "\($0) \($0 == 1 ? "bout" : "bouts")" } ?? "",
+                leaderName: concept.winner ?? concept.leader?.name,
+                leaderProbability: concept.winner == nil ? concept.leader?.probability : nil,
+                badge: item.headline
+            )
         }
+    }
+
+    /// One compact row for the things that are not a game and not a market
+    /// (#1471): a fight night, a Grand Prix, a tournament. Deliberately the same
+    /// shape for both so the "Events" section reads as one list.
+    private func conceptLikeRow(
+        title: String,
+        subtitle: String,
+        leaderName: String?,
+        leaderProbability: Double?,
+        badge: String?
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 8)
+                if let badge, !badge.isEmpty {
+                    Text(badge)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.12))
+                        .clipShape(Capsule())
+                }
+            }
+            if !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let leaderName, !leaderName.isEmpty {
+                HStack(spacing: 6) {
+                    Text(leaderName)
+                        .font(.caption.weight(.medium))
+                    if let p = renderedPercent(leaderProbability) {
+                        Text("\(p)%")
+                            .font(.caption.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
