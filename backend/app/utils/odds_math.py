@@ -212,11 +212,95 @@ def moneyline_to_probability(
     """
     home_prob = american_to_probability(home_odds)
     away_prob = american_to_probability(away_odds)
-    
+
     if remove_juice:
         return remove_vig(home_prob, away_prob)
-    
+
     return home_prob, away_prob
+
+
+#: Below this, a book's quoted outcome set is INCOMPLETE and must not be
+#: normalized. A market a book actually offers always sums ABOVE 1.0 — that
+#: excess IS the vig, and it is how the book makes money, so a sum under 1.0 is
+#: not a thin market but missing outcomes.
+#:
+#: Measured on production `odds_snapshots`, 2 days, raw home+away only
+#: (2026-09-16): 25 soccer leagues span **0.743 – 0.808**; all 17 non-soccer
+#: sports span **1.043 – 1.110**. No overlap, and nothing lands in between. The
+#: floor sits at 0.95 — above every fragment by 14pp, below every complete
+#: market by 9pp, and just under the theoretical minimum of 1.0 a zero-vig book
+#: would post.
+MARKET_COMPLETENESS_FLOOR = 0.95
+
+
+def h2h_pair_on_the_full_board(
+    home_odds: Optional[int],
+    away_odds: Optional[int],
+    other_odds: Sequence[Optional[int]] = (),
+) -> Optional[Tuple[float, float]]:
+    """``(home, away)`` de-vigged over EVERY outcome the book quotes, or None.
+
+    #1011. :func:`moneyline_to_probability` normalizes the home/away PAIR, which
+    is correct only when that pair is the whole market. On a soccer game winner
+    it is not — the draw holds a quarter of the mass — and dividing it out
+    inflates both named sides. Measured on production: `betting` matched
+    ``kalshi_home/(kalshi_home+kalshi_away)`` at abs Δ 0.0151 over 80 events
+    (discover/126), while the raw three-way home was 0.1289 away. At weight 3.0
+    against 0.8 that put the blended hero **~8pp** onto the home team on every
+    soccer match carrying a sportsbook line.
+
+    **THE DRAW IS NEVER NAMED, AND THAT IS THE DESIGN.** ``other_odds`` is
+    whatever else the book quotes; this function does not know or care that it
+    is a draw, a tie, an "Empate" or a no-result. Only home and away are
+    identified — by the team names the caller already matched on — and the rest
+    is residual mass. So there is no vocabulary map to maintain and no sport to
+    look up, which matters because the sport is the wrong question:
+
+    🪤 **`cricket_odi` and `cricket_international_t20` read 1.0570 / 1.0585 on
+    production — genuine, complete TWO-way markets — although cricket sits in
+    ``DRAW_CAPABLE_CATEGORIES`` beside soccer.** Limited-overs cricket is not
+    drawn the way Test cricket is. A rule that inferred three-wayness from the
+    sport would have deleted the sportsbook line from every cricket match. Shape
+    is decided by the outcome set the book actually quotes, exactly as the
+    read-side ``market_omits_draw_authority`` decides it by evidence.
+
+    Two outcomes take the identical arithmetic they take today, by construction
+    rather than by care: the board is ``[home, away]``, and
+    :func:`remove_vig_nway` over a pair IS :func:`remove_vig`. That also means a
+    GENUINELY two-way soccer market — an advancement line, a shootout-decided
+    tie — is preserved automatically, because it *quotes* two outcomes summing
+    above 1 and is de-vigged over two.
+
+    Returns ``None`` — a refusal, not a zero — when the board is unusable:
+    either side missing, or a raw sum under :data:`MARKET_COMPLETENESS_FLOOR`.
+    The second is the missing-draw case, and returning ``None`` rather than
+    renormalizing is the whole point: a fragment scaled to 1.0 is exactly the
+    defect above, re-created one book at a time. A refused book contributes
+    nothing to the consensus instead of contributing a confident lie, which is
+    gotcha #53's shape — "we cannot say" must not render as a number. A missing
+    third outcome is never inferred as zero; it makes the board unreadable.
+    """
+    if home_odds is None or away_odds is None:
+        return None
+
+    board = [
+        american_to_probability(home_odds),
+        american_to_probability(away_odds),
+    ]
+    # A `None` among the others is an outcome we failed to read, not an outcome
+    # the book declined to price. Skipping it lets the floor below judge the
+    # board on what we actually hold, rather than asserting the gap is empty.
+    board.extend(
+        american_to_probability(price) for price in other_odds if price is not None
+    )
+
+    if sum(board) < MARKET_COMPLETENESS_FLOOR:
+        return None
+
+    normalized = remove_vig_nway(board)
+    if normalized is None:
+        return None
+    return normalized[0], normalized[1]
 
 
 def project_scores(
