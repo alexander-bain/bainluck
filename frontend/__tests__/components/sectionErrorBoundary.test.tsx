@@ -166,6 +166,12 @@ describe("the event page actually wraps its sections", () => {
     const labels = [
       "The score and probability",
       "The win probability chart",
+      // #6421: the sportsbook price table used to be markup INSIDE the win
+      // probability card, so it shared that card's boundary and vanished with
+      // it when `suppressWinProbabilityCard` fired. It now also stands on its
+      // own when the card is suppressed, and an independently-renderable
+      // section gets its own boundary.
+      "The sportsbook prices",
       "The score differential chart",
       "The market maps",
       // UX-P098: THE DIVERGENCE rail leads the props body, above the full set.
