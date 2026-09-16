@@ -393,8 +393,13 @@ struct FuturesDetailView: View {
                     }
                 }
 
-                // Last updated
-                if let updatedAt = market.updatedAt, let date = updatedAt.asDate {
+                // Last updated — the age of the PRICES this page draws, never
+                // the moment the market ROW was touched (#6018; the reasoning,
+                // the production measurements and the floor-not-ceiling rule
+                // are in `Utilities/FuturesPriceAge`). `nil` renders nothing:
+                // there is no fall back to `market.updatedAt`, which is the
+                // wrong clock in both directions.
+                if let date = FuturesPriceAge.pricesAsOf(market.outcomes) {
                     HStack(spacing: 6) {
                         Image(systemName: "clock")
                             .font(.system(size: 9))
