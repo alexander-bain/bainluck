@@ -289,6 +289,7 @@ _PLACEHOLDER_TEAM_RE = re.compile(
 # 38-item ladder to the 3 meaningful lines on event 14961907).
 _SPREAD_DEEP_OTM_FLOOR = 0.02
 from app.utils.event_twin_fold import fold_twin_events
+from app.utils.kalshi_expiration_start import recover_kalshi_expiration_starts
 from app.utils.kalshi_occurrence_start import recover_kalshi_occurrence_starts
 from app.utils.event_taxonomy import compute_event_tags, validate_tag
 from app.utils.game_state import normalize_live_game_state
@@ -12410,6 +12411,36 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
             getattr(event, "id", None),
         )
 
+    # ── #6568 acceptance 2: the hero counted down to a fight already fought ───
+    #
+    # The recovery above is soccer-only, deliberately — its 180-minute pad is an
+    # exact soccer constant and a fabrication anywhere else, and its own
+    # docstring names the class it declines: "Boxing returns ~14 days (those
+    # markets kept `close_time`)". This page was one of those. `15309068` served
+    # "Starts in 10d 2h · Sep 26, 2026 · 3:00 PM PDT" for a bout Kalshi graded
+    # on September 12, because the auto-create path copied the contract's
+    # expiration instant into the start column (gotcha #14).
+    #
+    # Runs AFTER the soccer pad and could run before it without harm: the two
+    # modules refuse each other's output in both directions (the mutual-exclusion
+    # note on `recover_kalshi_expiration_starts`), so no arrangement of the two
+    # can doubly correct a row.
+    #
+    # It costs this route nothing on the rows it does not touch: the candidate
+    # test is pure and the batch query is skipped entirely when no row is
+    # unanchored and Kalshi-timed, which is almost every page.
+    try:
+        await recover_kalshi_expiration_starts(db, [event])
+    except Exception:
+        # Gotcha #42, and the same bargain every correction on this route
+        # strikes: a row served with the column we stored is worse than a
+        # corrected one and far better than a 500 on an event page. The ROW's id
+        # and never the path parameter (notice 32, `py/log-injection`).
+        logger.exception(
+            "event detail: kalshi expiration recovery failed for %s",
+            getattr(event, "id", None),
+        )
+
     # Load only the latest odds snapshot per bookmaker (not ALL snapshots).
     # This prevents R14 memory errors on events with thousands of snapshots.
     #
@@ -19001,6 +19032,22 @@ async def get_event_odds_history(
         # medium severity, which notice 32 refuses.
         logger.exception(
             "event history: kalshi occurrence recovery failed for %s",
+            getattr(event, "id", None),
+        )
+
+    # ── #6568 acceptance 2, and it is HERE because acceptance 1 was about this
+    # route disagreeing with the detail route about one column.
+    #
+    # Correcting the hero's kick-off and leaving `/history` on the stored value
+    # would re-open, on a different class of row, exactly the defect #6568 was
+    # filed for: two surfaces of one page serving two different kick-offs for
+    # one event in the same second. The chart's `time_domain.start` is built
+    # from this row, so it has to be the same instant the hero prints.
+    try:
+        await recover_kalshi_expiration_starts(db, [event])
+    except Exception:
+        logger.exception(
+            "event history: kalshi expiration recovery failed for %s",
             getattr(event, "id", None),
         )
 

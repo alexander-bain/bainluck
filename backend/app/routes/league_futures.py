@@ -38,6 +38,10 @@ from app.utils.event_rails import (
     upcoming_rail_condition,
 )
 from app.utils.game_state import normalize_live_game_state
+from app.utils.kalshi_expiration_start import (
+    recover_kalshi_expiration_starts,
+    still_upcoming_after_recovery,
+)
 from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
 from app.utils.resolution_authority import can_write_winner
 from app.utils.matchup_sides import sided_yes_no_labels
@@ -2669,6 +2673,55 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         _unreported_q = unreported_games_query(sport_key, now, also_sport_keys=_also_keys)
         _g = await asyncio.wait_for(db.execute(_games_q), timeout=10)
         _g_events = list(_g.scalars().all())
+        # ── #6568 acceptance 2: a fight already fought is not an upcoming one ──
+        #
+        # `upcoming_games_query` selects on `commence_time > now`, and on an
+        # unanchored Kalshi-minted row that column holds the contract's
+        # EXPIRATION instant rather than a start (gotcha #14). Measured on
+        # production 2026-09-16: four of this page's eight upcoming boxing cards
+        # were September 3 fights, advertised on September 17, because Kalshi
+        # hangs a combat card's settlement backstop ~14 days out.
+        #
+        # Two steps and they are one thought. Correcting the row to the date the
+        # venue's own ticker names is what makes the rail's own filter true
+        # again; dropping the rows that correction moves into the past is that
+        # filter being applied to the corrected value instead of the stored one.
+        # Re-dating without dropping would print a September 3 card under
+        # "Upcoming", which is a different lie rather than one fewer.
+        #
+        # Deliberately BEFORE `_folded_upcoming` and before the cap and the
+        # competition share, for #5496's reason: everything below counts rows,
+        # and a fixture that is not upcoming must not be counted as availability
+        # the reader never gets — including by `_more_games`.
+        #
+        # ONLY rows this correction moved are dropped. The stamp is the test, not
+        # "is it in the past": a row that is past for any other reason is some
+        # other rule's business and this one leaves it exactly where it was.
+        #
+        # The rail does not empty — measured before building, because a rule that
+        # removes rows owes that check: `/api/leagues/boxing_boxing` keeps its
+        # four real September 19 fights and `upcoming_games_has_more`.
+        try:
+            if await recover_kalshi_expiration_starts(db, _g_events):
+                _g_events = [
+                    _e for _e in _g_events
+                    if still_upcoming_after_recovery(_e, now)
+                ]
+        except Exception:  # noqa: BLE001 — see the gotcha #42 note below
+            # The correction improves the rail and is never a precondition for
+            # having one.
+            #
+            # NOTHING IS INTERPOLATED, and that is not caution — CodeQL caught
+            # the first version of this line. `sport_key` is a path parameter,
+            # so a log carrying it is `py/log-injection` at medium severity,
+            # which notice 32 refuses. This file already declines to interpolate
+            # it twice (the competition-share log and the market-born drain
+            # below) and its sibling `except` logs a bare message for exactly
+            # this reason. The traceback names the league anyway.
+            logger.exception(
+                "league upcoming: kalshi expiration recovery failed; "
+                "serving the stored kick-offs"
+            )
         # ── #5496: one fixture may not take two slots ──
         #
         # First, because everything below counts rows: `_more_games`, the
