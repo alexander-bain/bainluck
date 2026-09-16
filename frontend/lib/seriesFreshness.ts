@@ -245,10 +245,13 @@ export function seriesWindowLabel(
  * two of the three callers hand over a payload array they did not sort
  * themselves and a single out-of-order point would otherwise invent a negative
  * gap and, through it, a hole.
+ *
+ * `opts.settled` says the question is DECIDED — see the `stale` branch below.
  */
 export function seriesFreshness(
   timestamps: readonly unknown[] | null | undefined,
   now: number = Date.now(),
+  opts?: { settled?: boolean },
 ): SeriesFreshness {
   const raw = timestamps ?? [];
   const points = raw
@@ -314,7 +317,23 @@ export function seriesFreshness(
   // the endpoint dot is. A series that is both behind and holed gets the
   // trailing sentence; the hole is still readable in `largestGapMs` for any
   // caller that wants to draw it.
-  if (ageMs > staleAfter) {
+  // #6542: a DECIDED question has no liveness to report. "Last number 40 min
+  // ago" printed three lines above the word "Settled." is a claim that the
+  // market is still producing numbers, on a board that stopped being a market
+  // hours earlier — and the age it quotes is a re-poll of an unchanged price,
+  // not a new probability, which is not what the page's own glossary promises
+  // the phrase means (`tournamentProps.ts`, FRESHNESS_DEFINITION).
+  //
+  // Suppressed in THIS arm rather than at the caption, because the precedence
+  // here is stale-before-gapped: on a settled board that is both behind and
+  // holed, the age sentence is the only one that renders, so dropping the
+  // caption wholesale would take the hole warning with it and hand #2961 back
+  // its defect — a flat run making its strongest claim by absence. Falling
+  // through keeps the qualification of the drawn line and loses only the
+  // liveness claim. Measured on production 2026-09-16: `/futures/110141`
+  // (settled 7/28) renders the gapped arm, "No numbers for 33 days in this
+  // stretch", and must keep it.
+  if (ageMs > staleAfter && !opts?.settled) {
     return {
       ...base,
       state: "stale",
