@@ -254,6 +254,7 @@ from app.utils.labeling_queue import (
 from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
 from app.utils.event_twin_fold import fold_twin_events
 from app.utils.name_normalization import names_match as _team_name_matches
+from app.utils.sport_keys import sport_display_name
 from app.utils.outcome_display import (
     display_rank_order,
     drop_dominant_field_outcomes,
@@ -4999,6 +5000,35 @@ async def get_feed(
             data = item.get("data")
             if story_key and isinstance(data, dict) and "story_key" not in data:
                 data["story_key"] = story_key
+
+            # #6444: a sport's machine key is not its name, and the feed's three
+            # serializers were handing `Sport.name` straight to the card for the
+            # 15 rows whose `name` IS their `key` ("soccer_other" carries 147k
+            # futures, "tennis_other" 57k). Four web call sites read that field
+            # with no client-side map (`app/daily`, `discover/ComparisonCard`,
+            # `discover/FuturesCard`, `discover/GuessCard`) and three native ones
+            # do the same, so the reader sees the key.
+            #
+            # This runs HERE, at the publish boundary, and not at the three
+            # write sites — and that placement is the whole safety argument.
+            # `_review_decision_scope_keys` builds `category:{sport_name}` out of
+            # the very dict those serializers write, so humanising upstream would
+            # silently re-key every stored manual review decision
+            # (`category:tennis_other` -> `category:other tennis`), they would
+            # stop matching, and the only symptom would be suppressed cards
+            # quietly coming back. That is a RANKING change wearing a formatting
+            # change's clothes. By transforming after every ranking consumer has
+            # already read the raw value, the scope keys are unchanged BY
+            # CONSTRUCTION rather than by inspection.
+            #
+            # `sport_display_name` returns the stored name byte-for-byte unless
+            # it equals the key, so the 162 branded rows are untouched. The
+            # machine key stays on `data["sport"]`, which is what the clients
+            # key their own maps on.
+            if isinstance(data, dict) and data.get("sport_name") is not None:
+                data["sport_name"] = sport_display_name(
+                    data.get("sport"), data.get("sport_name")
+                )
 
             # Strip internal keys BY PREFIX, not by an enumerated list.
             #
