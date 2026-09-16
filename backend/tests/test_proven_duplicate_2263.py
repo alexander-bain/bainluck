@@ -1241,9 +1241,9 @@ class TestTheRouteIsActuallyWired:
         import ast
         import inspect
 
-        import app.routes.events as events_module
+        from app.routes.events import get_event
 
-        tree = ast.parse(inspect.getsource(events_module.get_event))
+        tree = ast.parse(inspect.getsource(get_event))
         called = {}
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
@@ -1283,9 +1283,9 @@ class TestTheRouteIsActuallyWired:
         import ast
         import inspect
 
-        import app.routes.events as events_module
+        from app.routes.events import get_event
 
-        tree = ast.parse(inspect.getsource(events_module.get_event))
+        tree = ast.parse(inspect.getsource(get_event))
         arms = [
             node
             for node in ast.walk(tree)
