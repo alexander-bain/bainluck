@@ -158,18 +158,26 @@ describe("#6616 · weatherProbability is the only reader of the raw value", () =
 /**
  * The digits and the `%` are ADJACENT spans at two sizes — that is why this
  * component takes `probabilityParts` and not the finished string (the #6064
- * shape). So the tags are stripped WITHOUT a separator: a reader sees `>99%`,
- * and `visibleText`'s word-preserving space would read `> 99 %`, which is a
- * fact about the markup and not about the page.
+ * shape). So `visibleText`'s word-preserving space lands between them and the
+ * reader's `>99%` reads back as `> 99 %`, which is a fact about the markup and
+ * not about the page. The whitespace is therefore dropped AFTER the shared
+ * strip rather than by a second stripper of its own.
+ *
+ * That order is not a style choice. The first draft stripped tags here with
+ * `.replace(/<[^>]*>/g, "")`, and CodeQL refused the sha for it — a
+ * single-pass strip to the EMPTY string is reassembling ("incomplete
+ * multi-character sanitization", 1 high), because `<scr<b>ipt>` collapses into
+ * something the pass has already gone by. Replacing with a SPACE cannot
+ * reassemble, which is why the house helper does it that way. Dropping
+ * whitespace afterwards is safe and exact here because this helper's whole
+ * output is one percent token, which contains none.
  */
 function probabilityNumber(value: number, probability?: number): string {
-  return renderToStaticMarkup(
-    React.createElement(ProbabilityNumber, { value, probability, size: 64 }),
-  )
-    .replace(/<[^>]*>/g, "")
-    .replace(/&gt;/g, ">")
-    .replace(/&lt;/g, "<")
-    .trim();
+  return visibleText(
+    renderToStaticMarkup(
+      React.createElement(ProbabilityNumber, { value, probability, size: 64 }),
+    ),
+  ).replace(/\s/g, "");
 }
 
 describe("#6616 · the 64px hero number obeys the boundary rule", () => {
