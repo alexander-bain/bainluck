@@ -1663,6 +1663,14 @@ export default function EventPage({ params }: EventPageProps) {
                 // answers, not a fourth reading of the clock: `isSuspended` is
                 // the one `hasNoReportedResult` answer computed above.
                 started={isLive || isFinished || isSuspended}
+                // #6438 — the page's ONE settled answer, reused. `Settled ·
+                // Draw 0-0` in the pill and "No price" between the crests were
+                // the same card describing the same graded match two ways, and
+                // the loud one was wrong. Derived from `venueSettledSentence`
+                // rather than re-reading `event.venue_settled`, so the pill and
+                // this slot cannot drift apart — the exact failure
+                // `venueSettledSummary` was centralised to end.
+                venueSettled={venueSettledSentence !== null}
               />
               )}
 
