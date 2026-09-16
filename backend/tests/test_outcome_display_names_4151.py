@@ -670,9 +670,25 @@ def test_both_scoring_sites_humanize_the_names_they_serve(scorer):
     instead: both scorers must route their names through the two seams where the
     display name is resolved. Scoped to the FUNCTION's source, not the file's,
     so a call somewhere else in `feed.py` cannot satisfy it.
+
+    🔴 THE SENTENCE SEAM IS NOW REACHED THROUGH `_printed_outcome_name` (#6552).
+    It used to be a literal `humanize_binary_outcome_name(leader_name` in each
+    scorer. #6552 had to stop completing the club label in place — `leader_name`
+    is also a string-equality lookup key against raw `outcomes_data` and against
+    the stored `hook_leader_at_generation`, so repairing it dropped cards and
+    moved `base_score` — and the completion moved to a single print step shared
+    by the leader, the mover and the surprise. So the scorer now names that seam
+    instead of the humanizer directly.
+
+    That indirection is only safe because it is pinned BOTH ways: the assertion
+    below says the scorer composes from `_printed_outcome_name(leader_name`, and
+    `test_the_seam_is_where_the_guard_above_thinks_it_is` says that helper still
+    calls `humanize_binary_outcome_name`. Checking only the first would let an
+    empty helper satisfy this test — which is the failure mode the seam-coupling
+    test in this file exists to prevent.
     """
     source = inspect.getsource(getattr(feed_route, scorer))
-    assert "humanize_binary_outcome_name(leader_name" in source, (
+    assert "_printed_outcome_name(leader_name" in source, (
         f"{scorer} composes its sentence from a name that never passes through "
         "the display-name seam"
     )
@@ -691,7 +707,17 @@ def test_the_seam_is_where_the_guard_above_thinks_it_is():
     There are THREE, one per copy of the name in the served payload — the
     sentence, the `top_outcomes` row, and the archetype builder's two label
     lists. The third is the one the first draft of this file did not know about.
+
+    Since #6552 the sentence seam is reached through `_printed_outcome_name`, so
+    that hop is pinned here too: without it, the structural test above could be
+    satisfied by a helper that returns its argument untouched.
     """
+    assert "humanize_binary_outcome_name(" in inspect.getsource(
+        feed_route._printed_outcome_name
+    ), (
+        "`_printed_outcome_name` no longer humanizes, so the scorers' sentence "
+        "seam resolves nothing and the structural test above is vacuous"
+    )
     assert "display_outcome_name(" in inspect.getsource(
         fr.humanize_binary_outcome_name
     ), "the sentence seam no longer resolves display names"
