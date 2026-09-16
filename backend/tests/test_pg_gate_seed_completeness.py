@@ -215,6 +215,13 @@ COVERED = (
     # withdrawn nothing and every "the sibling survived" assertion is true of a
     # row nothing could have reached.
     "test_prekickoff_leg_withdrawal_5896_pg.py",
+    # #6511, the EVENT-row half of the gate above. Same server-clock discipline
+    # for the same reason, plus one column that gate does not seed:
+    # `events.win_probability_sources`. It is NULLABLE, so the NOT-NULL arm
+    # below cannot require it — and a corpus that omitted it would leave every
+    # event with no `kalshi` key at all, at which point `jsonb_exists` selects
+    # nothing and the whole file passes having withdrawn nothing.
+    "test_stranded_prekickoff_hero_6511_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"

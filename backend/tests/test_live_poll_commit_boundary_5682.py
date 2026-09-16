@@ -827,7 +827,12 @@ class TestEveryWriterInTheBeatHasABoundary:
         pins: list[int] = []
 
         def _on_execute(kind, n, stmt):
-            if kind == "text":
+            # #6511: "is it a TextClause" stopped meaning "is it a pregame
+            # pin". The beat now runs a second raw-SQL statement — the
+            # stranded-hero selector — after this loop, and this arm counted it
+            # as a fourth pin. The proxy was only ever right while the beat had
+            # exactly one `text()`; key on the statement the arm is about.
+            if kind == "text" and "pregame_mark" in str(stmt):
                 pins.append(len(pins) + 1)
                 if len(pins) == 2:
                     return Exception(DEADLOCK)
