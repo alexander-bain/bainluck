@@ -1437,6 +1437,107 @@ _PROP_OUTCOME_RE = re.compile(
 )
 
 
+#: The words that may legitimately survive once BOTH team names are accounted
+#: for in an outcome that IS the matchup: the join, and nothing else.
+#:
+#: This is a list of JOINS, not a list of things to reject, and the direction is
+#: the whole point. A reject-list has to enumerate every way a venue might
+#: decorate a matchup — "Draw", "Empate", "Unentschieden", "Nul", a scoreline, a
+#: period — in every language it publishes, and it is wrong the first time one
+#: is missing. `find_three_way_partition` directly below already ruled against
+#: that instrument in this file's own words ("Coherence is evidence; a spelling
+#: is a guess that reads as evidence"), and three disagreeing draw vocabularies
+#: already exist in this codebase. An allow-list of joins is finite, structural
+#: and language-independent: anything else left over means the name asks a
+#: different question from "who won", whatever that leftover happens to spell.
+_MATCHUP_JOIN_TOKENS = frozenset({"vs", "v", "versus", "at"})
+
+
+def outcome_name_is_the_whole_matchup(
+    name: Optional[str], team_a: Optional[str], team_b: Optional[str]
+) -> bool:
+    """True only when the outcome name IS the matchup, not when it CONTAINS one.
+
+    #6604. The full-matchup fallback in :func:`find_moneyline_outcome` was
+    written for Polymarket's UFC shape, where the outcome name is the matchup
+    itself — ``"Tai Tuivasa vs. Robelis Despaigne"``. It tested for that with
+    containment, and Polymarket names a soccer draw leg
+    ``"Draw (Spain vs. Portugal U20)"``, which contains both team names and no
+    ``":"``. So the fallback handed back the DRAW's price as the home team's win
+    probability: `/events/15312327` printed **Spain < 1 %** while Polymarket
+    priced Spain at 0.9995, and `/events/15311769` printed Huddersfield at 25%,
+    which was the draw.
+
+    THE TEST IS A RESIDUE, AND THAT IS WHY IT NEEDS NO VOCABULARY. Account for
+    both team names, reduce what is left to words, and discard the joins. If
+    anything at all remains, the name is asking a different question from "who
+    won this" — and it does not matter whether the remainder reads "Draw",
+    "Empate", "3 - 1", "Regulation" or a word no one here has seen. A draw word
+    list would be a guess that reads as evidence; this is decidable from the
+    string.
+
+    IT CAN ONLY EVER REFUSE MORE THAN THE TEST IT REPLACES, never accept more:
+    it begins by requiring exactly the containment the old predicate required,
+    and then adds a condition. So no outcome that the fallback resolves today
+    can be re-pointed at a different outcome by this change — the worst it can
+    do is decline, and declining is this function's documented contract
+    ("Returns None — never a guess").
+
+    The longer team name is removed first, because one can be a substring of the
+    other: with ``"Portugal"`` and ``"Portugal U20"``, removing the short one
+    first strands a bare ``"u20"`` in the residue and the name is refused for a
+    reason that is an artefact of removal order rather than a fact about it.
+
+    Examples::
+
+        ("Tai Tuivasa vs. Robelis Despaigne", "Tai Tuivasa", "Robelis Despaigne")
+            -> True   (residue "vs" — the join)
+        ("Draw (Spain vs. Portugal U20)", "Spain", "Portugal U20")
+            -> False  (residue "draw")
+        ("SBV Excelsior 2 - 2 FC Utrecht", "SBV Excelsior", "FC Utrecht")
+            -> False  (residue "2 2" — an exact-score leg, same class)
+        ("Spain", "Spain", "Portugal U20")
+            -> False  (the away team is not in the name at all)
+    """
+    if not name or not team_a or not team_b:
+        return False
+
+    residue = name.lower()
+    # Longest first — see the docstring. Ties are irrelevant: two team names of
+    # equal length cannot be substrings of one another unless they are equal,
+    # and an event whose two sides carry the same name is not orientable here
+    # by any rule.
+    for team in sorted((team_a.lower(), team_b.lower()), key=len, reverse=True):
+        if not team or team not in residue:
+            # Exactly the containment the predicate this replaces required. A
+            # name missing either side was already refused and still is.
+            return False
+        # A SPACE, not an empty string — and a mutation pass says this one is
+        # safe in the direction that matters rather than load-bearing, so it is
+        # recorded instead of pinned by a contrived test. Replacing with `""`
+        # can fuse two adjacent residue tokens into one; two leftovers fused are
+        # still a leftover, and a leftover fused with a join is still a
+        # leftover, so the verdict can only ever move True -> False (refuse
+        # more), never False -> True. The space is the clearer expression of
+        # "this participant was here", which is why it stays.
+        residue = residue.replace(team, " ", 1)
+
+    # `[\W_]` and NOT `[^a-z0-9]`, and this is not a style preference — the
+    # first draft used the ASCII form and its own guard caught it. `[^a-z0-9]`
+    # deletes every non-Latin character, so `引き分け (Spain vs. Portugal U20)`
+    # reduced to an EMPTY residue and was accepted as the matchup: a
+    # vocabulary-free rule that silently privileges the Latin alphabet is a
+    # vocabulary again, just an implicit one. `\W` is Unicode-aware in Python 3,
+    # so a leftover word survives to be counted whatever script it is written
+    # in; `_` is excluded separately because `\w` admits it.
+    leftover = [
+        token
+        for token in re.sub(r"[\W_]+", " ", residue).split()
+        if token not in _MATCHUP_JOIN_TOKENS
+    ]
+    return not leftover
+
+
 def find_moneyline_outcome(
     outcomes: list,
     matchup: MatchupInfo,
@@ -1532,20 +1633,42 @@ def find_moneyline_outcome(
     if away_outcomes:
         return (away_outcomes[0], False)
 
-    # Fallback: outcome name is the full matchup (Polymarket pattern)
+    # Fallback: outcome name IS the full matchup (Polymarket pattern)
     # e.g., outcome named "Pistons vs. Bulls" instead of a single team name
+    #
+    # ── #6604: "is the matchup" and "contains one" are different questions ────
+    #
+    # This used to ask for containment — both team names present, no ":" — and
+    # Polymarket names its soccer draw leg `Draw (Spain vs. Portugal U20)`,
+    # which satisfies that exactly. So this fallback returned the DRAW as the
+    # home team's YES leg and the hero printed `P(draw)` as a win probability:
+    # `/events/15312327` showed **Spain < 1 %** against a venue price of 0.9995,
+    # and 44 fixtures had no second source to dilute it.
+    #
+    # Every guard upstream behaved as designed and that is why nothing caught
+    # it: a draw is not a prop or a spread, so `_is_prop_or_spread_outcome` does
+    # not claim it; #4629's `matches_home and matches_away` rule then correctly
+    # refuses to give it to either side — and the empty `home_outcomes` /
+    # `away_outcomes` that refusal produces is precisely the state that hands
+    # control down here. The defect is this predicate's, and it is fixed here.
+    #
+    # `outcome_name_is_the_whole_matchup` is a strict narrowing of the old test
+    # — it requires the same containment first — so this cannot re-point a
+    # resolved outcome at a different one. It can only decline, which is this
+    # function's documented contract ("Returns None — never a guess").
     if matchup.team_a and matchup.team_b:
-        a_lower = matchup.team_a.lower()
-        b_lower = matchup.team_b.lower()
         for outcome in outcomes:
             if not outcome.name or outcome.current_probability is None:
                 continue
             prob = float(outcome.current_probability)
             if prob <= 0 or prob >= 1:
                 continue
-            name_lower = outcome.name.lower()
-            # Must contain both teams and NOT have ":" (props/totals/spreads)
-            if a_lower in name_lower and b_lower in name_lower and ":" not in outcome.name:
+            # NOT props/totals/spreads, and the name must BE the matchup.
+            if ":" in outcome.name:
+                continue
+            if outcome_name_is_the_whole_matchup(
+                outcome.name, matchup.team_a, matchup.team_b
+            ):
                 return (outcome, yes_is_home)
 
     # Last resort: if 1-2 outcomes with generic names (e.g., "Yes"),
