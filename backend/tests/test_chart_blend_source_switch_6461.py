@@ -45,7 +45,9 @@ FIXTURE = Path(__file__).parent / "fixtures" / "chart_blend_15305465_6461.json"
 
 
 def _tp(seconds: float, prob: float) -> TimestampedProb:
-    return TimestampedProb(timestamp=BASE + timedelta(seconds=seconds), home_probability=prob)
+    return TimestampedProb(
+        timestamp=BASE + timedelta(seconds=seconds), home_probability=prob
+    )
 
 
 def _series(line):
@@ -79,9 +81,9 @@ class TestCadenceIsNotStaleness:
 
         assert len(line) > 20, "the fixture should span many buckets"
         assert _biggest_step(line) == pytest.approx(0.0, abs=1e-9)
-        assert len(set(_series(line))) == 1, (
-            f"a quiet market must draw one value, got {sorted(set(_series(line)))}"
-        )
+        assert (
+            len(set(_series(line))) == 1
+        ), f"a quiet market must draw one value, got {sorted(set(_series(line)))}"
 
     def test_a_source_slower_than_the_old_five_minute_cutoff_keeps_its_vote(self):
         """The specific mechanism: 600 s cadence used to mean zero weight.
@@ -98,9 +100,9 @@ class TestCadenceIsNotStaleness:
         line = compute_aggregated_probability(sources, bucket_seconds=60)
 
         # Every bucket, including the ones 9 minutes after betting last wrote.
-        assert all(p == pytest.approx(0.80) for p in _series(line)), (
-            "the heavier source stopped being counted between its own writes"
-        )
+        assert all(
+            p == pytest.approx(0.80) for p in _series(line)
+        ), "the heavier source stopped being counted between its own writes"
 
     def test_the_pinned_specimen_loses_its_source_switch_jumps(self):
         """The whole of event 15305465, real observations, before vs after.
@@ -110,7 +112,11 @@ class TestCadenceIsNotStaleness:
         records that the SERVED line had these same 29 jumps, so this test
         measures the shipped change rather than restating the issue.
         """
-        from scripts.replay_chart_blend import blend_after, blend_before, sources_from_payload
+        from scripts.replay_chart_blend import (
+            blend_after,
+            blend_before,
+            sources_from_payload,
+        )
 
         payload = json.loads(FIXTURE.read_text())
         sources = sources_from_payload(payload)
@@ -177,9 +183,9 @@ class TestRealMovementIsUntouched:
         }
         line = compute_aggregated_probability(sources, bucket_seconds=60)
         assert _series(line)[-1] == pytest.approx(0.80)
-        assert _biggest_step(line) == pytest.approx(0.30), (
-            "the jump was damped — that is the EMA ruling #4 removed"
-        )
+        assert _biggest_step(line) == pytest.approx(
+            0.30
+        ), "the jump was damped — that is the EMA ruling #4 removed"
 
     def test_a_move_by_the_slow_source_alone_still_reaches_the_line(self):
         """The inverse risk of the repair: keeping a slow source in the pool is
@@ -227,9 +233,9 @@ class TestObservationHygiene:
             "mlb": [_tp(0, 0.45), _tp(60, 0.50), _tp(120, 0.55)],
         }
         shuffled = {k: list(reversed(v)) for k, v in ordered.items()}
-        assert _series(compute_aggregated_probability(ordered, bucket_seconds=60)) == _series(
-            compute_aggregated_probability(shuffled, bucket_seconds=60)
-        )
+        assert _series(
+            compute_aggregated_probability(ordered, bucket_seconds=60)
+        ) == _series(compute_aggregated_probability(shuffled, bucket_seconds=60))
 
     def test_a_duplicate_receipt_does_not_move_the_line(self):
         """A second copy of an observation already held is not new evidence.
@@ -242,10 +248,12 @@ class TestObservationHygiene:
             "espn": [_tp(0, 0.30), _tp(300, 0.35)],
             "mlb": [_tp(0, 0.40), _tp(300, 0.45)],
         }
-        doubled = {k: [p for point in v for p in (point, point)] for k, v in single.items()}
-        assert _series(compute_aggregated_probability(single, bucket_seconds=60)) == _series(
-            compute_aggregated_probability(doubled, bucket_seconds=60)
-        )
+        doubled = {
+            k: [p for point in v for p in (point, point)] for k, v in single.items()
+        }
+        assert _series(
+            compute_aggregated_probability(single, bucket_seconds=60)
+        ) == _series(compute_aggregated_probability(doubled, bucket_seconds=60))
 
     def test_a_confirmed_unchanged_value_is_a_flat_segment_not_a_gap(self):
         """T1's rule: a same-value observation is evidence, and it refreshes
@@ -278,7 +286,10 @@ class TestObservationHygiene:
             "espn": [_tp(s, 0.50) for s in range(0, 900, 60)],
         }
         line = compute_aggregated_probability(sources, bucket_seconds=60)
-        at = {int(p.timestamp.timestamp() - BASE.timestamp()): p.home_probability for p in line}
+        at = {
+            int(p.timestamp.timestamp() - BASE.timestamp()): p.home_probability
+            for p in line
+        }
         assert at[480] == pytest.approx(0.50), "the late value leaked backwards in time"
         assert at[600] == pytest.approx(0.90)
 
@@ -304,14 +315,20 @@ class TestLifecycleIsBounded:
         test that silently stops matching the rule it guards."""
         boundary = HERO_RELATIVE_GRACE_SECONDS + HERO_RELATIVE_DECAY_SECONDS
 
-        assert _relative_staleness_multiplier(HERO_RELATIVE_GRACE_SECONDS, floor=0.0) == 1.0
+        assert (
+            _relative_staleness_multiplier(HERO_RELATIVE_GRACE_SECONDS, floor=0.0)
+            == 1.0
+        )
         assert _relative_staleness_multiplier(boundary - 1, floor=0.0) > 0.0
         assert _relative_staleness_multiplier(boundary, floor=0.0) == 0.0
 
         # The hero keeps its floor: this parameter must not have changed the
         # surface it was extracted from.
         assert _relative_staleness_multiplier(boundary) == HERO_MIN_STALENESS_MULTIPLIER
-        assert _relative_staleness_multiplier(boundary * 10) == HERO_MIN_STALENESS_MULTIPLIER
+        assert (
+            _relative_staleness_multiplier(boundary * 10)
+            == HERO_MIN_STALENESS_MULTIPLIER
+        )
 
     def test_a_returning_source_enters_on_its_first_observation(self):
         """T1 decision A: no cosmetic ramp. The bucket holding the returning
@@ -350,6 +367,38 @@ class TestLifecycleIsBounded:
         # source that never went away.
         assert gapped[3600] == pytest.approx(0.90)
         assert gapped[3600] == control[3600]
+
+    def test_a_fully_decayed_source_does_not_switch_the_share_cap_on(self):
+        """A source decayed to zero must not count as a third contributor.
+
+        The #1829 share cap only applies from three contributors up, so if a
+        weightless arm counted, a genuinely two-source event would be capped,
+        the heavy source held to 35%, and the median handed to the light one —
+        0.80 becoming 0.20 here. That is #5542's "a dead arm decides by
+        position" with the weight taken all the way to zero.
+
+        WRITTEN AFTER A MUTATION THAT SURVIVED, and the honest reading is the
+        opposite of the usual one. Replacing the producer's
+        `if effective_weight > 0` with `if True` changed no output, so that gate
+        is REDUNDANT — `cap_weight_shares` already counts only positive weights,
+        and `_weighted_median` can never return a zero-weight entry. This test
+        therefore pins the OUTCOME, which two mechanisms currently protect, and
+        it cannot tell you which of them did the work; it exists so that
+        removing BOTH is loud. Recording that honestly rather than claiming a
+        kill, because a guard whose docstring overstates it is how the next
+        person deletes the load-bearing half believing it is the spare one.
+        """
+        dark_plus_two = {
+            "betting": [_tp(s, 0.80) for s in range(0, 7200, 120)],
+            "espn": [_tp(s, 0.20) for s in range(0, 7200, 120)],
+            "kalshi": [_tp(0, 0.95)],  # one reading, then dark for two hours
+        }
+        line = compute_aggregated_probability(dark_plus_two, bucket_seconds=60)
+
+        assert _series(line)[-1] == pytest.approx(0.80), (
+            "the dark source is still counted as a third contributor, so the "
+            "share cap fired on a two-source event"
+        )
 
     def test_sources_that_all_stop_together_are_not_penalised(self):
         """#1829's load-bearing consequence, restated for the series: uniform
@@ -406,9 +455,9 @@ class TestTheOldProtectionsStillHold:
             "kalshi": [_tp(s, 0.565) for s in range(0, 600, 60)],
         }
         line = compute_aggregated_probability(sources, bucket_seconds=60)
-        assert all(p < 0.05 for p in _series(line)), (
-            "betting straddled the midpoint again — the share cap is not firing"
-        )
+        assert all(
+            p < 0.05 for p in _series(line)
+        ), "betting straddled the midpoint again — the share cap is not firing"
 
     def test_an_empty_input_is_still_an_empty_line(self):
         assert compute_aggregated_probability({}) == []

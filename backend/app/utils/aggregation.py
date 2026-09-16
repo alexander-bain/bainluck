@@ -861,13 +861,31 @@ def compute_aggregated_probability(
             if reference_epoch is None or source_key in _UNCAPPED_SOURCES:
                 relative_age = 0.0
             else:
-                relative_age = max(0.0, reference_epoch - latest_epoch)
+                # Cannot go negative, so there is no clamp to write: every
+                # decayed source's own epoch is one of the values
+                # `reference_epoch` was the max OF, and the sources excluded
+                # from that max take the branch above. A clamp here would be an
+                # arm no test could reach.
+                relative_age = reference_epoch - latest_epoch
 
             # Decay to ZERO, not to the hero's floor — see the docstring: this
             # axis is unbounded, so a lapsed source must be able to leave.
             stale_mult = _relative_staleness_multiplier(relative_age, floor=0.0)
             effective_weight = base_weight * stale_mult
 
+            # A source decayed to zero is excluded rather than admitted at zero
+            # weight. Mutation-tested and it is REDUNDANT, which is worth the
+            # line so nobody removes the wrong one of the two: deleting this
+            # gate changes no output, because `cap_weight_shares` counts only
+            # POSITIVE weights before deciding whether the #1829 share cap
+            # applies, and `_weighted_median` can never return a zero-weight
+            # entry (the cumulative sum does not advance at one, and the tie
+            # branch skips them when choosing the interval's far end). Both
+            # defences are deliberate; the one that is load-bearing is
+            # `cap_weight_shares`'. Without it, a weightless arm would be enough
+            # to make a two-source event look like three, switch the cap on, and
+            # hand the median to the lighter source — #5542's "a dead arm
+            # decides by position" with the weight taken all the way to zero.
             if effective_weight > 0:
                 readings.append(
                     SourceReading(
