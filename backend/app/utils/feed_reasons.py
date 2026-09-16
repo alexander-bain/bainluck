@@ -2090,10 +2090,59 @@ def generate_futures_headline(
         direction = "up" if top_surprise_change > 0 else "down"
         if _weak_outcome_label(top_surprise_name) and market_name:
             return f"{_short_market_name(market_name)} shifted since {since_opening}"
-        return (
-            f"{_side_label(top_surprise_name)} {direction} "
-            f"{_points(top_surprise_change)} since {since_opening}"
-        )
+        subject = _side_label(top_surprise_name)
+        move = f"{direction} {_points(top_surprise_change)} since {since_opening}"
+        # #6482's rule, arriving on the multi-outcome board. That ship stated
+        # clause (a) of #4066 — "'from opening' is context, never the headline
+        # reason" — and fixed the BINARY card only, because a binary card's
+        # reader-visible slot is `context_summary` and its headline could be
+        # left byte-identical. Here the headline IS the slot the reader reads
+        # (`generate_futures_context_summary` returns it verbatim once the
+        # leader's name already appears in it), so the same defect needed the
+        # same clause in a different place. Measured on production 2026-09-16,
+        # v4612, in the SERVED feed: 'Democratic Party up 15 points since
+        # Feb 19' over a Senate board printing 55/45, and '5 or more up 40
+        # points since Feb 19' over one printing 52/26 — neither number said in
+        # the caption above it. (Those are the board's own percents. The admin
+        # trace reports the pre-normalization 0.545/0.57 for the same two rows,
+        # and quoting THOSE here would restate #6181 in a comment: the percent
+        # this branch prints is the one `_display_pct` takes from the card.)
+        # Feb 19 is the bulk `opening_captured_at` date covering 57,122
+        # outcomes — the day we first saw the row, not a day anything happened
+        # to it.
+        #
+        # Past the horizon the standing goes first and the move keeps its date
+        # behind it; inside it nothing changes and the move still leads. The
+        # move is never dropped, exactly as in `compose_binary_card_copy`.
+        #
+        # The standing is composed through exactly the call the leader terminal
+        # at the bottom of this generator makes, so this rung inherits both of
+        # that terminal's refusals rather than restating them. They work
+        # differently and the difference is load-bearing: `_no_leader_subject`
+        # (#4640) REFUSES — a cumulative ladder rung has no favorite to be, so
+        # the card keeps today's string rather than gaining a false one — while
+        # `_lead_visible` (#6187) merely drops the comparative, so a tied board
+        # says "5 or more at 52%" and never "leads at". Neither can be lost to
+        # a hand-copied f-string here, which is why there isn't one.
+        if _baseline_is_older_than_news(top_surprise_opened_at, now=now) and (
+            leader_name
+            and leader_probability is not None
+            and not _no_leader_subject
+        ):
+            standing = leader_standing_clause(
+                leader_name,
+                _display_pct(leader_probability, rendered_leader_percent),
+                verb=_verb,
+                lead_is_visible=_lead_visible,
+            )
+            # The mover is usually the leader itself (both live specimens), and
+            # then repeating the name would read "Democratic Party leads at
+            # 55%, Democratic Party up 15 points". Elided on a normalized
+            # compare because `_side_label` may have suffixed the subject.
+            if subject.strip().lower() == leader_name.strip().lower():
+                return f"{standing}, {move}"
+            return f"{standing}, {subject} {move}"
+        return f"{subject} {move}"
 
     # (No `multi_source` branch — see `generate_futures_reason`. "Tracked by 2
     # sources" held the HEADLINE slot on four of the first twenty cards the
