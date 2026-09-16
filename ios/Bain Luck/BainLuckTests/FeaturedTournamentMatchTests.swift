@@ -15,14 +15,17 @@ final class FeaturedTournamentMatchTests: XCTestCase {
         FeaturedTournament(
             slug: "us-open",
             title: "US Open",
-            subtitle: "Live matches, results, title odds",
+            liveSubtitle: "Live matches, results, title odds",
+            restingSubtitle: "Results and title odds",
+            liveThrough: "2026-09-14T06:00:00+00:00",
             icon: "tennis.racket",
             aliases: ["flushing meadows"]
         ),
         FeaturedTournament(
             slug: "the-open",
             title: "The Open Championship",
-            subtitle: "Golf's oldest major",
+            liveSubtitle: "Golf's oldest major, live",
+            restingSubtitle: "Golf's oldest major",
             icon: "figure.golf"
         ),
     ]

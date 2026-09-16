@@ -10,21 +10,67 @@ nonisolated struct FeaturedTournament: Identifiable, Equatable, Sendable {
     /// The API slug, e.g. `us-open` for `/api/tournaments/us-open`.
     let slug: String
     let title: String
-    let subtitle: String
+    /// What to say while this edition is actually being played.
+    let liveSubtitle: String
+    /// What to say before it starts and after it is over — every other week of
+    /// the year. The hub is worth reaching then too; it just has no live match
+    /// to offer, so the card must not promise one.
+    let restingSubtitle: String
+    /// ISO-8601 instant after which no match of this edition can still be in
+    /// progress. `nil` means we do not know when it ends, and a hub we cannot
+    /// date NEVER claims to be live — see `subtitle(asOf:)`.
+    let liveThrough: String?
     let icon: String
     /// Other names for the same tournament. Matched exactly like the title is:
     /// every token of an alias must be present in the query.
     let aliases: [String]
 
-    init(slug: String, title: String, subtitle: String, icon: String, aliases: [String] = []) {
+    init(
+        slug: String,
+        title: String,
+        liveSubtitle: String,
+        restingSubtitle: String,
+        liveThrough: String? = nil,
+        icon: String,
+        aliases: [String] = []
+    ) {
         self.slug = slug
         self.title = title
-        self.subtitle = subtitle
+        self.liveSubtitle = liveSubtitle
+        self.restingSubtitle = restingSubtitle
+        self.liveThrough = liveThrough
         self.icon = icon
         self.aliases = aliases
     }
 
     var id: String { slug }
+
+    /// The line to print under the title.
+    ///
+    /// The whole point of this being a function of the clock is that the card is
+    /// drawn 50 weeks a year when the tournament is not on. A single stored
+    /// string cannot be true in both states, and the one we shipped chose the
+    /// two-week state: on 2026-09-16, three days after Zverev won the title,
+    /// Browse's first card and the top row of a search for "us open" both read
+    /// "Live matches, results, title odds" — directly above the app's own event
+    /// rows, every one of them stamped FINAL.
+    ///
+    /// Every failure of this function is an UNDERSTATEMENT and never a lie: an
+    /// absent date, a date that does not parse, and a date nobody remembered to
+    /// bump all land on `restingSubtitle`, which is true whether or not a match
+    /// is on. That asymmetry is the reason the window is an end rather than a
+    /// range — a stale end says "results" during a live tournament, where a
+    /// stale subtitle said "live" at a finished one.
+    ///
+    /// Not observed for changes: `now` is read when the view body runs, so a
+    /// card already on screen when the final ends keeps its wording until the
+    /// next render. That is a day-scale line on a static list, not a score.
+    func subtitle(asOf now: Date = Date()) -> String {
+        guard let end = parseFlexibleDate(liveThrough), now <= end else {
+            return restingSubtitle
+        }
+        return liveSubtitle
+    }
 }
 
 /// Tournament hubs promoted to Browse, and offered by Search when a query names one.
@@ -32,15 +78,22 @@ nonisolated struct FeaturedTournament: Identifiable, Equatable, Sendable {
 /// HAND-MAINTAINED, and that is the known limitation rather than the design:
 /// `REGISTERED_TOURNAMENTS` lives on the server and is not exposed as a list, so
 /// the phone cannot ask which hubs exist or which one is being played this week.
-/// A slug listed here stays listed after its final — the hub itself degrades
-/// honestly (it keeps serving results and the finished board), but Browse will
-/// keep offering the US Open in March until either this list is edited or the
-/// API grows an index. Tracked as a follow-up; not worth blocking the hub on.
+/// A slug listed here stays listed after its final, and that is deliberate — the
+/// hub degrades honestly, keeping the results and the finished board, and those
+/// are worth reaching. What was NOT honest was the line under the title, which
+/// went on promising live matches; `liveThrough` is what ends that, and it is
+/// the same hand-maintained fact, only one that rots into an understatement.
+/// An API index would still be better. Tracked as a follow-up.
 let featuredTournaments: [FeaturedTournament] = [
     FeaturedTournament(
         slug: "us-open",
         title: "US Open",
-        subtitle: "Live matches, results, title odds",
+        liveSubtitle: "Live matches, results, title odds",
+        restingSubtitle: "Results and title odds",
+        // The 2026 men's final was played on 13 September (`/api/tournaments/us-open`
+        // serves no result later than that, and its slate has run empty since).
+        // Small margin past midnight in New York for a late finish.
+        liveThrough: "2026-09-14T06:00:00+00:00",
         icon: "tennis.racket",
         aliases: ["flushing meadows"]
     ),
