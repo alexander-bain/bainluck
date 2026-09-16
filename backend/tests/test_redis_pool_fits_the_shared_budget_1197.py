@@ -900,8 +900,13 @@ def _sync_client_signatures() -> dict:
                 if isinstance(target, ast.Name):
                     try:
                         consts[target.id] = ast.literal_eval(node.value)
-                    except Exception:
-                        pass
+                    except (ValueError, SyntaxError, TypeError):
+                        # Not a literal, so not a constant this resolver can
+                        # use. Named rather than caught bare: a module-level
+                        # name bound to a CALL is a different thing from one
+                        # this scan failed to read, and only the first is
+                        # expected here.
+                        continue
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
