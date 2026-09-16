@@ -48,7 +48,10 @@ from __future__ import annotations
 import re
 from typing import Iterable, Optional
 
-from app.utils.prediction_market_matching import extract_team_codes_from_ticker
+from app.utils.prediction_market_matching import (
+    extract_team_code_from_outcome_ticker,
+    extract_team_codes_from_ticker,
+)
 
 #: The truncation artifact: a trailing run of 1-3 capitals standing in for the
 #: rest of the nickname. `Los Angeles D`, `Chicago WS`, `Los Angeles A`.
@@ -147,6 +150,79 @@ def repair_truncated_names(
             continue
         repaired[str(name)] = f"{city} {candidates[0]}"
     return repaired
+
+
+def repair_outcome_name_by_ticker(
+    outcome_external_id: Optional[str],
+    shipped_name: Optional[str],
+) -> Optional[str]:
+    """``("KXSB-27-LAR", "Los Angeles R")`` → ``"Los Angeles Rams"`` (#6479).
+
+    The FIELD sibling of :func:`repair_truncated_names`, which reads a game's two
+    sides off one ticker. Returns ``None`` when nothing can be repaired, which
+    stays the common case and still means "ship what Kalshi sent".
+
+    ── THE POPULATION `repair_truncated_names` CANNOT REACH ─────────────────────
+
+    A championship board's market ticker is ``KXSB-27``: no date, no team codes,
+    nothing to parse, so the pair parser declines and every rung of the Super
+    Bowl and World Series fields keeps the venue's truncation. Measured on
+    production 2026-09-16, those two open boards alone carry ten of them —
+    ``Los Angeles R``, ``Los Angeles C``, ``New York G``, ``New York J``,
+    ``Los Angeles D``, ``Los Angeles A``, ``New York Y``, ``New York M``,
+    ``Chicago C``, ``Chicago WS`` — and they are the longest-lived cards on the
+    site, reachable from search, the sport pages and Discover.
+
+    The answer was one level down all along. Each OUTCOME carries its own
+    ticker, and the team code is in it: ``futures_outcomes.external_id`` is
+    ``KXSB-27-LAR``. That is gotcha #16's standing rule — read the nickname off
+    the ticker — asked of the row we are actually rendering.
+
+    ── TWO INDEPENDENT SIGNALS, AND IT REFUSES WITHOUT BOTH ─────────────────────
+
+    This is the strongest correspondence in the module and it is still not
+    trusted alone. The ticker is id-anchored: the code and the shipped name are
+    the same database row, so unlike the game parser there is no "which side is
+    this" question to get wrong. But an id says which ROW, not which CLUB — that
+    second step is a lookup, and a lookup can be stale, rotated by the venue, or
+    resolved in the wrong sport.
+
+    So the venue's own shipped text is required to agree. ``Los Angeles R`` says
+    the nickname starts with R; the ticker says Rams; both agree and the repair
+    is made. Disagreement — a code whose nickname cannot be what the truncation
+    stands for — is a signal that one of the two is wrong, and the answer to
+    that is the venue's text, not a coin toss. ``_consistent`` is the same test
+    the pair parser uses, doing the same job for a different reason.
+
+    The namespace is the third guard and it lives in
+    :func:`extract_team_code_from_outcome_ticker`: ``LAC`` is the Chargers on a
+    football board and the Clippers on a basketball one, and an unregistered
+    series resolves to nothing at all rather than borrowing another sport's
+    vocabulary (#3672).
+
+    Pure: no database, no network. Composes ``city`` from the shipped text and
+    ``nickname`` from the ticker, so each half of the answer is traceable to a
+    source rather than to a table someone has to maintain. **Never invents a
+    name** — a short name is visibly short, a wrong one is not.
+    """
+    if not outcome_external_id or not shipped_name:
+        return None
+
+    match = _TRUNCATED_TAIL_RE.match(str(shipped_name).strip())
+    if not match:
+        return None  # not truncated — correct data, left alone
+    city = match.group("city").strip()
+    if not city:
+        return None
+
+    resolved = extract_team_code_from_outcome_ticker(outcome_external_id)
+    if not resolved:
+        return None
+    nickname = resolved[1]
+
+    if not _consistent(match.group("tail"), nickname):
+        return None
+    return f"{city} {nickname}"
 
 
 def apply_name_repairs(text: Optional[str], repairs: dict[str, str]) -> Optional[str]:

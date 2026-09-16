@@ -1410,6 +1410,45 @@ KALSHI_FUTURES_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxnflnfcsouth": "americanfootball_nfl",          # NFC South winner
     "kxnflnfcwest": "americanfootball_nfl",           # NFC West winner
     "kxnflplayoff": "americanfootball_nfl",           # Playoff qualifiers
+    # 🔴 THE HYPHEN IS LOAD-BEARING AND IT IS THE ONLY REASON THIS KEY IS SAFE.
+    #
+    # `KXSB-27` is the Super Bowl field — the biggest futures card on the site,
+    # 32 rungs, and the one card #6479 is about. It is the only NFL series whose
+    # ticker does not start `kxnfl`, which is why it sat unregistered while the
+    # 40-odd keys above it did not.
+    #
+    # `kxsb` is NOT the Super Bowl. Every key in these two maps is matched with
+    # `startswith`, and measured against production 2026-09-16 the bare prefix
+    # reaches SEVEN other live series and mis-sports every one of them:
+    #
+    #     KXSBUX-27JANSTORES          Starbucks total global stores      economics
+    #     KXSBUXCC-26OCT07            Starbucks credit-card spend        economics
+    #     KXSBUXA-28JANSTORES         Starbucks stores, fiscal 2026      economics
+    #     KXSBUXSAR-26OCT02           Starbucks Refresher price          economics
+    #     KXSBUXFT-26AUG08            Starbucks foot traffic             economics
+    #     KXSBUDGETRES-26JUN          Senate budget resolution           politics
+    #     KXSBLGAME-26MAY291300BRALEV Slovan Bratislava vs BK Levicki    basketball
+    #
+    # That is #3672's failure mode exactly — a prefix answering for a sport it
+    # has no business in — arriving one level up, from a key that is too SHORT
+    # rather than a default that is too generous. Longest-prefix-wins cannot
+    # save us here, because a coffee chain and the Senate have no sport key to
+    # register as the longer match.
+    #
+    # So the key terminates at the separator Kalshi itself uses to end a series
+    # name. It is the first hyphenated key in either map (429 futures prefixes,
+    # none before it), and that is a statement about this series, not a new
+    # grammar: `KXSB` is a complete series name that happens to be a prefix of
+    # five unrelated ones, and an alpha-run key cannot express "exactly this".
+    # Verified by `test_championship_field_club_names_6479.py`, which names all
+    # seven siblings above by their production tickers.
+    #
+    # Reach, measured both ways: the anchor channel still records `KXSB-27` as
+    # `market` (not `game` — `is_kalshi_game_level_ticker` needs a GAME prefix
+    # and there is none), and `is_kalshi_shadowed_futures_ticker` is unmoved.
+    # The one thing it buys is the abbreviation NAMESPACE (`_nfl`), which is
+    # what lets `KXSB-27-LAR` resolve to the Rams instead of nothing.
+    "kxsb-": "americanfootball_nfl",                  # Super Bowl champion field
     "kxnflwins": "americanfootball_nfl",              # Team win totals (all 32 teams)
     "kxnflexactwins": "americanfootball_nfl",         # Exact win totals
     "kxnfldraft": "americanfootball_nfl",             # Draft picks (all positions)
