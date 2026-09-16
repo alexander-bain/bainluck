@@ -199,6 +199,104 @@ def drop_incoherent_near_certain(
     return kept if kept else kept_all
 
 
+def is_unbacked_leg(external_id: str | None) -> bool:
+    """A leg carrying no venue id at all. Decidable from the row, no lookup. #6524."""
+    return not (external_id or "").strip()
+
+
+def drop_unbacked_legs(
+    items: Sequence[_T],
+    external_id_of: Callable[[_T], str | None],
+    *,
+    market_is_open: bool,
+    is_winner_of: Callable[[_T], bool | None] | None = None,
+) -> list[_T]:
+    """Remove every leg of an OPEN board that carries no venue id — because a row
+    with nothing to dereference at the venue is not a quote.
+
+    #6524. Split out of #6508 by the desk ("a row with no venue id at all is a
+    different defect with a different owner") and it is the harder half: #6508's
+    repair suppresses a leg the venue has already CLOSED, and on both of the
+    boards that issue names it is the *priced* sibling that is closed — so
+    applying it alone leaves a lone unbacked row reading 100%.
+
+    PRICE IS NOT THE PREDICATE, and that is the whole difference from
+    :func:`drop_incoherent_near_certain`, which is the natural owner of these rows
+    and is inert on every one of them — **disarmed by a scope field, not by its
+    predicate**. Measured on the whole open population 2026-09-16: all six boards
+    holding an unbacked leg are ``mutually_exclusive = false``, because they are
+    cumulative "by DATE?" ladders where several legs near 1.0 are legitimately
+    simultaneous, and #199 correctly refuses to judge a non-ME family. The sibling
+    also needs TWO near-certain legs before it fires, and the defect here is ONE
+    fabricated certainty sitting in an otherwise ordinary field:
+
+    * ``/api/futures/113545`` (*Will Russia enter Borova by…?*) — ``May 31 1.0``
+      above ``September 30 0.08``, and a SECOND, id-anchored ``May 31`` at 0.02.
+    * ``/api/futures/114237`` (*New "Stranger Things" episode released by…?*) —
+      ``May 31 1.0`` above eleven legs priced 0.03 and below.
+    * ``/api/futures/3821229`` (*GPT-5.5 released by…?*) — ``April 8 1.0`` at
+      **rank 1**, so this one leads the card.
+
+    A reader is told a war advance and a TV release are certain, at the strongest
+    confidence the product can express, on the strength of no market at all.
+
+    THE ROW REFUTES ITSELF AND NEEDS NO GROUND TRUTH. Polymarket's writer sets
+    ``external_id = market.condition_id`` and the upsert keys on
+    ``(market_id, external_id)``, so a row whose id is ``''`` can never be matched
+    by a later pass: it is frozen at whatever minted it (four of the six have not
+    moved since April). #4000's ``_retire_unpriced_legs`` cannot reach it either —
+    that works off the condition ids the venue SERVED, and there is no id to serve.
+    Nor can the poll's own orphan cleanup, which tests ``external_id.is_(None)``
+    while every one of these is the empty string.
+
+    Measured population, whole table, no sampling: **152 rows, every one
+    Polymarket, every one priced at exactly 1.000000 over a maximum-spread
+    (``bid 0.0000 / ask 1.0000``) book** — the reserved-slot signature
+    ``_is_placeholder_outcome`` already rejects at ingest. No other source has a
+    blank outcome id at all. The price and the dead book are stated here because
+    the next reader deserves the coincidence, NOT because the rule reads them: the
+    id is the structural fact, the 1.0 is the symptom, and a rule keyed on the
+    symptom would let through the first unbacked leg that happens to price at 0.4.
+
+    THREE EXEMPTIONS, the same three as the sibling, and the middle one is the one
+    that would do damage:
+
+    * **A CROWNED LEG IS NEVER DROPPED.** ``is_winner`` is a settlement, not a
+      quote — the same reason ``_retire_unpriced_legs`` refuses to touch one.
+      **139 of the 146 resolved unbacked rows are crowned**, so a rule without this
+      exemption deletes the displayed result from 139 settled boards and leaves the
+      losers on the page: "settled means settled", broken by a display helper.
+    * **OPEN MARKETS ONLY.** Those 146 resolved rows are a GRADING question — a
+      fabricated 1.0 stamped a winner — and belong to whoever owns that, not to a
+      display drop that would paper over it.
+    * **NEVER EMPTIES**, matching :func:`drop_incoherent_near_certain` and
+      :func:`drop_dominant_field_outcomes`: an honest-empty decision belongs to the
+      surface. It does not fire today — all six boards keep between 3 and 13 backed
+      legs — and the test pins that the surface is still a surface, because a rule
+      that REMOVES passes every refusal assertion on an empty list.
+
+    REMOVING A LEG CANNOT MOVE ANY OTHER PRINTED NUMBER, measured rather than
+    assumed. All six boards are non-ME, so :func:`normalize_display_probs` returns
+    early and serves raw prices; and even on an ME board the #23 squeeze only fires
+    ABOVE a field sum of 105%, which dropping a leg can only move away from. So
+    this cannot squeeze a 0.08 longshot up into a false contender — the failure
+    mode that would make the repair worse than the defect.
+
+    Returns a new list; the input is never mutated.
+    """
+    kept_all = list(items)
+    if not market_is_open:
+        return kept_all
+
+    def _drop(i: _T) -> bool:
+        if not is_unbacked_leg(external_id_of(i)):
+            return False
+        return not (is_winner_of(i) if is_winner_of is not None else False)
+
+    kept = [i for i in kept_all if not _drop(i)]
+    return kept if kept else kept_all
+
+
 def normalize_display_probs(
     outcomes: list[dict],
     key: str = "probability",

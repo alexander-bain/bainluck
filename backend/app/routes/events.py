@@ -22152,6 +22152,7 @@ from app.utils.outcome_display import (  # noqa: E402
     leader_pick_order as _leader_pick_order,
     drop_dominant_field_outcomes as _drop_dominant_field_outcomes,
     drop_incoherent_near_certain as _drop_incoherent_near_certain,
+    drop_unbacked_legs as _drop_unbacked_legs,
 )
 from app.utils.duplicate_condition_outcomes import (  # noqa: E402
     drop_duplicate_legs as _drop_duplicate_legs,
@@ -22273,9 +22274,20 @@ def _build_search_top_outcomes(
     # and headlines the dropdown. Dropped on the ORM rows, BEFORE the sort, the
     # `[:limit]` slice and `_normalize_search_outcome_probs`, so the phantom never
     # reaches a top-N slot and never sits in the normalization divisor.
+    #
+    # #6524: a leg with no venue id is not a quote, and the search card is where a
+    # reader meets it first — market 3821229 (*GPT-5.5 released by…?*) carries its
+    # unbacked `April 8 1.0` at rank 1, so this list's top row is the fabricated
+    # one. Same drop as browse and detail, for #993's reason: the click-through has
+    # to match what search showed.
     real = [
         o
-        for o in _drop_duplicate_legs(market.outcomes, lambda o: o.external_id)
+        for o in _drop_unbacked_legs(
+            _drop_duplicate_legs(market.outcomes, lambda o: o.external_id),
+            lambda o: o.external_id,
+            market_is_open=getattr(market, "status", None) == "open",
+            is_winner_of=lambda o: bool(o.is_winner),
+        )
         if not _is_placeholder_outcome_name(o.name)
     ]
     # #4253: a single-winner field cannot have five different winners. Measured
