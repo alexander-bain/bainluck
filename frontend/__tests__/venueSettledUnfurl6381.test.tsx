@@ -172,8 +172,19 @@ describe("#6381 — the picture names the venue's grade", () => {
 
     expect(text).toContain("Liverpool FC");
     expect(text).toContain("Fulham FC");
-    expect(text).toContain("38%");
     expect(text).toContain("62%");
+    // ⚠️ #6238 — the away half USED to be asserted here as `38%` and is now
+    // deliberately absent. This is an EPL row, and on a sport whose winner
+    // market prices a draw the served away figure is `1 − home`: "the home team
+    // does not win", i.e. away win OR draw, printed under Fulham's crest. The
+    // share card withholds it.
+    //
+    // The fixture keeps its soccer key rather than being moved to a two-way one,
+    // because it is #6381's actual production specimen and this file's subject
+    // is what a SETTLED row says. The control still does its job — it exists to
+    // prove the picture is not simply empty, and one named, sourced figure plus
+    // both team names proves that.
+    expect(text).not.toContain("38%");
   });
 });
 

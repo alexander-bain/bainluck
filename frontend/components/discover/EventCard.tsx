@@ -24,6 +24,7 @@ import {
 } from "@/lib/eventState";
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { probabilityBarPair } from "@/lib/probabilityBarPair";
+import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 
 /**
  * This card's bar is painted at full opacity — no `opacity` style on either
@@ -71,6 +72,19 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   const probWithheld = shouldWithholdProbability(data);
   const homeProb = probWithheld ? null : data.current_odds?.home_probability;
   const awayProb = probWithheld ? null : data.current_odds?.away_probability;
+  // #6238 — and the away figure is not printable at all on a sport whose winner
+  // market prices a draw: the feed derives it as `1 − home`, so it is "home does
+  // not win" (away win OR draw) wearing the away team's name. The argument and
+  // the production specimens live in `lib/drawPricedWinner.ts`; the hero and the
+  // chart readout have asked this since ux/1292.
+  //
+  // This card keeps its home number and loses only the away one. It can afford
+  // to drop the slot outright rather than dash it — the strip is
+  // `justify-between`, so with the away span gone the home number stays hard
+  // right, under the home crest, exactly where the pair already put it. The
+  // surfaces that had to name a survivor are the ones where position was doing
+  // the naming and collapsing moved the number.
+  const awayWithheld = awayIsTheComplement(awayProb, homeProb, data.sport);
   // UX-P114 — the two numbers below are two sides of ONE question (the feed
   // derives away as `1 - home`), so they are decided together or they sum to 101.
   // Measured 2026-08-21: 34 of 414 live/upcoming events printed 101 here, all 101
@@ -112,6 +126,15 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   // the fork is gone rather than corrected. One phrase, owned by
   // `prematchReading`, so this card and `FeedCard` cannot drift apart.
   const prematchSaid = PREMATCH_SAID;
+  // #6238 — the settled pair comes off `opening_odds`, which is a different pair
+  // from the live one and usually NOT a complement since #1011. Asked separately
+  // so this card does not delete a real opening away price. See
+  // `awayIsTheComplement`.
+  const prematchAwayWithheld = awayIsTheComplement(
+    prematch?.awayProbability,
+    prematch?.homeProbability,
+    data.sport,
+  );
   // #6247 — the WHOLE sport key, resolved to a shelf. The split segment
   // (`americanfootball`, `icehockey`) is not a shelf name, so every NFL and
   // NHL card wore the grey fallback chip and lost its gradient; and the
@@ -277,13 +300,14 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
 
         {/* Live/pregame win-probability strip — a settled game drops it for the
             winner treatment below (L2-112 Item 2: FINAL cards don't carry live chips). */}
-        {!isDone && !isSuspended && homeProb != null && awayProb != null && (
+        {!isDone && !isSuspended && homeProb != null && (awayProb != null || awayWithheld) && (
           <div className="mt-2">
             <div className="flex items-center justify-between text-sm mb-1">
               {/* UX-P003: the card's half of "card == hero == chart". These
                   data attributes let the browser rail read the number this card
                   actually PAINTED and compare it against the hero on the page it
                   links to, without scraping styled prose. */}
+              {!awayWithheld && (
               <span
                 className={`font-bold ${authorityClass}`.trim()}
                 style={{ color: barPair.away }}
@@ -294,6 +318,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
               >
                 {formatProbability(awayProb, { rendered: awayPct })}
               </span>
+              )}
               <span className="flex items-center gap-1.5 text-text-muted text-[10px]">
                 Win Probability
                 <SignalBars tier={data.confidence_tier} />
@@ -309,8 +334,18 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
                 {formatProbability(homeProb, { rendered: homePct })}
               </span>
             </div>
-            <div className="h-2.5 rounded-full overflow-hidden flex">
-              <div className="transition-all duration-500" style={{ width: `${awayProb * 100}%`, backgroundColor: barPair.away }} />
+            {/* #6238 — a two-colour split is the same claim in pixels as the
+                numerals above it, so on a draw-priced sport the bar paints the
+                home share only, against the neutral track, and leaves the
+                remainder unattributed. Anchored right, the end home already
+                grew from. */}
+            <div
+              className={`h-2.5 rounded-full overflow-hidden flex ${awayWithheld ? "bg-surface-border/30 justify-end" : ""}`}
+              data-away-withheld={awayWithheld ? "true" : undefined}
+            >
+              {!awayWithheld && (
+                <div className="transition-all duration-500" style={{ width: `${awayProb! * 100}%`, backgroundColor: barPair.away }} />
+              )}
               <div className="transition-all duration-500" style={{ width: `${homeProb * 100}%`, backgroundColor: barPair.home }} />
             </div>
           </div>
@@ -398,12 +433,17 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
             colour. A settled card that draws a live-style coloured bar reads as
             a live one (L2-112 Item 2), and this figure is history: muted, and
             captioned with the tense that makes it history. */}
-        {isDone && prematch && prematch.awayPercent !== null && prematch.homePercent !== null && (
+        {/* #6238 — the settled pair is the OPENING complement, the same lie one
+            instant earlier, so the away half goes with the live one. Same
+            `justify-between` geometry, so the home figure stays hard right and
+            keeps its attribution. */}
+        {isDone && prematch && prematch.homePercent !== null && (prematch.awayPercent !== null || prematchAwayWithheld) && (
           <div
             className="mt-2 flex items-center justify-between text-sm"
             data-testid="event-card-prematch"
             data-prematch-source={prematch.source}
           >
+            {!prematchAwayWithheld && (
             <span
               className="font-mono tabular-nums text-text-muted"
               data-testid="event-card-prematch-away"
@@ -414,6 +454,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
               </span>
               {prematch.awayPercent}%
             </span>
+            )}
             <span className="text-text-muted text-[10px]">
               {/* Alex: label it when it is not a prediction market. A books
                   median is a different claim from a prediction-market opening

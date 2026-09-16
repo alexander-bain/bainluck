@@ -30,6 +30,24 @@ export interface DuelKernelProps {
   /** 0–1 win probabilities. */
   awayProb?: number | null;
   homeProb?: number | null;
+  /**
+   * #6238 — may this card print an AWAY figure at all?
+   *
+   * On a sport whose winner market prices a draw, the served away probability is
+   * `1 − home`: "the home team does not win", i.e. away win OR draw, wearing the
+   * away team's name. `lib/drawPricedWinner.ts` carries the argument and the
+   * production measurements; `sportPricesADraw(sport)` is the value to pass.
+   *
+   * A PROP rather than a sport key, because this kernel is handed presentation
+   * values (`awayProb`, `awayColor`, `stateLabel`) and does not read a payload —
+   * its caller is the one that knows what sport it is holding. Today that caller
+   * is only `/kernels-preview`, so nothing reader-facing renders this yet; the
+   * rule is here so adopting the kernel cannot re-open the defect the rest of
+   * the card family just closed.
+   *
+   * Defaults false, so every existing caller renders exactly as before.
+   */
+  awayWithheld?: boolean;
   categorySlug: string;
   categoryLabel: string;
   categoryEmoji: string;
@@ -75,6 +93,7 @@ function Crest({ team, color, logo, score, show }: { team: string; color: string
 export function DuelKernel(props: DuelKernelProps) {
   const {
     state, awayTeam, homeTeam, awayScore, homeScore, awayProb, homeProb,
+    awayWithheld = false,
   } = props;
   const awayColor = props.awayColor || "#6b7280";
   const homeColor = props.homeColor || "#374151";
@@ -123,15 +142,28 @@ export function DuelKernel(props: DuelKernelProps) {
         {awayTeam} {settled ? "vs" : "@"} {homeTeam}
       </div>
 
-      {!settled && awayProb != null && homeProb != null && (
+      {/* #6238 — the home number survives on its own; only the away one goes.
+          The row is `justify-between`, so dropping the away span leaves the home
+          figure hard right under the home crest, which is what named it in the
+          pair. The bar paints the home share against the neutral track and
+          leaves the remainder unattributed, because a two-colour split is the
+          same claim in pixels as the numeral above it. */}
+      {!settled && homeProb != null && (awayProb != null || awayWithheld) && (
         <div className="mt-0.5">
           <div className="mb-1 flex items-center justify-between text-sm">
-            <span className="font-bold" style={{ color: awayTextColor }}>{awayPct}%</span>
+            {!awayWithheld && (
+              <span className="font-bold" style={{ color: awayTextColor }}>{awayPct}%</span>
+            )}
             <span className="text-[10px] text-text-muted">Win Probability</span>
             <span className="font-bold" style={{ color: homeTextColor }}>{homePct}%</span>
           </div>
-          <div className="flex h-2.5 overflow-hidden rounded-full">
-            <div className="transition-all duration-500" style={{ width: `${awayPct}%`, backgroundColor: awayColor }} />
+          <div
+            className={`flex h-2.5 overflow-hidden rounded-full ${awayWithheld ? "bg-surface-border/30 justify-end" : ""}`}
+            data-away-withheld={awayWithheld ? "true" : undefined}
+          >
+            {!awayWithheld && (
+              <div className="transition-all duration-500" style={{ width: `${awayPct}%`, backgroundColor: awayColor }} />
+            )}
             <div className="transition-all duration-500" style={{ width: `${homePct}%`, backgroundColor: homeColor }} />
           </div>
         </div>

@@ -102,8 +102,20 @@ function makeData(awayPrimary: string | null, homePrimary: string | null): FeedE
   return {
     id: 15301293,
     external_id: "evt-15301293",
-    sport: "soccer_epl",
-    sport_name: "Premier League",
+    // ⚠️ #6238 — this key used to be `soccer_epl`, and the number of bar
+    // SEGMENTS is now sport-dependent: on a sport whose winner market prices a
+    // draw the away figure is withheld (it is `1 − home`, i.e. "home does not
+    // win" — away win OR draw) and the bar paints one segment against a neutral
+    // track. The extractor below requires two, so on the old key every
+    // assertion in this file threw instead of testing a colour.
+    //
+    // This file's subject is COLOUR and the contrast arithmetic never read the
+    // sport, so the measured white/gold values are untouched and only the league
+    // they hang on moves. The one-segment soccer path is covered by the `#6238`
+    // block in `sharedCardBarWhiteOnWhite4470b.test.tsx` and by
+    // `drawPricedCardFamily6238.test.tsx`.
+    sport: "americanfootball_nfl",
+    sport_name: "League",
     sport_label: "CUP",
     home_team: "Chelsea",
     away_team: "Leeds United",

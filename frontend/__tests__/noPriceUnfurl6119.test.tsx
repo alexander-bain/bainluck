@@ -202,8 +202,29 @@ const SARACENS_LEICESTER = {
  * "scheduled games have no settled number, just draw the quiet card" is the
  * obvious over-reach. 45 of the 80 sampled rows are priced and must be untouched.
  */
+/**
+ * ⚠️ #6238 — EVERY PRICED FIXTURE BELOW CARRIES A TWO-WAY SPORT KEY.
+ *
+ * `BAYERN_LEVERKUSEN` is a soccer row, and since #6238 the share card withholds
+ * the AWAY figure on a sport whose winner market prices a draw: the served away
+ * value is `1 − home`, i.e. "the home team does not win" — away win OR draw —
+ * and printing it under the away crest is the defect that ship closed.
+ *
+ * That is correct and it is not what this file is about. These fixtures exist to
+ * prove the NO-PRICE rule does not over-reach onto a row that HAS a price, and
+ * they assert the away half of the pair to do it. Left on the soccer key they
+ * would assert #6238's behaviour instead and this file would stop testing its
+ * own subject.
+ *
+ * The withholding arm keeps the soccer key untouched: a row with no price has no
+ * away figure to withhold, so #6238 cannot reach it and the production specimen
+ * stays verbatim.
+ */
+const PRICED_SPORT = { sport: "americanfootball_nfl", sport_name: "NFL" };
+
 const PRICED = {
   ...BAYERN_LEVERKUSEN,
+  ...PRICED_SPORT,
   current_odds: {
     captured_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
     home_probability: 0.62,
@@ -247,6 +268,7 @@ const HALF_PRICED = {
  */
 const ZERO_PRICED = {
   ...BAYERN_LEVERKUSEN,
+  ...PRICED_SPORT,
   current_odds: {
     home_probability: 1,
     away_probability: 0,
@@ -268,6 +290,7 @@ const ZERO_PRICED = {
  */
 const NO_CURRENT_BUT_OPENING = {
   ...BAYERN_LEVERKUSEN,
+  ...PRICED_SPORT,
   status: "live",
   commence_time: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
   opening_odds: { home_probability: 0.62, away_probability: 0.38, favorite: "home" as const },

@@ -401,7 +401,7 @@ export default function EventConceptPage() {
           evolutionMarketId={evolutionId}
         />
       ) : soccerHero ? (
-        <SoccerContainerHero matchups={fightChildren} />
+        <SoccerContainerHero matchups={fightChildren} sport={event.domain} />
       ) : hasWinnerField ? (
         isSettled ? (
           evolutionId ? (
@@ -457,6 +457,11 @@ export default function EventConceptPage() {
         items={fightChildren}
         exclude={soccerHero}
         title={isSoccer ? "Matches" : undefined}
+        // #6238 — the concept's domain is this page's only sport signal (the
+        // child payload carries none), and `sportVocab` declares the `soccer`
+        // row, so the duel cards can withhold the away complement. A non-soccer
+        // domain matches nothing and keeps its two-sided reading.
+        sport={event.domain}
       />
 
       {hasPropsScript && (

@@ -15,6 +15,7 @@ import {
 } from "@/lib/eventShareMeta";
 import { resolveEventOutcome } from "@/lib/eventOutcome";
 import { prematchReading } from "@/lib/prematchReading";
+import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { suspendedSummary, venueSettledSummary } from "@/lib/eventState";
 
 export const runtime = "edge";
@@ -176,6 +177,14 @@ export default async function Image({ params }: { params: { id: string } }) {
   // decision is how the second one drifted. It also takes the served pair WHOLE
   // or not at all (#2279) — a payload carrying one field and not the other is
   // the same 101 arriving from the other direction.
+  // #6238 — may this card print an away probability at all? Precedence matches
+  // the league label below (`sport_key` then `sport`), so no row changes which
+  // key it is read by. `sportVocab` holds the declaration.
+  const awayWithheld = awayIsTheComplement(
+    event.current_odds?.away_probability,
+    event.current_odds?.home_probability,
+    event.sport_key || event.sport,
+  );
   const [awayRendered, homeRendered] = servedDuelPercents(
     awayProbability,
     homeProbability,
@@ -328,15 +337,23 @@ export default async function Image({ params }: { params: { id: string } }) {
   // these land on `null` and the 96px slot is simply not rendered. If an opening
   // ever does arrive without a current price, this prints it labelled
   // "Pre-match · sportsbooks" — which is the honest card, not a special case.
+  // #6238 — every away PROBABILITY this card can draw is `1 − home`, which on a
+  // draw-priced sport is "the home team does not win": away win OR draw, in
+  // 74px type under the away crest. The SCORE arm is untouched — a settled
+  // scoreline is a result, not a forecast, and withholding it would delete the
+  // one thing the card is for. This column names itself (crest, then team, then
+  // the number), so the withheld figure simply renders nothing.
   const awayHero = final
     ? showScore
       ? `${event.away_score}`
       : null
-    : forecastWithheld
-      ? prematch?.awayPercent != null
-        ? `${prematch.awayPercent}%`
-        : null
-      : awayPct;
+    : awayWithheld
+      ? null
+      : forecastWithheld
+        ? prematch?.awayPercent != null
+          ? `${prematch.awayPercent}%`
+          : null
+        : awayPct;
   const homeHero = final
     ? showScore
       ? `${event.home_score}`
@@ -361,10 +378,29 @@ export default async function Image({ params }: { params: { id: string } }) {
   // shape after being removed as a number, which is the identical failure the
   // line above was written for.
   const barAwayPercent = forecastWithheld ? prematch?.awayPercent ?? null : awayRendered;
-  const showBar = !forecastWithheld || barAwayPercent != null;
+  const barHomePercent = forecastWithheld ? prematch?.homePercent ?? null : homeRendered;
+  const showBar = awayWithheld
+    ? barHomePercent != null
+    : !forecastWithheld || barAwayPercent != null;
   const awayWidth = Math.max(
     3,
     Math.min(97, barAwayPercent ?? Math.round(awayProbability * 100)),
+  );
+  // #6238 — THE BAR IS THE SAME CLAIM AS THE NUMERAL, AT 1200px WIDE.
+  //
+  // This bar is built inside out: the track is painted in the HOME colour and an
+  // away-coloured div is laid over the left of it, so "the rest is home" is
+  // structural. Withholding the away numeral and leaving that whole would draw a
+  // full-width home-coloured bar — 100%, the loudest possible version of the
+  // claim this ship exists to stop, in the image that gets pasted into iMessage
+  // and Slack where it is often all a reader ever sees.
+  //
+  // So on a draw-priced sport the track goes neutral and the home share is drawn
+  // at its own width, anchored right, the end home already grew from. The
+  // remainder is visibly unallocated rather than attributed to either side.
+  const homeWidth = Math.max(
+    3,
+    Math.min(97, barHomePercent ?? Math.round(homeProbability * 100)),
   );
 
   // The settled card's emphasis: the winner reads as what happened and the
@@ -465,7 +501,9 @@ export default async function Image({ params }: { params: { id: string } }) {
                 scheduled game: there the big number IS the current reading and
                 a second percentage under it would be two answers to one
                 question, which is the defect this block exists to close. */}
-            {final && prematch?.awayPercent != null && (
+            {/* #6238 — the prior is the OPENING complement, so it goes with the
+                current one on a draw-priced sport. */}
+            {final && prematch?.awayPercent != null && !awayWithheld && (
               <div style={{ fontSize: 28, fontWeight: 700, color: "#64748b" }}>
                 {`${prematch.awayPercent}%`}
               </div>
@@ -510,12 +548,19 @@ export default async function Image({ params }: { params: { id: string } }) {
                 width: "100%",
                 height: 30,
                 borderRadius: 999,
-                background: homeColor,
+                // #6238 — a neutral track when the away side is withheld, so the
+                // unpainted remainder belongs to nobody. See `homeWidth` above.
+                background: awayWithheld ? "#e2e8f0" : homeColor,
                 overflow: "hidden",
                 display: "flex",
+                justifyContent: awayWithheld ? "flex-end" : "flex-start",
               }}
             >
-              <div style={{ width: `${awayWidth}%`, height: "100%", background: awayColor }} />
+              {awayWithheld ? (
+                <div style={{ width: `${homeWidth}%`, height: "100%", background: homeColor }} />
+              ) : (
+                <div style={{ width: `${awayWidth}%`, height: "100%", background: awayColor }} />
+              )}
             </div>
           )}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", color: "#64748b", fontSize: 23 }}>

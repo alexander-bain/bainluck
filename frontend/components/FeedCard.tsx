@@ -35,8 +35,9 @@ import {
   suspendedSummary,
 } from "@/lib/eventState";
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
+import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { probabilityBarPair, SEGMENT_OPACITY } from "@/lib/probabilityBarPair";
-import { teamCrestInitials } from "@/lib/teamShortName";
+import { teamCrestInitials, teamShortNames } from "@/lib/teamShortName";
 import TeamNameLink from "./TeamNameLink";
 
 interface FeedCardProps {
@@ -409,6 +410,34 @@ function EventFeedCard({
   const openingAway = data.opening_odds?.away_probability ?? null;
   const displayHomeProb = isFinished ? (openingHome ?? homeProb) : homeProb;
   const displayAwayProb = isFinished ? (openingAway ?? awayProb) : awayProb;
+  // ═══ #6238 — THE AWAY SLOT ON A SPORT THAT PRICES A DRAW ═══
+  //
+  // `lib/drawPricedWinner.ts` carries the argument and the measurements; the
+  // hero and the chart readout already ask it. This card never did, and it is
+  // the surface a reader meets FIRST: on 2026-09-16 `/sports` at 390px drew six
+  // soccer cards summing to exactly 100, including Sevilla v Deportivo printed
+  // **74% / 26% at half-time in a 0–0** — no room at all for the outcome the
+  // match was actually in.
+  //
+  // The feed derives `away_probability` as `1 − home`, so what sits under the
+  // away crest is "the home team does not win" — away win OR draw — wearing the
+  // away team's name. It is withheld rather than corrected because there is no
+  // away price to read (the payload carries none, and `draw_probability` is NULL
+  // fleet-wide). The home number is KEPT: it is the one thing this card exists
+  // to say, and #1011 repaired it at the source on 2026-09-16.
+  //
+  // THREE representations on this one card say it, so all three ask: the chips,
+  // the `Opened X/Y` footer, and the two-colour bar — a bar split 74/26 is the
+  // same claim in pixels. Doing one and not the others is how a card comes to
+  // contradict itself in a single frame (#5696's lesson on the hero).
+  // PER PAIR, not per sport. The chips and the `Opened` footer below read two
+  // DIFFERENT pairs and legitimately answer differently: measured on production
+  // 2026-09-16, all 13 live soccer cards carried a `current_odds` pair summing
+  // to exactly 1.0000 while 11 of the 13 carried an `opening_odds` pair summing
+  // to 0.68–0.94 — de-vigged across the whole board since #1011, with the draw
+  // as the residual. That opening away figure is a REAL away price, and a
+  // sport-keyed withhold deleted it. See `awayIsTheComplement`.
+  const awayWithheld = awayIsTheComplement(displayAwayProb, displayHomeProb, data.sport);
   // UX-P114 — the chips below print BOTH sides of one question, and the feed
   // derives away as `1 - home`, so rounding them independently printed 101
   // whenever the blend landed on a half-percent (34 of 414 live/upcoming events,
@@ -579,15 +608,40 @@ function EventFeedCard({
   // position means, and this card has now had two of them read the wrong way
   // round. `openedContext` stays a plain string because three call sites below
   // use it as a truthiness gate.
+  // ═══ #6238 — THE OPENING PAIR IS THE SAME COMPLEMENT AT AN EARLIER INSTANT ═══
+  //
+  // `opening_odds` is derived the same way `current_odds` is, so withholding the
+  // chips above and leaving this footer printing `Opened 71/29` would move the
+  // false number three rows down the card rather than delete it — #5696's
+  // lesson on the hero, and the reason native's card fixed both together.
+  //
+  // It is NOT dropped: the home opening figure is as legitimate as the home
+  // current one, and this footer is the only pre-match context a live card
+  // carries. It loses the PAIR, and with it the positional attribution that let
+  // both numbers go unnamed — away-first, home-second, matching the rows above.
+  // One number in that slot would inherit the away position and read as the away
+  // team's. So it names its survivor, in native's words
+  // (`EventCardView.footerRow`): `Opened LIV 71%`. Short names come from the
+  // PAIR helper, never per side — #3430, because "Tigers" is not a name when
+  // both sides shorten to it.
+  const openedAwayWithheld = awayIsTheComplement(
+    data.opening_odds?.away_probability,
+    data.opening_odds?.home_probability,
+    data.sport,
+  );
   const openedLine =
-    isLive && openedHomePct !== null && openedAwayPct !== null
-      ? [
-          { team: data.away_team, percent: openedAwayPct },
-          { team: data.home_team, percent: openedHomePct },
-        ]
+    isLive && openedHomePct !== null && (openedAwayPct !== null || openedAwayWithheld)
+      ? openedAwayWithheld
+        ? [{ team: data.home_team, percent: openedHomePct }]
+        : [
+            { team: data.away_team, percent: openedAwayPct! },
+            { team: data.home_team, percent: openedHomePct },
+          ]
       : null;
   const openedContext = openedLine
-    ? `Opened ${openedLine.map((side) => side.percent).join("/")}`
+    ? openedAwayWithheld
+      ? `Opened ${teamShortNames({ name: data.home_team }, { name: data.away_team }).home} ${openedHomePct}%`
+      : `Opened ${openedLine.map((side) => side.percent).join("/")}`
     : null;
   const openedSaid = openedLine
     ? openedLine.map((side) => `${side.team} opened at ${side.percent}%`).join(", ")
@@ -759,7 +813,21 @@ function EventFeedCard({
                   winner included: the bold treatment on this card means "this
                   is what happened", and the pre-match number is the opposite of
                   that — it is what was thought before anything had. */}
-              {prematch && prematch.awayPercent !== null && (
+              {/* #6238 — the settled card's per-team prior is the SAME opening
+                  complement the footer above withholds, so it is withheld on the
+                  away side too. This one needs no dash and no naming: it sits
+                  inside the away team's own row, after the crest and the name,
+                  so the slot is already attributed and its absence costs the
+                  surviving number nothing. That is native's rule for a
+                  self-naming row (`EventCardView.probabilityWithMovement`) and
+                  the reason the chips above had to do something different. */}
+              {prematch &&
+                prematch.awayPercent !== null &&
+                !awayIsTheComplement(
+                  prematch.awayProbability,
+                  prematch.homeProbability,
+                  data.sport,
+                ) && (
                 <span
                   className="flex-shrink-0 font-mono text-[11px] tabular-nums text-text-muted"
                   data-testid="feed-card-prematch-away"
@@ -808,12 +876,41 @@ function EventFeedCard({
               on, so printing them at full weight beside "no result reported"
               presents a stale line as a current read. This is the "live/pregame
               probability treatment" CERT-786 named. */}
-          {!isFinished && !isSuspended && displayHomeProb !== null && displayAwayProb !== null && (
+          {/* #6238 — the gate keeps the HOME number and drops only the away one.
+              Passing `displayAwayProb` through `printableAway` and stopping
+              there would have rendered NOTHING on every soccer card, because
+              this gate required both sides: the one-line change the helper
+              invites deletes the correct number along with the false one. So
+              the away side is satisfied either by a real value or by the
+              withholding itself, and on a two-way sport `awayWithheld` is false
+              and this reduces to exactly the condition it replaced.
+
+              WHY THE SLOT SURVIVES AS AN EM-DASH HERE WHEN THE HERO OMITS IT.
+              The hero omits the away numerals because at `text-[48px]` a dash
+              is a ~41px redaction bar (see `EventHeroProbabilityPair`), and it
+              can afford to: its crests sit either side of the number and name
+              it. This column is two stacked slots whose ORDER is the only thing
+              naming them — away above home, mirroring the rows to their left.
+              Drop the top slot and the surviving number no longer lines up with
+              the team it belongs to, which is a misattribution rather than a
+              cosmetic loss. At `text-sm` the dash is a dash, so the slot is
+              held open and the card keeps saying which number is whose. */}
+          {!isFinished && !isSuspended && displayHomeProb !== null && (displayAwayProb !== null || awayWithheld) && (
             <div className="flex-shrink-0 text-right">
               {/* Away prob */}
-              <div className={`font-mono text-sm font-bold mb-0.5 ${displayAwayProb >= 0.5 ? "text-text-primary" : "text-text-muted"}`}>
-                {formatProbability(displayAwayProb, { rendered: awayPct })}
-              </div>
+              {awayWithheld ? (
+                <div
+                  className="font-mono text-sm font-bold mb-0.5 text-text-muted"
+                  data-testid="feed-card-away-withheld"
+                >
+                  <span className="sr-only">No separate win probability for {data.away_team}. </span>
+                  <span aria-hidden="true">—</span>
+                </div>
+              ) : (
+                <div className={`font-mono text-sm font-bold mb-0.5 ${displayAwayProb! >= 0.5 ? "text-text-primary" : "text-text-muted"}`}>
+                  {formatProbability(displayAwayProb, { rendered: awayPct })}
+                </div>
+              )}
               {/* Home prob */}
               <div className={`font-mono text-sm font-bold ${displayHomeProb >= 0.5 ? "text-text-primary" : "text-text-muted"}`}>
                 {formatProbability(displayHomeProb, { rendered: homePct })}
@@ -844,8 +941,21 @@ function EventFeedCard({
             confident thing on the card. On FINAL the pre-game context is also no
             longer the muted "Opened X/Y" text below: as of ux/1036 it is a
             number beside each team name, above. */}
-        {!isFinished && !isSuspended && barHomeProb !== null && barAwayProb !== null && (
-          <div className="w-full h-1.5 rounded-full overflow-hidden mt-2 flex" data-testid="feed-card-prob-bar">
+        {/* #6238 — A BAR SPLIT 74/26 IS THE SAME CLAIM IN PIXELS.
+            Withholding the away numeral and leaving a full-width two-colour
+            split would keep the card's loudest statement saying exactly what
+            the numeral was stopped from saying — and the bar is the element a
+            reader parses without reading. So on a draw-priced sport it paints
+            the HOME share only, against the neutral track, and the remainder is
+            left unallocated rather than handed to the away team. The fill stays
+            anchored to the right, which is the end home already grew from, so
+            the bar keeps the orientation the two-colour version taught. */}
+        {!isFinished && !isSuspended && barHomeProb !== null && (barAwayProb !== null || awayWithheld) && (
+          <div
+            className={`w-full h-1.5 rounded-full overflow-hidden mt-2 flex ${awayWithheld ? "bg-surface-elevated justify-end" : ""}`}
+            data-testid="feed-card-prob-bar"
+            data-away-withheld={awayWithheld ? "true" : undefined}
+          >
             {/* #2962 — both segments are decided together, and at ONE opacity.
                 This used to read `awayColor || "var(--color-text-muted)"` and
                 `homeColor || "var(--color-accent-brand)"`; neither property has
@@ -856,17 +966,19 @@ function EventFeedCard({
                 distinguishable colours. Do NOT reintroduce a per-side opacity:
                 the old 0.3 put the away default at 1.28:1 against the card,
                 below the visibility floor the helper enforces. */}
+            {!awayWithheld && (
+              <div
+                className="h-full transition-all rounded-l-full"
+                style={{
+                  width: `${Math.round(barAwayProb! * 100)}%`,
+                  backgroundColor: barPair.away,
+                  opacity: SEGMENT_OPACITY,
+                }}
+                data-bar-segment="away"
+              />
+            )}
             <div
-              className="h-full transition-all rounded-l-full"
-              style={{
-                width: `${Math.round(barAwayProb * 100)}%`,
-                backgroundColor: barPair.away,
-                opacity: SEGMENT_OPACITY,
-              }}
-              data-bar-segment="away"
-            />
-            <div
-              className="h-full transition-all rounded-r-full"
+              className={`h-full transition-all ${awayWithheld ? "rounded-full" : "rounded-r-full"}`}
               style={{
                 width: `${Math.round(barHomeProb * 100)}%`,
                 backgroundColor: barPair.home,

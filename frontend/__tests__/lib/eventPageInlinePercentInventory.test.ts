@@ -49,8 +49,14 @@ const PERMITTED: Record<string, { count: number; because: string }> = {
     because: "bar width only; the label is formatProbability",
   },
   "components/event/MatchupDuel.tsx": {
-    count: 1,
-    because: "split-bar width, and it is a `h / total` ratio, not a served probability",
+    count: 2,
+    because:
+      "split-bar width, in BOTH of its arms. #6238 gave the bar a second arm: " +
+      "on a draw-priced sport the away side is withheld, so there is no pair to " +
+      "take a share of and the home segment is its own probability rather than " +
+      "`h / total` (renormalising a withheld pair paints a full-width bar). " +
+      "Neither arm is a printed label — the numbers a reader sees still go " +
+      "through formatProbability in TeamRow",
   },
   "components/event/MatchupsRail.tsx": {
     count: 1,

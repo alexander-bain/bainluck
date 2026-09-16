@@ -89,9 +89,9 @@ function MatchupCard({ child, dim }: { child: EventConceptChild; dim?: boolean }
 /** Render one child in the rail: a soccer team duel (crest + score + win prob) or
  *  the combat/golf outcome card. `dim` is passed to the combat card for the
  *  completed group; MatchupDuel handles its own settled treatment internally. */
-function RailChild({ child, index, dim }: { child: EventConceptChild; index: number; dim?: boolean }) {
+function RailChild({ child, index, dim, sport }: { child: EventConceptChild; index: number; dim?: boolean; sport?: string | null }) {
   if (isMatchupChild(child)) {
-    return <MatchupDuel child={child} />;
+    return <MatchupDuel child={child} sport={sport} />;
   }
   return <MatchupCard child={child} dim={dim} />;
 }
@@ -108,10 +108,13 @@ function RailBody({
   items,
   dim,
   className,
+  sport,
 }: {
   items: EventConceptChild[];
   dim?: boolean;
   className?: string;
+  /** #6238 — the container's domain, forwarded to the duel card. */
+  sport?: string | null;
 }) {
   const groups = groupMatchupsByFamily(items);
   const extra = className ? ` ${className}` : "";
@@ -120,7 +123,7 @@ function RailBody({
     return (
       <div className={`${GRID_CLASS}${extra}`}>
         {items.map((child, i) => (
-          <RailChild key={childReactKey(child, i)} child={child} index={i} dim={dim} />
+          <RailChild key={childReactKey(child, i)} child={child} index={i} dim={dim} sport={sport} />
         ))}
       </div>
     );
@@ -146,7 +149,7 @@ function RailBody({
           </summary>
           <div className={`${GRID_CLASS} mt-2 mb-1`}>
             {g.items.map((child, i) => (
-              <RailChild key={childReactKey(child, i)} child={child} index={i} dim={dim} />
+              <RailChild key={childReactKey(child, i)} child={child} index={i} dim={dim} sport={sport} />
             ))}
           </div>
         </details>
@@ -162,9 +165,12 @@ interface MatchupsRailProps {
   exclude?: EventConceptChild | null;
   /** Optional section heading override (soccer reads "Matches", not "Matchups"). */
   title?: string;
+  /** #6238 — the container's domain, so a soccer duel can withhold the away
+   *  number instead of printing the home side's complement. See `MatchupDuel`. */
+  sport?: string | null;
 }
 
-export default function MatchupsRail({ items, exclude, title }: MatchupsRailProps) {
+export default function MatchupsRail({ items, exclude, title, sport }: MatchupsRailProps) {
   const shown = (items || []).filter((c) => c !== exclude);
   if (shown.length === 0) return null;
   const { live, settled } = splitChildren(shown);
@@ -176,7 +182,7 @@ export default function MatchupsRail({ items, exclude, title }: MatchupsRailProp
           grid so wide viewports don't hide bouts behind a scroll gutter. #1602:
           above MATCHUP_GROUPING_THRESHOLD that grid becomes collapsed family
           groups instead of one 52,000px wall. */}
-      {live.length > 0 && <RailBody items={live} />}
+      {live.length > 0 && <RailBody items={live} sport={sport} />}
       {settled.length > 0 && (
         <details className="mt-4">
           <summary className="text-xs font-semibold uppercase tracking-wide text-text-muted cursor-pointer">
@@ -185,7 +191,7 @@ export default function MatchupsRail({ items, exclude, title }: MatchupsRailProp
           {/* The settled tail costs no height while collapsed, but on this page it
               is 744 cards — opening it would be the identical wall one click in,
               so it groups by the same rule. */}
-          <RailBody items={settled} dim className="mt-2" />
+          <RailBody items={settled} dim className="mt-2" sport={sport} />
         </details>
       )}
       {live.length === 0 && settled.length === 0 && (
