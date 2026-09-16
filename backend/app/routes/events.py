@@ -134,6 +134,7 @@ from app.utils.blank_event_cards import not_a_blank_card
 from app.utils.feed_market_quality import has_no_real_price, is_empty_book_midpoint
 from app.utils.proven_duplicates import (
     FoldedBlendView,
+    canonical_id_from_tags,
     folded_card_numbers_batch,
     folded_probability_sources_batch,
     ghost_names_canonical,
@@ -12233,6 +12234,57 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
 
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+
+    # ── #2263: a PROVEN duplicate reads as the row it duplicates ─────────────
+    #
+    # The arm below infers the correspondence; this one is simply TOLD. When
+    # `reconcile_shared_fixture_ids` proves two rows are one contest — both
+    # already carrying the same StatPal fixture id, ruling 048 arm B — it writes
+    # `provenance:duplicate-of:<canonical>` on the row it did not elect, and
+    # every LIST surface has consumed that tag since #2263. This route never
+    # did, for a structural reason rather than an oversight: `where()` needs a
+    # list to filter, and a detail page has exactly one row, so the predicate
+    # the rails use would answer "do not print this" and leave a 404 for a game
+    # that exists.
+    #
+    # What the reader got instead, measured on production 2026-09-16 05:33Z:
+    # `/api/events/15308290` served `suspended`, no score, for a Cardinals-Giants
+    # game that had finished 3-10 three hours earlier on 15312656 — the id its
+    # own tag names. The ghost is not a transient. It was minted 2026-09-09,
+    # five days BEFORE its canonical twin, and its state has been a lie ever
+    # since; 255 of the 258 tagged rows sitewide are past-dated the same way.
+    # The hourly reconciler is doing its job and cannot fix this, because the
+    # row is correctly tagged — it is only the reading of the tag that is
+    # missing here.
+    #
+    # Two reader paths reach it and both end at this route: a shared or
+    # bookmarked link, and a market card — 1,766 markets hang off 188 tagged
+    # ghosts. (Not a search engine: `frontend/app/sitemap.ts` excludes per-event
+    # URLs.) So one swap here closes both.
+    #
+    # FIRST, and not merely for speed: this arm is the stronger evidence. It
+    # rests on a written proof rather than on a contradiction reconstructed from
+    # anchors, and it costs no query on the miss — the tag is already on the row
+    # in hand, so a clean event pays one `startswith` scan of its own tag list.
+    # The arm below is left exactly as it is: its gate excludes `statpal`,
+    # `odds_api` and `espn` rows (39 of the 258) from even being asked about,
+    # which is why the specimen above fell through it untouched.
+    canonical_id = canonical_id_from_tags(getattr(event, "event_tags", None))
+    if canonical_id is not None and canonical_id != event_id:
+        canonical = (
+            await db.execute(
+                select(Event)
+                .options(selectinload(Event.sport))
+                .where(Event.id == canonical_id)
+            )
+        ).scalar_one_or_none()
+        # Same refusal as the arm below, for the same reason: a tag naming a row
+        # that has since been deleted must not 404 a row the caller can see.
+        # 258 of 258 targets resolved on production, so this is a guard against
+        # a future race, not against today's data.
+        if canonical is not None:
+            event = canonical
+            event_id = canonical_id
 
     # ── Q050: a market-born duplicate reads as the row it duplicates ──────────
     #
