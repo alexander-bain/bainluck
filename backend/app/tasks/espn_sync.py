@@ -3325,6 +3325,85 @@ def _apply_final_pm_win_prob(wp_sources: dict | None, resolved_home: float) -> d
 #: added here is judged, and a status not here is never touched.
 FUTURE_SETTLED_STATUSES = ("completed", "closed", "suspended")
 
+#: The statuses in which a tennis row's score is a claim about a FINISHED match,
+#: and so the only ones the illegal-score withdrawal below is allowed to reach.
+#:
+#: MOVED to :mod:`app.utils.espn_tennis_anchor` by CERT-2958 and deliberately
+#: NOT re-exported here. It began beside the withdrawal arm because that was its
+#: only reader; the Odds API score writer is now a second one, so the tuple
+#: belongs beside the rule it qualifies rather than inside one of the two tasks
+#: that ask it. There is no module-scope import standing in for it because the
+#: anchor rail pulls :mod:`app.services.espn_tennis` in behind it — the same
+#: reason :func:`settled_tennis_score_is_impossible` is imported inside the
+#: function that uses it, a few hundred lines down. Readers import it from the
+#: anchor; the two call sites in this module do it in-function.
+
+#: How many illegal tennis scores one 60-second pass may withdraw. The measured
+#: standing population is 26 (production 2026-09-16), so the first pass clears it
+#: whole and every later pass sees the arrivals alone. The cap is not throughput
+#: management — it is the blast-radius bound on a rule that nulls a column, and
+#: saturating it means the population is not the one this arm was measured
+#: against, which is why it is logged as a finding rather than silently retried.
+MAX_ILLEGAL_TENNIS_SCORES_PER_PASS = 200
+
+
+def illegal_settled_tennis_score_recall():
+    """The FETCH half of #2772's withdrawal — every row it could possibly act on.
+
+    A named function rather than an inline ``select`` because a fetch and a
+    judgment that disagree is the failure this arm is most exposed to, and the
+    only way to prove they agree is to be able to run the fetch against a real
+    Postgres on rows whose verdict is already known — see
+    ``tests/integration/test_illegal_settled_tennis_score_recall_2772_pg.py``.
+    The judgment itself is
+    :func:`~app.utils.espn_tennis_anchor.settled_tennis_score_is_impossible`
+    and it is re-applied to every row this returns; nothing is withdrawn on the
+    strength of the SQL alone.
+
+    THE RECALL READS THE SAME CONSTANT THE JUDGMENT READS
+    (:data:`~app.utils.espn_tennis_anchor.COMPLETED_WINNER_SET_COUNTS`), which
+    is #4114's lesson applied before it can bite: two spellings of one rule
+    drift, and the half that drifts silently is always the recall, because a
+    row it never returns cannot fail a test about the judgment.
+
+    It is a selective query rather than "every settled tennis row decided in
+    Python" for one measured reason: there are 720 settled tennis rows carrying
+    a score and 26 of them are illegal, so the Python-side form would re-walk
+    694 correct rows every 60 seconds forever. Measured on production
+    2026-09-16 with ``EXPLAIN (ANALYZE)``: **116.6 ms**, 26 rows, a bitmap index
+    scan on ``ix_events_sport_id`` — and once the standing population is cleared
+    the same query returns nothing for the same cost.
+    """
+    from app.utils.espn_tennis_anchor import (
+        COMPLETED_WINNER_SET_COUNTS,
+        TENNIS_STATUSES_CLAIMING_A_RESULT,
+    )
+
+    return (
+        select(Event)
+        .join(Sport, Event.sport_id == Sport.id)
+        .where(
+            Sport.key.like("tennis%"),
+            Event.status.in_(TENNIS_STATUSES_CLAIMING_A_RESULT),
+            Event.home_score.isnot(None),
+            Event.away_score.isnot(None),
+            ~and_(
+                func.greatest(Event.home_score, Event.away_score).in_(
+                    COMPLETED_WINNER_SET_COUNTS
+                ),
+                Event.home_score != Event.away_score,
+            ),
+        )
+        # A capped SELECT with no ORDER BY hands back a different page every
+        # pass, so a saturated one would be unreproducible exactly when it
+        # matters. Ordered by the primary key rather than by age because the cap
+        # is 200 against a measured 26: at one page a minute no plausible
+        # backlog survives long enough for an age order to matter, and
+        # determinism is the whole benefit on offer.
+        .order_by(Event.id)
+        .limit(MAX_ILLEGAL_TENNIS_SCORES_PER_PASS)
+    )
+
 
 def _is_bogus_future_settled(status, commence_time, home_score, away_score, now) -> bool:
     """Invariant guard (gotcha #32/#46): a SETTLED event cannot start in the
@@ -3958,6 +4037,87 @@ async def _transition_event_statuses_impl() -> dict:
                 event.away_score = None
                 stats["unsettled_future_commence"] += 1
 
+        # --- Repair: a SETTLED TENNIS row holding a score no completed match
+        #     could end on → withdraw the SCORE, keep the settlement (#2772) ---
+        #
+        # 26 rows on production say a tennis match finished 0-0, 1-0, 1-1 or 0-1
+        # — `Iga Swiatek 0 - 0 Elena Rybakina` sits in `/api/events/search
+        # ?q=Swiatek` among seven correctly-scored neighbours. A settled 0-0 is
+        # worse than a blank: a blank says "we don't know", a 0-0 says "we know,
+        # and it was nil-all".
+        #
+        # 🔴 WHAT THE READER LOSES, SAID HERE RATHER THAN DISCOVERED LATER. The
+        # event hero's settled treatment asks its authorities in order and rung
+        # 1 is `home_score > away_score` (`frontend/lib/eventOutcome.ts`, #2443),
+        # so on the 11 rows carrying `1-0`/`0-1` this withdrawal takes the WON
+        # badge with the number. `/events/15187830` today reads "Zhang 1 —
+        # Ostapenko 0, FINAL, WON, Zhang 100%" on a page that says in its own
+        # words "the scoreboard reports sets"; after this it falls through to
+        # rung 2 (the tournament container) or to a bare Final. That is
+        # deliberate and it is not a new judgement: `authority_score` already
+        # REFUSES to write a decided `1-0`, because ESPN awards an abandoned set
+        # to nobody and the count can name the LOSER as ahead — five of the six
+        # retirements on the 2026-09-03 board. A verdict derived from a count
+        # the authority will not state is a verdict we cannot stand behind, and
+        # the inverted-winner defect (gotcha #21) is the one this trade buys off.
+        #
+        # RESIDUAL, NOT FIXED HERE: `backfill_winners` grades moneyline markets
+        # off the same column and skips only TIES, so those 11 rows have already
+        # written 289 `is_winner` grades from a frozen partial score (measured
+        # 2026-09-16 over 9 rows carrying markets). This arm stops the class
+        # recurring; it does not un-grade what is written. Recorded on #2772.
+        #
+        # THE SCORE IS WITHDRAWN AND THE SETTLEMENT IS NOT, which is the one
+        # decision in this arm that could have gone the other way. The two
+        # repairs above un-settle, and both may: one is bounded to the last 12
+        # hours, the other to rows dated in the FUTURE — in each case the match
+        # has not been played and "scheduled" is the truth. These have. The
+        # oldest is 43 days old and every one of them finished weeks ago, so
+        # sending them back to `scheduled` would replace a wrong score with a
+        # wrong STATE, and the state is the louder lie (a match five weeks past
+        # reading "upcoming" on the reader's shelf). What we actually lack is
+        # the score, and the honest rendering of a score we lack is no score.
+        #
+        # NOT SCOPED TO THE UNANCHORED ROWS even though all 26 are unanchored.
+        # The invariant is a property of the SCORE, not of how the row was
+        # written, and keying on `espn_id IS NULL` would be keying on today's
+        # cause — the same mistake lane1b/287 names: key on the invariant, not
+        # on the clear. An anchored row cannot reach this state today because
+        # `authority_score` refuses first; if one ever does, it is the same lie.
+        # Imported here rather than at module scope for the same reason
+        # `_settle_authority_stragglers` does it: this module reaches the tennis
+        # anchor rail from inside functions only, and the rail pulls the ESPN
+        # tennis service in behind it.
+        from app.utils.espn_tennis_anchor import settled_tennis_score_is_impossible
+
+        stats["withdrew_illegal_tennis_score"] = 0
+        _illegal_tennis = await session.execute(illegal_settled_tennis_score_recall())
+        _illegal_rows = _illegal_tennis.scalars().all()
+        for event in _illegal_rows:
+            if not settled_tennis_score_is_impossible(
+                home_score=event.home_score, away_score=event.away_score
+            ):
+                continue
+            logger.info(
+                "#2772 withdrawing an illegal settled tennis score: event %s "
+                "(%s vs %s) is %s holding %s-%s, which no completed tennis "
+                "match could end on. Score cleared; status and completed_at "
+                "left alone — the match finished, we just cannot say how.",
+                event.id, event.home_team_name, event.away_team_name,
+                event.status, event.home_score, event.away_score,
+            )
+            event.home_score = None
+            event.away_score = None
+            stats["withdrew_illegal_tennis_score"] += 1
+        if len(_illegal_rows) >= MAX_ILLEGAL_TENNIS_SCORES_PER_PASS:
+            logger.warning(
+                "#2772 illegal-tennis-score withdrawal SATURATED its per-pass "
+                "cap of %d. The measured standing population was 26; a full "
+                "page means either a backlog this arm has never seen or a "
+                "writer producing them faster than one a minute.",
+                MAX_ILLEGAL_TENNIS_SCORES_PER_PASS,
+            )
+
         # `held_derived_start` is in the trigger and in the message: a guard that
         # declines silently reads as "there was nothing to do", and this one
         # holds ~40 rows a night on its own. Same reason `detect_and_close_stale_
@@ -3967,16 +4127,19 @@ async def _transition_event_statuses_impl() -> dict:
                 or stats["repaired_bogus_completed"] > 0
                 or stats["unsettled_future_commence"] > 0
                 or stats["held_derived_start"] > 0
+                or stats["withdrew_illegal_tennis_score"] > 0
                 or stats["unreachable_suspended_retired"] > 0):
             logger.info(
                 "Status transitions: %d scheduled→live, %d live→suspended, "
                 "%d suspended→live, %d repaired, %d un-settled-future-commence, "
+                "%d illegal tennis scores withdrawn, "
                 "%d held (derived start), %d held (still running), "
                 "%d suspended→%s (unreachable, budget %d)",
                 stats["scheduled_to_live"], stats["live_to_suspended"],
                 stats["suspended_to_live"],
                 stats["repaired_bogus_completed"],
                 stats["unsettled_future_commence"],
+                stats["withdrew_illegal_tennis_score"],
                 stats["held_derived_start"],
                 stats["held_still_running"],
                 stats["unreachable_suspended_retired"],

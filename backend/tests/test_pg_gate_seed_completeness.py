@@ -151,6 +151,31 @@ COVERED = (
     "test_stand_in_event_starts_real_postgres.py",
     "test_tennis_commence_predicate_real_postgres.py",
     "test_tennis_twin_sweep_pg.py",
+    # #2772. Seeds `sports` and 22 `events` by raw INSERT to prove the
+    # illegal-settled-tennis-score RECALL returns exactly the rows the judgment
+    # would withdraw — a fetch fails silently, so the id set is the assertion.
+    #
+    # It paid for BOTH of the shared-database hazards already written down in
+    # this file, and paid for them in CI rather than by reading them here first,
+    # which is the whole reason they are written down. Recorded again from the
+    # other end so the next author meets them in the order they bite:
+    #
+    #   1. `drop_all()` over a SUBSET raises `DependentObjectsStillExistError`
+    #      naming twelve foreign keys at `events` (the hazard
+    #      `test_live_blend_concurrent_stamp_pg.py` records). A fresh local
+    #      database cannot produce it. This gate creates with `checkfirst` and
+    #      drops nothing, ever, deleting only its own rows by id.
+    #   2. Any insert into `sports` that lets the sequence fire dies on
+    #      `sports_pkey`, and `ON CONFLICT (key)` does not save it — the
+    #      collision is on the PRIMARY key (the hazard
+    #      `test_folded_market_sport_net_6221_pg.py` records). This gate needs
+    #      three sports keys the shared database may or may not hold, so it
+    #      SELECTs first and names its own ids for the ones it creates.
+    #
+    # Both are now reproduced locally before pushing — a foreign dependent table
+    # with an FK at `events`, and a sequence left at 1 behind explicitly-idded
+    # rows for two of the keys this gate seeds.
+    "test_illegal_settled_tennis_score_recall_2772_pg.py",
     "test_typeahead_played_game_suppression_pg.py",
     "test_typeahead_final_seven_route_control_pg.py",
     # #5779. Seeds `sports` and `events` by raw INSERT, including rows whose

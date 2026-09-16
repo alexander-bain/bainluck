@@ -292,6 +292,7 @@ class _NetSession:
             suspended or [],    # suspended → live
             [],                 # bogus completed
             [],                 # future-settled
+            [],                 # illegal settled tennis score (#2772)
         ]
         self._snapshots = snapshots
         self.blend_updates = []

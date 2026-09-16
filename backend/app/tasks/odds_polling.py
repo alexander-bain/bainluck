@@ -1131,6 +1131,15 @@ async def _poll_all_odds():
         # an invisible refusal reads as "there was nothing to refuse" — and this
         # one doubles as the measurement of how often the two feeds were fighting.
         scores_deferred_to_authority = 0
+        # #2772 / CERT-2958: FINAL tennis scores this feed refused to write
+        # because no completed tennis match could have ended on them. Same rule
+        # as the counters above — an invisible refusal reads as "there was
+        # nothing to refuse", and this one is the only way to tell the guard
+        # holding from tennis simply being out of season. It is expected to sit
+        # at 0 for long stretches: the measured standing population is 26 rows
+        # and none has arrived since 2026-09-01, so a NON-zero reading is the
+        # interesting one and it names the writer that would have lied.
+        scores_refused_illegal_tennis_final = 0
         # #2368: score fetches the quota breaker refused. Same rule as the
         # `scores_refused_*` counters above — a guard whose refusals are
         # invisible is indistinguishable from a guard that is off, and this
@@ -1978,9 +1987,109 @@ async def _poll_all_odds():
                                 home_score is not None or away_score is not None
                             ):
                                 scores_deferred_to_authority += 1
-                            if home_score is not None and not _clockless_write_would_fight:
+
+                            # #2772 / CERT-2958: and this feed does not get to
+                            # state a FINAL tennis score no tennis match could
+                            # end on.
+                            #
+                            # `espn_sync` withdraws those scores once every 60
+                            # seconds, but this writer sets `status='completed'`
+                            # and the score in the SAME update (see the
+                            # `event_status` block above), every five minutes,
+                            # and the deferral immediately above it is
+                            # `status == "live" and bool(espn_id)` — which is
+                            # False for a completed row with or without an
+                            # anchor, and tennis rows have no anchor at all
+                            # (30,199 rows, zero `espn_id`). A cleanup racing an
+                            # unrefused writer is a race the READER loses: the
+                            # withdrawal only ever arrives second, so `0 - 0` on
+                            # a finished match is visible for up to a minute out
+                            # of every five. Refusing here is what makes the
+                            # withdrawal's guarantee hold continuously instead
+                            # of on average.
+                            #
+                            # THE EFFECTIVE STATUS, NOT THE COMPUTED ONE.
+                            # `event_status` is None whenever this pass is not
+                            # changing the status, and a row that is ALREADY
+                            # completed is exactly the row most at risk — it
+                            # would slip through a check that read the computed
+                            # value alone.
+                            #
+                            # AND THE EFFECTIVE SCORE PAIR, NOT THE PAYLOAD
+                            # (CERT-2963). The two writes below are INDEPENDENT
+                            # statements, so a payload carrying one side lands
+                            # on top of whatever the row already holds: stored
+                            # `2-0` plus an incoming `home=1` stores `1-0`,
+                            # which is impossible, while the payload alone reads
+                            # as "one side missing, not a claim". The stored
+                            # halves are handed over so the judgment is about
+                            # the pair the row will HOLD. `event_obj` is the
+                            # pre-write row — this task writes through Core, so
+                            # nothing has refreshed it.
+                            #
+                            # THE SCORE IS REFUSED AND THE STATUS IS NOT, the
+                            # same trade the withdrawal arm makes: a match that
+                            # finished, finished, and the honest rendering of a
+                            # score we cannot support is no score.
+                            #
+                            # Imported in-function, like every other reach into
+                            # the tennis anchor rail from a task module: the
+                            # rail pulls `app.services.espn_tennis` in behind
+                            # it.
+                            from app.utils.espn_tennis_anchor import (
+                                tennis_final_score_write_is_refused,
+                            )
+
+                            _illegal_tennis_final = (
+                                tennis_final_score_write_is_refused(
+                                    sport_key=sport_key,
+                                    event_status=(
+                                        event_status
+                                        if event_status is not None
+                                        else event_obj.status
+                                    ),
+                                    home_score=home_score,
+                                    away_score=away_score,
+                                    stored_home_score=event_obj.home_score,
+                                    stored_away_score=event_obj.away_score,
+                                )
+                            )
+                            if _illegal_tennis_final:
+                                scores_refused_illegal_tennis_final += 1
+                                logger.info(
+                                    "#2772 refusing an illegal tennis FINAL "
+                                    "score at the writer: event %s (%s vs %s) "
+                                    "would be %s holding %s-%s, which no "
+                                    "completed tennis match could end on "
+                                    "(payload %s-%s over stored %s-%s). "
+                                    "Score declined; status left alone.",
+                                    event_obj.id,
+                                    event_obj.home_team_name,
+                                    event_obj.away_team_name,
+                                    event_status or event_obj.status,
+                                    (
+                                        home_score
+                                        if home_score is not None
+                                        else event_obj.home_score
+                                    ),
+                                    (
+                                        away_score
+                                        if away_score is not None
+                                        else event_obj.away_score
+                                    ),
+                                    home_score,
+                                    away_score,
+                                    event_obj.home_score,
+                                    event_obj.away_score,
+                                )
+
+                            _skip_score_write = (
+                                _clockless_write_would_fight
+                                or _illegal_tennis_final
+                            )
+                            if home_score is not None and not _skip_score_write:
                                 update_values["home_score"] = home_score
-                            if away_score is not None and not _clockless_write_would_fight:
+                            if away_score is not None and not _skip_score_write:
                                 update_values["away_score"] = away_score
 
                             # Record score snapshot if scores changed.
@@ -1992,10 +2101,18 @@ async def _poll_all_odds():
                             # table the reversion was DIAGNOSED from, so a
                             # deferred write leaving a row here would poison the
                             # only record of who writes what.
+                            #
+                            # #2772 reads the same sentence: a REFUSED illegal
+                            # tennis final is a score this pass declined to
+                            # store, so it is declined here too. Both reasons
+                            # are carried by `_skip_score_write` rather than
+                            # re-listing them, so a third reason to decline
+                            # cannot reach the chart by being forgotten on this
+                            # line.
                             if (
                                 home_score is not None
                                 and away_score is not None
-                                and not _clockless_write_would_fight
+                                and not _skip_score_write
                             ):
                                 old_home = event_obj.home_score
                                 old_away = event_obj.away_score
@@ -2162,6 +2279,9 @@ async def _poll_all_odds():
             # games; zero on a night of college football means the guard is off,
             # not that the feeds agreed.
             "scores_deferred_to_authority": scores_deferred_to_authority,
+            "scores_refused_illegal_tennis_final": (
+                scores_refused_illegal_tennis_final
+            ),
             "scores_skipped_quota": scores_skipped_quota,
             "stat_model_from_poll": stat_model_from_poll,
             "events_closed": events_closed,

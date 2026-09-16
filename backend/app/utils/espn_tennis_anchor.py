@@ -766,6 +766,191 @@ SCORED_STATES = ("in_progress", "decided")
 #: nothing downstream doubts.
 COMPLETED_WINNER_SET_COUNTS = (2, 3)
 
+
+def settled_tennis_score_is_impossible(*, home_score: Any, away_score: Any) -> bool:
+    """Could a completed tennis match have ended on the set score OUR row holds?
+
+    The same legality rule :func:`authority_score` applies to an ESPN
+    competition, asked of a stored row instead — and it reads
+    :data:`COMPLETED_WINNER_SET_COUNTS`, the constant that rule is written
+    against, rather than restating ``(2, 3)`` a second time.  One rule, one
+    place to change it.
+
+    ═══ WHY IT IS THE SAME RULE ASKED TWICE ═══
+
+    :func:`authority_score` is the rule applied at the moment the AUTHORITY
+    speaks, and it works: measured on production 2026-09-16 over all 720 settled
+    tennis rows carrying a score, **0 of the 254 anchored rows hold an illegal
+    one**.  It has no reach at all to the rest.  The authority channel runs only
+    through an ``espn_id`` (#2772), so the three other writers that can put a
+    number in that column — the Odds API scores feed, the two staleness nets
+    that settle a row around whatever it was carrying — are judged by nothing.
+    All **26** illegal rows are unanchored, and they are unanchored 26 of 26.
+
+    ═══ WHAT COUNTS AS IMPOSSIBLE ═══
+
+    A completed match's score is SETS won.  The winner holds 2 or 3 and leads,
+    so a legal stored pair is exactly ``max in (2, 3)`` with the two unequal.
+    Measured over those same 720 rows, the split is clean::
+
+        LEGAL    0-2 197 · 2-0 159 · 1-2 109 · 2-1 104 · 3-0 34 · 1-3 22
+                 3-1 22 · 0-3 19 · 2-3 16 · 3-2 12            = 694
+        ILLEGAL  0-0 11 · 1-0 8 · 1-1 4 · 0-1 3                =  26
+
+    ``0-0`` is the headline and it is not the whole class.  ``1-0`` is a
+    mid-match score frozen by whichever poll happened last — the defect named
+    beside ``15293702`` in :func:`authority_score`'s own docstring — and ``1-1``
+    says a match both players led.  A reader cannot tell any of the four from a
+    result; each is a sentence we cannot support.
+
+    **The caller owes the status.**  This function judges a SCORE and knows
+    nothing about when it is entitled to.  ``1-0`` is exactly what a live second
+    set looks like and exactly what a suspended match truthfully holds, so a
+    caller that asks this question of anything but a row asserting a FINAL is
+    deleting true numbers — see the arm in
+    ``espn_sync._transition_event_statuses_impl`` and its
+    ``TENNIS_STATUSES_CLAIMING_A_RESULT``.
+
+    A missing half is not an illegal score — there is no claim to refute — so a
+    ``None`` on either side returns ``False`` rather than raising or guessing.
+    """
+    if home_score is None or away_score is None:
+        return False
+    try:
+        home = int(home_score)
+        away = int(away_score)
+    except (TypeError, ValueError):
+        # A non-numeric score is not a set count, so it is not a legal one
+        # either. Named rather than swallowed: the column is an integer and
+        # anything else arriving here is a finding of its own.
+        return True
+    if home < 0 or away < 0:
+        return True
+    return not (max(home, away) in COMPLETED_WINNER_SET_COUNTS and home != away)
+
+
+#: The statuses in which a tennis row's score is a claim about a FINISHED match,
+#: and so the only ones the illegal-score rule is allowed to reach.
+#:
+#: 🔴 ``suspended`` IS DELIBERATELY ABSENT, and it is the one entry whose absence
+#: has to be argued rather than assumed — `FUTURE_SETTLED_STATUSES` in
+#: ``espn_sync`` includes it and this does not. A suspended tennis match holding
+#: ``1-0`` is holding a TRUE partial score: CERT-752's six US Open matches were
+#: suspended mid-match at ``0-1, 2-1, 1-2, 0-0`` and ESPN had all six scheduled
+#: to resume that afternoon. Those numbers are the whole content of the "Live &
+#: Paused" card. A rule that judged them by the completed-match set counts would
+#: delete the score of every paused match on the site, which is the opposite
+#: ship. ``live`` and ``scheduled`` are absent for the same reason and need no
+#: argument.
+#:
+#: DEFINED HERE, NOT IN ``espn_sync``, since CERT-2958. It began beside the
+#: withdrawal arm because that was its only reader; the Odds API score writer is
+#: now a second one, and a constant that says WHICH STATUSES CLAIM A RESULT
+#: belongs beside the rule that judges the claim, not inside one of the two
+#: tasks that asks it. ``espn_sync`` imports it and re-exports it under its own
+#: name, so every existing reader and test still resolves.
+TENNIS_STATUSES_CLAIMING_A_RESULT = ("completed", "closed")
+
+
+def tennis_final_score_write_is_refused(
+    *,
+    sport_key: Any,
+    event_status: Any,
+    home_score: Any,
+    away_score: Any,
+    stored_home_score: Any = None,
+    stored_away_score: Any = None,
+) -> bool:
+    """May this writer leave THIS score on a tennis row asserting a FINAL?
+
+    CERT-2958, and the other half of #2772. The withdrawal arm in
+    ``espn_sync._transition_event_statuses_impl`` nulls an impossible settled
+    tennis score once every 60 seconds; the Odds API scores feed
+    (``odds_polling``) writes ``status='completed'`` and a score **in the same
+    update**, every five minutes, and its only deferral —
+    :func:`~app.utils.game_pairing.clockless_write_defers_to_authority` — is
+    ``status == "live" and bool(espn_id)``, so it returns ``False`` for a
+    completed row with or without an anchor. A cleanup and an unrefused writer
+    is a race the reader can lose: the lie is visible for up to a minute, every
+    five minutes, and the cleanup only ever arrives second.
+
+    So the same judgment is asked at the write boundary, and this is the
+    predicate that asks it. **The rule is not restated** — it reads
+    :func:`settled_tennis_score_is_impossible`, which reads
+    :data:`COMPLETED_WINNER_SET_COUNTS`. One rule, one place to change it, now
+    enforced at both ends.
+
+    ═══ WHY EACH CONDITION IS LOAD-BEARING ═══
+
+    * **Tennis only.** The set-count rule is a statement about tennis and
+      nothing else. ``0-0`` is an ordinary, true final in soccer — 634 settled
+      soccer rows hold one — so a rule that reached them would delete real
+      results. Keyed on the sport, not on how the row was written.
+    * **A FINAL only.** :func:`settled_tennis_score_is_impossible` judges a
+      SCORE and says in its own docstring that the caller owes the status.
+      ``1-0`` is exactly what a live second set looks like and exactly what a
+      suspended match truthfully holds, so this reads
+      :data:`TENNIS_STATUSES_CLAIMING_A_RESULT` — the same tuple the withdrawal
+      arm reads — rather than restating ``("completed", "closed")``.
+    * **The EFFECTIVE status, which is the caller's job to pass.** In
+      ``odds_polling`` the computed ``event_status`` is ``None`` whenever this
+      pass is not changing the status, and a row that is ALREADY ``completed``
+      would then slip through a check that only read the computed value. The
+      caller passes ``event_status or event_obj.status``.
+
+    Returning ``True`` means **decline the score half of this write**. It never
+    means decline the status: a match that finished, finished. The honest
+    rendering of a score we cannot support is no score — the same trade the
+    withdrawal arm makes, and the reason it leaves ``status`` and
+    ``completed_at`` alone.
+
+    ═══ IT JUDGES THE POST-WRITE PAIR, NOT THE PAYLOAD (CERT-2963) ═══
+
+    🔴 THE SECOND RACE, AND THE ONE THAT LOOKED CLOSED. The writer stores each
+    side INDEPENDENTLY — ``if home_score is not None`` and ``if away_score is
+    not None`` are two separate statements — so a payload carrying only one side
+    lands on top of whatever the row already holds. Asking this question of the
+    PAYLOAD therefore answers about a score that will never exist:
+
+        stored ``2-0`` (legal) + incoming ``home=1, away=None``
+            → payload judged: one side is None, so "not a claim", ALLOWED
+            → actually stored: ``1-0``, which this module's own rule calls
+              impossible.
+
+    So the pair judged is ``incoming if not None else stored``, on each side
+    independently — the value the row will HOLD once this write lands. Exactly
+    the same correction as the effective-status one above, applied to the
+    column instead of the state.
+
+    This is also why a one-sided write is not simply refused. A legal
+    correction arrives in precisely that shape: stored ``2-0`` plus an incoming
+    ``away=1`` is the true final ``2-1`` and must go through, and a one-sided
+    write onto a row whose other half is still NULL leaves a half-claim the
+    withdrawal arm deliberately ignores (its recall requires both sides
+    non-null). Refusing the shape rather than the RESULT would delete real
+    results to stop a defect the result test already stops.
+
+    A write carrying neither side is not a write, so it is never refused — it
+    would otherwise count a refusal on a pass that touched nothing, and the
+    counter is the only way to tell this guard holding from tennis being out of
+    season.
+
+    A ``None`` surviving on either side of the effective pair is not a claim and
+    cannot be refused; that falls out of
+    :func:`settled_tennis_score_is_impossible` returning ``False``.
+    """
+    if home_score is None and away_score is None:
+        return False
+    if not str(sport_key or "").startswith("tennis"):
+        return False
+    if event_status not in TENNIS_STATUSES_CLAIMING_A_RESULT:
+        return False
+    return settled_tennis_score_is_impossible(
+        home_score=home_score if home_score is not None else stored_home_score,
+        away_score=away_score if away_score is not None else stored_away_score,
+    )
+
+
 #: The four tournaments whose men's singles main draw is played over five sets,
 #: as :func:`board_tournaments` tokens.  Roland Garros is carried under both of
 #: the names ESPN has used for it.
