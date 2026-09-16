@@ -6,6 +6,9 @@ non-family -> None), entity extraction, group_prop_families requiring
 labelling (bug b).
 """
 
+import json
+from pathlib import Path
+
 from app.utils.prop_families import (
     family_key,
     extract_entity,
@@ -390,3 +393,290 @@ class TestEntityIsTheSubject6622:
         # won, the coherent field wins, not whichever source came first.
         assert brown[0]["probability"] == 1.0
         assert families[0]["entity_count"] == 2
+
+
+# ---------------------------------------------------------------------------
+# #6630 — the venue writes the league as a PHRASE, and a family key is
+# sport-scoped
+# ---------------------------------------------------------------------------
+
+
+def _award_market(mid, name, source, candidates, sport="basketball", status="open"):
+    return {
+        "market_id": mid,
+        "name": name,
+        "source": source,
+        "group_id": None,
+        "status": status,
+        "sport": sport,
+        "outcomes": [
+            {"outcome_id": mid * 100 + i, "name": who, "probability": prob}
+            for i, (who, prob) in enumerate(candidates)
+        ],
+    }
+
+
+class TestLeaguePhrasePrefix6630:
+    """Kalshi writes "Pro Basketball", not "NBA" — two tokens, so the
+    single-token noise set could never pop it and the award split in two."""
+
+    def test_the_celtics_sixth_man_pair_is_one_family(self):
+        # The reader-visible defect: production markets 409 ("Sixth Man of
+        # the Year Winner") and 58015765 ("Pro Basketball Sixth Man of the
+        # Year Winner"), both Kalshi, both basketball, stacked as two cards
+        # for one award on the Celtics page.
+        assert (
+            family_key("Pro Basketball Sixth Man of the Year Winner")
+            == family_key("Sixth Man of the Year Winner")
+            == "sixth man of the year"
+        )
+
+    def test_every_league_phrase_pairs_with_its_bare_award(self):
+        # The guard for the CLASS, not for the four titles that were live:
+        # one pair per league phrase in the venue's vocabulary, so a new
+        # sport's awards cannot re-open this.
+        for phrase in ("Pro Basketball", "Pro Football", "Pro Baseball", "Pro Hockey"):
+            for award in (
+                "Rookie of the Year",
+                "Coach of the Year",
+                "Defensive Player of the Year",
+                "Sixth Man of the Year",
+            ):
+                assert family_key(f"{phrase} {award}") == family_key(award), (
+                    f"{phrase} {award}"
+                )
+
+    def test_the_phrase_is_noise_only_at_the_front(self):
+        # Negative control. "Pro Patria" is a real Italian CLUB with 8 live
+        # rows, and a name can contain a league word — neither is a prefix,
+        # so neither is stripped.
+        assert family_key("Pro Patria Player of the Year") == (
+            "pro patria player of the year"
+        )
+        assert family_key("PLL: 2026 Dave Pietramala Defensive Player of the Year") == (
+            "dave pietramala defensive player of the year"
+        )
+
+    def test_the_womens_award_keeps_its_own_family(self):
+        # 🔴 The control that matters most. Both the men's and women's
+        # markets carry llm_sport_category='basketball', so the sport scope
+        # CANNOT separate them — only the leading-anchored strip does, by
+        # stopping at the "s" that the apostrophe leaves behind. If this ever
+        # goes green-by-merging, the WNBA and NBA races share one card.
+        mens = family_key("Pro Basketball Defensive Player of the Year Winner")
+        womens = family_key("Women's Pro Basketball Defensive Player of the Year Winner")
+        assert mens == "defensive player of the year"
+        assert womens != mens
+
+    def test_the_spelled_out_award_is_family_shaped(self):
+        # Production: "MLS: 2026 Most Valuable Player", "WBC: Most Valuable
+        # Player" and "PLL: 2026 Jim Brown Most Valuable Player" were not
+        # family-shaped at all, so their candidates never grouped.
+        assert family_key("Most Valuable Player") == "mvp"
+        assert family_key("MLS: 2026 Most Valuable Player") == "mvp"
+        assert family_key("WBC: Most Valuable Player") == "mvp"
+        assert family_key("PLL: 2026 Jim Brown Most Valuable Player") == "mvp"
+        assert family_key("Pro Football Most Valuable Player") == "mvp"
+
+    def test_the_non_award_pro_namespace_is_untouched(self):
+        # The 500+ "Pro X" rows that are NOT awards. _strip_noise_prefix is
+        # reached only from the "of the year" arm, so none of these can move.
+        for title in (
+            "Pro Baseball: 105+ MPH Pitch",
+            "Pro Baseball #1 Overall Pick",
+            "Pro Baseball: 30/30 Season",
+            "Pro Football: 2026-27 Regular Season Start Date",
+        ):
+            assert family_key(title) is None, title
+
+
+class TestSportScopedFamilies6630:
+    """A family key is the QUESTION SHAPE and carries no sport, so two
+    sports' awards land on it. Production has six live markets keyed
+    `defensive player of the year` across basketball, football and the WNBA."""
+
+    def test_two_sports_do_not_share_one_family(self):
+        # Kalshi 415 ("Defensive Player of the Year Winner", basketball) and
+        # 53663 ("Defensive Player of the Year Winner?", football) key
+        # identically. Merged, one card would mix an NBA and an NFL race.
+        markets = [
+            _award_market(415, "Defensive Player of the Year Winner", "kalshi",
+                          [("Jaylen Brown", 0.2), ("Derrick White", 0.1)],
+                          sport="basketball"),
+            _award_market(53663, "Defensive Player of the Year Winner?", "kalshi",
+                          [("Micah Parsons", 0.3), ("Myles Garrett", 0.25)],
+                          sport="football"),
+        ]
+        families = group_prop_families(markets)
+        assert len(families) == 2
+        assert {f["sport"] for f in families} == {"basketball", "football"}
+        # Same award, so the same reader-facing label; the KEY disambiguates,
+        # because the page uses it as its React key and must not collide.
+        assert {f["label"] for f in families} == {"Defensive Player Of The Year"}
+        assert len({f["family_key"] for f in families}) == 2
+        by_sport = {f["sport"]: f for f in families}
+        assert {r["entity"] for r in by_sport["basketball"]["rows"]} == {
+            "Jaylen Brown", "Derrick White",
+        }
+        assert {r["entity"] for r in by_sport["football"]["rows"]} == {
+            "Micah Parsons", "Myles Garrett",
+        }
+
+    def test_one_sport_emits_the_bare_key_exactly_as_before(self):
+        # The no-op case, which is every family on a team page. The scope may
+        # not change the served key when there is nothing to disambiguate.
+        markets = [
+            _award_market(409, "Sixth Man of the Year Winner", "kalshi",
+                          [("Payton Pritchard", 0.4), ("Sam Hauser", 0.01)]),
+            _award_market(58015765, "Pro Basketball Sixth Man of the Year Winner",
+                          "kalshi", [("Payton Pritchard", 0.38), ("Luke Kornet", 0.05)]),
+        ]
+        families = group_prop_families(markets)
+        assert len(families) == 1
+        assert families[0]["family_key"] == "sixth man of the year"
+        assert families[0]["sport"] == "basketball"
+        # Both venues' rows are in the one card, and the player named twice
+        # is one row, not two.
+        assert {r["entity"] for r in families[0]["rows"]} == {
+            "Payton Pritchard", "Sam Hauser", "Luke Kornet",
+        }
+
+    def test_a_missing_sport_never_splits_a_family(self):
+        # llm_sport_category is null on 793 of 541,777 served rows (0.15%).
+        # An unconditional (sport, key) tuple would split every family that
+        # straddled one of those nulls — this bug's mirror image.
+        markets = [
+            _award_market(409, "Sixth Man of the Year Winner", "kalshi",
+                          [("Payton Pritchard", 0.4)], sport=None),
+            _award_market(113146, "NBA Sixth Man of the Year Winner", "polymarket",
+                          [("Sam Hauser", 0.02)], sport="basketball"),
+        ]
+        families = group_prop_families(markets)
+        assert len(families) == 1
+        assert families[0]["family_key"] == "sixth man of the year"
+
+    def test_the_route_field_name_is_read(self):
+        # The route serves the column as `sport`; `llm_sport_category` is the
+        # fallback so a caller passing the raw row is scoped too.
+        markets = [
+            {**_award_market(1, "Rookie of the Year", "kalshi",
+                             [("A", 0.3), ("B", 0.2)], sport=None),
+             "llm_sport_category": "baseball"},
+            _award_market(2, "Rookie of the Year", "kalshi",
+                          [("C", 0.3), ("D", 0.2)], sport="hockey"),
+        ]
+        families = group_prop_families(markets)
+        assert {f["sport"] for f in families} == {"baseball", "hockey"}
+
+
+class TestKeyStabilityOverProduction6630:
+    """The control the fix is actually gated on.
+
+    The four titles in the issue cannot see the population this touches. So:
+    score EVERY distinct production title the change could reach and assert
+    that the only keys that moved are the ones named below.
+
+    The fixture is the BEFORE, captured from master (9a07bf9cb) on
+    2026-09-16 while the defect was live, and is never refreshed — a snapshot
+    taken from the fixed tree contains no defect to guard.
+    """
+
+    #: The whole intended effect of #6630, title -> new key. Everything else
+    #: in the fixture must key exactly as it did before.
+    MOVED = {
+        "Pro Basketball Coach of the Year Winner": "coach of the year",
+        "Pro Basketball Defensive Player of the Year Winner": (
+            "defensive player of the year"
+        ),
+        "Pro Basketball Rookie of the Year Winner": "rookie of the year",
+        "Pro Basketball Sixth Man of the Year Winner": "sixth man of the year",
+        "MLS: 2026 Most Valuable Player": "mvp",
+        "PLL: 2026 Jim Brown Most Valuable Player": "mvp",
+        # Verbatim from production, trailing space and all — the corpus is
+        # the venue's bytes, not a tidied copy of them.
+        "WBC: Most Valuable Player ": "mvp",
+    }
+
+    @staticmethod
+    def _fixture():
+        path = (
+            Path(__file__).parent
+            / "fixtures"
+            / "prop_family_keys_before_6630.json"
+        )
+        return json.loads(path.read_text())["keys"]
+
+    def test_the_fixture_still_covers_the_populations_it_claims(self):
+        # A control over a corpus is worth what the corpus is worth. If the
+        # file is ever trimmed, the "nothing else moved" assertion below goes
+        # quietly vacuous, so size and reach are asserted first.
+        keys = self._fixture()
+        assert len(keys) == 725
+        assert sum(1 for t in keys if t.lower().startswith("pro ")) >= 500
+        assert sum(1 for t in keys if "of the year" in t.lower()) >= 200
+        assert set(self.MOVED) <= set(keys)
+
+    def test_only_the_named_titles_changed_key(self):
+        keys = self._fixture()
+        moved, drifted = [], []
+        for title, before in keys.items():
+            now = family_key(title)
+            if title in self.MOVED:
+                if now != self.MOVED[title]:
+                    moved.append((title, before, now))
+            elif now != before:
+                drifted.append((title, before, now))
+        assert not drifted, f"{len(drifted)} title(s) re-keyed unintentionally: {drifted[:10]}"
+        assert not moved, f"intended fold did not land: {moved}"
+
+    def test_the_control_can_fail(self):
+        # Strawman: the fixture holds the pre-fix keys, so the four folded
+        # titles MUST disagree with it. If they did not, the corpus would be
+        # an AFTER snapshot and would prove nothing.
+        keys = self._fixture()
+        stale = [t for t in self.MOVED if keys[t] == self.MOVED[t]]
+        assert not stale, f"fixture already carries the fixed key for {stale}"
+
+
+class TestTheScopeReachesTheGrouper6630:
+    """The route is the only caller, so the scope is only real if it
+    survives the trip from the column to `group_prop_families`."""
+
+    def test_the_scope_column_exists_on_the_model(self):
+        # The route reads the column through `getattr(..., None)` so a test
+        # double without it degrades instead of 500-ing. That default is only
+        # safe while the column is really there — if it is ever renamed, the
+        # scope silently becomes None for every row and this bug returns
+        # without a single test going red. This is that test.
+        from app.models.models import FuturesMarket
+
+        assert hasattr(FuturesMarket, "llm_sport_category")
+
+    def test_the_route_puts_the_scope_in_the_market_dict(self):
+        # Reads the source rather than standing a route up: the assertion is
+        # that the key the grouper looks for is the key the route writes.
+        import inspect
+
+        from app.routes import prop_families as route
+
+        src = inspect.getsource(route)
+        assert '"sport": getattr(market, "llm_sport_category", None)' in src
+
+    def test_a_market_dict_without_a_sport_key_is_still_grouped(self):
+        # Every other caller and every older fixture passes no sport at all.
+        markets = [
+            {
+                "market_id": 1, "name": "LeBron James Next Team",
+                "source": "kalshi", "group_id": None, "status": "open",
+                "outcomes": [{"outcome_id": 1, "name": "Lakers", "probability": 0.6}],
+            },
+            {
+                "market_id": 2, "name": "Kevin Durant Next Team",
+                "source": "kalshi", "group_id": None, "status": "open",
+                "outcomes": [{"outcome_id": 2, "name": "Suns", "probability": 0.5}],
+            },
+        ]
+        families = group_prop_families(markets)
+        assert len(families) == 1
+        assert families[0]["family_key"] == "next team"
+        assert families[0]["sport"] is None

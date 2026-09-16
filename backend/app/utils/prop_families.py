@@ -66,6 +66,30 @@ _NOISE_PREFIX_TOKENS = {
     "2023", "2024", "2025", "2026", "2027", "2028", "2029", "2030",
 }
 
+# The same thing as ``_NOISE_PREFIX_TOKENS``, but for venues that write the
+# league as a PHRASE instead of an abbreviation.  Kalshi does not write "NBA" —
+# it writes "Pro Basketball", two tokens, so the single-token set above can
+# never pop it and "Pro Basketball Sixth Man of the Year" got its own family
+# beside the bare "Sixth Man of the Year" (#6630).
+#
+# MEASURED, not guessed: a census of ``futures_markets WHERE name ILIKE 'Pro %'``
+# returns exactly four leading heads — ``pro football`` (671), ``pro basketball``
+# (131), ``pro baseball`` (80) and ``pro patria`` (8, the Italian CLUB Pro
+# Patria, which is why this list is a closed enumeration and not a ``pro \w+``
+# pattern).  ``pro hockey`` is the venue's unlisted NHL analogue, carried here so
+# the next award season does not re-open this issue; it matches nothing today.
+#
+# Blast radius is one call site: :func:`_strip_noise_prefix` is reached ONLY
+# from the "... of the year" arm of :func:`_parse`, on the role span.  The 500+
+# non-award "Pro X" rows ("Pro Baseball: 105+ MPH Pitch", "Pro Baseball #1
+# Overall Pick") never reach it.
+_LEAGUE_PHRASE_PREFIXES: tuple[tuple[str, ...], ...] = (
+    ("pro", "basketball"),
+    ("pro", "football"),
+    ("pro", "baseball"),
+    ("pro", "hockey"),
+)
+
 # Standalone award keywords → canonical family key.  Longest / most specific
 # first so "cy young" is not shadowed by a broader match.
 _STANDALONE_AWARDS: list[tuple[str, str]] = [
@@ -82,6 +106,13 @@ _STANDALONE_AWARDS: list[tuple[str, str]] = [
     ("ballon d or", "ballon dor"),
     ("heisman", "heisman"),
     ("finals mvp", "finals mvp"),
+    # The award spelled out.  Without it "MLS: 2026 Most Valuable Player",
+    # "PLL: 2026 Jim Brown Most Valuable Player" and "WBC: Most Valuable
+    # Player" are not family-shaped AT ALL (#6630) — they key to None and
+    # their candidates never group.  Safe to fold onto "mvp" only because
+    # families are sport-scoped below: MLS is soccer, PLL lacrosse, WBC
+    # baseball, so this cannot merge a soccer MVP into a basketball one.
+    ("most valuable player", "mvp"),
     ("mvp", "mvp"),
     ("dpoy", "defensive player of the year"),
     ("roy", "rookie of the year"),
@@ -215,9 +246,35 @@ def _entity_span(cleaned: str, low: str, match: re.Match, group: str = "entity")
 
 
 def _strip_noise_prefix(text: str) -> str:
+    """Drop leading league/org/season noise from an award role span.
+
+    Single tokens ("NBA", "2026") and multi-token league phrases ("Pro
+    Basketball") both, interleaved, leading-anchored — a phrase is only noise
+    at the FRONT, so "Dave Pietramala Defensive Player" keeps its whole name.
+
+    🔴 The anchoring is load-bearing for the WNBA.  "Women's Pro Basketball
+    Defensive Player of the Year" reaches here as ``s pro basketball defensive
+    player`` — ``_OF_THE_YEAR_RE``'s role class excludes the apostrophe, so the
+    span starts mid-word at ``s``.  ``s`` is not noise, the loop stops on it,
+    and the women's award keeps a family of its own.  That is the CORRECT
+    outcome and nothing else preserves it: the men's and women's markets both
+    carry ``llm_sport_category='basketball'``, so the sport scope below cannot
+    tell them apart.  Do not "clean up" that apostrophe artefact without first
+    giving the scope a league discriminator — it is the only thing standing
+    between the WNBA and NBA races sharing one card.
+    """
     toks = text.split()
-    while toks and toks[0] in _NOISE_PREFIX_TOKENS:
-        toks.pop(0)
+    while toks:
+        if toks[0] in _NOISE_PREFIX_TOKENS:
+            toks.pop(0)
+            continue
+        phrase = next(
+            (p for p in _LEAGUE_PHRASE_PREFIXES if tuple(toks[: len(p)]) == p),
+            None,
+        )
+        if phrase is None:
+            break
+        del toks[: len(phrase)]
     return " ".join(toks)
 
 
@@ -616,6 +673,60 @@ def resolve_family_key(market: dict) -> str | None:
     return cached_family_key(market) or family_key(name)
 
 
+def family_scope(market: dict) -> str | None:
+    """The sport a market belongs to, or None when the venue never said.
+
+    The family key is the QUESTION SHAPE and is deliberately sport-free, so
+    two sports' awards land on it: production carries six live markets keyed
+    ``defensive player of the year`` across basketball, football and the WNBA.
+    This is the discriminator that keeps them apart — see
+    :func:`_scoped_buckets` for when it is allowed to bite.
+    """
+    for field in ("sport", "llm_sport_category"):
+        value = market.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower()
+    return None
+
+
+def _scoped_buckets(
+    fk: str, scoped_rows: list[tuple[str | None, dict]]
+) -> list[tuple[str, str | None, list[dict]]]:
+    """Split one family key's rows by sport — but only on a real disagreement.
+
+    Returns ``(emitted_key, scope, rows)`` per bucket.
+
+    A scope splits a family ONLY when two different sports are actually
+    present.  When a family is single-sport — or the venue named no sport at
+    all — this returns exactly one bucket carrying the BARE family key, so the
+    served payload is byte-for-byte what it was.  That matters twice over:
+    ``llm_sport_category`` is null on 793 of 541,777 served rows (0.15%), and
+    an unconditional ``(sport, fk)`` key would have split every family that
+    straddled one of those nulls into two cards — trading this bug for its
+    mirror image.  It also keeps the emitted key UNIQUE per family, which the
+    page relies on (``TeamPropFamilies.tsx`` uses it as its React key).
+
+    In the genuine multi-sport case the rows that named no sport cannot be
+    attributed to either side, so they stay their own bucket under the bare
+    key rather than being guessed into the larger one.
+    """
+    scopes: list[str] = []
+    for scope, _row in scoped_rows:
+        if scope and scope not in scopes:
+            scopes.append(scope)
+
+    if len(scopes) <= 1:
+        return [(fk, scopes[0] if scopes else None, [r for _s, r in scoped_rows])]
+
+    buckets: "OrderedDict[str | None, list[dict]]" = OrderedDict()
+    for scope, row in scoped_rows:
+        buckets.setdefault(scope, []).append(row)
+    return [
+        (fk if scope is None else f"{scope}:{fk}", scope, rows)
+        for scope, rows in buckets.items()
+    ]
+
+
 def group_prop_families(markets: list[dict]) -> list[dict]:
     """Group markets into prop families with per-entity rows.
 
@@ -640,18 +751,24 @@ def group_prop_families(markets: list[dict]) -> list[dict]:
     is not a family).  Cross-source duplicate entity rows are collapsed
     (bug a); settled rows are labelled settled, not live (bug b).
     """
-    families: "OrderedDict[str, list[dict]]" = OrderedDict()
+    families: "OrderedDict[str, list[tuple[str | None, dict]]]" = OrderedDict()
     for m in markets or []:
         if not isinstance(m, dict):
             continue
         fk = resolve_family_key(m)
         if not fk:
             continue
+        scope = family_scope(m)
         for row in _rows_for_market(m, fk):
-            families.setdefault(fk, []).append(row)
+            families.setdefault(fk, []).append((scope, row))
 
     result: list[dict] = []
-    for fk, rows in families.items():
+    buckets = [
+        (emitted_key, fk, scope, rows)
+        for fk, scoped_rows in families.items()
+        for emitted_key, scope, rows in _scoped_buckets(fk, scoped_rows)
+    ]
+    for emitted_key, fk, scope, rows in buckets:
         merged = _collapse_cross_source(rows)
         distinct = {r["entity_key"] for r in merged if r.get("entity_key")}
         if len(distinct) < 2:
@@ -670,8 +787,13 @@ def group_prop_families(markets: list[dict]) -> list[dict]:
 
         result.append(
             {
-                "family_key": fk,
+                # The emitted key carries the scope ONLY when a sport actually
+                # split this family, so it stays unique per card; the LABEL is
+                # always derived from the bare key, because a reader is owed
+                # "Defensive Player Of The Year", never "football:defensive…".
+                "family_key": emitted_key,
                 "label": _family_label(fk),
+                "sport": scope,
                 "entity_count": len(distinct),
                 "sources": sorted({s for r in merged for s in r.get("sources", [])}),
                 "rows": merged,
