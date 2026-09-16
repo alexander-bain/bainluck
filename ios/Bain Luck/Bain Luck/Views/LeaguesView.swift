@@ -164,13 +164,28 @@ struct LeaguesView: View {
                 color: .teal,
                 route: .calibration
             )
-            BrowseFeatureCard(
-                title: "Daily Challenge",
-                subtitle: "Five probability calls",
-                icon: "flame.fill",
-                color: .orange,
-                route: .dailyChallenge
-            )
+            // #6445 — the entry point that survived two sweeps of its own class.
+            // #6445 gated Discover's challenge card and resolution digest and My
+            // Stuff's summary; #6501 found the sign-in wall's perks and the
+            // "Stats" toolbar button. All five navigate `Route.predictionStats`,
+            // which is the one needle
+            // `PredictionsExperienceIsGatedEverywhere6501Tests` scans for, in the
+            // two views it reads. Browse's tile navigates `Route.dailyChallenge`
+            // from a third file, so that scan was blind to it twice over — and
+            // Alex found it on the phone on 16 September, a "Daily Challenge"
+            // card still promoting a screen the same binary had switched off.
+            //
+            // Gated, not deleted: `Route.dailyChallenge` stays reachable and
+            // flipping the flag restores this tile with the rest of the surface.
+            if ReleaseSurfaces.predictionsExperienceEnabled {
+                BrowseFeatureCard(
+                    title: "Daily Challenge",
+                    subtitle: "Five probability calls",
+                    icon: "flame.fill",
+                    color: .orange,
+                    route: .dailyChallenge
+                )
+            }
             BrowseFeatureCard(
                 title: "About Bain Luck",
                 subtitle: "Sources and methodology",
