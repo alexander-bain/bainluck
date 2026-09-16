@@ -106,20 +106,39 @@ def test_the_key_is_still_served_beside_the_name():
     assert data["sport_name"] == "NFL"
 
 
-def test_a_raw_row_serves_its_raw_name_rather_than_hiding_it():
-    """One of the 15.  The server has no word for these, and the payload says so
-    honestly instead of inventing one — the client's map owns that fallback.
+def test_a_raw_row_serves_a_derived_name_not_its_own_key():
+    """One of the 15 — AMENDED by #5657, because this file's premise changed.
 
-    Asserting the raw value rather than `None` is the point: a formatter that
-    "helpfully" nulled it would make the two cases indistinguishable on the wire,
-    and `getSportLabel` decides between them by comparing the name to the key.
+    As written for #4368 this arm asserted `sport_name == "mma_other"`, on the
+    reasoning that *"the server has no word for these"* and that nulling the
+    field would make the two cases indistinguishable on the wire.  The first
+    half is no longer true: `sport_display_name` gives the server the word, and
+    it is web's own word, so `getSportLabel` now returns the same string it used
+    to derive for itself.
+
+    The second half is still respected and is NOT what changed.  #5657 does not
+    null anything — the only value it rejects is the key itself, and a sport
+    with no stored name still serves `None`
+    (`test_a_sport_stub_without_a_name_degrades_instead_of_raising`, below).
+
+    🔴 WHY THIS AMENDMENT MAY NOT BE COPIED TO `/api/sports/{key}`.  A raw name
+    is load-bearing on ONE other surface: `getSportGroupLabel` reads
+    "is the served name raw?" as its signal that the served `group` is ALSO
+    machine-derived, and corrects it — the same 15 rows carry `Americanfootball`,
+    `Icehockey` and `Mma` in `sports.group` (measured 2026-09-15).  `sports.py`'s
+    detail route serves that `group`; `_format_event` and the search facet do
+    not, which is exactly why #5657 changed these two and left that one alone.
+    Anyone extending `sport_display_name` to `app/routes/sports.py:215` must fix
+    `group` in the same ship or web will start trusting "Mma".
+    `test_the_sports_detail_route_still_signals_raw`, in #5657's own file, is the
+    tripwire for that.
     """
     sport = Sport(id=1, key="mma_other", name="mma_other")
 
     data = _format_event(_event(sport))
 
-    assert data["sport"] == "mma_other"
-    assert data["sport_name"] == "mma_other"
+    assert data["sport"] == "mma_other", "the machine key still travels"
+    assert data["sport_name"] == "Other MMA"
 
 
 def test_an_event_with_no_sport_serves_null_for_both():

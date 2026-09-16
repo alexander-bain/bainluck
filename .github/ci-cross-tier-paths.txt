@@ -76,3 +76,15 @@ frontend/components/discover/FuturesCard.tsx
 # adding an arm to this file is precisely the frontend-only edit that would
 # otherwise be classified `frontend` and skip the shard that holds it.
 frontend/lib/eventState.ts
+
+# #5657. `test_sport_display_name_never_serves_raw_key_5657.py` parses the family
+# words out of `getLeagueDisplay` in this file, because #5657 gives the server a
+# name for the 15 `*_other` rows and the word it serves must be the word web
+# already derives from the key — otherwise one payload reads "Other Baseball" on
+# the web and something else in the app, which is the two-tier disagreement the
+# ship exists to end. The guard READS web's table rather than restating it, so
+# it can notice a rename; that is only true if it RUNS on the rename. Renaming a
+# family here is exactly the frontend-only edit that would otherwise be
+# classified `frontend`, skip this shard, and let the two tiers drift apart
+# silently — with the server now the one asserting the stale word.
+frontend/lib/sportCategories.ts

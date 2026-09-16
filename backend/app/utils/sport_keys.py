@@ -2834,3 +2834,121 @@ NON_SPORT_LLM_CATEGORIES: frozenset[str] = frozenset(
         "other",
     }
 )
+
+
+# ============================================================================
+# 12. SPORT_PREFIX_TO_DISPLAY_FAMILY — sport key prefix → reader-facing family
+# ============================================================================
+# #5657: 15 of 177 `sports` rows store the raw key as their display `name`
+# (`baseball_other`, `soccer_other`, the bare `esports`, …), and the payload
+# hands that straight to a reader. Alex met it on a physical phone on
+# 2026-09-15 (#6444): a filter chip reading `baseball_other` between "MLB" and
+# "MiLB", and the same raw key again as a row's sport label.
+#
+# 🔴 THE CLIENT IS NOT THE PLACE, AND ONE CLIENT ALREADY PROVES IT. Native's
+# `sportKeyDisplayName` is "the served name when the page has it, otherwise the
+# app's own shared rule" (#5723/#5780) — a deliberate decision that is correct,
+# so a non-empty served name wins and the raw key prints. The web meanwhile
+# derives its chip from the KEY and never reads the name at all
+# (`frontend/lib/sportCategories.ts:818`), whose own comment says "the server
+# has no word for those". Same payload, two answers: the web chip reads "Other
+# Baseball" while the app reads `baseball_other`. Giving the server the word is
+# what makes the two tiers print one thing.
+#
+# 🔴 THE ROWS ARE NOT REPAIRED, DELIBERATELY. `sports` rows are minted by ingest
+# on first event, with `name = key` (see the note at section 3), so a one-off
+# `UPDATE sports SET name = …` fixes today's 15 and is re-broken by the next
+# sport that appears. The repair belongs at derivation. Nothing here writes.
+#
+# The words are not invented here either — they are web's, so that a guard can
+# read the other tier's constant instead of restating it
+# (`test_sport_display_name_agrees_with_web_house_style_5657`). `aussierules_`
+# reads "AFL" and `icehockey_` reads "Hockey" because that is what the reader
+# is already shown on the website; agreement is the point, not taste.
+SPORT_PREFIX_TO_DISPLAY_FAMILY: dict[str, str] = {
+    "americanfootball": "Football",
+    "basketball": "Basketball",
+    "baseball": "Baseball",
+    "icehockey": "Hockey",
+    "mma": "MMA",
+    "boxing": "Boxing",
+    "golf": "Golf",
+    "tennis": "Tennis",
+    "soccer": "Soccer",
+    "cricket": "Cricket",
+    "rugby": "Rugby",
+    "rugbyleague": "Rugby",
+    "rugbyunion": "Rugby",
+    "aussierules": "AFL",
+    "politics": "Politics",
+    "entertainment": "Entertainment",
+    "esports": "Esports",
+    "lacrosse": "Lacrosse",
+    "motorsport": "Motorsport",
+    "racing": "Motorsport",
+    "horseracing": "Horse Racing",
+    "olympics": "Olympics",
+    "chess": "Chess",
+    "poker": "Poker",
+    "darts": "Darts",
+    "economics": "Economics",
+    "tech": "Tech & Science",
+    "weather": "Weather",
+    "health": "Health",
+    "geopolitics": "Geopolitics",
+    "legal": "Legal",
+    "culture": "Culture",
+}
+
+#: The suffix the catch-all buckets wear. `baseball_other` is a REAL league key
+#: with real events under it, not a null — see section 7's long note — so it is
+#: named, never dropped.
+_SPORT_CATCH_ALL_SUFFIX = "_other"
+
+
+def _sport_family_word(sport_key: str) -> str:
+    """The reader-facing family word for a key, full key first then its head.
+
+    Full key first so a bare category (`esports`) answers as itself; the head
+    covers every `<family>_<league>` key. The last resort title-cases the head
+    rather than returning the key: a reader may meet a sport we have no word
+    for yet, but they may never meet an underscore.
+    """
+    named = SPORT_PREFIX_TO_DISPLAY_FAMILY.get(sport_key)
+    if named:
+        return named
+    head = sport_key.split("_", 1)[0]
+    named = SPORT_PREFIX_TO_DISPLAY_FAMILY.get(head)
+    if named:
+        return named
+    return head.replace("_", " ").title() or sport_key
+
+
+def sport_display_name(
+    sport_key: Optional[str], stored_name: Optional[str] = None
+) -> Optional[str]:
+    """The name a reader may be shown for a sport, never its machine key.
+
+    The stored name wins whenever it is a real one — "MLB", "SHL", "ATP Queen's
+    Club Championships" are brands this module has no business re-deriving, and
+    the only rejected value is the key itself, which is the one value that is
+    not a name. Derivation is therefore a fallback, not a replacement, and the
+    branded 162 of 177 rows pass through byte-for-byte.
+
+    An ABSENT stored name is left absent rather than derived, and that is a
+    contract, not an omission: `_format_event` degrades `sport_name` to ``None``
+    on purpose so that a caller holding a bare `Sport(key=…)` stub — the shape
+    ~18 test modules build — keeps serving nothing, and the clients fall back to
+    their own maps exactly as they did before #4368. So the ONLY value this
+    function rejects is the key itself. Widening it to "derive whenever the name
+    is missing" would be a different ship with a different blast radius.
+    """
+    key = (sport_key or "").strip()
+    name = (stored_name or "").strip()
+    if not name or not key:
+        return stored_name if name else None
+    if name != key:
+        return name
+    if key.endswith(_SPORT_CATCH_ALL_SUFFIX):
+        return f"Other {_sport_family_word(key[: -len(_SPORT_CATCH_ALL_SUFFIX)])}"
+    return _sport_family_word(key)
