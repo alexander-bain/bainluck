@@ -162,27 +162,32 @@ struct GamePlayPoint {
         homeScore != nil && awayScore != nil
     }
 
+    /// The badge above the score: the period, and the clock when the clock says
+    /// something the period does not.
+    ///
+    /// #6574. #3273 pointed this card at the shared PARSER. It kept the JOIN, and the
+    /// join is the other half of the rule: `[periodStr, clock]` prints whatever
+    /// two strings it is handed, side by side, and ESPN's settled row sends
+    /// `period` and `game_clock` as the SAME word. Measured on the served payload
+    /// for 14638896 (Broncos 10 – Chiefs 31, MNF, Final) 2026-09-16: the last
+    /// `espn_history` row is `period: "Final", game_clock: "Final"`, so the badge
+    /// under the win-probability chart read **"Final · Final"**.
+    ///
+    /// That is #4880 — soccer's `23' 23'` — in its fourth call site.
+    /// ``PeriodLabel/liveStatusText(period:gameClock:)`` is the rule written for
+    /// exactly this, and it is the only thing that can see the collision, because
+    /// it is the only thing handed BOTH strings. The seven sites #4880 and #5057
+    /// converted are pinned by name in
+    /// `frontend/__tests__/ios/periodLabelSingleSource.test.ts`; this one was
+    /// invisible to that file's discovery scan because the pair is RENAMED at this
+    /// struct's boundary — `EventDetailView` passes `espn.gameClock` in as `clock`
+    /// — and the scan's tell keys on the identifier `gameClock`. The widened tell
+    /// lands with this fix, so the rename cannot hide the ninth site.
+    ///
+    /// The separator moves from `" · "` to the shared rule's space, which is what
+    /// the hero capsule two hundred points up this same page already prints
+    /// (`StatusBadge`, same helper): one vocabulary for the pair, not two.
     var timeDisplay: String {
-        let periodStr = formatPeriod(period)
-        let parts = [periodStr, clock].compactMap { $0?.isEmpty == false ? $0 : nil }
-        return parts.joined(separator: " · ")
-    }
-
-    /// #3273. This was a private fourth copy of period formatting, and on real
-    /// data every branch of it was wrong or dead:
-    ///
-    /// - `p.count > 2` returned the string UNTOUCHED, and ESPN's period embeds the
-    ///   clock (`"14:54 - 1st Quarter"`). Joined to `clock` by `timeDisplay`, the
-    ///   card read **"14:54 - 1st Quarter · 14:54"** — the clock printed twice.
-    ///   Measured 2026-09-05: 144,376 of 175,274 `espn_snapshots` rows carrying
-    ///   both (82.4%) have `period` starting with the exact `game_clock`.
-    /// - The `Int(p)` arm below it was unreachable: all 175,274 of those rows are
-    ///   longer than two characters, so it has never run in production.
-    ///
-    /// Delegates to the one parser, which yields `"Q1 · 14:54"`.
-    private func formatPeriod(_ period: String?) -> String? {
-        guard let p = period, !p.isEmpty else { return nil }
-        let normalized = PeriodLabel.normalize(p)
-        return normalized.isEmpty ? nil : normalized
+        PeriodLabel.liveStatusText(period: period, gameClock: clock) ?? ""
     }
 }

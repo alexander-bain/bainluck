@@ -186,9 +186,16 @@ d("iOS period labels have exactly one implementation", () => {
 
   it("the two files fixed by #3273 delegate to the shared parser", () => {
     // Named explicitly so a revert is loud rather than merely un-discovered.
+    //
+    // #6574 moved GamePlayCardView from `normalize` to `liveStatusText`. That is
+    // not a weakening of this assertion: #3273 pointed the card at the shared
+    // PARSER and left it joining the parsed label to the clock itself, which is
+    // how it came to print "Final · Final". `liveStatusText` IS the parser —
+    // it calls `liveBadgeLabel`, which calls `normalize` — plus the join rule
+    // the card was missing, so requiring it here is strictly the stronger claim.
     for (const [file, call] of [
       ["Views/EventDetailView.swift", "PeriodLabel.columnLabel("],
-      ["Components/GamePlayCardView.swift", "PeriodLabel.normalize("],
+      ["Components/GamePlayCardView.swift", "PeriodLabel.liveStatusText("],
     ]) {
       expect(readFileSync(join(IOS_ROOT, file), "utf8")).toContain(call);
     }
@@ -263,6 +270,15 @@ const PAIR_PRINTERS: Array<[string, string]> = [
   [join(WATCH_ROOT, "WatchFeedModels.swift"), "the watch feed row's clockText"],
   [join(WATCH_ROOT, "WatchLiveView.swift"), "the watch live game row"],
   [join(WIDGET_ROOT, "WidgetAPIClient.swift"), "the widget"],
+  // #6574. The eighth, and the one `RAW_JOIN` could not find: the pair is
+  // RENAMED at this struct's boundary — `EventDetailView` builds a
+  // `GamePlayPoint(period: espn.period, clock: espn.gameClock)` — so the join
+  // reads `[periodStr, clock]` and the identifier `gameClock` never appears in
+  // the file. Served payload for 14638896 (MNF, Final) carries
+  // `period: "Final", game_clock: "Final"`, so the badge under the
+  // win-probability chart read "Final · Final". `RAW_JOIN_RENAMED` below is the
+  // tell that makes the rename unable to hide the ninth site.
+  [join(IOS_ROOT, "Components/GamePlayCardView.swift"), "the play card under the chart"],
 ];
 
 /**
@@ -289,6 +305,33 @@ const RAW_JOIN = /\[[^\]]*\bperiod\b[^\]]*\bgameClock\b[^\]]*\]/;
  * was the defect.
  */
 const RAW_FALLBACK = /\bperiod\b[^\n]*\?\?[^\n]*\bgameClock\b/;
+
+/**
+ * #6574 — the join with the pair RENAMED, which `RAW_JOIN` is blind to.
+ *
+ * `RAW_JOIN` keys on the identifier `gameClock`, so it only ever sees a site
+ * that reads the API model directly. `GamePlayCardView` does not: the pair is
+ * copied into a view struct whose fields are `period` and **`clock`**, and the
+ * join there reads `[periodStr, clock]`. Nothing in the file says `gameClock`,
+ * the scan passed it for two months, and the card printed "Final · Final" on
+ * every settled game ESPN covers — `period` and `game_clock` are both the word
+ * "Final" on the last row of a finished game.
+ *
+ * So the tell is the SHAPE of the pair, not the names #4880 happened to meet:
+ * an array literal holding a `period`-ish identifier and a `clock`-ish one.
+ * Both orders, because `[clock, period]` prints the same two strings.
+ * Single-line (`[^\]\n]*`) so a multi-line literal elsewhere in a file cannot
+ * pair an unrelated `period` with an unrelated `clock`.
+ *
+ * MEASURED across all three targets at the fix (224 .swift files): exactly one
+ * hit, which was the defect, and zero after it. The tell is narrow because it
+ * requires both halves inside one bracket — a file may still name a period and
+ * a clock freely, as long as it does not print them side by side itself.
+ */
+const RAW_JOIN_RENAMED = [
+  /\[[^\]\n]*\bperiod\w*\b[^\]\n]*\b\w*[Cc]lock\w*\b[^\]\n]*\]/,
+  /\[[^\]\n]*\b\w*[Cc]lock\w*\b[^\]\n]*\bperiod\w*\b[^\]\n]*\]/,
+];
 
 const iosTargetsPresent = ALL_TARGET_ROOTS.every((root) => existsSync(root));
 const t = iosTargetsPresent ? describe : describe.skip;
@@ -317,6 +360,14 @@ t("a live period is printed beside its clock in exactly one place (#4880)", () =
         const code = stripComments(readFileSync(path, "utf8"));
         if (RAW_JOIN.test(code)) {
           offenders.push(`${path} — joins period to gameClock instead of calling liveStatusText`);
+        }
+        // #6574. The same join with the pair renamed on the way into a view
+        // struct. Reported separately so the message names the reason the
+        // older tell missed it.
+        if (RAW_JOIN_RENAMED.some((re) => re.test(code))) {
+          offenders.push(
+            `${path} — joins a period to a clock under LOCAL names; use liveStatusText`
+          );
         }
         // #5057. Coalescing the pair is the same decision as joining it.
         if (RAW_FALLBACK.test(code)) {
@@ -354,6 +405,29 @@ t("a live period is printed beside its clock in exactly one place (#4880)", () =
       return parts.joined(separator: " ")
     `);
     expect(RAW_JOIN.test(drifted)).toBe(true);
+  });
+
+  it("the renamed-join check can actually fail — and does not fire on delegation", () => {
+    // #6574. Feed it the exact line that shipped "Final · Final".
+    const drifted = stripComments(`
+      let parts = [periodStr, clock].compactMap { $0?.isEmpty == false ? $0 : nil }
+      return parts.joined(separator: " · ")
+    `);
+    expect(RAW_JOIN_RENAMED.some((re) => re.test(drifted))).toBe(true);
+
+    // Reversed, because the two strings print the same either way round.
+    expect(
+      RAW_JOIN_RENAMED.some((re) => re.test(stripComments(`let parts = [clock, periodLabel]`)))
+    ).toBe(true);
+
+    // And the fix must be clean under it, or the next author is pushed back to
+    // hand-rolling the pair to get a green suite (#5057's lesson).
+    const delegating = stripComments(`
+      var timeDisplay: String {
+          PeriodLabel.liveStatusText(period: period, gameClock: clock) ?? ""
+      }
+    `);
+    expect(RAW_JOIN_RENAMED.some((re) => re.test(delegating))).toBe(false);
   });
 
   it("the fallback check can actually fail — and does not fire on delegation", () => {
