@@ -225,17 +225,15 @@ def test_the_boundary_only_touches_cards_that_already_carry_a_sport_name():
     one — a payload shape change dressed as a label fix — because
     ``sport_display_name`` returns ``None`` for an absent stored name.
     """
-    tree = _feed_tree()
-    (humanise_line,) = _call_lines(tree, "sport_display_name")
+    # `_boundary_statement` (part 4) locates the guard structurally. This test
+    # used to find it by matching "sport_name" inside the guard's own test,
+    # which meant rewriting the guard — the exact thing being guarded against —
+    # raised `StopIteration` here instead of failing with the sentence below.
+    guard = _boundary_statement()
 
-    guard = next(
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.If)
-        and node.lineno < humanise_line <= (node.end_lineno or node.lineno)
-        and "sport_name" in ast.unparse(node.test)
+    assert isinstance(guard, ast.If), (
+        f"the humanise is no longer guarded at all: {ast.unparse(guard)[:200]}"
     )
-
     assert "is not None" in ast.unparse(guard.test), (
         f"the humanise must be guarded on an existing sport_name: "
         f"{ast.unparse(guard.test)}"
@@ -447,4 +445,205 @@ def test_the_three_write_sites_are_still_raw_ON_PURPOSE():
         f"sport_display_name is called {len(boundary_calls)} times in feed.py "
         f"(lines {boundary_calls}); the write sites must stay raw so the "
         f"boundary remains the only humaniser and the only thing under test"
+    )
+
+
+# --------------------------------------------------------------------------
+# 4. THE MUTATION ITSELF (CERT-2944's required repair)
+# --------------------------------------------------------------------------
+#
+# 🔴 EVERY guard above this line reads the CALL and nothing above this line
+# reads what is done with its RETURN VALUE. CERT-2944 proved it with one
+# mutant: delete only the assignment target, so
+#
+#     data["sport_name"] = sport_display_name(data.get("sport"), ...)
+#
+# becomes a bare `sport_display_name(...)` expression statement. The call is
+# still present, still downstream of the applier, still guarded on an existing
+# `sport_name`, still reading the machine key, still the only one in the file —
+# so parts 1-3 pass unchanged (reproduced here before this section was written:
+# 140 passed) while every reader gets `soccer_other` back. The ship's entire
+# user-visible effect is the assignment, and the assignment was the one thing
+# no test touched.
+#
+# `_publish_boundary` above cannot close this: it is a RESTATEMENT, so it
+# executes the test file's copy of the transform no matter what feed.py does.
+# That restatement is still right for what it is for — it pins WHAT the
+# transform means, and its independence from the route is what lets part 2 pin
+# WHERE — but "the route still mutates the card" has to be measured on the
+# route's own bytes. So this section EXECUTES the statement compiled out of
+# feed.py itself and reads the dict afterwards.
+
+
+def _boundary_statement() -> ast.stmt:
+    """The guarded statement in `get_feed` that humanises the card's name.
+
+    Located STRUCTURALLY — the innermost `if` that contains the humanise call,
+    or the bare statement when there is no guard left — and never by matching
+    text in the guard's own test. A first draft of this helper keyed on
+    ``"sport_name" in ast.unparse(node.test)``, which made finding the
+    statement depend on a property the statement is separately under test FOR:
+    rewriting the guard raised `StopIteration` inside every behavioural test in
+    this section, so four arms that should have been silent (a branded name
+    cannot be harmed by a guard change) went red with a bare
+    ``E StopIteration`` and no sentence. A locator must be able to find code it
+    is about to fail.
+    """
+    tree = _feed_tree()
+    (humanise_line,) = _call_lines(tree, "sport_display_name")
+
+    enclosing = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and node.lineno < humanise_line <= (node.end_lineno or node.lineno)
+    ]
+    # The innermost guard is the one written latest in the file among those
+    # spanning the call, so the harness runs the boundary and not whatever loop
+    # or branch happens to contain it.
+    statement = (
+        max(enclosing, key=lambda node: node.lineno)
+        if enclosing
+        else next(
+            (
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, (ast.Assign, ast.Expr))
+                and node.lineno == humanise_line
+            ),
+            None,
+        )
+    )
+
+    assert statement is not None, (
+        f"no statement could be located around the humanise call at line "
+        f"{humanise_line}; this harness executes the route's own bytes and "
+        f"cannot report on a shape it cannot find"
+    )
+    assert "sport_display_name" in ast.unparse(statement), (
+        f"the located statement does not contain the humanise call: "
+        f"{ast.unparse(statement)[:200]}"
+    )
+    return statement
+
+
+def _run_the_ROUTES_OWN_boundary(data: dict) -> dict:
+    """Execute feed.py's own boundary statement against one card's ``data``.
+
+    Not a copy of the transform and not an import of a helper — the bytes in
+    the route, compiled and run, with the same two names in scope that
+    `get_feed` has there. Whatever the route does to the card, this does to
+    ``data``; whatever it stops doing, this stops doing.
+    """
+    namespace = {"data": data, "sport_display_name": sport_display_name}
+    module = ast.Module(body=[_boundary_statement()], type_ignores=[])
+    exec(compile(module, str(FEED_SOURCE), "exec"), namespace)  # noqa: S102
+    return data
+
+
+@pytest.mark.parametrize("key", RAW_NAMED_KEYS)
+def test_the_ROUTE_writes_the_humanised_word_back_onto_the_card(key):
+    """The ship, as the reader gets it: the card leaves with a word on it.
+
+    This is the assertion CERT-2944 required. A boundary that computes the
+    right name and drops it fails here and nowhere else.
+    """
+    data = {"sport": key, "sport_name": key}
+
+    _run_the_ROUTES_OWN_boundary(data)
+
+    assert data["sport_name"] == sport_display_name(key, key), (
+        f"the route computed a name for {key} and did not write it back to "
+        f"data['sport_name']; the card still ships the machine key"
+    )
+    assert data["sport_name"] != key, key
+    assert "_" not in data["sport_name"], data["sport_name"]
+
+
+@pytest.mark.parametrize(
+    "sport_key,stored_name",
+    [
+        ("baseball_mlb", "MLB"),
+        ("soccer_epl", "EPL"),
+        ("icehockey_sweden_hockey_league", "SHL"),
+        ("tennis_atp_queens", "ATP Queen's Club Championships"),
+    ],
+)
+def test_the_ROUTE_leaves_a_branded_card_byte_for_byte(sport_key, stored_name):
+    """The 162, through the route rather than through a restatement.
+
+    This arm is also what catches the transform being handed its two arguments
+    the wrong way round. `sport_display_name` substitutes only when the stored
+    name IS the key, so on a RAW card the swap is invisible — both arguments
+    are the same string. On a branded card it inverts: ``("MLB",
+    "baseball_mlb")`` finds the two unequal, returns the second, and prints
+    `baseball_mlb` on an MLB card. The defect this ship exists to remove,
+    re-introduced on the population that is 92% of the table.
+    """
+    data = {"sport": sport_key, "sport_name": stored_name}
+
+    _run_the_ROUTES_OWN_boundary(data)
+
+    assert data["sport_name"] == stored_name, (
+        f"the route rewrote a branded name: {stored_name!r} -> "
+        f"{data['sport_name']!r}"
+    )
+
+
+def test_the_ROUTE_does_not_MINT_a_sport_name_on_a_card_without_one():
+    """It repairs the field, never adds it (the #4368 contract, executed).
+
+    Part 2 asserts the `is not None` guard is written; this asserts what the
+    guard is for. Without it every concept and tournament card that never
+    carried a `sport_name` leaves with ``"sport_name": None`` — a payload shape
+    change dressed as a label fix.
+    """
+    data = {"sport": "soccer_other", "headline": "a card with no sport_name"}
+
+    _run_the_ROUTES_OWN_boundary(data)
+
+    assert "sport_name" not in data, (
+        f"the boundary minted a field on a card that never had one: {data}"
+    )
+
+
+def test_the_humanised_name_is_ASSIGNED_BACK_to_data_sport_name():
+    """The same requirement structurally, so the failure names its own cause.
+
+    The behavioural tests above fail loudly when the write disappears, but they
+    fail with "the card still ships the machine key" — true, and one step away
+    from the reason. This one fails with the statement that stopped being an
+    assignment, which is what a reader needs in order to fix it. It also pins
+    the destination: writing the word to some OTHER key would satisfy "the
+    route mutated something" and still leave `sport_name` raw.
+    """
+    tree = _feed_tree()
+    (humanise_line,) = _call_lines(tree, "sport_display_name")
+
+    assignments = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "sport_display_name"
+    ]
+
+    assert len(assignments) == 1, (
+        f"the humanise call at line {humanise_line} is not the value of exactly "
+        f"one assignment (found {len(assignments)}). A bare "
+        f"`sport_display_name(...)` statement computes the reader's word and "
+        f"throws it away, and every other guard in this module still passes."
+    )
+
+    (target,) = assignments[0].targets
+    rendered = ast.unparse(target)
+
+    assert isinstance(target, ast.Subscript), (
+        f"the humanised name is assigned to {rendered}, not back onto the "
+        f"card's own dict"
+    )
+    assert rendered in ('data["sport_name"]', "data['sport_name']"), (
+        f"the humanised name is written to {rendered}; the clients read "
+        f"data['sport_name'] and would still be served the machine key"
     )
