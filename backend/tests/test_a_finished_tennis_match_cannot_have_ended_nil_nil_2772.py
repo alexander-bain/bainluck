@@ -53,6 +53,7 @@ Paused" card. So the score rule is not the whole fix — the STATUS gate is, and
 ``FUTURE_SETTLED_STATUSES`` two lines above it includes it.
 """
 
+import contextlib
 import inspect
 import logging
 import re
@@ -356,18 +357,17 @@ class _Session:
 
 
 async def _run(rows):
-    import contextlib
-
-    import app.tasks.espn_sync as mod
-
     session = _Session(rows)
 
     @contextlib.asynccontextmanager
     async def _fake_session():
         yield session
 
+    # `get_task_session` is patched where the impl LOOKS IT UP — it is imported
+    # inside the function from `app.tasks.base`, so that is the name that must
+    # move, not a copy on this module.
     with patch("app.tasks.base.get_task_session", _fake_session):
-        return await mod._transition_event_statuses_impl()
+        return await _transition_event_statuses_impl()
 
 
 class TestTheArmWithdrawsTheScoreAndNothingElse:
