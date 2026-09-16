@@ -1983,6 +1983,86 @@ _SPORT_ABBREV_SUFFIX: dict[str, str] = {
 }
 
 
+#: The `-CODE` a Kalshi OUTCOME ticker appends to its series: `KXSB-27-LAR`.
+#: Anchored so it can only ever take the final segment.
+#:
+#: The 2-5 bound is the RANGE `_KALSHI_TEAM_ABBREVS` actually holds, not a
+#: guess: `GB` at the short end, `steti_soc` (Saint-Etienne) at the long. It was
+#: written `{2,4}` first — which reads right, is wrong, and silently refused the
+#: one five-letter code in the map. `test_the_code_bound_covers_every_code_in_
+#: the_map_6479` is what keeps the two from drifting apart again, in the
+#: direction that matters: a bound SHORTER than the map is a silent
+#: false-negative no reader can report, because the name simply stays truncated.
+#:
+#: The upper bound is a cheap pre-filter rather than a safety rule — a code the
+#: map does not hold resolves to nothing whatever its length — so it is allowed
+#: to be generous and is not allowed to be mean.
+_OUTCOME_TEAM_CODE_RE = re.compile(r"^(?P<series>.+)-(?P<code>[A-Za-z]{2,5})$")
+
+
+def extract_team_code_from_outcome_ticker(
+    external_id: Optional[str],
+) -> Optional[tuple[str, str]]:
+    """``KXSB-27-LAR`` → ``("lar", "Rams")`` — the ONE team an outcome names.
+
+    The single-team sibling of :func:`extract_team_codes_from_ticker`, for the
+    rungs of a championship FIELD rather than the two sides of a game (#6479).
+
+    ── WHY THE PAIR PARSER CANNOT ANSWER THIS ───────────────────────────────────
+
+    A game ticker carries both clubs in one date-suffixed token
+    (``KXNFLGAME-26SEP20GBNYJ``), and the pair parser's whole job is finding the
+    split point inside it. A championship series has no date, no token and no
+    second team: ``KXSB-27`` is the field and ``-LAR`` is one rung of it. The
+    pair parser correctly declines — there is no pair — and every rung of the
+    Super Bowl and World Series boards was therefore unresolvable.
+
+    ── IT IS ID-ANCHORED, WHICH IS A STRONGER CLAIM THAN THE PAIR PARSER MAKES ──
+
+    The code and the outcome are the SAME ROW: `futures_outcomes.external_id` is
+    the venue's own id for the rung whose name we are reading. There is no
+    correspondence to establish and nothing to disambiguate — the pair parser
+    has to decide which shipped name goes with which of two codes (the
+    ``Los Angeles A`` problem that `_code_matches` exists for), and here that
+    question cannot arise.
+
+    ── THE SPORT IS STILL ASKED, AND A MISS IS STILL `None` (#3672) ─────────────
+
+    ``lar`` means the Rams in the NFL and nothing in the NBA; ``lac`` means the
+    Chargers in one and the Clippers in the other. So the namespace is resolved
+    from the SERIES ticker through the same two maps every other caller uses,
+    and an unregistered series yields ``None`` rather than a guess. That is the
+    direction #3672 settled: a miss falls through to the venue's own text, which
+    is merely short, while a wrong club is a name the reader can act on.
+
+    Pure: no database, no network, and no map of its own.
+    """
+    if not external_id:
+        return None
+
+    match = _OUTCOME_TEAM_CODE_RE.match(str(external_id).strip())
+    if not match:
+        return None
+    series = match.group("series")
+    code = match.group("code").lower()
+
+    # The SERIES, deliberately, not the whole outcome ticker. They resolve the
+    # same today (a prefix match cannot see the suffix), but asking the series is
+    # what makes the question honest: the sport is a property of the board, and a
+    # future key long enough to reach into the `-CODE` segment would otherwise
+    # answer a question about the rung.
+    # `get_sport_prefix_from_ticker` is this module's import alias for
+    # `sport_keys.get_sport_key_from_ticker` (line 25). The alias predates this
+    # function and is not renamed here.
+    sport_key = get_sport_prefix_from_ticker(series)
+    if not sport_key:
+        return None
+
+    suffix = _SPORT_KEY_TO_ABBREV_SUFFIX.get(sport_key, _ABBREV_NAMESPACE_UNKNOWN)
+    nickname = _resolve_team_abbrev(code, suffix)
+    return (code, nickname) if nickname else None
+
+
 def extract_teams_from_ticker(external_id: str) -> Optional[tuple[str, str]]:
     """
     Extract team name fragments from a Kalshi game ticker.

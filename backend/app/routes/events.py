@@ -40,6 +40,7 @@ from app.utils.game_market_club_names import (
     any_truncated_side,
     repair_card_club_names,
     repair_club_names,
+    repair_field_outcome_name,
 )
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 from app.utils.prematch_reading import opening_consensus_has_frozen
@@ -22147,26 +22148,39 @@ def _build_search_top_outcomes(
         return []
     real.sort(key=lambda o: o.current_probability or 0, reverse=True)
     top = real[:limit]
+    # #6479, and it is the SAME rung a reader meets on the detail page. Search
+    # ranks these boards by probability, so the truncated name is not buried in
+    # the tail: `?q=Los Angeles` led `2027 Pro Football Champion` with `Los
+    # Angeles R` at 12%, the field's favourite and the card's first row.
+    #
+    # Both payload shapes, because `lean` is the typeahead dropdown and the
+    # other is the results card — one surface repaired and the other not is how
+    # the #993 pair went wrong, and this serializer exists so that cannot
+    # recur. Completed from each rung's own ticker; see
+    # `game_market_club_names.repair_field_outcome_name`.
+    named = [
+        (o, repair_field_outcome_name(o.external_id, o.name) or o.name) for o in top
+    ]
     if lean:
         out = [
             {
-                "name": o.name,
+                "name": name,
                 "probability": float(o.current_probability) if o.current_probability else None,
                 "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
             }
-            for o in top
+            for o, name in named
         ]
     else:
         out = [
             {
                 "id": o.id,
-                "name": o.name,
+                "name": name,
                 "probability": float(o.current_probability) if o.current_probability else None,
                 "american_odds": o.current_american_odds,
                 "rank": o.rank,
                 "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
             }
-            for o in top
+            for o, name in named
         ]
     # #199: don't sum-to-1 non-mutually-exclusive participation families
     # (golf make-cut/top-N) — that squashed an honest 87% make-cut to ~20% in search.

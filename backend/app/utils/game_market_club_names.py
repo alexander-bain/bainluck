@@ -113,7 +113,11 @@ from __future__ import annotations
 import re
 from typing import Iterable, Mapping, Optional, Sequence
 
-from app.utils.kalshi_display_names import apply_name_repairs, repair_truncated_names
+from app.utils.kalshi_display_names import (
+    apply_name_repairs,
+    repair_outcome_name_by_ticker,
+    repair_truncated_names,
+)
 
 #: The fields of a `/game-markets` row a reader actually reads. `market_name`
 #: titles the card, `outcome_name` labels the row. Nothing else in the payload is
@@ -407,6 +411,61 @@ def repair_card_club_names(
     return changed
 
 
+def repair_field_outcome_name(
+    outcome_external_id: Optional[str],
+    shipped_name: Optional[str],
+) -> Optional[str]:
+    """One rung of a championship FIELD, reader-side (#6479).
+
+    ``("KXSB-27-LAR", "Los Angeles R")`` → ``"Los Angeles Rams"``; ``None`` when
+    the name ships unchanged, which is the common case and what every caller
+    must treat as "print what Kalshi sent".
+
+    The engine is :func:`kalshi_display_names.repair_outcome_name_by_ticker` and
+    the whole correspondence argument lives on it. This is the reader-side half,
+    and it exists for one reason the engine deliberately does not carry.
+
+    WHY THIS IS NOT THE ENGINE CALLED DIRECTLY
+    ==========================================
+
+    ``_uncompose_a_name_that_already_names_the_club`` — the ``LA Galaxy`` class.
+    The engine composes ``city + nickname`` on the premise that the ticker map
+    holds bare nicknames (``lad`` -> ``Dodgers``), and **101 of that map's
+    values are whole club names that already carry the city**: ``lv_wnba`` ->
+    ``Las Vegas Aces``, ``chi_mls`` -> ``Chicago Fire``, ``ind_wnba`` ->
+    ``Indiana Fever``. Composing those gives ``Las Vegas Las Vegas Aces``, a
+    string no one has ever called the club. Championship fields are exactly
+    where those leagues' boards live, so this is the population, not a corner.
+
+    The game-market path met the class first and the fix is measured there (12
+    real rows in two production samples). It is reused rather than re-derived,
+    and it stays out of ``kalshi_display_names`` for the reason written on it:
+    that module has two admin callers and a pinned suite of its own (#2060), and
+    a reader surface is not the place to widen someone else's blast radius.
+
+    NO POOL, AND THAT IS THE DIFFERENCE FROM ITS SIBLING
+    ====================================================
+
+    :func:`repair_club_names` pools a whole page because #5181's criterion is one
+    vocabulary per screen, and because a MARKET ticker resolves some of a
+    screen's rows and not others — one card would say "New York Jets" and its
+    neighbour "New York J".
+
+    A field cannot have that problem. Every rung carries its OWN id-anchored
+    ticker, so resolution is per-row by construction and a rung that resolves
+    never depends on a sibling that did not. There is nothing to pool, and
+    pooling would only add a way for one rung to rename another.
+    """
+    if not outcome_external_id or not shipped_name:
+        return None
+    full = repair_outcome_name_by_ticker(outcome_external_id, shipped_name)
+    if not full:
+        return None
+    shipped = str(shipped_name)
+    full = _uncompose_a_name_that_already_names_the_club(shipped, full)
+    return full if full != shipped else None
+
+
 __all__ = [
     "SEARCH_CARD_FIELDS",
     "TYPEAHEAD_CARD_FIELDS",
@@ -415,4 +474,5 @@ __all__ = [
     "matchup_sides",
     "repair_card_club_names",
     "repair_club_names",
+    "repair_field_outcome_name",
 ]

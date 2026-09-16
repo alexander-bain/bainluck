@@ -27,6 +27,7 @@ from app.utils.futures_unsupported_price import (
     price_is_unsupported,
     snapshot_price_is_unsupported,
 )
+from app.utils.game_market_club_names import repair_field_outcome_name
 from app.utils.hook_staleness import hook_names_unpriced_outcome, is_hook_stale
 from app.utils.leader_order import leader_first_outcomes
 from app.utils.market_display_name import clean_market_display_name
@@ -5032,10 +5033,24 @@ def _format_market_detail(
     # happened to be zero — which is exactly the value a settled-NO leg must have.
     # 3,738 of the 4,200 zero-priced legs on still-open markets are a definite
     # venue NO (measured 2026-09-14).
+    # #6479: a rung whose name is the venue's width truncation is completed from
+    # that rung's OWN ticker. `2027 Pro Football Champion` led with `Los Angeles
+    # R` and `Pro Baseball Champion` offered `Los Angeles D` / `Chicago WS` —
+    # ten rungs across the site's two longest-lived boards, each naming a club
+    # that does not exist. The correspondence is id-anchored (the code and the
+    # name are the same row) and the helper refuses unless the venue's own text
+    # agrees, so a rung is either completed or printed exactly as Kalshi sent it.
+    #
+    # Serve-time, like its game-market sibling: the stored `name` stays the
+    # venue's and no predicate that reads that column moves.
+    #
+    # HERE, where the dicts are built, so everything downstream sees one
+    # vocabulary — `drop_dominant_field_outcomes` and `leader_pick_order` are
+    # name-gated on "Other"/"Field", which this can neither create nor destroy.
     outcomes = [
         {
             "id": o.id,
-            "name": o.name,
+            "name": repair_field_outcome_name(o.external_id, o.name) or o.name,
             "probability": float(o.current_probability) if o.current_probability is not None else None,
             "american_odds": o.current_american_odds,
             "rank": o.rank,
