@@ -470,6 +470,21 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     let awayImageUrl: String?
     let homeFlagUrl: String?
     let awayFlagUrl: String?
+    /// D109/#4676's whistle stamp, decoded from `ended_at`. The clock a finished
+    /// card ages on (#4776 / #6440) — see `FeedLifecycle.finishedEventAgeAnchor`,
+    /// which says why it is this field and not `commence_time`.
+    ///
+    /// OPTIONAL by the producer's own rule: absent on every unsettled row, and a
+    /// cached payload can predate the stamp. NOT FOR DISPLAY — it is
+    /// `completed_at` when StatPal reported no end, so it runs later than the
+    /// true whistle by a variable margin and must never be printed as "ended at".
+    let endedAt: String?
+    /// Whether Discover kept this finished game on purpose — `discover_marquee_final`,
+    /// stamped in `app/routes/feed.py` on finished event cards only, `false` as
+    /// well as `true`. Absent means "this payload came from a surface that does
+    /// not select marquee finals" (the Sports feed is one), which reads as the
+    /// ordinary window. Never coalesce an absent flag into the long one.
+    let discoverMarqueeFinal: Bool?
 }
 
 /// What a card should draw in one participant's avatar slot, and how.
@@ -753,6 +768,61 @@ nonisolated enum FeedLifecycle {
     static func conceptIsSettled(_ d: FeedConceptData, now: Date = Date()) -> Bool {
         if d.marqueeWhathit == true { return false }
         return terminalScheduleStatuses.contains((d.status ?? "").lowercased())
+    }
+
+    // MARK: - Finished games: how long a final may stay on a feed (#6440)
+
+    /// Hours a finished game may still render before the client deletes it.
+    /// Web's `COMPLETED_EVENT_MAX_AGE_HOURS` (`lib/discover/feedFreshness.ts`),
+    /// pinned to it by `frontend/__tests__/lib/finishedCardAgeParity.test.ts`.
+    static let completedEventMaxAgeHours: Double = 8
+
+    /// The longer window for the one or two finished games Discover kept ON
+    /// PURPOSE — web's `MARQUEE_FINAL_MAX_AGE_HOURS` (D118 = B, Alex, 2026-09-10).
+    /// Eight hours from the whistle retired the NFL season opener at 4:26am
+    /// Pacific; fourteen puts an 8:30pm final on the page with the morning coffee.
+    /// It is scoped to the flagged cards because that is the promise Alex was
+    /// given — widening the constant above would move `/sports`' window too.
+    static let marqueeFinalMaxAgeHours: Double = 14
+
+    /// How long THIS finished card may live. Mirrors web's
+    /// `finishedEventMaxAgeHours`: `true` and nothing looser, because the
+    /// expensive direction of the error is keeping a dead card.
+    static func finishedEventMaxAgeHours(_ e: FeedEventData) -> Double {
+        e.discoverMarqueeFinal == true ? marqueeFinalMaxAgeHours : completedEventMaxAgeHours
+    }
+
+    /// When that clock starts — the whistle, not the kickoff (#4776).
+    ///
+    /// Ageing from `commence_time` charges a finished card for its own duration:
+    /// a measured median 2.26h across the 39 finished games served on 2026-09-10
+    /// (2.78h MLB, 3.11h NFL), so the eight hours above were really 5.7. `ended_at`
+    /// is optional — absent on unsettled rows, and a cached payload can predate it
+    /// — so falling back to `commence_time` is the contract, not defensive dressing.
+    static func finishedEventAgeAnchor(_ e: FeedEventData) -> Date? {
+        if let raw = e.endedAt, let d = raw.asDate { return d }
+        if let raw = e.commenceTime, let d = raw.asDate { return d }
+        return nil
+    }
+
+    /// True when a client should delete this finished card before it paints — the
+    /// single native answer to the question web answers in `isStale`'s event arm
+    /// and the backend mirrors in `client_deletes_finished_card`.
+    ///
+    /// It exists because that one rule had three implementations and two of them
+    /// were wrong (#6440): web ages a final out at 8h/14h from `ended_at`, native
+    /// Discover aged it out at 8h from KICKOFF with no marquee exemption, and the
+    /// native Sports tab had no age term at all — so the phone rendered finals that
+    /// bainluck.com/sports deletes (four of them 17.3–20.2h old, 2026-09-15 22:06Z).
+    ///
+    /// Two details are load-bearing. The comparison is strict `>`, so a card at
+    /// exactly the threshold is RENDERED. And an unreadable or absent anchor KEEPS
+    /// the card: unknown age has never meant "old" here, matching web, where the
+    /// same case yields `NaN > 8 === false`.
+    static func finishedEventIsExpired(_ e: FeedEventData, now: Date = Date()) -> Bool {
+        guard EventState.isFinished(e.status) else { return false }
+        guard let anchor = finishedEventAgeAnchor(e) else { return false }
+        return now.timeIntervalSince(anchor) > finishedEventMaxAgeHours(e) * 3600
     }
 }
 

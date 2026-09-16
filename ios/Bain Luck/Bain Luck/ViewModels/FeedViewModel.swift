@@ -136,8 +136,54 @@ final class FeedViewModel: ObservableObject {
         liveNow.contains { EventState.isSuspended($0.event?.status) }
     }
 
+    /// #6440 — the finished games this tab still shows, aged out on the SAME rule
+    /// the web client uses.
+    ///
+    /// `GET /api/feed?mode=sports` deliberately serves finished events that the
+    /// client is expected to delete: `client_deletes_finished_card`
+    /// (`utils/sports_first_page_rails.py`) is a line-for-line mirror of web's
+    /// `isStale`, and the first page is composed KNOWING those rows go. Web
+    /// deletes them in `applyFinishedCardGuard`; this bucket had no age term at
+    /// all, so the phone rendered finals bainluck.com/sports does not — four of
+    /// them 17.3–20.2h old on 2026-09-15, measured on the live payload. The
+    /// payload was correct by contract; the contract had one implementation and
+    /// two clients.
     var justHappened: [FeedItem] {
-        items.filter { EventState.section($0.event?.status) == .finished }
+        let now = clock()
+        return Self.finishedSection(
+            items, now: now, reprieved: Self.finishedAgeOutIsReprieved(items, now: now)
+        )
+    }
+
+    /// One finished card, asked of the shared predicate. Every age question on
+    /// this tab goes through here so there is no second opinion to drift.
+    static func isExpiredFinal(_ item: FeedItem, now: Date) -> Bool {
+        guard let e = item.event else { return false }
+        return FeedLifecycle.finishedEventIsExpired(e, now: now)
+    }
+
+    /// `applyFinishedCardGuard`'s #1091 reprieve: a sports feed that would lose
+    /// EVERY game card to the age-out keeps its finished ones rather than going
+    /// gameless. A settled market is never what saves it, so only games count on
+    /// both sides of the question.
+    ///
+    /// Decided over the WHOLE payload — the population web decides it on, before
+    /// any chip filtering — so selecting a league can never resurrect a final that
+    /// "All" hides.
+    static func finishedAgeOutIsReprieved(_ items: [FeedItem], now: Date) -> Bool {
+        let games = items.filter { $0.type == "event" }
+        guard !games.isEmpty else { return false }
+        return !games.contains { !isExpiredFinal($0, now: now) }
+    }
+
+    /// The pure half of the bucket above, so the age-out is testable without
+    /// standing up a load (gotcha #44: `now` is injected, never read here).
+    static func finishedSection(
+        _ items: [FeedItem], now: Date, reprieved: Bool
+    ) -> [FeedItem] {
+        items
+            .filter { EventState.section($0.event?.status) == .finished }
+            .filter { reprieved || !isExpiredFinal($0, now: now) }
     }
 
     var upcoming: [FeedItem] {
@@ -488,10 +534,17 @@ final class FeedViewModel: ObservableObject {
         }
     }
 
+    /// #6440 — THIS is the bucket the Sports tab actually renders (`FeedView`'s
+    /// "Just Happened" section reads the per-category twin, not `justHappened`),
+    /// so the age-out has to be here or it is inert on the screen that had the bug.
+    /// The reprieve is asked of the full payload, never of the chip's slice.
     func filteredJustHappened(for categoryID: String) -> [FeedItem] {
-        filteredItems(for: categoryID).filter {
-            EventState.section($0.event?.status) == .finished
-        }
+        let now = clock()
+        return Self.finishedSection(
+            filteredItems(for: categoryID),
+            now: now,
+            reprieved: Self.finishedAgeOutIsReprieved(items, now: now)
+        )
     }
 
     func filteredUpcoming(for categoryID: String) -> [FeedItem] {
