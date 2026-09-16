@@ -70,7 +70,7 @@ class TestFamilyKey:
 
 class TestExtractEntity:
     def test_entity_from_next_team_title(self):
-        assert extract_entity("LeBron James Next Team") == "Lebron James"
+        assert extract_entity("LeBron James Next Team") == "LeBron James"
 
     def test_entity_from_to_win_title(self):
         assert extract_entity("Nikola Jokic to win MVP") == "Nikola Jokic"
@@ -118,7 +118,7 @@ class TestGroupPropFamilies:
         assert fam["label"] == "Next Team"
         assert fam["entity_count"] == 2
         entities = {r["entity"] for r in fam["rows"]}
-        assert entities == {"Lebron James", "Kevin Durant"}
+        assert entities == {"LeBron James", "Kevin Durant"}
 
     def test_single_market_is_not_a_family(self):
         families = group_prop_families([_next_team_market(1, "LeBron James")])
@@ -171,7 +171,7 @@ class TestCrossSourceCollapse:
         fam = families[0]
         # LeBron collapses into ONE row despite two sources.
         assert fam["entity_count"] == 2
-        lebron = [r for r in fam["rows"] if r["entity"] == "Lebron James"]
+        lebron = [r for r in fam["rows"] if r["entity"] == "LeBron James"]
         assert len(lebron) == 1
         assert set(lebron[0]["sources"]) == {"kalshi", "polymarket"}
         assert set(lebron[0]["cross_source"].keys()) == {"kalshi", "polymarket"}
@@ -249,7 +249,7 @@ class TestSettledLabelling:
         families = group_prop_families(markets)
         assert len(families) == 1
         rows = {r["entity"]: r for r in families[0]["rows"]}
-        mcdavid = rows["Connor Mcdavid"]
+        mcdavid = rows["Connor McDavid"]
         assert mcdavid["settled"] is True
         assert mcdavid["status"] == "settled"
         assert mcdavid["result"] == "won"
@@ -287,4 +287,106 @@ class TestCachedLLMHint:
         families = group_prop_families(markets)
         assert len(families) == 1
         assert families[0]["family_key"] == "special race"
+        assert families[0]["entity_count"] == 2
+
+
+# ---------------------------------------------------------------------------
+# #6622 — the entity is the SUBJECT, not the market title
+#
+# Every title below is a real production ``futures_markets.name``.  Before
+# this guard, branch 1 title-cased the whole matched span: the venue's
+# category prefix became part of the player's name ("Nba Free Agency:
+# Mitchell Robinson"), the possessive survived and ``str.title()``
+# upper-cased after the apostrophe ("Jaylen Brown'S"), and correct venue
+# casing was destroyed ("LeBron" -> "Lebron", "CJ" -> "Cj", "III" -> "Iii").
+# That string is the cross-source fold's key, so the fold missed: NOT ONE of
+# the 163 next-team markets in production folded across venues.
+# ---------------------------------------------------------------------------
+
+
+class TestEntityIsTheSubject6622:
+    def test_category_qualifier_is_not_part_of_the_name(self):
+        assert extract_entity("NBA Free Agency: Mitchell Robinson Next Team") == "Mitchell Robinson"
+        assert extract_entity("NBA: Jaylen Brown Next Team") == "Jaylen Brown"
+        assert extract_entity("MLB: Mike Trout Next Team") == "Mike Trout"
+        assert extract_entity("VALORANT Offseason: Chronicle Next Team") == "Chronicle"
+
+    def test_a_sentence_before_a_colon_is_not_a_qualifier(self):
+        # Negative control: the head is seven words, longer than a category
+        # prefix, so it is left alone — the strip must not eat a clause.
+        # Asserted casing-blind so this control passes on BOTH sides of the
+        # change and isolates the strip alone.
+        entity = extract_entity("Who will be the first to announce: LeBron James Next Team")
+        assert entity != "LeBron James"
+        assert "announce" in entity.lower()
+
+    def test_possessive_is_dropped_both_spellings(self):
+        assert extract_entity("Jaylen Brown's Next Team") == "Jaylen Brown"
+        assert extract_entity("Austin Reaves' Next Team") == "Austin Reaves"
+        assert extract_entity("Kirk Cousins's Next Team") == "Kirk Cousins"
+        assert extract_entity("Bronny James' Next Team Before Oct 23, 2026") == "Bronny James"
+
+    def test_a_name_that_merely_ends_in_s_is_untouched(self):
+        # Negative control for the possessive strip: no apostrophe, no strip.
+        assert extract_entity("Anfernee Simons Next Team") == "Anfernee Simons"
+
+    def test_venue_casing_survives(self):
+        assert extract_entity("LeBron James Next Team") == "LeBron James"
+        assert extract_entity("CJ Abrams Next Team") == "CJ Abrams"
+        assert extract_entity("J.J. McCarthy Next Team") == "J.J. McCarthy"
+        assert extract_entity("NBA Free Agency: Robert Williams III Next Team") == "Robert Williams III"
+        assert extract_entity("De'Aaron Fox's Next Team") == "De'Aaron Fox"
+
+    def test_an_uncased_title_is_still_title_cased(self):
+        # The source told us nothing, so we case it ourselves.
+        assert extract_entity("kevin durant next team") == "Kevin Durant"
+        assert extract_entity("KEVIN DURANT NEXT TEAM") == "Kevin Durant"
+
+    def test_family_key_does_not_move(self):
+        # Control: this change is about the entity, never the family.
+        for title in (
+            "NBA Free Agency: Mitchell Robinson Next Team",
+            "Jaylen Brown's Next Team",
+            "CJ Abrams Next Team",
+            "kevin durant next team",
+        ):
+            assert family_key(title) == "next team"
+
+    def test_the_real_jaylen_brown_pair_folds_to_one_settled_row(self):
+        # Production specimens: Kalshi 15728530 and Polymarket 54697891, one
+        # question, both graded won on Philadelphia, rendered as two rows at
+        # 99% and 100% on the Celtics page.
+        markets = [
+            {
+                "market_id": 15728530, "name": "Jaylen Brown's Next Team",
+                "source": "kalshi", "group_id": None, "status": "resolved",
+                "outcomes": [
+                    {"outcome_id": 1, "name": "Philadelphia", "probability": 0.99, "is_winner": True},
+                ],
+            },
+            {
+                "market_id": 54697891, "name": "NBA: Jaylen Brown Next Team",
+                "source": "polymarket", "group_id": "poly:jb", "status": "resolved",
+                "outcomes": [
+                    {"outcome_id": 2, "name": "Philadelphia 76ers", "probability": 1.0, "is_winner": True},
+                ],
+            },
+            {
+                "market_id": 55686465, "name": "Nikola Jokic's Next Team",
+                "source": "kalshi", "group_id": None, "status": "open",
+                "outcomes": [
+                    {"outcome_id": 3, "name": "Denver", "probability": 0.8},
+                ],
+            },
+        ]
+        families = group_prop_families(markets)
+        assert len(families) == 1
+        rows = families[0]["rows"]
+        brown = [r for r in rows if r["entity"] == "Jaylen Brown"]
+        assert len(brown) == 1, [r["entity"] for r in rows]
+        assert set(brown[0]["sources"]) == {"kalshi", "polymarket"}
+        assert brown[0]["settled"] is True and brown[0]["result"] == "won"
+        # A settled winner does not print 99%: among rows that agree it is
+        # won, the coherent field wins, not whichever source came first.
+        assert brown[0]["probability"] == 1.0
         assert families[0]["entity_count"] == 2
