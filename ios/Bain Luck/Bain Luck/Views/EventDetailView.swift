@@ -17,8 +17,6 @@ private struct SourceRowWidthKey: PreferenceKey {
 struct EventDetailView: View {
     let eventId: Int
     @StateObject private var vm: EventDetailViewModel
-    @State private var countdownText: String?
-    @State private var countdownTimer: Timer?
     @State private var selectedPlayPoint: GamePlayPoint?
     /// Closed for every reader. Starts open only when the LOOK rig asks
     /// (`-launch_expand_sections`), which is the only way this list can be
@@ -134,8 +132,6 @@ struct EventDetailView: View {
         EventState.isSuspendedAndStarted(
             vm.event?.status, commenceTime: vm.event?.commenceTime?.asDate)
     }
-    private var isScheduled: Bool { vm.event?.status == "scheduled" }
-
     private var isIPad: Bool { sizeClass == .regular }
     private var logoSize: CGFloat { isIPad ? 80 : 56 }
     private var scoreFontSize: CGFloat { isIPad ? 52 : 40 }
@@ -264,7 +260,6 @@ struct EventDetailView: View {
             .task {
                 await vm.load()
                 AnalyticsService.trackEventDetailView(eventId: eventId, sport: vm.event?.sport)
-                startCountdownTimer()
                 startRefreshCountdown()
             }
             .refreshable {
@@ -272,7 +267,6 @@ struct EventDetailView: View {
             }
             .onDisappear {
                 vm.stopRefresh()
-                countdownTimer?.invalidate()
                 refreshCountdownTimer?.invalidate()
             }
     }
@@ -711,7 +705,28 @@ struct EventDetailView: View {
             // bleeds: the `FINAL` chip was cut off the left edge while
             // "Sep 5 at 6:40 PM" was cut off the right, in the same frame.
             metaLayout {
-                heroStatusBadge(event)
+                // #6544 — THE TICK IS HERE NOW, and it has to be somewhere.
+                //
+                // The chip derives "In 4d 12h" from `commenceTime` on every
+                // render, so it only ages when something re-renders it. What did
+                // that until now was a view-wide 60-second `Timer` writing a
+                // `countdownText` @State — and the centre column's duplicate copy
+                // was that state's ONLY reader. SwiftUI re-renders a view only
+                // when the body read the value that changed, so deleting the
+                // duplicate without replacing the tick would have frozen the chip
+                // at whatever it said when the page appeared: a page left open
+                // over lunch still reading "In 4d 12h".
+                //
+                // `TimelineView` puts the tick on the one view that needs it,
+                // which is both smaller than the old machinery (the @State, the
+                // Timer, its start and its invalidation all go) and impossible to
+                // strand again — there is no second reader to lose. It is not
+                // gated on `scheduled`: a minute is a long interval beside the
+                // half-second refresh ring a live page already runs, and gating
+                // would put the clock back in a branch.
+                TimelineView(.periodic(from: .now, by: 60)) { _ in
+                    heroStatusBadge(event)
+                }
                 // A `Spacer` pushes to both ends of a ROW; in a column it is a
                 // blank line that shoves the date away from the badge.
                 if !stacked { Spacer() }
@@ -1088,12 +1103,23 @@ struct EventDetailView: View {
                             .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
                     }
-                    if let countdownText, !isLive, !isFinished {
-                        Text("In \(countdownText)")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundStyle(.blue)
-                    }
+                    // #6544 — THE COUNTDOWN USED TO BE PRINTED HERE TOO, and the
+                    // two copies could not disagree: one `formatCountdown`
+                    // (`FormattingUtilities.swift`), the same `commenceTime`, so
+                    // the hero said "In 4d 12h" in this slot and again in the chip
+                    // 250pt above it. The three conditions this arm carried —
+                    // a future commence time, not live, not finished — are exactly
+                    // the conditions under which `heroStatusBadge` reaches its
+                    // `scheduled` arm, so there was never an arrangement where
+                    // this copy was the only statement.
+                    //
+                    // The chip is the one that stays, on #6528's rule: the state
+                    // lives in `StatusBadge`, which is what says LIVE / FINAL /
+                    // Settled / "In 4d 12h" on cards, search rows and team
+                    // schedules alike, and the other slot carries only what the
+                    // chip cannot say. Here it carries nothing further — the meta
+                    // row already holds the date and the broadcast — so this slot
+                    // is simply gone rather than refilled.
                     // Opening odds below probability for live games
                     if isLive,
                        let opened = DrawPricedWinner.printablePair(
@@ -1867,25 +1893,6 @@ struct EventDetailView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
-    }
-
-    // MARK: - Countdown Timer
-
-    private func startCountdownTimer() {
-        updateCountdown()
-        guard isScheduled else { return }
-        countdownTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
-            updateCountdown()
-        }
-    }
-
-    private func updateCountdown() {
-        guard let commenceTime = vm.event?.commenceTime,
-              let date = commenceTime.asDate else {
-            countdownText = nil
-            return
-        }
-        countdownText = formatCountdown(from: date)
     }
 
     // MARK: - Refresh Countdown
