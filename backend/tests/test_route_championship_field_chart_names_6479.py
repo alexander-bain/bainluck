@@ -140,6 +140,22 @@ def _snapshot(outcome_id, captured_at, prob):
     s.captured_at = captured_at
     s.probability = prob
     s.bookmaker = "kalshi"
+    # 🔴 THE BOOK COLUMNS ARE NAMED BECAUSE A MagicMock's AUTO-ATTRIBUTE IS NOT
+    # ABSENT — IT IS 1.0 (#6532). `_drop_unsupported_snapshot_points` reads these
+    # through `_as_float`, and `float(MagicMock())` is 1.0, so an unnamed
+    # `yes_bid` handed the price rules a live bid of 100c beside a 0.1
+    # probability. That is a genuinely refuted row — you could sell into a 1.0
+    # bid while we print 0.1 — and the whole legend under test was withheld,
+    # every series empty, for a book this file never meant to describe.
+    #
+    # `None` is the honest value and is what the column holds on a real snapshot
+    # the poller wrote with no book: every arm of `futures_unsupported_price`
+    # reads an absent book as "we did not look" and FAILS OPEN, which is the
+    # premise the comment on `resolution_source` above already states for this
+    # fixture. A mock's default is a value, not a silence.
+    s.yes_bid = None
+    s.yes_ask = None
+    s.last_price = None
     return s
 
 

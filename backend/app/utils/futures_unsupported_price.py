@@ -103,6 +103,7 @@ from typing import Optional
 from app.utils.feed_market_quality import is_fabricated_midpoint
 from app.utils.kalshi_empty_book import (
     KALSHI_BOOKMAKER,
+    book_refutes_price,
     is_lone_ask_on_empty_book,
 )
 
@@ -118,6 +119,7 @@ __all__ = [
     "needs_trade_disconfirmation",
     "needs_trade_evidence",
     "price_is_unsupported",
+    "price_refuted_by_live_book",
     "snapshot_price_is_unsupported",
 ]
 
@@ -204,6 +206,104 @@ def price_is_unsupported(
     if not has_trade_evidence:
         return False
     return is_lone_ask_on_empty_book(yes_bid, yes_ask, last_price)
+
+
+def price_refuted_by_live_book(
+    source: Optional[str],
+    resolution_source: Optional[str],
+    is_winner: Optional[bool],
+    probability: Optional[float],
+    yes_bid: Optional[float],
+    yes_ask: Optional[float],
+) -> bool:
+    """True when the row's own book prices out the price the row serves (#6532).
+
+    WHAT A READER SAW. ``/events/15312074`` (Valencia v Real Sociedad, a fixture
+    four days from kick-off) printed **"Relegated 99%"** for Real Sociedad under
+    *Season context*, directly beneath that club's own record on the same card,
+    **2-1-3**, six games into a twenty-club season. The same number again on
+    ``/events/15312073`` and on ``/sport/soccer/laliga``, where the whole column is
+    visible at once and sums to **8.24** in a league that relegates exactly three.
+    Real Sociedad's row carries ``current_probability 0.99`` beside
+    ``current_yes_ask 0.4900``: you can buy the outcome at 49c while we print 99%.
+
+    THE ROW REFUTES ITSELF AND NO VENUE READ IS NEEDED, which is the test every
+    arm of this module is built on. The price and the two book columns are three
+    fields of ONE write — Real Sociedad's ``last_updated`` is a single timestamp
+    for all three — so this is our stored value against another field of the same
+    write, never our value against what the venue says today, a shape that invents
+    a second writer and blames the market for moving.
+
+    🔴 THE RULE IS NOT NEW AND IS NOT RE-DERIVED. :func:`book_refutes_price` is
+    #5121's shipped predicate, written for and still used by
+    ``_kalshi_yes_probability`` rule 2, carrying its own measured half-cent
+    tolerance and its own empty-book carve-out (an ask of 1.00 cannot be exceeded,
+    so the stuck 99%/1% ladder ``kalshi_resolution_sweep`` depends on falls through
+    untouched). It guards the WRITE. Nothing guarded the READ — and as everywhere
+    else in this module, the guard that stops a new fabrication is exactly what
+    guarantees the old one survives: ``_kalshi_yes_probability`` returns ``None``
+    for a refuted trade and the caller SKIPS the row rather than nulling it, so the
+    book columns go on being kept current beside a price column that is frozen.
+
+    WHY THE TWO SHIPPED ARMS ARE INERT HERE, both of them by their own rules.
+    :func:`price_is_unsupported` asks "does a TRADE support this?" and
+    ``is_lone_ask_on_empty_book`` needs ``yes_ask > 0.50``; Real Sociedad's ask is
+    0.49, so the shape misses by one cent. And its first clause exempts any graded
+    row — of the 19 priced legs on that market, 15 carry
+    ``resolution_source='api_settlement'``, Real Sociedad among them, so the whole
+    family is disarmed on the specimen before any price rule is reached.
+
+    🔴 A GRADED ROW IS STILL EXEMPT — EXCEPT WHERE ITS OWN GRADE AND ITS OWN PRICE
+    DISAGREE, and that carve-out is as narrow as the sentence it comes from. The
+    other two arms exempt a graded row because "the number is a settlement value,
+    not a quote", and that is right: settled means settled, withholding a result
+    would pre-empt the settled-language ship (#4788, #5549, #5820), and this file
+    must not start deleting results. But a settlement value is 0 or 1. A row whose
+    grade says the outcome LOST while its price says 0.99, on a book offering it at
+    0.49, is stating neither a settlement value nor a quote anyone will honour, and
+    both of its own fields say so. So:
+
+    * a graded WINNER is never touched, whatever the book says. 163 Polymarket and
+      1 Kalshi leg sit above their own stale ask at exactly 1.0 — settled winners
+      with a book nobody refreshed — and every one of them keeps its price.
+    * a graded row with no verdict (``is_winner`` NULL beside a resolution source)
+      is never touched either: ignorance about which way it went is not evidence.
+    * a graded LOSER is asked the ASK arm only. Its number must be ~0, so a price
+      the live bid prices out from BELOW is still the 0 its grade implies and is
+      left alone — 110 Kalshi legs, almost all of them a settled 0.0000 beside a
+      bid nobody cleared, which the symmetric form would have blanked. Deleting
+      those is the exact harm the exemption exists to prevent.
+
+    An UNGRADED row is a quote and gets the shipped predicate whole, both arms: a
+    number the live book prices out is refuted whichever side prices it out.
+
+    SCOPED TO KALSHI, DELIBERATELY, and this one does not port. Polymarket's rule
+    for these columns is a different one (gotcha #19: a wide spread falls back to
+    ``lastTradePrice``), so a Polymarket price legitimately sits above its own ask
+    whenever the last trade did — the 385 ungraded Polymarket legs in that shape
+    are the stale-trade question, which #5876's arm already answers on that venue
+    with the newest snapshot rather than the book. Measured on production
+    2026-09-16: 411 Kalshi legs on open markets are refuted here, 210 of them
+    ungraded and 201 graded losers; the specimen's market contributes 3.
+
+    WITHHOLDING, NEVER REWRITING. Serving the ask instead would be a number we
+    invented, and ``calibration_probability`` coalesces to stored values (gotcha
+    #144 / ruling 103), so an invented price becomes a forecast we are graded on.
+    Nothing here mutates a stored price (gotcha #21).
+    """
+    if (source or "").strip().lower() != KALSHI_BOOKMAKER:
+        return False
+    if probability is None:
+        return False
+    if resolution_source is not None:
+        if is_winner is not False:
+            return False
+        # A graded loser: the ask arm alone, for the reason above. Passing no bid
+        # is how the shared predicate is asked half its question — it reads the
+        # bid only to run the mirror arm, so `None` disables that arm exactly the
+        # way an absent book does, with no second copy of the rule here.
+        return book_refutes_price(None, yes_ask, float(probability))
+    return book_refutes_price(yes_bid, yes_ask, float(probability))
 
 
 #: What "the last trade supports the served price" means, and it is anchored to
@@ -310,8 +410,10 @@ def snapshot_price_is_unsupported(
     yes_bid: Optional[float],
     yes_ask: Optional[float],
     last_price: Optional[float],
+    *,
+    is_winner: Optional[bool] = None,
 ) -> bool:
-    """Both arms above, asked of ONE historical ``futures_odds_snapshots`` row (#5898).
+    """All three arms above, asked of ONE historical ``futures_odds_snapshots`` row (#5898).
 
     THE CHART IS THE THIRD RAIL AND IT KEPT THE NUMBER THE LADDER REFUSED.
     ``/futures/8641774`` withholds Ceará's price today — the table prints ``—``.
@@ -349,6 +451,24 @@ def snapshot_price_is_unsupported(
     today; a stored 0.0 means the venue said zero, which both arms already treat
     as evidence. The two are distinguished upstream by Polymarket's and Kalshi's
     writers, which is what makes reading them differently safe.
+
+    THE THIRD ARM NEEDS NO TRADE AT ALL AND IS THE CHEAPEST OF THE THREE (#6532).
+    :func:`price_refuted_by_live_book` reads ``probability`` against ``yes_bid``
+    and ``yes_ask``, which on a snapshot are three columns of one insert — the
+    tightest form of the same-write argument this whole docstring rests on. It is
+    here, and not deferred to its own ship, because the specimen forces it: all
+    three refuted legs of market 56775508 carry four charted points each inside
+    the page's own 168-hour window and every one of those points is refuted, so a
+    ladder printing ``—`` over a chart ending at 0.99 would be #5898's defect
+    rebuilt by its own repair. Measured on production 2026-09-16 over the 411 legs
+    this arm refuses today: 268 draw a series in that window, and 894 of their
+    1,453 points are refused.
+
+    ``is_winner`` IS KEYWORD-ONLY WITH A ``None`` DEFAULT, AND THAT DEFAULT FAILS
+    OPEN. ``None`` is the "graded, verdict unknown" case, which
+    :func:`price_refuted_by_live_book` exempts, so a caller that never learned
+    about this argument keeps every point it serves today. Absence is not evidence
+    here, for the reason it is not evidence anywhere else in this module.
 
     ``resolution_source`` IS THE OUTCOME'S, NOT THE ROW'S. Snapshots carry no
     grade, and both arms exempt a graded outcome for the reason they each state
@@ -398,6 +518,15 @@ def snapshot_price_is_unsupported(
         yes_ask,
         last_price,
         has_trade_evidence=has_trade_evidence,
+    ):
+        return True
+    if price_refuted_by_live_book(
+        bookmaker,
+        resolution_source,
+        is_winner,
+        probability,
+        yes_bid,
+        yes_ask,
     ):
         return True
     return midpoint_refuted_by_last_trade(

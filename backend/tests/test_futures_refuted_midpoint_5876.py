@@ -413,8 +413,13 @@ class TestBothArmsLandInOneWithheldSet:
         """THE UNWIRED-HELPER GUARD, and it is the reason this test exists at the
         endpoint rather than one level down. Every other test in this file passes
         with `_refuted_midpoint_outcome_ids` never called by anything — a fully
-        tested helper that changes nothing a reader sees. Deleting the `|=` line
-        in `get_futures_market`, or replacing it with `=`, must fail here.
+        tested helper that changes nothing a reader sees. Deleting any of the `|=`
+        lines in `get_futures_market`, or replacing one with `=`, must fail here.
+
+        Extended for the third arm (#6532). The guard is per-arm on purpose: a
+        union assertion that named only two of three would go on passing the day
+        the newest helper was wired to nothing, which is the exact failure the
+        docstring above says this test exists to catch.
         """
         from app.routes import futures as futures_route
 
@@ -441,6 +446,9 @@ class TestBothArmsLandInOneWithheldSet:
         async def _poly_arm(_db, _m):
             return {202}
 
+        def _book_arm(_m):
+            return {303}
+
         seen = {}
 
         def _fake_detail(_m, _b, withheld):
@@ -452,13 +460,15 @@ class TestBothArmsLandInOneWithheldSet:
             futures_route, "_unsupported_price_outcome_ids", _kalshi_arm
         )
         monkeypatch.setattr(futures_route, "_refuted_midpoint_outcome_ids", _poly_arm)
+        monkeypatch.setattr(futures_route, "_book_refuted_outcome_ids", _book_arm)
         monkeypatch.setattr(futures_route, "_format_market_detail", _fake_detail)
 
         await futures_route.get_futures_market(8641774, _DB())
-        assert seen["withheld"] == {101, 202}, (
-            "the serializer must receive BOTH arms; got "
-            f"{seen['withheld']}. 101 alone means #5876 is unwired, 202 alone "
-            "means #5611 was overwritten rather than unioned."
+        assert seen["withheld"] == {101, 202, 303}, (
+            "the serializer must receive ALL THREE arms; got "
+            f"{seen['withheld']}. A missing 101 means #5611 is unwired, a missing "
+            "202 means #5876 is, a missing 303 means #6532 is — and any single id "
+            "alone means one `|=` was written as `=`."
         )
 
     async def test_the_polymarket_arm_reaches_the_serializer(self):
