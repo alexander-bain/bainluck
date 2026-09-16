@@ -181,6 +181,51 @@ def _record_espn_dark(url: str, status: Optional[int], error: Optional[str]) -> 
         )
 
 
+def _normalize_win_percentage(value) -> Optional[float]:
+    """ESPN's ``homeWinPercentage``, in the 0–1 unit the rest of the app uses.
+
+    ESPN is not consistent about the unit ACROSS ITS OWN SURFACES, so this is the
+    one place that decides. The ``winprobability`` array on ``/summary`` returns a
+    FRACTION — MLB 0.499, NFL 0.5853, NBA 0.137, probed 2026-08-31 and re-measured
+    2026-09-16 — while the scoreboard's ``situation.lastPlay.probability`` has
+    historically returned a PERCENTAGE (83.1 = 83.1%). Two readers, two units, one
+    field name.
+
+    Reading the fraction as a percentage is not a rounding error. An
+    unconditional ``/100`` on the summary path wrote **118,824 backfilled rows
+    across 989 events with 118,821 of them below 2%** (#2486) — an ESPN line glued
+    to the floor of every one of those charts, and, because the blend takes a
+    weighted median across sources, an aggregate line that hops ~45pp whenever
+    that arm's weight shifts (#6461: 29 jumps ≥5pp on one event, 14 of them this).
+
+    So: divide only what is actually a percentage, and refuse what is neither.
+
+    * ``> 1.0`` is a percentage; divide it.
+    * ``0.0``–``1.0`` inclusive is already a probability; PASS IT THROUGH. The
+      genuine-low case is the load-bearing one — ESPN really does report 0.0066
+      for the wrong end of a blowout, and that row must stay 0.0066 rather than
+      be "rescued" to 66%. A blanket ×100 of what is already stored is wrong for
+      exactly this reason (#2486's own refusal), and a blanket ÷100 here is the
+      same mistake in the other direction.
+    * anything that does not land in ``[0, 1]`` after that — a negative, a value
+      over 100, a NaN, a string ESPN put where a number belongs — is ``None``,
+      i.e. NO READING. Both callers already treat ``None`` as "no probability for
+      this point", which drops one point rather than storing a number that cannot
+      be a probability (gotcha #53: an unparseable answer is not a reading).
+    """
+    if value is None:
+        return None
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    if num > 1.0:
+        num = num / 100.0
+    if not (0.0 <= num <= 1.0):  # also catches NaN, whose comparisons are all False
+        return None
+    return num
+
+
 @dataclass
 class ESPNTeam:
     """Team data from ESPN."""
@@ -760,10 +805,12 @@ class ESPNAPIService:
             home_win_prob = None
             situation = competition.get("situation", {})
             if situation:
-                home_win_prob = situation.get("lastPlay", {}).get("probability", {}).get("homeWinPercentage")
-                # ESPN returns percentage (e.g., 83.1 = 83.1%) — convert to decimal
-                if home_win_prob is not None and home_win_prob > 1.0:
-                    home_win_prob = home_win_prob / 100.0
+                # The scoreboard's unit is a percentage (83.1 = 83.1%); the
+                # summary's is a fraction. `_normalize_win_percentage` is the one
+                # place that knows, and it is called from both (#2486).
+                home_win_prob = _normalize_win_percentage(
+                    situation.get("lastPlay", {}).get("probability", {}).get("homeWinPercentage")
+                )
 
             # Parse date — same two shapes as `status` above.
             date_str = event_data.get("date") or competition.get("date")
@@ -881,7 +928,14 @@ class ESPNAPIService:
             result.append({
                 "play_id": point.get("playId"),
                 "seconds_left": point.get("secondsLeft"),
-                "home_win_probability": point.get("homeWinPercentage", 0) / 100,
+                # 🔴 #2486. This line read `point.get("homeWinPercentage", 0) / 100`
+                # for as long as the task existed, and this array is a FRACTION —
+                # so every backfilled ESPN chart line was drawn at 1/100 of its
+                # true value. The caller drops a `None` point rather than writing
+                # a number that is not a probability.
+                "home_win_probability": _normalize_win_percentage(
+                    point.get("homeWinPercentage")
+                ),
             })
 
         return result
