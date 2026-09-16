@@ -6,7 +6,9 @@ import useSWR from "swr";
 import Link from "next/link";
 import { searchMovie, posterUrl, hasTMDBToken } from "@/lib/tmdb";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
-import { fetchEntertainment } from "@/lib/api";
+import { fetchEntertainment, formatProbability } from "@/lib/api";
+import { NO_READING, probabilityParts } from "@/lib/probabilityDisplay";
+import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { eventPath } from "@/lib/eventKey";
 import type {
   EntertainmentData,
@@ -190,27 +192,82 @@ function MetaRow({
   );
 }
 
+/**
+ * UX-P046, on the page that never adopted it.
+ *
+ * This printed `Math.round(value)`, so a real price below half a point printed
+ * `0%` — and `0%` does not read as "unlikely", it reads as "impossible", over an
+ * outcome a market is actively pricing. Measured on `GET /api/entertainment`
+ * 2026-09-16: **14 rows carry a nonzero probability and print `0%`**, including
+ * the first card on the page ("Which movie has biggest opening weekend in 2026?",
+ * The Hunger Games at 0.1) and every one of the five albums on the Billboard
+ * card, which between them tell the reader nothing.
+ *
+ * The SPLIT form, not the finished string: this page prints the integer and the
+ * `%` as separate spans at different sizes, so `formatProbabilityPercent` is not
+ * a drop-in — handed `">99%"` it would draw the marker at full size with a second
+ * `%` glued after it. `probabilityParts` is the seam #6064 added for exactly that
+ * shape on the event hero, and taking it is what keeps the boundary rule in one
+ * place rather than re-implemented here.
+ *
+ * `value` is a PERCENT (0-100) on this page's wire; the contract takes a
+ * probability, hence the divide.
+ */
 function ProbPct({ value, size = 14 }: { value: number; size?: number }) {
+  const { marker, digits } = probabilityParts(value / 100);
   return (
     <span
       className={s.probNum}
       style={{ fontSize: size, letterSpacing: size > 24 ? "-0.02em" : "-0.01em" }}
     >
-      {Math.round(value)}
-      <span style={{ fontSize: size * 0.65, opacity: 0.7 }}>%</span>
+      {digits === NO_READING ? (
+        NO_READING
+      ) : (
+        <>
+          {marker}
+          {digits}
+          <span style={{ fontSize: size * 0.65, opacity: 0.7 }}>%</span>
+        </>
+      )}
     </span>
   );
 }
 
+/**
+ * Two defects in one bar, both seen on production 2026-09-16 at 390px.
+ *
+ * (a) #2566 — THE LABEL WAS PAINTED INSIDE THE FILL. `.ynYes` was a flex item
+ *     whose width IS the probability, inside a clipped 28px track, so on a
+ *     lopsided market the label had a handful of pixels to live in and was
+ *     chopped: "Puka Nacua and Sara Saffari: Engaged in 2026?" and "Will Dune:
+ *     Part Three be delayed?" — both binary cards in the Cultural Moments feed —
+ *     drew `YES 2%` as `YI` over `2%`, cut mid-glyph. The fill is now a LAYER
+ *     BEHIND the labels, so no width can clip a label it does not contain. That
+ *     also covers the mirror case the original report did not reach: a 97% YES
+ *     made the NO label equally unreadable, and a percent threshold would have
+ *     had to be tuned twice (this card and the Tech & Culture rail draw the bar
+ *     at different widths).
+ *
+ * (b) THE TWO SIDES WERE ROUNDED INDEPENDENTLY. Callers pass `no = 100 - prob`,
+ *     an exact complement, and the venues quote on a half-cent grid — so `.5`
+ *     rounds up on BOTH sides at once and the card prints 101. Measured on
+ *     `GET /api/entertainment` 2026-09-16: **4 of 18 binary cards (22%)**, all
+ *     101 — PBD Podcast 4/97, MrBeast 6/95, Musk-on-Mars 11/90, Dantes 13/88.
+ *     `renderedDuelPercents` is the rule #2831 shipped and #6233 adopted on the
+ *     browse hubs; YES and NO sit in FIXED positions here, which is the duel
+ *     shape, so the favourite is the side that survives rounding rather than
+ *     whichever side happens to be first.
+ *
+ * Gotcha #23 is respected for free: the helper self-gates on the [0.99, 1.01]
+ * band, and this caller's pair is an exact complement by construction.
+ */
 function YesNoBar({ yes, no }: { yes: number; no: number }) {
+  const [yesPct, noPct] = renderedDuelPercents(yes / 100, no / 100);
   return (
     <div className={s.ynBar}>
-      <span className={s.ynYes} style={{ width: `${yes}%` }}>
-        YES {Math.round(yes)}%
-      </span>
-      <span className={s.ynNo} style={{ width: `${no}%` }}>
-        NO {Math.round(no)}%
-      </span>
+      <span className={s.ynFill} style={{ width: `${yes}%` }} aria-hidden="true" />
+      <span className={s.ynYes}>YES {formatProbability(yes / 100, { rendered: yesPct })}</span>
+      <span className={s.ynNo}>NO {formatProbability(no / 100, { rendered: noPct })}</span>
     </div>
   );
 }
