@@ -920,10 +920,21 @@ async def redis_census(
             "keyspace_hits": info_stats.get("keyspace_hits"),
             "keyspace_misses": info_stats.get("keyspace_misses"),
         }
+        # `connected_clients` is a GAUGE and on its own it cannot tell a healthy
+        # fleet from a churning one: 45 connections held open by pools and 45
+        # re-opened every few seconds read identically. #1197 is a TLS-handshake
+        # churn bug, so the counter that decides it is `total_connections_received`
+        # — monotonic, so two reads give a per-hour rate. Against ~14 pool-holding
+        # processes, a rate in the hundreds/hour means connections are being minted
+        # per operation rather than reused, which is the defect the pool cache fixed
+        # on the sync path.
         out["clients"] = {
             "connected_clients": info_clients.get("connected_clients"),
             "blocked_clients": info_clients.get("blocked_clients"),
             "rejected_connections": info_stats.get("rejected_connections"),
+            "total_connections_received": info_stats.get(
+                "total_connections_received"
+            ),
         }
         out["dbsize"] = r.dbsize()
 
