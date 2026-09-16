@@ -293,8 +293,17 @@ def test_the_contradiction_only_drops_the_contested_name():
 # ---------------------------------------------------------------------------
 
 
-def test_our_own_anchored_club_name_vetoes_the_rewrite():
-    """`Real Sociedad B` is a real club that matches the truncation shape."""
+def test_a_real_club_shaped_like_a_truncation_is_left_alone_by_the_ticker():
+    """`Real Sociedad B` is a real club that matches the truncation shape.
+
+    Written as a TICKER test and not a veto test, because that is what it
+    measures: no code resolves `Real Sociedad B`, so it survives here whether or
+    not the veto runs. Deleting the veto leaves this green — proven by mutation
+    — which is why the veto's own proof is
+    :func:`test_the_veto_stops_a_rewrite_the_ticker_would_otherwise_make` and
+    not this. The two are kept apart so neither can be read as covering the
+    other.
+    """
     card = _search_card(
         JETS_ID, "Real Sociedad B vs Eibar", ["Real Sociedad B", "Eibar"]
     )
@@ -304,11 +313,34 @@ def test_our_own_anchored_club_name_vetoes_the_rewrite():
         {JETS_ID: JETS_TICKER},
         title_field=SEARCH_CARD_FIELDS[0],
         id_field=SEARCH_CARD_FIELDS[1],
-        protected_names=("Real Sociedad B", "Eibar"),
     )
 
     assert changed == 0
     assert _outcome_names(card) == ["Real Sociedad B", "Eibar"]
+
+
+def test_the_veto_stops_a_rewrite_the_ticker_would_otherwise_make():
+    """The only honest veto test: a name the ticker DOES resolve.
+
+    `New York J` under `KXNFLGAME-26SEP20GBNYJ` completes to `New York Jets`
+    every other time in this file. Here an anchored row says that exact string
+    is somebody's actual name, and the rewrite stops. Nothing but the veto is
+    holding it, so removing the veto fails this and only this.
+    """
+    card = _search_card(
+        JETS_ID, "GB Packers vs NY Jets", ["Green Bay", "New York J"]
+    )
+
+    changed = repair_card_club_names(
+        [card],
+        {JETS_ID: JETS_TICKER},
+        title_field=SEARCH_CARD_FIELDS[0],
+        id_field=SEARCH_CARD_FIELDS[1],
+        protected_names=("New York J", "Green Bay Packers"),
+    )
+
+    assert changed == 0
+    assert _outcome_names(card) == ["Green Bay", "New York J"]
 
 
 def test_a_veto_from_another_card_in_the_response_still_binds():

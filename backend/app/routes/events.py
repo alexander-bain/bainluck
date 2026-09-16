@@ -7095,10 +7095,7 @@ async def search_events(
     await _repair_search_card_club_names(
         db,
         list(_formatted_by_id.values()),
-        [
-            (m.id, m.external_id, m.event_id)
-            for m in (*deduped_futures, *futures_markets)
-        ],
+        [_market_facts(m) for m in (*deduped_futures, *futures_markets)],
         card_fields=SEARCH_CARD_FIELDS,
     )
 
@@ -9066,7 +9063,7 @@ async def typeahead_search(
         # private-key strip, and gotcha #6 is explicit that a live ORM row may
         # not be carried across that distance — an expired attribute would be a
         # lazy refresh inside async on the hottest path in the API.
-        _ta_market_facts.append((market.id, market.external_id, market.event_id))
+        _ta_market_facts.append(_market_facts(market))
         label = _TIER_LABELS.get(market.market_tier, None)
         if not label and market.sport_id is None:
             label = (market.llm_sport_category or market.category or "Market").replace("_", " ").title()
@@ -22612,6 +22609,28 @@ def _served_prices_as_of(
     if not stamps:
         return None
     return min(stamps).isoformat()
+
+
+def _market_facts(market) -> tuple[Optional[int], Optional[str], Optional[int]]:
+    """`(id, kalshi ticker, event id)` for the #6447 search repair.
+
+    `getattr` with a default, which is this module's house idiom for reading a
+    row inside the search formatters — `_served_prices_as_of` says why in full:
+    these are mapped columns and are always there on a real row, the doubles
+    that reach this path are not, and a serializer must not be the thing that
+    500s a search page.
+
+    Not defensiveness for its own sake. Reading `market.event_id` directly
+    turned 22 green tests in `test_route_typeahead_intent_5060.py` into 500s the
+    first time this ran, because their fixtures predate the column being read
+    here — and a fixture that stops matching is a signal about the contract, not
+    a fixture to go and edit in twenty-two places.
+    """
+    return (
+        getattr(market, "id", None),
+        getattr(market, "external_id", None),
+        getattr(market, "event_id", None),
+    )
 
 
 async def _repair_search_card_club_names(
