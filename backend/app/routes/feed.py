@@ -6293,9 +6293,7 @@ def _leader_outcome_team_name(outcomes_data: list[dict]) -> str | None:
     return outcomes_data[0].get("team_name") if outcomes_data else None
 
 
-async def _team_names_by_id(
-    db: AsyncSession, outcomes: list[Any]
-) -> dict[int, str]:
+async def _team_names_by_id(db: AsyncSession, outcomes: list[Any]) -> dict[int, str]:
     """`{team_id: teams.name}` for the teams a candidate pool's outcomes name (#6550).
 
     ONE indexed primary-key SELECT per scoring pass, over the `team_id`s already
@@ -6370,9 +6368,7 @@ def _top_outcomes_for_trace(
                 "team_id": getattr(outcome, "team_id", None),
                 # #6550: and on whether the printed name reaches the nickname.
                 # See `_leader_outcome_team_name`.
-                "team_name": (team_names or {}).get(
-                    getattr(outcome, "team_id", None)
-                ),
+                "team_name": (team_names or {}).get(getattr(outcome, "team_id", None)),
                 "probability": (
                     float(outcome.current_probability)
                     if outcome.current_probability is not None
@@ -9445,9 +9441,7 @@ async def _score_sports_mode_futures(
     # #6550: one PK SELECT for the whole pool, beside the canonical counts and
     # for the same reason — the two serializers print the same card, so the verb
     # has to be answerable in both or the fix lands on one surface only.
-    team_names = await _team_names_by_id(
-        db, [o for m in markets for o in m.outcomes]
-    )
+    team_names = await _team_names_by_id(db, [o for m in markets for o in m.outcomes])
 
     user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
 
@@ -10763,9 +10757,7 @@ async def _score_futures(
     # see `_team_names_by_id` for why this is not a column on the wire. Reads
     # `market.outcomes` on rebuilt snapshot rows exactly as the scoring loop
     # below does, so the cached and direct paths answer identically.
-    team_names = await _team_names_by_id(
-        db, [o for m in markets for o in m.outcomes]
-    )
+    team_names = await _team_names_by_id(db, [o for m in markets for o in m.outcomes])
     mark_timing("team_names")
 
     # --- Load precomputed interestingness scores from Redis ---

@@ -29,8 +29,10 @@ row of `KNOWN_TEAM_NAME_CASES` below that reads "lead" is that assertion, and
 every caller that cannot name the team.
 """
 
+import ast
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -139,8 +141,16 @@ def test_team_ness_is_still_the_outer_gate():
 
     #4700 gated on `FuturesOutcome.team_id` precisely so a person is never
     touched. A stray `leader_team_name` must not open that gate.
+
+    🔴 THE SECOND ROW IS THE ONE THAT ISOLATES IT, and the first row cannot.
+    `Layne Riggs` inside `Layne Riggs Racing` IS a strict prefix, so a gate
+    widened to `leader_is_team or leader_team_name` still returns "leads" there
+    and the control passes while measuring nothing. The row that separates the
+    two is a non-team whose supplied name is NOT a prefix: gated, it keeps
+    #4700's singular; ungated, the orthographic arm makes it "lead".
     """
     assert leader_agreement_verb("Layne Riggs", False, "Layne Riggs Racing") == "leads"
+    assert leader_agreement_verb("Layne Riggs", False, "Kaulig Racing") == "leads"
     assert leader_agreement_verb(None, True, "Texas Longhorns") == "leads"
     assert leader_agreement_verb("", True, "Texas Longhorns") == "leads"
 
@@ -161,8 +171,14 @@ def test_a_strict_prefix_ends_on_a_word_boundary():
 
 def test_an_equal_name_is_not_a_stripped_nickname():
     """STRICT prefix. Equality means the nickname is printed, so #4700 decides."""
-    assert _printed_name_omits_nickname("Los Angeles Dodgers", "Los Angeles Dodgers") is False
-    assert leader_agreement_verb("Los Angeles Dodgers", True, "Los Angeles Dodgers") == "lead"
+    assert (
+        _printed_name_omits_nickname("Los Angeles Dodgers", "Los Angeles Dodgers")
+        is False
+    )
+    assert (
+        leader_agreement_verb("Los Angeles Dodgers", True, "Los Angeles Dodgers")
+        == "lead"
+    )
 
 
 def test_an_absent_team_name_is_not_a_stripped_nickname():
@@ -278,6 +294,159 @@ def test_every_caption_call_site_passes_the_team_name():
         ), f"feed.py:{index + 1} composes a caption without the team name"
 
 
+def test_every_outcome_row_that_carries_team_id_carries_team_name():
+    """The row builders, structurally — the link a call-site scan cannot see.
+
+    `leader_team_name` reaching all nine call sites proves nothing if the dict
+    those call sites read never got the name onto row 0. There are three
+    builders (the Discover serializer, the Sports serializer, the admin trace)
+    and #4700 had to be applied to all three; a fourth added with `team_id` and
+    without `team_name` would serve `Texas lead` on its own surface only, which
+    is the two-screens-two-grammars shape this issue was opened on.
+    """
+    source = (
+        Path(__file__).resolve().parents[1] / "app" / "routes" / "feed.py"
+    ).read_text(encoding="utf-8")
+    rows = [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Dict)
+        and any(
+            isinstance(key, ast.Constant) and key.value == "team_id"
+            for key in node.keys
+            if key is not None
+        )
+    ]
+    assert len(rows) == 3, f"the outcome row builders moved: found {len(rows)}"
+    for row in rows:
+        keys = {key.value for key in row.keys if isinstance(key, ast.Constant)}
+        assert (
+            "team_name" in keys
+        ), f"feed.py:{row.lineno} builds an outcome row with team_id and no team_name"
+
+
+def test_every_row_builder_actually_resolves_the_names():
+    """And the key must be filled from a real lookup, not left to default.
+
+    🔴 THIS IS THE INERTNESS GUARD, and the key-presence scan above cannot be
+    it. `"team_name": team_names.get(...)` over a `team_names` that nobody ever
+    populated is byte-for-byte as green as the fix and serves `Texas lead` on
+    every card — the whole chain present, the answer always `None`, every other
+    test in this file still passing. So each builder must either resolve the map
+    in its own body (the two serializers) or take it as a parameter from a
+    caller that does (the admin trace).
+    """
+    source = (
+        Path(__file__).resolve().parents[1] / "app" / "routes" / "feed.py"
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    def _builds_a_team_row(function):
+        return any(
+            isinstance(node, ast.Dict)
+            and any(
+                isinstance(key, ast.Constant) and key.value == "team_name"
+                for key in node.keys
+                if key is not None
+            )
+            for node in ast.walk(function)
+        )
+
+    def _resolves_the_map(function):
+        takes_it = any(
+            argument.arg == "team_names"
+            for argument in function.args.args + function.args.kwonlyargs
+        )
+        calls_it = any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_team_names_by_id"
+            for node in ast.walk(function)
+        )
+        return takes_it or calls_it
+
+    builders = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and _builds_a_team_row(node)
+    ]
+    assert len(builders) == 3, f"the outcome row builders moved: {len(builders)}"
+    for builder in builders:
+        assert _resolves_the_map(
+            builder
+        ), f"{builder.name} builds a team_name it never looks up"
+
+
+class _RecordingSession:
+    """A stub session that records the statement and replays fixed rows."""
+
+    def __init__(self, rows):
+        self._rows = rows
+        self.statements = []
+
+    async def execute(self, statement):
+        self.statements.append(statement)
+        return _Result(self._rows)
+
+
+class _Result:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+@pytest.mark.asyncio
+async def test_team_names_are_resolved_off_both_row_carriers():
+    """`_team_names_by_id` reads `team_id` from `__dict__`, never by attribute.
+
+    Discover serves from rebuilt `FuturesOutcomeSnapshot` rows and Sports from
+    hydrated ORM rows, and the two must answer identically or the same market
+    reads two ways on two screens. `__dict__.get` is also the only safe read
+    here: `getattr` on an unprojected mapped attribute lazy-loads and raises
+    `MissingGreenlet` inside the per-item serializer, emptying the whole futures
+    pool (gotcha #42).
+    """
+    from app.routes.feed import _team_names_by_id
+    from app.utils.futures_market_snapshot import (
+        OUTCOME_ROW_COLUMNS,
+        FuturesOutcomeSnapshot,
+    )
+
+    snapshot_values = [
+        834 if column == "team_id" else None for column in OUTCOME_ROW_COLUMNS
+    ]
+    orm_like = SimpleNamespace(team_id=15263)
+    unlinked = SimpleNamespace(team_id=None)
+
+    session = _RecordingSession([(834, "Texas Longhorns"), (15263, "Georgia Bulldogs")])
+    names = await _team_names_by_id(
+        session,
+        [FuturesOutcomeSnapshot(snapshot_values), orm_like, unlinked],
+    )
+
+    assert names == {834: "Texas Longhorns", 15263: "Georgia Bulldogs"}
+    assert len(session.statements) == 1, "one PK SELECT for the whole pool"
+    asked = session.statements[0].whereclause.right.value
+    assert sorted(asked) == [834, 15263], "an id was dropped or invented"
+
+
+@pytest.mark.asyncio
+async def test_a_pool_with_no_linked_team_asks_nothing():
+    """The short-circuit is load-bearing: most futures pools link no team at all
+    (`team_id` was populated on 3 of 45 served leaders when #4700 measured it),
+    so an unconditional SELECT would be a per-request round trip that answers
+    `{}`."""
+    from app.routes.feed import _team_names_by_id
+
+    session = _RecordingSession([])
+    assert await _team_names_by_id(session, [SimpleNamespace(team_id=None)]) == {}
+    assert await _team_names_by_id(session, []) == {}
+    assert session.statements == []
+
+
 def test_the_leader_row_carries_the_team_name():
     """`_leader_outcome_team_name` reads row 0 and nothing else.
 
@@ -292,7 +461,11 @@ def test_the_leader_row_carries_the_team_name():
         _leader_outcome_team_name(
             [
                 {"name": "Texas", "team_id": 834, "team_name": "Texas Longhorns"},
-                {"name": "Ohio State", "team_id": 9, "team_name": "Ohio State Buckeyes"},
+                {
+                    "name": "Ohio State",
+                    "team_id": 9,
+                    "team_name": "Ohio State Buckeyes",
+                },
             ]
         )
         == "Texas Longhorns"
