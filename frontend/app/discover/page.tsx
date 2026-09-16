@@ -49,6 +49,7 @@ import {
   GAMES_UNLOCK_CARDS_SEEN,
   type FirstRunStorage,
 } from "@/lib/discoverFirstRun";
+import { CHALLENGE_SURFACES_ENABLED } from "@/lib/launchSurfaces";
 
 const DISMISSED_KEY = "discover_dismissed";
 const PAGE_SIZE = 20;
@@ -704,8 +705,13 @@ export default function DiscoverPage() {
     { refreshInterval: 120000, revalidateOnFocus: false, keepPreviousData: true }
   );
 
+  // #6445 — a null key is SWR's "do not fetch". The banner is hidden for the
+  // initial release, so the page stops asking the backend for settled guesses
+  // as well as stops drawing them; a request whose only consumer is hidden is
+  // a request nobody can read. Read history is untouched — this is a read we
+  // are not making, not a row we are deleting.
   const { data: resolutionsData } = useSWR(
-    "discover-resolutions",
+    CHALLENGE_SURFACES_ENABLED ? "discover-resolutions" : null,
     fetchResolutions,
     { revalidateOnFocus: false }
   );
@@ -1288,8 +1294,12 @@ export default function DiscoverPage() {
         )}
 
         {/* Your settled Higher/Lower guesses (L2-119). 3+ collapse into one
-            "Your results" group; 1–2 render as individual clickable cards. */}
-        {resolutionsData && resolutionsData.resolutions.length > 0 && (
+            "Your results" group; 1–2 render as individual clickable cards.
+            #6445 — hidden for the initial release. Stated here as well as on
+            the SWR key above because this is the line a reader's screen is
+            decided by: a future restore that revives the fetch alone must
+            still not paint the banner without saying so. */}
+        {CHALLENGE_SURFACES_ENABLED && resolutionsData && resolutionsData.resolutions.length > 0 && (
           resolutionsData.resolutions.length >= 3 ? (
             <div className="mb-4">
               <ResolutionGroup resolutions={resolutionsData.resolutions.slice(0, 8)} />
@@ -1316,7 +1326,11 @@ export default function DiscoverPage() {
             Queue 309 Item 3: content before the game. A first-run anonymous
             reader meets ~8 cards (or taps one) before this appears; everyone
             else — signed in, returning, previously engaged — sees it exactly as
-            before, on the first paint. */}
+            before, on the first paint.
+            #6445 — hidden for the initial release: `gamesUnlocked` is false for
+            every reader while `CHALLENGE_SURFACES_ENABLED` is off, which is also
+            what closes the quiz slots below. One gate, deliberately, so the
+            tracker and the questions it counts cannot come back separately. */}
         {!isLoading && gamesUnlocked && processedItems.length > 0 && (
           <div className="mb-4">
             <DailyChallengeCard guessesToday={dailyGuesses} onStart={startChallenge} />
