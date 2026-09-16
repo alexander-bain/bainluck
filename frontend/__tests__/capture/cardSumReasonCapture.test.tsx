@@ -39,6 +39,7 @@
  * asserts the rig works, same as the other capture rigs.
  */
 
+import { assertCompiledCss } from "../helpers/compiledCss";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import fs from "node:fs";
@@ -317,7 +318,7 @@ whose numbers genuinely do not add up — and, on the payload, a machine-readabl
     expect(written).toContain(CARD_SUM_EXPLANATION[SUM_INDEPENDENT_PRICES]);
     expect(written).toContain(CARD_SUM_EXPLANATION[SUM_UNPRICED_OUTCOME]);
     // The stylesheet is the app's, not a hand-rolled approximation.
-    expect(css.length).toBeGreaterThan(1_000);
+    assertCompiledCss(css);
     // Panel 1 must genuinely lack the sentence, or the before/after is theatre.
     const panel1 = written.split("2 · What it shows once this deploys")[0];
     expect(panel1).not.toContain(CARD_SUM_EXPLANATION[SUM_INDEPENDENT_PRICES]);

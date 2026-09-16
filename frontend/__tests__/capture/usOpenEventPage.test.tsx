@@ -43,6 +43,7 @@
  * comes back.
  */
 
+import { assertCompiledCss } from "../helpers/compiledCss";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import fs from "node:fs";
@@ -626,6 +627,6 @@ ${panel(
     // and a substring guard would fail on its own explanation.
     expect(written).not.toMatch(/href="[^"]*\/matches\//);
     expect(written.split("<svg").length - 1).toBeGreaterThanOrEqual(2);
-    expect(css.length).toBeGreaterThan(1000);
+    assertCompiledCss(css);
   });
 });

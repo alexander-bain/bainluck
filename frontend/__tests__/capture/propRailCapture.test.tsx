@@ -41,6 +41,7 @@ import type { PlayerPropRow } from "@/lib/playerPropsGrouping";
 import phillies from "../fixtures/eventPlayerProps.15199886.json";
 import dodgers from "../fixtures/eventPlayerProps.15199902.settled.json";
 import reds from "../fixtures/eventPlayerProps.14788546.json";
+import { assertCompiledCss } from "../helpers/compiledCss";
 
 const FRONTEND_ROOT = path.resolve(__dirname, "../..");
 const OUT_DIR = process.env.UX_CAPTURE_DIR;
@@ -174,7 +175,7 @@ describe("the rendered capture rig", () => {
     // If this reds, run `npm run build` first. A capture taken without the real
     // CSS looks broken in ways the code is not, and reviewing it wastes the one
     // thing the capture is for.
-    expect(css.length).toBeGreaterThan(10_000);
+    assertCompiledCss(css, 10_000);
   });
 });
 

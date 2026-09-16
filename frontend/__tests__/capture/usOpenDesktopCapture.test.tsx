@@ -95,6 +95,7 @@ import { readPlayoffGrid } from "@/lib/playoffGrid";
 import { slateNotice, type SlateData } from "@/lib/slate";
 import type { PropMarket } from "@/lib/tournamentProps";
 import type { TournamentBoardData, TournamentPayload } from "@/lib/tournament";
+import { assertCompiledCss } from "../helpers/compiledCss";
 
 const MOCKS = path.join(__dirname, "..", "..", "..", "docs", "mocks", "us-open");
 const PAYLOAD_PATH = path.join(MOCKS, "payload-2026-08-27.json");
@@ -217,7 +218,7 @@ describe("US Open DESKTOP capture rig", () => {
 
   it("the compiled stylesheet is present — an unstyled capture is not a verdict", () => {
     const css = appStylesheet();
-    expect(css.length).toBeGreaterThan(1000);
+    assertCompiledCss(css);
     // And it really carries the desktop rules. If `npm run build` has not been
     // re-run since the classes were added, the artifact would render as the
     // phone and read as a failed fix.
