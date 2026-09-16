@@ -580,3 +580,79 @@ class TestClearingTheLegIsWhatStopsTheHero:
             "if the blend can speak from a price-less leg, clearing the leg is "
             "no longer sufficient and #5896 needs an explicit hero statement here"
         )
+
+
+class TestTheClearedCounterSurvivesNothingTheWriteDoesNot:
+    """#5682's rule, applied to this ship's two new counters.
+
+    `_recover` rolls every counter in `_durable_counters` back to the last
+    commit boundary, because a write counter that outlives the write it counted
+    lies in the one direction that hides an outage. The two counters #5896 adds
+    are opposite kinds and must be sorted accordingly: `_cleared` counts a WRITE
+    this pass made, `_legs` counts what the VENUE said. The distinction is the
+    whole reason they are two numbers, so it is pinned rather than trusted.
+
+    Read from the source tuple rather than by driving a rollback: the mechanism
+    already has its own arms in `test_live_poll_commit_boundary_5682.py`, and
+    what is unproven here is MEMBERSHIP — which is a fact about that tuple.
+    """
+
+    @staticmethod
+    def _durable_counter_names() -> set[str]:
+        import ast
+        from pathlib import Path
+
+        tree = ast.parse(Path(pmm.__file__).read_text())
+        found: list[set[str]] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            if "_durable_counters" not in targets:
+                continue
+            assert isinstance(node.value, ast.Tuple), (
+                "`_durable_counters` is no longer a literal tuple, so this arm "
+                "can no longer read its membership — teach it the new shape "
+                "rather than deleting the check"
+            )
+            found.append(
+                {e.value for e in node.value.elts if isinstance(e, ast.Constant)}
+            )
+
+        assert len(found) == 1, (
+            f"expected exactly one `_durable_counters` assignment, found {len(found)}"
+        )
+        return found[0]
+
+    def test_the_cleared_counter_is_rolled_back_with_its_write(self):
+        names = self._durable_counter_names()
+
+        assert "kalshi_pre_kickoff_settled_cleared" in names, (
+            "`kalshi_pre_kickoff_settled_cleared` counts a price this pass took "
+            "off a row. Outside `_durable_counters` it survives the rollback of "
+            "that very write, so a failed item reports a settlement we took back "
+            "while the settlement is still on the row — #5682's lying counter, "
+            "and the number the #5896 after-check reads to decide the ship works"
+        )
+
+    def test_its_withdrawn_twin_is_there_too_so_this_is_not_an_arbitrary_name(self):
+        """Pins the PAIRING, not a constant: both clears write, so both roll back."""
+        names = self._durable_counter_names()
+
+        assert "kalshi_outcomes_withdrawn_cleared" in names, (
+            "the #4356 clear's counter left `_durable_counters` — the two clears "
+            "share one body (`_clear_outcome_price`) and one durability rule, so "
+            "either both counters are in that tuple or neither claim holds"
+        )
+
+    def test_the_legs_counter_is_NOT_rolled_back(self):
+        """The observation half. A venue fact is not undone by our rollback."""
+        names = self._durable_counter_names()
+
+        assert "kalshi_pre_kickoff_settled_legs" not in names, (
+            "`kalshi_pre_kickoff_settled_legs` counts what the VENUE said — that "
+            "it has answered this contract — which stays true however our "
+            "transaction ends. Rolling it back would under-report the refusal on "
+            "exactly the passes that failed, and `_legs` high with `_cleared` 0 "
+            "is this ship's healthy steady state, not a dead branch"
+        )

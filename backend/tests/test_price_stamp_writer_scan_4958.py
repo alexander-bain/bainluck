@@ -116,13 +116,18 @@ UPDATE_FUNCS = {"update", "sa_update"}
 #:    before our row says kick-off) and moved the shared conditions and writes
 #:    into `_clear_outcome_price`. RELOCATED, NOT ADDED: one unstamped write site
 #:    before, one after, and the entry follows the write rather than the caller.
-#:    Stamping it is still not this file's call — the two hourly twins it exists
-#:    to agree with (`_KALSHI_WITHDRAW_PRE_KICKOFF_LEG_SQL` and its sibling in
-#:    `futures_price_refresh.py`) set exactly `current_probability` and
-#:    `current_american_odds`, and their docstring calls that SET list and the
-#:    absent `last_updated` stamp load-bearing. They are invisible here only
-#:    because a raw `text()` UPDATE is not a shape an AST scan reads, so a stamp
-#:    added on this side alone would be one writer disagreeing with two. #5192.
+#:    Stamping it is still not this ship's call, for the reason the clear's own
+#:    docstring gives: the ordinary price MOVE in the same task (the entry below,
+#:    `_poll_live_prediction_market_prices` ×2) does not stamp either, so a stamp
+#:    on the clear alone would make the column mean "when this price went away"
+#:    for one writer and nothing at all for the writer beside it — worse than a
+#:    uniform absence, because it reads as a maintained column. The file is
+#:    repaired as a file, in #5192, or not yet. (The two hourly SQL twins this
+#:    poller agrees with also write only `current_probability` and
+#:    `current_american_odds`; they are invisible to this scan because a raw
+#:    `text()` UPDATE is not a shape an AST reads. Their docstring reasons about
+#:    an absent `last_updated` and never mentions THIS column, so read them as
+#:    the same omission, not as a precedent either way.)
 #:  * `tournament_price_refresh.py` — the Q428 ladder rail, which moves a price
 #:    every ten minutes and is exactly the population a movement column is for.
 KNOWN_UNSTAMPED: dict[tuple[str, str, str], int] = {

@@ -7949,6 +7949,15 @@ async def _poll_live_prediction_market_prices():
             "outcomes_updated",
             "kalshi_outcomes_updated",
             "kalshi_outcomes_withdrawn_cleared",
+            # #5896. Here for the same reason its withdrawn twin one line up is,
+            # and its `_legs` sibling is deliberately NOT: `_cleared` counts a
+            # WRITE this pass made, so a rollback that threw the write away must
+            # take the number with it or the counter lies in the one direction
+            # that hides the outage — reporting a settlement we took back that
+            # is still on the row. `kalshi_pre_kickoff_settled_legs` counts what
+            # the VENUE said (this contract is answered), which stays true
+            # whatever the database does with our write.
+            "kalshi_pre_kickoff_settled_cleared",
             "futures_snapshots_written",
             "snapshots_written",
             "snapshots_deduped",
