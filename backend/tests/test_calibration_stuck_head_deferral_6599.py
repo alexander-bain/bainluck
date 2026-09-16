@@ -829,9 +829,17 @@ class TestTheRules:
             generation=1,
         )
         ref = sf.slot_ref(chunks[0])
-        for expected in range(1, STAGED_UNIT_SPLIT_AFTER + 1):
+        # A fixed range, deliberately not ``range(STAGED_UNIT_SPLIT_AFTER)``: a
+        # test whose loop bound IS the constant it is checking cannot fail when
+        # the constant is wrong, it can only take longer (gotcha #44's shape, one
+        # dimension over).
+        for expected in (1, 2, 3):
             cursor = sf.note_unit_cancelled(cursor, ref)
             assert cursor.unit_cancels[ref] == expected
+        assert 1 <= STAGED_UNIT_SPLIT_AFTER <= 3, (
+            "the split threshold must be reachable within a few beats, or a "
+            "stuck slot is parked rather than deferred"
+        )
 
     def test_a_refinement_map_the_planner_cannot_honour_is_dropped_entry_by_entry(self):
         clean = sf.sanitize_refinements(
