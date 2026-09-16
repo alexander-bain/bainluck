@@ -4570,7 +4570,30 @@ async def get_futures_history(
     # at the same timestamp into a single consensus value.
     # This prevents chart jaggedness caused by plotting each bookmaker's
     # slightly different probability as a separate data point.
-    outcome_names = {o.id: o.name for o in market.outcomes}
+    # #6479 chart half — the reader-side club-name repair the DETAIL payload has
+    # applied since `_format_market_detail`, on the one reader path that never
+    # got it. `/history` feeds the Probability Trend legend, so board 40533
+    # printed `Los Angeles R` in its legend 800px below a hero reading
+    # `Los Angeles Rams`: one club, two spellings, one screen, one of them a club
+    # that does not exist. Measured on production before the fix — 8 truncated
+    # labels inside the charted top-10 across 5 boards.
+    #
+    # Display-only, and that is checked rather than assumed. Nothing in this
+    # route MATCHES on this dict: the champion lookup in
+    # `_apply_settled_winner_freeze` reads `FuturesOutcome.name` off the ORM
+    # (so the freeze still fires on the shipped spelling), and the web client
+    # keys line selection on `outcome_id`, never on the label. Both display
+    # sites read it — the per-outcome entry below and the champion entry the
+    # freeze injects — so a settled board's legend and its "Settled — X won."
+    # caption cannot drift into two spellings either.
+    #
+    # Per-row and id-anchored by construction: every rung carries its own Kalshi
+    # OUTCOME ticker, so a rung that resolves never depends on a sibling that did
+    # not, and an unresolved rung prints exactly what Kalshi sent.
+    outcome_names = {
+        o.id: (repair_field_outcome_name(o.external_id, o.name) or o.name)
+        for o in market.outcomes
+    }
 
     # Group: outcome_id -> captured_at -> [probabilities from different bookmakers]
     outcome_time_groups: dict[int, dict[datetime, list[float]]] = defaultdict(

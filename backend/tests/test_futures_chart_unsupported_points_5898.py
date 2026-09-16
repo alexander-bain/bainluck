@@ -80,7 +80,14 @@ def _series(oid, rows, start=0, bookmaker="polymarket"):
     ]
 
 
-def _outcome(oid, name="Ceará", prob=0.47, resolution_source=None, is_winner=None):
+def _outcome(
+    oid,
+    name="Ceará",
+    prob=0.47,
+    resolution_source=None,
+    is_winner=None,
+    external_id=None,
+):
     return SimpleNamespace(
         id=oid,
         name=name,
@@ -91,6 +98,13 @@ def _outcome(oid, name="Ceará", prob=0.47, resolution_source=None, is_winner=No
         current_yes_ask=0.9380,
         resolution_source=resolution_source,
         is_winner=is_winner,
+        # `FuturesOutcome.external_id` is a mapped column, so a real row always
+        # HAS one — this double simply never modelled it. `/history` reads it to
+        # spell out truncated club names (#6479 chart half), and `None` is the
+        # faithful value here: these rows are a Polymarket field, whose ids are
+        # condition hashes that carry no club, so the repair no-ops and every
+        # assertion in this file is about exactly the series it was about before.
+        external_id=external_id,
     )
 
 
