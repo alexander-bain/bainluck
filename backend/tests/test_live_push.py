@@ -21,6 +21,7 @@ below:
   putting a second disagreeing number on screen ("the blend is the product").
 """
 
+import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -340,7 +341,14 @@ class TestLiveGate:
 
 
 class FakePubSub:
-    """A pubsub that yields a scripted sequence, then silence forever."""
+    """A pubsub that yields a scripted sequence, then silence forever.
+
+    #6515: the scripted messages carry a `channel`, because the process-wide
+    fanout hub now reads one connection for every stream and routes by it. The
+    empty poll SLEEPS rather than returning instantly — a real one is waiting on
+    a socket, and a fake that never awaits would spin the hub's reader task and
+    starve the event loop the test's own stream is running on.
+    """
 
     def __init__(self, messages=None):
         self._messages = list(messages or [])
@@ -354,12 +362,16 @@ class FakePubSub:
     async def unsubscribe(self, channel):
         self.unsubscribed.append(channel)
 
-    async def close(self):
+    async def aclose(self):
         self.closed = True
 
     async def get_message(self, ignore_subscribe_messages=False, timeout=None):
         if self._messages:
-            return self._messages.pop(0)
+            message = self._messages.pop(0)
+            if self.subscribed:
+                message.setdefault("channel", self.subscribed[0])
+            return message
+        await asyncio.sleep(min(timeout or 0.01, 0.01))
         return None
 
 
@@ -387,17 +399,29 @@ class FakeRequest:
 
 async def _collect(event_id, pubsub, monkeypatch, disconnect_after=3):
     from app.routes import event_stream as mod
+    from app.utils.live_fanout import fanout, reset_fanout
 
     monkeypatch.setattr(
         "app.tasks.redis_state.get_async_redis_client",
         lambda: FakeRedisConn(pubsub),
     )
-    return [
-        chunk
-        async for chunk in mod._stream(
-            event_id, FakeRequest(disconnect_after)
-        )
-    ]
+    # #6515: frames now arrive from the shared hub's reader task rather than
+    # from this coroutine's own `get_message`, so the loop's tick has to be
+    # short enough that a handful of passes still sees one delivered.
+    monkeypatch.setattr(mod, "FRAME_WAIT_S", 0.05)
+    try:
+        return [
+            chunk
+            async for chunk in mod._stream(
+                event_id, FakeRequest(disconnect_after)
+            )
+        ]
+    finally:
+        # The hub outlives one stream by design; it must not outlive one test.
+        # What it looked like at the end of the stream is recorded on the fake
+        # first, because after the reset every question about it answers zero.
+        pubsub.hub_subscribers = fanout().subscriber_count
+        await reset_fanout()
 
 
 class TestStreamOutput:
@@ -431,15 +455,22 @@ class TestStreamOutput:
         assert "event: open" in out
 
     @pytest.mark.asyncio
-    async def test_subscribes_and_unsubscribes_the_events_own_channel(
+    async def test_subscribes_to_the_events_own_channel_and_leaves_none_behind(
         self, monkeypatch
     ):
-        """A leaked subscription is a slow resource leak on a shared loop."""
+        """A leaked subscription is a slow resource leak on a shared loop.
+
+        #6515 moved the UNSUBSCRIBE off this coroutine and onto the hub's
+        reader, so what this asserts is the property rather than the call: the
+        stream joins ITS channel, and when it ends the hub holds no subscriber
+        and no connection. Which channel the hub unsubscribes when others are
+        still open is
+        `test_sse_shares_one_pubsub_connection_6515.py`'s subject.
+        """
         pubsub = FakePubSub()
         await _collect(55, pubsub, monkeypatch)
         assert pubsub.subscribed == ["live:event:55"]
-        assert pubsub.unsubscribed == ["live:event:55"]
-        assert pubsub.closed is True
+        assert pubsub.hub_subscribers == 0
 
     @pytest.mark.asyncio
     async def test_a_published_frame_is_forwarded_as_a_probability_event(
