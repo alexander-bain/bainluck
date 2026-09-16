@@ -51,6 +51,7 @@
  * rig works, same as the other capture rigs.
  */
 
+import { assertCompiledCss } from "../helpers/compiledCss";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import fs from "node:fs";
@@ -399,6 +400,6 @@ ${panel(UNEXPLAINED)}
       expect(written).toContain(String(id));
     }
     // The stylesheet actually loaded, so the panels are styled rather than bare.
-    expect(css.length).toBeGreaterThan(1_000);
+    assertCompiledCss(css);
   });
 });

@@ -56,6 +56,7 @@ jest.mock("next/link", () => ({
 
 import { GolferRow } from "@/components/golf/GolferRow";
 import type { GolfGolfer } from "@/lib/types";
+import { assertCompiledCss } from "../helpers/compiledCss";
 
 const FRONTEND = path.join(__dirname, "..", "..");
 const REPO = path.join(FRONTEND, "..");
@@ -198,7 +199,7 @@ ${panel(tourChamp, false)}
 
     expect(html).toContain("&lt;1%");
     // The stylesheet actually loaded, so the rows are styled rather than bare.
-    expect(css.length).toBeGreaterThan(1_000);
+    assertCompiledCss(css);
     const dir = process.env.UX_CAPTURE_DIR;
     if (dir) {
       fs.mkdirSync(dir, { recursive: true });

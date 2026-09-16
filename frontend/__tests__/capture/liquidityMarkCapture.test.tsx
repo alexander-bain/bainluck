@@ -55,6 +55,7 @@ import { LIQUIDITY_DEFINITION, liquidityReveal } from "@/lib/liquidity";
 import { readPlayoffGrid, type GridCell, type PlayoffGrid as GridModel } from "@/lib/playoffGrid";
 import type { PropMarket } from "@/lib/tournamentProps";
 import type { TournamentPayload } from "@/lib/tournament";
+import { assertCompiledCss } from "../helpers/compiledCss";
 
 const FRONTEND = path.join(__dirname, "..", "..");
 const REPO = path.join(FRONTEND, "..");
@@ -577,7 +578,7 @@ ${panel(
     // UX-P184: Alex's copy ruling, asserted against the file he will look at.
     expect(written).not.toMatch(/\bbuyers?\b|\bsellers?\b/i);
     // The stylesheet is the app's, not a hand-rolled approximation.
-    expect(css.length).toBeGreaterThan(1_000);
+    assertCompiledCss(css);
 
     // UX-P158's OWN CLAIM, asserted against the file that will be looked at
     // rather than against the model behind it. The failure this catches is the
