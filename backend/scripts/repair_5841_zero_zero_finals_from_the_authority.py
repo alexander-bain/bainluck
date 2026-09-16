@@ -100,9 +100,8 @@ August card and called it a fix.
                                  finished — `stopped_without_result` (a
                                  postponement, #3397) is refused by name
     authority_confirms_0_0       nothing to write
-    scored_twin_exists           another row at the same minute, or another row
-                                 holding the same `espn_id`, already carries the
-                                 result — shape B above
+    scored_twin_exists           another row at the same minute already carries
+                                 the result — shape B above
 
 ------------------------------------------------------------------------------
 WHAT IT WRITES, AND THE THREE COLUMNS IT KNOWINGLY LEAVES
@@ -122,18 +121,24 @@ WHAT IT WRITES, AND THE THREE COLUMNS IT KNOWINGLY LEAVES
     for it.
 
 ------------------------------------------------------------------------------
-RUNNING IT (D51 — backup first, one-command restore)
+RUNNING IT (D51 — the restore point is NOT optional)
 ------------------------------------------------------------------------------
+
+`--apply` ALWAYS banks first, and banks BOTH images: the scoreline it is about
+to overwrite and the scoreline it is about to write. `--backup` survives as an
+accepted no-op so the command line in every earlier note still runs. A repair
+whose restore point is a flag has a docstring promising an undo that a typo can
+switch off.
 
     python3 scripts/repair_5841_zero_zero_finals_from_the_authority.py --selftest
     python3 scripts/repair_5841_zero_zero_finals_from_the_authority.py            # dry run
-    python3 scripts/repair_5841_zero_zero_finals_from_the_authority.py --backup --apply
+    python3 scripts/repair_5841_zero_zero_finals_from_the_authority.py --apply
 
 Heroku one-off (gotcha #48 — detached, and PROJECT_PATH=backend puts scripts at
 /app, so NO `cd backend`; the script must be on the DEPLOYED SLUG to run):
 
     heroku run:detached "python3 scripts/repair_5841_zero_zero_finals_from_the_authority.py" -a bainluck
-    heroku run:detached "python3 scripts/repair_5841_zero_zero_finals_from_the_authority.py --backup --apply" -a bainluck
+    heroku run:detached "python3 scripts/repair_5841_zero_zero_finals_from_the_authority.py --apply" -a bainluck
 
 Undo:
 
@@ -567,38 +572,78 @@ def population_refusal_reason(population: int, *, default_window: bool) -> str |
     return None
 
 
+#: The D51 restore point. FOUR score columns, not two.
+#:
+#: 🔴 THE POST-IMAGE IS LOAD-BEARING AND ITS ABSENCE WAS A REAL DEFECT
+#: (CERT-2947's required repair, reproduced by the grader). A backup holding
+#: only the PRE-image cannot tell the undo what the repair actually wrote, so
+#: the undo had to infer "is this row still repaired?" from the row's CURRENT
+#: score — and "current is not the banked 0 - 0" is true of a row the AUTHORITY
+#: has since corrected to 2 - 4 just as it is of a row this repair wrote 1 - 3
+#: onto. The grader changed a repaired row to a newer 2 - 4, ran the committed
+#: restore, and watched it write 0 - 0 back: the undo destroyed newer truth and
+#: put the reader defect back, silently, with `rowcount=1`.
+#:
+#: Banking the exact pair that was written turns the undo's question from an
+#: inference into an equality against an IMMUTABLE record, which is the only
+#: form that can distinguish the two cases.
+_BAK_DDL = f"""
+CREATE TABLE IF NOT EXISTS {BAK_TABLE} (
+  event_id bigint PRIMARY KEY,
+  old_home_score integer,
+  old_away_score integer,
+  old_status text NOT NULL,
+  new_home_score integer NOT NULL,
+  new_away_score integer NOT NULL,
+  banked_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)
+"""
+# `CURRENT_TIMESTAMP`, not `now()`: both are correct on Postgres, and only one of
+# them parses on sqlite — which is where the guard EXECUTES this DDL and the
+# banking and the undo against a real engine. A restore point whose CREATE
+# statement no test has ever run is a restore point nobody has tried.
+
+_BANK_SQL = f"""
+INSERT INTO {BAK_TABLE}
+       (event_id, old_home_score, old_away_score, old_status,
+        new_home_score, new_away_score)
+VALUES (:eid, :old_home_score, :old_away_score, :old_status,
+        :new_home_score, :new_away_score)
+ON CONFLICT (event_id) DO NOTHING
+"""
+
+
 async def ensure_backup(session, plans: list[dict], rows_by_id: dict) -> int:
-    """Create the D51 backup table and bank the CURRENT scoreline and status.
+    """Create the D51 backup table and bank the pre-image AND the post-image.
 
     Only the rows about to be written — a backup of rows nobody touched is a
     restore script that can undo a repair it did not make.
+
+    The post-image is the PLANNED score, banked before the write. If the write
+    is then skipped (the row moved between plan and write and the re-checked
+    WHERE declined), the banked post-image is a pair that was never written —
+    and that is the SAFE direction: the undo's equality cannot match, so it
+    reports the row and touches nothing.
 
     `ON CONFLICT DO NOTHING` keeps the FIRST banked tuple, which is the
     pre-repair one: a re-run after a partial apply must not bank the score this
     pass just wrote as the thing to restore to.
     """
-    await session.execute(
-        text(
-            f"CREATE TABLE IF NOT EXISTS {BAK_TABLE} ("
-            "  event_id bigint PRIMARY KEY,"
-            "  old_home_score integer,"
-            "  old_away_score integer,"
-            "  old_status text NOT NULL,"
-            "  banked_at timestamptz NOT NULL DEFAULT now())"
-        )
-    )
+    await session.execute(text(_BAK_DDL))
     await session.commit()
 
     banked = 0
     for plan in plans:
         row = rows_by_id[plan["id"]]
         result = await session.execute(
-            text(
-                f"INSERT INTO {BAK_TABLE} "
-                "(event_id, old_home_score, old_away_score, old_status) "
-                "VALUES (:eid, :h, :a, :status) ON CONFLICT (event_id) DO NOTHING"
-            ),
-            {"eid": row.id, "h": row.home_score, "a": row.away_score, "status": row.status},
+            text(_BANK_SQL),
+            {
+                "eid": row.id,
+                "old_home_score": row.home_score,
+                "old_away_score": row.away_score,
+                "old_status": row.status,
+                "new_home_score": plan["home_score"],
+                "new_away_score": plan["away_score"],
+            },
         )
         banked += result.rowcount or 0
     await session.commit()
@@ -647,7 +692,7 @@ async def write_scores(session, plans: list[dict], rows_by_id: dict) -> tuple[in
     return written, skipped, failed
 
 
-async def run(*, backup: bool, apply: bool, lookback_days: int, only_ids: list[int] | None) -> int:
+async def run(*, apply: bool, lookback_days: int, only_ids: list[int] | None) -> int:
     from app.services.espn_api import get_espn_service
 
     now = datetime.now(timezone.utc)
@@ -666,70 +711,82 @@ async def run(*, backup: bool, apply: bool, lookback_days: int, only_ids: list[i
     try:
         exit_code = await _run_inner(
             espn=espn, params=params, only_ids=only_ids, apply=apply,
-            backup=backup, default_window=default_window,
+            default_window=default_window,
         )
     finally:
         await espn.close()
     return exit_code
 
 
-async def _run_inner(*, espn, params, only_ids, apply, backup, default_window) -> int:
-    from app.tasks.base import get_task_session
+async def _run_inner(*, espn, params, only_ids, apply, default_window, session=None) -> int:
+    """The pass itself. `session` is an injection seam, and it is load-bearing.
+
+    CERT-2947's required repair is "`--apply` always banks", and the only guard
+    that can prove a CALL happens is one that runs the pass and then reads the
+    backup table. A test asserting the string `ensure_backup` appears in this
+    function's source passes on a body that has been gated to `if False`. So the
+    guard drives this function over a sqlite corpus with a stub authority, and
+    the default path — `session=None` — opens the real one exactly as before.
+    """
+    if session is None:
+        from app.tasks.base import get_task_session
+
+        async with get_task_session() as own:
+            return await _run_inner(
+                espn=espn, params=params, only_ids=only_ids, apply=apply,
+                default_window=default_window, session=own,
+            )
 
     exit_code = 0
-    async with get_task_session() as session:
-        rows = (await session.execute(statement(_CANDIDATES_SQL), params)).all()
-        if only_ids:
-            rows = [r for r in rows if r.id in set(only_ids)]
-        rows_by_id = {r.id: r for r in rows}
-        print(f"candidates: {len(rows)}")
+    rows = (await session.execute(statement(_CANDIDATES_SQL), params)).all()
+    if only_ids:
+        rows = [r for r in rows if r.id in set(only_ids)]
+    rows_by_id = {r.id: r for r in rows}
+    print(f"candidates: {len(rows)}")
 
-        band = population_refusal_reason(len(rows), default_window=default_window)
-        if band and apply:
-            print(f"\n🔴 REFUSING TO APPLY: {band}")
-            return 2
-        if band:
-            print(f"\n⚠️  band: {band}")
+    band = population_refusal_reason(len(rows), default_window=default_window)
+    if band and apply:
+        print(f"\n🔴 REFUSING TO APPLY: {band}")
+        return 2
+    if band:
+        print(f"\n⚠️  band: {band}")
 
-        verdicts = []
-        for row in rows:
-            verdict = await adjudicate(session, espn, row)
-            verdicts.append(verdict)
-            fixture = f"{row.home_team_name} v {row.away_team_name}"
-            when = as_aware(row.commence_time).isoformat()
-            if verdict["verdict"] == "WRITE":
-                print(
-                    f"  WRITE   {row.id} [{row.sport_key}] {fixture} {when} "
-                    f"0-0 → {verdict['home_score']}-{verdict['away_score']} "
-                    f"(anchor {row.espn_id} @ {verdict['anchor_date']})"
-                )
-            else:
-                print(f"  REFUSE  {row.id} [{row.sport_key}] {fixture} {when} — {verdict['reason']}")
-
-        plans = [v for v in verdicts if v["verdict"] == "WRITE"]
-        refusals = [v for v in verdicts if v["verdict"] != "WRITE"]
-        print(f"\nplanned writes: {len(plans)} · refusals: {len(refusals)}")
-
-        if not apply:
-            print("\nDRY RUN — nothing written. Add --backup --apply to write.")
-            return 0
-        if not plans:
-            print("\nNothing to write.")
-            return 0
-
-        if backup:
-            banked = await ensure_backup(session, plans, rows_by_id)
-            print(f"backed up {banked} row(s) into {BAK_TABLE}")
+    verdicts = []
+    for row in rows:
+        verdict = await adjudicate(session, espn, row)
+        verdicts.append(verdict)
+        fixture = f"{row.home_team_name} v {row.away_team_name}"
+        when = as_aware(row.commence_time).isoformat()
+        if verdict["verdict"] == "WRITE":
+            print(
+                f"  WRITE   {row.id} [{row.sport_key}] {fixture} {when} "
+                f"0-0 → {verdict['home_score']}-{verdict['away_score']} "
+                f"(anchor {row.espn_id} @ {verdict['anchor_date']})"
+            )
         else:
-            print("⚠️  --apply without --backup: no restore point is being written")
+            print(f"  REFUSE  {row.id} [{row.sport_key}] {fixture} {when} — {verdict['reason']}")
 
-        written, skipped, failed = await write_scores(session, plans, rows_by_id)
-        print(f"\nwritten: {written} · skipped (row moved since the plan): {len(skipped)} · failed: {len(failed)}")
-        if skipped:
-            print(f"  skipped ids: {skipped}")
-        if failed:
-            print(f"  FAILED ids: {failed}")
-            exit_code = 1
+    plans = [v for v in verdicts if v["verdict"] == "WRITE"]
+    refusals = [v for v in verdicts if v["verdict"] != "WRITE"]
+    print(f"\nplanned writes: {len(plans)} · refusals: {len(refusals)}")
+
+    if not apply:
+        print("\nDRY RUN — nothing written. Add --backup --apply to write.")
+        return 0
+    if not plans:
+        print("\nNothing to write.")
+        return 0
+
+    banked = await ensure_backup(session, plans, rows_by_id)
+    print(f"backed up {banked} row(s) into {BAK_TABLE}")
+
+    written, skipped, failed = await write_scores(session, plans, rows_by_id)
+    print(f"\nwritten: {written} · skipped (row moved since the plan): {len(skipped)} · failed: {len(failed)}")
+    if skipped:
+        print(f"  skipped ids: {skipped}")
+    if failed:
+        print(f"  FAILED ids: {failed}")
+        exit_code = 1
     return exit_code
 
 
@@ -832,7 +889,12 @@ def _selftest() -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--apply", action="store_true", help="write (default is a dry run)")
-    parser.add_argument("--backup", action="store_true", help=f"bank the old scores into {BAK_TABLE} first")
+    # 🔴 NOT A FLAG. `--apply` ALWAYS banks (CERT-2947): a repair whose restore
+    # point is optional has a docstring promising an undo that the operator can
+    # turn off with a typo. `--backup` is accepted and ignored so the command
+    # line in every earlier note still runs.
+    parser.add_argument("--backup", action="store_true",
+                        help=f"accepted and ignored — --apply always banks into {BAK_TABLE}")
     parser.add_argument("--lookback-days", type=int, default=DEFAULT_LOOKBACK_DAYS,
                         help="0 sweeps all time; the sanity band only applies to the default")
     parser.add_argument("--ids", type=str, default=None, help="comma-separated event ids to restrict to")
@@ -844,8 +906,7 @@ def main() -> int:
 
     only_ids = [int(x) for x in args.ids.split(",")] if args.ids else None
     return asyncio.run(
-        run(backup=args.backup, apply=args.apply,
-            lookback_days=args.lookback_days, only_ids=only_ids)
+        run(apply=args.apply, lookback_days=args.lookback_days, only_ids=only_ids)
     )
 
 

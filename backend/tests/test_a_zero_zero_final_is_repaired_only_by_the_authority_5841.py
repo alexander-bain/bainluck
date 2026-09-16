@@ -66,6 +66,8 @@ from app.models.models import Base  # noqa: E402
 from app.utils.event_completion import SETTLED_STATUSES  # noqa: E402
 from scripts.repair_5841_zero_zero_finals_from_the_authority import (  # noqa: E402
     ANCHOR_MAX_HOURS,
+    _BAK_DDL,
+    _BANK_SQL,
     DRAW_CAPABLE_PREFIXES,
     MAX_EXPECTED_POPULATION,
     MIN_EXPECTED_POPULATION,
@@ -79,6 +81,33 @@ from scripts.repair_5841_zero_zero_finals_from_the_authority import (  # noqa: E
     statement,
     write_statement,
 )
+from scripts.restore_5841_zero_zero_finals_from_the_authority import (  # noqa: E402
+    _PLAN_SQL,
+    _RESTORE_SQL,
+    restore_params,
+    restore_refusal_reason,
+)
+
+
+class _AsyncSession:
+    """An `await`-able face on the corpus's synchronous sqlite session.
+
+    The pass is async and the corpus is not. Three methods is the whole surface
+    `_run_inner` touches, so this is an adapter rather than a mock: every
+    statement it runs is the shipped statement, against a real engine.
+    """
+
+    def __init__(self, session):
+        self._session = session
+
+    async def execute(self, *args, **kwargs):
+        return self._session.execute(*args, **kwargs)
+
+    async def commit(self):
+        self._session.commit()
+
+    async def rollback(self):
+        self._session.rollback()
 
 NOW = datetime(2026, 9, 16, 6, 0, tzinfo=timezone.utc)
 FLOOR = horizon_floor(NOW)
@@ -543,6 +572,145 @@ class TestTheWrite:
         assert "home_score" in set_clause and "away_score" in set_clause
         for column in ("status", "completed_at", "period", "espn_id"):
             assert f"{column} =" not in set_clause
+
+
+class TestTheUndo:
+    """CERT-2947. The undo restores what the repair wrote, and NOTHING ELSE.
+
+    The blocked version banked only the pre-image, so it had to infer "is this
+    row still repaired?" from "the current score differs from the banked 0 - 0"
+    — which is equally true of a row the repair wrote 1 - 3 onto and of a row the
+    AUTHORITY later corrected to 2 - 4. The grader changed a repaired row to
+    2 - 4, ran the committed statement, and it wrote 0 - 0 back with rowcount 1.
+
+    Both branches are executed here, the second on that exact specimen.
+    """
+
+    def _bank(self, session, eid, *, old, new):
+        session.execute(text(_BAK_DDL))
+        session.execute(text(_BANK_SQL), {
+            "eid": eid, "old_home_score": old[0], "old_away_score": old[1],
+            "old_status": "closed", "new_home_score": new[0], "new_away_score": new[1],
+        })
+        session.commit()
+
+    def _repair(self, session, eid, new):
+        row = session.get(Event, eid)
+        row.home_score, row.away_score = new
+        session.commit()
+
+    def _restore(self, session):
+        """The shipped plan, the shipped DECISION and the shipped CAS.
+
+        `restore_refusal_reason` is CALLED, never restated: a test that
+        re-implements the decision passes on a script whose decision has been
+        inverted back to the blocked form, which is exactly what a mutant does.
+        """
+        restored, skipped = 0, []
+        for row in session.execute(text(_PLAN_SQL)).all():
+            if restore_refusal_reason(row):
+                skipped.append(row.event_id)
+                continue
+            result = session.execute(text(_RESTORE_SQL), restore_params(row))
+            session.commit()
+            restored += result.rowcount or 0
+        return restored, skipped
+
+    def test_an_untouched_repair_is_put_back(self, corpus):
+        self._bank(corpus, 15201192, old=(0, 0), new=(1, 3))
+        self._repair(corpus, 15201192, (1, 3))
+        assert self._restore(corpus) == (1, [])
+        corpus.expire_all()
+        row = corpus.get(Event, 15201192)
+        assert (row.home_score, row.away_score) == (0, 0)
+
+    def test_a_row_the_authority_corrected_after_the_repair_is_NOT_put_back(self, corpus):
+        # The grader's reproduction, verbatim: repaired to 1 - 3, then a newer
+        # authoritative 2 - 4 lands. The undo must leave it alone — restoring
+        # 0 - 0 here destroys newer truth AND restores the reader defect.
+        self._bank(corpus, 15201192, old=(0, 0), new=(1, 3))
+        self._repair(corpus, 15201192, (1, 3))
+        self._repair(corpus, 15201192, (2, 4))  # the authority, later
+        assert self._restore(corpus) == (0, [15201192])
+        corpus.expire_all()
+        row = corpus.get(Event, 15201192)
+        assert (row.home_score, row.away_score) == (2, 4)
+
+    def test_a_half_corrected_row_is_skipped_too(self, corpus):
+        self._bank(corpus, 15201192, old=(0, 0), new=(1, 3))
+        self._repair(corpus, 15201192, (1, 5))
+        assert self._restore(corpus) == (0, [15201192])
+
+    def test_the_cas_binds_the_banked_post_image_and_not_the_current_score(self):
+        # The defect was in the BINDING, so this reads the statement itself: the
+        # WHERE must compare against `:new_*`, which only the backup row can
+        # supply. A `:written_*`-style bind fed from the event row is what made
+        # the old WHERE a tautology.
+        where = _RESTORE_SQL.split("WHERE", 1)[1]
+        assert ":new_home_score" in where and ":new_away_score" in where
+        assert "now_" not in where and "written_" not in where
+
+    def test_the_backup_banks_both_images(self):
+        for column in ("old_home_score", "old_away_score", "new_home_score", "new_away_score"):
+            assert column in _BAK_DDL and column in _BANK_SQL
+        # NOT NULL on the post-image: a banked row that cannot say what was
+        # written is a restore point that has to guess again.
+        assert "new_home_score integer NOT NULL" in _BAK_DDL
+        assert "new_away_score integer NOT NULL" in _BAK_DDL
+
+    def test_apply_banks_both_images_BEFORE_it_writes_run_end_to_end(self, corpus):
+        # The whole pass, driven over the corpus with a stub authority: plan →
+        # bank → write. Asserted by READING the backup table afterwards, because
+        # "the banking is unconditional" is a claim about a call happening and
+        # only an executed pass can make it.
+        import asyncio
+
+        import scripts.repair_5841_zero_zero_finals_from_the_authority as repair
+
+        anchors = {
+            espn_id: _anchor(date=anchor_date, home=home, away=away,
+                             home_score=hs, away_score=a_s)
+            for _eid, home, away, _c, espn_id, anchor_date, hs, a_s in SHAPE_A
+        }
+
+        class ESPN:
+            async def get_event(self, sport_key, espn_id):
+                return anchors.get(espn_id)
+
+        code = asyncio.run(
+            repair._run_inner(
+                espn=ESPN(), params={"settled": sorted(SETTLED_STATUSES), "floor": FLOOR},
+                only_ids=None, apply=True, default_window=False,
+                session=_AsyncSession(corpus),
+            )
+        )
+        assert code == 0
+
+        corpus.expire_all()
+        for eid, _h, _a, _c, _espn, _d, hs, a_s in SHAPE_A:
+            row = corpus.get(Event, eid)
+            assert (row.home_score, row.away_score) == (hs, a_s), eid
+        banked = {
+            r.event_id: (r.old_home_score, r.old_away_score, r.new_home_score, r.new_away_score)
+            for r in corpus.execute(text(f"SELECT * FROM {repair.BAK_TABLE}")).all()
+        }
+        assert set(banked) == {eid for eid, *_ in SHAPE_A}
+        for eid, _h, _a, _c, _espn, _d, hs, a_s in SHAPE_A:
+            assert banked[eid] == (0, 0, hs, a_s), eid
+        # And the twin row is untouched by the same pass.
+        assert (corpus.get(Event, BORROWED_ID).home_score,
+                corpus.get(Event, BORROWED_ID).away_score) == (0, 0)
+
+    def test_the_repaired_rows_can_then_be_put_back_by_the_shipped_undo(self, corpus):
+        # The pair exercised in sequence, which is the only thing that proves the
+        # banked post-image and the undo's CAS agree on a spelling.
+        self.test_apply_banks_both_images_BEFORE_it_writes_run_end_to_end(corpus)
+        restored, skipped = self._restore(corpus)
+        assert (restored, skipped) == (4, [])
+        corpus.expire_all()
+        for eid, *_ in SHAPE_A:
+            row = corpus.get(Event, eid)
+            assert (row.home_score, row.away_score) == (0, 0), eid
 
 
 class TestTheBand:

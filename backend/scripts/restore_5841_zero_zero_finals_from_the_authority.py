@@ -11,16 +11,30 @@ Heroku one-off (gotcha #48 — detached, and PROJECT_PATH=backend puts scripts a
 
     heroku run:detached "python3 scripts/restore_5841_zero_zero_finals_from_the_authority.py --apply" -a bainluck
 
-WHAT THE UNDO DELIBERATELY DOES NOT DO
---------------------------------------
-🔴 **It does not restore a row whose score has moved on from the one the repair
-wrote.** The repaired rows are settled and ESPN-anchored, so the live pass and
-`backfill_missing_scores` can both still speak about them — and a row that has
-since been corrected by the authority itself must not have a fabricated `0 - 0`
-put back over it. The undo restores a row ONLY where the current scoreline is
-still exactly what the repair left there; everything else is reported by id and
-skipped. That is what makes this safe to run late, and it is the same rule
-`restore_3780` draws on `status`.
+🔴 IT COMPARES AGAINST THE BANKED POST-IMAGE, AND THE FIRST VERSION DID NOT
+---------------------------------------------------------------------------
+The repaired rows are settled and ESPN-anchored, so the live pass and
+`backfill_missing_scores` can both still speak about them. A row the AUTHORITY
+has since corrected must not have a fabricated `0 - 0` put back over it.
+
+CERT-2947 blocked the first version of this file for exactly that, and the
+grader REPRODUCED it rather than reasoning about it: a repaired row was changed
+to a newer authoritative `2 - 4`, this script ran, and the committed statement
+matched it and wrote `0 - 0` back — `rowcount=1`, silently destroying newer
+truth and restoring the reader defect the repair had just removed.
+
+The cause was in the BACKUP, not in this file's intent: it banked only the
+pre-image, so "is this row still repaired?" could only be inferred from "the
+current score differs from the banked `0 - 0`" — which is equally true of a row
+the repair wrote `1 - 3` onto and of a row the authority later corrected to
+`2 - 4`. The backup now banks the exact pair the repair wrote, and this script
+asks an EQUALITY against that immutable record:
+
+    current == banked post-image   → restore the pre-image
+    anything else                  → report the id and touch nothing
+
+`tests/test_a_zero_zero_final_is_repaired_only_by_the_authority_5841.py`
+executes both branches, the second one on the grader's own specimen.
 
 It does not drop the backup table. A restore that destroys its own evidence
 cannot be re-run, and the repair is idempotent precisely so the pair can be
@@ -41,6 +55,7 @@ from scripts.repair_5841_zero_zero_finals_from_the_authority import BAK_TABLE  #
 
 _PLAN_SQL = f"""
 SELECT b.event_id, b.old_home_score, b.old_away_score, b.old_status,
+       b.new_home_score, b.new_away_score,
        e.home_score AS now_home_score, e.away_score AS now_away_score,
        e.status AS now_status
   FROM {BAK_TABLE} b
@@ -48,17 +63,54 @@ SELECT b.event_id, b.old_home_score, b.old_away_score, b.old_status,
  ORDER BY b.event_id
 """
 
-#: Re-states the banked pre-image's ABSENCE rather than just the id: the row may
-#: only be restored while it still carries what the repair put there. Spelled as
-#: an equality on both columns so a partially-corrected row (one side rewritten)
-#: is skipped too.
+#: The CAS. Both bounds come from the BACKUP row, never from the event row:
+#: `:new_*` is the immutable post-image the repair banked before it wrote, so
+#: this statement can only touch a row still carrying exactly what the repair
+#: put there. Binding the current score here instead — which is what CERT-2947
+#: blocked — makes the WHERE a tautology that matches whatever it finds.
+#:
+#: Spelled as an equality on BOTH columns so a half-corrected row is skipped too.
 _RESTORE_SQL = """
 UPDATE events
    SET home_score = :old_home_score, away_score = :old_away_score
  WHERE id = :eid
-   AND home_score = :written_home_score
-   AND away_score = :written_away_score
+   AND home_score = :new_home_score
+   AND away_score = :new_away_score
 """
+
+
+def restore_refusal_reason(row) -> str | None:
+    """Why this banked row must NOT be put back, or ``None``.
+
+    PURE, and the whole of CERT-2947's repair, so the guard can execute THIS
+    function rather than restate it — a test that re-implements the decision
+    passes on a script whose decision has been inverted. (`restorable` in
+    `restore_3780` is the same seam for the same reason.)
+
+    "Still repaired" is an EQUALITY against the banked post-image. The blocked
+    form inferred it from "the current score differs from the banked pre-image",
+    which is equally true of a row this repair wrote `1 - 3` onto and of one the
+    authority later corrected to `2 - 4`.
+    """
+    if (row.now_home_score, row.now_away_score) == (row.new_home_score, row.new_away_score):
+        return None
+    return (
+        "the row has moved since the repair wrote it "
+        f"({row.new_home_score}-{row.new_away_score} → "
+        f"{row.now_home_score}-{row.now_away_score}) — a newer authority reading "
+        "is not this script's to overwrite"
+    )
+
+
+def restore_params(row) -> dict:
+    """The CAS binds for one banked row. Both bounds come from the BACKUP."""
+    return {
+        "eid": row.event_id,
+        "old_home_score": row.old_home_score,
+        "old_away_score": row.old_away_score,
+        "new_home_score": row.new_home_score,
+        "new_away_score": row.new_away_score,
+    }
 
 
 async def restore_rows(session, plan: list[dict]) -> tuple[int, list[int]]:
@@ -93,34 +145,26 @@ async def run(*, apply: bool) -> None:
 
         plan, moved_on = [], []
         for row in rows:
-            # The repair only ever wrote a scoreline that is NOT 0 - 0 onto a row
-            # that WAS 0 - 0, so "still repaired" is "current != banked".
-            still_repaired = (
-                row.now_home_score != row.old_home_score
-                or row.now_away_score != row.old_away_score
-            )
-            if not still_repaired:
-                moved_on.append({"id": row.event_id, "why": "already at its banked scoreline"})
-                continue
-            plan.append(
-                {
-                    "params": {
-                        "eid": row.event_id,
-                        "old_home_score": row.old_home_score,
-                        "old_away_score": row.old_away_score,
-                        "written_home_score": row.now_home_score,
-                        "written_away_score": row.now_away_score,
+            why = restore_refusal_reason(row)
+            if why:
+                moved_on.append(
+                    {
+                        "id": row.event_id,
+                        "banked_post_image": f"{row.new_home_score}-{row.new_away_score}",
+                        "now": f"{row.now_home_score}-{row.now_away_score}",
+                        "why": why,
                     }
-                }
-            )
+                )
+                continue
+            plan.append({"params": restore_params(row)})
 
         print(
             json.dumps(
                 {
                     "banked": len(rows),
                     "restorable": len(plan),
-                    "already_at_banked_value": len(moved_on),
-                    "examples": moved_on[:20],
+                    "skipped_row_has_moved": len(moved_on),
+                    "skipped": moved_on[:20],
                 },
                 indent=2,
             )
