@@ -592,15 +592,37 @@ d("a draw is not the away team on iOS", () => {
     expect(widgetExceptions![0]).toMatch(/Utilities\/SportVocab\.swift,/);
   });
 
-  /** THE TEAM PAGE — a site the issue's own grep missed. */
+  /**
+   * THE TEAM PAGE — a site the issue's own grep missed.
+   *
+   * 🔴 THE GUARD GOT STRONGER AND ITS OLD SPELLING WENT FALSE (#6467, native/184).
+   * It used to require the `DrawPricedWinner` call by name. That call took
+   * `event.currentOdds?.homeProbability` — and `/api/teams/{slug}` HAS NEVER
+   * SERVED `current_odds`, so the whole branch was unreachable and the team page
+   * drew no number at all, on any row, in any sport. The row now prints the
+   * server's `win_probability`, which is already this page's team's number
+   * (`teams.py:559` applies the away complement itself, off a two-way normalised
+   * blend), so there is no client-side derivation left for the draw rule to
+   * guard.
+   *
+   * Requiring the call back would be requiring the defect: the guard's subject
+   * is a CLIENT-DERIVED away number, and the repair was to stop deriving one.
+   * So the assertion is now the property rather than the call — no `1 - ` on a
+   * probability anywhere in this file — which is strictly stronger than naming
+   * one helper, and the sweep below pins `TeamDetailView.swift: []` as well.
+   */
   it("a team's own page stops inventing its away-fixture number", () => {
     const code = stripComments(teamDetail());
 
-    expect(code).toMatch(
-      /: DrawPricedWinner\.printablePair\(\s*away: 1 - homeProb, home: homeProb, sport: event\.sport\)\?\.away/
-    );
-    // The old unconditional complement is gone.
+    // It reads the served, server-oriented field...
+    expect(code).toMatch(/TeamGameRow\.livePrice\(event\)/);
+    // ...and derives no side of any pair itself.
+    expect(code).not.toMatch(/1 - homeProb/);
+    expect(code).not.toMatch(/1\.0 - homeProb/);
     expect(code).not.toMatch(/let prob = isHome \? homeProb : \(1 - homeProb\)/);
+    // The unreachable branch is gone rather than repointed: the key it read is
+    // not in this route's payload at all.
+    expect(code).not.toMatch(/currentOdds/);
   });
 
   /**
