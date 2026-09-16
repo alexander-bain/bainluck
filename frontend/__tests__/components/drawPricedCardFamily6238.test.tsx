@@ -157,6 +157,29 @@ describe("#6238 FeedCard — the surface six live specimens were photographed on
     expect(html).toContain('data-testid="feed-card-away-withheld"');
   });
 
+  it("keeps the home chip when the away value is ABSENT, not just withheld", () => {
+    // 🔴 THIS IS THE ASSERTION THAT MAKES THE GATE LOAD-BEARING, and it took a
+    // mutation run to find. The gate was widened from "both sides non-null" to
+    // "home non-null, away satisfied by a value OR by the withholding" — but
+    // reverting that widening did NOT fail any other test in this file, because
+    // every other fixture carries a real away float and the gate passes on it.
+    //
+    // The case the widening actually buys is this one: a draw-priced card whose
+    // payload has no away figure at all. On the old gate the whole chip block
+    // disappeared and the reader lost the HOME number too — the exact deletion
+    // this ship exists not to cause, arriving through the payload instead of
+    // through the rule.
+    const html = renderToStaticMarkup(
+      <FeedCard
+        item={feedCard(DRAW_SPORT, {
+          current_odds: { home_probability: HOME_PROB, away_probability: null },
+        } as unknown as Partial<FeedEventData>)}
+      />,
+    );
+    expect(text(html)).toContain(HOME_TEXT);
+    expect(html).toContain('data-testid="feed-card-away-withheld"');
+  });
+
   it("CONTROL: a two-way sport prints both chips, unchanged", () => {
     const html = renderToStaticMarkup(<FeedCard item={feedCard(TWO_WAY_SPORT)} />);
     expect(text(html)).toContain(HOME_TEXT);
@@ -247,7 +270,14 @@ describe("#6238 EventCard — the shared league/team/search card", () => {
 
   it("leaves the bar's remainder unattributed instead of painting it away-coloured", () => {
     const html = renderToStaticMarkup(<EventCard event={sharedEvent(DRAW_SPORT)} />);
-    expect(html).toContain('data-bar-remainder="unattributed"');
+    const remainder = html.match(/<div([^>]*data-bar-remainder="unattributed"[^>]*)>/);
+    expect(remainder).not.toBeNull();
+    // 🔴 The attribute alone proved nothing: a mutation that dropped the neutral
+    // track class left the attribute in place and this test stayed green on a
+    // segment painted with no background at all. What matters is the PAINT —
+    // the neutral track, and no inline colour of its own.
+    expect(remainder![1]).toContain("bg-surface-border/30");
+    expect(remainder![1]).not.toContain("background-color");
   });
 
   it("CONTROL: a two-way sport paints a real away segment", () => {
@@ -369,9 +399,18 @@ describe("#6238 MatchupDuel — the concept page's bracket card", () => {
   });
 
   it("does not renormalise the split bar to a full-width home fill", () => {
-    // `h / (h + a)` on a withheld pair is `0.74 / 0.74` = 100%. The home segment
-    // must be its OWN probability, with the remainder left on the track.
-    const html = renderToStaticMarkup(<MatchupDuel child={matchupChild()} sport="soccer" />);
+    // 🔴 THE SPECIMEN HAS TO BE THE ONE WITH NO AWAY FLOAT, and a mutation run is
+    // what said so. With a served pair summing to 1, `h / (h + a)` IS `h` — so
+    // reintroducing the renormalisation changed nothing and the first version of
+    // this test passed on the mutant.
+    //
+    // The divergence only appears when the away value is absent: the old
+    // arithmetic reads `0.74 / 0.74` and paints a FULL-WIDTH home bar on a match
+    // the home side is a 74% chance in. That is the loudest possible version of
+    // the claim this ship removes, so it is the specimen worth pinning.
+    const child = matchupChild();
+    (child as { away?: unknown }).away = { name: "Deportivo Alaves" };
+    const html = renderToStaticMarkup(<MatchupDuel child={child} sport="soccer" />);
     expect(html).toContain('data-away-withheld="true"');
     expect(html).toContain("width:74%");
     expect(html).not.toContain("width:100%");
