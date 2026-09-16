@@ -107,11 +107,37 @@ final class FeedViewModelSportsLoadTests: XCTestCase {
     /// Main call #1 blocks on a gate and returns `first`; call #2+ returns
     /// `second` immediately. Backfill/grouped are always empty + immediate. Proves
     /// a superseded (older) load's late main response is discarded.
+    ///
+    /// ═══ WHICH CALL IS "CALL 1" IS A FACT THIS CLIENT KNOWS AND THE TEST CANNOT
+    ///     GUESS (#2975) ═══
+    ///
+    /// The blocking arm is chosen by ARRIVAL ORDER at this client (`callCount == 1`),
+    /// not by which `vm.load()` the test meant. The test used to sequence the two
+    /// loads with a single `await Task.yield()`, which does not guarantee the
+    /// `async let` child ever reached `fetchSportsFeed()`. When it had not, the
+    /// test's *second* load became call 1, took the gate, and `openGate()` — which
+    /// runs after that load returns — was unreachable. No timeout exists anywhere
+    /// on the path, so the whole suite hung silently: observed 2026-09-03 (the
+    /// filing) and again 2026-09-16 at 995/2513, ten minutes with no progress,
+    /// under load average 752.
+    ///
+    /// So arrival is now ANNOUNCED rather than assumed: ``firstCallArrived`` opens
+    /// the instant a call is numbered 1, and the test awaits that before issuing
+    /// the second. The `Task.yield()` is gone, and with it the only scheduling
+    /// assumption in the test.
+    ///
+    /// Both gates are the ``AsyncGate`` this file already had thirty lines up. The
+    /// hand-rolled continuation this class used to carry was a second, weaker copy
+    /// of it — single-waiter, and it resumed inside the lock — written when one was
+    /// already here.
     private nonisolated final class SupersedeClient: SportsFeedProviding, @unchecked Sendable {
         private let lock = NSLock()
         private var callCount = 0
-        private var gate: CheckedContinuation<Void, Never>?
-        private var opened = false
+        /// Opened by the CLIENT when the first main call arrives. The test awaits
+        /// this to know call 1 is in flight; nobody else opens it.
+        let firstCallArrived = AsyncGate()
+        /// Opened by the TEST to release call 1's late response.
+        private let gate = AsyncGate()
         private let first: FeedResponse
         private let second: FeedResponse
         private let emptyEvents: FeedResponse
@@ -124,22 +150,19 @@ final class FeedViewModelSportsLoadTests: XCTestCase {
             self.emptyGrouped = emptyGrouped
         }
 
-        func openGate() {
-            lock.withLock {
-                opened = true
-                gate?.resume()
-                gate = nil
-            }
-        }
+        /// How many main calls have reached this client. Read by the test to pin
+        /// that exactly one had arrived when it stopped waiting — the assertion
+        /// that turns a future regression of #2975 into a red test instead of a
+        /// suite that never finishes.
+        var mainCallsArrived: Int { lock.withLock { callCount } }
+
+        func openGate() { gate.open() }
 
         nonisolated func fetchSportsFeed() async throws -> FeedResponse {
             let n = lock.withLock { () -> Int in callCount += 1; return callCount }
             if n == 1 {
-                await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-                    lock.withLock {
-                        if opened { cont.resume() } else { gate = cont }
-                    }
-                }
+                firstCallArrived.open()
+                await gate.wait()
                 return first
             }
             return second
@@ -490,7 +513,16 @@ final class FeedViewModelSportsLoadTests: XCTestCase {
         let vm = FeedViewModel(client: fake, telemetry: nil, autoRefreshEnabled: false)
 
         async let loadA: Void = vm.load()   // call 1 — main blocks on the gate
-        await Task.yield()
+
+        // #2975: wait for the fact, not for the scheduler. `await Task.yield()`
+        // used to stand here and yields exactly once, which does not guarantee
+        // the child above reached the client — when it had not, the load below
+        // became call 1, took the gate, and `openGate()` was never reached.
+        await fake.firstCallArrived.wait()
+        XCTAssertEqual(fake.mainCallsArrived, 1,
+                       "exactly one main call is in flight — if this is 0 the gate is about to be "
+                       + "taken by load B and the old shape would have hung here instead of failing")
+
         await vm.load()                      // call 2 — publishes B, advances generation
 
         XCTAssertEqual(vm.items.map(\.id), ["event-9"], "newer load B published")

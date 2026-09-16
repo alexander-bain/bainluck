@@ -234,6 +234,40 @@ prove_test_sources () {   # <newline-separated files> <testlog>
   prove_compiled "$1" "$2" "in target 'BainLuckTests'"
 }
 
+# Watch a running child and kill it if its log stops growing (#2975). Returns 1
+# if it killed the child for stalling, 0 if the child finished on its own.
+#
+# A named function for the same reason `prove_test_sources` is one: --selftest
+# drives THIS code against a child that really hangs, rather than asserting that
+# a copy of the arithmetic is right. An unexercised kill path is indistinguishable
+# from no kill path until the night it is needed — and the whole point of the
+# watchdog is that it fires on a day nobody is watching.
+watch_for_stall () {   # <pid> <logfile> <limit-seconds>
+  _ws_pid=$1; _ws_log=$2; _ws_limit=$3
+  _ws_last_size=-1
+  _ws_last_growth=$(date +%s)
+  while kill -0 "$_ws_pid" 2>/dev/null; do
+    sleep 5
+    # `wc -c` on a file the child is still writing is a snapshot, which is all
+    # this needs: it only ever asks "did it change", never "how far along is it".
+    _ws_size=$(wc -c < "$_ws_log" 2>/dev/null || echo 0)
+    _ws_now=$(date +%s)
+    if [ "$_ws_size" != "$_ws_last_size" ]; then
+      _ws_last_size=$_ws_size
+      _ws_last_growth=$_ws_now
+    elif [ $((_ws_now - _ws_last_growth)) -ge "$_ws_limit" ]; then
+      # The GROUP, not just the leader: xcodebuild's children hold the simulator
+      # and outlive a bare kill of the parent. The single-pid form is the
+      # fallback for a shell that gave us no group.
+      kill -TERM -"$_ws_pid" 2>/dev/null || kill -TERM "$_ws_pid" 2>/dev/null
+      sleep 5
+      kill -KILL -"$_ws_pid" 2>/dev/null || kill -KILL "$_ws_pid" 2>/dev/null
+      return 1
+    fi
+  done
+  return 0
+}
+
 # ── --selftest: prove the rule above, on log shapes, with no Xcode ───────────
 # A gate that lied is being repaired; the repair owes proof that it no longer
 # does. These fixtures go through notice10_select() itself, not a copy of it.
@@ -420,6 +454,57 @@ if [ -n "$SELFTEST" ]; then
   else
     rc_check "section 3a hands prove_test_sources the TEST log" no yes
   fi
+
+  # ── #2975: the stall watchdog, driven against children that really hang ────
+  # Both arms run the REAL watch_for_stall against a REAL background process, so
+  # the kill path is exercised rather than described. No Xcode: a `sleep` that
+  # writes nothing is a perfect model of a deadlocked suite, and `printf` in a
+  # loop is a perfect model of a slow but living one. The negative arm is the
+  # load-bearing one — a watchdog that fires on a healthy run is worse than none,
+  # because it would red every gate on this Mac at load 750.
+  say "--selftest — #2975 stall watchdog (no xcodebuild; real children)"
+
+  echo "  (the shell will print one 'Terminated: 15' line below — that is job"
+  echo "   control reporting the child this arm is supposed to kill, not a failure)"
+  : > "$ST_DIR/hang.log"
+  set -m
+  bash -c 'sleep 600' > "$ST_DIR/hang.log" 2>&1 &
+  ST_HANG_PID=$!
+  set +m
+  ST_T0=$(date +%s)
+  watch_for_stall "$ST_HANG_PID" "$ST_DIR/hang.log" 10
+  ST_HANG_RC=$?
+  ST_ELAPSED=$(( $(date +%s) - ST_T0 ))
+  wait "$ST_HANG_PID" 2>/dev/null
+  rc_check "a child whose log never grows is reported as STALLED" "$ST_HANG_RC" 1
+  # The child must actually be GONE. A watchdog that returns 1 and leaves the
+  # process running would still wedge the machine, and the return code alone
+  # cannot tell the difference.
+  if kill -0 "$ST_HANG_PID" 2>/dev/null; then
+    rc_check "and the hung child is actually dead, not merely reported" alive dead
+    kill -KILL "$ST_HANG_PID" 2>/dev/null
+  else
+    rc_check "and the hung child is actually dead, not merely reported" dead dead
+  fi
+  # ~10s limit + one 5s poll + the 5s TERM->KILL grace. A bound, not a target:
+  # this only has to prove it does not sit there for the 600s the child asked for.
+  if [ "$ST_ELAPSED" -lt 60 ]; then
+    rc_check "and it gave up in seconds, not in the child's own 600" fast fast
+  else
+    rc_check "and it gave up in seconds, not in the child's own 600" "${ST_ELAPSED}s" fast
+  fi
+
+  : > "$ST_DIR/alive.log"
+  set -m
+  bash -c 'for i in $(seq 1 12); do printf "line %s\n" "$i"; sleep 1; done' > "$ST_DIR/alive.log" 2>&1 &
+  ST_ALIVE_PID=$!
+  set +m
+  watch_for_stall "$ST_ALIVE_PID" "$ST_DIR/alive.log" 10
+  ST_ALIVE_RC=$?
+  wait "$ST_ALIVE_PID" 2>/dev/null
+  rc_check "a child that keeps writing is left alone, even past the limit" "$ST_ALIVE_RC" 0
+  rc_check "and it ran to completion (all 12 lines)" \
+    "$(/usr/bin/grep -c '^line ' "$ST_DIR/alive.log")" 12
 
   rm -rf "$ST_DIR"
   say "done (--selftest) — $([ $ST_FAIL -eq 0 ] && echo 'all cases passed' || echo 'FAILURES ABOVE'); nothing was built"
@@ -638,12 +723,48 @@ fi
 echo "  simulator: $SIMNAME  ($UDID)"
 
 TESTLOG="$LOGDIR/tests.txt"
+
+# ── A HANG IS NOT A RESULT, AND UNTIL NOW NOTHING HERE HAD A BOUND (#2975) ────
+#
+# #5591 made a killed run unable to print a green pass line. It did not make the
+# run END. `xcodebuild test` ran in the foreground with no limit, so a suite that
+# deadlocked simply never returned and the lane sat on a dead process until a
+# human noticed — twice now on one test (#2975: 2026-09-03, and 2026-09-16 at
+# 995/2513, ten minutes of silence). Notice 10's iOS clause means no line and so
+# no self-merge: the lane is blocked, silently, by a test unrelated to its ship.
+#
+# The bound is on PROGRESS, not on wall-clock. A healthy run of this suite takes
+# 35-140 s here, but this Mac reaches load average 750 with ten lanes building,
+# and a wall-clock cap generous enough to survive that is too generous to catch
+# anything. The log gains a line per test start and per pass, so silence is the
+# signal that separates "slow" from "stuck": a stalled run is killed and SAID,
+# and #5591's machinery then reports it as the partial run it is.
+STALL_LIMIT=${NATIVE_GATES_STALL_LIMIT:-300}
+# `set -m` so the child becomes a PROCESS GROUP LEADER. Without it a background
+# job in a non-interactive shell shares the script's group, `kill -- -$PID` finds
+# no such group, and killing the leader alone orphans the xcodebuild children
+# that are holding the simulator — the stall would be reported and the machine
+# would keep the hung run. macOS ships no `setsid`; this is the portable form.
+set -m
 xcodebuild test \
   -project "$PROJECT" -scheme "$SCHEME" \
   -destination "id=$UDID" \
-  OTHER_SWIFT_FLAGS="$SWIFT_FLAGS" > "$TESTLOG" 2>&1
+  OTHER_SWIFT_FLAGS="$SWIFT_FLAGS" > "$TESTLOG" 2>&1 &
+XCB_PID=$!
+set +m
+watch_for_stall "$XCB_PID" "$TESTLOG" "$STALL_LIMIT"
+TEST_STALLED=$?
+wait "$XCB_PID" 2>/dev/null
 TEST_EXIT=$?
 echo "EXIT CODE: $TEST_EXIT   log: $TESTLOG"
+if [ "$TEST_STALLED" -eq 1 ]; then
+  FAILED=1
+  echo "  STALLED — the log did not grow for ${STALL_LIMIT}s, so this run was KILLED (#2975)."
+  echo "    last test to start, which is the one that hung:"
+  /usr/bin/grep "' started\.\$" "$TESTLOG" 2>/dev/null | tail -1 | sed 's/^/      /'
+  echo "    This is NOT a verdict on your change — it is the suite failing to finish."
+  echo "    Re-run; if the same test names itself twice, that test is the bug."
+fi
 
 # ── 3a. RECOMPILE PROOF, TEST SOURCES (#5635) ────────────────────────────────
 # The other half of section 2. These files could never appear in the macOS log,
