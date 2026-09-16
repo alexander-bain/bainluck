@@ -19419,6 +19419,10 @@ async def get_event_odds_history(
     try:
         from app.models.models import WinProbSnapshot
         from app.config.win_prob_sources import WIN_PROB_SOURCES
+        from app.utils.futures_liveness import (
+            KALSHI_BOOK_SILENT_FOR_EVENT_SQL,
+            event_pre_kickoff,
+        )
 
         wp_query = select(WinProbSnapshot).where(
             WinProbSnapshot.event_id.in_(series_event_ids),
@@ -19453,6 +19457,49 @@ async def get_event_odds_history(
                 "draw_probability": float(snap.draw_probability) if snap.draw_probability is not None else None,
                 "game_state": snap.game_state,
             })
+
+        # #6535 — the chart was the last place the withdrawn grade still showed.
+        #
+        # #6511/#6522 took the settled Kalshi number off the hero, and #5896's
+        # gate takes it off the legs. Neither reaches here: the hero reads
+        # `Event.win_probability_sources` and this chart reads
+        # `win_prob_snapshots`, a separate persisted series, and withdrawing a
+        # live key does not retract rows already written. So the page ended up
+        # withdrawing the number in its loudest position and keeping it in the
+        # chart — #6535's words, and its measurement: `/events/15313166` served
+        # hero "No price yet" over a curve flat at ~52% all day then spiking
+        # vertically to a labelled 99%, 23 minutes before its own kick-off.
+        #
+        # 🔴 THE SAME QUESTION, NOT A SECOND OPINION. `KALSHI_BOOK_SILENT_SQL`
+        # is the literal fragment the hero sweep asks, imported rather than
+        # restated, because the two must never be able to disagree about which
+        # rows are stranded — one drawing a line the other has withdrawn is
+        # exactly today's defect wearing the other face.
+        #
+        # 🔴 SERVE-TIME AND REVERSIBLE, DELIBERATELY. Nothing is deleted. The
+        # refusal is scoped to the window in which our own row says the contest
+        # has not started, so the moment `commence_time` passes the full series
+        # returns and "settled means settled" makes it true again. That matters
+        # because a settled Kalshi grade on a pre-kick-off row is NOT always a
+        # ghost: on `15307696` the venue's book closed ~58 min before our stored
+        # kick-off because that hour is a Kalshi expected-expiration rather than
+        # a kick-off (#5905/#6568), and the grade is the honest number on a
+        # clock we got wrong. Withdrawing those rows would delete a true final
+        # point; declining to PLOT them for the ~1h our clock is wrong does not.
+        #
+        # Ordered before the metadata build so a dropped source takes its legend
+        # entry with it — a legend naming a curve that is not drawn is the #3810
+        # confusion in reverse.
+        #
+        # The two in-memory tests gate the query, so a finished or live game —
+        # the overwhelming majority of chart loads — never pays for it, and a
+        # pre-kick-off page with no Kalshi series does not either.
+        if "kalshi" in win_prob_history and event_pre_kickoff(event, now=now):
+            _silent = await db.execute(
+                text(KALSHI_BOOK_SILENT_FOR_EVENT_SQL), {"event_id": event.id}
+            )
+            if _silent.scalar():
+                win_prob_history.pop("kalshi", None)
 
         # Build source metadata for sources that have data
         for source_key in win_prob_history:
