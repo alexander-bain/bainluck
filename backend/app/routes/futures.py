@@ -36,7 +36,7 @@ from app.utils.settlement_stamp import (
     last_charted_timestamp as _last_charted_timestamp,
     settled_point_timestamp,
 )
-from app.utils.sport_keys import LLM_CATEGORY_TO_SPORT_PREFIX
+from app.utils.sport_keys import LLM_CATEGORY_TO_SPORT_PREFIX, sport_display_name
 from app.utils.tournament_stages import (
     get_stages_for_sport,
     classify_market_stage,
@@ -4676,7 +4676,13 @@ def _format_market_summary(market: FuturesMarket, source_count_map: dict = None)
         "id": market.id,
         "name": market.name,
         "sport": market.sport.key if market.sport else None,
-        "sport_name": market.sport.name if market.sport else None,
+        # #6444 — see `_format_market_detail`; the summary serves the same field
+        # to the same readers and must not disagree with the detail beside it.
+        "sport_name": (
+            sport_display_name(market.sport.key, market.sport.name)
+            if market.sport
+            else None
+        ),
         "category": market.category,
         "llm_sport_category": market.llm_sport_category,
         "status": market.status,
@@ -5381,7 +5387,15 @@ def _format_market_detail(
         "name": market.name,
         "description": market.description,
         "sport": market.sport.key if market.sport else None,
-        "sport_name": market.sport.name if market.sport else None,
+        # #6444: `/api/futures/61182733` served `sport_name: "tennis_other"` —
+        # the machine key printed where a league brand belongs. The web guards
+        # this client-side (`servedSportNameIsRaw`), native does not, so the
+        # only place the two tiers can be made to agree is here.
+        "sport_name": (
+            sport_display_name(market.sport.key, market.sport.name)
+            if market.sport
+            else None
+        ),
         "category": market.category,
         "llm_sport_category": market.llm_sport_category,
         "status": market.status,

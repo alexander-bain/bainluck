@@ -22573,7 +22573,14 @@ def _format_futures_for_search(market: FuturesMarket) -> dict:
         "id": market.id,
         "name": market.name,
         "sport": market.sport.key if market.sport else None,
-        "sport_name": market.sport.name if market.sport else None,
+        # #6444: the FUTURES arm of the same search response Alex photographed.
+        # #5657 fixed the facet chips and the events arm; `GET /api/events/
+        # search?q=Red Sox` still answered `sport_name: "baseball_other"` here.
+        "sport_name": (
+            sport_display_name(market.sport.key, market.sport.name)
+            if market.sport
+            else None
+        ),
         "category": market.category,
         "llm_sport_category": market.llm_sport_category,
         "market_tier": market.market_tier,
