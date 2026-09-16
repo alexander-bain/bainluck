@@ -3150,6 +3150,19 @@ STALE_DELTA_BATCH = 100_000
 #: round it to one.
 GRADED_DELTA_BATCH = 100_000
 
+#: Rows retired per run by statement A3, the SELF-REFUTING sweep, biggest mover
+#: first.
+#:
+#: Its own constant for the same reason A2 has one — a separate backlog against a
+#: separate predicate, tunable without moving the other two — but sized for a
+#: population three orders of magnitude smaller. Measured on production
+#: 2026-09-16: **47 rows across 36 open markets**, so this batch is not a drain
+#: schedule the way A's and A2's are. It is a ceiling that keeps one pathological
+#: run (a writer regressing and impossible-ing the whole table) from blowing this
+#: task's 120 s `soft_time_limit`, and at today's size every run clears the
+#: backlog completely.
+IMPOSSIBLE_PRIOR_BATCH = 10_000
+
 
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=150, name="app.tasks.update_max_movement")
 def update_max_movement(self):
@@ -3188,6 +3201,19 @@ def update_max_movement(self):
     Clearing the column here keeps the identity exactly true, so the bound and
     every one of the ~130 other readers stay correct for free. Do not re-derive
     the read-side fix; `tests/test_futures_stamp_semantics.py` also rejects one.
+
+    Statement A3 exists because "it freezes" has a SECOND shape that A cannot
+    see, and it is the worse one (#6536). A row that stops being written keeps
+    serving its last delta — that is A's case, and `last_updated` finds it. But a
+    row that KEEPS being written by a price writer which does not touch the delta
+    also strands it, while looking perfectly fresh: `current_probability` moves,
+    the delta does not, and the pair stops describing the same instant. Those
+    rows are immune to A by construction (the writer bumps `last_updated` hourly)
+    and to A2 (they are open). The tell is on the row itself —
+    `current_probability - probability_change_24h` is the previous price, and
+    when it lands outside [0, 1] no venue ever quoted it. Measured 2026-09-16:
+    47 rows, 36 open markets, the worst of them green on Discover page one
+    telling a reader that an outcome sitting at 8% had risen 80 points.
 
     Statement C exists because statement B structurally cannot lower a market.
     B drives off `GROUP BY market_id` over non-null deltas, so a market whose
@@ -3280,7 +3306,83 @@ def update_max_movement(self):
                 {"batch": GRADED_DELTA_BATCH},
             )
 
-            # B. Recompute the per-market maximum over what survived A and A2.
+            # A3. Retire deltas that REFUTE THEMSELVES — the row's own two
+            #     columns cannot both describe the same instant (#6536).
+            #
+            #     `probability_change_24h` is `new - previous` at write time, so
+            #     `current_probability - probability_change_24h` IS the previous
+            #     price, and a probability outside [0, 1] is not a price that any
+            #     venue ever quoted. The row decides it alone: no snapshot join,
+            #     no venue read, no ground truth.
+            #
+            #     WHY A AND A2 STRUCTURALLY CANNOT REACH THESE, which is the whole
+            #     reason this is a third statement and not a widening. The four
+            #     delta writers (`kalshi`, `polymarket` x2, `futures`) write both
+            #     columns together and are honest when they do. But
+            #     `current_probability` has roughly twice as many writers, and the
+            #     ones that write a price and leave the delta alone —
+            #     `futures_price_refresh`, both sockets,
+            #     `prediction_market_matching`, `datagolf`,
+            #     `tournament_price_refresh` — leave a delta describing a price
+            #     that is no longer in the row. A gates on `last_updated`, and
+            #     every one of those writers bumps it, so the rows are immune to A
+            #     exactly as graded rows are immune (A2's case), and re-armed
+            #     HOURLY rather than every six. A2 does not apply: they are open,
+            #     `resolution_source IS NULL`.
+            #
+            #     Measured on production 2026-09-16, which is what sized the batch
+            #     above: 47 rows / 36 open markets, 16 overshooting by more than
+            #     5pp. The dominant writer is `refresh_stale_futures_prices`, and
+            #     its own docstring says why this population is the one it hits —
+            #     it exists BECAUSE the discovery polls "structurally cannot
+            #     reach" already-known futures markets, so the poll that owns the
+            #     delta and the refresh that owns the price never coincide.
+            #
+            #     WHY THE STRIP MAKES THIS WORSE THAN 47 ROWS SOUNDS: this task's
+            #     own `ORDER BY abs(probability_change_24h) DESC` and
+            #     `/api/futures/movers` both rank by magnitude, so the LARGER the
+            #     arithmetic impossibility the more likely the row is chosen as a
+            #     card's headline mover. The worst row in the whole table on
+            #     2026-09-16 was on Discover page one, green, claiming an outcome
+            #     sitting at 8% had risen 80 points.
+            #
+            #     NULL rather than a recomputed value, for the same reason A and
+            #     A2 clear: at sweep time the true previous price is unknowable —
+            #     recomputing it here would be fabricating one — and every reader
+            #     already treats NULL as "no movement" and prints no chip.
+            #
+            #     NO TOLERANCE, and it is derived rather than chosen: both columns
+            #     are `numeric(7, 6)` in production (verified against
+            #     `information_schema`), so this is exact decimal arithmetic with
+            #     no float epsilon to absorb. The 20 sub-1pp rows are the same
+            #     non-simultaneity defect at a smaller magnitude, not rounding
+            #     noise, and a tolerance would be a tuned constant with nothing
+            #     behind it.
+            #
+            #     `current_probability IS NOT NULL` is required and not decorative:
+            #     the column is nullable (a withdrawn leg), and `NULL - x` is NULL,
+            #     which is not > 1 and not < 0 — so without it the comparison is
+            #     NULL for those rows and they are silently never considered. It
+            #     is stated so the predicate says what it does.
+            impossible = await session.execute(
+                text("""
+                    UPDATE futures_outcomes
+                    SET probability_change_24h = NULL
+                    WHERE id IN (
+                        SELECT id
+                        FROM futures_outcomes
+                        WHERE probability_change_24h IS NOT NULL
+                          AND current_probability IS NOT NULL
+                          AND (current_probability - probability_change_24h < 0
+                               OR current_probability - probability_change_24h > 1)
+                        ORDER BY abs(probability_change_24h) DESC
+                        LIMIT :batch
+                    )
+                """),
+                {"batch": IMPOSSIBLE_PRIOR_BATCH},
+            )
+
+            # B. Recompute the per-market maximum over what survived A, A2 and A3.
             result = await session.execute(text("""
                 UPDATE futures_markets fm
                 SET max_movement_24h = sub.max_mv
@@ -3313,13 +3415,14 @@ def update_max_movement(self):
                   )
             """))
 
-            # One commit for all three: a reader must never see A's cleared
-            # outcomes against B and C's un-recomputed markets, because between
-            # those two states the superset bound is false.
+            # One commit for all of them: a reader must never see A/A2/A3's
+            # cleared outcomes against B and C's un-recomputed markets, because
+            # between those two states the superset bound is false.
             await session.commit()
             updated = result.rowcount
             expired_rows = expired.rowcount
             graded_rows = graded.rowcount
+            impossible_rows = impossible.rowcount
             cleared_markets = cleared.rowcount
 
             # Reported, not swallowed: a warm that never ran must be visible in
@@ -3342,6 +3445,14 @@ def update_max_movement(self):
                 "updated": updated,
                 "expired": expired_rows,
                 "graded_retired": graded_rows,
+                # #6536. Reported separately and never folded into
+                # `graded_retired`: this counter is the only way to see whether a
+                # price writer has started stranding deltas again. A run that
+                # retires 0 is the healthy steady state; a run that keeps
+                # retiring rows every ten minutes names a writer that is still
+                # moving prices without its delta, which is a fix at that writer
+                # and not more sweeping.
+                "impossible_retired": impossible_rows,
                 "cleared_markets": cleared_markets,
                 # Both backlogs have to be empty before the strip is honest, so
                 # `backlog_drained` reports the AND. Reporting only A's would go
