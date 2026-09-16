@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Mapping, NamedTuple, Optional
 
 from app.utils.graded_card import rendered_percent
-from app.utils.highlights import select_live_claim
+from app.utils.highlights import CLOSE_MATCHUP_MIN, select_live_claim
 from app.utils.outcome_display_names import (
     display_outcome_name,
     display_outcome_names,
@@ -541,6 +541,22 @@ def humanize_outcome_names_for_feed(
 def _point_change(value: float) -> float:
     """Convert a probability delta to percentage points for display."""
     return round(abs(value) * 100, 1)
+
+
+def _underdog_sentence(winner: str, pct: int) -> str:
+    """"{winner} won as a {pct}% underdog", with the article the number takes.
+
+    The article follows how the percent is SAID, not how it is spelled: "a 44%"
+    but "an 18%". Eight, eleven and eighteen are the three readings that open on
+    a vowel, and every hundred built on them inherits it ("an 81%"), so the test
+    is the leading digits rather than the value.
+
+    Split out of the one f-string that prints this sentence because #6477 gives
+    that sentence a second caller, and its specimen — Valencia at a printed 18 —
+    is exactly a case the old literal got wrong.
+    """
+    article = "an" if str(int(pct)).startswith(("8", "11", "18")) else "a"
+    return f"{winner} won as {article} {pct}% underdog"
 
 
 def _display_pct(probability: float, printed: Optional[int] = None) -> int:
@@ -1191,8 +1207,92 @@ def generate_event_reason(
                 if not lead_is_printable(loser_printed, winner_printed):
                     return ""
                 pct = _display_pct(winner_opening_prob, winner_printed)
-                return f"{winner} won as a {pct}% underdog"
+                return _underdog_sentence(winner, pct)
             return "Upset result"
+        # #6477 — A FINISHED UPSET WHOSE PRICE NEVER MOVED IS STILL AN UPSET.
+        #
+        # The branch above is the only settled sentence this card can carry, and
+        # it is admitted by `"upset"` — which `highlights.py` appends only behind
+        # `favorite_switched`, a PRICE event comparing the live aggregate against
+        # `opening_favorite`. On a FINISHED game that aggregate is not free to
+        # disagree: `compute_aggregate_probability` drops
+        # `_EXCLUDE_WHEN_COMPLETED = {"kalshi", "polymarket"}` once the status is
+        # final, so an event whose only speaker is a prediction market falls past
+        # Tier 1 and Tier 2 to Tier 3 — `opening_home_probability`, the very
+        # number `opening_favorite` was derived from. The gate is then asking
+        # whether the opening price switched away from itself. It cannot, ever,
+        # for that whole population, however large the upset.
+        #
+        # Served on production 2026-09-16 04:1xZ, card 11 of 60 at 390px: event
+        # 15305823, Alavés 0 - 1 Valencia (La Liga, `status=completed`,
+        # `discover_marquee_final`), `win_probability_sources` holding polymarket
+        # 0.0005 and nothing else, aggregate 0.7618 == opening 0.7618. No switch,
+        # no `"upset"`, `reason: ""` — a hole two cards below "Baltimore Orioles
+        # won as a 44% underdog", which is the same sentence on an event that
+        # happened to keep a sportsbook. 55 of the 151 decided upsets in the
+        # seven days to 2026-09-16 sit in this class, 38 of them
+        # prediction-market-only: the gate, not the fixture.
+        #
+        # THE SENTENCE NEVER NEEDED THE PRICE. It reads the SCOREBOARD against
+        # the PRE-GAME BOARD, and whether a price moved in between is a different
+        # question that already has its own two answers — the chip (#6279) and
+        # the movement line (#4094), both deliberately withheld here. So this
+        # branch asks only what the sentence actually claims: who won, and were
+        # they beneath the other side on the board this card prints.
+        #
+        # IT FAILS CLOSED WHERE THE BRANCH ABOVE FAILS OPEN, and that asymmetry
+        # is the point. `lead_is_printable` returns True when either percent is
+        # None — #6187's "the unknown case must not become a guess" convention,
+        # which exists to keep the `"upset"` caller's wording verbatim. Inherited
+        # here it would print "won as a 76% underdog" over every unprinted
+        # favourite that ever won, because in this branch nothing else
+        # establishes the word: there is no price event standing behind it. So
+        # both percents must be KNOWN and the winner's strictly lower — every
+        # word then checkable against the two numbers the card draws three
+        # millimetres below the sentence.
+        #
+        # AND IT TAKES A MAGNITUDE BAR, WHICH THE BRANCH ABOVE DOES NOT, because
+        # the two branches are admitted by different evidence and may honestly
+        # hold different bars: that one has a real price swing standing behind
+        # the word, this one has only the gap between two printed numbers.
+        # Measured over the same seven days, 24 of the 55 denied upsets have the
+        # winner between 40% and 48% — which is #2753's open complaint, verbatim
+        # ("Won as 48% underdog"), and shipping it here would manufacture that
+        # class on a population that is currently silent.
+        #
+        # The bar is NOT a new constant. `CLOSE_MATCHUP_MIN` is where
+        # `highlights.py` stops calling a board close, and this module already
+        # has the word it uses for boards inside it — "Tight game", forty lines
+        # down. A side the system itself classifies as half of a close matchup
+        # is not an underdog, so the sentence declines and the card keeps the
+        # two percents it was already printing. 31 of the 55 clear it; the
+        # specimen, at a printed 18, clears it easily. Whether the branch ABOVE
+        # should inherit the same bar is #2753's question, on #2753's surface
+        # (the chip), and is deliberately not answered here.
+        #
+        # Nothing above this line moves. The `"upset"` block returns on all four
+        # of its paths, so a card captioned today is captioned identically here.
+        if (
+            home_score is not None
+            and away_score is not None
+            and home_score != away_score
+            and prematch_percents
+        ):
+            if home_score > away_score:
+                settled_winner = home_team
+                winner_pct = prematch_percents.get("home")
+                loser_pct = prematch_percents.get("away")
+            else:
+                settled_winner = away_team
+                winner_pct = prematch_percents.get("away")
+                loser_pct = prematch_percents.get("home")
+            if (
+                winner_pct is not None
+                and loser_pct is not None
+                and lead_is_printable(loser_pct, winner_pct)
+                and int(winner_pct) < CLOSE_MATCHUP_MIN * 100
+            ):
+                return _underdog_sentence(settled_winner, int(winner_pct))
         # #4094 — NO INTRA-GAME MOVEMENT SENTENCE ON A FINAL CARD.
         #
         # This block used to answer `major_prob_swing` with "{team} odds shifted
