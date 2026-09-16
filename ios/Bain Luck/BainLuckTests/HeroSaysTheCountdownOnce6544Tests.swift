@@ -54,7 +54,21 @@ final class HeroSaysTheCountdownOnce6544Tests: XCTestCase {
     /// photographed `Nd Nh` shape, anchored off the test's own clock rather
     /// than a wall date — `formatCountdown` measures against `now` and takes no
     /// injected clock, so an absolute anchor here would expire (gotcha #44).
-    private var futureKickoff: Date { Date().addingTimeInterval(4 * 86_400 + 12 * 3_600) }
+    ///
+    /// 🔴 THE EXTRA THIRTY MINUTES ARE THE WHOLE POINT, and this file's own
+    /// mutation battery is what found it. At a flat `4d 12h` the anchor sits
+    /// exactly ON `formatCountdown`'s rounding boundary: the function takes
+    /// `Int(interval / 60)`, and 388,800 s is 6,480.0 minutes to the last bit,
+    /// so whether the microseconds that elapse between constructing this date
+    /// and reading it push the quotient below 6,480 decides between "4d 12h"
+    /// and "4d 11h" — two calls a fraction of a second apart disagreed, and
+    /// `testBothCopiesWereTheSameString` failed on five of ten mutant runs for
+    /// a reason that had nothing to do with the mutant. Offsetting into the
+    /// MIDDLE of the bucket buys half an hour of slack in both directions
+    /// (gotcha #44: offset first, and never anchor on the boundary itself).
+    private var futureKickoff: Date {
+        Date().addingTimeInterval(4 * 86_400 + 12 * 3_600 + 1_800)
+    }
     private var pastKickoff: Date { Date().addingTimeInterval(-3 * 3_600) }
 
     /// Every status that reaches the hero and is neither `live` nor finished.
@@ -76,9 +90,9 @@ final class HeroSaysTheCountdownOnce6544Tests: XCTestCase {
             "In \(once)", "In \(twice)",
             "the two hero copies read the same function with the same input"
         )
-        XCTAssertTrue(
-            once.hasPrefix("4d"),
-            "the specimen's shape: \"4d 12h\", not \(once)"
+        XCTAssertEqual(
+            once, "4d 12h",
+            "the specimen's shape, and it is exact now that the anchor is off the boundary"
         )
     }
 

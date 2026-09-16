@@ -73,11 +73,22 @@ classify() {
   esac
 }
 
-# Which of MY tests failed. Reported so a kill by an unrelated pre-existing test
-# is visible as such rather than banked as this file's work.
+# Which of MY tests FAILED. `'` + "failed" is load-bearing: xcodebuild prints the
+# same `-[Class testName]` shape for `started` and `passed` too, so the obvious
+# grep for the class name reports every test in the file on every mutant and
+# reads like a rout. M1's first run said exactly that before this was corrected.
+#
+# `outsiders` is the other half: a mutant killed only by a pre-existing test
+# elsewhere in the suite is not evidence about THIS guard, and it looks
+# identical in the verdict column.
 killers() {
-  /usr/bin/grep -oE "HeroSaysTheCountdownOnce6544Tests test[A-Za-z]+\]" "$TMP/out.txt" \
-    | /usr/bin/sed 's/.*\(test[A-Za-z]*\)\]/\1/' | sort -u | tr '\n' ' '
+  /usr/bin/grep -oE "HeroSaysTheCountdownOnce6544Tests test[A-Za-z]+\]' failed" "$TMP/out.txt" \
+    | /usr/bin/sed "s/.*\(test[A-Za-z]*\)\]' failed/\1/" | sort -u | tr '\n' ' '
+}
+
+outsiders() {
+  /usr/bin/grep -oE "Test Case '-\[[A-Za-z_.]+ test[A-Za-z]+\]' failed" "$TMP/out.txt" \
+    | /usr/bin/grep -v HeroSaysTheCountdownOnce6544Tests | sort -u | wc -l | tr -d ' '
 }
 
 mutant() {
@@ -90,7 +101,9 @@ mutant() {
   rc=$(run_suite); verdict=$(classify "$rc")
   if [ "$verdict" = KILLED ]; then
     by=$(killers)
-    [ -z "$by" ] && by="!! killed by a test OUTSIDE this file — read the log"
+    local out; out=$(outsiders)
+    [ -z "$by" ] && by="!! NOT killed by this file's tests — "
+    [ "$out" != 0 ] && by="$by(+$out failing test(s) outside this file)"
   else
     by=$(/usr/bin/grep -oE "\.swift:[0-9]+:[0-9]+: error: .*" "$TMP/out.txt" | head -1)
   fi
@@ -168,14 +181,8 @@ mutant "M7  the scheduled arm stops being handed a commence time" "$HERO" \
 # off takes a badge arm ABOVE the countdown and the hero loses the number
 # outright — the exact harm the deleted duplicate used to mask.
 mutant "M8  isSuspendedAndStarted forgets the clock" "$STATE" \
-'        return hasStarted(commenceTime: commenceTime, now: now)
-    }
-
-    /// Whether the hero and the card print a venue-settled verdict' \
-'        return true
-    }
-
-    /// Whether the hero and the card print a venue-settled verdict'
+'        isSuspended(status) && hasStarted(commenceTime: commenceTime, now: now)' \
+'        isSuspended(status)'
 
 mutant "M9  showsVenueSettledVerdict forgets the clock" "$STATE" \
 '        guard !isFinished(status) else { return false }
