@@ -1569,8 +1569,36 @@ export default function EventPage({ params }: EventPageProps) {
 
           {/* Broadcast + date/time + freshness */}
           <div className="flex items-center gap-2">
-            {event.espn?.broadcast && (
-              <span className="px-1.5 py-0.5 rounded bg-surface-elevated text-[10px] font-semibold text-text-secondary tracking-wide">
+            {/* #5741 — A BROADCAST IS A PROMISE ABOUT THE FUTURE, so it is
+                gated on the same state the badge two lines up reads. It was
+                gated on the field's presence and nothing else, which left the
+                chip as the only element in this row with no opinion about
+                whether the game is over: `/events/15312659` (Diamondbacks 2,
+                Marlins 4, Final) told the reader to watch it on
+                "MLB.TV, DBACKS.TV, Marlins.TV".
+
+                THE RULE IS NOT NEW AND IS NOT MINE — this page was the last
+                holdout of three surfaces. `EventCard`'s footer already reads
+                `!isFinished && !isSuspended` (CERT-792) and iOS's hero already
+                reads `EventDetailView.showsBroadcast` (#4002). Adopted verbatim
+                rather than designed, so the three cannot drift.
+
+                🔴 NOT `effectivelyLive`, which the issue recommended: pregame
+                is the chip's whole job — "the hero's real estate is game state
+                — pregame start time + broadcast" (L2-157, fifteen lines below)
+                — and a positive live gate would delete it for every reader who
+                has not yet watched the game. The pregame arm of the guard below
+                exists to kill exactly that fix.
+
+                `isSuspended` is the page's ONE `hasNoReportedResult` answer
+                (#4015) and is deliberately only READ here: a match nobody can
+                report on is not one to tune into either, which is #3821's false
+                promise worn as a chip. */}
+            {event.espn?.broadcast && !isFinished && !isSuspended && (
+              <span
+                className="px-1.5 py-0.5 rounded bg-surface-elevated text-[10px] font-semibold text-text-secondary tracking-wide"
+                data-testid="event-hero-broadcast"
+              >
                 {event.espn.broadcast}
               </span>
             )}
