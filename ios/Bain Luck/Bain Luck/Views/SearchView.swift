@@ -1015,8 +1015,23 @@ struct SearchView: View {
                     }
                     // #4021 — see StatusBadge: the suspended arm is clock-gated.
                     StatusBadge(status: event.status, commenceTime: event.commenceTime)
-                    if event.status == "scheduled", let commenceTime = event.commenceTime {
-                        RelativeTimeText(dateString: commenceTime)
+                    // #6444 — EVERY ROW SAYS WHEN. This was gated on
+                    // `status == "scheduled"`, which drew the date on the rows
+                    // whose badge already reads "In 3h" and withheld it from
+                    // the finished ones, where it is the only thing that tells
+                    // two fixtures apart. Alex's screenshot is three identical
+                    // "Boston Red Sox vs Baltimore Orioles · MLB · FINAL" rows.
+                    // The rule is `EventState`'s so the team schedule and the
+                    // next row that wants it read one answer.
+                    if EventState.listRowPrintsDate(event.status),
+                       let commenceTime = event.commenceTime {
+                        // A played game prints the DAY and not the clock: see
+                        // RelativeTimeText.Style, and the wrapped "Aug 28," /
+                        // "4:15 PM" this row measured at before it.
+                        RelativeTimeText(
+                            dateString: commenceTime,
+                            style: EventState.isFinished(event.status) ? .dayOnly : .full
+                        )
                     }
                 }
             }
