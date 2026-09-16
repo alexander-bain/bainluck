@@ -1990,6 +1990,73 @@ SUM_ARM_ONLY_EXCLUDED_CELLS = (("kalshi", "entertainment"),)
 
 
 # ---------------------------------------------------------------------------
+# CAL-P1318 (#6275) — the (source, category) cells the identity quarantine
+# deletes rows in, DISCLOSED so the publish gate can tell a ruled methodology
+# change from a cohort falling off a cliff.
+#
+# WHY THIS EXISTS. The quarantine shipped, the bank rebuilt to 128/128, and the
+# publish gate refused at the 2026-09-16 12:29:54Z beat with
+# ``category_collapse``: esports fell 35.6% (22,544 -> 14,526) and mma 30.6%
+# (3,087 -> 2,144), both past Rule 3's 20% limit. Rule 2 PASSED — the total
+# moved -4.72%, inside the +-5% band — so this is not a shrink and a version
+# bump is not the instrument. ``calibration_publish_gate._newly_excluded_in``
+# records a collapse instead of vetoing it when the candidate's own artifact
+# discloses a rung that newly excludes that category, and
+# ``identity_quarantine_filter`` published only a total, so the gate had nothing
+# to read and refused every generation for as long as it kept rebuilding
+# (~14 hourly beats a cycle).
+#
+# THESE CELLS ARE MEASURED, NOT THE TWO THAT HAPPENED TO BREACH. Read off
+# production 2026-09-16 ~13:2xZ with the shipped ``identity_quarantine_ctes``
+# chain rendered from its own module (``commence_time_col=event_commence_time``,
+# the CERT-2902 operand), grouped by the population's own ``(source, category)``:
+# every disputed market in the database sits in one of these fifteen cells and
+# ALL of them are kalshi — the predicate reads a date token out of the market's
+# own ticker, which no other source writes. Counts are disputed MARKETS over the
+# whole table, not the eligibility-filtered published subset, so they size the
+# cells and are deliberately not published as magnitudes.
+#
+# FAIL-CLOSED ON PURPOSE, and this is the property that makes a list safe here.
+# A cell absent from this tuple is not disclosed, so the gate does NOT excuse it
+# and refuses exactly as it does today. Being wrong costs a refusal, never a
+# silent publish — the opposite direction from the allowlists above, where a
+# missing cell would drop rows nobody named.
+#
+# 🔴 THIS TUPLE IS A DISCLOSURE, NOT AN ALLOWLIST, AND THE DIFFERENCE IS LOAD
+# BEARING. ``NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS`` decides WHICH ROWS the filter
+# deletes and is therefore interpolated into the population SQL and hashed into
+# ``_main_input_fingerprint``. This one decides only what the artifact SAYS
+# about a rung that already applies everywhere it can; it never reaches the SQL
+# and must never be added to that digest, or editing a sentence would discard an
+# in-flight bank. Adding or removing a cell here cannot change a single
+# published row — assert that before you touch it.
+#
+# The excuse is ONE-SHOT and disarms itself. ``_newly_excluded_in`` is
+# one-directional: it fires only where the CANDIDATE discloses a cell the
+# BASELINE does not. Once this publishes, the served baseline carries the same
+# cells, so the next generation gets no excuse and any FURTHER collapse in these
+# categories refuses normally (proved against the live q271 payload before this
+# was written: gen1 publishes, a second esports collapse on top of it refuses).
+IDENTITY_QUARANTINE_DISCLOSED_CELLS: tuple[tuple[str, str], ...] = (
+    ("kalshi", "baseball"),      # 19,028 disputed markets
+    ("kalshi", "tennis"),        # 15,521
+    ("kalshi", "esports"),       # 11,481
+    ("kalshi", "football"),      # 3,299
+    ("kalshi", "soccer"),        # 2,959
+    ("kalshi", "basketball"),    # 2,456
+    ("kalshi", "mma"),           # 981
+    ("kalshi", "lacrosse"),      # 374
+    ("kalshi", "hockey"),        # 258
+    ("kalshi", "cricket"),       # 142
+    ("kalshi", "boxing"),        # 135
+    ("kalshi", "rugby"),         # 19
+    ("kalshi", "motorsports"),   # 10
+    ("kalshi", "other"),         # 6
+    ("kalshi", "golf"),          # 1
+)
+
+
+# ---------------------------------------------------------------------------
 # CAL-P168 (#1978) — RANK 1, `polymarket/baseball`. K' = R1 + R2 + R3 + M1.
 #
 # Design + ruling: `artifacts/cal-p117/RULE-DESIGN-polymarket-baseball.md`
@@ -7462,6 +7529,24 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             "rule": QUARANTINE_RULE_TEXT,
             "excluded": identity_disputed_excluded,
             "excluded_markets": identity_disputed_markets_count,
+            # CAL-P1318 (#6275): WHICH cells this rung takes rows out of, so the
+            # publish gate can read the reshaping off the artifact instead of
+            # refusing it as an unexplained collapse. Sorted and materialised as
+            # lists because the payload is serialised to JSON, where a tuple of
+            # tuples and a list of lists are the same thing and only one of them
+            # round-trips. Provenance, measurement and the fail-closed argument
+            # are on IDENTITY_QUARANTINE_DISCLOSED_CELLS itself.
+            #
+            # No per-cell COUNT rides here on purpose. The gate marks a
+            # disclosed collapse `magnitude_uncheckable` and says in its own
+            # comment that bounding it needs per-cell counts and belongs to its
+            # own ship; the counted form is fifteen more scalar columns through
+            # `liq_summary`, the staged census tuple and the bank-time mirror
+            # (the CAL-P162 idiom), which is a change to the population
+            # statement — and this one deliberately does not touch it.
+            "excluded_cells": [
+                list(cell) for cell in sorted(IDENTITY_QUARANTINE_DISCLOSED_CELLS)
+            ],
         },
         # Queue 299 rung 1 (#1012): result authority before anything else.
         "no_winner_filter": {
