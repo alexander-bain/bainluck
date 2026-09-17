@@ -67,6 +67,50 @@ final class FooterRefreshSaysWhatItIsDoing1472Tests: XCTestCase {
         }
     }
 
+    /// THE SAME DEFECT, ONE READER OVER — and it is not hypothetical.
+    ///
+    /// A SwiftUI `Button` carrying an explicit `.accessibilityLabel` **replaces**
+    /// its children in the accessibility tree: the `Text(title)` inside it stops
+    /// being an element. The first cut of this fix gave the button one fixed
+    /// label, so a VoiceOver reader heard "Refresh feed" in all four phases
+    /// while a sighted reader saw four different things — #1472 intact for them.
+    ///
+    /// Caught by `AReaderCanSeeTheFooterRefreshWorking1472Tests`, which tapped
+    /// the real control on a real build and could not find "Refreshing…"
+    /// anywhere in the tree afterwards.
+    func testEveryPhaseSoundsDifferentFromEveryOtherToo() {
+        let labels = Self.allPhases.map { NativeFeedEndCard.refreshPresentation($0).accessibilityLabel }
+        XCTAssertEqual(
+            Set(labels).count, Self.allPhases.count,
+            "Two phases announce themselves identically, so a reader who cannot see the control cannot tell "
+            + "them apart: \(labels)"
+        )
+        for (phase, label) in zip(Self.allPhases, labels) {
+            XCTAssertFalse(
+                label.trimmingCharacters(in: .whitespaces).isEmpty,
+                "\(phase) has no spoken name at all"
+            )
+        }
+    }
+
+    /// The spoken label carries the outcome, because the status line beside it is
+    /// `accessibilityHidden` — otherwise the outcome would be read twice, or (if
+    /// the label were phase-blind) not at all.
+    func testTheSpokenLabelCarriesTheOutcomeItsPhaseHas() {
+        XCTAssertTrue(
+            NativeFeedEndCard.refreshPresentation(.refreshing).accessibilityLabel.lowercased().contains("refreshing"),
+            "the in-flight phase does not announce that it is in flight"
+        )
+        XCTAssertTrue(
+            NativeFeedEndCard.refreshPresentation(.failed).accessibilityLabel.lowercased().contains("couldn't refresh"),
+            "the failed phase does not announce the failure, and the visible status line is hidden from VoiceOver"
+        )
+        XCTAssertTrue(
+            NativeFeedEndCard.refreshPresentation(.refreshed).accessibilityLabel.lowercased().contains("checked"),
+            "the finished phase does not announce that it finished"
+        )
+    }
+
     /// `.idle` is the only phase in which the reader has not asked for anything,
     /// so it is the only one that may be silent.
     func testOnlyIdleIsSilent() {
@@ -158,7 +202,7 @@ final class FooterRefreshSaysWhatItIsDoing1472Tests: XCTestCase {
                       "http", "request", "nil", "error code", "retry budget"]
         for phase in Self.allPhases {
             let shown = NativeFeedEndCard.refreshPresentation(phase)
-            let copy = ((shown.status ?? "") + " " + shown.title).lowercased()
+            let copy = ((shown.status ?? "") + " " + shown.title + " " + shown.accessibilityLabel).lowercased()
             for word in banned {
                 XCTAssertFalse(
                     copy.contains(word),
@@ -166,6 +210,55 @@ final class FooterRefreshSaysWhatItIsDoing1472Tests: XCTestCase {
                 )
             }
         }
+    }
+
+    // MARK: - The card has to still be there to speak
+
+    /// The two speaking phases outrank the pagination spinner in the footer.
+    ///
+    /// MEASURED, and it is the reason the first cut of this fix was invisible:
+    /// `refreshFeed` resets `visibleCount` to 20 as its first visible act, the
+    /// surviving cards' `onAppear` calls `loadMoreIfNeeded()`, `vm.loadingMore`
+    /// goes true within a frame — and the footer's plain ordering drew a
+    /// wordless `ProgressView` in place of the card the reader had just pressed.
+    /// The journey test reported the in-flight control not hittable for exactly
+    /// as long as that was true.
+    func testTheSpeakingPhasesOutrankThePaginationSpinner() {
+        XCTAssertTrue(
+            DiscoverView.footerKeepsTheCard(phase: .refreshing),
+            "a refresh in flight yields the footer to a wordless spinner, so the press has no voice"
+        )
+        XCTAssertTrue(
+            DiscoverView.footerKeepsTheCard(phase: .failed),
+            "a pagination spinner swallows the only notice a failed refresh gets at this end of the page"
+        )
+
+        // AND THE QUIET PHASES MUST NOT, or the end card would sit over a feed
+        // that has more to give, claiming the reader is caught up.
+        XCTAssertFalse(
+            DiscoverView.footerKeepsTheCard(phase: .idle),
+            "'You're all caught up' would draw over a feed that is still paginating"
+        )
+        XCTAssertFalse(DiscoverView.footerKeepsTheCard(phase: .refreshed))
+    }
+
+    /// The footer consults that rule BEFORE it consults `loadingMore`. Ordering
+    /// is the whole content of the fix, and it is not visible in the rule.
+    func testTheFooterAsksAboutTheCardBeforeItAsksAboutPagination() throws {
+        let lines = Self.codeLines(of: "Bain Luck/Views/DiscoverView.swift")
+        let keeps = try XCTUnwrap(
+            lines.lastIndex(where: { $0.contains("Self.footerKeepsTheCard(phase: footerRefreshPhase)") }),
+            "the footer no longer consults the keep-the-card rule at all"
+        )
+        let spinner = try XCTUnwrap(
+            lines.lastIndex(where: { $0.contains("} else if vm.loadingMore {") }),
+            "the footer's pagination spinner has moved; move this test with it"
+        )
+        XCTAssertLessThan(
+            keeps, spinner,
+            "the footer asks `loadingMore` first, so a refresh the reader started from the end card is "
+            + "answered by a wordless spinner where the card used to be — the defect this fix exists for."
+        )
     }
 
     // MARK: - The call sites
@@ -193,13 +286,78 @@ final class FooterRefreshSaysWhatItIsDoing1472Tests: XCTestCase {
                 "End-card call site \(sites) does not pass the live phase, so the control is frozen on "
                 + "whatever it was given however right the rule is. Found instead:\n\(arguments)"
             )
+            XCTAssertTrue(
+                arguments.contains("refreshFeed(returningToTopWith: feedProxy)"),
+                "End-card call site \(sites) refreshes without returning the reader anywhere, so the press "
+                + "strands them mid-scroll in a feed they have not seen. Found instead:\n\(arguments)"
+            )
             searched = call.upperBound..<source.endIndex
         }
 
         XCTAssertEqual(
-            sites, 2,
-            "Discover built \(sites) end cards; #1472 knows of two (the empty-eligible caught-up state and "
-            + "the bottom-of-feed footer). A new one needs its own phase, and this count needs updating with it."
+            sites, 3,
+            "Discover built \(sites) end cards; #1472 knows of three — the empty-eligible caught-up state, "
+            + "the footer's keep-the-card branch (a refresh the reader started here), and the footer's "
+            + "ordinary end-of-feed branch. A new one needs its own phase, and this count with it."
+        )
+    }
+
+    /// A footer refresh returns the reader to the top of the fresh feed, and
+    /// only when it SUCCEEDED.
+    ///
+    /// MEASURED on a real build before this existed (journey run 2026-09-16,
+    /// badge `SERVED 49 · DRAWN 49 · FEED 3 · PULLS 1`): the press ran the
+    /// refresh, `visibleCount` reset collapsed the ~150-card page, the end card
+    /// unmounted because the fresh page-1 load set `hasMore` back to true, and
+    /// the scroll offset survived against entirely different content. The reader
+    /// pressed a button at the end of the feed and landed, unmarked, part-way
+    /// down a feed they had never seen.
+    ///
+    /// Read as text for the same reason as the call-site test: the scroll is a
+    /// side effect on a `ScrollViewProxy` that no unit-testable value records.
+    func testAFooterRefreshReturnsTheReaderToTheTopAndOnlyOnSuccess() throws {
+        let source = Self.codeText(of: "Bain Luck/Views/DiscoverView.swift")
+        let body = try XCTUnwrap(source.range(of: "private func refreshFeed("))
+        let scope = String(source[body.upperBound...].prefix(2000))
+
+        let scroll = try XCTUnwrap(
+            scope.range(of: "proxy.scrollTo(Self.feedTopAnchor"),
+            "A footer refresh no longer returns the reader anywhere. Without it the press lands them "
+            + "mid-scroll in a feed they have not seen, which reads as 'nothing happened' with extra steps."
+        )
+
+        // The return must sit inside the success arm. A scroll on the failure
+        // arm would tear the reader away from the only notice they get.
+        let beforeScroll = scope[..<scroll.lowerBound]
+        let successArm = try XCTUnwrap(
+            beforeScroll.range(of: "if vm.error == nil {", options: .backwards),
+            "the scroll-to-top is not guarded by the success test"
+        )
+        XCTAssertFalse(
+            beforeScroll[successArm.upperBound...].contains("} else {"),
+            "the scroll-to-top has fallen out of the success arm — a failed refresh must leave the reader "
+            + "where they are, next to the 'Couldn't refresh' notice that is their only word on it."
+        )
+
+        // The anchor it scrolls to has to exist in the view.
+        XCTAssertTrue(
+            source.contains(".id(Self.feedTopAnchor)"),
+            "nothing in the feed carries the top anchor, so scrolling to it is a no-op"
+        )
+    }
+
+    /// Pull-to-refresh must NOT get the scroll-return: that reader is already at
+    /// the top, and the `.refreshable` closure takes no proxy.
+    func testPullToRefreshDoesNotAskForTheScrollReturn() throws {
+        let source = Self.codeText(of: "Bain Luck/Views/DiscoverView.swift")
+        let refreshable = try XCTUnwrap(
+            source.range(of: ".refreshable {"),
+            "Discover no longer has a pull-to-refresh; move this test with it."
+        )
+        let closure = source[refreshable.upperBound...].prefix(120)
+        XCTAssertFalse(
+            closure.contains("returningToTopWith"),
+            "pull-to-refresh is asking for a scroll-to-top it does not need. Found:\n\(closure)"
         )
     }
 
@@ -257,7 +415,7 @@ final class FooterRefreshSaysWhatItIsDoing1472Tests: XCTestCase {
         let source = Self.codeText(of: "Bain Luck/Views/DiscoverView.swift")
         XCTAssertFalse(source.isEmpty, "DiscoverView.swift could not be read; this test proves nothing.")
         let body = try XCTUnwrap(
-            source.range(of: "private func refreshFeed() async {"),
+            source.range(of: "private func refreshFeed("),
             "refreshFeed has been renamed or moved; move this test with it."
         )
         let scope = source[body.upperBound...].prefix(3000)

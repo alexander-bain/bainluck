@@ -1363,8 +1363,17 @@ struct DiscoverView: View {
     var body: some View {
         NavigationStack(path: $navigationPath) {
         VStack(spacing: 0) {
+        ScrollViewReader { feedProxy in
         ScrollView {
             VStack(spacing: 0) {
+                // #1472. The anchor a footer refresh returns the reader to. Zero
+                // height and hidden from VoiceOver: it is a coordinate, not
+                // content. See `refreshFeed(returningToTopWith:)` for why the
+                // return is part of the fix and not a flourish.
+                Color.clear
+                    .frame(height: 0)
+                    .id(Self.feedTopAnchor)
+                    .accessibilityHidden(true)
                 // Compute the eligible, grouped feed once per body pass — reused
                 // by the card grid, pagination trigger, and the empty-eligible
                 // end state below (L2-191).
@@ -1621,7 +1630,7 @@ struct DiscoverView: View {
                         // The end card owns its own Refresh control now (#1773),
                         // so this branch no longer pairs it with a separate button.
                         NativeFeedEndCard(
-                            onRefresh: { Task { await refreshFeed() } },
+                            onRefresh: { Task { await refreshFeed(returningToTopWith: feedProxy) } },
                             phase: footerRefreshPhase
                         )
                             .frame(maxWidth: .infinity)
@@ -1636,7 +1645,33 @@ struct DiscoverView: View {
                 // silent dead bottom. Only under a populated feed — the
                 // empty-eligible state above owns the no-live-cards case.
                 if !vm.items.isEmpty, !grouped.isEmpty {
-                    if vm.loadingMore {
+                    if Self.footerKeepsTheCard(phase: footerRefreshPhase) {
+                        // #1472, AND THIS ORDERING IS THE FIX, not a preference.
+                        //
+                        // Measured on a real build: pressing Refresh here put
+                        // `.refreshing` on a card that had already been replaced
+                        // by the bare spinner below. `refreshFeed` resets
+                        // `visibleCount` to 20 as its first visible act; the 20
+                        // surviving cards' `onAppear` immediately calls
+                        // `loadMoreIfNeeded()`; `vm.loadingMore` goes true; this
+                        // branch drew a spinner with no words on it and the card
+                        // the reader had pressed was gone. The journey test
+                        // reported the in-flight control "not hittable" for
+                        // exactly as long as that was true.
+                        //
+                        // So a refresh the reader started FROM this card keeps
+                        // the card: it is the thing they pressed, and it is the
+                        // only thing on this half of the page that can tell them
+                        // what happened. `.failed` is included for the same
+                        // reason — a pagination spinner must never swallow the
+                        // one notice a failed refresh gets.
+                        NativeFeedEndCard(
+                            onRefresh: { Task { await refreshFeed(returningToTopWith: feedProxy) } },
+                            phase: footerRefreshPhase
+                        )
+                            .padding(.horizontal)
+                            .padding(.bottom, 24)
+                    } else if vm.loadingMore {
                         ProgressView()
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 24)
@@ -1647,7 +1682,7 @@ struct DiscoverView: View {
                         // it must say what that action is doing, because nothing
                         // else on this half of the page does.
                         NativeFeedEndCard(
-                            onRefresh: { Task { await refreshFeed() } },
+                            onRefresh: { Task { await refreshFeed(returningToTopWith: feedProxy) } },
                             phase: footerRefreshPhase
                         )
                             .padding(.horizontal)
@@ -1659,6 +1694,7 @@ struct DiscoverView: View {
             .frame(maxWidth: .infinity)
         }
         .overlay(alignment: .bottom) { debugCountsBadge }
+        }
         }
         .navigationTitle("Discover")
         #if os(iOS)
@@ -1795,8 +1831,39 @@ struct DiscoverView: View {
     /// One refresh path shared by pull-to-refresh and both end-card Refresh
     /// buttons (#1773), so the bottom-of-feed button does exactly what the
     /// gesture it replaced would have done — not an approximation of it.
+    /// The id of the zero-height view at the very top of the feed (#1472).
+    static let feedTopAnchor = "discover-feed-top"
+
+    /// Whether the feed footer keeps the end card instead of yielding it to the
+    /// pagination spinner (#1472). Pure so it can be pinned.
+    ///
+    /// A refresh the reader started from the end card resets `visibleCount`,
+    /// which makes `vm.loadingMore` true within a frame — so on the plain
+    /// ordering the card is swapped for a wordless spinner at precisely the
+    /// moment it has something to say. It has to outrank pagination in both the
+    /// phases where it is speaking.
+    static func footerKeepsTheCard(phase: NativeFeedRefreshPhase) -> Bool {
+        phase == .refreshing || phase == .failed
+    }
+
+    /// One refresh path, with one caller-supplied difference: where the reader
+    /// ends up.
+    ///
+    /// MEASURED, not reasoned (journey run 2026-09-16, `PULLS 1`): pressing
+    /// Refresh on the end card ran the refresh and left the reader stranded in
+    /// the MIDDLE of a completely different feed. `refreshFeed()` resets
+    /// `visibleCount` to 20, so the ~150-card page collapses; the scroll offset
+    /// survives against content that has entirely changed; the end card itself
+    /// unmounts (the fresh page-1 load sets `hasMore` back to true). So the
+    /// reader pressed a button at the end of the feed and arrived, with no
+    /// marker of any kind, part-way down a feed they had never seen. That reads
+    /// as "something odd happened", not as "my refresh worked" — it is the same
+    /// report as "no visible response", with a different cause.
+    ///
+    /// Pull-to-refresh does not need this: that reader is already at the top,
+    /// and scrolling them there would be a no-op at best.
     @MainActor
-    private func refreshFeed() async {
+    private func refreshFeed(returningToTopWith proxy: ScrollViewProxy? = nil) async {
         // First statement on purpose: the counter answers "did the reader's pull
         // reach this closure", which must not depend on anything below it
         // succeeding. See `rigRefreshCount`.
@@ -1827,6 +1894,12 @@ struct DiscoverView: View {
         // refresh succeed" and a throw never reaches here.
         if vm.error == nil {
             footerRefreshPhase = .refreshed
+            // The fresh feed starts at its top. Only on SUCCESS: a failed
+            // refresh leaves the reader's own content untouched, and yanking
+            // them away from it would destroy their place to report a failure.
+            if let proxy {
+                withAnimation { proxy.scrollTo(Self.feedTopAnchor, anchor: .top) }
+            }
             // Deliberately NOT awaited by this function: `.refreshable` holds the
             // pull-to-refresh spinner — and the header with it — until the closure
             // it is given returns, so sleeping here would pin the top of the page

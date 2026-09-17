@@ -178,8 +178,15 @@ final class ARefreshDoesNotUndoASwipe5951Tests: XCTestCase {
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
             .joined(separator: "\n")
 
+        // The needle is the DECLARATION PREFIX, not the whole signature. This
+        // assertion exists to prove the strip above left code standing, not to
+        // pin `refreshFeed`'s parameter list — and pinning the list is what it
+        // accidentally did: #1472 gave the method a `returningToTopWith:`
+        // argument and reddened this line, which says nothing about whether the
+        // dismiss store is still aged through the helper. The two assertions
+        // below are this test's actual subject and are untouched.
         XCTAssertTrue(
-            code.contains("private func refreshFeed() async {"),
+            code.contains("private func refreshFeed("),
             "the strip must leave the code standing — an over-eager filter would "
             + "make every assertion below pass on an empty string")
         XCTAssertTrue(
