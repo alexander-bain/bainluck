@@ -22,8 +22,11 @@
  * calendar-day classification) and offers each surface its existing style.
  *
  * PURE: no I/O, no ambient clock. `now` is always injectable so tests never race
- * a date boundary (gotcha #44).
+ * a date boundary (gotcha #44). The one import is a pure declaration table
+ * (`sportVocab`, #6684) and keeps that property; this module must not acquire a
+ * dependency that reads a clock, a network or a store.
  */
+import { sportVocab } from "@/lib/marketMapUtils";
 
 /** How the finished-game label reads. Both styles share the guard below. */
 export type FinishedLabelStyle =
@@ -606,12 +609,42 @@ const CLOCK_TOKEN_RE = /^\d{1,2}[:.]\d{1,2}$/;
  *    Compared case-insensitively and trimmed, and nothing wider than equality —
  *    a substring test over arbitrary strings would re-open exactly the false
  *    positive rule 2's gate exists to prevent.
+ *
+ * 4. A SPORT WHOSE GAME HAS NO CLOCK NEVER PAINTS ONE (#6684, ux/1307). Every
+ *    live MLB game's chart readout said `Bottom 8th 0:00`. Baseball has no
+ *    clock; ESPN sends the field anyway, as the constant `0:00`, and "0:00"
+ *    beside a half-inning reads as an expired timer on a game still being
+ *    played — directly above a live chart.
+ *
+ *    🔴 THE FIRST THREE RULES ARE ALL ABOUT THE TWO STRINGS, AND THAT IS WHY
+ *    NONE OF THEM CAN REACH IT. `"Bottom 8th"` is not pregame; `"0:00"` is not
+ *    a substring of it; `"0:00"` does not equal it. The fourth rule is about
+ *    the SPORT, so it needs a fact the two strings do not carry, and the fact
+ *    is DECLARED in {@link sportVocab} rather than sniffed here. A
+ *    `sportKey.startsWith("baseball")` in this function would be the same
+ *    defect one layer down — the spelling of a key is not a claim about a
+ *    sport, and `baseball_kbo` would have to re-earn it.
+ *
+ *    `sportKey` is OPTIONAL and an absent one changes nothing: it resolves to
+ *    `UNSCORED_IN_POINTS`, whose `gameHasAClock` is `true`. So every existing
+ *    caller keeps today's behaviour exactly, and this can never blank a clock
+ *    on a sport nobody declared.
  */
 export function trustedLiveClock(
   period: string | null | undefined,
   gameClock: string | null | undefined,
+  sportKey?: string | null,
 ): TrustedLiveClock {
   if (isPregameStatusDetail(period)) return { period: "", gameClock: "" };
+  // Rule 4, taken BEFORE the two string rules — not for speed, but because it
+  // answers a different question. Rules 1-3 ask "is this clock string
+  // trustworthy?"; this asks "is there a clock at all?", and where the answer
+  // is no there is no string worth testing. The period is kept: `Bottom 8th`
+  // is the real and useful half of the badge, and dropping it would trade a
+  // false timer for a blank.
+  if (!sportVocab(sportKey || undefined).gameHasAClock) {
+    return { period: (period || "").trim(), gameClock: "" };
+  }
   const trimmedPeriod = (period || "").trim();
   const trimmedClock = (gameClock || "").trim();
   const alreadySpelledOut =
@@ -641,7 +674,8 @@ export function formatLiveClockLabel(
   period: string | null | undefined,
   gameClock: string | null | undefined,
   separator: string = " ",
+  sportKey?: string | null,
 ): string {
-  const trusted = trustedLiveClock(period, gameClock);
+  const trusted = trustedLiveClock(period, gameClock, sportKey);
   return [trusted.period, trusted.gameClock].filter(Boolean).join(separator);
 }

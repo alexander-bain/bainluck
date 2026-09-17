@@ -2195,6 +2195,11 @@ export default function EventPage({ params }: EventPageProps) {
                  this card printed `Citizen 1% — Steelers 99%` two cards above
                  its own "Tie — Won" markets row. */
               awayWithheld={awaySlotWithheld}
+              /* #6684 — this badge read `Bottom 8th 0:00` on every live MLB
+                 game. The KEY, not a derived boolean: `trustedLiveClock` holds
+                 the other three rules about painting ESPN's clock and holds
+                 this one too. See the prop's own note. */
+              sportKey={event.sport || undefined}
             />
           ) : null}
         </div>
