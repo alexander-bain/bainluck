@@ -289,6 +289,69 @@ export function formatTournamentWhenLabel(
 /** `2026-12-31` — a CALENDAR DATE, carrying no time and no zone. */
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * `2026-12-31T00:00:00+00:00` — a calendar date SERIALISED as an instant.
+ *
+ * Exactly UTC midnight, with an all-zero fraction if one is present, and a zero
+ * offset however it is spelled. `T00:00:00.5Z` and `T00:00:00+05:00` are real
+ * instants and are deliberately excluded — that exclusion is what stops this
+ * becoming "render every deadline in UTC".
+ */
+const UTC_MIDNIGHT = /^\d{4}-\d{2}-\d{2}T00:00:00(?:\.0+)?(?:Z|\+00:00)$/i;
+
+/**
+ * #4081 — IS THIS VALUE A DECLARED DAY, OR AN INSTANT?
+ *
+ * ═══ WHAT A READER SAW ═══
+ *
+ * `/futures/114175` ("Who will be UFC Heavyweight champion at the end of 2026?"),
+ * production 2026-09-17 ~18:10Z at 390px: the chip under the hero read **"Resolves
+ * Dec 30, 2026"** while four cards further down the same screen were titled "…
+ * Title Holder on **Dec 31**, 2026?". The page contradicted itself in one
+ * viewport. The wire says `resolution_date: 2026-12-31T00:00:00+00:00`.
+ *
+ * ═══ WHY C270 P1's GUARD DID NOT REACH IT ═══
+ *
+ * `DATE_ONLY` matches a BARE `YYYY-MM-DD`, which is what golf's semantic
+ * `end_date` is and what C270 P1 measured. Every futures market sends a full
+ * timestamp instead, so the test was false and the label fell to local
+ * conversion, losing the declared day for every reader west of UTC. The
+ * docstring on `formatTournamentWhenLabel` below has named this exact gap since
+ * it was written — "the `DATE_ONLY` guard that catches it there does NOT match
+ * this value" — and it solved its own case by lifting the declared day out of
+ * the string rather than by widening anything.
+ *
+ * ═══ THE DISCRIMINATOR, AND WHAT IT COSTS ═══
+ *
+ * A calendar date is a timestamp whose instant is exactly UTC midnight. That is
+ * native's rule for the same defect in the app (`CalendarDeadline.swift`, shipped
+ * by native/207 this session), and the two clients answer the same question the
+ * same way by construction rather than by coincidence.
+ *
+ * It is a rule about a SHAPE, so state its cost plainly: a deadline that is
+ * genuinely an instant AND lands exactly on UTC midnight now prints its UTC day
+ * rather than the reader's. The trade is deliberate. This label prints a DATE and
+ * no time, so both readings are a whole day wrong or a whole day right; the
+ * population that actually exists is "by end of <period>" questions, where the
+ * declared day is the only thing the label is for; and a venue that means an
+ * instant almost never picks midnight exactly.
+ *
+ * MEASURED: 2,887 of 34,780 open markets with a resolution date carry exactly
+ * `00:00:00` UTC (native/206 on production, 2026-09-17). On the served payloads
+ * the same morning: 11 of 112 `/api/entertainment` rows and 17 of 55
+ * `/api/feed` rows. Every one of them was printing the wrong day in the Americas.
+ *
+ * 🔴 CI CANNOT SEE THIS DIFFERENCE. Jest pins `TZ=UTC` for the whole suite, so
+ * local IS UTC inside every test and a rendered-string assertion is green on the
+ * bug and on the fix alike (gotcha #44 in a new hat, as C270 P1 put it). The
+ * guard therefore asserts this PREDICATE and the FORMATTING OPTIONS the label
+ * chooses, never a difference the harness is structurally unable to produce.
+ */
+export function isDeclaredCalendarDay(value: string | null | undefined): boolean {
+  if (!value) return false;
+  return DATE_ONLY.test(value) || UTC_MIDNIGHT.test(value);
+}
+
 export function formatResolvesLabel(
   resolutionDate: string | null | undefined,
   now: number = Date.now(),
@@ -317,7 +380,13 @@ export function formatResolvesLabel(
   //
   // Timestamps keep local formatting — those really are instants, and "when
   // does this resolve, my time" is the right question to answer for them.
-  const zone = DATE_ONLY.test(resolutionDate) ? { timeZone: "UTC" as const } : {};
+  //
+  // #4081: a full timestamp AT EXACTLY UTC MIDNIGHT is a declared day wearing an
+  // instant's clothes, and is the shape every futures market sends. See
+  // `isDeclaredCalendarDay` for the discriminator, its cost and its measurement.
+  const zone = isDeclaredCalendarDay(resolutionDate)
+    ? { timeZone: "UTC" as const }
+    : {};
 
   return `Resolves ${end.toLocaleDateString([], {
     month: "short",
