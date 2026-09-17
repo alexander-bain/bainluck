@@ -65,7 +65,7 @@ MUTANTS = [
         "E · the forward-looking refusal is deleted — an 'or later' ladder gets "
         "sorted ascending, which on that ladder is upside down",
         RULE,
-        "    if (FORWARD_LOOKING_RE.test(row.name ?? \"\")) return null;",
+        "    if (pointsForward(row.name ?? \"\")) return null;",
         "    if (false) return null;",
     ),
     (

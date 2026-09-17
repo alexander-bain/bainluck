@@ -105,7 +105,16 @@ const LADDER_MONTHS: Record<string, number> = {
  * backwards. We do not attempt to reverse it — we refuse the whole ladder and
  * leave serve order alone. The refusal is the load-bearing half.
  */
-const FORWARD_LOOKING_RE = /^\s*(?:after|from)\s+|\s+or\s+(?:later|after)\s*$/i;
+// Two expressions rather than one alternation: `/^a|b$/` anchors only the
+// branch the anchor sits in, and CodeQL's `js/regex/missing-regexp-anchor`
+// refuses it on sight ("misleading operator precedence") — correctly, since the
+// reading it warns about is the one a later editor would assume.
+const FORWARD_LEAD_RE = /^\s*(?:after|from)\s+/i;
+const FORWARD_TAIL_RE = /\s+or\s+(?:later|after)\s*$/i;
+
+function pointsForward(label: string): boolean {
+  return FORWARD_LEAD_RE.test(label) || FORWARD_TAIL_RE.test(label);
+}
 
 const LADDER_DATE_RE = new RegExp(
   "^\\s*" +
@@ -193,7 +202,7 @@ function chronologicalRanks(
 
   const parsed: Array<[LadderOutcome, LadderDate]> = [];
   for (const row of rows) {
-    if (FORWARD_LOOKING_RE.test(row.name ?? "")) return null;
+    if (pointsForward(row.name ?? "")) return null;
     const got = parseLadderDate(row.name);
     if (!got) return null;
     parsed.push([row, got]);
