@@ -17,7 +17,6 @@ from datetime import datetime, timezone
 
 import pytest
 
-import app.routes.feed as feed_module
 from app.routes.feed import (
     DISCOVER_COMPOSITION_WINDOW,
     _canonical_item_key,
@@ -308,9 +307,11 @@ def test_the_chain_spaces_the_run_and_reports_it():
 
 def test_the_chain_keeps_every_card_the_unspaced_build_serves(monkeypatch):
     _, spaced, _ = _serve(_pool())
+    # String target, not `import app.routes.feed as feed_module`: this module
+    # already does `from app.routes.feed import ...`, and carrying both forms is
+    # what CodeQL's `py/import-and-import-from` note flags.
     monkeypatch.setattr(
-        feed_module,
-        "space_discover_concept_families",
+        "app.routes.feed.space_discover_concept_families",
         lambda items, **_: (items, {"moved": 0, "unresolved_adjacent": 0, "bound": 0}),
     )
     _, plain, _ = _serve(_pool())
