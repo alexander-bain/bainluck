@@ -140,6 +140,11 @@ class _Rows:
         return list(self._rows)
 
 
+def _with_commence_time(row):
+    """``(market_id, metadata)`` -> ``(market_id, metadata, None)``; 3-tuples pass."""
+    return tuple(row) if len(row) == 3 else (row[0], row[1], None)
+
+
 class _Session:
     """Answers the two SELECTs this function makes, in the order it makes them.
 
@@ -153,7 +158,12 @@ class _Session:
         self.updates: list = []
         self.selects: list = []
         self._queue = [
-            ("stored", list(stored_rows)),
+            # The stored read also carries the parent event's start time (#837).
+            # A row given as the older ``(market_id, metadata)`` pair is padded
+            # with ``None`` — "start time unknown", which the module treats as
+            # NOT stale, so every assertion in this file keeps testing what it
+            # was written to test rather than the staleness filter.
+            ("stored", [_with_commence_time(r) for r in stored_rows]),
             ("names", list(name_rows)),
         ]
         self._stored_raises = stored_raises
