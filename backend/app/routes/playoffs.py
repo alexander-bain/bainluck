@@ -3203,6 +3203,16 @@ _GRID_DECIDED_STATES = frozenset({"won", "eliminated", "lost"})
 _GRID_RESOLVED_COVERAGE = 0.9
 
 
+def _grid_price_is_decided(p: float, eps: float) -> bool:
+    """A price within ε of 0 (eliminated) or 1 (clinched).
+
+    Necessary for a cell to be decided, never sufficient: #6442's Barcelona
+    cleared it at 0.99 on a market trading until 2027-04-01. Callers must pair
+    it with :func:`_grid_column_still_trading`.
+    """
+    return p <= eps or p >= 1.0 - eps
+
+
 def _grid_column_still_trading(entries: list | None, now: datetime | None = None) -> bool:
     """Whether a market behind a grid column has not finished trading (#6442).
 
@@ -3298,8 +3308,7 @@ def _grid_column_resolved(
         p = cell.get("merged_probability")
         if p is None:
             return False
-        p = float(p)
-        if not (p <= eps or p >= 1.0 - eps):
+        if not _grid_price_is_decided(float(p), eps):
             return False
         if still_trading:
             return False
