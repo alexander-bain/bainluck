@@ -17170,6 +17170,27 @@ async def _build_game_markets(
             outcome=item.get("outcome_name"),
         )
 
+    def _grade_is_in_hand(item: dict) -> bool:
+        """Does this row already carry an authoritative result? (#6751)
+
+        THE ONE grade test in this endpoint, for the same reason
+        `_window_is_closed` above is the one window test: CERT-2486 is what a
+        second call site costs. Its two readers are step 9's third branch and
+        the #1588 `_window_open` filter ~270 lines below, and until #6751 only
+        the second of them had it — which is precisely how the rows below went
+        missing, because step 9 runs first and had already deleted them.
+
+        Both kinds of grade count, and that asymmetry is measured rather than
+        assumed (see `_window_open`): a venue grade arrives as
+        `resolution_source`, while `_grade_settled_prop` grades a settled prop
+        off the BOX SCORE and carries `hit` with no `resolution_source` at all.
+        `is_winner` is deliberately NOT read — it is a Boolean defaulting to
+        False, so ungraded rows would read as "lost" (`_settled_grade_fields`
+        measured 6,032 of them), which would hand a live-looking price back to
+        exactly the rows the suppression rule exists to remove.
+        """
+        return item.get("resolution_source") is not None or item.get("hit") is not None
+
     # 9. Filter out boring player props where neither side is interesting
     # (e.g., "2+ home runs: 98%" — the "over" is a near-certainty)
     #
@@ -17189,6 +17210,40 @@ async def _build_game_markets(
     # violators it finds. Taken out here, they reach `_window_closed_items`
     # directly, and their price is gone from the payload for the same reason it is
     # gone today: they never re-enter a price bucket.
+    # AND A GRADED WHOLE-GAME PROP MATCHED NEITHER BRANCH, SO IT LEFT (#6751).
+    #
+    # The two branches below are an `if`/`elif` with no `else`, and the rows that
+    # satisfy neither are not routed anywhere — they are simply gone, with no
+    # count, no log and no empty state. CERT-2502 rescued the settled legs whose
+    # window `prop_window_closed` can PROVE is over; a whole-game prop has no
+    # such window by construction, so that rescue could never reach one.
+    #
+    # `KXNFLFFPTS` — NFL fantasy points — is the specimen. Measured on production
+    # 2026-09-17: all 16 of those markets are tier-5, `resolved`, NFL, and 14 are
+    # correctly linked to their real ESPN-anchored game. **Zero of the 14 reach
+    # either serve path**; the string "Fantasy" appears nowhere in
+    # `/related-futures` or `/game-markets` for any of them, while their sibling
+    # families on the SAME events (Passing Yards, Rushing Yards, Touchdowns)
+    # render as settled Won/Lost cards throughout. The difference is only that
+    # `_classify_game_market` files those as `team_total` and never sends them
+    # through this filter. Every leg of a settled market has priced out to 0.0 or
+    # 1.0, so none survives the interest band; `prop_window_closed` returns False
+    # because "Fantasy Points" names no contest segment. Neither branch takes it.
+    #
+    # The third branch is LAST on purpose, so it changes no row either existing
+    # branch already claims. In particular a graded row whose window IS provably
+    # over still takes the `elif` above and still leaves its price behind — the
+    # #1588 rule that "First 5 Spread 0.99" must not be republished beside a
+    # green tick is untouched. What is readmitted here is only the class that was
+    # being deleted in silence: a row that is not a live question, carries no
+    # window we can close, and already has its answer in hand.
+    #
+    # This is the last filter in the chain to learn the rule the rest already
+    # know — 9c readmits a provable verdict (#6196) and refuses to cap a graded
+    # rung (#6169), `_window_open` keeps any graded row (#1735), and #4845 routed
+    # the deep-OTM casualties. An ungraded extreme price is still dropped here,
+    # on a finished game exactly as on a live one, which is the #921 behaviour
+    # this filter was built for and the one thing that must not widen.
     _boring_closed_windows: list[dict] = []
     _interesting_props: list[dict] = []
     for p in player_props:
@@ -17196,6 +17251,8 @@ async def _build_game_markets(
             _interesting_props.append(p)
         elif _window_is_closed(p):
             _boring_closed_windows.append(p)
+        elif _grade_is_in_hand(p):
+            _interesting_props.append(p)
     player_props = _interesting_props
     # Deduping these against each other HERE would be a set that spans one path
     # and calls itself the rule (CERT-2505). The same settled inning can arrive
@@ -17459,7 +17516,10 @@ async def _build_game_markets(
         # BOX SCORE (`hit`), carrying no `resolution_source` at all. Testing only
         # the venue grade would have suppressed a window-bounded prop that was
         # already showing the reader its result.
-        if item.get("resolution_source") is not None or item.get("hit") is not None:
+        #
+        # #6751 hoisted this test to `_grade_is_in_hand`, beside step 9, which is
+        # now its second reader. It is the same rule and it is asked once.
+        if _grade_is_in_hand(item):
             return True
         if _window_is_closed(item):
             _window_closed_items.append(item)

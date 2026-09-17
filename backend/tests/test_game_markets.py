@@ -74,13 +74,35 @@ def _make_market(
     return market
 
 
-def _make_outcome(*, id, market_id, name, probability, opening_probability=None):
+def _make_outcome(
+    *,
+    id,
+    market_id,
+    name,
+    probability,
+    opening_probability=None,
+    is_winner=None,
+    resolution_source=None,
+):
     outcome = MagicMock()
     outcome.id = id
     outcome.market_id = market_id
     outcome.name = name
     outcome.current_probability = probability
     outcome.opening_probability = opening_probability
+    # UNGRADED UNLESS THE TEST SAYS OTHERWISE (#6751).
+    #
+    # These two were left unset, and on a MagicMock that is not "absent" — it is
+    # an auto-created child mock, which is truthy and is not None. So every
+    # outcome in this file arrived at `_settled_grade_fields` looking
+    # AUTHORITATIVELY GRADED, and the payload served `resolution_source: {}` and
+    # `is_winner: {}` on rows the fixtures describe as ordinary live prices.
+    # Production spells an ungraded row NULL in both columns; the fixture now
+    # spells it the same way. Verified against the pre-#6751 tree: the junk
+    # values were already being served, so this corrects the rig rather than
+    # accommodating a change.
+    outcome.is_winner = is_winner
+    outcome.resolution_source = resolution_source
     return outcome
 
 
