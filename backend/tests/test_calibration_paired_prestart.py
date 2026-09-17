@@ -154,12 +154,29 @@ def test_freshness_reads_the_last_confirmation_not_the_first_sighting():
     assert sql.count("last_seen_at") >= 8  # 4 emissions + the freshness tests
 
 
-def test_freshness_caps_the_confirmation_at_the_instant_being_asked_about():
-    """A row re-confirmed DURING the event says nothing about how fresh it was
-    before it; without the LEAST that would readmit post-start evidence."""
+def test_freshness_falls_back_to_the_capture_when_the_run_crosses_the_instant():
+    """CAL-P1331. The clamp this replaces was ``LEAST(last_seen_at, instant)``,
+    and it did the OPPOSITE of what it claimed: a run confirmed after the
+    instant clamped TO the instant and scored staleness zero — the freshest
+    possible reading, awarded for a look taken after the event began. The last
+    look we can prove fell before the instant is ``captured_at``."""
     sql = paired_legs_sql()
-    assert "LEAST(early.last_seen_at," in sql
-    assert "LEAST(final.last_seen_at," in sql
+    assert "LEAST(early.last_seen_at," not in sql
+    assert "LEAST(final.last_seen_at," not in sql
+    for leg in ("early", "final", "ef", "ff"):
+        assert f"THEN {leg}.last_seen_at ELSE {leg}.captured_at END" in sql
+
+
+def test_a_run_crossing_the_instant_is_its_own_refusal_not_a_polling_gap():
+    """``*_stale`` means we stopped watching; this population we were still
+    watching. Two findings, two fixes, so the walk counts them apart."""
+    sql = paired_legs_sql()
+    assert "no_final_unconfirmed_span" in sql
+    assert "no_early_unconfirmed_span" in sql
+    # The span branch must be decided BEFORE the plain stale branch, or every
+    # one of these rows reports as a polling gap and the class is unreachable.
+    assert sql.index("no_final_unconfirmed_span") < sql.index("'no_final_stale'")
+    assert sql.index("no_early_unconfirmed_span") < sql.index("'no_early_stale'")
 
 
 def test_each_leg_carries_its_own_staleness_bound():
@@ -317,10 +334,26 @@ def test_unequal_lead_the_first_ever_snapshot_is_not_the_early_leg():
 
 
 def test_a_reconfirmed_flat_price_supplies_both_legs_and_is_counted_apart():
-    """We looked fifty times and it did not move. Dropping it would bias the
-    cohort toward markets that moved."""
-    rows = [snap(T0 - 3 * D, 0.70, valid_until=T0 - 1 * H)]
-    assert classify(rows) == ("paired_unchanged", 0.70, 0.70)
+    """We looked repeatedly and it did not move. Dropping it would bias the
+    cohort toward markets that moved.
+
+    🔴 CAL-P1331 MOVED THIS FIXTURE, and the move is the point. It used to be
+    captured 3 days out with ``valid_until`` an hour before the start, and it
+    passed only because the old clamp scored the EARLY leg's staleness as zero
+    against a confirmation taken 23 hours after the early instant. Rule 8 is
+    intact — a flat run still supplies both legs — but it has to be a run whose
+    proven looks actually cover both instants, so the capture moves inside the
+    early leg's own staleness bound. The old fixture is not deleted; it is the
+    second assertion, where it now names its refusal.
+    """
+    covered = [snap(T0 - 30 * H, 0.70, valid_until=T0 - 1 * H)]
+    assert classify(covered) == ("paired_unchanged", 0.70, 0.70)
+
+    # Same flat price, but the only proof before the early instant is 3 days
+    # old: we cannot say what the market showed a day out, only that the value
+    # was the same at both ends of a span that swallows the question.
+    spans = [snap(T0 - 3 * D, 0.70, valid_until=T0 - 1 * H)]
+    assert classify(spans)[0] == "no_early_unconfirmed_span"
 
 
 def test_a_repeated_value_with_no_reconfirmation_is_refused():
@@ -481,6 +514,52 @@ def test_an_early_leg_we_stopped_confirming_is_stale_not_absent():
     assert classify(rows)[0] == "no_early_stale"
 
 
+def test_a_look_after_the_start_never_freshens_the_final_leg():
+    """CAL-P1331, the commissioning directive's first correctness check.
+
+    One collapsed run, first seen three days before the start. Its ONLY
+    pre-start observation is that three-day-old capture; retention discarded
+    every intermediate timestamp, so the ``valid_until`` two hours PAST the
+    start proves a look before the start and a look after it and nothing about
+    the interval this test is asking about.
+
+    Before the repair this returned ``('paired_unchanged', 0.62, 0.62)`` — a
+    perfectly scored pair — because the clamp gave it staleness zero. The row
+    below it is the same price refused for being stale; the only difference
+    between the two was evidence from after the event began.
+    """
+    crosses = [snap(T0 - 3 * D, 0.62, valid_until=T0 + 2 * H)]
+    assert classify(crosses)[0] == "no_final_unconfirmed_span"
+    assert classify(crosses)[1:] == (None, None)
+
+    ends_before = [snap(T0 - 3 * D, 0.62, valid_until=T0 - 2 * D)]
+    assert classify(ends_before)[0] == "no_final_stale"
+
+
+def test_a_later_look_never_freshens_the_early_leg_either():
+    """The same defect at the 24h boundary, and it needs no after-START
+    evidence at all: a run last confirmed two hours before the start still
+    crosses a boundary a DAY before it, which lent this thirty-day-old price a
+    staleness of zero and paired it as the market's view "a day out"."""
+    rows = [
+        snap(T0 - 30 * D, 0.20, valid_until=T0 - 2 * H),
+        snap(T0 - 1 * H, 0.80, yes_bid=0.79, yes_ask=0.81),
+    ]
+    assert classify(rows)[0] == "no_early_unconfirmed_span"
+
+
+def test_a_confirmation_before_the_cutoff_still_pairs():
+    """The control that keeps the repair from being a blanket refusal: the
+    directive's own words are that identical values may legitimately pair when
+    actual pre-cutoff confirmation exists. Same thirty-day-old capture as the
+    test above, confirmed 25h out — an hour BEFORE the early instant."""
+    rows = [
+        snap(T0 - 30 * D, 0.20, valid_until=T0 - 25 * H),
+        snap(T0 - 1 * H, 0.80, yes_bid=0.79, yes_ask=0.81),
+    ]
+    assert classify(rows) == ("paired", 0.20, 0.80)
+
+
 def test_the_staleness_bounds_are_parameters_and_they_bind():
     rows = [snap(T0 - 26 * H, 0.35, valid_until=T0 - 25 * H)]
     assert classify(rows)[0] == "no_final_stale"
@@ -500,9 +579,16 @@ def test_every_emitted_class_is_declared():
         classify([snap(T0 - 26 * H, 0.35, valid_until=T0 - 25 * H)])[0],
         classify([snap(T0 - 1 * H, 0.5, yes_bid=0.49, yes_ask=0.51)])[0],
         classify([], is_winner=None, resolution_source=None, eligible_sources=["x"])[0],
+        classify([snap(T0 - 3 * D, 0.62, valid_until=T0 + 2 * H)])[0],
+        classify(
+            [
+                snap(T0 - 30 * D, 0.20, valid_until=T0 - 2 * H),
+                snap(T0 - 1 * H, 0.80, yes_bid=0.79, yes_ask=0.81),
+            ]
+        )[0],
     }
     assert seen <= set(PAIR_CLASSES)
-    assert len(seen) >= 8
+    assert len(seen) >= 10
 
 
 def test_forecast_kind_separates_a_model_from_a_market():
