@@ -491,3 +491,269 @@ class TestTheSweepReportsItsOwnConsumer:
                 SOLO_ID: '["audience:casual"]',
             }
         ) == {DUP_ID}
+
+
+# ── Part E: the verdict contract (CERT-3030) ─────────────────────────────────
+#
+# WHY THIS PART EXISTS. CERT-3030 BLOCKed the first presentation: the mechanism
+# in Parts A–D worked and 134 tests passed, and the recurring ship could still
+# fail silently. `polymarket_container_twin_sweep` was absent from
+# `ENFORCED_TASKS`, and it returned `applied` / `planned` — words that are in
+# NEITHER terminal vocabulary — so every run classified as
+# `unrecognised:terminal:applied`, non-authoritative, and `_tracked_run`
+# advanced `last_success_at` regardless.
+#
+# That receipt is the one this ship's after-check grades on, so the measurement
+# and the thing measured shared a failure mode: a pass whose population read had
+# gone dark would have advanced the receipt and been read as proof the fix had
+# landed. These tests are the guard for that class.
+
+import contextlib  # noqa: E402
+
+import app.tasks.polymarket_container_twin_sweep as sweep  # noqa: E402
+from app.utils.task_verdict import ENFORCED_TASKS, verdict_for  # noqa: E402
+
+
+def _filler(n: int, *, start: int = 900000):
+    """`n` markets on `n` distinct one-holder keys — population, never a plan.
+
+    Each has its own title AND its own event, so every key has exactly one base
+    holder and the judgement returns NOT_A_TWIN. They exist only to lift
+    `markets_read` over the floor without contributing a tag.
+    """
+    return [_m(start + i, f"Filler {i} FC vs. Filler {i} United") for i in range(n)]
+
+
+def _over_floor(extra=()):
+    """A population comfortably above `MIN_MARKETS_FLOOR`, plus `extra`."""
+    return [*_filler(sweep.MIN_MARKETS_FLOOR), *extra]
+
+
+def _run(
+    markets,
+    monkeypatch,
+    *,
+    rows=None,
+    apply=True,
+    fold_live=True,
+    read_raises=False,
+    confirm=None,
+    write_failed=(),
+):
+    """Drive the REAL run function; fake only the database edges.
+
+    `plan_container_tags` is deliberately NOT faked — the plan these tests
+    grade is the one production would compute.
+    """
+    calls: list[str] = []
+
+    known = dict(BASE_WINS)
+    for market in markets:
+        known.setdefault(market.event_id, ContainerRow(market.event_id, identity_rank=(1,)))
+    if rows:
+        known.update(rows)
+
+    async def _load_rows(session, *, lookback, lookahead):
+        calls.append("load_rows")
+        if read_raises:
+            raise RuntimeError("relation futures_markets does not exist")
+        return list(markets), known, {}
+
+    async def _ensure_backup(session, todo, current_tags):
+        calls.append("ensure_backup")
+        return len(todo)
+
+    async def _write_tags(session, todo, *, progress_every=0):
+        calls.append("write_tags")
+        failed = list(write_failed)
+        return len([t for t in todo if t.duplicate_id not in failed]), failed
+
+    async def _tagged_now(session, ids):
+        calls.append("tagged_now")
+        return set(ids) if confirm is None else set(confirm)
+
+    class _Session:
+        """Only the edge the run function touches directly: the rollback it
+        issues when the population read raises."""
+
+        async def rollback(self):
+            calls.append("rollback")
+
+    @contextlib.asynccontextmanager
+    async def _fake_session():
+        yield _Session()
+
+    import app.tasks.base as base
+
+    monkeypatch.setattr(base, "get_task_session", _fake_session)
+    monkeypatch.setattr(sweep, "load_rows", _load_rows)
+    monkeypatch.setattr(sweep, "ensure_backup", _ensure_backup)
+    monkeypatch.setattr(sweep, "write_tags", _write_tags)
+    monkeypatch.setattr(sweep, "tagged_now", _tagged_now)
+    monkeypatch.setattr(sweep, "fold_is_live", lambda: fold_live)
+
+    summary = asyncio.run(sweep.run_polymarket_container_twin_sweep(apply=apply))
+    return summary, calls
+
+
+def test_it_is_enrolled_in_enforced_tasks():
+    """Enrolment is what makes the terminal anybody's alarm. Outside the set
+    `verdict_for` returns a non-authoritative `unknown` whatever the run did."""
+    assert "polymarket_container_twin_sweep" in ENFORCED_TASKS
+
+
+class TestTheTerminalsAreInTheVocabulary:
+    """The defect CERT-3030 named: a word the contract does not know reads as
+    `unrecognised` and never blocks a success."""
+
+    def test_the_applied_path_is_authoritatively_complete(self, monkeypatch):
+        summary, _ = _run(_over_floor(SPLIT_FAMILY), monkeypatch)
+
+        assert summary["terminal"] == "complete"
+        verdict = verdict_for("polymarket_container_twin_sweep", summary)
+        assert verdict.verdict == "complete"
+        assert verdict.authoritative is True
+
+    def test_no_terminal_this_task_emits_is_unrecognised(self, monkeypatch):
+        """The strawman for the whole part. Every reachable exit is driven and
+        each verdict must be authoritative — `unrecognised:` is the string the
+        old `applied` and `planned` produced."""
+        cases = {
+            "applied": _run(_over_floor(SPLIT_FAMILY), monkeypatch),
+            "quiet": _run(_over_floor(), monkeypatch),
+            "dry_run": _run(_over_floor(SPLIT_FAMILY), monkeypatch, apply=False),
+            "thin": _run(_filler(3), monkeypatch),
+            "raised": _run(_over_floor(), monkeypatch, read_raises=True),
+            "no_fold": _run(_over_floor(SPLIT_FAMILY), monkeypatch, fold_live=False),
+            "unconfirmed": _run(_over_floor(SPLIT_FAMILY), monkeypatch, confirm=[]),
+        }
+        for name, (summary, _) in cases.items():
+            verdict = verdict_for("polymarket_container_twin_sweep", summary)
+            assert "unrecognised" not in verdict.reason, f"{name}: {verdict.reason}"
+            assert verdict.authoritative is True, f"{name}: {verdict.reason}"
+
+
+class TestTheTwoZerosDoNotShareAVerdict:
+    def test_a_drained_backlog_reads_green(self, monkeypatch):
+        """🔴 `complete`, not `no_work`, and this is the difference from the
+        tennis sibling's plan floor. This backlog DRAINS: after the first
+        successful pass every family in the window is labelled and every later
+        pass plans zero forever. `no_work` is an authoritative UNKNOWN, so a
+        plan floor would make the permanent healthy state permanently not-green.
+        """
+        summary, calls = _run(_over_floor(), monkeypatch)
+
+        assert summary["terminal"] == "complete"
+        assert summary["tagged"] == 0
+        assert summary["pairs_found"] == 0
+        assert "write_tags" not in calls
+        assert verdict_for("polymarket_container_twin_sweep", summary).verdict == "complete"
+
+    def test_a_population_that_collapses_is_failed_not_complete(self, monkeypatch):
+        """The same zero for the opposite reason. A lost join or a renamed
+        source filter reads a handful of rows and plans nothing, which from
+        outside is identical to the drained steady state above and means the
+        opposite. Without the floor the task records GREEN forever while every
+        split family keeps hiding its spread."""
+        summary, calls = _run(_filler(3), monkeypatch)
+
+        assert summary["terminal"] == "failed"
+        assert summary["measured"] is False
+        assert "below the floor" in summary["reason"]
+        assert "write_tags" not in calls
+        assert verdict_for("polymarket_container_twin_sweep", summary).verdict == "failed"
+
+    def test_an_empty_read_is_failed_not_no_work(self, monkeypatch):
+        """🔴 A DELIBERATE DIVERGENCE FROM THE SOCCER SIBLING, which calls an
+        empty window `no_work` because soccer ghosts are episodic. This window
+        is ±45 days across every sport Polymarket lists and was measured at
+        11,391 and 11,410 markets a week apart. Zero is not a quiet day here;
+        it is a broken read."""
+        summary, _ = _run([], monkeypatch)
+
+        assert summary["terminal"] == "failed"
+        assert summary["markets_read"] == 0
+
+    def test_the_floor_is_not_waived_by_having_found_a_family(self, monkeypatch):
+        """A thin window that happens to contain one decidable family is still
+        a thin window. Finding a pair earns no veto over the population band —
+        that waiver is the hole CERT-2193 found in the tennis sibling."""
+        summary, calls = _run([*SPLIT_FAMILY, *_filler(3)], monkeypatch)
+
+        assert summary["terminal"] == "failed"
+        assert "write_tags" not in calls
+
+    def test_a_read_that_raises_is_failed_and_unmeasured(self, monkeypatch):
+        """"I could not look" is not "there was nothing to do" (gotcha #53)."""
+        summary, _ = _run(_over_floor(), monkeypatch, read_raises=True)
+
+        assert summary["terminal"] == "failed"
+        assert summary["measured"] is False
+
+    def test_a_dry_run_banks_nothing_and_cannot_vouch(self, monkeypatch):
+        """`no_work` — an authoritative unknown. The old `planned` was not in
+        the vocabulary at all."""
+        summary, calls = _run(_over_floor(SPLIT_FAMILY), monkeypatch, apply=False)
+
+        assert summary["terminal"] == "no_work"
+        assert summary["planned"] == 1
+        assert "write_tags" not in calls
+        assert verdict_for("polymarket_container_twin_sweep", summary).verdict == "unknown"
+
+
+class TestTheConsumerGatesTheWrite:
+    def test_tags_are_withheld_loudly_when_the_fold_is_gone(self, monkeypatch):
+        """Previously `fold_live` was REPORTED and not acted on. The tag is
+        inert without `folded_event_ids`: it suppresses a card and delivers no
+        markets to the canonical page, so writing it is not a partial win."""
+        summary, calls = _run(_over_floor(SPLIT_FAMILY), monkeypatch, fold_live=False)
+
+        assert summary["terminal"] == "failed"
+        assert summary["tagged"] == 0
+        assert "write_tags" not in calls
+        assert "ensure_backup" not in calls
+        assert "folded_event_ids" in summary["reason"]
+
+    def test_a_quiet_day_is_still_green_without_the_fold(self, monkeypatch):
+        """The gate gates WRITES, not the run. With nothing to write there is
+        nothing to withhold, and `fold_live` is still reported so the signal is
+        visible BEFORE a write is pending rather than only once one is."""
+        summary, _ = _run(_over_floor(), monkeypatch, fold_live=False)
+
+        assert summary["terminal"] == "complete"
+        assert summary["fold_live"] is False
+
+
+class TestEveryPlannedTagIsConfirmedOnDisk:
+    def test_a_write_that_does_not_land_is_partial(self, monkeypatch):
+        """`written` is a sum of rowcounts; `confirmed_on_disk` is a read-back,
+        and only the second survives a commit that did not stick. A terminal of
+        `complete` here would advance the receipt on a pass that wrote nothing.
+        """
+        summary, _ = _run(_over_floor(SPLIT_FAMILY), monkeypatch, confirm=[])
+
+        assert summary["terminal"] == "partial"
+        assert summary["unconfirmed_count"] == 1
+        assert summary["unconfirmed"] == [DUP_ID]
+        assert verdict_for("polymarket_container_twin_sweep", summary).verdict == "partial"
+
+    def test_a_write_that_raises_is_partial_and_names_the_row(self, monkeypatch):
+        summary, _ = _run(
+            _over_floor(SPLIT_FAMILY), monkeypatch, write_failed=[DUP_ID], confirm=[]
+        )
+
+        assert summary["terminal"] == "partial"
+        assert summary["errors"] == [DUP_ID]
+
+    def test_damage_is_reported_under_the_contracts_own_key(self, monkeypatch):
+        """`_ERROR_COLLECTIONS` is ("errors", "failed_chunks", "failed_phases"),
+        so a key called `failed` is invisible to `_has_damage`. Naming it
+        `errors` means the contract downgrades a `complete` this function got
+        wrong, instead of trusting this function to be the only guard."""
+        from app.utils.task_verdict import _has_damage
+
+        assert _has_damage({"errors": [DUP_ID]}) == "errors"
+        assert _has_damage({"failed": [DUP_ID]}) is None
+
+        summary, _ = _run(_over_floor(SPLIT_FAMILY), monkeypatch)
+        assert "errors" in summary

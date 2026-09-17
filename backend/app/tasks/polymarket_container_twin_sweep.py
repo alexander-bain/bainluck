@@ -79,6 +79,30 @@ BAK_TABLE = "bak_5821_container_twin_tags"
 DEFAULT_LOOKBACK_DAYS = 45
 DEFAULT_LOOKAHEAD_DAYS = 45
 
+#: Non-vacuity floor on the population this pass READ, below which the run is
+#: `failed` rather than "nothing to do" (CERT-3030).
+#:
+#: WHICH FLOOR, and why it is on the read rather than on the plan. The two
+#: sibling sweeps make opposite choices and the comment in `task_verdict` says
+#: why: `tennis_twin_sweep` floors the PLAN, `soccer_ghost_twin_sweep` floors
+#: the POPULATION because soccer ghosts are episodic and a plan floor "would
+#: have made this task red on most days and taught everyone to ignore it".
+#:
+#: This sweep is the soccer shape, for a stronger reason than episodicity: its
+#: backlog DRAINS. Once the ~173 families are tagged, every later pass plans
+#: zero for the rest of time, so a plan floor would be red permanently after
+#: the first success. What must stay distinguishable here is "the join went
+#: dark / the window read nothing" from "every family is already labelled" —
+#: and only the read can tell those apart.
+#:
+#: WHY 500. Measured, twice, a week apart on the same window: 11,391 markets /
+#: 1,845 events (2026-09-17, when the window constants above were chosen) and
+#: 11,410 / 1,852 (2026-09-17 re-read for this repair). The floor sits ~23x
+#: below a population that moved 0.2% between reads, so no seasonal trough
+#: reaches it, while a read that lost its join or its source filter lands far
+#: underneath. It is a broken-read detector, not a dip detector.
+MIN_MARKETS_FLOOR = 500
+
 
 async def load_rows(session, *, lookback: int, lookahead: int):
     """Every Polymarket market carrying both venue signals, plus its row's ids.
@@ -344,15 +368,24 @@ async def run_polymarket_container_twin_sweep(
                 "reason": f"population read raised: {type(exc).__name__}: {exc}"[:300],
             }
 
-        if not markets:
+        # The non-vacuity floor, BEFORE any judgement. A read that lost its
+        # join, its source filter or its window returns few rows and no plan,
+        # which is indistinguishable from a drained backlog from the outside —
+        # and a drained backlog is this sweep's permanent steady state, so
+        # without this the two zeros mean opposite things and read the same.
+        if len(markets) < MIN_MARKETS_FLOOR:
             return {
                 **summary,
-                "terminal": "no_work",
-                "markets_read": 0,
+                "measured": False,
+                "terminal": "failed",
+                "markets_read": len(markets),
+                "floor": MIN_MARKETS_FLOOR,
                 "reason": (
-                    f"no Polymarket markets carrying venue_game_start in the "
-                    f"window (-{lookback}d/+{lookahead}d), so this pass can "
-                    f"vouch for nothing"
+                    f"population floor: read {len(markets)} Polymarket markets "
+                    f"carrying venue_game_start in the window "
+                    f"(-{lookback}d/+{lookahead}d), below the floor of "
+                    f"{MIN_MARKETS_FLOOR}. This pass could not look, which is "
+                    f"not the same as having nothing to do"
                 ),
             }
 
@@ -382,10 +415,44 @@ async def run_polymarket_container_twin_sweep(
             }
         )
 
-        if not todo:
+        # REFUSE BEFORE WRITING when the consumer is gone (CERT-3030). This was
+        # previously reported in the summary and not acted on, which is the
+        # weaker half of the same idea: a sweep whose fold has been removed
+        # would go on appending tags that deliver nothing to a reader, and each
+        # such pass would have banked a row and read healthy. The tag is inert
+        # without `folded_event_ids`, so writing it is not a partial win.
+        #
+        # It is checked here rather than at the top so a quiet pass still
+        # reports `fold_live` on a day with no work — the signal has to be
+        # visible BEFORE the fold breaks, not only once there is a write to
+        # refuse.
+        if todo and not folding:
             return {
                 **summary,
-                "terminal": "no_work",
+                "terminal": "failed",
+                "tagged": 0,
+                "reason": (
+                    f"refusing to write {len(todo)} tag(s): `folded_event_ids` "
+                    f"is no longer read by `folded_market_read_filters`, so the "
+                    f"tag would suppress a card and deliver no markets to the "
+                    f"canonical page. The consumer is the whole ship"
+                ),
+            }
+
+        if not todo:
+            # `complete`, NOT `no_work` — and the distinction is the reason
+            # enrolment helps here at all. This backlog DRAINS: after the first
+            # successful pass every family in the window is labelled and every
+            # later pass plans zero, forever. `no_work` classifies as an
+            # authoritative UNKNOWN, so the steady state would never read GREEN
+            # and the task would be permanently not-green for being healthy —
+            # the "ninety-six false REDs" the tennis sibling's comment warns
+            # about. The floor above is what keeps this honest: we only reach
+            # here having READ a healthy population.
+            return {
+                **summary,
+                "terminal": "complete",
+                "tagged": 0,
                 "reason": (
                     "every split family in the window is already tagged — the "
                     "healthy end state for a drained backlog"
@@ -393,19 +460,43 @@ async def run_polymarket_container_twin_sweep(
             }
 
         if not apply:
-            return {**summary, "terminal": "planned", "tagged": 0}
+            # A dry run deliberately banks nothing, so it cannot vouch for the
+            # task's health. `no_work` is the honest terminal (authoritative
+            # unknown); the previous `planned` was not in the vocabulary at all
+            # and classified as `unrecognised`.
+            return {**summary, "terminal": "no_work", "tagged": 0, "planned": len(todo)}
 
         banked = await ensure_backup(session, todo, current_tags)
         written, failed = await write_tags(session, todo, progress_every=50)
         confirmed = await tagged_now(session, [t.duplicate_id for t in todo])
 
+        # EVERY PLANNED TAG MUST BE CONFIRMED ON DISK (CERT-3030). `written` is
+        # a sum of rowcounts and `confirmed` is a read-back, and only the second
+        # survives a commit that did not stick. A shortfall in either direction
+        # is `partial`: the run did some of what it planned, and saying
+        # `complete` would let the receipt advance on a pass that half-worked.
+        missing = sorted({t.duplicate_id for t in todo} - confirmed)
+        if failed or missing:
+            terminal = "partial"
+        else:
+            terminal = "complete"
+
         return {
             **summary,
-            "terminal": "applied" if not failed else "partial",
+            "terminal": terminal,
             "banked": banked,
+            "planned": len(todo),
             "tagged": written,
             # Read back from disk, not `rowcount`. See `tagged_now`.
             "confirmed_on_disk": len(confirmed),
-            "failed": failed[:20],
+            "unconfirmed_count": len(missing),
+            "unconfirmed": missing[:20],
+            # `errors`, not `failed`: `_ERROR_COLLECTIONS` in `task_verdict` is
+            # ("errors", "failed_chunks", "failed_phases"), so a key called
+            # `failed` is invisible to `_has_damage`. The terminal above already
+            # refuses `complete` on damage; naming it the contract's own name
+            # means the contract ALSO downgrades a `complete` we got wrong,
+            # rather than trusting this function to be the only guard.
+            "errors": failed[:20],
             "failed_count": len(failed),
         }
