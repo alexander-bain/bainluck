@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 
 from app.services.anchor_channel import DUPLICATE_TAG_PREFIX, duplicate_tag
 from app.utils.polymarket_container_twins import (
@@ -329,6 +330,35 @@ async def tagged_now(session, duplicate_ids) -> set[int]:
     return {r.id for r in rows}
 
 
+#: The operator's stop switch, and the reason the undo needs one at all.
+#:
+#: 🔴 **THE RESTORE SCRIPT ALONE IS NOT A ROLLBACK.** It removes the tags; this
+#: beat runs `apply=True` at :27 every hour, and the planner selects on the
+#: ABSENCE of the tag — so a rollback with the schedule still live is undone by
+#: the next pass, within the hour, silently. Raised in #6786's review. An undo
+#: that the system reverses is not an undo, so the rollback is a SEQUENCE:
+#: stop, verify the stop, then restore.
+#:
+#: ANY NON-EMPTY VALUE DISABLES, deliberately. The obvious spelling — a truthy
+#: set like {"1","true","yes"} — has a silent failure that matters more here
+#: than tidiness: an operator halting a live repair who types `ture` or `TRUE `
+#: would get a variable that is set, looks set, and does nothing, and the next
+#: pass would re-tag every row they had just restored. Setting this at all is an
+#: explicit act; nobody sets it by accident. Unset or empty is the normal state
+#: and is what ships.
+CONTAINER_TWIN_SWEEP_DISABLED_ENV = "CONTAINER_TWIN_SWEEP_DISABLED"
+
+
+def sweep_is_disabled() -> bool:
+    """Has an operator stood this sweep down? Pure apart from the environment.
+
+    See :data:`CONTAINER_TWIN_SWEEP_DISABLED_ENV` for why any non-empty value
+    counts. Whitespace-only is treated as unset, because `heroku config:set X=""`
+    and a stray space are the same intent.
+    """
+    return bool(os.getenv(CONTAINER_TWIN_SWEEP_DISABLED_ENV, "").strip())
+
+
 async def run_polymarket_container_twin_sweep(
     *,
     apply: bool = True,
@@ -353,6 +383,31 @@ async def run_polymarket_container_twin_sweep(
         "lookback_days": lookback,
         "lookahead_days": lookahead,
     }
+
+    # THE STOP, BEFORE THE DATABASE IS TOUCHED AT ALL. A stood-down pass opens no
+    # session, reads no window and banks nothing, so an operator mid-rollback is
+    # not racing a reader.
+    #
+    # `skipped`, never `complete`: a sweep that has been switched off has proved
+    # nothing about the population and must not vouch for the task's health. It
+    # is in `_TERMINAL_NO_WORK`, so it classifies as an authoritative UNKNOWN —
+    # not green, not red — which is exactly what "somebody turned this off" is.
+    # Its own reason string, not the floor's or the fold's, because the receipt
+    # is what the rollback procedure reads to confirm the stop took effect.
+    if sweep_is_disabled():
+        return {
+            **summary,
+            "measured": False,
+            "terminal": "skipped",
+            "tagged": 0,
+            "disabled": True,
+            "reason": (
+                f"stood down: {CONTAINER_TWIN_SWEEP_DISABLED_ENV} is set. No "
+                f"population was read and nothing was written. Unset it to "
+                f"resume; while it is set this beat cannot re-tag rows that "
+                f"scripts/restore_5821_container_twin_tags.py has removed"
+            ),
+        }
 
     async with get_task_session() as session:
         try:

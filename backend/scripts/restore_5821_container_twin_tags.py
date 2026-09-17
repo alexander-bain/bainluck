@@ -58,6 +58,39 @@ SELECT b.event_id,
 """
 
 
+#: Postgres SQLSTATE for `undefined_table`. The ONLY read failure that honestly
+#: means "the sweep has never written here".
+_UNDEFINED_TABLE = "42P01"
+
+
+def is_missing_backup_table(exc: BaseException) -> bool:
+    """Is this exception a genuine "that table does not exist", and nothing else?
+
+    🔴 **A FAILED READ IS NOT AN ABSENCE** (gotcha #53). Until #6786's review this
+    script caught *every* exception here and printed "No backup table — nothing to
+    undo" with a SUCCESS exit. A dropped connection, a permission error, a
+    statement timeout, a typo in the SQL and a genuinely missing table were one
+    outcome, and the loudest of them was silent: an operator rolling back a live
+    repair would read "nothing to undo", believe the rows were never tagged, and
+    stop looking — while every duplicate stayed folded.
+
+    Both drivers surface the SQLSTATE, and this reads either: asyncpg puts it on
+    ``sqlstate``, psycopg2 on ``pgcode``, and SQLAlchemy wraps the driver error as
+    ``.orig``. Anything we cannot positively identify as 42P01 is NOT an absence,
+    which is the fail-closed direction: the caller aborts loudly rather than
+    reporting a clean no-op it cannot support.
+    """
+    for candidate in (getattr(exc, "orig", None), exc):
+        if candidate is None:
+            continue
+        code = getattr(candidate, "sqlstate", None) or getattr(
+            candidate, "pgcode", None
+        )
+        if code:
+            return str(code) == _UNDEFINED_TABLE
+    return False
+
+
 async def remove_tags(session, plan, *, progress_every: int = 25):
     """Strip the sweep's tag from each row, ONE ROW PER TRANSACTION.
 
@@ -110,8 +143,20 @@ async def run(*, apply: bool) -> None:
     async with get_task_session() as session:
         try:
             plan = (await session.execute(text(_PLAN_SQL))).all()
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 — classified immediately below
             await session.rollback()
+            if not is_missing_backup_table(exc):
+                # NOT an absence. Exit 2 rather than 1, so an operator can tell
+                # "I could not read the backup" from "the undo ran and left rows
+                # folded" (the exit 1 at the end of this function).
+                print(f"\n❌ #5821 undo ABORTED — could not read {BAK_TABLE}.")
+                print(f"   {type(exc).__name__}: {exc}")
+                print(
+                    "   This is NOT 'nothing to undo'. The tags may still be on "
+                    "the rows and the fold may still be live. Fix the read and "
+                    "re-run; do not treat this as a completed rollback."
+                )
+                sys.exit(2)
             print(
                 f"No backup table {BAK_TABLE} — the sweep has not written here, "
                 f"so there is nothing to undo."
