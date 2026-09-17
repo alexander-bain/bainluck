@@ -21,10 +21,18 @@ const html = (props: Parameters<typeof MarketRow>[0]) =>
   renderToStaticMarkup(<MarketRow {...props} />);
 
 // `renderToStaticMarkup` escapes, so "S&P 500" arrives as "S&amp;P 500" — and
-// three of the real leaders on this page carry an ampersand. Decoding keeps the
-// specimens below readable as the reader's own words rather than as markup.
-const text = (props: Parameters<typeof MarketRow>[0]) =>
-  html(props).replace(/&amp;/g, "&").replace(/&#x27;/g, "'").replace(/&quot;/g, '"');
+// three of the real leaders on this page carry an ampersand. The specimens below
+// stay written as the reader's own words; it is the EXPECTED string that is
+// escaped to meet the markup, never the markup that is decoded to meet it.
+//
+// Decoding was the first draft and CodeQL was right to refuse it
+// (`js/double-escaping`, high): unescaping `&amp;` before the other entities
+// produces `&` characters the later replacements read again, so `&amp;#x27;`
+// comes out as `'` rather than as the literal `&#x27;` the page rendered. There
+// is no safe ordering worth finding here — escaping one way has no such class,
+// because `&` is replaced first and its output contains no further triggers.
+const escapeHtml = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 const CANADIAN_TARIFF_RATE = {
   q: "What will the tariff rate on Canadian imports be on Jan 1, 2027?",
@@ -35,7 +43,7 @@ const CANADIAN_TARIFF_RATE = {
 
 describe("#6696 — an /economics row names the leg it prints", () => {
   it("prints the leader beside the source chip", () => {
-    expect(text(CANADIAN_TARIFF_RATE)).toContain("10% or above");
+    expect(html(CANADIAN_TARIFF_RATE)).toContain(escapeHtml("10% or above"));
   });
 
   it("still prints the number it always printed", () => {
@@ -48,7 +56,7 @@ describe("#6696 — an /economics row names the leg it prints", () => {
     ["Bitcoin vs. Gold vs. S&P 500 in 2026", 54.5, "S&P 500"],
     ["Texas crude oil production in 2026", 95.5, "Above 5.6 million barrels/day"],
   ])("names %s", (q, prob, leader) => {
-    expect(text({ q, prob, src: "kalshi", leader })).toContain(leader);
+    expect(html({ q, prob, src: "kalshi", leader })).toContain(escapeHtml(leader));
   });
 
   describe("when there is nothing worth naming", () => {
