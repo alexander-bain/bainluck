@@ -43,7 +43,26 @@ export default function TwoSidedTimeline({
   if (pair.length < 2) return null;
 
   const [a, b] = pair;
-  const aPct = a.probability != null ? Math.round(a.probability * 100) : 50;
+  // #6761 — A PRICE WE DO NOT HAVE USED TO DRAW AS AN EVEN BOUT. This fell back to
+  // 50 on a null probability, so the split bar rendered a clean 50/50 for a bout we
+  // hold no price for at all — pixel-identical to a genuinely even priced one, while
+  // the numbers directly above it printed an honest "-" (`formatProbability`). Two
+  // surfaces describing one state, one of them inventing it.
+  //
+  // Rare today; #2602 (venue-listed fight cards) makes it the common case — discover
+  // measured 11 of 11 bouts on UFC Fight Night 26 Sep and 4 of 5 on Dana White's
+  // Contender Series. Routed by discover/156; the line predates #2602.
+  //
+  // `null` means "no split can be placed", and the bar is then not drawn at all
+  // (notice 34: leave the space empty rather than explain the emptiness).
+  //
+  // 🪤 THE ONE-SIDED CASE NEEDS NO BRANCH HERE, and the first version of this fix
+  // grew a dead one. `fieldOrder` sorts on `probability ?? -1` descending, so a
+  // priced competitor always sorts AHEAD of an unpriced one: whenever exactly one
+  // side has a price, that side IS `a`. So `a.probability == null` already implies
+  // both are unpriced, and a `100 - b` fallback is unreachable. A test written for
+  // it passed only because the sort had quietly swapped the pair.
+  const aPct = a.probability != null ? Math.round(a.probability * 100) : null;
   const outcomes: FuturesOutcomeHistory[] = data?.outcomes ?? [];
   const hasHistory = outcomes.some(
     (o) => o.history.filter((p) => p.probability != null).length >= 2,
@@ -69,10 +88,15 @@ export default function TwoSidedTimeline({
         <span className="text-accent-brand">{formatProbability(a.probability)}</span>
         <span className="text-text-secondary">{formatProbability(b.probability)}</span>
       </div>
-      <div className="flex h-2.5 rounded-full overflow-hidden bg-surface-elevated">
-        <div className="h-full bg-accent-brand" style={{ width: `${aPct}%` }} />
-        <div className="h-full bg-text-muted/50" style={{ width: `${100 - aPct}%` }} />
-      </div>
+      {aPct != null && (
+        <div
+          data-testid="two-sided-split-bar"
+          className="flex h-2.5 rounded-full overflow-hidden bg-surface-elevated"
+        >
+          <div className="h-full bg-accent-brand" style={{ width: `${aPct}%` }} />
+          <div className="h-full bg-text-muted/50" style={{ width: `${100 - aPct}%` }} />
+        </div>
+      )}
 
       {/* Shared timeline */}
       {hasHistory && (
