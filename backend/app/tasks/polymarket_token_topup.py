@@ -34,6 +34,7 @@ import asyncio
 import bisect
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,29 @@ TOPUP_CURSOR_KEY = "polymarket_token_topup:outcome_cursor"
 #: longer holds it.  Losing it costs one pass's fairness, never correctness —
 #: the selector simply restarts at the front, which is today's behaviour.
 TOPUP_CURSOR_TTL_SECONDS = 7 * 24 * 3600
+
+#: How long after its event's start time an outcome stays worth asking about
+#: (#837).  Past this, the game is over by any reading and its CLOB book cannot
+#: be live, so the leg is dropped from the ask instead of holding a seat under
+#: the cap.
+#:
+#: NOT A TUNED NUMBER, and that is the point of stating the measurement.  The
+#: slate's age distribution is bimodal — today's fixtures, then corpses weeks
+#: old, with nothing in between — so the constant sits on a flat plateau rather
+#: than a cliff.  Measured on production 2026-09-17 07:0xZ, distinct condition
+#: ids the ask would carry at each bound:
+#:
+#:     no bound  1,803   (today's behaviour)
+#:     12 h        581
+#:     24 h        581
+#:     48 h        581
+#:      7 d        589
+#:
+#: Any choice between 12 h and 48 h is the same answer, and seven days moves it
+#: by eight ids.  48 h is taken as the most conservative point that is still on
+#: the plateau: comfortably longer than any single fixture we carry, so no real
+#: game can age out while its book is still trading.
+STALE_EVENT_HOURS = 48
 
 
 def select_ask_window(
@@ -133,6 +157,28 @@ def select_ask_window(
     start = bisect.bisect_right(ordered, cursor) if cursor is not None else 0
     kept = [ordered[(start + i) % len(ordered)] for i in range(size)]
     return kept, kept[-1]
+
+
+def _is_stale(commence_time, cutoff: datetime) -> bool:
+    """True only when ``commence_time`` is KNOWN to be older than ``cutoff``.
+
+    Every other case is False — unknown is not stale.  A missing start time, an
+    unlinked market or a value we cannot compare keeps its leg in the ask, so
+    the worst case of this whole filter is today's behaviour.  That asymmetry is
+    the safety argument: the cost of wrongly keeping a dead leg is one seat for
+    one pass, and the cost of wrongly dropping a live one is a hero line that
+    never streams.
+
+    A naive datetime is read as UTC rather than refused.  The column is
+    ``timestamptz`` so production always hands back an aware value; the coercion
+    exists because a naive one would otherwise raise inside the comparison and
+    take the socket's token pass down with it.
+    """
+    if not isinstance(commence_time, datetime):
+        return False
+    if commence_time.tzinfo is None:
+        commence_time = commence_time.replace(tzinfo=timezone.utc)
+    return commence_time < cutoff
 
 
 def _read_cursor_sync() -> Optional[str]:
@@ -338,11 +384,17 @@ async def topup_outcome_clob_tokens(
     lexicographic head — ``select_ask_window`` carries that argument and the
     measurement behind it. A leg that can never be filled therefore costs one
     seat for one pass rather than holding it for good.
+
+    WHAT IS NOT ASKED AT ALL is a leg whose game finished days ago. The caller's
+    slate has no lower bound on start time, so events stuck at 'scheduled' kept
+    their legs in the ask for ever — 73% of it, measured. ``STALE_EVENT_HOURS``
+    and the block that applies it carry that argument, including why the
+    predicate is the event's START TIME and not any settlement column.
     """
     from sqlalchemy import cast, func, literal, select, update
     from sqlalchemy.dialects.postgresql import JSONB
 
-    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.models.models import Event, FuturesMarket, FuturesOutcome
 
     # condition id -> (market_id, outcome_id). Keyed by condition id because
     # that is what Gamma echoes back, and it de-dupes an outcome accidentally
@@ -376,14 +428,27 @@ async def topup_outcome_clob_tokens(
     # Seeded into `filled` rather than merely skipped: the return value IS the
     # socket's subscription list, so dropping a stored outcome would unsubscribe
     # the very legs this module exists to keep streaming.
+    # The event's start time rides along on this read rather than taking a
+    # second round trip: staleness is a property of the MARKET's parent event,
+    # so it has the same grain as the row this query already returns, and this
+    # runs on the socket's event loop every recycle.  Outer join — a market with
+    # no linked event yields NULL and is KEPT, never dropped (below).
     stored_filled: dict[int, tuple[int, str]] = {}
+    stale_market_ids: set[int] = set()
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(hours=STALE_EVENT_HOURS)
     try:
         stored_rows = await session.execute(
-            select(FuturesMarket.id, FuturesMarket.market_metadata).where(
-                FuturesMarket.id.in_({mid for mid, _oid in addressable.values()})
+            select(
+                FuturesMarket.id,
+                FuturesMarket.market_metadata,
+                Event.commence_time,
             )
+            .outerjoin(Event, FuturesMarket.event_id == Event.id)
+            .where(FuturesMarket.id.in_({mid for mid, _oid in addressable.values()}))
         )
-        for stored_market_id, metadata in stored_rows.all():
+        for stored_market_id, metadata, commence_time in stored_rows.all():
+            if _is_stale(commence_time, stale_cutoff):
+                stale_market_ids.add(stored_market_id)
             stored = (metadata or {}).get(OUTCOME_TOKEN_METADATA_KEY)
             if not isinstance(stored, dict):
                 continue
@@ -408,6 +473,11 @@ async def topup_outcome_clob_tokens(
             "re-asking the whole slate this pass"
         )
         stored_filled = {}
+        # Fail OPEN on staleness too: with no start times read, nothing is known
+        # to be stale, so nothing is dropped.  A failed bookkeeping read must
+        # never be able to shrink the ask — that would be a silent outage
+        # wearing the shape of a healthy pass (gotcha #53).
+        stale_market_ids = set()
 
     if stored_filled:
         addressable = {
@@ -424,6 +494,56 @@ async def topup_outcome_clob_tokens(
                 len(stored_filled),
             )
             return stored_filled
+
+    if stale_market_ids:
+        # DROPPED AFTER THE STORED SHRINK, DELIBERATELY. `stored_filled` is
+        # already seeded into the return value above, and the return value IS
+        # the socket's subscription list — so filtering here can only remove
+        # legs from what is ASKED, never unsubscribe a leg whose token we hold.
+        #
+        # WHY THE ASK IS FULL OF CORPSES. The caller's slate is
+        # `Event.status = 'live' OR (status = 'scheduled' AND commence_time <=
+        # NOW() + 6h)`, and that window has no LOWER bound, so an event stuck at
+        # 'scheduled' whose game finished weeks ago satisfies it for ever.
+        # Measured on production 2026-09-17 07:0xZ: of 4,148 slate outcomes,
+        # 3,050 sat on markets whose event had commenced up to FIFTEEN WEEKS
+        # earlier — 2,996 of them more than 12 h ago. The ask was 73% dead, the
+        # 300 cap bound on the corpses, and a live leg waited ~7 passes for a
+        # turn it should get in 2.
+        #
+        # WHY START TIME AND NOT A SETTLEMENT COLUMN. `status = 'resolved'` was
+        # the obvious predicate and it is WRONG HERE: measured the same hour,
+        # the four live ITF tennis legs this ship exists to reach
+        # (`W35 Kyoto`, `Phan Thiet 4`, events 15313682 / 15313516 / 15313625)
+        # were themselves `status = 'resolved'` while still in play, carrying
+        # `is_winner = False` on BOTH contenders — the column's own default, not
+        # a settlement. Filtering on it would have dropped exactly the legs
+        # #837 is about. `settled_at` is no better: it is NULL on 66 of 576
+        # sampled corpses and the model says it is never backfilled. The start
+        # time is the one signal that is written by ingest for every row,
+        # independent of whether anything ever streamed the market.
+        #
+        # ONLY A POSITIVELY KNOWN OLD START DROPS A LEG: a NULL start time, an
+        # unlinked market, or a failed read all KEEP it. This refuses rather
+        # than guesses, the same way `token_for_outcome` does.
+        before = len(addressable)
+        addressable = {
+            cid: entry
+            for cid, entry in addressable.items()
+            if entry[0] not in stale_market_ids
+        }
+        logger.info(
+            "Polymarket outcome token top-up: dropped %d of %d outcomes whose "
+            "event started more than %dh ago; %d remain askable",
+            before - len(addressable),
+            before,
+            STALE_EVENT_HOURS,
+            len(addressable),
+        )
+        if not addressable:
+            # Every askable leg is stale. Still a full answer for the caller:
+            # the stored legs stay subscribed exactly as they would have.
+            return dict(stored_filled)
 
     if len(addressable) > max_outcomes:
         # "Deferred to the next recycle" was a claim nothing kept: the head was
