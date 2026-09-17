@@ -414,6 +414,19 @@ class TestNothingWorthNaming:
         state question with the single word "No". A name that restates the
         question's own framing is never worth printing, however many outcomes
         sit beside it.
+
+        AMENDED BY #2563, AND THE ORIGINAL WORRY IS WHAT AMENDED IT. This test
+        described the "No"-on-top future exactly and guarded half of it: it
+        stopped the WORD reaching the hero and let the NUMBER through, so the
+        card it protected still announced a forty-state question with 92% —
+        the price of no state qualifying. That half shipped as the live defect
+        on three other rows (#2563), and `_card_outcome` now declines a leg that
+        prices the negation. So the expected reading here moves from "92, unnamed"
+        to "90, Colorado": the dearest state, the number that belongs to it, and
+        still — the point of this test — never the word "No".
+
+        The half-even note below is untouched and still true; it simply no longer
+        applies to this row, whose price does not sit on a .5 boundary.
         """
         _serve(mock_db, [
             _market(
@@ -430,11 +443,13 @@ class TestNothingWorthNaming:
 
         item = (await client.get("/api/weather/featured")).json()[0]
 
-        # 92, not 93: `_highest_prob` is Python `round()`, which is HALF-EVEN,
-        # while the site's rendered-percent convention is HALF-UP. Out of scope
-        # here — this test is about the name — but real, and parked as UX-P186-2.
-        assert item["prob"] == 92, "the number is still the leader's"
-        assert item["leader"] is None
+        # The word this test was written to keep off the hero is still off it,
+        # asserted on its own so the intent survives the amended numbers.
+        assert item["leader"] != "No"
+        assert item["prob"] != 92, "92 is the price of NO state qualifying"
+
+        assert item["prob"] == 90
+        assert item["leader"] == "Colorado"
 
     async def test_a_placeholder_leader_is_not_named(self, client, mock_db):
         """`_GARBAGE_OUTCOME_RE`'s population, reused rather than re-listed. The
