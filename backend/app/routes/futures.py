@@ -2703,9 +2703,19 @@ async def get_multi_market_history(
 
     # Merge outcomes across markets by team_id or normalized name
     # merge_key -> {name, outcome_ids: [int], current_probabilities: [float]}
+    #
+    # #6641 — one condition, one line, applied INSIDE the per-market loop so a
+    # rung on market A can never justify dropping a leg on market B (the
+    # helper's scoping rule). Converted alongside the file's other three chart
+    # readers; leaving one of the four serving the leg is how the class
+    # survived on `/probability-timeline` after the board was fixed.
+    from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
+
     merged_outcomes: dict[str, dict] = {}
     for market in markets:
-        for outcome in market.outcomes:
+        for outcome in drop_duplicate_legs(
+            market.outcomes, lambda o: o.external_id
+        ):
             merge_key = _progression_merge_key(outcome)
             if merge_key not in merged_outcomes:
                 merged_outcomes[merge_key] = {
@@ -4020,6 +4030,35 @@ async def get_probability_timeline(
     if not market:
         raise HTTPException(status_code=404, detail="Market not found")
 
+    # #6641 — ONE CONDITION, ONE LINE. A Polymarket "field" row is served to us
+    # twice over: the bare condition id carries the named rung ("March 31,
+    # 2026") and the decomposition branch writes the same condition's two legs
+    # as `{condition_id}_yes` / `_no`, named literally "Yes"/"No". On 1,455
+    # markets both land on ONE market row. `_format_market_detail` has dropped
+    # them since Q480; this reader never did, and it is the one the phone's
+    # chart reads (`APIClient.swift` -> `/probability-timeline`). So Alex's
+    # 2026-09-16 phone pass got a participant table of five rows crowned by
+    # "No 100%" sitting directly above an All Outcomes board of three, which
+    # lists no "No" at all — one screen, two answers (`market-mixed-outcomes.png`,
+    # market 112868 "Taylor Swift pregnant by...?"). The web page is immune only
+    # by accident: it picks its series off the deduped board.
+    #
+    # `drop_duplicate_legs` drops a leg ONLY when the bare rung it duplicates is
+    # present on the SAME market, so a correctly decomposed sub-market row —
+    # where the legs are the only outcomes — is untouched and its chart still
+    # draws. That positive-fact rule is the whole safety argument; see the
+    # helper.
+    #
+    # Everything below reads THIS list and not `market.outcomes`, deliberately:
+    # the `> top` test that adds "Field" and the Field sum itself must count the
+    # same outcomes the participants come from, or a duplicate leg reappears as
+    # an inflated Field line after being dropped from the table.
+    from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
+
+    charted_outcomes = drop_duplicate_legs(
+        market.outcomes, lambda o: o.external_id
+    )
+
     requested_hours = hours
     actual_hours = hours
     now = datetime.now(timezone.utc)
@@ -4042,7 +4081,7 @@ async def get_probability_timeline(
         actual_hours = max(1, int((now - cutoff).total_seconds() // 3600))
 
     # Get ALL outcome IDs (we need them all to compute Field)
-    all_outcome_ids = [o.id for o in market.outcomes]
+    all_outcome_ids = [o.id for o in charted_outcomes]
 
     if not all_outcome_ids:
         return {
@@ -4072,7 +4111,7 @@ async def get_probability_timeline(
     # published bucket value. Filtered on the same rule and before the same
     # sparse decision as `/history`.
     snapshots = _drop_unsupported_snapshot_points(
-        list(result.scalars().all()), market.outcomes
+        list(result.scalars().all()), charted_outcomes
     )
 
     # Auto-extend for sparse markets (same logic as /history endpoint). Skipped
@@ -4096,7 +4135,7 @@ async def get_probability_timeline(
             )
             ext_result = await db.execute(ext_query)
             extended_snapshots = _drop_unsupported_snapshot_points(
-                list(ext_result.scalars().all()), market.outcomes
+                list(ext_result.scalars().all()), charted_outcomes
             )
             if len(extended_snapshots) > len(snapshots):
                 snapshots = extended_snapshots
@@ -4123,12 +4162,12 @@ async def get_probability_timeline(
 
     # Determine the top N outcomes by current probability
     sorted_outcomes = sorted(
-        market.outcomes,
+        charted_outcomes,
         key=lambda o: o.current_probability or 0,
         reverse=True,
     )
     top_outcome_ids = {o.id for o in sorted_outcomes[:top]}
-    outcome_names = {o.id: o.name for o in market.outcomes}
+    outcome_names = {o.id: o.name for o in charted_outcomes}
 
     # Group snapshots: outcome_id -> bucket_key -> [probabilities]
     # bucket_key is the truncated timestamp
@@ -4158,7 +4197,7 @@ async def get_probability_timeline(
 
         field_prob = 0.0
 
-        for outcome in market.outcomes:
+        for outcome in charted_outcomes:
             oid = outcome.id
             probs = outcome_buckets.get(oid, {}).get(bucket_key, [])
             if not probs:
@@ -4174,7 +4213,7 @@ async def get_probability_timeline(
         # Add Field if there are outcomes outside the top N. Cap at 1.0 (#1139):
         # independent binaries carry bookmaker overround and can sum >100%
         # (gotcha #23), which renders as an impossible >100% line.
-        if len(market.outcomes) > top:
+        if len(charted_outcomes) > top:
             entry["outcomes"]["Field"] = round(min(field_prob, 1.0), 6)
 
         timeline.append(entry)
@@ -4204,7 +4243,7 @@ async def get_probability_timeline(
         else:
             meta["team_id"] = o.team_id  # FK may exist without loaded team
         outcomes_meta.append(meta)
-    if len(market.outcomes) > top:
+    if len(charted_outcomes) > top:
         # Sum remaining probabilities for Field
         field_current = sum(
             float(o.current_probability) for o in sorted_outcomes[top:]
@@ -4270,9 +4309,15 @@ async def get_cross_source_timeline(
 
     # Merge outcomes across sources by team_id or normalized name
     # merge_key -> { name, team_id, outcome_ids: [int], team: Team|None }
+    # #6641 — same rule, same placement inside the per-market loop, as the three
+    # other chart readers in this file.
+    from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
+
     merged_outcomes: dict[str, dict] = {}
     for market in markets:
-        for outcome in market.outcomes:
+        for outcome in drop_duplicate_legs(
+            market.outcomes, lambda o: o.external_id
+        ):
             merge_key = _outcome_merge_key(outcome)
             if merge_key not in merged_outcomes:
                 merged_outcomes[merge_key] = {
@@ -4534,6 +4579,16 @@ async def get_futures_history(
     if not market:
         raise HTTPException(status_code=404, detail="Market not found")
 
+    # #6641, same rule and same reason as `get_probability_timeline` above —
+    # this is the other half of the same chart. No iOS client reads it, but the
+    # web futures page does, and the payload carried the legs either way (four
+    # rows served on 112868 where the board served three).
+    from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
+
+    charted_outcomes = drop_duplicate_legs(
+        market.outcomes, lambda o: o.external_id
+    )
+
     # Get outcome IDs to fetch history for
     if outcome_id:
         outcome_ids = [outcome_id]
@@ -4541,7 +4596,7 @@ async def get_futures_history(
         # Default to top N outcomes by current probability
         capped_n = min(top_n, 50)
         sorted_outcomes = sorted(
-            market.outcomes,
+            charted_outcomes,
             key=lambda o: o.current_probability or 0,
             reverse=True
         )[:capped_n]
@@ -4552,16 +4607,16 @@ async def get_futures_history(
         # settlement. Without this, a settled winner-field charts everyone BUT the
         # winner (the "path to resolution" that never resolves).
         _selected = set(outcome_ids)
-        for o in market.outcomes:
+        for o in charted_outcomes:
             if getattr(o, "is_winner", False) and o.id not in _selected:
                 outcome_ids.append(o.id)
                 _selected.add(o.id)
         # #232 — same guarantee for the odds_api winner-field class, where the
         # champion is known only by NAME (no is_winner grade): force its line in
         # even if it fizzled to a longshot, so its path can resolve below.
-        if champion and not any(getattr(o, "is_winner", False) for o in market.outcomes):
+        if champion and not any(getattr(o, "is_winner", False) for o in charted_outcomes):
             _cnorm = _norm_outcome_name(champion)
-            for o in market.outcomes:
+            for o in charted_outcomes:
                 if _norm_outcome_name(getattr(o, "name", "")) == _cnorm and o.id not in _selected:
                     outcome_ids.append(o.id)
                     _selected.add(o.id)
@@ -4592,7 +4647,7 @@ async def get_futures_history(
     # it. A market whose recent history is entirely fabricated now reaches back
     # for real history instead of charting the fabrication.
     snapshots = _drop_unsupported_snapshot_points(
-        list(result.scalars().all()), market.outcomes
+        list(result.scalars().all()), charted_outcomes
     )
 
     # Auto-extend if sparse
@@ -4609,7 +4664,7 @@ async def get_futures_history(
             )
             ext_result = await db.execute(ext_query)
             extended_snapshots = _drop_unsupported_snapshot_points(
-                list(ext_result.scalars().all()), market.outcomes
+                list(ext_result.scalars().all()), charted_outcomes
             )
             if len(extended_snapshots) > len(snapshots):
                 snapshots = extended_snapshots
@@ -4642,7 +4697,7 @@ async def get_futures_history(
     # not, and an unresolved rung prints exactly what Kalshi sent.
     outcome_names = {
         o.id: (repair_field_outcome_name(o.external_id, o.name) or o.name)
-        for o in market.outcomes
+        for o in charted_outcomes
     }
 
     # Group: outcome_id -> captured_at -> [probabilities from different bookmakers]
