@@ -71,6 +71,7 @@ line" — a chart with no line cannot place a boundary on it.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 from typing import Any, Iterable, Optional
 
@@ -79,6 +80,12 @@ SOURCE_STATPAL = "statpal"      # tier 1: the scoring_plays table (play-by-play)
 SOURCE_ESPN_BOX = "espn_box"    # tier 2: ESPN box-score scoring plays
 SOURCE_WIN_PROB = "win_prob"    # tier 3: win_prob_snapshots game_state
 SOURCE_ESTIMATED = "estimated"  # tier 4: arithmetic on commence_time
+
+# How much a marker's timestamp can be trusted AS A PERIOD START (#5140). Additive:
+# a client that ignores `precision` reads exactly what it read before.
+PRECISION_BOUNDARY = "boundary_observed"  # start clock, or bracketed within one poll
+PRECISION_FIRST_SEEN = "first_seen"       # period already running when first polled
+PRECISION_FIRST_SCORE = "first_score"     # first SCORE of the period, not its start
 
 #: Sources that mean "an instrument observed this period start".
 MEASURED_SOURCES = frozenset({SOURCE_STATPAL, SOURCE_ESPN_BOX, SOURCE_WIN_PROB})
@@ -260,3 +267,122 @@ def estimated_period_markers(
         return [at(0, "1st Period"), at(40, "2nd Period"), at(80, "3rd Period")]
 
     return []
+
+
+# ── Observed game-state transitions (#5140) ──────────────────────────────────
+#
+# Tiers 1 and 2 answer "when was the first SCORE of period N", which is bounded
+# below by that score and cannot answer "when did period N begin" (Chiefs-Broncos
+# 14638896: Q2 drawn at 01:33:43Z, its only touchdown; the feed had said
+# `15:00 - 2nd Quarter` at 00:54:43Z). The state stream answers it directly, at
+# poll resolution, from rows already in the payload.
+#
+# Football only, on purpose. The vocabulary below is ESPN's football status text;
+# innings, sets, halves and hockey periods keep the existing tiers untouched.
+TRANSITION_SPORT_PREFIXES = ("americanfootball_",)
+
+#: Two consecutive state rows this close bracket a boundary "at poll resolution".
+POLL_TOLERANCE = timedelta(seconds=150)
+#: A period first seen mid-way, with nothing observed for longer than this before
+#: it, is an unknown — better absent than drawn late (the first-score defect again).
+MAX_FIRST_SEEN_BRACKET = timedelta(minutes=20)
+
+_FOOTBALL_STATE = re.compile(
+    r"^(?:(?P<clock>\d{1,2}:\d{2})\s*-\s*)?"
+    r"(?:(?P<end>end\s+of\s+)?(?P<q>[1-4])(?:st|nd|rd|th)\s+quarter"
+    r"|(?P<ht>half\s*time)"
+    r"|(?P<endot>end\s+of\s+)?(?:\d\w*\s+)?(?P<ot>overtime|ot))$",
+    re.IGNORECASE,
+)
+_ORDINAL = {1: "1st", 2: "2nd", 3: "3rd", 4: "4th"}
+
+
+def _football_state(raw: Any) -> Optional[tuple[int, Optional[str], Optional[str]]]:
+    """``(rank, served label or None for a break we do not draw, clock)``."""
+    if not isinstance(raw, str):
+        return None
+    m = _FOOTBALL_STATE.match(raw.strip())
+    if not m:
+        return None  # "Final", a pre-game date string, another sport's text
+    if m.group("q"):
+        q = int(m.group("q"))
+        if m.group("end"):
+            return (q * 10 + 5, None, None)
+        return (q * 10, f"{_ORDINAL[q]} Quarter", m.group("clock"))
+    if m.group("ht"):
+        return (25, "Halftime", None)
+    if m.group("endot"):
+        return (55, None, None)
+    return (50, "Overtime", m.group("clock"))
+
+
+def observed_transition_markers(
+    sport_key: Optional[str],
+    observations: Iterable[dict],
+) -> list[dict]:
+    """Period markers from the game-state stream; ``[]`` when it cannot say.
+
+    ``observations`` are ``{"timestamp", "period"}`` rows from any state-bearing
+    series (``espn_history``, ``win_prob_history[*].game_state``). Order and
+    duplicates do not matter: rows are de-duplicated and sorted by CAPTURE time,
+    so late delivery of an old row changes nothing.
+
+    What this refuses to do:
+
+    * interpolate a start from the game clock (breaks and stoppages make that a
+      guess) — the clock only classifies, it never moves a timestamp;
+    * place a period nobody saw start. Every marker carries ``not_before`` — the
+      previous state row — so the boundary is claimed only inside
+      ``(not_before, timestamp]``. No previous row, or a wide bracket on a
+      mid-period first sighting, means no marker: absent, never kickoff;
+    * trust a one-row blip: a first sighting immediately followed by an EARLIER
+      state is discarded, and the period is taken from its next sighting.
+    """
+    if not sport_key or not sport_key.startswith(TRANSITION_SPORT_PREFIXES):
+        return []
+
+    seen: set[tuple[datetime, int]] = set()
+    rows: list[tuple[datetime, int, Optional[str], Optional[str], Any]] = []
+    for obs in observations or ():
+        when = _parse(obs.get("timestamp"))
+        state = _football_state(obs.get("period"))
+        if when is None or state is None or (when, state[0]) in seen:
+            continue
+        seen.add((when, state[0]))
+        rows.append((when, state[0], state[1], state[2], obs.get("timestamp")))
+    rows.sort(key=lambda r: (r[0], r[1]))
+
+    markers: list[dict] = []
+    placed: set[str] = set()
+    blipped: set[str] = set()
+    top_rank = -1
+    for i, (when, rank, label, clock, raw_ts) in enumerate(rows):
+        first_of_rank = rank > top_rank
+        blip = i + 1 < len(rows) and rows[i + 1][1] < rank
+        if not blip:
+            top_rank = max(top_rank, rank)
+        elif label and first_of_rank:
+            blipped.add(label)  # its real start is now unbracketed: never "observed"
+        if label is None or label in placed or not first_of_rank or blip:
+            continue
+        previous = rows[i - 1] if i else None
+        gap = (when - previous[0]) if previous else None
+        at_start_clock = clock == "15:00"
+        if label in blipped:
+            precision = PRECISION_FIRST_SEEN
+        elif at_start_clock or (gap is not None and gap <= POLL_TOLERANCE):
+            precision = PRECISION_BOUNDARY
+        elif gap is not None and gap <= MAX_FIRST_SEEN_BRACKET:
+            precision = PRECISION_FIRST_SEEN
+        else:
+            placed.add(label)  # seen, but its start is unknown: never re-place it later
+            continue
+        placed.add(label)
+        markers.append({
+            "timestamp": raw_ts,
+            "period": label,
+            "source": SOURCE_WIN_PROB,
+            "precision": precision,
+            "not_before": previous[4] if previous else None,
+        })
+    return markers
