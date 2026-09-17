@@ -375,6 +375,47 @@ EMPTY_BOOK_MIN_SPREAD = round(EMPTY_BOOK_MIN_ASK - EMPTY_BOOK_MAX_BID, 4)
 # the spread comparison to this is exact for every value the columns can hold.
 _BOOK_PRICE_DECIMALS = 4
 
+# 🪤 CONDITION 3 NEEDS THE SAME TREATMENT CONDITION 2 GOT, AND NOT HAVING IT WAS THE
+# WHOLE OF #6676's FOURTH WRITER. `EMPTY_BOOK_MIDPOINT_TOLERANCE` is spelled `0.01` and
+# the comparison was written `<=`, so the rule reads "within a cent of the midpoint
+# counts as ON it". In IEEE754 a distance of exactly one cent is not always 0.01:
+# `abs(0.51 - (0.00 + 1.00) / 2)` is `0.010000000000000009`, which is `> 0.01`. So the
+# rows the tolerance was written to catch — the ones sitting EXACTLY on its boundary —
+# were the rows it let through, and they are the emptiest books in the system.
+#
+# 📏 MEASURED ON PRODUCTION, 2026-09-17, open markets, read-only db-query, over both
+# venues: 25 outcomes sit at a midpoint distance of exactly 0.01 on a spread >= 0.90.
+# Replayed through this function as it stood, ALL 25 PASSED — served and writable —
+# and all 25 are refused once the compare is rounded. "Price of NVIDIA B200 compute by
+# Dec 31, 2026? / Above $5.57" printed 51% on a **0.0000 / 1.0000** book: no bid and no
+# ask, the emptiest quote the column can hold. Market 61309451 printed both sides of
+# the #6676 defect at once — "Completed Match" Yes 51% / No 49% on 0.01/0.99, the
+# phantom coin flip the ship was opened for, still live.
+#
+# Triaged, not assumed: 11 of the 25 carry any trade evidence at all, and on every one
+# it is MARKET-level `volume_24h` or our own `price_changed_at` (which our delta-blind
+# writers move — see `futures_price_refresh`), never a leg-level quote. The Amgen Irish
+# Open market has 24,360 of volume; the leg withdrawn here is "Grant Forrest" at 49% on
+# a 0.0000/1.0000 book, which is where that volume is not.
+#
+# 6 DECIMALS, NOT `_BOOK_PRICE_DECIMALS`, AND THE DIFFERENCE IS WHETHER THIS WIDENS.
+# Condition 2 rounds to 4dp because that is exact for the two Numeric(5,4) book columns.
+# Condition 3's operands are not those: it subtracts a Numeric(6,6) probability from the
+# midpoint of two Numeric(5,4) books, which is 5dp. 6dp is therefore exact for every
+# value BOTH columns can hold, so rounding there recovers the exact decimal comparison
+# and cannot move the boundary — whereas borrowing the 4dp constant would widen the
+# tolerance by up to 0.00005 on a column it was never measured against. (On production
+# today that widening is worth 0 rows, so this is a correctness choice rather than a
+# measured one — but the 4dp constant's justification does not transfer, and a constant
+# reused past its derivation is how the next reader inherits a number nobody measured.)
+#
+# 🔒 AND IT MAKES THE COMPLEMENT INVARIANCE TRUE. See this function's docstring: the
+# claim that a leg and its twin always get the same verdict was measured over BOOKS
+# with the price held fixed, so it could not see a condition-3 boundary at all. Swept
+# over all 509,949 (bid, ask, price) integer-cent triples through `complementary_book`
+# with the writer's own arithmetic: 10 disagreements unrounded, 0 rounded.
+_MIDPOINT_DISTANCE_DECIMALS = 6
+
 
 def is_empty_book_midpoint(
     probability: "float | None",
@@ -456,8 +497,18 @@ def is_empty_book_midpoint(
     ``(1 - ask, 1 - bid)``, whose spread is ``(1 - bid) - (1 - ask)`` = ``ask - bid``:
     identical, algebraically, for every book. Condition 3 is invariant the same way,
     the complement's midpoint distance being ``|(1 - p) - (1 - mid)|`` = ``|mid - p|``.
-    So since #6727 a per-leg caller and a per-item caller agree -- measured over all
-    5,050 integer-cent books through ``complementary_book``: 0 disagreements.
+    So since #6727 a per-leg caller and a per-item caller agree.
+
+    THAT INVARIANCE IS ALGEBRAIC, AND UNTIL #6676's FOURTH WRITER THE CODE DID NOT HAVE
+    IT. The sweep this docstring used to cite -- "all 5,050 integer-cent books through
+    ``complementary_book``: 0 disagreements" -- swept BOOKS with the price held fixed,
+    so it never varied the one operand condition 3 is about and could not have found a
+    condition-3 boundary. Swept properly, over all 509,949 (bid, ask, price) integer-cent
+    TRIPLES with the writer's own arithmetic, the unrounded form disagreed on 10: four of
+    them write a phantom complement the item-level caller passed. Rounding the distance
+    (see ``_MIDPOINT_DISTANCE_DECIMALS``) takes that to 0, so the invariance is now the
+    code's behaviour and not just the algebra's. A sweep that varies only the book will
+    report 0 against either form and proves nothing -- vary the price.
 
     THAT WAS NOT TRUE OF THE TWO-BOUND FORM, WHICH IS WHY THE ITEM-LEVEL GUARD STAYS.
     Conditions 1-2 only survived the flip while ``EMPTY_BOOK_MAX_BID +
@@ -486,7 +537,14 @@ def is_empty_book_midpoint(
     # exact-threshold 0.05/0.95. 4dp is exact for these Numeric(5,4) columns.
     if round(ask - bid, _BOOK_PRICE_DECIMALS) < EMPTY_BOOK_MIN_SPREAD:
         return False
-    return abs(float(probability) - (bid + ask) / 2) <= EMPTY_BOOK_MIDPOINT_TOLERANCE
+    # Rounded for the same reason the spread compare above is, and at a precision that
+    # is exact for BOTH operand columns rather than just the book's — see
+    # `_MIDPOINT_DISTANCE_DECIMALS`. Unrounded, a distance of exactly one cent is
+    # `0.010000000000000009` and the tolerance's own boundary rows escape it.
+    distance = abs(float(probability) - (bid + ask) / 2)
+    return (
+        round(distance, _MIDPOINT_DISTANCE_DECIMALS) <= EMPTY_BOOK_MIDPOINT_TOLERANCE
+    )
 
 
 # A distribution over a MUTUALLY EXCLUSIVE field must still cover that field once the
