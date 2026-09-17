@@ -752,6 +752,70 @@ pr_state_scan () {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# WHAT THE PUSH WILL CLOSE — the PR-body half of the closing question (int412,
+# routed to this file by int414).
+#
+# `closing_keyword_scan` above reads the COMMIT bodies. The PR BODY is a second,
+# independent channel to the same consequence, and the desk does not control it:
+# int412 pushed `a8837bdbb` with `#6727 and #5333 STAY OPEN ON THIS MERGE.` in
+# the merge body and #6727 closed anyway at 15:58:27Z, because the PR body said
+# `Closes #6727` and GitHub marked the PR merged when its commit landed.
+#
+# THE ASYMMETRY THAT MAKES THIS ROW WORTH A CALL. The commit-body row is a WARN
+# with no remedy — the text is frozen inside a certed sha and rewording it mints
+# a new sha and kills the token. A PR body is EDITABLE and editing it does not
+# touch the sha. So this row's finding is actionable in ten seconds, right up
+# until the push, and only until then.
+#
+# IT IS A STATEMENT, NOT A REFUSAL, and that is deliberate: closing is usually
+# the intent (#6754 declared `Closes #4949` and closing it was the ship). A row
+# that refused on a declared reference would be overridden on most merges and
+# then believed on none. So `found` and `none` both PASS.
+#
+# BUT AN EMPTY ANSWER IS NOT AN ANSWER OF NONE. That is this file's oldest
+# lesson (pulls_lookup_scan, ci_runs_scan) and the reason the fetch emits the
+# literal sentinel `NONE` for an empty array instead of letting `--jq` print an
+# empty string: without it, "the PR declares nothing" and "GitHub did not
+# answer" arrive as the same zero bytes, and the desk states the first while
+# looking at the second. Unanswered is therefore a `stopq` — RE-RUN, not a
+# finding about the sha — because the whole purpose of the row is to let the
+# desk WRITE the consequence down, and it cannot write down what it does not
+# know.
+# ─────────────────────────────────────────────────────────────────────────────
+# ⭐ THIS ROW'S OWN TEXT MUST NOT BE A CLOSING DIRECTIVE, AND THE FIRST DRAFT
+# WAS ONE. It printed `will close: #6739`, and GitHub's parser accepts
+# `close: #N` — so PR #6768, whose body quoted its own sample output, linked
+# live's #6739 and would have closed someone else's issue on merge. The gate
+# caught it on itself, on its own sha, before any push; nothing else would have.
+#
+# An instrument whose output is QUOTED — into PR bodies, merge bodies, cert
+# blocks, ledger rows — must not emit any of GitHub's nine keywords adjacent to
+# a `#N`. Hence `declares` (not one of the nine) and no keyword within reach of
+# a reference. `assert_not_self_closing` below is the guard, and it is run
+# against the live detail strings rather than against a copy of them.
+PRC_VERDICT=""; PRC_DETAIL=""
+pr_closing_scan () {
+  local raw="$1" rc="$2"
+  if [ "$rc" -ne 0 ] || [ -z "$raw" ]; then
+    PRC_VERDICT=unanswered
+    PRC_DETAIL="the PR closing-references API did not answer (exit $rc) — an empty answer here is NOT 'this PR declares nothing'. Do not state a closing consequence in the merge body from this row"
+    return 0
+  fi
+  if [ "$raw" = NONE ]; then
+    PRC_VERDICT=none
+    PRC_DETAIL="declares NOTHING — answered, and the PR body carries no closing reference"
+  else
+    PRC_VERDICT=found
+    PRC_DETAIL="declares $raw — the push WILL close them. Say so in the merge body. If any must STAY OPEN, edit the PR BODY before the push (free: it does not change the sha); a merge body cannot stop it"
+  fi
+}
+
+# A keyword adjacent to a reference — the POSITIVE form of the negated pattern
+# above, reusing the same two vocabularies so the two can never drift. This is
+# what a quoted row would do to whatever it is pasted into.
+SELF_CLOSING_RE="(^|[^A-Za-z])(${CLOSING_KEYWORDS})[[:space:]]*:?[[:space:]]+${CLOSING_REFERENCE}"
+
+# ─────────────────────────────────────────────────────────────────────────────
 # notice 28's CI row — WHICH row (lane1/275). One sha can carry MORE THAN ONE
 # CI run: a re-run after master was fixed under it, or the close+reopen that
 # `ci.yml`'s own header comment prescribes for a PR that got no run at all. The
@@ -1732,6 +1796,52 @@ FIXEOF
   check "pulls_lookup_scan: two open PRs take the first, not the whole csv" \
     "[ \"$PRL_NUM\" = 5598 ]"
 
+  # ── PR-body closing references (int412's mirror) ───────────────────────────
+  # The measured defect is one direction only: a blank read stating "closes
+  # nothing". Both blank shapes are pinned, because the one that bit this file
+  # before was the blank at exit ZERO, not the failed call.
+  pr_closing_scan "" 1
+  check "pr_closing_scan: a failed call is UNANSWERED, never 'closes nothing'" \
+    "[ \"$PRC_VERDICT\" = unanswered ]"
+  pr_closing_scan "" 0
+  check "pr_closing_scan: an empty body at exit 0 is also UNANSWERED (the fail-open shape)" \
+    "[ \"$PRC_VERDICT\" = unanswered ]"
+  check "pr_closing_scan: and it says so — the unanswered row denies the 'nothing' reading in words" \
+    "printf '%s' \"\$PRC_DETAIL\" | /usr/bin/grep -q \"NOT 'this PR declares nothing'\""
+  pr_closing_scan "NONE" 0
+  check "pr_closing_scan: the NONE sentinel is ANSWERED — genuinely declares nothing" \
+    "[ \"$PRC_VERDICT\" = none ] && printf '%s' \"\$PRC_DETAIL\" | /usr/bin/grep -q 'NOTHING'"
+  # ⭐ THE MEASURED SPECIMEN OF THIS SHIP'S OWN DEFECT. The first draft printed
+  # `will close: #NNNN`; GitHub accepts `close: #N`; PR #6768's body quoted its
+  # own sample output and GitHub linked live's #6739 to it — verified with
+  # `gh pr view 6768 --json closingIssuesReferences` → `[6739]`. An instrument
+  # whose rows get pasted into PR bodies, merge bodies, certs and ledger rows
+  # must not emit a keyword adjacent to a reference. All three details, because
+  # the one that bit was the one nobody thought of.
+  pr_closing_scan "#6727, #5333" 0
+  check "pr_closing_scan: the FOUND row is not itself a closing directive when quoted" \
+    "! printf '%s' \"\$PRC_DETAIL\" | /usr/bin/grep -qiE \"\$SELF_CLOSING_RE\""
+  pr_closing_scan "NONE" 0
+  check "pr_closing_scan: the NONE row is not itself a closing directive when quoted" \
+    "! printf '%s' \"\$PRC_DETAIL\" | /usr/bin/grep -qiE \"\$SELF_CLOSING_RE\""
+  pr_closing_scan "" 0
+  check "pr_closing_scan: the UNANSWERED row is not itself a closing directive when quoted" \
+    "! printf '%s' \"\$PRC_DETAIL\" | /usr/bin/grep -qiE \"\$SELF_CLOSING_RE\""
+  # The guard must be able to FAIL, or the three above are three green lines
+  # about a regex that matches nothing. This is the exact string that shipped.
+  check "the self-closing guard actually fires on the text that caused this" \
+    "printf '%s' 'will close: #6739' | /usr/bin/grep -qiE \"\$SELF_CLOSING_RE\""
+  pr_closing_scan "#6727, #5333" 0
+  check "pr_closing_scan: declared references are reported BY NUMBER, all of them" \
+    "[ \"$PRC_VERDICT\" = found ] \
+     && printf '%s' \"\$PRC_DETAIL\" | /usr/bin/grep -q '6727' \
+     && printf '%s' \"\$PRC_DETAIL\" | /usr/bin/grep -q '5333'"
+  # The remedy is the finding's whole value, and it is the OPPOSITE of the
+  # commit-body row's: a PR body is editable at no cost to the sha, and the
+  # merge body — the one thing the desk controls — provably cannot stop it.
+  check "pr_closing_scan: the remedy names the PR BODY, not the merge body" \
+    "printf '%s' \"\$PRC_DETAIL\" | /usr/bin/grep -q 'edit the PR BODY'"
+
   # The summary line, which is the only part of this the desk reads under time
   # pressure. Counters are saved and restored: the live run has not started yet
   # at --selftest time, but leaving them dirty is the kind of thing that makes a
@@ -1795,6 +1905,30 @@ FIXEOF
     "printf '%s' \"\$_code\" | /usr/bin/grep -q 'stopq \"notice 28 exact-sha CI\"' \
      && printf '%s' \"\$_code\" | /usr/bin/grep -q 'stopq \"notice 32 check-runs\"' \
      && [ \$(printf '%s' \"\$_code\" | /usr/bin/grep -c 'stopq \"PR state\"') -eq 2 ]"
+
+  # Structural, PR closing refs. Anchored at line start for the reason the block
+  # further down spells out: these patterns scan the file the assertions live in.
+  check "the closing-refs gate routes through pr_closing_scan, not an inline branch" \
+    "printf '%s' \"\$_code\" | /usr/bin/grep -q '^ *pr_closing_scan \"\$prc_raw\"'"
+  # THE LOAD-BEARING LINE OF THE WHOLE SHIP. Delete the sentinel and the fetch
+  # still works, the selftest above still passes on its own inputs, and the live
+  # gate starts printing UNANSWERED for every PR that legitimately closes
+  # nothing — or, if someone then "fixes" that by treating empty as none, states
+  # 'closes nothing' on a blip. The sentinel is what keeps those two apart, and
+  # it exists only in the fetch, where no unit test can see it.
+  check "the fetch emits the NONE sentinel — an empty array must not arrive as an empty string" \
+    "printf '%s' \"\$_code\" | /usr/bin/grep -q '^ *--jq .if (.closingIssuesReferences | length) == 0 then \"NONE\"'"
+  # A declared reference must never refuse: closing is usually the intent, and a
+  # row that stopped on it would be overridden every time and then believed
+  # never. Exactly one arm stops, and it is the unanswered one.
+  check "an ANSWERED closing-refs row passes; only the unanswered arm stops" \
+    "[ \$(printf '%s' \"\$_code\" | /usr/bin/grep -c '^ *stopq \"PR closing refs\"') -eq 1 ] \
+     && [ \$(printf '%s' \"\$_code\" | /usr/bin/grep -c '^ *pass \"PR closing refs\"') -eq 1 ] \
+     && [ \$(printf '%s' \"\$_code\" | /usr/bin/grep -cE '^ *(stop|warn) \"PR closing refs\"') -eq 0 ]"
+  # One GitHub blip is one refused gate. The PR-lookup row already stops when the
+  # lookup fails, and this row reads the PR that lookup could not find.
+  check "an unanswered PR LOOKUP does not stop twice — the closing row reports, it does not re-refuse" \
+    "printf '%s' \"\$_code\" | /usr/bin/grep -q '^ *echo \"  ----  PR closing refs            NOT READ'"
 
   # ── closing keywords ───────────────────────────────────────────────────────
   # The positive cases are the measured ones. The specimen first: this exact
@@ -2554,6 +2688,45 @@ case "$PRL_VERDICT" in
       ok)         pass  "PR state" "#$pr_num $PRS_DETAIL" ;;
       unanswered) stopq "PR state" "#$pr_num $PRS_DETAIL" ;;
       *)          stop  "PR state" "#$pr_num $PRS_DETAIL" ;;
+    esac
+    ;;
+esac
+
+# The PR-body closing references, read for the SAME PR the row above judged.
+# `if length == 0 then "NONE"` is the whole fail-closed property: an empty array
+# and a failed call must not both arrive as an empty string. Retried on the
+# verdict, like the mergeability read, for the same reason — a blip here reads
+# as an answer nobody can act on.
+case "$PRL_VERDICT" in
+  unanswered)
+    # One cause, one STOP. The lookup row above already carries it; a second
+    # stopq here would report one GitHub blip as two refused gates.
+    echo "  ----  PR closing refs            NOT READ — the PR lookup above is UNANSWERED, and this reads the PR it could not find. Re-run; do not state a closing consequence from this row."
+    ;;
+  none)
+    echo "  ----  PR closing refs            no OPEN PR for this sha — the PR-body channel needs one, so the commit bodies (row below) are the only way this push can close anything."
+    ;;
+  found)
+    for _attempt in 1 2 3; do
+      prc_raw="$(gh pr view "$pr_num" --repo "$REPO_SLUG" --json closingIssuesReferences \
+        --jq 'if (.closingIssuesReferences | length) == 0 then "NONE" else ([.closingIssuesReferences[] | "#\(.number)"] | join(", ")) end' 2>/dev/null)"
+      prc_rc=$?
+      pr_closing_scan "$prc_raw" "$prc_rc"
+      [ "$PRC_VERDICT" = unanswered ] || break
+      [ "$_attempt" -lt 3 ] && sleep 3
+    done
+    # Written one call per line, not as two inline case arms like the PR-state
+    # block above: the structural check below counts these by anchored pattern,
+    # and an inline arm puts `*)` at the line start where no honest anchor can
+    # reach it. A guard that cannot see the line it is about is the thing this
+    # file keeps being written to prevent.
+    case "$PRC_VERDICT" in
+      unanswered)
+        stopq "PR closing refs" "#$pr_num $PRC_DETAIL"
+        ;;
+      *)
+        pass "PR closing refs" "#$pr_num $PRC_DETAIL"
+        ;;
     esac
     ;;
 esac
