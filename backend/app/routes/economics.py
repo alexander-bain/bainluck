@@ -324,6 +324,108 @@ def _is_cumulative_ladder(market: FuturesMarket) -> bool:
     return marked >= 2 and marked == len(outcomes)
 
 
+def _ladder_rung(market: FuturesMarket):
+    """The rung a one-line summary of a cumulative ladder should print.
+
+    THE DEAREST RUNG IS NEVER THE ANSWER. A ladder's probabilities are monotone
+    in its threshold, so the highest one is always the loosest bound — "at least
+    370 rigs, 97%" tells a reader nothing they could not have guessed. The
+    informative rung is the TIGHTEST bound the market still calls more likely
+    than not, which is the distribution's own median: "at least 450, 57%".
+
+    Chosen on the probability, never on a number parsed out of the label. The
+    ladder is monotone in both directions the prefixes allow — ``above``/``at
+    least`` rise as the threshold falls, ``below``/``before`` rise as it rises —
+    and "the tightest bound still favoured" is the same sentence either way,
+    while a threshold parsed from "Before Jan 1, 2028" would sort on 1.
+
+    First of a tie wins, the same discipline as ``weather._leader_outcome``: two
+    rungs at one price must not be able to give two callers two answers.
+
+    Falls back to the dearest rung when the market favours none of them, which
+    is the best available statement about a ladder that is long odds all the way
+    up. Returns None only when nothing is priced.
+    """
+    priced = [
+        o for o in _outcomes_sorted(market) if o.current_probability is not None
+    ]
+    if not priced:
+        return None
+    favoured = [o for o in priced if float(o.current_probability) >= 0.5]
+    if favoured:
+        return min(favoured, key=lambda o: float(o.current_probability))
+    return max(priced, key=lambda o: float(o.current_probability))
+
+
+def _oil_row(market: FuturesMarket) -> dict | None:
+    """A Crude-oil row that names its question and prints a price the venue quotes.
+
+    #3004 — THE OIL CARD'S COMPOSITE LABEL IS ONLY HALF THE DEFECT; THE OTHER
+    HALF IS THAT THE NUMBER UNDER IT IS NOT A PRICE ANYBODY QUOTED. Both rows on
+    production tonight (390px, 2026-09-16 22:28 PDT) were built by treating a
+    market that is not a distribution as one, and then normalizing it:
+
+        rendered            prints  the venue says
+        WTI No                 32%  50.0  — P(No) on a Yes/No market whose
+                                           outcome set also carries two rungs
+                                           of a sibling ladder, so the four
+                                           "brackets" sum to 154.5% and the
+                                           rescale invents 32.4
+        Oil At least 370       13%  97.0  — twelve cumulative "At least X"
+                                           rungs summing to 777.5%, rescaled
+                                           into 12.5
+
+    The second is this file's own rule, one call site short: the
+    ``_CUMULATIVE_PREFIXES`` block above says in as many words that a cumulative
+    ladder's rows "legitimately sum well over 100% and must never be normalized
+    or rescaled against each other", and ``_is_cumulative_ladder`` has been here
+    since #2563 to detect exactly that. The energy branch asks a weaker question
+    (`any("above" in name)`), which "At least 370" fails, so the ladder falls
+    through to the partition path and is rescaled.
+
+    Repairing only the label would have been worse than leaving it: a reader who
+    cannot parse ``Oil At least 370`` distrusts the row, where "Number of US oil
+    rigs at end of 2026 · At least 370 — 13%" is a confident sentence that is
+    wrong by 84 points.
+
+    Returns None for a genuine partition of a price — ``WTI 85 or above`` is a
+    fair reading of one, has no specimen on today's card, and keeps the
+    composite path it has always had rather than taking an unmeasured change.
+
+    IT ALSO REFUSES GAS, and that refusal lives here rather than at the call
+    site so it is reachable by a test. The gas card is a HISTOGRAM of the whole
+    distribution: it is handed `brackets` and draws every one of them, so a
+    market summarised down to a single rung would render a one-bar chart. Gas
+    markets are cumulative ladders as often as oil ones are — the refusal is
+    load-bearing, not defensive.
+    """
+    if "gas" in (market.name or "").lower():
+        return None
+    outcomes = _clean_outcomes(list(market.outcomes))
+    if _is_cumulative_ladder(market):
+        rung = _ladder_rung(market)
+        if rung is None:
+            return None
+        return {
+            "q": market.name,
+            "prob": round(float(rung.current_probability) * 100, 1),
+            "leader": _leader_name(market, rung, outcomes),
+            "src": _source(market),
+            "delta": None,
+            "market_id": market.id,
+        }
+    # A bare Yes or No rung is proof the market is a BINARY whose extra outcomes
+    # are contamination rather than a distribution: no partition of a price
+    # prices "No" beside its brackets. `_market_row` is the page's binary
+    # renderer and already refuses the negation's price (#6696), so it returns
+    # the question with a price the venue actually quotes. It returns None above
+    # five outcomes, and that is a fall-through, not a refusal — a market that
+    # wide is handed back to the bracket path unchanged.
+    if any(_UNINFORMATIVE_LEADER_RE.match((o.name or "").strip()) for o in outcomes):
+        return _market_row(market)
+    return None
+
+
 def _distribution_row(
     market: FuturesMarket, *, min_outcomes: int = 6
 ) -> dict | None:
@@ -929,6 +1031,14 @@ async def get_economics(db: AsyncSession):
         outcomes = _outcomes_sorted(m)
         has_cumulative = any("above" in (o.name or "").lower() for o in outcomes)
         if ("gas" in name_lower or "oil" in name_lower or "wti" in name_lower or "brent" in name_lower or "natural gas" in name_lower) and len(outcomes) >= 3:
+            # #3004. Only the OIL half is re-routed — `_oil_row` refuses a gas
+            # market itself, so the histogram card's path stays byte-identical —
+            # and it returns None for a genuine partition, which falls through
+            # to the bracket path below unchanged.
+            _oil = _oil_row(m)
+            if _oil is not None:
+                oil_rows.append(_oil)
+                continue
             if has_cumulative:
                 brackets = _cumulative_to_discrete(outcomes, max_buckets=6)
             else:
