@@ -183,19 +183,34 @@ class TestTheJudgement:
         """The judgement compares opaque tuples, so the only thing standing
         between it and a home-grown election is that the SWEEP passes
         `twin_identity_rank` through. Asserted on the sweep's source rather
-        than mocked: a re-spelled election here would pass every test above."""
+        than mocked: a re-spelled election here would pass every test above.
+
+        🔴 COMMENTS AND DOCSTRINGS ARE STRIPPED FIRST, AND THAT IS NOT
+        TIDINESS. The first version of this test searched the raw source, and
+        the eager-load mutation SURVIVED it: the line above the code reads
+        "`selectinload(Event.sport)` is REQUIRED, not an optimisation", so
+        deleting the actual `.options(...)` call left the assertion satisfied by
+        the comment explaining why it must not be deleted. A source-scanning
+        guard that can be satisfied by prose about itself is vacuous.
+        """
+        import ast
         import inspect
+        import textwrap
 
         from app.tasks import polymarket_container_twin_sweep as sweep
 
-        source = inspect.getsource(sweep.load_rows)
-        assert "twin_identity_rank(event)" in source
-        assert "from app.utils.event_twin_fold import twin_identity_rank" in (
-            inspect.getsource(sweep.load_rows)
-        )
-        # And the relationship the election's league rung reads is eager-loaded;
-        # a lazy load would raise on an async session or, worse, change it.
-        assert "selectinload(Event.sport)" in source
+        tree = ast.parse(textwrap.dedent(inspect.getsource(sweep.load_rows)))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+                node.value.value = ""  # drop docstrings; comments are already gone
+        code = ast.unparse(tree)
+
+        assert "twin_identity_rank(event)" in code
+        assert "from app.utils.event_twin_fold import twin_identity_rank" in code
+        # The relationship the election's league rung (#2866) reads must be
+        # EAGER-loaded: a lazy load raises on an async session, and an unloaded
+        # one would silently change the election.
+        assert "selectinload(Event.sport)" in code
 
     def test_a_fixture_on_one_row_is_left_entirely_alone(self):
         """The overwhelming majority: 10,749 of 10,932 keys name one event."""
