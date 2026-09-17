@@ -88,3 +88,17 @@ frontend/lib/eventState.ts
 # classified `frontend`, skip this shard, and let the two tiers drift apart
 # silently — with the server now the one asserting the stale word.
 frontend/lib/sportCategories.ts
+
+# #6238. `test_event_payload_draw_priced_away_6238.py` reads the ONE
+# `winnerMarketPricesADraw: true` row out of this file's `SPORT_SCORING` table
+# and asserts it is character-for-character the server's
+# `DRAW_PRICED_SPORT_KEY_MATCHES`. Three runtimes decide whether a sport's
+# winner market prices a draw — server, web and Swift — and they must decide it
+# the same way or one withholds the away figure where another prints a
+# complement, which is the exact split that let the web print `1 - home` for
+# five days after native stopped. Widening the rule to a second sport is a
+# one-word edit HERE, and it is precisely the frontend-only change the
+# classifier would send past the shard holding the parity test: the server would
+# keep serving a fabricated away on a sport the web had already declared
+# three-way, and nothing would say so.
+frontend/lib/marketMapUtils.ts
