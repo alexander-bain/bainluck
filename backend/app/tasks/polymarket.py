@@ -2103,6 +2103,48 @@ async def rescue_stuck_future_status_events() -> dict:
         return stats
 
 
+def submarket_is_open(event, market) -> bool:
+    """Whether a decomposed sub-market row may be stamped `status='open'`. Pure.
+
+    #6734. The sub-market rows written below are keyed on
+    `external_id=market.condition_id` — each one IS an individual Polymarket
+    market — but their status has always been read off `event.active`, the
+    PARENT's flag. A market the venue has closed while its event still trades
+    therefore keeps `status='open'` forever, and the price frozen at the moment
+    the book went away keeps being served as a live quote. The filed specimen is
+    a LIVE tennis page printing `Over 21.5 / 22.5 / 23.5` all at 51% off three
+    different condition ids whose books Gamma answers
+    `No orderbook exists for the requested token id`.
+
+    Two independent ways the parent's flag is the wrong question, both reachable
+    from this one writer:
+
+      * the market closes under an open event — the specimen above; and
+      * the EVENT is closed but Gamma keeps `active=true` on it, which is why
+        :func:`sunk_event_is_open` exists. `_process_event_batch` is fed by a
+        `closed=True` sweep as well as the open poll, so that population arrives
+        here too and is stamped `open` on the same expression.
+
+    Read through `getattr` for the reason the `closed` test in
+    `_is_reserved_slot` is: a duck-typed caller carrying no such field keeps
+    exactly the old behaviour rather than silently gaining the carve-out.
+
+    STRICTLY TIGHTENING, deliberately. This adds two ways to be `resolved` and
+    removes none — it can never turn a stored `resolved` back into `open`. That
+    is not incidental: `status` gates `/api/futures/{categories,faceted,
+    grouped-feed,movers}`, so a predicate that un-resolved rows would PUSH
+    markets onto the feed and into Biggest Movers, and the inverse defect
+    (rows stamped `resolved` while the venue still trades them) is a different
+    fix with its own blast radius. It is measured and filed, not smuggled in
+    here.
+    """
+    return bool(
+        getattr(event, "active", False)
+        and not getattr(event, "closed", False)
+        and not getattr(market, "closed", False)
+    )
+
+
 async def _process_event_batch(
     events, stats, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot,
     pg_insert, probability_to_american, compute_market_tier,
@@ -2442,13 +2484,19 @@ async def _process_event_batch(
                             if market.volume_24h is not None
                             else None
                         )
+                        # #6734: this row IS `market`, so its openness is the
+                        # market's own — not the parent event's `active`. See
+                        # `submarket_is_open`; the two insert/update sites below
+                        # share this one value so an upsert cannot disagree with
+                        # itself about whether the leg still trades.
+                        sub_open = submarket_is_open(event, market)
                         sub_set = {
                             "name": sub_name,
                             "market_tier": sub_tier,
-                            "status": "open" if event.active else "resolved",
+                            "status": "open" if sub_open else "resolved",
                             # Same coupling as the parent above (LINKLOSS-02).
                             "settled_at": (
-                                None if event.active
+                                None if sub_open
                                 else func.coalesce(
                                     FuturesMarket.settled_at, func.now()
                                 )
@@ -2513,7 +2561,7 @@ async def _process_event_batch(
                             mutually_exclusive=True,
                             commence_time=commence_time,
                             resolution_date=resolution_date,
-                            status="open" if event.active else "resolved",
+                            status="open" if sub_open else "resolved",
                             group_id=poly_group_id,
                             group_type="polymarket_sub_market",
                             event_id=parent_event_id,
