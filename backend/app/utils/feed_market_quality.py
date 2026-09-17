@@ -375,6 +375,16 @@ EMPTY_BOOK_MIN_SPREAD = round(EMPTY_BOOK_MIN_ASK - EMPTY_BOOK_MAX_BID, 4)
 # the spread comparison to this is exact for every value the columns can hold.
 _BOOK_PRICE_DECIMALS = 4
 
+# The precision of |price - midpoint|, which is NOT the book precision and must not be
+# borrowed from it (#6784). `current_probability` is Numeric(7,6) while the two book
+# columns are Numeric(5,4), so a midpoint `(bid + ask) / 2` is exact at 5 decimals and
+# the difference against a 6-decimal price is exact at 6. Rounding that difference to
+# `_BOOK_PRICE_DECIMALS` would be coarser than the data: a genuine distance of 0.010049
+# would collapse onto 0.0100 and be refused as if it sat exactly on the tolerance. 6
+# is fine enough to keep every real distance intact and still far coarser than the
+# ~1e-17 representation error that made the bound arbitrary in the first place.
+_MIDPOINT_DELTA_DECIMALS = 6
+
 
 def is_empty_book_midpoint(
     probability: "float | None",
@@ -412,28 +422,39 @@ def is_empty_book_midpoint(
 
     THIS HELPER IS NO LONGER READ-SIDE ONLY, and the prose saying so was stale from
     #6676 until CERT-3015 named it (follow-up
-    ``6676-UPDATE-SHARED-PREDICATE-DOCSTRING-FOR-WRITER-CONSUMER``). There are SIX
+    ``6676-UPDATE-SHARED-PREDICATE-DOCSTRING-FOR-WRITER-CONSUMER``). There are SEVEN
     consumers in two classes, and they differ in what refusal MEANS:
 
       * READ side (3) -- ``routes/events.py`` at ``game-markets`` and at the search
         slice, and ``routes/futures.py`` for the grouped feed. These refuse to SERVE
         the outcome; nothing is rewritten and no stored price is mutated (gotcha #21).
-      * WRITE side (3) -- ``tasks/polymarket.py`` at
+      * WRITE side (4) -- ``tasks/polymarket.py`` at
         ``_resolve_market_probability_with_source`` and at ``_parent_outcome_data``,
-        and ``tasks/futures_price_refresh.py`` at ``_write_prices`` (#6676's third
-        writer, landed 2026-09-17). These DECLINE THE UPSERT, so the row is never
+        ``tasks/futures_price_refresh.py`` at ``_write_prices`` (#6676's third
+        writer, landed 2026-09-17), and ``tasks/prediction_market_matching.py`` in the
+        Polymarket leg-pricing guard, which pairs this with
+        :func:`is_fabricated_midpoint`. These DECLINE THE UPSERT, so the row is never
         written in the first place.
 
-    ONE OF THE SIX RIDES THE HEAVY APP AND THE OTHER FIVE DO NOT, so notice 48 binds
+    THE COUNT WAS SIX IN THIS DOCSTRING UNTIL #6784 AND THE MISSING ONE WAS A HEAVY
+    WRITER, which is the combination that makes a stale census cost something: the
+    sentence below used to read "one of the six rides the heavy app", and a notice-48
+    claim leaning on it would have under-stated the heavy half by a whole consumer.
+    Re-count by grepping for the symbol across ``app/``, not from this list.
+
+    TWO OF THE SEVEN RIDE THE HEAVY APP AND THE OTHER FIVE DO NOT, so notice 48 binds
     for part of a change here and not for the part a reader sees:
 
       * the 3 READ consumers are routes on the web dyno, and both Polymarket writers
         are reached from ``app.tasks.poll_polymarket_markets``, which is NOT in
-        ``HEAVY_TASKS``. All five are live at the ordinary main-app release.
+        ``HEAVY_TASKS`` (its beat entry carries no ``options.queue`` either). All five
+        are live at the ordinary main-app release, and they are the whole of what a
+        reader sees change.
       * ``futures_price_refresh._write_prices`` is reached from
-        ``app.tasks.refresh_stale_futures_prices``, which IS in ``HEAVY_TASKS``, so
-        that writer does not change behaviour until ``bainluck-heavy`` carries the
-        commit.
+        ``app.tasks.refresh_stale_futures_prices`` and the matching guard from
+        ``app.tasks.match_prediction_markets``. BOTH are in ``HEAVY_TASKS`` and both
+        beat entries also carry a literal ``options: {"queue": "heavy"}``, so neither
+        writer changes behaviour until ``bainluck-heavy`` carries the commit.
 
     MEASURE MEMBERSHIP AGAINST ``app.tasks.HEAVY_TASKS`` BY TASK NAME, NEVER BY
     GREPPING THE MODULE. The set is keyed on the registered Celery name in
@@ -442,6 +463,13 @@ def is_empty_book_midpoint(
     "heavy" returns only a boxing ticker and reads as a clean negative. An earlier
     revision of this docstring claimed all three writers were non-heavy on exactly
     that evidence, and it was wrong. Import the set and ask it.
+
+    THEN ASK THE BEAT ENTRY TOO, BECAUSE MEMBERSHIP IS SUFFICIENT AND NOT NECESSARY.
+    Being in ``HEAVY_TASKS`` forces the heavy queue, but a beat entry carrying a
+    literal ``options: {"queue": "heavy"}`` routes there without being in the set at
+    all (``recover-sunk-polymarket-events-hourly``, #6758, is exactly that shape). So
+    the set alone can return a false negative for a task that demonstrably runs on
+    ``bainluck-heavy``: read ``options.queue``, then the set.
 
     WHY THE REFRESH WRITER IS UNPAIRED while the two ingest ones pair this with
     :func:`is_fabricated_midpoint` (lane1b, #6676): it is shared by both venues, and
@@ -486,7 +514,19 @@ def is_empty_book_midpoint(
     # exact-threshold 0.05/0.95. 4dp is exact for these Numeric(5,4) columns.
     if round(ask - bid, _BOOK_PRICE_DECIMALS) < EMPTY_BOOK_MIN_SPREAD:
         return False
-    return abs(float(probability) - (bid + ask) / 2) <= EMPTY_BOOK_MIDPOINT_TOLERANCE
+    # Quantized for the same reason the spread is, one line up (#6784) -- but at the
+    # DELTA's precision, not the book's; see `_MIDPOINT_DELTA_DECIMALS` for why
+    # borrowing 4dp here would be coarser than the data. Unrounded, `abs(p - mid)`
+    # lands either side of the bound by representation error alone: across the 72
+    # integer-cent books sitting exactly one tolerance from their midpoint it
+    # evaluates to 0.009999999999999953 for 6 of them and 0.010000000000000009 for
+    # the other 66, so the `<=` refused 6 and admitted 66 at one distance under one
+    # policy. The served case was `Above 107` at 0.51 on a 0.01/0.99 book (outcome
+    # 225982191). Rounding makes the bound mean what the constant says; it moves no
+    # threshold -- measured over all 1,030,301 integer-cent triples, 66 newly refused
+    # and 0 no longer refused, every one of the 66 exactly ON 0.0100.
+    delta = round(abs(float(probability) - (bid + ask) / 2), _MIDPOINT_DELTA_DECIMALS)
+    return delta <= EMPTY_BOOK_MIDPOINT_TOLERANCE
 
 
 def bout_price_is_supported(sides: "Iterable[tuple]") -> bool:
@@ -543,12 +583,25 @@ def bout_price_is_supported(sides: "Iterable[tuple]") -> bool:
     ``_concept_can_render`` gate then does what it already does for the two UFC
     cards beside this one, which it suppresses correctly today.
 
-    SETTLED MEANS SETTLED, BY CONSTRUCTION RATHER THAN BY EXEMPTION. A graded side
-    carries 0 or 1, which is one whole midpoint-tolerance away from any book this
-    predicate can reach, so condition 3 fails and the result is kept. The three
-    arms of ``futures_unsupported_price`` need an explicit ``resolution_source``
-    carve-out because they read a trade column; this reads three columns of one
-    write and cannot see a settlement value as a quote.
+    SETTLED MEANS SETTLED — BUT NOT BY CONSTRUCTION, AND THE ORIGINAL WORDING HERE
+    WAS WRONG. This paragraph used to argue that a graded side carries 0 or 1, one
+    whole midpoint-tolerance from any book this predicate can reach, so a settled
+    result is kept automatically. Measured on production while building #6784, that
+    is false: a graded row keeps whatever ``current_probability`` it was last
+    written with, and settlement does not move it to 0 or 1. On open/active markets
+    the predicate already refuses **3 rows whose ``is_winner`` is true and 52
+    carrying a ``resolution_source``** — outcome 133046831 is a settled
+    ``api_settlement`` winner still holding ``0.510000`` on a 0.00/1.00 book, on a
+    market left ``status='open'`` by gotcha #33.
+
+    So the true statement is narrower and worth having straight: this predicate is
+    blind to grading, and a settled row whose stale price happens to sit on an empty
+    book IS refused. For a BOUT that is still the behaviour we want — printing "51%"
+    beside a fighter who already won is the truth defect, not the refusal — and the
+    caller keeps both names either way. But nothing here makes settled rows safe, and
+    a future caller that needs them kept must read ``is_winner`` /
+    ``resolution_source`` itself. The three arms of ``futures_unsupported_price``
+    carve out ``resolution_source`` explicitly for precisely this reason.
 
     ``sides`` IS AN ITERABLE OF ``(probability, yes_bid, yes_ask)`` TRIPLES, in any
     order and of any length, because the caller's shape is not this module's
