@@ -45,6 +45,9 @@ from sqlalchemy import text
 
 from app.utils.calibration_phase_ledger import (
     CANCELLED,
+    CHECKPOINT_REASON_ABSENT,
+    CHECKPOINT_REASON_LEASE_HELD,
+    CHECKPOINT_REASON_READ_FAILED,
     DONE_STATUSES,
     FAILED,
     FEASIBILITY_INDETERMINATE,
@@ -667,6 +670,7 @@ class PhaseRunner:
         owner: str,
         generation: int,
         fingerprint: str,
+        checkpoint_reason: str = "",
     ) -> None:
         self.ledger = PhaseLedger(
             plan=plan,
@@ -677,6 +681,11 @@ class PhaseRunner:
         )
         self.checkpoint = checkpoint
         self.checkpoint_action = checkpoint_action
+        #: WHY the action above (#6599). Defaulted rather than required so every
+        #: existing construction keeps its meaning; the one caller that stands
+        #: down on ``REFUSE`` reads it to tell a healthy overlap from a durable
+        #: read that did not answer.
+        self.checkpoint_reason = checkpoint_reason
         self.owner = owner
         self.generation = generation
         self.fingerprint = fingerprint
@@ -1286,6 +1295,9 @@ class NullPhaseRunner:
     """
 
     checkpoint_action = FRESH
+    #: #6599's companion to the action. A cold-cache serve reads no checkpoint,
+    #: so there is no read to have failed.
+    checkpoint_reason = CHECKPOINT_REASON_ABSENT
     carried_phases: tuple[str, ...] = ()
     #: Never. A one-off serve has nothing to resume into and must not have its
     #: request transaction committed out from under the caller.
@@ -1565,8 +1577,32 @@ async def load_main_checkpoint(
     owner: str,
     generation: int,
     max_age_s: float = STATE_MAX_AGE_S,
-) -> tuple[MainBuildCheckpoint, str]:
-    """Read + classify the durable checkpoint (fresh / resume / invalidate / refuse)."""
+) -> tuple[MainBuildCheckpoint, str, str]:
+    """Read + classify the durable checkpoint (fresh / resume / invalidate / refuse).
+
+    Returns ``(checkpoint, action, reason)``. The third value is the same
+    addition CAL-P024 made to the staged cursor and for the same reason: the
+    action alone is not diagnostic. Two unrelated causes now produce ``REFUSE``,
+    and the caller's stand-down has to be able to say which — a beat that stood
+    down because a sibling holds the lease is healthy, and a beat that stood
+    down because the database did not answer is not.
+
+    **#6599, second site: a read that did not ANSWER returns ``REFUSE``, not
+    ``INVALIDATE``.** This is `load_staged_cursor`'s defect one layer up, found
+    while fixing it. ``read.unavailable`` is ``durable_state``'s named UNKNOWN —
+    the read did not come back — and it was being folded in with the six
+    statuses that are a row we HAVE and can prove we may not resume (torn
+    payload, wrong schema, wrong task, wrong population version, wrong
+    fingerprint, past the age bound). Those still invalidate, unchanged, and a
+    genuinely absent row is still ``FRESH``: a cold start is not a failure.
+
+    The damage the fold does is not a lost resume. The beat ran on the blank and
+    then :func:`save_main_checkpoint` wrote it OVER the row the read could not
+    see, so one statement timeout discarded every phase the build had banked —
+    and on a build that does not fit in one beat, discarding the carried phases
+    every beat is how it never finishes. ``REFUSE`` is the stand-down the build
+    already has, whose whole contract is that doing nothing is correct.
+    """
     from app.services.durable_snapshots import read_snapshot_standalone
 
     read = await read_snapshot_standalone(
@@ -1575,17 +1611,27 @@ async def load_main_checkpoint(
         max_age_s=max_age_s,
     )
     if not read.ok or read.envelope is None:
-        if read.status != "missing":
-            logger.info(
-                "calibration main checkpoint not resumable (%s) — starting fresh",
-                read.status,
-            )
         blank = new_main_checkpoint(
             version=population_version, fingerprint=fingerprint, owner=owner, generation=generation
         )
-        return blank, (FRESH if read.status == "missing" else INVALIDATE)
+        if read.status == "missing":
+            return blank, FRESH, CHECKPOINT_REASON_ABSENT
+        if read.unavailable:
+            # #6599. UNKNOWN may not be ACTED ON as the destructive reading any
+            # more than it may be SERVED as the reassuring one (gotcha #53).
+            logger.warning(
+                "calibration main checkpoint read did not answer (%s) — standing "
+                "down rather than authoring a checkpoint over one we could not read",
+                read.error or read.error_class or "no detail",
+            )
+            return blank, REFUSE, CHECKPOINT_REASON_READ_FAILED
+        logger.info(
+            "calibration main checkpoint not resumable (%s) — starting fresh",
+            read.status,
+        )
+        return blank, INVALIDATE, f"envelope_{read.status}"
 
-    return decode_main_checkpoint(
+    checkpoint, action = decode_main_checkpoint(
         read.envelope.payload,
         expected_version=population_version,
         expected_fingerprint=fingerprint,
@@ -1593,6 +1639,11 @@ async def load_main_checkpoint(
         generation=generation,
         now=time.time(),
     )
+    # The decode has exactly one ``REFUSE``: a different owner holds an
+    # unexpired lease. Named here rather than inside the pure decoder so its
+    # ``(checkpoint, action)`` contract — and every caller and corpus case that
+    # rests on it — is untouched by this fix.
+    return checkpoint, action, (CHECKPOINT_REASON_LEASE_HELD if action == REFUSE else action)
 
 
 async def save_main_checkpoint(checkpoint: MainBuildCheckpoint, *, terminal: str) -> bool:
@@ -2556,34 +2607,48 @@ async def build_runner(
         )
 
     try:
-        checkpoint, action = await load_main_checkpoint(
+        checkpoint, action, reason = await load_main_checkpoint(
             population_version=population_version,
             fingerprint=fingerprint,
             owner=owner,
             generation=generation,
             max_age_s=carry_max_age_s,
         )
-    except Exception as exc:  # noqa: BLE001 — an unreadable checkpoint is a fresh one
+    except Exception as exc:  # noqa: BLE001 — UNKNOWN, so we may not write over it
+        # #6599. This comment used to read "an unreadable checkpoint is a fresh
+        # one" and this arm returned INVALIDATE. It is the same untruth the
+        # named-``unavailable`` route carried: a read that raised is evidence
+        # about the DATABASE, never about the checkpoint, and the beat that runs
+        # on the blank writes it over the row it could not see.
         logger.warning("calibration main checkpoint read failed: %s", exc)
-        checkpoint, action = (
+        checkpoint, action, reason = (
             new_main_checkpoint(
                 version=population_version,
                 fingerprint=fingerprint,
                 owner=owner,
                 generation=generation,
             ),
-            INVALIDATE,
+            REFUSE,
+            CHECKPOINT_REASON_READ_FAILED,
         )
 
     runner = PhaseRunner(
         plan=plan,
         checkpoint=checkpoint,
         checkpoint_action=action,
+        checkpoint_reason=reason,
         population_version=population_version,
         owner=owner,
         generation=generation,
         fingerprint=fingerprint,
     )
+    # #6599, the half the cursor fix taught: a stood-down beat that records
+    # nothing is indistinguishable in the ledger from a beat that never ran, and
+    # "how often is this happening" has to be answerable from the beat ring.
+    # Recorded for EVERY action, not only the refusals, so the denominator is
+    # there too. Before the returns below, because one of them is the stand-down.
+    runner.ledger.record_stage(f"checkpoint:{action}", 0)
+    runner.ledger.record_stage(f"checkpoint:reason:{reason}", 0)
     for phase in checkpoint.completed_phases:
         runner.carry(phase)
     if runner.is_carried(PHASE_FUTURES):

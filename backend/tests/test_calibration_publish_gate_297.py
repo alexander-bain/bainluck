@@ -884,12 +884,25 @@ class _FakeRedis:
 
 
 class _FakeCM:
-    """Task-session stand-in; the beat arms a statement_timeout on it (Queue 274)."""
+    """Task-session stand-in; the beat arms a statement_timeout on it (Queue 274).
+
+    #6599: the session must also be able to ANSWER A SELECT. The durable reads
+    (``read_snapshot``) run on it, and a bare ``AsyncMock`` returns a coroutine
+    from ``.mappings()``, which raises inside the read and is classified
+    ``unavailable`` — the named UNKNOWN. That was invisible while the build
+    treated UNKNOWN as "no checkpoint"; now it stands the beat down, so a double
+    that cannot answer silently skips the whole run these tests assert on. The
+    honest answer for this fixture is the one it always meant: no durable row.
+    """
 
     async def __aenter__(self):
-        from unittest.mock import AsyncMock
+        from unittest.mock import AsyncMock, MagicMock
 
-        return AsyncMock()
+        db = AsyncMock()
+        db.execute.return_value = MagicMock(
+            **{"mappings.return_value.first.return_value": None}
+        )
+        return db
 
     async def __aexit__(self, *a):
         return False

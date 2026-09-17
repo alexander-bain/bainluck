@@ -76,6 +76,16 @@ def _payload(outcomes: int = 635_464) -> dict:
 class _FakeCM:
     def __init__(self):
         self.db = AsyncMock()
+        # #6599: the durable reads run on this session, and a bare AsyncMock
+        # returns a coroutine from `.mappings()` — which raises inside
+        # `read_snapshot` and is classified `unavailable`, the named UNKNOWN.
+        # The build used to treat that as "no checkpoint" and carry on; it now
+        # stands down rather than write over a row it could not read, so a
+        # double that cannot answer a SELECT would skip the beat these tests
+        # assert on. "There is no durable row" is what this fixture meant.
+        self.db.execute.return_value = MagicMock(
+            **{"mappings.return_value.first.return_value": None}
+        )
 
     async def __aenter__(self):
         return self.db

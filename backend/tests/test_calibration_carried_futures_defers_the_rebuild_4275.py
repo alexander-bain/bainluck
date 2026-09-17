@@ -74,7 +74,9 @@ def wiring(monkeypatch):
 
     def _serve(checkpoint: MainBuildCheckpoint, action: str = RESUME):
         async def _load(**kwargs):
-            return checkpoint, action
+            # Three values since #6599: the reason travels beside the action so
+            # a stood-down beat can say WHICH stand-down it was.
+            return checkpoint, action, action
 
         monkeypatch.setattr(cmb, "load_main_checkpoint", _load)
 
