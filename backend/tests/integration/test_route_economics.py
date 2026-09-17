@@ -184,7 +184,11 @@ class TestEconomicsThemes:
     async def test_housing_structure(self, client):
         housing = (await client.get("/api/economics")).json()["themes"]["housing"]
         assert isinstance(housing["count"], int) and housing["count"] >= 0
-        assert isinstance(housing["mortgage_brackets"], list)
+        # #6702: null when no mortgage ladder is open, otherwise a distribution
+        # carrying the selected market's own question.
+        assert housing["mortgage_dist"] is None or isinstance(
+            housing["mortgage_dist"], dict
+        )
         assert isinstance(housing["markets"], list)
 
     async def test_trade_structure(self, client):

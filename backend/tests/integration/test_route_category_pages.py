@@ -606,7 +606,9 @@ class TestEconomicsEndpoint:
         housing = body["themes"]["housing"]
         assert "count" in housing
         assert isinstance(housing["count"], int)
-        assert "mortgage_brackets" in housing
+        # #6702: the card ships its own question and the shape of its rows, in
+        # place of a bare always-rescaled bracket array.
+        assert "mortgage_dist" in housing
         assert "markets" in housing
         assert isinstance(housing["markets"], list)
 

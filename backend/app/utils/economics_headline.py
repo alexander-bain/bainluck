@@ -61,7 +61,12 @@ import re
 from dataclasses import dataclass
 from typing import Sequence
 
-__all__ = ["RecessionCandidate", "select_recession_headline"]
+__all__ = [
+    "RecessionCandidate",
+    "select_recession_headline",
+    "LadderCandidate",
+    "select_mortgage_ladder",
+]
 
 
 @dataclass(frozen=True)
@@ -138,4 +143,106 @@ def select_recession_headline(
             _year_rank(c.name, current_year),
             c.market_id,
         ),
+    )
+
+
+# ═══ THE MORTGAGE CARD (#6702) ═══
+#
+# The same defect as #2674, one section further down the page and with a
+# distribution instead of a single number. The housing card was headed by the
+# hardcoded string "30-year mortgage rate by end of 2026" above whichever
+# mortgage market with three-or-more outcomes the theme loop saw LAST — on the
+# same ORDER BY-less query — and on production 2026-09-16 that was market
+# ``60775281`` *"30-year mortgage rate this week"*, a market resolving the next
+# morning, drawn under an end-of-year headline.
+#
+# The repair has the same two halves, in the same order of importance: the card
+# ships the selected market's own question (it can no longer ask one thing and
+# answer another, whatever this ranking does), and the ranking below decides
+# only which honest question gets the card.
+#
+# ═══ WHY THE RANK IS A SPREAD ═══
+#
+# Two mortgage ladders were open when this was written and they are not equally
+# worth a card:
+#
+#   109321   "How high will 30yr mortgage rate get this year?"   99.9 → 57.0
+#   60775281 "30-year mortgage rate this week"                   94.5 → 68.0
+#
+# The second is thirteen rungs between 6.73% and 6.85%: monotone, honest, and
+# almost information-free — a reader learns nothing from a bar chart whose bars
+# are all nearly the same height. The first sweeps from a near-certainty down
+# through a coin flip, which is the shape that makes a ladder worth drawing. The
+# property that separates them is the SPREAD of the prices, so that is what is
+# ranked.
+#
+# Measured on the probabilities, never on a threshold parsed out of a label —
+# the same discipline as ``economics._ladder_rung``, and for the same reason:
+# these ladders are phrased "Above 6.73%", "At least 370" and "Before Jan 1,
+# 2028" in one pool, and only the price is comparable across all three.
+#
+# ⚠️ AND THE RANKING HAS NOT YET HAD TO BREAK A TIE IN PRODUCTION. Of the three
+# mortgage markets with rungs open on 2026-09-16, TWO never reach this helper:
+# ``should_exclude_from_featured`` drops a market whose leader clears 0.98, and
+# a cumulative ladder's leader is its LOOSEST bound, which is a near-certainty
+# by construction. 109321 leads at 99.9 and 115646 at 100.0, so both are gone
+# before the theme loop, and the card is drawn from the single survivor. That
+# interaction is filed separately — it is a shared predicate on three routes and
+# is not this card's to change. The rank below is written for the pool, not for
+# tonight; what tonight's pool needs is the BINDING and the raw rows.
+#
+# ⚠️ CANDIDACY IS THE LOAD-BEARING HALF OF THIS HELPER, NOT THE RANKING. Only a
+# market the caller has already confirmed is a cumulative ladder may be offered
+# here. The third market, Polymarket's ``115646``, carries outcomes ``↑ 6.20%``,
+# ``↓ 6.00%`` and a stray ``Yes``/``No`` pair; it is not a ladder,
+# ``economics._is_cumulative_ladder`` correctly refuses it, and a card drawn
+# from it would be rescaled into a fake distribution — which is the defect this
+# issue is about. Its price spread is the widest of the three (100 → 0), so
+# ranking WITHOUT the candidacy gate would pick exactly the wrong market.
+
+
+@dataclass(frozen=True)
+class LadderCandidate:
+    """One cumulative-threshold market a distribution card may be drawn from.
+
+    ``probs`` are percentages (0–100), in any order — the spread does not care.
+    The caller has already established that this market IS a ladder; see the
+    warning above.
+    """
+
+    market_id: int
+    name: str
+    probs: Sequence[float]
+
+
+def _spread(probs: Sequence[float]) -> float:
+    """How far a ladder's prices travel, in percentage points.
+
+    Rounded to one decimal — the same precision the page prints — so that a
+    float hair's breadth between two ladders cannot flip the card from one
+    reingest to the next. Ties fall through to ``market_id``.
+    """
+    if not probs:
+        return 0.0
+    return round(max(probs) - min(probs), 1)
+
+
+def select_mortgage_ladder(
+    candidates: Sequence[LadderCandidate],
+) -> LadderCandidate | None:
+    """Return the ladder that should draw the housing card, or None.
+
+    Widest price spread first, then ``market_id`` as a total tiebreak so the
+    result never depends on query order — the property #2674 found missing and
+    the only one of the two that is a correctness claim.
+
+    Returns ``None`` for an empty list; the route then publishes no
+    distribution and the page renders no card, rather than a card whose numbers
+    are a rescale of something that was never a distribution.
+    """
+    if not candidates:
+        return None
+    return min(
+        candidates,
+        key=lambda c: (-_spread(c.probs), c.market_id),
     )

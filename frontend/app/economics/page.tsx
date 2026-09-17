@@ -483,13 +483,12 @@ export default function EconomicsPage() {
           <section className="mb-12">
             <SectionHeader kicker="Housing & Mortgages" title="Rates, prices, and the American dream" count={t.housing.count} />
             <div className="grid md:grid-cols-[1.2fr_1fr] gap-3.5">
-              {t.housing.mortgage_brackets && t.housing.mortgage_brackets.length > 0 && (
-                <Card>
-                  <div className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-3">
-                    30-year mortgage rate by end of 2026
-                  </div>
-                  <Histogram buckets={t.housing.mortgage_brackets as [number, string][]} color="#8B5CF6" height={90} />
-                </Card>
+              {/* The card asks the market's own question and draws its rows in
+                  the shape the market has (#6702). It used to be a hardcoded
+                  "30-year mortgage rate by end of 2026" over a Histogram, which
+                  rescaled a cumulative ladder into a distribution it is not. */}
+              {t.housing.mortgage_dist && (
+                <DistributionCard dist={t.housing.mortgage_dist} />
               )}
               {t.housing.markets && t.housing.markets.length > 0 && (
                 <Card>

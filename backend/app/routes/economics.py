@@ -28,7 +28,9 @@ from app.utils.cross_source_matching import (
     source as _source,
 )
 from app.utils.economics_headline import (
+    LadderCandidate,
     RecessionCandidate,
+    select_mortgage_ladder,
     select_recession_headline,
 )
 from app.utils.market_staleness import should_exclude_from_featured
@@ -322,7 +324,9 @@ def _is_cumulative_ladder(market: FuturesMarket) -> bool:
     return marked >= 2 and marked == len(outcomes)
 
 
-def _distribution_row(market: FuturesMarket) -> dict | None:
+def _distribution_row(
+    market: FuturesMarket, *, min_outcomes: int = 6
+) -> dict | None:
     """Render a multi-outcome market that ``_market_row`` refuses.
 
     ``_market_row`` returns None above five outcomes, which silently drops
@@ -330,9 +334,14 @@ def _distribution_row(market: FuturesMarket) -> dict | None:
     keeps them by serving their shape instead: a cumulative threshold ladder
     stays raw (see ``_CUMULATIVE_PREFIXES``), a partition is normalized into
     brackets. Returns None when nothing is priced.
+
+    ``min_outcomes`` defaults to 6 because that is where ``_market_row`` gives
+    up, which is the whole reason this function exists. The housing card (#6702)
+    passes 3: its branch has its own, lower floor and a market of four rungs
+    there is a card, not a row that fell through a gap.
     """
     outcomes = list(market.outcomes)
-    if len(outcomes) <= 5:
+    if len(outcomes) < min_outcomes:
         return None
     if not any(float(o.current_probability or 0) > 0 for o in outcomes):
         return None
@@ -960,16 +969,56 @@ async def get_economics(db: AsyncSession):
                 oil_rows.append(_row)
 
     # --- Housing section ---
-    mortgage_brackets = []
+    # The mortgage card is CHOSEN and it ships its own question, the same repair
+    # #2674 made to the recession headline one section up (#6702). It used to be
+    # `mortgage_brackets = _brackets_from_outcomes(m)` inside this loop — last
+    # match wins, on a query with no ORDER BY — under the hardcoded page label
+    # "30-year mortgage rate by end of 2026". On production 2026-09-16 that drew
+    # a market resolving the next morning.
+    #
+    # The numbers were the larger half. Every open mortgage market with rungs is
+    # a CUMULATIVE ladder, and `_brackets_from_outcomes` rescales anything
+    # summing past 105% back to 100: a thirteen-rung ladder summing to 1111%
+    # printed its 94.5% rung as 8.5%. That is this file's own rule — see
+    # `_CUMULATIVE_PREFIXES`, which says such rows "must never be normalized or
+    # rescaled against each other" — and the branch simply never asked.
+    #
+    # A non-ladder mortgage market is therefore NOT a candidate: it would take
+    # the rescaling path and reintroduce the defect. Tonight's example is
+    # Polymarket's 115646 (`↑ 6.20%`, `↓ 6.00%`, plus a stray Yes/No pair),
+    # which falls through to `_market_row` below exactly as it does today.
+    mortgage_ladders: list[LadderCandidate] = []
+    mortgage_by_id: dict[int, FuturesMarket] = {}
     housing_side = []
     for m in housing_markets:
         name_lower = (m.name or "").lower()
-        if "mortgage" in name_lower and len(_outcomes_sorted(m)) >= 3:
-            mortgage_brackets = _brackets_from_outcomes(m)
-        else:
-            _row = _market_row(m)
-            if _row:
-                housing_side.append(_row)
+        if (
+            "mortgage" in name_lower
+            and len(_outcomes_sorted(m)) >= 3
+            and _is_cumulative_ladder(m)
+        ):
+            mortgage_ladders.append(
+                LadderCandidate(
+                    market_id=m.id,
+                    name=m.name or "",
+                    probs=[
+                        round(float(o.current_probability or 0) * 100, 1)
+                        for o in m.outcomes
+                    ],
+                )
+            )
+            mortgage_by_id[m.id] = m
+            continue
+        _row = _market_row(m)
+        if _row:
+            housing_side.append(_row)
+
+    _mortgage_pick = select_mortgage_ladder(mortgage_ladders)
+    mortgage_dist = (
+        _distribution_row(mortgage_by_id[_mortgage_pick.market_id], min_outcomes=3)
+        if _mortgage_pick
+        else None
+    )
 
     # --- Trade & Government ---
     trade_rows = [r for m in trade_markets if (r := _market_row(m))]
@@ -1033,7 +1082,11 @@ async def get_economics(db: AsyncSession):
             },
             "housing": {
                 "count": len(housing_markets),
-                "mortgage_brackets": mortgage_brackets,
+                # The card's own question travels with its rows. `kind` tells
+                # the page whether they are a ladder (drawn raw) or a partition
+                # (drawn as a histogram); `mortgage_brackets`, the bare
+                # always-rescaled array this replaces, could say neither.
+                "mortgage_dist": mortgage_dist,
                 "markets": housing_side[:6],
             },
             "trade": {
