@@ -249,6 +249,7 @@ def test_provenance_is_decided_before_any_snapshot_is_read():
             mod.PAIR_START_PROVENANCE_UNKNOWN,
             mod.PAIR_START_NOT_REPORTED,
             mod.PAIR_START_CONTRADICTED,
+            mod.PAIR_SETTLEMENT_PRECEDES_START,
             mod.PAIR_PAIRED_UNCHANGED,
         )
     ]
@@ -456,6 +457,93 @@ def test_our_own_columns_contradicting_the_start_are_a_refusal():
     assert start_refusal(Ev(), resolution_date=T0 - 1 * D) == "start_contradicted"
     # minutes of disagreement are not a contradiction
     assert start_refusal(Ev(), resolution_date=T0 + 3 * H) is None
+
+
+def test_a_settlement_before_the_start_is_refused_not_clamped():
+    """CAL-P1333 / codex local check 2. The band ``start_contradicted`` leaves.
+
+    A settlement can never truly precede the start it belongs to, so one of the
+    two columns is wrong. Inside the 6h tolerance the old rule said "close
+    enough" and let ``LEAST`` re-anchor the whole measurement on the settlement
+    timestamp. Both edges are pinned so neither the tolerance nor the new bare
+    ``<`` can be moved without this failing.
+    """
+    # inside the tolerance: used to fall through to the clamp, now refused
+    assert (
+        start_refusal(Ev(), resolution_date=T0 - 1 * H) == "settlement_precedes_start"
+    )
+    assert (
+        start_refusal(Ev(), resolution_date=T0 - 5 * H) == "settlement_precedes_start"
+    )
+    # one second before the start is still before the start
+    assert (
+        start_refusal(Ev(), resolution_date=T0 - timedelta(seconds=1))
+        == "settlement_precedes_start"
+    )
+    # beyond it the flagrant arm still owns the row, and the two stay distinct
+    assert start_refusal(Ev(), resolution_date=T0 - 7 * H) == "start_contradicted"
+    # settling AT the start is not settling before it
+    assert start_refusal(Ev(), resolution_date=T0) is None
+
+
+def test_a_wrong_late_start_no_longer_admits_an_in_game_price():
+    """The probe specimen, run through the real ``classify_pair``.
+
+    A game starting 19:00 and settling 22:30 whose stored ``commence_time`` is
+    the market CLOSE time of 23:00 (gotcha #14). ``LEAST`` clamped the boundary
+    to 22:30, so the last price before it — taken at 21:45, deep inside the game
+    — was scored as a final PRE-EVENT forecast. ``completed_at`` is NULL here,
+    which is what let it through: that is the only arm that used to fire.
+    """
+    real_start = datetime(2026, 1, 10, 19, 0, tzinfo=timezone.utc)
+    settlement = datetime(2026, 1, 10, 22, 30, tzinfo=timezone.utc)
+    close_time = datetime(2026, 1, 10, 23, 0, tzinfo=timezone.utc)
+    in_game = datetime(2026, 1, 10, 21, 45, tzinfo=timezone.utc)
+    rows = [
+        snap(real_start - 25 * H, 0.50, valid_until=real_start - 24 * H),
+        snap(in_game, 0.94, yes_bid=0.93, yes_ask=0.95),
+    ]
+
+    # `completed_at` NULL is the condition — set after construction because the
+    # fixture's `completed=None` means "use the default", not "the column is
+    # NULL", and this specimen needs the column genuinely empty.
+    wrong_late = Ev(commence=close_time)
+    wrong_late.completed_at = None
+    klass, early, final = classify_pair(
+        rows, event=wrong_late, market_source="kalshi", resolution_date=settlement
+    )
+    assert klass == "settlement_precedes_start"
+    assert (early, final) == (None, None), "a refused row may never score"
+
+    # CONTROL: the same snapshots against the TRUE start were always refused,
+    # so the in-game price is not something the rule wants in general.
+    correct = Ev(commence=real_start)
+    correct.completed_at = None
+    control, _, _ = classify_pair(
+        rows, event=correct, market_source="kalshi", resolution_date=settlement
+    )
+    assert control not in PAIRED_CLASSES
+    assert control == "no_final_stale"
+
+
+def test_the_refusal_fires_before_the_clamp_can_move_start():
+    """Named in ``classify_pair``'s comment: the clamp is dead only because the
+    ladder refuses first. Pin the ordering that makes it dead, so reordering the
+    ladder cannot quietly restore an in-game boundary."""
+    assert PAIR_CLASSES.index(mod.PAIR_SETTLEMENT_PRECEDES_START) < PAIR_CLASSES.index(
+        mod.PAIR_PAIRED
+    )
+    # every row the clamp could act on is refused before it is reached
+    assert start_refusal(Ev(), resolution_date=T0 - 1 * H) is not None
+
+
+def test_the_settlement_boundary_branch_carries_no_tolerance():
+    """The SQL half. A tolerance here would re-open the band the Python half
+    closes, and the two would disagree only on production."""
+    rendered = mod.settlement_precedes_start_sql()
+    assert "fm.resolution_date < e.commence_time" in rendered
+    assert "INTERVAL" not in rendered, "the residual band is the whole point"
+    assert mod.settlement_precedes_start_sql() in paired_legs_sql()
 
 
 def test_start_refusal_refuses_a_bare_timestamp():

@@ -299,6 +299,22 @@ def build_fixture() -> dict[int, str]:
     standard_pair(c9b, 0.55, 0.70)
     expected[c9b.id] = "start_contradicted"
 
+    # C9c CAL-P1333: settlement SHORTLY before the start — inside the old 6h
+    # tolerance, so `start_contradicted` does not fire and `completed_at` is
+    # healthy (after the start). This is the band where `LEAST` silently
+    # re-anchored the measure on the settlement timestamp, and a wrong-LATE
+    # start then puts the "final pre-event" leg inside the game.
+    c9c = outcome("C9-C", game(), resolution_date=T0 - 1 * H)
+    standard_pair(c9c, 0.55, 0.70)
+    expected[c9c.id] = "settlement_precedes_start"
+
+    # C9d the boundary control for C9c: settling AT the start is not settling
+    # BEFORE it, and must still pair. Without this, a `<=` typo in either half
+    # would pass C9c and silently empty the cohort.
+    c9d = outcome("C9-D", game(), resolution_date=T0)
+    standard_pair(c9d, 0.55, 0.70)
+    expected[c9d.id] = "paired"
+
     # C10 the start IS the clock of the poll that minted the row.
     minted_at = (T0 - 2 * D).replace(second=17, microsecond=316804)
     c10 = outcome(
