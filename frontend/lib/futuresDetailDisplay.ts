@@ -650,3 +650,65 @@ export function sortFuturesOutcomes<T extends SortableOutcome>(
     return direction === "asc" ? comparison : -comparison;
   });
 }
+
+/**
+ * D102 / #4568 — the ALL OUTCOMES fold.
+ *
+ * Alex, 2026-09-09 (standing notice 37): "Untraded or vanished props go behind a
+ * collapsed toggle ('Untraded props (3)') — present, openable, taking no real
+ * estate when closed."
+ *
+ * WHAT A READER GOT BEFORE THIS. `bainluck.com/futures/114175`, "Who will be UFC
+ * Heavyweight champion at the end of 2026?", 390px, 2026-09-17 20:2xZ — ranks
+ * 15-19 of ALL OUTCOMES:
+ *
+ *     14  Rizvan Kuniev   LAST MOVE  -   LATEST  <1%
+ *     15  Fighter E       LAST MOVE  -   LATEST  -
+ *     16  Fighter D       LAST MOVE  -   LATEST  -
+ *     17  Other           LAST MOVE  -   LATEST  -
+ *     18  Fighter F       LAST MOVE  -   LATEST  -
+ *     19  Fighter G       LAST MOVE  -   LATEST  -
+ *
+ * Five ranked, named, numberless rows at the foot of a championship ladder. The
+ * Kalshi legs in #4568's original report ("Before Nov 1, 2025") are at least real
+ * labels; these are placeholders.
+ *
+ * WHY THIS WAS NOT ALREADY HANDLED, which #4568 asked and nobody had answered.
+ * The page's only collapse is `slice(0, 25)` — a flat overflow cap, blind to
+ * price. Measured on four payloads: `11020528` serves 36 outcomes with ONE null
+ * leg (cap hides rows 26-36, the null among them, so the page "looked" like it
+ * folded); `108559` 22/2, `108555` 22/5 and `114175` 19/5 are all under 25, so
+ * every numberless row rendered. The one page that appeared to have D102's
+ * toggle was a coincidence of length. A count cap cannot become a semantic
+ * partition by tuning the number.
+ *
+ * THE PREDICATE IS `probability == null`, AND IT IS THE RENDER'S OWN.
+ * `OutcomeRow` prints `formatProbability(outcome.probability, { rendered })`,
+ * and `formatProbability` returns `"-"` on null BEFORE it consults `rendered`
+ * (`lib/api.ts:799`) — so the override cannot rescue a null, and this folds
+ * exactly the rows that print a dash and no others. That check is the whole
+ * point: the props twin of this fold (`components/event/PropsSection`) was first
+ * built against a field that looked absent, and 89 of 89 rows it would have
+ * folded carried a live price.
+ *
+ * THE LABEL IS D111's, NOT THIS ISSUE'S TITLE. #4568 was filed against D102's
+ * original "Untraded" wording; Alex overruled that wording on 2026-09-10 and
+ * `MORE_PROPS_LABEL` has read "More props" since. Neutral wording claims nothing
+ * about WHY a row is folded, which is why it survived where "Untraded" did not.
+ * Here "Untraded" would arguably even be true — but the ruling is about what the
+ * reader is told, not about what we could defend, so this is "More outcomes".
+ *
+ * Collapsed, never dropped (gotcha #43): the rows stay reachable, keep their
+ * served `rank`, and render in the normal row presentation.
+ */
+export function partitionOutcomesByPrice<T extends { probability: number | null }>(
+  outcomes: readonly T[],
+): { listed: T[]; folded: T[] } {
+  const listed: T[] = [];
+  const folded: T[] = [];
+  for (const outcome of outcomes) {
+    if (outcome.probability == null) folded.push(outcome);
+    else listed.push(outcome);
+  }
+  return { listed, folded };
+}
