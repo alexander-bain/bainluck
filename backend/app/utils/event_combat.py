@@ -101,6 +101,13 @@ class CombatSportConfig:
     # disables the events-table source. MMA spans two keys (mma_ufc +
     # mma_mixed_martial_arts); boxing is ("boxing_boxing",).
     events_sport_keys: tuple[str, ...] = ()
+    # #5603/#2602: what a card's CHIP may assert, by the evidence behind it —
+    # see :func:`card_sport_label`. `domain` is OUR routing token and is never a
+    # claim a source made; these are. All empty (the default, and boxing) = this
+    # sport says nothing and every renderer keeps printing the domain.
+    promotion_label: str = ""  # a venue's own series/title proves it, e.g. "UFC"
+    schedule_label: str = ""  # all the schedule source asserts, e.g. "MMA"
+    generic_label: str = ""  # a venue names some OTHER promotion, e.g. "Combat"
 
 
 def make_combat_config(
@@ -116,6 +123,9 @@ def make_combat_config(
     fight_night_re: re.Pattern | None = None,
     fight_night_label: str = "Fight Night",
     events_sport_keys: tuple[str, ...] = (),
+    promotion_label: str = "",
+    schedule_label: str = "",
+    generic_label: str = "",
 ) -> CombatSportConfig:
     """Build a config, compiling the `<PREFIX>-<YYMONDD>` date-token regexes.
 
@@ -139,6 +149,9 @@ def make_combat_config(
         fight_night_re=fight_night_re,
         fight_night_label=fight_night_label,
         events_sport_keys=events_sport_keys,
+        promotion_label=promotion_label,
+        schedule_label=schedule_label,
+        generic_label=generic_label,
     )
 
 
@@ -931,6 +944,64 @@ def card_rows_are_not_a_schedule(bouts) -> bool:
     return False
 
 
+def card_sport_label(
+    cfg: CombatSportConfig, *, ticker_fights: int, venue_promotions=()
+) -> str | None:
+    """The chip a card may print, decided by EVIDENCE and never by our adapter.
+
+    #5603. Every surface that shows a card prints ``domain.upper()``, and this
+    engine's MMA domain is ``ufc`` — so a Power Slap card, a Contender Series
+    card and a bare sportsbook row off the umbrella ``mma_mixed_martial_arts``
+    key all wear a "UFC" chip that no source ever asserted. ``domain`` is OUR
+    routing token (it keys the adapter registry, the event URL and the card
+    gradient); this is the separate, weaker thing a reader is allowed to be
+    told. Three tiers, strongest evidence first:
+
+    1. **A venue's own fight SERIES lists the card** (``ticker_fights`` — the
+       count of rows whose ticker matched ``cfg.fight_re``, e.g. Kalshi
+       ``KXUFCFIGHT-…``). The venue put the card in its UFC series, and the
+       card's displayed name is derived from exactly those rows in every caller
+       — so the evidence is about the card the reader is looking at, not about
+       a foreign row that shares its date. -> ``cfg.promotion_label``.
+    2. **A venue TITLES the bouts** (:func:`venue_card_promotion`): the
+       promotion label only when EVERY title names it ("UFC Fight Night: A vs
+       B"); any other named promotion -> ``cfg.generic_label``. The card's NAME
+       already prints the venue's own words ("Power Slap 23"), so the chip must
+       not add a claim the title did not make. On today's data a venue card's
+       token carries its promotion slug (:func:`venue_card_token`), so one card
+       holds one promotion and the mixed arm is unreachable through
+       :func:`list_card_concepts` — it is the policy, kept total on purpose,
+       and it is reachable directly (the /event adapter hands us whatever the
+       card's rows carry).
+    3. **Schedule rows only**: the source's sport key says mixed martial arts
+       and nothing at all about who promotes it -> ``cfg.schedule_label``.
+       ``events_sport_keys`` spans ``mma_ufc`` AND ``mma_mixed_martial_arts``
+       and the Odds API files non-UFC bouts under both, so the key is not
+       promotion evidence either.
+
+    ``None`` when the config declares no labels (boxing, whose domain IS its
+    sport): nothing is emitted and every renderer behaves exactly as before.
+
+    This is a DISPLAY claim and nothing else — not a key, not a score, not a
+    membership test. It does not certify that every bout grouped under the card
+    belongs to the promotion it names (that is #5602's, and a card can still
+    sweep in a foreign bout by date); it certifies only what the card itself may
+    be called. "MMA" on a real UFC card is true; "UFC" on somebody else's card
+    is not — so every doubt resolves downward.
+    """
+    if not cfg.promotion_label:
+        return None
+    if ticker_fights:
+        return cfg.promotion_label
+    promos = [p for p in (venue_promotions or ()) if p]
+    if promos:
+        named = re.compile(rf"^\s*{re.escape(cfg.promotion_label)}\b", re.IGNORECASE)
+        if all(named.match(p) for p in promos):
+            return cfg.promotion_label
+        return cfg.generic_label or None
+    return cfg.schedule_label or None
+
+
 def bout_order_key(ev):
     """Total order over one card's bouts: `(commence_time, id)`.
 
@@ -1115,6 +1186,10 @@ async def list_card_concepts(
 
         {key, name, domain, status, start_date, is_major, fight_count,
          main_event_id, latest_commence}
+
+    plus `sport_label` (#5603) for a config that declares one — the chip, by
+    evidence; see :func:`card_sport_label`. Absent, never null, when the sport
+    has nothing to say, so a presence test is the renderer's whole question.
 
     Read-only, best-effort. Mirrors _score_golf_tournaments' "pull my own data,
     emit candidates" pattern — no dependency on the request-path futures pools.
@@ -1303,11 +1378,20 @@ async def list_card_concepts(
             fight_count = len(bouts)
             name = label or headline
 
+        # #5603: the chip, from THIS card's own evidence. Absent for a config
+        # that declares no labels (boxing) so an older renderer and every other
+        # domain are untouched; `domain` stays the routing token it always was.
+        _sport_label = card_sport_label(
+            cfg,
+            ticker_fights=(kalshi or {}).get("ticker", 0),
+            venue_promotions=(kalshi or {}).get("promotions", ()),
+        )
         concepts.append(
             {
                 "key": f"event:{cfg.domain}:{token}",
                 "name": name,
                 "domain": cfg.domain,
+                **({"sport_label": _sport_label} if _sport_label else {}),
                 "status": status,
                 "start_date": latest.isoformat() if latest is not None else None,
                 "is_major": is_major,
@@ -1730,12 +1814,25 @@ class CombatEventAdapter:
                 }
             )
 
+        # #5603: the page's chip, from the SAME evidence and the SAME helper the
+        # feed card uses, so the card a reader taps and the page behind it can
+        # never disagree about what this card may be called. The ticker fights
+        # are this card's own (`card_tokens`) and they are what named it above.
+        _sport_label = card_sport_label(
+            cfg,
+            ticker_fights=len(fights),
+            venue_promotions=[
+                p for p in (venue_card_promotion(m.name) for m in venue_bouts) if p
+            ],
+        )
+
         return {
             "event": {
                 "key": f"event:{cfg.domain}:{target}",
                 # L2-113: pretty, self-resolving URL slug (headliner + date-token).
                 "slug": card_slug(card_name or main_event.name, target),
                 "domain": cfg.domain,
+                **({"sport_label": _sport_label} if _sport_label else {}),
                 "name": card_name or main_event.name,  # numbered/Fight-Night card
                 "status": card_status_value,
                 "start_date": (
@@ -1895,11 +1992,20 @@ class CombatEventAdapter:
             main_bout.name, [o.name for o in (main_bout.outcomes or [])]
         )
 
+        # #5603: no ticker here by construction — this branch exists BECAUSE
+        # Kalshi lists no fight for the card — so the chip rests on the venue's
+        # own titles, which are also what `card_name` above was taken from.
+        # "Power Slap 23" is the specimen: named by the venue, chipped "Combat".
+        _sport_label = card_sport_label(
+            cfg, ticker_fights=0, venue_promotions=promotions
+        )
+
         return {
             "event": {
                 "key": f"event:{cfg.domain}:{target}",
                 "slug": card_slug(card_name, target),
                 "domain": cfg.domain,
+                **({"sport_label": _sport_label} if _sport_label else {}),
                 "name": card_name,
                 "status": card_status_value,
                 "start_date": earliest.isoformat() if earliest is not None else None,
@@ -2007,12 +2113,17 @@ class CombatEventAdapter:
         headline = f"{main_bout.home_team_name} vs {main_bout.away_team_name}"
         card_name, is_major = card_label(cfg, headline, ())
 
+        # #5603: schedule rows and nothing else — the sport key says mixed
+        # martial arts and names no promoter, so neither may this card.
+        _sport_label = card_sport_label(cfg, ticker_fights=0, venue_promotions=())
+
         return {
             "event": {
                 "key": f"event:{cfg.domain}:{target}",
                 # L2-113: pretty, self-resolving URL slug (headliner + date-token).
                 "slug": card_slug(card_name or headline, target),
                 "domain": cfg.domain,
+                **({"sport_label": _sport_label} if _sport_label else {}),
                 "name": card_name or headline,
                 "status": card_status_value,
                 "start_date": (

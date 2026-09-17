@@ -13446,6 +13446,14 @@ async def _score_event_concepts(
                     "key": c["key"],
                     "name": c["name"],
                     "domain": c["domain"],
+                    # #5603: the chip, evidence-tiered by the lister
+                    # (`card_sport_label`). `domain` is the routing token —
+                    # "ufc" covers every card this MMA adapter emits, Power Slap
+                    # and the Contender Series included — so it is not a claim
+                    # any source made and it may not be the chip. ABSENT when
+                    # the lister has nothing to say, so an older client and
+                    # every other domain are untouched.
+                    **({"sport_label": c["sport_label"]} if c.get("sport_label") else {}),
                     "status": c["status"],
                     "start_date": c["start_date"],
                     "is_major": c["is_major"],
