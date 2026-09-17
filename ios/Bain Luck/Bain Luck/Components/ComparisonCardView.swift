@@ -35,11 +35,11 @@ struct ComparisonCardView: View {
         sportCategoryDisplayName(data.sportName ?? data.llmSportCategory).uppercased()
     }
 
+    /// #4081 — a UTC-midnight `resolution_date` is a declared calendar date, not
+    /// an instant; localising it drew the day before west of UTC.
     private var resolvesText: String? {
-        guard let rd = data.resolutionDate, let date = rd.asDate else { return nil }
-        let fmt = DateFormatter()
-        fmt.dateFormat = "MMM d"
-        return "Resolves \(fmt.string(from: date))"
+        guard let text = CalendarDeadline.format(data.resolutionDate, style: .monthDay) else { return nil }
+        return "Resolves \(text)"
     }
 
     // MARK: - Body

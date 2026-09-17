@@ -891,13 +891,12 @@ struct EntertainmentView: View {
 
     // MARK: - Helpers
 
+    /// #4081 — every caller of this is a "Resolves …" deadline. The old body
+    /// truncated to `prefix(10)`, parsed that as UTC midnight and then printed it
+    /// in the reader's zone, so EVERY entertainment market — calendar-date or
+    /// real instant — lost a day west of UTC.
     private func formatDate(_ iso: String) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withFullDate, .withDashSeparatorInDate]
-        guard let date = formatter.date(from: String(iso.prefix(10))) else { return iso }
-        let df = DateFormatter()
-        df.dateFormat = "MMM d"
-        return df.string(from: date)
+        CalendarDeadline.format(iso, style: .monthDay) ?? iso
     }
 
     private func formatVolume(_ vol: Int) -> String {

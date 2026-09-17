@@ -349,19 +349,10 @@ struct FuturesBrowseMarketRow: View {
         .frame(width: 56, height: 56)
     }
 
+    /// #4081 — a UTC-midnight `resolution_date` is a declared calendar date, not
+    /// an instant; localising it drew the day before west of UTC.
     private var formattedResolutionDate: String? {
-        guard let raw = market.resolutionDate else { return nil }
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let date = formatter.date(from: raw) ?? {
-            formatter.formatOptions = [.withInternetDateTime]
-            return formatter.date(from: raw)
-        }()
-        guard let date else { return nil }
-
-        let output = DateFormatter()
-        output.dateFormat = "MMM d"
-        return output.string(from: date)
+        CalendarDeadline.format(market.resolutionDate, style: .monthDay)
     }
 }
 
