@@ -400,6 +400,12 @@ def _serialize_concept(c: dict) -> dict:
         "end_date": c.get("end_date"),
         "is_major": bool(c.get("is_major")),
         "fight_count": c.get("fight_count"),
+        # #5603: named here BECAUSE this is an allowlist — the combat listers
+        # emit `sport_label` (the chip, by evidence: "UFC" only on a venue's own
+        # say-so, else "MMA"/"Combat") and a key this function does not name is
+        # dropped silently. Absent, not null, when the lister said nothing, so
+        # the rail's presence test matches the feed card's.
+        **({"sport_label": c["sport_label"]} if c.get("sport_label") else {}),
     }
 
 

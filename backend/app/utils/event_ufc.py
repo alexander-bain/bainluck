@@ -70,6 +70,14 @@ UFC_CONFIG = make_combat_config(
     # Schedule source: Odds API MMA events land under both sport keys (gotcha: MMA
     # spans mma_ufc + mma_mixed_martial_arts). Surfaces + dates cards before Kalshi.
     events_sport_keys=("mma_ufc", "mma_mixed_martial_arts"),
+    # #5603: the chip, by evidence (`card_sport_label`). "UFC" only on a venue's
+    # own say-so; a bare schedule row is "MMA"; a venue title naming another
+    # promotion (Power Slap, Dana White's Contender Series) claims neither. All
+    # three are declared, so every card of this domain carries one — the label is
+    # never absent for a reason other than an old payload.
+    promotion_label="UFC",
+    schedule_label="MMA",
+    generic_label="Combat",
 )
 
 
