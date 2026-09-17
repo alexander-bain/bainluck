@@ -36,6 +36,38 @@
  * rather than falling back to `updated_at`. An empty corner claims nothing; the
  * old pip claimed something false. (Alex, standing notice 34: if a number cannot
  * be shown honestly, leave the space empty.)
+ *
+ * #6803 — AND A ROW THAT SHOWS NO PRICE CANNOT BE A FLOOR OVER PRICES.
+ *
+ * The floor doctrine above is a claim about what the reader can SEE: *nothing
+ * you can see here is older than this*. A rung with `probability: null` renders
+ * no number, so it has no age the sentence is about — yet it carried a
+ * `last_updated` like any other row and the walk below took it. Routed by
+ * native/207, who measured it on the iOS twin: `/api/futures/114175` serves 19
+ * outcomes, 14 priced and rewritten at 2026-09-17T19:50Z, and five placeholder
+ * rungs (`Fighter D/E/F/G`, `Other`) stamped 2026-05-12T16:16:06Z. The floor
+ * over all nineteen is **May 12**; over the fourteen with a price it is **today**.
+ * The iPhone drew "Updated May 12 at 9:16 AM" over a 66% hero whose every price
+ * was 35 minutes old.
+ *
+ * This is the SCOPED-TO-THE-DRAWN-ROWS paragraph above arriving through a door
+ * it did not cover. That paragraph names this very market's `Other` rung and
+ * this very date, and leans on the server's `served`/`top_outcomes` scope to
+ * keep the dead tail out. On the `/api/futures/{id}` shape there is no such
+ * scope — the card gets the WHOLE ladder — so the scope has to be re-stated
+ * here, in the only terms this payload can express it: does the row show a price.
+ *
+ * WORSE THAN THE DEFECT #6018 REPLACED, and that is why it is worth a branch.
+ * The old pip overstated freshness; this understates it, telling a reader to
+ * distrust a number that is current. A card that says nothing (`null`) is
+ * honest; a card that says "May 12" over today's price is not.
+ *
+ * NOT a filter on smallness. A 0.1% leg nobody refreshes DOES show a price and
+ * so keeps its vote, exactly as the doctrine above requires — `0` is a price,
+ * not an absence (see `pct`). The test is `probability != null` and nothing
+ * looser: a truthiness check here would silently drop every 0% rung and hand
+ * the floor to whichever leg happened to be refreshed last, which is the
+ * flattering half of #6018 all over again.
  */
 import type { FuturesMarket, FuturesOutcome } from "@/lib/types";
 
@@ -48,6 +80,16 @@ function parsedTime(value: string | null | undefined): number | null {
   if (typeof value !== "string" || value === "") return null;
   const ms = new Date(value).getTime();
   return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * Does this rung put a number in front of the reader? (#6803, see the note above.)
+ *
+ * `!= null` on purpose, so it is `null` AND `undefined` and nothing else — `0`
+ * is a price and must vote.
+ */
+function showsAPrice(row: FuturesOutcome | null | undefined): boolean {
+  return row?.probability != null;
 }
 
 /**
@@ -74,6 +116,8 @@ export function renderedPricesAsOf(market: PriceAgeSource): string | null {
   const rows: FuturesOutcome[] = market.top_outcomes || market.outcomes || [];
   let oldest: number | null = null;
   for (const row of rows) {
+    // #6803: a priceless rung is not a price this floor is allowed to cover.
+    if (!showsAPrice(row)) continue;
     const ms = parsedTime(row?.last_updated);
     if (ms === null) continue;
     if (oldest === null || ms < oldest) oldest = ms;
