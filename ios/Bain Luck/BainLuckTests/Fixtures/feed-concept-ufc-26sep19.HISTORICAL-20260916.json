@@ -1,0 +1,39 @@
+{
+  "type": "concept",
+  "score": 53,
+  "reason": "",
+  "headline": "This week",
+  "data": {
+    "key": "event:ufc:26sep19",
+    "name": "331: Van vs Pantoja",
+    "domain": "ufc",
+    "status": "upcoming",
+    "start_date": "2026-09-19T22:45:00+00:00",
+    "is_major": false,
+    "fight_count": 12,
+    "entry_count": 0,
+    "is_marquee": false,
+    "marquee_whathit": false,
+    "leader": {
+      "name": "Joshua van",
+      "probability": 0.565,
+      "movement_24h": null,
+      "field_size": 2,
+      "price_observed_at": "2026-09-16T22:28:57+00:00"
+    },
+    "price_observed_at": "2026-09-16T22:28:57+00:00",
+    "headline_bout": {
+      "competitors": [
+        {
+          "name": "Joshua van",
+          "probability": 0.565
+        },
+        {
+          "name": "Alexandre Pantoja",
+          "probability": 0.435
+        }
+      ],
+      "commence_time": "2026-09-20T07:20:00+00:00"
+    }
+  }
+}

@@ -1158,6 +1158,16 @@ actor APIClient {
         return try await fetch("/api/golf/tournaments/\(slug)", cacheTTL: 60)
     }
 
+    /// One event concept — the JSON behind the web's `/event/<domain>/<slug>`
+    /// page (#6667). The key is percent-encoded by `ConceptKey.apiPath`.
+    ///
+    /// 60s, matching the server's own primary TTL for this tier
+    /// (`event_concept_cache`): asking sooner returns the same bytes.
+    func fetchEventConcept(key: String) async throws -> EventConceptResponse {
+        guard let parsed = ConceptKey(key) else { throw APIError.invalidURL }
+        return try await fetch(parsed.apiPath, cacheTTL: 60)
+    }
+
     /// Pins an event or futures market for the current user.
     func addPin(type: String, id: Int) async throws -> StatusResponse {
         return try await postEncodable("/api/me/pins", body: PinRequest(pinType: type, targetId: id))

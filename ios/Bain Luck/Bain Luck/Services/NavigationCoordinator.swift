@@ -140,6 +140,28 @@ final class NavigationCoordinator: ObservableObject {
             navigate(to: .golfCategory, tab: .leagues)
             return true
 
+        // #6667 — `bainluck://event/ufc/26sep19`, and the web's own
+        // `https://bainluck.com/event/ufc/26sep19` (colon-free since L2-113).
+        // Singular `event`; plural `events/<id>` above is a game. Only a domain
+        // the fight-card screen can draw is claimed — any other concept URL
+        // returns false, as it did before this case existed, rather than
+        // opening a screen built for bouts on a golf tournament.
+        //
+        // Browse, matching `golf` and `tournaments`: a tab that CONSUMES a
+        // pushed route (PendingRouteReachabilityTests guards that pairing).
+        case "event":
+            if pathComponents.count >= 3,
+               let key = ConceptKey(domain: pathComponents[1], slug: pathComponents[2]),
+               ConceptCardRouting.fightCardDomains.contains(key.domain) {
+                let name = queryItems?.first(where: { $0.name == "name" })?.value
+                navigate(
+                    to: .conceptCard(key: key.canonical, name: name ?? sportCategoryDisplayName(key.domain)),
+                    tab: .leagues
+                )
+                return true
+            }
+            return false
+
         case "playoffs":
             if pathComponents.count >= 2 {
                 navigate(to: .leagueGrid(slug: pathComponents[1]), tab: .leagues)
