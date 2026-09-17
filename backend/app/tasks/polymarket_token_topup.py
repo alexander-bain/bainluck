@@ -312,9 +312,39 @@ def yes_token_of(market) -> Optional[str]:
 def token_for_outcome(market, outcome_name: Optional[str]) -> Optional[str]:
     """The CLOB token that is the book for ONE of our outcome rows.
 
-    ``yes_token_of`` first, unchanged, and its answer wins whenever it has one.
-    This adds the one shape it cannot read: a head-to-head market whose Gamma
-    ``outcomes`` are the CONTENDERS THEMSELVES rather than ``["Yes","No"]``.
+    OUR OWN OUTCOME'S NAME IS TRIED FIRST, and ``yes_token_of`` is the fallback
+    for the rows that name is silent about. This reads both shapes: a market
+    whose Gamma ``outcomes`` are ``["Yes","No"]``, and a head-to-head whose
+    ``outcomes`` are the CONTENDERS THEMSELVES.
+
+    🔴 WHY THE NAME GOES FIRST, and why the other order was a live inversion.
+    ``yes_token_of`` answers "which token is the YES side of this market" — a
+    question about the MARKET. It cannot see which of our rows is asking. When
+    one condition id carries BOTH of our outcome rows (a ``…_yes`` / ``…_no``
+    pair, which is every binary sub-market — 384 of the 385 live condition ids
+    measured 2026-09-17 09:2xZ), the ``_no`` row asking this function is handed
+    the YES token, because ``yes_token_of`` has an answer and its answer wins.
+    That is not a stale leg, it is the Q489 *inversion*: the row renders ``p``
+    where the truth is ``1-p``. Two live rows have the shape that would trip it —
+    ``0xd7a5b002…`` and ``0x4dc1cca8…``, our row named ``"No"``, Gamma
+    ``outcomes ["Yes","No"]``.
+
+    ⚠️ NEITHER IS ACTUALLY INVERTED ON A SCREEN, and an earlier version of this
+    note said they were. Both markets carry market-level ``clob_token_ids``, so
+    the socket attributes their legs through the Q489 zip and never asks this
+    function about them. The branch is latent, and it is repaired on that
+    footing rather than on a reader-visible one — see the work-set comment in
+    ``topup_outcome_clob_tokens`` for the reach measurement. Trying our own name
+    first is what makes the answer a statement about the ROW; nothing else in
+    the shape distinguishes them.
+
+    NOTHING THAT IS CORRECT TODAY MOVES. The name path only fires on an exact,
+    unique match against Gamma's own outcome list, and where it fires the old
+    order agreed with it or was wrong: a row named ``"Yes"`` matches index 0,
+    which is what ``yes_token_of`` returned; a row named ``"Wolfsberger AC"``
+    against ``["Yes","No"]`` matches nothing and still falls through to the Yes
+    token; a row named ``"Under"`` against ``["Over","Under"]`` reached the name
+    path before this change too, because ``yes_token_of`` had refused.
 
     WHY THIS EXISTS — Q500 taught the fast lane to address a parent row one
     level down, through its outcomes' condition ids, and that closed the
@@ -340,32 +370,23 @@ def token_for_outcome(market, outcome_name: Optional[str]) -> Optional[str]:
     tick": a mis-attributed token does not make a card stale, it makes it
     *inverted*. So the fallback matches OUR outcome's own name against Gamma's
     outcome list and takes the index-aligned token, and it refuses on anything
-    it cannot prove — no match, or more than one, returns None exactly as today.
-
-    PURELY ADDITIVE, and that is the safety argument rather than a hope: this
-    function can only return a token where ``yes_token_of`` returned None, so no
-    leg that streams today can be moved, re-attributed or lost by it. The worst
-    case is the present behaviour.
+    it cannot prove — no match, or more than one, falls back rather than guesses.
     """
-    token = yes_token_of(market)
-    if token:
-        return token
-
     tokens = [str(t) for t in (getattr(market, "clob_token_ids", None) or []) if str(t)]
     outcomes = [str(o) for o in (getattr(market, "outcomes", None) or [])]
-    if not tokens or not outcome_name:
+    if not tokens:
         return None
 
-    want = outcome_name.strip().lower()
-    if not want:
-        return None
-    hits = [i for i, name in enumerate(outcomes) if name.strip().lower() == want]
-    # Exactly one, or nothing. Two outcomes sharing a name is a shape we cannot
-    # resolve, and picking the first would be the positional guess this whole
-    # module refuses to make.
-    if len(hits) != 1 or hits[0] >= len(tokens):
-        return None
-    return tokens[hits[0]]
+    want = (outcome_name or "").strip().lower()
+    if want:
+        hits = [i for i, name in enumerate(outcomes) if name.strip().lower() == want]
+        # Exactly one, or fall through. Two outcomes sharing a name is a shape we
+        # cannot resolve, and picking the first would be the positional guess
+        # this whole module refuses to make.
+        if len(hits) == 1 and hits[0] < len(tokens):
+            return tokens[hits[0]]
+
+    return yes_token_of(market)
 
 
 async def topup_outcome_clob_tokens(
@@ -399,16 +420,16 @@ async def topup_outcome_clob_tokens(
     ``0xfa91ccd0…`` → *"Will Wolfsberger AC win on 2026-09-01?"*, outcomes
     ``["Yes","No"]``, two ``clobTokenIds``.
 
-    ONLY ONE TOKEN PER OUTCOME IS RETURNED, and only the one that IS that
-    outcome's book. On a ``["Yes","No"]`` sub-market that is the YES token: the
-    NO book is P(not this outcome), and on a three-way market that is not any
-    other outcome row — it is the other two combined — so there is no leg to
-    write it to and it is never subscribed rather than written somewhere
-    plausible. On a two-way head-to-head, whose Gamma ``outcomes`` are the
-    contenders themselves, it is the token index-aligned with OUR outcome's own
-    name; the other contender's token is that market's other leg and is left to
-    the outcome row that owns it. ``token_for_outcome`` holds both rules and
-    refuses anything it cannot attribute by name.
+    ONLY ONE TOKEN PER OUTCOME ROW IS RETURNED, and only the one that IS that
+    row's book — but a condition id may carry MORE THAN ONE of our rows, and
+    then each gets its own. That is the ordinary binary shape, not an edge case:
+    our outcome rows store the condition id with a ``_yes`` / ``_no`` suffix, so
+    both legs of a two-way market share one id and each names one of Gamma's two
+    ``clobTokenIds``. On a three-way market the NO book is the other two
+    contenders combined, so it is not any outcome row of ours and is never
+    subscribed rather than written somewhere plausible.
+    ``token_for_outcome`` decides which token belongs to which row, by that
+    row's own name, and refuses anything it cannot attribute.
 
     WHAT IS ASKED WHEN THE SLATE EXCEEDS THE CAP is a resuming window, not the
     lexicographic head — ``select_ask_window`` carries that argument and the
@@ -428,14 +449,48 @@ async def topup_outcome_clob_tokens(
 
     from app.models.models import Event, FuturesMarket, FuturesOutcome
 
-    # condition id -> (market_id, outcome_id). Keyed by condition id because
-    # that is what Gamma echoes back, and it de-dupes an outcome accidentally
-    # sharing a condition with a sibling rather than letting both claim a tick.
-    addressable: dict[str, tuple[int, int]] = {}
+    # condition id -> [(market_id, outcome_id), ...]. Keyed by condition id
+    # because that is what Gamma echoes back and what the ask is billed in; the
+    # VALUE is a list because sharing a condition id is the normal shape, not an
+    # accident, and both sharers have a real book.
+    #
+    # 🔴 A DICT HERE CAPPED LIVE COVERAGE AT HALF, PERMANENTLY. Our outcome rows
+    # store a condition id with a ``_yes`` / ``_no`` suffix, so a binary
+    # sub-market's two rows differ only in that suffix and `condition_id_of`
+    # maps both to one key. With a scalar value the second assignment overwrote
+    # the first, so exactly one of the two legs was ever asked about — and it
+    # was not a fair coin: the caller orders by `FuturesOutcome.id` and the
+    # `_no` row is minted second, so the `_no` leg won every collision and the
+    # `_yes` leg was never subscribed. Nor was it retried: once the survivor's
+    # token is stored, the stored-shrink below drops the whole condition id from
+    # the ask, so its sibling is unreachable for good rather than next recycle.
+    #
+    # Measured against production and Gamma 2026-09-17 09:2x-09:5xZ: 385
+    # condition ids carry an outcome row on a `status='live'` event, 384 of them
+    # holding EXACTLY TWO of our rows — the collapsing shape, and essentially the
+    # whole binary population.
+    #
+    # ⚠️ AND IT COSTS ZERO LEGS TODAY, which is stated here so the next reader
+    # does not re-derive a payoff from the shape. All 385 of those markets carry
+    # market-level `clob_token_ids`, so `polymarket_ws` excludes them from
+    # `outcome_topup_targets` and attributes both legs positionally through the
+    # Q489 zip; this function never sees them. Of the 235 slate markets that DO
+    # lack market-level tokens — the population this function is handed — exactly
+    # 38 condition ids are pairs, and every one sits on a `status='scheduled'`
+    # event older than `STALE_EVENT_HOURS`, which the filter below drops before
+    # the ask is built. The repair is a latent one: it holds the invariant this
+    # function claims (one token per ROW, attributed to that row) against the day
+    # a binary reaches it without an ingest-stamped market-level pair.
+    addressable: dict[str, list[tuple[int, int]]] = {}
     for market_id, outcome_id, external_id in outcomes:
         cid = condition_id_of(external_id)
-        if cid:
-            addressable[cid] = (market_id, outcome_id)
+        if not cid:
+            continue
+        # Not de-duplicated, deliberately: a repeated row resolves to the same
+        # token, writes the same metadata key and lands on the same entry of
+        # `filled`, so a guard here would have nothing observable to protect and
+        # would be a test that cannot fail.
+        addressable.setdefault(cid, []).append((market_id, outcome_id))
 
     if not addressable:
         return {}
@@ -479,7 +534,15 @@ async def topup_outcome_clob_tokens(
                 Event.status,
             )
             .outerjoin(Event, FuturesMarket.event_id == Event.id)
-            .where(FuturesMarket.id.in_({mid for mid, _oid in addressable.values()}))
+            .where(
+                FuturesMarket.id.in_(
+                    {
+                        mid
+                        for entries in addressable.values()
+                        for mid, _oid in entries
+                    }
+                )
+            )
         )
         for stored_market_id, metadata, commence_time, event_status in stored_rows.all():
             if _is_stale(commence_time, event_status, stale_cutoff):
@@ -515,10 +578,16 @@ async def topup_outcome_clob_tokens(
         stale_market_ids = set()
 
     if stored_filled:
+        # PER ROW, NOT PER CONDITION ID. A condition id stays in the ask while
+        # ANY of its rows is still unmapped, and only the rows that are already
+        # known are dropped from it — they are seeded into `filled` above, so
+        # they stay subscribed without being re-asked. Shrinking by condition id
+        # is what made a sibling unreachable for good: the first leg to be
+        # stored took the whole id out of the ask with it.
         addressable = {
-            cid: entry
-            for cid, entry in addressable.items()
-            if entry[1] not in stored_filled
+            cid: unstored
+            for cid, entries in addressable.items()
+            if (unstored := [e for e in entries if e[1] not in stored_filled])
         }
         if not addressable:
             # Everything on the slate is already known. Still a full answer, so
@@ -571,18 +640,28 @@ async def topup_outcome_clob_tokens(
         # EVENT DROPS A LEG: a NULL start time, a NULL status, an unlinked
         # market, or a failed read all KEEP it. This refuses rather than
         # guesses, the same way `token_for_outcome` does.
-        before = len(addressable)
+        #
+        # COUNTED IN OUTCOME ROWS, which is what the sentence says and what the
+        # previous version of this line did NOT report: it counted dict entries
+        # while one entry stood for a whole condition id, so "dropped N of M
+        # outcomes" was in condition ids and any threshold read off it was in
+        # the wrong unit. The filter is per row for the same reason the shrink
+        # above is.
+        before = sum(len(entries) for entries in addressable.values())
         addressable = {
-            cid: entry
-            for cid, entry in addressable.items()
-            if entry[0] not in stale_market_ids
+            cid: kept_entries
+            for cid, entries in addressable.items()
+            if (kept_entries := [e for e in entries if e[0] not in stale_market_ids])
         }
+        after = sum(len(entries) for entries in addressable.values())
         logger.info(
-            "Polymarket outcome token top-up: dropped %d of %d outcomes whose "
-            "event started more than %dh ago; %d remain askable",
-            before - len(addressable),
+            "Polymarket outcome token top-up: dropped %d of %d outcome legs "
+            "whose event started more than %dh ago; %d remain askable across "
+            "%d condition ids",
+            before - after,
             before,
             STALE_EVENT_HOURS,
+            after,
             len(addressable),
         )
         if not addressable:
@@ -596,6 +675,13 @@ async def topup_outcome_clob_tokens(
         # now RESUMES where the last pass stopped, so the sentence is true and
         # the bound is ceil(len / max_outcomes) passes at any cadence — see
         # `select_ask_window`, which holds the whole argument.
+        #
+        # CAPPED IN CONDITION IDS, deliberately and unchanged: `max_outcomes`
+        # bounds the ASK, and Gamma is asked one query parameter per condition
+        # id however many of our rows ride on it. Counting legs here would
+        # shrink the request for no reason — the sibling leg this ship reaches
+        # is answered by a response the pass was already paying for. The log
+        # states both numbers so the two units are never read as one.
         cursor = await load_topup_cursor()
         kept, next_cursor = select_ask_window(
             sorted(addressable), max_outcomes, cursor
@@ -605,10 +691,11 @@ async def topup_outcome_clob_tokens(
         # recovers — which is the livelock this replaces, with a different cause.
         await save_topup_cursor(next_cursor)
         logger.warning(
-            "Polymarket outcome token top-up: %d outcomes needed tokens, "
-            "capped at %d (%d deferred to the next recycle; window resumed "
-            "after %s, stops at %s)",
+            "Polymarket outcome token top-up: %d condition ids needed tokens "
+            "(%d outcome legs), capped at %d (%d deferred to the next recycle; "
+            "window resumed after %s, stops at %s)",
             len(addressable),
+            sum(len(entries) for entries in addressable.values()),
             max_outcomes,
             len(addressable) - max_outcomes,
             cursor or "the front",
@@ -616,18 +703,22 @@ async def topup_outcome_clob_tokens(
         )
         addressable = {cid: addressable[cid] for cid in kept}
 
-    # Our own name for each outcome, for the head-to-head shape whose Gamma
-    # `outcomes` are the contenders rather than ["Yes","No"] — see
-    # `token_for_outcome`. Read HERE rather than widened into the `outcomes`
-    # argument on purpose: the caller is `polymarket_ws`, another lane's file,
-    # and this keeps the repair inside one module. One batched `IN` bounded by
-    # `max_outcomes`, and a name we cannot read simply leaves that outcome on
-    # the Yes path exactly as before.
+    # Our own name for each outcome — the signal `token_for_outcome` attributes
+    # on. Read HERE rather than widened into the `outcomes` argument on purpose:
+    # the caller is `polymarket_ws`, another lane's file, and this keeps the
+    # repair inside one module. One batched `IN`, and a name we cannot read
+    # simply leaves that outcome on the Yes path exactly as before.
     name_by_outcome: dict[int, str] = {}
     try:
         name_rows = await session.execute(
             select(FuturesOutcome.id, FuturesOutcome.name).where(
-                FuturesOutcome.id.in_([oid for _mid, oid in addressable.values()])
+                FuturesOutcome.id.in_(
+                    [
+                        oid
+                        for entries in addressable.values()
+                        for _mid, oid in entries
+                    ]
+                )
             )
         )
         name_by_outcome = {oid: (name or "") for oid, name in name_rows.all()}
@@ -675,9 +766,9 @@ async def topup_outcome_clob_tokens(
         if not stored_filled:
             raise
         logger.exception(
-            "Polymarket outcome token top-up: Gamma failed for %d outcomes; "
-            "keeping the %d already-stored legs subscribed and retrying the "
-            "rest next recycle",
+            "Polymarket outcome token top-up: Gamma failed for %d condition "
+            "ids; keeping the %d already-stored legs subscribed and retrying "
+            "the rest next recycle",
             len(addressable),
             len(stored_filled),
         )
@@ -691,18 +782,29 @@ async def topup_outcome_clob_tokens(
     filled: dict[int, tuple[int, str]] = dict(stored_filled)
     by_market: dict[int, dict[str, str]] = {}
     named_fallback = 0
+    reattributed = 0
     for market in fetched:
-        entry = addressable.get(getattr(market, "condition_id", "") or "")
-        if entry is None:
+        entries = addressable.get(getattr(market, "condition_id", "") or "")
+        if not entries:
             continue
-        market_id, outcome_id = entry
-        token = token_for_outcome(market, name_by_outcome.get(outcome_id))
-        if not token:
-            continue
-        if not yes_token_of(market):
-            named_fallback += 1
-        filled[outcome_id] = (market_id, token)
-        by_market.setdefault(market_id, {})[str(outcome_id)] = token
+        # EVERY row on this condition id, not one of them. One Gamma answer
+        # carries both books of a binary, and each is the book for exactly one
+        # of our rows; `token_for_outcome` decides which by that row's own name
+        # and still refuses anything it cannot attribute.
+        yes_token = yes_token_of(market)
+        for market_id, outcome_id in entries:
+            token = token_for_outcome(market, name_by_outcome.get(outcome_id))
+            if not token:
+                continue
+            if token != yes_token:
+                # Unreachable through the Yes path: either the market names no
+                # "Yes" at all, or this row's book is the other side of one that
+                # does. The second case is the inversion `reattributed` counts.
+                named_fallback += 1
+                if yes_token:
+                    reattributed += 1
+            filled[outcome_id] = (market_id, token)
+            by_market.setdefault(market_id, {})[str(outcome_id)] = token
 
     for market_id, token_map in by_market.items():
         # Nested merge, not a replace: the outer `||` protects sibling metadata
@@ -738,15 +840,26 @@ async def topup_outcome_clob_tokens(
     # `stored` is kept apart from `mapped` for the same reason `named` is: a pass
     # that asked nothing because everything was already known, and a pass that
     # asked and filled, are different events, and one total reports them alike.
+    # `reattributed` is apart from both because it is the only counter that is
+    # a REPAIR rather than a yield: a leg whose market does name a "Yes" and
+    # whose book is the other side of it. Those are the rows the old ordering
+    # handed the YES token to, so a non-zero here is the inversion being caught
+    # in flight — and a zero on a slate full of `_yes`/`_no` pairs is this
+    # attribution having gone dark, which no total would show.
+    # ASKED IS IN CONDITION IDS, MAPPED IS IN OUTCOME LEGS, and they are labelled
+    # so because they are different units and the pass is judged on both.
     logger.info(
-        "Polymarket outcome token top-up: %d outcomes asked, %d returned by "
-        "Gamma, %d newly mapped across %d markets (%d via the outcome-name "
-        "fallback), %d already stored, %d subscribable",
+        "Polymarket outcome token top-up: %d condition ids asked (%d outcome "
+        "legs), %d returned by Gamma, %d newly mapped across %d markets (%d not "
+        "reachable via the Yes path, of which %d re-attributed off a named Yes), "
+        "%d already stored, %d subscribable",
         len(addressable),
+        sum(len(entries) for entries in addressable.values()),
         len(fetched),
         len(filled) - len(stored_filled),
         len(by_market),
         named_fallback,
+        reattributed,
         len(stored_filled),
         len(filled),
     )
