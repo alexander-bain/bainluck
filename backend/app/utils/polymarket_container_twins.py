@@ -98,6 +98,7 @@ __all__ = [
     "REFUSE_AMBIGUOUS",
     "REFUSE_ANCHORED",
     "REFUSE_MIXED_KICKOFF",
+    "REFUSE_NO_ELECTION",
     "TWIN_FOUND",
     "ContainerMarket",
     "ContainerPlan",
@@ -135,6 +136,12 @@ REFUSE_ANCHORED = "REFUSE_ANCHORED"
 #: from 173 families to 64 for no defect at all.
 REFUSE_MIXED_KICKOFF = "REFUSE_MIXED_KICKOFF"
 
+#: At least one member of the family has no `twin_identity_rank`, so the fold's
+#: election cannot be reproduced here. Refused rather than defaulted: an absent
+#: rank sorts as the empty tuple, smaller than every real one, so defaulting
+#: would quietly tag whichever row failed to load as the duplicate.
+REFUSE_NO_ELECTION = "REFUSE_NO_ELECTION"
+
 #: The key names one event. The overwhelming majority: 10,749 of 10,932.
 NOT_A_TWIN = "NOT_A_TWIN"
 
@@ -160,6 +167,15 @@ class ContainerRow:
     #: :data:`REFUSE_MIXED_KICKOFF` asks is whether this row holds a SECOND
     #: fixture, which by construction lives under a different key.
     venue_game_starts: frozenset[str] = frozenset()
+    #: ``app.utils.event_twin_fold.twin_identity_rank`` for this row — biggest
+    #: wins. Supplied by the caller rather than computed here so this module
+    #: stays pure, and IMPORTED from the serving layer rather than re-spelled so
+    #: it cannot drift from the election the fold actually runs.
+    #:
+    #: 🔴 THIS, NOT THE BASE TITLE, DECIDES WHICH ROW IS CANONICAL, and the
+    #: distinction is the whole safety of the sweep. See
+    #: :func:`_classify_family`.
+    identity_rank: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -215,20 +231,52 @@ def _classify_family(
     base_holders: set[int],
     rows: Mapping[int, ContainerRow],
 ) -> tuple[str, list[ContainerTag]]:
-    """The whole decision for one key. Pure; returns a verdict and its tags."""
+    """The whole decision for one key. Pure; returns a verdict and its tags.
+
+    🔴 **THE BASE TITLE CONFIRMS THE FAMILY; IT DOES NOT CHOOSE THE SURVIVOR.**
+    Those are two different questions and conflating them is a live defect, not
+    a tidiness point. Exactly one row holding the base-titled market is the
+    evidence that these rows are one fixture the venue split. WHICH of them the
+    reader should be sent to is decided by
+    ``app.utils.event_twin_fold.twin_identity_rank`` — the fold's own election,
+    supplied on :attr:`ContainerRow.identity_rank`.
+
+    `repair_5821_split_container_markets.py` measured the cost of getting this
+    wrong: of 125 families, **96 are won by the base and 29 by the companion**.
+    A sweep that always made the base canonical would tag the fold's own
+    survivor as a duplicate in 29 of 125, and ``not_a_proven_duplicate`` — which
+    runs BEFORE the fold — would then suppress the better row and send the
+    reader to the worse one. That is a new reader-facing defect traded for the
+    one being fixed, and it is why this module defers rather than deciding, for
+    the same reason that script gives: "a repair that picked its own winner
+    would move markets onto the row the fold then hides".
+    """
     if len(event_ids) < 2:
         return NOT_A_TWIN, []
     if len(base_holders) != 1:
         return REFUSE_AMBIGUOUS, []
 
-    canonical_id = next(iter(base_holders))
-    canonical = rows.get(canonical_id) or ContainerRow(canonical_id)
+    members = {eid: (rows.get(eid) or ContainerRow(eid)) for eid in event_ids}
+
+    # Fail closed on a missing election. An absent rank sorts as `()` — smaller
+    # than every real tuple — so a row whose rank failed to load would silently
+    # LOSE the election and be tagged a duplicate of a row that may be worse.
+    if any(not member.identity_rank for member in members.values()):
+        return REFUSE_NO_ELECTION, []
+
+    canonical_id = max(members, key=lambda eid: (members[eid].identity_rank, -eid))
+    canonical = members[canonical_id]
     canonical_anchored = _is_fixture_anchored(canonical)
 
     tags: list[ContainerTag] = []
-    for duplicate_id in sorted(event_ids - base_holders):
-        duplicate = rows.get(duplicate_id) or ContainerRow(duplicate_id)
+    for duplicate_id in sorted(event_ids - {canonical_id}):
+        duplicate = members[duplicate_id]
 
+        # Belt and braces, and expected to read ZERO: `twin_identity_rank`
+        # already ranks an ESPN id and then any provider id above source count,
+        # so an anchored row wins its own election and cannot reach here. It is
+        # kept because the day that ordering changes, the honest answer is to
+        # refuse rather than to tag an authority-named row as a copy.
         if _is_fixture_anchored(duplicate) and not canonical_anchored:
             return REFUSE_ANCHORED, []
 

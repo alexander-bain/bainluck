@@ -60,12 +60,17 @@ from app.utils.polymarket_container_twins import (  # noqa: E402
     REFUSE_AMBIGUOUS,
     REFUSE_ANCHORED,
     REFUSE_MIXED_KICKOFF,
+    REFUSE_NO_ELECTION,
     ContainerMarket,
     ContainerRow,
     family_key,
     holds_base_title,
     plan_container_tags,
 )
+
+#: Every family needs an election, so the default fixture supplies one in which
+#: the BASE row wins — the 96-of-125 majority. Tests that care about the other
+#: 29 override it explicitly.
 
 CANON_ID = 15311859
 DUP_ID = 15311852
@@ -97,35 +102,106 @@ SPLIT_FAMILY = [
 ]
 
 
+def _rows(winner: int, loser: int, **overrides) -> dict[int, ContainerRow]:
+    """A family whose fold election `winner` wins. Ranks are opaque tuples here.
+
+    The judgement only ever COMPARES ranks, so the fixture does not need to
+    reproduce `twin_identity_rank`'s internals — and must not, or it would be
+    asserting its own copy of the election rather than that the real one is
+    deferred to. The sweep's own test covers that it passes the real function's
+    output through.
+    """
+    rows = {
+        winner: ContainerRow(winner, identity_rank=(2,)),
+        loser: ContainerRow(loser, identity_rank=(1,)),
+    }
+    for event_id, row in overrides.items():
+        rows[int(event_id)] = row
+    return rows
+
+
+#: The 96-of-125 majority: the base-titled row also wins the fold's election.
+BASE_WINS = _rows(CANON_ID, DUP_ID)
+
+
 # ── Part A: the judgement finds the fixture the venue split ──────────────────
 
 
 class TestTheJudgement:
     def test_the_container_row_is_a_duplicate_of_the_base_row(self):
         """The whole finding: `15311852` is a second copy of `15311859`."""
-        plan = plan_container_tags(SPLIT_FAMILY)
+        plan = plan_container_tags(SPLIT_FAMILY, BASE_WINS)
         assert [(t.duplicate_id, t.canonical_id) for t in plan.tags] == [
             (DUP_ID, CANON_ID)
         ]
         assert plan.refusals == []
 
-    def test_the_direction_is_not_reversible(self):
-        """The BASE row is canonical, never the container.
+    def test_the_direction_follows_the_folds_election_not_the_base_title(self):
+        """🔴 THE 29-OF-125 CASE, AND THE WHOLE SAFETY OF THIS SWEEP.
 
-        Stated as its own test because the pair is symmetric in every signal the
-        key reads — same title, same kickoff, same sport, neither anchored — so
-        the only thing choosing a direction is which row holds the base-titled
-        market. A change that lost that would still produce one tag per family
-        and would fold every fixture's real markets onto its overflow basket.
+        The base title CONFIRMS the family; it does not choose the survivor.
+        `repair_5821_split_container_markets.py` measured the split: of 125
+        families **96 are won by the base and 29 by the companion**.
+
+        If the container wins the fold's election, the container is canonical
+        and the BASE row is the one tagged. Get this backwards and
+        `not_a_proven_duplicate` — which runs BEFORE the fold — suppresses the
+        row the fold would have elected and sends the reader to the worse of
+        the two. That is a new reader-facing defect traded for the one being
+        fixed, so it is pinned from both sides.
         """
-        plan = plan_container_tags(SPLIT_FAMILY)
-        assert plan.tags[0].canonical_id == CANON_ID
-        assert plan.tags[0].duplicate_id == DUP_ID
+        base_wins = plan_container_tags(SPLIT_FAMILY, BASE_WINS)
+        assert (base_wins.tags[0].canonical_id, base_wins.tags[0].duplicate_id) == (
+            CANON_ID,
+            DUP_ID,
+        )
+
+        companion_wins = plan_container_tags(
+            SPLIT_FAMILY, _rows(winner=DUP_ID, loser=CANON_ID)
+        )
+        assert (
+            companion_wins.tags[0].canonical_id,
+            companion_wins.tags[0].duplicate_id,
+        ) == (DUP_ID, CANON_ID)
+
+    def test_a_family_with_no_election_is_refused_not_defaulted(self):
+        """Fail closed. An absent rank is the empty tuple, which is SMALLER than
+        every real one, so a defaulting implementation would silently elect
+        whichever row happened to load and tag the other — possibly the better
+        row — while looking exactly like a clean pass."""
+        plan = plan_container_tags(
+            SPLIT_FAMILY,
+            {
+                CANON_ID: ContainerRow(CANON_ID, identity_rank=(2,)),
+                DUP_ID: ContainerRow(DUP_ID),  # no rank
+            },
+        )
+        assert plan.tags == []
+        assert plan.refusals[0].startswith(REFUSE_NO_ELECTION)
+
+    def test_the_sweep_hands_the_judgement_the_real_election(self):
+        """The judgement compares opaque tuples, so the only thing standing
+        between it and a home-grown election is that the SWEEP passes
+        `twin_identity_rank` through. Asserted on the sweep's source rather
+        than mocked: a re-spelled election here would pass every test above."""
+        import inspect
+
+        from app.tasks import polymarket_container_twin_sweep as sweep
+
+        source = inspect.getsource(sweep.load_rows)
+        assert "twin_identity_rank(event)" in source
+        assert "from app.utils.event_twin_fold import twin_identity_rank" in (
+            inspect.getsource(sweep.load_rows)
+        )
+        # And the relationship the election's league rung reads is eager-loaded;
+        # a lazy load would raise on an async session or, worse, change it.
+        assert "selectinload(Event.sport)" in source
 
     def test_a_fixture_on_one_row_is_left_entirely_alone(self):
         """The overwhelming majority: 10,749 of 10,932 keys name one event."""
         plan = plan_container_tags(
-            [_m(SOLO_ID, BASE), _m(SOLO_ID, f"{BASE} - More Markets")]
+            [_m(SOLO_ID, BASE), _m(SOLO_ID, f"{BASE} - More Markets")],
+            {SOLO_ID: ContainerRow(SOLO_ID, identity_rank=(1,))},
         )
         assert plan.tags == []
         assert plan.refusals == []
@@ -142,7 +218,8 @@ class TestTheJudgement:
             [
                 _m(CANON_ID, BASE),
                 _m(DUP_ID, f"{BASE} - More Markets", vgs=OTHER_KICKOFF),
-            ]
+            ],
+            BASE_WINS,
         )
         assert plan.tags == []
         assert plan.split_keys_examined == 0
@@ -157,7 +234,8 @@ class TestTheJudgement:
             [
                 ContainerMarket(CANON_ID, BASE, ""),
                 ContainerMarket(DUP_ID, f"{BASE} - More Markets", ""),
-            ]
+            ],
+            BASE_WINS,
         )
         assert plan.tags == []
         assert plan.rows_considered == 0
@@ -165,7 +243,7 @@ class TestTheJudgement:
     def test_player_props_is_a_container_too(self):
         """Both suffixes, because `_strip_more_markets` strips both."""
         plan = plan_container_tags(
-            [_m(CANON_ID, BASE), _m(DUP_ID, f"{BASE} - Player Props")]
+            [_m(CANON_ID, BASE), _m(DUP_ID, f"{BASE} - Player Props")], BASE_WINS
         )
         assert [(t.duplicate_id, t.canonical_id) for t in plan.tags] == [
             (DUP_ID, CANON_ID)
@@ -184,7 +262,7 @@ class TestTheJudgement:
 class TestTheRefusals:
     def test_two_base_holders_are_refused_not_guessed(self):
         """3 of 183 keys. The venue's structure does not say which is the fixture."""
-        plan = plan_container_tags([_m(CANON_ID, BASE), _m(DUP_ID, BASE)])
+        plan = plan_container_tags([_m(CANON_ID, BASE), _m(DUP_ID, BASE)], BASE_WINS)
         assert plan.tags == []
         assert len(plan.refusals) == 1
         assert plan.refusals[0].startswith(REFUSE_AMBIGUOUS)
@@ -194,7 +272,9 @@ class TestTheRefusals:
         backwards under ruling 048, which argues for keeping the anchored row."""
         plan = plan_container_tags(
             SPLIT_FAMILY,
-            {DUP_ID: ContainerRow(DUP_ID, espn_id="401882870")},
+            _rows(CANON_ID, DUP_ID,
+                  **{str(DUP_ID): ContainerRow(DUP_ID, espn_id="401882870",
+                                               identity_rank=(1,))}),
         )
         assert plan.tags == []
         assert plan.refusals[0].startswith(REFUSE_ANCHORED)
@@ -202,7 +282,9 @@ class TestTheRefusals:
     def test_a_statpal_id_anchors_a_row_just_as_an_espn_id_does(self):
         plan = plan_container_tags(
             SPLIT_FAMILY,
-            {DUP_ID: ContainerRow(DUP_ID, statpal_fixture_id="99123")},
+            _rows(CANON_ID, DUP_ID,
+                  **{str(DUP_ID): ContainerRow(DUP_ID, statpal_fixture_id="99123",
+                                               identity_rank=(1,))}),
         )
         assert plan.refusals[0].startswith(REFUSE_ANCHORED)
 
@@ -214,10 +296,9 @@ class TestTheRefusals:
         """
         plan = plan_container_tags(
             SPLIT_FAMILY,
-            {
-                CANON_ID: ContainerRow(CANON_ID, espn_id="401882870"),
-                DUP_ID: ContainerRow(DUP_ID),
-            },
+            _rows(CANON_ID, DUP_ID,
+                  **{str(CANON_ID): ContainerRow(CANON_ID, espn_id="401882870",
+                                                 identity_rank=(2,))}),
         )
         assert [(t.duplicate_id, t.canonical_id) for t in plan.tags] == [
             (DUP_ID, CANON_ID)
@@ -231,11 +312,10 @@ class TestTheRefusals:
         """
         plan = plan_container_tags(
             SPLIT_FAMILY,
-            {
-                DUP_ID: ContainerRow(
-                    DUP_ID, venue_game_starts=frozenset({KICKOFF, OTHER_KICKOFF})
-                )
-            },
+            _rows(CANON_ID, DUP_ID,
+                  **{str(DUP_ID): ContainerRow(
+                      DUP_ID, identity_rank=(1,),
+                      venue_game_starts=frozenset({KICKOFF, OTHER_KICKOFF}))}),
         )
         assert plan.tags == []
         assert plan.refusals[0].startswith(REFUSE_MIXED_KICKOFF)
@@ -251,7 +331,9 @@ class TestTheRefusals:
         """
         plan = plan_container_tags(
             SPLIT_FAMILY,
-            {DUP_ID: ContainerRow(DUP_ID, venue_game_starts=frozenset({KICKOFF}))},
+            _rows(CANON_ID, DUP_ID,
+                  **{str(DUP_ID): ContainerRow(DUP_ID, identity_rank=(1,),
+                                               venue_game_starts=frozenset({KICKOFF}))}),
         )
         assert [(t.duplicate_id, t.canonical_id) for t in plan.tags] == [
             (DUP_ID, CANON_ID)
@@ -259,7 +341,7 @@ class TestTheRefusals:
 
     def test_the_verdict_names_are_not_interchangeable(self):
         assert len({NOT_A_TWIN, REFUSE_AMBIGUOUS, REFUSE_ANCHORED,
-                    REFUSE_MIXED_KICKOFF}) == 4
+                    REFUSE_MIXED_KICKOFF, REFUSE_NO_ELECTION}) == 5
 
 
 # ── Part C: the cert's named test — the page actually gets the markets ───────
@@ -335,7 +417,7 @@ class TestTheSplitFamilyServesOneEvent:
         """
         assert _folded(split_family_engine, CANON_ID) == [CANON_ID]
 
-        _apply_plan(split_family_engine, plan_container_tags(SPLIT_FAMILY))
+        _apply_plan(split_family_engine, plan_container_tags(SPLIT_FAMILY, BASE_WINS))
 
         assert _folded(split_family_engine, CANON_ID) == [CANON_ID, DUP_ID]
 
@@ -348,7 +430,7 @@ class TestTheSplitFamilyServesOneEvent:
         also serve the canonical's markets on the duplicate's page, which is the
         duplicate card coming back with prices on it.
         """
-        _apply_plan(split_family_engine, plan_container_tags(SPLIT_FAMILY))
+        _apply_plan(split_family_engine, plan_container_tags(SPLIT_FAMILY, BASE_WINS))
         assert _folded(split_family_engine, DUP_ID) == [DUP_ID]
 
     def test_a_refused_family_changes_nothing_on_the_page(
@@ -356,7 +438,7 @@ class TestTheSplitFamilyServesOneEvent:
     ):
         """A refusal is not a quiet half-repair — it leaves the page as it was."""
         ambiguous = [_m(CANON_ID, BASE), _m(DUP_ID, BASE)]
-        _apply_plan(split_family_engine, plan_container_tags(ambiguous))
+        _apply_plan(split_family_engine, plan_container_tags(ambiguous, BASE_WINS))
         assert _folded(split_family_engine, CANON_ID) == [CANON_ID]
 
 

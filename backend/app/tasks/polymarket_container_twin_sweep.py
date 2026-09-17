@@ -89,14 +89,23 @@ async def load_rows(session, *, lookback: int, lookahead: int):
     venue signals is missing, the key cannot be formed, and the judgement would
     skip them anyway — leaving them in the read would only make the population
     floor below look healthier than the evidence is.
+
+    🔴 The `Event` ORM rows are loaded as well as the market tuples, solely so
+    that ``twin_identity_rank`` — the SERVING layer's own survivor election —
+    can be computed per row and handed to the judgement. It is imported, never
+    re-spelled: a sweep that picked its own winner would tag the row the fold
+    then elects, suppress it, and send the reader to the worse of the two.
     """
-    from sqlalchemy import text
+    from sqlalchemy import select, text
+    from sqlalchemy.orm import selectinload
+
+    from app.models.models import Event
+    from app.utils.event_twin_fold import twin_identity_rank
 
     result = await session.execute(
         text(
             "SELECT fm.event_id, fm.name, "
             "       fm.market_metadata->>'venue_game_start' AS vgs, "
-            "       e.espn_id, e.statpal_fixture_id, "
             "       CAST(COALESCE(e.event_tags, '[]'::jsonb) AS text) AS tags_text "
             "FROM futures_markets fm "
             "JOIN events e ON e.id = fm.event_id "
@@ -111,7 +120,6 @@ async def load_rows(session, *, lookback: int, lookahead: int):
 
     markets: list[ContainerMarket] = []
     starts: dict[int, set[str]] = {}
-    ids: dict[int, tuple[object, object]] = {}
     current_tags: dict[int, str] = {}
 
     for row in result:
@@ -121,17 +129,34 @@ async def load_rows(session, *, lookback: int, lookahead: int):
             )
         )
         starts.setdefault(row.event_id, set()).add(row.vgs)
-        ids[row.event_id] = (row.espn_id, row.statpal_fixture_id)
         current_tags[row.event_id] = row.tags_text or "[]"
 
-    rows = {
-        event_id: ContainerRow(
-            event_id=event_id,
-            espn_id=ids[event_id][0],
-            statpal_fixture_id=ids[event_id][1],
-            venue_game_starts=frozenset(starts.get(event_id, ())),
+    # `selectinload(Event.sport)` is REQUIRED, not an optimisation: the
+    # election's second-to-last rung prefers a row that NAMES ITS LEAGUE over a
+    # `*_other` catch-all (#2866), so it reads `event.sport`. Lazy-loading that
+    # from an async session raises, and an unloaded one would silently change
+    # the election — the hazard `loaded_sport_key` documents from the other side.
+    event_rows = (
+        (
+            await session.execute(
+                select(Event)
+                .where(Event.id.in_(list(current_tags)))
+                .options(selectinload(Event.sport))
+            )
         )
-        for event_id in ids
+        .scalars()
+        .all()
+    )
+
+    rows = {
+        event.id: ContainerRow(
+            event_id=event.id,
+            espn_id=event.espn_id,
+            statpal_fixture_id=event.statpal_fixture_id,
+            venue_game_starts=frozenset(starts.get(event.id, ())),
+            identity_rank=tuple(twin_identity_rank(event)),
+        )
+        for event in event_rows
     }
     return markets, rows, current_tags
 
