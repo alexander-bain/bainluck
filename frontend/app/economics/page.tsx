@@ -276,19 +276,34 @@ export default function EconomicsPage() {
         {/* Inflation */}
         {t.inflation && t.inflation.count > 0 && (
           <section className="mb-12">
+            {/* Not "CPI releases": the branch feeding this card admits any
+                market whose name carries "cpi" OR "inflation", so South
+                Africa's August print, euro-area annual inflation and headline
+                PCE have always been eligible for it. Ordering the blocks by
+                release date (#2564) puts one of them first instead of leaving
+                it to row order, which makes a title naming only CPI a claim the
+                card's own first row contradicts. Widened to what it draws
+                rather than narrowing the pool by country, which no field on the
+                market states. */}
             <SectionHeader
               kicker="Inflation & Consumer Prices"
-              title="CPI releases · Market expectations"
+              title="Inflation releases · Market expectations"
               count={t.inflation.count}
             />
             <div className="grid md:grid-cols-[1.6fr_1fr] gap-3.5">
               <Card>
                 {t.inflation.cpi_releases?.map((cpi: any, i: number) => (
                   <div key={i} className="py-3 border-b border-surface-secondary last:border-0">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-text-secondary">{cpi.mo}</span>
-                      {cpi.upcoming && (
-                        <span className="text-[9px] font-bold tracking-wide bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full">
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      {/* The question, not the month. Three blocks headed `Dec`
+                          were US CPI for 2030, 2034 and 2036, and a block
+                          headed `Sep` was Argentina's — #2564. `mo` is the
+                          short period hint and stays as the fallback. */}
+                      <span className="text-sm font-medium text-text-secondary leading-snug min-w-0">
+                        {cpi.q || cpi.mo}
+                      </span>
+                      {cpi.is_next && (
+                        <span className="text-[9px] font-bold tracking-wide bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full shrink-0 whitespace-nowrap">
                           NEXT
                         </span>
                       )}

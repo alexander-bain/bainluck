@@ -494,6 +494,87 @@ def _modal_bracket(brackets: list[list]) -> tuple[int, float, str]:
     return best_idx, best_prob, best_label
 
 
+# A month, and only a month. The expression this replaces was
+# `\b(Jan|...|Dec)\w*\b`, which also matches "Maybe", "Marginal" and "August"
+# inside "Augusta" — `\w*` after a three-letter stem accepts any word that
+# merely starts like one. Strictly narrower, so no name newly matches; a name
+# that stops matching was never naming a month.
+_CPI_MONTH_RE = re.compile(
+    r"\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?"
+    r"|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?"
+    r"|Dec(?:ember)?)\b",
+    re.IGNORECASE,
+)
+_CPI_YEAR_RE = re.compile(r"\b(20\d{2})\b")
+
+
+def _cpi_release_label(name: str) -> str:
+    """The short period label a CPI block prints, and it keeps the YEAR.
+
+    #2564 — THE DROPPED YEAR IS THE DIFFERENCE BETWEEN THREE BLOCKS AND ONE.
+    This label was ``re.search(<month>, name).group(0).title()[:3]``, so every
+    market naming a December collapsed onto the same four characters. On
+    production 2026-09-17 09:25:34Z that put three blocks titled ``Dec`` on the
+    card, and they were US headline CPI for December **2030**, **2034** and
+    **2036** — a decade apart, carrying different distributions, printed under
+    one heading. The issue reads this as "December repeated three times"; it is
+    three different questions wearing one name.
+
+    It is not only a web defect. ``CPIRelease`` in the iOS models declares
+    ``var id: String { mo }``, so the label IS the ``Identifiable`` id: three
+    ``Dec`` blocks are three duplicate ids in a ``ForEach``, which is why
+    native's iPad walk photographed "December repeated three times with
+    byte-identical values and an identical bar chart". Unique labels settle the
+    symptom; ``id = marketId`` is the durable fix and belongs to native.
+
+    The no-month fallback truncated at a fixed 20 characters, mid-word, so
+    "South Korea Annual Inflation 2026" reached the card as ``South Korea
+    Annual I``. It now stops at a word boundary. That is the best a SHORT label
+    can do for a market whose period is not a month, and it is why the block
+    also carries ``q``: the label is a hint, the question is the truth.
+
+    Returns "" when the name yields no period at all, which the caller reads as
+    "this block has no short label" rather than substituting one.
+    """
+    name = (name or "").strip()
+    if not name:
+        return ""
+    month = _CPI_MONTH_RE.search(name)
+    year = _CPI_YEAR_RE.search(name)
+    if month:
+        mon = month.group(0).title()[:3]
+        return f"{mon} {year.group(1)}" if year else mon
+    if len(name) <= 20:
+        return name
+    return name[:20].rsplit(" ", 1)[0].rstrip(" -–,:")
+
+
+def _cpi_release_sort_key(market: FuturesMarket) -> tuple[int, float]:
+    """Order CPI blocks by when the release they price actually lands.
+
+    #2564 — THE SIX BLOCKS WERE AN ARBITRARY SLICE OF 56. The query feeding this
+    page carries no ``ORDER BY`` and the list is cut ``[:6]``, so which six
+    releases a reader sees was decided by row order — the same undefined pairing
+    this file already documents for the recession headline. Measured on
+    production 2026-09-17: three of the six resolved in 2031, 2035 and 2037,
+    while the next actual print (September CPI, 2026-10-14) and all of October
+    and November lost to them. That is the issue's "a reader cannot reach Oct or
+    Nov at all", and it is an ordering defect, not a missing-data one.
+
+    Undated markets sort last rather than first: a null is not "imminent".
+
+    ``resolution_date`` is compared as a timestamp because the column yields
+    naive and aware datetimes from different writers, and sorting those against
+    each other raises rather than mis-orders.
+    """
+    resolves = getattr(market, "resolution_date", None)
+    if resolves is None:
+        return (1, 0.0)
+    if resolves.tzinfo is None:
+        resolves = resolves.replace(tzinfo=timezone.utc)
+    return (0, resolves.timestamp())
+
+
 def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
     """Convert cumulative 'Above X' outcomes to discrete bracket probabilities.
 
@@ -909,24 +990,47 @@ async def get_economics(db: AsyncSession):
                     inflation_side.append(_row)
                 continue
             modal_idx, _, _ = _modal_bracket(brackets)
-            # Extract short month label from name (e.g. "CPI YoY for May 2026" → "May")
-            _mo_match = re.search(
-                r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\b",
-                m.name or "",
-                re.IGNORECASE,
-            )
-            _cpi_mo = _mo_match.group(0).title()[:3] if _mo_match else m.name[:20]
             cpi_releases.append({
-                "mo": _cpi_mo,
+                "mo": _cpi_release_label(m.name or ""),
+                # The question the market asks, in the venue's own words — the
+                # same `q` every other row on this page carries (#3004, #6702).
+                # A period label cannot separate Argentina's September inflation
+                # from the US September CPI print, and on a card headed "CPI
+                # releases" the reader has no way to tell which one the number
+                # belongs to. The label is the hint; this is the truth.
+                "q": m.name,
                 "brackets": brackets,
+                # Left true on every block ON PURPOSE. iOS gates the whole CPI
+                # section on this field — `releases.filter { $0.upcoming ==
+                # true }`, then `if !upcoming.isEmpty` — and draws its section
+                # count from it, so narrowing it to the single next release
+                # would cut native's card row from six to one. It reads "this
+                # release has not happened yet", which is true of all of them.
+                # The superlative the badge claims is `is_next`, below.
                 "upcoming": True,
                 "peakIs": modal_idx,
                 "market_id": m.id,
+                "_sort_key": _cpi_release_sort_key(m),
             })
         else:
             _row = _market_row(m)
             if _row:
                 inflation_side.append(_row)
+
+    # Soonest release first, then the badge. Sorting BEFORE the `[:6]` below is
+    # the whole point — it decides which six of the 56 candidates a reader ever
+    # sees, not merely what order they sit in (#2564, `_cpi_release_sort_key`).
+    # Market id breaks the ties, and there are many: eight Kalshi markets price
+    # the same September print to the same minute. A stable sort would leave
+    # those in DB order, which is the undefined order this is replacing.
+    cpi_releases.sort(key=lambda r: (r["_sort_key"], r["market_id"]))
+    for _i, _release in enumerate(cpi_releases):
+        # Exactly one block may claim to be next, and it is the first one only
+        # because the list is now genuinely ordered. Stated by the payload
+        # rather than inferred from array position by each client: a superlative
+        # read off an index is true only for as long as nobody re-orders.
+        _release["is_next"] = _i == 0
+        del _release["_sort_key"]
 
     # --- Jobs section ---
     jobs_side = [r for m in jobs_markets if (r := _market_row(m))]

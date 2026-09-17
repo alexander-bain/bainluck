@@ -93,11 +93,62 @@ export function ProbBar({ value, height = 6, color }: { value: number; height?: 
   );
 }
 
+/**
+ * The leading word every bracket label in one histogram restates, or "".
+ *
+ * #2564 clause 3: the September blocks on /economics render eight rows reading
+ * `Exactly …`, `Exactly …`, `Exactly …` — eight different questions, eight
+ * different probabilities, and nothing on screen telling them apart. The labels
+ * are `Exactly 3.5%`, `Exactly 3.6%`, `Exactly 2.1%`: the value is present and
+ * correct in the payload, and the shared word is what eats the column, so the
+ * distinguishing suffix is the part that gets truncated away.
+ *
+ * The idiom is `sharedFamilyPrefix`'s (#2662/#5191, `lib/propFamily.ts`) and
+ * the three guards are lifted from it — but not the code: that one retreats to
+ * the last `": "` boundary, which a bracket label does not have, so it returns
+ * "" on every specimen here. Same rule, different boundary.
+ *
+ *  1. two or more DISTINCT labels — sharedness across one row is not evidence
+ *     of anything;
+ *  2. the prefix is a whole leading word, shared by every label;
+ *  3. it never strips a label to nothing, and never makes two labels that
+ *     differed read the same. A histogram whose rows are told apart only by
+ *     the prefix must keep it;
+ *  4. IT NEVER STRIPS A BOUND. `Exactly 3.5%` is a bucket and the word is
+ *     restated by the seven rows around it; `At least 370` is a cumulative
+ *     threshold and the word is the meaning — `least 370` and `370` are both
+ *     worse than what they replace. The vocabulary is `economics.py`'s own
+ *     `_CUMULATIVE_PREFIXES`, mirrored rather than re-derived, so a rung this
+ *     page already knows to keep raw is a rung this label rule keeps whole.
+ */
+const BOUND_WORDS = [
+  "above", "at", "least", "more", "over", "greater", "below", "before",
+  "under", "less", "than",
+];
+
+export function sharedBucketPrefix(labels: string[]): string {
+  const distinct = Array.from(new Set(labels));
+  if (distinct.length < 2) return "";
+
+  const lead = /^(\S+\s+)/.exec(distinct[0]);
+  if (!lead) return "";
+  const prefix = lead[1];
+  if (!distinct.every(l => l.startsWith(prefix))) return "";
+  if (BOUND_WORDS.includes(prefix.trim().toLowerCase())) return "";
+
+  const stripped = distinct.map(l => l.slice(prefix.length).trim());
+  if (stripped.some(s => !s)) return "";
+  if (new Set(stripped).size !== distinct.length) return "";
+  return prefix;
+}
+
 export function Histogram({ buckets, color }: {
   buckets: [number, string][]; color: string; height?: number;
 }) {
   const max = Math.max(...buckets.map(b => b[0]));
   const peak = buckets.reduce((best, b, i) => (b[0] > buckets[best][0] ? i : best), 0);
+  const shared = sharedBucketPrefix(buckets.map(b => b[1]));
+  const label = (raw: string) => (shared && raw.startsWith(shared) ? raw.slice(shared.length).trim() : raw);
   return (
     <div className="flex flex-col gap-px">
       {buckets.map((b, i) => {
@@ -105,7 +156,14 @@ export function Histogram({ buckets, color }: {
         const isPeak = i === peak;
         return (
           <div key={i} className="flex items-center gap-1.5 h-[22px]">
-            <span className="font-mono text-[10px] text-text-secondary w-[56px] text-right shrink-0 truncate">{b[1]}</span>
+            {/* Sized to its content between a floor and a ceiling, not pinned
+                at 56px. A range label ("1.9 to 2.1%") needs ~72px at this size
+                and was ellipsised to `1.9 to 2…` — the reader could not tell
+                2.0% from 2.1% on the modal outcome of the next CPI print. The
+                bar track beside it is `flex-1` and had the room to spare. The
+                ceiling keeps a long label from starving the bar, and `truncate`
+                stays as the last resort rather than the first. */}
+            <span className="font-mono text-[10px] text-text-secondary min-w-[56px] max-w-[88px] text-right shrink-0 truncate">{label(b[1])}</span>
             <div className="flex-1 h-[16px] bg-surface-secondary rounded-sm overflow-hidden">
               <div className="h-full rounded-sm" style={{
                 width: `${Math.max(w, 1.5)}%`,

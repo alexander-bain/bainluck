@@ -2122,7 +2122,10 @@ export interface EconThemeFed {
 
 export interface EconThemeInflation {
   count: number;
-  cpi_releases: { mo: string; brackets: number[][]; upcoming: boolean; peakIs: number; market_id: number }[];
+  // `q` is the market's own question and is what the card prints; `mo` is the
+  // short period hint. `upcoming` means "not yet released" and is true of every
+  // block — `is_next` is the one that may claim to be next (#2564).
+  cpi_releases: { mo: string; q: string; brackets: number[][]; upcoming: boolean; is_next: boolean; peakIs: number; market_id: number }[];
   side_markets: EconMarketRow[];
 }
 
