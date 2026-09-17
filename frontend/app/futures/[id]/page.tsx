@@ -303,6 +303,14 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     market?.status,
   ]);
   const hasOwnLadder = ownLadderRungs.length > 0;
+  // D102 / #4568 — the same partition the ranked table below uses, on the rungs.
+  // `buildOutcomeLadderRungs` already sorts a null probability to the end of a
+  // cumulative ladder (POSITIVE_INFINITY), so this folds a block that was
+  // already contiguous at the foot rather than reordering anything.
+  const { listed: pricedRungs, folded: numberlessRungs } = useMemo(
+    () => partitionOutcomesByPrice(ownLadderRungs),
+    [ownLadderRungs],
+  );
   // Progression-ordered markets (e.g., playoff rounds)
   const progressionMarkets = groupMarkets
     .filter((m) => m.group_position !== null && m.group_position !== undefined)
@@ -969,12 +977,36 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           that read, to anyone scanning this file, as a settled path the ladder
           handles. It never handled one — that is what CERT-605 blocked. A ladder
           here always describes a live question. */}
+      {/* D102 / #4568 — the SECOND renderer of this page's outcome set, and the
+          one #4568's own specimens sit on. `108555` (Starlink) drew three bare
+          `-` rungs at the foot of its ladder while `114175` drew five in the
+          ranked table below; the two paths are chosen by market SHAPE, so a fix
+          to either one alone leaves the issue live on half its evidence.
+          `partitionOutcomesByPrice` is the same rule both call — notice 35's
+          one-family rule, and ux/1316's lesson that a rule landing on one of two
+          renderers is the defect, not the fix. */}
       {hasOwnLadder && (
-        <QuantityGroup
-          title="All Outcomes"
-          rungs={ownLadderRungs}
-          wideLabels={ladderNeedsWideLabels(ownLadderRungs)}
-        />
+        <>
+          {pricedRungs.length > 0 && (
+            <QuantityGroup
+              title="All Outcomes"
+              rungs={pricedRungs}
+              wideLabels={ladderNeedsWideLabels(pricedRungs)}
+            />
+          )}
+          {numberlessRungs.length > 0 && (
+            <details data-testid="futures-more-rungs" className="px-6">
+              <summary className="cursor-pointer select-none py-1 text-[11px] text-text-muted">
+                More outcomes ({numberlessRungs.length})
+              </summary>
+              {/* Titleless: the disclosure's own summary is the heading. */}
+              <QuantityGroup
+                rungs={numberlessRungs}
+                wideLabels={ladderNeedsWideLabels(numberlessRungs)}
+              />
+            </details>
+          )}
+        </>
       )}
 
       {/* Progression (e.g., playoff rounds ordered by stage) */}

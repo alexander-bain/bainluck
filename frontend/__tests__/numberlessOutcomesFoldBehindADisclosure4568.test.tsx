@@ -87,6 +87,7 @@ function render(market: unknown, id: string): string {
 }
 
 const FOLD_MARKER = 'data-testid="futures-more-outcomes"';
+const LADDER_FOLD_MARKER = 'data-testid="futures-more-rungs"';
 
 /**
  * The markup either side of the disclosure.
@@ -292,5 +293,131 @@ describe("#4568 — the ALL OUTCOMES ladder on /futures/114175", () => {
     expect(html).not.toContain("Show all 35");
     expect(html).toContain("Show 5 more outcomes");
     expect(html).toContain("More outcomes (5)");
+  });
+});
+
+/* ───────────────────── the OTHER renderer, and why it is here ───────────────────── */
+
+/**
+ * 🔴 THE PAGE DRAWS ITS OUTCOME SET THROUGH TWO DIFFERENT COMPONENTS, CHOSEN BY
+ * MARKET SHAPE, AND #4568's OWN SPECIMENS ARE ON THE ONE THE RANKED TABLE IS NOT.
+ *
+ * `114175` is a `field` market and renders the ranked table asserted above.
+ * `108555` ("When will Starlink officially announce an IPO?") is a `quantity`
+ * market, so `hasOwnLadder` is true and the table is suppressed entirely — its
+ * five numberless rungs are drawn by `QuantityGroup`. Photographed still bare on
+ * production at 2026-09-17 20:4xZ, AFTER the table half was written:
+ * `artifacts/ux-1317/crop-108555-outcomes.png`.
+ *
+ * So a fix to either renderer alone leaves the issue live on half its evidence,
+ * and the half it leaves live is the half the issue was actually filed about.
+ * Both call `partitionOutcomesByPrice` — one rule, two wirings (notice 35;
+ * ux/1316's mutants A and B are the same lesson one surface over).
+ */
+function starlinkIpo() {
+  const priced = [
+    ["Before May 1, 2026", 0.01],
+    ["Before Apr 1, 2026", 0.01],
+    ["Before Nov 1, 2026", 0.01],
+    ["Before Jun 30, 2027", 0.06],
+  ] as const;
+  const numberless = [
+    "Before Nov 1, 2025",
+    "Before Sep 1, 2025",
+    "Before Dec 1, 2025",
+    "Before Oct 1, 2025",
+    "Before Jan 1, 2026",
+  ] as const;
+  return {
+    id: 108555,
+    name: "When will Starlink officially announce an IPO?",
+    status: "open",
+    source: "kalshi",
+    category: "championship",
+    market_type: "quantity",
+    // 🔴 FALSE is what makes this a cumulative ladder (`ladderOrderFor`), which
+    // is what makes `hasOwnLadder` true and suppresses the ranked table.
+    mutually_exclusive: false,
+    outcome_count: 9,
+    bookmakers: ["kalshi"],
+    resolution_date: "2027-06-30T00:00:00+00:00",
+    outcomes: [
+      ...priced.map(([name, probability], i) => ({
+        id: 1593052 + i,
+        name: name as string,
+        probability: probability as number | null,
+        rank: i + 1,
+        opening_probability: null,
+        probability_change_24h: null,
+        american_odds: null,
+        opening_american_odds: null,
+        is_winner: null,
+        resolution_source: null,
+        last_updated: "2026-09-17T19:50:18.481336+00:00",
+      })),
+      ...numberless.map((name, i) => ({
+        id: 1593032 + i,
+        name: name as string,
+        probability: null as number | null,
+        rank: 18 + i,
+        opening_probability: null,
+        probability_change_24h: null,
+        american_odds: null,
+        opening_american_odds: null,
+        is_winner: null,
+        resolution_source: null,
+        last_updated: "2026-05-12T16:16:06.970740+00:00",
+      })),
+    ],
+  };
+}
+
+function splitAtLadderFold(html: string): { beforeFold: string; insideFold: string } {
+  const at = html.indexOf(LADDER_FOLD_MARKER);
+  if (at === -1) return { beforeFold: html, insideFold: "" };
+  return { beforeFold: html.slice(0, at), insideFold: html.slice(at) };
+}
+
+describe("#4568 — the QUANTITY LADDER on /futures/108555", () => {
+  it("renders the ladder, not the ranked table — the fixture proves the branch", () => {
+    const html = render(starlinkIpo(), "108555");
+    // The table's own fold must be absent, or this suite would be asserting the
+    // same renderer twice and calling it two.
+    expect(html).not.toContain(FOLD_MARKER);
+    expect(html).toContain(LADDER_FOLD_MARKER);
+  });
+
+  it("puts every numberless rung BEHIND the disclosure", () => {
+    const { beforeFold, insideFold } = splitAtLadderFold(
+      render(starlinkIpo(), "108555"),
+    );
+    for (const label of [
+      "Before Nov 1, 2025",
+      "Before Sep 1, 2025",
+      "Before Dec 1, 2025",
+      "Before Oct 1, 2025",
+    ]) {
+      expect(insideFold).toContain(label);
+      expect(beforeFold).not.toContain(label);
+    }
+    expect(insideFold).toContain("More outcomes (5)");
+  });
+
+  it("keeps every priced rung in the open ladder", () => {
+    const { beforeFold, insideFold } = splitAtLadderFold(
+      render(starlinkIpo(), "108555"),
+    );
+    for (const label of ["Before May 1, 2026", "Before Jun 30, 2027"]) {
+      expect(beforeFold).toContain(label);
+      expect(insideFold).not.toContain(label);
+    }
+  });
+
+  it("draws NO ladder disclosure when every rung carries a price", () => {
+    const market = starlinkIpo();
+    market.outcomes = market.outcomes.filter((o) => o.probability != null);
+    const html = render(market, "108555");
+    expect(html).not.toContain(LADDER_FOLD_MARKER);
+    expect(html).not.toContain("More outcomes");
   });
 });

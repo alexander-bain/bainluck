@@ -89,6 +89,20 @@ MUTANTS = [
         "              More outcomes ({unpricedOutcomes.length})",
         "              Untraded outcomes ({unpricedOutcomes.length})",
     ),
+    (
+        "I · the LADDER list wiring is reverted — the quantity path keeps drawing "
+        "its numberless rungs, which is where #4568's OWN specimens live",
+        PAGE,
+        "              rungs={pricedRungs}",
+        "              rungs={ownLadderRungs}",
+    ),
+    (
+        "J · the LADDER disclosure is deleted — the half of the fix a battery "
+        "aimed only at the ranked table cannot see",
+        PAGE,
+        "          {numberlessRungs.length > 0 && (",
+        "          {false && (",
+    ),
 ]
 
 
