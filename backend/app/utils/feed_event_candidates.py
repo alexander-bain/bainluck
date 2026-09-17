@@ -125,6 +125,8 @@ def candidate_window_conditions(
     live_start_cutoff,
     upcoming_cutoff,
     recent_cutoff,
+    marquee_upcoming_cutoff=None,
+    marquee_sport_keys=(),
 ):
     """The status × time window the game-event candidate pass selects on.
 
@@ -149,22 +151,62 @@ def candidate_window_conditions(
       is a small clock-drift buffer against rows stuck ``live`` with a future
       start (see :func:`app.utils.lifecycle.served_event_status`).
     * ``scheduled`` — ahead of us, inside the upcoming window.
+    * ``scheduled`` again, out to ``marquee_upcoming_cutoff``, for the handful of
+      sports in ``marquee_sport_keys`` — see below.
     * ``completed`` / ``closed`` — recently finished.
     * ``suspended`` — recently *not* finished, on the same window as the Final
       it replaced.  See the route-side comment for why it shares that window
       rather than the live arm's open floor.
+
+    ── WHY THE SCHEDULED ARM IS TWO ARMS (#6690, live/346) ──
+
+    The single 12-hour arm made the evening feed structurally incapable of
+    showing tomorrow's games.  Twelve hours forward from 9 PM Pacific reaches
+    9 AM Pacific, and no North-American game starts before that: measured on
+    2026-09-16 at 04:15Z the nearest marquee kickoff was 12.3h out and Thursday
+    night's NFL game 20.0h out, so ``/api/feed?mode=sports`` served 26 event
+    cards of which **zero** were ``scheduled`` and the web "Upcoming" rail held
+    nine UFC concepts and a golf tournament — no game at all.
+
+    Widening the single arm to 36h is the move this deliberately does NOT make.
+    The window is also the candidate budget's intake: 36h holds 306 scheduled
+    rows against a quota of 150, and the overwhelming majority are ITF/challenger
+    tennis that the ``min_score`` gate discards downstream anyway.  Widening for
+    everyone spends the budget on rows the feed will never serve and starves the
+    games it exists to carry.
+
+    So the widening is scoped to the sports a reader opens the app for.  The
+    caller passes its own Tier 1+2 allowlist rather than this module minting a
+    second one — there is exactly one such list in the codebase and it stays
+    that way.  Omit either argument and the predicate is the one-armed original,
+    which is what ``my_teams_only`` (already 7 days forward for every sport)
+    continues to use.
     """
+    marquee_keys = tuple(marquee_sport_keys or ())
+    scheduled_arms = [
+        and_(
+            Event.status == "scheduled",
+            Event.commence_time >= now,
+            Event.commence_time <= upcoming_cutoff,
+        )
+    ]
+    if marquee_upcoming_cutoff is not None and marquee_keys:
+        scheduled_arms.append(
+            and_(
+                Event.status == "scheduled",
+                Event.commence_time >= now,
+                Event.commence_time <= marquee_upcoming_cutoff,
+                Sport.key.in_(marquee_keys),
+            )
+        )
+
     return [
         or_(
             and_(
                 Event.status == "live",
                 Event.commence_time <= live_start_cutoff,
             ),
-            and_(
-                Event.status == "scheduled",
-                Event.commence_time >= now,
-                Event.commence_time <= upcoming_cutoff,
-            ),
+            or_(*scheduled_arms),
             and_(
                 Event.status.in_(RECENT_STATUSES),
                 Event.commence_time >= recent_cutoff,
@@ -332,7 +374,52 @@ def survivor_order():
     ]
 
 
-def _collapsed_subquery(where_clauses, name: str):
+def scheduled_rank_columns(marquee_sport_keys=()):
+    """The two sort keys that decide which *scheduled* rows survive the quota.
+
+    ── WHY `commence_time DESC` WAS THE WRONG KEY (#6690, live/346) ──
+
+    The ranked pass row-numbers every tier with one ``ORDER BY commence_time
+    DESC``.  For ``live``, ``recent`` and ``suspended`` that is right: their rows
+    are in the past, so DESC is "most recent first" and the quota cuts the
+    stalest.  For ``scheduled`` every row is in the FUTURE, so DESC is
+    "furthest away first" — rank 1 is the game nobody is thinking about yet and
+    the rows the quota discards are the ones kicking off next.
+
+    It was inert when written (96 scheduled rows against a quota of 150,
+    measured 2026-08-21) and is inert no longer: on 2026-09-16 the scheduled
+    tier held 170 rows, so the 20 most imminent games were being cut nightly by
+    a key that was never meant to choose between real games at all.  That is the
+    "eligible major games disappear" symptom in launch block 5, and it is why
+    the window widening above could not ship on its own — a 36h window under a
+    DESC key would have cut *everything inside eleven hours*.
+
+    Two keys, most significant first:
+
+    1. ``marquee_rank`` — 0 for a scheduled row in a Tier 1+2 sport, 1 for
+       everything else.  A slate of obscure overnight fixtures can no longer
+       push tomorrow's NFL game out of the pool, whatever the pool size.
+    2. ``scheduled_time`` — ``commence_time`` ASC, so within each of those two
+       groups the quota cuts the furthest away and never the imminent.
+
+    Both are NULL/constant outside the scheduled tier, and ``row_number`` only
+    compares rows inside one partition, so the live, recent and suspended tiers
+    fall straight through to the unchanged ``commence_time DESC``.  That is the
+    inertness claim, and it is structural rather than measured: those tiers
+    cannot see these columns vary.
+    """
+    marquee_keys = tuple(marquee_sport_keys or ())
+    is_scheduled = status_tier_expr() == TIER_SCHEDULED
+    marquee_rank = (
+        case((and_(is_scheduled, Sport.key.in_(marquee_keys)), 0), else_=1)
+        if marquee_keys
+        else case((is_scheduled, 1), else_=1)
+    )
+    scheduled_time = case((is_scheduled, Event.commence_time), else_=None)
+    return marquee_rank.label("marquee_rank"), scheduled_time.label("scheduled_time")
+
+
+def _collapsed_subquery(where_clauses, name: str, marquee_sport_keys=()):
     """The duplicate-collapse pass, shared by both callers.
 
     Factored out for :func:`deduplicated_event_ids` (My Stuff) so the two
@@ -365,12 +452,15 @@ def _collapsed_subquery(where_clauses, name: str):
     ]
 
     where_clauses = [*where_clauses, not_a_proven_duplicate()]
+    marquee_rank, scheduled_time = scheduled_rank_columns(marquee_sport_keys)
 
     return (
         select(
             Event.id.label("id"),
             status_tier_expr().label("tier"),
             Event.commence_time.label("commence_time"),
+            marquee_rank,
+            scheduled_time,
             func.row_number()
             .over(partition_by=dedup_partition, order_by=survivor_order())
             .label("dup_rn"),
@@ -427,7 +517,7 @@ def deduplicated_event_ids(where_clauses) -> Select:
     return select(collapsed.c.id).where(collapsed.c.dup_rn == 1)
 
 
-def event_candidate_ids(where_clauses) -> Select:
+def event_candidate_ids(where_clauses, marquee_sport_keys=()) -> Select:
     """A SELECT of event ids: duplicates collapsed, then quota'd per tier.
 
     Returns a ``Select`` of ids for use as a subquery, so the caller keeps its
@@ -440,8 +530,14 @@ def event_candidate_ids(where_clauses) -> Select:
 
     #2263: proven duplicates are dropped as well, by the shared collapse pass —
     see :func:`_collapsed_subquery` for why it lives there and not here.
+
+    #6690: ``marquee_sport_keys`` reaches the *ordering* only.  It never widens
+    or narrows the pool — that is the window predicate's job — so passing it
+    cannot admit a row the caller's ``where_clauses`` did not already admit.
     """
-    collapsed = _collapsed_subquery(where_clauses, "feed_event_candidates_collapsed")
+    collapsed = _collapsed_subquery(
+        where_clauses, "feed_event_candidates_collapsed", marquee_sport_keys
+    )
 
     ranked = (
         select(
@@ -450,7 +546,15 @@ def event_candidate_ids(where_clauses) -> Select:
             func.row_number()
             .over(
                 partition_by=collapsed.c.tier,
-                order_by=collapsed.c.commence_time.desc(),
+                # #6690 — the first two keys are inert outside the scheduled
+                # tier by construction (see `scheduled_rank_columns`), so the
+                # live/recent/suspended tiers rank on `commence_time DESC`
+                # exactly as they did before.
+                order_by=[
+                    collapsed.c.marquee_rank.asc(),
+                    collapsed.c.scheduled_time.asc().nulls_last(),
+                    collapsed.c.commence_time.desc(),
+                ],
             )
             .label("tier_rn"),
         )

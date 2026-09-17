@@ -1092,6 +1092,15 @@ MY_STUFF_ALLOWED_SPORT_KEYS = {
     "mma_mixed_martial_arts",
 }
 
+#: #6690 — how far forward the candidate pass looks for a *scheduled* game in
+#: one of the sports above.  Every other sport keeps the 12-hour window.
+#:
+#: Measured 2026-09-16 04:15Z, which is why this number is 36 and not 24: the
+#: nearest marquee kickoff was 12.3h out and Thursday night's NFL game 20.0h
+#: out, so a 24h window would have carried that evening and missed the next
+#: one.  36h clears a full next-day slate from any hour a reader opens the app.
+MARQUEE_UPCOMING_WINDOW_HOURS = 36
+
 # LLM sport categories corresponding to MY_STUFF_ALLOWED_SPORT_KEYS.
 # Used for futures filtering where sport_key isn't directly available.
 MY_STUFF_ALLOWED_CATEGORIES = {
@@ -8510,10 +8519,22 @@ async def _score_events(
     if my_teams_only:
         recent_cutoff = now - timedelta(hours=72)
         upcoming_cutoff = now + timedelta(days=7)
+        # Already 7 days forward for every sport, so there is nothing for the
+        # marquee arm to widen — it stays off on this branch (#6690).
+        marquee_upcoming_cutoff = None
     else:
         # Tighter time windows than the full events list to keep query fast
         recent_cutoff = now - timedelta(hours=24)
         upcoming_cutoff = now + timedelta(hours=12)
+        # #6690 — the Tier 1+2 slate reaches a full day and a half forward, so
+        # a reader who opens the app in the evening can see tomorrow's games.
+        # 12h forward from 9 PM Pacific stops at 9 AM Pacific, which is before
+        # the first pitch of anything; the NFL game measured 20.0h out was not a
+        # candidate at all. 36h clears a full next-day slate with margin.
+        # Scoped to `MY_STUFF_ALLOWED_SPORT_KEYS` rather than applied to every
+        # sport on purpose — see `candidate_window_conditions` for why widening
+        # for everyone starves the games it is meant to carry.
+        marquee_upcoming_cutoff = now + timedelta(hours=MARQUEE_UPCOMING_WINDOW_HOURS)
     # Guard against events incorrectly stuck in "live" status with future
     # commence_times (e.g., from Scores API returning upcoming events as
     # completed=False). Only include "live" events that have actually started.
@@ -8549,6 +8570,8 @@ async def _score_events(
         live_start_cutoff=live_start_cutoff,
         upcoming_cutoff=upcoming_cutoff,
         recent_cutoff=recent_cutoff,
+        marquee_upcoming_cutoff=marquee_upcoming_cutoff,
+        marquee_sport_keys=MY_STUFF_ALLOWED_SPORT_KEYS,
     )
 
     if sport_filter:
@@ -8639,7 +8662,11 @@ async def _score_events(
         # fix is how the budget is DIVIDED. Still one round trip — the pass is an
         # inlined subquery, not a second execute.
         query = query.where(
-            Event.id.in_(event_candidate_ids(candidate_conditions))
+            Event.id.in_(
+                event_candidate_ids(
+                    candidate_conditions, MY_STUFF_ALLOWED_SPORT_KEYS
+                )
+            )
         )
         # Retained so ordering downstream of this function is unchanged, and as a
         # belt-and-braces bound if the quotas are ever edited to sum higher.
