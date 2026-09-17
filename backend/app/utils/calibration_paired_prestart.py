@@ -209,8 +209,10 @@ __all__ = [
     "PAIR_LEGS_FROM_DIFFERENT_BOOKS",
     "PAIR_NO_EARLY_NONE_BEFORE",
     "PAIR_NO_EARLY_STALE",
+    "PAIR_NO_EARLY_UNCONFIRMED_SPAN",
     "PAIR_NO_FINAL_NONE_BEFORE",
     "PAIR_NO_FINAL_STALE",
+    "PAIR_NO_FINAL_UNCONFIRMED_SPAN",
     "PAIR_PAIRED",
     "PAIR_PAIRED_UNCHANGED",
     "PAIR_RESULT_NOT_INDEPENDENT",
@@ -366,12 +368,27 @@ PAIR_NO_FINAL_NONE_BEFORE = "no_final_none_before"
 #: enough before that it cannot stand as the final price.
 PAIR_NO_FINAL_STALE = "no_final_stale"
 
+#: The final leg's run CROSSES the start: first seen too long before it to
+#: stand, last seen after it. Not the same finding as ``*_stale`` — we were
+#: still watching this price, we simply cannot prove we watched it in the window
+#: that matters, because retention keeps only the run's two ends. Counted
+#: separately so the walk can report what refusing them costs; folding it into
+#: ``*_stale`` would blame a polling gap that is not there. See
+#: :func:`_last_proven_look_sql`.
+PAIR_NO_FINAL_UNCONFIRMED_SPAN = "no_final_unconfirmed_span"
+
 #: A usable final leg, but nothing at all before the early instant — we only
 #: started watching inside the lead window.
 PAIR_NO_EARLY_NONE_BEFORE = "no_early_none_before"
 
 #: Something before the early instant, but not being confirmed near it.
 PAIR_NO_EARLY_STALE = "no_early_stale"
+
+#: :data:`PAIR_NO_FINAL_UNCONFIRMED_SPAN` at the early instant. Reachable
+#: without any after-START evidence at all — a run last confirmed two hours
+#: before the start still crosses a boundary a DAY before it, and would
+#: otherwise lend a thirty-day-old price a staleness of zero.
+PAIR_NO_EARLY_UNCONFIRMED_SPAN = "no_early_unconfirmed_span"
 
 #: The classes that yield two scorable probabilities. Everything else returns
 #: ``None`` for both, so a caller cannot score a pair this module refused.
@@ -391,9 +408,30 @@ PAIR_CLASSES: tuple[str, ...] = (
     PAIR_LEGS_FROM_DIFFERENT_BOOKS,
     PAIR_NO_FINAL_NONE_BEFORE,
     PAIR_NO_FINAL_STALE,
+    PAIR_NO_FINAL_UNCONFIRMED_SPAN,
     PAIR_NO_EARLY_NONE_BEFORE,
     PAIR_NO_EARLY_STALE,
+    PAIR_NO_EARLY_UNCONFIRMED_SPAN,
 )
+
+
+#: :func:`_standing_leg`'s refusal reason → the class each leg reports it as.
+#:
+#: Dicts rather than a chain of conditionals so a reason added to
+#: :func:`_standing_leg` without a class raises ``KeyError`` here instead of
+#: being silently bucketed as "stale" — which is how the unconfirmed-span
+#: population would have stayed invisible a second time.
+_NO_FINAL_CLASS = {
+    "none_before": PAIR_NO_FINAL_NONE_BEFORE,
+    "stale": PAIR_NO_FINAL_STALE,
+    "unconfirmed_span": PAIR_NO_FINAL_UNCONFIRMED_SPAN,
+}
+
+_NO_EARLY_CLASS = {
+    "none_before": PAIR_NO_EARLY_NONE_BEFORE,
+    "stale": PAIR_NO_EARLY_STALE,
+    "unconfirmed_span": PAIR_NO_EARLY_UNCONFIRMED_SPAN,
+}
 
 
 def forecast_kind(source: Any) -> str:
@@ -459,20 +497,55 @@ def as_of_sql(instant: str, lead_seconds: int) -> str:
     return f"({instant} - INTERVAL '{lead_seconds} seconds')"
 
 
+def _last_proven_look_sql(leg: str, instant: str) -> str:
+    """The latest look at ``leg`` we can PROVE happened at or before ``instant``.
+
+    🔴 CAL-P1331, on the commissioning directive's first correctness check:
+    *"valid_until compression may extend beyond a historical cutoff. Clamping it
+    to S DOES NOT prove a pre-S observation."* The clamp this replaces —
+    ``LEAST(last_seen_at, instant)`` — did the opposite of what its own docstring
+    claimed. A run first seen three days before the start whose ``valid_until``
+    ran two hours PAST it clamped to the instant itself, scoring staleness ZERO:
+    the freshest reading available, awarded for an observation taken after the
+    event began. The same row with ``valid_until`` ending before the start was
+    correctly refused. The only thing separating them was after-start evidence.
+
+    Retention collapses a run of equal values into its first row and moves the
+    LAST look into ``valid_until`` (``tasks/retention.py``), discarding the
+    intermediate timestamps. So a run spanning the instant proves a look before
+    it (``captured_at``) and a look after it (``valid_until``) and NOTHING about
+    the interval between — which is the only interval this test is asking about.
+    ``captured_at`` is therefore the honest answer whenever the span crosses the
+    boundary, and :func:`_span_unconfirmed_sql` counts what that costs.
+    """
+    return (
+        f"CASE WHEN {leg}.last_seen_at <= {instant}"
+        f" THEN {leg}.last_seen_at ELSE {leg}.captured_at END"
+    )
+
+
+def _span_unconfirmed_sql(leg: str, instant: str) -> str:
+    """Whether ``leg``'s run crosses ``instant`` — its own counted refusal.
+
+    Folding this into ``*_stale`` would report "we stopped watching" for a price
+    we were in fact still watching; the two findings want different fixes (poll
+    harder vs. stamp the intermediate looks), so the walk reports them apart.
+    """
+    return f"{leg}.last_seen_at > {instant}"
+
+
 def _fresh_sql(leg: str, instant: str, max_stale_seconds: int) -> str:
     """Whether ``leg`` was still being confirmed close enough to ``instant``.
 
-    ``LEAST(last_seen_at, instant)`` caps a ``valid_until`` that runs past the
-    instant: a row re-confirmed during the event tells us nothing about how
-    fresh it was BEFORE the event, and letting it count would readmit exactly
-    the post-start evidence rule 3 excludes.
+    Measured against :func:`_last_proven_look_sql`, never against a look taken
+    after ``instant``.
     """
     if not isinstance(max_stale_seconds, int) or max_stale_seconds < 0:
         raise ValueError(
             f"max_stale_seconds must be a non-negative int, got {max_stale_seconds!r}"
         )
     return (
-        f"EXTRACT(EPOCH FROM ({instant} - LEAST({leg}.last_seen_at, {instant})))"
+        f"EXTRACT(EPOCH FROM ({instant} - {_last_proven_look_sql(leg, instant)}))"
         f" <= {max_stale_seconds}"
     )
 
@@ -603,6 +676,8 @@ def paired_legs_sql(
     final_fresh = _fresh_sql("final", _BOUNDARY, final_max_stale_seconds)
     book_early_fresh = _fresh_sql("ef", as_of_early, early_max_stale_seconds)
     book_final_fresh = _fresh_sql("ff", _BOUNDARY, final_max_stale_seconds)
+    early_span = _span_unconfirmed_sql("early", as_of_early)
+    final_span = _span_unconfirmed_sql("final", _BOUNDARY)
     return f"""
 SELECT fo.id AS outcome_id,
        fm.source AS source,
@@ -630,8 +705,11 @@ SELECT fo.id AS outcome_id,
                 AND {early_fresh} AND {final_fresh}
                THEN '{PAIR_LEGS_FROM_DIFFERENT_BOOKS}'
            WHEN final.id IS NULL THEN '{PAIR_NO_FINAL_NONE_BEFORE}'
+           WHEN NOT {final_fresh} AND {final_span}
+               THEN '{PAIR_NO_FINAL_UNCONFIRMED_SPAN}'
            WHEN NOT {final_fresh} THEN '{PAIR_NO_FINAL_STALE}'
            WHEN early.id IS NULL THEN '{PAIR_NO_EARLY_NONE_BEFORE}'
+           WHEN {early_span} THEN '{PAIR_NO_EARLY_UNCONFIRMED_SPAN}'
            ELSE '{PAIR_NO_EARLY_STALE}'
        END AS pair_class
 FROM futures_outcomes fo
@@ -844,10 +922,17 @@ def _standing_leg(
     """The standing eligible price at ``instant``, with proof we were still looking.
 
     Rows are ``(captured_at, probability, yes_bid, yes_ask, bookmaker,
-    valid_until)``. Returns ``(row, "ok" | "none_before" | "stale")``.
+    valid_until)``. Returns
+    ``(row, "ok" | "none_before" | "stale" | "unconfirmed_span")``.
 
     Strictly before ``instant``: a row captured AT the instant is not a forecast
     made before it.
+
+    Freshness is measured against the last look we can PROVE fell at or before
+    ``instant``, which is ``captured_at`` whenever the run's ``valid_until``
+    crosses it — see :func:`_last_proven_look_sql` for why, and the mirrored
+    ``CASE`` it renders. This twin and that statement must answer identically;
+    ``backend/scripts/probe_paired_prestart_sql.py`` is what proves they do.
     """
     before = [
         row
@@ -858,10 +943,11 @@ def _standing_leg(
     if not before:
         return None, "none_before"
     row = max(before, key=lambda r: _as_utc(r[0]))
-    last_seen = _as_utc(row[5]) or _as_utc(row[0])
-    last_seen = min(last_seen, instant)
+    valid_until = _as_utc(row[5])
+    spans_instant = valid_until is not None and valid_until > instant
+    last_seen = _as_utc(row[0]) if spans_instant else (valid_until or _as_utc(row[0]))
     if (instant - last_seen).total_seconds() > max_stale_seconds:
-        return None, "stale"
+        return None, "unconfirmed_span" if spans_instant else "stale"
     return row, "ok"
 
 
@@ -939,24 +1025,8 @@ def classify_pair(
         # margin difference, not a forecast change.
         return PAIR_LEGS_FROM_DIFFERENT_BOOKS, None, None
     if why_final != "ok":
-        return (
-            (
-                PAIR_NO_FINAL_NONE_BEFORE
-                if why_final == "none_before"
-                else PAIR_NO_FINAL_STALE
-            ),
-            None,
-            None,
-        )
-    return (
-        (
-            PAIR_NO_EARLY_NONE_BEFORE
-            if why_early == "none_before"
-            else PAIR_NO_EARLY_STALE
-        ),
-        None,
-        None,
-    )
+        return _NO_FINAL_CLASS[why_final], None, None
+    return _NO_EARLY_CLASS[why_early], None, None
 
 
 # NOTE: the pre-CAL-P1330 ``select_paired_legs`` name is GONE, not aliased. It

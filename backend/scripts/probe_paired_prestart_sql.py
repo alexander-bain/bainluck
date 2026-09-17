@@ -214,11 +214,14 @@ def build_fixture() -> dict[int, str]:
     unequal_lead = OUTCOMES[0]
     snap(unequal_lead, "kalshi", T0 - 30 * D, 0.40, valid_until=T0 - 29 * D)
 
-    # E7: ONE collapsed row covers both instants (looked 50 times, never moved).
+    # E7: ONE collapsed row covers both instants (looked repeatedly, never
+    # moved). CAL-P1331 moved the capture from 3 days out to 30 hours out: the
+    # run must PROVE a look before each instant, and a 3-day-old capture proves
+    # nothing about the early one. The 3-day variant is now C12 below.
     e7 = game()
     for name, won, p in (("E7-A", True, 0.70), ("E7-B", False, 0.30)):
         o = outcome(name, e7, won=won)
-        snap(o, "kalshi", T0 - 3 * D, p, valid_until=T0 - 1 * H)
+        snap(o, "kalshi", T0 - 30 * H, p, valid_until=T0 - 1 * H)
         expected[o.id] = "paired_unchanged"
 
     # -- early-ONLY: 3% longshots watched a week out, then polling stopped
@@ -320,6 +323,29 @@ def build_fixture() -> dict[int, str]:
     snap(c11, "kalshi", real_at - 26 * H, 0.55, valid_until=real_at - 25 * H)
     snap(c11, "kalshi", real_at - 1 * H, 0.70, yes_bid=0.69, yes_ask=0.71)
     expected[c11.id] = "paired"
+
+    # C12 CAL-P1331, the FINAL leg: one run first seen 3 days before the start
+    # and last seen 2 hours AFTER it. The old clamp scored this staleness zero
+    # and published it as a flat pair; the only evidence promoting it over an
+    # identical stale row came from after the event began.
+    c12 = outcome("C12-A", game())
+    snap(c12, "kalshi", T0 - 3 * D, 0.62, valid_until=T0 + 2 * H)
+    expected[c12.id] = "no_final_unconfirmed_span"
+
+    # C13 the same defect at the EARLY boundary, reachable with no after-start
+    # evidence at all: a 30-day-old price whose only confirmation lands 22 hours
+    # after the instant it is being offered as the market's view of.
+    c13 = outcome("C13-A", game())
+    snap(c13, "kalshi", T0 - 30 * D, 0.20, valid_until=T0 - 2 * H)
+    snap(c13, "kalshi", T0 - 1 * H, 0.80, yes_bid=0.79, yes_ask=0.81)
+    expected[c13.id] = "no_early_unconfirmed_span"
+
+    # C14 the positive control for both: identical shape to C13, confirmed an
+    # hour BEFORE the early instant rather than after it, and it pairs.
+    c14 = outcome("C14-A", game())
+    snap(c14, "kalshi", T0 - 30 * D, 0.20, valid_until=T0 - 25 * H)
+    snap(c14, "kalshi", T0 - 1 * H, 0.80, yes_bid=0.79, yes_ask=0.81)
+    expected[c14.id] = "paired"
 
     # G1 DataGolf: a valid pair, but a MODEL forecast — its own set, never pooled.
     g1 = outcome("G1-A", game(), won=False, source="datagolf", res="game_score")
