@@ -5800,12 +5800,6 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
         # be self-defeating. The cursor on disk right now is stamped wide.
         legacy_input_fingerprint=runner.fingerprint,
     )
-    if action == REFUSE:
-        # Another beat holds an unexpired lease on this generation. Two workers
-        # each advancing half a cursor is the one way this design corrupts, so
-        # standing down is the correct behaviour, not a degraded one.
-        logger.info("calibration staged futures: cursor held by another run — standing down")
-        return None
     runner.ledger.record_stage(f"staged:cursor_{action}", 0)
     # CAL-P024: the action alone is not diagnostic. Five distinct causes produce
     # INVALIDATE, and on 2026-08-09 the one that fired (a deploy moving
@@ -5814,6 +5808,22 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
     # establish, because the ledger recorded only "invalidate".
     runner.ledger.record_stage(f"staged:cursor_reason:{reason}", 0)
     logger.info("calibration staged futures: cursor %s (%s)", action, reason)
+    if action == REFUSE:
+        # Standing down is the correct behaviour, not a degraded one. Two
+        # causes reach here and they are different operational stories:
+        # another beat holds an unexpired lease (two workers each advancing
+        # half a cursor is the one way this design corrupts), or the durable
+        # read did not answer (#6599 — a cursor we could not read is not one we
+        # may write over).
+        #
+        # #6599: the two ``record_stage`` calls MOVED ABOVE this return. They
+        # used to sit below it, so a stood-down beat recorded neither its action
+        # nor its reason and was indistinguishable in the ledger from a beat
+        # that never ran. That was survivable while REFUSE meant only the lease;
+        # it is not, now that it also means the read failed — "how often is this
+        # happening" has to be answerable from the beat ring.
+        logger.info("calibration staged futures: standing down (%s)", reason)
+        return None
 
     # CAL-P1301: the plan, cut with whatever refinements the cursor carries. A
     # cursor with none — every cursor before this deploy, and every one after it
