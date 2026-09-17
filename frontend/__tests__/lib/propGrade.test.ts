@@ -244,3 +244,64 @@ describe("isGraded / SETTLED_NO_GRADE_LABEL", () => {
     expect(SETTLED_NO_GRADE_LABEL).toBe("Resolved · grading unavailable");
   });
 });
+
+// ---------------------------------------------------------------------------
+// CERT-3024 / #6751 — the server↔reader contract for a VENUE-TYPED grade.
+//
+// THIS MODULE IS UNCHANGED BY THAT REPAIR, AND THAT IS THE POINT. `readPropGrade`
+// still refuses `is_winner` + `resolution_source` (the test above, #1642, still
+// passes and must keep passing). What changed is upstream: `_grade_settled_prop`
+// in `app/routes/events.py` now types `hit` ITSELF for a settled leg whose
+// allowlisted `resolution_source` AND settled price agree, because for
+// `KXNFLFFPTS` no box score can ever do it — no fantasy-points stat mapping
+// exists. CERT-3024 BLOCKed the first attempt precisely because the rows
+// arrived here ungraded and this module correctly withheld.
+//
+// So these cases pin the SHAPE the backend now sends. If the backend fallback
+// regresses, the rows revert to the withheld shape above and the event page
+// silently goes back to "Resolved · grading unavailable" — a fix that looks
+// merged and changes nothing for a reader.
+// ---------------------------------------------------------------------------
+describe("readPropGrade — the venue-typed backend shape (CERT-3024 / #6751)", () => {
+  /** What `/game-markets` now serves for a settled FFPTS winner: no stat line. */
+  const VENUE_TYPED_WINNER: PropGradeFields = {
+    actual: null,
+    hit: true,
+    is_winner: true,
+    resolution_source: "api_settlement",
+  };
+  const VENUE_TYPED_LOSER: PropGradeFields = {
+    actual: null,
+    hit: false,
+    is_winner: false,
+    resolution_source: "api_settlement",
+  };
+
+  it("grades a venue-typed winner as HIT even with no actual", () => {
+    const g = readPropGrade([VENUE_TYPED_WINNER]);
+    expect(g.state).toBe("HIT");
+    expect(g.reason).toBe("explicit_hit");
+    expect(g.actual).toBeNull();
+  });
+
+  it("grades a venue-typed loser as MISS even with no actual", () => {
+    const g = readPropGrade([VENUE_TYPED_LOSER]);
+    expect(g.state).toBe("MISS");
+    expect(g.reason).toBe("explicit_hit");
+    expect(g.actual).toBeNull();
+  });
+
+  it("renders a verdict rather than the withheld label", () => {
+    expect(isGraded(readPropGrade([VENUE_TYPED_WINNER]))).toBe(true);
+    expect(isGraded(readPropGrade([VENUE_TYPED_LOSER]))).toBe(true);
+  });
+
+  // The regression this whole pair exists to catch: drop the backend fallback
+  // and the same row arrives with `hit: null`, which is the BLOCKed state.
+  it("withholds again the moment the backend stops typing hit — the CERT-3024 state", () => {
+    const untyped = { ...VENUE_TYPED_WINNER, hit: null };
+    const g = readPropGrade([untyped]);
+    expect(g.state).toBe("WITHHOLD");
+    expect(g.reason).toBe("no_typed_grade");
+  });
+});
