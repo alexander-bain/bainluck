@@ -424,7 +424,45 @@ supersedes_scan () {
   # and `supersedes CERT-9130/9140` each declare two. Both continuations stay
   # inside the tight form — the list may only grow by `/N` or `and CERT-N`, so
   # no ordinary word can creep in and turn prose into a STOP.
-  SUP_DECL="$($GREP -oiE 'supersed(es|e|ing):? *CERT-[0-9]+((/[0-9]+)|(,? +and +CERT-[0-9]+))*' "$ledger" | $GREP -ciE "$cert([^0-9]|\$)|/${cert#CERT-}([^0-9]|\$)")"
+  #
+  # A NEGATED VERB IS NOT A DECLARATION (int400, #6619/CERT-2989). `-o` prints
+  # only the MATCH, so the words before the verb are not merely unexamined —
+  # they are structurally invisible. `it does not supersede CERT-2989` extracts
+  # as `supersede CERT-2989`, the canonical form, and STOPs. This gate therefore
+  # failed CLOSED on a correct sha, and told the desk to "write the orchestrator"
+  # — who is stood down — so the ship sat until a desk hand-derived the merge.
+  #
+  # It recurs by construction rather than by accident: notice 17 REQUIRES a
+  # concurrent second opinion to be rebanked under a fresh id, and such a row
+  # exists precisely to say it does NOT supersede the row it agrees with. The
+  # correct output of a working bus is what tripped the gate.
+  #
+  # Neutralise the VERB before the untouched tight expression runs, rather than
+  # widening the expression to see its own left context. The obvious repair —
+  # prefixing `.{0,28}` so the negation falls inside the match — was measured and
+  # REJECTED: the id is counted from the extracted string, so any CERT-N sitting
+  # in that prefix counts as a declaration, and the greedy prefix also swallows
+  # adjacent matches. Over the live ledger it moved 83 of 1,461 certs IN BOTH
+  # DIRECTIONS (new false STOPs and new fail-opens). This form moves 2.
+  #
+  # `not`/`never`/`n't` must be whole words followed by the verb: `notice 18
+  # **tight** supersedes` is the exact string this must not touch, and `[^a-zA-Z]`
+  # before plus ` +` after is what keeps `not` out of `notice`.
+  #
+  # THE SAFETY PROPERTY IS THAT THE SCREEN IS UNTOUCHED. Only SUP_DECL narrows,
+  # so SUP_N cannot fall and no cert can reach `clean` that did not already: the
+  # only transition this can cause is `declared` → `review`, which WARNS and
+  # PRINTS the row. A fail-open is structurally unreachable here — which is the
+  # whole reason the fix goes on this line and not on the screen above.
+  #
+  # Measured on the live ledger, 1,461 certs, exactly 2 move, both to `review`:
+  #   CERT-2989  2 → 0   both rows read "does not supersede" (int400's STOP)
+  #   CERT-1871  1 → 0   "CERT-1876 alone does not supersede CERT-1871, while
+  #                       the paired GREEN subjects do" — a COMPOUND sentence a
+  #                       negation rule cannot resolve, so it lands on `review`
+  #                       and the desk reads that clause itself. Stated rather
+  #                       than hidden: this one is a real STOP→WARN weakening.
+  SUP_DECL="$(sed -E "s/((^|[^a-zA-Z])(not|never|n'?t) +)supersed(es|e|ing)/\1NEGATEDVERB/gI" "$ledger" | $GREP -oiE 'supersed(es|e|ing):? *CERT-[0-9]+((/[0-9]+)|(,? +and +CERT-[0-9]+))*' | $GREP -ciE "$cert([^0-9]|\$)|/${cert#CERT-}([^0-9]|\$)")"
   if [ "${SUP_N:-0}" -eq 0 ]; then
     SUP_VERDICT=clean
   elif [ "${SUP_DECL:-0}" -gt 0 ]; then
@@ -909,6 +947,34 @@ FIXEOF
     "supersedes_scan CERT-9140 '$fx/failopen.md'; [ \"\$SUP_VERDICT\" = declared ]"
   check "n18 fail-open: the inverse 'CERT-N ... superseded by' is not clean (CERT-2042)" \
     "supersedes_scan CERT-2042 '$fx/failopen.md'; [ \"\$SUP_VERDICT\" != clean ]"
+
+  # ── notice 18, THE FAIL-CLOSED (int400, #6619/CERT-2989). `-o` prints only the
+  # match, so `does not supersede CERT-N` extracted as the canonical form and
+  # STOPped a correct sha. Rows 1-2 are the live ledger's wording, trimmed.
+  # Row 3 is the compound the rule cannot resolve and must not silently clear;
+  # row 4 is a real declaration in the SAME file, so a pass here cannot be the
+  # cheap kind where the negation rule simply suppressed everything; row 5 is
+  # `notice` — the string the word-boundary exists for, and the one a lazier
+  # `not` pattern would eat.
+  cat > "$fx/negated.md" <<'FIXEOF'
+| CERT-2990 -- RECONCILIATION | cert bus (notice-17 reconciliation) | **GREEN -- TOKEN GRANTED** | records the agreeing second opinion; it does not supersede CERT-2989 and grants no additional token. |
+| CERT-2991 -- ADMIN | cert bus (administrative; no strike) | **GREEN -- NO ADDITIONAL TOKEN** | this row does not supersede CERT-2989. |
+| CERT-1876 -- PAIRED | lane1 (repairs CERT-1871) | **GREEN -- TOKEN GRANTED** | CERT-1876 alone does not supersede CERT-1871, while the paired GREEN subjects do. |
+| CERT-3000 -- SUBJECT | GREEN | supersedes: CERT-2777 |
+| CERT-2320 -- SUBJECT | MERGED | notice 18 **tight** supersedes -- 0 for CERT-2300; notice 28 completed/success. |
+FIXEOF
+  check "n18 fail-closed: 'does not supersede CERT-N' is NOT a declaration (CERT-2989)" \
+    "supersedes_scan CERT-2989 '$fx/negated.md'; [ \"\$SUP_DECL\" -eq 0 ]"
+  check "n18 fail-closed: two negated rows land on review, never a STOP (CERT-2989)" \
+    "supersedes_scan CERT-2989 '$fx/negated.md'; [ \"\$SUP_VERDICT\" = review ]"
+  check "n18 fail-closed: the negated row still REACHES the screen, so it is printed" \
+    "supersedes_scan CERT-2989 '$fx/negated.md'; [ \"\$SUP_N\" -gt 0 ]"
+  check "n18 fail-closed: the compound 'alone does not ... while the pair do' is review, not clean (CERT-1871)" \
+    "supersedes_scan CERT-1871 '$fx/negated.md'; [ \"\$SUP_VERDICT\" = review ]"
+  check "n18 fail-closed: a real declaration in the same file still declares (CERT-2777)" \
+    "supersedes_scan CERT-2777 '$fx/negated.md'; [ \"\$SUP_VERDICT\" = declared ]"
+  check "n18 fail-closed: 'notice' is not 'not' — the mention row stays out of it (CERT-2300)" \
+    "supersedes_scan CERT-2300 '$fx/negated.md'; [ \"\$SUP_VERDICT\" != declared ]"
 
   # The widening must not re-import the false STOPs it was built beside. A
   # sentence ABOUT the check names the id after the verb with a word in between;
