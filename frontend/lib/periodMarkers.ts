@@ -14,6 +14,58 @@ export interface PeriodBoundary {
 }
 
 /**
+ * Minimum gap between two period markers before their LABELS are collapsed into
+ * one, as a fraction of the chart's visible time span.
+ *
+ * UX-P022 derived this on the win-probability chart: label collision is a
+ * function of PIXELS, so the rule has to be purely proportional. The earlier
+ * hybrid — `max(duration * N%, some minutes)` — mixes a pixel budget with a time
+ * budget, and the two only agree at one chart length: on a three-hour game the
+ * minutes floor is far too tight, on a twenty-minute live game it is far too
+ * wide. 7% of the visible width is comfortably wider than a 2–4 character period
+ * label at 11px, and means the same thing at every chart length.
+ */
+export const PERIOD_LABEL_MIN_SPACING_FRACTION = 0.07;
+
+/**
+ * Collapse period boundaries whose labels would overlap, keeping the LATER of
+ * any too-close pair (so "HT" wins over "Q2 end", which names the same moment
+ * better).
+ *
+ * Input must be timestamp-ascending — each chart bounds and filters the list its
+ * own way first, because they disagree on what "on the chart" means: the
+ * win-probability chart measures its drawn extent (CERT-1984), the score
+ * differential chart requires a drawn score line (CERT-1989). Only the spacing
+ * rule is shared, and it is shared because it is the same pixel problem on the
+ * same page at the same width.
+ *
+ * #888-adjacent, routed by latency/467: the score differential chart carried a
+ * private copy of the PRE-UX-P022 rule and rendered `TB2`, `TB3`, `T5T6` at
+ * 390px while the win-probability chart directly above it spaced the identical
+ * innings cleanly. One rule, two call sites, so a third chart cannot inherit the
+ * old one by copy-paste.
+ */
+export function dedupePeriodLabels<T extends { timestamp: string }>(
+  ascending: T[],
+  chartDurationMs: number,
+): T[] {
+  const minSpacing = chartDurationMs * PERIOD_LABEL_MIN_SPACING_FRACTION;
+  const deduped: T[] = [];
+  for (const b of ascending) {
+    const t = new Date(b.timestamp).getTime();
+    if (deduped.length > 0) {
+      const prevT = new Date(deduped[deduped.length - 1].timestamp).getTime();
+      if (t - prevT < minSpacing) {
+        deduped[deduped.length - 1] = b;
+        continue;
+      }
+    }
+    deduped.push(b);
+  }
+  return deduped;
+}
+
+/**
  * Largest plausible gap WITHIN a single game's period/inning markers. No sport
  * that renders period gridlines (NBA/NFL/MLB/NHL/soccer) has a 6-hour mid-game
  * pause, so a gap this large means the marker stream jumped to a DIFFERENT

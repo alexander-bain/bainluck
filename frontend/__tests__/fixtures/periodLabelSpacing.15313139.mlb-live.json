@@ -1,0 +1,6028 @@
+{
+ "event_id": 15313139,
+ "home_team": "Cincinnati Reds",
+ "away_team": "Los Angeles Dodgers",
+ "commence_time": "2026-09-16T22:40:00+00:00",
+ "status": "live",
+ "period_markers": [
+  {
+   "timestamp": "2026-09-16T22:41:58.439331+00:00",
+   "period": "Top 1st",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-16T22:52:58.631134+00:00",
+   "period": "Middle 1st",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-16T22:54:58.455919+00:00",
+   "period": "Bottom 1st",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-16T23:03:58.413173+00:00",
+   "period": "End 1st",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-16T23:04:58.593969+00:00",
+   "period": "Top 2nd",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-16T23:08:58.443042+00:00",
+   "period": "Middle 2nd",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-16T23:09:58.425981+00:00",
+   "period": "Bottom 2nd",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-16T23:18:58.457380+00:00",
+   "period": "End 2nd",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-16T23:20:58.446689+00:00",
+   "period": "Top 3rd",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-16T23:27:58.459865+00:00",
+   "period": "Middle 3rd",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-16T23:29:58.469398+00:00",
+   "period": "Bottom 3rd",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-16T23:38:58.451987+00:00",
+   "period": "End 3rd",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-16T23:40:58.636608+00:00",
+   "period": "Top 4th",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-16T23:49:29.064435+00:00",
+   "period": "Middle 4th",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-16T23:50:29.064138+00:00",
+   "period": "Bottom 4th",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-16T23:58:29.040450+00:00",
+   "period": "Top 5th",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-17T00:10:29.044601+00:00",
+   "period": "Middle 5th",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-17T00:12:29.360395+00:00",
+   "period": "Bottom 5th",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-17T00:19:29.069896+00:00",
+   "period": "End 5th",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-17T00:20:29.069768+00:00",
+   "period": "Top 6th",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-17T00:32:29.074969+00:00",
+   "period": "Middle 6th",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-17T00:34:29.104508+00:00",
+   "period": "Bottom 6th",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-17T00:53:29.064670+00:00",
+   "period": "End 6th",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-17T00:55:29.074826+00:00",
+   "period": "Top 7th",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-17T00:59:29.076413+00:00",
+   "period": "Middle 7th",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-17T01:00:29.079913+00:00",
+   "period": "Bottom 7th",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-17T01:15:29.354227+00:00",
+   "period": "End 7th",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-17T01:16:29.123793+00:00",
+   "period": "Top 8th",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-17T01:26:29.094059+00:00",
+   "period": "Middle 8th",
+   "source": "win_prob"
+  },
+  {
+   "timestamp": "2026-09-17T01:28:29.085212+00:00",
+   "period": "Bottom 8th",
+   "source": "win_prob"
+  }
+ ],
+ "score_history": [
+  {
+   "timestamp": "2026-09-16T22:39:58.447118+00:00",
+   "home_score": 0,
+   "away_score": 0
+  },
+  {
+   "timestamp": "2026-09-16T23:25:58.448589+00:00",
+   "home_score": 0,
+   "away_score": 1
+  },
+  {
+   "timestamp": "2026-09-16T23:38:58.451987+00:00",
+   "home_score": 2,
+   "away_score": 1
+  },
+  {
+   "timestamp": "2026-09-17T00:17:29.487525+00:00",
+   "home_score": 3,
+   "away_score": 1
+  },
+  {
+   "timestamp": "2026-09-17T00:29:29.091791+00:00",
+   "home_score": 3,
+   "away_score": 2
+  },
+  {
+   "timestamp": "2026-09-17T00:48:29.068179+00:00",
+   "home_score": 4,
+   "away_score": 2
+  },
+  {
+   "timestamp": "2026-09-17T01:10:29.060403+00:00",
+   "home_score": 5,
+   "away_score": 2
+  },
+  {
+   "timestamp": "2026-09-17T01:15:29.354227+00:00",
+   "home_score": 6,
+   "away_score": 2
+  }
+ ],
+ "espn_history": [
+  {
+   "timestamp": "2026-09-16T22:40:58.425707+00:00",
+   "home_probability": 0.5,
+   "away_probability": 0.5,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T22:41:58.439331+00:00",
+   "home_probability": 0.3573,
+   "away_probability": 0.6427,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": null,
+   "period": "Top 1st"
+  },
+  {
+   "timestamp": "2026-09-16T22:44:58.470122+00:00",
+   "home_probability": 0.522,
+   "away_probability": 0.478,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T22:46:58.450562+00:00",
+   "home_probability": 0.46,
+   "away_probability": 0.54,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T22:50:58.437626+00:00",
+   "home_probability": 0.475,
+   "away_probability": 0.525,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T22:52:58.631134+00:00",
+   "home_probability": 0.3927,
+   "away_probability": 0.6073,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": null,
+   "period": "Middle 1st"
+  },
+  {
+   "timestamp": "2026-09-16T22:54:58.457326+00:00",
+   "home_probability": 0.548,
+   "away_probability": 0.452,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T22:56:58.432644+00:00",
+   "home_probability": 0.364,
+   "away_probability": 0.636,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": "0:00",
+   "period": "Bottom 1st"
+  },
+  {
+   "timestamp": "2026-09-16T22:58:58.424035+00:00",
+   "home_probability": 0.526,
+   "away_probability": 0.474,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:00:58.434331+00:00",
+   "home_probability": 0.51,
+   "away_probability": 0.49,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:02:58.504966+00:00",
+   "home_probability": 0.522,
+   "away_probability": 0.478,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:03:58.413173+00:00",
+   "home_probability": 0.3334,
+   "away_probability": 0.6666,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": null,
+   "period": "End 1st"
+  },
+  {
+   "timestamp": "2026-09-16T23:04:58.439442+00:00",
+   "home_probability": 0.5,
+   "away_probability": 0.5,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:06:58.504398+00:00",
+   "home_probability": 0.523,
+   "away_probability": 0.477,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:08:58.412326+00:00",
+   "home_probability": 0.54,
+   "away_probability": 0.46,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:09:58.425981+00:00",
+   "home_probability": 0.3756,
+   "away_probability": 0.6244,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": null,
+   "period": "Bottom 2nd"
+  },
+  {
+   "timestamp": "2026-09-16T23:10:58.463705+00:00",
+   "home_probability": 0.551,
+   "away_probability": 0.449,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:12:58.498265+00:00",
+   "home_probability": 0.589,
+   "away_probability": 0.411,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:16:58.525389+00:00",
+   "home_probability": 0.554,
+   "away_probability": 0.446,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:18:58.618936+00:00",
+   "home_probability": 0.54,
+   "away_probability": 0.46,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:20:58.471107+00:00",
+   "home_probability": 0.5,
+   "away_probability": 0.5,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:22:58.464809+00:00",
+   "home_probability": 0.497,
+   "away_probability": 0.503,
+   "home_score": 0,
+   "away_score": 0,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:25:58.448589+00:00",
+   "home_probability": 0.2469,
+   "away_probability": 0.7531,
+   "home_score": 0,
+   "away_score": 1,
+   "game_clock": null,
+   "period": "Top 3rd"
+  },
+  {
+   "timestamp": "2026-09-16T23:26:58.445406+00:00",
+   "home_probability": 0.403,
+   "away_probability": 0.597,
+   "home_score": 0,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:27:58.459865+00:00",
+   "home_probability": 0.2795,
+   "away_probability": 0.7205,
+   "home_score": 0,
+   "away_score": 1,
+   "game_clock": null,
+   "period": "Middle 3rd"
+  },
+  {
+   "timestamp": "2026-09-16T23:29:58.469398+00:00",
+   "home_probability": 0.2481,
+   "away_probability": 0.7519,
+   "home_score": 0,
+   "away_score": 1,
+   "game_clock": null,
+   "period": "Bottom 3rd"
+  },
+  {
+   "timestamp": "2026-09-16T23:30:58.459679+00:00",
+   "home_probability": 0.437,
+   "away_probability": 0.563,
+   "home_score": 0,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:32:58.438020+00:00",
+   "home_probability": 0.481,
+   "away_probability": 0.519,
+   "home_score": 0,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:34:58.439538+00:00",
+   "home_probability": 0.44,
+   "away_probability": 0.56,
+   "home_score": 0,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:36:58.486446+00:00",
+   "home_probability": 0.46,
+   "away_probability": 0.54,
+   "home_score": 0,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:37:58.455208+00:00",
+   "home_probability": 0.51,
+   "away_probability": 0.49,
+   "home_score": 0,
+   "away_score": 1,
+   "game_clock": "0:00",
+   "period": "Bottom 3rd"
+  },
+  {
+   "timestamp": "2026-09-16T23:38:58.452588+00:00",
+   "home_probability": 0.633,
+   "away_probability": 0.367,
+   "home_score": 2,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:40:58.462112+00:00",
+   "home_probability": 0.623,
+   "away_probability": 0.377,
+   "home_score": 2,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:42:58.516597+00:00",
+   "home_probability": 0.576,
+   "away_probability": 0.424,
+   "home_score": 2,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:47:29.139453+00:00",
+   "home_probability": 0.657,
+   "away_probability": 0.343,
+   "home_score": 2,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:49:29.064435+00:00",
+   "home_probability": 0.6113,
+   "away_probability": 0.3887,
+   "home_score": 2,
+   "away_score": 1,
+   "game_clock": null,
+   "period": "Middle 4th"
+  },
+  {
+   "timestamp": "2026-09-16T23:50:29.064138+00:00",
+   "home_probability": 0.578,
+   "away_probability": 0.422,
+   "home_score": 2,
+   "away_score": 1,
+   "game_clock": null,
+   "period": "Bottom 4th"
+  },
+  {
+   "timestamp": "2026-09-16T23:51:29.100399+00:00",
+   "home_probability": 0.644,
+   "away_probability": 0.356,
+   "home_score": 2,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:53:29.133746+00:00",
+   "home_probability": 0.687,
+   "away_probability": 0.313,
+   "home_score": 2,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:55:29.138786+00:00",
+   "home_probability": 0.721,
+   "away_probability": 0.279,
+   "home_score": 2,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-16T23:57:29.296017+00:00",
+   "home_probability": 0.604,
+   "away_probability": 0.396,
+   "home_score": 2,
+   "away_score": 1,
+   "game_clock": "0:00",
+   "period": "Bottom 4th"
+  },
+  {
+   "timestamp": "2026-09-16T23:58:29.040450+00:00",
+   "home_probability": 0.5955,
+   "away_probability": 0.4045,
+   "home_score": 2,
+   "away_score": 1,
+   "game_clock": null,
+   "period": "Top 5th"
+  },
+  {
+   "timestamp": "2026-09-16T23:59:29.146889+00:00",
+   "home_probability": 0.585,
+   "away_probability": 0.415,
+   "home_score": 2,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T00:05:29.140818+00:00",
+   "home_probability": 0.507,
+   "away_probability": 0.493,
+   "home_score": 2,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T00:07:29.206863+00:00",
+   "home_probability": 0.579,
+   "away_probability": 0.421,
+   "home_score": 2,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T00:09:29.137654+00:00",
+   "home_probability": 0.645,
+   "away_probability": 0.355,
+   "home_score": 2,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T00:10:29.044601+00:00",
+   "home_probability": 0.6496,
+   "away_probability": 0.3504,
+   "home_score": 2,
+   "away_score": 1,
+   "game_clock": null,
+   "period": "Middle 5th"
+  },
+  {
+   "timestamp": "2026-09-17T00:12:29.360395+00:00",
+   "home_probability": 0.6151,
+   "away_probability": 0.3849,
+   "home_score": 2,
+   "away_score": 1,
+   "game_clock": null,
+   "period": "Bottom 5th"
+  },
+  {
+   "timestamp": "2026-09-17T00:13:29.179475+00:00",
+   "home_probability": 0.708,
+   "away_probability": 0.292,
+   "home_score": 2,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T00:15:29.116206+00:00",
+   "home_probability": 0.687,
+   "away_probability": 0.313,
+   "home_score": 2,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T00:17:29.557825+00:00",
+   "home_probability": 0.671,
+   "away_probability": 0.329,
+   "home_score": 3,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T00:19:29.127954+00:00",
+   "home_probability": 0.786,
+   "away_probability": 0.214,
+   "home_score": 3,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T00:20:29.069768+00:00",
+   "home_probability": 0.8071,
+   "away_probability": 0.1929,
+   "home_score": 3,
+   "away_score": 1,
+   "game_clock": null,
+   "period": "Top 6th"
+  },
+  {
+   "timestamp": "2026-09-17T00:21:29.139338+00:00",
+   "home_probability": 0.779,
+   "away_probability": 0.221,
+   "home_score": 3,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T00:23:29.130925+00:00",
+   "home_probability": 0.81,
+   "away_probability": 0.19,
+   "home_score": 3,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T00:25:29.185817+00:00",
+   "home_probability": 0.716,
+   "away_probability": 0.284,
+   "home_score": 3,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T00:27:29.125816+00:00",
+   "home_probability": 0.627,
+   "away_probability": 0.373,
+   "home_score": 3,
+   "away_score": 1,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T00:29:29.136510+00:00",
+   "home_probability": 0.644,
+   "away_probability": 0.356,
+   "home_score": 3,
+   "away_score": 2,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T00:32:29.074969+00:00",
+   "home_probability": 0.6974,
+   "away_probability": 0.3026,
+   "home_score": 3,
+   "away_score": 2,
+   "game_clock": null,
+   "period": "Middle 6th"
+  },
+  {
+   "timestamp": "2026-09-17T00:34:29.104508+00:00",
+   "home_probability": 0.6624,
+   "away_probability": 0.3376,
+   "home_score": 3,
+   "away_score": 2,
+   "game_clock": null,
+   "period": "Bottom 6th"
+  },
+  {
+   "timestamp": "2026-09-17T00:35:29.200626+00:00",
+   "home_probability": 0.74,
+   "away_probability": 0.26,
+   "home_score": 3,
+   "away_score": 2,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T00:39:29.254754+00:00",
+   "home_probability": 0.818,
+   "away_probability": 0.182,
+   "home_score": 3,
+   "away_score": 2,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T00:43:29.182437+00:00",
+   "home_probability": 0.804,
+   "away_probability": 0.196,
+   "home_score": 3,
+   "away_score": 2,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T00:47:29.162843+00:00",
+   "home_probability": 0.885,
+   "away_probability": 0.115,
+   "home_score": 4,
+   "away_score": 2,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T00:48:29.068179+00:00",
+   "home_probability": 0.8349,
+   "away_probability": 0.1651,
+   "home_score": 4,
+   "away_score": 2,
+   "game_clock": null,
+   "period": "Bottom 6th"
+  },
+  {
+   "timestamp": "2026-09-17T00:51:29.222257+00:00",
+   "home_probability": 0.845,
+   "away_probability": 0.155,
+   "home_score": 4,
+   "away_score": 2,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T00:53:29.064670+00:00",
+   "home_probability": 0.8135,
+   "away_probability": 0.1865,
+   "home_score": 4,
+   "away_score": 2,
+   "game_clock": null,
+   "period": "End 6th"
+  },
+  {
+   "timestamp": "2026-09-17T00:55:29.177928+00:00",
+   "home_probability": 0.815,
+   "away_probability": 0.185,
+   "home_score": 4,
+   "away_score": 2,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T00:59:29.167065+00:00",
+   "home_probability": 0.809,
+   "away_probability": 0.191,
+   "home_score": 4,
+   "away_score": 2,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T01:00:29.079913+00:00",
+   "home_probability": 0.8983,
+   "away_probability": 0.1017,
+   "home_score": 4,
+   "away_score": 2,
+   "game_clock": null,
+   "period": "Bottom 7th"
+  },
+  {
+   "timestamp": "2026-09-17T01:01:29.170282+00:00",
+   "home_probability": 0.887,
+   "away_probability": 0.113,
+   "home_score": 4,
+   "away_score": 2,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T01:03:29.162207+00:00",
+   "home_probability": 0.916,
+   "away_probability": 0.084,
+   "home_score": 4,
+   "away_score": 2,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T01:07:29.215957+00:00",
+   "home_probability": 0.897,
+   "away_probability": 0.103,
+   "home_score": 4,
+   "away_score": 2,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T01:09:29.181431+00:00",
+   "home_probability": 0.915,
+   "away_probability": 0.085,
+   "home_score": 5,
+   "away_score": 2,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T01:10:29.060403+00:00",
+   "home_probability": 0.9737,
+   "away_probability": 0.0263,
+   "home_score": 5,
+   "away_score": 2,
+   "game_clock": null,
+   "period": "Bottom 7th"
+  },
+  {
+   "timestamp": "2026-09-17T01:11:29.144750+00:00",
+   "home_probability": 0.941,
+   "away_probability": 0.059,
+   "home_score": 5,
+   "away_score": 2,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T01:13:29.161638+00:00",
+   "home_probability": 0.946,
+   "away_probability": 0.054,
+   "home_score": 5,
+   "away_score": 2,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T01:15:29.354227+00:00",
+   "home_probability": 0.9955,
+   "away_probability": 0.0045,
+   "home_score": 6,
+   "away_score": 2,
+   "game_clock": null,
+   "period": "End 7th"
+  },
+  {
+   "timestamp": "2026-09-17T01:16:29.123793+00:00",
+   "home_probability": 0.9987,
+   "away_probability": 0.0013,
+   "home_score": 6,
+   "away_score": 2,
+   "game_clock": null,
+   "period": "Top 8th"
+  },
+  {
+   "timestamp": "2026-09-17T01:17:29.136005+00:00",
+   "home_probability": 0.964,
+   "away_probability": 0.036,
+   "home_score": 6,
+   "away_score": 2,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T01:18:29.071991+00:00",
+   "home_probability": 0.988,
+   "away_probability": 0.012,
+   "home_score": 6,
+   "away_score": 2,
+   "game_clock": "0:00",
+   "period": "Top 8th"
+  },
+  {
+   "timestamp": "2026-09-17T01:19:29.191875+00:00",
+   "home_probability": 0.985,
+   "away_probability": 0.015,
+   "home_score": 6,
+   "away_score": 2,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T01:21:29.526167+00:00",
+   "home_probability": 0.979,
+   "away_probability": 0.021,
+   "home_score": 6,
+   "away_score": 2,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T01:25:29.168278+00:00",
+   "home_probability": 0.967,
+   "away_probability": 0.033,
+   "home_score": 6,
+   "away_score": 2,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T01:26:29.094059+00:00",
+   "home_probability": 0.999,
+   "away_probability": 0.001,
+   "home_score": 6,
+   "away_score": 2,
+   "game_clock": null,
+   "period": "Middle 8th"
+  },
+  {
+   "timestamp": "2026-09-17T01:28:29.085212+00:00",
+   "home_probability": 0.999,
+   "away_probability": 0.001,
+   "home_score": 6,
+   "away_score": 2,
+   "game_clock": null,
+   "period": "Bottom 8th"
+  },
+  {
+   "timestamp": "2026-09-17T01:29:29.148047+00:00",
+   "home_probability": 0.988,
+   "away_probability": 0.012,
+   "home_score": 6,
+   "away_score": 2,
+   "game_clock": null,
+   "period": null
+  },
+  {
+   "timestamp": "2026-09-17T01:31:29.168258+00:00",
+   "home_probability": 0.99,
+   "away_probability": 0.01,
+   "home_score": 6,
+   "away_score": 2,
+   "game_clock": null,
+   "period": null
+  }
+ ],
+ "history": [
+  {
+   "timestamp": "2026-09-16T01:32:00+00:00",
+   "home_probability": 0.3526,
+   "away_probability": 0.6474,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 17,
+   "probability_range": {
+    "min": 0.3435,
+    "max": 0.3566
+   }
+  },
+  {
+   "timestamp": "2026-09-16T01:42:00+00:00",
+   "home_probability": 0.3541,
+   "away_probability": 0.6459,
+   "over_under": 8.5,
+   "projected_home_score": 3.4,
+   "projected_away_score": 5.1,
+   "bookmaker_count": 4,
+   "probability_range": {
+    "min": 0.3508,
+    "max": 0.356
+   }
+  },
+  {
+   "timestamp": "2026-09-16T01:45:00+00:00",
+   "home_probability": 0.3535,
+   "away_probability": 0.6465,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3535,
+    "max": 0.3535
+   }
+  },
+  {
+   "timestamp": "2026-09-16T01:51:00+00:00",
+   "home_probability": 0.3552,
+   "away_probability": 0.6448,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3538,
+    "max": 0.3566
+   }
+  },
+  {
+   "timestamp": "2026-09-16T01:53:00+00:00",
+   "home_probability": 0.3566,
+   "away_probability": 0.6434,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3566,
+    "max": 0.3566
+   }
+  },
+  {
+   "timestamp": "2026-09-16T01:54:00+00:00",
+   "home_probability": 0.3538,
+   "away_probability": 0.6462,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3538,
+    "max": 0.3538
+   }
+  },
+  {
+   "timestamp": "2026-09-16T02:04:00+00:00",
+   "home_probability": 0.3556,
+   "away_probability": 0.6444,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3554,
+    "max": 0.3558
+   }
+  },
+  {
+   "timestamp": "2026-09-16T02:09:00+00:00",
+   "home_probability": 0.354,
+   "away_probability": 0.646,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3539,
+    "max": 0.3542
+   }
+  },
+  {
+   "timestamp": "2026-09-16T02:25:00+00:00",
+   "home_probability": 0.3523,
+   "away_probability": 0.6477,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3493,
+    "max": 0.3553
+   }
+  },
+  {
+   "timestamp": "2026-09-16T02:35:00+00:00",
+   "home_probability": 0.3522,
+   "away_probability": 0.6478,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 18,
+   "probability_range": {
+    "min": 0.3435,
+    "max": 0.3558
+   }
+  },
+  {
+   "timestamp": "2026-09-16T02:36:00+00:00",
+   "home_probability": 0.3522,
+   "away_probability": 0.6478,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3435,
+    "max": 0.3558
+   }
+  },
+  {
+   "timestamp": "2026-09-16T02:48:00+00:00",
+   "home_probability": 0.3431,
+   "away_probability": 0.6569,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3403,
+    "max": 0.3459
+   }
+  },
+  {
+   "timestamp": "2026-09-16T03:03:00+00:00",
+   "home_probability": 0.3485,
+   "away_probability": 0.6515,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3485,
+    "max": 0.3485
+   }
+  },
+  {
+   "timestamp": "2026-09-16T03:04:00+00:00",
+   "home_probability": 0.3504,
+   "away_probability": 0.6496,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3459,
+    "max": 0.355
+   }
+  },
+  {
+   "timestamp": "2026-09-16T03:05:00+00:00",
+   "home_probability": 0.352,
+   "away_probability": 0.648,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 12,
+   "probability_range": {
+    "min": 0.3419,
+    "max": 0.3558
+   }
+  },
+  {
+   "timestamp": "2026-09-16T03:06:00+00:00",
+   "home_probability": 0.3529,
+   "away_probability": 0.6471,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3485,
+    "max": 0.3558
+   }
+  },
+  {
+   "timestamp": "2026-09-16T03:12:00+00:00",
+   "home_probability": 0.3403,
+   "away_probability": 0.6597,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3403,
+    "max": 0.3403
+   }
+  },
+  {
+   "timestamp": "2026-09-16T03:16:00+00:00",
+   "home_probability": 0.3506,
+   "away_probability": 0.6494,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3506,
+    "max": 0.3506
+   }
+  },
+  {
+   "timestamp": "2026-09-16T03:19:00+00:00",
+   "home_probability": 0.3452,
+   "away_probability": 0.6548,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3452,
+    "max": 0.3452
+   }
+  },
+  {
+   "timestamp": "2026-09-16T03:35:00+00:00",
+   "home_probability": 0.3529,
+   "away_probability": 0.6471,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 22,
+   "probability_range": {
+    "min": 0.3485,
+    "max": 0.3558
+   }
+  },
+  {
+   "timestamp": "2026-09-16T03:40:00+00:00",
+   "home_probability": 0.3518,
+   "away_probability": 0.6482,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3518,
+    "max": 0.3518
+   }
+  },
+  {
+   "timestamp": "2026-09-16T03:42:00+00:00",
+   "home_probability": 0.3494,
+   "away_probability": 0.6506,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3494,
+    "max": 0.3494
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:05:00+00:00",
+   "home_probability": 0.3529,
+   "away_probability": 0.6471,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3485,
+    "max": 0.3558
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:06:00+00:00",
+   "home_probability": 0.3529,
+   "away_probability": 0.6471,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 12,
+   "probability_range": {
+    "min": 0.3485,
+    "max": 0.3558
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:15:00+00:00",
+   "home_probability": 0.3542,
+   "away_probability": 0.6458,
+   "over_under": 7.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3542,
+    "max": 0.3542
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:16:00+00:00",
+   "home_probability": 0.3542,
+   "away_probability": 0.6458,
+   "over_under": 8.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3542,
+    "max": 0.3542
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:18:00+00:00",
+   "home_probability": 0.3542,
+   "away_probability": 0.6458,
+   "over_under": 7.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3542,
+    "max": 0.3542
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:19:00+00:00",
+   "home_probability": 0.3542,
+   "away_probability": 0.6458,
+   "over_under": 5.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3542,
+    "max": 0.3542
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:20:00+00:00",
+   "home_probability": 0.3566,
+   "away_probability": 0.6434,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3566,
+    "max": 0.3566
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:22:00+00:00",
+   "home_probability": 0.3551,
+   "away_probability": 0.6449,
+   "over_under": 6.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3551,
+    "max": 0.3551
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:23:00+00:00",
+   "home_probability": 0.3551,
+   "away_probability": 0.6449,
+   "over_under": 5.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3551,
+    "max": 0.3551
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:24:00+00:00",
+   "home_probability": 0.3551,
+   "away_probability": 0.6449,
+   "over_under": 7.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3551,
+    "max": 0.3551
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:26:00+00:00",
+   "home_probability": 0.3551,
+   "away_probability": 0.6449,
+   "over_under": 7.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3551,
+    "max": 0.3551
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:27:00+00:00",
+   "home_probability": 0.3551,
+   "away_probability": 0.6449,
+   "over_under": 7.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3551,
+    "max": 0.3551
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:30:00+00:00",
+   "home_probability": 0.3551,
+   "away_probability": 0.6449,
+   "over_under": 10.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3551,
+    "max": 0.3551
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:35:00+00:00",
+   "home_probability": 0.3529,
+   "away_probability": 0.6471,
+   "over_under": 6.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 12,
+   "probability_range": {
+    "min": 0.3485,
+    "max": 0.3566
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:36:00+00:00",
+   "home_probability": 0.3527,
+   "away_probability": 0.6473,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3485,
+    "max": 0.3566
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:37:00+00:00",
+   "home_probability": 0.3551,
+   "away_probability": 0.6449,
+   "over_under": 7.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3551,
+    "max": 0.3551
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:38:00+00:00",
+   "home_probability": 0.3551,
+   "away_probability": 0.6449,
+   "over_under": 6.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3551,
+    "max": 0.3551
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:39:00+00:00",
+   "home_probability": 0.3551,
+   "away_probability": 0.6449,
+   "over_under": 7.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3551,
+    "max": 0.3551
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:41:00+00:00",
+   "home_probability": 0.3551,
+   "away_probability": 0.6449,
+   "over_under": 6.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3551,
+    "max": 0.3551
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:42:00+00:00",
+   "home_probability": 0.3551,
+   "away_probability": 0.6449,
+   "over_under": 5.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3551,
+    "max": 0.3551
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:43:00+00:00",
+   "home_probability": 0.355,
+   "away_probability": 0.645,
+   "over_under": 7.0,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3542,
+    "max": 0.3558
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:45:00+00:00",
+   "home_probability": 0.3542,
+   "away_probability": 0.6458,
+   "over_under": 6.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3542,
+    "max": 0.3542
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:46:00+00:00",
+   "home_probability": 0.3542,
+   "away_probability": 0.6458,
+   "over_under": 9.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3542,
+    "max": 0.3542
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:47:00+00:00",
+   "home_probability": 0.3542,
+   "away_probability": 0.6458,
+   "over_under": 5.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3542,
+    "max": 0.3542
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:49:00+00:00",
+   "home_probability": 0.3542,
+   "away_probability": 0.6458,
+   "over_under": 5.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3542,
+    "max": 0.3542
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:51:00+00:00",
+   "home_probability": 0.3542,
+   "away_probability": 0.6458,
+   "over_under": 6.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3542,
+    "max": 0.3542
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:53:00+00:00",
+   "home_probability": 0.3542,
+   "away_probability": 0.6458,
+   "over_under": 7.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3542,
+    "max": 0.3542
+   }
+  },
+  {
+   "timestamp": "2026-09-16T04:54:00+00:00",
+   "home_probability": 0.3542,
+   "away_probability": 0.6458,
+   "over_under": 7.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3542,
+    "max": 0.3542
+   }
+  },
+  {
+   "timestamp": "2026-09-16T05:03:00+00:00",
+   "home_probability": 0.3514,
+   "away_probability": 0.6486,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3493,
+    "max": 0.3535
+   }
+  },
+  {
+   "timestamp": "2026-09-16T05:05:00+00:00",
+   "home_probability": 0.3542,
+   "away_probability": 0.6458,
+   "over_under": 8.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3542,
+    "max": 0.3542
+   }
+  },
+  {
+   "timestamp": "2026-09-16T05:14:00+00:00",
+   "home_probability": 0.3584,
+   "away_probability": 0.6417,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3553,
+    "max": 0.3614
+   }
+  },
+  {
+   "timestamp": "2026-09-16T05:15:00+00:00",
+   "home_probability": 0.3574,
+   "away_probability": 0.6425,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3535,
+    "max": 0.3614
+   }
+  },
+  {
+   "timestamp": "2026-09-16T05:33:00+00:00",
+   "home_probability": 0.3699,
+   "away_probability": 0.6301,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3699,
+    "max": 0.3699
+   }
+  },
+  {
+   "timestamp": "2026-09-16T05:36:00+00:00",
+   "home_probability": 0.3545,
+   "away_probability": 0.6455,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3485,
+    "max": 0.3699
+   }
+  },
+  {
+   "timestamp": "2026-09-16T06:32:00+00:00",
+   "home_probability": 0.3513,
+   "away_probability": 0.6487,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3438,
+    "max": 0.3699
+   }
+  },
+  {
+   "timestamp": "2026-09-16T06:36:00+00:00",
+   "home_probability": 0.3492,
+   "away_probability": 0.6508,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3378,
+    "max": 0.3699
+   }
+  },
+  {
+   "timestamp": "2026-09-16T07:05:00+00:00",
+   "home_probability": 0.3476,
+   "away_probability": 0.6524,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3476,
+    "max": 0.3476
+   }
+  },
+  {
+   "timestamp": "2026-09-16T07:30:00+00:00",
+   "home_probability": 0.3464,
+   "away_probability": 0.6536,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 10,
+   "probability_range": {
+    "min": 0.3378,
+    "max": 0.3538
+   }
+  },
+  {
+   "timestamp": "2026-09-16T07:35:00+00:00",
+   "home_probability": 0.3464,
+   "away_probability": 0.6536,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 10,
+   "probability_range": {
+    "min": 0.3378,
+    "max": 0.3538
+   }
+  },
+  {
+   "timestamp": "2026-09-16T08:00:00+00:00",
+   "home_probability": 0.3466,
+   "away_probability": 0.6534,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3378,
+    "max": 0.355
+   }
+  },
+  {
+   "timestamp": "2026-09-16T08:05:00+00:00",
+   "home_probability": 0.3466,
+   "away_probability": 0.6534,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3378,
+    "max": 0.355
+   }
+  },
+  {
+   "timestamp": "2026-09-16T08:30:00+00:00",
+   "home_probability": 0.3461,
+   "away_probability": 0.6539,
+   "over_under": 8.5,
+   "projected_home_score": 3.4,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3378,
+    "max": 0.355
+   }
+  },
+  {
+   "timestamp": "2026-09-16T08:35:00+00:00",
+   "home_probability": 0.3454,
+   "away_probability": 0.6546,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3378,
+    "max": 0.355
+   }
+  },
+  {
+   "timestamp": "2026-09-16T09:00:00+00:00",
+   "home_probability": 0.3452,
+   "away_probability": 0.6548,
+   "over_under": 8.5,
+   "projected_home_score": 3.4,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3378,
+    "max": 0.355
+   }
+  },
+  {
+   "timestamp": "2026-09-16T09:05:00+00:00",
+   "home_probability": 0.3451,
+   "away_probability": 0.6549,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3378,
+    "max": 0.3538
+   }
+  },
+  {
+   "timestamp": "2026-09-16T09:30:00+00:00",
+   "home_probability": 0.3441,
+   "away_probability": 0.6559,
+   "over_under": 8.5,
+   "projected_home_score": 3.4,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3378,
+    "max": 0.3535
+   }
+  },
+  {
+   "timestamp": "2026-09-16T09:35:00+00:00",
+   "home_probability": 0.3441,
+   "away_probability": 0.6559,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3378,
+    "max": 0.3535
+   }
+  },
+  {
+   "timestamp": "2026-09-16T10:03:00+00:00",
+   "home_probability": 0.3441,
+   "away_probability": 0.6559,
+   "over_under": 8.5,
+   "projected_home_score": 3.4,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3378,
+    "max": 0.3535
+   }
+  },
+  {
+   "timestamp": "2026-09-16T10:05:00+00:00",
+   "home_probability": 0.3441,
+   "away_probability": 0.6559,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3378,
+    "max": 0.3535
+   }
+  },
+  {
+   "timestamp": "2026-09-16T11:00:00+00:00",
+   "home_probability": 0.3441,
+   "away_probability": 0.6559,
+   "over_under": 8.5,
+   "projected_home_score": 3.4,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3378,
+    "max": 0.3535
+   }
+  },
+  {
+   "timestamp": "2026-09-16T11:06:00+00:00",
+   "home_probability": 0.3441,
+   "away_probability": 0.6559,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3378,
+    "max": 0.3535
+   }
+  },
+  {
+   "timestamp": "2026-09-16T11:35:00+00:00",
+   "home_probability": 0.3523,
+   "away_probability": 0.6477,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3523,
+    "max": 0.3523
+   }
+  },
+  {
+   "timestamp": "2026-09-16T12:05:00+00:00",
+   "home_probability": 0.3511,
+   "away_probability": 0.6489,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3511,
+    "max": 0.3511
+   }
+  },
+  {
+   "timestamp": "2026-09-16T12:37:00+00:00",
+   "home_probability": 0.3508,
+   "away_probability": 0.6492,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3508,
+    "max": 0.3508
+   }
+  },
+  {
+   "timestamp": "2026-09-16T13:05:00+00:00",
+   "home_probability": 0.3493,
+   "away_probability": 0.6506,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3487,
+    "max": 0.35
+   }
+  },
+  {
+   "timestamp": "2026-09-16T13:10:00+00:00",
+   "home_probability": 0.3479,
+   "away_probability": 0.6521,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3387,
+    "max": 0.3572
+   }
+  },
+  {
+   "timestamp": "2026-09-16T14:05:00+00:00",
+   "home_probability": 0.346,
+   "away_probability": 0.654,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 4,
+   "probability_range": {
+    "min": 0.3419,
+    "max": 0.3508
+   }
+  },
+  {
+   "timestamp": "2026-09-16T14:35:00+00:00",
+   "home_probability": 0.3438,
+   "away_probability": 0.6562,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3435,
+    "max": 0.3441
+   }
+  },
+  {
+   "timestamp": "2026-09-16T15:05:00+00:00",
+   "home_probability": 0.3419,
+   "away_probability": 0.6581,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3419,
+    "max": 0.3419
+   }
+  },
+  {
+   "timestamp": "2026-09-16T15:10:00+00:00",
+   "home_probability": 0.3436,
+   "away_probability": 0.6564,
+   "over_under": 8.3,
+   "projected_home_score": 3.4,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 19,
+   "probability_range": {
+    "min": 0.3296,
+    "max": 0.3535
+   }
+  },
+  {
+   "timestamp": "2026-09-16T15:16:00+00:00",
+   "home_probability": 0.3508,
+   "away_probability": 0.6492,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3508,
+    "max": 0.3508
+   }
+  },
+  {
+   "timestamp": "2026-09-16T16:05:00+00:00",
+   "home_probability": 0.3435,
+   "away_probability": 0.6565,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3378,
+    "max": 0.3508
+   }
+  },
+  {
+   "timestamp": "2026-09-16T16:06:00+00:00",
+   "home_probability": 0.3434,
+   "away_probability": 0.6566,
+   "over_under": 8.7,
+   "projected_home_score": 3.4,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 12,
+   "probability_range": {
+    "min": 0.3378,
+    "max": 0.3508
+   }
+  },
+  {
+   "timestamp": "2026-09-16T16:11:00+00:00",
+   "home_probability": 0.3478,
+   "away_probability": 0.6522,
+   "over_under": 8.2,
+   "projected_home_score": 3.4,
+   "projected_away_score": 4.9,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.347,
+    "max": 0.3487
+   }
+  },
+  {
+   "timestamp": "2026-09-16T16:17:00+00:00",
+   "home_probability": 0.3422,
+   "away_probability": 0.6578,
+   "over_under": 6.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3422,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T16:22:00+00:00",
+   "home_probability": 0.3476,
+   "away_probability": 0.6524,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3476,
+    "max": 0.3476
+   }
+  },
+  {
+   "timestamp": "2026-09-16T16:33:00+00:00",
+   "home_probability": 0.3476,
+   "away_probability": 0.6524,
+   "over_under": 8.0,
+   "projected_home_score": 3.2,
+   "projected_away_score": 4.8,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3476,
+    "max": 0.3476
+   }
+  },
+  {
+   "timestamp": "2026-09-16T16:35:00+00:00",
+   "home_probability": 0.3435,
+   "away_probability": 0.6565,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3378,
+    "max": 0.3476
+   }
+  },
+  {
+   "timestamp": "2026-09-16T16:38:00+00:00",
+   "home_probability": 0.3435,
+   "away_probability": 0.6565,
+   "over_under": 8.5,
+   "projected_home_score": 3.4,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3378,
+    "max": 0.3476
+   }
+  },
+  {
+   "timestamp": "2026-09-16T16:44:00+00:00",
+   "home_probability": 0.3493,
+   "away_probability": 0.6507,
+   "over_under": 8.0,
+   "projected_home_score": 3.0,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3493,
+    "max": 0.3493
+   }
+  },
+  {
+   "timestamp": "2026-09-16T16:55:00+00:00",
+   "home_probability": 0.3422,
+   "away_probability": 0.6578,
+   "over_under": 6.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3422,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T17:06:00+00:00",
+   "home_probability": 0.342,
+   "away_probability": 0.658,
+   "over_under": 9.5,
+   "projected_home_score": 3.2,
+   "projected_away_score": 4.8,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3419,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T17:11:00+00:00",
+   "home_probability": 0.3422,
+   "away_probability": 0.6578,
+   "over_under": 5.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3422,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T17:14:00+00:00",
+   "home_probability": 0.3282,
+   "away_probability": 0.6718,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3282,
+    "max": 0.3282
+   }
+  },
+  {
+   "timestamp": "2026-09-16T17:15:00+00:00",
+   "home_probability": 0.3419,
+   "away_probability": 0.6581,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3419,
+    "max": 0.3419
+   }
+  },
+  {
+   "timestamp": "2026-09-16T17:26:00+00:00",
+   "home_probability": 0.3422,
+   "away_probability": 0.6578,
+   "over_under": 7.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3422,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T17:27:00+00:00",
+   "home_probability": 0.3422,
+   "away_probability": 0.6578,
+   "over_under": 6.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3422,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T17:35:00+00:00",
+   "home_probability": 0.3426,
+   "away_probability": 0.6574,
+   "over_under": 8.5,
+   "projected_home_score": 3.4,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 22,
+   "probability_range": {
+    "min": 0.3378,
+    "max": 0.3476
+   }
+  },
+  {
+   "timestamp": "2026-09-16T17:36:00+00:00",
+   "home_probability": 0.3282,
+   "away_probability": 0.6718,
+   "over_under": 8.5,
+   "projected_home_score": 3.2,
+   "projected_away_score": 5.2,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3282,
+    "max": 0.3282
+   }
+  },
+  {
+   "timestamp": "2026-09-16T17:37:00+00:00",
+   "home_probability": 0.3263,
+   "away_probability": 0.6737,
+   "over_under": 8.5,
+   "projected_home_score": 3.2,
+   "projected_away_score": 5.2,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3244,
+    "max": 0.3282
+   }
+  },
+  {
+   "timestamp": "2026-09-16T17:38:00+00:00",
+   "home_probability": 0.3452,
+   "away_probability": 0.6548,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3452,
+    "max": 0.3452
+   }
+  },
+  {
+   "timestamp": "2026-09-16T18:04:00+00:00",
+   "home_probability": 0.3422,
+   "away_probability": 0.6578,
+   "over_under": 7.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3422,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T18:11:00+00:00",
+   "home_probability": 0.3422,
+   "away_probability": 0.6578,
+   "over_under": 8.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3422,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T18:12:00+00:00",
+   "home_probability": 0.3422,
+   "away_probability": 0.6578,
+   "over_under": 4.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3422,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T18:22:00+00:00",
+   "home_probability": 0.3422,
+   "away_probability": 0.6578,
+   "over_under": 5.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3422,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T18:23:00+00:00",
+   "home_probability": 0.3422,
+   "away_probability": 0.6578,
+   "over_under": 6.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3422,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T18:28:00+00:00",
+   "home_probability": 0.3422,
+   "away_probability": 0.6578,
+   "over_under": 5.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3422,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T18:33:00+00:00",
+   "home_probability": 0.3422,
+   "away_probability": 0.6578,
+   "over_under": 5.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3422,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T18:36:00+00:00",
+   "home_probability": 0.3405,
+   "away_probability": 0.6595,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3244,
+    "max": 0.347
+   }
+  },
+  {
+   "timestamp": "2026-09-16T18:37:00+00:00",
+   "home_probability": 0.3405,
+   "away_probability": 0.6595,
+   "over_under": 8.5,
+   "projected_home_score": 3.4,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3244,
+    "max": 0.347
+   }
+  },
+  {
+   "timestamp": "2026-09-16T18:38:00+00:00",
+   "home_probability": 0.3422,
+   "away_probability": 0.6578,
+   "over_under": 7.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3422,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T18:39:00+00:00",
+   "home_probability": 0.3379,
+   "away_probability": 0.6621,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3379,
+    "max": 0.3379
+   }
+  },
+  {
+   "timestamp": "2026-09-16T18:43:00+00:00",
+   "home_probability": 0.3422,
+   "away_probability": 0.6578,
+   "over_under": 6.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3422,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T18:44:00+00:00",
+   "home_probability": 0.3422,
+   "away_probability": 0.6578,
+   "over_under": 7.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3422,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T18:45:00+00:00",
+   "home_probability": 0.3422,
+   "away_probability": 0.6578,
+   "over_under": 6.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3422,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T18:48:00+00:00",
+   "home_probability": 0.3422,
+   "away_probability": 0.6578,
+   "over_under": 5.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3422,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T18:51:00+00:00",
+   "home_probability": 0.3422,
+   "away_probability": 0.6578,
+   "over_under": 6.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3422,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T18:53:00+00:00",
+   "home_probability": 0.3422,
+   "away_probability": 0.6578,
+   "over_under": 8.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3422,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T18:56:00+00:00",
+   "home_probability": 0.342,
+   "away_probability": 0.658,
+   "over_under": 7.5,
+   "projected_home_score": 3.2,
+   "projected_away_score": 4.8,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3419,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T18:57:00+00:00",
+   "home_probability": 0.3231,
+   "away_probability": 0.6769,
+   "over_under": 8.5,
+   "projected_home_score": 3.2,
+   "projected_away_score": 5.2,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3231,
+    "max": 0.3231
+   }
+  },
+  {
+   "timestamp": "2026-09-16T18:58:00+00:00",
+   "home_probability": 0.3244,
+   "away_probability": 0.6756,
+   "over_under": 8.5,
+   "projected_home_score": 3.2,
+   "projected_away_score": 5.2,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3244,
+    "max": 0.3244
+   }
+  },
+  {
+   "timestamp": "2026-09-16T18:59:00+00:00",
+   "home_probability": 0.3422,
+   "away_probability": 0.6578,
+   "over_under": 6.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3422,
+    "max": 0.3422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T19:01:00+00:00",
+   "home_probability": 0.3493,
+   "away_probability": 0.6507,
+   "over_under": 8.5,
+   "projected_home_score": 3.2,
+   "projected_away_score": 5.2,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3493,
+    "max": 0.3493
+   }
+  },
+  {
+   "timestamp": "2026-09-16T19:03:00+00:00",
+   "home_probability": 0.3424,
+   "away_probability": 0.6576,
+   "over_under": 7.5,
+   "projected_home_score": 3.3,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.3364,
+    "max": 0.3493
+   }
+  },
+  {
+   "timestamp": "2026-09-16T19:04:00+00:00",
+   "home_probability": 0.3414,
+   "away_probability": 0.6586,
+   "over_under": 7.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3414,
+    "max": 0.3414
+   }
+  },
+  {
+   "timestamp": "2026-09-16T19:07:00+00:00",
+   "home_probability": 0.3414,
+   "away_probability": 0.6586,
+   "over_under": 4.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3414,
+    "max": 0.3414
+   }
+  },
+  {
+   "timestamp": "2026-09-16T19:08:00+00:00",
+   "home_probability": 0.3292,
+   "away_probability": 0.6708,
+   "over_under": 7.3,
+   "projected_home_score": 3.2,
+   "projected_away_score": 5.2,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.3231,
+    "max": 0.3414
+   }
+  },
+  {
+   "timestamp": "2026-09-16T19:09:00+00:00",
+   "home_probability": 0.3219,
+   "away_probability": 0.6781,
+   "over_under": 8.5,
+   "projected_home_score": 3.2,
+   "projected_away_score": 5.2,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3194,
+    "max": 0.3244
+   }
+  },
+  {
+   "timestamp": "2026-09-16T19:10:00+00:00",
+   "home_probability": 0.3244,
+   "away_probability": 0.6756,
+   "over_under": 8.5,
+   "projected_home_score": 3.2,
+   "projected_away_score": 5.2,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3244,
+    "max": 0.3244
+   }
+  },
+  {
+   "timestamp": "2026-09-16T19:11:00+00:00",
+   "home_probability": 0.3493,
+   "away_probability": 0.6507,
+   "over_under": 8.5,
+   "projected_home_score": 3.2,
+   "projected_away_score": 5.2,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3493,
+    "max": 0.3493
+   }
+  },
+  {
+   "timestamp": "2026-09-16T19:13:00+00:00",
+   "home_probability": 0.3414,
+   "away_probability": 0.6586,
+   "over_under": 4.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3414,
+    "max": 0.3414
+   }
+  },
+  {
+   "timestamp": "2026-09-16T19:17:00+00:00",
+   "home_probability": 0.3493,
+   "away_probability": 0.6507,
+   "over_under": 8.0,
+   "projected_home_score": 3.0,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3493,
+    "max": 0.3493
+   }
+  },
+  {
+   "timestamp": "2026-09-16T19:22:00+00:00",
+   "home_probability": 0.3414,
+   "away_probability": 0.6586,
+   "over_under": 8.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3414,
+    "max": 0.3414
+   }
+  },
+  {
+   "timestamp": "2026-09-16T19:23:00+00:00",
+   "home_probability": 0.3341,
+   "away_probability": 0.6659,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.3244,
+    "max": 0.3414
+   }
+  },
+  {
+   "timestamp": "2026-09-16T19:27:00+00:00",
+   "home_probability": 0.3414,
+   "away_probability": 0.6586,
+   "over_under": 7.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3414,
+    "max": 0.3414
+   }
+  },
+  {
+   "timestamp": "2026-09-16T19:29:00+00:00",
+   "home_probability": 0.3414,
+   "away_probability": 0.6586,
+   "over_under": 6.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3414,
+    "max": 0.3414
+   }
+  },
+  {
+   "timestamp": "2026-09-16T19:34:00+00:00",
+   "home_probability": 0.3414,
+   "away_probability": 0.6586,
+   "over_under": 5.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3414,
+    "max": 0.3414
+   }
+  },
+  {
+   "timestamp": "2026-09-16T19:37:00+00:00",
+   "home_probability": 0.3355,
+   "away_probability": 0.6645,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3355,
+    "max": 0.3355
+   }
+  },
+  {
+   "timestamp": "2026-09-16T19:38:00+00:00",
+   "home_probability": 0.3385,
+   "away_probability": 0.6615,
+   "over_under": 7.2,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3355,
+    "max": 0.3414
+   }
+  },
+  {
+   "timestamp": "2026-09-16T19:44:00+00:00",
+   "home_probability": 0.3414,
+   "away_probability": 0.6586,
+   "over_under": 8.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3414,
+    "max": 0.3414
+   }
+  },
+  {
+   "timestamp": "2026-09-16T20:05:00+00:00",
+   "home_probability": 0.3395,
+   "away_probability": 0.6605,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 22,
+   "probability_range": {
+    "min": 0.3244,
+    "max": 0.347
+   }
+  },
+  {
+   "timestamp": "2026-09-16T20:08:00+00:00",
+   "home_probability": 0.3395,
+   "away_probability": 0.6605,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3395,
+    "max": 0.3395
+   }
+  },
+  {
+   "timestamp": "2026-09-16T20:14:00+00:00",
+   "home_probability": 0.3282,
+   "away_probability": 0.6718,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3282,
+    "max": 0.3282
+   }
+  },
+  {
+   "timestamp": "2026-09-16T20:18:00+00:00",
+   "home_probability": 0.3414,
+   "away_probability": 0.6586,
+   "over_under": 6.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3414,
+    "max": 0.3414
+   }
+  },
+  {
+   "timestamp": "2026-09-16T20:19:00+00:00",
+   "home_probability": 0.3334,
+   "away_probability": 0.6666,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3334,
+    "max": 0.3334
+   }
+  },
+  {
+   "timestamp": "2026-09-16T20:21:00+00:00",
+   "home_probability": 0.3334,
+   "away_probability": 0.6666,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3334,
+    "max": 0.3334
+   }
+  },
+  {
+   "timestamp": "2026-09-16T20:23:00+00:00",
+   "home_probability": 0.3414,
+   "away_probability": 0.6586,
+   "over_under": 8.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3414,
+    "max": 0.3414
+   }
+  },
+  {
+   "timestamp": "2026-09-16T20:31:00+00:00",
+   "home_probability": 0.3414,
+   "away_probability": 0.6586,
+   "over_under": 7.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3414,
+    "max": 0.3414
+   }
+  },
+  {
+   "timestamp": "2026-09-16T20:33:00+00:00",
+   "home_probability": 0.341,
+   "away_probability": 0.6591,
+   "over_under": 8.4,
+   "projected_home_score": 3.4,
+   "projected_away_score": 5.1,
+   "bookmaker_count": 4,
+   "probability_range": {
+    "min": 0.3387,
+    "max": 0.3435
+   }
+  },
+  {
+   "timestamp": "2026-09-16T20:34:00+00:00",
+   "home_probability": 0.3387,
+   "away_probability": 0.6613,
+   "over_under": 8.2,
+   "projected_home_score": 3.2,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.334,
+    "max": 0.3435
+   }
+  },
+  {
+   "timestamp": "2026-09-16T20:37:00+00:00",
+   "home_probability": 0.3186,
+   "away_probability": 0.6814,
+   "over_under": 8.0,
+   "projected_home_score": 3.0,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.3182,
+    "max": 0.3194
+   }
+  },
+  {
+   "timestamp": "2026-09-16T20:38:00+00:00",
+   "home_probability": 0.3424,
+   "away_probability": 0.6576,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3424,
+    "max": 0.3424
+   }
+  },
+  {
+   "timestamp": "2026-09-16T20:40:00+00:00",
+   "home_probability": 0.34,
+   "away_probability": 0.66,
+   "over_under": 6.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.34,
+    "max": 0.34
+   }
+  },
+  {
+   "timestamp": "2026-09-16T20:45:00+00:00",
+   "home_probability": 0.3382,
+   "away_probability": 0.6618,
+   "over_under": 7.8,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3364,
+    "max": 0.34
+   }
+  },
+  {
+   "timestamp": "2026-09-16T20:47:00+00:00",
+   "home_probability": 0.34,
+   "away_probability": 0.66,
+   "over_under": 6.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.34,
+    "max": 0.34
+   }
+  },
+  {
+   "timestamp": "2026-09-16T20:56:00+00:00",
+   "home_probability": 0.331,
+   "away_probability": 0.669,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.331,
+    "max": 0.331
+   }
+  },
+  {
+   "timestamp": "2026-09-16T20:58:00+00:00",
+   "home_probability": 0.3364,
+   "away_probability": 0.6636,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3364,
+    "max": 0.3364
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:00:00+00:00",
+   "home_probability": 0.3244,
+   "away_probability": 0.6756,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3244,
+    "max": 0.3244
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:01:00+00:00",
+   "home_probability": 0.3424,
+   "away_probability": 0.6576,
+   "over_under": 8.0,
+   "projected_home_score": 3.2,
+   "projected_away_score": 4.8,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3424,
+    "max": 0.3424
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:05:00+00:00",
+   "home_probability": 0.3367,
+   "away_probability": 0.6633,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3194,
+    "max": 0.3435
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:06:00+00:00",
+   "home_probability": 0.3373,
+   "away_probability": 0.6627,
+   "over_under": 8.5,
+   "projected_home_score": 3.4,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 12,
+   "probability_range": {
+    "min": 0.3194,
+    "max": 0.3435
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:07:00+00:00",
+   "home_probability": 0.331,
+   "away_probability": 0.669,
+   "over_under": 8.0,
+   "projected_home_score": 3.2,
+   "projected_away_score": 4.8,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.331,
+    "max": 0.331
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:13:00+00:00",
+   "home_probability": 0.3167,
+   "away_probability": 0.6833,
+   "over_under": 8.5,
+   "projected_home_score": 3.3,
+   "projected_away_score": 5.2,
+   "bookmaker_count": 4,
+   "probability_range": {
+    "min": 0.3146,
+    "max": 0.3231
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:16:00+00:00",
+   "home_probability": 0.3354,
+   "away_probability": 0.6646,
+   "over_under": 8.5,
+   "projected_home_score": 3.2,
+   "projected_away_score": 5.2,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.3349,
+    "max": 0.3364
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:17:00+00:00",
+   "home_probability": 0.3435,
+   "away_probability": 0.6565,
+   "over_under": 8.0,
+   "projected_home_score": 3.0,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3435,
+    "max": 0.3435
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:19:00+00:00",
+   "home_probability": 0.3337,
+   "away_probability": 0.6663,
+   "over_under": 6.8,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.331,
+    "max": 0.3363
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:21:00+00:00",
+   "home_probability": 0.3383,
+   "away_probability": 0.6617,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3379,
+    "max": 0.3387
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:22:00+00:00",
+   "home_probability": 0.3361,
+   "away_probability": 0.6639,
+   "over_under": 8.5,
+   "projected_home_score": 3.4,
+   "projected_away_score": 5.1,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.334,
+    "max": 0.3379
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:23:00+00:00",
+   "home_probability": 0.343,
+   "away_probability": 0.657,
+   "over_under": 8.0,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.3363,
+    "max": 0.3493
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:24:00+00:00",
+   "home_probability": 0.3353,
+   "away_probability": 0.6647,
+   "over_under": 7.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.331,
+    "max": 0.3387
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:25:00+00:00",
+   "home_probability": 0.3328,
+   "away_probability": 0.6672,
+   "over_under": 8.3,
+   "projected_home_score": 3.4,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.3287,
+    "max": 0.3364
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:26:00+00:00",
+   "home_probability": 0.3359,
+   "away_probability": 0.6641,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3359,
+    "max": 0.3359
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:27:00+00:00",
+   "home_probability": 0.3364,
+   "away_probability": 0.6636,
+   "over_under": 8.5,
+   "projected_home_score": 3.4,
+   "projected_away_score": 5.1,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3364,
+    "max": 0.3364
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:28:00+00:00",
+   "home_probability": 0.331,
+   "away_probability": 0.669,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.331,
+    "max": 0.331
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:29:00+00:00",
+   "home_probability": 0.3231,
+   "away_probability": 0.6769,
+   "over_under": 8.5,
+   "projected_home_score": 3.0,
+   "projected_away_score": 5.5,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3231,
+    "max": 0.3231
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:31:00+00:00",
+   "home_probability": 0.3331,
+   "away_probability": 0.6669,
+   "over_under": 8.5,
+   "projected_home_score": 3.2,
+   "projected_away_score": 5.2,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.3325,
+    "max": 0.3334
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:33:00+00:00",
+   "home_probability": 0.3295,
+   "away_probability": 0.6705,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.328,
+    "max": 0.331
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:35:00+00:00",
+   "home_probability": 0.3335,
+   "away_probability": 0.6665,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.328,
+    "max": 0.3387
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:36:00+00:00",
+   "home_probability": 0.3335,
+   "away_probability": 0.6665,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.328,
+    "max": 0.3387
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:37:00+00:00",
+   "home_probability": 0.3279,
+   "away_probability": 0.6721,
+   "over_under": 7.2,
+   "projected_home_score": 3.4,
+   "projected_away_score": 4.9,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.3194,
+    "max": 0.333
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:38:00+00:00",
+   "home_probability": 0.3314,
+   "away_probability": 0.6686,
+   "over_under": 8.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3314,
+    "max": 0.3314
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:41:00+00:00",
+   "home_probability": 0.3381,
+   "away_probability": 0.6619,
+   "over_under": 7.2,
+   "projected_home_score": 3.0,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 4,
+   "probability_range": {
+    "min": 0.3314,
+    "max": 0.3403
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:43:00+00:00",
+   "home_probability": 0.3314,
+   "away_probability": 0.6686,
+   "over_under": 7.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3314,
+    "max": 0.3314
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:44:00+00:00",
+   "home_probability": 0.3325,
+   "away_probability": 0.6675,
+   "over_under": 8.5,
+   "projected_home_score": 3.2,
+   "projected_away_score": 5.2,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3325,
+    "max": 0.3325
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:47:00+00:00",
+   "home_probability": 0.3314,
+   "away_probability": 0.6686,
+   "over_under": 4.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3314,
+    "max": 0.3314
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:48:00+00:00",
+   "home_probability": 0.3218,
+   "away_probability": 0.6782,
+   "over_under": 8.5,
+   "projected_home_score": 3.0,
+   "projected_away_score": 5.5,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3218,
+    "max": 0.3218
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:50:00+00:00",
+   "home_probability": 0.3296,
+   "away_probability": 0.6704,
+   "over_under": 8.0,
+   "projected_home_score": 3.0,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3296,
+    "max": 0.3296
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:51:00+00:00",
+   "home_probability": 0.3337,
+   "away_probability": 0.6663,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3337,
+    "max": 0.3337
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:52:00+00:00",
+   "home_probability": 0.3296,
+   "away_probability": 0.6704,
+   "over_under": 8.0,
+   "projected_home_score": 3.0,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3296,
+    "max": 0.3296
+   }
+  },
+  {
+   "timestamp": "2026-09-16T21:57:00+00:00",
+   "home_probability": 0.3182,
+   "away_probability": 0.6818,
+   "over_under": 8.5,
+   "projected_home_score": 3.0,
+   "projected_away_score": 5.5,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3182,
+    "max": 0.3182
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:01:00+00:00",
+   "home_probability": 0.3419,
+   "away_probability": 0.6581,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3419,
+    "max": 0.3419
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:03:00+00:00",
+   "home_probability": 0.3266,
+   "away_probability": 0.6734,
+   "over_under": 7.5,
+   "projected_home_score": 3.0,
+   "projected_away_score": 5.5,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3218,
+    "max": 0.3314
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:05:00+00:00",
+   "home_probability": 0.332,
+   "away_probability": 0.668,
+   "over_under": 11.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 12,
+   "probability_range": {
+    "min": 0.3194,
+    "max": 0.3419
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:06:00+00:00",
+   "home_probability": 0.332,
+   "away_probability": 0.668,
+   "over_under": 8.4,
+   "projected_home_score": 3.4,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3194,
+    "max": 0.3419
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:09:00+00:00",
+   "home_probability": 0.3244,
+   "away_probability": 0.6756,
+   "over_under": 8.0,
+   "projected_home_score": 3.2,
+   "projected_away_score": 4.8,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3244,
+    "max": 0.3244
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:14:00+00:00",
+   "home_probability": 0.3266,
+   "away_probability": 0.6734,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3266,
+    "max": 0.3266
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:15:00+00:00",
+   "home_probability": 0.3266,
+   "away_probability": 0.6734,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3266,
+    "max": 0.3266
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:19:00+00:00",
+   "home_probability": 0.3369,
+   "away_probability": 0.6631,
+   "over_under": 8.4,
+   "projected_home_score": 3.4,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.3364,
+    "max": 0.3387
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:21:00+00:00",
+   "home_probability": 0.3376,
+   "away_probability": 0.6624,
+   "over_under": 8.2,
+   "projected_home_score": 3.4,
+   "projected_away_score": 4.9,
+   "bookmaker_count": 4,
+   "probability_range": {
+    "min": 0.334,
+    "max": 0.3419
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:22:00+00:00",
+   "home_probability": 0.3342,
+   "away_probability": 0.6658,
+   "over_under": 5.0,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3342,
+    "max": 0.3342
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:23:00+00:00",
+   "home_probability": 0.3301,
+   "away_probability": 0.6699,
+   "over_under": 9.2,
+   "projected_home_score": 3.1,
+   "projected_away_score": 5.2,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.3182,
+    "max": 0.3379
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:24:00+00:00",
+   "home_probability": 0.3535,
+   "away_probability": 0.6465,
+   "over_under": 8.0,
+   "projected_home_score": 3.2,
+   "projected_away_score": 4.8,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3535,
+    "max": 0.3535
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:25:00+00:00",
+   "home_probability": 0.3356,
+   "away_probability": 0.6644,
+   "over_under": 7.0,
+   "projected_home_score": 3.1,
+   "projected_away_score": 5.2,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.3337,
+    "max": 0.3368
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:26:00+00:00",
+   "home_probability": 0.3319,
+   "away_probability": 0.6681,
+   "over_under": 7.2,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3286,
+    "max": 0.3353
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:29:00+00:00",
+   "home_probability": 0.3353,
+   "away_probability": 0.6647,
+   "over_under": 6.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3353,
+    "max": 0.3353
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:31:00+00:00",
+   "home_probability": 0.3311,
+   "away_probability": 0.6689,
+   "over_under": 8.3,
+   "projected_home_score": 3.3,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.3244,
+    "max": 0.3344
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:32:00+00:00",
+   "home_probability": 0.3266,
+   "away_probability": 0.6734,
+   "over_under": 8.0,
+   "projected_home_score": 3.1,
+   "projected_away_score": 4.9,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.3231,
+    "max": 0.3337
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:33:00+00:00",
+   "home_probability": 0.3365,
+   "away_probability": 0.6635,
+   "over_under": 8.5,
+   "projected_home_score": 3.2,
+   "projected_away_score": 4.8,
+   "bookmaker_count": 4,
+   "probability_range": {
+    "min": 0.3353,
+    "max": 0.3379
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:34:00+00:00",
+   "home_probability": 0.3021,
+   "away_probability": 0.6979,
+   "over_under": 8.0,
+   "projected_home_score": 3.0,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3021,
+    "max": 0.3021
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:35:00+00:00",
+   "home_probability": 0.3305,
+   "away_probability": 0.6695,
+   "over_under": 8.2,
+   "projected_home_score": 3.0,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 13,
+   "probability_range": {
+    "min": 0.3042,
+    "max": 0.3387
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:36:00+00:00",
+   "home_probability": 0.3323,
+   "away_probability": 0.6677,
+   "over_under": 8.2,
+   "projected_home_score": 3.3,
+   "projected_away_score": 4.9,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3042,
+    "max": 0.3387
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:37:00+00:00",
+   "home_probability": 0.3287,
+   "away_probability": 0.6713,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3287,
+    "max": 0.3287
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:38:00+00:00",
+   "home_probability": 0.3287,
+   "away_probability": 0.6713,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.3287,
+    "max": 0.3287
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:39:00+00:00",
+   "home_probability": 0.3326,
+   "away_probability": 0.6674,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.3272,
+    "max": 0.3365
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:40:00+00:00",
+   "home_probability": 0.3216,
+   "away_probability": 0.6784,
+   "over_under": 8.3,
+   "projected_home_score": 3.3,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.3076,
+    "max": 0.3294
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:41:00+00:00",
+   "home_probability": 0.3213,
+   "away_probability": 0.6787,
+   "over_under": 7.6,
+   "projected_home_score": 3.2,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.3076,
+    "max": 0.3319
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:42:00+00:00",
+   "home_probability": 0.3224,
+   "away_probability": 0.6776,
+   "over_under": 8.5,
+   "projected_home_score": 3.2,
+   "projected_away_score": 5.2,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3033,
+    "max": 0.3414
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:43:00+00:00",
+   "home_probability": 0.3417,
+   "away_probability": 0.6583,
+   "over_under": 7.5,
+   "projected_home_score": 3.1,
+   "projected_away_score": 4.7,
+   "bookmaker_count": 12,
+   "probability_range": {
+    "min": 0.3033,
+    "max": 0.3614
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:44:00+00:00",
+   "home_probability": 0.3409,
+   "away_probability": 0.6591,
+   "over_under": 8.1,
+   "projected_home_score": 3.2,
+   "projected_away_score": 4.9,
+   "bookmaker_count": 7,
+   "probability_range": {
+    "min": 0.3147,
+    "max": 0.3791
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:45:00+00:00",
+   "home_probability": 0.3162,
+   "away_probability": 0.6838,
+   "over_under": 8.5,
+   "projected_home_score": 3.2,
+   "projected_away_score": 5.3,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.2949,
+    "max": 0.3294
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:46:00+00:00",
+   "home_probability": 0.3048,
+   "away_probability": 0.6952,
+   "over_under": 8.7,
+   "projected_home_score": 3.1,
+   "projected_away_score": 5.4,
+   "bookmaker_count": 13,
+   "probability_range": {
+    "min": 0.2887,
+    "max": 0.3299
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:47:00+00:00",
+   "home_probability": 0.3109,
+   "away_probability": 0.6891,
+   "over_under": 8.4,
+   "projected_home_score": 3.1,
+   "projected_away_score": 5.4,
+   "bookmaker_count": 9,
+   "probability_range": {
+    "min": 0.2982,
+    "max": 0.3256
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:48:00+00:00",
+   "home_probability": 0.3064,
+   "away_probability": 0.6936,
+   "over_under": 8.2,
+   "projected_home_score": 3.0,
+   "projected_away_score": 5.5,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.2982,
+    "max": 0.3183
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:49:00+00:00",
+   "home_probability": 0.3417,
+   "away_probability": 0.6583,
+   "over_under": 8.1,
+   "projected_home_score": 3.3,
+   "projected_away_score": 4.8,
+   "bookmaker_count": 19,
+   "probability_range": {
+    "min": 0.3207,
+    "max": 0.3839
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:50:00+00:00",
+   "home_probability": 0.3356,
+   "away_probability": 0.6644,
+   "over_under": 8.2,
+   "projected_home_score": 3.2,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 8,
+   "probability_range": {
+    "min": 0.3218,
+    "max": 0.3547
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:51:00+00:00",
+   "home_probability": 0.3224,
+   "away_probability": 0.6776,
+   "over_under": 8.2,
+   "projected_home_score": 3.1,
+   "projected_away_score": 5.2,
+   "bookmaker_count": 17,
+   "probability_range": {
+    "min": 0.2933,
+    "max": 0.3444
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:52:00+00:00",
+   "home_probability": 0.3545,
+   "away_probability": 0.6455,
+   "over_under": 7.9,
+   "projected_home_score": 3.1,
+   "projected_away_score": 4.7,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.3294,
+    "max": 0.3933
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:53:00+00:00",
+   "home_probability": 0.3788,
+   "away_probability": 0.6212,
+   "over_under": 7.2,
+   "projected_home_score": 3.0,
+   "projected_away_score": 4.5,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3541,
+    "max": 0.3919
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:54:00+00:00",
+   "home_probability": 0.3877,
+   "away_probability": 0.6123,
+   "over_under": 6.8,
+   "projected_home_score": 3.0,
+   "projected_away_score": 4.5,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.3839,
+    "max": 0.3914
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:55:00+00:00",
+   "home_probability": 0.3766,
+   "away_probability": 0.6234,
+   "over_under": 7.7,
+   "projected_home_score": 3.0,
+   "projected_away_score": 4.5,
+   "bookmaker_count": 13,
+   "probability_range": {
+    "min": 0.3556,
+    "max": 0.3933
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:56:00+00:00",
+   "home_probability": 0.3879,
+   "away_probability": 0.6121,
+   "over_under": 7.1,
+   "projected_home_score": 3.0,
+   "projected_away_score": 4.5,
+   "bookmaker_count": 7,
+   "probability_range": {
+    "min": 0.3704,
+    "max": 0.4033
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:57:00+00:00",
+   "home_probability": 0.3672,
+   "away_probability": 0.6328,
+   "over_under": 7.4,
+   "projected_home_score": 2.9,
+   "projected_away_score": 4.4,
+   "bookmaker_count": 9,
+   "probability_range": {
+    "min": 0.3373,
+    "max": 0.3962
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:58:00+00:00",
+   "home_probability": 0.3553,
+   "away_probability": 0.6447,
+   "over_under": 6.5,
+   "projected_home_score": 3.0,
+   "projected_away_score": 4.5,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.3414,
+    "max": 0.3816
+   }
+  },
+  {
+   "timestamp": "2026-09-16T22:59:00+00:00",
+   "home_probability": 0.3521,
+   "away_probability": 0.6479,
+   "over_under": 7.5,
+   "projected_home_score": 3.0,
+   "projected_away_score": 4.5,
+   "bookmaker_count": 16,
+   "probability_range": {
+    "min": 0.3258,
+    "max": 0.375
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:00:00+00:00",
+   "home_probability": 0.3461,
+   "away_probability": 0.6539,
+   "over_under": 7.1,
+   "projected_home_score": 2.8,
+   "projected_away_score": 4.3,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.3275,
+    "max": 0.3685
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:01:00+00:00",
+   "home_probability": 0.3569,
+   "away_probability": 0.6431,
+   "over_under": 7.6,
+   "projected_home_score": 3.0,
+   "projected_away_score": 4.5,
+   "bookmaker_count": 14,
+   "probability_range": {
+    "min": 0.3297,
+    "max": 0.3711
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:02:00+00:00",
+   "home_probability": 0.3517,
+   "away_probability": 0.6483,
+   "over_under": 7.5,
+   "projected_home_score": 3.0,
+   "projected_away_score": 4.5,
+   "bookmaker_count": 9,
+   "probability_range": {
+    "min": 0.3294,
+    "max": 0.375
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:03:00+00:00",
+   "home_probability": 0.3377,
+   "away_probability": 0.6623,
+   "over_under": 6.8,
+   "projected_home_score": 2.9,
+   "projected_away_score": 4.3,
+   "bookmaker_count": 9,
+   "probability_range": {
+    "min": 0.3183,
+    "max": 0.3627
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:04:00+00:00",
+   "home_probability": 0.3482,
+   "away_probability": 0.6518,
+   "over_under": 6.3,
+   "projected_home_score": 2.6,
+   "projected_away_score": 4.1,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.3294,
+    "max": 0.3659
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:05:00+00:00",
+   "home_probability": 0.3574,
+   "away_probability": 0.6426,
+   "over_under": 7.7,
+   "projected_home_score": 3.1,
+   "projected_away_score": 4.6,
+   "bookmaker_count": 19,
+   "probability_range": {
+    "min": 0.3218,
+    "max": 0.3771
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:06:00+00:00",
+   "home_probability": 0.3727,
+   "away_probability": 0.6273,
+   "over_under": 6.6,
+   "projected_home_score": 2.6,
+   "projected_away_score": 4.1,
+   "bookmaker_count": 19,
+   "probability_range": {
+    "min": 0.3373,
+    "max": 0.4112
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:07:00+00:00",
+   "home_probability": 0.3877,
+   "away_probability": 0.6123,
+   "over_under": 6.6,
+   "projected_home_score": 2.7,
+   "projected_away_score": 4.2,
+   "bookmaker_count": 7,
+   "probability_range": {
+    "min": 0.3515,
+    "max": 0.4138
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:08:00+00:00",
+   "home_probability": 0.3928,
+   "away_probability": 0.6072,
+   "over_under": 6.1,
+   "projected_home_score": 2.5,
+   "projected_away_score": 4.0,
+   "bookmaker_count": 7,
+   "probability_range": {
+    "min": 0.3672,
+    "max": 0.4071
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:09:00+00:00",
+   "home_probability": 0.3964,
+   "away_probability": 0.6036,
+   "over_under": 6.7,
+   "projected_home_score": 2.6,
+   "projected_away_score": 4.1,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3672,
+    "max": 0.4248
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:10:00+00:00",
+   "home_probability": 0.3946,
+   "away_probability": 0.6054,
+   "over_under": 5.9,
+   "projected_home_score": 2.6,
+   "projected_away_score": 4.1,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.3839,
+    "max": 0.4049
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:11:00+00:00",
+   "home_probability": 0.4059,
+   "away_probability": 0.5941,
+   "over_under": 6.1,
+   "projected_home_score": 2.5,
+   "projected_away_score": 4.0,
+   "bookmaker_count": 9,
+   "probability_range": {
+    "min": 0.3817,
+    "max": 0.4232
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:12:00+00:00",
+   "home_probability": 0.4491,
+   "away_probability": 0.5509,
+   "over_under": 7.3,
+   "projected_home_score": 2.9,
+   "projected_away_score": 4.4,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.4167,
+    "max": 0.4797
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:13:00+00:00",
+   "home_probability": 0.4429,
+   "away_probability": 0.5571,
+   "over_under": 7.2,
+   "projected_home_score": 2.9,
+   "projected_away_score": 4.3,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.4245,
+    "max": 0.4761
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:14:00+00:00",
+   "home_probability": 0.4483,
+   "away_probability": 0.5517,
+   "over_under": 6.9,
+   "projected_home_score": 2.9,
+   "projected_away_score": 4.4,
+   "bookmaker_count": 7,
+   "probability_range": {
+    "min": 0.4335,
+    "max": 0.4554
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:15:00+00:00",
+   "home_probability": 0.4218,
+   "away_probability": 0.5782,
+   "over_under": 6.7,
+   "projected_home_score": 2.7,
+   "projected_away_score": 4.2,
+   "bookmaker_count": 15,
+   "probability_range": {
+    "min": 0.3989,
+    "max": 0.4698
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:16:00+00:00",
+   "home_probability": 0.4139,
+   "away_probability": 0.5861,
+   "over_under": 6.3,
+   "projected_home_score": 2.6,
+   "projected_away_score": 4.1,
+   "bookmaker_count": 9,
+   "probability_range": {
+    "min": 0.3976,
+    "max": 0.4232
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:17:00+00:00",
+   "home_probability": 0.4112,
+   "away_probability": 0.5888,
+   "over_under": 6.1,
+   "projected_home_score": 2.6,
+   "projected_away_score": 4.0,
+   "bookmaker_count": 7,
+   "probability_range": {
+    "min": 0.364,
+    "max": 0.4285
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:18:00+00:00",
+   "home_probability": 0.3807,
+   "away_probability": 0.6193,
+   "over_under": 6.3,
+   "projected_home_score": 2.5,
+   "projected_away_score": 4.0,
+   "bookmaker_count": 13,
+   "probability_range": {
+    "min": 0.3621,
+    "max": 0.4171
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:19:00+00:00",
+   "home_probability": 0.3864,
+   "away_probability": 0.6136,
+   "over_under": 7.1,
+   "projected_home_score": 2.5,
+   "projected_away_score": 4.0,
+   "bookmaker_count": 4,
+   "probability_range": {
+    "min": 0.375,
+    "max": 0.3948
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:20:00+00:00",
+   "home_probability": 0.3942,
+   "away_probability": 0.6058,
+   "over_under": 6.5,
+   "projected_home_score": 2.5,
+   "projected_away_score": 4.0,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.3774,
+    "max": 0.4138
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:22:00+00:00",
+   "home_probability": 0.4006,
+   "away_probability": 0.5994,
+   "over_under": 6.2,
+   "projected_home_score": 2.5,
+   "projected_away_score": 4.0,
+   "bookmaker_count": 10,
+   "probability_range": {
+    "min": 0.3909,
+    "max": 0.414
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:23:00+00:00",
+   "home_probability": 0.3806,
+   "away_probability": 0.6194,
+   "over_under": 6.5,
+   "projected_home_score": 2.5,
+   "projected_away_score": 4.0,
+   "bookmaker_count": 20,
+   "probability_range": {
+    "min": 0.3528,
+    "max": 0.4266
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:24:00+00:00",
+   "home_probability": 0.3838,
+   "away_probability": 0.6162,
+   "over_under": 6.2,
+   "projected_home_score": 2.5,
+   "projected_away_score": 4.0,
+   "bookmaker_count": 10,
+   "probability_range": {
+    "min": 0.3685,
+    "max": 0.4138
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:25:00+00:00",
+   "home_probability": 0.2854,
+   "away_probability": 0.7146,
+   "over_under": 7.2,
+   "projected_home_score": 2.5,
+   "projected_away_score": 4.9,
+   "bookmaker_count": 19,
+   "probability_range": {
+    "min": 0.2566,
+    "max": 0.3933
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:26:00+00:00",
+   "home_probability": 0.2851,
+   "away_probability": 0.7149,
+   "over_under": 8.2,
+   "projected_home_score": 2.8,
+   "projected_away_score": 4.8,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.2838,
+    "max": 0.2864
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:27:00+00:00",
+   "home_probability": 0.3099,
+   "away_probability": 0.6901,
+   "over_under": 7.2,
+   "projected_home_score": 2.8,
+   "projected_away_score": 4.3,
+   "bookmaker_count": 17,
+   "probability_range": {
+    "min": 0.2771,
+    "max": 0.3479
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:28:00+00:00",
+   "home_probability": 0.3172,
+   "away_probability": 0.6828,
+   "over_under": 6.9,
+   "projected_home_score": 2.6,
+   "projected_away_score": 4.3,
+   "bookmaker_count": 6,
+   "probability_range": {
+    "min": 0.2934,
+    "max": 0.3403
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:29:00+00:00",
+   "home_probability": 0.3235,
+   "away_probability": 0.6765,
+   "over_under": 6.6,
+   "projected_home_score": 2.6,
+   "projected_away_score": 4.1,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.3103,
+    "max": 0.3479
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:30:00+00:00",
+   "home_probability": 0.3367,
+   "away_probability": 0.6633,
+   "over_under": 6.7,
+   "projected_home_score": 2.8,
+   "projected_away_score": 4.3,
+   "bookmaker_count": 8,
+   "probability_range": {
+    "min": 0.3256,
+    "max": 0.3479
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:31:00+00:00",
+   "home_probability": 0.3668,
+   "away_probability": 0.6332,
+   "over_under": 7.2,
+   "projected_home_score": 2.9,
+   "projected_away_score": 4.4,
+   "bookmaker_count": 19,
+   "probability_range": {
+    "min": 0.3297,
+    "max": 0.4085
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:32:00+00:00",
+   "home_probability": 0.3716,
+   "away_probability": 0.6284,
+   "over_under": 6.8,
+   "projected_home_score": 3.0,
+   "projected_away_score": 4.5,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.3484,
+    "max": 0.3818
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:33:00+00:00",
+   "home_probability": 0.3415,
+   "away_probability": 0.6585,
+   "over_under": 6.9,
+   "projected_home_score": 2.7,
+   "projected_away_score": 4.2,
+   "bookmaker_count": 17,
+   "probability_range": {
+    "min": 0.3232,
+    "max": 0.3791
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:34:00+00:00",
+   "home_probability": 0.3288,
+   "away_probability": 0.6712,
+   "over_under": 7.2,
+   "projected_home_score": 2.8,
+   "projected_away_score": 4.3,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.3256,
+    "max": 0.3346
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:35:00+00:00",
+   "home_probability": 0.3404,
+   "away_probability": 0.6596,
+   "over_under": 6.9,
+   "projected_home_score": 2.8,
+   "projected_away_score": 4.3,
+   "bookmaker_count": 22,
+   "probability_range": {
+    "min": 0.2934,
+    "max": 0.3659
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:36:00+00:00",
+   "home_probability": 0.3377,
+   "away_probability": 0.6623,
+   "over_under": 6.8,
+   "projected_home_score": 2.8,
+   "projected_away_score": 4.4,
+   "bookmaker_count": 10,
+   "probability_range": {
+    "min": 0.2934,
+    "max": 0.3714
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:37:00+00:00",
+   "home_probability": 0.391,
+   "away_probability": 0.609,
+   "over_under": 7.2,
+   "projected_home_score": 3.0,
+   "projected_away_score": 4.2,
+   "bookmaker_count": 15,
+   "probability_range": {
+    "min": 0.3033,
+    "max": 0.5633
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:38:00+00:00",
+   "home_probability": 0.5204,
+   "away_probability": 0.4796,
+   "over_under": 8.5,
+   "projected_home_score": 4.2,
+   "projected_away_score": 4.2,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.5,
+    "max": 0.5408
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:39:00+00:00",
+   "home_probability": 0.529,
+   "away_probability": 0.471,
+   "over_under": 8.2,
+   "projected_home_score": 4.1,
+   "projected_away_score": 4.4,
+   "bookmaker_count": 13,
+   "probability_range": {
+    "min": 0.5,
+    "max": 0.5541
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:40:00+00:00",
+   "home_probability": 0.5203,
+   "away_probability": 0.4797,
+   "over_under": 8.5,
+   "projected_home_score": 4.4,
+   "projected_away_score": 4.1,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.5099,
+    "max": 0.5408
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:41:00+00:00",
+   "home_probability": 0.5152,
+   "away_probability": 0.4848,
+   "over_under": 8.3,
+   "projected_home_score": 4.1,
+   "projected_away_score": 4.6,
+   "bookmaker_count": 15,
+   "probability_range": {
+    "min": 0.4669,
+    "max": 0.5546
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:42:00+00:00",
+   "home_probability": 0.4894,
+   "away_probability": 0.5106,
+   "over_under": 8.0,
+   "projected_home_score": 4.0,
+   "projected_away_score": 4.9,
+   "bookmaker_count": 6,
+   "probability_range": {
+    "min": 0.4674,
+    "max": 0.5041
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:43:00+00:00",
+   "home_probability": 0.4885,
+   "away_probability": 0.5115,
+   "over_under": 8.7,
+   "projected_home_score": 3.8,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 17,
+   "probability_range": {
+    "min": 0.4694,
+    "max": 0.5101
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:44:00+00:00",
+   "home_probability": 0.4815,
+   "away_probability": 0.5185,
+   "over_under": 8.8,
+   "projected_home_score": 4.0,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 10,
+   "probability_range": {
+    "min": 0.4459,
+    "max": 0.5408
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:45:00+00:00",
+   "home_probability": 0.535,
+   "away_probability": 0.465,
+   "over_under": 8.6,
+   "projected_home_score": 4.8,
+   "projected_away_score": 3.8,
+   "bookmaker_count": 7,
+   "probability_range": {
+    "min": 0.4554,
+    "max": 0.5565
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:46:00+00:00",
+   "home_probability": 0.5561,
+   "away_probability": 0.4439,
+   "over_under": 8.2,
+   "projected_home_score": 5.0,
+   "projected_away_score": 3.5,
+   "bookmaker_count": 14,
+   "probability_range": {
+    "min": 0.5392,
+    "max": 0.5915
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:47:00+00:00",
+   "home_probability": 0.5664,
+   "away_probability": 0.4336,
+   "over_under": 7.8,
+   "projected_home_score": 4.8,
+   "projected_away_score": 3.3,
+   "bookmaker_count": 9,
+   "probability_range": {
+    "min": 0.5456,
+    "max": 0.5835
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:48:00+00:00",
+   "home_probability": 0.5887,
+   "away_probability": 0.4113,
+   "over_under": 7.9,
+   "projected_home_score": 4.8,
+   "projected_away_score": 3.3,
+   "bookmaker_count": 14,
+   "probability_range": {
+    "min": 0.5667,
+    "max": 0.6238
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:49:00+00:00",
+   "home_probability": 0.6033,
+   "away_probability": 0.3967,
+   "over_under": 7.6,
+   "projected_home_score": 4.6,
+   "projected_away_score": 3.2,
+   "bookmaker_count": 8,
+   "probability_range": {
+    "min": 0.5715,
+    "max": 0.625
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:50:00+00:00",
+   "home_probability": 0.5943,
+   "away_probability": 0.4057,
+   "over_under": 7.7,
+   "projected_home_score": 4.5,
+   "projected_away_score": 3.0,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.5741,
+    "max": 0.6238
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:51:00+00:00",
+   "home_probability": 0.579,
+   "away_probability": 0.421,
+   "over_under": 7.6,
+   "projected_home_score": 4.5,
+   "projected_away_score": 3.1,
+   "bookmaker_count": 12,
+   "probability_range": {
+    "min": 0.5514,
+    "max": 0.6067
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:52:00+00:00",
+   "home_probability": 0.5756,
+   "away_probability": 0.4244,
+   "over_under": 7.3,
+   "projected_home_score": 4.5,
+   "projected_away_score": 3.0,
+   "bookmaker_count": 13,
+   "probability_range": {
+    "min": 0.5459,
+    "max": 0.6091
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:53:00+00:00",
+   "home_probability": 0.5963,
+   "away_probability": 0.4037,
+   "over_under": 7.7,
+   "projected_home_score": 4.7,
+   "projected_away_score": 3.2,
+   "bookmaker_count": 10,
+   "probability_range": {
+    "min": 0.5696,
+    "max": 0.6246
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:54:00+00:00",
+   "home_probability": 0.6142,
+   "away_probability": 0.3858,
+   "over_under": 8.2,
+   "projected_home_score": 4.9,
+   "projected_away_score": 3.4,
+   "bookmaker_count": 16,
+   "probability_range": {
+    "min": 0.5769,
+    "max": 0.6586
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:55:00+00:00",
+   "home_probability": 0.6019,
+   "away_probability": 0.3981,
+   "over_under": 8.1,
+   "projected_home_score": 4.5,
+   "projected_away_score": 3.6,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.54,
+    "max": 0.6422
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:56:00+00:00",
+   "home_probability": 0.5612,
+   "away_probability": 0.4388,
+   "over_under": 7.7,
+   "projected_home_score": 4.2,
+   "projected_away_score": 3.3,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.5306,
+    "max": 0.6162
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:57:00+00:00",
+   "home_probability": 0.546,
+   "away_probability": 0.454,
+   "over_under": 7.2,
+   "projected_home_score": 3.9,
+   "projected_away_score": 3.6,
+   "bookmaker_count": 9,
+   "probability_range": {
+    "min": 0.5279,
+    "max": 0.5824
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:58:00+00:00",
+   "home_probability": 0.5303,
+   "away_probability": 0.4697,
+   "over_under": 7.4,
+   "projected_home_score": 3.5,
+   "projected_away_score": 4.0,
+   "bookmaker_count": 12,
+   "probability_range": {
+    "min": 0.5,
+    "max": 0.5824
+   }
+  },
+  {
+   "timestamp": "2026-09-16T23:59:00+00:00",
+   "home_probability": 0.4945,
+   "away_probability": 0.5055,
+   "over_under": 7.9,
+   "projected_home_score": 3.3,
+   "projected_away_score": 4.5,
+   "bookmaker_count": 14,
+   "probability_range": {
+    "min": 0.4661,
+    "max": 0.5327
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:00:00+00:00",
+   "home_probability": 0.4732,
+   "away_probability": 0.5268,
+   "over_under": 8.0,
+   "projected_home_score": 3.4,
+   "projected_away_score": 4.6,
+   "bookmaker_count": 7,
+   "probability_range": {
+    "min": 0.4669,
+    "max": 0.4819
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:01:00+00:00",
+   "home_probability": 0.4897,
+   "away_probability": 0.5103,
+   "over_under": 8.0,
+   "projected_home_score": 3.3,
+   "projected_away_score": 4.8,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.4761,
+    "max": 0.5103
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:02:00+00:00",
+   "home_probability": 0.481,
+   "away_probability": 0.519,
+   "over_under": 7.6,
+   "projected_home_score": 3.2,
+   "projected_away_score": 4.6,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.4628,
+    "max": 0.5103
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:03:00+00:00",
+   "home_probability": 0.4289,
+   "away_probability": 0.5711,
+   "over_under": 8.3,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 12,
+   "probability_range": {
+    "min": 0.4033,
+    "max": 0.4494
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:04:00+00:00",
+   "home_probability": 0.4415,
+   "away_probability": 0.5585,
+   "over_under": 8.5,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 6,
+   "probability_range": {
+    "min": 0.4335,
+    "max": 0.4496
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:05:00+00:00",
+   "home_probability": 0.4237,
+   "away_probability": 0.5763,
+   "over_under": 8.6,
+   "projected_home_score": 3.5,
+   "projected_away_score": 5.0,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.4124,
+    "max": 0.4511
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:06:00+00:00",
+   "home_probability": 0.4897,
+   "away_probability": 0.5103,
+   "over_under": 7.7,
+   "projected_home_score": 3.3,
+   "projected_away_score": 4.5,
+   "bookmaker_count": 10,
+   "probability_range": {
+    "min": 0.3962,
+    "max": 0.5203
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:07:00+00:00",
+   "home_probability": 0.567,
+   "away_probability": 0.433,
+   "over_under": 7.2,
+   "projected_home_score": 4.5,
+   "projected_away_score": 3.0,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.5541,
+    "max": 0.5921
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:08:00+00:00",
+   "home_probability": 0.575,
+   "away_probability": 0.425,
+   "over_under": 7.5,
+   "projected_home_score": 4.5,
+   "projected_away_score": 3.0,
+   "bookmaker_count": 4,
+   "probability_range": {
+    "min": 0.558,
+    "max": 0.5862
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:09:00+00:00",
+   "home_probability": 0.5993,
+   "away_probability": 0.4007,
+   "over_under": 6.2,
+   "projected_home_score": 4.5,
+   "projected_away_score": 3.0,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.5633,
+    "max": 0.6426
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:10:00+00:00",
+   "home_probability": 0.6332,
+   "away_probability": 0.3668,
+   "over_under": 6.3,
+   "projected_home_score": 4.1,
+   "projected_away_score": 2.6,
+   "bookmaker_count": 10,
+   "probability_range": {
+    "min": 0.6091,
+    "max": 0.6597
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:11:00+00:00",
+   "home_probability": 0.6286,
+   "away_probability": 0.3714,
+   "over_under": 5.7,
+   "projected_home_score": 4.0,
+   "projected_away_score": 2.5,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.6091,
+    "max": 0.6426
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:12:00+00:00",
+   "home_probability": 0.6344,
+   "away_probability": 0.3656,
+   "over_under": 6.5,
+   "projected_home_score": 4.1,
+   "projected_away_score": 2.6,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.6017,
+    "max": 0.6626
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:13:00+00:00",
+   "home_probability": 0.6238,
+   "away_probability": 0.3762,
+   "over_under": 6.5,
+   "projected_home_score": 4.0,
+   "projected_away_score": 2.6,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.6077,
+    "max": 0.6482
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:14:00+00:00",
+   "home_probability": 0.6201,
+   "away_probability": 0.3799,
+   "over_under": 6.3,
+   "projected_home_score": 4.0,
+   "projected_away_score": 2.5,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.5944,
+    "max": 0.6531
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:15:00+00:00",
+   "home_probability": 0.6061,
+   "away_probability": 0.3939,
+   "over_under": 6.5,
+   "projected_home_score": 4.0,
+   "projected_away_score": 2.5,
+   "bookmaker_count": 10,
+   "probability_range": {
+    "min": 0.5915,
+    "max": 0.6225
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:16:00+00:00",
+   "home_probability": 0.6751,
+   "away_probability": 0.3249,
+   "over_under": 6.7,
+   "projected_home_score": 4.3,
+   "projected_away_score": 2.8,
+   "bookmaker_count": 8,
+   "probability_range": {
+    "min": 0.5954,
+    "max": 0.7421
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:17:00+00:00",
+   "home_probability": 0.7285,
+   "away_probability": 0.2715,
+   "over_under": 7.5,
+   "projected_home_score": 4.5,
+   "projected_away_score": 3.0,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.7145,
+    "max": 0.7434
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:18:00+00:00",
+   "home_probability": 0.7251,
+   "away_probability": 0.2749,
+   "over_under": 8.0,
+   "projected_home_score": 4.5,
+   "projected_away_score": 3.0,
+   "bookmaker_count": 10,
+   "probability_range": {
+    "min": 0.7099,
+    "max": 0.7418
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:19:00+00:00",
+   "home_probability": 0.7185,
+   "away_probability": 0.2815,
+   "over_under": 7.3,
+   "projected_home_score": 4.5,
+   "projected_away_score": 3.0,
+   "bookmaker_count": 9,
+   "probability_range": {
+    "min": 0.6853,
+    "max": 0.7368
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:20:00+00:00",
+   "home_probability": 0.7189,
+   "away_probability": 0.2811,
+   "over_under": 7.5,
+   "projected_home_score": 4.5,
+   "projected_away_score": 3.0,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.705,
+    "max": 0.7404
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:21:00+00:00",
+   "home_probability": 0.7448,
+   "away_probability": 0.2552,
+   "over_under": 7.0,
+   "projected_home_score": 4.4,
+   "projected_away_score": 2.9,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.705,
+    "max": 0.7746
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:22:00+00:00",
+   "home_probability": 0.7406,
+   "away_probability": 0.2594,
+   "over_under": 7.5,
+   "projected_home_score": 4.5,
+   "projected_away_score": 3.0,
+   "bookmaker_count": 12,
+   "probability_range": {
+    "min": 0.72,
+    "max": 0.7615
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:23:00+00:00",
+   "home_probability": 0.6996,
+   "away_probability": 0.3004,
+   "over_under": 7.4,
+   "projected_home_score": 4.5,
+   "projected_away_score": 3.0,
+   "bookmaker_count": 15,
+   "probability_range": {
+    "min": 0.6487,
+    "max": 0.7283
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:24:00+00:00",
+   "home_probability": 0.6656,
+   "away_probability": 0.3344,
+   "over_under": 7.9,
+   "projected_home_score": 4.7,
+   "projected_away_score": 3.2,
+   "bookmaker_count": 13,
+   "probability_range": {
+    "min": 0.6315,
+    "max": 0.7173
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:25:00+00:00",
+   "home_probability": 0.6325,
+   "away_probability": 0.3675,
+   "over_under": 7.9,
+   "projected_home_score": 4.8,
+   "projected_away_score": 3.3,
+   "bookmaker_count": 13,
+   "probability_range": {
+    "min": 0.6017,
+    "max": 0.6654
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:26:00+00:00",
+   "home_probability": 0.5692,
+   "away_probability": 0.4308,
+   "over_under": 8.4,
+   "projected_home_score": 5.0,
+   "projected_away_score": 3.5,
+   "bookmaker_count": 13,
+   "probability_range": {
+    "min": 0.5203,
+    "max": 0.6003
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:27:00+00:00",
+   "home_probability": 0.5751,
+   "away_probability": 0.4249,
+   "over_under": 8.4,
+   "projected_home_score": 5.0,
+   "projected_away_score": 3.5,
+   "bookmaker_count": 8,
+   "probability_range": {
+    "min": 0.5239,
+    "max": 0.6133
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:28:00+00:00",
+   "home_probability": 0.5803,
+   "away_probability": 0.4197,
+   "over_under": 8.8,
+   "projected_home_score": 5.0,
+   "projected_away_score": 3.5,
+   "bookmaker_count": 12,
+   "probability_range": {
+    "min": 0.5506,
+    "max": 0.7122
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:29:00+00:00",
+   "home_probability": 0.5665,
+   "away_probability": 0.4335,
+   "over_under": 8.1,
+   "projected_home_score": 4.8,
+   "projected_away_score": 3.7,
+   "bookmaker_count": 8,
+   "probability_range": {
+    "min": 0.5372,
+    "max": 0.5931
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:30:00+00:00",
+   "home_probability": 0.576,
+   "away_probability": 0.424,
+   "over_under": 8.5,
+   "projected_home_score": 5.0,
+   "projected_away_score": 3.5,
+   "bookmaker_count": 8,
+   "probability_range": {
+    "min": 0.5544,
+    "max": 0.6071
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:31:00+00:00",
+   "home_probability": 0.6142,
+   "away_probability": 0.3857,
+   "over_under": 8.2,
+   "projected_home_score": 4.9,
+   "projected_away_score": 3.4,
+   "bookmaker_count": 12,
+   "probability_range": {
+    "min": 0.5372,
+    "max": 0.6965
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:32:00+00:00",
+   "home_probability": 0.67,
+   "away_probability": 0.33,
+   "over_under": 7.7,
+   "projected_home_score": 4.7,
+   "projected_away_score": 3.2,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.6342,
+    "max": 0.7082
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:33:00+00:00",
+   "home_probability": 0.6807,
+   "away_probability": 0.3193,
+   "over_under": 7.5,
+   "projected_home_score": 4.8,
+   "projected_away_score": 3.2,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.6559,
+    "max": 0.6945
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:34:00+00:00",
+   "home_probability": 0.6509,
+   "away_probability": 0.3491,
+   "over_under": 8.1,
+   "projected_home_score": 4.8,
+   "projected_away_score": 3.3,
+   "bookmaker_count": 9,
+   "probability_range": {
+    "min": 0.6287,
+    "max": 0.6795
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:35:00+00:00",
+   "home_probability": 0.6628,
+   "away_probability": 0.3372,
+   "over_under": 7.7,
+   "projected_home_score": 4.7,
+   "projected_away_score": 3.2,
+   "bookmaker_count": 13,
+   "probability_range": {
+    "min": 0.6287,
+    "max": 0.6795
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:36:00+00:00",
+   "home_probability": 0.6571,
+   "away_probability": 0.3429,
+   "over_under": null,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 8,
+   "probability_range": {
+    "min": 0.6341,
+    "max": 0.6795
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:37:00+00:00",
+   "home_probability": 0.6773,
+   "away_probability": 0.3227,
+   "over_under": 7.9,
+   "projected_home_score": 4.9,
+   "projected_away_score": 3.3,
+   "bookmaker_count": 16,
+   "probability_range": {
+    "min": 0.6341,
+    "max": 0.7236
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:38:00+00:00",
+   "home_probability": 0.7377,
+   "away_probability": 0.2623,
+   "over_under": 8.5,
+   "projected_home_score": 5.1,
+   "projected_away_score": 3.6,
+   "bookmaker_count": 13,
+   "probability_range": {
+    "min": 0.6701,
+    "max": 0.7691
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:39:00+00:00",
+   "home_probability": 0.749,
+   "away_probability": 0.251,
+   "over_under": 8.9,
+   "projected_home_score": 5.2,
+   "projected_away_score": 3.6,
+   "bookmaker_count": 12,
+   "probability_range": {
+    "min": 0.7215,
+    "max": 0.8017
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:40:00+00:00",
+   "home_probability": 0.7608,
+   "away_probability": 0.2392,
+   "over_under": 9.1,
+   "projected_home_score": 5.5,
+   "projected_away_score": 3.9,
+   "bookmaker_count": 10,
+   "probability_range": {
+    "min": 0.7341,
+    "max": 0.7944
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:41:00+00:00",
+   "home_probability": 0.7345,
+   "away_probability": 0.2655,
+   "over_under": 8.5,
+   "projected_home_score": 5.0,
+   "projected_away_score": 3.5,
+   "bookmaker_count": 17,
+   "probability_range": {
+    "min": 0.7008,
+    "max": 0.7555
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:42:00+00:00",
+   "home_probability": 0.723,
+   "away_probability": 0.277,
+   "over_under": 8.6,
+   "projected_home_score": 5.0,
+   "projected_away_score": 3.5,
+   "bookmaker_count": 6,
+   "probability_range": {
+    "min": 0.705,
+    "max": 0.7424
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:43:00+00:00",
+   "home_probability": 0.7269,
+   "away_probability": 0.2731,
+   "over_under": 8.5,
+   "projected_home_score": 5.0,
+   "projected_away_score": 3.5,
+   "bookmaker_count": 4,
+   "probability_range": {
+    "min": 0.7122,
+    "max": 0.764
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:44:00+00:00",
+   "home_probability": 0.7412,
+   "away_probability": 0.2588,
+   "over_under": 8.3,
+   "projected_home_score": 5.0,
+   "projected_away_score": 3.5,
+   "bookmaker_count": 9,
+   "probability_range": {
+    "min": 0.7229,
+    "max": 0.753
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:45:00+00:00",
+   "home_probability": 0.7448,
+   "away_probability": 0.2552,
+   "over_under": 8.3,
+   "projected_home_score": 5.0,
+   "projected_away_score": 3.5,
+   "bookmaker_count": 12,
+   "probability_range": {
+    "min": 0.7139,
+    "max": 0.7595
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:46:00+00:00",
+   "home_probability": 0.7633,
+   "away_probability": 0.2367,
+   "over_under": 8.8,
+   "projected_home_score": 5.3,
+   "projected_away_score": 3.5,
+   "bookmaker_count": 9,
+   "probability_range": {
+    "min": 0.6992,
+    "max": 0.8394
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:47:00+00:00",
+   "home_probability": 0.8194,
+   "away_probability": 0.1806,
+   "over_under": 9.2,
+   "projected_home_score": 5.9,
+   "projected_away_score": 3.5,
+   "bookmaker_count": 16,
+   "probability_range": {
+    "min": 0.7204,
+    "max": 0.854
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:48:00+00:00",
+   "home_probability": 0.8184,
+   "away_probability": 0.1816,
+   "over_under": 8.8,
+   "projected_home_score": 5.8,
+   "projected_away_score": 3.4,
+   "bookmaker_count": 10,
+   "probability_range": {
+    "min": 0.8008,
+    "max": 0.8317
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:49:00+00:00",
+   "home_probability": 0.8159,
+   "away_probability": 0.1841,
+   "over_under": 9.2,
+   "projected_home_score": 6.0,
+   "projected_away_score": 3.5,
+   "bookmaker_count": 13,
+   "probability_range": {
+    "min": 0.787,
+    "max": 0.8317
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:50:00+00:00",
+   "home_probability": 0.8247,
+   "away_probability": 0.1753,
+   "over_under": 9.5,
+   "projected_home_score": 6.0,
+   "projected_away_score": 3.5,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.8184,
+    "max": 0.8303
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:51:00+00:00",
+   "home_probability": 0.7895,
+   "away_probability": 0.2105,
+   "over_under": 8.4,
+   "projected_home_score": 5.0,
+   "projected_away_score": 3.5,
+   "bookmaker_count": 21,
+   "probability_range": {
+    "min": 0.7505,
+    "max": 0.8155
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:52:00+00:00",
+   "home_probability": 0.7749,
+   "away_probability": 0.2251,
+   "over_under": 8.5,
+   "projected_home_score": 5.0,
+   "projected_away_score": 3.5,
+   "bookmaker_count": 7,
+   "probability_range": {
+    "min": 0.7576,
+    "max": 0.7865
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:53:00+00:00",
+   "home_probability": 0.7595,
+   "away_probability": 0.2405,
+   "over_under": 8.4,
+   "projected_home_score": 5.0,
+   "projected_away_score": 3.5,
+   "bookmaker_count": 13,
+   "probability_range": {
+    "min": 0.7416,
+    "max": 0.7746
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:54:00+00:00",
+   "home_probability": 0.7511,
+   "away_probability": 0.2489,
+   "over_under": 8.5,
+   "projected_home_score": 5.0,
+   "projected_away_score": 3.5,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.7434,
+    "max": 0.7573
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:55:00+00:00",
+   "home_probability": 0.752,
+   "away_probability": 0.248,
+   "over_under": 8.0,
+   "projected_home_score": 5.0,
+   "projected_away_score": 3.5,
+   "bookmaker_count": 4,
+   "probability_range": {
+    "min": 0.7397,
+    "max": 0.7595
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:56:00+00:00",
+   "home_probability": 0.7596,
+   "away_probability": 0.2404,
+   "over_under": 8.3,
+   "projected_home_score": 5.0,
+   "projected_away_score": 3.5,
+   "bookmaker_count": 10,
+   "probability_range": {
+    "min": 0.6875,
+    "max": 0.7809
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:57:00+00:00",
+   "home_probability": 0.7125,
+   "away_probability": 0.2875,
+   "over_under": 8.7,
+   "projected_home_score": 5.1,
+   "projected_away_score": 3.6,
+   "bookmaker_count": 14,
+   "probability_range": {
+    "min": 0.6667,
+    "max": 0.7515
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:58:00+00:00",
+   "home_probability": 0.8207,
+   "away_probability": 0.1793,
+   "over_under": 7.8,
+   "projected_home_score": 4.7,
+   "projected_away_score": 3.2,
+   "bookmaker_count": 13,
+   "probability_range": {
+    "min": 0.6955,
+    "max": 0.873
+   }
+  },
+  {
+   "timestamp": "2026-09-17T00:59:00+00:00",
+   "home_probability": 0.8464,
+   "away_probability": 0.1536,
+   "over_under": 7.5,
+   "projected_home_score": 4.5,
+   "projected_away_score": 3.0,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.8332,
+    "max": 0.8692
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:00:00+00:00",
+   "home_probability": 0.8442,
+   "away_probability": 0.1558,
+   "over_under": 7.3,
+   "projected_home_score": 4.5,
+   "projected_away_score": 3.0,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.8317,
+    "max": 0.8599
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:01:00+00:00",
+   "home_probability": 0.8506,
+   "away_probability": 0.1494,
+   "over_under": 7.4,
+   "projected_home_score": 4.8,
+   "projected_away_score": 2.7,
+   "bookmaker_count": 10,
+   "probability_range": {
+    "min": 0.8426,
+    "max": 0.8599
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:02:00+00:00",
+   "home_probability": 0.8649,
+   "away_probability": 0.1351,
+   "over_under": 8.3,
+   "projected_home_score": 5.3,
+   "projected_away_score": 2.9,
+   "bookmaker_count": 10,
+   "probability_range": {
+    "min": 0.843,
+    "max": 0.884
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:03:00+00:00",
+   "home_probability": 0.8767,
+   "away_probability": 0.1233,
+   "over_under": 8.3,
+   "projected_home_score": 5.5,
+   "projected_away_score": 3.0,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.8682,
+    "max": 0.884
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:04:00+00:00",
+   "home_probability": 0.8662,
+   "away_probability": 0.1338,
+   "over_under": 8.2,
+   "projected_home_score": 5.4,
+   "projected_away_score": 2.9,
+   "bookmaker_count": 15,
+   "probability_range": {
+    "min": 0.8491,
+    "max": 0.8774
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:05:00+00:00",
+   "home_probability": 0.8692,
+   "away_probability": 0.1308,
+   "over_under": 6.5,
+   "projected_home_score": null,
+   "projected_away_score": null,
+   "bookmaker_count": 9,
+   "probability_range": {
+    "min": 0.8571,
+    "max": 0.8774
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:06:00+00:00",
+   "home_probability": 0.8643,
+   "away_probability": 0.1357,
+   "over_under": 7.6,
+   "projected_home_score": 5.1,
+   "projected_away_score": 2.6,
+   "bookmaker_count": 23,
+   "probability_range": {
+    "min": 0.843,
+    "max": 0.8774
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:07:00+00:00",
+   "home_probability": 0.875,
+   "away_probability": 0.125,
+   "over_under": 8.5,
+   "projected_home_score": 5.5,
+   "projected_away_score": 3.0,
+   "bookmaker_count": 16,
+   "probability_range": {
+    "min": 0.8544,
+    "max": 0.897
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:08:00+00:00",
+   "home_probability": 0.8781,
+   "away_probability": 0.1219,
+   "over_under": 8.4,
+   "projected_home_score": 5.5,
+   "projected_away_score": 3.0,
+   "bookmaker_count": 8,
+   "probability_range": {
+    "min": 0.8571,
+    "max": 0.9028
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:09:00+00:00",
+   "home_probability": 0.9075,
+   "away_probability": 0.0925,
+   "over_under": 8.5,
+   "projected_home_score": 6.0,
+   "projected_away_score": 2.5,
+   "bookmaker_count": 11,
+   "probability_range": {
+    "min": 0.8986,
+    "max": 0.9161
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:10:00+00:00",
+   "home_probability": 0.9005,
+   "away_probability": 0.0995,
+   "over_under": 8.5,
+   "projected_home_score": 5.6,
+   "projected_away_score": 2.9,
+   "bookmaker_count": 15,
+   "probability_range": {
+    "min": 0.8859,
+    "max": 0.9207
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:11:00+00:00",
+   "home_probability": 0.8979,
+   "away_probability": 0.1021,
+   "over_under": 8.5,
+   "projected_home_score": 5.5,
+   "projected_away_score": 3.0,
+   "bookmaker_count": 9,
+   "probability_range": {
+    "min": 0.8881,
+    "max": 0.9058
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:12:00+00:00",
+   "home_probability": 0.9032,
+   "away_probability": 0.0968,
+   "over_under": 8.4,
+   "projected_home_score": 5.9,
+   "projected_away_score": 2.6,
+   "bookmaker_count": 7,
+   "probability_range": {
+    "min": 0.8889,
+    "max": 0.9207
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:13:00+00:00",
+   "home_probability": 0.9092,
+   "away_probability": 0.0908,
+   "over_under": 8.6,
+   "projected_home_score": 6.0,
+   "projected_away_score": 2.7,
+   "bookmaker_count": 10,
+   "probability_range": {
+    "min": 0.895,
+    "max": 0.9541
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:14:00+00:00",
+   "home_probability": 0.9291,
+   "away_probability": 0.0709,
+   "over_under": 8.7,
+   "projected_home_score": 6.2,
+   "projected_away_score": 2.7,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.9132,
+    "max": 0.9439
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:15:00+00:00",
+   "home_probability": 0.9147,
+   "away_probability": 0.0853,
+   "over_under": 8.9,
+   "projected_home_score": 6.2,
+   "projected_away_score": 2.7,
+   "bookmaker_count": 4,
+   "probability_range": {
+    "min": 0.905,
+    "max": 0.9269
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:16:00+00:00",
+   "home_probability": 0.931,
+   "away_probability": 0.069,
+   "over_under": 8.6,
+   "projected_home_score": 6.1,
+   "projected_away_score": 2.6,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.9132,
+    "max": 0.9454
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:17:00+00:00",
+   "home_probability": 0.9348,
+   "away_probability": 0.0652,
+   "over_under": 8.5,
+   "projected_home_score": 6.0,
+   "projected_away_score": 2.5,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.9186,
+    "max": 0.9508
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:18:00+00:00",
+   "home_probability": 0.9428,
+   "away_probability": 0.0572,
+   "over_under": 8.5,
+   "projected_home_score": 6.0,
+   "projected_away_score": 2.5,
+   "bookmaker_count": 7,
+   "probability_range": {
+    "min": 0.9202,
+    "max": 0.9684
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:19:00+00:00",
+   "home_probability": 0.9266,
+   "away_probability": 0.0734,
+   "over_under": 8.5,
+   "projected_home_score": 6.0,
+   "projected_away_score": 2.4,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.9266,
+    "max": 0.9266
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:20:00+00:00",
+   "home_probability": 0.9426,
+   "away_probability": 0.0574,
+   "over_under": 8.5,
+   "projected_home_score": 6.0,
+   "projected_away_score": 2.4,
+   "bookmaker_count": 3,
+   "probability_range": {
+    "min": 0.9205,
+    "max": 0.9578
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:21:00+00:00",
+   "home_probability": 0.9454,
+   "away_probability": 0.0546,
+   "over_under": 8.5,
+   "projected_home_score": 6.0,
+   "projected_away_score": 2.5,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.9129,
+    "max": 0.9626
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:22:00+00:00",
+   "home_probability": 0.9475,
+   "away_probability": 0.0525,
+   "over_under": 8.5,
+   "projected_home_score": 6.0,
+   "projected_away_score": 2.5,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.9359,
+    "max": 0.9663
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:23:00+00:00",
+   "home_probability": 0.9486,
+   "away_probability": 0.0514,
+   "over_under": 8.5,
+   "projected_home_score": 6.0,
+   "projected_away_score": 2.4,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.9136,
+    "max": 0.9685
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:24:00+00:00",
+   "home_probability": 0.9216,
+   "away_probability": 0.0784,
+   "over_under": 8.7,
+   "projected_home_score": 6.1,
+   "projected_away_score": 2.6,
+   "bookmaker_count": 8,
+   "probability_range": {
+    "min": 0.8982,
+    "max": 0.9454
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:25:00+00:00",
+   "home_probability": 0.9309,
+   "away_probability": 0.0691,
+   "over_under": 8.5,
+   "projected_home_score": 6.0,
+   "projected_away_score": 2.5,
+   "bookmaker_count": 8,
+   "probability_range": {
+    "min": 0.8994,
+    "max": 0.9712
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:26:00+00:00",
+   "home_probability": 0.9329,
+   "away_probability": 0.0671,
+   "over_under": 8.5,
+   "projected_home_score": 6.0,
+   "projected_away_score": 2.5,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.9083,
+    "max": 0.9579
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:27:00+00:00",
+   "home_probability": 0.9484,
+   "away_probability": 0.0516,
+   "over_under": 8.5,
+   "projected_home_score": 6.0,
+   "projected_away_score": 2.5,
+   "bookmaker_count": 5,
+   "probability_range": {
+    "min": 0.9316,
+    "max": 0.9578
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:28:00+00:00",
+   "home_probability": 0.9626,
+   "away_probability": 0.0374,
+   "over_under": 8.5,
+   "projected_home_score": 6.0,
+   "projected_away_score": 2.5,
+   "bookmaker_count": 1,
+   "probability_range": {
+    "min": 0.9626,
+    "max": 0.9626
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:29:00+00:00",
+   "home_probability": 0.9614,
+   "away_probability": 0.0386,
+   "over_under": 8.5,
+   "projected_home_score": 6.0,
+   "projected_away_score": 2.5,
+   "bookmaker_count": 2,
+   "probability_range": {
+    "min": 0.9578,
+    "max": 0.9651
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:30:00+00:00",
+   "home_probability": 0.9442,
+   "away_probability": 0.0558,
+   "over_under": 8.5,
+   "projected_home_score": 6.5,
+   "projected_away_score": 2.1,
+   "bookmaker_count": 8,
+   "probability_range": {
+    "min": 0.9083,
+    "max": 0.9712
+   }
+  },
+  {
+   "timestamp": "2026-09-17T01:31:00+00:00",
+   "home_probability": 0.9499,
+   "away_probability": 0.0501,
+   "over_under": 8.6,
+   "projected_home_score": 6.4,
+   "projected_away_score": 2.2,
+   "bookmaker_count": 6,
+   "probability_range": {
+    "min": 0.9205,
+    "max": 0.9702
+   }
+  }
+ ]
+}

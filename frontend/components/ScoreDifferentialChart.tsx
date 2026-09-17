@@ -33,6 +33,7 @@ import type {
   ESPNHistoryPoint,
 } from "@/lib/types";
 import type { PeriodBoundary } from "@/lib/periodMarkers";
+import { dedupePeriodLabels } from "@/lib/periodMarkers";
 
 interface ScoreDifferentialChartProps {
   history: OddsHistoryPoint[];
@@ -634,8 +635,6 @@ export default function ScoreDifferentialChart({
     const chartDuration =
       parseISO(chartData[chartData.length - 1].timestamp).getTime() -
       parseISO(chartData[0].timestamp).getTime();
-    const minSpacing = Math.max(chartDuration * 0.05, 180_000);
-
     const filtered = periodBoundaries
       .filter((b) => {
         const t = parseISO(b.timestamp).getTime();
@@ -643,28 +642,25 @@ export default function ScoreDifferentialChart({
       })
       .sort((a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime());
 
-    const deduped: typeof filtered = [];
-    for (const b of filtered) {
-      const t = parseISO(b.timestamp).getTime();
-      if (deduped.length > 0) {
-        const prevT = parseISO(deduped[deduped.length - 1].timestamp).getTime();
-        if (t - prevT < minSpacing) {
-          deduped[deduped.length - 1] = b;
-          continue;
-        }
-      }
-      deduped.push(b);
-    }
+    // UX-P022's spacing rule, shared with the win-probability chart above rather
+    // than copied. This chart used to run `max(duration * 5%, 3 minutes)` — the
+    // hybrid pixel/time form UX-P022 removed — and the 12-label modulo cap below
+    // it, which decimated by INDEX and so dropped markers without reference to
+    // whether they were actually close together.
+    const deduped = dedupePeriodLabels(filtered, chartDuration);
 
-    // Cap at 12 labels max to prevent overlap on dense games (baseball)
-    const capped = deduped.length > 12
-      ? deduped.filter((_, i) => i % Math.ceil(deduped.length / 12) === 0)
-      : deduped;
-
-    return capped.map((b, i) => ({
+    return deduped.map((b) => ({
       ...b,
       time: format(parseISO(b.timestamp), labelFormat),
-      labelPosition: i % 2 === 0 ? "insideTopLeft" : "insideTopRight",
+      // UX-P022: labels used to ALTERNATE insideTopLeft / insideTopRight, which
+      // reads like it spreads them out and does the opposite — a left-anchored
+      // label grows rightward, the next right-anchored one grows leftward, so
+      // adjacent labels grow TOWARD each other and meet in the middle. That is
+      // what printed `TB2` / `T5T6` on the Reds–Dodgers page at 390px. Anchoring
+      // every label on the same side makes the gap between two markers the space
+      // actually available to the first one's text, which is what the spacing
+      // rule assumes.
+      labelPosition: "insideTopLeft",
     }));
   }, [periodBoundaries, chartData, scoreSpan, labelFormat]);
 
