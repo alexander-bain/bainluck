@@ -45,14 +45,70 @@ _SOURCE_TASKS = {
     "openai": ["enrich_hooks", "enrich_discover_llm"],
 }
 
-# DB queries to check freshness per source
+# DB freshness per source — the DATA half of this endpoint. #4949.
+#
+# 🔴 THREE OF THESE NAMED `events.updated_at`, A COLUMN THAT DOES NOT EXIST, AND
+# THE FIRST ONE ABORTED THE OTHER FIVE.
+#
+# Measured on production 2026-09-17 16:2xZ, not recalled:
+#
+#   * `SELECT COUNT(*) FROM events WHERE updated_at > …` → `undefined_column`.
+#     `events` has `created_at`, `completed_at`, `ei_computed_at` and no mtime.
+#   * `odds_api` is the FIRST key in `_SOURCE_TASKS`, so its raise aborted the
+#     shared session's transaction and the three queries that WERE valid failed
+#     behind it. Run alone in the same minute they answer 6198 / 5325 / 15.
+#   * Every failure landed in `except Exception: pass`, so `items_updated_6h`
+#     was absent from all nine sources, `status: "stale"` was unreachable, and
+#     the endpoint served `overall: "healthy"`, `alerts: []` while its only
+#     data-derived check had never once run.
+#
+# That is gotcha #53 in the reassuring direction: a source whose task keeps
+# reporting success while writing nothing reads healthy, which is precisely the
+# failure this endpoint exists to catch.
+#
+# Each entry is (sql, window_hours). A source is listed here ONLY if it writes a
+# timestamped row continuously — a query that reads 0 when nothing is wrong
+# turns the alarm into noise, which is the same defect facing the other way.
 _SOURCE_FRESHNESS_QUERIES = {
-    "odds_api": "SELECT COUNT(*) FROM events WHERE updated_at > NOW() - INTERVAL '6 hours'",
-    "espn": "SELECT COUNT(*) FROM events WHERE espn_id IS NOT NULL AND updated_at > NOW() - INTERVAL '6 hours'",
-    "statpal": "SELECT COUNT(*) FROM events WHERE statpal_fixture_id IS NOT NULL AND updated_at > NOW() - INTERVAL '6 hours'",
-    "kalshi": "SELECT COUNT(*) FROM futures_markets WHERE source = 'kalshi' AND updated_at > NOW() - INTERVAL '6 hours'",
-    "polymarket": "SELECT COUNT(*) FROM futures_markets WHERE source = 'polymarket' AND updated_at > NOW() - INTERVAL '6 hours'",
-    "datagolf": "SELECT COUNT(*) FROM futures_markets WHERE source = 'datagolf' AND updated_at > NOW() - INTERVAL '12 hours'",
+    "odds_api": (
+        "SELECT COUNT(*) FROM odds_snapshots "
+        "WHERE captured_at > NOW() - INTERVAL '6 hours'",
+        6,
+    ),
+    "kalshi": (
+        "SELECT COUNT(*) FROM futures_markets "
+        "WHERE source = 'kalshi' AND updated_at > NOW() - INTERVAL '6 hours'",
+        6,
+    ),
+    "polymarket": (
+        "SELECT COUNT(*) FROM futures_markets "
+        "WHERE source = 'polymarket' AND updated_at > NOW() - INTERVAL '6 hours'",
+        6,
+    ),
+    "datagolf": (
+        "SELECT COUNT(*) FROM futures_markets "
+        "WHERE source = 'datagolf' AND updated_at > NOW() - INTERVAL '12 hours'",
+        12,
+    ),
+}
+
+# The two sources whose freshness this endpoint does NOT measure, and why —
+# said out loud in the payload rather than left as a silent absence, because
+# "we do not measure this" and "we measured it and it is fine" are the two
+# readings the old code could not tell apart.
+#
+# Both were on `events.updated_at` and neither has a replacement that means
+# what the check needs it to mean (measured 2026-09-17 16:2xZ):
+_FRESHNESS_UNMEASURED = {
+    "espn": (
+        "espn writes only while games are in play — espn_snapshots.captured_at "
+        "returned 0 rows in a quiet hour and the espn leg of "
+        "win_probability_sources was 12 h old with nothing wrong"
+    ),
+    "statpal": (
+        "statpal's livescore writes land on events columns that carry no write "
+        "stamp; teams.standings_updated_at moves about once a day"
+    ),
 }
 
 
@@ -95,16 +151,47 @@ async def source_health(
             total_failures_24h += int(m.get("failures_24h", 0))
             max_consecutive = max(max_consecutive, int(m.get("consecutive_failures", 0)))
 
-        # DB freshness check
-        freshness_count = None
+        # DB freshness check — #4949.
+        #
+        # ONE SAVEPOINT PER QUERY. All of these run on the one request session,
+        # and a failed statement poisons that transaction, so a single bad query
+        # is a silent outage of every check after it — which is exactly how the
+        # three dead `events.updated_at` queries took the three live ones down
+        # with them. The savepoint makes each source's check independent.
+        freshness = None
         if source_name in _SOURCE_FRESHNESS_QUERIES:
+            sql, window_hours = _SOURCE_FRESHNESS_QUERIES[source_name]
             try:
-                result = await db.execute(text(_SOURCE_FRESHNESS_QUERIES[source_name]))
-                freshness_count = result.scalar()
-                if freshness_count == 0 and worst_health != "critical":
+                async with db.begin_nested():
+                    result = await db.execute(text(sql))
+                    items = result.scalar()
+                freshness = {
+                    "status": "ok",
+                    "items": items,
+                    "window_hours": window_hours,
+                }
+                if items == 0 and worst_health != "critical":
                     worst_health = "stale"
-            except Exception:
-                pass
+            except Exception as exc:
+                # NEVER `pass`. A check that could not run must not be reported
+                # the same way as a check that passed (gotcha #53). And THE
+                # CLASS NAME, NEVER THE MESSAGE — `health.py:_error_label`
+                # carries the reason that rule exists in this codebase.
+                logger.warning(
+                    "source-health freshness query did not run for %s: %s",
+                    source_name,
+                    type(exc).__name__,
+                )
+                freshness = {
+                    "status": "error",
+                    "error": type(exc).__name__,
+                    "window_hours": window_hours,
+                }
+        elif source_name in _FRESHNESS_UNMEASURED:
+            freshness = {
+                "status": "unmeasured",
+                "reason": _FRESHNESS_UNMEASURED[source_name],
+            }
 
         source_data = {
             "status": worst_health,
@@ -112,11 +199,14 @@ async def source_health(
             "failures_24h": total_failures_24h,
             "consecutive_failures": max_consecutive,
         }
-        if freshness_count is not None:
-            source_data["items_updated_6h"] = freshness_count
+        if freshness is not None:
+            source_data["freshness"] = freshness
 
         if worst_health in ("critical", "stale"):
-            alerts.append(f"{source_name}: {worst_health} (consecutive_failures={max_consecutive}, items_6h={freshness_count})")
+            items = freshness.get("items") if freshness else None
+            alerts.append(f"{source_name}: {worst_health} (consecutive_failures={max_consecutive}, items={items})")
+        if freshness is not None and freshness["status"] == "error":
+            alerts.append(f"{source_name}: freshness check did not run ({freshness['error']})")
 
         sources[source_name] = source_data
 
@@ -132,10 +222,18 @@ async def source_health(
     except Exception:
         pass
 
+    # A freshness check that DID NOT RUN degrades the answer too: with the data
+    # half dark this endpoint is task bookkeeping only, and "we cannot tell"
+    # printed as `healthy` is the #4949 defect coming straight back.
+    freshness_dark = any(
+        isinstance(s.get("freshness"), dict) and s["freshness"]["status"] == "error"
+        for s in sources.values()
+    )
+
     overall = "healthy"
     if any(s["status"] == "critical" for s in sources.values()):
         overall = "critical"
-    elif any(s["status"] in ("degraded", "stale") for s in sources.values()):
+    elif freshness_dark or any(s["status"] in ("degraded", "stale") for s in sources.values()):
         overall = "degraded"
 
     return {
