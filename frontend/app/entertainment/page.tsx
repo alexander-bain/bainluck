@@ -9,6 +9,7 @@ import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { fetchEntertainment, formatProbability } from "@/lib/api";
 import { NO_READING, probabilityParts } from "@/lib/probabilityDisplay";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
+import { twoLegCardPair } from "@/lib/twoLegCardPair";
 import { eventPath } from "@/lib/eventKey";
 import type {
   EntertainmentData,
@@ -1169,7 +1170,12 @@ function CulturalMoments({ markets }: { markets: EntMarketRow[] }) {
 }
 
 function MomentCard({ market }: { market: EntMarketRow }) {
-  const isBinary = market.outcome_count <= 2;
+  // #6766: a YES/NO bar may only draw a pair that IS a yes and a no — see the
+  // note on `twoLegCardPair`. Anything else falls through to the rung list
+  // below, which prints each served leg with its own name and its own price.
+  const pair = twoLegCardPair(market);
+  const yesNo =
+    market.outcome_count <= 2 && pair.oneQuestion ? pair.second : null;
   return (
     <Link href={`/futures/${market.market_id}`}>
       <div className={`${s.card} ${s.masonryCard}`} style={{ padding: 16 }}>
@@ -1217,8 +1223,8 @@ function MomentCard({ market }: { market: EntMarketRow }) {
             {market.hook}
           </div>
         )}
-        {isBinary ? (
-          <YesNoBar yes={market.prob} no={100 - market.prob} />
+        {yesNo ? (
+          <YesNoBar yes={pair.first.prob} no={yesNo.prob} />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {market.top_outcomes.map((o, i) => (
@@ -1290,7 +1296,16 @@ function TechCultureSidebar({ data }: { data: EntThemeTechCulture }) {
         </p>
       </div>
 
-      {data.markets.map((m, i) => (
+      {data.markets.map((m, i) => {
+        // #6766 — THIS RAIL IS WHERE THE DEFECT WAS PHOTOGRAPHED. "# of views of
+        // next MrBeast video on week 1?" is two BUCKETS — `90-100M` 6.0% and
+        // `100M+` 5.1% — and the bar read `YES 6% NO 94%`, a number no venue
+        // quotes, under a word neither bucket is. The pair decides it now; the
+        // rung list below is the same render this card already gives three
+        // buckets, so nothing new is drawn.
+        const pair = twoLegCardPair(m);
+        const yesNo = m.outcome_count <= 2 && pair.oneQuestion ? pair.second : null;
+        return (
         <Link key={i} href={`/futures/${m.market_id}`}>
           <div className={s.sidebarCard}>
             <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>
@@ -1301,8 +1316,8 @@ function TechCultureSidebar({ data }: { data: EntThemeTechCulture }) {
                 {m.hook}
               </div>
             )}
-            {m.outcome_count <= 2 ? (
-              <YesNoBar yes={m.prob} no={100 - m.prob} />
+            {yesNo ? (
+              <YesNoBar yes={pair.first.prob} no={yesNo.prob} />
             ) : (
               <div
                 style={{
@@ -1345,7 +1360,8 @@ function TechCultureSidebar({ data }: { data: EntThemeTechCulture }) {
             </div>
           </div>
         </Link>
-      ))}
+        );
+      })}
     </aside>
   );
 }

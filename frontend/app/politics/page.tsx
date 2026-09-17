@@ -20,6 +20,8 @@ import PoliticsSkeleton from "@/components/skeletons/PoliticsSkeleton";
 import Sparkline from "@/components/Sparkline";
 import { formatSpan, seriesFreshness, seriesHasHole, seriesWindowLabel } from "@/lib/seriesFreshness";
 import { eventPath } from "@/lib/eventKey";
+import { twoLegCardPair } from "@/lib/twoLegCardPair";
+import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
 import s from "./politics.module.css";
 import { BORDER_COLOR, SourceBadge } from "@/components/politics/atoms";
 import { CrossSourceSpotlight } from "@/components/politics/CrossSourceSpotlight";
@@ -663,7 +665,19 @@ function MarketCard({
   theme: string;
 }) {
   const borderColor = BORDER_COLOR[theme] || "#9CA3AF";
-  const isBinary = market.outcome_count <= 2;
+  // #6766 — TWO LEGS IS NOT THE SAME FACT AS TWO SIDES OF ONE QUESTION.
+  //
+  // `outcome_count <= 2` was the whole test, and `BinaryCard` is built on the two
+  // legs being complements: it prints one number, derives the other, and draws
+  // them as the two ends of one full bar. A two-RUNG market satisfies the arity
+  // and denies the premise — "Before Nov 3, 2026" 2.5% beside "Before Oct 1,
+  // 2026" 1.0% are nested rungs summing to 3.5, and the card printed 98% under
+  // the second name. `twoLegCardPair` decides it on the prices, and a pair that
+  // is not one question is rendered by `MultiCard`, which is this page's own
+  // render for independent rungs — leader, its bar, then each runner-up with its
+  // OWN served price. No new markup, and nothing that draws a partition the
+  // prices deny.
+  const isBinary = market.outcome_count <= 2 && twoLegCardPair(market).oneQuestion;
 
   if (isBinary) {
     return <BinaryCard market={market} borderColor={borderColor} />;
@@ -678,8 +692,14 @@ function BinaryCard({
   market: PoliticsMarketRow;
   borderColor: string;
 }) {
-  const yesProb = market.prob;
-  const noProb = 100 - yesProb;
+  // #6766: the second number is the SERVED leg wherever the payload carries one.
+  // `MarketCard` above only routes a complement pair here, so `second` is
+  // non-null and the two round through the pair contract (#2831) rather than
+  // independently — which is also why `94.5 / 5.5` stops printing `95% vs 6%`.
+  const { first, second } = twoLegCardPair(market);
+  const yesProb = first.prob;
+  const noProb = second?.prob ?? 100 - yesProb;
+  const [yesPct, noPct] = renderedOutcomeRowPercents([yesProb / 100, noProb / 100]);
   const yesLeads = yesProb >= 50;
 
   return (
@@ -715,10 +735,10 @@ function BinaryCard({
               className={s.probNum}
               style={{ fontSize: 24, color: yesLeads ? "#16A34A" : "#111827" }}
             >
-              {Math.round(yesProb)}%
+              {yesPct ?? Math.round(yesProb)}%
             </span>
             <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-              {market.top_outcomes?.[0]?.name || "Yes"}
+              {first.name}
             </span>
             <span
               style={{
@@ -728,8 +748,8 @@ function BinaryCard({
               }}
             >
               vs{" "}
-              <span className={s.probNum}>{Math.round(noProb)}%</span>{" "}
-              {market.top_outcomes?.[1]?.name || "No"}
+              <span className={s.probNum}>{noPct ?? Math.round(noProb)}%</span>{" "}
+              {second?.name || "No"}
             </span>
           </div>
 
