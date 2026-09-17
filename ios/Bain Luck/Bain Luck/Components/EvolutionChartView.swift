@@ -70,6 +70,14 @@ struct EvolutionChartView: View {
     @State private var selectedRange: EvolutionTimeRange = .week
     @State private var crosshair: CrosshairData?
 
+    /// Which drags on the chart are a crosshair scrub and which belong to the
+    /// page's scroll (#6705). Pure and unit-tested — see `ChartScrubState`.
+    ///
+    /// Load-bearing BECAUSE the fix made the pan recognize simultaneously with
+    /// the scroll view's: both now fire, so something has to say which of them
+    /// this particular drag was for.
+    @State private var scrub = ChartScrubState()
+
     /// #4373 — the leaderboard's numeric columns are measured in the face they are
     /// drawn in, so they need the size the reader is actually at.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -455,7 +463,46 @@ struct EvolutionChartView: View {
                     }
                 }
 
-                // Touch overlay for crosshair
+                // Touch overlay for crosshair. #6705.
+                //
+                // A SwiftUI `DragGesture` here starved FuturesDetailView's
+                // ScrollView: this overlay is 280pt tall at full width, and an
+                // identical 160pt swipe measured ~330pt of travel started off
+                // the chart against 0.0pt started on it. FOUR compositions were
+                // measured and all four read 0.0 — plain `.gesture`,
+                // `.simultaneousGesture`, and each of those sequenced behind a
+                // LongPressGesture. Removing the gesture entirely was the only
+                // thing that scrolled, and that deletes the interaction.
+                //
+                // `shouldRecognizeSimultaneouslyWith` is the only layer that can
+                // actually say "both of you may recognize this", so the scrub
+                // runs on a UIKit pan. See `ChartScrubSurface` for the table.
+                #if os(iOS)
+                ChartScrubSurface(
+                    onChange: { location, translation in
+                        guard scrub.change(
+                            width: translation.width,
+                            height: translation.height
+                        ) else {
+                            // Latched vertical: the reader is scrolling, and
+                            // because the pan now recognizes SIMULTANEOUSLY we
+                            // are still being called throughout. Drop any
+                            // crosshair placed by the undecided opening frames
+                            // rather than letting it ride down the page.
+                            crosshair = nil
+                            return
+                        }
+                        updateCrosshair(at: location, proxy: proxy, geometry: geo)
+                    },
+                    onEnd: {
+                        scrub.end()
+                        crosshair = nil
+                    }
+                )
+                #else
+                // macOS: a trackpad scroll never contended for the touch, so
+                // the ordinary gesture is correct and the UIKit bridge does not
+                // exist to port.
                 Color.clear
                     .contentShape(Rectangle())
                     .gesture(
@@ -463,10 +510,9 @@ struct EvolutionChartView: View {
                             .onChanged { drag in
                                 updateCrosshair(at: drag.location, proxy: proxy, geometry: geo)
                             }
-                            .onEnded { _ in
-                                crosshair = nil
-                            }
+                            .onEnded { _ in crosshair = nil }
                     )
+                #endif
             }
         }
         .chartYAxis {
@@ -497,7 +543,18 @@ struct EvolutionChartView: View {
         .frame(height: height)
         .padding(.horizontal)
         .padding(.vertical, 8)
+        // How a finger-driven test finds the region that used to swallow the
+        // scroll. `.contain` is load-bearing for the same reason it is on
+        // `DiscoverEventCard`: an identifier alone inherits down to every leaf
+        // in the subtree, and a drag test that resolves to an axis label drags
+        // the wrong 30pt frame. `.contain` lands it once, on an element with
+        // the chart's own 280pt frame, without merging or hiding any child.
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(Self.scrubSurfaceIdentifier)
     }
+
+    /// How a tap-driven test finds the chart's touch surface.
+    static let scrubSurfaceIdentifier = "evolution-chart-surface"
 
     // MARK: - Crosshair Update
 
