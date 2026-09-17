@@ -242,7 +242,19 @@ def build_slow_event(
     if rss_mb is not None and math.isfinite(rss_mb):
         record["rss_mb"] = round(float(rss_mb), 1)
     if isinstance(split, dict):
-        for key in ("db_ms", "app_ms", "router_queue_ms", "queries", "max_query_ms"):
+        # `edge_ms` (#6796) is the wait the READER experienced — wall plus
+        # router queue — and it is the only field on this record that answers
+        # "how long did somebody sit there". Without it a router-dominated
+        # event records `ms: 62.5` for a 16.4 s wait and every reader of the
+        # ring draws the opposite conclusion from the one the event supports.
+        for key in (
+            "db_ms",
+            "app_ms",
+            "router_queue_ms",
+            "edge_ms",
+            "queries",
+            "max_query_ms",
+        ):
             value = split.get(key)
             # `None` means UNUSABLE and is written as such — dropping the key
             # would let a reader default it to 0 and conclude the router took no
@@ -315,6 +327,12 @@ def summarize_slow_events(records: Sequence[dict]) -> dict:
         summary["oldest_ts"] = None
         summary["newest_ts"] = None
         summary["max_ms"] = None
+        # Shape-stable on the empty path too, for the reason `_summarize_layers`
+        # gives: a payload whose KEYS depend on its data makes every consumer
+        # write the `.get(...) or {}` dance, and the one that forgets reads the
+        # missing key as a zero.
+        summary["max_edge_ms"] = None
+        summary["n_router_dominated"] = 0
         return summary
     times = [float(r["t"]) for r in usable if isinstance(r.get("t"), (int, float))]
     summary["oldest_ts"] = min(times) if times else None
@@ -328,7 +346,58 @@ def summarize_slow_events(records: Sequence[dict]) -> dict:
         cache = record.get("cache") or "none"
         summary["by_cache"][cache] = summary["by_cache"].get(cache, 0) + 1
     summary["by_layer"] = _summarize_layers(usable)
+    summary.update(_summarize_reader_wait(usable))
     return summary
+
+
+#: The share of the reader's wait above which this rollup calls an event
+#: router-dominated. Named for what it computes rather than for the HALT
+#: sentence in `request_timing`'s header comment ("router > 30 % of the
+#: EXCESS"): "the excess" has no baseline defined anywhere, and a count that
+#: silently picked one would be a different claim wearing the doctrine's name.
+ROUTER_DOMINATED_SHARE = 0.30
+
+
+def _summarize_reader_wait(usable: Sequence[dict]) -> dict:
+    """The two numbers that keep a router-dominated tail event legible (#6796).
+
+    ``max_ms`` is the largest HANDLER time in the ring, and for the class this
+    ring could not previously record — 16,005 ms of router queue in front of a
+    62.5 ms handler — it reads 62.5. A reader who sees that concludes the
+    window was quiet. So the rollup states, separately:
+
+    * ``max_edge_ms`` — the longest wait anyone actually sat through, or
+      ``None`` when no record carries a usable ``edge_ms``. ``None`` is "we
+      could not measure it", never 0 (gotcha #53); records written before this
+      field shipped have no ``edge_ms`` and must not be averaged in as zeros.
+    * ``n_router_dominated`` — how many events spent at least
+      ``ROUTER_DOMINATED_SHARE`` of the reader's wait in the router queue,
+      counted only over records where the router term was USABLE. This is the
+      evidence the capacity question needs, and until the gate change that
+      admits these events it was uncollectable by construction.
+    """
+    edges = [
+        float(r["edge_ms"])
+        for r in usable
+        if isinstance(r.get("edge_ms"), (int, float))
+        and math.isfinite(float(r["edge_ms"]))
+    ]
+    dominated = 0
+    for record in usable:
+        router = record.get("router_queue_ms")
+        edge = record.get("edge_ms")
+        if not isinstance(router, (int, float)) or not math.isfinite(float(router)):
+            continue  # unusable router term — not a zero, and not a count
+        if not isinstance(edge, (int, float)) or not math.isfinite(float(edge)):
+            continue
+        if float(edge) <= 0:
+            continue
+        if float(router) / float(edge) >= ROUTER_DOMINATED_SHARE:
+            dominated += 1
+    return {
+        "max_edge_ms": round(max(edges), 1) if edges else None,
+        "n_router_dominated": dominated,
+    }
 
 
 #: #1917 (LAT-P070): the layer rollup. `by_top_stage` answers "which stage" and can
