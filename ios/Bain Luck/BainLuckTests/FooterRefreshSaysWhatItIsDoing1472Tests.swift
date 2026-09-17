@@ -177,10 +177,11 @@ final class FooterRefreshSaysWhatItIsDoing1472Tests: XCTestCase {
     /// literal, and `phase: .idle` compiles, passes every test above, and ships
     /// this entire fix inert. That is the failure mode this test exists for.
     func testBothEndCardCallSitesPassTheLiveRefreshPhase() throws {
-        let source = try String(
-            contentsOf: Self.projectDirectory.appendingPathComponent("Bain Luck/Views/DiscoverView.swift"),
-            encoding: .utf8
-        )
+        // Comment-stripped, like every scan here: a doc comment naming
+        // `phase: footerRefreshPhase` would otherwise satisfy this on a call
+        // site that passes a literal.
+        let source = Self.codeText(of: "Bain Luck/Views/DiscoverView.swift")
+        XCTAssertFalse(source.isEmpty, "DiscoverView.swift could not be read; this test proves nothing.")
 
         var searched = source.startIndex..<source.endIndex
         var sites = 0
@@ -211,29 +212,39 @@ final class FooterRefreshSaysWhatItIsDoing1472Tests: XCTestCase {
     /// `ReleaseSurfaces.predictionsExperienceEnabled` — `false` in the launch
     /// build. So every pull-to-refresh paid a second network round trip for a
     /// value the shipping app cannot draw.
+    /// MEASURED VACUOUS ONCE, AND THAT IS WHY IT READS CODE LINES NOW.
+    ///
+    /// The first draft looked back 400 raw characters from the call for the flag
+    /// name. Mutant M13 removed the gate from the refresh path and the suite
+    /// stayed GREEN: the 400-character window still held the *comment* above the
+    /// call, which names `ReleaseSurfaces.predictionsExperienceEnabled` in prose
+    /// explaining why the gate is there. The assertion was matching its own
+    /// documentation. So comments are stripped first, and the window is a small
+    /// number of CODE lines rather than a character count.
     func testEveryResolutionsFetchIsGatedOnTheSurfaceThatDrawsIt() throws {
-        let source = try String(
-            contentsOf: Self.projectDirectory.appendingPathComponent("Bain Luck/Views/DiscoverView.swift"),
-            encoding: .utf8
+        let lines = Self.codeLines(of: "Bain Luck/Views/DiscoverView.swift")
+
+        let fetchLines = lines.indices.filter { lines[$0].contains("fetchResolutions()") }
+        XCTAssertEqual(
+            fetchLines.count, 2,
+            "Discover makes \(fetchLines.count) resolutions fetches; #1472 gated two (cold open and refresh)."
         )
 
-        var searched = source.startIndex..<source.endIndex
-        var fetches = 0
-        while let call = source.range(of: "fetchResolutions()", range: searched) {
-            fetches += 1
-            // The gate is the nearest one ABOVE the call, so look back over the
-            // enclosing statement rather than forward.
-            let preceding = source[..<call.lowerBound].suffix(400)
+        for line in fetchLines {
+            // The gate sits in the enclosing `if`, which is at most a couple of
+            // code lines above the call at either site.
+            let window = lines[max(0, line - Self.gateLookbackLines)...line].joined(separator: "\n")
             XCTAssertTrue(
-                preceding.contains("ReleaseSurfaces.predictionsExperienceEnabled"),
-                "Resolutions fetch \(fetches) is ungated. Nothing in the launch build draws what it returns, "
-                + "and on the refresh path it holds the reader's pull open for the round trip. Context:\n\(preceding.suffix(200))"
+                window.contains("ReleaseSurfaces.predictionsExperienceEnabled"),
+                "The resolutions fetch at code line \(line) is ungated. Nothing in the launch build draws what "
+                + "it returns, and on the refresh path it holds the reader's pull open for the round trip. Code:\n\(window)"
             )
-            searched = call.upperBound..<source.endIndex
         }
-
-        XCTAssertEqual(fetches, 2, "Discover makes \(fetches) resolutions fetches; #1472 gated two (cold open and refresh).")
     }
+
+    /// How far above a call its gate may sit. Small on purpose: a generous window
+    /// is how a source scan stops discriminating.
+    private static let gateLookbackLines = 3
 
     /// The success confirmation is scheduled OUTSIDE the awaited refresh closure.
     ///
@@ -243,10 +254,8 @@ final class FooterRefreshSaysWhatItIsDoing1472Tests: XCTestCase {
     /// September 16 report ("pull-to-refresh leaves heading/cards frozen halfway
     /// down screen"). This fix must not manufacture it.
     func testTheConfirmationTimerDoesNotHoldTheRefreshClosure() throws {
-        let source = try String(
-            contentsOf: Self.projectDirectory.appendingPathComponent("Bain Luck/Views/DiscoverView.swift"),
-            encoding: .utf8
-        )
+        let source = Self.codeText(of: "Bain Luck/Views/DiscoverView.swift")
+        XCTAssertFalse(source.isEmpty, "DiscoverView.swift could not be read; this test proves nothing.")
         let body = try XCTUnwrap(
             source.range(of: "private func refreshFeed() async {"),
             "refreshFeed has been renamed or moved; move this test with it."
@@ -262,6 +271,48 @@ final class FooterRefreshSaysWhatItIsDoing1472Tests: XCTestCase {
             "the confirmation window is being awaited by refreshFeed itself, which pins the pull-to-refresh "
             + "header down for its whole duration. Context:\n\(beforeSleep)"
         )
+    }
+
+    // MARK: - Reading source as source
+
+    /// A file's lines with comments and blank lines removed.
+    ///
+    /// Every scan in this file goes through here, because a scan that can match
+    /// a comment is a scan that passes on the strength of the sentence written
+    /// to explain the code it is supposed to be checking — measured, see
+    /// `testEveryResolutionsFetchIsGatedOnTheSurfaceThatDrawsIt`.
+    private static func codeLines(of relativePath: String) -> [String] {
+        let source = (try? String(
+            contentsOf: projectDirectory.appendingPathComponent(relativePath), encoding: .utf8
+        )) ?? ""
+        return source
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { stripComment(String($0)) }
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+    }
+
+    /// One line with any `//` comment removed — but only a `//` that is not
+    /// inside a string literal, so a `"https://…"` in real code survives intact.
+    private static func stripComment(_ line: String) -> String {
+        var inString = false
+        var previous: Character? = nil
+        let characters = Array(line)
+        var index = 0
+        while index < characters.count {
+            let c = characters[index]
+            if c == "\"" && previous != "\\" {
+                inString.toggle()
+            } else if !inString, c == "/", index + 1 < characters.count, characters[index + 1] == "/" {
+                return String(characters[..<index])
+            }
+            previous = c
+            index += 1
+        }
+        return line
+    }
+
+    private static func codeText(of relativePath: String) -> String {
+        codeLines(of: relativePath).joined(separator: "\n")
     }
 
     private static var projectDirectory: URL {
