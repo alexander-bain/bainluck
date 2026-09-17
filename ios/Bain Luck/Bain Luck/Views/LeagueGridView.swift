@@ -149,26 +149,16 @@ struct LeagueGridView: View {
 
     // MARK: - League Market Sections
 
-    private static let sectionOrder = ["series", "awards", "playoff_props", "season_stats", "novelty"]
-    private static let sectionLabels: [String: String] = [
-        "series": "Playoff Series",
-        "awards": "Awards",
-        "playoff_props": "Playoff Props",
-        "season_stats": "Season Stats",
-        "novelty": "More Markets",
-    ]
-    private static let sectionIcons: [String: String] = [
-        "series": "sportscourt.fill",
-        "awards": "trophy.fill",
-        "playoff_props": "chart.bar.fill",
-        "season_stats": "chart.line.uptrend.xyaxis",
-        "novelty": "sparkles",
-    ]
+    // #888: the section vocabulary is `LeagueMarketSections` and is NOT restated
+    // here. Two views held their own copy of these five strings, both copies named
+    // two keys the API has never emitted, and `sections[key]` misses silently — so
+    // the markets behind them vanished with no empty state and no count. The
+    // catalog carries the measurement and the reasoning.
 
     @ViewBuilder
     private var leagueMarketSections: some View {
         if let leagueData = viewModel.leagueMarkets {
-            ForEach(Self.sectionOrder, id: \.self) { key in
+            ForEach(LeagueMarketSections.order, id: \.self) { key in
                 if let markets = leagueData.sections[key], !markets.isEmpty {
                     Section {
                         ForEach(markets.prefix(8)) { market in
@@ -183,8 +173,8 @@ struct LeagueGridView: View {
                         }
                     } header: {
                         Label(
-                            Self.sectionLabels[key] ?? key.capitalized,
-                            systemImage: Self.sectionIcons[key] ?? "list.bullet"
+                            LeagueMarketSections.label(for: key),
+                            systemImage: LeagueMarketSections.icon(for: key)
                         )
                     }
                 }
