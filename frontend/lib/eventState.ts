@@ -188,11 +188,18 @@ export const VENUE_SETTLED_DESCRIPTION =
  * itself, so a client that re-derived anything here would be the second place
  * that judgement lives and the first place it drifts.
  *
- * A settled match with NO graded score prints the badge alone — the tennis
- * shape, where 16 prop grades settle the event and no market ever quoted a
- * scoreline. Deliberately not "Settled · no score": on a page whose sibling
- * states print real scorelines, "no score" reads as 0-0, which is a result we
- * do not have. Saying less is the only way to say nothing false.
+ * #6739 — A MATCH WITH NO GRADED SCORE STILL NAMES ITS WINNER, where the venue
+ * settled one outright: the producer falls back to the graded full-scope
+ * moneyline and sends `"Fiona Crawley wins"`, so the tennis shape reads
+ * "Settled · Fiona Crawley wins" rather than the badge alone. That shape is
+ * the majority — 265 of the 1,121 graded `suspended` events name a winner and
+ * only 56 name a score.
+ *
+ * The badge STILL stands alone when nothing graded the whole contest: 16 prop
+ * grades settle an event without ever saying who won it. Deliberately not
+ * "Settled · no result": on a page whose sibling states print real scorelines,
+ * "no result" invites the reader to supply one. Saying less is the only way to
+ * say nothing false.
  */
 export function venueSettledSummary(
   venueSettled: boolean | null | undefined,

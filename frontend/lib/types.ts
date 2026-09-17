@@ -384,20 +384,35 @@ export interface EventDetailResponse extends Event {
    * One truthiness test covers all three, which is why it is a plain boolean
    * rather than #5077's present-only shape.
    *
-   * `venue_settled_result` is the graded FULL-CONTEST score market's outcome
-   * NAME, verbatim and unparsed: `"Draw 0-0"` (soccer, `Correct Score`),
-   * `"Aryna Sabalenka wins 2-0"` (tennis sets, `Exact Match Score`). It is
-   * null whenever no such market graded — 16 graded props do not add up to a
-   * score — and null when two of them disagree, because picking one by sort
-   * order would publish a guess. 🔴 Render it as given: the producer refuses
-   * `1st Half Correct Score` by segment-exact name precisely so no consumer
-   * has to know the vocabulary, and a client that parsed it would be the
-   * second place that rule lives.
+   * `venue_settled_result` is what the venue said about the FULL CONTEST, as
+   * a finished sentence, verbatim and unparsed. Two shapes, in precedence
+   * order:
    *
-   * Produced by `backend/app/utils/venue_settlement.py` (live lane, PR #6410);
-   * read here and nowhere else. It never decides a winner: only positive
-   * grades are read, so a voided market — where every leg reads as a loss —
-   * cannot print a fabricated verdict.
+   *   1. A graded full-scope SCORE market's outcome NAME — `"Draw 0-0"`
+   *      (soccer, `Correct Score`), `"Aryna Sabalenka wins 2-0"` (tennis
+   *      sets, `Exact Match Score`).
+   *   2. #6739 — when no score market graded, a graded full-scope MONEYLINE
+   *      naming one of the two sides, rendered as `"Fiona Crawley wins"`.
+   *      This is the same sentence with the score removed, not a new
+   *      register, and it is the common case: of the 1,121 `suspended` events
+   *      holding a positive grade, 56 carry a score and 265 carry only a
+   *      winner. Before #6739 those 265 printed the badge alone under an
+   *      89%–11% chart.
+   *
+   * Null whenever neither graded — 16 graded props still do not add up to a
+   * result — and null when two of them disagree, because picking one by sort
+   * order would publish a guess. 🔴 Render it as given: the producer refuses
+   * `1st Half Correct Score` and `Set 1 Winner` by market CLASS and
+   * segment-exact name precisely so no consumer has to know the vocabulary,
+   * and a client that parsed it would be the second place that rule lives.
+   *
+   * Produced by `backend/app/utils/venue_settlement.py` (live lane, PR #6410
+   * then #6756); read here and nowhere else. It decides a winner only where
+   * the venue settled one outright: only positive grades are read, so a
+   * voided market — where every leg reads as a loss — cannot print a
+   * fabricated verdict; a derivative book (set, half, handicap) is refused by
+   * class; and an outcome name that reaches BOTH sides, or neither, names
+   * nobody rather than guessing.
    */
   venue_settled?: boolean;
   /** @see EventDetailResponse.venue_settled */
