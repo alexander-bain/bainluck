@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import re
 import time
@@ -340,15 +341,41 @@ class LatencyMiddleware(BaseHTTPMiddleware):
             except Exception:
                 logger.debug("Timing split emit failed", exc_info=True)
 
+        # #6796: the wait a READER experienced, which is what every tail gate
+        # below fires on. `duration_ms` is the handler clock alone, and a
+        # request that sat in the Heroku router queue was slow for the person
+        # waiting whatever the handler then did in 62 ms — the specimen that
+        # filed #6796 was `router=16005.1` against `wall=62.5`, invisible to
+        # the ring, to the warning below, and therefore to the HALT condition
+        # in `request_timing`'s own header comment, which can only ever be
+        # computed over events this gate selected.
+        #
+        # `build_split` already computes the sum as `edge_ms`; it is read from
+        # there rather than recomputed so the header a reader sees and the
+        # threshold the ring applies can never drift apart. When the router
+        # term is UNUSABLE (no `X-Request-Start`, unparseable, implausible)
+        # `edge_ms` is None and this falls back to the handler clock, so the
+        # behaviour on a fleet without the header is byte-identical to before.
+        observed_ms = duration_ms
+        if split is not None:
+            edge = split.get("edge_ms")
+            if isinstance(edge, (int, float)) and math.isfinite(float(edge)):
+                observed_ms = max(duration_ms, float(edge))
+
         # Log memory for slow requests to diagnose OOM crashes (#809)
         rss_mb: Optional[float] = None
-        if duration_ms > 5000:
+        if observed_ms > 5000:
             try:
                 import resource
                 rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+                # Both terms, always: the headline number is what the reader
+                # waited, and `wall` beside it says how much of that the
+                # handler owned. One number cannot carry both claims, and a
+                # line that silently changed meaning would mislead every
+                # reader of the older ones.
                 logger.warning(
-                    "Slow request: %s %.0fms RSS=%.0fMB",
-                    path[:60], duration_ms, rss_mb,
+                    "Slow request: %s %.0fms wall=%.0fms RSS=%.0fMB",
+                    path[:60], observed_ms, duration_ms, rss_mb,
                 )
             except Exception:
                 pass
@@ -362,7 +389,10 @@ class LatencyMiddleware(BaseHTTPMiddleware):
         # #1459: record the tail BEFORE the sampling gate. A slow request on a
         # 1-in-10 endpoint is precisely the observation worth keeping, and
         # gating it behind sampling would throw away 9 of every 10 of them.
-        if duration_ms >= SLOW_EVENT_MS:
+        # #6796: gate on the reader-observed wait, record the handler clock.
+        # `ms` keeps meaning exactly what it has always meant, so no existing
+        # consumer of the ring changes under it; `edge_ms` rides the split.
+        if observed_ms >= SLOW_EVENT_MS:
             await _record_slow_event(
                 normalized, duration_ms, _cache_bucket(response), response, rss_mb, split
             )
