@@ -117,40 +117,68 @@ export function FuturesHero({
       {!resolved && pct != null && (
         <>
           {sparklinePoints && sparklinePoints.length >= 3 ? (
-            <div className="relative h-[96px] mb-3">
-              <AmbientHistory points={sparklinePoints} />
-              <div className="absolute left-0 bottom-1 flex items-baseline gap-[1px] font-mono font-bold tracking-[-0.045em] text-text-primary leading-none">
-                <span className="text-[64px]">{pct}</span>
-                <span className="text-[28px]">%</span>
-              </div>
-              <div className="absolute right-0 bottom-2 flex flex-col items-end gap-1.5">
-                {movementStr && (
-                  <span className="flex flex-col items-end gap-0.5">
-                    <span
-                      data-testid="hero-movement"
-                      className={`inline-flex items-center font-mono text-[13px] font-bold px-2 py-0.5 rounded-full ${
-                        movementUp
-                          ? "text-accent-live bg-accent-live/15"
-                          : "text-accent-danger bg-accent-danger/15"
-                      }`}
-                    >
-                      {movementStr}
-                    </span>
-                    {movementLabel && (
+            /* #6760 — THE NUMERAL AND THE OUTCOME NAME USED TO BE DRAWN ON TOP OF
+               EACH OTHER, and neither could be read. The box held two independently
+               `absolute` children — the numeral at `left-0` and a right-anchored
+               column carrying the movement pill AND the outcome name — with no
+               width constraint on either. An outcome name long enough to wrap runs
+               the full width of the box, so on a live tennis market whose outcome
+               name repeats the whole question the reader got `Sao Pa100%pen: Suzan
+               Lamens…` (measured: 5,075px² of intersection at 390px, and Chromium's
+               own hit test answers "name" at 16 of 24 points sampled INSIDE the
+               numeral's box).
+
+               Two changes, and the second is the one that closes the class:
+               (a) the outcome name moves OUT of the absolute layer and into normal
+                   flow below the box, which is exactly where the plain variant a few
+                   lines down has always put it — the two renderings now agree, and a
+                   name of any length simply wraps under a full-width line;
+               (b) what remains in the box — the numeral and the short movement
+                   column — is laid out as a FLEX ROW inside one absolutely
+                   positioned strip. Two flex siblings cannot occupy the same pixels,
+                   so this is not "the label is short enough today", it is a shape
+                   that has no overlap state to regress into. */
+            <>
+              <div className={`relative h-[96px] ${outcomeName ? "mb-2" : "mb-3"}`}>
+                <AmbientHistory points={sparklinePoints} />
+                <div className="absolute inset-x-0 bottom-1 flex items-end justify-between gap-3">
+                  <div className="shrink-0 flex items-baseline gap-[1px] font-mono font-bold tracking-[-0.045em] text-text-primary leading-none">
+                    <span className="text-[64px]">{pct}</span>
+                    <span className="text-[28px]">%</span>
+                  </div>
+                  {movementStr && (
+                    <span className="min-w-0 flex flex-col items-end gap-0.5 pb-1">
                       <span
-                        data-testid="hero-movement-window"
-                        className="text-[11px] text-text-muted"
+                        data-testid="hero-movement"
+                        className={`inline-flex items-center font-mono text-[13px] font-bold px-2 py-0.5 rounded-full ${
+                          movementUp
+                            ? "text-accent-live bg-accent-live/15"
+                            : "text-accent-danger bg-accent-danger/15"
+                        }`}
                       >
-                        {movementLabel}
+                        {movementStr}
                       </span>
-                    )}
-                  </span>
-                )}
-                {outcomeName && (
-                  <span className="text-[13px] font-semibold text-text-primary">{outcomeName}</span>
-                )}
+                      {movementLabel && (
+                        <span
+                          data-testid="hero-movement-window"
+                          className="text-[11px] text-text-muted"
+                        >
+                          {movementLabel}
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </div>
               </div>
-            </div>
+              {outcomeName && (
+                <div
+                  data-testid="hero-outcome-name"
+                  className="text-[13px] font-semibold text-text-primary mb-3"
+                >
+                  {outcomeName}
+                </div>
+              )}
+            </>
           ) : (
             <div className="flex items-end justify-between mb-3">
               <div>
@@ -160,7 +188,17 @@ export function FuturesHero({
                 </div>
                 <div className="flex items-center gap-2 mt-2 flex-wrap">
                   {outcomeName && (
-                    <span className="text-[13px] font-semibold text-text-primary">{outcomeName}</span>
+                    /* #6760: addressable in BOTH renderings. UX-P233's guard was
+                       written against the plain variant only and a mutation battery
+                       renaming the ambient one survived every assertion in the file
+                       — when a state changes how a component renders, the testid
+                       has to exist on each rendering or a guard can only reach one. */
+                    <span
+                      data-testid="hero-outcome-name"
+                      className="text-[13px] font-semibold text-text-primary"
+                    >
+                      {outcomeName}
+                    </span>
                   )}
                   {movementStr && (
                     <span
