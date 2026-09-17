@@ -2649,6 +2649,49 @@ def kalshi_game_segment_key(external_id: Optional[str]) -> Optional[str]:
     whereas a soccer segment's date is the fixture's own. Widening the shared
     helper would have reached both. This one is read by the segment reconciler
     and by nothing else.
+
+    ═══ WHY THE SCOPE IS THE SPORT PREFIX AND NOT THE SPORT KEY ═══
+
+    The first cut of this scoped by the full ``get_sport_key_from_ticker``
+    answer, and that SPLIT a third of the cup fixtures it was meant to gather.
+
+    ``KALSHI_TICKER_TO_SPORT_KEY``'s value is not an identity — #3446 says so in
+    its own words: *"the value here is not a label, it is a filter"*. For the
+    five domestic leagues every leg is mapped to the competition
+    (``kxlaligagame``/``spread``/``total``/``btts`` → ``soccer_spain_la_liga``),
+    but for the cups and continental competitions only the ``*GAME`` leg is,
+    and the other legs are mapped deliberately to the BARE PREFIX ``soccer`` —
+    "some soccer competition, and I do not know which" — because a wrong precise
+    key is worse than an honest broad one (CERT-2043). Scoping a GROUPING key by
+    a value that is precise for one leg and coarse for the next therefore splits
+    one game in two:
+
+        KXUELGAME-26SEP16LEVCEL    -> soccer_uefa_europa_league:26SEP16LEVCEL
+        KXUELBTTS-26SEP16LEVCEL    -> soccer:26SEP16LEVCEL
+        KXUELSPREAD-26SEP16LEVCEL  -> soccer:26SEP16LEVCEL
+        KXUELTOTAL-26SEP16LEVCEL   -> soccer:26SEP16LEVCEL
+
+    and the reconciler then sees each half alone — ``single`` on one side,
+    ``no_anchor`` on the other — and can never bring them together. Measured on
+    production 2026-09-17 over the pass's whole 9,721-market read: **34 game ids
+    carrying 136 markets were split this way, and 34 of 34 were the same game**
+    (18 Europa League, 6 EFL Cup, 4 Copa Sudamericana, 4 Copa Libertadores,
+    2 Coppa Italia). Zero were different games.
+
+    The prefix is the honest granularity — the same call
+    ``anchor_channel._sport_family`` makes, and for the same reason. It still
+    refuses the thing the scope exists to refuse (an NFL and an MLB game sharing
+    a date and a team code are ``americanfootball:`` and ``baseball:``), and it
+    is INVARIANT under #3478, which will give those cup legs their real league
+    key: on that day this key does not move, whereas the full-key scope would
+    have silently re-grouped the population.
+
+    What the prefix gives up is the competition, and that is given up HERE and
+    taken back in the reconciler: :func:`kalshi_segment_competition` reports the
+    competition when the map names one, and the pass refuses any segment whose
+    members name two. Tennis is untouched — it returns above, still qualified by
+    tour, because ``tennis_atp`` and ``tennis_wta`` are two tours and not one
+    sport's two spellings.
     """
     tennis = kalshi_match_segment_key(external_id)
     if tennis:
@@ -2668,7 +2711,45 @@ def kalshi_game_segment_key(external_id: Optional[str]) -> Optional[str]:
     game_id = kalshi_game_id(external_id)
     if not game_id:
         return None
-    return f"{sport_key}:{game_id}"
+    return f"{sport_key.split('_', 1)[0]}:{game_id}"
+
+
+def kalshi_segment_competition(external_id: Optional[str]) -> Optional[str]:
+    """The COMPETITION a Kalshi ticker names, or ``None`` when it names none.
+
+    The companion to :func:`kalshi_game_segment_key`'s prefix scope. That key
+    deliberately groups ``soccer_uefa_europa_league`` with bare ``soccer``,
+    because for a cup the two are the same competition described at two
+    precisions. This reports the precision that was available, so the reconciler
+    can refuse a segment whose members disagree:
+
+        KXUELGAME-26SEP16LEVCEL    -> "soccer_uefa_europa_league"
+        KXUELBTTS-26SEP16LEVCEL    -> None          (the map gave a prefix)
+        KXLALIGAGAME-26SEP16LEVCEL -> "soccer_spain_la_liga"
+
+    One competition plus any number of ``None``s is agreement — the ``None``s
+    know nothing and contradict nothing. TWO competitions is a genuine
+    collision, two different fixtures that happen to share a date and a
+    six-character team code, and the pass refuses it.
+
+    **The test for "names a competition" is the underscore, and that is not a
+    string trick — it is the shape #3446 built.** The bare prefixes it writes
+    (``soccer``) are exactly the values with no ``_``, and the precise keys
+    (``soccer_england_efl_cup``) are exactly the values with one. A sport whose
+    top-level key legitimately carries no suffix would report ``None`` here and
+    be treated as "knows nothing", which is the refusing direction for a
+    collision and the admitting direction for a split — i.e. it degrades to the
+    behaviour of having no guard at all, never to a wrong merge that the guard
+    would otherwise have caught.
+    """
+    if not external_id:
+        return None
+    from app.utils.sport_keys import get_sport_key_from_ticker
+
+    sport_key = get_sport_key_from_ticker(external_id)
+    if not sport_key or "_" not in sport_key:
+        return None
+    return sport_key
 
 
 # The Kalshi tennis series that price the MATCH ITSELF — who wins it. Everything

@@ -48,6 +48,7 @@ from app.utils.prediction_market_matching import (
     is_kalshi_tennis_prop_ticker,
     kalshi_game_segment_key,
     kalshi_match_segment_key,
+    kalshi_segment_competition,
 )
 
 
@@ -143,17 +144,17 @@ class TestKalshiGameSegmentKey:
             kalshi_game_segment_key(t)
             for t in FREIBURG_STRANDED + FREIBURG_ON_THE_REAL_ROW
         }
-        assert keys == {"soccer_germany_bundesliga:26SEP12SCFBMG"}
+        assert keys == {"soccer:26SEP12SCFBMG"}
 
     @pytest.mark.parametrize("tickers,expected", [
         (("KXNFL1Q-26SEP13NODET", "KXNFLGAME-26SEP13NODET",
-          "KXNFL4Q-26SEP13NODET"), "americanfootball_nfl:26SEP13NODET"),
+          "KXNFL4Q-26SEP13NODET"), "americanfootball:26SEP13NODET"),
         (("KXMLBGAME-26SEP061335BOSBAL", "KXMLBSPREAD-26SEP061335BOSBAL",
-          "KXMLBTOTAL-26SEP061335BOSBAL"), "baseball_mlb:26SEP061335BOSBAL"),
+          "KXMLBTOTAL-26SEP061335BOSBAL"), "baseball:26SEP061335BOSBAL"),
         (("KXUFCMOV-26SEP12ALDTAR", "KXUFCROUNDS-26SEP12ALDTAR"),
-         "mma_mixed_martial_arts:26SEP12ALDTAR"),
+         "mma:26SEP12ALDTAR"),
         (("KXLALIGAGAME-26SEP16LEVATH", "KXLALIGATOTAL-26SEP16LEVATH"),
-         "soccer_spain_la_liga:26SEP16LEVATH"),
+         "soccer:26SEP16LEVATH"),
     ])
     def test_each_measured_sport_collapses_to_one_key(self, tickers, expected):
         assert {kalshi_game_segment_key(t) for t in tickers} == {expected}
@@ -192,6 +193,117 @@ class TestKalshiGameSegmentKey:
         """Two sports sharing a segment token are not one game."""
         assert (kalshi_game_segment_key("KXNFLGAME-26SEP13ABCDEF")
                 != kalshi_game_segment_key("KXMLBGAME-26SEP13ABCDEF"))
+
+
+# =============================================================================
+# #6720 q2 — the cups were split by the key's OWN scope
+# =============================================================================
+
+
+#: The live specimen, production 2026-09-17. Event 15298545 held the match
+#: winner; the other three sat on NO event at all, and the pass could not see
+#: that they belonged together.
+UEL_LEVCEL = (
+    "KXUELGAME-26SEP16LEVCEL",
+    "KXUELBTTS-26SEP16LEVCEL",
+    "KXUELSPREAD-26SEP16LEVCEL",
+    "KXUELTOTAL-26SEP16LEVCEL",
+)
+
+
+class TestACupFixtureIsOneSegment:
+    """The regression that #6720's own after-check could not see.
+
+    The key scoped by `get_sport_key_from_ticker`, whose answer for a cup is the
+    competition on the `*GAME` leg and the bare prefix `soccer` on every other
+    leg — a #3446 decision that is deliberate and must not be undone there. So
+    one fixture became two segments and stayed split forever.
+    """
+
+    def test_the_europa_league_specimen_is_one_key(self):
+        assert {kalshi_game_segment_key(t) for t in UEL_LEVCEL} == {
+            "soccer:26SEP16LEVCEL"}
+
+    def test_the_legs_really_do_resolve_to_different_sport_keys(self):
+        """The guard is only meaningful while the asymmetry it answers exists.
+
+        If #3478 later maps these legs to the competition, this test reds and
+        should simply be deleted — the split will be gone at its source. It is
+        here so that nobody reads the prefix scope as arbitrary.
+        """
+        from app.utils.sport_keys import get_sport_key_from_ticker
+
+        assert get_sport_key_from_ticker(
+            "KXUELGAME-26SEP16LEVCEL") == "soccer_uefa_europa_league"
+        for leg in UEL_LEVCEL[1:]:
+            assert get_sport_key_from_ticker(leg) == "soccer"
+
+    @pytest.mark.parametrize("family,gid", [
+        ("KXEFLCUP", "26SEP16ARSPOR"),
+        ("KXCONMEBOLSUD", "26SEP08BOCSPA"),
+        ("KXCONMEBOLLIB", "26SEP16RIVPAL"),
+        ("KXCOPPAITALIA", "26SEP16JUVGEN"),
+    ])
+    def test_every_measured_split_family_now_collapses(self, family, gid):
+        """The other four competitions found in the same production census."""
+        keys = {
+            kalshi_game_segment_key(f"{family}{leg}-{gid}")
+            for leg in ("GAME", "BTTS", "SPREAD", "TOTAL")
+        }
+        assert keys == {f"soccer:{gid}"}
+
+    def test_a_prefix_scope_still_refuses_two_sports(self):
+        """What the scope exists for survives the coarsening."""
+        assert (kalshi_game_segment_key("KXNFLGAME-26SEP13ABCDEF")
+                != kalshi_game_segment_key("KXMLBGAME-26SEP13ABCDEF"))
+        assert (kalshi_game_segment_key("KXMLBGAME-26SEP13ABCDEF")
+                != kalshi_game_segment_key("KXUFCMOV-26SEP13ABCDEF"))
+
+    def test_tennis_keeps_its_tour_qualifier(self):
+        """ATP and WTA are two tours, not one sport spelled twice — the tennis
+        arm returns before the prefix scope and is not coarsened with it."""
+        atp = kalshi_game_segment_key("KXATPMATCH-26AUG30BUBWOL")
+        assert atp == "tennis_atp:26AUG30BUBWOL"
+        assert atp != kalshi_game_segment_key("KXWTAMATCH-26AUG30BUBWOL")
+
+
+class TestSegmentCompetition:
+    """The precision the prefix scope gives up, reported so the pass can refuse
+    a real collision rather than merge two fixtures."""
+
+    def test_a_named_competition_is_reported(self):
+        assert kalshi_segment_competition(
+            "KXUELGAME-26SEP16LEVCEL") == "soccer_uefa_europa_league"
+        assert kalshi_segment_competition(
+            "KXLALIGAGAME-26SEP16LEVATH") == "soccer_spain_la_liga"
+
+    @pytest.mark.parametrize("ticker", [
+        "KXUELBTTS-26SEP16LEVCEL",     # mapped to the bare prefix on purpose
+        "KXUELSPREAD-26SEP16LEVCEL",
+        "KXUELTOTAL-26SEP16LEVCEL",
+        "",
+        None,
+    ])
+    def test_a_prefix_only_answer_names_no_competition(self, ticker):
+        """`None` means "knows nothing", which contradicts nothing."""
+        assert kalshi_segment_competition(ticker) is None
+
+    def test_the_specimen_names_exactly_one_competition(self):
+        named = {c for c in (kalshi_segment_competition(t) for t in UEL_LEVCEL)
+                 if c}
+        assert named == {"soccer_uefa_europa_league"}
+
+    def test_two_competitions_sharing_a_game_id_are_distinguishable(self):
+        """The collision the guard exists for: one date, one team code, two
+        different fixtures. Measured 0 times on production 2026-09-17 — this
+        pins that the evidence to catch it is still there."""
+        named = {
+            c for c in (
+                kalshi_segment_competition("KXUELGAME-26SEP16LEVCEL"),
+                kalshi_segment_competition("KXLALIGAGAME-26SEP16LEVCEL"),
+            ) if c
+        }
+        assert named == {"soccer_uefa_europa_league", "soccer_spain_la_liga"}
 
 
 class TestTheSharedHelpersOtherConsumersAreUntouched:
@@ -367,6 +479,91 @@ class TestReconcileOnTheProductionSpecimens:
 
         assert _applied(session) == {15305825: {2}}
         assert (stats["adopted"], stats["converged"]) == (1, 0)
+
+    async def test_the_europa_league_props_rejoin_the_match_winners_page(self):
+        """#6720 q2, the live specimen. Event 15298545 (Leverkusen 2-0 NK
+        Celje, FINAL) held Kalshi's match winner; BTTS, Spread and Total Goals
+        sat on NO event because the key scoped them into a second segment."""
+        session = _FakeSession(
+            markets=[
+                _Row(1, "KXUELGAME-26SEP16LEVCEL", 15298545),
+                _Row(2, "KXUELBTTS-26SEP16LEVCEL", None),
+                _Row(3, "KXUELSPREAD-26SEP16LEVCEL", None),
+                _Row(4, "KXUELTOTAL-26SEP16LEVCEL", None),
+            ],
+            provenance={15298545: "espn"},
+            anchored={15298545},
+        )
+        stats = await _reconcile_kalshi_match_segments(session)
+
+        assert _applied(session) == {15298545: {2, 3, 4}}
+        # ADOPT only — nothing is taken off any event. That is what the
+        # production replay predicted (4 adopt / 0 converge) and it is the
+        # property that makes this safe.
+        assert (stats["adopted"], stats["converged"]) == (3, 0)
+        assert stats["segments"] == 1
+
+    async def test_the_match_winner_rejoins_the_page_holding_its_props(self):
+        """The same split, the other way round — event 15298546 (Be'er Sheva
+        0-0 Dinamo Zagreb) served BTTS, Spread and Total and NOT the market
+        that decides the game."""
+        session = _FakeSession(
+            markets=[
+                _Row(1, "KXUELGAME-26SEP16HBSDIN", None),
+                _Row(2, "KXUELBTTS-26SEP16HBSDIN", 15298546),
+                _Row(3, "KXUELSPREAD-26SEP16HBSDIN", 15298546),
+                _Row(4, "KXUELTOTAL-26SEP16HBSDIN", 15298546),
+            ],
+            provenance={15298546: "espn"},
+            anchored={15298546},
+        )
+        stats = await _reconcile_kalshi_match_segments(session)
+
+        assert _applied(session) == {15298546: {1}}
+        assert (stats["adopted"], stats["converged"]) == (1, 0)
+
+    async def test_two_competitions_on_one_game_id_are_refused(self):
+        """The cost of the prefix scope, bounded. A La Liga fixture and a
+        Europa League fixture sharing a date and a six-character team code are
+        two games; the pass must move nothing and count it under its OWN
+        reason."""
+        session = _FakeSession(
+            markets=[
+                _Row(1, "KXLALIGAGAME-26SEP16LEVCEL", 700),
+                _Row(2, "KXUELGAME-26SEP16LEVCEL", 701),
+                _Row(3, "KXUELTOTAL-26SEP16LEVCEL", None),
+            ],
+            provenance={700: "espn", 701: "odds_api"},
+            anchored={700},
+        )
+        stats = await _reconcile_kalshi_match_segments(session)
+
+        assert session.updates == []
+        assert stats["ambiguous_competition"] == 1
+        assert (stats["adopted"], stats["converged"]) == (0, 0)
+        # Its own counter, never folded into the tiebreak's refusal.
+        assert stats["ambiguous"] == 0
+        assert stats["ambiguous_idless"] == 0
+
+    async def test_a_prefix_only_leg_does_not_read_as_a_second_competition(
+        self,
+    ):
+        """The guard's whole population is `soccer` legs beside a named one. If
+        a `None` counted as a disagreement the guard would refuse every cup
+        fixture — i.e. re-create the bug it was shipped alongside."""
+        session = _FakeSession(
+            markets=[
+                _Row(1, "KXEFLCUPGAME-26SEP16ARSPOR", 800),
+                _Row(2, "KXEFLCUPBTTS-26SEP16ARSPOR", None),
+                _Row(3, "KXEFLCUPTOTAL-26SEP16ARSPOR", None),
+            ],
+            provenance={800: "espn"},
+            anchored={800},
+        )
+        stats = await _reconcile_kalshi_match_segments(session)
+
+        assert stats["ambiguous_competition"] == 0
+        assert _applied(session) == {800: {2, 3}}
 
     async def test_a_sport_outside_the_set_is_still_refused_by_the_key(self):
         """The SQL prefixes bound the read; the key is the rule. An NBA row
