@@ -14118,7 +14118,8 @@ _UNPLAYED_EVENT_STATES = frozenset({"scheduled", "live"})
 
 def _settled_grade_fields(
     market, outcome, *, event_commence=None, event_is_finished=None,
-    event_status=None,
+    event_status=None, home_team=None, away_team=None,
+    home_score=None, away_score=None,
 ) -> dict:
     """The authoritative settlement verdict for a game-market row (#2089).
 
@@ -14198,6 +14199,33 @@ def _settled_grade_fields(
     — `_settled_margin_is_provable` and the #5771 settled gate both require
     `_event_is_really_finished` first, so this arm is unreachable from there by
     construction rather than by omission.
+
+    ── AND A FINISHED GAME MAY NOT CROWN THE SIDE ITS OWN SCORE BEAT (#6627) ──
+
+    The refusal above ends at the final whistle — "once the game is over the
+    question is the game's own AND answerable, and settled means settled". That
+    is right about the question and wrong about the row. `/events/15312858`
+    finished Colorado Rockies 9 – San Diego Padres 3 and served, in ONE card
+    titled with the matchup, `Colorado — Won`, `San Diego Padres — Won` and
+    `San Diego — Lost`: both sides crowned in the same game. The second crown is
+    a Polymarket weekly container settled at 05:36Z for the PREVIOUS night's
+    fixture, attached here one game late (#6627 under #2693).
+
+    `_verdict_contradicts_the_final_score` withholds that one. See it for the
+    predicate; the two things worth saying here are what it costs and why it is
+    allowed to use the score at all:
+
+    * **It costs nothing that is right.** Replayed over the real rows — 1,767
+      authoritative outcomes on 512 finished events with a decisive score, 10
+      days to 2026-09-16 — it withholds **15 rows on 13 events** and leaves 213
+      agreeing verdicts, 253 rows naming neither side, 16 ambiguous ones and
+      1,270 rows whose market asks a different question exactly as they are.
+    * **The score is already this page's authority for a finished game.** The
+      win-probability chart in this same file injects a terminal 100/0 point on
+      `event.home_score > event.away_score` for exactly this population, so the
+      hero one screen above the card is ALREADY answering "who won" from the
+      score. A card that contradicts it is not offering a second opinion, it is
+      contradicting the page. Holding both to one authority is the whole change.
     """
     authoritative = (
         getattr(market, "status", None) == "resolved"
@@ -14207,6 +14235,16 @@ def _settled_grade_fields(
         return {"is_winner": None, "resolution_source": None}
     if _settled_before_its_event_began(
         market, event_commence, event_is_finished, event_status
+    ):
+        return {"is_winner": None, "resolution_source": None}
+    if _verdict_contradicts_the_final_score(
+        market,
+        outcome,
+        event_is_finished=event_is_finished,
+        home_team=home_team,
+        away_team=away_team,
+        home_score=home_score,
+        away_score=away_score,
     ):
         return {"is_winner": None, "resolution_source": None}
     return {
@@ -14246,6 +14284,122 @@ def _settled_before_its_event_began(
         else event_commence.replace(tzinfo=timezone.utc)
     )
     return settled < commence
+
+
+def _verdict_contradicts_the_final_score(
+    market,
+    outcome,
+    *,
+    event_is_finished=None,
+    home_team=None,
+    away_team=None,
+    home_score=None,
+    away_score=None,
+) -> bool:
+    """True when this row's verdict disagrees with the final score of its own
+    event, on the one question the score can answer. See `_settled_grade_fields`.
+
+    ── THE DEFECT ───────────────────────────────────────────────────────────────
+
+    `/events/15312858`, Colorado Rockies 9 – San Diego Padres 3, `completed`,
+    served one card headed with the matchup and three rows under it::
+
+        Colorado                 Won
+        San Diego Padres         Won        <- a Polymarket container for the
+        San Diego                Lost          PREVIOUS night's fixture
+
+    Both sides crowned in one game. The mis-attachment is #6627's (under #2693)
+    and is not repaired here; what is repaired is that we PRINT it. The same
+    population also prints the other direction — `/events/15308640` finished
+    Philadelphia 1 – Houston 2 and marked `Houston Astros` LOST — so the
+    predicate is about disagreement, not about the crown.
+
+    ── WHY THE SCORE IS ALLOWED TO ARBITRATE ────────────────────────────────────
+
+    Because it already does, on this page, in this file. The win-probability
+    chart injects a terminal 100/0 point for a finished event straight off
+    ``event.home_score > event.away_score``, so the hero the reader sees one
+    screen above these cards is answering "who won" from the score for exactly
+    this population. This does not introduce that authority; it stops a card
+    contradicting it. Any sport for which "the higher score won" is false is
+    already served a wrong HERO, and that is a defect one screen up, not here.
+
+    ── AND THE HOUSE HAS ALREADY RULED THIS EXACT DISAGREEMENT ──────────────────
+
+    `_settled_margin_is_provable`, in this file, on the margin family, in its own
+    words: *"A DISAGREEMENT PUBLISHES NOTHING. If the venue says this leg won and
+    the final score says it did not, one of the two is wrong and we cannot tell
+    which from here"* — with the asymmetry spelled out, that wrongly withholding
+    costs a row that is invisible anyway while wrongly publishing prints a false
+    result beside a game the reader just watched.
+
+    That is the same two authorities, disagreeing the same way, and the ruling is
+    already made. The only new thing here is the DIRECTION: that predicate uses
+    the disagreement to refuse to PROMOTE a price into a verdict, and this one
+    uses it to WITHDRAW a verdict already being printed — the cheaper of the two
+    by that docstring's own reckoning, on the family it did not reach.
+
+    ── THE THREE GATES, AND EACH ONE IS LOAD-BEARING ────────────────────────────
+
+    1. **The event is FINISHED and the score is DECISIVE.** `event_is_finished`
+       is `_event_is_really_finished`, which admits only `completed`/`closed`, so
+       a suspended fixture's partial score never arbitrates anything; an equal
+       score is not a result to disagree with (a draw, or a score we have not
+       finished reading).
+
+    2. **The market asks THE GAME'S OWN QUESTION** —
+       :func:`outcome_name_is_the_whole_matchup`, the #6604 predicate, on the
+       MARKET name. This is the gate that makes the change safe, and the
+       measurement is unambiguous about it: of the 332 authoritative rows whose
+       verdict disagrees with their event's score, **318 are correct** — a player
+       who won `Set 1 Winner` and lost the match, a team that won
+       `First Team to Score` and lost the game. Those questions are not the
+       score's to answer. Reusing #6604's residue rule rather than writing a
+       second one also means one definition of "this is the who-won market" and
+       one place to fix it.
+
+    3. **The row must name EXACTLY ONE side.** `_fuzzy_team_match` is the house's
+       team-name rule and is consulted, not re-invented, so `Colorado` reaches
+       `Colorado Rockies` the same way every matching arm reaches it. A name that
+       matches BOTH sides (`Draw (VfB Stuttgart vs. Viking FK)` — 16 rows in the
+       census, and #6604's own subject) or NEITHER (`Yes`, `Over` — 253 rows)
+       tells us nothing about which side it is claiming, so it fails open. Every
+       missing input fails open too: an over-refusing gate strips real results,
+       which is the defect CERT-2980 caught in this function's sibling.
+
+    Withheld, NOT dropped, and only the verdict — the row keeps its label and its
+    price, exactly as `_settled_before_its_event_began` leaves them, so a card
+    whose only market is this one is still a card.
+    """
+    # Local, like this file's other two reads of this module: it is the matching
+    # layer and the route does not import it at module scope.
+    from app.utils.prediction_market_matching import (
+        _fuzzy_team_match,
+        outcome_name_is_the_whole_matchup,
+    )
+
+    if not event_is_finished:
+        return False
+    if home_score is None or away_score is None or home_score == away_score:
+        return False
+    if not home_team or not away_team:
+        return False
+    if not outcome_name_is_the_whole_matchup(
+        getattr(market, "name", None), home_team, away_team
+    ):
+        return False
+
+    name = getattr(outcome, "name", None)
+    if not name:
+        return False
+    names_home = _fuzzy_team_match(name, home_team)
+    names_away = _fuzzy_team_match(name, away_team)
+    if names_home == names_away:
+        # Both sides, or neither. Either way the row is not claiming one of them.
+        return False
+
+    side_won = home_score > away_score if names_home else away_score > home_score
+    return bool(getattr(outcome, "is_winner", None)) != side_won
 
 
 #: A grade at this tier or above RECOMPUTES to the same winner from cited data —
@@ -15689,10 +15843,18 @@ async def _build_game_markets(
     # clock it shares so no branch below can grade against a different event.
     # Every `_settled_grade_fields` call in this build carries it; see that
     # function for why both keys are load-bearing.
+    # #6627 adds the four score keys. They travel in the SAME dict rather than a
+    # second one for the reason the first three do: every `_settled_grade_fields`
+    # call in this build must grade against one event, and a caller that can pass
+    # half the context is a caller that can grade half of it.
     _grade_ctx = {
         "event_commence": event.commence_time,
         "event_is_finished": event_is_finished,
         "event_status": getattr(event, "status", None),
+        "home_team": getattr(event, "home_team_name", None),
+        "away_team": getattr(event, "away_team_name", None),
+        "home_score": getattr(event, "home_score", None),
+        "away_score": getattr(event, "away_score", None),
     }
 
     # #2693 — read the markets of the rows we have declined to PRINT as well as
