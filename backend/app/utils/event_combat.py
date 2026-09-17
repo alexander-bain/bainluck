@@ -190,8 +190,27 @@ def event_commence_token(commence) -> str | None:
 #: crossed midnight, not two cards.
 ROLLOVER_MAX_GAP_HOURS = 4
 
-#: `YYMONDD` back to a date, for the adjacency half of the same test.
-_TOKEN_RE = re.compile(r"^(\d{2})([a-z]{3})(\d{2})$")
+#: `YYMONDD` back to a date, for the adjacency half of the same test, plus the
+#: optional promotion suffix a venue-scoped card token carries (`venue_card_token`
+#: mints `26sep26ufcfightnight`). The suffix is captured rather than tolerated so
+#: the fold can refuse to cross between two promotions — see `token_scope`.
+_TOKEN_RE = re.compile(r"^(\d{2})([a-z]{3})(\d{2})([a-z0-9]*)$")
+
+
+def token_scope(token: str | None) -> str:
+    """The promotion suffix of a venue-scoped card token, or "" for a bare one.
+
+    #2602 follow-up (codex Brief15). `fold_rollover_tokens` asks its adjacency
+    question of scoped tokens too, and must only ever ask it against a token of
+    the SAME scope: a scoped card never folds into another promotion's night,
+    and never into a bare date token — that join is a cross-source identity
+    claim and needs bout evidence, not an adjacent date.
+
+    A bare Kalshi-ticker token returns "", so the legacy population shares one
+    scope and its fold behaviour is unchanged.
+    """
+    m = _TOKEN_RE.match((token or "").strip().lower())
+    return m.group(4) if m else ""
 
 
 def token_date(token: str | None):
@@ -202,6 +221,13 @@ def token_date(token: str | None):
     date from a token — a Kalshi ticker's date is the card's local date and its
     `commence_time` is the resolution date (gotcha #14), so the two disagree
     routinely and only the adjacency question is safe to ask of the string.
+
+    #2602 follow-up: a venue-scoped token (`26sep26ufcfightnight`) names a date
+    just as a bare one does, and answering ``None`` for it filtered every scoped
+    card out of `fold_rollover_tokens` — so a venue card crossing UTC midnight
+    split and could never fold back. The date is read from the leading
+    `YYMONDD`; the promotion suffix is `token_scope`'s to answer, and the fold
+    needs both.
     """
     from datetime import date
 
@@ -210,7 +236,7 @@ def token_date(token: str | None):
     m = _TOKEN_RE.match(token.strip().lower())
     if not m:
         return None
-    yy, mon, dd = m.groups()
+    yy, mon, dd = m.groups()[:3]
     try:
         return date(2000 + int(yy), _MONTHS.index(mon) + 1, int(dd))
     except (ValueError, IndexError):
@@ -260,11 +286,17 @@ def fold_rollover_tokens(
         if token_date(t) is not None and all(token_span[t])
     ]
     dated.sort()
-    by_date = {d: t for d, t in dated}
+    # #2602 follow-up: keyed on (SCOPE, date), not date alone. Two promotions can
+    # run the same night — Power Slap 23 and a UFC Fight Night both minted a
+    # 26 Sep token — and a date-only key keeps just one of them, so the next day's
+    # spillover would fold into whichever happened to survive the dict build.
+    # Scoping also refuses the bare<->scoped join outright: that is a cross-source
+    # identity claim, and an adjacent date is not evidence for it.
+    by_date = {(token_scope(t), d): t for d, t in dated}
     gap = timedelta(hours=max_gap_hours)
 
     for day, token in dated:
-        previous = by_date.get(day - timedelta(days=1))
+        previous = by_date.get((token_scope(token), day - timedelta(days=1)))
         if previous is None:
             continue
         earlier_last = token_span[previous][1]
@@ -1343,11 +1375,26 @@ class CombatEventAdapter:
         # its rule that a venue close time never widens a scheduled token.
         venue_times: dict[str, list] = {}
         for m in markets:
-            if len(m.outcomes or []) != 2:
-                continue
             token = card_token(self.cfg, m.external_id)
             if token is not None:
-                venue_times.setdefault(token, []).append(m.commence_time)
+                # A Kalshi row's `commence_time` is its CLOSE stamp, and only a
+                # two-sided row is a fight — the filter this branch has always had.
+                if len(m.outcomes or []) == 2:
+                    venue_times.setdefault(token, []).append(m.commence_time)
+                continue
+            # #2602 follow-up: a venue-scoped card folds on the page exactly as it
+            # folds in the feed, or a card the feed serves once opens a page
+            # holding half of it. Two differences from the ticker branch, both
+            # deliberate: the time is the venue's OWN fight start (its
+            # `commence_time` is Gamma's listing stamp, measured two weeks early
+            # on all 28 rows that carry both), and there is NO outcome-count
+            # filter — most venue bouts carry no moneyline, and `list_card_concepts`
+            # does not filter them either, so filtering here would make the two
+            # callers disagree about which bouts date the card.
+            meta = getattr(m, "market_metadata", None)
+            token = venue_card_token(self.cfg, getattr(m, "name", None), meta)
+            if token is not None:
+                venue_times.setdefault(token, []).append(venue_fight_start(meta))
 
         survivor = fold_rollover_tokens(
             card_span_by_token(
