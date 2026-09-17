@@ -1336,6 +1336,28 @@ def refresh_linked_polymarket_books(self):
 
 
 @celery_app.task(
+    bind=True,
+    name="app.tasks.recover_sunk_polymarket_events",
+    soft_time_limit=300,
+    time_limit=360,
+)
+def recover_sunk_polymarket_events(self):
+    """#6758: re-read open Polymarket parents the discovery poll no longer reaches.
+
+    The poll sees the newest 2,000 open events (~10.5h of listings, measured
+    2026-09-17) and refuses a child whose book is empty, on the promise that the
+    next cycle re-captures it. For anything listed more than half a day before
+    its book opens there is no next cycle. This re-reads those parents by id and
+    hands them to the poll's OWN writer. Mechanism: `app/tasks/polymarket.py`.
+    """
+    from app.tasks.polymarket import _recover_sunk_polymarket_events
+
+    return _tracked_run(
+        "recover_sunk_polymarket_events", _recover_sunk_polymarket_events()
+    )
+
+
+@celery_app.task(
     name="app.tasks.refresh_dated_fixture_starts",
     soft_time_limit=240,
     time_limit=300,
@@ -5161,6 +5183,14 @@ celery_app.conf.beat_schedule = {
     "refresh-linked-polymarket-books-hourly": {
         "task": "app.tasks.refresh_linked_polymarket_books",
         "schedule": crontab(minute=38),
+        "options": {"queue": "heavy"},
+    },
+    # #6758. :26 — after the :15 discovery poll's 420s budget has closed and
+    # before the :38 linked-books pass, so no two Gamma readers overlap and this
+    # never shares a writer transaction with the poll it borrows its writer from.
+    "recover-sunk-polymarket-events-hourly": {
+        "task": "app.tasks.recover_sunk_polymarket_events",
+        "schedule": crontab(minute=26),
         "options": {"queue": "heavy"},
     },
     # UX-P139. Every 10 minutes, and it is cheap because the register bounds

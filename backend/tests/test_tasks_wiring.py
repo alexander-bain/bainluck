@@ -206,6 +206,9 @@ class TestBeatScheduleCompleteness:
         # priceless when a market is listed before its book opens and have no
         # path back for exactly the same three reasons.
         "refresh-linked-polymarket-books-hourly",
+        # #6758: open Polymarket parents that have sunk out of the newest-2,000
+        # discovery window, re-read by id and written by the poll's own writer.
+        "recover-sunk-polymarket-events-hourly",
         "enrich-events-hourly",
         "sync-espn-live",
         "sync-tennis-from-espn",
