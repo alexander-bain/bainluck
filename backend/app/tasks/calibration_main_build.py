@@ -57,6 +57,7 @@ from app.utils.calibration_phase_ledger import (
     PHASE_FUTURES,
     PHASE_LEDGER_SCHEMA,
     PHASE_OUTPUT_KEYS,
+    REFUSE,
     RESUMABLE_PHASES,
     RESUMED,
     STAGED_UNIT_OVERRUN_FACTOR,
@@ -1733,6 +1734,16 @@ async def load_staged_cursor(
     caller records it beside the action, because five different causes all
     produce ``INVALIDATE`` and the stage name alone could not tell an operator
     which one had just cost the build every unit it had banked.
+
+    **#6599: a read that did not ANSWER returns ``REFUSE``, not ``INVALIDATE``.**
+    ``app.utils.durable_state`` already models ``unavailable`` apart from its six
+    sibling statuses, and the distinction is the whole point: the siblings are a
+    row we have and can prove we may not resume, while ``unavailable`` means we
+    do not know what is on disk. Invalidating on it was not merely a lost
+    resume — the beat ran on the blank and wrote it over the row it could not
+    read, so a single statement timeout destroyed every banked unit. ``REFUSE``
+    is the action the build already has for "doing nothing is correct". Every
+    genuine invalidator below is unchanged.
     """
     from app.services.durable_snapshots import read_snapshot_standalone
     from app.utils.calibration_staged_futures import (
@@ -1762,12 +1773,36 @@ async def load_staged_cursor(
             expected_version=STAGED_FUTURES_SCHEMA,
             max_age_s=max_age_s,
         )
-    except Exception as exc:  # noqa: BLE001 — an unreadable cursor is a fresh one
-        logger.warning("calibration staged cursor read failed: %s", exc)
-        return blank, INVALIDATE, REASON_READ_FAILED
+    except Exception as exc:  # noqa: BLE001 — UNKNOWN, so we may not write over it
+        # #6599. This used to read "an unreadable cursor is a fresh one" and
+        # return INVALIDATE with a blank. It is not a fresh one: the beat then
+        # runs on the blank and ``save_staged_cursor`` writes it OVER the
+        # durable row this read could not see, so one timeout on a ~12 KB read
+        # costs every unit the rebuild has banked. A read that did not answer is
+        # evidence about the DATABASE, never about the cursor.
+        logger.warning(
+            "calibration staged cursor read failed (%s) — standing down rather "
+            "than authoring a cursor over one we could not read",
+            exc,
+        )
+        return blank, REFUSE, REASON_READ_FAILED
     if not read.ok or read.envelope is None:
         if read.status == "missing":
             return blank, FRESH, REASON_ABSENT
+        if read.unavailable:
+            # The same fact by the other route. ``durable_state`` models this
+            # status apart from its six siblings for exactly this reason: the
+            # others are a row we HAVE and can prove we may not resume (torn
+            # payload, wrong schema, wrong version, past the age bound), and
+            # those still invalidate the bank whole. ``unavailable`` is the
+            # named UNKNOWN, and UNKNOWN may not be acted on as the destructive
+            # reading any more than it may be served as the reassuring one
+            # (gotcha #53).
+            logger.warning(
+                "calibration staged cursor unavailable (%s) — standing down",
+                read.error or read.error_class or "no detail",
+            )
+            return blank, REFUSE, f"envelope_{read.status}"
         return blank, INVALIDATE, f"envelope_{read.status}"
 
     return decode_staged_cursor_detailed(
