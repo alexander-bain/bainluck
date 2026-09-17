@@ -873,6 +873,40 @@ _stats: dict[str, int] = {
     "cross_worker_publish_refused": 0,
 }
 
+# --- LAT-P223 (#2143 residual): THE AGGREGATE CANNOT NAME THE ARTIFACT ------
+#
+# Every counter above is summed across namespaces, and the failure this module
+# has actually suffered is per-namespace: LAT-P221's `market_load` was refused
+# on EVERY publish while `concepts` and `canonical_counts` published fine. On
+# the aggregate that reads as a nonzero `cross_worker_publish_refused` beside a
+# large `cross_worker_publishes` — i.e. indistinguishable from healthy churn,
+# which is why it went unseen until the feed was probed end-to-end.
+#
+# So the same counters are ALSO kept per namespace. The aggregates are written
+# byte-for-byte as before (tests assert them directly); this is a second, finer
+# view of the identical events, never a replacement.
+_ns_stats: dict[str, dict[str, int]] = {}
+
+#: A long-lived worker must not accumulate a counter bucket per arbitrary
+#: string. The real namespace set is small and fixed (`SHARED_ARTIFACT_NAMES`
+#: plus a handful of page-base names), so this cap is far above it; anything
+#: past it folds into `_NS_OVERFLOW_BUCKET` rather than growing without bound.
+MAX_TRACKED_NAMESPACES = 64
+_NS_OVERFLOW_BUCKET = "_other"
+
+
+def _bump(namespace: str, counter: str) -> None:
+    """Record `counter` for `namespace` on both the aggregate and the per-namespace view."""
+    _stats[counter] += 1
+    bucket = _ns_stats.get(namespace)
+    if bucket is None:
+        if len(_ns_stats) >= MAX_TRACKED_NAMESPACES:
+            namespace = _NS_OVERFLOW_BUCKET
+            bucket = _ns_stats.get(namespace)
+        if bucket is None:
+            bucket = _ns_stats.setdefault(namespace, {})
+    bucket[counter] = bucket.get(counter, 0) + 1
+
 
 def clear_shared_builds(namespace: Optional[str] = None) -> None:
     """Drop shared artifacts. Test hygiene and an operational escape hatch.
@@ -886,6 +920,10 @@ def clear_shared_builds(namespace: Optional[str] = None) -> None:
         _locks.clear()
         for k in _stats:
             _stats[k] = 0
+        # The per-namespace view is the same events as the aggregates, so it
+        # resets with them — a cold worker starts with cold counters on BOTH
+        # or the two views disagree about the same worker boundary.
+        _ns_stats.clear()
         return
     _store.pop(namespace, None)
     _locks.pop(namespace, None)
@@ -1024,12 +1062,20 @@ def peek_shared_build(namespace: str) -> Any:
     return newest[1]
 
 
-def shared_build_stats() -> dict[str, int]:
-    """Counters for the admin/latency panel. Identity-free integers only."""
-    out = dict(_stats)
+def shared_build_stats() -> dict[str, Any]:
+    """Counters for the admin/latency panel. Identity-free integers only.
+
+    `by_namespace` carries the same cross-worker events split by artifact,
+    because the aggregate cannot answer the one question this cache is asked —
+    *which* artifact stopped being shared (see `_ns_stats`). Namespaces with no
+    cross-worker event yet are simply absent; an absent namespace and a
+    zero-valued one both mean "nothing happened here in this process".
+    """
+    out: dict[str, Any] = dict(_stats)
     out["entries"] = sum(len(v) for v in _store.values())
     out["namespaces"] = len(_store)
     out["cross_worker_enabled"] = int(cross_worker_enabled())
+    out["by_namespace"] = {ns: dict(c) for ns, c in _ns_stats.items()}
     return out
 
 
@@ -1301,7 +1347,7 @@ async def _read_cross_worker(
         raise
     except Exception:
         logger.debug("shared build: no redis client", exc_info=True)
-        _stats["cross_worker_failures"] += 1
+        _bump(namespace, "cross_worker_failures")
         return False, None, 0.0
 
     redis_key = redis_key_for(namespace, key)
@@ -1309,42 +1355,42 @@ async def _read_cross_worker(
         lambda: client.get(redis_key), deadline_ms=REDIS_READ_DEADLINE_MS
     )
     if result.is_failure:
-        _stats["cross_worker_failures"] += 1
+        _bump(namespace, "cross_worker_failures")
         return False, None, 0.0
     if not result.is_ok:
-        _stats["cross_worker_misses"] += 1
+        _bump(namespace, "cross_worker_misses")
         return False, None, 0.0
 
     raw = wire_decode(result.value)
     if raw is None:
-        _stats["cross_worker_failures"] += 1
+        _bump(namespace, "cross_worker_failures")
         return False, None, 0.0
 
     try:
         envelope = json.loads(raw)
     except (ValueError, TypeError):
-        _stats["cross_worker_failures"] += 1
+        _bump(namespace, "cross_worker_failures")
         return False, None, 0.0
     if not isinstance(envelope, dict) or envelope.get("v") != 1:
-        _stats["cross_worker_failures"] += 1
+        _bump(namespace, "cross_worker_failures")
         return False, None, 0.0
 
     # A digest is a hash. Identity is the stored key repr, checked here, so a
     # collision between two distinct cache keys can only cost a rebuild.
     if envelope.get("ns") != namespace or envelope.get("k") != repr(key):
-        _stats["cross_worker_misses"] += 1
+        _bump(namespace, "cross_worker_misses")
         return False, None, 0.0
 
     stored_wall = envelope.get("stored_wall")
     if not isinstance(stored_wall, (int, float)) or isinstance(stored_wall, bool):
-        _stats["cross_worker_failures"] += 1
+        _bump(namespace, "cross_worker_failures")
         return False, None, 0.0
     # Wall clock, because L1's monotonic clock means nothing in the process that
     # wrote this. A negative age is a writer whose clock runs ahead: the entry is
     # YOUNGER than it looks, so clamping to 0 is the conservative reading.
     age_s = max(0.0, time.time() - float(stored_wall))
     if age_s > ttl_s:
-        _stats["cross_worker_misses"] += 1
+        _bump(namespace, "cross_worker_misses")
         return False, None, 0.0
 
     try:
@@ -1353,10 +1399,10 @@ async def _read_cross_worker(
         logger.warning(
             "shared build: undecodable payload for namespace=%s — building", namespace
         )
-        _stats["cross_worker_failures"] += 1
+        _bump(namespace, "cross_worker_failures")
         return False, None, 0.0
 
-    _stats["cross_worker_hits"] += 1
+    _bump(namespace, "cross_worker_hits")
     return True, value, age_s
 
 
@@ -1382,7 +1428,7 @@ async def _publish_cross_worker(
             namespace,
             exc,
         )
-        _stats["cross_worker_publish_refused"] += 1
+        _bump(namespace, "cross_worker_publish_refused")
         return
 
     envelope = json.dumps(
@@ -1408,7 +1454,7 @@ async def _publish_cross_worker(
             size,
             MAX_ENVELOPE_BYTES,
         )
-        _stats["cross_worker_publish_refused"] += 1
+        _bump(namespace, "cross_worker_publish_refused")
         return
 
     blob = wire_encode(envelope)
@@ -1421,7 +1467,7 @@ async def _publish_cross_worker(
             MAX_STORED_BYTES,
             size,
         )
-        _stats["cross_worker_publish_refused"] += 1
+        _bump(namespace, "cross_worker_publish_refused")
         return
 
     try:
@@ -1430,7 +1476,7 @@ async def _publish_cross_worker(
         raise
     except Exception:
         logger.debug("shared build: no redis client for publish", exc_info=True)
-        _stats["cross_worker_failures"] += 1
+        _bump(namespace, "cross_worker_failures")
         return
 
     redis_key = redis_key_for(namespace, key)
@@ -1443,9 +1489,9 @@ async def _publish_cross_worker(
         treat_none_as_miss=False,
     )
     if result.is_failure:
-        _stats["cross_worker_failures"] += 1
+        _bump(namespace, "cross_worker_failures")
         return
-    _stats["cross_worker_publishes"] += 1
+    _bump(namespace, "cross_worker_publishes")
 
 
 async def get_or_build(
