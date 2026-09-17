@@ -931,3 +931,99 @@ def test_the_first_ever_snapshot_selector_is_gone_not_aliased():
     """An alias would keep old call sites compiling while silently answering a
     different question. A NameError names itself."""
     assert not hasattr(mod, "select_paired_legs")
+
+
+# ---------------------------------------------------------------------------
+# The differential FUZZ generator. CI cannot execute the statement, so it cannot
+# run the probe — but it CAN hold the generator to being worth running, which is
+# the half that rots silently. A fuzz that only ever produces refusals passes
+# forever and proves nothing about pairing.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def probe():
+    """``scripts.probe_paired_prestart_sql`` with its module-level rows emptied.
+
+    The script keeps its fixture in module globals so ``main`` can build once and
+    load once; a test that builds twice would otherwise read a coverage table no
+    single run produces.
+    """
+    from scripts import probe_paired_prestart_sql as probe_mod
+
+    probe_mod.reset_fixture()
+    yield probe_mod
+    probe_mod.reset_fixture()
+
+
+def test_the_fuzz_generator_reaches_every_pair_class(probe):
+    """NON-VACUITY, and it is not hypothetical: the first draft of this generator
+    reached ``start_contradicted`` 95 times in 300 and ``paired`` never, because
+    an even draw over ``completed_at`` spends the whole run on one refusal. A
+    green agreement run over a set like that is a statement about nothing.
+
+    PRESENCE, NOT A TUNED FLOOR. The obvious stronger assertion — "at least N of
+    each" — is one a later session pays by widening the generator until the
+    number appears, which is tuning a rig against its own test rather than
+    measuring anything. The three structurally RARE shapes get a floor of two
+    below, because those are what a narrowing edit kills first; everything else
+    is asserted present and counted in the probe's printed coverage table, where
+    a human reads it.
+    """
+    probe.build_fixture()
+    ids = probe.build_fuzz(800, seed=6176)
+    classes = probe.python_classes()
+    counts: dict[str, int] = {}
+    for oid in ids:
+        counts[classes[oid]] = counts.get(classes[oid], 0) + 1
+    assert set(PAIR_CLASSES) - set(counts) == set(), (
+        "the generator no longer reaches every class; an agreement run over it "
+        "would prove less than it claims"
+    )
+    for rare in ("paired", "paired_unchanged", "no_final_unconfirmed_span"):
+        assert counts[rare] >= 2, (rare, counts)
+
+
+def test_the_fuzz_boundary_offsets_are_derived_from_the_policy_constants(probe):
+    """The offsets ARE the test: the two instants the rule turns on, and one
+    second either side of each. Re-typed as literals they would keep testing 24h
+    and 6h after somebody moved the constants, which is the failure the module's
+    own ``start_is_reported_sql`` derivation exists to avoid."""
+    offsets = set(probe.FUZZ_OFFSETS)
+    for anchor in (
+        0,
+        -DEFAULT_LEAD_SECONDS,
+        -DEFAULT_FINAL_MAX_STALE_SECONDS,
+        -(DEFAULT_LEAD_SECONDS + DEFAULT_EARLY_MAX_STALE_SECONDS),
+    ):
+        assert {anchor - 1, anchor, anchor + 1} <= offsets, anchor
+
+
+def test_the_fuzz_is_reproducible_from_its_seed(probe):
+    """A disagreement nobody can re-raise is an anecdote. Same seed, same rows."""
+    probe.build_fixture()
+    first_ids = probe.build_fuzz(60, seed=99)
+    first = [probe.python_classes()[oid] for oid in first_ids]
+    probe.reset_fixture()
+    probe.build_fixture()
+    second_ids = probe.build_fuzz(60, seed=99)
+    second = [probe.python_classes()[oid] for oid in second_ids]
+    assert first == second
+
+
+def test_the_fuzz_asserts_the_legs_not_only_the_verdict(probe):
+    """A class-only comparison lets a wrong ANSWER hide behind a right VERDICT.
+
+    Mutant M5 — dropping ``(b.bookmaker <> fm.source)`` from ``pair_book``'s
+    ``ORDER BY`` — leaves every ``pair_class`` reading ``paired`` and changes
+    which book's two numbers the page would publish. It is killed only by the
+    leg comparison, so the twin must keep handing its probabilities out.
+    """
+    probe.build_fixture()
+    probe.python_classes()
+    paired = [
+        oid
+        for oid, legs in probe.PY_LEGS.items()
+        if legs[0] is not None and legs[1] is not None
+    ]
+    assert paired, "the fixture holds no scorable pair to compare legs on"
