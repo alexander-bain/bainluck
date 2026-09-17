@@ -120,16 +120,23 @@ def closing_line_lateral_sql(
         extra_and: an extra conjunct for callers with a source-specific rule, e.g.
             Part A's Kalshi ``N+`` threshold guard (#167/#941/#1054). Must begin
             with ``AND``.
-        order: ``"DESC"`` for the last eligible quote (the closing line),
-            ``"ASC"`` for the FIRST — the early leg of a paired pre-start
-            comparison (``app.utils.calibration_paired_prestart``). Parameterised
-            rather than copied so that "which snapshots may be used at all" keeps
-            having exactly one definition: an early leg selected under a laxer
-            eligibility rule than the late leg would manufacture improvement out
-            of the filter, which is the failure the paired work exists to avoid.
+        order: ``"DESC"`` for the last eligible quote (the closing line), which
+            is what every caller in the repo asks for. ``"ASC"`` yields the
+            FIRST eligible quote and **nothing calls it** — it was added for the
+            early leg of the paired pre-start comparison
+            (``app.utils.calibration_paired_prestart``) and CAL-P1330 / #6176
+            withdrew that use: "the first snapshot we ever captured" measures
+            when our poller started, not the market, so the early leg is now a
+            DESC selection against an earlier boundary. Kept because the branch
+            is validated and free, and because the parameter is what lets "which
+            snapshots may be used at all" keep exactly one definition: an early
+            leg selected under a laxer eligibility rule than the late leg would
+            manufacture improvement out of the filter, which is the failure the
+            paired work exists to avoid.
         columns: the select list. The default yields the single ``probability``
             column every existing caller consumes; a paired caller also needs
-            ``fos.captured_at`` to enforce leg separation.
+            ``fos.captured_at`` and ``fos.valid_until`` (when a value was first
+            seen is not when we last confirmed it — ``tasks/retention.py``).
 
     Returns:
         A parenthesised sub-SELECT yielding at most one row.

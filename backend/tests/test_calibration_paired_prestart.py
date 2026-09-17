@@ -1,467 +1,759 @@
-"""CAL-P1215 (#1544, #997) — guards for the paired early/late pre-start cohort.
+"""The paired early/final pre-start cohort — CAL-P1215 and CAL-P1330 (#6176, #1544, #997).
 
-The module under test decides which outcomes may be used to answer "do forecasts
-improve before an event?". Every guard here exists because the corresponding
-mistake would publish a number that looks like an answer and is not:
+Two halves, and both are load-bearing:
 
-* an asymmetric eligibility filter manufactures improvement out of the filter;
-* a degenerate pair (one snapshot read twice) reads as "no improvement";
-* a NULL boundary silently admits post-settlement prices;
-* an unpaired standard error reports "no detectable change" on a real one;
-* an empty cohort returning ``0.0`` publishes a perfect score for no data.
+* the SQL guards assert the STATEMENT says what the module's prose says, because
+  nothing in CI executes it against a database and a rule that exists only in a
+  docstring is not a rule;
+* the Python guards are the control set from
+  ``artifacts/other-model-paired-accuracy/paired_accuracy_example.py``, ported
+  one-to-one to the classes this module emits, plus the four classes that
+  example predates.
+
+``backend/scripts/probe_paired_prestart_sql.py`` closes the gap between them: it
+runs the real statement against a throwaway local Postgres over the same
+synthetic fixture and asserts the SQL and the Python agree row for row. It needs
+a database, so it is a developer gate rather than a CI one — the SQL-text guards
+below are what CI can hold.
+
+EVERY NUMBER IN THIS FILE IS SYNTHETIC.
 """
 
-import math
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.utils.calibration_closing_line import (
-    closing_line_boundary_sql,
-    closing_line_lateral_sql,
+from app.utils.calibration_closing_line import closing_line_lateral_sql
+from app.utils.event_completion import DERIVED_COMMENCE_SOURCES
+from app.utils.event_rails import (
+    POLL_CLOCK_STAMP_TOLERANCE,
+    _POLL_CLOCK_FALLBACK_SOURCES,
 )
+from app.utils.resolution_authority import CALIBRATION_TRUTH_ELIGIBLE_SOURCES
+from app.utils import calibration_paired_prestart as mod
 from app.utils.calibration_paired_prestart import (
-    DEFAULT_MIN_SEPARATION_SECONDS,
-    PAIR_NO_LEG,
-    PAIR_PAIRED,
-    PAIR_SINGLE_LEG,
+    DEFAULT_EARLY_MAX_STALE_SECONDS,
+    DEFAULT_FINAL_MAX_STALE_SECONDS,
+    DEFAULT_LEAD_SECONDS,
+    MIN_CLUSTERS_FOR_MARGIN,
+    MODEL_FORECAST_SOURCES,
     PAIR_CLASSES,
-    PAIR_TOO_CLOSE,
-    PAIR_UNANCHORED_BOUNDARY,
+    PAIRED_CLASSES,
+    as_of_sql,
     boundary_is_anchored,
     brier,
     classify_pair,
+    forecast_kind,
     leg_calibration,
     log_loss,
     paired_feasibility_sql,
     paired_improvement,
     paired_legs_sql,
-    select_paired_legs,
+    result_is_independent,
+    start_is_contradicted_sql,
+    start_is_reported_sql,
+    start_refusal,
 )
 
-T0 = datetime(2026, 9, 1, 0, 0, tzinfo=timezone.utc)
-COMMENCE = T0 + timedelta(days=2)
+H = timedelta(hours=1)
+D = timedelta(days=1)
+T0 = datetime(2026, 1, 10, 20, 0, tzinfo=timezone.utc)
 
 
-def snap(hours, probability, yes_bid=None, yes_ask=None):
-    """One ``futures_odds_snapshots`` row in the shape the selector consumes."""
-    return (T0 + timedelta(hours=hours), probability, yes_bid, yes_ask)
+class Ev:
+    """A duck-typed event row. The rule reads four columns and nothing else."""
+
+    def __init__(self, commence=T0, source="espn", created=None, completed=None):
+        self.commence_time = commence
+        self.commence_time_source = source
+        # `Event.created_at` is a bare DateTime on the model (naive UTC), so the
+        # fixture is naive here too — a fixture that hands the rule an aware
+        # datetime would never exercise the normalisation the real row needs.
+        self.created_at = (
+            created if created is not None else (T0 - 30 * D).replace(tzinfo=None)
+        )
+        self.completed_at = completed if completed is not None else T0 + 3 * H
+
+
+def snap(at, p, *, book="kalshi", valid_until=None, yes_bid=None, yes_ask=None):
+    """One ``futures_odds_snapshots`` row in the shape the rule consumes."""
+    return (at, p, yes_bid, yes_ask, book, valid_until)
+
+
+def standard(early, final, *, book="kalshi"):
+    """One look 26h out (re-confirmed at 25h) and one an hour before the start."""
+    return [
+        snap(T0 - 26 * H, early, book=book, valid_until=T0 - 25 * H),
+        snap(T0 - 1 * H, final, book=book, yes_bid=final - 0.01, yes_ask=final + 0.01),
+    ]
+
+
+def classify(snapshots, **kw):
+    kw.setdefault("event", Ev())
+    kw.setdefault("market_source", "kalshi")
+    kw.setdefault("resolution_date", T0 + 3 * H)
+    return classify_pair(snapshots, **kw)
 
 
 # ---------------------------------------------------------------------------
-# The shared eligibility rule must stay shared
+# The SQL half
 # ---------------------------------------------------------------------------
 
 
-def test_default_lateral_emission_is_byte_identical_after_the_order_param():
-    """Adding ``order``/``columns`` must not move the SQL Part A already runs.
+def test_the_shipped_closing_line_lateral_is_untouched_by_this_work():
+    """CAL-P1330 added no argument to the module ``backfill_winners`` embeds.
 
-    ``backfill_winners`` embeds this string and a Q436 guard asserts it appears
-    verbatim in the shipped statement. If a default changed, that guard would be
-    asserting against a statement the task no longer runs.
+    Everything the paired rule needs — the bookmaker predicate, the extra
+    columns, the earlier boundary — was already expressible through
+    ``extra_and``/``columns``/``boundary``. Stating that here means a future
+    change to the shipped emitter has to break this test on purpose.
     """
-    emitted = closing_line_lateral_sql(outcome_id="s.outcome_id", boundary="s.bound")
-    assert "ORDER BY fos.captured_at DESC" in emitted
-    # The default select list is the single column every existing caller reads.
-    assert "SELECT fos.probability\n" in emitted
-    assert "fos.captured_at," not in emitted
+    default = closing_line_lateral_sql(outcome_id="fo.id", boundary="B")
+    assert "AND fos.bookmaker" not in default
+    assert "valid_until" not in default
+    assert default.count("SELECT fos.probability") == 1
+
+
+def test_no_leg_is_selected_first_ever_captured():
+    """The early leg is a closing line against an EARLIER boundary, not the
+    first snapshot we happened to take. An ``ASC`` lateral is the defect."""
+    sql = paired_legs_sql()
+    assert "ORDER BY fos.captured_at ASC" not in sql
+    # Four leg laterals: the two book-blind ones that name the failure, and the
+    # chooser's two. Every one of them is a "last price before X" selection.
+    assert sql.count("ORDER BY fos.captured_at DESC") == 4
+
+
+def test_the_early_leg_is_the_shared_boundary_minus_one_lead():
+    sql = paired_legs_sql(lead_seconds=DEFAULT_LEAD_SECONDS)
+    boundary = "LEAST(e.commence_time, COALESCE(fm.resolution_date, e.commence_time))"
+    assert f"({boundary} - INTERVAL '{DEFAULT_LEAD_SECONDS} seconds')" in sql
+    # and the final leg is that same boundary with no interval applied
+    assert f"AND fos.captured_at < {boundary}\n" in sql
+
+
+def test_lead_is_a_parameter_so_a_second_rung_is_a_call_not_a_rewrite():
+    seven_days = 7 * 24 * 3600
+    sql = paired_legs_sql(lead_seconds=seven_days)
+    assert f"INTERVAL '{seven_days} seconds'" in sql
+    assert f"INTERVAL '{DEFAULT_LEAD_SECONDS} seconds'" not in sql
+
+
+@pytest.mark.parametrize("bad", [0, -1, 24.5, "86400"])
+def test_a_lead_that_is_not_a_positive_int_is_refused_before_it_reaches_sql(bad):
+    with pytest.raises(ValueError):
+        as_of_sql("B", bad)
+
+
+def test_freshness_reads_the_last_confirmation_not_the_first_sighting():
+    """``captured_at`` is when a VALUE was first seen; retention moves the last
+    look into ``valid_until``. Reading the wrong one lets a stale price pose as
+    the final one."""
+    sql = paired_legs_sql()
+    assert "COALESCE(fos.valid_until, fos.captured_at) AS last_seen_at" in sql
+    assert sql.count("last_seen_at") >= 8  # 4 emissions + the freshness tests
+
+
+def test_freshness_caps_the_confirmation_at_the_instant_being_asked_about():
+    """A row re-confirmed DURING the event says nothing about how fresh it was
+    before it; without the LEAST that would readmit post-start evidence."""
+    sql = paired_legs_sql()
+    assert "LEAST(early.last_seen_at," in sql
+    assert "LEAST(final.last_seen_at," in sql
+
+
+def test_each_leg_carries_its_own_staleness_bound():
+    sql = paired_legs_sql(early_max_stale_seconds=111, final_max_stale_seconds=222)
+    assert "<= 111" in sql and "<= 222" in sql
+
+
+def test_both_per_book_legs_are_held_to_one_bookmaker():
+    sql = paired_legs_sql()
+    # once for each of the chooser's two legs, and never on the union legs
+    assert sql.count("AND fos.bookmaker = b.bookmaker") == 2
+
+
+def test_the_book_is_chosen_before_the_legs_are_scored():
+    """Native book first, then alphabetically. Shopping across books for
+    whichever pair looks best is a selection effect, not a measurement."""
+    sql = paired_legs_sql()
+    assert "ORDER BY (b.bookmaker <> fm.source), b.bookmaker" in sql
+    assert "LIMIT 1\n) pair_book ON true" in sql
 
 
 def test_both_legs_carry_the_identical_eligibility_clause():
-    """The early leg may not be selected under a laxer filter than the late leg.
-
-    This is the guard that makes the comparison honest: if the two legs could
-    admit different snapshots, any measured "improvement" would partly be the
-    filter changing, not the forecast changing. The two laterals must therefore
-    differ in their sort direction and in NOTHING else.
-    """
-    kwargs = dict(
-        outcome_id="fo.id",
-        boundary="BOUND",
-        columns="fos.probability, fos.captured_at",
-    )
-    early = closing_line_lateral_sql(order="ASC", **kwargs)
-    late = closing_line_lateral_sql(order="DESC", **kwargs)
-
-    assert early != late
-    assert early.replace("captured_at ASC", "captured_at DESC") == late
-
-    # ...and both of those are what the paired statement actually embeds.
+    """An early leg selected under a laxer filter manufactures improvement."""
     sql = paired_legs_sql()
-    boundary = "LEAST(e.commence_time, COALESCE(fm.resolution_date, e.commence_time))"
-    for leg in (early, late):
-        assert leg.replace("BOUND", boundary) in sql
+    eligibility = "AND fos.probability > 0 AND fos.probability < 1"
+    assert sql.count(eligibility) == 4  # one per leg lateral
+    assert sql.count("NOT (") >= 4  # the fabricated-midpoint guard on every leg
 
 
-def test_order_is_validated_because_it_is_interpolated_into_sql():
-    with pytest.raises(ValueError, match="order must be ASC or DESC"):
-        closing_line_lateral_sql(outcome_id="fo.id", boundary="b", order="DESC; DROP")
+def test_start_provenance_sql_is_derived_from_the_house_sets_both_directions():
+    """Not a third list. A source added to either set must reach this predicate
+    without anybody remembering this line."""
+    rendered = start_is_reported_sql()
+    for source in DERIVED_COMMENCE_SOURCES:
+        assert f"'{source}'" in rendered
+    for source in _POLL_CLOCK_FALLBACK_SOURCES:
+        assert f"'{source}'" in rendered
+    quoted = {
+        token.strip().strip("'")
+        for chunk in rendered.split("IN (")[1:]
+        for token in chunk.split(")")[0].split(",")
+    }
+    assert quoted == set(DERIVED_COMMENCE_SOURCES) | set(_POLL_CLOCK_FALLBACK_SOURCES)
+    assert str(int(POLL_CLOCK_STAMP_TOLERANCE.total_seconds())) in rendered
+
+
+def test_the_poll_clock_arm_needs_all_three_conditions():
+    """Each arm alone is far too broad — ``commence_time_source = 'kalshi'``
+    covers 610 real rail rows. The conjunction is the test."""
+    rendered = start_is_reported_sql()
+    assert "EXTRACT(SECOND FROM e.commence_time) <> 0" in rendered
+    assert "AT TIME ZONE 'UTC'" in rendered  # naive created_at, aware commence_time
+    assert rendered.count(" AND ") >= 3
+
+
+def test_start_contradiction_covers_both_of_our_own_columns():
+    rendered = start_is_contradicted_sql()
+    assert "e.completed_at <= e.commence_time" in rendered  # gotcha #46
+    assert f"INTERVAL '{mod.START_CONTRADICTION_TOLERANCE_SECONDS} seconds'" in rendered
+
+
+def test_provenance_is_decided_before_any_snapshot_is_read():
+    """The CASE order is the rule's order: a leg drawn before a stand-in is not
+    a pre-event forecast, however good the snapshots are."""
+    sql = paired_legs_sql()
+    order = [
+        sql.index(f"'{klass}'")
+        for klass in (
+            mod.PAIR_UNANCHORED_BOUNDARY,
+            mod.PAIR_START_PROVENANCE_UNKNOWN,
+            mod.PAIR_START_NOT_REPORTED,
+            mod.PAIR_START_CONTRADICTED,
+            mod.PAIR_PAIRED_UNCHANGED,
+        )
+    ]
+    assert order == sorted(order)
 
 
 def test_population_uses_resolution_source_not_market_source():
-    """Truth-eligibility is keyed on HOW the row was graded, not on who quoted it.
-
-    The allowlist holds ``resolution_source`` values (``box_score``,
-    ``clob_authoritative``, ...). Reading it as a market-source list would select
-    an empty population while looking entirely plausible.
-    """
+    """The allowlist is HOW the outcome was graded, never WHICH venue quoted it."""
     sql = paired_legs_sql()
-    assert "fo.resolution_source IN (" in sql
-    assert "fm.source IN (" not in sql
-    assert "'box_score'" in sql
+    assert "fo.resolution_source" in sql
+    assert "fm.source IN ('api_settlement'" not in sql
+    assert "fo.is_winner IS NOT NULL" in sql
 
 
-def test_both_legs_share_one_boundary_expression():
-    """Two boundaries would let the late leg run past the early leg's start."""
+def test_result_not_independent_is_python_only_and_that_is_deliberate():
+    """The SQL holds the rule in its WHERE, so the feasibility denominator stays
+    the graded population every other calibration reader uses. The class exists
+    for row-level Python callers, and the asymmetry is asserted rather than
+    discovered."""
     sql = paired_legs_sql()
-    boundary = "LEAST(e.commence_time, COALESCE(fm.resolution_date, e.commence_time))"
-    assert sql.count(f"fos.captured_at < {boundary}") == 2
+    assert f"'{mod.PAIR_RESULT_NOT_INDEPENDENT}'" not in sql
+    assert mod.PAIR_RESULT_NOT_INDEPENDENT in PAIR_CLASSES
 
 
-def test_task_statement_binds_while_the_bus_statement_uses_literals():
-    """The db-query rail does not bind; a task caller must not interpolate ids."""
-    assert "fo.id > :cursor" in paired_legs_sql()
-    assert "LIMIT :scan" in paired_legs_sql()
+def test_forecast_kind_rides_on_every_row_and_is_derived_from_the_constant():
+    sql = paired_legs_sql()
+    for source in MODEL_FORECAST_SOURCES:
+        assert f"'{source}'" in sql
+    assert "THEN 'model' ELSE 'market' END AS forecast_kind" in sql
 
-    bus = paired_feasibility_sql(cursor=4321, scan=1000)
-    assert "fo.id > 4321" in bus
-    assert "LIMIT 1000" in bus
-    assert ":cursor" not in bus and ":scan" not in bus
+
+def test_cluster_id_rides_on_every_row():
+    """Both sides of a game are ONE piece of evidence; the reader of this
+    statement cannot cluster without the column."""
+    assert "fm.event_id AS cluster_id" in paired_legs_sql()
+
+
+def test_feasibility_reports_classes_per_source_and_counts_events():
+    sql = paired_feasibility_sql()
+    assert "GROUP BY source, forecast_kind, pair_class" in sql
+    assert "COUNT(DISTINCT cluster_id) AS n_events" in sql
 
 
 def test_feasibility_literals_are_type_checked():
-    """They are interpolated, not bound, so a string is refused rather than run."""
-    with pytest.raises(TypeError, match="pass ints"):
-        paired_feasibility_sql(cursor="0; DROP TABLE futures_outcomes")
+    with pytest.raises(TypeError):
+        paired_feasibility_sql(cursor="0")
 
 
 def test_feasibility_carries_the_cursor_forward_for_the_next_window():
-    """A row-bounded walk needs its own bookmark, or it rescans the first window."""
     assert "MAX(outcome_id) AS max_outcome_id" in paired_feasibility_sql()
 
 
-def test_feasibility_reports_the_failure_classes_separately():
-    """"We never looked twice" and "the market is illiquid" are different findings.
-
-    Iterates :data:`PAIR_CLASSES` rather than a hand-written tuple: a class added
-    to the module and not to the statement is exactly the drift this catches, and
-    a literal list here would have to be remembered instead.
-    """
-    sql = paired_feasibility_sql()
-    assert "GROUP BY source, pair_class" in sql
-    for klass in PAIR_CLASSES:
-        assert f"'{klass}'" in sql, f"{klass} is unreachable in the walk's own SQL"
-
-
-def test_least_ignores_a_null_commence_so_the_boundary_becomes_the_settlement_date():
-    """The witness that ``unanchored_boundary`` closes a LIVE hole, not a theoretical one.
-
-    ``closing_line_boundary_sql`` emits
-    ``LEAST(e.commence_time, COALESCE(fm.resolution_date, e.commence_time))``, and
-    its own docstring records that **Postgres LEAST ignores NULL arguments** — the
-    COALESCE is for the reader. So with no linked event the boundary does NOT go
-    NULL and drop the row: it quietly becomes ``resolution_date``, a settlement
-    stamp, and the outcome scored as though that were its kick-off.
-
-    Asserted from the shipped emission rather than from memory, because the whole
-    finding rests on this one operator's NULL semantics. If that expression is
-    ever changed to null out instead, this test should fail and the class can be
-    revisited.
-    """
-    boundary = closing_line_boundary_sql("e.commence_time", "fm.resolution_date")
-    assert boundary == "LEAST(e.commence_time, COALESCE(fm.resolution_date, e.commence_time))"
-    assert "COALESCE(fm.resolution_date, e.commence_time)" in boundary
-
-
-def test_the_unanchored_branch_is_first_in_the_sql_case():
-    """Order is the guarantee: it must win over every leg-shaped reason.
-
-    A row with no event start can also have no snapshots. If the branches were
-    the other way round it would be reported as ``no_eligible_leg`` and the
-    provenance requirement would look free — the feasibility walk would
-    under-count what it costs, which is the number the decision rests on.
-    """
-    sql = paired_legs_sql()
-    case = sql[sql.index("CASE") : sql.index("END AS pair_class")]
-    assert case.index(f"'{PAIR_UNANCHORED_BOUNDARY}'") < case.index(f"'{PAIR_NO_LEG}'")
-    assert "WHEN e.commence_time IS NULL" in case
-
-
-def test_boundary_is_anchored_is_the_single_provenance_question():
-    """One function, so the SQL branch, the mirror and the callers cannot diverge."""
-    assert boundary_is_anchored(COMMENCE) is True
-    assert boundary_is_anchored(None) is False
+def test_task_statement_binds_while_the_bus_statement_uses_literals():
+    assert "fo.id > :cursor" in paired_legs_sql()
+    assert "fo.id > 4200" in paired_feasibility_sql(cursor=4200)
 
 
 # ---------------------------------------------------------------------------
-# The Python selector must mirror the SQL branch for branch
+# The Python rule — the control set, one test per named refusal
 # ---------------------------------------------------------------------------
 
 
-def test_picks_first_and_last_eligible_snapshot():
-    klass, early, late = select_paired_legs(
-        [snap(30, 0.55), snap(1, 0.40), snap(12, 0.48)],
-        event_commence=COMMENCE,
-    )
-    assert (klass, early, late) == (PAIR_PAIRED, 0.40, 0.55)
-
-
-def test_unsorted_input_is_sorted_not_trusted():
-    """The SQL sorts; a caller handing rows in arrival order must get the same pair."""
-    rows = [snap(30, 0.55), snap(1, 0.40), snap(12, 0.48)]
-    assert select_paired_legs(rows, event_commence=COMMENCE) == select_paired_legs(
-        list(reversed(rows)), event_commence=COMMENCE
-    )
-
-
-def test_single_snapshot_is_not_a_pair():
-    """One reading is not an early AND a late forecast, and must not score as one."""
-    klass, early, late = select_paired_legs([snap(1, 0.40)], event_commence=COMMENCE)
-    assert klass == PAIR_SINGLE_LEG
-    assert early is None and late is None
-
-
-def test_legs_closer_than_the_separation_floor_are_refused():
-    klass, early, late = select_paired_legs(
-        [snap(1, 0.40), snap(2, 0.44)], event_commence=COMMENCE
-    )
-    assert klass == PAIR_TOO_CLOSE
-    assert early is None and late is None
+def test_an_ordinary_two_look_outcome_pairs():
+    assert classify(standard(0.55, 0.70)) == ("paired", 0.55, 0.70)
 
 
 def test_a_refused_pair_never_returns_probabilities_to_score():
-    """A caller must not be able to score a pair the selector rejected."""
-    for rows in ([], [snap(1, 0.4)], [snap(1, 0.4), snap(2, 0.5)]):
-        klass, early, late = select_paired_legs(rows, event_commence=COMMENCE)
-        assert klass != PAIR_PAIRED
-        assert early is None and late is None
+    for klass, early, final in (
+        classify(standard(0.55, 0.70), event=Ev(source="kalshi_ticker")),
+        classify(standard(0.55, 0.70), event=None),
+        classify([snap(T0 - 7 * D, 0.03, valid_until=T0 - 6 * D)]),
+    ):
+        assert klass not in PAIRED_CLASSES
+        assert early is None and final is None
 
 
-def test_post_boundary_snapshots_are_excluded():
-    """A quote at or after the start is not a pre-start forecast."""
-    klass, _, _ = select_paired_legs(
-        [snap(1, 0.40), snap(48, 0.90), snap(60, 0.99)],
-        event_commence=COMMENCE,
-    )
-    assert klass == PAIR_SINGLE_LEG, "only the pre-start quote should survive"
+def test_unequal_lead_the_first_ever_snapshot_is_not_the_early_leg():
+    """THE defect CAL-P1330 removes: a 30-days-out look and a 26-hours-out look
+    are not the same forecast, and picking the older one measures when our
+    poller started."""
+    rows = standard(0.55, 0.70) + [snap(T0 - 30 * D, 0.40, valid_until=T0 - 29 * D)]
+    assert classify(rows) == ("paired", 0.55, 0.70)
 
 
-def test_boundary_clamps_to_the_earlier_of_commence_and_resolution():
-    """Q436: a mis-linked market's boundary must not sit past its own settlement."""
-    resolution = T0 + timedelta(hours=10)
-    klass, _, _ = select_paired_legs(
-        [snap(1, 0.40), snap(20, 0.95)],
-        event_commence=COMMENCE,
-        resolution_date=resolution,
-    )
-    assert klass == PAIR_SINGLE_LEG, "the 20h quote is post-settlement"
+def test_a_reconfirmed_flat_price_supplies_both_legs_and_is_counted_apart():
+    """We looked fifty times and it did not move. Dropping it would bias the
+    cohort toward markets that moved."""
+    rows = [snap(T0 - 3 * D, 0.70, valid_until=T0 - 1 * H)]
+    assert classify(rows) == ("paired_unchanged", 0.70, 0.70)
 
 
-def test_null_boundary_admits_nothing():
-    """`captured_at < NULL` is NULL in SQL — the Python half must not be laxer.
-
-    CAL-P1216b refines the CLASS without weakening the guarantee: a missing event
-    start is now reported as ``unanchored_boundary`` rather than folded into
-    ``no_eligible_leg``, because "nobody told us when this started" and "nobody
-    quoted it twice" are different findings. What must never change is the part
-    this test was written for — no probabilities come back.
-    """
-    klass, early, late = select_paired_legs(
-        [snap(1, 0.40), snap(30, 0.55)], event_commence=None, resolution_date=None
-    )
-    assert klass == PAIR_UNANCHORED_BOUNDARY
-    assert early is None and late is None
+def test_a_repeated_value_with_no_reconfirmation_is_refused():
+    """The converse of the test above, and the reason it is safe: without a
+    ``valid_until`` reaching the final window, the same row is a week-old price
+    posing as the last one."""
+    rows = [snap(T0 - 3 * D, 0.70)]
+    assert classify(rows)[0] == "no_final_stale"
 
 
-def test_a_settlement_date_alone_never_anchors_a_pre_event_leg():
-    """codex 17:11Z: *LEAST of two timestamps alone does not prove real event start.*
-
-    The dangerous shape, and the reason the class exists: there IS a boundary
-    here — a resolution date 30 hours out — and two well-separated, perfectly
-    eligible quotes sit before it. Under the old rule that is a clean ``paired``
-    row. But ``resolution_date`` is a SETTLEMENT stamp, at or after the end of
-    the thing, so the "final pre-event forecast" could have been taken while the
-    event was being decided. A pair like that makes late forecasts look brilliant
-    precisely because they were no longer forecasts.
-
-    Refused, and refused with its own name so the feasibility walk can report
-    what the requirement costs instead of burying it in ``no_eligible_leg``.
-    """
-    klass, early, late = select_paired_legs(
-        [snap(1, 0.40), snap(25, 0.93)],
-        event_commence=None,
-        resolution_date=T0 + timedelta(hours=30),
-    )
-    assert klass == PAIR_UNANCHORED_BOUNDARY
-    assert early is None and late is None, "an unvouched boundary must score nothing"
-
-    # ...and the SAME two snapshots ARE a pair once a real start anchors them.
-    anchored, early_p, late_p = select_paired_legs(
-        [snap(1, 0.40), snap(25, 0.93)],
-        event_commence=T0 + timedelta(hours=30),
-        resolution_date=T0 + timedelta(hours=30),
-    )
-    assert anchored == PAIR_PAIRED
-    assert (early_p, late_p) == (0.40, 0.93)
+def test_missing_close_the_opening_fallback_is_never_consulted():
+    """C1. ``backfill_winners`` stores the opening under the closing line's name
+    on this population; this rule reads snapshots and nothing else."""
+    rows = [snap(T0 - 26 * H, 0.35, valid_until=T0 - 25 * H)]
+    assert classify(rows)[0] == "no_final_stale"
 
 
-def test_fabricated_midpoint_legs_are_rejected():
-    """bid 0.001 / ask 1.000 midpoint 0.5005 is the #1574 phantom, not a price."""
-    klass, early, late = select_paired_legs(
-        [snap(1, 0.5005, 0.001, 1.000), snap(30, 0.5005, 0.001, 1.000)],
-        event_commence=COMMENCE,
-    )
-    assert klass == PAIR_NO_LEG
+def test_an_after_start_price_is_never_a_candidate():
+    """C2. The in-game 0.97 would score a Brier of 0.0009 — brilliant, and not a
+    forecast."""
+    rows = [
+        snap(T0 - 26 * H, 0.55, valid_until=T0 - 25 * H),
+        snap(T0 + timedelta(minutes=20), 0.97),
+    ]
+    assert classify(rows)[0] == "no_final_stale"
+    assert brier(0.97, True) < 0.001  # what admitting it would have bought
 
 
-def test_classify_pair_matches_the_sql_case_order():
-    # The FIRST branch, and it wins over every other reason — an outcome with no
-    # provable start is not a thin pair, it is not a pair at all. Asserted with
-    # timestamps that would otherwise classify `paired`, so this cannot pass by
-    # landing on some other branch.
+def test_a_price_derived_winner_cannot_grade_the_price():
+    """C3. ``settlement_sync`` crowned the outcome FROM the close."""
     assert (
-        classify_pair(
-            T0,
-            T0 + timedelta(seconds=DEFAULT_MIN_SEPARATION_SECONDS),
-            boundary_anchored=False,
+        classify(
+            standard(0.55, 0.90),
+            is_winner=True,
+            resolution_source="settlement_sync",
+            eligible_sources=CALIBRATION_TRUTH_ELIGIBLE_SOURCES,
+        )[0]
+        == "result_not_independent"
+    )
+
+
+def test_ungraded_truth_is_not_a_loss():
+    assert (
+        classify(
+            standard(0.55, 0.90),
+            is_winner=None,
+            resolution_source="api_settlement",
+            eligible_sources=CALIBRATION_TRUTH_ELIGIBLE_SOURCES,
+        )[0]
+        == "result_not_independent"
+    )
+
+
+def test_the_result_gate_is_skipped_only_when_the_caller_says_so():
+    """Passing no allowlist means "the statement's WHERE already applied it",
+    and it is the only way to skip the gate — there is no silent default."""
+    assert classify(standard(0.55, 0.70), is_winner=None)[0] == "paired"
+    assert result_is_independent(
+        True, "api_settlement", eligible_sources=["api_settlement"]
+    )
+    assert not result_is_independent(
+        None, "api_settlement", eligible_sources=["api_settlement"]
+    )
+
+
+def test_a_ticker_date_stand_in_start_is_refused():
+    """C4. Midnight UTC of a ticker date, for a match played that afternoon."""
+    ev = Ev(commence=T0.replace(hour=0), source="kalshi_ticker")
+    assert classify(standard(0.55, 0.70), event=ev)[0] == "start_not_reported"
+
+
+def test_a_poll_clock_stamp_is_refused_and_a_real_fixture_beside_it_is_not():
+    """The positive control matters as much as the specimen: each arm of
+    ``commence_time_was_never_a_kickoff`` alone would take real fixtures with
+    it."""
+    minted = (T0 - 2 * D).replace(second=17, microsecond=316804)
+    stamped = Ev(commence=minted, source="kalshi", created=minted.replace(tzinfo=None))
+    real = (T0 - 2 * D).replace(second=0, microsecond=0)
+    discovered = Ev(commence=real, source="kalshi", created=real.replace(tzinfo=None))
+    assert start_refusal(stamped) == "start_not_reported"
+    assert start_refusal(discovered, resolution_date=real + 3 * H) is None
+
+
+def test_a_start_nobody_can_vouch_for_is_its_own_class():
+    """``commence_time_is_a_reported_start(None)`` answers True, deliberately,
+    for a PROMOTION rule. A truth measurement may not score against an
+    unprovenanced instant — counted apart so the walk reports what that costs."""
+    assert start_refusal(Ev(source=None)) == "start_provenance_unknown"
+
+
+def test_no_linked_event_means_the_boundary_is_a_settlement_date():
+    """A "final pre-event" leg drawn before a settlement date can sit anywhere
+    inside the event, including after the result was effectively known."""
+    assert start_refusal(None) == "unanchored_boundary"
+    assert start_refusal(Ev(commence=None)) == "unanchored_boundary"
+
+
+def test_our_own_columns_contradicting_the_start_are_a_refusal():
+    assert start_refusal(Ev(completed=T0 - 1 * H)) == "start_contradicted"  # gotcha #46
+    assert start_refusal(Ev(), resolution_date=T0 - 1 * D) == "start_contradicted"
+    # minutes of disagreement are not a contradiction
+    assert start_refusal(Ev(), resolution_date=T0 + 3 * H) is None
+
+
+def test_start_refusal_refuses_a_bare_timestamp():
+    """The pre-CAL-P1330 signature took ``commence_time``. Read through getattr
+    a datetime answers "unanchored" for every row — a wrong answer that looks
+    like a finding."""
+    with pytest.raises(TypeError):
+        start_refusal(T0)
+
+
+def test_boundary_is_anchored_is_the_single_provenance_question():
+    assert boundary_is_anchored(Ev(), resolution_date=T0 + 3 * H)
+    assert not boundary_is_anchored(Ev(source="kalshi_ticker"))
+    assert not boundary_is_anchored(None)
+
+
+def test_legs_from_two_sportsbooks_are_not_a_forecast_change():
+    """C5. ``probability`` is one book's raw, margin-inclusive number."""
+    rows = [
+        snap(T0 - 26 * H, 0.52, book="draftkings", valid_until=T0 - 25 * H),
+        snap(T0 - 1 * H, 0.58, book="fanduel", yes_bid=0.57, yes_ask=0.59),
+    ]
+    assert classify(rows, market_source="odds_api")[0] == "legs_from_different_books"
+
+
+def test_one_book_holding_both_legs_pairs_even_when_another_book_is_present():
+    """The control for the test above: the presence of a second book must not
+    refuse a pair the native book fully supplies."""
+    rows = standard(0.55, 0.70, book="kalshi") + [
+        snap(T0 - 2 * H, 0.61, book="draftkings", yes_bid=0.60, yes_ask=0.62)
+    ]
+    assert classify(rows)[0] == "paired"
+
+
+def test_a_fabricated_midpoint_is_not_a_price():
+    """C6. bid 0.001 / ask 1.000 is "nobody will trade this at any price"."""
+    rows = [
+        snap(T0 - 26 * H, 0.55, valid_until=T0 - 25 * H),
+        snap(T0 - 1 * H, 0.5005, yes_bid=0.001, yes_ask=1.0),
+    ]
+    assert classify(rows)[0] == "no_final_stale"
+
+
+def test_only_starting_to_watch_inside_the_lead_window_is_its_own_class():
+    """E5. A usable final leg and nothing at all a day out."""
+    rows = [snap(T0 - 1 * H, 0.50, yes_bid=0.49, yes_ask=0.51)]
+    assert classify(rows)[0] == "no_early_none_before"
+
+
+def test_an_early_leg_we_stopped_confirming_is_stale_not_absent():
+    """Two different findings; summing them would hide which this is."""
+    rows = [
+        snap(T0 - 20 * D, 0.30, valid_until=T0 - 19 * D),
+        snap(T0 - 1 * H, 0.50, yes_bid=0.49, yes_ask=0.51),
+    ]
+    assert classify(rows)[0] == "no_early_stale"
+
+
+def test_the_staleness_bounds_are_parameters_and_they_bind():
+    rows = [snap(T0 - 26 * H, 0.35, valid_until=T0 - 25 * H)]
+    assert classify(rows)[0] == "no_final_stale"
+    assert classify(rows, final_max_stale_seconds=30 * 3600)[0] == "paired_unchanged"
+
+
+def test_every_emitted_class_is_declared():
+    """A class the module can return but never named would be invisible to the
+    walk's report."""
+    seen = {
+        classify(standard(0.55, 0.70))[0],
+        classify(standard(0.55, 0.70), event=Ev(source="kalshi_ticker"))[0],
+        classify(standard(0.55, 0.70), event=None)[0],
+        classify(standard(0.55, 0.70), event=Ev(source=None))[0],
+        classify(standard(0.55, 0.70), event=Ev(completed=T0 - 1 * H))[0],
+        classify([snap(T0 - 3 * D, 0.70, valid_until=T0 - 1 * H)])[0],
+        classify([snap(T0 - 26 * H, 0.35, valid_until=T0 - 25 * H)])[0],
+        classify([snap(T0 - 1 * H, 0.5, yes_bid=0.49, yes_ask=0.51)])[0],
+        classify([], is_winner=None, resolution_source=None, eligible_sources=["x"])[0],
+    }
+    assert seen <= set(PAIR_CLASSES)
+    assert len(seen) >= 8
+
+
+def test_forecast_kind_separates_a_model_from_a_market():
+    assert forecast_kind("datagolf") == "model"
+    assert forecast_kind("kalshi") == "market"
+    assert forecast_kind("odds_api") == "market"  # a market with no volume feed
+
+
+# ---------------------------------------------------------------------------
+# The measure
+# ---------------------------------------------------------------------------
+
+#: The report's §3(B) worked example: three two-sided games plus one that never
+#: moved. Four events, eight outcomes, one event that got WORSE.
+WORKED_PAIRS = [
+    (0.55, 0.70, True),
+    (0.45, 0.30, False),  # E1 improved
+    (0.60, 0.50, True),
+    (0.40, 0.50, False),  # E2 got worse
+    (0.50, 0.65, True),
+    (0.50, 0.35, False),  # E3 improved
+    (0.70, 0.70, True),
+    (0.30, 0.30, False),  # E7 never moved
+]
+WORKED_EVENTS = ["E1", "E1", "E2", "E2", "E3", "E3", "E7", "E7"]
+
+
+def test_the_worked_example_from_the_report_reproduces_exactly():
+    """If these numbers move, either the module changed or the report is wrong.
+    Either way somebody must look; they are not incidental."""
+    s = paired_improvement(WORKED_PAIRS, cluster_ids=WORKED_EVENTS)
+    assert s["n"] == 8 and s["n_events"] == 4
+    assert s["early_mean"] == pytest.approx(0.175625)
+    assert s["final_mean"] == pytest.approx(0.138125)
+    assert s["mean_delta"] == pytest.approx(0.0375)
+    assert (s["events_improved"], s["events_worse"], s["events_unchanged"]) == (2, 1, 1)
+
+
+def test_positive_mean_delta_means_the_final_forecast_was_better():
+    s = paired_improvement([(0.50, 0.90, True), (0.50, 0.80, True)])
+    assert s["mean_delta"] > 0
+
+
+def test_a_cohort_that_got_worse_is_reported_not_suppressed():
+    s = paired_improvement(
+        [(0.90, 0.50, True), (0.80, 0.50, True)], cluster_ids=["a", "b"]
+    )
+    assert s["mean_delta"] < 0
+    assert s["events_worse"] == 2 and s["events_improved"] == 0
+
+
+def test_two_legs_of_one_game_are_one_piece_of_evidence():
+    """The naive error bar counts them as two and is too narrow."""
+    s = paired_improvement(WORKED_PAIRS, cluster_ids=WORKED_EVENTS)
+    assert s["cluster_se"] > s["se"]
+
+
+def test_one_outcome_per_cluster_collapses_toward_the_naive_error():
+    pairs = [
+        (0.50, 0.60, True),
+        (0.50, 0.40, False),
+        (0.30, 0.20, False),
+        (0.70, 0.80, True),
+    ]
+    s = paired_improvement(pairs, cluster_ids=["a", "b", "c", "d"])
+    assert s["cluster_se"] == pytest.approx(s["se"], rel=0.4)
+
+
+def test_no_margin_is_published_below_the_cluster_floor():
+    s = paired_improvement(WORKED_PAIRS, cluster_ids=WORKED_EVENTS)
+    assert s["n_events"] < MIN_CLUSTERS_FOR_MARGIN
+    assert s["displayable_margin"] is None
+    assert s["cluster_se"] is not None  # computed and reportable, just not shown
+
+
+def test_a_margin_appears_once_there_are_enough_events():
+    pairs = [(0.50, 0.60, i % 2 == 0) for i in range(MIN_CLUSTERS_FOR_MARGIN)]
+    clusters = [f"E{i}" for i in range(MIN_CLUSTERS_FOR_MARGIN)]
+    s = paired_improvement(pairs, cluster_ids=clusters)
+    assert s["n_events"] == MIN_CLUSTERS_FOR_MARGIN
+    assert s["displayable_margin"] == s["cluster_se"]
+
+
+def test_without_cluster_ids_no_margin_is_publishable():
+    """A number whose clustering nobody declared cannot be defended, so the
+    absence of the argument is a refusal rather than a fallback."""
+    s = paired_improvement(WORKED_PAIRS)
+    assert s["displayable_margin"] is None
+    assert s["cluster_se"] is None and s["n_events"] is None
+    assert s["se"] is not None
+
+
+def test_pooling_a_model_with_market_prices_raises():
+    """Not a rule a caller has to remember: ``datagolf`` is a model output and
+    averaging it with quoted prices is not a number of anything."""
+    with pytest.raises(ValueError, match="must not be pooled"):
+        paired_improvement(
+            [(0.50, 0.60, True), (0.12, 0.10, False)],
+            forecast_kinds=["market", "model"],
         )
-        == PAIR_UNANCHORED_BOUNDARY
+
+
+def test_a_single_kind_cohort_is_fine():
+    s = paired_improvement(
+        [(0.12, 0.10, False), (0.20, 0.15, False)], forecast_kinds=["model", "model"]
     )
-    # Unstated provenance is REFUSED, not assumed: the fail-closed default is the
-    # whole protection, since a caller that forgets to say is exactly the caller
-    # that has not checked.
-    assert classify_pair(T0, T0 + timedelta(hours=9)) == PAIR_UNANCHORED_BOUNDARY
-    # `event_commence` derives it, so a caller holding the timestamp need not
-    # also hold the boolean.
-    assert (
-        classify_pair(T0, T0 + timedelta(hours=9), event_commence=COMMENCE) == PAIR_PAIRED
-    )
-
-    assert classify_pair(None, None, boundary_anchored=True) == PAIR_NO_LEG
-    assert classify_pair(T0, T0, boundary_anchored=True) == PAIR_SINGLE_LEG
-    assert classify_pair(T0, T0 - timedelta(hours=1), boundary_anchored=True) == PAIR_SINGLE_LEG
-    assert classify_pair(T0, T0 + timedelta(seconds=DEFAULT_MIN_SEPARATION_SECONDS - 1), boundary_anchored=True) == PAIR_TOO_CLOSE
-    assert classify_pair(T0, T0 + timedelta(seconds=DEFAULT_MIN_SEPARATION_SECONDS), boundary_anchored=True) == PAIR_PAIRED
+    assert s["n"] == 2
 
 
-# ---------------------------------------------------------------------------
-# Proper scores
-# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("kwarg", ["cluster_ids", "forecast_kinds"])
+def test_a_parallel_sequence_of_the_wrong_length_raises(kwarg):
+    with pytest.raises(ValueError):
+        paired_improvement(
+            [(0.5, 0.6, True), (0.5, 0.4, False)], **{kwarg: ["only-one"]}
+        )
+
+
+def test_empty_and_single_pair_cohorts_return_none_not_zero():
+    """A perfect-looking score standing in for no data is gotcha #53 at the top
+    of this product's most-cited number."""
+    assert paired_improvement([]) is None
+    assert paired_improvement([(0.5, 0.6, True)]) is None
+
+
+def test_n_counts_outcomes_not_legs():
+    assert paired_improvement([(0.5, 0.6, True), (0.5, 0.4, False)])["n"] == 2
+
+
+def test_unknown_score_raises_before_it_is_used():
+    with pytest.raises(ValueError):
+        paired_improvement(WORKED_PAIRS, score="rmse")
+
+
+def test_log_loss_and_brier_can_be_selected_independently():
+    a = paired_improvement(WORKED_PAIRS, score="brier")
+    b = paired_improvement(WORKED_PAIRS, score="log_loss")
+    assert a["mean_delta"] != b["mean_delta"]
 
 
 def test_brier_is_squared_error_against_the_realised_outcome():
     assert brier(1.0, True) == 0.0
     assert brier(0.0, True) == 1.0
-    assert brier(0.5, True) == pytest.approx(0.25)
-    assert brier(0.25, False) == pytest.approx(0.0625)
+    assert brier(0.5, False) == 0.25
 
 
 def test_log_loss_is_finite_at_the_extremes():
-    """Eligibility rejects p in {0,1}; an unfiltered caller must still not get inf."""
-    assert log_loss(0.0, True) > 0 and log_loss(0.0, True) != float("inf")
     assert log_loss(1.0, False) > 0 and log_loss(1.0, False) != float("inf")
-    assert log_loss(0.5, True) == pytest.approx(log_loss(0.5, False))
 
 
-def test_positive_mean_delta_means_the_final_forecast_was_better():
-    """The sign convention IS the reader's sentence — backwards inverts the claim."""
-    # Early 0.5, late 0.9, outcome happened: the late forecast is much better.
-    out = paired_improvement([(0.5, 0.9, True)] * 8)
-    assert out is not None
-    assert out["mean_delta"] > 0
-    assert out["late_mean"] < out["early_mean"]
+def test_the_aggregate_can_point_the_opposite_way_from_the_paired_result():
+    """Section (A) of the report's worked example, as a guard.
 
-
-def test_negative_mean_delta_is_reported_not_suppressed():
-    """If the data contradicts the expectation, the module must say so (Alex)."""
-    out = paired_improvement([(0.9, 0.5, True)] * 8)
-    assert out is not None
-    assert out["mean_delta"] < 0
-
-
-def test_empty_and_single_pair_cohorts_return_none_not_zero():
-    """gotcha #53: a perfect-looking score standing in for no data."""
-    assert paired_improvement([]) is None
-    assert paired_improvement([(0.4, 0.6, True)]) is None
-
-
-def test_standard_error_is_paired_not_marginal():
-    """Correlated legs: the paired SE sees a consistent shift a marginal one hides.
-
-    These three outcomes sit at very different prices, so each leg's own Brier
-    scores are widely spread — but every pair moves the same direction by a
-    similar amount. The paired error bar makes the improvement detectable; an
-    error bar built from the two marginal variances calls it noise.
+    The early group is full of 3% longshots (a tiny Brier by construction); the
+    late group is coin flips we only began polling two hours out. The aggregate
+    says forecasts got WORSE. On the outcomes that appear in BOTH groups they
+    got better. This is the whole reason the paired cohort exists, so it is
+    asserted rather than described.
     """
-    pairs = [(0.20, 0.30, True), (0.50, 0.60, True), (0.80, 0.90, True)]
-    out = paired_improvement(pairs)
-    assert out is not None
-    assert out["mean_delta"] > 0
+    early_only = [brier(0.03, False) for _ in range(10)]
+    late_only = [brier(0.50, i % 2 == 0) for i in range(4)]
+    paired_early = [brier(e, w) for e, _, w in WORKED_PAIRS]
+    paired_final = [brier(f, w) for _, f, w in WORKED_PAIRS]
 
-    n = len(pairs)
-    early = [brier(e, y) for e, _, y in pairs]
-    late = [brier(lt, y) for _, lt, y in pairs]
-
-    def variance(xs):
-        m = sum(xs) / len(xs)
-        return sum((x - m) ** 2 for x in xs) / (len(xs) - 1)
-
-    unpaired_se = math.sqrt(variance(early) / n + variance(late) / n)
-
-    assert out["se"] < unpaired_se / 5
-    # The whole point: paired resolves the shift, unpaired does not.
-    assert out["mean_delta"] > 2 * out["se"]
-    assert out["mean_delta"] < 2 * unpaired_se
-
-
-def test_n_counts_outcomes_not_legs():
-    out = paired_improvement([(0.4, 0.6, True), (0.3, 0.2, False)])
-    assert out is not None and out["n"] == 2
-
-
-def test_unknown_score_raises_before_it_is_used():
-    with pytest.raises(ValueError, match="unknown score"):
-        paired_improvement([(0.4, 0.6, True), (0.3, 0.2, False)], score="accuracy")
-
-
-def test_log_loss_and_brier_can_be_selected_independently():
-    pairs = [(0.4, 0.6, True)] * 5
-    assert paired_improvement(pairs, score="brier")["mean_delta"] == pytest.approx(
-        brier(0.4, True) - brier(0.6, True)
+    aggregate_early = early_only + paired_early
+    aggregate_late = late_only + paired_final
+    assert sum(aggregate_late) / len(aggregate_late) > sum(aggregate_early) / len(
+        aggregate_early
     )
-    assert paired_improvement(pairs, score="log_loss")["mean_delta"] == pytest.approx(
-        log_loss(0.4, True) - log_loss(0.6, True)
-    )
+
+    s = paired_improvement(WORKED_PAIRS, cluster_ids=WORKED_EVENTS)
+    assert s["mean_delta"] > 0  # the same rows, the opposite conclusion
 
 
 # ---------------------------------------------------------------------------
-# Calibration is reported SEPARATELY from the proper score (Alex)
+# Calibration is a separate sentence
 # ---------------------------------------------------------------------------
 
 
 def test_calibration_is_computed_on_both_legs_of_the_same_population():
-    out = leg_calibration([(0.4, 0.6, True), (0.4, 0.6, False)])
+    out = leg_calibration(WORKED_PAIRS)
     assert set(out) == {"early_ece_pp", "late_ece_pp"}
     assert out["early_ece_pp"] is not None and out["late_ece_pp"] is not None
 
 
-def test_a_forecast_can_sharpen_while_calibration_worsens():
-    """Why the two numbers are reported apart rather than summarised into one.
+def test_perfect_calibration_is_not_accuracy():
+    """A forecaster who says 50% on every coin flip is perfectly calibrated and
+    useless. The page needs both words."""
+    coin = [(0.5, True), (0.5, False)] * 50
+    sharp = (
+        [(0.9, True)] * 45
+        + [(0.9, False)] * 5
+        + [(0.1, False)] * 45
+        + [(0.1, True)] * 5
+    )
+    for forecasts in (coin, sharp):
+        gap = abs(
+            sum(p for p, _ in forecasts) / len(forecasts)
+            - sum(w for _, w in forecasts) / len(forecasts)
+        )
+        assert gap == pytest.approx(0.0, abs=1e-9)
+    assert sum(brier(p, w) for p, w in coin) / len(coin) == pytest.approx(0.25)
+    assert sum(brier(p, w) for p, w in sharp) / len(sharp) == pytest.approx(0.09)
 
-    Base rate 0.8. The early leg quotes 0.8 on everything: perfectly calibrated,
-    and uninformative. The late leg separates the winners (0.9) from the losers
-    (0.6) but overshoots on both: a much better Brier score, and a worse ECE.
-    A single "did it improve?" number would have to pick one of those and hide
-    the other.
-    """
-    pairs = [(0.8, 0.9, True)] * 8 + [(0.8, 0.6, False)] * 2
-    score = paired_improvement(pairs)
-    cal = leg_calibration(pairs)
-    assert score is not None and score["mean_delta"] > 0, "sharper by Brier"
-    assert cal["early_ece_pp"] == pytest.approx(0.0), "early leg is on the diagonal"
-    assert cal["late_ece_pp"] > cal["early_ece_pp"], "but further off the diagonal"
+
+def test_a_forecast_can_sharpen_while_calibration_worsens():
+    """Early: 50% on ten coin flips, five of which won — perfectly calibrated,
+    Brier 0.25. Final: 0.8 on every winner and 0.2 on every loser — Brier 0.04,
+    and 20 points off the diagonal in both bins. Sharper AND worse calibrated,
+    which is why the page may not collapse the two words into one."""
+    pairs = [(0.50, 0.80, True)] * 5 + [(0.50, 0.20, False)] * 5
+    s = paired_improvement(pairs)
+    out = leg_calibration(pairs)
+    assert s["mean_delta"] > 0  # sharper
+    assert out["early_ece_pp"] == pytest.approx(0.0, abs=1e-9)
+    assert out["late_ece_pp"] > out["early_ece_pp"]  # and further off the diagonal
 
 
 def test_empty_calibration_is_absent_not_zero():
     out = leg_calibration([])
-    assert out == {"early_ece_pp": None, "late_ece_pp": None}
+    assert out["early_ece_pp"] is None and out["late_ece_pp"] is None
+
+
+# ---------------------------------------------------------------------------
+# The constants are policy, and policy is stated
+# ---------------------------------------------------------------------------
+
+
+def test_the_lead_is_twenty_four_hours_and_one_rung_only():
+    """CAL-P1330's recorded decision. A 7-day rung is legitimate only as its own
+    paired set — comparing it against this one is the cross-population defect
+    the module exists to remove."""
+    assert DEFAULT_LEAD_SECONDS == 24 * 3600
+
+
+def test_the_final_bound_is_tighter_than_the_early_one():
+    """The hour before a start is polled far more often than the day before; a
+    bound tighter than the cadence empties the cohort for a reason that has
+    nothing to do with the market."""
+    assert DEFAULT_FINAL_MAX_STALE_SECONDS < DEFAULT_EARLY_MAX_STALE_SECONDS
+    assert DEFAULT_FINAL_MAX_STALE_SECONDS >= 6 * 3600
+
+
+def test_the_minimum_separation_constant_is_gone():
+    """A fixed 24h lead makes it unnecessary: two instants a day apart cannot be
+    one poll sampled twice. Leaving it would leave two definitions of a pair."""
+    assert not hasattr(mod, "DEFAULT_MIN_SEPARATION_SECONDS")
+    assert not hasattr(mod, "PAIR_TOO_CLOSE")
+    assert "legs_too_close" not in PAIR_CLASSES
+
+
+def test_the_first_ever_snapshot_selector_is_gone_not_aliased():
+    """An alias would keep old call sites compiling while silently answering a
+    different question. A NameError names itself."""
+    assert not hasattr(mod, "select_paired_legs")
