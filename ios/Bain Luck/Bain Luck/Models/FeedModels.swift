@@ -199,7 +199,8 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
 
     // Personalization fields
     let personalized: Bool?
-    let baseScore: Int?
+    // Personalized ranking metadata can contain decimals, including on bundle children.
+    let baseScore: Double?
     let multiplier: Double?
     let personalizationReasons: [String]?
 
@@ -248,7 +249,7 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         headline = try c.decodeIfPresent(String.self, forKey: .headline)
         contextSummary = try c.decodeIfPresent(String.self, forKey: .contextSummary)
         personalized = try c.decodeIfPresent(Bool.self, forKey: .personalized)
-        baseScore = try c.decodeIfPresent(Int.self, forKey: .baseScore)
+        baseScore = try c.decodeIfPresent(Double.self, forKey: .baseScore)
         multiplier = try c.decodeIfPresent(Double.self, forKey: .multiplier)
         personalizationReasons = try c.decodeIfPresent([String].self, forKey: .personalizationReasons)
 
@@ -323,7 +324,7 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         concept: FeedConceptData?,
         bundle: FeedBundle?,
         personalized: Bool?,
-        baseScore: Int?,
+        baseScore: Double?,
         multiplier: Double?,
         personalizationReasons: [String]?
     ) {
