@@ -13,11 +13,11 @@ tolerance — and the 2c bid then satisfies the #151 evidence gate, so the row i
 as a 50% `outcome_prices` forecast. The fix pairs the shipped #5247 predicate
 `is_empty_book_midpoint` (tolerance 0.01) with it at both sites.
 
-🪤 THE CLASS IS NOT CLOSED AND `TestWhatThisFixDoesNotReach` PINS THE REMAINDER.
-`EMPTY_BOOK_MAX_BID` is 0.02, so a **3c** bid escapes both predicates. Widening it is
-#5333's ship, on #5333's own measurement. Those tests assert the escape is still open
-so it cannot be forgotten, and they are #5333's acceptance line — when #5333 lands,
-it flips them.
+✅ THE 3c REMAINDER IS CLOSED AND `TestWhatThisFixDidNotReachUntil5333` RECORDS THE
+FLIP. `EMPTY_BOOK_MAX_BID` was 0.02, so a **3c** bid escaped both predicates; #5333
+moved it to 0.05 on its own production measurement (2026-09-17) and those tests now
+assert the close instead of the escape. The bound's own guard tests live in
+`test_empty_book_bid_bound_5333.py`, including the cost the move pays.
 
 Nothing is re-implemented here: every case runs the production parser
 (`PolymarketAPIService._parse_market` / `_parse_event`) and the production selectors.
@@ -210,31 +210,43 @@ class TestGenuinePricesSurvive:
         assert _select(_gamma("lone ask", None, None, 0.36)) == (0.36, "best_ask")
 
 
-class TestWhatThisFixDoesNotReach:
-    """🪤 #5333's acceptance line. When #5333 lands, these three FLIP — that is the point.
+class TestWhatThisFixDidNotReachUntil5333:
+    """🪤 THE FLIP. These three asserted the escape OPEN; #5333 closed it and they
+    now assert the close. The class was written so its own remainder could not be
+    absorbed silently, and this is the PR coming back to say what it changed.
 
-    `EMPTY_BOOK_MAX_BID` is 0.02 and the bound is inclusive, so the 2c books we
-    actually stored are caught and a **3c** book is not. The diagnostic's own live
-    specimen (Gamma 4630453, 2026-09-17T03:43Z, price 0.5 on 0.03 / 0.98) is that
-    shape and is still admitted by this code.
-
-    Asserting the escape rather than describing it is deliberate. A remainder written
-    only in prose is a remainder nobody is forced to read; a remainder written as a
-    passing test cannot be absorbed silently, and #5333's PR must come here and say
-    what it changed.
+    Before (#6676, 2026-09-17 0500Z): `EMPTY_BOOK_MAX_BID` 0.02, inclusive — the 2c
+    books we stored were caught and the diagnostic's own live specimen (Gamma
+    4630453, 03:43Z, price 0.5 on 0.03 / 0.98) was still WRITTEN.
+    After (#5333, same day): the bound is 0.05 on its own production measurement —
+    1,119 rows in (0.02, 0.05] sitting on their midpoint, price range 0.490-0.525,
+    inside the derived band [0.465, 0.535]. The specimen is now declined.
     """
 
-    def test_the_bound_is_still_two_cents(self):
-        assert (EMPTY_BOOK_MAX_BID, EMPTY_BOOK_MIN_ASK) == (0.02, 0.95)
+    def test_the_bound_is_five_cents(self):
+        assert (EMPTY_BOOK_MAX_BID, EMPTY_BOOK_MIN_ASK) == (0.05, 0.95)
 
-    def test_a_three_cent_bid_still_escapes_both_predicates(self):
-        assert is_empty_book_midpoint(0.5, 0.03, 0.98) is False
+    def test_a_three_cent_bid_no_longer_escapes(self):
+        assert is_empty_book_midpoint(0.5, 0.03, 0.98) is True
 
-    def test_the_live_three_cent_specimen_is_still_written(self):
-        """NOT a passing ship — a measured, named remainder. #5333 owns it."""
-        assert _select(_gamma("Set Handicap", [0.5, 0.5], 0.03, 0.98)) == (
-            0.5, "outcome_prices"
-        )
+    def test_the_live_three_cent_specimen_is_no_longer_written(self):
+        """The shape #6676 measured live and could not take. It is taken now."""
+        assert _select(_gamma("Set Handicap", [0.5, 0.5], 0.03, 0.98)) == (None, None)
+
+    def test_the_bound_is_inclusive_at_five_cents_and_open_at_a_short_spread(self):
+        """Where the new edge is, asserted on the side the WIDTH decides.
+
+        Both rows sit EXACTLY on their own midpoint, so the tolerance cannot be
+        what separates them — only the bound can. A tolerance-decided pair
+        here would be a vacuous boundary test.
+
+        #6727 flipped the second assertion: it read `0.06/0.97 is False`, keeping a
+        91-cent-wide book because the bid missed by a cent. The separator is the
+        spread now, so the short book is the one that is kept.
+        """
+        assert is_empty_book_midpoint((0.05 + 0.97) / 2, 0.05, 0.97) is True
+        assert is_empty_book_midpoint((0.06 + 0.95) / 2, 0.06, 0.95) is False
+        assert is_empty_book_midpoint((0.06 + 0.97) / 2, 0.06, 0.97) is True
 
 
 class TestTheGuardIsActuallyAtBothCallSites:

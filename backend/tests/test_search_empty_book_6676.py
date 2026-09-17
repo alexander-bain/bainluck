@@ -56,12 +56,12 @@ still disagreed about whether they have a price — the same sentence
 
 ═══ WHAT THIS SHIP DELIBERATELY DOES NOT DO ═══
 
-🔴 **The promoted rung can itself be #5333's.** On *Lions vs. Bills - Player
-Props* the four legs dropped here are replaced by `0.505 on 0.03/0.97` rows —
-the identical shape one cent outside `EMPTY_BOOK_MAX_BID`. That cohort is
-#5333's measured ship. No constant moves here; widening the bound would take a
-population this ship never measured. The reader is strictly better off and the
-residual is named rather than quietly inherited.
+✅ **The promoted rung was #5333's, and #5333 landed.** On *Lions vs. Bills -
+Player Props* the four legs dropped here were replaced by `0.505 on 0.03/0.97`
+rows — the identical shape one cent outside the then-0.02 `EMPTY_BOOK_MAX_BID`.
+The bound is 0.05 on its own measurement now, so those are dropped too and
+`TestTheBounds` records the flip. No constant moves in THIS file either way; it
+pins that the shared one has not been moved here by accident.
 
 * **Read-side only** (gotcha #21). Nothing rewrites a stored price; the WRITER
   half is #6676's other end in `tasks/polymarket.py`.
@@ -345,24 +345,63 @@ class TestARealPriceSurvives:
 
 
 class TestTheBounds:
-    def test_a_three_cent_bid_is_5333s_and_is_NOT_taken_here(self):
-        """`EMPTY_BOOK_MAX_BID` is 0.02 and inclusive. One cent out is another ship.
+    def test_a_three_cent_bid_was_5333s_and_IS_taken_here_now(self):
+        """FLIPPED by #5333 (bid bound 0.02 -> 0.05, 2026-09-17).
 
-        The literal shape promoted onto the Lions/Bills card by this very fix.
+        The literal shape this ship promoted onto the Lions/Bills card: a 0.505 leg
+        on 0.03/0.97 replacing the 0.01/0.95 legs it dropped. It is dropped too now,
+        so the slice reaches further down the honest ladder instead of stopping on
+        the next phantom.
         """
         market = _Market([_Outcome(1, "Team First TD", 0.505, 0.03, 0.97)])
 
-        assert [o["name"] for o in _build_search_top_outcomes(market)] == ["Team First TD"]
+        assert _build_search_top_outcomes(market) == []
 
     def test_the_bid_bound_is_inclusive_at_two_cents(self):
         market = _Market([_Outcome(1, "Total Corners O/U 12.5", 0.50, 0.02, 0.98)])
 
         assert _build_search_top_outcomes(market) == []
 
-    def test_an_ask_below_the_bound_is_a_book_that_bounds_something(self):
-        market = _Market([_Outcome(1, "Half ask", 0.475, 0.01, 0.94)])
+    def test_a_six_cent_bid_is_kept_only_when_the_ask_does_not_compensate(self):
+        """The new edge, on the side the WIDTH decides: the price sits exactly on the
+        book's own midpoint, so only the bound can be what keeps it.
 
-        assert [o["name"] for o in _build_search_top_outcomes(market)] == ["Half ask"]
+        #6727 flipped the second half. `0.06/0.97` was kept here because the bid was
+        one cent past `EMPTY_BOOK_MAX_BID`, though the book is 91 cents of nothing.
+        A 6c bid is a reprieve only against an ask that leaves the spread short.
+        """
+        kept = _Market([_Outcome(1, "Team First TD", (0.06 + 0.95) / 2, 0.06, 0.95)])
+        assert [o["name"] for o in _build_search_top_outcomes(kept)] == ["Team First TD"]
+
+        dropped = _Market([_Outcome(1, "Team First TD", (0.06 + 0.97) / 2, 0.06, 0.97)])
+        assert [o["name"] for o in _build_search_top_outcomes(dropped)] == []
+
+    def test_the_milwaukee_bucks_shape_no_longer_reaches_a_card(self):
+        """🪤 THE FLIP, and it is #6727's whole ship.
+
+        `0.475 on 0.01 / 0.94` asserted KEPT here until 2026-09-17, on the reasoning
+        that an ask below `EMPTY_BOOK_MIN_ASK` is "a book that bounds something". It
+        bounds nothing: 93 cents wide. This exact row was photographed on production
+        at 390px hours after #6676's search half went live, reading "Milwaukee Bucks
+        48%" to be Steph Curry's next team, beside four legs at 0.01/0.95 the same
+        card had correctly refused — so the rule dropped four fabrications and left
+        the fifth, which is worse for a reader than dropping none.
+        """
+        market = _Market([_Outcome(1, "Milwaukee Bucks", 0.475, 0.01, 0.94)])
+        assert [o["name"] for o in _build_search_top_outcomes(market)] == []
+
+        # The same card's honest rows are untouched, including two whose BID is
+        # inside `EMPTY_BOOK_MAX_BID` and which only the spread keeps.
+        honest = _Market([
+            _Outcome(1, "Golden State Warriors", 0.74, 0.52, 0.96),
+            _Outcome(2, "San Antonio Spurs", 0.25, 0.01, 0.49),
+            _Outcome(3, "Boston Celtics", 0.205, 0.01, 0.40),
+        ])
+        assert [o["name"] for o in _build_search_top_outcomes(honest)] == [
+            "Golden State Warriors",
+            "San Antonio Spurs",
+            "Boston Celtics",
+        ]
 
     def test_the_half_cent_skew_is_INSIDE_the_tolerance(self):
         """0.505 on 0.01/0.99 — the specimen shape, midpoint 0.50, skew 0.005.

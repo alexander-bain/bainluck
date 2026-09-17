@@ -110,7 +110,7 @@ class TestOneRuleTwoSurfaces:
             (0.5, 0.02, 0.97),    # the specimens
             (0.5, 0.49, 0.51),    # a genuine coin flip
             (0.28, 0.25, 0.31),   # the live 0.28 control
-            (0.5, 0.03, 0.98),    # #5333's cohort: out of reach, must AGREE it is
+            (0.5, 0.03, 0.98),    # #5333's cohort: in reach since #5333, must AGREE
             (0.99, 0.0, 1.0),     # a price far from an empty book's midpoint
             (0.5, None, None),    # a model price, no book at all
             (None, 0.02, 0.97),   # no price to judge
@@ -123,18 +123,38 @@ class TestOneRuleTwoSurfaces:
             outcome(prob, bid, ask).current_yes_ask,
         )
 
-    def test_the_3c_cohort_is_deliberately_out_of_reach(self):
-        """#5333's ship, not this one, and the guard says so out loud.
+    def test_the_3c_cohort_came_into_reach_with_5333(self):
+        """FLIPPED, and the flip is the whole point of having written it.
 
-        `EMPTY_BOOK_MAX_BID` is 0.02 and inclusive. The diagnostic that found
-        this class read a 3c bid live off Gamma and proposed widening the bound;
-        the rows we actually stored are 2c, so the widening is not needed here
-        and moving a measured constant would take a population this ship never
-        looked at (109 rows, per `feed_market_quality`'s own comment). If that
-        bound later moves, this test fails and whoever moved it re-reads the
-        sentence above rather than discovering the scope change from a graph.
+        This test asserted the 3c escape OPEN so that moving `EMPTY_BOOK_MAX_BID`
+        could not happen quietly: whoever moved it had to come here and re-read
+        why it had not been moved. #5333 did, moved it 0.02 -> 0.05 on a fresh
+        production measurement (1,119 rows on their midpoint in (0.02, 0.05],
+        price range 0.490-0.525), and this is the return trip.
         """
-        assert _leg_prices_an_empty_book(outcome(0.5, 0.03, 0.98)) is False
+        assert _leg_prices_an_empty_book(outcome(0.5, 0.03, 0.98)) is True
+
+    def test_the_compensated_book_came_into_reach_with_6727(self):
+        """FLIPPED AGAIN, by the same mechanism, and that is the tripwire working.
+
+        This was re-armed by #5333 one cent past its new bid bound — `0.06/0.97`
+        asserted OUT OF REACH — so that the next person to widen had to come here
+        first. #6727 did, and found the premise wrong rather than the cent: a
+        0.06/0.97 book is 91 cents of nothing, and refusing to call it empty
+        because one SIDE missed by a cent is the arbitrariness, not a safeguard.
+        The pair of bounds became one statement about the spread. This is the
+        return trip.
+        """
+        assert _leg_prices_an_empty_book(outcome((0.06 + 0.97) / 2, 0.06, 0.97)) is True
+
+    def test_a_book_one_cent_short_of_the_spread_is_still_out_of_reach(self):
+        """The tripwire re-armed at the edge that decides now: the WIDTH.
+
+        The price is the book's exact midpoint, so the tolerance cannot be what
+        keeps it — only the spread being one cent too short.
+        """
+        assert _leg_prices_an_empty_book(outcome((0.06 + 0.95) / 2, 0.06, 0.95)) is False
+        assert _leg_prices_an_empty_book(outcome((0.0 + 0.89) / 2, 0.0, 0.89)) is False
 
 
 class TestGenuinePricesSurvive:

@@ -22,6 +22,7 @@ from app.utils.feed_market_quality import (
     EMPTY_BOOK_MAX_BID,
     EMPTY_BOOK_MIDPOINT_TOLERANCE,
     EMPTY_BOOK_MIN_ASK,
+    EMPTY_BOOK_MIN_SPREAD,
     is_empty_book_midpoint,
     is_fabricated_midpoint,
 )
@@ -127,11 +128,39 @@ class TestRowsThatMustSurvive:
 
 
 class TestTheBoundaries:
-    def test_a_bid_one_tick_above_the_floor_is_kept(self):
-        assert is_empty_book_midpoint(0.51, EMPTY_BOOK_MAX_BID + 0.01, 0.99) is False
+    def test_a_book_one_tick_short_of_the_spread_is_kept(self):
+        """Priced at the book's EXACT midpoint, so only the width can keep it.
 
-    def test_an_ask_one_tick_below_the_ceiling_is_kept(self):
-        assert is_empty_book_midpoint(0.485, 0.02, EMPTY_BOOK_MIN_ASK - 0.01) is False
+        Written as `0.51` against a 0.03/0.99 book until #5333 moved the bid bound to
+        0.05, at which point 0.51 stopped being that book's midpoint and the
+        assertion would have passed on the tolerance instead — a boundary test
+        that no longer tests its own boundary. Derived now, so it cannot go
+        vacuous the next time a constant moves.
+
+        REWRITTEN BY #6727, and the rewrite is the ship. This asserted
+        `is_empty_book_midpoint(0.525, 0.06, 0.99) is False` — a bid one tick past
+        `EMPTY_BOOK_MAX_BID`, kept no matter how extreme the ask. That is exactly the
+        arbitrariness the spread shape removes: 0.06/0.99 is 93 cents of nothing, and
+        production serves three such rows today ("College Basketball (M): Top 25
+        Ranked Teams", Iowa St. / Alabama / St. John's, all at 0.525). The boundary
+        this test defends is now the SPREAD, so it is stated against the spread.
+        """
+        bid = 0.06
+        ask = round(bid + EMPTY_BOOK_MIN_SPREAD - 0.01, 4)  # one tick too narrow
+        assert is_empty_book_midpoint((bid + ask) / 2, bid, ask) is False
+        # ...and one tick wider is refused, so the assertion above is not vacuous.
+        wide = round(bid + EMPTY_BOOK_MIN_SPREAD, 4)
+        assert is_empty_book_midpoint((bid + wide) / 2, bid, wide) is True
+
+    def test_an_ask_one_tick_below_the_ceiling_is_kept_only_if_the_bid_agrees(self):
+        """#6727: `0.02/0.94` used to be kept here purely because the ask missed 0.95.
+
+        That is the "Milwaukee Bucks 48%" shape. A one-cent ask miss is no longer a
+        reprieve when the bid gives the cent back — but an ask miss on a book that
+        genuinely bounds something still is, which is the half this keeps proving.
+        """
+        assert is_empty_book_midpoint(0.48, 0.02, EMPTY_BOOK_MIN_ASK - 0.01) is True
+        assert is_empty_book_midpoint(0.485, 0.06, EMPTY_BOOK_MIN_ASK - 0.01) is False
 
     def test_both_sides_exactly_at_the_threshold_are_refused(self):
         mid = (EMPTY_BOOK_MAX_BID + EMPTY_BOOK_MIN_ASK) / 2
@@ -157,9 +186,16 @@ class TestTheBoundaries:
         states the true guarantee -- while the sampled honest lines below pin that the
         band never grows far enough to reach them.
         """
-        band_lo = EMPTY_BOOK_MIN_ASK / 2 - EMPTY_BOOK_MIDPOINT_TOLERANCE
-        band_hi = (EMPTY_BOOK_MAX_BID + 1.0) / 2 + EMPTY_BOOK_MIDPOINT_TOLERANCE
-        assert (band_lo, band_hi) == pytest.approx((0.465, 0.52))
+        # #6727 re-derives this off the SPREAD. With `bid >= 0` and `ask <= 1`, a
+        # spread of at least S confines the midpoint to [S/2, 1 - S/2] whatever the
+        # ask does — which is the property an ask-bound widening would NOT have had.
+        band_lo = EMPTY_BOOK_MIN_SPREAD / 2 - EMPTY_BOOK_MIDPOINT_TOLERANCE
+        band_hi = (1.0 - EMPTY_BOOK_MIN_SPREAD / 2) + EMPTY_BOOK_MIDPOINT_TOLERANCE
+        # 0.52 until #5333 moved the bid bound 0.02 -> 0.05; (0.465, 0.535) until
+        # #6727 replaced the pair with the spread. The literal is kept (rather than
+        # derived twice) precisely so a constant move has to stop here and re-state
+        # the band it bought.
+        assert (band_lo, band_hi) == pytest.approx((0.44, 0.56))
 
         # Dense sweep: nothing outside the derived band may ever be refused. Bids run
         # to 20c -- far past EMPTY_BOOK_MAX_BID and past any plausible widening of it,
