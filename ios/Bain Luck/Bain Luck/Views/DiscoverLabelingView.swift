@@ -727,7 +727,12 @@ struct DiscoverLabelingView: View {
         if let starts = shortDate(item.commenceTime) {
             parts.append("Starts \(starts)")
         }
-        if let resolves = shortDate(item.resolutionDate) {
+        // #4081 — a resolution deadline is usually a declared calendar date
+        // serialised as UTC midnight. `shortDate` localises it (a day early west
+        // of UTC) AND prints an hour the contract never declared, which is
+        // exactly the "wrong thing about when" this line exists to prevent.
+        // A real intraday deadline still falls through to local conversion.
+        if let resolves = CalendarDeadline.format(item.resolutionDate, style: .weekdayMonthDayTime) {
             parts.append("Resolves \(resolves)")
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")

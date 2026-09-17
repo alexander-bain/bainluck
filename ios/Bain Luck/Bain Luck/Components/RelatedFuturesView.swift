@@ -1647,8 +1647,11 @@ private struct GameCell: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     // Date
-                    if let dateStr = future.resolutionDate, let date = dateStr.asDate {
-                        Text(date, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day())
+                    // #4081 — a UTC-midnight `resolution_date` is a declared
+                    // calendar date, not an instant; localising it drew the day
+                    // before west of UTC.
+                    if let text = CalendarDeadline.format(future.resolutionDate, style: .weekdayMonthDay) {
+                        Text(text)
                             .font(.system(size: 9, weight: .medium))
                             .foregroundStyle(.tertiary)
                     }

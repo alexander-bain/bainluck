@@ -365,8 +365,13 @@ struct FuturesDetailView: View {
                     }
                 }
 
-                // Resolution date
-                if let resolution = market.resolutionDate, let date = resolution.asDate {
+                // Resolution date — a "by end of <period>" deadline is a CALENDAR
+                // DATE serialised as UTC midnight, and localising it printed the
+                // day before for every reader west of UTC (#4081: this row read
+                // "Resolves Dec 30, 2026" on a market resolving 2026-12-31). A
+                // real intraday deadline is still an instant and still local;
+                // `CalendarDeadline` is what tells them apart.
+                if let text = CalendarDeadline.format(market.resolutionDate, style: .monthDayYear) {
                     HStack(spacing: 6) {
                         Image(systemName: "flag.checkered")
                             .font(.system(size: 9))
@@ -375,7 +380,7 @@ struct FuturesDetailView: View {
                         Text("Resolves")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(DS.textMuted)
-                        Text(date, format: .dateTime.month(.abbreviated).day().year())
+                        Text(text)
                             .font(.system(size: 12, weight: .semibold, design: .monospaced))
                             .foregroundStyle(DS.textSecondary)
                     }
