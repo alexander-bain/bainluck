@@ -13659,6 +13659,229 @@ def _row_market_ids(row: dict) -> set:
     return {market_id} if market_id is not None else set()
 
 
+#: The first word of an outcome that names the DRAW rather than either club.
+#:
+#: Read BEFORE the two clubs and matched on the FIRST TOKEN ONLY, because a venue
+#: spells the draw with both clubs inside it — Polymarket's leg is
+#: ``Draw (Crystal Palace FC vs. KKS Lech Poznań)``. A substring test would then
+#: fire on a club whose name merely contains the word; the first token cannot.
+_MATCH_WINNER_DRAW_TOKENS = frozenset({"draw", "tie"})
+
+
+def _match_winner_side(
+    outcome_name: str, home_name: Optional[str], away_name: Optional[str]
+) -> Optional[str]:
+    """Which side of THIS fixture does a served ``other`` row name? (#6799)
+
+    ``"home"``, ``"away"``, ``"draw"`` — or ``None``, and ``None`` is the answer
+    that does the work. :func:`_market_is_event_match_winner` folds a market only
+    when EVERY one of its legs answers, so a single unrecognised leg keeps the
+    whole market on the page. Every ambiguity below therefore costs a duplicate
+    card, never a deleted price.
+
+    Three refusals worth naming, each measured on the production payload for
+    event 15298552 (Crystal Palace v Lech Poznań, live at 3-0, 2026-09-17 20:50Z):
+
+      * ``Crystal Palace FC 3 - 3 KKS Lech Poznań`` — an Exact Score leg. It
+        answers ``away``, because ``names_match`` finds "Lech Poznań" as a
+        trailing-word suffix and refuses "Crystal Palace" as a prefix. One side
+        for every leg of that market, so the market fails the two-sides test.
+      * ``Neither`` (First Team to Score) and ``Yes``/``No`` (Both Teams to
+        Score) — no side, so those markets are never candidates. ``game-markets``
+        does not call :func:`resolve_binary_matchup_outcome_name`, so a
+        Polymarket moneyline published as bare Yes/No stays unrecognised here and
+        keeps today's behaviour.
+      * ``Draw (Crystal Palace FC vs. KKS Lech Poznań)`` — names both clubs.
+        Against the clubs alone ``names_match`` answers False to each (token
+        overlap 2-of-7 and 1-of-7, both under the 0.5 bar), so the market would be
+        refused rather than mis-sided; the draw token is read first so a fixture
+        this ordinary is not refused for a reason this obvious.
+
+    ``names_match`` rather than :func:`_team_name_patterns` + substring: the
+    stored clubs are the venues' own spellings and they differ by diacritic
+    ("Beşiktaş JK" against our "Besiktas JK", where a substring test answers
+    False), by club-type prefix ("KKS Lech Poznań"), and by truncation
+    ("New York G" for the Giants). ``names_match`` normalises all three and is
+    already this repo's answer to "are these two strings the same team".
+    """
+    from app.utils.name_normalization import names_match
+
+    name = (outcome_name or "").strip()
+    if not name:
+        return None
+
+    first_token = re.split(r"[\s(]+", name, maxsplit=1)[0].strip("().,:;-").lower()
+    if first_token in _MATCH_WINNER_DRAW_TOKENS:
+        return "draw"
+
+    is_home = bool(home_name) and names_match(name, home_name)
+    is_away = bool(away_name) and names_match(name, away_name)
+    # A leg that answers to BOTH clubs has named neither of them, and a derby of
+    # two similarly-spelled clubs is exactly where that happens. Refusing keeps
+    # the market.
+    if is_home and is_away:
+        return None
+    if is_home:
+        return "home"
+    if is_away:
+        return "away"
+    return None
+
+
+def _market_is_event_match_winner(
+    rows: list, home_name: Optional[str], away_name: Optional[str]
+) -> bool:
+    """Is this market, as SERVED, nothing but "who wins the match"? (#6799)
+
+    Two independent tests, both required, because either one alone folds a market
+    that is not the full-time winner:
+
+    1. **Every served leg names a side, and at least two sides are covered.**
+       Without it, Polymarket's habit of packing a game's total INTO the market
+       named for the fixture would cost the reader real rungs: market 59115833
+       ``"Titans vs. Giants"`` serves ``O/U 52.5``, ``Titans``, ``O/U 50.5``, and
+       folding it away deletes two totals. The legs are read from the payload
+       rows rather than from the market, so a leg an earlier filter already
+       dropped cannot make a market look mixed that no longer is.
+    2. **The market's name is the bare fixture.** Without it, ``… - Halftime
+       Result`` and ``… - Second Half Result`` fold INTO full time: their legs are
+       the same three sides, and test 1 passes on every one of them.
+
+    🔴 THE ``" - "`` CLAUSE IS NOT BELT-AND-BRACES ON THE COLON.
+    :data:`_MONEYLINE_MATCHUP_RE`'s own comment says *"Hyphens are NOT separators
+    in this population (no market uses ' - ')"*. That was true of the population
+    it was written for and is false here: every Polymarket container-derived name
+    on event 15298552 uses it — ``- Halftime Result``, ``- Second Half Result``,
+    ``- Exact Score``, ``- First Team to Score``, ``- Player Props``. The regex is
+    reused for what it does say (the name is a matchup, and a TAIL colon
+    disqualifies) and the separator this population actually uses is added here,
+    beside the specimen, rather than by editing a regex three other callers read.
+    """
+    if not rows:
+        return False
+
+    market_name = (rows[0].get("market_name") or "").strip()
+    if not market_name or " - " in market_name:
+        return False
+    if not _MONEYLINE_MATCHUP_RE.match(market_name):
+        return False
+
+    sides = set()
+    for row in rows:
+        side = _match_winner_side(row.get("outcome_name"), home_name, away_name)
+        if side is None:
+            return False
+        sides.add(side)
+    return len(sides) >= 2
+
+
+def _fold_duplicate_match_winner_markets(
+    other_rows: list, home_name: Optional[str], away_name: Optional[str]
+) -> list:
+    """One match-winner card per fixture, not one per venue (#6799).
+
+    A live Europa League page served the event's own winner market twice — Kalshi
+    ``60481745`` and Polymarket ``60207781`` — and the card printed the union of
+    their legs: **Crystal Palace at both 99% and >99%**, the draw as both "Tie"
+    and "Draw (…)", five rows summing past 200%. Alex's standing ruling is the
+    other way round: one number per question, and source divergence is a data bug
+    to fix rather than a thing to show.
+
+    The fold is a DROP, never a merge. Step 9b averages its duplicates because a
+    player prop's two venues quote the same line; here the two venues quote three
+    outcomes each under different spellings, and averaging would need an
+    alignment that inventing a new blended number does not justify. Every number
+    that survives is a number a venue actually quoted, and the card's ``2x`` badge
+    (``new Set(outcomes.map(o => o.source)).size``) falls to 1 on its own — no
+    claim of a blend that did not happen.
+
+    WHICH MARKET SURVIVES, in order, and why each key is a real criterion rather
+    than a tiebreak that merely happens to be stable:
+
+      1. **The most distinct sides.** Never lose an outcome the reader could have
+         seen: a two-leg market never beats the three-leg one carrying the draw.
+      2. **The freshest price.** A market is only as fresh as its oldest leg
+         (:func:`blended_observed_at`, and the comparison goes through that helper
+         rather than ``<`` on the ISO text, which the 9b clock comment explains).
+         An unknown age never wins — it cannot be shown to be the fresher one.
+      3. **Kalshi.** Step 9b's existing preference, reused rather than restated.
+      4. **The lowest market id**, so a page does not change under a reader when
+         nothing about the data did.
+
+    Rows from a market that carries no ``_market_id`` are passed through
+    untouched: they cannot be grouped, so they cannot be folded.
+    """
+    from app.utils.latest_observation import blended_observed_at
+
+    rows_by_market: dict = {}
+    for row in other_rows:
+        market_id = row.get("_market_id")
+        if market_id is None:
+            continue
+        rows_by_market.setdefault(market_id, []).append(row)
+
+    candidates = [
+        market_id
+        for market_id, rows in rows_by_market.items()
+        if _market_is_event_match_winner(rows, home_name, away_name)
+    ]
+    if len(candidates) < 2:
+        return other_rows
+
+    def _rank(market_id):
+        rows = rows_by_market[market_id]
+        sides = {
+            _match_winner_side(r.get("outcome_name"), home_name, away_name)
+            for r in rows
+        }
+        oldest = blended_observed_at([r.get("observed_at") for r in rows])
+        is_kalshi = any(r.get("source") == "kalshi" for r in rows)
+        return len(sides), oldest, is_kalshi, market_id
+
+    survivor = candidates[0]
+    survivor_rank = _rank(survivor)
+    for market_id in candidates[1:]:
+        challenger_rank = _rank(market_id)
+        if _match_winner_rank_beats(challenger_rank, survivor_rank, blended_observed_at):
+            survivor, survivor_rank = market_id, challenger_rank
+
+    dropped = set(candidates) - {survivor}
+    return [r for r in other_rows if r.get("_market_id") not in dropped]
+
+
+def _match_winner_rank_beats(challenger, incumbent, blended_observed_at) -> bool:
+    """Does ``challenger`` outrank ``incumbent``? (#6799)
+
+    Split out from :func:`_fold_duplicate_match_winner_markets` because the
+    freshness key cannot be expressed as a sort key: two ISO stamps are only
+    comparable through :func:`blended_observed_at`, which returns the OLDER of
+    them verbatim and answers ``None`` the moment either is absent or
+    unparseable. Ordering the four keys by hand is what keeps that "unknown never
+    wins" rule intact — a sort would have to invent a value for the unknown, and
+    every value it could invent is a claim about an age we do not have.
+    """
+    c_sides, c_oldest, c_kalshi, c_id = challenger
+    i_sides, i_oldest, i_kalshi, i_id = incumbent
+
+    if c_sides != i_sides:
+        return c_sides > i_sides
+
+    if c_oldest != i_oldest:
+        older = blended_observed_at([c_oldest, i_oldest])
+        if older is not None:
+            # The one that is NOT the older stamp is the fresher market.
+            return older == i_oldest
+        # One age is unknown. An unknown age is not evidence of freshness, so the
+        # KNOWN one wins and two unknowns fall through to the keys below.
+        if (c_oldest is None) != (i_oldest is None):
+            return i_oldest is None
+
+    if c_kalshi != i_kalshi:
+        return c_kalshi
+
+    return c_id < i_id
+
+
 def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
     """Classify a game-level market name into a type.
 
@@ -17930,6 +18153,22 @@ async def _build_game_markets(
             period_markets = [r for r in period_markets if _not_redundant(r)]
             matchups = [r for r in matchups if _not_redundant(r)]
             other_markets = [r for r in other_markets if _not_redundant(r)]
+
+    # ── #6799 — ONE MATCH-WINNER CARD PER FIXTURE, NOT ONE PER VENUE ─────────
+    #
+    # Placed HERE, after every drop above, for the reason #4189's block states
+    # three paragraphs up: this is the first point at which "which of these
+    # markets reaches the reader?" is a fact rather than a forecast. Choosing the
+    # survivor earlier could keep the one a later filter then empties, and the
+    # fixture's own winner market would leave the page altogether.
+    #
+    # Before `repair_club_names`, not after: that pass rewrites outcome labels
+    # under the truncated-club map, and folding on repaired strings would judge
+    # "Los Angeles R" and "Los Angeles Rams" as two different populations
+    # depending on whether the map happened to carry this fixture.
+    other_markets = _fold_duplicate_match_winner_markets(
+        other_markets, event.home_team_name, event.away_team_name
+    )
 
     # #6447 — THE CARDS STOP NAMING A CLUB THAT DOES NOT EXIST.
     #
