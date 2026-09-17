@@ -1145,6 +1145,19 @@ actor APIClient {
         return try await fetch("/api/golf/leaderboard", query: ["tour": tour], cacheTTL: 30)
     }
 
+    /// Fetches one golf tournament and its field (#1471).
+    ///
+    /// ⚠️ **NOT `fetchTournamentHub`.** That calls `/api/tournaments/{slug}`,
+    /// the registered *tennis* hub, which 404s on every golf slug — the
+    /// "Couldn't load Biltmore Championship Asheville" Alex hit on 2026-09-16.
+    /// See `GolfTournamentDetailResponse` for the measurement.
+    ///
+    /// 60s rather than the landing page's 120s: the field's probabilities move
+    /// during a round, and this is the screen a reader stays on to watch them.
+    func fetchGolfTournament(slug: String) async throws -> GolfTournamentDetailResponse {
+        return try await fetch("/api/golf/tournaments/\(slug)", cacheTTL: 60)
+    }
+
     /// Pins an event or futures market for the current user.
     func addPin(type: String, id: Int) async throws -> StatusResponse {
         return try await postEncodable("/api/me/pins", body: PinRequest(pinType: type, targetId: id))

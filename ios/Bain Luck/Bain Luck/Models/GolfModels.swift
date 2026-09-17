@@ -214,3 +214,42 @@ nonisolated struct GolfScheduleEntry: Decodable, Sendable, Identifiable {
 
     var id: String { (eventName ?? "") + (startDate ?? "") }
 }
+
+// MARK: - One golf tournament (#1471)
+
+/// `GET /api/golf/tournaments/{slug}` — the destination a golf tournament card
+/// leads to.
+///
+/// ⚠️ **THIS IS NOT `/api/tournaments/{slug}`, AND THE DIFFERENCE IS A BUG ALEX
+/// HIT.** That one is the *registered hub* — tennis draws — and it answers
+/// `404 {"detail":"No registered tournament 'biltmore-championship-asheville'"}`
+/// for every golf slug there is. Routing a golf tournament there is what
+/// produced "Couldn't load Biltmore Championship Asheville" on his phone, and
+/// why the retry button could not help: the second call is the same 404.
+/// Measured 2026-09-16 — `/api/tournaments/us-open` 200, `/api/tournaments/the-open`
+/// and `/api/tournaments/biltmore-championship-asheville` both 404, while
+/// `/api/golf/tournaments/biltmore-championship-asheville` served 132 golfers.
+///
+/// The field arrives at the TOP LEVEL, not inside `tournament` — so
+/// `tournament.golfers` is empty here and the field is read from `golfers`.
+/// Do not "tidy" that by reaching for `tournament.golfers`; it is the shape the
+/// server sends.
+nonisolated struct GolfTournamentDetailResponse: Decodable, Sendable {
+    let tournament: GolfTournamentData
+    let golfers: [GolfGolferData]
+    let biggestMovers: [GolfMoverData]
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        tournament = try container.decode(GolfTournamentData.self, forKey: .tournament)
+        // Tolerant on everything but the tournament itself: a malformed mover or
+        // a field this build has not seen must not blank a page whose subject
+        // decoded perfectly well (the per-item tolerance rule of #1471).
+        golfers = (try? container.decodeIfPresent([GolfGolferData].self, forKey: .golfers)) ?? []
+        biggestMovers = (try? container.decodeIfPresent([GolfMoverData].self, forKey: .biggestMovers)) ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case tournament, golfers, biggestMovers
+    }
+}

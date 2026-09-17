@@ -109,6 +109,37 @@ final class NavigationCoordinator: ObservableObject {
             selectedTab = .leagues
             return true
 
+        case "golf":
+            // #1471. The third instance of the gap the `tournaments` and
+            // `about` cases above are both written about: a real destination
+            // with no case in the one router. `GolfTournamentView` is reached
+            // by hand from the Discover card, the Golf page's hero and its tour
+            // rows — and until this case existed no link could open it, which
+            // also meant the screen could not be photographed before a
+            // submission.
+            //
+            // Browse, matching `tournaments`: same kind of destination, same
+            // tab, and it is a tab that CONSUMES a pushed route
+            // (PendingRouteReachabilityTests is the guard for that pairing).
+            if pathComponents.count >= 2 {
+                let slug = pathComponents[1]
+                // `?name=` lets a caller that knows the real title pass it, so
+                // the title bar is not guessed from a slug. The loaded screen
+                // renders the server's own name regardless.
+                let name = queryItems?.first(where: { $0.name == "name" })?.value
+                navigate(
+                    to: .golfTournament(
+                        slug: slug,
+                        name: name ?? toTitleCaseAcronymSafe(slug.replacingOccurrences(of: "-", with: " "))
+                    ),
+                    tab: .leagues
+                )
+                return true
+            }
+            // A link to the collection: the golf category is the list.
+            navigate(to: .golfCategory, tab: .leagues)
+            return true
+
         case "playoffs":
             if pathComponents.count >= 2 {
                 navigate(to: .leagueGrid(slug: pathComponents[1]), tab: .leagues)

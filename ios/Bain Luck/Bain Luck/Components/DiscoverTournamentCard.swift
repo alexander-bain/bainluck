@@ -209,8 +209,30 @@ struct NativeTournamentDiscoverCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.08), radius: 8, y: 4)
         .onTapGesture {
-            navigationPath.append(Route.sportCategory(key: "golf", name: "Golf"))
+            navigationPath.append(Self.destination(for: data))
         }
+    }
+
+    /// Where this card leads (#1471).
+    ///
+    /// It used to lead, unconditionally, to `Route.sportCategory(key: "golf")` —
+    /// the generic Golf page. Alex, 2026-09-16: tapping the golf card showed him
+    /// **the same card again** on that page, and tapping THAT produced
+    /// "Couldn't load Biltmore Championship Asheville". A card about one
+    /// tournament has to open that tournament; the category is where a reader
+    /// goes when they want the others.
+    ///
+    /// The slug is the server's own (`biltmore-championship-asheville`), and
+    /// `test_feed_tournament_destination_1471.py` pins it as the slug
+    /// `get_golf_tournament` matches on — so this is a contract, not a guess.
+    /// Without one there is no tournament to open and the category is the
+    /// honest destination: better the generic page than a screen that can only
+    /// say it failed.
+    nonisolated static func destination(for data: FeedTournamentData) -> Route {
+        guard let slug = data.slug, !slug.isEmpty else {
+            return .sportCategory(key: "golf", name: "Golf")
+        }
+        return .golfTournament(slug: slug, name: data.name)
     }
 }
 

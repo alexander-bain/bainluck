@@ -92,6 +92,86 @@ final class EveryLinkLandsTests: XCTestCase {
         XCTAssertEqual(nav.consumeRoute(), .tournamentHub(slug: "roland-garros", name: "French Open"))
     }
 
+    // MARK: - A golf tournament (#1471)
+
+    /// The third instance of this file's own subject: a real destination with no
+    /// case in the one router.
+    ///
+    /// `GolfTournamentView` is reached by hand from the Discover tournament card
+    /// and from the Golf page's hero and tour rows, and until #1471 no link
+    /// could open it — which also meant the screen could not be photographed
+    /// before a submission. Exactly the `tournaments` gap this file was written
+    /// for, one tournament kind over.
+    @MainActor
+    func testGolfLinkOpensThatTournament() throws {
+        let nav = NavigationCoordinator()
+        nav.selectedTab = .myStuff   // start elsewhere, so .leagues proves the move
+
+        XCTAssertTrue(
+            nav.handleURL(try XCTUnwrap(URL(string: "bainluck://golf/biltmore-championship-asheville"))),
+            "a link to a golf tournament is not a link the app accepts"
+        )
+        XCTAssertEqual(nav.selectedTab, .leagues)
+
+        let pushed = expectation(description: "route published")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { pushed.fulfill() }
+        wait(for: [pushed], timeout: 1.0)
+        XCTAssertEqual(
+            nav.consumeRoute(),
+            .golfTournament(slug: "biltmore-championship-asheville", name: "Biltmore Championship Asheville"),
+            "the slug must survive the link, and the title bar must not read 'Biltmore Championship Asheville' "
+            + "as some other casing of itself"
+        )
+    }
+
+    @MainActor
+    func testGolfLinkPrefersAnExplicitName() throws {
+        let nav = NavigationCoordinator()
+        _ = nav.handleURL(try XCTUnwrap(URL(string: "bainluck://golf/the-open?name=The%20Open%20Championship")))
+
+        let pushed = expectation(description: "route published")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { pushed.fulfill() }
+        wait(for: [pushed], timeout: 1.0)
+        XCTAssertEqual(
+            nav.consumeRoute(),
+            .golfTournament(slug: "the-open", name: "The Open Championship")
+        )
+    }
+
+    /// A bare link is a link to the collection, matching `events` and
+    /// `tournaments`: it opens the golf category rather than a tournament with
+    /// no slug, which could only fail to load.
+    @MainActor
+    func testBareGolfLinkOpensTheCategory() throws {
+        let nav = NavigationCoordinator()
+        XCTAssertTrue(nav.handleURL(try XCTUnwrap(URL(string: "bainluck://golf"))))
+        XCTAssertEqual(nav.selectedTab, .leagues)
+
+        let pushed = expectation(description: "route published")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { pushed.fulfill() }
+        wait(for: [pushed], timeout: 1.0)
+        XCTAssertEqual(nav.consumeRoute(), .golfCategory)
+    }
+
+    /// A golf link must never land on the registered tennis hub — the 404 that
+    /// produced "Couldn't load Biltmore Championship Asheville" on Alex's phone.
+    @MainActor
+    func testAGolfLinkNeverLandsOnTheTennisHub() throws {
+        let nav = NavigationCoordinator()
+        _ = nav.handleURL(try XCTUnwrap(URL(string: "bainluck://golf/biltmore-championship-asheville")))
+
+        let pushed = expectation(description: "route published")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { pushed.fulfill() }
+        wait(for: [pushed], timeout: 1.0)
+
+        if case .tournamentHub = nav.consumeRoute() {
+            XCTFail(
+                "a golf slug routed to /api/tournaments/{slug}, which serves tennis draws and 404s on "
+                + "every golf slug there is"
+            )
+        }
+    }
+
     // MARK: - Naming a hub from a slug
 
     func testCatalogOwnsTheNameItKnows() {
