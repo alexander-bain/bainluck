@@ -19,6 +19,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 FE = ROOT / "frontend"
 LIB = FE / "lib" / "futuresCardPriceAge.ts"
 TEST = FE / "__tests__" / "futuresCardPricelessRowFloor6803.test.ts"
+RENDER = FE / "__tests__" / "components" / "futuresCardPipReadsPrices6018.test.tsx"
 FIXTURE = FE / "__tests__" / "fixtures" / "futures114175PricelessTail6803.json"
 
 # (name, file, find, replace, why it must be caught)
@@ -86,6 +87,14 @@ MUTANTS = [
         '"last_updated": "2026-09-18T00:00:00.000000+00:00"',
         "the non-vacuity clause must refuse a fixture that cannot show the defect",
     ),
+    (
+        "wiring-severed: the card prints `updated_at` again instead of the helper",
+        FE / "components" / "FuturesCard.tsx",
+        "  const pricesAsOf = renderedPricesAsOf(market);",
+        "  const pricesAsOf = market.updated_at;",
+        "a correct helper the card does not call is the silent no-op — only the "
+        "RENDERED-OUTPUT clauses see this, and notice 49 makes them the closing evidence",
+    ),
 ]
 
 # Deliberate controls: these MUST survive. A control that dies means the suite is
@@ -104,7 +113,7 @@ CONTROLS = [
 
 def run_suite() -> tuple[bool, str]:
     p = subprocess.run(
-        ["npx", "jest", "--testPathPatterns=futuresCardPrice"],
+        ["npx", "jest", "--testPathPatterns=futuresCard"],
         cwd=FE, capture_output=True, text=True,
     )
     return p.returncode == 0, (p.stdout + p.stderr)

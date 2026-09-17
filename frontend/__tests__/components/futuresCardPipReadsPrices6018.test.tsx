@@ -27,6 +27,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import FuturesCard from "../../components/FuturesCard";
 import type { FuturesMarket, FuturesOutcome } from "../../lib/types";
+import specimen from "../fixtures/futures114175PricelessTail6803.json";
 
 /** The minute of the screenshot, so every relative string below is fixed. */
 const SHOT = new Date("2026-09-13T22:47:00.000Z");
@@ -166,6 +167,79 @@ describe("#6018 what it refuses to say", () => {
     });
 
     const printed = pip(market);
+    expect(printed === null || printed === "").toBe(true);
+  });
+});
+
+/**
+ * #6803 — THE SAME WIRING, ONE DOOR FURTHER IN.
+ *
+ * Appended here rather than given its own file because it is the same claim
+ * about the same span: the card prints the helper's answer. The unit rule lives
+ * in `__tests__/futuresCardPricelessRowFloor6803.test.ts`; this proves a reader
+ * of a PINNED card sees it, which is the surface #6803 was filed about
+ * (`/api/futures/{id}` — My Stuff and Preferences). That surface is auth-gated,
+ * so under notice 49 this rendered-output read is what closes it in place of a
+ * LOOK no lane can take.
+ *
+ * Its own frozen clock: the minute the fixture was captured, so "3h ago" is
+ * fixed text rather than a moving target.
+ */
+describe("#6803 a priceless rung does not date the pinned card", () => {
+  /** `/api/futures/114175`, captured 2026-09-17T23:05Z. */
+  const CAPTURE = new Date("2026-09-17T23:05:00.000Z");
+
+  beforeAll(() => {
+    jest.setSystemTime(CAPTURE);
+  });
+
+  afterAll(() => {
+    jest.setSystemTime(SHOT);
+  });
+
+  const ladder = (): FuturesOutcome[] =>
+    (specimen.outcomes as Array<{
+      id: number;
+      name: string;
+      probability: number | null;
+      last_updated: string;
+    }>).map((o) => leg(o.id, o.name, o.probability as number, o.last_updated));
+
+  it("prints the age of the fourteen prices, not of the five placeholders", () => {
+    const market = card({
+      id: 114175,
+      name: "Who will be UFC Heavyweight champion at the end of 2026?",
+      outcome_count: 19,
+      // The row's own write time is irrelevant and present on purpose.
+      updated_at: "2026-09-17T19:50:18+00:00",
+      outcomes: ladder(),
+    });
+
+    expect(pip(market)).toBe("3h ago");
+    // What the reader actually saw: 128 days of understatement, bought from
+    // five rungs that display no number at all.
+    expect(pip(market)).not.toBe("May 12");
+  });
+
+  it("a ladder of nothing but placeholders prints no pip rather than May 12", () => {
+    // The floor is withheld (notice 34), not recovered from the rows the helper
+    // just refused to count. A card drawing no prices has no price age.
+    const market = card({
+      id: 114175,
+      outcome_count: 5,
+      updated_at: "2026-09-17T19:50:18+00:00",
+      outcomes: (specimen.outcomes as Array<{
+        id: number;
+        name: string;
+        probability: number | null;
+        last_updated: string;
+      }>)
+        .filter((o) => o.probability == null)
+        .map((o) => leg(o.id, o.name, o.probability as number, o.last_updated)),
+    });
+
+    const printed = pip(market);
+    expect(printed).not.toBe("May 12");
     expect(printed === null || printed === "").toBe(true);
   });
 });
