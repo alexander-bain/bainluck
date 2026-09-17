@@ -32,14 +32,27 @@ complement the same way, and that has moved twice in one day:
     bid<=0.05, ask>=0.95  (#5333)   6          ``ask == 0.95`` exactly, on the
                                                float boundary: ``1 - 0.95`` is
                                                ``0.050000000000000044``
-    ask - bid >= 0.90     (#6727)   0          nothing — the spread is invariant
-                                               under the flip, so the class is
-                                               empty by construction
+    ask - bid >= 0.90     (#6727)   0          the SPREAD is invariant under the
+                                               flip — but see below: condition 3
+                                               was not, and 4 legs escaped there
+    + rounded condition 3           0          nothing; the invariance is now the
+                                               code's and not only the algebra's
 
 Swept over all 5,050 integer-cent books with the writer's own arithmetic. (A
 sweep that tidies the complement with ``round()`` reports the middle row as 0
 too, and concludes the guard was never load-bearing. It was, on a quarter of the
 class, and it still is on the six.)
+
+THE FOURTH ROW IS #6676's FOURTH WRITER AND IT CORRECTS THE THIRD. Every sweep
+above varies the BOOK and holds the price fixed, so none of them can see a
+condition-3 boundary, and the "empty by construction" the third row used to
+claim was measured by a method that could not have found a counter-example. Over
+all 509,949 (bid, ask, price) triples the unrounded predicate disagreed with its
+own complement on 10 — and on 4 of those the ITEM passed while the derived no
+leg was the phantom, which is the split this file exists to prevent, reachable
+through this module's own producer. ``feed_market_quality`` now rounds that
+compare; ``test_empty_book_midpoint_tolerance_6676.py`` is where it is pinned.
+The item-level guard below still stands, for the reasons at the call site.
 
 SO THE ASYMMETRY IS REAL, IS CLOSING, AND CLOSES ENTIRELY UNDER #6727 — at which
 point this guard is defence in depth on this path. IT STAYS, and
