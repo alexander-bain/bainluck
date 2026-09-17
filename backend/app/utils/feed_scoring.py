@@ -8,6 +8,7 @@ scores/dicts — no database access, no side effects.
 from datetime import datetime
 from typing import Any
 
+from app.utils.aggregation import parse_source_entry
 from app.utils.game_state import normalize_live_game_state
 from app.utils.graded_card import rendered_duel_percents
 from app.utils.prematch_reading import resolve_prematch_reading
@@ -348,6 +349,54 @@ def compute_base_score(
     return score, reasons
 
 
+def _servable_sources(win_probability_sources: dict | None) -> dict:
+    """#6669 — the `win_probability_sources` entries that are safe to put on the wire.
+
+    This column is a grab-bag, not a map of sources: besides readings it carries
+    `statpal_injuries` (an ARRAY of injury dicts) and `statpal_injuries_updated`
+    (an ISO STRING). `/api/events/{id}` has dropped those by SHAPE since #4120;
+    this serializer — the one behind every `/api/feed` game card — did not, and
+    shipped the raw bag.
+
+    On the phone that is not untidy, it is a lost game. `FeedEventData` declares
+    `winProbabilitySources: [String: WinProbSource]?`, `WinProbSource.init` falls
+    through to `decoder.container(keyedBy:)`, and that throws on a bare array AND
+    on a bare string; `FeedResponse.init` decodes items with `try?` and skips a
+    thrower, so the card is silently absent. Measured on production
+    2026-09-17 02:15Z with the shipped models compiled verbatim:
+    `served=50 decoded=49 lost=1` — event 15310992 Botafogo–Grêmio, a completed
+    game with a real `betting` price, gone from the Sports tab.
+
+    The gate is the SHAPE and not the key, which is the difference between this
+    fix and an inert one. #4120's note reasoned that only the array was fatal
+    because "`WinProbValue` accepts Double or String" — but that is the INNER
+    `value` field; the OUTER entry needs a keyed container either way. Removing
+    each key on its own from the real payload still lost the card; only removing
+    both recovered it. So this keeps what `parse_source_entry` can read as a
+    number and drops everything else, which also catches the fourth bookkeeping
+    key nobody has written yet.
+
+    Delegating to `parse_source_entry` is the point: it is the same helper the
+    event route gates on, so the two payloads cannot drift apart again.
+
+    Entries are passed through UNCHANGED rather than rebuilt from the parsed
+    number — the `{"value": x, "updated_at": …}` wrapper is a live stored shape
+    and its sibling timestamp is what dates the source rows.
+    """
+    if not win_probability_sources:
+        return {}
+
+    servable = {}
+    for key, entry in win_probability_sources.items():
+        if key.startswith("_"):
+            continue
+        numeric, _updated_at = parse_source_entry(entry)
+        if numeric is None:
+            continue
+        servable[key] = entry
+    return servable
+
+
 def format_event_data(
     event_id: int,
     external_id: str | None,
@@ -393,8 +442,9 @@ def format_event_data(
         "away_score": away_score,
     }
 
-    if win_probability_sources:
-        data["win_probability_sources"] = win_probability_sources
+    servable_sources = _servable_sources(win_probability_sources)
+    if servable_sources:
+        data["win_probability_sources"] = servable_sources
 
     if status == "live":
         display_period, display_clock = normalize_live_game_state(
