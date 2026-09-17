@@ -140,8 +140,26 @@ class _Session:
             return _Rows([])
         self._selects += 1
         if self._selects == 1:  # stored-token read (#6634)
+            # FULL WIDTH, and the width is load-bearing. The read returns
+            # ``(market_id, metadata, event_start, event_status)`` (#837), and a
+            # short row raises INSIDE the module's fail-open `except`, which
+            # swallows it and re-asks the whole slate. This fake was two wide,
+            # so every recycle below took that branch and the stored round trip
+            # these tests exist to prove was never executed — 18 silent
+            # "stored-token read failed" logs and a green suite.
+            #
+            # Both event columns are ``None`` = "unknown", which is never stale,
+            # so nothing here is dropped for staleness: this file is about dead
+            # legs at Gamma, not about the staleness filter.
             return _Rows(
-                [(PARENT_MARKET_ID, {OUTCOME_TOKEN_METADATA_KEY: dict(self.stored)})]
+                [
+                    (
+                        PARENT_MARKET_ID,
+                        {OUTCOME_TOKEN_METADATA_KEY: dict(self.stored)},
+                        None,
+                        None,
+                    )
+                ]
             )
         return _Rows([(oid, name) for oid, _cid, name in self.legs])  # outcome names
 

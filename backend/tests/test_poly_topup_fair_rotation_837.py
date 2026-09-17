@@ -279,13 +279,14 @@ class _Session:
             rows: dict = {}
             for oid, token in self.stored.items():
                 rows.setdefault(HERO_MARKET_ID, {})[str(oid)] = token
-            # Third element is the parent event's start time (#837). ``None`` —
-            # "unknown" — because the module treats unknown as NOT stale, so
-            # these rotation tests keep exercising the window rather than the
-            # staleness filter, which has its own file.
+            # Third and fourth elements are the parent event's start time and
+            # status (#837). Both ``None`` — "unknown" — because the module
+            # treats unknown as NOT stale on either, so these rotation tests
+            # keep exercising the window rather than the staleness filter,
+            # which has its own file.
             return _Rows(
                 [
-                    (mid, {OUTCOME_TOKEN_METADATA_KEY: m}, None)
+                    (mid, {OUTCOME_TOKEN_METADATA_KEY: m}, None, None)
                     for mid, m in rows.items()
                 ]
             )
