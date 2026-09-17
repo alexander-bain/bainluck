@@ -842,7 +842,15 @@ struct OddsChartView: View {
     /// Uses a firstSeen dictionary to produce exactly one marker per unique
     /// normalized period label (e.g., Q1, Q2, Q3, Q4 for basketball).
     /// Matches the web's `derivePeriodBoundaries()` approach.
-    /// Adds a Q1/P1/1H marker at game commence time if ESPN data starts later.
+    ///
+    /// **Every marker sits on a time the feed actually observed (#6718).** A
+    /// period nobody saw begin is ABSENT from the chart; it is never drawn at
+    /// the scheduled commence time. Alex, 2026-09-14: "align meaningful
+    /// sport-specific state markers to evidenced times… scheduled kickoff/
+    /// capture timestamps are not automatically actual start/finish."
+    /// `ScoreDifferentialChartView` — the other half of the same event page —
+    /// has always worked this way, using the scheduled start as a filter floor
+    /// and never as a marker position.
     private func extractPeriodMarkers(_ history: EventHistoryResponse, filteredPoints: [ChartDataPoint]) -> [PeriodMarker] {
         var firstSeen: [(label: String, date: Date)] = []
         var seenLabels: Set<String> = []
@@ -891,14 +899,25 @@ struct OddsChartView: View {
             }
         }
 
-        // If data doesn't include the first period, add one at game commence time.
-        // This ensures e.g. Q1 always appears even if ESPN sync started in Q2.
-        if isGameStarted, let startDate = gameStartDate, !firstSeen.isEmpty {
-            let firstPeriodLabel = inferFirstPeriodLabel(from: firstSeen.map(\.label))
-            if let firstPeriodLabel, !seenLabels.contains(firstPeriodLabel) {
-                firstSeen.insert((firstPeriodLabel, startDate), at: 0)
-            }
-        }
+        // #6718 — NOTHING IS INSERTED HERE, AND THAT IS THE FIX.
+        //
+        // This is where a first-period marker used to be invented: if the feed
+        // opened in Q2, a "Q1" was inferred from the labels present and placed
+        // at `gameStartDate` — which is `commenceTime`, the SCHEDULED kickoff.
+        // Two separate claims, both unevidenced: that the period happened at
+        // all, and that it began when the fixture was listed to begin. A game
+        // that starts late (weather, a preceding fixture, a broadcast window)
+        // got a labelled boundary minutes or hours from anything observed, and
+        // the chart read as though we had watched it.
+        //
+        // The server now states this rule on its own side: as of #6718 a
+        // `boundary_observed` marker always carries a `not_before` lower bound,
+        // and a transition the feed never bracketed is omitted rather than
+        // pinned to kickoff. Absent beats invented on both sides of the wire.
+        //
+        // Do not reinstate this from the served `period_markers` either without
+        // reading `not_before` — the app does not decode that payload yet, and
+        // a marker is only as good as the bound it ships with.
 
         // Halftime inferred from a pause — gated on the sport actually playing
         // halves (#3317). The rule, why the previous `firstSeen.isEmpty` guard
@@ -969,19 +988,11 @@ struct OddsChartView: View {
             .map { PeriodMarker(date: $1.date, label: $1.label, isGameStart: false) }
     }
 
-    /// Infer the first period label from existing labels.
-    /// If we see Q2, Q3, Q4 → the missing first is Q1.
-    /// If we see P2, P3 → the missing first is P1.
-    /// If we see 2H → the missing first is 1H.
-    private func inferFirstPeriodLabel(from labels: [String]) -> String? {
-        guard let first = labels.first else { return nil }
-        if first.hasPrefix("Q") && first != "Q1" { return "Q1" }
-        if first.hasPrefix("P") && first != "P1" { return "P1" }
-        if first.hasSuffix("H") && first != "1H" { return "1H" }
-        // Baseball: if first inning marker is "2" or higher
-        if let num = Int(first), num > 1 { return "1" }
-        return nil
-    }
+    // `inferFirstPeriodLabel(from:)` was removed with #6718. It answered "which
+    // period is missing from the front of this list" so a marker could be
+    // manufactured for it; nothing needs that question now that the answer is
+    // never drawn. Its behaviour is pinned as a control in
+    // `AChartMarkerSitsOnAnObservedTime6718Tests` so the defect stays provable.
 
     // MARK: - Chart
 
