@@ -3066,8 +3066,9 @@ _TICKER_DERIVED_COMMENCE_SOURCE = TICKER_DERIVED_COMMENCE_SOURCE
 
 #: #6720 — the coarse ticker families the segment reconciler READS. This bounds
 #: the query; it does not decide anything (`kalshi_game_segment_key` does).
-#: Measured on production 2026-09-17: this set selects 9,498 rows against the
-#: 20,000-row refuse cap below, i.e. 53% headroom. Tennis alone was 2,216.
+#: Measured on production 2026-09-17: this set selects 9,721 rows against the
+#: 20,000-row refuse cap below, i.e. 51% headroom (9,498 earlier the same day —
+#: the read grows with the fixture calendar, so re-measure, never quote this).
 #: Adding a family here costs read volume and nothing else — but check that
 #: count first, because blowing the cap does not reconcile less, it reconciles
 #: NOTHING (the truncation guard refuses the whole pass, tennis included).
@@ -3176,6 +3177,30 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
     was refusing `ambiguous` on essentially every real contest — see its
     docstring for the measurement).
 
+    ═══ #6720 q2: THE CUPS WERE SPLIT BY THE KEY'S OWN SCOPE ═══
+
+    The widening above landed and drove the stranded count to zero — and its
+    after-check could not see this, because an after-check that replays the key
+    is blind to a bug IN the key. `kalshi_game_segment_key` scoped by the full
+    `get_sport_key_from_ticker` answer, which for a cup is the competition on
+    the `*GAME` leg and the bare prefix `soccer` on every other leg (#3446,
+    deliberately). One fixture therefore became two segments, each read alone:
+    `single` on the linked half, `no_anchor` on the unlinked one, forever.
+
+    Measured on production 2026-09-17: **34 game ids / 136 markets split this
+    way, 34 of 34 the same game, 0 collisions** — and four markets stranded by
+    it right then, on two finished Europa League pages. `/events/15298546`
+    (Be'er Sheva 0-0 Dinamo Zagreb) served Kalshi's BTTS, Spread and Total and
+    NOT its match winner, so the question that decides the game had one source
+    on a page where the venue had priced two.
+
+    The scope is now the sport prefix and the competition is checked as a
+    segment-level refusal (`ambiguous_competition`). Replayed against the same
+    9,721-market production snapshot before it shipped: 4 ADOPT, **0 CONVERGE**
+    — nothing is taken off any event — and the `ambiguous`/`ambiguous_idless`
+    refusal controls held identically, which is the assertion that matters
+    (a refusal that DROPPED would be absorption on no evidence).
+
     ═══ THE BUG THIS CLOSES ═══
 
     Kalshi prices a tennis match through several of its OWN events, one per
@@ -3252,11 +3277,14 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
     #14).
     """
     from app.models.models import FuturesMarket, Event
-    from app.utils.prediction_market_matching import kalshi_game_segment_key
+    from app.utils.prediction_market_matching import (
+        kalshi_game_segment_key, kalshi_segment_competition,
+    )
 
     stats = {
         "candidates": 0, "segments": 0, "adopted": 0,
         "converged": 0, "ambiguous": 0, "ambiguous_idless": 0, "no_anchor": 0,
+        "ambiguous_competition": 0,
         "truncated": False,
     }
     try:
@@ -3385,6 +3413,43 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
         # the moves that take a price off an event (LINKLOSS-02).
         receipted_moves: list[tuple[Optional[int], int, dict]] = []
         for members in segments.values():
+            # #6720 q2 — THE OTHER HALF OF THE PREFIX SCOPE.
+            #
+            # `kalshi_game_segment_key` scopes by the sport PREFIX so that a
+            # cup's `*GAME` leg (mapped to the competition) and its `*BTTS` leg
+            # (mapped to bare `soccer` on purpose — #3446) land in one segment
+            # instead of two. What that gives up is the competition, and this is
+            # where it is taken back: two DIFFERENT competitions sharing a date
+            # and a six-character team code are two fixtures, not one, and
+            # merging them would move a market onto the wrong game.
+            #
+            # A `None` is not a disagreement. It is a leg whose map entry is the
+            # bare prefix, which knows nothing about the competition and so
+            # contradicts nothing; only two NAMED competitions refuse. Measured
+            # on production 2026-09-17 over 2,111 game ids in scope: 34 carried
+            # more than one sport key, 34 of 34 were one competition plus
+            # prefix-only legs, and this guard fired ZERO times. It is a
+            # correctness bound on a widening, not a live filter — and the
+            # counter is what will say if that ever stops being true.
+            competitions = {
+                c for c in (kalshi_segment_competition(r.external_id)
+                            for r in members)
+                if c
+            }
+            if len(competitions) > 1:
+                # Its OWN reason, never folded into `ambiguous`: that counter
+                # means "several anchored candidates and no tiebreak", and this
+                # means "the members are not the same game at all". Two causes
+                # behind one reason string is how a widening's cost goes
+                # unnoticed.
+                stats["ambiguous_competition"] += 1
+                logger.warning(
+                    "Kalshi game-segment reconcile REFUSED a segment: members "
+                    "name %d competitions (%s) — one game id, two fixtures. "
+                    "No markets moved.",
+                    len(competitions), sorted(competitions),
+                )
+                continue
             target, reason = _choose_segment_event(
                 [r.event_id for r in members], provenance, anchored,
             )
@@ -3443,10 +3508,10 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
             logger.info(
                 "Kalshi game-segment reconcile (Q435/#6720): %d adopted, %d "
                 "converged across %d segments (%d ambiguous, %d both-id-less, "
-                "%d without an anchor)",
+                "%d without an anchor, %d spanning two competitions)",
                 stats["adopted"], stats["converged"], stats["segments"],
                 stats["ambiguous"], stats["ambiguous_idless"],
-                stats["no_anchor"],
+                stats["no_anchor"], stats["ambiguous_competition"],
             )
         return stats
     except Exception as e:
