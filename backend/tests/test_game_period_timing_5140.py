@@ -228,6 +228,45 @@ class TestServedMarkers:
         # the play itself is still served, in order — only the MARKER was withheld
         assert len(body["scoring_plays"]) == 2
 
+    async def test_a_non_football_game_reaches_tier_2_and_is_byte_identical(self):
+        """#6718 finding 4 — THE CONTROL THE MLB AND TENNIS ONES COULD NOT BE.
+
+        #5140 claimed "every other sport's marker chain is byte-identical" while
+        the `timestamp_resolved` skip sat in the GENERIC tier-2 block, outside
+        the football condition. Neither existing control could contradict that:
+        measured, the MLB fixture carries ZERO scoring plays and tennis has
+        none, so neither ever reaches the changed line — a control that cannot
+        execute the statement it is vouching for.
+
+        This one does. Same shape as the football silent-stream case above —
+        basketball, one unresolvable play, one resolvable — so the skip WOULD
+        fire here if it were still unscoped. Both periods must survive, the
+        carried timestamp included, and no `precision` key may appear: outside
+        football nothing about this chain moved.
+        """
+        t0 = datetime(2026, 9, 14, 20, 0, tzinfo=UTC)
+        espn_rows = [
+            {"timestamp": (t0 + timedelta(minutes=m)).isoformat(), "home_probability": p,
+             "away_probability": 1 - p, "home_score": hs, "away_score": aws, "period": None}
+            for m, p, hs, aws in [(0, 0.5, 0, 0), (40, 0.4, 0, 7), (80, 0.6, 3, 7)]
+        ]
+        session = _session(
+            event_id=14999002, sport_key="basketball_nba", commence=t0,
+            completed=t0 + timedelta(hours=3), espn_rows=espn_rows,
+            plays=[
+                {"period": 2, "clock": "9:11", "home_score": None, "away_score": 7},
+                {"period": 3, "clock": "3:13", "home_score": 3, "away_score": 7},
+            ],
+        )
+        body = await get_event_odds_history(event_id=14999002, hours=720,
+                                            response=MagicMock(headers={}), db=session)
+        assert [(m["period"], m["timestamp"]) for m in body["period_markers"]] == [
+            ("2", t0.isoformat()),                              # the CARRIED one, kept
+            ("3", (t0 + timedelta(minutes=80)).isoformat()),
+        ], body["period_markers"]
+        assert all("precision" not in m for m in body["period_markers"])
+        assert {m["source"] for m in body["period_markers"]} == {pm.SOURCE_ESPN_BOX}
+
     async def test_halftime_is_its_own_marker_and_is_not_q3(self):
         _, body = await _replay("nfl_14638896_history_replay.json")
         ht = [m for m in body["period_markers"] if str(m["period"]).lower() == "halftime"]
@@ -358,12 +397,30 @@ GAME = [
 
 class TestTransitionRules:
     def test_completed_game_replay(self):
+        """#6718: Q1 IS ABSENT, and that is the correction, not a loss.
+
+        `GAME` opens on `15:00 - 1st Quarter` with nothing before it, which is
+        also what production holds — 14638896's `espn_history` begins at that
+        exact row. Nothing in the stream says the game had not already started,
+        so the first cut served Q1 at our first poll wearing
+        `boundary_observed` and `not_before: null`: the tightest label the
+        vocabulary has, on an unbounded claim. The `15:00` clock does not
+        rescue it, because a start clock persists until play begins — on this
+        very payload it reads `15:00` at 00:17:12 AND at 00:18:12, so the
+        kickoff is somewhere after our first sighting, not on it.
+
+        Absent is the honest answer and it is already known to render: 14780138
+        has served no Q1 since #5140 and both of its charts read correctly at
+        390px. The three quarters and the break that ARE bracketed are
+        unchanged.
+        """
         got = [(m["period"], m["timestamp"]) for m in _markers(GAME)]
         assert got == [
-            ("1st Quarter", _obs(0, "")["timestamp"]), ("2nd Quarter", _obs(36, "")["timestamp"]),
+            ("2nd Quarter", _obs(36, "")["timestamp"]),
             ("Halftime", _obs(79, "")["timestamp"]), ("3rd Quarter", _obs(93, "")["timestamp"]),
             ("4th Quarter", _obs(131, "")["timestamp"]),
         ]
+        assert all(m["not_before"] for m in _markers(GAME)), "no marker without a bracket"
 
     def test_delivery_order_and_duplicates_change_nothing(self):
         shuffled = list(reversed(GAME)) + GAME[3:9] + GAME[:2]
@@ -379,13 +436,29 @@ class TestTransitionRules:
         assert _markers(with_scores) == _markers(GAME)
 
     def test_start_clock_versus_mid_period_first_sighting(self):
+        """#6718: THE START CLOCK NO LONGER UPGRADES THE PRECISION.
+
+        The bracket here is nine minutes wide either way. The first cut let a
+        `15:00` reading relabel it `boundary_observed` — the label that means
+        "inside POLL_TOLERANCE", i.e. 150 seconds — so a nine-minute
+        uncertainty was served as a tight one. A start clock says play has not
+        advanced; it does not say when the period began, and it persists across
+        polls. It may corroborate a bracket and may never replace or narrow
+        one, so both halves of this pair are `first_seen`.
+        """
         rows = [_obs(35, "End of 1st Quarter"), _obs(44, "10:41 - 2nd Quarter")]
         m = _at(_markers(rows), "2nd Quarter")
         assert m["precision"] == "first_seen"
         assert m["not_before"] == rows[0]["timestamp"]           # the claim is an interval
         assert m["timestamp"] == rows[1]["timestamp"]            # never moved by the clock
         rows[1] = _obs(44, "15:00 - 2nd Quarter")
-        assert _at(_markers(rows), "2nd Quarter")["precision"] == "boundary_observed"
+        widened = _at(_markers(rows), "2nd Quarter")
+        assert widened["precision"] == "first_seen"
+        assert widened["timestamp"] == rows[1]["timestamp"]
+
+        # And the tight bracket is still reachable — on evidence, not on a clock.
+        tight = [_obs(35, "End of 1st Quarter"), _obs(36, "10:41 - 2nd Quarter")]
+        assert _at(_markers(tight), "2nd Quarter")["precision"] == "boundary_observed"
 
     def test_a_period_first_seen_after_a_long_silence_is_absent_not_late(self):
         rows = [_obs(10, "9:00 - 1st Quarter"), _obs(75, "1:39 - 2nd Quarter"), _obs(76, "1:02 - 2nd Quarter")]
@@ -404,9 +477,55 @@ class TestTransitionRules:
         assert q3["precision"] == "first_seen"  # once blipped, never claimed as observed
 
     def test_a_stale_old_state_row_delivered_late_resurrects_nothing(self):
+        """A lagging source delivering an old state must change NOTHING.
+
+        Asserted as a difference rather than as a count of `1st Quarter`
+        markers: under #6718 that count is 0 either way, so the old form would
+        now pass for the wrong reason — it would be satisfied by a helper that
+        had stopped producing markers at all.
+        """
         rows = GAME + [_obs(150, "3:00 - 1st Quarter")]
-        assert [m["period"] for m in _markers(rows)].count("1st Quarter") == 1
-        assert _at(_markers(rows), "1st Quarter")["timestamp"] == _obs(0, "")["timestamp"]
+        assert _markers(rows) == _markers(GAME)
+        assert _markers(GAME), "otherwise this passes vacuously"
+
+    def test_a_stale_row_may_not_tighten_a_later_bracket(self):
+        """#6718. The stale row sits one minute before a genuine 4th Quarter,
+        so taking it as the lower bound would read as a one-poll observation.
+        It regresses below the running maximum, which is the signature of a
+        late delivery, so it is refused as a bound — and the honest bracket
+        back to the real 3rd Quarter row is too wide to place Q4 at all."""
+        rows = [_obs(0, "End of 2nd Quarter"), _obs(1, "15:00 - 3rd Quarter"),
+                _obs(45, "5:00 - 2nd Quarter"), _obs(46, "15:00 - 4th Quarter")]
+        got = _markers(rows)
+        assert [m["period"] for m in got] == ["3rd Quarter"]
+        assert got[0]["not_before"] == rows[0]["timestamp"]
+
+    def test_two_overtimes_are_two_markers(self):
+        """#6718. `(?:\\d\\w*\\s+)?` swallowed the ordinal, so every overtime
+        ranked alike and the label dedupe kept only the first. College football
+        reaches a second overtime routinely."""
+        rows = [_obs(0, "End of 4th Quarter"), _obs(1, "10:00 - OT"),
+                _obs(2, "End of OT"), _obs(3, "2nd OT"), _obs(4, "2nd OT")]
+        assert [m["period"] for m in _markers(rows)] == ["Overtime", "2nd Overtime"]
+
+    def test_one_instant_carrying_two_states_is_disagreement_not_a_transition(self):
+        """#6718. Two sources contradicting each other at one capture time gave
+        `not_before == timestamp` — a zero-width bracket wearing the tightest
+        precision label. That instant is evidence of disagreement; it can
+        neither carry a marker nor bound one."""
+        t = _obs(10, "")["timestamp"]
+        rows = [{"timestamp": t, "period": "1:00 - 1st Quarter"},
+                {"timestamp": t, "period": "14:00 - 2nd Quarter"}]
+        assert _markers(rows) == []
+
+    def test_a_marker_names_the_series_that_saw_it(self):
+        """#6718. Every marker was stamped `win_prob` whatever saw the
+        transition, so the payload could not say which instrument observed it."""
+        rows = [dict(_obs(35, "End of 1st Quarter"), source="espn_history"),
+                dict(_obs(36, "15:00 - 2nd Quarter"), source="espn_history")]
+        assert _at(_markers(rows), "2nd Quarter")["source"] == "espn_history"
+        assert _at(_markers([{k: v for k, v in r.items() if k != "source"} for r in rows]),
+                   "2nd Quarter")["source"] == pm.SOURCE_WIN_PROB
 
     def test_overtime_follows_regulation(self):
         """SYNTHETIC: no real OT payload was available; status text is assumed."""
