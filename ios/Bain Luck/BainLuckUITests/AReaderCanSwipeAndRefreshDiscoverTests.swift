@@ -38,12 +38,23 @@ final class AReaderCanSwipeAndRefreshDiscoverTests: XCTestCase {
             "Cold launch did not land on Discover. Discover is the default tab (MainTabView)."
         )
 
-        let card = app.descendants(matching: .any)
-            .matching(identifier: "discover-card-event")
-            .firstMatch
+        // ANY CARD, NOT AN EVENT CARD, and the difference is the whole of this
+        // check's honesty. Until 2026-09-17 this waited on `discover-card-event`
+        // — the identifier only `NativeEventDiscoverCard` carries — and called
+        // its absence "Discover drew no cards". Measured against the live
+        // `GET /api/feed?limit=50` at 10:25Z that morning: 2 events, 39 futures,
+        // 8 bundles, 1 tournament. The app had drawn 50 real cards and the
+        // photograph of that run shows two of them; the check still read FAIL,
+        // and took four sibling journeys down as skips behind it. A feed with no
+        // GAME in it is the night's fixture list. A feed with no CARD in it is
+        // the defect this check is named for.
+        // Deliberately NOT `JourneyPrecondition.firstCard`: that helper SKIPS an
+        // empty feed, and an empty feed is the one thing this check must go RED
+        // for. Same query, opposite verdict.
+        let card = JourneyPrecondition.cards(in: app).firstMatch
         XCTAssertTrue(
             card.waitForExistence(timeout: UITestLaunch.contentTimeout),
-            "CHECK 5 FAILS: Discover mounted but drew no event card within \(UITestLaunch.contentTimeout)s. "
+            "CHECK 5 FAILS: Discover mounted but drew no card of any kind within \(UITestLaunch.contentTimeout)s. "
             + "A screenshot of this state looks like a slow load and is not distinguishable from an empty feed."
         )
 
@@ -63,7 +74,7 @@ final class AReaderCanSwipeAndRefreshDiscoverTests: XCTestCase {
         // the feed drew at all — this does not flake on content below the fold.
         XCTAssertTrue(
             card.isHittable,
-            "CHECK 5 FAILS: Discover drew an event card and the reader cannot touch it — "
+            "CHECK 5 FAILS: Discover drew a card and the reader cannot touch it — "
             + "the card exists at \(card.frame) but reports `isHittable == false`, which is what a modal, "
             + "an overlay or a blocking spinner on top of the feed looks like from here."
         )
@@ -74,7 +85,7 @@ final class AReaderCanSwipeAndRefreshDiscoverTests: XCTestCase {
     func testAVerticalSwipeMovesTheFeed() throws {
         let app = UITestLaunch.launchApp()
         JourneyPrecondition.tabBar(of: app)
-        _ = try JourneyPrecondition.firstEventCard(in: app)
+        _ = try JourneyPrecondition.firstCard(in: app)
 
         let scrollView = app.scrollViews.firstMatch
         XCTAssertTrue(scrollView.exists, "Discover has no scroll view to swipe.")
@@ -85,7 +96,7 @@ final class AReaderCanSwipeAndRefreshDiscoverTests: XCTestCase {
         // passes on a feed that cannot scroll — the green-light-no-sensor shape.
         // A card's own frame is the cheapest witness: it is in content
         // coordinates, so it can only change if the content scrolled.
-        let cards = app.descendants(matching: .any).matching(identifier: "discover-card-event")
+        let cards = JourneyPrecondition.cards(in: app)
         JourneyPrecondition.settle(cards)
         let card = cards.firstMatch
         let before = card.frame.origin.y
@@ -131,9 +142,9 @@ final class AReaderCanSwipeAndRefreshDiscoverTests: XCTestCase {
     func testAHorizontalSwipeDismissesTheCardUnderTheFinger() throws {
         let app = UITestLaunch.launchApp()
         JourneyPrecondition.tabBar(of: app)
-        _ = try JourneyPrecondition.firstEventCard(in: app)
+        _ = try JourneyPrecondition.firstCard(in: app)
 
-        let cards = app.descendants(matching: .any).matching(identifier: "discover-card-event")
+        let cards = JourneyPrecondition.cards(in: app)
         JourneyPrecondition.settle(cards)
 
         let target = cards.firstMatch
@@ -211,14 +222,14 @@ final class AReaderCanSwipeAndRefreshDiscoverTests: XCTestCase {
         let app = UITestLaunch.launchApp(extra: ["-launch_debug_counts", "YES"])
 
         JourneyPrecondition.tabBar(of: app)
-        _ = try JourneyPrecondition.firstEventCard(in: app)
+        _ = try JourneyPrecondition.firstCard(in: app)
 
         let badge = app.descendants(matching: .any).matching(identifier: "discover-debug-counts").firstMatch
         XCTAssertTrue(
             badge.waitForExistence(timeout: UITestLaunch.contentTimeout),
             "-launch_debug_counts drew no badge, so this test has no witness. A flag with no visible effect is the #3157 shape: silently inert."
         )
-        JourneyPrecondition.settle(app.descendants(matching: .any).matching(identifier: "discover-card-event"))
+        JourneyPrecondition.settle(JourneyPrecondition.cards(in: app))
 
         // THE CONTROL, and it is not ceremony: a counter that ticks on its own
         // would make this test pass forever while proving nothing. Cold load,
@@ -257,7 +268,7 @@ final class AReaderCanSwipeAndRefreshDiscoverTests: XCTestCase {
         )
 
         XCTAssertTrue(
-            app.descendants(matching: .any).matching(identifier: "discover-card-event").firstMatch
+            JourneyPrecondition.cards(in: app).firstMatch
                 .waitForExistence(timeout: UITestLaunch.contentTimeout),
             "The feed had no event card after the refresh. A refresh emptied the page."
         )

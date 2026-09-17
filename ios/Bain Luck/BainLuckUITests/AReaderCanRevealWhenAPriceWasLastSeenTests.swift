@@ -45,15 +45,56 @@ final class AReaderCanRevealWhenAPriceWasLastSeenTests: XCTestCase {
             "Discover has no scroll view, so there is nothing to hunt through."
         )
 
+        // A chip the TREE reports is not a chip a finger can reach. The feed is
+        // lazy, so rows past the fold are materialised and answer queries with a
+        // frame; and the tab bar floats over the last 83pt of the window.
+        // Measured 2026-09-17: this hunt returned a chip at
+        // (79.7, 902.3, 58.7, 28) in a window 874 tall — 28pt BELOW the bottom
+        // edge — and the `isHittable` assertion below then reported "a reader
+        // cannot open the precise stamp at all". That was false and it was this
+        // loop's fault: the chip was one scroll from perfectly tappable.
+        // See `JourneyPrecondition.isReachable`.
+        var sawAnUnreachableChip = false
+
         // Bounded. Twelve swipes is well past the forty cards the feed serves at
         // phone width, and an unbounded hunt on an infinite feed never returns.
         for swipe in 0...12 {
             let mark = Self.markQuery(in: app).firstMatch
             if mark.waitForExistence(timeout: swipe == 0 ? 8 : 1.5) {
-                XCTContext.runActivity(named: "found an age chip after \(swipe) swipe(s): \(mark.label)") { _ in }
-                return mark
+                if JourneyPrecondition.isReachable(mark, in: app) {
+                    XCTContext.runActivity(named: "found an age chip after \(swipe) swipe(s): \(mark.label)") { _ in }
+                    return mark
+                }
+
+                // Lift it into the band rather than swiping a whole screen past
+                // it: a full `swipeUp` carries this chip off the TOP and the
+                // hunt then reports the specimen as absent.
+                sawAnUnreachableChip = true
+                let lift = JourneyPrecondition.liftNeeded(for: mark, in: app) + 40
+                JourneyPrecondition.liftContent(app, by: lift)
+
+                let lifted = Self.markQuery(in: app).firstMatch
+                if lifted.exists, JourneyPrecondition.isReachable(lifted, in: app) {
+                    XCTContext.runActivity(
+                        named: "found an age chip after \(swipe) swipe(s), lifted \(Int(lift))pt "
+                        + "into the reachable band: \(lifted.label)"
+                    ) { _ in }
+                    return lifted
+                }
             }
             scrollView.swipeUp()
+        }
+
+        if sawAnUnreachableChip {
+            // A DIFFERENT verdict from "there was no chip", and it must not be
+            // filed as one: the data had a specimen and the rig could not pose
+            // it. That is a rig bug to fix here, not news about the feed.
+            XCTFail(
+                "RIG FAULT, NOT A PRODUCT DEFECT: a price-age chip was in the tree but every sighting "
+                + "was outside the reachable band \(JourneyPrecondition.reachableBand(app)), and lifting "
+                + "it in did not work. The tap path is UNTESTED by this run — do not read this as "
+                + "'a reader cannot tap the chip'."
+            )
         }
 
         throw XCTSkip(
