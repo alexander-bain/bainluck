@@ -36,6 +36,7 @@ import math
 import os
 import socket
 import time
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -55,6 +56,9 @@ from app.utils.calibration_phase_ledger import (
     FRESH,
     HARD_LIMIT_MS,
     INVALIDATE,
+    LEDGER_WRITE_DECLINED,
+    LEDGER_WRITE_ERROR,
+    LEDGER_WRITE_OK,
     MAIN_BUILD_TASK,
     MAIN_CHECKPOINT_SCHEMA,
     PHASE_FUTURES,
@@ -1478,19 +1482,55 @@ def _bootstrap_worst_history(unit_costs: dict[str, Any]) -> dict[str, list[int]]
     return seeded
 
 
-async def load_phase_carryover() -> tuple[
-    dict[str, list[int]], dict[str, list[int]], dict[str, Any], dict[str, list[int]]
-]:
-    """Everything a prior beat banked, in ONE durable read.
+@dataclass(frozen=True)
+class PhaseCarryover:
+    """What a prior beat banked, WITH the classification of the read that got it.
 
-    Durations, floors, unit costs, and (CAL-P163) the rolling ring of worst
-    COMPLETED unit durations. One read because they live on one row and a plan
-    built from a subset is a plan reasoning from partial evidence about whether
-    it can reason at all.
+    #6599, third site. The four dicts on their own cannot tell a row that says
+    "nothing banked yet" from a row the database DID NOT ANSWER FOR, and one of
+    those two may not be written over. :func:`load_phase_carryover` keeps
+    returning just the dicts, because for the PLAN that conflation is harmless —
+    with nothing read nothing is measured either way, and ``derive_plan`` renders
+    ``no_data`` rather than a reassuring empty finding. It is the SAVE that needs
+    the fifth value, and only the save.
+    """
 
-    Four empty dicts is the honest answer to every read problem: with nothing
-    read, nothing is measured, and :func:`derive_plan` renders ``no_data``
-    rather than a reassuring empty finding.
+    history: dict[str, list[int]]
+    floors: dict[str, list[int]]
+    unit_costs: dict[str, Any]
+    worst_history: dict[str, list[int]]
+    #: ``durable_state``'s own read status, verbatim, so the log names the cause.
+    status: str
+    #: True when the read did not ANSWER — ``unavailable``, or it raised. Never
+    #: true for a row we HAVE: a genuinely absent row is knowledge, and so is a
+    #: torn, wrong-version or expired one.
+    unknown: bool = False
+
+
+async def read_phase_carryover() -> PhaseCarryover:
+    """:func:`load_phase_carryover`, plus what the read itself did.
+
+    Everything a prior beat banked, in ONE durable read: durations, floors, unit
+    costs, and (CAL-P163) the rolling ring of worst COMPLETED unit durations. One
+    read because they live on one row and a plan built from a subset is a plan
+    reasoning from partial evidence about whether it can reason at all.
+
+    Four empty dicts remains the answer to every read problem. What is new is
+    that the caller can now ask WHY they are empty:
+
+    * ``missing`` — there is no row. A cold start; four empty dicts are the
+      truth and initialising the row is correct.
+    * ``ok`` with nothing banked — a real row that really says nothing.
+    * ``unavailable`` — the read did not come back. **The dicts are empty
+      because we are blind, not because the bank is.** :func:`save_phase_ledger`
+      must not fold onto this.
+    * ``malformed`` / ``wrong_type`` / ``wrong_version`` / ``stale``, and an
+      ``ok`` read whose payload is not a dict — a row we HAVE and can prove we
+      may not USE. These stay write-authorised, exactly as the same six statuses
+      stay ``INVALIDATE`` in :func:`load_main_checkpoint`, and for the same
+      reason: refusing them forever would wedge the build with no way back. A
+      14-day-old or torn ledger must be replaceable or the first bad row is
+      permanent.
     """
     from app.services.durable_snapshots import read_snapshot_standalone
 
@@ -1498,7 +1538,7 @@ async def load_phase_carryover() -> tuple[
         LEDGER_IDENTITY, expected_version=PHASE_LEDGER_SCHEMA, max_age_s=STATE_MAX_AGE_S
     )
     if not read.ok or read.envelope is None or not isinstance(read.envelope.payload, dict):
-        return {}, {}, {}, {}
+        return PhaseCarryover({}, {}, {}, {}, status=read.status, unknown=read.unavailable)
     payload = read.envelope.payload
     history = payload.get("history")
     floors = payload.get("floors")
@@ -1514,12 +1554,28 @@ async def load_phase_carryover() -> tuple[
     # the seed cannot run away, extinguishes on the next save, and ages out.
     if not ring:
         ring = _bootstrap_worst_history(costs)
-    return (
+    return PhaseCarryover(
         merge_history(history, {}) if isinstance(history, dict) else {},
         merge_history(floors, {}) if isinstance(floors, dict) else {},
         costs,
         ring,
+        status=read.status,
     )
+
+
+async def load_phase_carryover() -> tuple[
+    dict[str, list[int]], dict[str, list[int]], dict[str, Any], dict[str, list[int]]
+]:
+    """The four dicts of :func:`read_phase_carryover`, for the PLAN callers.
+
+    Unchanged in behaviour and in signature: every read problem is still four
+    empty dicts here. Deriving a plan from an empty history is not destructive —
+    it produces ``no_data`` and a provisional plan, which is the right answer to
+    being blind. Only the SAVE has to tell the read problems apart, so only the
+    save calls the classified reader.
+    """
+    carry = await read_phase_carryover()
+    return carry.history, carry.floors, carry.unit_costs, carry.worst_history
 
 
 async def load_phase_measurements() -> tuple[
@@ -2490,12 +2546,42 @@ def _unit_worst_from(runner: PhaseRunner) -> dict[str, int]:
 
 
 async def save_phase_ledger(runner: PhaseRunner, extra: Optional[dict[str, Any]] = None) -> str:
-    """Persist the phase ledger + rolling history. Returns ``ok`` or ``error``.
+    """Persist the phase ledger + rolling history.
+
+    Returns ``ok``, ``error``, or :data:`LEDGER_WRITE_DECLINED`.
 
     This is the measurement rail Item 0 exists to build, so it is written on
     EVERY terminal — a run that timed out at phase 2 is exactly the run whose
     timings the next plan most needs. A failure here is reported, never
     swallowed: :func:`health_for` turns it into UNKNOWN, never GREEN.
+
+    **#6599, third site: this write is a FOLD, so it may only run on a prior it
+    could READ.** ``history``, ``floors``, ``unit_costs`` and the worst-unit ring
+    are all built as ``this beat`` folded onto ``what was banked``, and the
+    publish replaces the whole row. So when the carryover read returns four
+    empty dicts because the database did not answer, the fold degenerates to
+    "this beat only" and the publish writes THAT over every beat the build had
+    banked — measured on the real path: three beats banking
+    ``{'futures': [1000, 1100, 1200]}``, one unavailable read, and the row comes
+    out ``{'futures': [9999]}`` with a returned status of ``ok``.
+
+    The repair cannot be the two REFUSEs #6599 already shipped, because you
+    cannot preserve a prior you could not read — there is nothing to fold onto.
+    The question here is whether the row may be written WHOLE at all, and with
+    the prior unknown the answer is no: **stand down, write nothing, say so.**
+    ``publish_snapshot`` is an unconditional whole-payload replace and there is
+    no merge mode, so not writing is the only thing that preserves the bank.
+
+    What that costs is named and small: THIS beat's telemetry is not persisted.
+    It is a beat's worth of observations that the next beat re-measures, set
+    against a multi-beat bank that nothing re-derives. It does not touch
+    publication or resume safety — by the time this runs the artifact has
+    already published and :func:`save_main_checkpoint` has already banked the
+    resumable phases onto a DIFFERENT durable row. The one contract it does
+    reach is :func:`health_for`, which is preserved by construction: the return
+    value is not ``ok``, so health stays UNKNOWN and never GREEN. That is the
+    honest direction — the old code returned ``ok`` on exactly this path, so a
+    beat that had just destroyed the bank could report GREEN.
     """
     from app.services.durable_snapshots import publish_snapshot_standalone
     from app.utils.durable_state import DurableEnvelope
@@ -2503,10 +2589,33 @@ async def save_phase_ledger(runner: PhaseRunner, extra: Optional[dict[str, Any]]
     await _record_staged_convergence(runner)
 
     try:
-        prior_history, prior_floors, prior_unit_costs, prior_worst = await load_phase_carryover()
-    except Exception as exc:  # noqa: BLE001 — a lost history is not a lost ledger
+        carry = await read_phase_carryover()
+    except Exception as exc:  # noqa: BLE001
+        # #6599. A read that RAISED is the same UNKNOWN as a read classified
+        # ``unavailable`` — the comment here used to say "a lost history is not
+        # a lost ledger" and fell through to four empty dicts, which is how a
+        # raised read got to destroy the bank too. It is not a lost history: it
+        # is an unread one, and the difference is the whole fix.
         logger.warning("calibration phase ledger: history read failed: %s", exc)
-        prior_history, prior_floors, prior_unit_costs, prior_worst = {}, {}, {}, {}
+        carry = PhaseCarryover({}, {}, {}, {}, status="read_raised", unknown=True)
+
+    if carry.unknown:
+        logger.error(
+            "calibration phase ledger: prior row UNREADABLE (%s) — DECLINING the "
+            "write. This beat's telemetry is NOT persisted; the banked history, "
+            "floors, unit costs and worst-unit ring ARE. The payload is a fold "
+            "onto the prior and the publish replaces the row, so writing it now "
+            "would put this beat alone over every beat the build has banked. "
+            "Progress is UNKNOWN, not green.",
+            carry.status,
+        )
+        runner.ledger.ledger_write = LEDGER_WRITE_DECLINED
+        return LEDGER_WRITE_DECLINED
+
+    prior_history = carry.history
+    prior_floors = carry.floors
+    prior_unit_costs = carry.unit_costs
+    prior_worst = carry.worst_history
     # CAL-P1027: the carry decision is taken BEFORE ``as_payload``, because the
     # reasons it records (ruling 075) are ledger gauges and the payload is a
     # snapshot of the ledger. Taken after, every one of them would be written to
@@ -2557,8 +2666,12 @@ async def save_phase_ledger(runner: PhaseRunner, extra: Optional[dict[str, Any]]
             source=MAIN_BUILD_TASK,
         )
     )
-    status = "ok" if result.get("status") in ("ok", "superseded") else "error"
-    if status != "ok":
+    status = (
+        LEDGER_WRITE_OK
+        if result.get("status") in ("ok", "superseded")
+        else LEDGER_WRITE_ERROR
+    )
+    if status != LEDGER_WRITE_OK:
         logger.error(
             "calibration phase ledger: durable write FAILED (%s) — this run's "
             "progress is UNKNOWN, not green", result.get("error") or result.get("status"),
