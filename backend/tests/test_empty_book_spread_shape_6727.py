@@ -110,6 +110,7 @@ import pytest
 from app.routes.events import _leg_prices_an_empty_book as _event_page_drops
 from app.routes.events import _build_search_top_outcomes
 from app.routes.futures import _leg_prices_an_empty_book as _grouped_feed_drops
+from app.tasks.polymarket import complementary_book
 from app.utils.feed_market_quality import (
     EMPTY_BOOK_MAX_BID,
     EMPTY_BOOK_MIDPOINT_TOLERANCE,
@@ -531,3 +532,73 @@ class TestEveryServeSurfaceInheritsTheShape:
             expected = is_empty_book_midpoint(prob, bid, ask)
             assert _event_page_drops(row) is expected, (prob, bid, ask)
             assert _grouped_feed_drops(row) is expected, (prob, bid, ask)
+
+
+class TestTheShapeIsWhatMakesTheTwoLegsAgree:
+    """The property #6727 adds that no choice of constants could supply.
+
+    This lives here, in #6727's own file, rather than in #6676's control. It is a
+    statement about THIS predicate's shape, and lane1b measured (2026-09-17) that
+    after the shape change nothing behavioural in the #6676 control can still tell
+    a per-leg guard from a per-item one — so pinning it there would have been a
+    control asserting a distinction it no longer draws. The per-leg/per-item
+    question stays theirs, tested behaviourally through ``_write_prices``;
+    the invariance is mine.
+
+    WHY IT MATTERS. A two-leg market's no leg is derived, not quoted:
+    ``complementary_book`` returns ``(1 - ask, 1 - bid)``. Under the old two
+    one-sided bounds the predicate could answer differently on the two legs of ONE
+    book, so a caller that asked per LEG dropped the yes leg while its equally
+    phantom complement printed on the row beneath it — 49% over 51%, the shape a
+    reader actually saw. The spread form cannot do that: ``(1 - bid) - (1 - ask)``
+    IS ``ask - bid``, and condition 3's midpoint distance is invariant the same
+    way, so the two legs get one answer by construction.
+
+    IT IS ONE EDIT DEEP, which is the reason to pin it. Restore two one-sided
+    bounds and the asymmetry returns immediately — and it returns even if the two
+    constants are spelled to sum to 1, because nothing on the path rounds and
+    ``1 - 0.95`` is ``0.050000000000000044``, above a 0.05 bid bound. The
+    strawman below exists so this file cannot report symmetry by being blind to
+    it: the same sweep, against the shape this ship replaces, must FIND the class.
+    """
+
+    @staticmethod
+    def _books():
+        for b in range(0, 101):
+            for a in range(b, 101):
+                yield b / 100, a / 100
+
+    def test_the_predicate_answers_the_same_for_a_leg_and_its_twin(self):
+        disagreed = []
+        for bid, ask in self._books():
+            prob = (bid + ask) / 2
+            no_bid, no_ask, _ = complementary_book(bid, ask, None)
+            if is_empty_book_midpoint(prob, bid, ask) != is_empty_book_midpoint(
+                1 - prob, no_bid, no_ask
+            ):
+                disagreed.append((bid, ask))
+        assert disagreed == [], (
+            "condition 2 has stopped being invariant under "
+            f"(bid, ask) -> (1 - ask, 1 - bid) on {len(disagreed)} books, first "
+            f"{disagreed[:5]}. A per-leg caller now drops one leg of a pair and "
+            "prints its equally phantom complement on the row beneath it."
+        )
+
+    def test_the_sweep_finds_the_class_against_the_shape_this_ship_replaces(self):
+        """Strawman: the sweep above must be able to report non-zero, or its 0 is
+        blindness rather than a measurement. Against the two-bound form it finds
+        the boundary legs lane1b measured -- at ``ask`` equal to the bound exactly,
+        an ordinary round quote. (Deriving the complement with ``round()`` instead
+        of the writer's own arithmetic hides these and reports the class empty;
+        two readers did exactly that on the day this shipped.)"""
+        disagreed = []
+        for bid, ask in self._books():
+            prob = (bid + ask) / 2
+            no_bid, no_ask, _ = complementary_book(bid, ask, None)
+            if _old_pair(prob, bid, ask) != _old_pair(1 - prob, no_bid, no_ask):
+                disagreed.append((bid, ask))
+        assert disagreed, (
+            "the sweep can no longer detect an asymmetric predicate, so the "
+            "invariance test above proves nothing"
+        )
+        assert all(ask == EMPTY_BOOK_MIN_ASK for _, ask in disagreed), disagreed

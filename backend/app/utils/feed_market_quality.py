@@ -424,9 +424,24 @@ def is_empty_book_midpoint(
         writer, landed 2026-09-17). These DECLINE THE UPSERT, so the row is never
         written in the first place.
 
-    None of the three writers is in ``HEAVY_TASKS`` (measured, not assumed), so a
-    change here is live at the main-app release with no ``bainluck-heavy`` convergence
-    owed -- notice 48. Re-measure rather than quoting this line if a writer is added.
+    ONE OF THE SIX RIDES THE HEAVY APP AND THE OTHER FIVE DO NOT, so notice 48 binds
+    for part of a change here and not for the part a reader sees:
+
+      * the 3 READ consumers are routes on the web dyno, and both Polymarket writers
+        are reached from ``app.tasks.poll_polymarket_markets``, which is NOT in
+        ``HEAVY_TASKS``. All five are live at the ordinary main-app release.
+      * ``futures_price_refresh._write_prices`` is reached from
+        ``app.tasks.refresh_stale_futures_prices``, which IS in ``HEAVY_TASKS``, so
+        that writer does not change behaviour until ``bainluck-heavy`` carries the
+        commit.
+
+    MEASURE MEMBERSHIP AGAINST ``app.tasks.HEAVY_TASKS`` BY TASK NAME, NEVER BY
+    GREPPING THE MODULE. The set is keyed on the registered Celery name in
+    ``app/tasks/__init__.py`` -- ``app.tasks.refresh_stale_futures_prices`` -- which
+    does not appear in ``futures_price_refresh.py`` at all; grepping that module for
+    "heavy" returns only a boxing ticker and reads as a clean negative. An earlier
+    revision of this docstring claimed all three writers were non-heavy on exactly
+    that evidence, and it was wrong. Import the set and ask it.
 
     WHY THE REFRESH WRITER IS UNPAIRED while the two ingest ones pair this with
     :func:`is_fabricated_midpoint` (lane1b, #6676): it is shared by both venues, and
