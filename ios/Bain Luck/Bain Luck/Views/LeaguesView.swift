@@ -75,6 +75,37 @@ private let groupOrder = ["Major US Leagues", "College", "Other US Leagues", "So
 // Featured tournament hubs — `Utilities/FeaturedTournaments.swift`. Shared with
 // Search, which offers the same hubs to a query that names one.
 
+/// Where each featured hub belongs in Browse's grid, as of `now`.
+///
+/// Alex, 16 September: "Stale US Open leads." #6600 fixed the LINE under that
+/// card — it reads "Results and title odds" now, which was the lie — but the
+/// tournament whose final was played on 13 September still occupied the top of
+/// the tab, above every destination that is worth reaching in an ordinary week.
+/// A card can be honest and still be in the wrong place: leading the tab is
+/// itself a claim that this is the thing to look at today.
+///
+/// So a hub LEADS only while its edition is being played, and otherwise moves
+/// down. It is never dropped — the hub keeps the results and the title odds and
+/// those are worth reaching all year, which is why `trailing` exists rather than
+/// a `filter`. Catalog order is preserved inside each arm, and every hub lands
+/// in exactly one of them: `leading + trailing` is the catalog, always.
+///
+/// The clock rule itself is `isBeingPlayed(asOf:)` and is deliberately NOT
+/// re-implemented here — a second detector of one rule is how Browse came to
+/// lead with a hub whose own header read "No match is being played right now".
+/// It understates (an absent, unparsable or un-bumped date all read as not being
+/// played), so the failure mode of this ordering is a live hub that sits low and
+/// keeps its results, never a finished one back at the top.
+nonisolated func browseFeaturedHubs(
+    in catalog: [FeaturedTournament] = featuredTournaments,
+    asOf now: Date = Date()
+) -> (leading: [FeaturedTournament], trailing: [FeaturedTournament]) {
+    (
+        leading: catalog.filter { $0.isBeingPlayed(asOf: now) },
+        trailing: catalog.filter { !$0.isBeingPlayed(asOf: now) }
+    )
+}
+
 private struct CategoryLink: Identifiable {
     let id: String
     let label: String
@@ -140,15 +171,18 @@ struct LeaguesView: View {
     }
 
     private var featuredGrid: some View {
-        LazyVGrid(columns: adaptiveColumns(.featured), spacing: 14) {
-            ForEach(featuredTournaments) { tournament in
-                BrowseFeatureCard(
-                    title: tournament.title,
-                    subtitle: tournament.subtitle(),
-                    icon: tournament.icon,
-                    color: .yellow,
-                    route: .tournamentHub(slug: tournament.slug, name: tournament.title)
-                )
+        // ONE clock for the whole grid. Two `Date()` calls can straddle the
+        // boundary, and a hub that led on the first and printed its resting line
+        // on the second is the disagreement this pair exists to prevent, moved
+        // inside a single render.
+        let now = Date()
+        let hubs = browseFeaturedHubs(asOf: now)
+
+        return LazyVGrid(columns: adaptiveColumns(.featured), spacing: 14) {
+            // A hub being played leads the tab. On an ordinary week there is no
+            // such hub and this draws nothing, which is the common case.
+            ForEach(hubs.leading) { tournament in
+                featuredHubCard(tournament, asOf: now)
             }
             BrowseFeatureCard(
                 title: "Futures Markets",
@@ -186,6 +220,14 @@ struct LeaguesView: View {
                     route: .dailyChallenge
                 )
             }
+            // A hub whose edition is over, or that nobody dated. It sits below
+            // the destinations that are useful in any week and above "About",
+            // which is the grid's footer rather than a place to go — a finished
+            // tournament's results and title odds are still content, so last
+            // place would be a demotion further than the defect warranted.
+            ForEach(hubs.trailing) { tournament in
+                featuredHubCard(tournament, asOf: now)
+            }
             BrowseFeatureCard(
                 title: "About Bain Luck",
                 subtitle: "Sources and methodology",
@@ -194,6 +236,19 @@ struct LeaguesView: View {
                 route: .about
             )
         }
+    }
+
+    /// One card, drawn identically wherever in the grid it lands — the position
+    /// is the only thing the clock changes, and the reader who finds the US Open
+    /// lower down gets the same tile they would have got at the top.
+    private func featuredHubCard(_ tournament: FeaturedTournament, asOf now: Date) -> some View {
+        BrowseFeatureCard(
+            title: tournament.title,
+            subtitle: tournament.subtitle(asOf: now),
+            icon: tournament.icon,
+            color: .yellow,
+            route: .tournamentHub(slug: tournament.slug, name: tournament.title)
+        )
     }
 
     /// Hidden for v1, so it is outside #5655 — which was measured off rasters of
