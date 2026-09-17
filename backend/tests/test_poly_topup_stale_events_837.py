@@ -38,6 +38,24 @@ matters. ``settled_at`` is no better: NULL on 66 of 576 sampled corpses, and the
 model says it is never backfilled.
 
 ``test_a_live_market_marked_resolved_is_still_asked`` is that case, pinned.
+
+AND AGE ALONE MAY NOT DROP A LEG EITHER, which is the other half of the
+predicate and the reason ``TestAgeAloneMayNotDropALeg`` exists. The caller's
+slate admits an event on either of two statuses, and an event that reached
+``'live'`` is the event graph saying the game is happening NOW. Aging that out
+on a clock would drop exactly the live winner line this ship is for — a
+multi-day competition, a fixture whose row is advanced late, any event whose
+start time is wrong in the stale direction. So the drop requires BOTH a known
+old start AND an event still sitting at ``STALE_EVENT_STATUS``; every unknown
+keeps its leg.
+
+The guard is free. Measured on production 2026-09-17 07:5xZ: of the slate legs
+past the bound, 2,996 of 2,996 are ``'scheduled'`` and NO live event of that age
+exists anywhere in the table — the newest dropped leg starts 2026-09-06, nine
+days clear of the 48 h line. Deleting the status clause turns this module back
+into the age-alone version and reddens the four ``TestAgeAloneMayNotDropALeg``
+cases and NOTHING else: the fourteen tests above still pass, which is the proof
+that the clause guards a class of wrong drop without costing the repair a leg.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -48,7 +66,15 @@ from sqlalchemy.sql.dml import Update
 from app.tasks.polymarket_token_topup import (
     OUTCOME_TOKEN_METADATA_KEY,
     STALE_EVENT_HOURS,
+    STALE_EVENT_STATUS,
     topup_outcome_clob_tokens,
+)
+
+SCHEDULED = STALE_EVENT_STATUS
+LIVE_STATUS = "live"
+
+assert LIVE_STATUS != STALE_EVENT_STATUS, (
+    "the live-exemption tests below are vacuous if the two statuses collide"
 )
 
 NOW = datetime.now(timezone.utc)
@@ -122,11 +148,15 @@ class _HalfDeadRows:
 
 
 class _Session:
-    """Answers the market read (metadata + event start time), then the names.
+    """Answers the market read (metadata + event start time + status), then names.
 
     ``commence_by_market`` is the whole point: a market absent from it answers
     with ``None``, which is "start time unknown" and must NOT be treated as
     stale.
+
+    Its value is either a bare start time — read as an event still sitting at
+    ``'scheduled'``, which is the corpse shape — or an explicit
+    ``(commence_time, status)`` pair when a test needs to say otherwise.
     """
 
     def __init__(self, commence_by_market, names, *, stored=None, raises=None):
@@ -136,6 +166,12 @@ class _Session:
         self.updates: list = []
         self._raises = raises
         self._n = 0
+
+    @staticmethod
+    def _split(value):
+        if isinstance(value, tuple):
+            return value
+        return value, SCHEDULED
 
     async def execute(self, stmt):
         if isinstance(stmt, Update):
@@ -152,9 +188,9 @@ class _Session:
                         {OUTCOME_TOKEN_METADATA_KEY: self.stored[mid]}
                         if mid in self.stored
                         else None,
-                        commence,
+                        *self._split(value),
                     )
-                    for mid, commence in self.commence_by_market.items()
+                    for mid, value in self.commence_by_market.items()
                 ]
             )
         return _Rows(list(self.names.items()))
@@ -275,7 +311,10 @@ class TestUnknownIsNeverStale:
                 self._n += 1
                 if self._n == 1:
                     return _HalfDeadRows(
-                        [(CORPSE_A_MARKET, None, STALE), (CORPSE_B_MARKET, None, STALE)]
+                        [
+                            (CORPSE_A_MARKET, None, STALE, SCHEDULED),
+                            (CORPSE_B_MARKET, None, STALE, SCHEDULED),
+                        ]
                     )
                 return _Rows(list(self.names.items()))
 
@@ -297,6 +336,113 @@ class TestUnknownIsNeverStale:
             service=service,
         )
         assert service.asked == [[LIVE]]
+
+
+class TestAgeAloneMayNotDropALeg:
+    """The event's STATUS is the second half of the predicate, and the guard.
+
+    The caller's slate admits an event on either of two statuses — ``'live'``,
+    or ``'scheduled'`` starting within 6 h. Aging out a leg whose event reached
+    ``'live'`` would be this module overruling the event graph on a clock and
+    dropping exactly the live winner line #837 exists to reach: a multi-day
+    competition, a fixture whose row is advanced late, or any event whose start
+    time is wrong in the stale direction.
+
+    Measured on production 2026-09-17 07:5xZ, which is why this costs nothing:
+    of the slate legs past the bound, 2,996 of 2,996 are ``'scheduled'`` and no
+    live event of that age exists anywhere in the table. The clause removes a
+    class of wrong drop without changing a leg of the repair — and the two
+    ``TestTheCorpsesLeaveTheAsk`` cases above still pass, which is the proof.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_live_event_is_never_aged_out_however_old_its_start_time(self):
+        service = _FakeService(
+            [
+                _FakeMarket(CORPSE_A, ["a" * 77, "b" * 77], ["x", "z"]),
+                _FakeMarket(LIVE, [LIVE_TOKEN, "8" * 77], [LIVE_NAME, "Texas Rangers"]),
+            ]
+        )
+        await topup_outcome_clob_tokens(
+            _session(
+                {
+                    CORPSE_A_MARKET: (NOW - timedelta(days=90), LIVE_STATUS),
+                    LIVE_MARKET: FRESH,
+                }
+            ),
+            _targets(CORPSE_A_LEG, LIVE_LEG),
+            service=service,
+        )
+        assert sorted(service.asked[0]) == sorted([CORPSE_A, LIVE]), (
+            "an event the graph calls 'live' must keep its leg no matter how "
+            f"old its start time reads. Asked: {service.asked}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_live_event_keeps_its_seat_even_when_the_cap_binds(self):
+        """Not merely kept in the dict — it must survive to the ask under a cap.
+
+        Without this, a version that keeps the live leg in ``addressable`` but
+        lets the corpse-sorted head spend the cap would still pass the test
+        above.
+        """
+        service = _FakeService(
+            [_FakeMarket(CORPSE_A, ["a" * 77, "b" * 77], ["x", "z"])]
+        )
+        await topup_outcome_clob_tokens(
+            _session(
+                {
+                    CORPSE_A_MARKET: (NOW - timedelta(days=90), LIVE_STATUS),
+                    CORPSE_B_MARKET: STALE,
+                    LIVE_MARKET: (NOW - timedelta(days=90), LIVE_STATUS),
+                }
+            ),
+            ALL_THREE,
+            service=service,
+            max_outcomes=2,
+        )
+        assert sorted(service.asked[0]) == sorted([CORPSE_A, LIVE]), (
+            "both live-status legs are askable and the cap is 2, so the "
+            f"'scheduled' corpse is the one that must give up its seat. Asked: "
+            f"{service.asked}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_status_keeps_its_leg(self):
+        """Unknown is not stale — an unlinked market answers NULL for both."""
+        service = _FakeService(
+            [
+                _FakeMarket(CORPSE_A, ["a" * 77, "b" * 77], ["x", "z"]),
+                _FakeMarket(LIVE, [LIVE_TOKEN, "8" * 77], [LIVE_NAME, "Texas Rangers"]),
+            ]
+        )
+        await topup_outcome_clob_tokens(
+            _session({CORPSE_A_MARKET: (STALE, None), LIVE_MARKET: FRESH}),
+            _targets(CORPSE_A_LEG, LIVE_LEG),
+            service=service,
+        )
+        assert sorted(service.asked[0]) == sorted([CORPSE_A, LIVE])
+
+    @pytest.mark.asyncio
+    async def test_a_status_we_do_not_recognise_keeps_its_leg(self):
+        """Anything that is not the corpse status is out of scope, not stale.
+
+        'suspended', 'voided', 'completed' and 'merged' all exist on the events
+        table. None of them reaches the slate today, and if one ever does this
+        module is not the place that decides what it means.
+        """
+        service = _FakeService(
+            [
+                _FakeMarket(CORPSE_A, ["a" * 77, "b" * 77], ["x", "z"]),
+                _FakeMarket(LIVE, [LIVE_TOKEN, "8" * 77], [LIVE_NAME, "Texas Rangers"]),
+            ]
+        )
+        await topup_outcome_clob_tokens(
+            _session({CORPSE_A_MARKET: (STALE, "suspended"), LIVE_MARKET: FRESH}),
+            _targets(CORPSE_A_LEG, LIVE_LEG),
+            service=service,
+        )
+        assert sorted(service.asked[0]) == sorted([CORPSE_A, LIVE])
 
 
 class TestTheBoundary:

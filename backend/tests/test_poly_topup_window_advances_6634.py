@@ -141,8 +141,15 @@ class _Rows:
 
 
 def _with_commence_time(row):
-    """``(market_id, metadata)`` -> ``(market_id, metadata, None)``; 3-tuples pass."""
-    return tuple(row) if len(row) == 3 else (row[0], row[1], None)
+    """Pad to the shape the stored read returns: ``(id, metadata, start, status)``.
+
+    The trailing two are the parent event's start time and status (#837), both
+    ``None`` = "unknown", which the module treats as NOT stale on either count.
+    These window tests are about the cursor, so nothing here may be dropped for
+    staleness. Rows already at full width pass through.
+    """
+    row = tuple(row)
+    return row + (None,) * (4 - len(row))
 
 
 class _Session:

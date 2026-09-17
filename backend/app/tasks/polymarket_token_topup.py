@@ -91,6 +91,18 @@ TOPUP_CURSOR_TTL_SECONDS = 7 * 24 * 3600
 #: game can age out while its book is still trading.
 STALE_EVENT_HOURS = 48
 
+#: The ONLY event status an outcome may be aged out on (#837).  The caller's
+#: slate admits two — ``'live'``, and ``'scheduled'`` starting within 6 h — and
+#: an event that reached ``'live'`` is never dropped no matter how old its start
+#: time is, because that is the event graph saying the game is happening now.
+#:
+#: Measured on production 2026-09-17 07:5xZ, and this is why the guard costs
+#: nothing: of the slate legs older than ``STALE_EVENT_HOURS``, 2,996 of 2,996
+#: are ``'scheduled'`` and NONE is ``'live'`` — there is no live event anywhere
+#: in the table with a start time that old.  The clause therefore removes a
+#: whole class of wrong drop without changing a single leg of the repair.
+STALE_EVENT_STATUS = "scheduled"
+
 
 def select_ask_window(
     ordered: list[str], size: int, cursor: Optional[str]
@@ -159,21 +171,39 @@ def select_ask_window(
     return kept, kept[-1]
 
 
-def _is_stale(commence_time, cutoff: datetime) -> bool:
-    """True only when ``commence_time`` is KNOWN to be older than ``cutoff``.
+def _is_stale(commence_time, status, cutoff: datetime) -> bool:
+    """True only for a leg KNOWN to be a corpse: old start AND never left the gate.
 
-    Every other case is False — unknown is not stale.  A missing start time, an
-    unlinked market or a value we cannot compare keeps its leg in the ask, so
-    the worst case of this whole filter is today's behaviour.  That asymmetry is
-    the safety argument: the cost of wrongly keeping a dead leg is one seat for
-    one pass, and the cost of wrongly dropping a live one is a hero line that
-    never streams.
+    TWO conditions, and the second one is the guard rather than a refinement.
+    AGE ALONE MAY NOT DROP A LEG.  The caller's slate admits an event on either
+    of two statuses — ``'live'``, or ``'scheduled'`` starting within 6 h — and an
+    event that reached ``'live'`` is one the rest of the system believes is
+    happening NOW, whatever its start time says.  Aging such a leg out would be
+    this module deciding a game is over on a clock, against the event graph's own
+    reading, and dropping exactly the live winner line #837 exists to reach.  So
+    only ``STALE_EVENT_STATUS`` — the status the corpses are stuck on — is
+    eligible, and every other status keeps its leg.
+
+    That is also what makes the predicate honest about what it detects.  The
+    3,050 dead legs are not "old": they are events stuck at ``'scheduled'`` whose
+    games finished weeks ago and whose rows nothing ever advanced (an event-state
+    defect, filed on #837, not fixable here).  Never transitioning IS the corpse
+    signature; the age bound only separates that from tonight's fixtures.
+
+    Every unknown is False — unknown is not stale.  A missing start time, a
+    missing status, an unlinked market or a value we cannot compare keeps its leg
+    in the ask, so the worst case of this whole filter is today's behaviour.
+    That asymmetry is the safety argument: the cost of wrongly keeping a dead leg
+    is one seat for one pass, and the cost of wrongly dropping a live one is a
+    hero line that never streams.
 
     A naive datetime is read as UTC rather than refused.  The column is
     ``timestamptz`` so production always hands back an aware value; the coercion
     exists because a naive one would otherwise raise inside the comparison and
     take the socket's token pass down with it.
     """
+    if status != STALE_EVENT_STATUS:
+        return False
     if not isinstance(commence_time, datetime):
         return False
     if commence_time.tzinfo is None:
@@ -387,9 +417,11 @@ async def topup_outcome_clob_tokens(
 
     WHAT IS NOT ASKED AT ALL is a leg whose game finished days ago. The caller's
     slate has no lower bound on start time, so events stuck at 'scheduled' kept
-    their legs in the ask for ever — 73% of it, measured. ``STALE_EVENT_HOURS``
-    and the block that applies it carry that argument, including why the
-    predicate is the event's START TIME and not any settlement column.
+    their legs in the ask for ever — 73% of it, measured. ``STALE_EVENT_HOURS``,
+    ``STALE_EVENT_STATUS`` and the block that applies them carry that argument,
+    including why the predicate is the event's START TIME plus its STATUS and
+    not any settlement column, and why an event the graph calls 'live' is never
+    aged out however old its start time reads.
     """
     from sqlalchemy import cast, func, literal, select, update
     from sqlalchemy.dialects.postgresql import JSONB
@@ -428,11 +460,13 @@ async def topup_outcome_clob_tokens(
     # Seeded into `filled` rather than merely skipped: the return value IS the
     # socket's subscription list, so dropping a stored outcome would unsubscribe
     # the very legs this module exists to keep streaming.
-    # The event's start time rides along on this read rather than taking a
-    # second round trip: staleness is a property of the MARKET's parent event,
-    # so it has the same grain as the row this query already returns, and this
-    # runs on the socket's event loop every recycle.  Outer join — a market with
-    # no linked event yields NULL and is KEPT, never dropped (below).
+    # The event's start time AND status ride along on this read rather than
+    # taking a second round trip: staleness is a property of the MARKET's parent
+    # event, so both have the same grain as the row this query already returns,
+    # and this runs on the socket's event loop every recycle.  Outer join — a
+    # market with no linked event yields NULL for both and is KEPT, never
+    # dropped (below).  Two columns, not one, because age alone may not drop a
+    # leg: see `_is_stale` and `STALE_EVENT_STATUS`.
     stored_filled: dict[int, tuple[int, str]] = {}
     stale_market_ids: set[int] = set()
     stale_cutoff = datetime.now(timezone.utc) - timedelta(hours=STALE_EVENT_HOURS)
@@ -442,12 +476,13 @@ async def topup_outcome_clob_tokens(
                 FuturesMarket.id,
                 FuturesMarket.market_metadata,
                 Event.commence_time,
+                Event.status,
             )
             .outerjoin(Event, FuturesMarket.event_id == Event.id)
             .where(FuturesMarket.id.in_({mid for mid, _oid in addressable.values()}))
         )
-        for stored_market_id, metadata, commence_time in stored_rows.all():
-            if _is_stale(commence_time, stale_cutoff):
+        for stored_market_id, metadata, commence_time, event_status in stored_rows.all():
+            if _is_stale(commence_time, event_status, stale_cutoff):
                 stale_market_ids.add(stored_market_id)
             stored = (metadata or {}).get(OUTCOME_TOKEN_METADATA_KEY)
             if not isinstance(stored, dict):
@@ -523,9 +558,19 @@ async def topup_outcome_clob_tokens(
         # time is the one signal that is written by ingest for every row,
         # independent of whether anything ever streamed the market.
         #
-        # ONLY A POSITIVELY KNOWN OLD START DROPS A LEG: a NULL start time, an
-        # unlinked market, or a failed read all KEEP it. This refuses rather
-        # than guesses, the same way `token_for_outcome` does.
+        # AGE ALONE DOES NOT DROP A LEG. The event must ALSO still be sitting at
+        # `STALE_EVENT_STATUS` — the status the corpses never left. An event the
+        # graph has moved to 'live' keeps its leg however old its start time
+        # reads, because that column is the rest of the system saying the game
+        # is happening now, and overruling it on a clock would drop the live
+        # winner line this ship exists to reach. Measured 2026-09-17 07:5xZ:
+        # 2,996 of 2,996 slate legs past the bound are 'scheduled' and no live
+        # event of that age exists at all, so the guard costs zero legs here.
+        #
+        # ONLY A POSITIVELY KNOWN OLD START ON A POSITIVELY KNOWN 'scheduled'
+        # EVENT DROPS A LEG: a NULL start time, a NULL status, an unlinked
+        # market, or a failed read all KEEP it. This refuses rather than
+        # guesses, the same way `token_for_outcome` does.
         before = len(addressable)
         addressable = {
             cid: entry
