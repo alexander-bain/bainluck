@@ -1232,16 +1232,28 @@ async def _write_prices(
         # THE TEST IS ON THE ITEM, NOT THE LEG, AND THAT IS THE WHOLE FIX.
         # `_legs` can return the yes leg AND the no leg, and the no leg's book is
         # `complementary_book(bid, ask)` = `(1 - ask, 1 - bid)` — the same CLOB
-        # addressed from the other token. The empty-book thresholds are NOT
-        # complementary (`1 - 0.02 = 0.98`, not `0.95`), so a per-leg test fires
-        # on yes and MISSES no whenever `0.95 <= ask < 0.98`: measured on
-        # production 2026-09-17, 131 of 499 open Polymarket yes-leg specimens sit
-        # in exactly that band. Declining per leg would have half-fixed a quarter
-        # of the class and left the phantom complement printing — 49% on one row
-        # and 51% on the row beneath it, which is the shape a reader sees.
-        # Testing the venue's own quote once and skipping the whole item is also
-        # the truer statement: "this book is empty" is a fact about the market,
-        # not about which side of it you address.
+        # addressed from the other token. So a per-leg test is equivalent to this
+        # one only while the predicate answers a book and its complement the same
+        # way, and that is a property of the predicate's SHAPE, which moved twice
+        # on 2026-09-17. Read `feed_market_quality` for the shape in force and the
+        # test module's docstring for the swept table; the short version, over all
+        # 5,050 integer-cent books, is 18 legs escaping a per-leg read at the
+        # original pair (a band of `0.95 <= ask < 0.98` holding 131 of 499 open
+        # Polymarket yes-leg specimens, a quarter of the class), 6 after #5333
+        # moves the bid bound, and 0 under #6727's spread form, which is invariant
+        # under the flip. Declining per leg would have half-fixed that quarter and
+        # left the phantom complement printing — 49% on one row and 51% on the row
+        # beneath it, which is the shape a reader sees.
+        #
+        # THE GUARD STAYS ITEM-LEVEL EVEN WHERE THAT COUNT REACHES 0. Testing the
+        # venue's own quote once and skipping the whole item is the truer
+        # statement — "this book is empty" is a fact about the market, not about
+        # which side of it you address — and the equivalence above is not an
+        # invariant anything enforces. Neither is the single producer: `_legs`
+        # writes whatever `item["no"]` holds, so a second one passing the venue's
+        # own no-token book rather than the derived one splits the pair again on
+        # the day it lands. `test_a_per_leg_guard_would_split_the_pair` is the
+        # control that still catches that, and it rests on no constant.
         #
         # `is_fabricated_midpoint` is DELIBERATELY NOT imported here, though the
         # ingest half carries it. Measured on the same pass, over open markets:
