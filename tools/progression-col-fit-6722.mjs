@@ -103,6 +103,10 @@ const out = await page.evaluate(() => {
     scroller: { clientWidth: r1(scroller.clientWidth), scrollWidth: r1(scroller.scrollWidth), overflow: r1(scroller.scrollWidth - scroller.clientWidth) },
     table: { minWidth: cs.minWidth, width: r1(table.getBoundingClientRect().width), layout: cs.tableLayout },
     stageColumns: ths.length - 2,
+    // Where the grid sits in the document, so the after-LOOK's `SHOT_SCROLL` is measured rather
+    // than inherited: the page moves as cards are added above it, and ux/1312 re-derived this by
+    // hand in a scratch file that the next session could not find (its own lesson, applied here).
+    documentY: Math.round(table.getBoundingClientRect().top + window.scrollY),
     headers: ths,
     firstRow: tds,
   };
