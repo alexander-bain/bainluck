@@ -20237,7 +20237,16 @@ async def get_event_odds_history(
             ts = play.get("timestamp")
             # #5140: an unresolved play carries its predecessor's timestamp (or the
             # first snapshot's). That is not a sighting of this period — skip it.
-            if play.get("timestamp_resolved") is False:
+            #
+            # #6718 SCOPED TO FOOTBALL. This line shipped in the generic tier-2
+            # block, so it ran for every sport while the change claimed "every
+            # other sport's marker chain is byte-identical". The two controls
+            # could not have caught that: the MLB fixture carries zero scoring
+            # plays and tennis has none either, so neither ever reaches this
+            # line. The carried-timestamp defect is real on other sports too,
+            # but widening a marker rule onto populations #5140 never measured
+            # is a separate ship with its own evidence — #6718 names it.
+            if _is_transition_sport and play.get("timestamp_resolved") is False:
                 continue
             if period and ts and period not in first_seen:
                 first_seen[period] = ts
@@ -20285,9 +20294,23 @@ async def get_event_odds_history(
     if _is_transition_sport:
         _observed = pm_source.observed_transition_markers(
             event.sport.key,
-            [{"timestamp": eh.get("timestamp"), "period": eh.get("period")} for eh in espn_history]
+            # #6718: each observation names the series it came from, so the
+            # marker can say which instrument saw the transition instead of
+            # attributing all of them to the win-prob tier.
+            [
+                {
+                    "timestamp": eh.get("timestamp"),
+                    "period": eh.get("period"),
+                    "source": pm_source.SOURCE_ESPN_STATE,
+                }
+                for eh in espn_history
+            ]
             + [
-                {"timestamp": pt.get("timestamp"), "period": pt["game_state"].get("period")}
+                {
+                    "timestamp": pt.get("timestamp"),
+                    "period": pt["game_state"].get("period"),
+                    "source": pm_source.SOURCE_WIN_PROB,
+                }
                 for pts in win_prob_history.values()
                 for pt in pts
                 if isinstance(pt.get("game_state"), dict)
