@@ -42,6 +42,7 @@ import type {
   ActiveChartPoint,
 } from "@/lib/types";
 import type { PeriodBoundary } from "@/lib/periodMarkers";
+import { dedupePeriodLabels } from "@/lib/periodMarkers";
 
 /** Fallback source configs when win_prob_sources metadata isn't available */
 // Colors come from the one source-color registry (@/lib/sourceColors) — the
@@ -1129,8 +1130,10 @@ export default function OddsChart({
     // Spacing is now purely proportional, so it means the same thing at every
     // chart length: markers must be at least 7% of the visible width apart, which
     // is comfortably wider than a 2–4 character period label at 11px.
-    const minSpacing = chartDuration * 0.07;
-
+    //
+    // The rule itself now lives in `dedupePeriodLabels` and is shared with the
+    // score differential chart below, which carried a private pre-UX-P022 copy
+    // and smeared its inning labels (latency/467). Behaviour here is unchanged.
     const filtered = periodBoundaries
       .filter((b) => {
         const t = parseISO(b.timestamp).getTime();
@@ -1144,19 +1147,7 @@ export default function OddsChart({
 
     // Deduplicate: when two boundaries are too close, keep the later one
     // (e.g., "End of Q2" and "HT" at nearly the same time -> keep "HT")
-    const deduped: typeof filtered = [];
-    for (const b of filtered) {
-      const t = parseISO(b.timestamp).getTime();
-      if (deduped.length > 0) {
-        const prevT = parseISO(deduped[deduped.length - 1].timestamp).getTime();
-        if (t - prevT < minSpacing) {
-          // Replace previous with this one (prefer later label like "HT" over "Q2 end")
-          deduped[deduped.length - 1] = b;
-          continue;
-        }
-      }
-      deduped.push(b);
-    }
+    const deduped = dedupePeriodLabels(filtered, chartDuration);
 
     return deduped.map((b) => ({
       ...b,
