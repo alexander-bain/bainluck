@@ -95,9 +95,27 @@ def _vmeta(start: datetime, event_id: str) -> dict:
     }
 
 
-def _outcome(name: str, probability: float | None):
+def _outcome(
+    name: str,
+    probability: float | None,
+    *,
+    yes_bid=None,
+    yes_ask=None,
+    resolution_source=None,
+):
+    """An ORM-shaped `futures_outcomes` row for the adapter.
+
+    The book defaults to ABSENT (#6777): both-null is a price with no book
+    behind it, which `is_empty_book_midpoint` passes through untouched, so
+    every case written before that gate still asserts what it asserted.
+    """
     return SimpleNamespace(
-        name=name, current_probability=probability, last_updated=None
+        name=name,
+        current_probability=probability,
+        last_updated=None,
+        current_yes_bid=yes_bid,
+        current_yes_ask=yes_ask,
+        resolution_source=resolution_source,
     )
 
 

@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.utils.event_matcher import player_key
+from app.utils.feed_market_quality import bout_price_is_supported
 from app.utils.futures_market_snapshot import concept_price_observed_at_iso
 from app.utils.name_normalization import clean_slug, strip_diacritics
 from app.utils.settledness import price_converged, settled_under_assigned_state
@@ -512,6 +513,69 @@ def venue_bout_is_priced(name: str | None, outcome_names) -> bool:
         return False
     got = {_fighter_identity(n) for n in outcome_names if n and str(n).strip()}
     return len(got) == 2 and got == {_fighter_identity(s) for s in sides}
+
+
+def printable_probabilities(sides) -> list[float | None]:
+    """The numbers these outcomes may print — one per side, in order (#6777).
+
+    ``sides`` is an iterable of ``(probability, yes_bid, yes_ask)`` triples, the
+    shape :func:`app.utils.feed_market_quality.bout_price_is_supported` takes.
+    Returns the rounded value per side, or ``None`` for a side that may print no
+    number, so a caller substitutes this for the
+    ``round(float(p), 4) if p is not None else None`` expression it used to carry
+    and nothing else about it changes.
+
+    WHAT A READER SAW. The Power Slap 23 Discover card led with **Brandon Wilson
+    50% / Brian Ellis 49.5%** off ``bid 0.0200 / ask 0.9900`` and
+    ``bid 0.0100 / ask 0.9800`` (outcomes 229923170 / 229923171, production
+    2026-09-17). A quote that wide locates no price at all.
+
+    THE RULE IS NOT REDERIVED HERE, AND NEITHER IS THE QUANTIFIER. Authority owns
+    both under codex's owner split for #6777: ``bout_price_is_supported`` is the
+    bout-shaped call-site policy over #5247's ``is_empty_book_midpoint``, and one
+    refused side refuses the pair. This module is the INTEGRATION half — where the
+    question gets asked and what falls when the answer is no — so the concept path
+    grows no second copy of a price rule and cannot drift from the shared one.
+
+    🔴 ANY IS RIGHT FOR A BOUT AND WRONG FOR A LADDER, WHICH IS WHY THE PAIR RULE
+    IS SCOPED TO A TWO-SIDED SET. A bout is one question with two sides: refusing
+    Wilson while keeping Ellis leaves the card leading "Brian Ellis 49.5%", whose
+    complement is precisely the number we just refused (#5333's defect, and
+    #1860's before it). A ladder is the opposite — its rungs are separate
+    questions, and dropping every rung because one has an empty book would destroy
+    honest ones. ``_fight_outcomes`` serves BOTH shapes on this page: a main event
+    (two sides) and method/round/distance props, which can carry more. So the pair
+    rule fires only on a two-sided set, and a longer set is returned exactly as it
+    is served today. No ladder policy is invented here — the concept path has never
+    had one, and inventing one would be a ship nobody ruled.
+
+    WITHHOLDING, NEVER REWRITING (gotcha #21). Nothing stored moves; the builder
+    declines to publish. A rescaled or inferred price would be a number we
+    invented, and ``calibration_probability`` coalesces to stored values (gotcha
+    #144 / ruling 103), so an invented price becomes a forecast we are graded on.
+
+    SETTLED NEEDS NO CARVE-OUT HERE, and that is the shared predicate's property
+    rather than an omission: a graded side carries 0 or 1, a whole
+    midpoint-tolerance away from any book this rule can reach, so condition 3 fails
+    and the result is kept. ``futures_unsupported_price`` needs an explicit
+    ``resolution_source`` exemption because it reads a trade column; this reads
+    three columns of one write and cannot mistake a settlement for a quote.
+
+    The refusal lands in a shape this module already ships and already renders:
+    ``{"name": ..., "probability": None}`` is what an unpriced venue bout emits
+    today, and :func:`venue_bout_is_priced`'s docstring says why that is the safe
+    direction — "a refused pair renders as a bout with no prices, which is what the
+    reader sees today anyway". The card keeps its bouts, its page and its fighters'
+    names; it loses only the number it could not stand up.
+    """
+    triples = [tuple(s) for s in sides]
+    values = [
+        None if probability is None else round(float(probability), 4)
+        for probability, _bid, _ask in triples
+    ]
+    if len(triples) == 2 and not bout_price_is_supported(triples):
+        return [None] * len(triples)
+    return values
 
 
 def card_number(cfg: CombatSportConfig, *texts: str | None) -> str | None:
@@ -1317,6 +1381,13 @@ async def _attach_headline_bouts(
                         FuturesOutcome.market_id,
                         FuturesOutcome.name,
                         FuturesOutcome.current_probability,
+                        # #6777: the book columns decide whether that probability
+                        # may be printed. Two more columns on the SAME read of the
+                        # SAME child table — the scan the docstring above guards is
+                        # of `futures_markets`, and this is not one. No settlement
+                        # column is needed: see `printable_probabilities`.
+                        FuturesOutcome.current_yes_bid,
+                        FuturesOutcome.current_yes_ask,
                     ).where(FuturesOutcome.market_id.in_(main_ids))
                 )
             ).all()
@@ -1325,8 +1396,10 @@ async def _attach_headline_bouts(
         return
 
     by_market: dict[int, list] = {}
-    for market_id, name, probability in outcome_rows:
-        by_market.setdefault(market_id, []).append((name, probability))
+    for market_id, name, probability, yes_bid, yes_ask in outcome_rows:
+        by_market.setdefault(market_id, []).append(
+            (name, probability, yes_bid, yes_ask)
+        )
 
     commence_by_market = commence_by_market or {}
     for concept in concepts:
@@ -1335,19 +1408,22 @@ async def _attach_headline_bouts(
         if len(outcomes) != 2:
             continue  # not a two-sided bout — leave the card as it was
         outcomes.sort(key=lambda o: float(o[1] or 0), reverse=True)
+        # #6777. Numeric(7,6) arrives as Decimal, and a Decimal is not JSON — the
+        # float() inside `printable_probabilities` is the serialisation, not a
+        # rounding preference. This is a main event, so it is always the pair.
+        printable = printable_probabilities(
+            (probability, yes_bid, yes_ask)
+            for _name, probability, yes_bid, yes_ask in outcomes
+        )
         competitors = [
-            {
-                "name": name,
-                # Numeric(7,6) arrives as Decimal, and a Decimal is not JSON —
-                # the float() is the serialisation, not a rounding preference.
-                "probability": (
-                    round(float(probability), 4) if probability is not None else None
-                ),
-            }
-            for name, probability in outcomes
+            {"name": row[0], "probability": p}
+            for row, p in zip(outcomes, printable)
         ]
         if not all(c["name"] and c["probability"] is not None for c in competitors):
-            continue  # half a bout is not a bout
+            # "half a bout is not a bout" — and since #6777 that also means a bout
+            # whose price the book refutes attaches no headline at all, rather
+            # than attaching a nameless one.
+            continue
         commence = commence_by_market.get(main_id)
         concept["headline_bout"] = {
             "competitors": competitors,
@@ -1552,16 +1628,17 @@ class CombatEventAdapter:
                 key=lambda o: float(o.current_probability or 0),
                 reverse=True,
             )
-            return [
-                {
-                    "name": o.name,
-                    "probability": (
-                        round(float(o.current_probability), 4)
-                        if o.current_probability is not None
-                        else None
-                    ),
-                }
+            # #6777: a price the book refutes is withheld, not printed, and on a
+            # two-sided bout the pair falls together. The sort above is
+            # deliberately left on the STORED value, so a withheld row keeps its
+            # place rather than sinking to the bottom of its own bout.
+            printable = printable_probabilities(
+                (o.current_probability, o.current_yes_bid, o.current_yes_ask)
                 for o in outs
+            )
+            return [
+                {"name": o.name, "probability": p}
+                for o, p in zip(outs, printable)
             ]
 
         # primary = the main-event fighters (co-equal, head-to-head).
@@ -1774,16 +1851,16 @@ class CombatEventAdapter:
             if not venue_bout_is_priced(m.name, [o.name for o in outs]):
                 # The two fighters, no numbers. Never a price we cannot stand up.
                 return [{"name": s, "probability": None} for s in sides]
-            priced = [
-                {
-                    "name": o.name,
-                    "probability": (
-                        round(float(o.current_probability), 4)
-                        if o.current_probability is not None
-                        else None
-                    ),
-                }
+            # #6777 — see `printable_probabilities`. This is the branch the Power
+            # Slap 23 specimen renders through, and `venue_bout_is_priced` above
+            # has already established that these two outcomes ARE the two
+            # fighters, so the pair rule is on exactly the shape it is for.
+            printable = printable_probabilities(
+                (o.current_probability, o.current_yes_bid, o.current_yes_ask)
                 for o in outs
+            )
+            priced = [
+                {"name": o.name, "probability": p} for o, p in zip(outs, printable)
             ]
             return sorted(
                 priced,

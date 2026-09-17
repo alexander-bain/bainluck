@@ -44,13 +44,21 @@ import pytest
 from app.utils.event_combat import _attach_headline_bouts
 
 
-def _outcome(market_id, name, probability):
+def _outcome(market_id, name, probability, yes_bid=None, yes_ask=None):
     """A row of the projection `_attach_headline_bouts` selects.
 
-    `(market_id, name, current_probability)` — three columns of
-    `futures_outcomes`, never a `FuturesMarket`.
+    `(market_id, name, current_probability, current_yes_bid, current_yes_ask)` —
+    five columns of `futures_outcomes`, never a `FuturesMarket`. The last two
+    joined the projection with #6777, which asks whether the book supports the
+    price before printing it.
+
+    THE BOOK DEFAULTS TO ABSENT, and that is what keeps every test written
+    before #6777 saying what it said. Both-null is "no book at all" — a model
+    price — which the shared predicate passes through untouched, so these cases
+    still exercise naming, pairing and scan-counting rather than price support.
+    The cases that mean to exercise support pass a book explicitly.
     """
-    return (market_id, name, probability)
+    return (market_id, name, probability, yes_bid, yes_ask)
 
 
 class _Result:

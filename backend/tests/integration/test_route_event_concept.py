@@ -127,9 +127,22 @@ class TestEventConceptRoute:
         assert resp.status_code == 405
 
 
-def _tennis_outcome(name, prob, won=False):
+def _tennis_outcome(name, prob, won=False, yes_bid=None, yes_ask=None):
+    """A `futures_outcomes` row for the concept adapters.
+
+    The book defaults to ABSENT (#6777): both-null is a price with no book
+    behind it, which `is_empty_book_midpoint` passes through untouched, so every
+    case written before that gate still renders the prices it always did.
+    """
     from types import SimpleNamespace
-    return SimpleNamespace(name=name, current_probability=prob, is_winner=won)
+    return SimpleNamespace(
+        name=name,
+        current_probability=prob,
+        is_winner=won,
+        current_yes_bid=yes_bid,
+        current_yes_ask=yes_ask,
+        resolution_source=None,
+    )
 
 
 def _tennis_winner_market():
