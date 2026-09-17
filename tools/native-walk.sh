@@ -37,13 +37,131 @@
 # would make anyway. It signs nothing in, writes nothing, and cannot reach an
 # authenticated surface.
 #
+# A THIRD WAY IT LIES, AND THE ONLY ONE THAT SURVIVES BOTH FIXES ABOVE: the shot
+# is of the right app at the right moment and is STILL the previous frame. Two
+# measured instances, a day apart, both found by hashing PNGs by hand:
+#
+#   - native/204: `native-gates.sh` runs BainLuckTests, whose host app launches
+#     WITHOUT -suppress_notification_prompt, so the permission alert is left on
+#     SpringBoard. Every later walk photographs the DIALOG — two frames two
+#     minutes apart, one of them supposedly scrolled 1800pt, were identical.
+#   - native/203: a scroll that never applied. Same route, different `-launch_scroll`,
+#     byte-identical frame.
+#
+# Neither is visible in the log: the terminate worked, the launch worked, the
+# PNG is non-empty, and the script prints `WALK ok`. It is only visible if you
+# compare the frames — which is why this now does it, and why a no-op is a STOP.
+# Live prices and the clock move between any two honest shots of this app, so a
+# byte-identical pair is not a coincidence worth tolerating.
+#
 # USAGE
 #   tools/native-walk.sh <device-udid> <out.png> [route] [scroll-points]
 #   tools/native-walk.sh "$DEV" shots/01-discover.png
 #   tools/native-walk.sh "$DEV" shots/05-event.png "bainluck://events/15310222" 1600
+#   tools/native-walk.sh --selftest   # prove the no-op rule. No simulator, no tree.
 set -uo pipefail
 
 BUNDLE="com.bainluck.Bain-Luck"
+
+# ── frame-twin detection (the no-op guard) ───────────────────────────────────
+# PURE: reads a ledger path and three strings, sets three globals, prints
+# nothing — so `--selftest` drives THE SAME function the real walk calls. A copy
+# of this logic inside a test would prove nothing about this script.
+#
+#   FRAME_VERDICT     NEW | DUP_OTHER_WALK | DUP_SAME_WALK
+#   FRAME_TWIN        the earlier shot carrying this exact frame
+#   FRAME_TWIN_PARAMS the walk parameters that earlier shot was taken with
+#
+# The two verdicts are kept apart because they mean different things to the
+# reader: DUP_OTHER_WALK is the rig failing to move (a dead scroll, a modal
+# drawn over every route); DUP_SAME_WALK is a before/after that is one frame
+# filed twice. Both are a STOP — the escape hatch is explicit, see below.
+frame_check () {   # <sha256> <params> <ledger> <this-out-path>
+  _fc_hash="$1"; _fc_params="$2"; _fc_ledger="$3"; _fc_path="$4"
+  FRAME_VERDICT=NEW; FRAME_TWIN=""; FRAME_TWIN_PARAMS=""
+  [ -f "$_fc_ledger" ] || return 0
+  while IFS="$(printf '\t')" read -r _h _p _q; do
+    [ -n "${_h:-}" ] || continue
+    [ "$_h" = "$_fc_hash" ] || continue
+    # Re-shooting the SAME output path replaces its own earlier row: a frame is
+    # never a twin of itself. Keyed on the PATH, not the hash, so a genuine
+    # re-shoot that lands a different frame still clears the stale row below.
+    [ "${_q:-}" = "$_fc_path" ] && continue
+    FRAME_TWIN="$_q"; FRAME_TWIN_PARAMS="$_p"
+    if [ "$_p" = "$_fc_params" ]; then
+      FRAME_VERDICT=DUP_SAME_WALK
+    else
+      FRAME_VERDICT=DUP_OTHER_WALK
+    fi
+    return 0
+  done < "$_fc_ledger"
+  return 0
+}
+
+# ── --selftest: prove the rule above, on synthetic ledgers, with no simulator ─
+if [ "${1:-}" = "--selftest" ]; then
+  ST_FAIL=0
+  _st_dir="$(mktemp -d)"; _st_led="$_st_dir/frames.tsv"
+  st () {  # <case> <expected-verdict> <hash> <params> <path>
+    frame_check "$3" "$4" "$_st_led" "$5"
+    if [ "$FRAME_VERDICT" = "$2" ]; then
+      echo "  ok    $1 -> $FRAME_VERDICT"
+    else
+      echo "  FAIL  $1 -> $FRAME_VERDICT (expected $2)"; ST_FAIL=$((ST_FAIL+1))
+    fi
+  }
+  echo "--selftest — walk frame no-op rule (no simctl, no tree needed)"
+
+  # 1. An absent ledger must not crash and must not accuse.
+  st "absent ledger           " NEW "aaa" "route=X scroll=none" "shots/01.png"
+
+  printf 'aaa\troute=X scroll=none\tshots/01.png\n'   >  "$_st_led"
+  printf 'bbb\troute=Y scroll=none\tshots/02.png\n'   >> "$_st_led"
+  printf 'ccc\troute=Y scroll=1600\tshots/03.png\n'   >> "$_st_led"
+
+  # 2. THE CONTROL. A genuinely new frame must read NEW — without this the
+  #    whole guard could be a function that returns a STOP for every input and
+  #    every other case below would still pass.
+  st "new frame               " NEW "zzz" "route=Z scroll=none" "shots/04.png"
+
+  # 3. The native/204 shape: a different route photographed the same pixels.
+  st "twin, different route   " DUP_OTHER_WALK "aaa" "route=Z scroll=none" "shots/04.png"
+
+  # 4. The native/203 shape: same route, a scroll that never applied.
+  st "twin, dead scroll       " DUP_OTHER_WALK "bbb" "route=Y scroll=1600" "shots/04.png"
+
+  # 5. A before/after filed twice — same walk, same pixels.
+  st "twin, same walk         " DUP_SAME_WALK  "ccc" "route=Y scroll=1600" "shots/04.png"
+
+  # 6. A re-shoot of one path is not a twin of itself.
+  st "re-shoot of same path   " NEW "aaa" "route=X scroll=none" "shots/01.png"
+
+  # 7. Matching is on the FRAME, not the path: the same path name in a different
+  #    directory carrying a known frame is still a twin.
+  st "twin under another dir  " DUP_OTHER_WALK "aaa" "route=Q scroll=none" "other/01.png"
+
+  # 8. Params differing only by first-run gates still count as a different walk,
+  #    because those gates change what is on the screen.
+  st "twin, firstrun differs  " DUP_OTHER_WALK "aaa" "route=X scroll=none firstrun=1" "shots/05.png"
+
+  rm -rf "$_st_dir"
+  echo "done (--selftest) — $([ $ST_FAIL -eq 0 ] && echo 'all cases passed' || echo 'FAILURES ABOVE'); nothing was launched"
+  exit $([ $ST_FAIL -eq 0 ] && echo 0 || echo 1)
+fi
+
+# This script is POSITIONAL, and its sibling rig has already been bitten by that
+# (`look.sh --width 390 out.png` silently took `--width` as the OUTPUT PATH and
+# shot nothing). So an unrecognised leading flag is a STOP here, not a udid.
+case "${1:-}" in
+  -*) echo "WALK: '$1' is not a device udid. This script takes POSITIONAL args:" >&2
+      echo "  tools/native-walk.sh <device-udid> <out.png> [route] [scroll-points]" >&2
+      echo "  tools/native-walk.sh --selftest" >&2
+      exit 2 ;;
+esac
+case "${2:-}" in
+  -*) echo "WALK: '$2' is not an output path (positional arg 2)." >&2; exit 2 ;;
+esac
+
 DEV="${1:?device udid}"
 OUT="${2:?output png path}"
 ROUTE="${3:-}"
@@ -155,4 +273,55 @@ xcrun simctl io "$DEV" screenshot "$OUT" >/dev/null 2>&1 || {
 
 # A zero-byte or absent PNG is the failure that reads like a pass downstream.
 if [ ! -s "$OUT" ]; then echo "WALK: EMPTY png -> $OUT" >&2; exit 1; fi
+
+# ── is this frame one we have already filed? ─────────────────────────────────
+# The ledger lives beside the shots, so it is scoped to one walk the way a
+# reader thinks of one: a directory of frames. NATIVE_WALK_NO_LEDGER=1 turns the
+# whole check off; NATIVE_WALK_ALLOW_DUPLICATE=1 keeps recording but downgrades a
+# twin to a warning, which is what you want for a deliberate control — a pair
+# that is SUPPOSED to be identical because the change under test should not have
+# moved this screen.
+if [ "${NATIVE_WALK_NO_LEDGER:-0}" != "1" ]; then
+  LEDGER="${NATIVE_WALK_LEDGER:-$(dirname "$OUT")/.native-walk-frames.tsv}"
+  HASH="$(shasum -a 256 "$OUT" | awk '{print $1}')"
+  # The gates belong in the identity of a walk: they change what is on screen,
+  # so two shots that differ only by them are genuinely different walks.
+  PARAMS="route=${ROUTE:-<default tab>} scroll=${SCROLL:-none} firstrun=${NATIVE_WALK_FIRSTRUN:-0} prompt=${NATIVE_WALK_PROMPT:-0}"
+
+  frame_check "$HASH" "$PARAMS" "$LEDGER" "$OUT"
+
+  if [ "$FRAME_VERDICT" != "NEW" ]; then
+    {
+      echo "WALK: NO-OP FRAME — this shot is byte-identical to one already taken."
+      echo "  this shot : $OUT"
+      echo "              $PARAMS"
+      echo "  twin      : $FRAME_TWIN"
+      echo "              $FRAME_TWIN_PARAMS"
+      echo "  sha256    : $HASH"
+      if [ "$FRAME_VERDICT" = "DUP_OTHER_WALK" ]; then
+        echo "  Two DIFFERENT walks produced one frame, so the app did not move."
+        echo "  Most likely: a system dialog is drawn over every route (run"
+        echo "  'xcrun simctl shutdown \$DEV && xcrun simctl boot \$DEV' — a"
+        echo "  BainLuckTests run leaves the notification alert on SpringBoard),"
+        echo "  or -launch_scroll never applied."
+      else
+        echo "  The SAME walk twice, pixel for pixel — a before and an after that"
+        echo "  hash the same are one frame filed twice. Live prices and the clock"
+        echo "  move between two honest shots of this app."
+      fi
+      echo "  Deliberate control? NATIVE_WALK_ALLOW_DUPLICATE=1. Off entirely:"
+      echo "  NATIVE_WALK_NO_LEDGER=1."
+    } >&2
+    [ "${NATIVE_WALK_ALLOW_DUPLICATE:-0}" = "1" ] || exit 3
+  fi
+
+  # Record it, dropping any earlier row for THIS path so a re-shoot replaces
+  # itself rather than accumulating a stale frame that can never match again.
+  if [ -f "$LEDGER" ]; then
+    _tmp="$LEDGER.$$"
+    awk -F'\t' -v p="$OUT" '$3 != p' "$LEDGER" > "$_tmp" 2>/dev/null && mv "$_tmp" "$LEDGER"
+  fi
+  printf '%s\t%s\t%s\n' "$HASH" "$PARAMS" "$OUT" >> "$LEDGER"
+fi
+
 echo "WALK ok  route='${ROUTE:-<default tab>}' scroll='${SCROLL:-none}' waited=${wait_for}s -> $OUT"
