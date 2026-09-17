@@ -1098,6 +1098,63 @@ def golf_tournament_story_key(name: str) -> str | None:
     slug = re.sub(r"_+", "_", re.sub(r"[^a-z0-9]+", "_", tournament.lower())).strip("_")
     return f"{GOLF_TOURNAMENT_STORY_PREFIX}{slug}" if slug else None
 
+
+#: Prefix for the per-event UFC story keys minted below. Same shape, and for the
+#: same reason, as `GOLF_TOURNAMENT_STORY_PREFIX`: the event number is DERIVED
+#: from the market name, so it can never appear in a hand-written dict, and every
+#: consumer (the cap in `diversify_quality_families`, the label/question in
+#: `discover_bundles`) keys on the prefix instead.
+#:
+#: #2602/#6444. Before this, `\bufc\s+\d{3,}\b` matched "UFC 331" and then threw
+#: the number away, returning one literal `story:ufc_events` for the whole
+#: promotion. Two different real events — UFC 331 on September 19 and UFC 332 in
+#: October — landed in one bucket headed "UFC" and asked "Who wins on the next
+#: card?", which is not answerable about a set spanning two cards. Alex's
+#: September 16 phone test read that as seven UFC cards with no event context.
+#: The number the regex already matched IS the event identity; keeping it is the
+#: whole fix.
+UFC_EVENT_STORY_PREFIX = "story:ufc_event:"
+
+#: Numbered UFC events only ("UFC 331"). A bare "UFC" with no number names no
+#: single card — "Will Aljamain Sterling become UFC champion in 2026?" is a
+#: season-long question, not a fight on a card — so those keep the generic
+#: `story:ufc_events` key and are deliberately NOT folded into an event family.
+#: Exactly three digits, and the trailing `\b` is load-bearing: the original
+#: `\d{3,}` — and a `\d{3,4}` written while fixing it — both read the year in
+#: "Will the UFC 2026 season sell out?" as card number 2026 and mint a story for
+#: an event that does not exist. Three digits cannot match a year, because the
+#: boundary after them fails against a fourth digit. Numbered UFC events are in
+#: the 300s and arrive ~13 a year, so this holds until UFC 1000; a four-digit
+#: card number needs a year exclusion here, not a wider quantifier.
+_UFC_NUMBERED_EVENT_RE = re.compile(r"\bufc\s+(\d{3})\b", re.IGNORECASE)
+
+
+def ufc_event_story_key(name: str) -> str | None:
+    """``story:ufc_event:331`` when ``name`` names a numbered UFC event, else ``None``.
+
+    Matches the fight rows ("UFC 331: Renato Moicano vs. Brian Ortega") and the
+    off-card markets that name the same event ("Will Donald Trump attend UFC
+    332?") alike — under notice 40 an off-card novelty belongs to its event's
+    container, and the reader who taps "UFC 332" should find it there.
+    """
+    match = _UFC_NUMBERED_EVENT_RE.search(name or "")
+    return f"{UFC_EVENT_STORY_PREFIX}{match.group(1)}" if match else None
+
+
+def ufc_event_display_name(story_key: str) -> str | None:
+    """``"UFC 331"`` for a per-event key, else ``None``.
+
+    Unlike golf's slug — which cannot be un-slugified back into a name a reader
+    recognises — a UFC event key carries only the number, so the display name is
+    recovered losslessly here rather than stored twice. Minting and reading the
+    key therefore stay in one module.
+    """
+    if not story_key.startswith(UFC_EVENT_STORY_PREFIX):
+        return None
+    number = story_key[len(UFC_EVENT_STORY_PREFIX) :]
+    return f"UFC {number}" if number.isdigit() else None
+
+
 _EPISODE_LEVEL_RE = re.compile(
     r"("
     r"S\d{1,2}E\d{1,2}"
@@ -1556,9 +1613,11 @@ def _story_key(name: str, category: str) -> str | None:
     if re.search(r"\b(fifa\s+)?world cup\b", lower):
         return "story:fifa_world_cup"
 
-    if re.search(r"\bufc\s+\d{3,}\b", lower) or re.search(
-        r"\bufc\b.*\b(title|champion|main event)\b", lower
-    ):
+    ufc_event = ufc_event_story_key(name)
+    if ufc_event is not None:
+        return ufc_event
+
+    if re.search(r"\bufc\b.*\b(title|champion|main event)\b", lower):
         return "story:ufc_events"
 
     if re.search(
@@ -3384,6 +3443,10 @@ def diversify_quality_families(
     # golf key upstream.
     prefix_story_caps = {
         GOLF_TOURNAMENT_STORY_PREFIX: 3,
+        # Same 3 the literal `story:ufc_events` carried before the key was split
+        # per event: the cap is a dial on how much of one card reaches a page,
+        # and splitting the key must not quietly raise it to the default 5.
+        UFC_EVENT_STORY_PREFIX: 3,
     }
 
     def _cap_for(story_key: str) -> int:

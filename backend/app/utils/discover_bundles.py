@@ -8,8 +8,10 @@ from datetime import datetime
 from typing import Any
 
 from app.utils.feed_market_quality import GOLF_TOURNAMENT_STORY_PREFIX
+from app.utils.feed_market_quality import UFC_EVENT_STORY_PREFIX
 from app.utils.feed_market_quality import _story_key as compute_story_key
 from app.utils.feed_market_quality import golf_tournament_display_name
+from app.utils.feed_market_quality import ufc_event_display_name
 
 logger = logging.getLogger(__name__)
 
@@ -736,6 +738,20 @@ def _make_theme_bundle_item(
             return None
         label, question = resolved
         title_source = question_source = "golf_tournament"
+    elif story_key.startswith(UFC_EVENT_STORY_PREFIX):
+        # #2602/#6444. "What happens at UFC 331?" rather than the promotion-wide
+        # "Who wins on the next card?" this family used to inherit. Two reasons
+        # to phrase it this way and not "Who wins at UFC 331?": the card is named,
+        # so the reader knows which night they are being asked about; and the
+        # family legitimately holds off-card markets beside the fights (notice
+        # 40 — "Will Donald Trump attend UFC 332?" belongs to UFC 332), of which
+        # "who wins" is simply not true. It reuses the wording `_derive_race_label`
+        # already gives a named occasion, so the voice is the house's, not a new one.
+        label = ufc_event_display_name(story_key)
+        if label is None:
+            return None
+        question = f"What happens at {label}?"
+        title_source = question_source = "ufc_event"
     if not question:
         return None
     if _members_span_multiple_seasons(ranked):
