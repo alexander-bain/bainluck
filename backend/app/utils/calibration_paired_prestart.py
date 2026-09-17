@@ -216,6 +216,7 @@ __all__ = [
     "PAIR_PAIRED",
     "PAIR_PAIRED_UNCHANGED",
     "PAIR_RESULT_NOT_INDEPENDENT",
+    "PAIR_SETTLEMENT_PRECEDES_START",
     "PAIR_START_CONTRADICTED",
     "PAIR_START_NOT_REPORTED",
     "PAIR_START_PROVENANCE_UNKNOWN",
@@ -232,6 +233,7 @@ __all__ = [
     "paired_improvement",
     "paired_legs_sql",
     "result_is_independent",
+    "settlement_precedes_start_sql",
     "start_is_contradicted_sql",
     "start_is_reported_sql",
     "start_refusal",
@@ -357,6 +359,42 @@ PAIR_START_NOT_REPORTED = "start_not_reported"
 #: :data:`START_CONTRADICTION_TOLERANCE_SECONDS` before it.
 PAIR_START_CONTRADICTED = "start_contradicted"
 
+#: CAL-P1333, on codex's 01:48Z local check 2: *"A late wrong start can admit
+#: in-game prices before eventual resolution; ``LEAST(start, resolution)`` alone
+#: doesn't catch that."* Measured on the real :func:`classify_pair`, it does not
+#: — see ``scripts/probe_wrong_late_start.py``.
+#:
+#: The specimen: a game starting 19:00 and settling 22:30, whose stored
+#: ``commence_time`` is the market's CLOSE time of 23:00 (gotcha #14, and an
+#: ordinary shape for a Kalshi-linked row). ``LEAST`` clamps the boundary to the
+#: SETTLEMENT, 22:30 — so the "final pre-event" leg is the last price before
+#: 22:30, which is deep inside the game. The probe scores a 0.94 in-game price
+#: as a pre-event forecast against a result already all but known, and the same
+#: row with a correct start refuses it. Only ``completed_at`` stood in the way,
+#: and on this population it is routinely NULL.
+#:
+#: 🔴 THE AMBIGUITY IS WHY THIS REFUSES RATHER THAN CLAMPS. A settlement can
+#: never truly precede a start, so one of the two columns is wrong — and WHICH
+#: one decides the direction of the error, in opposite directions:
+#:
+#: * the START is wrong-late ⇒ the boundary lands after the real start and
+#:   admits in-game prices. Anti-conservative, and it inflates the very number
+#:   this module publishes.
+#: * the SETTLEMENT is wrong-early ⇒ the boundary lands before the real start.
+#:   Harmless, merely costs freshness.
+#:
+#: Nothing we hold says which, so codex's *"reject ambiguous boundaries; don't
+#: label remaining uncertainty universally one-sided"* applies exactly. Its own
+#: class rather than a widened :data:`PAIR_START_CONTRADICTED` so the
+#: feasibility walk prices what this strictness COSTS separately from the
+#: flagrant arm — the same reasoning as
+#: :data:`PAIR_START_PROVENANCE_UNKNOWN`, and the reason
+#: :data:`START_CONTRADICTION_TOLERANCE_SECONDS` keeps its 6h rather than being
+#: quietly dropped to zero: the tolerance's band is now REFUSED either way, and
+#: the walk gets to say whether the two bands behave alike before anyone merges
+#: them.
+PAIR_SETTLEMENT_PRECEDES_START = "settlement_precedes_start"
+
 #: No single book holds both legs, but the union of books does. Stitching two
 #: books together measures a margin difference, not a forecast change.
 PAIR_LEGS_FROM_DIFFERENT_BOOKS = "legs_from_different_books"
@@ -403,6 +441,7 @@ PAIR_CLASSES: tuple[str, ...] = (
     PAIR_START_PROVENANCE_UNKNOWN,
     PAIR_START_NOT_REPORTED,
     PAIR_START_CONTRADICTED,
+    PAIR_SETTLEMENT_PRECEDES_START,
     PAIR_PAIRED,
     PAIR_PAIRED_UNCHANGED,
     PAIR_LEGS_FROM_DIFFERENT_BOOKS,
@@ -625,6 +664,23 @@ def start_is_contradicted_sql(
       )"""
 
 
+def settlement_precedes_start_sql(
+    commence_time: str = "e.commence_time",
+    resolution_date: str = "fm.resolution_date",
+) -> str:
+    """A settlement before the start it belongs to. See the class docs.
+
+    Deliberately bare ``<`` with no tolerance: this is the branch
+    :func:`start_is_contradicted_sql` leaves behind, and the whole point is that
+    the residual band is the one where ``LEAST`` silently re-anchors the measure
+    on a settlement timestamp.
+    """
+    return f"""(
+          {resolution_date} IS NOT NULL
+          AND {resolution_date} < {commence_time}
+      )"""
+
+
 def paired_legs_sql(
     *,
     lead_seconds: int = DEFAULT_LEAD_SECONDS,
@@ -697,6 +753,8 @@ SELECT fo.id AS outcome_id,
                THEN '{PAIR_START_PROVENANCE_UNKNOWN}'
            WHEN NOT {start_is_reported_sql()} THEN '{PAIR_START_NOT_REPORTED}'
            WHEN {start_is_contradicted_sql()} THEN '{PAIR_START_CONTRADICTED}'
+           WHEN {settlement_precedes_start_sql()}
+               THEN '{PAIR_SETTLEMENT_PRECEDES_START}'
            WHEN pair_book.bookmaker IS NOT NULL
                 AND pair_book.early_id = pair_book.final_id
                THEN '{PAIR_PAIRED_UNCHANGED}'
@@ -854,7 +912,18 @@ def start_refusal(event: Any, *, resolution_date: Any = None) -> Optional[str]:
         return PAIR_START_NOT_REPORTED
     if _start_is_contradicted(event, resolution_date):
         return PAIR_START_CONTRADICTED
+    if _settlement_precedes_start(event, resolution_date):
+        return PAIR_SETTLEMENT_PRECEDES_START
     return None
+
+
+def _settlement_precedes_start(event: Any, resolution_date: Any) -> bool:
+    """The Python twin of :func:`settlement_precedes_start_sql`."""
+    commence = _as_utc(getattr(event, "commence_time", None))
+    settled = _as_utc(resolution_date)
+    if commence is None or settled is None:
+        return False
+    return settled < commence
 
 
 def _start_is_contradicted(event: Any, resolution_date: Any) -> bool:
@@ -999,6 +1068,15 @@ def classify_pair(
 
     start = _as_utc(getattr(event, "commence_time", None))
     resolution_date = _as_utc(resolution_date)
+    # UNREACHABLE BY CONSTRUCTION SINCE CAL-P1333, AND KEPT ON PURPOSE.
+    # `start_refusal` now returns PAIR_SETTLEMENT_PRECEDES_START for every row
+    # this branch used to fire on, so the clamp can no longer move `start`. It
+    # stays because it is the Python twin of the SQL's `LEAST(...)`, which also
+    # stays: the statement still computes a boundary for rows the CASE refuses.
+    # Deleting one half of a mirrored pair is how the two drift. The refusal
+    # ordering that makes this dead is itself asserted, so if anyone reorders
+    # the ladder this clamp is the safe fallback rather than a silent in-game
+    # boundary. See `test_the_refusal_fires_before_the_clamp_can_move_start`.
     if resolution_date is not None and resolution_date < start:
         start = resolution_date
     as_of_early = start - timedelta(seconds=lead_seconds)
