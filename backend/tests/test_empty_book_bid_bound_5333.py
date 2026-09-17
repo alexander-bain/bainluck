@@ -71,6 +71,7 @@ controls precisely because they must not move. Reverting the CONSTANT alone is
 the right mutant here: the ship is one number, so a mutation that touches
 anything else would be testing a change nobody made.
 """
+
 import json
 from decimal import Decimal
 from types import SimpleNamespace
@@ -91,7 +92,6 @@ from app.utils.feed_market_quality import (
     EMPTY_BOOK_MIN_SPREAD,
     is_empty_book_midpoint,
 )
-
 
 # ---------------------------------------------------------------------------
 # The four real entry points. Each surface is driven through the function the
@@ -138,7 +138,9 @@ class _Market:
 
 
 def _search_names(*outcomes, **kw):
-    return [o["name"] for o in _build_search_top_outcomes(_Market(list(outcomes)), **kw)]
+    return [
+        o["name"] for o in _build_search_top_outcomes(_Market(list(outcomes)), **kw)
+    ]
 
 
 def _gamma(question, prices, bid, ask, last=None, vol24=None, cond="0xtest", **extra):
@@ -147,7 +149,9 @@ def _gamma(question, prices, bid, ask, last=None, vol24=None, cond="0xtest", **e
         "conditionId": cond,
         "question": question,
         "outcomes": json.dumps(["Over", "Under"]),
-        "outcomePrices": json.dumps([str(p) for p in prices]) if prices is not None else None,
+        "outcomePrices": (
+            json.dumps([str(p) for p in prices]) if prices is not None else None
+        ),
         "clobTokenIds": json.dumps(["1", "2"]),
         "bestBid": bid,
         "bestAsk": ask,
@@ -172,8 +176,13 @@ def _submarket(raw):
 def _parent(*markets, title="IK Sirius vs Degerfors - Total Corners"):
     """The parent write site — the non-negRisk multi-market branch."""
     event = PolymarketAPIService()._parse_event(
-        {"id": "1035459", "title": title, "negRisk": False, "active": True,
-         "markets": list(markets)}
+        {
+            "id": "1035459",
+            "title": title,
+            "negRisk": False,
+            "active": True,
+            "markets": list(markets),
+        }
     )
     assert event is not None, "the production parser refused the event"
     return {leg["external_id"]: leg["prob"] for leg in _parent_outcome_data(event)}
@@ -190,10 +199,13 @@ class TestTheSiblingComplement:
     """
 
     def test_neither_leg_of_the_specimen_reaches_a_search_card(self):
-        assert _search_names(
-            _row(0.490, 0.02, 0.97, name="Over", oid=1),
-            _row(0.510, 0.03, 0.98, name="Under", oid=2),
-        ) == []
+        assert (
+            _search_names(
+                _row(0.490, 0.02, 0.97, name="Over", oid=1),
+                _row(0.510, 0.03, 0.98, name="Under", oid=2),
+            )
+            == []
+        )
 
     def test_neither_leg_of_the_specimen_reaches_the_grouped_feed(self):
         assert _grouped_feed_drops(_row(0.490, 0.02, 0.97, name="Over")) is True
@@ -323,8 +335,14 @@ class TestATradedFiftyOnAWideBook:
         volume-gated exception substitutes the trade price — it does not hand the
         fabricated midpoint back because the market happens to be traded."""
         assert _submarket(
-            _gamma("Will 'Tesla' be said", [0.4965, 0.5035], 0.033, 0.96,
-                   last=0.031, vol24=455.6)
+            _gamma(
+                "Will 'Tesla' be said",
+                [0.4965, 0.5035],
+                0.033,
+                0.96,
+                last=0.031,
+                vol24=455.6,
+            )
         ) == (pytest.approx(0.031), "last_trade_price")
 
     def test_a_stale_print_with_no_recent_volume_is_still_declined(self):
@@ -348,7 +366,9 @@ class TestGenuinePricesSurvive:
         No bid bound this ship could plausibly reach comes near a 49c bid."""
         assert is_empty_book_midpoint(0.50, 0.49, 0.51) is False
         assert _grouped_feed_drops(_row(0.50, 0.49, 0.51)) is False
-        assert _search_names(_row(0.50, 0.49, 0.51, name="Even money")) == ["Even money"]
+        assert _search_names(_row(0.50, 0.49, 0.51, name="Even money")) == [
+            "Even money"
+        ]
 
     def test_the_live_twenty_eight_control_is_untouched(self):
         """Outcome 61260583: 0.28 on 25c/31c, never traded. No trade is not no quote."""
