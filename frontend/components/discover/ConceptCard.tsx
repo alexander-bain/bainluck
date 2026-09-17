@@ -16,7 +16,7 @@ import { eventPath } from "@/lib/eventKey";
 import type { FeedConceptData } from "@/lib/types";
 import { conceptHeadlineBout } from "@/lib/eventConceptDisplay";
 import { DismissBtn, ActionBar, dismissCornerBadge } from "./shared";
-import { formatConceptMovement } from "./utils";
+import { conceptDomainLabel, formatConceptMovement } from "./utils";
 
 interface ConceptCardProps {
   data: FeedConceptData;
@@ -67,7 +67,9 @@ export function ConceptCard({
       : null;
   const movementLabel = formatConceptMovement(leader?.movement_24h);
   const href = eventPath(data.key);
-  const domainLabel = (data.domain || "event").toUpperCase();
+  // #5603: NOT `data.domain` — that is the routing namespace, and the `ufc` one
+  // carries Power Slap and schedule-only MMA. See `conceptDomainLabel`.
+  const domainLabel = conceptDomainLabel(data.sport_label, data.domain);
   const gradient =
     DOMAIN_GRADIENT[(data.domain || "").toLowerCase()] ??
     "linear-gradient(135deg, #1f2937, #374151)";

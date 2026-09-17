@@ -214,6 +214,54 @@ export function formatConceptMovement(
 }
 
 /**
+ * #5603 (Brief18) — THE CHIP OVER A CONCEPT HERO, AND WHY IT MAY NOT READ THE
+ * ROUTING TOKEN.
+ *
+ * `ConceptCard` printed `(data.domain || "event").toUpperCase()`. `domain` is
+ * the event-key namespace this codebase routes on — `event:ufc:<token>` — and
+ * `UFC_CONFIG` (`backend/app/utils/event_ufc.py`) declares exactly how wide that
+ * namespace is: schedule keys `mma_ufc` AND `mma_mixed_martial_arts`, plus every
+ * `KXUFC*` Kalshi ticker. It is the MMA adapter, named after its biggest tenant.
+ *
+ * MEASURED ON PRODUCTION 2026-09-17 19:52Z, `GET /api/feed?limit=150`: 8 of 8
+ * concept cards carried `domain: "ufc"` and NO `sport_label`, and one of the
+ * eight is **"Power Slap 23"** — a slap-fighting card wearing a `UFC` chip on
+ * the Discover feed. That is not a near-miss of a label; it is the card naming a
+ * promotion the event has nothing to do with.
+ *
+ * THE FALLBACK IS THE WHOLE FIX, NOT A DEFENSIVE BRANCH. The obvious shape —
+ * `sport_label || domain` — is the defect again the moment the label is absent,
+ * which is *every card served today* and every envelope already in a CDN or a
+ * client cache after the backend half ships. So a combat-namespace card with no
+ * evidence falls to the generic `COMBAT`: strictly less than the payload knows,
+ * never more. A real UFC card gets its name back the instant the server says so.
+ *
+ * SCOPED TO THE ONE MIXED NAMESPACE, deliberately. `boxing` is its own adapter
+ * and its own sport, so `BOXING` is true; `cycling`, `f1` and `motorsports` keep
+ * the fallback they have always had. Widening this set would spend a truthful
+ * label to fix an untruthful one.
+ *
+ * Discover owns the backend contract for `sport_label` and native owns its two
+ * Swift edits (codex 2026-09-17 19:07Z); this is the web consumer and nothing
+ * else — no suppression, no ranking, no key or link changes.
+ */
+const UNEVIDENCED_COMBAT_DOMAINS = new Set(["ufc"]);
+
+export function conceptDomainLabel(
+  sportLabel: string | null | undefined,
+  domain: string | null | undefined,
+): string {
+  // `.trim()` is load-bearing and not hygiene: `""` is already falsy, but a
+  // label of spaces would satisfy `||` and render the chip BLANK — the one
+  // outcome worse than either label.
+  const declared = (sportLabel ?? "").trim();
+  if (declared) return declared.toUpperCase();
+  const routing = (domain ?? "").trim();
+  if (UNEVIDENCED_COMBAT_DOMAINS.has(routing.toLowerCase())) return "COMBAT";
+  return (routing || "event").toUpperCase();
+}
+
+/**
  * #1939 — is a concept `leader` something the card can actually PRINT?
  *
  * Native writes this test as `concept.leader != nil` and that is complete THERE,

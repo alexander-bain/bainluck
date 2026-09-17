@@ -26,7 +26,7 @@ import EntityImage from "./EntityImage";
 import TournamentCard from "./TournamentCard";
 import { isNonSportsCategory, isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { useAnalyticsContext } from "@/components/Analytics";
-import { feedContextSnippet, feedItemHasRenderableContent, resolvesLabel, formatConceptMovement } from "@/components/discover/utils";
+import { feedContextSnippet, feedItemHasRenderableContent, resolvesLabel, formatConceptMovement, conceptDomainLabel } from "@/components/discover/utils";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import {
   SUSPENDED_LABEL,
@@ -1509,7 +1509,13 @@ function ConceptFeedCard({ item, data }: { item: FeedItem; data: FeedConceptData
                   {conceptDomainEmoji(data.domain)}
                 </span>
               )}
-              {data.domain?.toUpperCase() || "EVENT"}
+              {/* #5603: the SECOND concept renderer, and it printed the routing
+                  token exactly as the Discover one did — so "Power Slap 23" wore
+                  a `UFC` chip on the Sports tab too. Both call the one helper,
+                  the same way both already call `formatConceptMovement`: a rule
+                  fixed on one of these two surfaces is the drift this card's own
+                  history (#1935, #1939, #1951) is made of. */}
+              {conceptDomainLabel(data.sport_label, data.domain)}
             </span>
           </div>
         </div>
