@@ -6,7 +6,7 @@ to probabilities, projected scores, and excitement indices.
 """
 
 import math
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Container, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from statistics import mean, median
 
@@ -134,6 +134,7 @@ def remove_vig(home_prob: float, away_prob: float) -> Tuple[float, float]:
 def devig_consensus(
     book_columns: Mapping[str, Mapping[str, Optional[float]]],
     method: str = "mean",
+    already_normalized: Container[str] = (),
 ) -> Dict[str, float]:
     """
     Build a de-vigged consensus across bookmakers for one N-way market.
@@ -155,6 +156,12 @@ def devig_consensus(
             pre-normalized.
         method: Cross-book aggregation, passed to :func:`aggregate_probabilities`
             ("mean", "median", or "trimmed_mean").
+        already_normalized: Bookmaker keys whose column is ALREADY a probability
+            and must be aggregated as-is. De-vigging is only meaningful for a
+            column of vig-inclusive prices over a mutually exclusive, exhaustive
+            outcome set; applying :func:`remove_vig_nway` to anything else
+            divides by whatever that column happens to sum to (#6675). Empty by
+            default, so the live path is unchanged.
 
     Returns:
         ``{outcome_key: consensus_probability}``. Sums to ~1.0 whenever every
@@ -171,15 +178,22 @@ def devig_consensus(
     """
     per_outcome: Dict[str, List[float]] = {}
 
-    for _bookmaker, column in book_columns.items():
+    for bookmaker, column in book_columns.items():
         if not column:
             continue
         keys = list(column.keys())
-        normalized = remove_vig_nway([column[k] for k in keys])
+        if bookmaker in already_normalized:
+            # This source publishes probabilities, not prices. Contribute the
+            # column unchanged — normalizing it would re-scale by its own sum.
+            normalized = [column[k] for k in keys]
+        else:
+            normalized = remove_vig_nway([column[k] for k in keys])
         if normalized is None:
             # This book's column is unusable; skip the BOOK, not the market.
             continue
         for key, value in zip(keys, normalized):
+            if value is None:
+                continue
             per_outcome.setdefault(key, []).append(value)
 
     consensus: Dict[str, float] = {}

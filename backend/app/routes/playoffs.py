@@ -1009,6 +1009,33 @@ async def _build_register_column_data(
     return column_data, outcome_entity, stats
 
 
+#: ``futures_odds_snapshots.bookmaker`` values whose ``probability`` is ALREADY a
+#: probability when it is written, not a vig-inclusive price.
+#:
+#: The three of them write the SAME number into ``FuturesOutcome
+#: .current_probability`` and into the snapshot row on the same pass
+#: (``tasks/kalshi.py``, ``tasks/polymarket.py``, ``tasks/datagolf.py``), so the
+#: snapshot is already on the live side's scale. The seven Odds API sportsbooks
+#: are the opposite: their snapshot is raw American-odds-implied and the live
+#: value is de-vigged at ingest by ``_aggregate_futures_outcomes``. Measured on
+#: production 2026-09-17, NBA markets: every kalshi/polymarket column has
+#: ``max|raw - live| <= 0.06`` and the same sum, while every sportsbook column on
+#: ``NBA Championship Winner`` sums 1.107-1.241 raw against a live sum of exactly
+#: 1.000.
+#:
+#: Adding a source to ``futures_odds_snapshots`` means classifying it here.
+#: ``test_playoff_movers_basis.py`` scans the writers for ``bookmaker=`` literals
+#: and fails on any value this module has never heard of, so a new source cannot
+#: land unclassified (#6675).
+_ALREADY_PROBABILITY_SOURCES = frozenset({"kalshi", "polymarket", "datagolf_model"})
+
+#: The Odds API sportsbooks, whose raw column IS a vig-inclusive price set over a
+#: mutually exclusive outcome set — the only shape ``remove_vig_nway`` is valid on.
+_DEVIGGED_AT_INGEST_SOURCES = frozenset({
+    "betmgm", "betrivers", "betonlineag", "bovada", "draftkings", "fanduel", "lowvig",
+})
+
+
 class MoversResult(dict):
     """``{outcome_id: de-vigged consensus probability at t-N hours}``.
 
@@ -1051,7 +1078,7 @@ async def _compute_movers(
     day, deterministically. LAD's headline "-7.6 in 24h" was
     ``0.3153 x 0.245`` — the betrivers overround — not a market move.
 
-    Three defects, all closed here:
+    Four defects, all closed here:
 
     1. **Vig basis mismatch.** We now de-vig the historical column per book and
        average across books, through the SAME ``odds_math.devig_consensus`` the
@@ -1064,9 +1091,31 @@ async def _compute_movers(
        16.6%-vig one and halved every published mover with zero market movement.
        ``DISTINCT ON`` here carries an explicit ``fos.id`` tie-break.
 
+    4. **Cardinality basis mismatch** (#6675). #1844 made both sides the same
+       quantity with respect to VIG; they were still different quantities with
+       respect to WHAT THE COLUMN SUMS TO. De-vigging was applied to every
+       source, including kalshi/polymarket/datagolf — which store a probability,
+       not a price — so each such column was silently re-scaled by its own sum.
+       Harmless-looking on a winner market (sum ~1.0); catastrophic on a
+       multi-qualifier one: "Pro Basketball Playoff Qualifiers" is 30 INDEPENDENT
+       binaries summing to 16.54, so every reconstructed price was divided by
+       ~16.5 and ``merged - old_p`` collapsed to ``merged x (1 - 1/16.5)``. The
+       NBA grid told a reader all 30 teams' playoff odds rose by ~94% of their
+       own value in 24 hours (OKC: 98.5%, "▲93"). The same re-scaling was live
+       and wrong, just less visible, on every kalshi award market — "Pro
+       Basketball MVP Winner" sums to 1.46, a 31% inflation of every mover.
+
+       The fix is not a threshold on the column sum: production sums run
+       CONTINUOUSLY from 1.0 to 20+ (measured over 24h of snapshots — 729 book
+       columns land in 2.0-3.0 alone), so no cut separates "winner market with
+       heavy vig" from "small qualifier market". It is the SOURCE that decides,
+       because the source decides whether ingest already normalized.
+
     The naming trap that hid all of this: ``FuturesOddsSnapshot.probability`` is
     commented "Normalized probability (always calculated)". It is normalized
     from American odds and is PER BOOKMAKER — never de-vigged, never a consensus.
+    For kalshi/polymarket/datagolf it is not even that: it is the venue's own
+    published probability, copied verbatim.
     """
     empty = MoversResult()
     if not outcome_ids:
@@ -1137,12 +1186,17 @@ async def _compute_movers(
                 pass
 
     # De-vig each book's column on its own market, then average across books —
-    # the SAME helper the live path uses (app/tasks/futures.py).
+    # the SAME helper the live path uses (app/tasks/futures.py) — but only for
+    # the sources whose stored snapshot is a PRICE. See #6675 and defect 4 above.
     old_probs = MoversResult()
     old_probs.requested = len(unique_ids)
     for _market_id, book_columns in columns.items():
         # Keys are outcome ids; devig_consensus is key-agnostic.
-        consensus = devig_consensus(book_columns, method="mean")
+        consensus = devig_consensus(
+            book_columns,
+            method="mean",
+            already_normalized=_ALREADY_PROBABILITY_SOURCES,
+        )
         if consensus:
             old_probs.markets_normalized += 1
         old_probs.update(consensus)
