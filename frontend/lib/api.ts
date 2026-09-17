@@ -2178,7 +2178,11 @@ export interface EconThemeGovernment extends EconThemeSimple {
 
 export interface EconThemeHousing {
   count: number;
-  mortgage_brackets: number[][];
+  /** The mortgage card, carrying its own question and the shape of its rows
+   *  (#6702). Null when no mortgage ladder is open — and absent entirely from a
+   *  payload the hourly precompute built before this field existed, which the
+   *  page must also survive. */
+  mortgage_dist?: EconDistribution | null;
   markets: EconMarketRow[];
 }
 
