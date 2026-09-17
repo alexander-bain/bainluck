@@ -1485,6 +1485,16 @@ export interface FeedConceptData {
   key: string;
   name: string;
   domain: string;
+  // #5603 (Brief18) — the SPORT/PROMOTION the card may claim, decided server-side
+  // from evidence. `domain` above is OUR ROUTING token and is not evidence: the
+  // `ufc` adapter ingests both Odds API MMA keys (`mma_ufc` +
+  // `mma_mixed_martial_arts`) and every `KXUFC*` Kalshi ticker, so it carries
+  // Power Slap and schedule-only MMA cards alongside real UFC ones.
+  //
+  // Discover owns this field's contract; this is the consumer declaration only.
+  // Absent/blank is the OLD CACHED ENVELOPE and every payload built before that
+  // half ships — `conceptDomainLabel` must not read the silence as "UFC".
+  sport_label?: string | null;
   status: string;
   start_date?: string | null;
   is_major: boolean;
