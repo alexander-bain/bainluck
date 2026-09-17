@@ -46,6 +46,7 @@ import {
   movementExplanation as movementExplanationHelper,
   heroOutcomeLabel,
   movementWindowLabel,
+  partitionOutcomesByPrice,
   pickHeroOutcome,
   sortFuturesOutcomes,
 } from "@/lib/futuresDetailDisplay";
@@ -402,10 +403,24 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     [leader]
   );
 
+  // D102 / #4568 — the rows that print a number, and the numberless ones folded
+  // behind a disclosure. The reasoning, the four measured payloads and why the
+  // predicate is the render's own live in `partitionOutcomesByPrice`.
+  //
+  // Everything downstream counts `pricedOutcomes`, never `sortedOutcomes`: the
+  // 25-cap, the "Show all N" label and the "Show N more" button are all claims
+  // about the list a reader is looking at, and folding rows out of that list
+  // without moving its counters is how a "Show all 19" button comes to reveal
+  // fourteen rows.
+  const { listed: pricedOutcomes, folded: unpricedOutcomes } = useMemo(
+    () => partitionOutcomesByPrice(sortedOutcomes),
+    [sortedOutcomes],
+  );
+
   // Limit displayed outcomes unless "show all" is enabled
   const displayedOutcomes = showAllOutcomes
-    ? sortedOutcomes
-    : sortedOutcomes.slice(0, 25);
+    ? pricedOutcomes
+    : pricedOutcomes.slice(0, 25);
 
   const toggleSort = (field: SortField) => {
     if (sortField === field) {
@@ -1043,14 +1058,14 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               </span>
             )}
           </h2>
-          {sortedOutcomes.length > 25 && (
+          {pricedOutcomes.length > 25 && (
             <button
               onClick={() => setShowAllOutcomes(!showAllOutcomes)}
               className="text-sm text-text-secondary hover:text-text-primary transition-colors"
             >
               {showAllOutcomes
                 ? "Show less"
-                : `Show all ${sortedOutcomes.length}`}
+                : `Show all ${pricedOutcomes.length}`}
             </button>
           )}
         </div>
@@ -1131,13 +1146,51 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         </div>
 
         {/* Show more button */}
-        {!showAllOutcomes && sortedOutcomes.length > 25 && (
+        {!showAllOutcomes && pricedOutcomes.length > 25 && (
           <button
             onClick={() => setShowAllOutcomes(true)}
             className="w-full mt-4 py-2 text-sm text-text-secondary hover:text-text-primary border border-surface-border rounded-lg hover:bg-slate/5 transition-colors"
           >
-            Show {sortedOutcomes.length - 25} more outcomes
+            Show {pricedOutcomes.length - 25} more outcomes
           </button>
+        )}
+
+        {/* D102 / #4568 — the numberless rows, collapsed but never dropped
+            (gotcha #43). The markup is `ScriptFold`'s from the props twin
+            deliberately: notice 35 says a second problem of the same shape does
+            not get a second component, and this is the same disclosure with the
+            same neutral D111 label. Closed it costs one row of height and names
+            its own count; open it shows every folded outcome in the normal row
+            presentation, keeping its served `rank` so the numbering a reader saw
+            never restarts at 1. */}
+        {unpricedOutcomes.length > 0 && (
+          <details data-testid="futures-more-outcomes" className="mt-4">
+            <summary className="cursor-pointer select-none py-1 text-[11px] text-text-muted">
+              More outcomes ({unpricedOutcomes.length})
+            </summary>
+            <div className="mt-1 space-y-2">
+              {unpricedOutcomes.map((outcome, index) => (
+                <OutcomeRow
+                  key={outcome.id}
+                  outcome={outcome}
+                  rank={outcome.rank ?? pricedOutcomes.length + index + 1}
+                  isLeader={false}
+                  isSelected={selectedOutcomes.has(outcome.id)}
+                  onToggleSelect={() => toggleOutcomeSelection(outcome.id)}
+                  hasHistory={historyOutcomes.some(
+                    (h) => h.outcome_id === outcome.id
+                  )}
+                  marketCategory={market?.llm_sport_category}
+                  marketName={market?.name}
+                  isResolved={isResolved}
+                  rendered={renderedById.get(outcome.id)?.current ?? null}
+                  renderedOpening={renderedById.get(outcome.id)?.opening ?? null}
+                  showLastMove={showLastMove}
+                  showEntityImage={showEntityImage}
+                />
+              ))}
+            </div>
+          </details>
         )}
       </div>
       )}
