@@ -1,0 +1,122 @@
+{
+ "market_id": 114175,
+ "name": "Who will be UFC Heavyweight champion at the end of 2026?",
+ "prices_updated_at": null,
+ "captured": "2026-09-17T23:05Z",
+ "outcomes": [
+  {
+   "id": 1632881,
+   "name": "Ciryl Gane",
+   "probability": 0.655,
+   "last_updated": "2026-09-17T19:50:18.481336+00:00"
+  },
+  {
+   "id": 69769815,
+   "name": "Josh Hokit",
+   "probability": 0.2,
+   "last_updated": "2026-09-17T19:50:18.481336+00:00"
+  },
+  {
+   "id": 1632888,
+   "name": "Alexander Volkov",
+   "probability": 0.0415,
+   "last_updated": "2026-09-17T19:50:18.481336+00:00"
+  },
+  {
+   "id": 1632880,
+   "name": "Tom Aspinall",
+   "probability": 0.0145,
+   "last_updated": "2026-09-17T19:50:18.481336+00:00"
+  },
+  {
+   "id": 1632885,
+   "name": "Sergei Pavlovich",
+   "probability": 0.0095,
+   "last_updated": "2026-09-17T19:50:18.481336+00:00"
+  },
+  {
+   "id": 1632887,
+   "name": "Curtis Blaydes",
+   "probability": 0.0005,
+   "last_updated": "2026-09-17T19:50:18.481336+00:00"
+  },
+  {
+   "id": 1632883,
+   "name": "Jailton Almeida",
+   "probability": 0.0005,
+   "last_updated": "2026-09-17T19:50:18.481336+00:00"
+  },
+  {
+   "id": 69769809,
+   "name": "Tyrell Fortune",
+   "probability": 0.0005,
+   "last_updated": "2026-09-17T19:50:18.481336+00:00"
+  },
+  {
+   "id": 1632882,
+   "name": "Waldo Cortes Acosta",
+   "probability": 0.0005,
+   "last_updated": "2026-09-17T19:50:18.481336+00:00"
+  },
+  {
+   "id": 1632886,
+   "name": "Serghei Spivac",
+   "probability": 0.0005,
+   "last_updated": "2026-09-17T19:50:18.481336+00:00"
+  },
+  {
+   "id": 1632889,
+   "name": "Derrick Lewis",
+   "probability": 0.0005,
+   "last_updated": "2026-09-17T19:50:18.481336+00:00"
+  },
+  {
+   "id": 1632884,
+   "name": "Ante Delija",
+   "probability": 0.0005,
+   "last_updated": "2026-09-17T19:50:18.481336+00:00"
+  },
+  {
+   "id": 1632890,
+   "name": "Marcin Tybura",
+   "probability": 0.0005,
+   "last_updated": "2026-09-17T19:50:18.481336+00:00"
+  },
+  {
+   "id": 69769811,
+   "name": "Rizvan Kuniev",
+   "probability": 0.0005,
+   "last_updated": "2026-09-17T19:50:18.481336+00:00"
+  },
+  {
+   "id": 69769812,
+   "name": "Fighter E",
+   "probability": null,
+   "last_updated": "2026-05-12T16:16:06.970740+00:00"
+  },
+  {
+   "id": 69769816,
+   "name": "Fighter D",
+   "probability": null,
+   "last_updated": "2026-05-12T16:16:06.970740+00:00"
+  },
+  {
+   "id": 69769814,
+   "name": "Other",
+   "probability": null,
+   "last_updated": "2026-05-12T16:16:06.970740+00:00"
+  },
+  {
+   "id": 69769810,
+   "name": "Fighter F",
+   "probability": null,
+   "last_updated": "2026-05-12T16:16:06.970740+00:00"
+  },
+  {
+   "id": 69769813,
+   "name": "Fighter G",
+   "probability": null,
+   "last_updated": "2026-05-12T16:16:06.970740+00:00"
+  }
+ ]
+}
