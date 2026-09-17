@@ -801,6 +801,152 @@ def admissible_speakers_are_all_settled(group: Sequence[MarketOutcomes]) -> bool
     return all(_is_settled_book(entry) for entry in admissible)
 
 
+#: A price no gate in `find_moneyline_outcome` can refuse — see
+#: :func:`admissible_speakers_can_never_price_a_side`. Strictly inside the
+#: `prob <= 0 or prob >= 1` band every one of that function's three resolution
+#: paths enforces, so substituting it removes the PRICE from the question and
+#: leaves only the NAMES.
+_MID_PRICE = 0.5
+
+
+@dataclass(frozen=True)
+class _MidPricedOutcome:
+    """One outcome with its name kept and its price replaced by `_MID_PRICE`.
+
+    A shim, not a row: it exposes exactly the three attributes
+    `find_moneyline_outcome` reads (`name`, `current_probability`, `rank`) and
+    is never written anywhere. The real outcome is left untouched — this module
+    is the pure half and does no I/O (see the module docstring).
+    """
+
+    name: Optional[str]
+    current_probability: float
+    rank: Optional[int]
+
+
+def _mid_priced(entry: MarketOutcomes) -> MarketOutcomes:
+    """`entry` with every outcome repriced to `_MID_PRICE`, names unchanged."""
+    return MarketOutcomes(
+        market=entry.market,
+        outcomes=[
+            _MidPricedOutcome(
+                name=getattr(outcome, "name", None),
+                current_probability=_MID_PRICE,
+                rank=getattr(outcome, "rank", None),
+            )
+            for outcome in entry.outcomes
+        ],
+        event_commence_time=entry.event_commence_time,
+        event_has_result=entry.event_has_result,
+    )
+
+
+def admissible_speakers_can_never_price_a_side(
+    group: Sequence[MarketOutcomes], home_team_name: str, away_team_name: str
+) -> bool:
+    """Whether this group's speakers are silenced by their OUTCOME NAMES (#6642).
+
+    THE FOURTH WAY A SOURCE FALLS PERMANENTLY SILENT, and the three before it
+    are all price- or status-shaped, so none can see it. Polymarket links a
+    soccer fixture a container titled with the bare matchup — admissible, by
+    every rule this module has — whose only outcome is
+    `Draw (DPR Korea vs. Japan)`. #6604 taught `find_moneyline_outcome` to
+    refuse that name (it is a different question from "who won"), so the reading
+    went to None and the writer correctly stopped writing. Nothing retired the
+    number already stored: `count_admissible_speakers` counts 1, the book is not
+    settled, it was observed this hour. `/events/15312330` therefore went on
+    printing **26 %** for DPR Korea — the draw's price wearing Korea's name —
+    with an hour-by-hour chart drawn from it, indefinitely.
+
+    THE PRICE IS TAKEN OUT OF THE QUESTION, WHICH IS WHAT MAKES THIS PERMANENT
+    RATHER THAN TRANSIENT — the distinction `count_admissible_speakers` exists
+    to protect (see its docstring; retiring on a transient silence twitches the
+    hero by a whole source weight every fifteen minutes). Every resolution path
+    in `find_moneyline_outcome` needs two things of an outcome: a price strictly
+    inside (0, 1), and a NAME that clears one of its three name tests. So each
+    admissible speaker is asked again with every price held at `_MID_PRICE` — a
+    value no price gate can refuse. If the real resolver STILL says nothing,
+    then no price this book can ever quote will make it speak, because the only
+    thing left deciding is the names, and an outcome does not get renamed into a
+    team. `_is_settled_book` is the same argument from the other side: it holds
+    the names and reads the prices.
+
+    ASKED THROUGH THE REAL RESOLVER, never beside it. The predicate is
+    `_reading_for_entry` — this module's own admission-plus-resolution rule —
+    run over a repriced copy, so it cannot drift into a second opinion of what
+    resolves (#1951). The copy is a shim; nothing is written back.
+
+    IT CAN ONLY EVER REFUSE MORE THAN "THE READING IS NONE", never less: a
+    mid-price makes resolution strictly easier, so every group this returns True
+    for is already silent today. The caller reaches it only on a None reading
+    anyway, and that ordering is belt-and-braces rather than the argument.
+
+    FOUR ABSTENTIONS, each because the cost of a false positive is retiring a
+    live source leg:
+
+      * NO ADMISSIBLE SPEAKER — the zero-speaker case, #5031's, and returning
+        False here keeps the two causes separable in the funnel exactly as
+        `admissible_speakers_are_all_settled` does;
+      * an EMPTY outcome list on any speaker — a book we have not fetched is the
+        transient case, the same abstention `_is_settled_book` makes;
+      * a speaker whose title does not PARSE into a matchup — that book is mute
+        for a reason that lives in the parser, not in its outcome names, and
+        folding it in here would hide a parser defect behind a retirement
+        counter. Measured 0 of 45 in the population below;
+      * a Kalshi speaker its own VENUE-SIDE gate refuses. `feeds_win_prob_blend`
+        reads the ticker, not the outcome names, so a group silenced by it is
+        silenced for a reason this predicate is not entitled to speak about —
+        and that refusal is a vocabulary, so a ticker prefix nobody has taught
+        it yet would read here as "the names can never price" and retire a live
+        Kalshi hero. Its own guard test below caught exactly that. Kalshi is
+        never retired by any arm in this module today (its primary is always
+        admissible), and this keeps it that way;
+      * anything the real resolver can still price at a mid price.
+
+    MEASURED, production 2026-09-17 00:5xZ, over every `scheduled`/`live` event
+    carrying a stored Polymarket leg and a bare-matchup-shaped linked market
+    (553 events): **45 are silent today, all 45 for this one cause**, and 508
+    speak normally and are untouched. 41 of the 45 store a draw leg's price
+    outright and 4 store its complement. **The Kalshi delta is measured, not
+    asserted: 0.** Over the same window's 312 events holding a stored Kalshi
+    leg, none is silent today and none would be retired by this arm — Kalshi's
+    admission is venue-side (`feeds_win_prob_blend`) and its props never reach a
+    blend — so the rule is left source-agnostic rather than carrying a special
+    case that no population exercises.
+    """
+    admissible = admissible_speakers(group)
+    if not admissible:
+        return False
+    for entry in admissible:
+        if not entry.outcomes:
+            return False
+        if entry.market.source == "kalshi" and not feeds_win_prob_blend(
+            entry.market.external_id or ""
+        ):
+            return False
+        if _matchup_for_entry(entry) is None:
+            return False
+        if _reading_for_entry(
+            _mid_priced(entry), home_team_name, away_team_name
+        ) is not None:
+            return False
+    return True
+
+
+def _matchup_for_entry(entry: MarketOutcomes) -> Any:
+    """This market's parsed matchup, or None — the ONE expression that builds it.
+
+    Extracted so `_reading_for_entry` and
+    `admissible_speakers_can_never_price_a_side` cannot come to differ about
+    which title is parsed. Narrowing the name to the competition tail first is
+    load-bearing, not cosmetic (CERT-2751) — see the caller's own comment.
+    """
+    return extract_matchup_with_ticker_fallback(
+        competition_prefix_tail(entry.market.name) or entry.market.name,
+        external_id=entry.market.external_id,
+    )
+
+
 def _reading_for_entry(
     entry: MarketOutcomes, home_team_name: str, away_team_name: str
 ) -> Optional[tuple[Any, float, Any, float, Optional[float], Optional[float]]]:
@@ -841,10 +987,12 @@ def _reading_for_entry(
     # CORRECTED (`PPA`/`Women's Singles` -> the two players; `T20 Series
     # Zimbabwe`/`South Africa, Women` -> `Zimbabwe`/`South Africa`), and **0**
     # stop parsing. The remaining 116 already parsed identically.
-    matchup = extract_matchup_with_ticker_fallback(
-        competition_prefix_tail(entry.market.name) or entry.market.name,
-        external_id=entry.market.external_id,
-    )
+    #
+    # THE EXPRESSION ITSELF LIVES IN `_matchup_for_entry` (#6642), because a
+    # second caller now needs the same parse and two copies of it would be free
+    # to disagree about which title is read — the #1951 drift this module exists
+    # to prevent. Nothing about the parse changed when it moved.
+    matchup = _matchup_for_entry(entry)
     if not matchup:
         return None
 
