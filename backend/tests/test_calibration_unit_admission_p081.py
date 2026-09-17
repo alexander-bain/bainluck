@@ -342,7 +342,10 @@ def loop_env(monkeypatch):
             "resumable",
         )
 
-    async def _save(cursor, terminal=None):
+    async def _save(cursor, terminal=None, banks_a_unit=True):
+        # ``banks_a_unit`` is CAL-P1302's: the cancellation-memory save passes
+        # False so its failure is not tallied as an unbanked COMPLETION. This
+        # double always succeeds, so it only has to accept the argument.
         saved.append(len(cursor.committed_units))
         return True
 

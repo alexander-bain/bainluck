@@ -576,7 +576,7 @@ class TestTheFrozenLoopActuallyReStages:
 
         saves = {"n": 0}
 
-        async def fake_save(cursor, *, terminal):
+        async def fake_save(cursor, *, terminal, banks_a_unit=True):
             saves["n"] += 1
             # The real persister stamps the clock here. Keep that in the path so
             # the dating is exercised by the loop, not only by its own unit test.
