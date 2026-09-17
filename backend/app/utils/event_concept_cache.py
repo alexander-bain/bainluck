@@ -665,12 +665,43 @@ def publish_mirror_if_unchanged(
 
 
 def write_negative(rc, keys: ConceptCacheKeys) -> None:
+    """A key has been REFUSED: arm the negative and drop the mirror behind it.
+
+    The mirror drop is the other half of `write_payload`'s `delete(keys.negative)`
+    (#6733). That line says "a key that now resolves must not keep a negative
+    entry behind it"; this one says the converse, and without it the pair only
+    turns one way — a refused key keeps a 24h mirror the route will serve the
+    moment the 60s negative lapses, so the page FLAPS instead of going away.
+
+    `build_and_cache`'s `envelope is None` branch is the only production caller,
+    so the blast radius is exactly "an adapter refused a key".
+    Measured on production 2026-09-17 before the fix: `event:ufc:27jan01` served
+    `stale_ok` at every TTL boundary and `live` in between, so the mirror path is
+    hot, not theoretical, and a refusal that left it standing would have been
+    ~98% inert at the reader for 24 hours.
+
+    Safe because the mirror's job is to rescue a build that RAISED, and this is
+    not that path: `build_and_cache` reaches here only on a clean `None` return —
+    the adapter's considered "no such key" — while an exception propagates to the
+    route, which re-reads the mirror and is untouched by this. A `None` already
+    blinds the mirror for `NEGATIVE_TTL` today (the route reads the negative
+    BEFORE the mirror, deliberately, "so a key that has since stopped resolving
+    404s instead of serving a day-old tournament"); this makes that decision
+    durable rather than something that lapses every 60 seconds.
+
+    Best-effort in the same way the rest of the module is: a Redis failure here
+    degrades to today's behaviour and never fails a request.
+    """
     if rc is None:
         return
     try:
         rc.setex(keys.negative, NEGATIVE_TTL, NEGATIVE_SENTINEL)
     except Exception:
         logger.warning("event-concept cache: negative write failed for %s", keys.negative)
+    try:
+        rc.delete(keys.stale)
+    except Exception:
+        logger.warning("event-concept cache: mirror drop failed for %s", keys.stale)
 
 
 def has_negative(rc, keys: ConceptCacheKeys) -> bool:

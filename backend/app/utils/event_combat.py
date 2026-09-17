@@ -1222,7 +1222,19 @@ class CombatEventAdapter:
 
         if not fights:
             # No Kalshi markets for this card — resolve from the schedule alone.
-            if bouts:
+            #
+            # #6733: and refuse the same rows `list_card_concepts` refuses. The
+            # two layers read the same roster and must reach the same verdict,
+            # or a card suppressed from the feed keeps its page: after #4485
+            # shipped, `/api/event/event:ufc:27jan01` still served seven
+            # rumoured bouts as a real card (Strickland and Chimaev each booked
+            # twice, every bout stamped one instant) while the feed had stopped
+            # listing it. Gated on the SAME events-only branch and with the SAME
+            # predicate — a card the venue lists has corroboration this cannot
+            # overrule, so the `fights` path below is untouched. `None` is the
+            # adapter's "no such card": `build_and_cache` writes the negative
+            # marker and the route 404s, exactly as for an unknown token.
+            if bouts and not card_rows_are_not_a_schedule(bouts):
                 return self._build_events_envelope(target, bouts, now)
             return None
 
