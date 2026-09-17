@@ -47,6 +47,21 @@ interface GamePlayCardProps {
    * `sportPricesADraw` documents.
    */
   awayWithheld?: boolean;
+  /**
+   * #6684 — so the badge can stop painting `Bottom 8th 0:00` on a live MLB game.
+   *
+   * The KEY is passed, not a derived boolean, and that is the opposite choice
+   * from `awayWithheld` directly above. The difference is where the authority
+   * lives: `sportPricesADraw` is consulted by the page because the hero and
+   * this card must reach the SAME withholding decision from one derivation.
+   * "Does this sport have a clock" has a different authority —
+   * `trustedLiveClock`, which already owns the other three rules about which of
+   * ESPN's clock fields may be painted. Deriving a boolean here would put the
+   * fourth rule outside the function that holds the first three, and the next
+   * surface to adopt the helper would re-acquire the defect the helper exists
+   * to prevent.
+   */
+  sportKey?: string | null;
 }
 
 /** Format period number into display string */
@@ -79,6 +94,7 @@ export default function GamePlayCard({
   awayTeamLogo,
   lastPoint,
   awayWithheld = false,
+  sportKey,
 }: GamePlayCardProps) {
   const point = activePoint || lastPoint;
   if (!point) return null;
@@ -155,7 +171,7 @@ export default function GamePlayCard({
   // "3" -> "Q3" rendering is a display choice no other surface makes. The trust
   // decision is taken over the string the reader will actually see, which is the
   // only string a duplicate can be visible in.
-  const trusted = trustedLiveClock(formatPeriod(point.period), point.clock);
+  const trusted = trustedLiveClock(formatPeriod(point.period), point.clock, sportKey);
   // Game clock is shown only when genuinely observed; a value carried forward from
   // an earlier snapshot is marked approximate ("~") rather than shown as exact, and
   // when there's no clock at all we fall back to the period, then to "—" (#925).

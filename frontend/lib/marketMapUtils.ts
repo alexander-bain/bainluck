@@ -967,6 +967,44 @@ export interface SportScoringVocab {
    * not by whoever wrote a default.
    */
   winnerMarketPricesADraw: boolean;
+  /**
+   * Is this sport's game governed by a running CLOCK at all?
+   *
+   * #6684. ESPN ships `period` and `game_clock` from one status payload for
+   * every sport, including the ones that have no clock to report — and it does
+   * not send an empty field, it sends a placeholder. So the chart readout on
+   * every live MLB game printed:
+   *
+   *     Bottom 8th 0:00      CR 3 - 9 SD
+   *
+   * Baseball has no clock. "0:00" beside a half-inning reads as an expired
+   * timer on a game still being played — the most natural reading is "this is
+   * over", directly above a live chart (`/events/15313145`, 390px, 03:25Z
+   * 2026-09-17).
+   *
+   * Measured on production, `events.game_clock` over 14 days: `baseball_mlb`
+   * carries **187 rows, ONE distinct value, and it is `0:00`** — 100%. Soccer
+   * is the control and runs the other way (`soccer_usa_mls` 43 rows / 13
+   * distinct, `soccer_spain_la_liga` 28 / 10, all non-zero): a real clock. The
+   * ESPN snapshot series behind the chart says the same thing more loudly —
+   * 292 of 292 MLB rows are the placeholder across 38 events, against 90
+   * distinct values for NFL.
+   *
+   * ⚠️ **THE DEFAULT IS `true`, like `scoreboardCountsTheUnit` and unlike
+   * `winnerMarketPricesADraw`,** and the polarity is the whole safety argument.
+   * This field DELETES a field the wire really sent, so an undeclared sport
+   * must keep painting its clock; defaulting `false` would silently blank a
+   * genuine clock off every sport nobody has got round to declaring.
+   *
+   * 🔴 **`americanfootball_*` reads 100% `0:00` in the same table and is
+   * declared `true` anyway** — deliberately, and this is the trap the
+   * measurement nearly walked into. Football's zeros are FINISHED games, where
+   * the clock really did run out; 16 NFL rows all at `0:00` is a population of
+   * completed fixtures, not a placeholder. The distinguishing fact is the
+   * DISTINCT count on the live series, not the share of zeros. Anyone widening
+   * this must check the live snapshots, not `events.game_clock`.
+   */
+  gameHasAClock: boolean;
 }
 
 /**
@@ -980,19 +1018,21 @@ export interface SportScoringVocab {
 const SPORT_SCORING: { match: string[]; vocab: SportScoringVocab }[] = [
   {
     match: ["baseball", "mlb"],
-    vocab: { marginTitle: "Run margin map", totalTitle: "Runs map", unit: "runs", unitSingular: "run", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false },
+    // THE ONE ROW THAT SAYS NO TO A CLOCK (#6684). An inning is not a timed
+    // period; ESPN's `game_clock` for this sport is the constant `0:00`.
+    vocab: { marginTitle: "Run margin map", totalTitle: "Runs map", unit: "runs", unitSingular: "run", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, gameHasAClock: false },
   },
   {
     match: ["hockey", "nhl"],
     // A regular-season game level after overtime is decided by a shootout, so
     // the winner market has two outcomes and the complement is honest.
-    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false },
+    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, gameHasAClock: true },
   },
   {
     match: ["soccer", "mls", "epl", "uefa", "fifa"],
     // THE ONE ROW THAT SAYS YES (#6238, mirroring native's #5271). A league
     // draw prices around 20-30% pre-match and the site held no slot for it.
-    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: true },
+    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: true, gameHasAClock: true },
   },
   {
     // #2441's subject. A tennis match is scored in games inside sets; the
@@ -1000,15 +1040,15 @@ const SPORT_SCORING: { match: string[]; vocab: SportScoringVocab }[] = [
     // `hasDerivedSpread: false` is what stops `BER +4.5` being drawn from a
     // points model over a sport with no points.
     match: ["tennis"],
-    vocab: { marginTitle: "Game margin map", totalTitle: "Games map", unit: "games", unitSingular: "game", marginRange: 6, hasDerivedSpread: false, scoreboardCountsTheUnit: false, scoreboardUnit: "sets", winnerMarketPricesADraw: false },
+    vocab: { marginTitle: "Game margin map", totalTitle: "Games map", unit: "games", unitSingular: "game", marginRange: 6, hasDerivedSpread: false, scoreboardCountsTheUnit: false, scoreboardUnit: "sets", winnerMarketPricesADraw: false, gameHasAClock: false },
   },
   {
     match: ["basketball", "nba", "wnba", "ncaab"],
-    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false },
+    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, gameHasAClock: true },
   },
   {
     match: ["americanfootball", "nfl", "ncaaf"],
-    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false },
+    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, gameHasAClock: true },
   },
 ];
 
@@ -1036,6 +1076,11 @@ export const UNSCORED_IN_POINTS: SportScoringVocab = {
   // An undeclared sport keeps its two-sided reading. See the field's own note:
   // this default is what makes withholding the away number opt-in.
   winnerMarketPricesADraw: false,
+  // `true`, with `scoreboardCountsTheUnit`'s polarity and not
+  // `winnerMarketPricesADraw`'s: this field DELETES a field the wire really
+  // sent, so an undeclared sport keeps painting its clock. Defaulting false
+  // would blank a genuine clock off every sport nobody has declared yet.
+  gameHasAClock: true,
 };
 
 export function sportVocab(sportKey: string | undefined): SportScoringVocab {
