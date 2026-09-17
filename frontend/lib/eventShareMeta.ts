@@ -86,6 +86,7 @@
  */
 
 import type { SettledOutcome } from "./eventOutcome";
+import { awayIsTheComplement } from "./drawPricedWinner";
 import { liveClaimIsUnbacked } from "./eventLivePush";
 import {
   hasNoReportedResult,
@@ -105,6 +106,13 @@ export interface EventShareMetaInput {
   hero_probability_source?: string | null;
   hero_settled_result?: string | null;
   current_odds?: { home_probability?: number | null; away_probability?: number | null } | null;
+  /** #6238 — read ONLY to ask whether an absent away probability is a withheld
+   *  figure or an absent price. Same precedence (`sport_key` then `sport`) as the
+   *  card's league label and its own `awayWithheld`, so no row is classified by a
+   *  different key on two lines of one render. @see hasNoPriceForShare */
+  sport_key?: string | null;
+  /** @see sport_key — the fallback half of the same precedence. */
+  sport?: string | null;
   /** @see hasNoReportedResultForShare — #6113. Served by `/api/events/{id}`. */
   live_probability_pinned?: { pinned?: boolean } | null;
   /** @see EventDetailResponse.venue_settled — #6381. Served on exactly the rows
@@ -296,6 +304,21 @@ export function shareForecastPercents(
  * visible and a later edit cannot close it by accident: every no-price row is
  * also quiet in the words, and the rows in between are exactly the zeroes.
  *
+ * ═══ #6238 AMENDED THAT CONTAINMENT, ONE-WAY AND ON PURPOSE ═══
+ *
+ * The containment above no longer runs both ways, and the second class of row
+ * between the two halves is now the draw-priced one: on a soccer match whose
+ * away leg the server withholds, the PICTURE speaks (the home figure, the away
+ * numeral dropped, the bar's remainder visibly unallocated) and the WORDS stay
+ * quiet, because `shareForecastPercents` takes the pair whole or not at all and
+ * the title's form — "away X%, home Y%" — has no honest one-sided spelling.
+ *
+ * Quieter, never louder, and that direction is the whole licence: a card may
+ * say less than its picture, never more. Writing a one-sided sentence is a copy
+ * change on the most-shared surface the product has, and it is tracked on #6670
+ * rather than invented in this function. The one-way containment is asserted
+ * below, so it stays a visible decision instead of drifting into a bug.
+ *
  * ═══ WITHHOLDS ONLY ═══
  *
  * Like the `suspended` and pinned-live branches: a price can arrive on the next
@@ -306,12 +329,40 @@ export function shareForecastPercents(
 export function hasNoPriceForShare(event: EventShareMetaInput): boolean {
   const away = event.current_odds?.away_probability;
   const home = event.current_odds?.home_probability;
-  return (
-    typeof away !== "number" ||
-    typeof home !== "number" ||
-    Number.isNaN(away) ||
-    Number.isNaN(home)
-  );
+
+  // The home half is what the slot is anchored on. No home number, no forecast.
+  if (typeof home !== "number" || Number.isNaN(home)) return true;
+
+  // A NaN is CORRUPTION, not a withholding: nobody chose it, so it cannot be
+  // read as the server declining to price a side. Both halves have to be sound
+  // before any of the reasoning below applies.
+  if (typeof away === "number") return Number.isNaN(away);
+
+  // #6238 — THE AWAY HALF IS ABSENT, AND ABSENT NOW MEANS TWO DIFFERENT THINGS.
+  //
+  // Until #6668 the away probability was always served, as `1 − home`, so a
+  // missing one could only be an absent price and "either side missing ⇒ no
+  // forecast" was a complete rule. That producer stops serving it on a
+  // draw-priced sport, because `1 − P(home)` there is *away win OR draw* and the
+  // draw's mass was printing under the away crest.
+  //
+  // So on those sports an absent away is the server WITHHOLDING a figure it
+  // could not source, beside a home figure it could — and this card already
+  // renders exactly that case: `awayWithheld` drops the away numeral, the bar's
+  // track goes neutral and the home share is drawn at its own width. Reading the
+  // absence as "no price at all" would throw away the honest home number too,
+  // and on a live match hand the slot to `prematch`, which prints the OPENING
+  // line labelled "Pre-match · sportsbooks" where the row has one and nothing at
+  // all where it does not. A stale number and an empty slot, in place of the
+  // current number we hold.
+  //
+  // Anywhere else an absent away is still an absent price and the whole slot
+  // goes — `awayIsTheComplement` answers false for every undeclared sport, so
+  // the two-way behaviour is unchanged rather than excused. That precedence
+  // (`sport_key` then `sport`) is the one this card already uses for the league
+  // label and for `awayWithheld` itself, so no row is read by a different key
+  // here than it is fifty lines down.
+  return !awayIsTheComplement(away, home, event.sport_key || event.sport);
 }
 
 export interface EventShareCopy {
