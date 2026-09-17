@@ -1238,6 +1238,73 @@ def _warm_rail_status(key: str, *, ttl_s: int, absent_note: str) -> dict:
     }
 
 
+@router.get("/shared-build-stats")
+async def get_shared_build_stats(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """The principal-independent cache's own counters (#2143 residual, read-only).
+
+    `shared_build_stats()` has described itself as "counters for the admin/latency
+    panel" since LAT-P103 and **nothing has ever read it outside the test suite**,
+    so the one question this cache exists to answer — is the expensive artifact
+    still being shared across workers — was not a question production could be
+    asked. It had to be inferred by probing `/api/feed` end-to-end, which is
+    `always_sampled` and therefore contaminates `/latency-stats` while measuring.
+
+    That gap has already cost a shipped defect. LAT-P221 (#2971) found
+    `market_load` — 692-775 ms of a cold feed — refused on EVERY publish for
+    being over a cap, silently, for weeks. `cross_worker_publish_refused` was
+    counting it the whole time with no reader.
+
+    TWO PROPERTIES OF THIS RAIL, both load-bearing:
+
+    * **The counters are PER WORKER PROCESS, not fleet-wide.** They are a plain
+      in-memory dict, so one request samples whichever of `WEB_CONCURRENCY`
+      workers answers it. `worker_pid` is returned so two reads can be told
+      apart. This makes the rail sound for its actual job — a systematic refusal
+      (LAT-P221's was every build, on every worker) shows up on any worker you
+      land on — and unsound as proof of a negative: **a zero here cannot show
+      that nothing is being refused fleet-wide**, only that this worker has not
+      refused since it started. Read a nonzero as real; never read a zero as
+      "clean" without sampling repeatedly.
+    * **`by_namespace` is the half that names the artifact.** The aggregate
+      cannot distinguish "the big artifact never publishes" from healthy churn
+      across the small ones, which is exactly how LAT-P221 stayed invisible.
+    """
+    _check_admin_secret(secret, request=request)
+
+    import os as _os
+
+    from app.utils.principal_independent_cache import (
+        SHARED_ARTIFACT_NAMES,
+        shared_build_stats,
+    )
+
+    stats = shared_build_stats()
+    by_ns = stats.get("by_namespace", {})
+
+    # The actionable read, computed rather than left for a human to scan: an
+    # artifact that is being refused at publish is one that CANNOT reach another
+    # worker, whatever the hit counters say.
+    refused = sorted(
+        ns for ns, c in by_ns.items() if c.get("cross_worker_publish_refused", 0) > 0
+    )
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "worker_pid": _os.getpid(),
+        "scope": "this worker process only — see `caveat`",
+        "caveat": (
+            "In-memory per-process counters. A NONZERO value is real; a zero is "
+            "not proof of absence, because this request sampled one worker of "
+            "WEB_CONCURRENCY and that worker may be freshly started."
+        ),
+        "stats": stats,
+        "publish_refused_namespaces": refused,
+        "shared_artifact_names": sorted(SHARED_ARTIFACT_NAMES),
+    }
+
+
 @router.get("/feed-prewarm/last")
 async def get_feed_prewarm_last(
     request: Request,
