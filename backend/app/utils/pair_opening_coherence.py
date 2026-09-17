@@ -34,6 +34,16 @@ So the gate is fail-closed and symmetric: incoherent pair -> stamp NEITHER leg.
 Stamping only the coherent-looking side would leave a half-open pair whose single
 published number carries no partner to check it against, which is how a 22.7%
 ``partial_open`` population came to exist in the first place.
+
+THIS MODULE NOW ANSWERS TWO QUESTIONS, NOT ONE (#6793). The opening gate above
+shipped in 2026-08 and left ``current_probability`` — the number on the page —
+ungoverned, so the same mixed-source pair that is refused an opening is still
+*displayed*. :func:`classify_pair_price` is the second question. The two differ in
+exactly one clause (provenance; see its docstring) and share this module's
+tolerance so that the writer's two gates cannot drift apart the way the writer and
+its census could not. Both remain fail-closed and symmetric for the same reason:
+one honest-looking leg beside a withdrawn partner is a number with nothing to
+check it against.
 """
 
 from __future__ import annotations
@@ -124,3 +134,87 @@ def pair_opening_allowed(
         )
         == OK
     )
+
+
+def classify_pair_price(
+    yes_prob: Optional[float],
+    no_prob: Optional[float],
+    *,
+    tolerance: float = PAIR_SUM_TOLERANCE,
+) -> str:
+    """Return :data:`OK` if this pair's two CURRENT prices may both be stored (#6793).
+
+    Same arithmetic as :func:`classify_pair_opening`, asked of the two numbers a
+    reader is about to see rather than of the two we publish a forecast from.
+
+    PROVENANCE IS DELIBERATELY NOT TESTED HERE, and that is the whole difference
+    between the two questions. :data:`REFUSED_UNPAIRED_SOURCE` fires whenever the
+    resolver fell back to ``last_trade_price``, a midpoint or a bare ask — which is
+    exactly right for an *opening*, because ``calibration_probability`` falls back
+    to ``opening_probability`` and a mixed-source pair becomes a published forecast
+    we are then graded on. A current price is not graded: a real last trade is an
+    honest answer to "what is this worth now", and refusing it would blank
+    thousands of working markets to fix a few hundred broken ones. So this asks
+    only the question a reader can check with their own eyes — do these two numbers
+    describe one question.
+
+    MEASURED ON PRODUCTION, 2026-09-17, open Polymarket markets. The stored-row
+    counts are read-only db-query; the served count is the actual payload of
+    ``/api/futures/{id}`` fetched for every one of the 152, NOT a re-derivation of
+    the serve predicate against the database (an earlier pass modelled it that way
+    and over-counted by more than twentyfold)::
+
+        two-leg decomposed sub-markets                          8,961
+        pairs not summing to 1 (tolerance 0.02)                   282
+          ... live: both legs ungraded, resolution date ahead      148
+          ... of those, last written within 7 days                 139
+        SERVED  both contradictory legs rendered              4 and 6
+        GRADED  polymarket snapshot rows on that set            3,437
+          ... written in the preceding 24 hours                    552
+
+    THE TWO HALVES ARE VERY DIFFERENT SIZES AND THAT IS THE POINT. Serve already
+    hides most of this by other means — a leg with no price, a single-leg render,
+    the empty-book withdrawal — so only a handful of markets show a reader both
+    halves at once, and WHICH ones churns every poll: six at 21:05Z, four at 21:25Z,
+    overlapping but not equal. ``Galaxy vs Rapids: O/U 8.5 Total Corners`` was
+    photographed on ``/futures/60976220`` reading **Under 50% / Over 48%**.
+
+    Nothing hides the SNAPSHOT half. ``calibration_probability`` reads snapshots
+    before it falls back to the opening, so every one of these pairs is graded on a
+    price its own partner refutes — and the opening gate that has guarded this
+    arithmetic since 2026-08 never reached it. That is the larger half and the
+    reason this is worth doing even on a day when the served count is four.
+
+    Why the ingest writer and not the refresh task: ``futures_price_refresh``
+    derives the No leg from one price and so cannot produce these, and the measured
+    rows are stamped in ``poll_polymarket_markets``' ``:15`` pass.
+
+    OUT OF SCOPE, and measured so the boundary is not guesswork: 419 open
+    Polymarket FIELD markets carry a ``_yes``/``_no`` pair among more than two
+    outcomes (36 of them incoherent). An earlier sizing pass of this work did not
+    require the market to have exactly two outcomes and swept them in. Those are the duplicate-condition-leg shape
+    :mod:`app.utils.winner_field_coherence` describes, not this one, and a field of
+    independent or cumulative rungs is allowed to sum past 1 (gotcha #23). This
+    function cannot reach them: its call site judges the two prices of ONE Gamma
+    market, which is a binary by construction, and never a field.
+
+    A ONE-SIDED MARKET IS NOT A PAIR. ``no_prob`` of ``None`` means there is no
+    second leg to disagree with, which is the ordinary shape of a great many real
+    markets — callers must not ask this of one. :data:`REFUSED_MISSING_LEG` is
+    still returned rather than :data:`OK` so that a caller which asks anyway fails
+    closed and is legible in the stats, but the ingest call site guards on the leg
+    existing before it asks at all.
+    """
+    return classify_pair_opening(
+        yes_prob, no_prob, price_source=PAIRED_PRICE_SOURCE, tolerance=tolerance
+    )
+
+
+def pair_price_allowed(
+    yes_prob: Optional[float],
+    no_prob: Optional[float],
+    *,
+    tolerance: float = PAIR_SUM_TOLERANCE,
+) -> bool:
+    """Boolean form of :func:`classify_pair_price` for call sites that only branch."""
+    return classify_pair_price(yes_prob, no_prob, tolerance=tolerance) == OK
