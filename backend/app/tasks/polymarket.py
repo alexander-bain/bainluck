@@ -16,6 +16,7 @@ from sqlalchemy import func, select, text
 from app.tasks.base import get_task_session
 from app.utils.feed_market_quality import (
     FEED_PHANTOM_MIN_SPREAD,
+    is_empty_book_midpoint,
     is_fabricated_midpoint,
 )
 from app.utils.winner_field_coherence import (
@@ -60,6 +61,9 @@ logger = logging.getLogger(__name__)
 #       price handed to us (Gamma's opaque `outcome_prices`): decline it only when
 #       it IS the midpoint of a wide book. If it is something else, it came from
 #       somewhere else and the #151 evidence gate judges it.
+#   is_empty_book_midpoint(prob, bid, ask)   — also imported from the read side
+#       (#5247), and paired with the one above because the two have complementary
+#       blind spots on ONE payload shape. See the #6676 comment at the call site.
 #   _poly_book_is_untradeable(bid, ask)      — for a midpoint WE compute ourselves
 #       (the bid/ask fallback, the websocket stream). No opacity, so the width
 #       test alone settles it.
@@ -3863,7 +3867,15 @@ def _parent_outcome_data(event) -> list[dict]:
     if len(event.markets) > 1:
         for market in event.markets:
             prob = market.outcome_prices[0] if market.outcome_prices else None
-            if is_fabricated_midpoint(prob, market.best_bid, market.best_ask):
+            # #6676: the same pair, for the same reason, as in
+            # `_resolve_market_probability_with_source` — read the long comment
+            # there. This is the least-guarded of the five write paths (#1578), and
+            # outcome 61246705 reached a /sports card through THIS branch, not the
+            # resolver, so guarding only the resolver would have fixed two of the
+            # three named rows and left the parent anchor printing 50%.
+            if is_fabricated_midpoint(
+                prob, market.best_bid, market.best_ask
+            ) or is_empty_book_midpoint(prob, market.best_bid, market.best_ask):
                 prob = (
                     float(market.last_trade_price)
                     if market.last_trade_price is not None
@@ -3997,7 +4009,44 @@ def _resolve_market_probability_with_source(market) -> tuple[float | None, str |
     # a market that ran away DURING active trading — the book clears because
     # everyone is on one side, not because nobody is there — so it carries
     # 24-hour volume and this branch cannot reach it.
-    if is_fabricated_midpoint(prob, market.best_bid, market.best_ask):
+    # #6676: the 0.0005 equality above is an EXACT-midpoint test, and it assumes
+    # Gamma's payload describes one instant. It does not. `outcomePrices` and
+    # `bestBid`/`bestAsk` can be a tick apart in the same response — caught live on
+    # market 4630453 at 2026-09-17T03:43Z, price 0.5 beside quotes 0.03 / 0.98 while
+    # Gamma's own `spread` field still read 0.94. Half a cent off the arithmetic mean
+    # is past a 0.0005 tolerance, and the 2c/3c bid then satisfies the #151 evidence
+    # gate below, so an empty never-traded book was stored as a 50% forecast. Three
+    # such rows reached /sports as "Over 50% / Under 50%" cards on 2026-09-16.
+    #
+    # The remedy is the sibling predicate rather than a looser tolerance here,
+    # because the two have complementary blind spots and widening either one alone
+    # spends a population neither measured:
+    #
+    #   is_fabricated_midpoint  wide book coverage (spread >= 0.20), razor tolerance
+    #                           (0.0005) — catches the 206 of 209 wide-book markets
+    #                           that sat EXACTLY on their midpoint in the 03:41Z scan.
+    #   is_empty_book_midpoint  narrow book coverage (bid <= 0.02 AND ask >= 0.95),
+    #                           generous tolerance (0.01) — written for #5247's
+    #                           "a venue's own mid is not obliged to be the exact
+    #                           arithmetic mean of the two sides it reports".
+    #
+    # #5247 documented that on the SERVE side and never applied it to the writer;
+    # this is the line that makes ingest and serve read the same rows the same way.
+    # Nothing here is a new threshold: both predicates are imported, not restated.
+    #
+    # 🪤 THIS DOES NOT CLOSE THE CLASS, AND THAT IS DELIBERATE. `EMPTY_BOOK_MAX_BID`
+    # is 0.02, so a 3c bid still escapes BOTH predicates — the live specimen above is
+    # exactly that shape and is still admitted here. Widening the bound is #5333's
+    # ship, on #5333's own measurement (it has sibling-complement and product checks
+    # this fix does not discharge), and it is a shared constant the serve side and
+    # the calibration SQL mirror also read. `test_5333_is_still_open_on_a_3c_bid`
+    # pins the escape so the remainder cannot be forgotten or silently absorbed.
+    #
+    # A genuine traded 50% still survives: the volume-gated last-trade exception
+    # below runs after this test, unchanged.
+    if is_fabricated_midpoint(
+        prob, market.best_bid, market.best_ask
+    ) or is_empty_book_midpoint(prob, market.best_bid, market.best_ask):
         recently_traded = bool(market.volume_24h and float(market.volume_24h) > 0)
         if (
             recently_traded
