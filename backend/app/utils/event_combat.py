@@ -283,6 +283,42 @@ def fold_rollover_tokens(
     return survivor
 
 
+def card_span_by_token(
+    venue_times: dict[str, list],
+    fight_times: dict[str, list],
+) -> dict[str, tuple]:
+    """``{token: (first, last)}`` for :func:`fold_rollover_tokens`, with each
+    token's span on ONE time scale — never a blend of two.
+
+    #2602. The fold asks "did this card cross midnight?", which is a question
+    about fight STARTS. A venue market's ``commence_time`` is not one: Kalshi's
+    is the close/resolution stamp (gotcha #14), measured ~3-4 h LATER than the
+    bout it prices. Widening a token's span with both sources therefore pushed
+    the earlier token's end PAST the later token's first bout, and the fold's
+    own overlap guard (``later_first < earlier_last``) then refused exactly the
+    card it was written for.
+
+    Measured on production 2026-09-17, UFC 331: its 13 Kalshi tickers all carry
+    the token ``26sep19`` while closing 02:00-07:20Z on Sep 20, so the blended
+    span for ``26sep19`` ran to 07:20Z on the 20th — past ``26sep20``'s first
+    bout at 00:15Z. `/hub/mma` served the one card twice, as "331: Van vs
+    Pantoja · Sat, Sep 19 · 12 fights" beside "van vs Pantoja · Sun, Sep 20".
+
+    So fight-start times REPLACE venue times for any token that has them, and a
+    token with no scheduled bout keeps its venue span — which is all it has, and
+    is self-consistent, because every ticker of one card shares the same shift.
+    """
+    spans: dict[str, tuple] = {}
+    for source in (venue_times, fight_times):
+        for token, times in source.items():
+            if token is None:
+                continue
+            known = sorted(t for t in times if t is not None)
+            if known:
+                spans[token] = (known[0], known[-1])
+    return spans
+
+
 def card_token(cfg: CombatSportConfig, external_id: str | None) -> str | None:
     """Lowercased card date-token from a card FIGHT ticker, or None if it isn't a
     fight market. e.g. (UFC) "kalshi:KXUFCFIGHT-26JUN20KAPHOR" -> "26jun20";
@@ -880,23 +916,14 @@ async def list_card_concepts(
         return f["commence"] or datetime.min.replace(tzinfo=timezone.utc)
 
     # #1712 shape 1 / ux/1070 item 2: collapse a card that crossed midnight UTC
-    # back into ONE card. Computed over both sources' times together (see
-    # `fold_rollover_tokens`) and applied to both dicts, so a Kalshi fight and
-    # the events row for the same bout cannot end up on different cards.
-    _spans: dict[str, tuple] = {}
-    for token, card in cards.items():
-        times = sorted(f["commence"] for f in card["fights"] if f["commence"])
-        if times:
-            _spans[token] = (times[0], times[-1])
-    for token, group in event_bouts.items():
-        times = sorted(e.commence_time for e in group if e.commence_time)
-        if not times:
-            continue
-        first, last = times[0], times[-1]
-        if token in _spans:
-            first = min(first, _spans[token][0])
-            last = max(last, _spans[token][1])
-        _spans[token] = (first, last)
+    # back into ONE card. Computed over both sources (see `card_span_by_token`
+    # for why the venue's clock never widens a scheduled token) and applied to
+    # both dicts, so a Kalshi fight and the events row for the same bout cannot
+    # end up on different cards.
+    _spans = card_span_by_token(
+        {t: [f["commence"] for f in c["fights"]] for t, c in cards.items()},
+        {t: [e.commence_time for e in group] for t, group in event_bouts.items()},
+    )
     _survivor = fold_rollover_tokens(_spans)
     if any(t != s for t, s in _survivor.items()):
         folded_cards: dict[str, dict] = {}
@@ -1112,23 +1139,26 @@ class CombatEventAdapter:
         (#1712 shape 1). Either half of a folded card resolves to the whole of
         it, so the pre-fold link keeps working.
         """
-        spans: dict[str, tuple] = {}
-
-        def _widen(token, when):
-            if token is None or when is None:
-                return
-            first, last = spans.get(token, (when, when))
-            spans[token] = (min(first, when), max(last, when))
-
+        # The feed lister and this page MUST fold identically (see the caller's
+        # note), so both build their spans through the one helper — including
+        # its rule that a venue close time never widens a scheduled token.
+        venue_times: dict[str, list] = {}
         for m in markets:
             if len(m.outcomes or []) != 2:
                 continue
-            _widen(card_token(self.cfg, m.external_id), m.commence_time)
-        for token, group in bouts_by_token.items():
-            for bout in group:
-                _widen(token, bout.commence_time)
+            token = card_token(self.cfg, m.external_id)
+            if token is not None:
+                venue_times.setdefault(token, []).append(m.commence_time)
 
-        survivor = fold_rollover_tokens(spans)
+        survivor = fold_rollover_tokens(
+            card_span_by_token(
+                venue_times,
+                {
+                    token: [b.commence_time for b in group]
+                    for token, group in bouts_by_token.items()
+                },
+            )
+        )
         root = survivor.get(target, target)
         tokens = {t for t, s in survivor.items() if s == root}
         tokens.add(target)
