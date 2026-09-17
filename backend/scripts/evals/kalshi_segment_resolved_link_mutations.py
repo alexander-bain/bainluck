@@ -36,6 +36,12 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 RECONCILER = ROOT / "app" / "tasks" / "prediction_market_matching.py"
 DEDUP = ROOT / "app" / "utils" / "search_fixture_dedup.py"
 SUITE = ROOT / "tests" / "test_kalshi_segment_reads_a_resolved_link_q048.py"
+#: #6720 re-grounded the choice on the provider anchor and added a refusal —
+#: two id-less twins are left alone — that has NO specimen in the q048 suite,
+#: whose every case pits an anchored row against a ghost. The battery must read
+#: this suite too or M6b is unkillable by construction, which is a mutant that
+#: reports a survivor while guarding nothing.
+SUITE_6720 = ROOT / "tests" / "test_kalshi_game_segment_reconcile_6720.py"
 
 #: (id, description, old, new, target). `old` must appear EXACTLY once IN ITS
 #: OWN TARGET — a mutation that matches zero or many places is a harness bug
@@ -100,16 +106,27 @@ MUTANTS: list[tuple[str, str, str, str, object]] = [
     ),
     (
         "M6",
-        "let the ticker-derived twin win the segment — converges the props "
-        "onto the GHOST, a strictly worse bug that still reports success",
-        '''    scheduled = [
-        eid for eid in ids
-        if provenance.get(eid) not in (None, _TICKER_DERIVED_COMMENCE_SOURCE)
-    ]''',
-        '''    scheduled = [
-        eid for eid in ids
-        if provenance.get(eid) in (None, _TICKER_DERIVED_COMMENCE_SOURCE)
-    ]''',
+        "let the id-less twin win the segment — converges the props onto the "
+        "GHOST, a strictly worse bug that still reports success",
+        # RE-TARGETED by #6720. M6's intent is unchanged — make the duplicate
+        # win — but the line that decides it moved. The choice used to turn on
+        # `commence_time_source != 'kalshi_ticker'`; measured 2026-09-17 that
+        # string covered 1.4% of the id-less events it had to judge, so the
+        # rule was inert and the decision now turns on the provider ANCHOR.
+        # Inverting the anchor test is the same mutant on the new axis.
+        "    with_anchor = [eid for eid in ids if anchored.get(eid)]",
+        "    with_anchor = [eid for eid in ids if not anchored.get(eid)]",
+        RECONCILER,
+    ),
+    (
+        "M6b",
+        "drop the both-id-less refusal and fall through to provenance — "
+        "resurrects the pre-#6720 coin flip that would have moved Brest v "
+        "PSG's 13 markets onto a ghost",
+        '''    if not with_anchor:
+        return None, "ambiguous_idless"''',
+        '''    if not with_anchor:
+        with_anchor = list(ids)''',
         RECONCILER,
     ),
     (
@@ -167,7 +184,8 @@ MUTANTS: list[tuple[str, str, str, str, object]] = [
 
 def _run_suite() -> int:
     return subprocess.run(
-        [sys.executable, "-m", "pytest", str(SUITE), "-q", "--no-header", "-x"],
+        [sys.executable, "-m", "pytest", str(SUITE), str(SUITE_6720),
+         "-q", "--no-header", "-x"],
         cwd=ROOT,
         capture_output=True,
         text=True,
