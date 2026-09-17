@@ -210,6 +210,17 @@ RESUME = "resume"
 INVALIDATE = "invalidate"
 REFUSE = "refuse"
 
+# Why the action above was taken. CAL-P024's lesson, applied to the checkpoint:
+# the action alone is not diagnostic, because two unrelated causes now produce
+# ``REFUSE`` and six produce ``INVALIDATE``. The reason travels beside the
+# action so a stood-down beat can say WHICH stand-down it was — the difference
+# between "another worker is mid-build, all is well" and "the database did not
+# answer", which are opposite operational stories.
+CHECKPOINT_REASON_ABSENT = "absent"
+#: The durable read did not ANSWER (#6599). Not evidence about the checkpoint.
+CHECKPOINT_REASON_READ_FAILED = "read_failed"
+CHECKPOINT_REASON_LEASE_HELD = "lease_held_by_other"
+
 # Health verdicts (lowercase, matching the corpus's ``health.verdict``).
 GREEN = "green"
 UNKNOWN = "unknown"

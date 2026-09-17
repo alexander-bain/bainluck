@@ -101,7 +101,18 @@ class _FakeCM:
         self._response = response
         # Queue 274: the beat now arms a DB-level statement_timeout on this
         # session before computing, so the session must support `await execute`.
+        #
+        # #6599: and it must be able to ANSWER a SELECT. The durable reads run
+        # on this session, and a bare AsyncMock returns a coroutine from
+        # `.mappings()` — which raises inside `read_snapshot` and is classified
+        # `unavailable`, the named UNKNOWN. The build used to treat that as "no
+        # checkpoint" and carry on; it now stands down, so a double that cannot
+        # answer would skip the very beat these tests assert on. No durable row
+        # is what this fixture always meant.
         self.db = AsyncMock()
+        self.db.execute.return_value = MagicMock(
+            **{"mappings.return_value.first.return_value": None}
+        )
 
     async def __aenter__(self):
         return self.db
