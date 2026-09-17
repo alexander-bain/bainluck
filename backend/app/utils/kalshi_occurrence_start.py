@@ -97,9 +97,14 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 __all__ = [
+    "KALSHI_DERIVATIVE_SERIES_EXCESS",
     "KALSHI_EXPECTED_EXPIRATION_PAD",
+    "KALSHI_MEASURED_SOCCER_LEAGUE_PREFIXES",
     "KALSHI_OCCURRENCE_TIMED_SOURCES",
     "KALSHI_RECOVERY_STAMP",
+    "KALSHI_SOCCER_DERIVATIVE_KINDS",
+    "kalshi_derivative_series_excess",
+    "kalshi_game_scale_commence",
     "kalshi_occurrence_scheduled_start",
     "loaded_sport_key",
     "recover_kalshi_occurrence_starts",
@@ -167,6 +172,129 @@ KALSHI_OCCURRENCE_TIMED_SOURCES = frozenset({"kalshi", "kalshi_occurrence"})
 #: `commence_time` from the database. Nothing is written, and the mapper never
 #: sees it — a name it does not map is not a column it can flush (gotcha #4).
 KALSHI_RECOVERY_STAMP = "_bl_kalshi_occurrence_start_recovered"
+
+
+#: How much LATER a soccer DERIVATIVE series publishes its occurrence than the
+#: GAME series does for the very same fixture.
+#:
+#: 🔴 **THIS IS WHY THE PAD ABOVE LOOKED BIMODAL, AND IT IS NOT A SECOND PAD.**
+#: #6715 measured the ghost/real delta as 180 minutes x10 and 240 minutes x2 and
+#: recorded the 240 as an unexplained second value — which would have been
+#: "answered" either by widening :data:`KALSHI_EXPECTED_EXPIRATION_PAD` (forbidden
+#: above, and the wrong shape) or by the per-competition table that note
+#: prescribes (which cannot work: La Liga produces BOTH values).
+#:
+#: The specimen refutes the competition theory inside one event id. `15312871`
+#: (Levante v Bilbao, stored 23:30Z, true kick-off 19:30Z) holds four Kalshi
+#: markets and they do not agree with each other:
+#:
+#:     KXLALIGAGAME-26SEP16LEVATH     22:30Z   <- kick-off + 180, the pad is EXACT
+#:     KXLALIGATOTAL-26SEP16LEVATH    23:30Z
+#:     KXLALIGASPREAD-26SEP16LEVATH   23:30Z
+#:     KXLALIGABTTS-26SEP16LEVATH     23:30Z
+#:
+#: The event took the derivative's hour, so the 3h recovery landed it at 20:30Z
+#: against a 19:30Z kick-off and `fold_twin_events` then correctly refused the
+#: pair — a duplicate card in the La Liga "No result reported" rail (#6715).
+#:
+#: Read at the venue 2026-09-17 (notice 26, series discovery, pairing each
+#: derivative event ticker to its own fixture's GAME ticker):
+#:
+#:     league          fixtures    BTTS      SPREAD    TOTAL
+#:     KXLALIGA            10      +60 x10   +60 x10   +60 x10
+#:     KXEPL               10      +60 x10   +60 x10   +60 x10
+#:     KXSERIEA            10      +60 x10   +60 x10   +60 x10
+#:     KXLIGUE1             9      +60 x9    +60 x9    +60 x9
+#:     KXMLS               16      +60 x16   +60 x16   +60 x16
+#:     KXEREDIVISIE         9       --       +60 x9    +60 x9
+#:
+#: **183 of 183 comparisons at exactly +60 minutes; zero exceptions.** Six
+#: independent league families, three derivative kinds. That is the same
+#: character as the 11-of-11 census behind the pad above — a single value to the
+#: minute, because it is a constant the venue applies rather than an estimate it
+#: makes. So BOTH values are exact and the discriminator is the series KIND:
+#: `…GAME` is kick-off +180, `…TOTAL`/`…SPREAD`/`…BTTS` is kick-off +240.
+KALSHI_DERIVATIVE_SERIES_EXCESS = timedelta(minutes=60)
+
+#: The derivative series kinds the census above covers.
+#:
+#: `BTTS` ("both teams to score") is soccer by construction, but `TOTAL` and
+#: `SPREAD` are not — Kalshi runs those shapes over several sports, and an
+#: NFL spread's expected expiration tracks a game that can run long. Nothing here
+#: is inherited into those: the league gate below is what keeps this measurement
+#: inside the population it was taken on, exactly as `_soccer` does for the pad.
+KALSHI_SOCCER_DERIVATIVE_KINDS = ("TOTAL", "SPREAD", "BTTS")
+
+#: The soccer league series families the +60 census above actually measured.
+#:
+#: An ALLOWLIST rather than a pattern, and the distinction is the whole safety
+#: argument: `^KX[A-Z]+(TOTAL|SPREAD)-` is a grammar, and a grammar reaches every
+#: sport Kalshi ever gives that shape to — including the NFL and MMA series whose
+#: spread this constant is measured to be WRONG about. A league absent here is not
+#: asserted to be 0; it is UNMEASURED, and it is left exactly as it is until
+#: somebody reads it at the venue and adds it. KXUCL, KXUEL, KXBUNDES, KXLIGAMX
+#: and six more were probed the same day and had no open GAME market to pair
+#: against — unpaired, not disagreeing.
+KALSHI_MEASURED_SOCCER_LEAGUE_PREFIXES = frozenset(
+    {"KXLALIGA", "KXEPL", "KXSERIEA", "KXLIGUE1", "KXMLS", "KXEREDIVISIE"}
+)
+
+#: Every measured `<league><kind>` series, precomputed. Membership is tested by
+#: EQUALITY against the ticker's series segment — never by `startswith` — so a
+#: longer series that merely opens with a measured name (a hypothetical
+#: `KXEPLTOTALCORNERS`) is a miss and is left alone, which is the safe answer.
+_KALSHI_MEASURED_DERIVATIVE_SERIES = frozenset(
+    league + kind
+    for league in KALSHI_MEASURED_SOCCER_LEAGUE_PREFIXES
+    for kind in KALSHI_SOCCER_DERIVATIVE_KINDS
+)
+
+
+def kalshi_derivative_series_excess(ticker: Optional[str]) -> timedelta:
+    """How much later than the GAME series this ticker's occurrence sits.
+
+    :data:`KALSHI_DERIVATIVE_SERIES_EXCESS` for a measured soccer derivative
+    series, and a zero timedelta for everything else — which is the answer for
+    the overwhelming majority of tickers and always means "leave this alone".
+    Pure: no DB, no clock, no I/O.
+
+    Returning a zero timedelta rather than ``None`` is deliberate: the caller
+    subtracts it, so an unmeasured series costs one subtraction of nothing
+    instead of a branch that a later edit can forget to write.
+    """
+    if not isinstance(ticker, str) or "-" not in ticker:
+        return timedelta(0)
+    series = ticker.split("-", 1)[0]
+    if series in _KALSHI_MEASURED_DERIVATIVE_SERIES:
+        return KALSHI_DERIVATIVE_SERIES_EXCESS
+    return timedelta(0)
+
+
+def kalshi_game_scale_commence(market: Any) -> Any:
+    """``market.commence_time`` expressed on the GAME series' clock.
+
+    The value is returned UNCHANGED — including ``None``, and including anything
+    that is not a datetime — unless the market is a Kalshi row whose ticker names
+    one of the measured soccer derivative series, in which case the measured hour
+    of venue excess comes off it. Pure: no DB, no clock, no I/O.
+
+    **This normalises what an EVENT is minted with, not what the MARKET stores.**
+    A derivative market's own `commence_time` is the venue's honest occurrence for
+    that series and other readers are entitled to it; what is wrong is letting
+    that series' clock become the fixture's kick-off, because every consumer
+    downstream — `recover_kalshi_occurrence_starts` above, the twin fold, the
+    "starts in" line — reasons with the GAME series' 180-minute pad. Putting the
+    instant on the GAME scale HERE means the pad stays exact and nothing
+    downstream needs to learn a second constant.
+    """
+    commence = getattr(market, "commence_time", None)
+    if not isinstance(commence, datetime):
+        return commence
+    if getattr(market, "source", None) != "kalshi":
+        return commence
+    return commence - kalshi_derivative_series_excess(
+        getattr(market, "external_id", None)
+    )
 
 
 def _soccer(sport_key: Optional[str]) -> bool:

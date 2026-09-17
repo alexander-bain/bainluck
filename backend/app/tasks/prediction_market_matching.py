@@ -26,6 +26,7 @@ from app.utils.event_completion import (
     commence_time_is_a_reported_start,
 )
 from app.utils.sport_keys import is_kalshi_shadowed_futures_ticker
+from app.utils.kalshi_occurrence_start import kalshi_game_scale_commence
 from app.utils.futures_liveness import KALSHI_BOOK_SILENT_SQL
 from app.utils.feed_market_quality import (  # #6676, the two-minute beat's third writer
     is_empty_book_midpoint,
@@ -7354,7 +7355,21 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
     # ── Unified event matching via Event Registry ──
     # Determine commence_time: use market's commence_time if reasonable,
     # otherwise use now (the market is probably live)
-    commence_time = market.commence_time
+    #
+    # #6715: on the GAME series' clock, not the derivative series' own. A Kalshi
+    # soccer TOTAL/SPREAD/BTTS market publishes its occurrence exactly 60 minutes
+    # later than the GAME market for the same fixture (183 of 183 venue
+    # comparisons across six leagues — see `KALSHI_DERIVATIVE_SERIES_EXCESS`), so
+    # minting an event from one hands every downstream reader an hour that the
+    # 180-minute recovery pad cannot put back. `15312871` is the specimen: it
+    # holds its own GAME market at 22:30Z and was minted at 23:30Z anyway, which
+    # is why it recovered to 20:30Z against a 19:30Z kick-off, failed to fold, and
+    # drew a second card in the La Liga "No result reported" rail.
+    #
+    # BEFORE the ±30-day clamp, so a normalised instant is what gets judged
+    # reasonable, and before `auto_create_commence_time`, whose ticker arm
+    # compares this value against the ticker's own date.
+    commence_time = kalshi_game_scale_commence(market)
     if not commence_time or abs((commence_time - now).total_seconds()) > 86400 * 30:
         commence_time = now
 
