@@ -20,14 +20,26 @@ That module must not be weakened. The verdict has to be typed on the server.
 ## The rule these tests pin
 
 `hit` may be typed from a venue settlement only when **two independent signals
-agree**: an allowlisted `resolution_source` VALUE, and the leg's own settled
-price. Anything else withholds.
+agree**: a `resolution_source` graded at tier 2 or above on the CANONICAL
+authority ladder (`app/utils/resolution_authority.py` — tier 3 the venue's own
+settlement, tier 2 the box score), and the leg's own settled price. Anything
+else withholds.
 
-The second signal is the whole safety argument. `is_winner` is a non-nullable
-column defaulting to `False`, so on a never-graded row it is indistinguishable
-from "graded a loser" — UX-P044 measured 70 red MISSes across 358 rendered cards
-built from exactly that. An allowlist keyed on a source *value* (never on "a
-source exists") refuses that cohort at the first gate; the price refuses
+CERT-3025 BLOCKed the draft that used a hand-rolled
+`frozenset({"api_settlement", "clean_resolution"})`. `clean_resolution` is tier
+1 and PRICE-DERIVED — `backfill_winners.py:680` sets
+`is_winner = (current_probability >= 0.95)` — so for those rows the two signals
+collapse into one and "alignment" is guaranteed by construction. The ladder is
+the house idiom for exactly this question and asking it keeps one answer in one
+place.
+
+The second signal is the whole safety argument. `is_winner` IS nullable, in the
+model and in production (CERT-521 / CAL-P155), but production overwhelmingly
+stores `False` rather than NULL for an ungraded row — 2,536 NULL of 3,893,126,
+measured 2026-08-31 — so a stored `False` is indistinguishable from "graded a
+loser". UX-P044 measured 70 red MISSes across 358 rendered cards built from
+exactly that. A tier gate (never "a source exists") refuses that
+cohort at the first gate; the price refuses
 anything that slips past it, and refuses genuine conflicts — void, retracted,
 partial settlement — without needing a vocabulary for each.
 
@@ -43,10 +55,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.routes.events import (
-    _AUTHORITATIVE_SETTLEMENT_SOURCES,
+    _PRICE_IS_A_VERDICT_MIN_TIER,
     _grade_settled_prop,
     _venue_typed_hit,
 )
+from app.utils.resolution_authority import authority_tier
 
 
 def _leg(
@@ -107,11 +120,10 @@ def test_a_venue_settled_loser_end_to_end_is_a_miss_not_a_withhold():
     assert out["actual"] is None
 
 
-def test_clean_resolution_is_authoritative_too_at_its_measured_price():
-    # The one specimen row at 0.97 (Justin Jefferson Over 17.1, `clean_resolution`).
-    assert (
-        _venue_typed_hit(_leg(source="clean_resolution", won=True, price=0.97)) is True
-    )
+def test_a_tier_two_box_score_grade_also_qualifies():
+    """The gate is the LADDER, not one source name: tier 2 is a real second signal."""
+    assert authority_tier("game_score") >= _PRICE_IS_A_VERDICT_MIN_TIER
+    assert _venue_typed_hit(_leg(source="game_score", won=True, price=1.0)) is True
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +143,7 @@ def test_the_never_graded_default_false_cohort_is_still_refused():
     assert _venue_typed_hit(_leg(source=None, won=False, price=0.0)) is None
 
 
-def test_a_source_that_is_not_allowlisted_is_refused_however_settled_it_looks():
+def test_a_source_below_the_verdict_tier_is_refused_however_settled_it_looks():
     """UX-P044 in one line: a source PROVES a process touched the row, not a verdict."""
     for source in ("manual", "backfill", "espn", "inferred", "", "API_SETTLEMENT"):
         assert (
@@ -140,9 +152,9 @@ def test_a_source_that_is_not_allowlisted_is_refused_however_settled_it_looks():
 
 
 def test_an_unknown_future_source_defaults_to_refuse():
-    """The allowlist's default is REFUSE — a source nobody has taught it withholds.
+    """The ladder's default is REFUSE — an unclassified source scores -1.
 
-    An allowlist whose default is a real value stores plausible wrong data. This
+    A gate whose default is a real value stores plausible wrong data. This
     is the property that keeps a new ingest path from silently publishing
     verdicts before anyone has checked what its `is_winner` means.
     """
@@ -185,12 +197,18 @@ def test_a_price_out_of_range_is_refused_rather_than_clamped():
     assert _venue_typed_hit(_leg(won=True, price=1000.0)) is None
 
 
-def test_a_zero_to_one_hundred_price_is_normalised_not_read_vacuously():
-    """97 is not "comfortably above 0.9" — it is the same 0.97 on another scale."""
-    assert _venue_typed_hit(_leg(won=True, price=97)) is True
-    assert _venue_typed_hit(_leg(won=False, price=3)) is False
-    # and the conflict still fires after normalising
-    assert _venue_typed_hit(_leg(won=True, price=2)) is None
+def test_an_out_of_domain_price_fails_closed_rather_than_being_rescaled():
+    """CERT-3025 follow-up `6751-FAIL-CLOSED-ON-OUT-OF-DOMAIN-PROBABILITY`.
+
+    The first draft divided anything above 1.0 by 100 to "normalise a percent
+    write", which silently rescued malformed values: a stored `2` became 0.02
+    and typed a confident MISS. This column stores a 0–1 probability (185 of 185
+    specimen rows do), so a value outside it is not a scale to guess at — it is
+    a row we do not understand, and those are withheld.
+    """
+    for price in (2, 3, 97, 100, 1.5):
+        assert _venue_typed_hit(_leg(won=True, price=price)) is None, price
+        assert _venue_typed_hit(_leg(won=False, price=price)) is None, price
 
 
 # ---------------------------------------------------------------------------
@@ -228,13 +246,48 @@ def test_an_unfinished_event_publishes_no_grade_keys_at_all():
     )
 
 
-def test_the_allowlist_is_a_frozenset_of_exactly_the_two_measured_values():
-    """Pinned so widening it is a deliberate, reviewed edit rather than a drift.
+def test_an_aligned_clean_resolution_row_is_withheld_because_its_two_signals_are_one():
+    """CERT-3025's BLOCK, pinned. THE CIRCULARITY IS THE WHOLE POINT.
 
-    Adding a value here changes what the site will state as a settled verdict.
-    The site-wide coverage share of these sources is parked, unmeasured, in
-    PARKED-MEASUREMENTS.md — so a third value needs that census first.
+    `clean_resolution` is tier 1 — price-derived and overwritable. Its writer
+    (`app/tasks/backfill_winners.py:680`) is literally:
+
+        SET is_winner = (fo.current_probability >= 0.95),
+            resolution_source = 'clean_resolution',
+
+    so the "corroborating" price IS the input that produced `is_winner`. Such a
+    row is aligned BY CONSTRUCTION and could never be caught by the conflict
+    check — which is exactly why alignment proves nothing here. Typing a verdict
+    off it would state a definitive HIT/MISS on our own 0.95 threshold while
+    presenting it as the venue's word.
+
+    Note the prices used: 1.0 and 0.0, perfectly aligned. This test passes only
+    because the SOURCE is refused, never because the price disagreed.
     """
-    assert _AUTHORITATIVE_SETTLEMENT_SOURCES == frozenset(
-        {"api_settlement", "clean_resolution"}
+    assert authority_tier("clean_resolution") < _PRICE_IS_A_VERDICT_MIN_TIER
+    assert (
+        _venue_typed_hit(_leg(source="clean_resolution", won=True, price=1.0)) is None
     )
+    assert (
+        _venue_typed_hit(_leg(source="clean_resolution", won=False, price=0.0)) is None
+    )
+
+
+def test_the_gate_is_the_canonical_ladder_not_a_local_copy_of_it():
+    """Pinned so a future edit cannot quietly re-introduce a hand-rolled set.
+
+    A local allowlist is how `clean_resolution` got in: it looked authoritative
+    by name. The ladder already answers "is a price a verdict here", tier by
+    tier, and an unclassified source scores -1, so the default stays REFUSE.
+    """
+    assert _PRICE_IS_A_VERDICT_MIN_TIER == 2
+    for source, qualifies in [
+        ("api_settlement", True),  # tier 3, the venue's own settlement
+        ("game_score", True),  # tier 2, deterministic
+        ("clean_resolution", False),  # tier 1, price-derived
+        ("pass2_guess", False),  # tier 0, guess family
+        ("some_new_source_v2", False),  # unclassified -> -1, fail-safe
+        (None, False),
+    ]:
+        got = authority_tier(source) >= _PRICE_IS_A_VERDICT_MIN_TIER
+        assert got is qualifies, source

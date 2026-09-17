@@ -14702,28 +14702,11 @@ def _settled_over_verdict(
     }
 
 
-# CERT-3024 / #6751: which `resolution_source` values are an AUTHORITATIVE VENUE
-# SETTLEMENT — the venue told us this leg settled and which side won.
-#
-# THIS IS AN ALLOWLIST AND ITS DEFAULT IS REFUSE, which is the whole of the
-# safety argument. UX-P044 (#1642) is precisely the bug where the *presence* of
-# a `resolution_source` was read as licence to believe `is_winner`: measured on
-# 19 settled events / 358 rendered cards, 70 showed a red MISS built from a
-# generic source plus a Boolean defaulting to False. So membership is by VALUE,
-# never by "a source exists", and an unrecognised source — including a future
-# one nobody has taught this set — withholds exactly as a NULL does.
-#
-# Measured on the 14 `KXNFLFFPTS` specimen markets, 2026-09-17: 185 outcome rows
-# carry `api_settlement` (168) and `clean_resolution` (17), and no other value.
-# Site-wide coverage share of these two values is NOT measured (the census timed
-# out from a build lane; parked in PARKED-MEASUREMENTS.md against this ship),
-# which is the second reason the price corroboration below is not optional.
-_AUTHORITATIVE_SETTLEMENT_SOURCES = frozenset({"api_settlement", "clean_resolution"})
-
 # The settled price a venue-graded leg must show to CORROBORATE its own
-# `is_winner`. A settled leg prices out: measured across those same 185 rows,
-# winners sit at 0.97–1.00 and losers at 0.00–0.03, with nothing within 0.4 of
-# the midpoint. These bounds are deliberately far looser than the observation.
+# `is_winner`. A settled leg prices out: measured across the 185 `KXNFLFFPTS`
+# specimen outcome rows on 2026-09-17, winners sit at 0.97–1.00 and losers at
+# 0.00–0.03, with nothing within 0.4 of the midpoint. These bounds are
+# deliberately far looser than the observation.
 _VENUE_GRADE_WIN_FLOOR = 0.9
 _VENUE_GRADE_LOSS_CEILING = 0.1
 
@@ -14746,12 +14729,36 @@ def _venue_typed_hit(outcome) -> Optional[bool]:
     TWO INDEPENDENT SIGNALS MUST AGREE, and that is what makes this safe rather
     than a re-run of UX-P044:
 
-      1. the venue's own settlement, by allowlisted source VALUE, and
+      1. a grade at `_PRICE_IS_A_VERDICT_MIN_TIER` or above on the CANONICAL
+         authority ladder (`app/utils/resolution_authority.py`) — tier 3 the
+         venue's own settlement, tier 2 the box score — and
       2. the settled PRICE of this same leg.
 
-    `is_winner` alone cannot be trusted — it is a non-nullable column defaulting
-    to False, so on an ungraded row it is indistinguishable from "graded a
-    loser", which is the 6,032-row cohort the withholding rule exists for. The
+    🔴 THE LADDER, NOT A LOCAL ALLOWLIST, AND CERT-3025 IS WHY. The first draft
+    hand-rolled `frozenset({"api_settlement", "clean_resolution"})`, and
+    `clean_resolution` is tier 1: PRICE-DERIVED and overwritable. Its writer
+    says so in one line (`app/tasks/backfill_winners.py:680`):
+
+        SET is_winner = (fo.current_probability >= 0.95),
+            resolution_source = 'clean_resolution',
+
+    so on such a row the two signals below COLLAPSE INTO ONE — the corroborating
+    price is the very input that produced `is_winner`, and an "aligned"
+    `clean_resolution` row is aligned BY CONSTRUCTION and could not be
+    otherwise. Typing a verdict off it states a definitive HIT/MISS on our own
+    0.95 threshold while calling it the venue's word. `_PRICE_IS_A_VERDICT_MIN_TIER`
+    is the constant this file already defines for exactly this question, so
+    asking it here keeps one answer in one place: a source qualifies only when
+    its `is_winner` comes from OUTSIDE the price. An unclassified source scores
+    tier -1 and withholds, so the default is still REFUSE.
+
+    `is_winner` alone cannot be trusted. The column IS nullable in the model and
+    in production (CERT-521 / CAL-P155 fixed the prose that said otherwise), but
+    production overwhelmingly STORES False rather than NULL for an ungraded row
+    — 2,536 NULL of 3,893,126, measured 2026-08-31 — so a stored False is
+    indistinguishable from "graded a loser", which is the cohort the withholding
+    rule exists for. A NULL is refused here too, by the `is True` / `is False`
+    test below; it is the stored False that needs the second signal. The
     price is a signal that cohort does not forge: an ungraded row carries a
     NULL source and is refused at the first gate regardless.
 
@@ -14765,7 +14772,7 @@ def _venue_typed_hit(outcome) -> Optional[bool]:
     returns. Caller must never coerce that None to a Boolean.
     """
     source = getattr(outcome, "resolution_source", None)
-    if not isinstance(source, str) or source not in _AUTHORITATIVE_SETTLEMENT_SOURCES:
+    if authority_tier(source) < _PRICE_IS_A_VERDICT_MIN_TIER:
         return None
     # `is True` / `is False` rather than truthiness: a stray 0/1/"" must not
     # type a verdict, and `is_winner` is the exact field whose sloppy reading
@@ -14780,10 +14787,14 @@ def _venue_typed_hit(outcome) -> Optional[bool]:
         p = float(price)
     except (TypeError, ValueError):
         return None
-    # Stored as a 0–1 probability on this column; normalise a 0–100 write rather
-    # than silently reading 97 as "above the floor" (it would be, vacuously).
-    if p > 1.0:
-        p = p / 100.0
+    # FAIL CLOSED OUTSIDE THE DOMAIN (CERT-3025 follow-up
+    # `6751-FAIL-CLOSED-ON-OUT-OF-DOMAIN-PROBABILITY`). The first draft divided
+    # anything above 1.0 by 100 to "normalise a percent write". That silently
+    # rescued malformed values: a stored `2` became 0.02 and typed a confident
+    # MISS. This column stores a 0–1 probability — 185 of 185 specimen rows do —
+    # so a value outside it is not a scale to guess at, it is a row we do not
+    # understand, and the whole point of this function is that a row we do not
+    # understand is withheld.
     if not 0.0 <= p <= 1.0:
         return None
     if won and p >= _VENUE_GRADE_WIN_FLOOR:
