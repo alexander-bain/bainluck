@@ -27,6 +27,10 @@ from app.utils.event_completion import (
 )
 from app.utils.sport_keys import is_kalshi_shadowed_futures_ticker
 from app.utils.futures_liveness import KALSHI_BOOK_SILENT_SQL
+from app.utils.feed_market_quality import (  # #6676, the two-minute beat's third writer
+    is_empty_book_midpoint,
+    is_fabricated_midpoint,
+)
 from app.utils.prediction_market_matching import (
     is_game_level_market,
     _KALSHI_GAME_TICKER_PREFIXES,
@@ -8747,6 +8751,99 @@ async def _poll_live_prediction_market_prices():
                                         break
 
                             if prob <= 0 or prob >= 1:
+                                continue
+
+                            # #6676 — THE THIRD WRITER. The Kalshi arm of this
+                            # same beat states the principle at its own price
+                            # call ("One price policy per venue: the same spread
+                            # guard the 2-hour poll uses ... so a wide one-sided
+                            # book cannot fabricate a ~0.50 quote here that the
+                            # full poll would have refused"). It keeps that
+                            # promise by DELEGATING to `_kalshi_yes_probability`.
+                            # This arm reimplements a price policy inline
+                            # instead, so it never picked up the two midpoint
+                            # predicates the Polymarket ingest writer applies in
+                            # `_resolve_market_probability_with_source` and
+                            # `_parent_outcome_data`, and it runs every two
+                            # minutes rather than hourly.
+                            #
+                            # Measured on production 2026-09-17 16:45Z, at the
+                            # LIVE bound (`EMPTY_BOOK_MAX_BID` is 0.05 since
+                            # #5333, not the 0.02 this class was first sized on):
+                            # 21 legs / 16 markets / 14 events stamped in 40
+                            # minutes. NINETEEN of the 21 carry this beat's
+                            # fingerprint — a strict 2-minute cadence with a
+                            # shared sub-second (…:19:22.842264, :23:22.844279,
+                            # :31:22.846291, :33:22.842150, :43:22.846327,
+                            # :45:22.850504), one batch writer per stamp — not
+                            # the hourly poll's (`last_success_at` 16:16:03Z).
+                            # The honest remainder: 2 legs (16:15:14.937991 and
+                            # 16:42:03.951022) sit off that cadence with a
+                            # different sub-second and are SOMEBODY ELSE'S write.
+                            # This guard does not claim them and they are still
+                            # open on #6676.
+                            #
+                            # Rows kept appearing AFTER the 16:27:33Z release
+                            # that carries the ingest guards, which is why
+                            # #6676's residual survived it. They reach a reader:
+                            # `/api/futures/61246736` served outcomes 230621538 /
+                            # 230492518 / 230621548 at `probability: 0.5` —
+                            # three Sao Paulo Open set lines on a live match —
+                            # each with a 1c bid / 99c ask behind it.
+                            #
+                            # DECLINE, DO NOT WITHDRAW, and that is the house
+                            # answer rather than a preference:
+                            # `_unpriced_leg_external_ids` retires only legs with
+                            # no bid AND no trade, excluding this exact class by
+                            # name ("a real bid — we refused it, the venue did
+                            # not"), because retiring a refused quote would
+                            # un-price live markets. Declining also leaves the
+                            # stored bid/ask/probability triple intact, so the
+                            # read-side predicate (#5247) can still recognise the
+                            # row; writing a NULL would destroy the evidence that
+                            # identifies it. `is_empty_book_midpoint`'s own
+                            # docstring is explicit that nothing may mutate a
+                            # stored price on its account.
+                            #
+                            # NOT DONE HERE, deliberately: delegating this arm to
+                            # `_resolve_market_probability_with_source` outright.
+                            # That resolver takes a Gamma dataclass and this loop
+                            # holds raw dicts, and its #151 evidence gate and
+                            # volume-gated last-trade exception would re-price
+                            # honest legs this beat prices correctly today. One
+                            # class, not a pricing rewrite.
+                            #
+                            # Both predicates are imported, not restated — no
+                            # threshold is introduced here.
+                            #
+                            # 🪤 ORDERING, AND WHAT IT DOES **NOT** BUY. A genuine
+                            # blowout survives because the VENUE's own
+                            # `outcomePrices` tracks the trade and so sits far
+                            # from the book's midpoint (0.93 against a 1c/99c book
+                            # is 0.43 away) — not because the wide-spread
+                            # `lastTradePrice` preference above protects it. It
+                            # does not: the name-index block between that
+                            # preference and this test reassigns
+                            # `prob = float(prices[idx])` unconditionally, so for
+                            # any leg whose outcome names are not yes/no — every
+                            # Over/Under prop — the midpoint is put back and the
+                            # trade is discarded. An earlier draft of this comment
+                            # claimed the opposite; the guard test's own
+                            # `test_the_name_index_match_clobbers_the_last_trade_preference`
+                            # falsified it, and pins today's behaviour.
+                            #
+                            # On that leg this guard turns "published 0.5 while the
+                            # book last traded 0.93" into "published nothing" —
+                            # better, but 0.93 was available and is now dropped.
+                            # Recovering it is a reordering of a pricing policy
+                            # over legs this class never measured, so it is recorded on
+                            # #6676 as a known limit rather than fixed here.
+                            if is_fabricated_midpoint(
+                                prob, best_bid, best_ask
+                            ) or is_empty_book_midpoint(prob, best_bid, best_ask):
+                                stats["polymarket_phantom_midpoints_refused"] = (
+                                    stats.get("polymarket_phantom_midpoints_refused", 0) + 1
+                                )
                                 continue
 
                             # Update outcome probability
