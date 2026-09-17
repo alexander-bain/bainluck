@@ -428,6 +428,34 @@ def is_empty_book_midpoint(
     change here is live at the main-app release with no ``bainluck-heavy`` convergence
     owed -- notice 48. Re-measure rather than quoting this line if a writer is added.
 
+    WHY THE REFRESH WRITER IS UNPAIRED while the two ingest ones pair this with
+    :func:`is_fabricated_midpoint` (lane1b, #6676): it is shared by both venues, and
+    the sibling is a WIDE-book test that also matches honest two-sided Kalshi lines
+    whose price merely sits at their own midpoint. Pairing it there would freeze those
+    as stale to catch a class this narrower predicate already reaches. It is a
+    decision, not an omission to complete; the measured counts and the control that
+    pins it live at that call site.
+
+    ON A TWO-LEG MARKET THIS ANSWERS THE SAME FOR A LEG AND ITS TWIN, AND THAT IS A
+    PROPERTY OF THE SHAPE RATHER THAN OF THE NUMBERS. The complement leg's book is
+    ``(1 - ask, 1 - bid)``, whose spread is ``(1 - bid) - (1 - ask)`` = ``ask - bid``:
+    identical, algebraically, for every book. Condition 3 is invariant the same way,
+    the complement's midpoint distance being ``|(1 - p) - (1 - mid)|`` = ``|mid - p|``.
+    So since #6727 a per-leg caller and a per-item caller agree -- measured over all
+    5,050 integer-cent books through ``complementary_book``: 0 disagreements.
+
+    THAT WAS NOT TRUE OF THE TWO-BOUND FORM, WHICH IS WHY THE ITEM-LEVEL GUARD STAYS.
+    Conditions 1-2 only survived the flip while ``EMPTY_BOOK_MAX_BID +
+    EMPTY_BOOK_MIN_ASK == 1``, and summing to 1 *as written* did not save it: every
+    caller derives the complement as ``1 - float(ask)`` with no rounding on the path,
+    and ``1 - 0.95`` is ``0.050000000000000044`` -- above a 0.05 bid bound, escaping
+    it. The same sweep finds 6 such legs at #5333's bounds and 3 at the pair before
+    them, all at the boundary ask exactly. (A sweep that tidies the complement with
+    ``round()`` reports that class as empty and is wrong; sweep with the writer's
+    arithmetic.) Any return to two one-sided bounds reopens this, so callers keep
+    asking the ITEM -- which is also the truer statement, since "this book is empty"
+    is a fact about the market and not about which side of it you address.
+
     The consequence worth knowing before changing anything here: the write side is
     forward-only. Widening this predicate does not shrink the STORED class -- existing
     rows stay and go stale -- so an after-check that expects the stored count to fall
