@@ -17,6 +17,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport, Team
 from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
+from app.utils.feed_market_quality import is_empty_book_midpoint
 from app.utils.kalshi_empty_book import KALSHI_BOOKMAKER
 from app.utils.futures_unsupported_price import (
     POLYMARKET_BOOKMAKER,
@@ -1990,6 +1991,58 @@ _EXTEND_TIERS = [
 PLACEMENT_GRID_FEED_ROWS = 8
 
 
+def _leg_prices_an_empty_book(outcome) -> bool:
+    """Is this leg's number the midpoint of a book with nothing in it? (#6676)
+
+    WHAT A READER SAW. Three consecutive Game Props cards in one 390px viewport
+    on ``/sports``, each printing **Over 50% / Under 50%** with the bar drawn at
+    exactly half, directly beneath a card whose 57/43 was real — so the reader
+    had no way to tell a manufactured coin flip from a forecast. The stored rows
+    behind them (outcomes 230498576, 230496527, 230475436, read 2026-09-17):
+    ``current_probability 0.500000`` beside ``current_yes_bid 0.0200 /
+    current_yes_ask 0.9700``, ``volume`` and ``price_changed_at`` both NULL. That
+    quote bounds nothing, and its own midpoint is 0.495 — the stored number is
+    half a cent off the book it was averaged from. A fabricated 50% is the one
+    number that looks most like an answer.
+
+    THE RULE IS NOT NEW AND IS NOT RE-DERIVED HERE. :func:`is_empty_book_midpoint`
+    is #5247's shipped predicate, with its own measured constants, and the
+    expression below is field for field the one already running at its call site
+    in ``routes/events.py`` (``game-markets``). That surface got the rule and this
+    one did not, which is the entire defect: the strip and the event page draw
+    from the same rows and disagreed about whether those rows have a price. A
+    second, differently-spelled copy of a price rule is exactly what
+    ``futures_unsupported_price`` exists to prevent, so this is a delegation with
+    a name, not a policy.
+
+    IT IS A NAMED FUNCTION AND NOT AN INLINE COMPREHENSION for the reason
+    :func:`_market_has_priced_outcome` states directly below: the one property
+    that makes it a fix has to be testable without standing up the route.
+
+    A LEG, NOT A MARKET, for the reason the shipped call site gives: a props
+    market carries real lines beside its unpriced ones and dropping the card
+    would take the real ones with it. A market whose legs are ALL empty-book then
+    has no priced outcome left, and ``_market_has_priced_outcome`` drops its card
+    BEFORE the truncation (#2710) — so the vacated slot is backfilled from the
+    ``limit * 5`` rows the route already loaded and the strip stays a full strip.
+
+    WHAT IT DELIBERATELY DOES NOT TOUCH. Read-side only (gotcha #21): nothing
+    here rewrites a stored price, and withholding rather than rewriting is the
+    standing rule, because ``calibration_probability`` coalesces to stored values
+    (gotcha #144 / ruling 103) and an invented price becomes a forecast we are
+    graded on. The WRITER still stores these rows — that is #6676's ingest half —
+    and the 3c-bid cohort this predicate's bound does not reach is #5333's
+    measured ship. Neither is widened here; a genuine 50% on a tight book, a
+    traded 50%, a one-sided real ask and every model price (both book columns
+    NULL) are all passed through by the predicate's own construction.
+    """
+    return is_empty_book_midpoint(
+        outcome.current_probability,
+        outcome.current_yes_bid,
+        outcome.current_yes_ask,
+    )
+
+
 def _market_has_priced_outcome(market: dict) -> bool:
     """Does this grouped-feed market carry a probability the card can print?
 
@@ -2351,6 +2404,8 @@ async def grouped_feed(
             "outcomes": [],
         }
         for o in m.outcomes:
+            if _leg_prices_an_empty_book(o):
+                continue
             o_dict = {
                 "id": o.id,
                 "name": o.name,

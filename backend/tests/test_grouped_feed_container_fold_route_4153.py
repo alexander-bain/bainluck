@@ -65,11 +65,32 @@ class _StubSession:
 
 
 class _Outcome:
-    def __init__(self, oid, name, probability):
+    """A stand-in for a ``FuturesOutcome`` row as the route reads it.
+
+    THE PRICE COLUMNS ARE HERE BECAUSE THE ROUTE READS THEM, not because this
+    file is about prices. `probability` is a PROPERTY on the real model
+    returning `current_probability`, and #6676's empty-book leg filter reads the
+    stored triple (`current_probability`, `current_yes_bid`, `current_yes_ask`)
+    rather than the property — so a fake carrying only `probability` is not the
+    shape the route is handed, and every test here raised `AttributeError` the
+    day that filter landed. The fake was not wrong before; it was incomplete in a
+    way nothing could see until a new reader asked for a real column.
+
+    `yes_bid`/`yes_ask` default to None — no order book at all, which
+    `is_empty_book_midpoint` passes through untouched by construction. That is
+    deliberate: these tests are about FOLDING, so the fixture must not acquire
+    an opinion about pricing, and no assertion in this file moves because of it.
+    A test that wants the filter to fire passes a real book explicitly.
+    """
+
+    def __init__(self, oid, name, probability, yes_bid=None, yes_ask=None):
         self.id = oid
         self.name = name
         self.probability = probability
         self.american_odds = None
+        self.current_probability = probability
+        self.current_yes_bid = yes_bid
+        self.current_yes_ask = yes_ask
 
 
 class _Market:
