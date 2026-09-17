@@ -3378,6 +3378,46 @@ def _spacing_separates(item: dict, family: str) -> bool:
     return category not in related
 
 
+def _spacing_run_is_at_its_share(
+    family: str, run_length: int, pending: list[tuple[int, dict]]
+) -> bool:
+    """Has the run in hand already used up its share of the separators left?
+
+    A separator is a SCARCE RESOURCE, and spending it is a choice about which
+    run gets broken. Left-to-right greed always spends on the earliest pair,
+    which is why the 2026-09-17 tail — six fight cards and two separators —
+    came out ``F F S F F F F S`` -> ``F S F S F F F F``: both separators bought
+    the two cheapest pairs at the top and the run of four survived intact, at
+    the very END of the feed, which is the shape Alex actually complained about
+    ("eight UFC cards, one golf, another UFC, then end").
+
+    So ration instead. With ``R`` cards of the family still to place and ``K``
+    usable separators still behind them, the evenest achievable grouping is
+    ``ceil(R / (K + 1))`` per run; a run shorter than its share does not get to
+    spend, and one that has reached its share does. On that same tail this
+    yields ``F F S F F S F F`` — longest run 4 -> 2, the arithmetic optimum for
+    six cards and two separators (three adjacent pairs is the floor either way).
+
+    ``K`` counts every separator still pending rather than only those inside the
+    displacement window: reachability shrinks as the pass advances, and
+    OVER-counting is the safe direction — it lowers the share, spends earlier,
+    and degrades toward the old greedy behaviour instead of hoarding a
+    separator that the bound would never have let us reach.
+    """
+    remaining_family = 0
+    remaining_separators = 0
+    for _, candidate in pending:
+        if discover_spacing_family(candidate) == family:
+            remaining_family += 1
+        elif not _spacing_is_anchor(candidate) and _spacing_separates(candidate, family):
+            remaining_separators += 1
+    if remaining_separators <= 0:
+        # nothing left to ration; the run stands and is counted as unresolved.
+        return False
+    share = -(-(remaining_family + run_length) // (remaining_separators + 1))
+    return run_length >= share
+
+
 def space_discover_concept_families(
     items: list[dict],
     *,
@@ -3417,6 +3457,17 @@ def space_discover_concept_families(
     out: list[dict] = list(items[:protected_prefix])
     pending: list[tuple[int, dict]] = list(enumerate(items))[protected_prefix:]
 
+    # How many of the family already sit shoulder to shoulder at the tail of
+    # ``out``. Seeded from the protected prefix, then carried incrementally.
+    run_length = 0
+    if out:
+        seed_family = discover_spacing_family(out[-1])
+        if seed_family is not None:
+            for placed in reversed(out):
+                if discover_spacing_family(placed) != seed_family:
+                    break
+                run_length += 1
+
     while pending:
         slot = len(out)
         head_index, head = pending[0]
@@ -3426,6 +3477,7 @@ def space_discover_concept_families(
         if (
             family is not None
             and family == previous_family
+            and _spacing_run_is_at_its_share(family, run_length, pending)
             and not _spacing_is_anchor(head)
             # the head is always the most-delayed pending card, so bounding it
             # bounds every deferral. MEASURED (2026-09-17, 783 ladder shapes +
@@ -3459,6 +3511,12 @@ def space_discover_concept_families(
                 meta["max_displacement_seen"], abs(index - slot)
             )
         out.append(item)
+        placed_family = discover_spacing_family(item)
+        run_length = (
+            run_length + 1
+            if placed_family is not None and placed_family == previous_family
+            else (1 if placed_family is not None else 0)
+        )
     return out, meta
 
 

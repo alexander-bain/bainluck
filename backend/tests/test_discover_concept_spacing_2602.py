@@ -515,3 +515,155 @@ def test_every_card_that_waits_is_still_served():
     assert meta["moved"] > 0
     for it in items:
         assert it in out
+
+
+# ---------------------------------------------------------------------------
+# A separator is a SCARCE RESOURCE: which run it is spent on is a choice
+# ---------------------------------------------------------------------------
+#
+# The 2026-09-17 production tail is the specimen: six combat cards and two
+# non-combat cards, arranged ``F F S F F F F S``. Left-to-right greed spends
+# both separators on the two cheapest pairs at the top and leaves the run of
+# four standing at the very END of the feed. Rationing spends them evenly.
+
+
+def _scarce_tail():
+    """The live 2026-09-17 tail shape: 6 combat cards, 2 separators, F F S F F F F S."""
+    items = [_fut(i, 90 - i) for i in range(P + 6)]
+    items += [
+        _concept("m1"),
+        _concept("m2"),
+        _fut(801, 20, "politics"),
+        _concept("m3"),
+        _concept("m4"),
+        _concept("m5"),
+        _concept("m6"),
+        _fut(802, 19, "entertainment"),
+    ]
+    return items
+
+
+def _final_run(items):
+    """How many of one family the reader meets in an unbroken block at the END."""
+    run = 0
+    prev = None
+    for it in reversed(items):
+        fam = discover_spacing_family(it)
+        if fam is None:
+            break
+        if prev is not None and fam != prev:
+            break
+        prev = fam
+        run += 1
+    return run
+
+
+def test_a_scarce_separator_is_spent_on_the_longest_run_not_the_earliest_pair():
+    """Six family cards and two separators: the floor is three runs of two.
+
+    RED on left-to-right greed, which returns a longest run of four.
+    """
+    items = _scarce_tail()
+    assert _longest_run(items) == 4
+    out, meta = space_discover_concept_families(items)
+    assert _longest_run(out) == 2
+    assert sorted(_keys(out)) == sorted(_keys(items))
+    assert _keys(out[:P]) == _keys(items[:P])
+
+
+def test_rationing_does_not_cost_the_reader_an_extra_adjacent_pair():
+    """Three adjacent pairs is the arithmetic floor for 6 cards and 2 separators.
+
+    Spending evenly must reach that floor too — a prettier distribution bought
+    with MORE back-to-back pairs would be a worse feed, not a better one.
+    """
+    items = _scarce_tail()
+
+    def _pairs(xs):
+        prev = None
+        total = 0
+        for it in xs:
+            fam = discover_spacing_family(it)
+            if fam is not None and fam == prev:
+                total += 1
+            prev = fam
+        return total
+
+    out, _ = space_discover_concept_families(items)
+    assert _pairs(items) == 4
+    assert _pairs(out) == 3  # the floor: 6 cards split into 3 groups
+
+
+def test_the_feed_never_ends_on_a_longer_block_than_it_already_did():
+    """The regression the greedy pass shipped: it pulled the LAST separator
+    forward to buy an early pair and left the reader ending on four fights.
+
+    RED on left-to-right greed, whose final block grows 1 -> 4.
+    """
+    items = _scarce_tail()
+    out, _ = space_discover_concept_families(items)
+    assert _final_run(out) <= max(_final_run(items), 2)
+
+
+@pytest.mark.parametrize("n_family", [4, 5, 6, 7])
+def test_no_run_exceeds_its_even_share_while_a_separator_is_still_in_reach(n_family):
+    """``ceil(R / (K + 1))`` is the evenest grouping the pool can afford — and
+    the pass reaches it only WHILE a separator is inside the displacement
+    window. Beyond that the bound is unreachable by construction, which is the
+    regime the test below pins; claiming the share there would be claiming a
+    bound this algorithm cannot hold (the CERT-3035/3039 failure, twice).
+    """
+    separators = 2
+    items = [_fut(i, 90 - i) for i in range(P + 4)]
+    for j in range(n_family):
+        items.append(_concept(f"r{j}"))
+        if j in (1, 3) and separators:
+            items.append(_fut(900 + j, 18, "politics"))
+            separators -= 1
+    out, _ = space_discover_concept_families(items)
+    share = -(-n_family // 3)  # two separators -> at most three groups
+    assert _longest_run(out) <= share
+    assert sorted(_keys(out)) == sorted(_keys(items))
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_rationing_never_makes_a_pool_worse_than_it_arrived(seed):
+    """The whole pass is only ever allowed to improve the reader's run length."""
+    rng = random.Random(seed)
+    items = []
+    for i in range(140):
+        if rng.random() < 0.45:
+            items.append(_concept(f"q{seed}x{i}", domain=rng.choice(["ufc", "boxing"])))
+        else:
+            items.append(_fut(i, category=rng.choice(["politics", "weather"])))
+    out, meta = space_discover_concept_families(items)
+    pos = {k: i for i, k in enumerate(_keys(items))}
+    assert max(abs(pos[k] - j) for j, k in enumerate(_keys(out))) <= K
+    assert _longest_run(out, P) <= _longest_run(items, P)
+    assert _final_run(out) <= max(_final_run(items), 2)
+    assert sorted(_keys(out)) == sorted(_keys(items))
+
+
+@pytest.mark.parametrize("n_family", [8, 9, 12])
+def test_a_run_past_the_reach_of_every_separator_stands_and_is_counted(n_family):
+    """The honest other half: once no separator is inside the displacement
+    window, the run is served as it stands.
+
+    This is the pool's fact, not the pass's failure (gotcha #53) — so it must
+    not read like a clean pass. It is counted in ``unresolved_adjacent``, no
+    card is dropped to manufacture the bound, and the result is still never
+    worse than what arrived.
+    """
+    items = [_fut(i, 90 - i) for i in range(P + 4)]
+    separators = 2
+    for j in range(n_family):
+        items.append(_concept(f"far{j}"))
+        if j in (1, 3) and separators:
+            items.append(_fut(900 + j, 18, "politics"))
+            separators -= 1
+    out, meta = space_discover_concept_families(items)
+    assert _longest_run(out) > -(-n_family // 3)  # the share is NOT reached
+    assert meta["unresolved_adjacent"] >= 1  # and the pass says so
+    assert len(out) == len(items)
+    assert sorted(_keys(out)) == sorted(_keys(items))
+    assert _longest_run(out, P) <= _longest_run(items, P)
