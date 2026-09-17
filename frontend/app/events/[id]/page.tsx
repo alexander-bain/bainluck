@@ -1177,6 +1177,15 @@ export default function EventPage({ params }: EventPageProps) {
   // in the one pure seam a guard can hold, and because the widened `isSuspended`
   // above would otherwise turn the ring ON for an unbacked page
   // (`isLive || isSuspended` returns true) — the exact promise this withdraws.
+  //
+  // #6381's second half rides the SAME split, for the same reason. The ring is
+  // a promise and a venue-graded match has nothing to promise; the age badge is
+  // the admission and must survive. So `venueSettled` is passed HERE and not to
+  // `onVisiblePoll` above — exactly where `liveClaimUnbacked` is passed.
+  //
+  // Derived from `venueSettledSentence` rather than re-reading
+  // `event.venue_settled`, which is the centralisation this page's own pill
+  // note (below) says `venueSettledSummary` exists to enforce.
   const showRefreshCountdown = shouldShowRefreshCountdown({
     isFinished,
     streamConnected,
@@ -1184,6 +1193,7 @@ export default function EventPage({ params }: EventPageProps) {
     isSuspended,
     commenceTime: event?.commence_time,
     liveClaimUnbacked,
+    venueSettled: Boolean(venueSettledSentence),
   });
 
   // #4861 — and only where one actually IS landing. The ring above counts down

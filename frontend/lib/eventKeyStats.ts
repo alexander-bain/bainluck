@@ -321,7 +321,8 @@ function startedWithinCountdownReach(
  * A countdown earns its place when an update could plausibly land while the
  * reader is looking: the event is live, it is past its start with no reported
  * result *and still within {@link REFRESH_COUNTDOWN_MAX_AGE_MS} of it* (#6381),
- * or it starts within the window above. A pregame match days out is told when
+ * or it starts within the window above — and in no case once the VENUE HAS
+ * GRADED the match (#6381's second half; see the `venueSettled` argument). A pregame match days out is told when
  * it starts by the hero ("Starts in 1d 10h") — the poll clock adds nothing
  * there and costs the header its layout; a fixture days PAST its kickoff with
  * no result is the same sentence told backwards, and #6381 photographed it on
@@ -344,6 +345,26 @@ export function shouldShowRefreshCountdown(args: {
    * table honest about what it is still measuring.
    */
   liveClaimUnbacked?: boolean;
+  /**
+   * #6381 (second half) — THE VENUE HAS GRADED THIS MATCH.
+   *
+   * `venue_settled` / `venue_settled_result` are on the payload today, and since
+   * #6739 the hero prints the winner's name off them — so `/events/15313807`
+   * read **"Next update: 108"** in the header and **"Settled · Crawley wins"**
+   * two lines below, at 390px, one page and two answers (live/354, production
+   * 2026-09-17 18:13Z). **777 of the 1,121** graded `suspended` rows now carry a
+   * winner sentence, and every one inside countdown reach drew this ring.
+   *
+   * Neither existing guard can see it, by construction: `isFinished` is false
+   * because the row is `suspended` rather than `completed`, and
+   * `liveClaimUnbacked` measures how old OUR NUMBER is — the blend on these rows
+   * is fresh, because their markets are still being polled.
+   *
+   * Optional, and absent means "not graded", so every existing caller and every
+   * case below is unchanged by this argument (the shape `liveClaimUnbacked`
+   * established for the same reason).
+   */
+  venueSettled?: boolean;
   now?: Date;
 }): boolean {
   const { isFinished, streamConnected, isLive, isSuspended, commenceTime } = args;
@@ -351,6 +372,15 @@ export function shouldShowRefreshCountdown(args: {
   // Unchanged: a finished event has nothing to refresh, and a pushed event
   // shows its age stamp instead (live/034 S2).
   if (isFinished || streamConnected) return false;
+
+  // #6381 — BESIDE the finished arm, and deliberately not inside the
+  // `isSuspended` branch below. A venue-graded match has nothing to refresh for
+  // the same reason a Final does not: it is a STATE, and the bound below is a
+  // CLOCK. Written as a clock rule it would read as "the ring expires" on a row
+  // where the answer is already known, and it would keep promising an update on
+  // a match graded inside the window — which is every one of them for the first
+  // hours after the whistle.
+  if (args.venueSettled) return false;
 
   // #5459 — and BEFORE the two cases below, deliberately. This ring's whole
   // promise is that the next tick brings a new number; on a page whose number
