@@ -43,7 +43,16 @@ def _make_event_row(
     row.home_score = 80 if status == "live" else None
     row.away_score = 75 if status == "live" else None
     row.external_id = f"ext-{id}"
-    row.win_probability_sources = {"betting": {"home_probability": home_prob}}
+    # #6669 — a shape the column actually holds. It stores a bare float or
+    # `{"value": x, "updated_at": …}` (`parse_source_entry` is the one place that
+    # decides); `{"home_probability": x}` was invented here and occurs on ZERO
+    # production rows, so the payload-shape assertion below was being made over a
+    # shape the serializer never meets. Now that the feed gates this column by
+    # shape, the invented one is dropped and the key vanishes — which is the
+    # fixture being wrong, not the gate.
+    row.win_probability_sources = {
+        "betting": {"value": home_prob, "updated_at": "2026-09-17T00:00:00+00:00"}
+    }
     row.current_home_probability = home_prob
     row.current_away_probability = 1 - home_prob
     row.opening_home_probability = max(0.01, home_prob - 0.25)

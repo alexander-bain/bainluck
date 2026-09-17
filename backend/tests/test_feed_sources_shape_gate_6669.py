@@ -102,14 +102,26 @@ def test_the_production_bag_that_lost_the_card_serves_only_its_two_numbers():
         ("statpal_injuries", [{"team": "Botafogo RJ", "player": "J. Barrera"}]),
         ("statpal_injuries_updated", "2026-09-17T00:21:09.652063+00:00"),
         ("statpal_fixture_id", "1234567"),
+        ("deep_straggler_asked_at", "2026-09-16T11:02:00+00:00"),
     ],
 )
 def test_a_value_the_phone_cannot_decode_never_reaches_the_wire(key, value):
-    """Each of the three keys #4120's census found, one at a time.
+    """Every non-numeric entry the column actually holds, one at a time.
 
     Parametrised rather than asserted as a set because each one on its own is
     sufficient to lose the whole card — that is what the three-variant decode
     measured, and a combined assertion would not have caught it.
+
+    The four are the complete production census (2026-09-17):
+
+        statpal_injuries         array   292 events
+        statpal_injuries_updated string  292
+        statpal_fixture_id       string   56
+        deep_straggler_asked_at  string    3
+
+    ⭐ The fourth is the argument for a shape gate in one line: `deep_straggler_asked_at`
+    postdates #4120 and is named in none of its analysis. A fix written against
+    that issue's list of keys would already be one key behind.
     """
     served = _served({"betting": 0.61, key: value})
 
