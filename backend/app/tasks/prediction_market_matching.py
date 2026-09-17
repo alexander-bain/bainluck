@@ -56,6 +56,7 @@ from app.utils.live_blend import (
     admissible_speakers_are_all_settled,
     admissible_speakers_are_settled_without_result,
     admissible_speakers_are_unobserved_since_kickoff,
+    admissible_speakers_can_never_price_a_side,
     compute_source_home_probability as _compute_source_home_probability,
     count_admissible_speakers,
     select_primary_market as _select_primary_market,
@@ -4753,6 +4754,28 @@ def _blend_group_for_refs(refs, outcomes_by_market) -> list:
     ]
 
 
+#: One sentence per retirement cause, keyed by the funnel counter it is logged
+#: beside, so the two can never describe different silences (#6642). Every key
+#: `_retire_unbacked_blend_source` can set appears here; a test asserts that.
+_RETIREMENT_CAUSE_SENTENCES = {
+    "blend_source_retired_settled_book": (
+        "every market admitted to speak is a settled book"
+    ),
+    "blend_source_retired_no_name_can_price": (
+        "no market admitted to speak carries an outcome name that can price a side"
+    ),
+    "blend_source_retired_settled_without_result": (
+        "every market that could speak is settled and the event has no result"
+    ),
+    "blend_source_retired_unobserved_since_kickoff": (
+        "no market admitted to speak has been observed since kickoff"
+    ),
+    "blend_source_retired_no_winner_market": (
+        "group holds no market admitted to speak for the winner"
+    ),
+}
+
+
 async def _retire_unbacked_blend_source(session, anchor, blend_group, stats) -> bool:
     """Drop a stored source leg no admissible market in the group can back (#5031).
 
@@ -4823,7 +4846,22 @@ async def _retire_unbacked_blend_source(session, anchor, blend_group, stats) -> 
     # folded into an old counter reads as a spike in the old one, and the reach
     # of each is measured separately.
     settled_no_result = admissible_speakers_are_settled_without_result(blend_group)
-    if speakers > 0 and not settled_book:
+    # A BOOK WHOSE OUTCOME NAMES CAN NEVER PRICE A SIDE IS THE FIFTH (#6642),
+    # and it is the first that is neither price- nor status-shaped, which is why
+    # none of the four above can see it. Polymarket links a soccer fixture a
+    # container titled with the bare matchup whose only outcome is
+    # `Draw (DPR Korea vs. Japan)`: admissible by title, not settled, observed
+    # this hour — and unreadable, because #6604 correctly stopped the draw's
+    # price being handed back as the home side's. The writer went quiet and the
+    # stored number stayed, so `/events/15312330` printed 26 % for DPR Korea
+    # (the draw's price) over a chart drawn from it. Measured 2026-09-17: 45 of
+    # 553 events holding a Polymarket leg, every one of them this cause; 0 of
+    # 312 Kalshi ones. Permanence comes from asking the real resolver again with
+    # the prices held mid-band — see the predicate's docstring.
+    unpriceable = admissible_speakers_can_never_price_a_side(
+        blend_group, anchor.home_team_name, anchor.away_team_name
+    )
+    if speakers > 0 and not settled_book and not unpriceable:
         return False
 
     result = await session.execute(
@@ -4843,8 +4881,15 @@ async def _retire_unbacked_blend_source(session, anchor, blend_group, stats) -> 
     # Counted apart so the funnel says WHICH silence retired the leg. Folding
     # #5548 into #5031's counter would make a new cause look like a spike in an
     # old one, and the two need separate reach measurements.
-    if speakers > 0:
+    if speakers > 0 and settled_book:
         funnel_key = "blend_source_retired_settled_book"
+    elif speakers > 0:
+        # #6642. Reached only via the `unpriceable` arm above — a group with
+        # speakers that is not a settled book gets here no other way — and
+        # counted apart from the settled-book arm it now shares a branch with,
+        # for the reason every other cause here is counted apart: a new cause
+        # folded into an old counter reads as a spike in the old one.
+        funnel_key = "blend_source_retired_no_name_can_price"
     elif settled_no_result:
         # Asked BEFORE the kickoff clause because the two can both be true of
         # one group — a book settled hours ago is also a book nobody has looked
@@ -4861,20 +4906,12 @@ async def _retire_unbacked_blend_source(session, anchor, blend_group, stats) -> 
         "Retired %s blend leg on event %s — %s (%d linked markets)",
         anchor.source,
         anchor.event_id,
-        (
-            "every market admitted to speak is a settled book"
-            if speakers > 0
-            else (
-                "every market that could speak is settled and the event has "
-                "no result"
-                if settled_no_result
-                else (
-                    "no market admitted to speak has been observed since kickoff"
-                    if unobserved
-                    else "group holds no market admitted to speak for the winner"
-                )
-            )
-        ),
+        # KEYED OFF THE FUNNEL KEY, not re-derived from the flags beside it
+        # (#6642). The nested ternary this replaces had to restate every
+        # condition a second time, so a fifth cause meant editing the same
+        # branch twice and the sentence was free to end up describing a
+        # different silence from the counter it was logged next to.
+        _RETIREMENT_CAUSE_SENTENCES[funnel_key],
         len(blend_group),
     )
     return True
