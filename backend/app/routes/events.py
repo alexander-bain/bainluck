@@ -22844,23 +22844,108 @@ def _futures_market_has_no_outcome_rows(market: "FuturesMarket") -> bool:
     return not market.outcomes
 
 
+def _leg_prices_an_empty_book(outcome) -> bool:
+    """Is this leg's number the midpoint of a book with nothing in it? (#6676)
+
+    THE RULE IS NOT NEW AND IS NOT RE-DERIVED HERE. :func:`is_empty_book_midpoint`
+    is #5247's shipped predicate with its own measured constants, and this module
+    already runs it, this exact way, at the `game-markets` call site above. The
+    grouped feed got it too (`routes/futures.py`, `24660582f`). Search was the
+    holdout — the same sentence `_futures_market_has_no_outcome_rows` writes about
+    #3412, and for the same reason: three reader surfaces drawing the same rows
+    disagreed about whether those rows have a price.
+
+    WHAT A READER SEES TODAY, measured on production 2026-09-17 by replaying real
+    queries against `/api/events/search` and joining every served leg back to its
+    stored book columns by id (the payload carries no bid/ask, which is the whole
+    defect — the reader cannot tell either):
+
+        ?q=lakers   "NBA: Steph Curry Next Team"
+            Golden State Warriors   0.74   on 0.52/0.96   <- real
+            Brooklyn Nets           0.48   on 0.01/0.95   <- phantom
+            Atlanta Hawks           0.48   on 0.01/0.95   <- phantom
+            Phoenix Suns            0.48   on 0.01/0.95   <- phantom
+            Chicago Bulls           0.48   on 0.01/0.95   <- phantom
+
+    Four mutually exclusive teams printed at the identical manufactured number,
+    filling every slot below the one real answer while fifteen of that market's
+    thirty legs carry honest prices the card never reaches. 29 of 690 served legs
+    across 23 replayed queries are this class (4.2%); 3,081 such legs sit on 1,803
+    open markets.
+
+    A LEG, NOT A MARKET, and the placement is the argument: see
+    :func:`_build_search_top_outcomes`, which drops these BEFORE its sort and its
+    `[:limit]` slice, so the honest rungs underneath are promoted rather than
+    truncated away. A market with nothing else to print is then taken whole by
+    :func:`_futures_market_prices_only_empty_books`.
+
+    Read-side only (gotcha #21): nothing here rewrites a stored price. The WRITER
+    half is #6676's other end (`tasks/polymarket.py`), and the 3c cohort this
+    predicate's `EMPTY_BOOK_MAX_BID` bound does not reach is #5333's measured ship
+    — neither is widened here.
+    """
+    return is_empty_book_midpoint(
+        outcome.current_probability,
+        outcome.current_yes_bid,
+        outcome.current_yes_ask,
+    )
+
+
+def _futures_market_prices_only_empty_books(market: "FuturesMarket") -> bool:
+    """Every price this market carries is an empty book's midpoint (#6676).
+
+    The THIRD population of the union below, and it is its own predicate for the
+    reason `_futures_market_is_wholly_unpriced` states in its own docstring: two
+    populations composed into one number can no longer be re-measured or reverted
+    apart. This one is "priced, but not with anything a book stands behind" —
+    disjoint from #6327's "not priced at all" by construction, since a class leg
+    must carry a `current_probability` to be in it.
+
+    MEASURED BEFORE IT WAS BUILT, because a withdrawal is a suppression and
+    #6327's own note is that an unmeasured one must never ride a measured one.
+    Production, 2026-09-17, of 25,376 open markets holding outcome rows:
+
+        every priced leg is an empty-book midpoint  ->  1,198   this predicate
+        some priced legs are, some are not          ->    605   card keeps, rungs drop
+        no class leg at all                         -> 22,961   untouched
+        (for scale, #6327's live withdrawal today   ->    612)
+
+    1,193 of the 1,198 are Polymarket and 1,117 are tier 5. On the replayed
+    reader queries the population shows up as 15 served cards of 217 — "Total
+    Corners", "Player Props" and "Spread:" markets carrying one or two legs, all
+    of them phantom, e.g. market 61193385 (*Caribbean Premier League: Winner of
+    Eliminator vs Loser of Qualifier 1*) whose single leg reads 0.505 on 0.01/0.99.
+
+    CONSERVATIVE RELATIVE TO THE BUILDER, exactly like its #6327 sibling: this
+    reads every outcome row, while `_build_search_top_outcomes` judges the
+    placeholder/duplicate/unbacked-filtered survivors. A market this calls
+    empty-book-only is one the builder is certain to empty (its survivors are a
+    subset). The reverse is not guaranteed, and that is the safe direction.
+    """
+    priced = [o for o in market.outcomes if o.current_probability is not None]
+    return bool(priced) and all(_leg_prices_an_empty_book(o) for o in priced)
+
+
 def _futures_card_has_no_answer(market: "FuturesMarket") -> bool:
     """The card this market would draw can state no number at all.
 
     The union the search surfaces actually want, and the ONLY thing the call
-    sites should ask. Two independently measured populations, two predicates,
+    sites should ask. Three independently measured populations, three predicates,
     one question:
 
         no outcome rows whatsoever   -> #3412, `_..._has_no_outcome_rows`
         rows, none of them priced    -> #6327, `_..._is_wholly_unpriced`
+        priced only by empty books   -> #6676, `_..._prices_only_empty_books`
 
-    They are kept apart on purpose so either can be re-measured or reverted
-    without disturbing the other; composing them here is what keeps the two
-    call sites from drifting into two different rules.
+    They are kept apart on purpose so any one can be re-measured or reverted
+    without disturbing the others; composing them here is what keeps the two
+    call sites from drifting into three different rules.
     """
-    return _futures_market_has_no_outcome_rows(
-        market
-    ) or _futures_market_is_wholly_unpriced(market)
+    return (
+        _futures_market_has_no_outcome_rows(market)
+        or _futures_market_is_wholly_unpriced(market)
+        or _futures_market_prices_only_empty_books(market)
+    )
 
 
 def _build_search_top_outcomes(
@@ -22920,6 +23005,32 @@ def _build_search_top_outcomes(
         market_is_open=getattr(market, "status", None) == "open",
         is_winner_of=lambda o: bool(o.is_winner),
     )
+    # #6676: a price that is the midpoint of an EMPTY book is not a price, and this
+    # card is where a reader meets it with no bid/ask beside it to tell them so. See
+    # `_leg_prices_an_empty_book` for the specimen, the measured population and why
+    # the rule is #5247's and not a new one.
+    #
+    # HERE — before the sort, the `[:limit]` slice and `_normalize_search_outcome_probs`
+    # — for the same three reasons Q480 and #4253 give directly above, and the
+    # specimens are just as literal. A phantom sits at ~0.50 by construction, which
+    # on most boards is ABOVE every honest longshot: `?q=lakers` served *NBA: Steph
+    # Curry Next Team* as `Golden State Warriors 0.74 · Brooklyn Nets 0.48 · Atlanta
+    # Hawks 0.48 · Phoenix Suns 0.48 · Chicago Bulls 0.48`, so four of the five slots
+    # were phantom and the fifteen honest legs below them were truncated away. Dropped
+    # here, the same card reads `Golden State 0.74 · Milwaukee 0.475 · San Antonio
+    # 0.25 · Charlotte 0.205 · Cleveland 0.205`. A post-slice drop would have left
+    # one rung and NEVER-EMPTIES would hand the four straight back. And a phantom
+    # inside `_normalize_search_outcome_probs`' divisor deflates every real number on
+    # a mutually-exclusive board, which is a second, quieter lie.
+    #
+    # 🔴 THE PROMOTED RUNG CAN STILL BE #5333's, and this ship does not pretend
+    # otherwise: on *Lions vs. Bills - Player Props* the four legs this drops are
+    # replaced by 0.505-on-0.03/0.97 rows — the same shape one cent outside
+    # `EMPTY_BOOK_MAX_BID`. That cohort is #5333's measured ship and widening the
+    # constant here would take a population this one never measured. The reader is
+    # strictly better off (four fabricated rungs become four real-book rungs) and
+    # the residual is named rather than quietly inherited.
+    real = [o for o in real if not _leg_prices_an_empty_book(o)]
     # #6327: a market where NOTHING is priced draws a ranked ladder of dashes —
     # sixteen rungs, an order implying a favourite, and not one number. Measured
     # live 2026-09-15: `?q=Sonmez` served market 61106176 "WTA Guadalajara

@@ -105,17 +105,24 @@ from app.routes.events import (
     _futures_card_has_no_answer,
     _futures_market_has_no_outcome_rows,
     _futures_market_is_wholly_unpriced,
+    _futures_market_prices_only_empty_books,  # #6676, the union's third part
 )
 
 
 class _Outcome:
     """The attributes the search builder reads off an ORM outcome row."""
 
-    def __init__(self, oid, name="Leg", prob=None, ask=None):
+    def __init__(self, oid, name="Leg", prob=None, ask=None, bid=None):
         self.id = oid
         self.name = name
         self.current_probability = prob
         self.current_yes_ask = ask
+        # #6676: the builder judges the BOOK as well as the price. `bid` defaults to
+        # None — no two-sided quote — and `is_empty_book_midpoint` passes a one-sided
+        # or absent book through untouched, so every assertion in this file (which is
+        # about NULL vs stored-zero PRICES) is unmoved. The empty-book cases live in
+        # test_search_empty_book_6676.py.
+        self.current_yes_bid = bid
         self.current_american_odds = None
         self.rank = None
         self.probability_change_24h = None
@@ -230,18 +237,37 @@ class TestTheTwoHalves:
         assert _futures_market_is_wholly_unpriced(dashes) is True
         assert _futures_card_has_no_answer(dashes) is True
 
-    def test_the_union_is_exactly_the_or_of_the_two_and_nothing_more(self):
-        """No third rule hiding in the composed predicate."""
+    def test_the_union_is_exactly_the_or_of_its_parts_and_nothing_more(self):
+        """No UNDECLARED rule hiding in the composed predicate.
+
+        ⚠️ AMENDED BY #6676, WHICH ADDED A THIRD DECLARED PART
+        (`_futures_market_prices_only_empty_books`: priced, but only by empty
+        books). This test was written as a two-way identity and would have gone
+        on passing untouched — every market below carries no book, so the third
+        disjunct is False for all of them and the assertion could no longer see
+        what it exists to see. Widened rather than left green: the sample now
+        includes a class market, so a FOURTH undeclared rule still reddens it.
+        """
         for market in (
             _Market([]),
             _Market([_Outcome(1, "A")]),
             _Market([_Outcome(1, "A", 0.0)]),
             _Market([_Outcome(1, "A", 0.5)]),
             _Market([_Outcome(1, "A"), _Outcome(2, "B", 0.5)]),
+            # #6676's population: 0.505 on a 0.01/0.99 book — priced, and by nothing.
+            _Market([_Outcome(1, "A", 0.505, ask=0.99, bid=0.01)]),
+            # ...beside a real price, which must keep the card.
+            _Market(
+                [
+                    _Outcome(1, "A", 0.505, ask=0.99, bid=0.01),
+                    _Outcome(2, "B", 0.62, ask=0.63, bid=0.61),
+                ]
+            ),
         ):
             assert _futures_card_has_no_answer(market) is (
                 _futures_market_has_no_outcome_rows(market)
                 or _futures_market_is_wholly_unpriced(market)
+                or _futures_market_prices_only_empty_books(market)
             )
 
 

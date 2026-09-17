@@ -62,6 +62,11 @@ def _outcome(name, prob):
         current_american_odds=None,
         rank=None,
         probability_change_24h=None,
+        # #6676: the builder judges the stored BOOK as well as the price. Both
+        # sides None is "no book at all", which `is_empty_book_midpoint` passes
+        # through by construction, so nothing in this file moves.
+        current_yes_bid=None,
+        current_yes_ask=None,
     )
 
 

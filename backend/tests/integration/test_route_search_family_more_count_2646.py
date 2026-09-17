@@ -102,6 +102,10 @@ def _outcome(name, prob, oid):
         opening_probability=prob, is_winner=None, price=prob,
         probability_change_24h=None, american_odds=None,
         current_american_odds=None, rank=oid % 10, sort_order=oid,
+        # #6676: the search/typeahead builder judges the stored BOOK too. Both
+        # sides None is "no book at all", which `is_empty_book_midpoint` passes
+        # through by construction, so no assertion in this file moves.
+        current_yes_bid=None, current_yes_ask=None,
         external_id=f"OUT-{oid}",
     )
 
