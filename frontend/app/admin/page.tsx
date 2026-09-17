@@ -10,6 +10,7 @@ import {
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import { adminFetch, adminFetchJSON, isAdminAuthError } from "@/lib/adminFetch";
 import { adminErrorStatus, adminErrorSummary } from "@/lib/adminHealthStatus";
+import { readLastPolls } from "@/lib/adminLastPolls";
 import AdminAuthNotice from "@/components/admin/AdminAuthNotice";
 import AdminCockpit from "@/components/admin/AdminCockpit";
 import SentinelsCard from "@/components/admin/SentinelsCard";
@@ -2001,7 +2002,10 @@ interface HealthReadyResponse {
   checks: {
     database?: string;
     redis?: string;
-    last_polls?: Record<string, string | null>;
+    // The route serves the bare string "unavailable" when its Redis read
+    // raises — see lib/adminLastPolls.ts. Typing it as a Record is what let
+    // Object.entries enumerate the characters.
+    last_polls?: Record<string, string | null> | string;
     odds_api?: Record<string, unknown>;
   };
 }
@@ -2050,7 +2054,7 @@ function PREQCard({ secret }: { secret: string }) {
     return "text-red-400";
   };
 
-  const polls = healthData?.checks?.last_polls;
+  const polls = readLastPolls(healthData?.checks?.last_polls);
 
   return (
     <div className="rounded-xl border border-surface-border bg-surface-card p-4">
@@ -2132,17 +2136,27 @@ function PREQCard({ secret }: { secret: string }) {
       )}
 
       {/* Last poll timestamps */}
-      {polls && (
+      {polls.kind === "stamps" && (
         <div>
           <div className="text-micro text-text-muted mb-1">Last Source Polls</div>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-1 text-xs">
-            {Object.entries(polls).map(([source, ts]) => (
+            {Object.entries(polls.stamps).map(([source, ts]) => (
               <div key={source} className="flex items-center gap-1.5">
                 <span className={"w-2 h-2 rounded-full " + (ts ? "bg-green-400" : "bg-text-muted")} />
                 <span className="text-text-muted capitalize">{source.replace("_", " ")}</span>
                 <span className="text-text-muted ml-auto">{ts ? timeAgo(ts) : "—"}</span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {polls.kind === "unavailable" && (
+        <div>
+          <div className="text-micro text-text-muted mb-1">Last Source Polls</div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="w-2 h-2 rounded-full bg-text-muted" />
+            <span className="text-text-muted">Unavailable — the readiness probe could not read poll stamps</span>
           </div>
         </div>
       )}
