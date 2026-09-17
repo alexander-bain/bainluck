@@ -814,6 +814,36 @@ def _statement_timeout_for(budget_ms: int) -> int:
     return max(1, budget_ms - gap)
 
 
+def deadline_bound_headroom_ceiling_ms(remaining_ms: int) -> int:
+    """The MOST headroom a bound taken from the WINDOW can leave — #6599.
+
+    :func:`_statement_timeout_for` always reserves a strictly positive gap, so a
+    unit bounded by what is left of the beat records
+    ``headroom = remaining - (remaining - gap) = gap``, and ``gap`` is exactly
+    what this returns. **A window bound therefore leaves positive headroom too**,
+    which is the fact that made
+    :func:`~app.tasks.calibration_main_build._level_refuted_by_cancellation`'s
+    "positive headroom means the LEVEL did this" condition vacuous: it fired on
+    every beat that merely ended busy.
+
+    The contrapositive is what the caller needs and it is exact: headroom
+    STRICTLY GREATER than this ceiling cannot have come from the window, so the
+    bound came from a measured basis. Headroom at or below it is indistinguishable
+    from a window bound and must not be read as a level verdict — declining there
+    is the conservative direction (a measurement is kept, not withdrawn), which is
+    the same way round as every other "absent evidence is not evidence" branch in
+    this module.
+
+    Measured on production's 2026-09-17T17:37:55Z beat, where the latch was found:
+    unit 2 was bounded at 59,087 ms with 6,565 ms of headroom, i.e. 65,652 ms of
+    window remained and this returns **6,565** — equality to the millisecond. The
+    headroom WAS the margin. On #6275's specimen (830,841 ms remaining, a
+    483,000 ms level bound) it returns 30,000 against 347,841 ms of observed
+    headroom, so that refutation stands untouched.
+    """
+    return max(1, min(STATEMENT_INNER_MARGIN_MS, max(2, int(remaining_ms)) // 10))
+
+
 def bottleneck_phase(budgets: Iterable[PhaseBudget]) -> Optional[str]:
     """The one phase MEASUREMENT says the window is being withheld from.
 

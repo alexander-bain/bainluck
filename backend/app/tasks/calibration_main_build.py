@@ -75,6 +75,7 @@ from app.utils.calibration_phase_ledger import (
     MainBuildCheckpoint,
     PhaseLedger,
     PhasePlan,
+    deadline_bound_headroom_ceiling_ms,
     decode_main_checkpoint,
     derive_plan,
     merge_history,
@@ -2417,9 +2418,46 @@ def _level_refuted_by_cancellation(runner: PhaseRunner) -> bool:
       intrinsically costs, and withdrawing a level on that evidence would throw
       away a good measurement every time a beat ended busy. ``headroom`` is
       ``remaining_ms - timeout`` recorded at the moment the fence was applied
-      (CAL-P163), so a positive value means the bound came from the measured
-      basis while window was still available — which is precisely "the level
-      did this". On the #6275 specimen it read 347,841 ms.
+      (CAL-P163), and it is read against the most a WINDOW bound could have left.
+
+    **AMENDED #6599: the third condition was ``headroom > 0`` and that is
+    satisfied by every window bound, so it scoped nothing.**
+    :func:`~app.utils.calibration_phase_ledger._statement_timeout_for` always
+    reserves a strictly positive gap, so a unit handed what is left of the beat
+    records ``headroom = gap``, positive, always. The predicate therefore fired
+    on beats it was explicitly written not to fire on — and because the
+    withdrawal ALSO suppresses the worst-unit ring
+    (:func:`load_phase_measurements` skips the fold on
+    :data:`LEVEL_REFUTED_KEY`), it latched: no basis, so the next beat's first
+    unit was handed the whole window; it cancelled; the scraps went to a second
+    unit which cancelled at a window bound; zero completions and positive
+    headroom refuted the level again. Production ran that loop for fourteen
+    hours with a ring holding 24 genuine completions that no beat was allowed
+    to read — 1 of 128 units banked, ``units_this_beat: 2``,
+    ``units_cancelled: 2``, every beat. It is the disease the paragraph above
+    describes, reproduced by the cure one layer up.
+
+    The repair is the exact contrapositive rather than a tolerance:
+    :func:`~app.utils.calibration_phase_ledger.deadline_bound_headroom_ceiling_ms`
+    is the most headroom a window bound CAN leave, and only headroom strictly
+    greater than it proves a measured basis set the fence. The window that was
+    available is reconstructed from the pair the fence recorded together
+    (``bound + headroom``) rather than re-read now, because this runs at the end
+    of the beat and ``remaining_ms`` has moved since. On the 17:37:55Z specimen
+    the ceiling is 6,565 ms against an observed 6,565 ms — the headroom WAS the
+    margin — and on #6275's it is 30,000 ms against 347,841 ms, so that
+    withdrawal is unchanged.
+
+    Both gauges are LEVELS (``record_gauge``), so they describe the LAST unit
+    the beat bounded. That is the right unit to ask about: it is the one whose
+    cancellation ended the beat.
+
+    Known and unchanged: a unit killed by the PHASE budget rather than by the
+    deadline can also leave large headroom, and this still reads that as the
+    level. Production's loop runs under ``ignore_phase_budget`` (CAL-P994) where
+    the phase term is dropped entirely, so the two cases it can meet are the two
+    this separates. Widening the predicate to the phase budget is a separate
+    question on a population that is not currently reachable.
     """
     if not runner.ledger.stage_counts.get(STAGED_UNIT_STAGE, 0):
         return False
@@ -2428,7 +2466,13 @@ def _level_refuted_by_cancellation(runner: PhaseRunner) -> bool:
     if not runner.ledger.stages.get("staged:units_cancelled"):
         return False
     headroom = runner.ledger.stages.get(f"staged:unit_bound_headroom_ms:{PHASE_FUTURES}")
-    return bool(headroom and headroom > 0)
+    bound = runner.ledger.stages.get(f"staged:unit_bound_ms:{PHASE_FUTURES}")
+    if not headroom or headroom <= 0 or not bound or bound <= 0:
+        # Either the fence recorded nothing, or it left no headroom at all.
+        # Absent evidence is not evidence (ruling 075): with no pair to read we
+        # cannot say which bound bit, so the level stands.
+        return False
+    return headroom > deadline_bound_headroom_ceiling_ms(bound + headroom)
 
 
 def _carry_unit_costs(runner: PhaseRunner, prior: dict[str, Any]) -> dict[str, Any]:
