@@ -108,7 +108,29 @@ def _payload(event):
 
 
 def _session(graded, *, raises=None):
-    """An `AsyncSession` stub returning `(market_name, outcome_name)` rows."""
+    """An `AsyncSession` stub returning the route's graded rows.
+
+    #6739 widened the row to ``(market_name, market_external_id, outcome_name)``
+    — the shared moneyline recognizer needs the ticker, because a
+    ``KXNBA2HSPREAD`` id under a bare-matchup title is a spread and the name
+    alone cannot say so. A case written before that passes a 2-tuple and means
+    "no ticker"; it is padded here rather than rewritten at 14 call sites,
+    because the id is not what any of those cases is about.
+
+    🔴 THE PAD IS NOT A NORMALISER. It widens a row that is SHORT, and a row of
+    any other length still raises — so a future column cannot be swallowed by
+    this helper and go untested at the route.
+    """
+    rows = []
+    for row in graded:
+        if len(row) == 2:
+            market_name, outcome_name = row
+            rows.append((market_name, None, outcome_name))
+        elif len(row) == 3:
+            rows.append(tuple(row))
+        else:
+            raise AssertionError(f"graded row is neither 2 nor 3 columns: {row!r}")
+
     session = MagicMock()
     session.calls = 0
 
@@ -117,7 +139,7 @@ def _session(graded, *, raises=None):
         if raises is not None:
             raise raises
         result = MagicMock()
-        result.all.return_value = list(graded)
+        result.all.return_value = list(rows)
         return result
 
     session.execute = AsyncMock(side_effect=execute)

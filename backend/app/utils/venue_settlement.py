@@ -46,6 +46,7 @@ rather than inside it.
 
 from __future__ import annotations
 
+import re
 from typing import Iterable, Optional
 
 from app.utils.event_completion import EVENT_SUSPENDED
@@ -133,6 +134,157 @@ def choose_settled_score(graded_outcome_names: Iterable[Optional[str]]) -> Optio
     if len(distinct) != 1:
         return None
     return next(iter(distinct))
+
+
+#: The sentence a winner-only grade renders as. It is the score sentence with
+#: the score removed, NOT a new register: the strings this field already
+#: carries are ``Sevilla FC wins 1-0`` and ``Aryna Sabalenka wins 2-0``, so
+#: ``Fiona Crawley wins`` is the same sentence about a venue that named a side
+#: and no scoreline. Serving the bare participant name instead would render as
+#: "Settled · Fiona Crawley", which does not say which of the two she is.
+WINNER_SENTENCE = "{participant} wins"
+
+#: An outcome name that is itself a MATCHUP rather than one side of one.
+#:
+#: 🔴 #4629's both-sides refusal below is defeated by TRUNCATION, and the
+#: specimen is live. ``/events/15309330`` grades the outcome
+#: ``US Open WTA (Doubles): Siniakova/Townsend vs Montgomery/Krue`` — the
+#: venue's full-matchup name cut at 60 characters. It contains the home pair
+#: and, because ``Krueger`` lost its last three letters, NOT the away pair — so
+#: the both-sides guard never fires and the FIRST-NAMED side is reported as the
+#: winner whoever actually won. Measured over the 778 admitted ``suspended``
+#: events 2026-09-17: exactly one outcome name matches this, and it is that
+#: row. Refusing it costs one event and closes the whole class.
+#:
+#: ``at`` and a bare ``v`` are deliberately NOT connectors here. They are in
+#: the matchup grammar, and they are also words that appear inside real names;
+#: this pattern runs on a name we are about to PRINT as a verdict, so it is
+#: sized to the shape that actually occurs rather than to the grammar.
+_OUTCOME_IS_A_MATCHUP_RE = re.compile(r"\S\s+(?:vs\.?|v\.|@)\s+\S", re.IGNORECASE)
+
+
+def _names_a_participant(
+    outcome_name: Optional[str],
+    home_team_name: Optional[str],
+    away_team_name: Optional[str],
+) -> Optional[str]:
+    """Which of this event's two sides does the graded outcome name? (#6739)
+
+    Returns OUR spelling of that participant, not the venue's, because the
+    sentence is rendered beside our own team names.
+
+    🔴 EQUALITY WAS THE FIRST DRAFT AND IT REFUSED THE SPECIMEN THAT MOTIVATED
+    THE SHIP. ``/events/15313807`` stores ``home_team_name = 'Crawley'`` while
+    the venue grades ``'Fiona Crawley'`` — our row carries the surname and
+    Polymarket carries the full name. Replayed over the ``suspended`` arm, an
+    exact test found 265 events and every one of them was a boxing or tennis
+    row where the two spellings happen to agree; the whole ITF population —
+    the class #6739 was filed about — was invisible to it. So the test is
+    :func:`~app.utils.prediction_market_matching._fuzzy_team_match`, which is
+    the SAME primitive the blend orients its moneyline leg with on these exact
+    rows. A second containment rule written here is the #1951 drift failure.
+
+    🔴 AN OUTCOME THAT MATCHES BOTH SIDES NAMES NEITHER (#4629, inherited with
+    the primitive). ``_fuzzy_team_match`` is a containment test, so
+    Polymarket's full-matchup outcome name — ``Fiona Crawley vs. Naiktha
+    Bains`` — reaches both. Skipping is the honest failure: a name that
+    genuinely reaches both sides is a name this module cannot orient, and two
+    players sharing a surname is the shape that makes that real rather than
+    hypothetical.
+
+    ``None`` for anything that is not one of the two sides. A moneyline market
+    whose graded outcome is ``Yes``, ``Over 21.5`` or a third party is a market
+    this module has no standing to read a match winner out of.
+    """
+    from app.utils.prediction_market_matching import _fuzzy_team_match
+
+    name = (outcome_name or "").strip()
+    if not name or _OUTCOME_IS_A_MATCHUP_RE.search(name):
+        return None
+    home = (home_team_name or "").strip()
+    away = (away_team_name or "").strip()
+    matches_home = bool(home) and _fuzzy_team_match(name, home)
+    matches_away = bool(away) and _fuzzy_team_match(name, away)
+    if matches_home and matches_away:
+        return None
+    if matches_home:
+        return home
+    if matches_away:
+        return away
+    return None
+
+
+def choose_settled_winner(
+    graded_markets: Iterable[tuple[Optional[str], Optional[str], Optional[str]]],
+    home_team_name: Optional[str],
+    away_team_name: Optional[str],
+) -> Optional[str]:
+    """The one side the venue graded as winning the WHOLE match, as a sentence.
+
+    #6739's producer half, and the fallback under :func:`choose_settled_score`:
+    56 of the 426 measured events grade a full-scope SCORE market, and the
+    other 370 "are graded on props alone" — which is true of the score
+    vocabulary and is NOT true of the moneyline. Measured on production
+    2026-09-17 over the ``suspended`` arm: 1,121 events hold a positive venue
+    grade, 305 of them grade an outcome that names one of the two sides, and
+    **265 of those name it on a market this function admits** — 11 of the 305
+    carry a score-shaped market at all, so this is very nearly all new. The
+    reader-visible change is that a settled page stops saying only "Settled"
+    with a 89%–11% chart under it and says which player won.
+
+    🔴 THE MARKET TEST IS :func:`~app.utils.game_market_class.classify_game_market_class`
+    AND IT IS NOT A CONVENIENCE. A graded outcome naming a participant is NOT
+    evidence of a match winner — it is the shape of every set, map, half and
+    handicap book the venue writes. Replayed over the 773 stored
+    participant-named grades in that population:
+
+        ==================================  =====  ==========================
+        market shape                        grades verdict
+        ==================================  =====  ==========================
+        ``Set Handicap: A (-1.5) vs B (+1.5)``  286 refused (``spread``)
+        ``Set 1 Winner: A vs B``                150 refused (``other``)
+        ``Set 2 Winner: A vs B``                  9 refused (``other``)
+        ``A vs. B: Map 1|2|3``                   18 refused (``other``)
+        ``Game Spread: A (-3.5) vs B (+3.5)``    11 refused (``spread``)
+        ``A vs B`` / ``M15 Monastir: A vs B``   265 ADMITTED (``moneyline``)
+        ==================================  =====  ==========================
+
+    Every one of those refusals is a page that would have been told the set-1
+    winner won the match. The recognizer is the one #5698 and #5743 were
+    written against for exactly this class, it is source-agnostic, and it
+    imports only stdlib — so this module reusing it is the #1951 rule (one
+    classifier, never a second copy), not a shortcut.
+
+    ``None`` ON DISAGREEMENT, the same refusal :func:`choose_settled_score`
+    makes and for the same reason. Measured: 0 of the 305 events grade two
+    different sides as the match winner today, which is why the refusal is
+    written before a specimen exists rather than after. A duplicate event pair
+    or a mutually-exclusive market with two winners would put two winners on
+    one row, and picking one by sort order is how a deterministic tiebreak
+    becomes a confident wrong answer.
+
+    ``graded_markets`` is ``(market_name, market_external_id, outcome_name)``
+    because the recognizer's ticker branch needs the id: a ``KXNBA2HSPREAD``
+    ticker under a bare-matchup title is a spread, and the name alone cannot
+    say so.
+    """
+    from app.utils.game_market_class import classify_game_market_class
+
+    winners = set()
+    for market_name, market_external_id, outcome_name in graded_markets:
+        if (
+            classify_game_market_class(market_name or "", market_external_id)
+            != "moneyline"
+        ):
+            continue
+        participant = _names_a_participant(
+            outcome_name, home_team_name, away_team_name
+        )
+        if participant is not None:
+            winners.add(participant)
+    if len(winners) != 1:
+        return None
+    return WINNER_SENTENCE.format(participant=next(iter(winners)))
 
 
 def venue_settlement_is_askable(
