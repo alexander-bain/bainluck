@@ -1348,6 +1348,126 @@ def _pair_matches(left: tuple, right: tuple) -> bool:
     return _pair_matches_after_transliteration(left, right)
 
 
+def _group_is_id_anchored(members: list) -> bool:
+    """Does any row in this group carry a provider's id for the fixture? #6047.
+
+    `espn_id` or `external_id`, which is the same pair of columns
+    :func:`twin_identity_rank` ranks an anchor by and the same test
+    `kalshi_occurrence_scheduled_start` calls "a schedule provider reported this
+    start". A row with either was reported by somebody who knows the fixture by
+    id; a row with neither is a claim (ruling 048 / gotcha #32) that could only
+    ever CREATE.
+    """
+    for member in members:
+        if getattr(member, "espn_id", None) is not None:
+            return True
+        if getattr(member, "external_id", None) is not None:
+            return True
+    return False
+
+
+def _star_on_one_anchor(
+    members: list, groups: dict[tuple, list], same_fixture: Any
+) -> bool:
+    """May this non-clique cluster fold anyway, because one anchor centres it? #6047.
+
+    THE DEFECT THIS EXISTS FOR: A THIRD ROW MADE THE PAGE WORSE, NOT BETTER.
+    On production 2026-09-17, `/sports/soccer_spain_la_liga` served Athletic
+    Bilbao v Alavés THREE times — `15312047` (ESPN, `espn_id` 401882866,
+    58%), `15312903` (Kalshi, no id, 83%) and `15307698` (Kalshi, no id) — and
+    the fold dropped none of them. Driving :func:`fold_twin_events` over doubles
+    of those exact rows shows why, and the shape is the whole finding:
+
+        rows handed to the fold        dropped
+        15312047 + 15312903            15312903
+        15312047 + 15307698            15307698
+        all three                      nothing
+
+    Both pairs fold on master today. The predicate reaches `Athletic Bilbao` ≡
+    `Athletic Club` and `Athletic Bilbao` ≡ `Bilbao`, and it does NOT reach
+    `Athletic Club` ≡ `Bilbao` — two providers' short names for one club that
+    share no token. So the cluster is connected but not a clique, and the
+    refusal above discards it whole: a reader who would have met the fixture
+    twice meets it three times BECAUSE a third row arrived.
+
+    WHY A GENERAL DECOMPOSITION IS REFUSED AND THIS ONE IS NOT. `Madrid` ⊆
+    `Real Madrid` and `Madrid` ⊆ `Atlético Madrid` is the chain
+    :func:`_merge_soccer_name_variants` names, and splitting a non-clique into
+    "some clique" would let a coin-flip decide which Madrid club the vague row
+    joins. This function does not split anything. It asks one question about the
+    cluster's SHAPE:
+
+    * exactly one member group is id-anchored (:func:`_group_is_id_anchored`), and
+    * every other member pair-matches THAT group under the caller's own
+      `same_fixture` — the same names, the same drift bound, the same
+      squad-marker refusal — so the cluster is a star centred on the anchor, and
+    * no two member groups are :func:`_objectively_different_games`.
+
+    Then every id-less member is a claim that it is the anchored fixture, and the
+    anchored fixture is ONE real game: if X is that game and Y is that game, X
+    and Y are each other's twin whatever the two short names say about one
+    another. The Madrid chain fails the first clause in the direction that
+    matters — its centre is the id-less row and its leaves are two anchored games
+    — so it is refused exactly as it is today, and so is a chain of three id-less
+    rows, which has no anchor to be a claim ABOUT.
+
+    THE REACH IS BOUNDED BY SOMETHING ALREADY TRUE RATHER THAN BY A PROMISE:
+    every pair this folds is a pair master folds when the third row is absent.
+    No name rule is loosened, no bucket is widened, no clock bound moves; the
+    only behaviour that changes is that a third row can no longer veto them.
+
+    MEASURED BY DRIVING :func:`fold_twin_events` — not a re-implementation — over
+    two production populations, 2026-09-17, with this rescue off and on. Each is
+    folded twice: once per league page, the way a reader meets it, and once as a
+    single fold over every soccer row, which is the only way the cross-league
+    catch-all path (:func:`_merge_catchall_leagues`) is exercised at all:
+
+        population / how folded              refused   rescued   rows folded
+        914 `[now-3d, now+8d]`, per league     1          1        94 ->  96
+        914, one fold                          1          1       154 -> 156
+        6,501 `[now-30d, now+8d]`, per league  1          1       362 -> 364
+        6,501, one fold                        1          1       444 -> 446
+
+    THE HONEST READING OF THAT TABLE: over 38 days of soccer there is exactly ONE
+    non-clique cluster, and it is the specimen above. This is not a class with a
+    population — it is a shape the fold gets wrong whenever it appears, and it
+    appeared on a top-five league page three days before the fixture. The same
+    two rows are the only ones that move in all four folds; NO fold master makes
+    today is lost in any of them, which is the control that matters more than the
+    count.
+
+    KNOWN RESIDUAL, STATED RATHER THAN HIDDEN. The one star this cannot tell from
+    the Madrid chain is the chain wearing the anchor: an id-anchored row carrying
+    the VAGUE name (`Madrid v Getafe`, with an `espn_id`) beside two id-less rows
+    for two different clubs, each matching it. Counting anchors does not separate
+    those, and no name rule can — the repo refuses to invent an unmeasured club
+    vocabulary (:mod:`app.utils.soccer_team_matching`, "THE MISSES"). What bounds
+    it is the schedule: all three rows must share one competition, one opponent
+    and one minute to within :data:`SOCCER_KICKOFF_DRIFT`, so the two clubs would
+    have to be playing the same opponent at the same moment. Zero clusters of any
+    shape other than the specimen exist in the 6,501 rows measured above. If one
+    ever does, the refusal to widen is here: the answer is a second anchor on the
+    id-less rows, not a looser star.
+
+    TWO ANCHORS ARE REFUSED EVEN WHEN EVERY MEMBER AGREES WITH ONE OF THEM, and
+    that is about determinism, not caution. With two anchored groups the centre
+    would be whichever the caller's query happened to return first, and the same
+    three rows in the other order would fold differently — a card that changes
+    with row arrival order is a worse thing than the duplicate it removes.
+    """
+    anchored = [key for key in members if _group_is_id_anchored(groups[key])]
+    if len(anchored) != 1:
+        return False
+    centre = anchored[0]
+    if not all(same_fixture(centre, other) for other in members if other != centre):
+        return False
+    return not any(
+        _objectively_different_games(groups[left], groups[right])
+        for i, left in enumerate(members)
+        for right in members[i + 1 :]
+    )
+
+
 def _name_clusters(bucket_keys: list[tuple], groups: dict[tuple, list]) -> list[list]:
     """Groups of keys inside one bucket that all pair-match each other.
 
@@ -1433,6 +1553,8 @@ def _name_clusters(bucket_keys: list[tuple], groups: dict[tuple, list]) -> list[
             for i, left in enumerate(members)
             for right in members[i + 1 :]
         ):
+            out.append(members)
+        elif _star_on_one_anchor(members, groups, same_fixture):
             out.append(members)
         else:
             logger.info(
