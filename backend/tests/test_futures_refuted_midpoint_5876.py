@@ -416,10 +416,17 @@ class TestBothArmsLandInOneWithheldSet:
         tested helper that changes nothing a reader sees. Deleting any of the `|=`
         lines in `get_futures_market`, or replacing one with `=`, must fail here.
 
-        Extended for the third arm (#6532). The guard is per-arm on purpose: a
-        union assertion that named only two of three would go on passing the day
-        the newest helper was wired to nothing, which is the exact failure the
-        docstring above says this test exists to catch.
+        Extended for the third arm (#6532) and the fourth (#6757). The guard is
+        per-arm on purpose: a union assertion that named only two of three would go
+        on passing the day the newest helper was wired to nothing, which is the
+        exact failure the docstring above says this test exists to catch.
+
+        🪤 #6757 IS THE ONE ARM THAT IS NOT DISJOINT FROM THE OTHERS, so the class
+        docstring's "disjoint by construction" describes the first three only. An
+        empty book is an empty book at either venue and that arm screens on no
+        source, so it may name a row another arm has already named. The union
+        absorbs the overlap; the per-arm ids below stay distinct precisely so the
+        assertion can still say WHICH helper went missing.
         """
         from app.routes import futures as futures_route
 
@@ -449,6 +456,9 @@ class TestBothArmsLandInOneWithheldSet:
         def _book_arm(_m):
             return {303}
 
+        def _empty_book_arm(_m):
+            return {404}
+
         seen = {}
 
         def _fake_detail(_m, _b, withheld):
@@ -461,14 +471,17 @@ class TestBothArmsLandInOneWithheldSet:
         )
         monkeypatch.setattr(futures_route, "_refuted_midpoint_outcome_ids", _poly_arm)
         monkeypatch.setattr(futures_route, "_book_refuted_outcome_ids", _book_arm)
+        monkeypatch.setattr(
+            futures_route, "_empty_book_outcome_ids", _empty_book_arm
+        )
         monkeypatch.setattr(futures_route, "_format_market_detail", _fake_detail)
 
         await futures_route.get_futures_market(8641774, _DB())
-        assert seen["withheld"] == {101, 202, 303}, (
-            "the serializer must receive ALL THREE arms; got "
+        assert seen["withheld"] == {101, 202, 303, 404}, (
+            "the serializer must receive ALL FOUR arms; got "
             f"{seen['withheld']}. A missing 101 means #5611 is unwired, a missing "
-            "202 means #5876 is, a missing 303 means #6532 is — and any single id "
-            "alone means one `|=` was written as `=`."
+            "202 means #5876 is, a missing 303 means #6532 is, a missing 404 means "
+            "#6757 is — and any single id alone means one `|=` was written as `=`."
         )
 
     async def test_the_polymarket_arm_reaches_the_serializer(self):
