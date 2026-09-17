@@ -1,0 +1,304 @@
+{
+  "_fixture_note": "SYNTHETIC \u2014 NOT A PRODUCTION CAPTURE. Derived 2026-09-17 from event-ufc-26sep19.20260917.json by hand: event.status=settled, children settled=true. Prices follow backend/app/utils/event_combat.py: a fight child carries ONLY {name, probability} per outcome (no winner field); fight_child_settled() = assigned card state OR price converged (>=0.97). Child 60306296 is deliberately settled-by-assignment with an UNconverged price (0.62/0.38) \u2014 the case where no winner can be named. No live settled UFC card was obtainable inside the 6-request budget (26sep12 and 26sep15 both 404).",
+  "event": {
+    "key": "event:ufc:26sep19",
+    "slug": "331-van-vs-pantoja-26sep19",
+    "domain": "ufc",
+    "name": "331: Van vs Pantoja",
+    "status": "settled",
+    "start_date": "2026-09-19T23:45:00+00:00",
+    "end_date": null,
+    "venue": null,
+    "location": null,
+    "is_major": false
+  },
+  "primary": {
+    "kind": "co_equal_list",
+    "label": "Main event",
+    "competitors": [
+      {
+        "name": "Joshua van",
+        "probability": 0.99
+      },
+      {
+        "name": "Alexandre Pantoja",
+        "probability": 0.01
+      }
+    ],
+    "evolution_market_id": 60306288,
+    "price_observed_at": "2026-09-17T14:27:52+00:00"
+  },
+  "sections": [
+    {
+      "type": "matchup",
+      "label": "Fights",
+      "market_ids": [
+        60306300,
+        60306299,
+        60306298,
+        60306297,
+        60306296,
+        60306295,
+        60306294,
+        60306293,
+        60306292,
+        60306290,
+        60306289,
+        60306288
+      ]
+    },
+    {
+      "type": "props",
+      "label": "Props",
+      "market_ids": [
+        60305330
+      ]
+    }
+  ],
+  "children": [
+    {
+      "market_id": 60306300,
+      "market_name": "331: Aswell vs Yoo",
+      "source": "kalshi",
+      "kind": "fight",
+      "settled": true,
+      "probability": 0.99,
+      "outcomes": [
+        {
+          "name": "Joo Sang Yoo",
+          "probability": 0.99
+        },
+        {
+          "name": "Michael Aswell",
+          "probability": 0.01
+        }
+      ]
+    },
+    {
+      "market_id": 60306299,
+      "market_name": "331: Gandra vs Diaz",
+      "source": "kalshi",
+      "kind": "fight",
+      "settled": true,
+      "probability": 0.99,
+      "outcomes": [
+        {
+          "name": "Ryan Gandra",
+          "probability": 0.99
+        },
+        {
+          "name": "Osman Diaz",
+          "probability": 0.01
+        }
+      ]
+    },
+    {
+      "market_id": 60306298,
+      "market_name": "331: O'Neill vs Moura",
+      "source": "kalshi",
+      "kind": "fight",
+      "settled": true,
+      "probability": 0.99,
+      "outcomes": [
+        {
+          "name": "Casey O'Neill",
+          "probability": 0.99
+        },
+        {
+          "name": "Eduarda Moura",
+          "probability": 0.01
+        }
+      ]
+    },
+    {
+      "market_id": 60306297,
+      "market_name": "331: Chikadze vs Brito",
+      "source": "kalshi",
+      "kind": "fight",
+      "settled": true,
+      "probability": 0.99,
+      "outcomes": [
+        {
+          "name": "Joanderson Brito",
+          "probability": 0.99
+        },
+        {
+          "name": "Giga Chikadze",
+          "probability": 0.01
+        }
+      ]
+    },
+    {
+      "market_id": 60306296,
+      "market_name": "331: Shahbazyan vs Ferreira",
+      "source": "kalshi",
+      "kind": "fight",
+      "settled": true,
+      "probability": 0.62,
+      "outcomes": [
+        {
+          "name": "Edmen Shahbazyan",
+          "probability": 0.62
+        },
+        {
+          "name": "Brunno Ferreira",
+          "probability": 0.38
+        }
+      ]
+    },
+    {
+      "market_id": 60306295,
+      "market_name": "331: Tuivasa vs Despaigne",
+      "source": "kalshi",
+      "kind": "fight",
+      "settled": true,
+      "probability": 0.99,
+      "outcomes": [
+        {
+          "name": "Robelis Despaigne",
+          "probability": 0.99
+        },
+        {
+          "name": "Tai Tuivasa",
+          "probability": 0.01
+        }
+      ]
+    },
+    {
+      "market_id": 60306294,
+      "market_name": "331: Vera vs Jourdain",
+      "source": "kalshi",
+      "kind": "fight",
+      "settled": true,
+      "probability": 0.99,
+      "outcomes": [
+        {
+          "name": "Charles Jourdain",
+          "probability": 0.99
+        },
+        {
+          "name": "Marlon Vera",
+          "probability": 0.01
+        }
+      ]
+    },
+    {
+      "market_id": 60306293,
+      "market_name": "331: Steveson vs Sharaf",
+      "source": "kalshi",
+      "kind": "fight",
+      "settled": true,
+      "probability": 0.99,
+      "outcomes": [
+        {
+          "name": "Gable Steveson",
+          "probability": 0.99
+        },
+        {
+          "name": "Sean Sharaf",
+          "probability": 0.01
+        }
+      ]
+    },
+    {
+      "market_id": 60306292,
+      "market_name": "331: Menifield vs Baraniewski",
+      "source": "kalshi",
+      "kind": "fight",
+      "settled": true,
+      "probability": 0.99,
+      "outcomes": [
+        {
+          "name": "Iwo Baraniewski",
+          "probability": 0.99
+        },
+        {
+          "name": "Alonzo Menifield",
+          "probability": 0.01
+        }
+      ]
+    },
+    {
+      "market_id": 60306290,
+      "market_name": "331: Pitbull vs Choi",
+      "source": "kalshi",
+      "kind": "fight",
+      "settled": true,
+      "probability": 0.99,
+      "outcomes": [
+        {
+          "name": "Doo Ho Choi",
+          "probability": 0.99
+        },
+        {
+          "name": "Patricio Pitbull",
+          "probability": 0.01
+        }
+      ]
+    },
+    {
+      "market_id": 60306289,
+      "market_name": "331: Tsarukyan vs Ruffy",
+      "source": "kalshi",
+      "kind": "fight",
+      "settled": true,
+      "probability": 0.99,
+      "outcomes": [
+        {
+          "name": "Arman Tsarukyan",
+          "probability": 0.99
+        },
+        {
+          "name": "Mauricio Ruffy",
+          "probability": 0.01
+        }
+      ]
+    },
+    {
+      "market_id": 60306288,
+      "market_name": "331: Van vs Pantoja",
+      "source": "kalshi",
+      "kind": "fight",
+      "settled": true,
+      "probability": 0.99,
+      "outcomes": [
+        {
+          "name": "Joshua van",
+          "probability": 0.99
+        },
+        {
+          "name": "Alexandre Pantoja",
+          "probability": 0.01
+        }
+      ]
+    },
+    {
+      "market_id": 60305330,
+      "market_name": "Will Giga Chikadze win in Round 3?",
+      "source": "polymarket",
+      "kind": "prop",
+      "settled": true,
+      "probability": 0.5,
+      "outcomes": [
+        {
+          "name": "Yes",
+          "probability": 0.5
+        },
+        {
+          "name": "No",
+          "probability": 0.5
+        }
+      ],
+      "prop_type": "rounds"
+    }
+  ],
+  "movers": [],
+  "cache": {
+    "generation": 3,
+    "created_at": "2026-09-17T14:35:10.959593+00:00",
+    "quality": "full",
+    "availability": "live",
+    "lifecycle_watermark": "2026-09-17T12:50:25.464517+00:00",
+    "quality_reasons": []
+  }
+}

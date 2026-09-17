@@ -631,6 +631,7 @@ struct BugReportView: View {
             case .golfLeaderboard: currentPage = "Golf Leaderboard"
             case .golfTournament(_, let name): currentPage = "Golf: \(name)"
             case .tournamentHub(let slug, _): currentPage = "Tournament Hub (\(slug))"
+            case .conceptCard(let key, _): currentPage = "Fight Card (\(key))"
             case .preferences: currentPage = "Preferences"
             case .discoverLabeling: currentPage = "Discover Labeling"
             case .futuresList: currentPage = "Futures Browser"

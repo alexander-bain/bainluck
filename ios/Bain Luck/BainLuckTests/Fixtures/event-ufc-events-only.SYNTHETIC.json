@@ -1,0 +1,107 @@
+{
+  "_fixture_note": "SYNTHETIC \u2014 NOT A PRODUCTION CAPTURE. Hand-built 2026-09-17 to the shape of CombatEventAdapter._build_events_envelope (backend/app/utils/event_combat.py): source='events', market_id is an EVENT primary key ('render key only, not a futures id'), primary.evolution_market_id=null, probabilities null when no source has priced the bout. Fighter names are invented.",
+  "event": {
+    "key": "event:ufc:26oct03",
+    "slug": "alpha-vs-bravo-26oct03",
+    "domain": "ufc",
+    "name": "Fight Night: Alpha vs Bravo",
+    "status": "upcoming",
+    "start_date": "2026-10-03T23:00:00+00:00",
+    "end_date": null,
+    "venue": null,
+    "location": null,
+    "is_major": false
+  },
+  "primary": {
+    "kind": "co_equal_list",
+    "label": "Main event",
+    "competitors": [
+      {
+        "name": "Alan Alpha",
+        "probability": 0.58
+      },
+      {
+        "name": "Bo Bravo",
+        "probability": 0.42
+      }
+    ],
+    "evolution_market_id": null,
+    "price_observed_at": null
+  },
+  "sections": [
+    {
+      "type": "matchup",
+      "label": "Fights",
+      "market_ids": [
+        9100001,
+        9100002,
+        9100003
+      ]
+    }
+  ],
+  "children": [
+    {
+      "market_id": 9100001,
+      "market_name": "Cy Charlie vs Dee Delta",
+      "source": "events",
+      "kind": "fight",
+      "settled": false,
+      "probability": null,
+      "outcomes": [
+        {
+          "name": "Cy Charlie",
+          "probability": null
+        },
+        {
+          "name": "Dee Delta",
+          "probability": null
+        }
+      ]
+    },
+    {
+      "market_id": 9100002,
+      "market_name": "Ed Echo vs Flo Foxtrot",
+      "source": "events",
+      "kind": "fight",
+      "settled": false,
+      "probability": null,
+      "outcomes": [
+        {
+          "name": "Ed Echo",
+          "probability": null
+        },
+        {
+          "name": "Flo Foxtrot",
+          "probability": null
+        }
+      ]
+    },
+    {
+      "market_id": 9100003,
+      "market_name": "Alan Alpha vs Bo Bravo",
+      "source": "events",
+      "kind": "fight",
+      "settled": false,
+      "probability": 0.58,
+      "outcomes": [
+        {
+          "name": "Alan Alpha",
+          "probability": 0.58
+        },
+        {
+          "name": "Bo Bravo",
+          "probability": 0.42
+        }
+      ]
+    }
+  ],
+  "movers": [],
+  "cache": {
+    "generation": 3,
+    "created_at": "2026-09-17T00:00:00+00:00",
+    "quality": "full",
+    "availability": "live",
+    "lifecycle_watermark": null,
+    "quality_reasons": []
+  }
+}

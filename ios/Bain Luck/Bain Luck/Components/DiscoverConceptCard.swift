@@ -228,14 +228,13 @@ struct NativeConceptDiscoverCard: View {
 
     private func navigate() {
         onOpen?()
-        // No native concept-hub view exists yet (web opens /event/{key}); land on
-        // the closest existing surface — the sport category for the concept's
-        // domain — mirroring the tournament card's category landing.
-        guard let domain = data.domain?.lowercased(), !domain.isEmpty else { return }
-        if domain == "golf" {
-            navigationPath.append(Route.golfCategory)
-        } else {
-            navigationPath.append(Route.sportCategory(key: domain, name: properTitleCase(domain)))
-        }
+        // #6667: a fight card opens THAT card (`/api/event/{key}`, the web
+        // page's own endpoint). Every other concept domain still lands on the
+        // closest existing surface — the sport category — exactly as before.
+        // The rule lives in `ConceptCardRouting` so a test can execute it.
+        guard let route = ConceptCardRouting.destination(
+            key: data.key, name: data.name, domain: data.domain
+        ) else { return }
+        navigationPath.append(route)
     }
 }
