@@ -15134,6 +15134,157 @@ def _settled_market_prices_an_unstarted_game(event, market, market_outcomes, now
     return market_assigned_settled(market, list(market_outcomes))
 
 
+#: How far a market's own pregame pin may sit from the fixture it now hangs off
+#: before the two are different games (#5481).
+#:
+#: READ OFF A TROUGH, NOT TUNED. Every pinned market on an event commencing in
+#: the last 14 days (21,618 rows, production 2026-09-17 22:0xZ), counted by
+#: ``|pin − event commence|``::
+#:
+#:     =0       ≤1h     1-6h    6-12h   12-18h   18-24h   24-48h    >48h
+#:     19,340   830     184       8      198      456      168      434
+#:
+#: Eight rows in the whole 6-to-12h band. The distribution is not a gradient
+#: with a line drawn through it — it is two populations with a gap between
+#: them: 20,354 pins within six hours of the fixture they hang off (the same
+#: game, its start time revised), and 1,256 more than half a day away (a
+#: different game). Any threshold in that empty band partitions the same rows to
+#: within 8, so nothing here turns on the exact number.
+_ANOTHER_FIXTURE_PIN_GAP = timedelta(hours=12)
+
+
+def _pinned_fixture_time(market):
+    """When the fixture this market was PINNED against was due to start (#5481).
+
+    ``market_metadata["pregame_mark"]["commence_time"]`` is written once, by
+    ``prediction_market_matching``'s pregame-mark loop, as the ``commence_time``
+    of whatever event the market was linked to at the moment of the pin, and a
+    ``NOT jsonb_exists`` guard means the first write is the only write. So on a
+    market that has since been re-attached to a different fixture the pin is a
+    FOSSIL of the old one, and that is the whole reason this is readable
+    evidence rather than a restatement of today's link: it is the one field on
+    the row that the current attachment did not write.
+
+    ``None`` for every absent, non-dict or unparseable value — the callers below
+    all fail open on it, and a page build must never throw on a lookup.
+    """
+    metadata = getattr(market, "market_metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    mark = metadata.get("pregame_mark")
+    if not isinstance(mark, dict):
+        return None
+    raw = mark.get("commence_time")
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        pinned = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return pinned if pinned.tzinfo else pinned.replace(tzinfo=timezone.utc)
+
+
+def _settled_book_belongs_to_another_fixture(event, market, market_outcomes, now) -> bool:
+    """A settled market on a live page whose own pin names a DIFFERENT game (#5481).
+
+    THE SECOND BUCKET OF #5771, SPLIT BY THE ONE SIGNAL THAT SEPARATES ITS TWO
+    HALVES. ``_settled_market_prices_an_unstarted_game`` withdraws a settled
+    market from every section of a fixture that has not kicked off, and its
+    docstring stops there on purpose: the 2,080 events that have STARTED and
+    hold a settled market are "mostly a live game's genuinely-settled sub-market
+    (a finished first set during a match in play) — real information that a
+    withdrawal would destroy". That is true of most of them and false of the
+    rest, and the pregame pin is what tells the two apart.
+
+    ── THE SPECIMEN ─────────────────────────────────────────────────────────────
+
+    ``/events/15313672`` — Colorado Rockies v San Diego Padres, ``live``, 2-9 in
+    the middle of the 8th, shopped at 390px 2026-09-17 21:43Z. Under *Additional
+    Markets → Novelty Props*, one row::
+
+        Colorado Rockies vs San Diego Padres            · 16h ago
+        San Diego Padres                        ███████   100%
+
+    Market ``60683971``: a Polymarket container pinned to the
+    ``2026-09-15T00:40Z`` fixture, settled at 05:37Z this morning against a
+    19:10Z first pitch, and attached to tonight's event. Its 1.000 is the
+    settlement price of a game played three days ago.
+
+    Tonight's real book is in the same payload — Kalshi ``61072383``,
+    ``San Diego 0.99 / Colorado 0.01``, observed one minute before the read —
+    and the card never shows it: the frontend's ``findWinProbMarkets`` filters a
+    two-sided market that sums to 1.0 as the hero's own question, which this
+    one-legged settlement is not. So the only match-winner number the reader
+    gets on that card is the previous game's result, printed as a live price.
+
+    ── WHY THIS IS THE PRICE HALF OF #6595, AND WHY IT HAS TO BE HERE ───────────
+
+    ``_settled_grade_fields`` already refuses to state that market's VERDICT:
+    a settlement observed before the event began cannot be this event's result,
+    so ``is_winner`` and ``resolution_source`` are both withheld. That is right
+    and stays. But the withhold is what leaves the row looking live — the wire
+    now says ``is_winner: null, resolution_source: null`` next to a price of
+    1.000, so the settlement arrives through the price channel with nothing
+    left on the row to mark it, and #5481's originally-routed frontend fix (a
+    render rule keyed on ``resolution_source`` being PRESENT) can never fire on
+    this population again. A withheld verdict and a printed settlement price are
+    the same wrong statement; refusing one and serving the other is not a
+    position.
+
+    ── WHAT IT COSTS, MEASURED ─────────────────────────────────────────────────
+
+    Every settled market on an unfinished event, production 2026-09-17 22:0xZ:
+    23 events, 32 markets. This drops **3** — one live, two scheduled (those two
+    already unreachable behind #5771) — and all three are Polymarket weekly
+    containers holding a previous game in the same series. It touches no Kalshi
+    market at all.
+
+    What it deliberately does NOT drop is the cohort #5771 protected: the eight
+    live Polymarket markets on ``/events/15313836`` (Ortenzi v Badosa — Set 1
+    Winner, Set 2 Winner, the set handicap, the game spread) whose pins name this
+    event's own 20:30Z commence to the second. Their settlements are real and are
+    this match's; the page's clock is what is wrong there, and that is #6595's
+    family, not this one. Recurrence of the class being dropped: 154 markets on
+    65 events in the 8 days to 2026-09-17.
+
+    ── THE FOUR REFUSALS, EACH COSTING A REAL ROW IF IT WERE DROPPED ───────────
+
+    * **A finished event keeps everything.** Settled means settled (gotcha #43),
+      and ``_verdict_contradicts_the_final_score`` is already the finished half
+      of this exact mis-attachment (#6627).
+    * **A fixture that has not started is #5771's**, not this one's. The two
+      gates partition the unfinished population rather than overlapping on it,
+      so neither has to reason about the other's rows.
+    * **No pin, or an unreadable one, keeps the market.** 89.5% of pins name
+      their event exactly; the absent ones are markets pinned before the pin
+      existed, or never linked at the moment it fires, and an absent fossil is
+      not evidence of anything.
+    * **``market_assigned_settled`` and not a status test**, so gotcha #33's
+      settled-but-``status='open'`` Kalshi rows are in scope by the same
+      predicate #5771 uses, on the same already-filtered outcome list.
+    """
+    if market_outcomes is None:
+        return False
+    if _event_is_really_finished(event, now):
+        return False
+    commence = getattr(event, "commence_time", None)
+    if commence is None:
+        return False
+    # A naive commence_time is read as UTC, the same coercion and for the same
+    # reason as #5771's one function above: this gate is asked of EVERY market on
+    # EVERY event, so it meets the naive datetimes that older fixtures build.
+    if commence.tzinfo is None:
+        commence = commence.replace(tzinfo=timezone.utc)
+    if commence > now:
+        return False
+    pinned = _pinned_fixture_time(market)
+    if pinned is None:
+        return False
+    if abs(pinned - commence) <= _ANOTHER_FIXTURE_PIN_GAP:
+        return False
+    return market_assigned_settled(market, list(market_outcomes))
+
+
 # How far a market's own trading window may outlive the fixture it hangs off
 # before the market is asking a different question (#6026). A game's own book
 # stops trading within hours of the whistle; one still due to trade next spring
@@ -16415,6 +16566,20 @@ async def _build_game_markets(
         # specimen, the measured population, and why the scope stops at
         # "has not started" instead of #5820's wider "has no result".
         if _settled_market_prices_an_unstarted_game(
+            event, market, market_outcomes, _gm_now
+        ):
+            continue
+
+        # #5481: and a settled market on a game that HAS started may still be a
+        # different game's — a Polymarket weekly container attaching one fixture
+        # late prints the previous night's settlement as tonight's live price.
+        # Same placement and same reason as the two gates above: no section could
+        # print another fixture's book honestly. The gate immediately above owns
+        # the not-yet-started half, so the two partition the unfinished
+        # population; see `_settled_book_belongs_to_another_fixture` for the
+        # specimen, the pin the split is read from, and the cohort it must not
+        # reach.
+        if _settled_book_belongs_to_another_fixture(
             event, market, market_outcomes, _gm_now
         ):
             continue
