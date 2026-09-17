@@ -149,20 +149,35 @@ struct LeagueGridView: View {
 
     // MARK: - League Market Sections
 
-    private static let sectionOrder = ["series", "awards", "playoff_props", "season_stats", "novelty"]
-    private static let sectionLabels: [String: String] = [
+    // #888: these keys must be keys the API actually emits. `leagueData.sections[key]`
+    // misses SILENTLY — an absent key and an empty section render identically — so
+    // `playoff_props` and `novelty` dropped every market behind them for months.
+    // The API builds exactly `futures · series · matches · awards · props ·
+    // season_stats · more_markets` (`backend/app/routes/league_futures.py:2380`), and
+    // `more_markets` is the classifier's DEFAULT return (`:1523`), which makes it the
+    // biggest bucket on every league. Measured 2026-09-17: 378 markets dropped against
+    // 189 rendered — NBA 11 of 64, NHL 4 of 41, UCL 3 of 38.
+    //
+    // `futures` and `matches` are deliberately not rendered here: neither is populated
+    // for a team league, and the API omits empty sections. `LeagueGridSectionKeysMatchTheAPI888Tests`
+    // pins that omission, so adding a section server-side fails a test rather than
+    // disappearing.
+    static let sectionOrder = ["series", "awards", "props", "season_stats", "more_markets"]
+    static let sectionLabels: [String: String] = [
         "series": "Playoff Series",
         "awards": "Awards",
-        "playoff_props": "Playoff Props",
+        // Not "Playoff Props": NCAAF's 31 are not playoff props, and most leagues
+        // carrying this section are not in a playoff at all.
+        "props": "Props",
         "season_stats": "Season Stats",
-        "novelty": "More Markets",
+        "more_markets": "More Markets",
     ]
-    private static let sectionIcons: [String: String] = [
+    static let sectionIcons: [String: String] = [
         "series": "sportscourt.fill",
         "awards": "trophy.fill",
-        "playoff_props": "chart.bar.fill",
+        "props": "chart.bar.fill",
         "season_stats": "chart.line.uptrend.xyaxis",
-        "novelty": "sparkles",
+        "more_markets": "sparkles",
     ]
 
     @ViewBuilder
