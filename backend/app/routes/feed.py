@@ -161,6 +161,7 @@ from app.utils.feed_market_quality import (
     diversify_quality_families,
     editorial_archetype,
     enforce_first_page_quality_floor,
+    space_discover_concept_families,
     FIRST_PAGE_WHY_NOW_WINDOW,
     has_no_real_price,
     is_locked_near_certain,
@@ -2102,10 +2103,11 @@ def apply_discover_display_chain(
 
     There is already a third, drifted copy in this module:
     ``_discover_rank_phase_trace`` re-implements a SUBSET (no noise filter, no
-    category-mix balance, no bundles, no lead composition) because it needs a
-    rank reading *between* phases, which a single call cannot give. It is left
-    alone deliberately — it is a per-phase probe, not a build — but it is the
-    standing evidence that this chain grows copies when it is not a function.
+    category-mix balance, no bundles, no lead composition, no concept spacing)
+    because it needs a rank reading *between* phases, which a single call cannot
+    give. It is left alone deliberately — it is a per-phase probe, not a build —
+    but it is the standing evidence that this chain grows copies when it is not
+    a function.
 
     **This mutates the item dicts it is given, and callers that reuse a pool
     must copy.** ``_demote_non_exceptional_discover_events`` writes ``score`` and
@@ -2465,6 +2467,35 @@ def apply_discover_display_chain(
             )
     _tick("first_page_quality_floor")
 
+    # === SAME-DOMAIN CONCEPT CARDS DO NOT SIT SHOULDER TO SHOULDER (#2602) ===
+    #
+    # Editorial spacing, not eligibility: nothing is dropped, rescored or
+    # re-keyed. AFTER the floor, deliberately, and for the floor's own reason —
+    # it is the last writer of Discover order, so nothing downstream can undo the
+    # spacing or re-form the run. It cannot disturb the floor, the seats or the
+    # lead: it never reads or writes `items[:DISCOVER_COMPOSITION_WINDOW]`, and
+    # every card those passes guarantee lives there. Discover only — Sports and
+    # My Stuff never reach this branch (CERT-2190's three-surface rule). It runs
+    # on the whole canonical list BEFORE the single pagination slice and reads no
+    # `limit`/`offset`, so every page size slices the same order (#5101).
+    concept_spacing_meta = None
+    if discover_mode:
+        items, concept_spacing_meta = space_discover_concept_families(
+            items, protected_prefix=DISCOVER_COMPOSITION_WINDOW
+        )
+        if concept_spacing_meta["unresolved_adjacent"]:
+            # Not silent (gotcha #53): the pool had no separator left within the
+            # bound. A thin-slate fact, logged at info — it is expected at the
+            # very end of a tail and on an all-one-domain list.
+            logger.info(
+                "Discover concept spacing: %d same-family adjacency(ies) kept — "
+                "no separator within %d slots (%d card(s) moved)",
+                concept_spacing_meta["unresolved_adjacent"],
+                concept_spacing_meta["bound"],
+                concept_spacing_meta["moved"],
+            )
+    _tick("concept_spacing")
+
     # === ONE STORY, NOT NINE CARDS, ON THE SPORTS FIRST PAGE (#3511) ===
     #
     # `diversify_discover_first_page` caps repeated archetypes at 3 and runs
@@ -2666,6 +2697,8 @@ def apply_discover_display_chain(
         # means it ran and found nothing to seat. Opposite facts (gotcha #53).
         "final_seating": final_seating_meta,
         "first_page_quality_floor": first_page_floor_meta,
+        # None = not Discover; `moved: 0` = ran and found nothing to space.
+        "concept_spacing": concept_spacing_meta,
         "finished_rail_cap": finished_rail_cap_meta,
         "client_deletion_swap": client_deletion_swap_meta,
         "futures_first_page_cap": futures_cap_meta,
@@ -7439,8 +7472,18 @@ async def _discover_rank_phase_trace(
     # Everything above is a per-phase PROBE: a partial build re-implemented here
     # because a single call cannot give a rank reading *between* phases. It is
     # deliberately a subset — no noise filter, no category-mix balance, no
-    # bundles, no lead composition — which is fine for "where in the pipeline did
-    # this card move" and NOT fine for "is this card on the page".
+    # bundles, no lead composition, and since #2602 no concept spacing — which is
+    # fine for "where in the pipeline did this card move" and NOT fine for "is
+    # this card on the page".
+    #
+    # #2602 SCOPING, stated rather than assumed: `space_discover_concept_families`
+    # is the LAST writer of Discover order, so a `post_*_rank` above is a reading
+    # taken BEFORE it and may be one to four slots off the served slot. That is
+    # the probe's standing contract, not a new defect — and it is why the
+    # disposition below must stay on the shared chain. `assembled_rank` and
+    # `returned_rank` come from `apply_discover_display_chain`, so they include
+    # the spacing stage automatically and need no edit here; only the
+    # `probe_*`/`post_*` fields omit it.
     #
     # It was answering both. `returned` came off the probe, so the trace shipped a
     # confident verdict about the served page derived from a build the server does
