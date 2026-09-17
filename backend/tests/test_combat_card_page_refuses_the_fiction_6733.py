@@ -214,8 +214,22 @@ class TestVenueCorroborationStillWins:
             commence_time=_FICTION_WHEN,
             market_metadata={"event_title": "UFC 330"},
             outcomes=[
-                SimpleNamespace(name="Tom Aspinall", current_probability=0.62),
-                SimpleNamespace(name="Ciryl Gane", current_probability=0.38),
+                # #6777: no book on these rows, so the price gate passes them
+                # through and this stays a test about the roster predicate.
+                SimpleNamespace(
+                    name="Tom Aspinall",
+                    current_probability=0.62,
+                    current_yes_bid=None,
+                    current_yes_ask=None,
+                    resolution_source=None,
+                ),
+                SimpleNamespace(
+                    name="Ciryl Gane",
+                    current_probability=0.38,
+                    current_yes_bid=None,
+                    current_yes_ask=None,
+                    resolution_source=None,
+                ),
             ],
         )
 

@@ -244,18 +244,29 @@ class TestTheContractTheConceptPathStillOwes:
         assert bout is not None
         assert all("yes_bid" not in c and "yes_ask" not in c for c in bout["competitors"])
 
-    def test_the_attached_headline_bout_is_the_reader_the_envelope_does_not_cover(self):
-        # `_attach_headline_bouts` reads futures_outcomes directly and its result WINS
-        # over the envelope pair at `_concept_can_render`. Its contract is two more
-        # columns in the SELECT it already runs — today it projects neither.
+    def test_the_attached_headline_bout_now_projects_the_book(self):
+        # REPLACED BY THE INTEGRATION, exactly as this class's docstring says it
+        # would be (discover/158, #6790). `_attach_headline_bouts` reads
+        # futures_outcomes directly and its result WINS over the envelope pair at
+        # `_concept_can_render`, so it is the one reader the envelope refusal does
+        # not reach. Its contract was two more columns in the SELECT it already
+        # runs; the handover arm asserted it projected neither, and this asserts
+        # the debt is paid.
+        #
+        # Still a source assertion rather than a behavioural one, because what is
+        # pinned here is the CONTRACT (the columns are fetched on that one read,
+        # so no second scan appears). The behaviour — an unsupported pair attaches
+        # no headline at all — is asserted against the real function in
+        # `test_concept_card_unsupported_price_6777.py`, and that arm has been
+        # seen red.
         import inspect
 
         from app.utils import event_combat
 
         src = inspect.getsource(event_combat._attach_headline_bouts)
         assert "FuturesOutcome.current_probability" in src
-        assert "FuturesOutcome.current_yes_bid" not in src
-        assert "FuturesOutcome.current_yes_ask" not in src
+        assert "FuturesOutcome.current_yes_bid" in src
+        assert "FuturesOutcome.current_yes_ask" in src
 
 
 # RED-FIRST, both mutations applied to `bout_price_is_supported` and RUN on this tree

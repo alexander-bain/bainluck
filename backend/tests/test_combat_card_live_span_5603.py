@@ -127,11 +127,24 @@ class _MockDB:
 
 
 class _FakeOutcome:
-    def __init__(self, name, probability=0.5):
+    def __init__(
+        self,
+        name,
+        probability=0.5,
+        yes_bid=None,
+        yes_ask=None,
+        resolution_source=None,
+    ):
         self.name = name
         self.outcome_name = name
         self.probability = probability
         self.current_probability = probability
+        # #6777: the book columns the adapter now consults. Absent by default —
+        # a price with no book is passed through, so this card's live/called-off
+        # assertions are unchanged by the price gate.
+        self.current_yes_bid = yes_bid
+        self.current_yes_ask = yes_ask
+        self.resolution_source = resolution_source
 
 
 class _FakeMarket:
