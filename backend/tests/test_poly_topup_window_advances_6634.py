@@ -53,12 +53,39 @@ previous behaviour rather than taking the socket's token pass down.
 import pytest
 from sqlalchemy.sql.dml import Update
 
+import app.tasks.polymarket_token_topup as topup_mod
 from app.tasks.polymarket_token_topup import (
     OUTCOME_TOKEN_METADATA_KEY,
     topup_outcome_clob_tokens,
 )
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_redis(monkeypatch):
+    """Pin the #837 window position instead of reaching for a real Redis.
+
+    These tests predate the resuming window and are about what LEAVES the ask,
+    not about where it starts, so they hold the position at the front — which is
+    the lexicographic head they were written against, unchanged.
+
+    The pin is the point: without it a pass whose slate exceeds the cap calls
+    the real loader, and the answer depends on whether a Redis happens to be
+    listening and on what some earlier run left in the key. A test that reads
+    ambient infrastructure state passes or fails for reasons the diff cannot
+    explain. Fairness under churn and restart is pinned in
+    ``test_poly_topup_fair_rotation_837.py``, where the store is explicit.
+    """
+
+    async def _front():
+        return None
+
+    async def _discard(_cursor):
+        return None
+
+    monkeypatch.setattr(topup_mod, "load_topup_cursor", _front)
+    monkeypatch.setattr(topup_mod, "save_topup_cursor", _discard)
 
 # Tonight's three specimens, kept verbatim so the fixture cannot drift into a
 # friendlier one. LOW sorts below the measured boundary 0x2b8f76c0…; HIGH sorts

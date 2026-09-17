@@ -30,6 +30,8 @@ markets and every future row; this closes the gap for the small, time-critical
 subset where "eventually" is not an answer.
 """
 
+import asyncio
+import bisect
 import json
 import logging
 from typing import Optional
@@ -51,6 +53,139 @@ MAX_TOPUP_MARKETS = 300
 #: ``FuturesOutcome.id`` because that is what the socket must attribute a tick
 #: to, and stringified because JSONB object keys are always strings.
 OUTCOME_TOKEN_METADATA_KEY = "clob_yes_token_by_outcome"
+
+#: Where the outcome top-up's position between recycles lives (#837).  Redis,
+#: not a column, for the reason ``anchor_schedule_sentinel`` keeps its
+#: continuation there (CERT-843): it is scheduling scratch, it is worthless the
+#: moment the slate moves past it, and a migration for it would outlive its
+#: usefulness by years.
+TOPUP_CURSOR_KEY = "polymarket_token_topup:outcome_cursor"
+
+#: Long enough to survive a deploy and a quiet night, short enough that a
+#: position from a dead era expires instead of resuming into a slate that no
+#: longer holds it.  Losing it costs one pass's fairness, never correctness —
+#: the selector simply restarts at the front, which is today's behaviour.
+TOPUP_CURSOR_TTL_SECONDS = 7 * 24 * 3600
+
+
+def select_ask_window(
+    ordered: list[str], size: int, cursor: Optional[str]
+) -> tuple[list[str], Optional[str]]:
+    """``size`` condition ids from ``ordered``, resuming after ``cursor``.
+
+    Returns ``(kept, next_cursor)``.  ``next_cursor`` is None when there was
+    nothing to defer — the caller then leaves the stored position alone rather
+    than spending a write on a pass that asked the whole slate.
+
+    WHY A POSITION AND NOT A CLOCK.  #6634 made FILLED outcomes leave the ask,
+    so the set shrinks as legs are mapped.  Nothing makes UNFILLABLE ones leave,
+    and most legs of a live game's parent row are unfillable for good: a closed
+    sub-market is an empty 200 on this read (gotcha #53), and an open
+    spread/total comes back with outcomes our single leg cannot be attributed
+    to.  Those legs keep their lexicographic seats forever and starve whatever
+    sorts above the cap — measured 2026-09-16 as 324 of 333 condition ids
+    identical between consecutive recycles, 2 newly mapped per pass, with the
+    Braves moneyline ``0x8670…`` (which maps first try when asked directly)
+    among the starved.
+
+    The obvious repair — turn the window by wall clock,
+    ``(now // recycle_seconds) * size % len`` — was PROVED to starve before it
+    was built, which is why it is not what this is.  The window quantum and the
+    call cadence resonate: 900 stable ids, cap 300, a pass every 900 s visits
+    clock buckets 0, 1, 3, 4, 6, 7… so the starts are 0 and 300 forever and the
+    last 300 ids are never asked at all; 600 ids at cap 300 on a 1,200 s cadence
+    starves half.  A skipped window does not cost "one cycle" — it can cost
+    every cycle, permanently, and no cadence assumption is safe in a runner that
+    restarts inside the dyno and whose recycles drift.
+
+    So the window turns on WHERE IT STOPPED, never on when it ran:
+
+    * **Cadence-free.**  Consecutive passes ask contiguous, disjoint runs, so
+      with a stable slate of N ids every id is asked within ``ceil(N / size)``
+      passes whatever the interval between them, however irregular, however
+      often one is skipped or repeated.  There is no clock in this function and
+      no clock in its caller's use of it.
+    * **Restart-proof.**  The position is durable (Redis), so a runner restart
+      resumes where the last pass stopped.  A pass counter in module state would
+      restart at 0 and re-select the head forever, which is the present defect.
+    * **Churn-safe.**  The cursor is an id, not an index, so an id added or
+      removed below it shifts nobody's turn.  An id that enters the slate ABOVE
+      the cursor is asked this cycle; one that enters below waits at most one
+      full cycle (``ceil(N / size)`` passes).  Legs enter the slate ~6 h before
+      first pitch, so a hero leg is asked long before anybody can read it.
+
+    The bound is on being ASKED.  Whether Gamma can answer, and whether the
+    answer can be attributed to our leg, are the mapping rules above, and this
+    function deliberately knows nothing about them: it needs no theory of why a
+    leg is dead, so it cannot mis-classify one.
+    """
+    if size <= 0:
+        return [], None
+    if len(ordered) <= size:
+        return list(ordered), None
+
+    # ``bisect_right`` is the first id STRICTLY greater than the cursor, which
+    # is also the right answer when the cursor's own id has left the slate —
+    # the position survives its id's departure.
+    # A cursor past the last id gives ``start == len(ordered)``; the modulo
+    # below is what wraps it to the front, so there is no separate guard for it
+    # (one no test could kill, because it cannot change an answer).
+    start = bisect.bisect_right(ordered, cursor) if cursor is not None else 0
+    kept = [ordered[(start + i) % len(ordered)] for i in range(size)]
+    return kept, kept[-1]
+
+
+def _read_cursor_sync() -> Optional[str]:
+    from app.tasks.redis_state import get_redis_client
+
+    raw = get_redis_client().get(TOPUP_CURSOR_KEY)
+    if not raw:
+        return None
+    return raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw)
+
+
+def _write_cursor_sync(cursor: str) -> None:
+    from app.tasks.redis_state import get_redis_client
+
+    get_redis_client().setex(TOPUP_CURSOR_KEY, TOPUP_CURSOR_TTL_SECONDS, cursor)
+
+
+async def load_topup_cursor() -> Optional[str]:
+    """The position the last pass stopped at, or None to start at the front.
+
+    A Redis fault degrades to None — one pass from the front, which is exactly
+    the pre-#837 behaviour — rather than raising.  That is the right way to
+    fail: the socket still gets its tokens, it just loses its place for a pass.
+
+    The bounded SYNC client on a worker thread, not ``get_async_redis_client``:
+    the sync client is cached per process (#1197) while the async factory builds
+    a fresh connection pool per call, and this runs on the socket's event loop
+    every recycle.  ``to_thread`` keeps a slow Redis off that loop; the client's
+    own 5 s socket timeout (#969) is what bounds the work itself.
+    """
+    try:
+        return await asyncio.to_thread(_read_cursor_sync)
+    except Exception:
+        logger.warning(
+            "Polymarket outcome token top-up: could not read the saved window "
+            "position; asking from the front of the slate this pass",
+            exc_info=True,
+        )
+        return None
+
+
+async def save_topup_cursor(cursor: Optional[str]) -> None:
+    """Persist where this pass stopped.  A fault costs the next pass its place."""
+    if not cursor:
+        return
+    try:
+        await asyncio.to_thread(_write_cursor_sync, cursor)
+    except Exception:
+        logger.warning(
+            "Polymarket outcome token top-up: could not persist the window "
+            "position; the next pass will ask from the front of the slate",
+            exc_info=True,
+        )
 
 
 def condition_id_of(external_id: Optional[str]) -> Optional[str]:
@@ -198,6 +333,11 @@ async def topup_outcome_clob_tokens(
     name; the other contender's token is that market's other leg and is left to
     the outcome row that owns it. ``token_for_outcome`` holds both rules and
     refuses anything it cannot attribute by name.
+
+    WHAT IS ASKED WHEN THE SLATE EXCEEDS THE CAP is a resuming window, not the
+    lexicographic head — ``select_ask_window`` carries that argument and the
+    measurement behind it. A leg that can never be filled therefore costs one
+    seat for one pass rather than holding it for good.
     """
     from sqlalchemy import cast, func, literal, select, update
     from sqlalchemy.dialects.postgresql import JSONB
@@ -286,13 +426,28 @@ async def topup_outcome_clob_tokens(
             return stored_filled
 
     if len(addressable) > max_outcomes:
-        kept = sorted(addressable)[:max_outcomes]
+        # "Deferred to the next recycle" was a claim nothing kept: the head was
+        # re-selected every pass and the tail was starved for good. The window
+        # now RESUMES where the last pass stopped, so the sentence is true and
+        # the bound is ceil(len / max_outcomes) passes at any cadence — see
+        # `select_ask_window`, which holds the whole argument.
+        cursor = await load_topup_cursor()
+        kept, next_cursor = select_ask_window(
+            sorted(addressable), max_outcomes, cursor
+        )
+        # Saved BEFORE the ask, not after it: a Gamma failure must cost this
+        # slice one pass, not hold the window at the same slice until Gamma
+        # recovers — which is the livelock this replaces, with a different cause.
+        await save_topup_cursor(next_cursor)
         logger.warning(
             "Polymarket outcome token top-up: %d outcomes needed tokens, "
-            "capped at %d (%d deferred to the next recycle)",
+            "capped at %d (%d deferred to the next recycle; window resumed "
+            "after %s, stops at %s)",
             len(addressable),
             max_outcomes,
             len(addressable) - max_outcomes,
+            cursor or "the front",
+            next_cursor,
         )
         addressable = {cid: addressable[cid] for cid in kept}
 
@@ -327,10 +482,41 @@ async def topup_outcome_clob_tokens(
         service = PolymarketAPIService()
 
     try:
-        # Errors re-raise (gotcha #36): an empty list here would read as "these
-        # outcomes have no tokens", the exact false negative that hid this gap
-        # for the market-level path.
+        # The CLIENT still raises on a 429 or a 5xx (gotcha #36) — an empty list
+        # from it would read as "these outcomes have no tokens", the exact false
+        # negative that hid this gap for the market-level path. What changes
+        # here is only what THIS function does with the raise.
+        #
+        # WHY IT IS CAUGHT, and why ONLY WITH SOMETHING STORED. The caller
+        # (`polymarket_ws`) answers an exception out of this function with
+        # `outcome_yes_token = {}` — so one Gamma failure unsubscribes every
+        # moneyline leg whose token we already hold and had no need to ask
+        # about. The provider being down is not a reason to stop streaming the
+        # legs that are already mapped; their tokens were read before this call
+        # and are still valid. So a failed ASK returns what is already KNOWN.
+        #
+        # With nothing stored there is nothing known, and `{}` would say "these
+        # outcomes have no tokens" — the exact false negative gotcha #36 forbids
+        # and the one that hid this whole gap for the market-level path. So that
+        # case RE-RAISES, exactly as it did before this ship, and the caller
+        # logs the outage. The difference between the two arms is whether this
+        # function has an answer of its own, never whether the provider failed.
+        #
+        # Loud either way (gotcha #53 / `task_verdict`): the swallowed arm logs
+        # the traceback and both counts, so a Gamma outage still reads as an
+        # outage rather than as a quiet pass that mapped nothing.
         fetched = await service.get_markets_by_conditions(list(addressable))
+    except Exception:
+        if not stored_filled:
+            raise
+        logger.exception(
+            "Polymarket outcome token top-up: Gamma failed for %d outcomes; "
+            "keeping the %d already-stored legs subscribed and retrying the "
+            "rest next recycle",
+            len(addressable),
+            len(stored_filled),
+        )
+        return dict(stored_filled)
     finally:
         if own_service:
             await service.close()
