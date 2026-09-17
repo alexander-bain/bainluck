@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Iterable, Literal
 
 from app.utils.card_integrity import is_anonymized_market
 from app.utils.feed_reasons import RESOLVING_WITHIN_MONTH_HEADLINE
@@ -487,6 +487,118 @@ def is_empty_book_midpoint(
     if round(ask - bid, _BOOK_PRICE_DECIMALS) < EMPTY_BOOK_MIN_SPREAD:
         return False
     return abs(float(probability) - (bid + ask) / 2) <= EMPTY_BOOK_MIDPOINT_TOLERANCE
+
+
+def bout_price_is_supported(sides: "Iterable[tuple]") -> bool:
+    """May this two-sided bout show numbers at all? (#6777)
+
+    WHAT A READER SAW. The **Power Slap 23** card on Discover led with
+    *"Brandon Wilson 50% · Brian Ellis 49.5%"*. The two rows behind it, read on
+    production 2026-09-17 (``futures_markets`` 61148613, source ``polymarket``,
+    status open, both legs ungraded):
+
+        outcome            served   bid / ask     last_updated
+        Brandon Wilson     0.5000   0.02 / 0.99   2026-09-15 17:17Z
+        Brian Ellis        0.4950   0.01 / 0.98   2026-09-15 17:17Z
+
+    A 0.02/0.99 quote pair does not locate a price at 50%. What the row proves is
+    exactly that and no more: whether this market has ever traded is UNKNOWN to us
+    — ``volume`` is NULL and a NULL is not a zero (gotcha #53) — so nothing here
+    reads volume, and "never traded" is not claimed anywhere in this function or
+    its ship. The claim is the narrow one: *the book we hold does not support the
+    number we display*.
+
+    THE RULE IS NOT NEW AND IS NOT RE-DERIVED HERE. :func:`is_empty_book_midpoint`
+    is #5247's shipped predicate with its own measured constants, already the
+    single answer to this question at six call sites in two classes (see its
+    docstring). This function is the CALL-SITE POLICY for a seventh shape — a
+    BOUT — so the concept path consults the same predicate instead of growing a
+    second parallel filter. No new threshold, no new constant, no new column: a
+    wide spread alone does not refuse (condition 3 still demands the served price
+    sit ON the midpoint) and a 50% alone does not refuse (condition 2 still
+    demands the ≥ ``EMPTY_BOOK_MIN_SPREAD`` book).
+
+    🔴 THE QUANTIFIER IS **ANY**, AND THAT IS THE WHOLE OF WHAT THIS ADDS. The
+    six shipped call sites drop a LEG and let the container keep its honest rungs
+    — right for a ladder, wrong for a bout. A bout is a two-sided question whose
+    sides are one market's own pair; refusing Wilson and keeping Ellis leaves the
+    card printing *"Brian Ellis 49.5%"* as its leader, which is #5333's defect
+    ("the empty book's complement stops surviving alone at 51%") rebuilt one
+    surface over, and #1860's before it. So one refused side refuses the pair.
+
+    IT IS NOT MEASURED-INERT SAFETY THEATRE, THOUGH ON THE SPECIMEN IT IS INERT.
+    #6727 proved the leg predicate answers the same for a leg and its algebraic
+    complement, so a pair whose books are exact complements can never split — and
+    the specimen's are (``1 − 0.99 = 0.01``, ``1 − 0.02 = 0.98``). But the two
+    sides of a venue bout are two SEPARATE rows written by two upserts, not one
+    row and its derived twin, so nothing guarantees they stay complementary. The
+    ANY form is what makes the split case safe without anyone having to notice it.
+
+    NO BLANKET DELETION, AND NO MANUFACTURED LEADER. A refusal here is a refusal
+    to state numbers, never a refusal to state the bout: the caller keeps both
+    fighters' names and drops only the two probabilities, which is the shape its
+    own unpriced branch already produces (``[{"name": s, "probability": None}]``
+    in ``event_combat._competitors``). A card does not lose its real bouts, and a
+    card that can show no supported probability shows none — the existing
+    ``_concept_can_render`` gate then does what it already does for the two UFC
+    cards beside this one, which it suppresses correctly today.
+
+    SETTLED MEANS SETTLED, BY CONSTRUCTION RATHER THAN BY EXEMPTION. A graded side
+    carries 0 or 1, which is one whole midpoint-tolerance away from any book this
+    predicate can reach, so condition 3 fails and the result is kept. The three
+    arms of ``futures_unsupported_price`` need an explicit ``resolution_source``
+    carve-out because they read a trade column; this reads three columns of one
+    write and cannot see a settlement value as a quote.
+
+    ``sides`` IS AN ITERABLE OF ``(probability, yes_bid, yes_ask)`` TRIPLES, in any
+    order and of any length, because the caller's shape is not this module's
+    business — a two-sided bout is two, and a caller holding one side has already
+    failed its own "half a bout is not a bout" test. A side whose probability is
+    NULL is not refused BY THIS RULE (the leg predicate returns False for it);
+    whether an unpriced side makes the bout unrenderable is the caller's existing
+    question and is deliberately left where it already lives, so the two causes
+    stay separately measurable.
+
+    🪤 WHERE THE EVIDENCE IS, WHICH DECIDES WHERE THE CALL GOES — the contract the
+    concept path needs, stated rather than invented (#6777, Authority's half of
+    codex's owner split; the integration half is Discover's):
+
+    * ``event_combat._competitors`` and ``_fight_outcomes`` hold ORM
+      ``FuturesOutcome`` rows, so ``current_yes_bid`` / ``current_yes_ask`` are
+      already in hand. Refusing HERE is what makes the rest free: the envelope's
+      ``primary.competitors``, its ``children`` rail and its ``evolution_market_id``
+      are all derived from these two functions, so they inherit one refusal.
+    * ``routes/feed._resolve_concept_leader`` and ``_bout_from_competitors`` are
+      CACHE-ONLY by measurement (UX-P089/#1934) and the cached envelope carries no
+      book columns at all. They therefore CANNOT ask this question themselves, and
+      must not be given a DB read to do it — they inherit the refusal above, which
+      is why the refusal must happen at the builder and not at the reader. Said
+      plainly because the alternative contract (widen the envelope schema to carry
+      bid/ask per competitor) is the one thing here that would be an invention.
+    * ``event_combat._attach_headline_bouts`` is the ONE reader the envelope does
+      not cover: it reads ``futures_outcomes`` directly and its ``headline_bout``
+      WINS over the envelope pair at the gate. Its contract is two more columns in
+      the SELECT it already runs — ``current_yes_bid``, ``current_yes_ask`` — which
+      is not a second scan and does not touch LAT-P094's guard (that counts scans
+      of ``futures_markets``; this reads the child table under an indexed
+      ``market_id``).
+
+    FORWARD-ONLY ON THE CACHE, AND THAT IS A COST WORTH ONE SENTENCE. Envelopes
+    built before the release keep their unsupported number until they age out
+    (5s fresh / 300s stale) or the warmer rebuilds them. No purge is needed and
+    none is authorized; an after-check taken inside that window is measuring the
+    cache, not the ship.
+
+    READ-SIDE ONLY (gotcha #21). Nothing here mutates a stored price. The WRITER
+    half of this class is #6676's, already live at three writers — which is
+    precisely why this fossil survives: the guard that stops a new fabrication is
+    what guarantees the old one is never overwritten.
+    """
+    for side in sides:
+        probability, yes_bid, yes_ask = side
+        if is_empty_book_midpoint(probability, yes_bid, yes_ask):
+            return False
+    return True
 
 
 # A distribution over a MUTUALLY EXCLUSIVE field must still cover that field once the
