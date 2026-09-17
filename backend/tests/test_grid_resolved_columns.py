@@ -38,11 +38,30 @@ class TestGridColumnResolved:
         assert _grid_column_resolved(_teams({"mp": 0.01}, {"mp": 0.99}), "mp") is True
         assert _grid_column_resolved(_teams({"mp": 0.02}, {"mp": 0.99}), "mp") is False
 
-    def test_skips_missing_probabilities(self):
-        # A cell with no merged_probability is ignored, not treated as live
+    def test_present_but_unpriced_cell_refuses_the_column(self):
+        # AMENDED #6442. This case asserted True under the name
+        # "test_skips_missing_probabilities", on the reasoning that a cell with
+        # no merged_probability "is ignored, not treated as live". That is
+        # fault (a) of #6442 in miniature: an unpriced, ungraded cell is not
+        # evidence that anything was decided, and skipping it is what let ONE
+        # priced club of 36 resolve the UCL quarterfinal column. A cell that is
+        # present carries no price and no settled state is UNKNOWN, and a
+        # column containing an unknown is not decided.
         teams = [
             {"cells": {"mp": {"merged_probability": 1.0}}},
             {"cells": {"mp": {"merged_probability": None}}},
             {"cells": {"mp": {"merged_probability": 0.0}}},
+        ]
+        assert _grid_column_resolved(teams, "mp") is False
+
+    def test_a_settled_state_decides_without_a_price(self):
+        # The other half of the amendment: the register's terminal results are
+        # the strongest evidence there is, and they carry no probability. The
+        # old skip made a fully venue-settled column resolve only by accident
+        # (empty probs -> False); now it resolves because it is settled.
+        teams = [
+            {"cells": {"mp": {"merged_probability": None, "state": "won"}}},
+            {"cells": {"mp": {"merged_probability": None, "state": "eliminated"}}},
+            {"cells": {"mp": {"merged_probability": 1.0}}},
         ]
         assert _grid_column_resolved(teams, "mp") is True
