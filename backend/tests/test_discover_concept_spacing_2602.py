@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+import app.routes.feed as feed_module
 from app.routes.feed import (
     DISCOVER_COMPOSITION_WINDOW,
     _canonical_item_key,
@@ -307,8 +308,6 @@ def test_the_chain_spaces_the_run_and_reports_it():
 
 def test_the_chain_keeps_every_card_the_unspaced_build_serves(monkeypatch):
     _, spaced, _ = _serve(_pool())
-    import app.routes.feed as feed_module
-
     monkeypatch.setattr(
         feed_module,
         "space_discover_concept_families",
