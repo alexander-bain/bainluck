@@ -134,7 +134,7 @@ from app.utils import (
     get_league_tier,
     get_season_multiplier,
 )
-from app.utils.highlights import parse_game_progress
+from app.utils.highlights import parse_game_progress, tier_12_sport_keys
 from app.utils.ladder_monotonicity import cumulative_outcome_ladder
 from app.utils.participant_images import participant_images_for_event
 from app.utils.futures_highlights import (
@@ -1092,8 +1092,35 @@ MY_STUFF_ALLOWED_SPORT_KEYS = {
     "mma_mixed_martial_arts",
 }
 
+#: #6690 — WHICH sports the candidate pass looks a day and a half ahead for.
+#:
+#: This is the canonical Tier 1/2 authority, `tier_12_sport_keys()`, and NOT
+#: `MY_STUFF_ALLOWED_SPORT_KEYS` above.  The first presentation of this ship used
+#: that set and the review caught it: the twelve Europa League fixtures named in
+#: the issue — the reader's own example of a missing slate — are Tier 2 by the
+#: canonical table and absent from the My Stuff list, so they stayed behind the
+#: 12-hour shutter the fix exists to lift.  Bundesliga, La Liga, Serie A, Ligue 1,
+#: Libertadores, the World Cup, the golf majors and the Grand Slams were all
+#: omitted the same way.
+#:
+#: The two lists answer two different questions and must not be conflated.
+#: `MY_STUFF_ALLOWED_SPORT_KEYS` answers "which sports may a FOLLOW match", where
+#: a false positive shows a Red Sox follower a Boston College hockey game
+#: (BR42/BR43) — so it is deliberately narrow and stays exactly as it is.  This
+#: one answers "which games count as major", where the cost of being narrow is
+#: the defect above.
+#:
+#: The long-tail exclusion the scoping exists for is unchanged, because the
+#: canonical table never contained the tail.  Measured on production 2026-09-17
+#: 05:45Z, scheduled rows inside 36 hours: 353 total, 17 admitted by the My Stuff
+#: set, 33 by this one (+12 Europa League, +2 Libertadores, +2 La Liga) against a
+#: quota of 150.  The 320 rows left out are `tennis_other` (130), `soccer_other`
+#: (47), the bare `tennis_atp`/`tennis_wta` keys (58), `baseball_other`, Liiga,
+#: Allsvenskan — the ITF/challenger mass the `min_score` gate discards anyway.
+MARQUEE_UPCOMING_SPORT_KEYS = tier_12_sport_keys()
+
 #: #6690 — how far forward the candidate pass looks for a *scheduled* game in
-#: one of the sports above.  Every other sport keeps the 12-hour window.
+#: one of those sports.  Every other sport keeps the 12-hour window.
 #:
 #: Measured 2026-09-16 04:15Z, which is why this number is 36 and not 24: the
 #: nearest marquee kickoff was 12.3h out and Thursday night's NFL game 20.0h
@@ -8531,9 +8558,11 @@ async def _score_events(
         # 12h forward from 9 PM Pacific stops at 9 AM Pacific, which is before
         # the first pitch of anything; the NFL game measured 20.0h out was not a
         # candidate at all. 36h clears a full next-day slate with margin.
-        # Scoped to `MY_STUFF_ALLOWED_SPORT_KEYS` rather than applied to every
-        # sport on purpose — see `candidate_window_conditions` for why widening
-        # for everyone starves the games it is meant to carry.
+        # Scoped to `MARQUEE_UPCOMING_SPORT_KEYS` — the canonical Tier 1/2
+        # authority — rather than applied to every sport on purpose; see
+        # `candidate_window_conditions` for why widening for everyone starves
+        # the games it is meant to carry, and the constant's own note for why
+        # the narrower My Stuff list is the wrong authority here.
         marquee_upcoming_cutoff = now + timedelta(hours=MARQUEE_UPCOMING_WINDOW_HOURS)
     # Guard against events incorrectly stuck in "live" status with future
     # commence_times (e.g., from Scores API returning upcoming events as
@@ -8571,7 +8600,7 @@ async def _score_events(
         upcoming_cutoff=upcoming_cutoff,
         recent_cutoff=recent_cutoff,
         marquee_upcoming_cutoff=marquee_upcoming_cutoff,
-        marquee_sport_keys=MY_STUFF_ALLOWED_SPORT_KEYS,
+        marquee_sport_keys=MARQUEE_UPCOMING_SPORT_KEYS,
     )
 
     if sport_filter:
@@ -8664,7 +8693,7 @@ async def _score_events(
         query = query.where(
             Event.id.in_(
                 event_candidate_ids(
-                    candidate_conditions, MY_STUFF_ALLOWED_SPORT_KEYS
+                    candidate_conditions, MARQUEE_UPCOMING_SPORT_KEYS
                 )
             )
         )

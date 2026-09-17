@@ -26,7 +26,7 @@ coexist with it (the idiom of ``test_feed_event_candidates.py``).
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import and_, case, create_engine, func, or_, select
+from sqlalchemy import and_, create_engine, func, select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
@@ -46,6 +46,7 @@ def _array_on_sqlite(type_, compiler, **kw):  # pragma: no cover - DDL shim
 from app.models import Event, Sport  # noqa: E402
 from app.models.models import Base  # noqa: E402
 from app.routes.feed import (  # noqa: E402
+    MARQUEE_UPCOMING_SPORT_KEYS,
     MARQUEE_UPCOMING_WINDOW_HOURS,
     MY_STUFF_ALLOWED_SPORT_KEYS,
 )
@@ -64,13 +65,19 @@ NOW = datetime(2026, 9, 17, 4, 15, 0, tzinfo=timezone.utc)
 S_NFL = 1
 S_MLB = 2
 S_TENNIS = 3
+S_EUROPA = 4
 
 _SPORTS = [
     (S_NFL, "americanfootball_nfl", "NFL"),
     (S_MLB, "baseball_mlb", "MLB"),
-    # Deliberately NOT in `MY_STUFF_ALLOWED_SPORT_KEYS`: the ITF/challenger mass
-    # that fills the window and is discarded downstream at `min_score`.
+    # Deliberately NOT in either list: the ITF/challenger mass that fills the
+    # window and is discarded downstream at `min_score`. 130 of the 353 rows
+    # inside 36h on production, 2026-09-17.
     (S_TENNIS, "tennis_other", "Tennis"),
+    # Tier 2 by the canonical table, ABSENT from `MY_STUFF_ALLOWED_SPORT_KEYS` —
+    # which is why the first presentation of this ship left the twelve fixtures
+    # the issue names behind the very shutter it was lifting.
+    (S_EUROPA, "soccer_uefa_europa_league", "Europa League"),
 ]
 
 NFL_ID = 10           # Lions @ Bills — 20.0h out, the game Alex could not find
@@ -78,6 +85,7 @@ MLB_ID = 11           # 19.8h out
 MLB_IMMINENT_ID = 12  # 2h out — the row the old DESC ordering cut first
 TENNIS_NEAR_ID = 20   # 6h out, inside the original window
 TENNIS_FAR_ID = 21    # 20h out, outside it and meant to STAY outside
+EUROPA_ID = 30        # 20.0h out — the named slate, Tier 2, not a My Stuff key
 FLOOD_ID_BASE = 100_000
 
 
@@ -109,11 +117,16 @@ def _slate():
         _event(MLB_IMMINENT_ID, S_MLB, 2.0),
         _event(TENNIS_NEAR_ID, S_TENNIS, 6.0),
         _event(TENNIS_FAR_ID, S_TENNIS, 20.0),
+        _event(EUROPA_ID, S_EUROPA, 20.0),
     ]
 
 
-def _conditions(now=NOW, marquee=True):
-    """The predicate the route builds — the SAME function, not a copy of it."""
+def _conditions(now=NOW, marquee=True, keys=MARQUEE_UPCOMING_SPORT_KEYS):
+    """The predicate the route builds — the SAME function, not a copy of it.
+
+    ``keys`` is a parameter only so a test can hand it the WRONG authority and
+    watch the Europa League slate disappear; the route has one answer.
+    """
     return candidate_window_conditions(
         now=now,
         live_start_cutoff=now + timedelta(hours=1),
@@ -124,7 +137,7 @@ def _conditions(now=NOW, marquee=True):
             if marquee
             else None
         ),
-        marquee_sport_keys=MY_STUFF_ALLOWED_SPORT_KEYS if marquee else (),
+        marquee_sport_keys=keys if marquee else (),
     )
 
 
@@ -135,10 +148,8 @@ def engine():
     return eng
 
 
-def _admitted(session, conditions, marquee=True):
-    stmt = event_candidate_ids(
-        conditions, MY_STUFF_ALLOWED_SPORT_KEYS if marquee else ()
-    )
+def _admitted(session, conditions, marquee=True, keys=MARQUEE_UPCOMING_SPORT_KEYS):
+    stmt = event_candidate_ids(conditions, keys if marquee else ())
     return {r[0] for r in session.execute(stmt).all()}
 
 
@@ -169,6 +180,65 @@ def test_the_defect_reproduces_without_the_marquee_arm(engine):
     assert not {
         e for e in admitted if e in (NFL_ID, MLB_ID, TENNIS_FAR_ID)
     }
+
+
+def test_the_europa_league_slate_is_reachable(engine):
+    """The second half of the reader's sentence, and the repair of CERT-3006.
+
+    The issue names four missing slates: the NFL game, the MLB slate, eight WNBA
+    games and TWELVE EUROPA LEAGUE FIXTURES. The first presentation carried the
+    first three and left the fourth exactly where it was, because it scoped the
+    widening to `MY_STUFF_ALLOWED_SPORT_KEYS` — a deliberately narrow list that
+    answers "may a follow match this sport" (BR42/BR43) and has never contained
+    Europa League, Bundesliga, La Liga, Serie A, Ligue 1 or the majors.
+    """
+    with Session(engine) as s:
+        _seed(s, _slate())
+        admitted = _admitted(s, _conditions())
+    assert EUROPA_ID in admitted, "the 12-fixture Europa League card is still unreachable"
+
+
+def test_the_my_stuff_list_is_the_wrong_authority_and_would_lose_the_slate(engine):
+    """Red-first for the repair itself: the SAME corpus under the SAME window,
+    scoped by the list the first presentation used. The NFL game is carried
+    either way, which is precisely why this defect survived the first round of
+    guards — only a key outside the narrow list can see it."""
+    with Session(engine) as s:
+        _seed(s, _slate())
+        admitted = _admitted(
+            s,
+            _conditions(keys=MY_STUFF_ALLOWED_SPORT_KEYS),
+            keys=MY_STUFF_ALLOWED_SPORT_KEYS,
+        )
+    assert NFL_ID in admitted, "the narrow list was never wrong about the NFL"
+    assert EUROPA_ID not in admitted
+
+
+def test_the_marquee_authority_is_the_canonical_tier_table_not_a_hand_list():
+    """A second hand-maintained list is how the first presentation went wrong, so
+    the constant is the canonical `tier_12_sport_keys()` and this asserts the
+    identity — not a spelling of its contents, which would just be a third list.
+
+    Both directions, because the scoping is load-bearing in both: every sport a
+    reader opens the app for is in, and the long tail measured on production
+    (353 scheduled rows inside 36h, 320 of them these keys) stays out.
+    """
+    from app.utils.highlights import get_league_tier, tier_12_sport_keys
+
+    assert MARQUEE_UPCOMING_SPORT_KEYS == tier_12_sport_keys()
+    assert MY_STUFF_ALLOWED_SPORT_KEYS < MARQUEE_UPCOMING_SPORT_KEYS
+    for key in (
+        "soccer_uefa_europa_league", "soccer_germany_bundesliga",
+        "soccer_spain_la_liga", "soccer_italy_serie_a", "soccer_france_ligue_one",
+        "americanfootball_nfl", "baseball_mlb", "basketball_wnba",
+    ):
+        assert key in MARQUEE_UPCOMING_SPORT_KEYS, key
+        assert get_league_tier(key) <= 2, key
+    for key in (
+        "tennis_other", "soccer_other", "tennis_atp", "tennis_wta",
+        "baseball_other", "icehockey_liiga", "icehockey_sweden_allsvenskan",
+    ):
+        assert key not in MARQUEE_UPCOMING_SPORT_KEYS, key
 
 
 def test_the_widening_is_scoped_and_is_not_a_blanket_window(engine):
@@ -238,6 +308,29 @@ def test_a_flood_of_fixtures_cannot_cut_tomorrows_marquee_games(engine):
     assert NFL_ID in admitted
     assert MLB_ID in admitted
     assert MLB_IMMINENT_ID in admitted
+    # The ordering half of the CERT-3006 repair. Being ADMITTED by the window is
+    # not being SERVED: the Europa fixture is the furthest-out row in the pool, so
+    # under the wrong authority it ranks non-marquee and the flood cuts it right
+    # back out. The window and the priority must read the same list, and only a
+    # key outside the narrow one can tell whether they do.
+    assert EUROPA_ID in admitted, "admitted by the window, then cut by the quota"
+
+
+def test_the_wrong_authority_admits_the_europa_slate_and_then_cuts_it(engine):
+    """Red-first for that: the same flood, scoped by the My Stuff list.
+
+    This is the failure mode a window-only repair would have shipped — the row
+    reaches the pool and the reader still never sees it.
+    """
+    with Session(engine) as s:
+        _seed(s, _flooded_slate())
+        admitted = _admitted(
+            s,
+            _conditions(keys=MY_STUFF_ALLOWED_SPORT_KEYS),
+            keys=MY_STUFF_ALLOWED_SPORT_KEYS,
+        )
+    assert NFL_ID in admitted, "the narrow list was never wrong about the NFL"
+    assert EUROPA_ID not in admitted
 
 
 def test_the_quota_cuts_the_furthest_fixture_and_never_the_imminent(engine):
@@ -370,9 +463,48 @@ async def test_the_route_actually_passes_the_marquee_window(monkeypatch):
     assert seen["marquee_upcoming_cutoff"] == NOW + timedelta(
         hours=MARQUEE_UPCOMING_WINDOW_HOURS
     )
-    assert seen["marquee_sport_keys"] is MY_STUFF_ALLOWED_SPORT_KEYS
+    # The canonical authority, BY IDENTITY: the repair of CERT-3006 is a change
+    # of WHICH list the route hands over, and nothing else in this module can see
+    # that choice — the predicate is handed its keys by every other test here.
+    assert seen["marquee_sport_keys"] is MARQUEE_UPCOMING_SPORT_KEYS
+    assert "soccer_uefa_europa_league" in seen["marquee_sport_keys"]
     # The original window is passed alongside it, not replaced by it.
     assert seen["upcoming_cutoff"] == NOW + timedelta(hours=12)
+
+
+@pytest.mark.asyncio
+async def test_the_route_passes_the_same_authority_to_the_ordering(monkeypatch):
+    """The SECOND wiring point, which the first of these guards cannot see.
+
+    The route hands the key list to two places — the window predicate and the
+    quota's ordering — and a mutation that reverts only the ordering one left
+    every test in this module green, because they all call
+    ``event_candidate_ids`` with their own arguments and the guard above stops
+    at ``candidate_window_conditions``. So this one stops at the ordering call
+    and reads what the route actually passed. Two lists reaching two halves of
+    one decision is the shape of the defect this ship already has once.
+    """
+    import app.routes.feed as feed_mod
+
+    seen = {}
+
+    def _capture(where_clauses, marquee_sport_keys=()):
+        seen["keys"] = marquee_sport_keys
+        raise _StopHere
+
+    monkeypatch.setattr(feed_mod, "event_candidate_ids", _capture)
+
+    with pytest.raises(_StopHere):
+        await feed_mod._score_events(
+            db=None,
+            now=NOW,
+            sport_filter=None,
+            ctx=feed_mod.PersonalizationContext(),
+            my_teams_only=False,
+        )
+
+    assert seen["keys"] is MARQUEE_UPCOMING_SPORT_KEYS
+    assert "soccer_uefa_europa_league" in seen["keys"]
 
 
 @pytest.mark.asyncio
