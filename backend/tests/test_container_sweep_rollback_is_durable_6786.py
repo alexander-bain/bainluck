@@ -135,6 +135,40 @@ class TestAStoodDownPass:
             assert other not in summary["reason"]
 
 
+class TestWhyTheStopIsNeededAtAll:
+    """The other half of the proof: without the stop, the restore IS reverted.
+
+    `test_a_disabled_pass_opens_no_session` shows the stop works. On its own that
+    is only half an argument — it would be just as true of a switch nobody needed.
+    This shows the mechanism the switch exists to interrupt, so the pair is a
+    real demonstration that the rollback survives the next scheduled pass rather
+    than an assertion that it does.
+    """
+
+    def test_a_restored_row_re_enters_the_plan(self):
+        """The planner selects on the ABSENCE of the tag, which the undo creates.
+
+        `already_tagged_ids` is what removes a row from the work list. The
+        restore's whole job is to strip `provenance:duplicate-of:<id>` — so the
+        moment it succeeds, the row stops being "already tagged" and the very
+        next pass at :27 puts it straight back on the list and re-tags it. That
+        is the loop #6786's review caught, reproduced here in one assertion pair.
+        """
+        from app.tasks.polymarket_container_twin_sweep import already_tagged_ids
+
+        before_the_undo = {7: '["audience:us", "provenance:duplicate-of:9"]'}
+        assert already_tagged_ids(before_the_undo) == {7}
+
+        # exactly what scripts/restore_5821_container_twin_tags.py leaves behind:
+        # the sweep's one element removed, every other tag untouched.
+        after_the_undo = {7: '["audience:us"]'}
+        assert already_tagged_ids(after_the_undo) == set(), (
+            "the restored row is no longer excluded from the plan — so an "
+            "enabled beat re-tags it within the hour, which is why the rollback "
+            "is a SEQUENCE and not a single command"
+        )
+
+
 class TestAFailedBackupReadIsNotAnAbsence:
     """Gap 2: `is_missing_backup_table` answers only for a real 42P01."""
 
