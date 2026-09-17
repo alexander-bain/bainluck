@@ -534,6 +534,73 @@ composition_scan () {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# NEGATED CLOSING KEYWORDS — there is no such thing as one, and GitHub is the
+# only reader whose opinion counts.
+#
+# MEASURED SPECIMEN, 2026-09-17. The desk wrote `DO NOT CLOSE #6720 ON THIS
+# MERGE.` into the body of merge commit `8834e8963`, at the lane's explicit
+# request, because the issue's second question was still open. GitHub's parser
+# does not read English: it matched `CLOSE #6720`, and the issue's own timeline
+# carries `closed 10:41:36Z commit=8834e8963`, `reopened 10:43:37Z`. The
+# sentence written to keep an issue open is the sentence that closed it.
+#
+# THE STRUCTURAL GAP, which is why this is a gate and not a habit. The PR body
+# and the merge-commit body are DIFFERENT TEXTS. A lane can check
+# `closingIssuesReferences` on its own PR, find it empty, and still be wrong,
+# because the closing text is written by the desk afterwards — at merge, under
+# a clock, into a `-m` argument no gate has ever looked at. There is exactly one
+# moment at which that text exists and is still editable, and it is between the
+# local merge and the push.
+#
+# THE CLASS IS NOT NEW. lane1 scanned 400 master commits and found one, which
+# read as a fresh trap. Over the whole of master — 11,607 commits — the scan
+# below finds THIRTEEN, from `Do not close #2222` onward, and every one of them
+# closed the issue it was protecting. A rate of roughly one a fortnight is not a
+# trap, it is a backlog nobody could see, because the evidence (an issue closed
+# and quietly reopened minutes later) never lands in the same place twice.
+#
+# WHAT IT MATCHES. A negator, then up to two intervening words, then one of
+# GitHub's nine closing keywords, then the reference. The nine are the whole
+# list: `closing #1` closes nothing, `closed #1` closes. The intervening words
+# are what catch `NOT the fix #2690` — GitHub needs only `fix #2690`, so the
+# words between the negation and the keyword are the author's, not the parser's.
+#
+# THE ONE FALSE POSITIVE IT ACCEPTS is a sentence like "not only fixes #1 but
+# also", where the author does mean to close. That reading is stated in the
+# output rather than engineered away: a negator this near a live keyword is
+# worth one glance, and the alternative — parsing intent — is how you get a
+# scan that is confidently wrong in the direction of silence.
+# ─────────────────────────────────────────────────────────────────────────────
+CLOSING_NEGATORS="not|never|no|without|don'?t|doesn'?t|didn'?t|isn'?t|aren'?t|wasn'?t|weren'?t|won'?t|wouldn'?t|shouldn'?t|mustn'?t|can'?t|cannot"
+# GitHub's nine, and only the nine.
+CLOSING_KEYWORDS="close[sd]?|fix(e[sd])?|resolve[sd]?"
+# The reference: `#123`, or the cross-repo `owner/repo#123` form, which closes
+# just as hard and is what a desk note quoting another repo would reach for.
+CLOSING_REFERENCE="(#|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#)[0-9]+"
+CLOSING_NEGATED_RE="(${CLOSING_NEGATORS})[[:space:]]+([A-Za-z'-]+[[:space:]]+){0,2}(${CLOSING_KEYWORDS})[[:space:]]*:?[[:space:]]+${CLOSING_REFERENCE}"
+
+CLOSE_VERDICT=""; CLOSE_DETAIL=""
+# closing_keyword_scan <text> — sets CLOSE_VERDICT to clean|hit and CLOSE_DETAIL
+# to the phrases found. It takes TEXT, not a ref or a path, so that both entry
+# points (a sha's commit bodies, and a message about to be pushed) run the
+# identical scanner; two instruments answering one question is how they come to
+# disagree.
+closing_keyword_scan () {
+  local text="$1"
+  local hits
+  # `grep -o` exits 1 on no match, which under `pipefail` would take the whole
+  # assignment down; the count is read from the RESULT, never from the exit.
+  hits="$(printf '%s\n' "$text" | $GREP -oiE "$CLOSING_NEGATED_RE" 2>/dev/null | sort -fu | tr '\n' '|' | sed 's/|$//; s/|/ · /g')"
+  if [ -z "$hits" ]; then
+    CLOSE_VERDICT=clean
+    CLOSE_DETAIL="no negated closing keyword"
+  else
+    CLOSE_VERDICT=hit
+    CLOSE_DETAIL="$hits"
+  fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # The verdict vocabulary. Defined HERE, above `--selftest`, rather than beside
 # the gate run that uses it: a helper defined after the selftest block cannot be
 # called by it, and "the summary line reports the right number" is a claim that
@@ -774,9 +841,71 @@ ci_runs_scan () {
 if [ -z "$SHA_IN" ]; then
   echo "usage: tools/merge-gate.sh <sha> [<repo-path>]" >&2
   echo "       tools/merge-gate.sh --orphans [--all] [<repo-path>]" >&2
+  echo "       tools/merge-gate.sh --lint-body [<ref-or-file>] [<repo-path>]" >&2
   echo "       tools/merge-gate.sh --selftest" >&2
   VERDICT_PRINTED=1   # a usage message is its own answer; no verdict is owed
   exit 2
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# --lint-body — the one moment the merge body exists and is still editable.
+#
+# The desk's sequence is merge locally, gate, push. `--lint-body` goes between
+# the second and the third, with the merge commit sitting in the working tree
+# where `git commit --amend` still reaches it. After the push the text is a fact
+# about production and the only remedy left is reopening an issue by hand and
+# hoping someone notices it was ever shut.
+#
+#   tools/merge-gate.sh --lint-body            # HEAD, i.e. the merge just made
+#   tools/merge-gate.sh --lint-body /tmp/msg   # a message not yet committed
+#
+# It takes a REF or a FILE and tries them in that order, because the answer must
+# never depend on a guess: if the argument is neither, it exits 2 naming both
+# attempts rather than linting an empty string and reporting it clean. An empty
+# scan and a clean scan are the same output and opposite facts (gotcha #53).
+#
+# Exit 1, not a warning, and this is the one place it should be. The single-sha
+# run below only WARNS about the same phrases, because there the text is frozen
+# inside a certed sha and rewording it mints a new sha, which kills the token
+# (notice 28). Here nothing is frozen, so a refusal costs one `--amend`.
+# ─────────────────────────────────────────────────────────────────────────────
+if [ "$SHA_IN" = "--lint-body" ]; then
+  VERDICT_PRINTED=1   # this mode prints its own one-line verdict
+  lb_target="${2:-HEAD}"
+  REPO_PATH="${3:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+  lb_text=""
+  lb_source=""
+  if lb_text="$(git -C "$REPO_PATH" log -1 --format=%B "${lb_target}^{commit}" 2>/dev/null)" && [ -n "$lb_text" ]; then
+    lb_source="commit $(git -C "$REPO_PATH" rev-parse --short "${lb_target}^{commit}" 2>/dev/null) in $REPO_PATH"
+  elif [ -r "$lb_target" ]; then
+    lb_text="$(cat "$lb_target")"
+    lb_source="file $lb_target"
+  else
+    echo "  --lint-body: '$lb_target' is neither a commit in $REPO_PATH nor a readable file." >&2
+    echo "  Not linting an empty string and calling it clean — say which you meant." >&2
+    exit 2
+  fi
+
+  echo "merge-gate --lint-body"
+  echo "  source=$lb_source"
+  closing_keyword_scan "$lb_text"
+  if [ "$CLOSE_VERDICT" = clean ]; then
+    echo "  VERDICT: CLEAN — no negated closing keyword in this body."
+    exit 0
+  fi
+  echo "  FOUND: $CLOSE_DETAIL"
+  echo
+  echo "  GitHub has no negated closing keyword. It reads the keyword and the"
+  echo "  reference and closes the issue; the word 'not' in front of it changes"
+  echo "  nothing. On 2026-09-17 'DO NOT CLOSE #6720 ON THIS MERGE' in a merge"
+  echo "  body closed #6720 at 10:41:36Z."
+  echo
+  echo "  Reword before you push — put the reference out of the keyword's reach:"
+  echo "    'leaves issue 6720 OPEN — its second question is unanswered'"
+  echo "    'issue 6720 stays open (do not let this merge shut it)'"
+  echo "  If you DO mean to close it, this line is noise: say so in the offer."
+  echo "  VERDICT: STOP — reword the body, then re-run. 'git commit --amend' if it is already committed."
+  exit 1
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1667,6 +1796,74 @@ FIXEOF
      && printf '%s' \"\$_code\" | /usr/bin/grep -q 'stopq \"notice 32 check-runs\"' \
      && [ \$(printf '%s' \"\$_code\" | /usr/bin/grep -c 'stopq \"PR state\"') -eq 2 ]"
 
+  # ── closing keywords ───────────────────────────────────────────────────────
+  # The positive cases are the measured ones. The specimen first: this exact
+  # sentence, in merge commit 8834e8963, closed the issue it was written to
+  # protect. If nothing else in this block survives, this must.
+  check "closing keywords: the measured specimen is caught" \
+    "closing_keyword_scan 'DO NOT CLOSE #6720 ON THIS MERGE.'; [ \"\$CLOSE_VERDICT\" = hit ]"
+  # GitHub needs only `fix #2690`; the words the author put between the negation
+  # and the keyword are invisible to it. Two of master's thirteen read this way.
+  check "closing keywords: intervening words do not hide it ('NOT the fix #NNNN')" \
+    "closing_keyword_scan 'This is NOT the fix #2690 asked for.'; [ \"\$CLOSE_VERDICT\" = hit ]"
+  check "closing keywords: contraction negators are caught too" \
+    "closing_keyword_scan \"don't close #11\"; [ \"\$CLOSE_VERDICT\" = hit ] \
+     && closing_keyword_scan \"this won't resolve #12\" && [ \"\$CLOSE_VERDICT\" = hit ]"
+  # The cross-repo form closes just as hard, and is what a note quoting another
+  # repository reaches for.
+  check "closing keywords: the owner/repo#N form is caught" \
+    "closing_keyword_scan 'do not close alexander-bain/bainluck#123'; [ \"\$CLOSE_VERDICT\" = hit ]"
+  check "closing keywords: it reports the PHRASE, not a bare boolean" \
+    "closing_keyword_scan 'DO NOT CLOSE #6720 ON THIS MERGE.'; \
+     printf '%s' \"\$CLOSE_DETAIL\" | /usr/bin/grep -q '6720'"
+
+  # The negative cases are the ones that decide whether anyone keeps running it.
+  # A scan that fires on the house's own standard phrasing gets switched off,
+  # and then the positives above are worth nothing.
+  #
+  # `not a regression of #NNNN` is notice 51's template — the literal opening
+  # line the house writes on a follow-up issue. It must never trip.
+  check "closing keywords: notice 51's own template does not trip it" \
+    "closing_keyword_scan 'not a regression of #5669'; [ \"\$CLOSE_VERDICT\" = clean ]"
+  # `closing` is NOT one of GitHub's nine. A scan that matched it would be
+  # reporting a hazard that does not exist, which is the same disease as missing
+  # one — both teach the reader the output is noise.
+  check "closing keywords: 'closing #N' is clean, because GitHub does not close on it" \
+    "closing_keyword_scan 'not closing #99 in this pass'; [ \"\$CLOSE_VERDICT\" = clean ]"
+  check "closing keywords: a negator with no reference after the keyword is clean" \
+    "closing_keyword_scan 'this does not close the question yet'; [ \"\$CLOSE_VERDICT\" = clean ]"
+  # The whole point is the NEGATION. A deliberate close is the normal case and
+  # must stay silent, or the gate warns on most merges and is tuned out.
+  check "closing keywords: a plain deliberate 'Closes #N' is clean" \
+    "closing_keyword_scan 'Closes #4321'; [ \"\$CLOSE_VERDICT\" = clean ]"
+  check "closing keywords: an empty body is clean and does not error" \
+    "closing_keyword_scan ''; [ \"\$CLOSE_VERDICT\" = clean ]"
+
+  # Structural, and this is the load-bearing pair. The two entry points must run
+  # the SAME scanner — a second inline regex is how they come to disagree — and
+  # they must carry DIFFERENT verdicts, because the text is frozen in one and
+  # editable in the other. Flipping either is the regression.
+  #
+  # EVERY PATTERN BELOW IS ANCHORED AT LINE START, and that is not tidiness.
+  # These scan the file the assertions live in, so an unanchored pattern matches
+  # ITS OWN ASSERTION LINE and passes no matter what the live code says. Written
+  # unanchored first, three of these four were vacuous, and the one that was not
+  # was saved only by the backslashes its quoting happened to need. Measured:
+  # rewriting `CLOSE_POP="TIP COMMIT ONLY…"` to `"tip only"` left the selftest
+  # GREEN. The live lines are indented two spaces and begin with the code; no
+  # assertion line does.
+  check "closing keywords: both entry points call the one scanner" \
+    "[ \$(printf '%s' \"\$_code\" | /usr/bin/grep -c '^ *closing_keyword_scan \"') -eq 2 ]"
+  check "closing keywords: the frozen-text run WARNs (rewording a certed sha kills its token)" \
+    "printf '%s' \"\$_code\" | /usr/bin/grep -q '^  warn \"closing keywords\"'"
+  check "closing keywords: --lint-body, where the text is still editable, exits 1" \
+    "printf '%s' \"\$_code\" | /usr/bin/grep -q '^  echo \"  VERDICT: STOP — reword the body'"
+  # gotcha #53: an empty scan and a clean scan print the same word. When the
+  # commit range is unavailable the population shrinks to one commit, and the
+  # row has to say so rather than report a tip-only clean as branch-wide.
+  check "closing keywords: a missing commit range names its shrunken denominator" \
+    "printf '%s' \"\$_code\" | /usr/bin/grep -q '^  CLOSE_POP=\"TIP COMMIT ONLY'"
+
   # The summary cannot be tested by running this mode (it would recurse), so it
   # is pinned to the line it guards — the failure being guarded is someone
   # deleting the note and leaving a reduced-coverage run printing a bare PASS.
@@ -2377,6 +2574,43 @@ case "$COMP_VERDICT" in
     echo "           'git -C $REPO_PATH fetch --unshallow' once makes this gate answerable for good."
     ;;
 esac
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The branch's OWN commit bodies, scanned for a negated closing keyword.
+#
+# The population is every commit this merge would land — `$MASTER..$SHA`, not
+# the tip — because GitHub closes on any of them, and a lane's fourth commit is
+# exactly where a "do not close" note gets written and forgotten.
+#
+# A WARN, deliberately, and it is the weaker of this script's two answers about
+# the same phrase. The text here is frozen inside a sha someone has certed;
+# rewording it mints a new sha and kills the token (notice 28), which is a
+# ruinous price for a sentence. So the desk is TOLD, merges, and reopens the
+# issue — which is what happened with #6720 anyway, two minutes later, by hand.
+# The STOP lives in `--lint-body`, where the text is still editable and the
+# remedy is one `--amend`. Same scanner, two costs, two verdicts.
+# ─────────────────────────────────────────────────────────────────────────────
+CLOSE_RANGE_N="$(git -C "$REPO_PATH" rev-list --count "$MASTER..$SHA" 2>/dev/null || echo 0)"
+if [ "${CLOSE_RANGE_N:-0}" -gt 0 ]; then
+  CLOSE_TEXT="$(git -C "$REPO_PATH" log --format=%B "$MASTER..$SHA" 2>/dev/null)"
+  CLOSE_POP="$CLOSE_RANGE_N commit(s) in $(git -C "$REPO_PATH" rev-parse --short "$MASTER")..$(git -C "$REPO_PATH" rev-parse --short "$SHA")"
+else
+  # No range is a shallow/unreachable-base story, not an empty branch: ancestry
+  # above already proved this sha is NOT on master. Scan the tip and SAY that
+  # the denominator shrank, rather than reporting a one-commit clean as if it
+  # covered the branch.
+  CLOSE_TEXT="$(git -C "$REPO_PATH" log -1 --format=%B "$SHA" 2>/dev/null)"
+  CLOSE_POP="TIP COMMIT ONLY — no commit range against master in this clone (shallow?), so the rest of the branch was NOT scanned"
+fi
+closing_keyword_scan "$CLOSE_TEXT"
+if [ "$CLOSE_VERDICT" = clean ]; then
+  pass "closing keywords" "no negated closing keyword — $CLOSE_POP"
+else
+  warn "closing keywords" "GitHub WILL close on merge: $CLOSE_DETAIL — there is no negated closing keyword ($CLOSE_POP)"
+  echo "        └─ frozen in a certed sha, so this is a WARN, not a STOP: rewording mints a new sha and kills the token."
+  echo "           Merge if it is otherwise green, then REOPEN the issue — and check your own merge body first:"
+  echo "           tools/merge-gate.sh --lint-body   (run it after the local merge, before the push)"
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Does it force a Heroku release? Not a gate — a routing fact. Notice 10: a

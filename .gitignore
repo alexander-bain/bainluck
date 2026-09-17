@@ -224,6 +224,29 @@ artifacts/cal-p989/bank-cursor.jsonl
 # Deliberate evidence can still be committed with `git add -f`.
 backend/artifacts/
 
+# Measurement scratch dropped straight into `backend/` — the same CWD accident as
+# the block above, one directory shallower, and the one that actually costs merge
+# cycles. A probe run from a `cd backend` shell writes its JSON beside the code,
+# nothing here caught it, and it rides the next offer: live/348 was bounced at
+# 09:05Z on 2026-09-17 for exactly this (four scratch json files under an offer
+# that said three files), live/349 hit it again on the re-offer, and int409
+# recorded it as "still true and still unowned". A bounce costs the desk a merge
+# cycle and the lane a session, for a file nobody meant to commit.
+#
+# NON-RECURSIVE, and that is the whole safety argument. A pattern containing a
+# slash is anchored, and `*` does not cross one, so this reaches files sitting
+# DIRECTLY in `backend/` and nothing below it. Every legitimate json in this tree
+# is at least one directory deeper — `backend/tests/evals/fixtures` (128),
+# `backend/tests/fixtures` (68), `backend/scripts/evals` (43), `backend/app/data`
+# (8), `backend/scripts` (3), `backend/data/tournament_registers` (2),
+# `backend/tests` (1) — 253 tracked json files, and the count of tracked files
+# directly in `backend/` with this extension is ZERO. So this ignores no tracked
+# file today and cannot start: a fixture that belongs to the app belongs in a
+# package, not at the root of one.
+#
+# A deliberate one still goes in with `git add -f`, like every other block here.
+/backend/*.json
+
 # Watchman cookies (#1121 follow-up, 2026-09-14). Watchman drops zero-byte
 # `.watchman-cookie-<host>-<pid>-<n>` probe files into whatever directory it is
 # asked to watch, and they live exactly as long as the query. They are NOT
