@@ -816,6 +816,62 @@ pr_closing_scan () {
 SELF_CLOSING_RE="(^|[^A-Za-z])(${CLOSING_KEYWORDS})[[:space:]]*:?[[:space:]]+${CLOSING_REFERENCE}"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# WHAT THE MERGE BODY ITSELF DECLARES — the second half of int416's routing, and
+# the shape `closing_keyword_scan` above is deliberately blind to.
+#
+# THE MEASURED DEFECT, FOUR DESKS DEEP. That scanner reads only the NEGATED
+# pattern, because its whole subject is the author who wrote a negation and got
+# the opposite. But GitHub does not need a negation, and it does not need
+# intent: on 2026-09-17 int416 shut live's #6739 by QUOTING the phrase in a merge
+# body while explaining this very trap, then re-opened it 90 seconds later. The
+# same day, PR #6768's body quoted the gate's own sample output and linked the
+# same issue. Nobody in either case wrote a closing directive; they wrote ABOUT
+# one. A paragraph explaining the hazard is itself a paste destination.
+#
+# ⭐ WHY THIS IS A ROW AND NOT A VERDICT, WHICH IS THE WHOLE DESIGN DECISION.
+# The obvious build — point the body lint at `SELF_CLOSING_RE` and stop on a hit
+# — was measured against the band below and is WRONG. `closing keywords: a plain
+# deliberate 'Closes #N' is clean` is not an oversight; it is load-bearing, and
+# its comment says why: "A deliberate close is the normal case and must stay
+# silent, or the gate warns on most merges and is tuned out." A desk closing the
+# issue it just fixed is the overwhelming majority of merge bodies. A gate that
+# fires on all of them is switched off, and then the negated rows above — the
+# ones that catch the real defect — are worth nothing.
+#
+# There is also no textual way to tell a quoted explanation from genuine intent,
+# and inventing a "looks quoted" heuristic would be guessing at the one thing
+# that decides the answer. So this does not guess and does not judge: it states
+# what the push will shut, beside the row that states what the PR declares, and
+# lets the reader compare two numbers. A body declaring an issue its PR does not
+# is exactly int416's case, and it is visible at a glance without a single new
+# warning on a normal merge.
+#
+# The detail string carries BARE NUMBERS — no `#`, no keyword within reach of a
+# reference — for the reason spelled out at `pr_closing_scan` above: this row
+# gets pasted into PR bodies, merge bodies, certs and ledger rows, and the first
+# draft of that one was itself a closing directive. The same guard covers this.
+BDECL_VERDICT=""; BDECL_DETAIL=""
+body_declares_scan () {
+  local text="$1" nums
+  # `grep -o` exits 1 on no match, which under `pipefail` would take the whole
+  # assignment down; the count is read from the RESULT, never from the exit.
+  # The second `grep` reduces each match to its trailing number, which also
+  # de-fangs the owner/repo#N form (a repository name may contain digits, so
+  # the pattern is anchored at the end rather than merely numeric).
+  nums="$(printf '%s\n' "$text" \
+    | $GREP -oiE "$SELF_CLOSING_RE" 2>/dev/null \
+    | $GREP -oE '[0-9]+$' 2>/dev/null \
+    | sort -nu | tr '\n' ' ' | sed 's/ *$//; s/ / · /g')"
+  if [ -z "$nums" ]; then
+    BDECL_VERDICT=none
+    BDECL_DETAIL="declares nothing — no keyword adjacent to a reference in this body"
+  else
+    BDECL_VERDICT=found
+    BDECL_DETAIL="declares $nums — the push WILL shut them, whether or not the sentence meant to. Cross-check against what the PR declares: a number here that the PR does not declare is the accident this row exists for"
+  fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # notice 28's CI row — WHICH row (lane1/275). One sha can carry MORE THAN ONE
 # CI run: a re-run after master was fixed under it, or the close+reopen that
 # `ci.yml`'s own header comment prescribes for a PR that got no run at all. The
@@ -953,6 +1009,11 @@ if [ "$SHA_IN" = "--lint-body" ]; then
   echo "merge-gate --lint-body"
   echo "  source=$lb_source"
   closing_keyword_scan "$lb_text"
+  # Printed BEFORE the verdict and on BOTH paths, because it is the half a clean
+  # verdict used to hide: a body with no negation can still shut an issue nobody
+  # intended, and this mode is the last moment the text can be changed for free.
+  body_declares_scan "$lb_text"
+  echo "  declares: $BDECL_DETAIL"
   if [ "$CLOSE_VERDICT" = clean ]; then
     echo "  VERDICT: CLEAN — no negated closing keyword in this body."
     exit 0
@@ -1998,6 +2059,66 @@ FIXEOF
   check "closing keywords: a missing commit range names its shrunken denominator" \
     "printf '%s' \"\$_code\" | /usr/bin/grep -q '^  CLOSE_POP=\"TIP COMMIT ONLY'"
 
+  # ── what the body itself declares (int416's second shape) ──────────────────
+  # THE TWO MEASURED SPECIMENS OF 2026-09-17, both of which the negated scanner
+  # above reads as CLEAN, which is the entire reason this exists.
+  check "body declares: the quoted-explanation shape is caught (int416's, 4th desk)" \
+    "body_declares_scan 'I shut it by writing close: #6739 in the merge body.'; [ \"\$BDECL_VERDICT\" = found ]"
+  check "body declares: and the negated scanner calls that very text CLEAN — the gap is real" \
+    "closing_keyword_scan 'I shut it by writing close: #6739 in the merge body.'; [ \"\$CLOSE_VERDICT\" = clean ]"
+  # The deliberate close is REPORTED here while staying CLEAN above. Both halves
+  # asserted together: this row is the one that would have been deleted by
+  # anyone who read the two as contradictory.
+  check "body declares: a deliberate close is reported here, yet stays clean for the verdict" \
+    "body_declares_scan 'Closes #4321'; [ \"\$BDECL_VERDICT\" = found ] \
+     && closing_keyword_scan 'Closes #4321' && [ \"\$CLOSE_VERDICT\" = clean ]"
+  # Every reference, deduped and numerically sorted, pinned as an EXACT prefix —
+  # a `grep -q '12'` here would also pass on '123' or on a stray '12' anywhere
+  # in the sentence, which is the substring trap notice 32 was amended for.
+  check "body declares: every reference is reported BY NUMBER, deduped and sorted" \
+    "body_declares_scan 'fixes #90, closes #12, resolves #90'; \
+     case \"\$BDECL_DETAIL\" in 'declares 12 · 90 —'*) true;; *) false;; esac"
+  # A repository name may carry digits, so the number is taken from the END of
+  # the match. `bainluck2#123` must report 123, never the name's own 2.
+  check "body declares: the owner/repo#N form reports the issue number, not the repo's digits" \
+    "body_declares_scan 'closes alexander-bain/bainluck2#123'; \
+     case \"\$BDECL_DETAIL\" in 'declares 123 —'*) true;; *) false;; esac"
+  # The negatives, held to the same bar as the scanner above: a row that fires
+  # on the house's standard phrasing is a row that gets deleted.
+  check "body declares: notice 51's own template declares nothing" \
+    "body_declares_scan 'not a regression of #5669'; [ \"\$BDECL_VERDICT\" = none ]"
+  check "body declares: 'closing #N' declares nothing, because GitHub does not act on it" \
+    "body_declares_scan 'closing #99 in this pass'; [ \"\$BDECL_VERDICT\" = none ]"
+  check "body declares: an empty body declares nothing and does not error" \
+    "body_declares_scan ''; [ \"\$BDECL_VERDICT\" = none ]"
+  # ⭐ THIS ROW GETS PASTED, SO IT MUST NOT BE A CLOSING DIRECTIVE EITHER. Both
+  # details, against the LIVE strings — the `pr_closing_scan` band above proves
+  # this guard can fail, on the exact text that caused it.
+  check "body declares: the FOUND row is not itself a closing directive when quoted" \
+    "body_declares_scan 'Closes #4321'; \
+     ! printf '%s' \"\$BDECL_DETAIL\" | /usr/bin/grep -qiE \"\$SELF_CLOSING_RE\""
+  check "body declares: the NONE row is not itself a closing directive when quoted" \
+    "body_declares_scan ''; \
+     ! printf '%s' \"\$BDECL_DETAIL\" | /usr/bin/grep -qiE \"\$SELF_CLOSING_RE\""
+
+  # Structural. Anchored at line start for the reason given above — unanchored,
+  # each of these matches its own assertion line and is vacuous from birth.
+  #
+  # ⭐ THE COUNTS ROW IS THE LOAD-BEARING ONE. This must stay a `----` row: a
+  # `warn` here would fire on the majority of merges (a deliberate close is the
+  # normal case), the desk would tune the gate out, and the negated rows that
+  # catch the real defect would go with it. It would also re-score every
+  # unchanged sha, so a re-gate would read as a regression against its ledger.
+  check "body declares: the gate row is informational — it moves no stop/warn count" \
+    "[ \$(printf '%s' \"\$_code\" | /usr/bin/grep -c '^echo \"  ----  commit body declares') -eq 1 ] \
+     && [ \$(printf '%s' \"\$_code\" | /usr/bin/grep -cE '^ *(warn|stop|stopq|pass) \"commit body declares\"') -eq 0 ]"
+  check "body declares: both entry points call the one scanner (the gate and --lint-body)" \
+    "[ \$(printf '%s' \"\$_code\" | /usr/bin/grep -cE '^ *body_declares_scan \"') -eq 2 ]"
+  # --lint-body prints it on BOTH paths, and the clean path is the one that
+  # matters: that is where a body with no negation used to leave silently.
+  check "body declares: --lint-body prints it before the verdict, so a CLEAN body still shows it" \
+    "printf '%s' \"\$_code\" | /usr/bin/grep -q '^  echo \"  declares: \$BDECL_DETAIL\"'"
+
   # The summary cannot be tested by running this mode (it would recurse), so it
   # is pinned to the line it guards — the failure being guarded is someone
   # deleting the note and leaving a reduced-coverage run printing a bare PASS.
@@ -2784,6 +2905,11 @@ else
   echo "           Merge if it is otherwise green, then REOPEN the issue — and check your own merge body first:"
   echo "           tools/merge-gate.sh --lint-body   (run it after the local merge, before the push)"
 fi
+# A `----` row, not a pass/warn: see the design note at `body_declares_scan`.
+# It must not move the stop/warn counts, because every gate table in the ledger
+# quotes them and a row that re-scores an unchanged sha reads as a regression.
+body_declares_scan "$CLOSE_TEXT"
+echo "  ----  commit body declares      $BDECL_DETAIL ($CLOSE_POP)"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Does it force a Heroku release? Not a gate — a routing fact. Notice 10: a
