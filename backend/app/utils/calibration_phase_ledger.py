@@ -221,6 +221,20 @@ CHECKPOINT_REASON_ABSENT = "absent"
 CHECKPOINT_REASON_READ_FAILED = "read_failed"
 CHECKPOINT_REASON_LEASE_HELD = "lease_held_by_other"
 
+# Ledger write outcomes — the vocabulary of ``PhaseLedger.ledger_write`` and of
+# ``save_phase_ledger``'s return value. ``ok`` and ``error`` are the two this
+# rail has always had; the third is #6599's third site.
+LEDGER_WRITE_OK = "ok"
+LEDGER_WRITE_ERROR = "error"
+#: The write was DECLINED, not attempted and not failed: the prior row could not
+#: be read, and the payload is a fold onto that prior. Its own word rather than
+#: ``error`` because the two are opposite operational stories — ``error`` is a
+#: write we tried and lost, this is a write we refused in order to keep the bank
+#: intact — and because a reason string with no reader is how the second cause
+#: inside one word goes unnoticed (the checkpoint's two REFUSEs are the
+#: precedent). ``health_for`` needs nothing new: it asks ``!= "ok"``.
+LEDGER_WRITE_DECLINED = "declined_unreadable_prior"
+
 # Health verdicts (lowercase, matching the corpus's ``health.verdict``).
 GREEN = "green"
 UNKNOWN = "unknown"
