@@ -38,6 +38,47 @@ on:
   push:
     branches: [master]
 
+# SUPERSEDED PULL-REQUEST SHAS STOP HOLDING RUNNERS. NOTHING ELSE CHANGES.
+#
+# Measured 2026-09-17 14:07-15:15Z: twelve CI runs in 35 minutes against the
+# account's hosted-runner cap. An uncongested run took 15m25s; the phone PR
+# (#6744) took 40m11s, of which ~29 minutes was waiting for a runner. One PR in
+# that burst was pushed three times in ten minutes and all three shas ran the
+# full ~82 runner-minutes, though only the last could ever be merged.
+#
+#   * pull_request: one group per PR NUMBER. A newer sha on the same PR cancels
+#     the older sha's run. The head sha - the only one the integrator may merge
+#     - is always the survivor, and it still runs every job.
+#   * push (master): the group is the RUN ID, which no other run shares, and
+#     `cancel-in-progress` evaluates false. A master run is therefore never
+#     cancelled and never held pending by this block: a concurrency group keeps
+#     at most ONE pending run and drops the rest, so master must never share
+#     one. Release serialization stays where it was, on the `deploy` job.
+#   * re-run: keeps its run id, so a master re-run is still alone in its group.
+#     Re-running an OLD-sha PR run would cancel that PR's head-sha run - re-run
+#     the head sha's run, never an older one.
+#
+# THE ONE ACCEPTED HAZARD, and why it is a rule here instead of a setting.
+# That last line is operational because the obvious fix only half-works. Gating
+# `cancel-in-progress` on `github.run_attempt` would spare an IN-PROGRESS head
+# run, but a group holds exactly ONE pending run and a newly queued run displaces
+# the previously pending one no matter what this flag says - the same asymmetry
+# the `deploy` job's own concurrency comment records further down. On the burst
+# days that motivated this change most of a run's life is spent pending, so the
+# half-fix would drop the very runs it appears to protect while reading as
+# safety. The cost of the hazard is bounded: the desk merges on exact-sha CI
+# (notice 28), so a cancelled head run means the gate finds no successful run and
+# REFUSES. It fails closed - a wasted re-run, never a bad merge.
+#
+# FOR THE DESK: a lane that pushes again after offering sha X cancels X's run, so
+# the offer must move to the new head; re-gate the new sha rather than re-running
+# X. This is the one behaviour change merging this produces.
+#
+# Guarded by backend/tests/test_ci_supersede_concurrency.py.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # #5007 (THRU-H) — does this candidate need the backend jobs at all?
   #
