@@ -128,6 +128,13 @@ SPORT_AFFINITY_MAPPING: dict[str, list[str]] = {
     "boxing": ["boxing_boxing"],
     "cricket": ["cricket_icc_world_cup", "cricket_test_match"],
     "rugby": ["rugbyleague_nrl", "rugbyunion_six_nations"],
+    # `aussierules_afl` alone would cover the other two by the prefix fallback in
+    # `_lookup_sport_affinity`; all three are named because this dict is also the
+    # REVERSE map's source (`SPORT_KEY_TO_CATEGORY`), and that lookup is exact —
+    # a backend key missing from here is a stored affinity the preferences
+    # endpoint silently declines to serve back. Keys per `utils/sport_keys.py`
+    # plus the live `aussierules_aflw` (#6671).
+    "aussierules": ["aussierules_afl", "aussierules_aflw", "aussierules_other"],
     "motorsport": ["motorsport_formula1"],
     "esports": ["esports_lol", "esports_csgo", "esports_dota2", "esports_valorant"],
     # --- Beyond Sports (prediction market categories) ---
@@ -154,6 +161,18 @@ for category, keys in SPORT_AFFINITY_MAPPING.items():
     else:
         for key in keys:
             SPORT_KEY_TO_CATEGORY[key] = category
+
+# A client key that reached `_expand_sport_affinities` before it had a mapping was
+# passed through VERBATIM (the unrecognised-key branch below) and is sitting in
+# `users.sport_affinities` under its own name. This lookup is exact, so adding the
+# mapping alone repairs only the NEXT save and is inert for every reader who
+# already made the choice — which is the entire population the repair is for.
+# Naming the stored key here is what makes it retroactive (#6671, CERT-2999).
+_PASS_THROUGH_STORED_KEYS: dict[str, str] = {
+    "aussierules": "aussierules",
+}
+for stored_key, category in _PASS_THROUGH_STORED_KEYS.items():
+    SPORT_KEY_TO_CATEGORY.setdefault(stored_key, category)
 
 
 def _expand_sport_affinities(frontend_affinities: dict[str, float]) -> dict[str, float]:
