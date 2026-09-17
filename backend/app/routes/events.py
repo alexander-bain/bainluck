@@ -62,6 +62,7 @@ from app.utils.event_completion import (
     is_retired_event_status,
     started_without_result,
 )
+from app.utils.draw_priced_winner import printable_away
 from app.utils.graded_card import rendered_duel_percents
 from app.utils.market_shape import (
     SHAPE_CONTAINER_MEMBER,
@@ -290,7 +291,10 @@ _PLACEHOLDER_TEAM_RE = re.compile(
 _SPREAD_DEEP_OTM_FLOOR = 0.02
 from app.utils.event_twin_fold import fold_twin_events
 from app.utils.kalshi_expiration_start import recover_kalshi_expiration_starts
-from app.utils.kalshi_occurrence_start import recover_kalshi_occurrence_starts
+from app.utils.kalshi_occurrence_start import (
+    loaded_sport_key,
+    recover_kalshi_occurrence_starts,
+)
 from app.utils.event_taxonomy import compute_event_tags, validate_tag
 from app.utils.game_state import normalize_live_game_state
 from app.utils.sport_keys import (
@@ -12693,6 +12697,17 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     # actually asking the page what it thinks will happen.
     agg_prob = compute_aggregate_probability(blend_view)
 
+    # #6238: read ONCE for every probability object this route serves, so the
+    # hero, the fallback, the opening line and the top-level pair cannot answer
+    # "does this sport price a draw" differently on one page. `loaded_sport_key`
+    # rather than `event.sport.key`: it is this repo's lazy-safe read of that
+    # relationship and it emits no IO. Both queries above eagerly load it, so
+    # this is the real key on every served row; if it ever were not, the answer
+    # is None, `sport_prices_a_draw` says False, and the payload is exactly what
+    # it is today — the failure direction is the status quo, never a withheld
+    # number on a sport nobody declared.
+    event_sport_key = loaded_sport_key(event)
+
     if latest_snapshots:
         # latest_snapshots already contains only the most recent per bookmaker
         all_latest_snapshots = latest_snapshots
@@ -12719,6 +12734,33 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         # fall back to bookmaker-only consensus if aggregate unavailable.
         hero_home_prob = agg_prob if agg_prob is not None else aggregated["home_probability"]
         hero_away_prob = round(1.0 - hero_home_prob, 6) if hero_home_prob is not None else aggregated["away_probability"]
+
+        # ── #6238: AND ON A THREE-OUTCOME WINNER MARKET THAT SECOND NUMBER IS
+        #    NOT THE AWAY TEAM'S PRICE ────────────────────────────────────────
+        #
+        # `1 − P(home)` is "the home team does not win", which in soccer is
+        # *away win OR draw*. Measured on production 2026-09-16 19:00 PDT, this
+        # very route, event 15298553 (Juventus v NEC Nijmegen): served
+        # `away_probability` 0.2063 over ten `bookmaker_odds[]` rows IN THE SAME
+        # RESPONSE whose mean away is 0.0740 — 2.79x, and 0 of the 10 book pairs
+        # sum above 0.97, so the away leg those rows carry is a real three-way
+        # price and only the pair above is fabricated. On 15298549 it reverses
+        # the favourite: Salzburg served at 0.6893 over a board pricing them
+        # 0.4203.
+        #
+        # The home leg is NOT the defect and is left exactly as it is: 0.7937
+        # here against the books' own de-vigged 0.7939 (#1011). Only the
+        # invented slot goes, and it goes BEFORE `rendered_duel_percents` rather
+        # than being nulled after it — that helper renders a non-pair
+        # independently, so withholding first leaves the home whole percent the
+        # number it always was and `away_rendered_percent` absent rather than a
+        # stale half of a complement.
+        #
+        # `printable_away` and not a `startswith("soccer")` here: the
+        # declaration is shared with both client halves that already withhold
+        # this figure (ux/1301 web, native #5271) and the reasoning lives with
+        # it, in `app/utils/draw_priced_winner.py`.
+        hero_away_prob = printable_away(hero_away_prob, hero_home_prob, event_sport_key)
 
         # #2085: the pair above is an exact complement BY CONSTRUCTION, so
         # rounding each side independently prints 101 whenever `home * 100` lands
@@ -12800,7 +12842,13 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     # Fallback: if no odds snapshots, use aggregate from alternative sources
     if "current_odds" not in response and agg_prob is not None:
         # #2085 site 2 — same derive, same 101, same fix as the snapshot path above.
-        _fb_away_prob = round(1.0 - agg_prob, 6)
+        # #6238 site 2 for the same reason: this arm serves a page with NO book
+        # rows at all, so the fabricated away is the only away number on it and
+        # nothing else in the payload contradicts it. Withheld here too, or the
+        # defect simply moves to the events the books have gone quiet on.
+        _fb_away_prob = printable_away(
+            round(1.0 - agg_prob, 6), agg_prob, event_sport_key
+        )
         _fb_away_pct, _fb_home_pct = rendered_duel_percents(_fb_away_prob, agg_prob)
         response["current_odds"] = {
             "home_probability": agg_prob,
@@ -12824,9 +12872,26 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     if event.opening_home_probability is not None and opening_consensus_has_frozen(
         event.commence_time, event.status, datetime.now(timezone.utc)
     ):
+        _opening_home_prob = float(event.opening_home_probability)
+        # #6238, and THIS OBJECT IS THE ONE THAT MOSTLY KEEPS ITS AWAY NUMBER.
+        # The stored pre-game consensus is de-vigged across the whole quoted
+        # board since #1011, so on soccer it sums to 0.68-0.94 with its home and
+        # the shortfall IS the draw — `away_is_the_complement` reads that pair
+        # as SOURCED and leaves it alone (ux measured 11 of 13 live soccer cards
+        # on 2026-09-16; production tonight has Levski at 0.3107/0.4216, sum
+        # 0.7323, kept). What this drops is the OTHER arm on the same line: the
+        # `round(1.0 - home, 4)` written when the column is null, which is the
+        # same fabrication as the hero's and is not saved by living inside a
+        # fallback. Two pairs in one response can answer this differently
+        # because they are two different objects, which is why the predicate
+        # asks about the pair in hand and not about the sport alone.
         response["opening_odds"] = {
-            "home_probability": float(event.opening_home_probability),
-            "away_probability": float(event.opening_away_probability) if event.opening_away_probability else round(1.0 - float(event.opening_home_probability), 4),
+            "home_probability": _opening_home_prob,
+            "away_probability": printable_away(
+                float(event.opening_away_probability) if event.opening_away_probability else round(1.0 - _opening_home_prob, 4),
+                _opening_home_prob,
+                event_sport_key,
+            ),
             # #5414: the DETAIL formatter served three of the five opening
             # columns and omitted exactly the two a "PRE-GAME" tile needs, while
             # the LIST formatter for the same object (`_format_event_summary`,
@@ -12887,7 +12952,30 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     _hero = resolve_hero(blend_view)
     if _hero is not None:
         response["hero_probability"] = _hero.home_probability
-        response["hero_probability_away"] = _hero.away_probability
+        # ── #6238: THE SAME WITHHOLD, AND IT STOPS AT `settled` ──────────────
+        #
+        # Two of `resolve_hero`'s three arms build the away side as `1 - home`
+        # (the blend arm literally, the opening arm when the stored away is
+        # null), so the top-level pair carries the hero's own copy of the
+        # fabrication — 0.2063 for NEC on 15298553, the same number
+        # `current_odds` served.
+        #
+        # 🔴 THE SETTLED ARM IS EXEMPT, AND NOT BECAUSE OF ITS ARITHMETIC. A
+        # settled hero is 1.0/0.0 — or 0.5/0.5 with `result="draw"`
+        # (`settled_hero`) — and every one of those pairs sums to exactly 1.0,
+        # so the predicate alone would read a RESULT as a fabricated forecast
+        # and delete the losing side of a finished soccer match. "Settled means
+        # settled" outranks this issue: a result is not a price and was never
+        # derived from the home number. The gate is therefore the hero's own
+        # `source` vocabulary, which exists to carry exactly this kind of
+        # distinction, and not a numeric test that cannot tell 0.0 "they lost"
+        # from 0.0 "we made it up".
+        _hero_away = _hero.away_probability
+        if _hero.source != "settled":
+            _hero_away = printable_away(
+                _hero_away, _hero.home_probability, event_sport_key
+            )
+        response["hero_probability_away"] = _hero_away
         response["hero_probability_source"] = _hero.source
         if _hero.settled_result is not None:
             response["hero_settled_result"] = _hero.settled_result
