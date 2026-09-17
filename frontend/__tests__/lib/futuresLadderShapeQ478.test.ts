@@ -110,13 +110,19 @@ describe("ladder ordering (lib/futuresLadder.ts)", () => {
     ]);
   });
 
-  test("🔴 a PRICE TIE keeps serve order — it must NOT be broken on outcome id", () => {
+  test("🔴 a PRICE TIE is never broken on outcome id", () => {
     // This is the assertion that caught a real bug in this queue's own first cut.
     // "Before April" and "Before July" are BOTH 1%, and their ids run
     //     1596640 = July, 1596641 = April
     // so tiebreaking on id (insertion order) renders JULY ABOVE APRIL — a
     // backwards timeline, on the exact market the defect is about. Insertion order
     // is not a fact about the ladder. Serve order at least claims to be one.
+    //
+    // #4568 moved WHAT breaks the tie — on a ladder whose rungs all parse as
+    // dates it is now the calendar, and only where the prices are equal (see
+    // dateLadderTiesBreakChronologically4568.test.ts). This assertion is
+    // unchanged and still load-bearing: whatever breaks the tie, it may never be
+    // the id. Here the two rules agree, which is why this specimen looked fine.
     const { buildOutcomeLadderRungs } = require("@/lib/futuresLadder");
     const tied = REAL_RUNGS.filter((r) => r.probability === 0.01);
     expect(tied.map((r) => r.id)).toEqual([1596641, 1596640]); // April, July — id DESC
