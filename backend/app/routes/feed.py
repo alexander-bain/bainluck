@@ -9102,8 +9102,29 @@ async def _score_events(
             # UNLESS it's a championship or playoff game.  A user who said "Nah"
             # to soccer shouldn't see Champions League regular matches, but a
             # World Cup Final is a genuine cultural event worth surfacing.
+            #
+            # #1927 — OR unless the reader follows one of the teams playing. That
+            # is not a softening of the preference; it is the gate finally reading
+            # the number the scorer already computed. A followed team in a "Nah"
+            # sport arrives here at `your_team:0.80` + `sport_nah:-0.60` = a
+            # multiplier of **1.20** — the two signals were weighed, the follow
+            # won, and this line was deleting the winner. CERT-2676 named exactly
+            # this shape one clause to the left ("the gate reads the admission
+            # score, the rank reads the penalty"); the reason string is a display
+            # vocabulary and was never fit to decide eligibility.
+            #
+            # Measured on production 2026-09-17: the one account with real phone
+            # history stores `baseball_mlb: 0.0` alongside five followed teams, and
+            # all 5 MLB games in that minute's payload were deleted for it. A
+            # reader who tapped follow on a team is telling you about THAT team;
+            # a sport they skipped at onboarding four months ago cannot outrank it.
+            #
+            # Deliberately NOT touched: the "if it's wild" bar below (0.05–0.2 is
+            # a request for fewer, not none, and the follow bonus already lifts the
+            # score toward it), and the futures gate at the other call site, which
+            # has no home/away pair and so no relationship to read.
             is_nah = any("sport_nah" in r for r in p_result.reasons)
-            if is_nah and not my_teams_only:
+            if is_nah and not my_teams_only and not p_result.has_standing_team_relationship:
                 if importance not in ("championship", "playoff"):
                     continue
                 # Championship/playoff in a "Nah" sport: override but explain

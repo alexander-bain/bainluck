@@ -86,6 +86,13 @@ HIGH_AFFINITY_BONUS = 0.5       # boost for high-affinity sports
 LOW_AFFINITY_PENALTY = -0.3     # penalty for low-affinity sports ("If wild" = 0.1)
 NAH_AFFINITY_PENALTY = -0.6     # stronger penalty for "Nah" (0.0) sports
 
+#: The team relationships the reader PERFORMED — a follow, a home metro, a school.
+#: #1927: these keep a game out of the sport-"Nah" hard delete, because the reader
+#: named this team after (and independently of) whatever they said about the sport
+#: at onboarding. `rival` is deliberately absent: it is inferred from a follow, not
+#: declared, and a rival's game is a suggestion rather than a request.
+STANDING_TEAM_RELATIONSHIPS = frozenset({"follow", "local", "alma_mater"})
+
 # Clamp range
 MIN_MULTIPLIER = 0.15
 MAX_MULTIPLIER = 3.0
@@ -181,6 +188,22 @@ class PersonalizationResult:
     #: exactly 1.0 — see `test_no_swipe_derived_term_of_any_name_reaches_admission`.
     admission_multiplier: float = 1.0
 
+    #: True when the reader has a STANDING relationship with one of the teams in
+    #: this matchup — a follow, their home metro, or their alma mater. #1927.
+    #:
+    #: Only the event scorer sets it; futures have no home/away pair to relate to,
+    #: so the futures path leaves it False and its own gate is untouched.
+    #:
+    #: Why it is a field and not `any("your_team" in r for r in reasons)`: the
+    #: reason strings are a display vocabulary. `rival_playing` is also a team
+    #: relationship and is deliberately NOT one of these three — a rival's game is
+    #: not a game the reader asked for, it is one the scorer thinks they might
+    #: enjoy — and a string test would have to encode that distinction in a
+    #: substring match that reads as a typo. The three that count are the three
+    #: the reader performed: they tapped follow, they set a home location, they
+    #: named a school.
+    has_standing_team_relationship: bool = False
+
 
 def compute_event_multiplier(
     ctx: PersonalizationContext,
@@ -221,10 +244,18 @@ def compute_event_multiplier(
 
     team_ids = [tid for tid in [home_team_id, away_team_id] if tid is not None]
 
+    # #1927: does the reader have a standing relationship with either side? Read
+    # off the SAME `relations` set the bonuses below read, in the same loop, so
+    # the flag and the bonus can never disagree about what the reader follows.
+    has_standing_team_relationship = False
+
     # --- Team relationship bonuses ---
     for team_id in team_ids:
         relations = ctx.team_relations.get(team_id, set())
         weight = ctx.team_weights.get(team_id, 1.0)
+
+        if relations & STANDING_TEAM_RELATIONSHIPS:
+            has_standing_team_relationship = True
 
         if "follow" in relations:
             team_bonus = FOLLOW_BONUS * weight
@@ -333,6 +364,7 @@ def compute_event_multiplier(
         reasons=reasons,
         is_personalized=bool(reasons),
         admission_multiplier=admission_multiplier,
+        has_standing_team_relationship=has_standing_team_relationship,
     )
 
 
