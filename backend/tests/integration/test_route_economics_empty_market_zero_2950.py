@@ -232,7 +232,16 @@ class TestControls:
     def test_CONTROL_a_priced_zero_is_data_and_still_renders(self):
         """`Decimal("0.000000")` is FALSY, which is why the old `or 0` could not
         tell it from a NULL. A market that says "no" is answering the question;
-        it must keep its row and print 0%."""
+        it must keep its row and print 0%.
+
+        AMENDED, not refreshed (#6696). This control's thesis is that the row
+        SURVIVES and that a priced zero is read as data — both still asserted
+        below, and both are what #2950 put here. The expected number was
+        `100.0`, which is the price of the `No` leg: incidental to this control
+        and the defect #6696 repairs. The docstring above already said the row
+        "must keep its row and print 0%" — the assertion is what disagreed with
+        it, and now does not.
+        """
         m = _market(
             market_id=6,
             outcomes=[
@@ -241,7 +250,8 @@ class TestControls:
             ],
         )
         row = _market_row(m)
-        assert row is not None and row["prob"] == 100.0
+        assert row is not None, "the row must survive — that is this control"
+        assert row["prob"] == 0.0
 
     def test_CONTROL_an_all_zero_market_still_renders_its_zero(self):
         """Every side priced, every side at zero. Nothing is missing here — the
@@ -285,7 +295,11 @@ class TestControls:
             outcomes=[_outcome("Yes", Decimal("0.420000"), outcome_id=110, rank=1)],
         )
         row = _market_row(m)
-        assert set(row.keys()) == {"q", "prob", "src", "delta", "market_id"}
+        # `leader` joined the shape in #6696 — which outcome `prob` belongs to,
+        # always present and explicitly null when there is nothing worth naming.
+        # Pinned as an exact set on purpose: this control exists to notice a
+        # shape change, and it did.
+        assert set(row.keys()) == {"q", "prob", "leader", "src", "delta", "market_id"}
         assert row["market_id"] == 11
         assert row["delta"] is None
 
