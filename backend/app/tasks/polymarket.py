@@ -42,6 +42,7 @@ from app.utils.prediction_market_matching import (  # #6073 CERT-2840
 from app.utils.pair_opening_coherence import (
     OK as PAIR_OPENING_OK,
     classify_pair_opening,
+    classify_pair_price,
 )
 
 logger = logging.getLogger(__name__)
@@ -2576,6 +2577,59 @@ async def _process_event_batch(
                             )
                             sub_has_open = False
 
+                        # THE PRICE GATE (#6793). The gate above governs the number
+                        # we are GRADED on; this one governs the number a reader
+                        # SEES, and until now nothing did. Same module, same
+                        # tolerance, one clause different (provenance is not tested
+                        # — see `classify_pair_price`), because a last trade is an
+                        # honest current price and a dishonest opening.
+                        #
+                        # Measured on production 2026-09-17: 8,962 open two-leg
+                        # decomposed pairs, 282 not summing to 1, 152 of them live.
+                        # SIX are served to a reader as both halves of the
+                        # contradiction (`Dawson Knox: Anytime Touchdown` at No 90%
+                        # / Yes 15%; `Galaxy vs Rapids O/U 8.5` at Under 50% / Over
+                        # 47.5%) — serve hides the rest by other means. But ALL 152
+                        # carry snapshots (3,437 rows, 552 in 24h) and
+                        # `calibration_probability` reads snapshots before it falls
+                        # back to the opening, so the graded half is the whole 152
+                        # and it has no serve-time rescue at all.
+                        #
+                        # ONLY ASKED OF AN ACTUAL PAIR. A market with no second leg
+                        # has nothing to contradict, and `classify_pair_price` fails
+                        # closed on a None partner by design, so asking it here
+                        # would blank every one-sided market on the venue.
+                        sub_price_ok = True
+                        if sub_under_raw is not None:
+                            sub_price_verdict = classify_pair_price(
+                                prob, sub_under_raw
+                            )
+                            if sub_price_verdict != PAIR_OPENING_OK:
+                                sub_price_ok = False
+                                stats["pair_price_refused"] = (
+                                    stats.get("pair_price_refused", 0) + 1
+                                )
+                                stats[f"pair_price_{sub_price_verdict}"] = (
+                                    stats.get(f"pair_price_{sub_price_verdict}", 0) + 1
+                                )
+
+                        # What the two upserts below actually store. NULL rather
+                        # than a repair: `current_probability` is nullable and
+                        # 6,530 of 59,333 live Polymarket legs already carry NULL,
+                        # `has_no_real_price` reads NULL as "no price" and drops the
+                        # card, and synthesising either leg from its partner would
+                        # assert a level nobody quoted (the reasoning
+                        # `pair_opening_coherence` already records for the opening
+                        # half, and which its own guard test pins by refusing to let
+                        # that arithmetic appear in this block at all).
+                        #
+                        # The BOOK is still written on both legs. A refusal says the
+                        # two derived probabilities disagree; it says nothing against
+                        # the quotes, which are what the venue actually published and
+                        # what every book-based predicate downstream reads.
+                        sub_over_price = prob if sub_price_ok else None
+                        sub_over_american = over_american if sub_price_ok else None
+
                         sub_opening = prob if sub_has_open else None
                         sub_opening_am = over_american if sub_has_open else None
                         sub_opening_at = now if sub_has_open else None
@@ -2591,20 +2645,29 @@ async def _process_event_batch(
                         )
 
                         over_update: dict = {
-                            "current_probability": prob,
-                            "current_american_odds": over_american,
+                            "current_probability": sub_over_price,
+                            "current_american_odds": sub_over_american,
                             "current_yes_bid": market.best_bid,
                             "current_yes_ask": market.best_ask,
                             "rank": 1,
-                            "probability_change_24h": prob - FuturesOutcome.current_probability,
                             "volume": sub_vol,
                             "last_updated": func.now(),
-                            "price_changed_at": price_changed_at_value(  # #2024
+                        }
+                        # #6793: a move and a change-stamp are claims ABOUT a price.
+                        # Computing either against a refused leg would subtract from
+                        # NULL (silently nulling the delta) and, worse, advance
+                        # `price_changed_at` for a price we declined to store — a
+                        # freshness stamp on an absence. Both keys are therefore
+                        # omitted on refusal, leaving the prior values untouched.
+                        if sub_price_ok:
+                            over_update["probability_change_24h"] = (
+                                prob - FuturesOutcome.current_probability
+                            )
+                            over_update["price_changed_at"] = price_changed_at_value(  # #2024
                                 FuturesOutcome.current_probability,
                                 FuturesOutcome.price_changed_at,
                                 prob,
-                            ),
-                        }
+                            )
                         if sub_has_open:
                             over_update["opening_probability"] = func.coalesce(
                                 FuturesOutcome.opening_probability, prob
@@ -2615,8 +2678,8 @@ async def _process_event_batch(
                             market_id=sub_market_id,
                             external_id=f"{market.condition_id}_yes",
                             name=over_name,
-                            current_probability=prob,
-                            current_american_odds=over_american,
+                            current_probability=sub_over_price,
+                            current_american_odds=sub_over_american,
                             current_yes_bid=market.best_bid,
                             current_yes_ask=market.best_ask,
                             opening_probability=sub_opening,
@@ -2638,17 +2701,25 @@ async def _process_event_batch(
                         over_result = await session.execute(over_stmt)
                         over_outcome_id = over_result.scalar_one()
 
-                        snap_stmt = pg_insert(FuturesOddsSnapshot).values(
-                            outcome_id=over_outcome_id,
-                            bookmaker="polymarket",
-                            probability=prob,
-                            american_odds=over_american,
-                            yes_bid=market.best_bid,
-                            yes_ask=market.best_ask,
-                            last_price=market.last_trade_price,
-                            captured_at=now,
-                        )
-                        await session.execute(snap_stmt)
+                        # #6793: SKIPPED, not nulled — `FuturesOddsSnapshot.probability`
+                        # is NOT NULL, so a refused pair has no honest row to write
+                        # here. This is the half calibration grades on
+                        # (`calibration_probability` is read from snapshots before it
+                        # falls back to the opening), which makes it the half where
+                        # storing an incoherent price costs the most and the one the
+                        # opening gate never protected.
+                        if sub_price_ok:
+                            snap_stmt = pg_insert(FuturesOddsSnapshot).values(
+                                outcome_id=over_outcome_id,
+                                bookmaker="polymarket",
+                                probability=prob,
+                                american_odds=over_american,
+                                yes_bid=market.best_bid,
+                                yes_ask=market.best_ask,
+                                last_price=market.last_trade_price,
+                                captured_at=now,
+                            )
+                            await session.execute(snap_stmt)
 
                         # Create Under/No outcome if available
                         if len(market.outcome_prices) > 1:
@@ -2720,20 +2791,32 @@ async def _process_event_batch(
                                 )
                             )
 
+                            # #6793: the same refusal, applied to the partner leg.
+                            # Symmetric because the verdict is about the PAIR — the
+                            # module's own doctrine is that keeping the
+                            # coherent-looking side leaves a number with no partner
+                            # to check it against, which is how the `partial_open`
+                            # population came to exist.
+                            sub_under_price = under_prob if sub_price_ok else None
+                            sub_under_american = (
+                                under_american if sub_price_ok else None
+                            )
+
                             under_update: dict = {
-                                "current_probability": under_prob,
-                                "current_american_odds": under_american,
+                                "current_probability": sub_under_price,
+                                "current_american_odds": sub_under_american,
                                 "current_yes_bid": under_best_bid,
                                 "current_yes_ask": under_best_ask,
                                 "rank": 2,
                                 "volume": sub_vol,
                                 "last_updated": func.now(),
-                                "price_changed_at": price_changed_at_value(  # #2024
+                            }
+                            if sub_price_ok:
+                                under_update["price_changed_at"] = price_changed_at_value(  # #2024
                                     FuturesOutcome.current_probability,
                                     FuturesOutcome.price_changed_at,
                                     under_prob,
-                                ),
-                            }
+                                )
                             if sub_under_has_open:
                                 under_update["opening_probability"] = func.coalesce(
                                     FuturesOutcome.opening_probability, under_prob
@@ -2746,8 +2829,8 @@ async def _process_event_batch(
                                 market_id=sub_market_id,
                                 external_id=f"{market.condition_id}_no",
                                 name=under_name,
-                                current_probability=under_prob,
-                                current_american_odds=under_american,
+                                current_probability=sub_under_price,
+                                current_american_odds=sub_under_american,
                                 current_yes_bid=under_best_bid,
                                 current_yes_ask=under_best_ask,
                                 opening_probability=sub_under_opening,
@@ -2791,21 +2874,30 @@ async def _process_event_batch(
                             # from a second call and NOT restated: same helper,
                             # same call, same tuple as the outcome upsert above,
                             # so the two can never disagree about one market.
-                            under_snap_stmt = pg_insert(FuturesOddsSnapshot).values(
-                                outcome_id=under_outcome_id,
-                                bookmaker="polymarket",
-                                probability=under_prob,
-                                american_odds=under_american,
-                                yes_bid=under_best_bid,
-                                yes_ask=under_best_ask,
-                                last_price=under_last,
-                                captured_at=now,
-                            )
-                            await session.execute(under_snap_stmt)
+                            # #6793: skipped on a refused pair, exactly as the Over
+                            # snapshot above is, and for the same NOT NULL reason.
+                            if sub_price_ok:
+                                under_snap_stmt = pg_insert(FuturesOddsSnapshot).values(
+                                    outcome_id=under_outcome_id,
+                                    bookmaker="polymarket",
+                                    probability=under_prob,
+                                    american_odds=under_american,
+                                    yes_bid=under_best_bid,
+                                    yes_ask=under_best_ask,
+                                    last_price=under_last,
+                                    captured_at=now,
+                                )
+                                await session.execute(under_snap_stmt)
 
                         stats["markets_processed"] += 1
                         stats["outcomes_updated"] += 2
-                        stats["snapshots_created"] += 1
+                        # #6793: a refused pair writes no snapshot, so counting one
+                        # here would report captured prices that do not exist — the
+                        # task-verdict failure mode of gotcha #53 ("it returned" is
+                        # not "it worked"). The outcome rows ARE still written (their
+                        # books and names), so that counter is unchanged.
+                        if sub_price_ok:
+                            stats["snapshots_created"] += 1
                         stats["sub_markets_created"] = stats.get("sub_markets_created", 0) + 1
 
                 # The parent's own legs for this shape were built by
