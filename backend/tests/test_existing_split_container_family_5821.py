@@ -757,3 +757,30 @@ class TestEveryPlannedTagIsConfirmedOnDisk:
 
         summary, _ = _run(_over_floor(SPLIT_FAMILY), monkeypatch)
         assert "errors" in summary
+
+
+class TestARefusalIsNotDamage:
+    def test_a_run_carrying_refusals_is_still_complete(self, monkeypatch):
+        """🔴 A PRODUCTION STEADY STATE, not an edge case. The measured window
+        holds 7 fixture-anchored families and 3 ambiguous ones that this sweep
+        refuses BY DESIGN and will refuse on every pass forever.
+
+        Refusals are reported in the summary, so the question is whether the
+        contract reads them as damage. `_ERROR_COLLECTIONS` is
+        ("errors", "failed_chunks", "failed_phases") and `refusals` is none of
+        them — but that is an argument, and the cost of it being wrong is a task
+        that is never green for doing exactly what it was built to do. Pinned.
+        """
+        ambiguous = [_m(770001, "Ambiguous FC vs. Ambiguous United"),
+                     _m(770002, "Ambiguous FC vs. Ambiguous United")]
+        summary, _ = _run(
+            _over_floor([*SPLIT_FAMILY, *ambiguous]),
+            monkeypatch,
+            rows={770001: ContainerRow(770001, identity_rank=(2,)),
+                  770002: ContainerRow(770002, identity_rank=(1,))},
+        )
+
+        assert summary["refusals"] >= 1, "the fixture stopped producing a refusal"
+        assert summary["terminal"] == "complete"
+        verdict = verdict_for("polymarket_container_twin_sweep", summary)
+        assert verdict.verdict == "complete", verdict.reason
