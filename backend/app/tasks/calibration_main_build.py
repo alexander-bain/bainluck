@@ -1786,12 +1786,26 @@ async def load_staged_cursor(
     )
 
 
-async def save_staged_cursor(cursor, *, terminal: str) -> bool:
+async def save_staged_cursor(cursor, *, terminal: str, banks_a_unit: bool = True) -> bool:
     """Persist the staged cursor. ``True`` only when the write is durable.
 
     The caller must treat a unit as banked ONLY on ``True``. Everything the
     resume story rests on — that a unit recorded as done really did commit — is
     this boolean being honest.
+
+    ``banks_a_unit=False`` says this save carries no completed unit, so a
+    failure is not an unbanked COMPLETION and must not be tallied as one.
+    CAL-P1302, the second follow-up CERT-2987 named. CAL-P1301 added a save on
+    the CANCELLATION path — the beat remembering that a slot died at its bound —
+    and that save reaches the same two failing exits. Counting it would subtract
+    a unit that never completed from ``staged:units_completed_this_beat``
+    (``max(0, completed - unbanked)``), so a beat that banked one unit and
+    failed to remember one cancellation would publish PROGRESS 0. The
+    diagnostic direction is the damage: the field's whole job is to separate
+    "nothing banked because every unit was cancelled" from "nothing banked
+    because the durable path is failing", and this would put a cancellation
+    into the second bucket. The failure stays loud either way —
+    ``staged:unit_cancel_not_persisted`` is recorded by the caller.
     """
     from app.services.durable_snapshots import publish_snapshot_standalone
     from app.utils.calibration_staged_futures import (
@@ -1821,12 +1835,14 @@ async def save_staged_cursor(cursor, *, terminal: str) -> bool:
         )
     except Exception as exc:  # noqa: BLE001 — reported, never swallowed
         logger.warning("calibration staged cursor persist failed: %s", exc)
-        _note_unbanked_completion()
+        if banks_a_unit:
+            _note_unbanked_completion()
         return False
     ok = result.get("status") in ("ok", "superseded")
     if not ok:
         logger.warning("calibration staged cursor persist rejected: %s", result)
-        _note_unbanked_completion()
+        if banks_a_unit:
+            _note_unbanked_completion()
     return ok
 
 
@@ -2024,6 +2040,29 @@ def _record_served_bank(runner: PhaseRunner, payload: dict[str, Any]) -> None:
 STAGED_UNIT_STAGE = "read:futures_unit"
 
 
+def _planned_unit_total(runner: PhaseRunner) -> int:
+    """How many units THIS beat's plan holds — not how many the partition has.
+
+    CAL-P1302, the follow-up CERT-2987 named. They were the same number for as
+    long as every plan was exactly the base partition, and CAL-P1301 taught
+    :func:`_unit_costs_from` the difference. It left the SAME constant in the
+    remaining-work arithmetic one function up, where reading it is worse: a plan
+    of 131 with 128 banked computes ``remaining = 0`` and publishes
+    ``beats_to_publish: 0`` — the producer reporting it is finished while three
+    units are outstanding. ``is_complete`` is keyed on the exact unit set and
+    correctly refuses to publish, so nothing invalid escapes; the two then
+    disagree in the payload, which is the reading #3536 spent four days behind.
+
+    The gauge is written by the unit loop at the top of every beat
+    (``precompute_calibration.py``, ``staged:units_planned_total``). The
+    constant stays the fallback for a beat that never reached it, which is the
+    same number both call sites published before — so a pre-CAL-P1301 cursor,
+    and every cursor whose slots all fit, reads exactly as it always did.
+    """
+    return int(
+        runner.ledger.stages.get("staged:units_planned_total", 0) or STAGED_FUTURES_BUCKETS
+    )
+
 
 def _record_staged_rate(runner: PhaseRunner, *, banked: int) -> None:
     """How fast this beat went and how many beats are left, on EVERY terminal.
@@ -2109,7 +2148,7 @@ def _record_staged_rate(runner: PhaseRunner, *, banked: int) -> None:
         return
     runner.ledger.record_gauge("staged:unit_ms_mean", int(mean_ms))
 
-    remaining = max(0, STAGED_FUTURES_BUCKETS - banked)
+    remaining = max(0, _planned_unit_total(runner) - banked)
     if remaining == 0:
         runner.ledger.record_gauge("staged:beats_to_publish", 0)
         return
@@ -2177,10 +2216,7 @@ def _unit_costs_from(runner: PhaseRunner) -> dict[str, dict[str, int]]:
     banked = int(runner.ledger.stages.get("staged:units_banked", 0) or 0)
     if banked <= 0:
         return {}
-    planned = int(
-        runner.ledger.stages.get("staged:units_planned_total", 0)
-        or STAGED_FUTURES_BUCKETS
-    )
+    planned = _planned_unit_total(runner)
     return {
         PHASE_FUTURES: {
             "unit_ms": int(mean_ms),

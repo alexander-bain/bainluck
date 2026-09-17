@@ -6042,7 +6042,13 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
             # twice, banked zero, and wrote no cursor at all. A failed write
             # costs the memory of this cancellation and nothing else — the bank
             # is untouched — so it is logged and the beat carries on.
-            if not await save_staged_cursor(cursor, terminal=TERMINAL_PARTIAL):
+            #
+            # ``banks_a_unit=False`` (CAL-P1302): this unit was CANCELLED, so a
+            # failure here is not an unbanked completion and must not be
+            # subtracted from this beat's completed count. See the persister.
+            if not await save_staged_cursor(
+                cursor, terminal=TERMINAL_PARTIAL, banks_a_unit=False
+            ):
                 runner.ledger.record_gauge("staged:unit_cancel_not_persisted", 1)
                 logger.warning(
                     "calibration staged futures: cursor write failed after unit %s "
