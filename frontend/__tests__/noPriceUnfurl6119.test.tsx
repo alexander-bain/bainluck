@@ -235,13 +235,38 @@ const PRICED = {
 };
 
 /**
- * `current_odds` present as an OBJECT, with one side missing.
+ * `current_odds` present as an OBJECT, with one side missing — on a TWO-WAY
+ * sport, where that is still an absent price and the whole slot goes.
  *
  * Not observed on production (0 of 87 priced objects), and pinned anyway: the
  * type permits it, the pair must be taken whole or not at all (#2279), and a
  * per-side coalesce here is exactly how `servedDuelPercents` came to exist.
+ *
+ * ⚠️ #6670 — this fixture carried the SOCCER key until #6238's producer half
+ * landed, and it no longer may. The two rows now mean opposite things and the
+ * sport key is the only thing that tells them apart, so they are two fixtures.
  */
 const HALF_PRICED = {
+  ...BAYERN_LEVERKUSEN,
+  ...PRICED_SPORT,
+  current_odds: { home_probability: 0.62, away_probability: null },
+};
+
+/**
+ * ═══ #6670 — THE SAME SHAPE, ON A DRAW-PRICED SPORT, MEANING THE OPPOSITE ═══
+ *
+ * Home priced, away absent, soccer. Before #6238's producer half (`81c72f3e3`,
+ * #6668) this shape could not occur: `routes/feed.py` derived away as `1 − home`
+ * and always served it. That producer stops serving it on a sport whose winner
+ * market prices a draw, because `1 − P(home)` there is *away win OR draw* and the
+ * draw's mass was printing under the away crest.
+ *
+ * So on this row the absence is the server WITHHOLDING a figure it cannot
+ * source, beside a home figure it can — not the absence of a price. It is now
+ * the ORDINARY shape of a live soccer payload, where the fixture above is the
+ * one never observed.
+ */
+const HALF_PRICED_DRAW_SPORT = {
   ...BAYERN_LEVERKUSEN,
   current_odds: { home_probability: 0.62, away_probability: null },
 };
@@ -471,6 +496,40 @@ describe("#6119 — the picture stops inventing 50/50 for an unquoted game", () 
     expect(allText(half)).not.toContain("50%");
   });
 
+  it("#6670 — KEEPS the honest home number when the away leg is WITHHELD, not missing", async () => {
+    // The same object as `HALF_PRICED` one test up, on a draw-priced sport. The
+    // test above and this one are the pair: identical `current_odds`, opposite
+    // answers, and the sport key is the only thing between them.
+    //
+    // What the reader gets: the current home figure, no away numeral, and a bar
+    // whose remainder is visibly unallocated rather than handed to either side
+    // (#6238's render half, already shipped — this row simply reaches it now
+    // instead of being routed to the withheld path a rung above).
+    const card = await renderCard(HALF_PRICED_DRAW_SPORT);
+
+    expect(heroSlot(card)).toEqual(["62%"]);
+    // The `?? 0.5` coalesce is one line above the render and is exactly what
+    // this card used to draw for an unpriced side. It must not reach the page
+    // through the new branch, as a numeral OR as a width.
+    expect(allText(card)).not.toContain("50%");
+    expect(allText(card)).not.toContain("38%");
+    // `barAwayWidth` reads the track's SOLE CHILD, and on the withheld branch
+    // that child is the HOME share drawn at its own width against a neutral
+    // track (`drawPricedCardFamily6238` pins the colours). So 62 and not null:
+    // the bar is the numeral above it at 1200px wide, and it must agree with it
+    // — a `?? 0.5` reaching the geometry would read 50 here while the numeral
+    // still read 62.
+    expect(barAwayWidth(card)).toBe(62);
+
+    // And NOT the pre-match treatment: the number on the card is the current
+    // one, so the card must not label it as the sportsbook median it is not.
+    // This is the whole difference the ship makes — before it, this row fell to
+    // `prematch` and printed the opening line, or nothing where the row has no
+    // opening line at all.
+    expect(allText(card)).not.toContain("Pre-match");
+    expect(allText(card)).toContain("Bayer Leverkusen");
+  });
+
   it("LEAVES AN EXACT ZERO ALONE — #4963's ruling is not reversed here", async () => {
     // The guard on this ship's own over-reach. `hasNoPriceForShare` is narrower
     // than the words' rule ON PURPOSE (see its docstring): a real 0% loser is a
@@ -570,6 +629,11 @@ describe("#6119 — the two halves of the preview answer as one", () => {
     // and the image make the same call about whether we hold a number. This is
     // the assertion that would have caught the original defect without anyone
     // having to know which of the two halves was the wrong one.
+    // #6670 — `HALF_PRICED_DRAW_SPORT` is deliberately NOT in this list. It is
+    // the one row where the two halves no longer answer alike, by decision
+    // rather than by accident, and it has its own assertion below saying which
+    // direction the gap runs in. Adding it here would read as a regression of
+    // this property; leaving it out silently would hide that it exists.
     for (const row of [BAYERN_LEVERKUSEN, SARACENS_LEICESTER, PRICED, HALF_PRICED]) {
       const wordsAreQuiet = buildEventShareCopy(row).title.endsWith(" Odds");
       const pictureIsQuiet = heroSlot(await renderCard(row)).length === 0;
@@ -590,16 +654,34 @@ describe("#6119 — the two halves of the preview answer as one", () => {
     // FORWARD: every row the picture calls priceless, the words also call
     // priceless. If this ever fails, the picture has started withholding a
     // number the sentence beside it prints — the original defect, mirrored.
-    for (const row of [BAYERN_LEVERKUSEN, SARACENS_LEICESTER, PRICED, HALF_PRICED, ZERO_PRICED]) {
+    const ALL = [
+      BAYERN_LEVERKUSEN,
+      SARACENS_LEICESTER,
+      PRICED,
+      HALF_PRICED,
+      HALF_PRICED_DRAW_SPORT,
+      ZERO_PRICED,
+    ];
+    for (const row of ALL) {
       if (hasNoPriceForShare(row)) expect(shareForecastPercents(row)).toBeNull();
     }
 
     // REVERSE: the rows in between — quiet in the words, numeric in the picture
-    // — are EXACTLY the exact-zero ones, and there is currently one of them.
-    const between = [BAYERN_LEVERKUSEN, SARACENS_LEICESTER, PRICED, HALF_PRICED, ZERO_PRICED]
-      .filter((row) => shareForecastPercents(row) === null && !hasNoPriceForShare(row))
-      .map((row) => row.current_odds);
-    expect(between).toEqual([ZERO_PRICED.current_odds]);
+    // — and there are now TWO classes of them, which is the #6670 amendment
+    // stated as a count rather than as prose.
+    //
+    //   · the exact zero, #4963's standing disagreement, unchanged;
+    //   · the draw-priced row whose away leg the server withholds, where the
+    //     picture prints the honest home figure and the title has no one-sided
+    //     spelling to print (#6670).
+    //
+    // Both are the picture speaking while the words stay quiet. The FORWARD
+    // direction above is what must never grow a member: a picture withholding a
+    // number the sentence beside it prints is the original defect, mirrored.
+    const between = ALL.filter(
+      (row) => shareForecastPercents(row) === null && !hasNoPriceForShare(row),
+    ).map((row) => row.current_odds);
+    expect(between).toEqual([HALF_PRICED_DRAW_SPORT.current_odds, ZERO_PRICED.current_odds]);
   });
 });
 
@@ -628,6 +710,33 @@ describe("#6119 — shareForecastPercents, the one owner", () => {
     expect(hasNoPriceForShare(PRICED)).toBe(false);
     // The divergence, at the unit level: a real zero IS a price here.
     expect(hasNoPriceForShare(ZERO_PRICED)).toBe(false);
+  });
+
+  it("#6670 — a WITHHELD away is not a missing price, and only on the sports that withhold", () => {
+    // The same object shape, twice, differing only in the sport key. If these
+    // two ever answer the same, the predicate has stopped reading the sport and
+    // one of the two rows is wrong: the soccer card loses the honest home
+    // number, or the NFL card starts drawing a 50% it was handed by a `?? 0.5`.
+    expect(HALF_PRICED.current_odds).toEqual(HALF_PRICED_DRAW_SPORT.current_odds);
+    expect(hasNoPriceForShare(HALF_PRICED_DRAW_SPORT)).toBe(false);
+    expect(hasNoPriceForShare(HALF_PRICED)).toBe(true);
+
+    // The home half is still the anchor. A withheld away beside NO home number
+    // is not a withholding at all — there is nothing left to draw.
+    expect(
+      hasNoPriceForShare({ ...HALF_PRICED_DRAW_SPORT, current_odds: { home_probability: null, away_probability: null } }),
+    ).toBe(true);
+
+    // A NaN is corruption and not a declination, on either kind of sport.
+    expect(
+      hasNoPriceForShare({ ...HALF_PRICED_DRAW_SPORT, current_odds: { home_probability: 0.62, away_probability: Number.NaN } }),
+    ).toBe(true);
+
+    // And the sport key is read by the card's own precedence, so a row carrying
+    // only `sport_key` is classified the same as one carrying only `sport`.
+    const { sport: _dropped, ...noSport } = HALF_PRICED_DRAW_SPORT;
+    expect(hasNoPriceForShare({ ...noSport, sport_key: "soccer_germany_bundesliga" })).toBe(false);
+    expect(hasNoPriceForShare(noSport)).toBe(true);
   });
 
   it("reads current_odds and NOT win_probability_sources", () => {
