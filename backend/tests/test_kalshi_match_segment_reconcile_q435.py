@@ -288,50 +288,94 @@ class TestTennisPropMayNotCreateAnEvent:
 
 class TestChooseSegmentEvent:
     def test_single_candidate_wins(self):
-        assert _choose_segment_event([7, 7, None], {7: "kalshi_ticker"}) == (7, "single")
+        assert _choose_segment_event(
+            [7, 7, None], {7: "kalshi_ticker"}, {7: False},
+        ) == (7, "single")
 
     def test_no_candidate_is_not_an_anchor(self):
-        assert _choose_segment_event([None, None], {}) == (None, "no_anchor")
+        assert _choose_segment_event([None, None], {}, {}) == (None, "no_anchor")
 
-    def test_schedule_derived_beats_ticker_derived(self):
-        """THE SPECIMEN. odds_api 15293809 wins over the kalshi_ticker twin."""
+    def test_the_anchored_row_beats_the_id_less_twin(self):
+        """THE SPECIMEN. odds_api 15293809 wins over the kalshi_ticker twin.
+
+        Unchanged in outcome from the Q435 original; #6720 only changed WHY.
+        The winning row is the one that dereferences to a provider's schedule,
+        which is the same row provenance used to name here.
+        """
         assert _choose_segment_event(
             [15293809, 15295024, None],
             {15293809: "odds_api", 15295024: "kalshi_ticker"},
-        ) == (15293809, "schedule_derived")
+            {15293809: True, 15295024: False},
+        ) == (15293809, "anchored")
 
-    def test_schedule_derived_wins_regardless_of_row_order(self):
+    def test_the_anchored_row_wins_regardless_of_row_order(self):
         """26AUG30YIBWAL is the SAME class pointing the other way: the WINNER
         market sat on the kalshi twin and the props on the odds_api event."""
         assert _choose_segment_event(
             [15294919, 15293803],
             {15294919: "kalshi_ticker", 15293803: "odds_api"},
-        ) == (15293803, "schedule_derived")
+            {15294919: False, 15293803: True},
+        ) == (15293803, "anchored")
 
-    def test_two_ticker_derived_twins_are_refused(self):
+    def test_two_id_less_twins_are_refused(self):
         """26AUG30WONPAU: both rows are Kalshi auto-creates. Picking either
         would be a coin flip dressed as a reconciliation."""
         assert _choose_segment_event(
             [15295004, 15295025],
             {15295004: "kalshi_ticker", 15295025: "kalshi_ticker"},
+            {15295004: False, 15295025: False},
+        ) == (None, "ambiguous_idless")
+
+    def test_two_anchored_events_are_refused(self):
+        assert _choose_segment_event(
+            [11, 22], {11: "odds_api", 22: "espn"}, {11: True, 22: True},
         ) == (None, "ambiguous")
 
-    def test_two_schedule_derived_events_are_refused(self):
+    def test_provenance_still_breaks_a_tie_between_two_anchored_rows(self):
+        """The provenance arm is kept, not deleted. It is the only tiebreak
+        available once BOTH candidates carry an anchor, and a NULL
+        commence_time_source asserts nothing, so it cannot win against a row
+        that names a real schedule."""
         assert _choose_segment_event(
-            [11, 22], {11: "odds_api", 22: "espn"},
-        ) == (None, "ambiguous")
-
-    def test_unknown_provenance_is_treated_as_ticker_derived(self):
-        """A NULL commence_time_source asserts nothing, so it cannot win a
-        contest against a row that names a real schedule."""
-        assert _choose_segment_event(
-            [11, 22], {11: None, 22: "odds_api"},
+            [11, 22], {11: None, 22: "odds_api"}, {11: True, 22: True},
         ) == (22, "schedule_derived")
 
-    def test_null_provenance_on_both_sides_is_refused(self):
-        assert _choose_segment_event([11, 22], {11: None, 22: None}) == (
-            None, "ambiguous",
-        )
+    def test_null_provenance_on_two_anchored_rows_is_refused(self):
+        assert _choose_segment_event(
+            [11, 22], {11: None, 22: None}, {11: True, 22: True},
+        ) == (None, "ambiguous")
+
+    # --- #6720: the arm that was inert on production -----------------------
+
+    @pytest.mark.parametrize("ghost_source", [
+        "kalshi",             # 82,587 id-less events — the live value
+        "kalshi_occurrence",  # Saints v Lions' voided twin
+        "statpal",            # the MLB twins
+    ])
+    def test_an_id_less_ghost_loses_whatever_string_its_provenance_carries(
+        self, ghost_source,
+    ):
+        """RED BEFORE #6720 for every one of these three.
+
+        The old rule asked `commence_time_source != 'kalshi_ticker'`. All three
+        of these strings pass that test, so the ghost scored as
+        schedule-derived, the contest had two winners, and the pass returned
+        `ambiguous` and moved nothing. These are not hypotheticals: each one is
+        a measured id-less twin from #6720's worked specimens.
+        """
+        assert _choose_segment_event(
+            [100, 200],
+            {100: "espn", 200: ghost_source},
+            {100: True, 200: False},
+        ) == (100, "anchored")
+
+    def test_the_anchor_may_be_an_external_id_and_not_only_an_espn_id(self):
+        """`anchored` is computed as `espn_id OR external_id`, so a row
+        anchored only by a cross-source provider id still wins."""
+        assert _choose_segment_event(
+            [100, 200], {100: "odds_api", 200: "kalshi"},
+            {100: True, 200: False},
+        ) == (100, "anchored")
 
 
 # =============================================================================
@@ -355,11 +399,18 @@ class _Result:
 
 
 class _FakeSession:
-    """Serves the two SELECTs the reconcile issues and records the UPDATEs."""
+    """Serves the two SELECTs the reconcile issues and records the UPDATEs.
 
-    def __init__(self, markets, provenance, sport_ids=None):
+    ``anchored`` (#6720) is the set of event ids that carry a provider anchor.
+    It has NO default on purpose: the reconcile now decides on the anchor, so a
+    fake that guessed it from provenance would be encoding this suite's answer
+    into its own harness.
+    """
+
+    def __init__(self, markets, provenance, anchored, sport_ids=None):
         self._markets = markets
         self._provenance = provenance
+        self._anchored = set(anchored)
         self._sport_ids = sport_ids or {}
         self.updates = []
         self.commits = 0
@@ -373,7 +424,11 @@ class _FakeSession:
             return _Result(self._markets)
         if "events" in text:
             return _Result([
-                (eid, src, self._sport_ids.get(eid))
+                (
+                    eid, src, self._sport_ids.get(eid),
+                    f"espn-{eid}" if eid in self._anchored else None,
+                    None,
+                )
                 for eid, src in self._provenance.items()
             ])
         raise AssertionError(f"unexpected statement: {text[:120]}")
@@ -410,6 +465,7 @@ class TestReconcileKalshiMatchSegments:
                 _Row(59706200, "KXATPGTOTAL-26AUG30BUBWOL-T22", None),
             ],
             provenance={15293809: "odds_api", 15295024: "kalshi_ticker"},
+            anchored={15293809},
         )
         stats = await _reconcile_kalshi_match_segments(session)
 
@@ -430,13 +486,19 @@ class TestReconcileKalshiMatchSegments:
                 _Row(4, "KXWTAGTOTAL-26AUG30SWIRYB-T20", None),
             ],
             provenance={900: "kalshi_ticker"},
+            anchored={900},
         )
         stats = await _reconcile_kalshi_match_segments(session)
 
         assert _applied(session) == {900: {2, 3, 4}}
         assert (stats["adopted"], stats["converged"]) == (3, 0)
 
-    async def test_two_ticker_derived_twins_move_nothing(self):
+    async def test_two_id_less_twins_move_nothing(self):
+        """26AUG30WONPAU. #6720 re-filed this refusal under its own counter —
+        `ambiguous_idless` rather than `ambiguous` — because "both candidates
+        are auto-creates" and "several real events disagree" are different
+        facts and the fix's own reach is measured on the first. What the pass
+        DOES here is unchanged, which is what the first two asserts pin."""
         session = _FakeSession(
             markets=[
                 _Row(1, "KXATPMATCH-26AUG30WONPAU", 15295004),
@@ -444,12 +506,14 @@ class TestReconcileKalshiMatchSegments:
                 _Row(3, "KXATPGTOTAL-26AUG30WONPAU-T22", None),
             ],
             provenance={15295004: "kalshi_ticker", 15295025: "kalshi_ticker"},
+            anchored=set(),
         )
         stats = await _reconcile_kalshi_match_segments(session)
 
         assert session.updates == []
         assert session.commits == 0
-        assert stats["ambiguous"] == 1
+        assert stats["ambiguous_idless"] == 1
+        assert stats["ambiguous"] == 0
         assert (stats["adopted"], stats["converged"]) == (0, 0)
 
     async def test_segment_with_no_linked_sibling_is_left_alone(self):
@@ -459,6 +523,7 @@ class TestReconcileKalshiMatchSegments:
                 _Row(2, "KXWTAGTOTAL-26SEP01AAABBB-T20", None),
             ],
             provenance={},
+            anchored=set(),
         )
         stats = await _reconcile_kalshi_match_segments(session)
 
@@ -472,6 +537,7 @@ class TestReconcileKalshiMatchSegments:
                 _Row(2, "KXATPSETWINNER-26AUG30BUBWOL-1", 15293809),
             ],
             provenance={15293809: "odds_api"},
+            anchored={15293809},
         )
         await _reconcile_kalshi_match_segments(session)
 
@@ -487,6 +553,7 @@ class TestReconcileKalshiMatchSegments:
                 _Row(2, "KXNBASPREAD-26FEB20BOSGSW", None),
             ],
             provenance={500: "odds_api"},
+            anchored={500},
         )
         stats = await _reconcile_kalshi_match_segments(session)
 
@@ -502,6 +569,7 @@ class TestReconcileKalshiMatchSegments:
                 _Row(2, "KXATPSETWINNER-26AUG30BUBWOL-1", None),
             ],
             provenance={15293809: "odds_api"},
+            anchored={15293809},
         )
         await _reconcile_kalshi_match_segments(session)
 
@@ -525,6 +593,7 @@ class TestReconcileKalshiMatchSegments:
                 _Row(2, "KXATPSETWINNER-26AUG30BUBWOL-1", None),
             ],
             provenance={15293809: "odds_api"},
+            anchored={15293809},
         )
         await _reconcile_kalshi_match_segments(session)
 
@@ -540,6 +609,7 @@ class TestReconcileKalshiMatchSegments:
                 _Row(2, "KXATPSETWINNER-26AUG30BUBWOL-1", 15295024),
             ],
             provenance={15293809: "odds_api", 15295024: "kalshi_ticker"},
+            anchored={15293809},
             sport_ids={15293809: 356611, 15295024: 105026},
         )
         await _reconcile_kalshi_match_segments(session)

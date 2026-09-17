@@ -3060,29 +3060,85 @@ KALSHI_SEGMENT_WINDOW_DAYS = 14
 #: provenance is derived — one string, three readers.
 _TICKER_DERIVED_COMMENCE_SOURCE = TICKER_DERIVED_COMMENCE_SOURCE
 
+#: #6720 — the coarse ticker families the segment reconciler READS. This bounds
+#: the query; it does not decide anything (`kalshi_game_segment_key` does).
+#: Measured on production 2026-09-17: this set selects 9,498 rows against the
+#: 20,000-row refuse cap below, i.e. 53% headroom. Tennis alone was 2,216.
+#: Adding a family here costs read volume and nothing else — but check that
+#: count first, because blowing the cap does not reconcile less, it reconciles
+#: NOTHING (the truncation guard refuses the whole pass, tennis included).
+_KALSHI_SEGMENT_TICKER_PREFIXES = (
+    "kxatp%", "kxwta%",                                   # tennis (the original)
+    "kxnfl%", "kxmlb%", "kxufc%",                         # #6720
+    "kxepl%", "kxsoc%", "kxlaliga%", "kxbundesliga%",     # soccer, by family
+    "kxseriea%", "kxligue1%", "kxmls%", "kxuel%",
+    "kxuecl%", "kxfacup%", "kxeflcup%", "kxdfbpokal%",
+    "kxcoppaitalia%", "kxleaguescup%", "kxconmebol%",
+    "kxbrasileiro%",
+)
 
-def _choose_segment_event(event_ids, provenance: dict) -> tuple:
-    """Pick the ONE event a tennis match segment's markets should all sit on.
+
+def _choose_segment_event(event_ids, provenance: dict, anchored: dict) -> tuple:
+    """Pick the ONE event a Kalshi game segment's markets should all sit on.
 
     Returns ``(event_id, reason)``; ``event_id`` is ``None`` when the choice is
     ambiguous, in which case nothing moves and the reason is counted.
 
     * One candidate → it wins, and nothing is moved off anything.
-    * Several candidates → the one whose ``commence_time_source`` is NOT
-      ticker-derived wins, because that row came from a real schedule and is the
-      row the draw register and the event page already point at. This is the
-      whole rule: a Kalshi auto-create is the duplicate, never the survivor.
-    * Several candidates and none (or more than one) schedule-derived → REFUSE.
-      Two ticker-derived twins are indistinguishable on evidence, and picking by
-      row order would be a coin flip dressed as a reconciliation.
+    * Exactly one candidate carries a PROVIDER ANCHOR (an ``espn_id`` or an
+      ``external_id``) → it wins. The others are id-less auto-creates, and an
+      id-less claim is never the survivor (gotcha #32).
+    * No candidate carries an anchor → REFUSE. Two id-less auto-creates are
+      indistinguishable on evidence, and picking by row order would be a coin
+      flip dressed as a reconciliation.
+    * Several anchored candidates → fall back to the provenance rule below, and
+      refuse unless it forces a single answer.
+
+    ═══ #6720: WHY THE ANCHOR, AND NOT ``commence_time_source`` ═══
+
+    This rule used to read provenance alone: the candidate whose
+    ``commence_time_source`` was not ``kalshi_ticker`` won, on the reasoning
+    that anything else "came from a real schedule". That discriminator was
+    aimed at a value almost nothing carries any more. Measured on production
+    2026-09-17 over every id-less event created since 2026-08-01:
+
+        kalshi              82,587   (still being written — last 07:06Z that day)
+        polymarket          10,634
+        polymarket_venue     1,624
+        kalshi_ticker        1,199   (last written 2026-09-13 08:37Z)
+        statpal                197
+        kalshi_occurrence       57   (last written 2026-09-13 08:37Z)
+
+    ``kalshi_ticker`` is 1.4% of the population the rule has to judge. A Kalshi
+    auto-create stamped ``kalshi`` therefore read as "came from a real
+    schedule", every real contest scored two schedule-derived candidates, and
+    the pass returned ``ambiguous`` and moved nothing — on its own tennis
+    population as much as anywhere else. The three id-less twins in #6720's
+    worked specimens carry three DIFFERENT strings (``kalshi``,
+    ``kalshi_occurrence`` and ``statpal``), which is the clearest statement
+    available that provenance is the wrong axis: it names a writer, and writers
+    keep being added.
+
+    The anchor is the right axis because it is the same evidence ruling 048
+    already turns on, and it does not drift when a new ingest path appears: a
+    row either dereferences to a provider's schedule or it does not.
+
+    The provenance arm is KEPT, not deleted, for the several-anchored case,
+    where it is still the only tiebreak available and still refuses far more
+    often than it fires.
     """
     ids = sorted({int(e) for e in event_ids if e})
     if not ids:
         return None, "no_anchor"
     if len(ids) == 1:
         return ids[0], "single"
+    with_anchor = [eid for eid in ids if anchored.get(eid)]
+    if len(with_anchor) == 1:
+        return with_anchor[0], "anchored"
+    if not with_anchor:
+        return None, "ambiguous_idless"
     scheduled = [
-        eid for eid in ids
+        eid for eid in with_anchor
         if provenance.get(eid) not in (None, _TICKER_DERIVED_COMMENCE_SOURCE)
     ]
     if len(scheduled) == 1:
@@ -3091,7 +3147,30 @@ def _choose_segment_event(event_ids, provenance: dict) -> tuple:
 
 
 async def _reconcile_kalshi_match_segments(session) -> dict:
-    """Q435: every market on ONE Kalshi tennis match resolves to ONE event.
+    """Q435 / #6720: every market on ONE Kalshi game resolves to ONE event.
+
+    ═══ #6720: WHAT CHANGED, AND WHAT IT COST TO LEAVE ═══
+
+    This pass was scoped to tennis (`KXATP%`/`KXWTA%`) because that was the
+    measured population in August. The ticker grammar it reads is not
+    tennis-specific, and the same split was measured across every in-season
+    sport on production 2026-09-17 — 68 fixtures holding **174 Kalshi markets
+    on an id-less twin of an event that already exists**, in a 14-day window:
+
+        MLB          56        NFL          40        soccer       45
+        tennis       19        UFC           7        (the rest)    7
+
+    The reader-visible half is a fixture page that renders a fraction of what
+    the venue priced for it. `/events/15297802` (Freiburg v M'gladbach) served
+    3 Kalshi markets while 12 more — Total Goals, Spread, BTTS, Team Total and
+    the half variants — sat on `15307870`, an id-less duplicate no page links
+    to. Saints v Lions served 54 and kept its four quarter-winners on a
+    `voided` twin.
+
+    Two things had to change together, and either alone is inert: the
+    population (here) and the discriminator (`_choose_segment_event`, which
+    was refusing `ambiguous` on essentially every real contest — see its
+    docstring for the measurement).
 
     ═══ THE BUG THIS CLOSES ═══
 
@@ -3169,11 +3248,11 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
     #14).
     """
     from app.models.models import FuturesMarket, Event
-    from app.utils.prediction_market_matching import kalshi_match_segment_key
+    from app.utils.prediction_market_matching import kalshi_game_segment_key
 
     stats = {
         "candidates": 0, "segments": 0, "adopted": 0,
-        "converged": 0, "ambiguous": 0, "no_anchor": 0,
+        "converged": 0, "ambiguous": 0, "ambiguous_idless": 0, "no_anchor": 0,
         "truncated": False,
     }
     try:
@@ -3219,10 +3298,21 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
                             FuturesMarket.event_id.isnot(None),
                         ),
                     ),
-                    or_(
-                        FuturesMarket.external_id.like("KXATP%"),
-                        FuturesMarket.external_id.like("KXWTA%"),
-                    ),
+                    # #6720: a deliberately GENEROUS pre-filter whose only job
+                    # is to bound the read. `kalshi_game_segment_key` is the
+                    # single decider and refuses anything outside its measured
+                    # sport set, so over-reach here costs read volume and can
+                    # never cause a move; under-reach would silently drop a
+                    # population, which is why these are coarse family prefixes
+                    # rather than the exact series names. A series-exact list
+                    # would have missed the stranded rows outright:
+                    # `get_sport_key_from_ticker` resolves KXBUNDESLIGASCORE
+                    # and KXMLBERA through a PREFIX FALLBACK, so they carry a
+                    # sport key without appearing in the ticker map at all.
+                    or_(*[
+                        func.lower(FuturesMarket.external_id).like(p)
+                        for p in _KALSHI_SEGMENT_TICKER_PREFIXES
+                    ]),
                 )
                 .order_by(FuturesMarket.id)
                 .limit(MAX_KALSHI_SEGMENT_ROWS)
@@ -3254,7 +3344,7 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
         # the segment split a second time in SQL is how the two drift.
         segments: dict[str, list] = {}
         for row in rows:
-            key = kalshi_match_segment_key(row.external_id)
+            key = kalshi_game_segment_key(row.external_id)
             if key:
                 segments.setdefault(key, []).append(row)
         stats["segments"] = len(segments)
@@ -3268,14 +3358,21 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
         }
         provenance: dict[int, str] = {}
         sport_ids: dict[int, int] = {}
+        # #6720: which candidates dereference to a provider's own schedule.
+        # This is the evidence `_choose_segment_event` now decides on.
+        anchored: dict[int, bool] = {}
         if candidate_event_ids:
-            for eid, src, sport_id in (
+            for eid, src, sport_id, espn_id, external_id in (
                 await session.execute(
-                    select(Event.id, Event.commence_time_source, Event.sport_id)
+                    select(
+                        Event.id, Event.commence_time_source, Event.sport_id,
+                        Event.espn_id, Event.external_id,
+                    )
                     .where(Event.id.in_(candidate_event_ids))
                 )
             ).all():
                 provenance[int(eid)] = src
+                anchored[int(eid)] = bool(espn_id or external_id)
                 if sport_id:
                     sport_ids[int(eid)] = int(sport_id)
 
@@ -3285,10 +3382,14 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
         receipted_moves: list[tuple[Optional[int], int, dict]] = []
         for members in segments.values():
             target, reason = _choose_segment_event(
-                [r.event_id for r in members], provenance,
+                [r.event_id for r in members], provenance, anchored,
             )
             if target is None:
-                stats["ambiguous" if reason == "ambiguous" else "no_anchor"] += 1
+                # Every refusal is counted under its OWN reason. Folding
+                # `ambiguous_idless` into `no_anchor` would hide the #6720
+                # population — segments where both twins are id-less — inside a
+                # counter that means "no candidate event at all".
+                stats[reason if reason in stats else "no_anchor"] += 1
                 continue
             for row in members:
                 if row.event_id == target:
@@ -3336,10 +3437,12 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
                 label="reconcile_kalshi_match_segments",
             )
             logger.info(
-                "Kalshi match-segment reconcile (Q435): %d adopted, %d converged "
-                "across %d segments (%d ambiguous, %d without an anchor)",
+                "Kalshi game-segment reconcile (Q435/#6720): %d adopted, %d "
+                "converged across %d segments (%d ambiguous, %d both-id-less, "
+                "%d without an anchor)",
                 stats["adopted"], stats["converged"], stats["segments"],
-                stats["ambiguous"], stats["no_anchor"],
+                stats["ambiguous"], stats["ambiguous_idless"],
+                stats["no_anchor"],
             )
         return stats
     except Exception as e:
