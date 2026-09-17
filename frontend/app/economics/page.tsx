@@ -264,7 +264,7 @@ export default function EconomicsPage() {
                       Side markets
                     </div>
                     {t.fed.side_markets.map((m: any, i: number) => (
-                      <MarketRow key={i} q={m.q} prob={m.prob} src={m.src} />
+                      <MarketRow key={i} q={m.q} prob={m.prob} src={m.src} leader={m.leader} />
                     ))}
                   </Card>
                 )}
@@ -305,7 +305,7 @@ export default function EconomicsPage() {
                     Related markets
                   </div>
                   {t.inflation.side_markets.map((m: any, i: number) => (
-                    <MarketRow key={i} q={m.q} prob={m.prob} src={m.src} />
+                    <MarketRow key={i} q={m.q} prob={m.prob} src={m.src} leader={m.leader} />
                   ))}
                 </Card>
               )}
@@ -324,7 +324,7 @@ export default function EconomicsPage() {
             <Card>
               <div className="grid md:grid-cols-2 gap-x-6">
                 {t.jobs.markets?.map((m: any, i: number) => (
-                  <MarketRow key={i} q={m.q} prob={m.prob} src={m.src} />
+                  <MarketRow key={i} q={m.q} prob={m.prob} src={m.src} leader={m.leader} />
                 ))}
               </div>
             </Card>
@@ -364,7 +364,7 @@ export default function EconomicsPage() {
                   </>
                 )}
                 {t.recession.side_markets?.map((m: any, i: number) => (
-                  <MarketRow key={i} q={m.q} prob={m.prob} src={m.src} />
+                  <MarketRow key={i} q={m.q} prob={m.prob} src={m.src} leader={m.leader} />
                 ))}
               </Card>
               {t.recession.gdp_quarters && t.recession.gdp_quarters.length > 0 && (
@@ -436,7 +436,7 @@ export default function EconomicsPage() {
                     More markets
                   </div>
                   {t.markets.side_markets.slice(0, 5).map((m: any, i: number) => (
-                    <MarketRow key={i} q={m.q} prob={m.prob} src={m.src} />
+                    <MarketRow key={i} q={m.q} prob={m.prob} src={m.src} leader={m.leader} />
                   ))}
                 </Card>
               )}
@@ -470,7 +470,7 @@ export default function EconomicsPage() {
                     Crude oil
                   </div>
                   {t.energy.oil.map((o: any, i: number) => (
-                    <MarketRow key={i} q={o.sym ? `${o.sym} ${o.range || ""}` : o.q} prob={o.prob} src={o.src} />
+                    <MarketRow key={i} q={o.sym ? `${o.sym} ${o.range || ""}` : o.q} prob={o.prob} src={o.src} leader={o.sym ? null : o.leader} />
                   ))}
                 </Card>
               )}
@@ -497,7 +497,7 @@ export default function EconomicsPage() {
                     Housing markets
                   </div>
                   {t.housing.markets.map((m: any, i: number) => (
-                    <MarketRow key={i} q={m.q} prob={m.prob} src={m.src} />
+                    <MarketRow key={i} q={m.q} prob={m.prob} src={m.src} leader={m.leader} />
                   ))}
                 </Card>
               )}
@@ -512,7 +512,7 @@ export default function EconomicsPage() {
             <Card>
               <div className="grid md:grid-cols-2 gap-x-6">
                 {t.trade.markets?.map((m: any, i: number) => (
-                  <MarketRow key={i} q={m.q} prob={m.prob} src={m.src} />
+                  <MarketRow key={i} q={m.q} prob={m.prob} src={m.src} leader={m.leader} />
                 ))}
               </div>
             </Card>
@@ -531,7 +531,7 @@ export default function EconomicsPage() {
               <Card>
                 <div className="grid md:grid-cols-2 gap-x-6">
                   {t.government.markets.map((m, i) => (
-                    <MarketRow key={i} q={m.q} prob={m.prob} src={m.src} />
+                    <MarketRow key={i} q={m.q} prob={m.prob} src={m.src} leader={m.leader} />
                   ))}
                 </div>
               </Card>

@@ -2097,6 +2097,17 @@ export async function fetchResolutions(): Promise<{ resolutions: ResolutionItem[
 export interface EconMarketRow {
   q: string;
   prob: number;
+  /**
+   * Which outcome `prob` belongs to — "10% or above" under "What will the
+   * tariff rate on Canadian imports be on Jan 1, 2027?", where the bare 85%
+   * reads as a confidence and is really the price of one rung (#6696).
+   *
+   * OPTIONAL in the type and explicitly null in the payload when there is
+   * nothing worth naming: the question already answers itself, or the leg is a
+   * Yes/No that only restates it. The `?` is for the hourly Redis cache, which
+   * can serve a payload built before the field existed.
+   */
+  leader?: string | null;
   src: string;
   delta: number | null;
   market_id: number;
@@ -2139,7 +2150,10 @@ export interface EconThemeMarkets {
 export interface EconThemeEnergy {
   count: number;
   gas: { label: string; val: string; prob: number; brackets: number[][]; src: string }[];
-  oil: { sym?: string; prob: number; range?: string; src: string; q?: string }[];
+  // Mixed by construction: a modal-bracket row (carries `sym`/`range`, no
+  // single outcome to name) or a plain `_market_row` that fell through to one,
+  // which carries `leader` like every other Market row.
+  oil: { sym?: string; prob: number; range?: string; src: string; q?: string; leader?: string | null }[];
 }
 
 export interface EconThemeSimple {

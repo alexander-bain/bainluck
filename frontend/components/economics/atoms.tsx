@@ -123,8 +123,8 @@ export function Histogram({ buckets, color }: {
   );
 }
 
-export function MarketRow({ q, prob, src, delta }: {
-  q: string; prob: number; src: string; delta?: number | null;
+export function MarketRow({ q, prob, src, delta, leader }: {
+  q: string; prob: number; src: string; delta?: number | null; leader?: string | null;
 }) {
   const col = probColor(prob);
   return (
@@ -140,8 +140,25 @@ export function MarketRow({ q, prob, src, delta }: {
           </span>
         </div>
       </div>
-      <div className="flex items-center gap-1.5 mt-1">
+      {/* Wraps rather than truncates. The leader is the longest thing on this
+          line ("Above 5.6 million barrels/day") and the one a truncation
+          destroys: weather measured 8/8 leaders cut at 390px when the same
+          content was laid out as a nowrap row (ux/1083, #3147). Each piece
+          stays whole and takes the next line when it must. */}
+      <div className="flex items-center flex-wrap gap-1.5 mt-1">
         <SourceChip src={src} />
+        {/* Which outcome the row's percentage prices. "What will the tariff
+            rate on Canadian imports be on Jan 1, 2027? — 85%" is 85% of "10%
+            or above", not a confidence in anything. Omitted when the question
+            already answers itself. See EconMarketRow.leader (#6696). */}
+        {leader ? (
+          <span
+            data-testid="econ-market-leader"
+            className="text-[11px] font-semibold text-text-secondary"
+          >
+            {leader}
+          </span>
+        ) : null}
       </div>
     </div>
   );

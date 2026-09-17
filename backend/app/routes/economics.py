@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 from app.models import FuturesMarket, FuturesOutcome
 from app.services import get_db
 from app.utils.cross_source_matching import (
+    GARBAGE_OUTCOME_RE,
     clean_outcomes as _clean_outcomes,
     find_cross_source_markets,
     group_markets_by_group_id,
@@ -118,6 +119,101 @@ def _outcomes_sorted(market: FuturesMarket) -> list:
     return sorted(market.outcomes, key=lambda o: o.rank or 0)
 
 
+# A leader name that would tell the reader nothing they don't already have.
+# "Yes"/"No" only restate the binary framing the question itself carries, so
+# naming them adds a word and no information.
+_UNINFORMATIVE_LEADER_RE = re.compile(r"^(?:yes|no)$", re.I)
+
+# A question that pits named alternatives against each other. Whole tokens, so
+# the "vs" inside "Vsevolod" or a ticker cannot trip it.
+_VERSUS_RE = re.compile(r"(?<!\w)(?:vs\.?|versus)(?!\w)", re.I)
+
+
+def _prices_the_negation(outcome) -> bool:
+    """Is ``outcome``'s price the price of the question NOT happening?
+
+    True for a bare ``No`` leg, and for a garbage placeholder, whose name is not
+    a name and whose price is therefore about nothing the reader can see.
+
+    The weather twin (`weather._prices_the_negation`, #2563) carries the long
+    reasoning for why negation is kept apart from redundancy. In short:
+    redundancy suppresses the NAME, negation moves the NUMBER, and merging them
+    hands a card to a 10% also-ran whose only fault was repeating the question.
+    """
+    name = (outcome.name or "").strip()
+    if not name:
+        return True
+    if GARBAGE_OUTCOME_RE.match(name):
+        return True
+    return bool(re.match(r"^no$", name, re.I))
+
+
+def _appears_in(name: str | None, question: str | None) -> bool:
+    """Is ``name`` spelled out in ``question``, as whole tokens?
+
+    Lookarounds rather than ``\\b``: a name may begin or end with punctuation
+    ("<4m sq km", "41°C or higher"), where ``\\b`` asserts the opposite thing.
+    The match is on WHOLE TOKENS and not a bare substring, because outcome names
+    on these markets get very short — a market priced across "0", "1" and "2"
+    would otherwise find its leader "0" inside "2026" and suppress the only word
+    that makes the number mean anything.
+    """
+    normalized = re.sub(r"\s+", " ", name or "").strip().lower()
+    if not normalized:
+        return False
+    haystack = re.sub(r"\s+", " ", question or "").lower()
+    return re.search(rf"(?<!\w){re.escape(normalized)}(?!\w)", haystack) is not None
+
+
+def _leader_name(market: FuturesMarket, outcome, outcomes: list) -> str | None:
+    """Name of the outcome whose probability the row prints, or None.
+
+    A bare percentage is a complete answer only when the question already says
+    what the number is about. Measured on the served `/api/economics` payload of
+    2026-09-17 04:45Z, 18 of 53 rendered rows print a number whose referent the
+    question does not carry: "What will the tariff rate on Canadian imports be
+    on Jan 1, 2027?" printed **85%**, which is the price of "10% or above" and
+    not a confidence in anything; "Which sectors will Trump tariff in 2026?"
+    printed **97%**, the price of Pharmaceuticals alone.
+
+    An outcome name earns its place by ADDING to the question, whatever the
+    market's shape: a "Yes"/"No" restates it, a placeholder is not a name, and a
+    name already spelled out in the question renders the same words twice in two
+    type sizes.
+
+    THE EXCEPTION IS A QUESTION THAT ENUMERATES ITS OWN ALTERNATIVES, and it is
+    what a straight lift of the weather rule gets wrong here. "Bitcoin vs. Gold
+    vs. S&P 500 in 2026" names all three contenders, so "S&P 500" appearing in
+    the question does not make it redundant — selecting it is the entire answer.
+    The discriminator is the market's OWN population rather than a word list: a
+    name is redundant when it is the only outcome the question spells out, and
+    informative when the question spells out two or more and the leader picks
+    between them. #6696 named one such row.
+
+    A versus question is the second arm because it enumerates BY CONSTRUCTION
+    even when the counting arm cannot see it. "Annual Return: S&P 500 vs. S&P
+    500 Equal Weight Index" is priced across "S&P 500 Equal Weight Index" and
+    "S&P 500 Index", and only the first is spelled out exactly — the rival is
+    written "S&P 500" in the question and "S&P 500 Index" in the outcome, so the
+    count reaches 1 and the leader is suppressed on a question whose whole point
+    is which of two things won. Measured over the served payload this arm names
+    exactly one further row, that one; it cannot reach a question with no versus
+    token, which is every row the counting arm already decided.
+    """
+    if outcome is None:
+        return None
+    name = (outcome.name or "").strip()
+    if not name or GARBAGE_OUTCOME_RE.match(name):
+        return None
+    if _UNINFORMATIVE_LEADER_RE.match(name):
+        return None
+    if _appears_in(name, market.name):
+        enumerated = sum(1 for o in outcomes if _appears_in(o.name, market.name))
+        if enumerated < 2 and not _VERSUS_RE.search(market.name or ""):
+            return None
+    return name
+
+
 def _market_row(market: FuturesMarket) -> dict | None:
     """Convert a binary market to a Market row.
 
@@ -141,6 +237,29 @@ def _market_row(market: FuturesMarket) -> dict | None:
     The sentinel is removed rather than guarded: `prob` is a `max()` over a
     list already proven non-empty, so no initialiser survives that could be
     mistaken for a measurement.
+
+    #6696 — THE ``No`` LEG NEVER WINS THIS SCAN, and the row NAMES the leg it
+    prints. The old body took the dearest leg whatever it was called and printed
+    the bare number, which fails in two different directions at once. Measured
+    on the served payload, 2026-09-17 04:45Z:
+
+        prints  honest  question
+         85.5%   14.5%  Tariff increase on Canada in effect by December 31, 2026?
+           81%     19%  Will S&P 500 (SPY) hit (HIGH) $780 in September?
+           50%   49.5%  Will WTI Crude Oil (WTI) hit (LOW) $90 Week of Sept 14?
+
+    Each of those is the price of the question's own negation, printed in green
+    behind a near-full bar; the first sits in TRADE & TARIFFS telling a reader a
+    Canadian tariff increase is near-certain when the market says it is not.
+    A further 18 rows printed a real leg's price with no way to tell which leg.
+
+    The outcome is chosen ONCE and the number, the name and the `market_id` all
+    read that single object, so they cannot come to disagree about what the row
+    is about — the same seam discipline as `weather._card_outcome`.
+
+    The fallback keeps today's number when every priced leg is a negation: that
+    case has no specimen in the served population, and preserving a number beats
+    shipping an unexercised withholding path across nine theme lists.
     """
     outcomes = _clean_outcomes(list(market.outcomes))
     if len(outcomes) > 5:
@@ -153,10 +272,16 @@ def _market_row(market: FuturesMarket) -> dict | None:
     priced = [o for o in outcomes if o.current_probability is not None]
     if not priced:
         return None
-    prob = max(float(o.current_probability) for o in priced)
+    answerable = [o for o in priced if not _prices_the_negation(o)]
+    leg = max(answerable or priced, key=lambda o: float(o.current_probability))
     return {
         "q": market.name,
-        "prob": round(prob * 100, 1),
+        "prob": round(float(leg.current_probability) * 100, 1),
+        # Which outcome `prob` belongs to. Always present, explicitly null when
+        # there is nothing worth naming — an absent key would be
+        # indistinguishable from a payload served out of a Redis cache built
+        # before the field existed, which the page must also survive.
+        "leader": _leader_name(market, leg, outcomes),
         "src": _source(market),
         "delta": None,
         "market_id": market.id,
