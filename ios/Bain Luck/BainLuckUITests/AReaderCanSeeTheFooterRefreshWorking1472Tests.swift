@@ -44,7 +44,7 @@ final class AReaderCanSeeTheFooterRefreshWorking1472Tests: XCTestCase {
         // fixes. A reader never sees the badge.
         let app = UITestLaunch.launchApp(extra: ["-launch_debug_counts", "YES"])
         JourneyPrecondition.tabBar(of: app)
-        _ = try JourneyPrecondition.firstEventCard(in: app)
+        _ = try JourneyPrecondition.firstCard(in: app)
 
         let scrollView = app.scrollViews.firstMatch
         XCTAssertTrue(scrollView.exists, "Discover has no scroll view to walk.")
@@ -162,7 +162,7 @@ final class AReaderCanSeeTheFooterRefreshWorking1472Tests: XCTestCase {
         add(Self.shot(app, "3-after"))
 
         XCTAssertTrue(
-            app.descendants(matching: .any).matching(identifier: "discover-card-event").firstMatch
+            JourneyPrecondition.cards(in: app).firstMatch
                 .waitForExistence(timeout: UITestLaunch.contentTimeout),
             "The refresh left the reader on a feed with no event cards in it. Moving them is only an "
             + "improvement if there is something where they land."

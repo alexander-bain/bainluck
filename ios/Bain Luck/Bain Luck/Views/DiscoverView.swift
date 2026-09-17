@@ -2965,8 +2965,34 @@ private struct SwipeToDismiss<Content: View>: View {
     // defects this replaced.
     @State private var swipe = DiscoverSwipeState()
 
+    /// Every dismissible Discover card answers to this, whatever kind it is.
+    ///
+    /// Before this existed the only card a UI test could find was the EVENT card
+    /// (`NativeEventDiscoverCard.tapTargetIdentifier`), and that quietly made
+    /// five of the target's journeys — vertical swipe, horizontal dismiss,
+    /// pull-to-refresh, card→detail→back, and the walk to the footer refresh —
+    /// depend on the night's fixture list. Measured against the live
+    /// `GET /api/feed?limit=50` at 10:25Z on 2026-09-17: **2 of 50 items were
+    /// `type: "event"`**; the other 48 were futures, bundles and a tournament,
+    /// all of them real cards the app drew correctly. The run that morning read
+    /// 1 failure + 4 skips, and the failure's text was "Discover mounted but drew
+    /// no event card", which is not what happened and reads exactly like an
+    /// outage.
+    ///
+    /// The identifier goes HERE rather than on each of the four card views
+    /// because this wrapper is what every one of them is already built from —
+    /// all ten call sites in `DiscoverView` — so a new card kind cannot be added
+    /// without it. `children: .contain` makes the card an accessibility
+    /// CONTAINER: the rig gets a handle, and the buttons inside the card stay
+    /// individually reachable for VoiceOver (a `.combine` here would flatten the
+    /// card into one label and take the share and context controls away from
+    /// readers who use it).
+    static var tapTargetIdentifier: String { "discover-card" }
+
     var body: some View {
         content()
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier(Self.tapTargetIdentifier)
             .offset(x: swipe.offset)
             .opacity(swipe.opacity)
             .overlay(alignment: swipe.overlayIsLeading ? .leading : .trailing) {

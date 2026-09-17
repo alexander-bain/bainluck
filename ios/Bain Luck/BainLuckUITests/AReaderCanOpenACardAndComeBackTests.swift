@@ -19,10 +19,17 @@ final class AReaderCanOpenACardAndComeBackTests: XCTestCase {
         continueAfterFailure = false
     }
 
-    func testTappingACardOpensTheEventAndBackReturnsToDiscover() throws {
+    /// Any card, not specifically a game card. The assertions below are already
+    /// destination-agnostic — they check that SOME navigation bar replaced
+    /// Discover's, never the title — so a futures or tournament card exercises
+    /// the identical push and pop. Keying the precondition on the EVENT card
+    /// meant this journey did not run at all on a quiet slate (2 of 50 live feed
+    /// items were events at 10:25Z on 2026-09-17), which is when an unattended
+    /// run usually happens.
+    func testTappingACardOpensItsDetailAndBackReturnsToDiscover() throws {
         let app = UITestLaunch.launchApp()
         JourneyPrecondition.tabBar(of: app)
-        let card = try JourneyPrecondition.firstEventCard(in: app)
+        let card = try JourneyPrecondition.firstCard(in: app)
 
         let discover = app.navigationBars["Discover"]
         XCTAssertTrue(discover.exists, "Not on Discover before the tap; the pop assertion below would prove nothing.")
@@ -37,7 +44,7 @@ final class AReaderCanOpenACardAndComeBackTests: XCTestCase {
         XCTAssertTrue(
             discover.waitForNonExistence(timeout: UITestLaunch.contentTimeout),
             "Tapped a Discover card and the Discover navigation bar never went away — no push happened. "
-            + "The card opens on `.onTapGesture` (DiscoverEventCard), so this is the gesture not landing, not a routing bug."
+            + "The card opens on its own tap target, so this is the gesture not landing, not a routing bug."
         )
 
         let backButton = app.navigationBars.buttons.firstMatch
@@ -53,7 +60,7 @@ final class AReaderCanOpenACardAndComeBackTests: XCTestCase {
             "Back did not return to Discover. A reader who opens a card is stranded on it."
         )
         XCTAssertTrue(
-            app.descendants(matching: .any).matching(identifier: "discover-card-event").firstMatch
+            JourneyPrecondition.cards(in: app).firstMatch
                 .waitForExistence(timeout: UITestLaunch.contentTimeout),
             "Came back to Discover and it had no cards. Returning to an empty feed is the same defect as not returning."
         )

@@ -109,6 +109,115 @@ enum JourneyPrecondition {
         return last
     }
 
+    /// Every Discover card on screen, of any kind.
+    ///
+    /// `discover-card` is set by `SwipeToDismiss`, which wraps all four card
+    /// views, so this counts what the reader can actually see and swipe. Use it
+    /// for anything that needs A CARD; use `firstEventCard` only where the
+    /// journey needs the card to be a GAME.
+    static func cards(in app: XCUIApplication) -> XCUIElementQuery {
+        app.descendants(matching: .any).matching(identifier: "discover-card")
+    }
+
+    /// The first Discover card of any kind, or a SKIP saying the feed was empty.
+    ///
+    /// Distinct from `firstEventCard` on purpose, and the distinction is
+    /// measured: at 10:25Z on 2026-09-17 the live feed's first 50 items held
+    /// **2 events and 48 futures/bundle/tournament cards**. A journey that only
+    /// needs something to swipe should not be unrunnable for the hours of the
+    /// day when the slate is quiet — that is a property of the fixture list, not
+    /// of the app.
+    static func firstCard(in app: XCUIApplication) throws -> XCUIElement {
+        let card = Self.cards(in: app).firstMatch
+        guard card.waitForExistence(timeout: UITestLaunch.contentTimeout) else {
+            throw XCTSkip(
+                "NOT WALKED: Discover drew no card of any kind within \(UITestLaunch.contentTimeout)s, "
+                + "so there was nothing to touch. This says nothing about navigation — if the feed is "
+                + "really empty it is check 5 failing, so read that test's result, not this skip."
+            )
+        }
+        return card
+    }
+
+    // MARK: - The floating tab bar, which draws OVER the scroll content
+
+    /// The floating tab bar's rect, or `.null` if this platform has none.
+    ///
+    /// iPad draws a `NavigationSplitView` and has no tab bar, so `.null` is a
+    /// real answer and every caller below treats it as "nothing is in the way".
+    static func tabBarRect(_ app: XCUIApplication) -> CGRect {
+        let bar = app.tabBars.firstMatch
+        return bar.exists ? bar.frame : .null
+    }
+
+    /// The part of the window a finger can actually land in: inside the window,
+    /// and above the floating tab bar.
+    static func reachableBand(_ app: XCUIApplication) -> CGRect {
+        let window = app.frame
+        let bar = Self.tabBarRect(app)
+        let bottom = bar.isNull ? window.maxY : min(window.maxY, bar.minY)
+        return CGRect(
+            x: window.minX, y: window.minY,
+            width: window.width, height: max(0, bottom - window.minY)
+        )
+    }
+
+    /// Could a reader actually put a finger on this element right now?
+    ///
+    /// ⚠️ **`waitForExistence` AND `isHittable` BETWEEN THEM DO NOT ANSWER THIS,
+    /// AND THE GAP HAS NOW COST TWO TESTS.** A lazy list MATERIALISES rows past
+    /// the fold, so an element well below the window is in the tree and reports
+    /// a frame; and MainTabView's tab bar FLOATS over the scroll content, so an
+    /// element in the bottom 83pt is covered by a tab button. Measured
+    /// 2026-09-17 on iPhone 17 Pro, window 402×874:
+    ///
+    ///     window   = (0,   0, 402, 874)
+    ///     tabBar   = (0, 791, 402,  83)   → reachable band ends at y 791
+    ///     age chip = (79.7, 902.3, 58.7, 28)  → BELOW THE WINDOW ENTIRELY
+    ///
+    /// Two different failures wear one face. `AReaderCanScrollPastTheChartTests`
+    /// hit the tab-bar half (a drag posed at `chart.midY` swept the tab bar and
+    /// was read as a navigation defect). The price-age chip hunt hit the
+    /// off-screen half: it returned the first chip the tree reported, 28pt below
+    /// the window, then asserted a reader could tap it and reported "a reader
+    /// cannot open the precise stamp at all". The chip was fine; it was one
+    /// scroll away.
+    ///
+    /// The whole frame must be in the band, not just its centre: a chip half
+    /// under the tab bar is one a reader stabs at and misses.
+    static func isReachable(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
+        Self.reachableBand(app).contains(element.frame)
+    }
+
+    /// How far the content must rise for `element` to sit inside the band, or 0
+    /// if it already does.
+    static func liftNeeded(for element: XCUIElement, in app: XCUIApplication) -> CGFloat {
+        max(0, element.frame.maxY - Self.reachableBand(app).maxY)
+    }
+
+    /// Lift the scrolling content by `distance` points, without a flick.
+    ///
+    /// `swipeUp()` moves roughly a whole screen and carries momentum, which is
+    /// the wrong instrument for "raise this one element clear of the tab bar" —
+    /// it routinely carries the specimen off the TOP of the window instead, and
+    /// the hunt then reports the chip as absent. A slow press before the drag
+    /// suppresses the inertia so the content moves by the distance asked for.
+    ///
+    /// Absolute window coordinates rather than an element-relative offset: the
+    /// normalized form is what produced off-screen destinations in the chart
+    /// tests.
+    static func liftContent(_ app: XCUIApplication, by distance: CGFloat) {
+        let window = app.frame
+        // Start in the middle of the window — clear of the tab bar at the bottom
+        // and of the navigation bar at the top — and never drag past either.
+        let startY = window.midY
+        let travel = max(40, min(distance, startY - window.minY - 80))
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        let start = origin.withOffset(CGVector(dx: window.midX, dy: startY))
+        let finish = origin.withOffset(CGVector(dx: window.midX, dy: startY - travel))
+        start.press(forDuration: 0.25, thenDragTo: finish)
+    }
+
     /// The first Discover event card, or a SKIP saying the feed had none.
     ///
     /// `discover-card-event` is set on the card's tap target
