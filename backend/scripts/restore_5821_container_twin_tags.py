@@ -1,9 +1,23 @@
-"""#5821 — the one-command undo for the Polymarket container-twin tags (D51).
+"""#5821 — STEP 3 of the undo for the Polymarket container-twin tags (D51).
 
 Reads `bak_5821_container_twin_tags` and removes, from each duplicate row, the
 ONE `provenance:duplicate-of:<canonical>` element the sweep appended. Every
 fixture goes straight back to serving its spread and totals on the hidden row
 and nowhere else, i.e. back to the defect — which is the point of an undo.
+
+🔴 RUNNING THIS ALONE IS NOT A ROLLBACK (#6786 review).
+───────────────────────────────────────────────────────
+This used to call itself "the one-command undo". It is not one command. The
+sweep's beat runs `apply=True` at :27 EVERY HOUR and its planner selects on the
+ABSENCE of the tag — so tags removed here are re-applied by the next pass,
+within the hour, silently. Stop the sweep first, and confirm the stop landed:
+
+    1. heroku config:set CONTAINER_TWIN_SWEEP_DISABLED=1 -a bainluck
+    2. read /api/admin/celery/task-metrics/polymarket_container_twin_sweep
+       after the next :27 — `terminal` must be `skipped` and the reason must
+       name CONTAINER_TWIN_SWEEP_DISABLED. Do NOT infer this from the clock.
+    3. run this script with --apply
+    4. heroku config:unset CONTAINER_TWIN_SWEEP_DISABLED -a bainluck  (to resume)
 
     python3 scripts/restore_5821_container_twin_tags.py            # dry run
     python3 scripts/restore_5821_container_twin_tags.py --apply
