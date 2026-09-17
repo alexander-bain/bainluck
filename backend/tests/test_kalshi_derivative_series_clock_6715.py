@@ -174,6 +174,25 @@ class TestTheNormaliserLeavesEverythingElseAlone:
         poly = _Market("0xabc", SPECIMEN_DERIV_OCCURRENCE, source="polymarket")
         assert kalshi_game_scale_commence(poly) == SPECIMEN_DERIV_OCCURRENCE
 
+    def test_the_source_gate_is_what_spares_a_non_kalshi_row(self):
+        """🔴 THE TEST ABOVE CANNOT SEE THE SOURCE GATE AND THIS ONE CAN.
+
+        A mutation battery deleted the `source != "kalshi"` branch and every test
+        in this file still passed: a real Polymarket `external_id` ("0xabc") has
+        no `-`, so `kalshi_derivative_series_excess` returns zero for it whatever
+        the source is, and the row above is spared by the ticker parser rather
+        than by the gate it claims to test.
+
+        So this hands the normaliser the one input only the gate can refuse — a
+        non-Kalshi row wearing a measured Kalshi series ticker. The id is
+        synthetic by construction; that is the point. Delete the gate and this
+        goes red alone.
+        """
+        impostor = _Market(
+            "KXLALIGATOTAL-26SEP16LEVATH", SPECIMEN_DERIV_OCCURRENCE, source="polymarket"
+        )
+        assert kalshi_game_scale_commence(impostor) == SPECIMEN_DERIV_OCCURRENCE
+
     def test_a_missing_commence_time_is_returned_unchanged(self):
         """`None` must survive: the caller's next line tests it and substitutes
         `now`. Returning a datetime here would invent a start for a market that
