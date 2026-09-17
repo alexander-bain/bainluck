@@ -844,6 +844,80 @@ def deadline_bound_headroom_ceiling_ms(remaining_ms: int) -> int:
     return max(1, min(STATEMENT_INNER_MARGIN_MS, max(2, int(remaining_ms)) // 10))
 
 
+def cancellation_is_conclusive(
+    *,
+    remaining_ms: int,
+    bound_ms: int,
+    cancelled_after_ms: int,
+    worst_completed_ms: Optional[int],
+) -> bool:
+    """Should this cancellation refine its slot NOW — #6599 defect 1.
+
+    **This is a bounded refinement POLICY, not a proof about the slot's
+    intrinsic cost, and the difference is load-bearing.** A cancellation that
+    was window-bounded and outran every completed unit does NOT logically
+    exclude a lock wait, a vacuum or a plan flip: a new slow disturbance can
+    exceed any prior maximum, and the prior maximum is all this module has. What
+    the two conditions below select is the population where refining
+    IMMEDIATELY is cheap if the evidence was a disturbance and worth a whole
+    pass if it was not — so the policy is justified by what a wrong answer
+    COSTS, which is measured, and never by a claim it cannot be wrong.
+
+    :data:`STAGED_UNIT_SPLIT_AFTER` is two so that a refinement follows a
+    REPRODUCTION rather than an event, and re-cutting the partition every time
+    the database has a bad minute would re-plan the population for nothing. That
+    reasoning is unchanged and this does not weaken it: it narrows the wait to
+    the one shape where the wait is not worth its price, and both conditions
+    must hold.
+
+    1. **The bound came from the WINDOW, not from a measured basis.** The unit
+       was handed everything the beat had left, so there is no larger bound the
+       build could have given it and no tighter fence to blame. Decided by
+       :func:`deadline_bound_headroom_ceiling_ms`, exactly as
+       ``_level_refuted_by_cancellation`` decides it — one rule, two readers.
+    2. **It ran longer than the longest unit this build has ever COMPLETED.**
+       A completed duration is the only evidence this module ever admits about
+       what a legitimate unit costs (CAL-P163). It is a floor on what is normal,
+       not a ceiling on what a disturbance can reach — see above.
+
+    The second condition is what keeps this off the 17:37:55Z beat's SECOND
+    unit: it was window-bounded too, at 59,087 ms — the 65,652 ms of scraps left
+    after the first unit ate the beat — and cutting a slot on 59 s of evidence
+    would refine a slot nobody measured. On that beat's FIRST unit (1,254,562 ms
+    against a ring whose worst completion is 1,181,085 ms) both hold.
+
+    **What a disturbance that does satisfy both conditions costs**, measured in
+    the real loop by
+    ``test_calibration_oversized_slot_is_cut_on_its_proof_6599``'s transient
+    control: the slot is partitioned once, into children bounded by
+    :data:`STAGED_UNIT_SPLIT_MAX_FACTOR`; every unit already completed that beat
+    stays banked; the build publishes in the same beat it would have; the
+    published census is identical to a fresh single-pass computation; and the
+    cut does not cascade — a disturbance held for forty consecutive beats still
+    produces exactly ONE split, because the children absorb it and stop
+    cancelling. The wrong answer is a finer partition, which is the same
+    partition the two-cancellation rule reaches a pass later anyway.
+
+    ``worst_completed_ms`` of ``None`` returns False, and that is ruling 075
+    rather than caution: with no completed unit anywhere in the history there is
+    no measurement to outrun, so there is no basis for the policy at all and the
+    ordinary two-cancellation rule stands.
+    """
+    if worst_completed_ms is None or int(worst_completed_ms) <= 0:
+        return False
+    remaining = int(remaining_ms)
+    bound = int(bound_ms)
+    if remaining <= 0 or bound <= 0:
+        return False
+    headroom = remaining - bound
+    if headroom > deadline_bound_headroom_ceiling_ms(remaining):
+        # A measured basis set this fence, not the window. The build can still
+        # hand this slot a bigger bound on a beat with more room, so nothing is
+        # proved about the slot yet.
+        return False
+    return int(cancelled_after_ms) >= int(worst_completed_ms)
+
+
 def bottleneck_phase(budgets: Iterable[PhaseBudget]) -> Optional[str]:
     """The one phase MEASUREMENT says the window is being withheld from.
 

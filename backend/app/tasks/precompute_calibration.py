@@ -5758,6 +5758,7 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
         STAGED_UNIT_MAX_CANCELLATIONS,
         STAGED_UNIT_SPLIT_AFTER,
         TERMINAL_PARTIAL,
+        cancellation_is_conclusive,
     )
 
     # -- Stage 1: freeze the generation ---------------------------------------
@@ -5958,7 +5959,7 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
         # ledger to the carried mean. Strictly tighter than the phase bound in
         # every case, so it can only stop a unit outliving its measured cost —
         # never let one outlive the beat.
-        await runner.apply_unit_statement_timeout(
+        unit_bound_ms = await runner.apply_unit_statement_timeout(
             db,
             PHASE_FUTURES,
             unit_ms=worst_unit_ms or prior_unit_ms or None,
@@ -6030,7 +6031,45 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
             cursor = note_unit_cancelled(cursor, ref)
             seen = cursor.unit_cancels.get(ref, 0)
             runner.ledger.record_gauge(f"staged:unit_cancels:{ref}", seen)
-            if seen >= STAGED_UNIT_SPLIT_AFTER:
+            # -- CAL-P1303 (#6599 defect 1): WAIT ONLY WHERE WAITING PAYS ------
+            #
+            # The threshold above is two so a refinement follows a reproduction
+            # rather than a bad minute, and that is right for a unit cancelled
+            # at a bound the BUILD chose. It is unreachable for the regime
+            # production is in: ``attempt_order`` sorts ascending on cancel
+            # count, so no slot earns a second cancellation until every slot
+            # holds one — and once the worst-unit ring is readable again
+            # (#6775) the first unit of a beat is handed the whole window, so a
+            # beat records ONE cancellation, and one full pass of 128 slots is
+            # 128 beats. Measured against invalidations every ~15 beats: never.
+            #
+            # So for one narrow shape — window-bounded AND past every completed
+            # unit — the slot is refined on the first cancellation instead. This
+            # does NOT claim such a cancellation cannot be a lock, a vacuum or a
+            # plan flip; a new disturbance can outrun any prior maximum. It is a
+            # bounded refinement policy, justified by the measured cost of being
+            # wrong: one extra partition, nothing unbanked, the same published
+            # census, no cascade. ``cancellation_is_conclusive`` carries the
+            # reasoning and the transient control that measures that cost.
+            worst_completed_ms = max(
+                int(worst_unit_ms or 0),
+                int(runner.ledger.measured_unit_worst_ms(PHASE_FUTURES) or 0),
+            )
+            conclusive = cancellation_is_conclusive(
+                remaining_ms=remaining_ms,
+                bound_ms=int(unit_bound_ms or 0),
+                cancelled_after_ms=cancelled_after_ms,
+                worst_completed_ms=worst_completed_ms or None,
+            )
+            if conclusive:
+                # Recorded whether or not the split then applies, because the
+                # four ``SPLIT_*`` refusals mean four different things and
+                # "the evidence was conclusive and the cut was refused" must be
+                # readable apart from "the evidence never arrived" (gotcha #53).
+                runner.ledger.record_gauge(
+                    f"staged:unit_cancel_conclusive:{ref}", cancelled_after_ms
+                )
+            if seen >= STAGED_UNIT_SPLIT_AFTER or conclusive:
                 # The factor is a multiple of a measurement, and the measurement
                 # is a floor — one split is not promised to be enough, and a
                 # child that cancels twice is cut again on its own evidence.
