@@ -20166,25 +20166,17 @@ async def get_event_odds_history(
             (event.win_probability_sources or {}).get("statpal_plays", [])
         )
 
-    # #6155 — a COMPLETED game's stored score line still replays readings a
-    # lagging feed appended before #6056/#6251 closed the writers. Withhold one
-    # only when this event's own positioned ESPN trace proves it superseded;
-    # full rule, refusals and the stated residual are in the helper. ESPN's
-    # box-score play list only: the StatPal fallback is "last 10", and an
-    # incomplete list would read as "no play inside the bracket".
-    score_history_withheld: list[dict] = []
-    if espn_scoring and score_rows_event_id == event_id:
-        from app.utils.score_history_authority import (
-            split_superseded_score_history,
-        )
-
-        score_history, score_history_withheld = split_superseded_score_history(
-            score_history,
-            espn_history,
-            scoring_plays,
-            event_completed=is_finished,
-            final_score=(event.home_score, event.away_score),
-        )
+    # #6155 — every stored reading is drawn, including ones that step the line
+    # DOWN. A serve-time suppressor lived here for twelve hours and was removed:
+    # the readings it hid were observationally identical to a real ruling
+    # overturned and re-instated between two authority samples, and nothing this
+    # system stores can tell the two apart (see
+    # `test_score_history_ambiguous_reversals_6155.py`, which pins the proof and
+    # guards this line). Stale readings are a WRITER problem — #6056 and #6251
+    # closed those writers — and hiding the rows they already wrote trades a
+    # visible stale dip for an invisible deleted correction, which is the worse
+    # of the two. Do not re-introduce a filter here without evidence that
+    # separates the two causes on a per-row basis.
 
     # ── Period markers from scoring_plays table ──
     # Query distinct periods with their earliest timestamp.
@@ -21116,7 +21108,6 @@ async def get_event_odds_history(
         "history": history,
         "bookmaker_history": bookmaker_history,
         "score_history": score_history,
-        "score_history_withheld": score_history_withheld,
         "espn_history": espn_history,
         "win_prob_history": win_prob_history,
         "win_prob_sources": win_prob_sources_meta,
