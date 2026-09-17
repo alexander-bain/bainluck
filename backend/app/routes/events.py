@@ -19461,6 +19461,72 @@ def _pin_blend_edge(
 _SCORE_SERIES_KEY = "score"
 
 
+def one_row_per_bookmaker_in_bucket(snaps: list) -> list:
+    """One vote per sportsbook inside a chart minute — the book's LAST row there.
+
+    WHAT A READER SEES WITHOUT THIS. `/api/events/15305827/history?hours=48`, the
+    window the event page actually boots with, measured against the bytes
+    production served 2026-09-17 18:57Z: **535 of 718 buckets** carry a sportsbook
+    that wrote more than once in that minute, and the bucket averages it once per
+    row. Across those buckets the route reported **1,336 sportsbooks where 732
+    wrote** — an 82% overstatement, up to "13 sportsbooks" on a minute six books
+    quoted. That count is not internal: `lib/eventKeyStats.ts` reads the newest
+    bucket's `bookmaker_count` and prints `Live · N sportsbooks` beside the
+    probability; 35 of that page's last 60 buckets would have printed an
+    overstated N. The averaged number moves too — 66 buckets change value, three
+    by 3pp or more (17:51Z 65.15% -> 69.60%, 17:52Z 77.44% -> 81.68%, 17:33Z
+    67.48% -> 63.91%), because at 17:52Z bovada held two rows 25 points apart in
+    price — 0.5625 and 0.8097 — and both were counted.
+
+    WHY THE LAST ROW AND NOT AN AVERAGE OF THEM. A minute bucket is meant to be a
+    reading of the market at that minute. Two rows from one book are not two
+    opinions, they are one opinion observed twice, and the newer observation is
+    the one that was true at the end of the minute — the same rule the page's own
+    hero uses (`latest_odds_per_bookmaker_query` takes the newest row per book).
+    Averaging them would keep a superseded price alive in the number.
+
+    WHY THIS SURVIVES THE BRIEF-14 HOLD. It reads `captured_at`, `bookmaker` and
+    `id` and never `valid_until`. Rows are born at `now()` and a re-confirm creates
+    no row, so a point this route has already served can never be revised by a
+    later write — the property codex's hold says the in-force interval helper
+    cannot promise. Nothing is reconstructed; a row is dropped from an average it
+    was already in twice.
+
+    THE TIE-BREAK IS PART OF THE FIX, NOT DECORATION. `(captured_at, id, input
+    position)`: no per-book pick exists today, so today there is no tie to break —
+    this change creates one, and two rows a book wrote in the same microsecond
+    must resolve the same way on every request or the chart flickers between page
+    loads. `id` is the writer's own order; position is the query's `ORDER BY
+    captured_at` and only decides rows identical in both.
+
+    THE MEASURED COST, WHICH THE GUARDS ASSERT RATHER THAN HIDE.
+    `detect_reversed_bookmakers` needs three ENTRIES and counts rows, so buckets
+    that only reached three by counting a book twice stop being checked. Authority
+    measured it over 3h / 300 events: of 854 armed buckets, **224** were armed on
+    fewer than three distinct books and **7** on a single book comparing itself to
+    its own duplicates. Those lose the detector, correctly — a book cannot be an
+    outlier against a median built from its own rows. Honestly unarmed beats
+    vacuously armed.
+
+    NOT THE WHOLE DEFECT, AND THE OTHER HALF IS NOT HERE. #6771 (`_snapshots_are_equal`
+    in `tasks/odds_polling.py`, another owner) re-mints byte-identical rows for
+    books quoting quarter-point lines and is the cause of 611 of 816 double-counted
+    buckets. That fix is forward-only: it stops new duplicates and repairs nothing
+    already stored. This one is what the reader gets on rows that already exist,
+    on the next page load, with no backfill.
+
+    Returns the kept rows in input order. Rows are never merged, rewritten or
+    re-timed; `snaps` is not mutated.
+    """
+    best: dict = {}
+    for position, snap in enumerate(snaps):
+        rank = (snap.captured_at, snap.id if snap.id is not None else -1, position)
+        current = best.get(snap.bookmaker)
+        if current is None or rank > current[0]:
+            best[snap.bookmaker] = (rank, position, snap)
+    return [snap for _, _, snap in sorted(best.values(), key=lambda kept: kept[1])]
+
+
 @router.get("/{event_id}/history")
 async def get_event_odds_history(
     event_id: int,
@@ -19776,9 +19842,13 @@ async def get_event_odds_history(
                 snapshots_by_time[end_key].append(snap)
 
     # Aggregate each time bucket (excluding reversed bookmakers)
+    #
+    # #6771 route half — one vote per sportsbook before anything reads the bucket,
+    # so the reversal detector and the average see the same set and neither counts
+    # a book twice. See `one_row_per_bookmaker_in_bucket`.
     history = []
     for timestamp in sorted(snapshots_by_time.keys()):
-        snaps = snapshots_by_time[timestamp]
+        snaps = one_row_per_bookmaker_in_bucket(snapshots_by_time[timestamp])
         reversed_bks = detect_reversed_bookmakers(snaps)
         agg_snaps = [s for s in snaps if s.bookmaker not in reversed_bks] if reversed_bks else snaps
         aggregated = aggregate_bookmaker_odds(agg_snaps if agg_snaps else snaps)
