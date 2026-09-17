@@ -412,15 +412,21 @@ def is_empty_book_midpoint(
 
     THIS HELPER IS NO LONGER READ-SIDE ONLY, and the prose saying so was stale from
     #6676 until CERT-3015 named it (follow-up
-    ``6676-UPDATE-SHARED-PREDICATE-DOCSTRING-FOR-WRITER-CONSUMER``). There are five
+    ``6676-UPDATE-SHARED-PREDICATE-DOCSTRING-FOR-WRITER-CONSUMER``). There are SIX
     consumers in two classes, and they differ in what refusal MEANS:
 
-      * READ side -- ``routes/events.py`` (``game-markets`` and the search slice) and
-        ``routes/futures.py`` (the grouped feed). These refuse to SERVE the outcome;
-        nothing is rewritten and no stored price is mutated (gotcha #21).
-      * WRITE side -- ``tasks/polymarket.py``, at
-        ``_resolve_market_probability_with_source`` and ``_parent_outcome_data``.
-        These DECLINE THE UPSERT, so the row is never written in the first place.
+      * READ side (3) -- ``routes/events.py`` at ``game-markets`` and at the search
+        slice, and ``routes/futures.py`` for the grouped feed. These refuse to SERVE
+        the outcome; nothing is rewritten and no stored price is mutated (gotcha #21).
+      * WRITE side (3) -- ``tasks/polymarket.py`` at
+        ``_resolve_market_probability_with_source`` and at ``_parent_outcome_data``,
+        and ``tasks/futures_price_refresh.py`` at ``_write_prices`` (#6676's third
+        writer, landed 2026-09-17). These DECLINE THE UPSERT, so the row is never
+        written in the first place.
+
+    None of the three writers is in ``HEAVY_TASKS`` (measured, not assumed), so a
+    change here is live at the main-app release with no ``bainluck-heavy`` convergence
+    owed -- notice 48. Re-measure rather than quoting this line if a writer is added.
 
     The consequence worth knowing before changing anything here: the write side is
     forward-only. Widening this predicate does not shrink the STORED class -- existing

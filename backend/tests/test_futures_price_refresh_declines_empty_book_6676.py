@@ -89,10 +89,22 @@ class TestThePhantomCoinFlipNeverReachesTheRow:
         """The asymmetric band, and the reason the guard tests the ITEM.
 
         ``ask = 0.96`` is inside ``[0.95, 0.98)``. The yes leg is an empty-book
-        midpoint; the no leg's derived book is ``(0.04, 0.99)``, whose bid of 4c
-        is ABOVE ``EMPTY_BOOK_MAX_BID``, so the predicate is False on that leg
-        read alone. A per-leg guard writes it — 51% on an empty book, sitting
-        under the 49% it just declined.
+        midpoint; the no leg's derived book is ``(0.04, 0.99)``. When this was
+        written the predicate read two independent bounds, so a 4c bid was above
+        ``EMPTY_BOOK_MAX_BID`` and the predicate was False on that leg READ ALONE
+        — a per-leg guard wrote it, 51% on an empty book, sitting under the 49%
+        it had just declined. Testing the ITEM is what closed that.
+
+        🔄 AMENDED BY #6727 (2026-09-17), and the amendment is the good news.
+        The two bounds became the one statement they were jointly making —
+        ``ask - bid >= 0.90`` — so ``(0.04, 0.99)`` is a 95c-wide book and the
+        predicate is now True on that leg read alone. **The asymmetry this test
+        was built around no longer exists**, which means the item-level guard
+        below is belt-and-braces rather than the only thing between a reader and
+        a phantom 51%. The test keeps its full value: it still proves the guard
+        is per-ITEM, and it now also pins that the complement can no longer slip
+        through on its own. CERT-3016 caught this composition — my branch
+        pre-dated this file, so exact-sha CI could not see it (notice 47(a)).
         """
         item = {
             "external_id": "0xband",
@@ -101,9 +113,12 @@ class TestThePhantomCoinFlipNeverReachesTheRow:
             "yes_ask": 0.96,
             "no": {"probability": 0.515, "yes_bid": 0.04, "yes_ask": 0.99},
         }
-        # The asymmetry is real and not an assumption of this test.
+        # Both legs are now caught on their own; the asymmetry is closed.
         assert is_empty_book_midpoint(0.485, 0.01, 0.96) is True
-        assert is_empty_book_midpoint(0.515, 0.04, 0.99) is False
+        assert is_empty_book_midpoint(0.515, 0.04, 0.99) is True
+        # The band is still asymmetric in the direction that matters: a book
+        # that genuinely bounds something is untouched on either leg.
+        assert is_empty_book_midpoint(0.515, 0.10, 0.93) is False
 
         session = _WriteSession(rows=_pair_rows("0xband"))
         stats: dict = {}

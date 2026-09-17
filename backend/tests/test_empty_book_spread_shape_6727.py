@@ -497,9 +497,14 @@ class TestTheGappedLadderIsTheOldRulesDoing:
 
 class TestEveryServeSurfaceInheritsTheShape:
     """The two read-side helpers plus search, driven with the specimen row itself.
-    The two Polymarket write sites are covered by #5333's and #6676's own suites,
-    which drive the resolver and the parent path end to end; both import the same
-    predicate and neither names a constant, asserted just above."""
+
+    There are SIX consumers, three read and three write. The three writers are
+    covered by their own suites, which drive each path end to end: #5333's and
+    #6676's for the two in ``tasks/polymarket.py``, and
+    ``test_futures_price_refresh_declines_empty_book_6676.py`` for the third
+    (lane1b's, landed 2026-09-17). All six import the same predicate and none
+    names a constant, asserted just above.
+    """
 
     def test_the_event_page_drops_the_bucks_row(self):
         assert _event_page_drops(_outcome(0.475, 0.01, 0.94)) is True
