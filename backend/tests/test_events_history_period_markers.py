@@ -121,13 +121,19 @@ def _event(now, **kw):
     return SimpleNamespace(**base)
 
 
-def _totals_only_snapshot(when):
+def _totals_only_snapshot(when, row_id=None):
     """A real production shape: a book quoting a TOTAL and no moneyline.
 
     `aggregate_bookmaker_odds()` returns `home_probability: None` for this, and
     the route appends the `history` row anyway. Timestamp, no probability line.
+
+    `id` carries the primary key every `odds_snapshots` row has. #6771's bucket
+    dedupe reads it as the tie-break between two rows one book wrote in the same
+    microsecond, and this rig predates it — the field was missing here because
+    nothing had needed it, not because the row it models lacks one.
     """
     return SimpleNamespace(
+        id=row_id if row_id is not None else int(when.timestamp()),
         captured_at=when,
         bookmaker="draftkings",
         home_win_probability=None,
