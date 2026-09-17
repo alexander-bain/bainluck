@@ -303,7 +303,12 @@ class TestEconomicsSeededInflation:
         assert inf["count"] == 1
         assert len(inf["cpi_releases"]) == 1
         cpi = inf["cpi_releases"][0]
-        assert cpi["mo"] == _mon
+        # The label KEEPS THE YEAR (#2564). This read `== _mon` while the route
+        # discarded it, which is what let three markets a decade apart reach the
+        # card as three blocks headed `Dec`. The assertion encoded the defect;
+        # the docstring above is about date drift and is unaffected.
+        assert cpi["mo"] == f"{_mon} {_yr}"
+        assert cpi["q"] == f"CPI YoY for {_mon} {_yr}?"
         assert isinstance(cpi["brackets"], list)
         assert len(cpi["brackets"]) == 3
         assert "peakIs" in cpi

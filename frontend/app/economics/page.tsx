@@ -285,10 +285,16 @@ export default function EconomicsPage() {
               <Card>
                 {t.inflation.cpi_releases?.map((cpi: any, i: number) => (
                   <div key={i} className="py-3 border-b border-surface-secondary last:border-0">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-text-secondary">{cpi.mo}</span>
-                      {cpi.upcoming && (
-                        <span className="text-[9px] font-bold tracking-wide bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full">
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      {/* The question, not the month. Three blocks headed `Dec`
+                          were US CPI for 2030, 2034 and 2036, and a block
+                          headed `Sep` was Argentina's — #2564. `mo` is the
+                          short period hint and stays as the fallback. */}
+                      <span className="text-sm font-medium text-text-secondary leading-snug min-w-0">
+                        {cpi.q || cpi.mo}
+                      </span>
+                      {cpi.is_next && (
+                        <span className="text-[9px] font-bold tracking-wide bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full shrink-0 whitespace-nowrap">
                           NEXT
                         </span>
                       )}
