@@ -31,7 +31,7 @@ from sqlalchemy.orm import selectinload
 
 from app.utils.event_matcher import player_key
 from app.utils.futures_market_snapshot import concept_price_observed_at_iso
-from app.utils.name_normalization import clean_slug
+from app.utils.name_normalization import clean_slug, strip_diacritics
 from app.utils.settledness import price_converged, settled_under_assigned_state
 
 # ---------------------------------------------------------------------------
@@ -52,6 +52,7 @@ def card_slug(card_name: str | None, token: str) -> str:
     The trailing token keeps the slug self-resolving (see `_DATE_TOKEN_RE`)."""
     base = clean_slug(card_name or "")
     return f"{base}-{token}" if base else token
+
 
 # A matchup-shaped name ("A vs B", "A def. B") — used to keep the two-sided fight
 # (and its cross-source dup / negrisk bundle) OUT of the props list.
@@ -84,10 +85,14 @@ class CombatSportConfig:
     fight_re: re.Pattern  # matches a card FIGHT ticker → captures the date-token
     any_date_re: re.Pattern  # matches ANY ticker (fight OR prop) → date-token
     prop_ticker_types: dict  # {ticker-prefix: prop_type}
-    number_re: re.Pattern | None = None  # numbered-card pattern (MMA); None = unnumbered
+    number_re: re.Pattern | None = (
+        None  # numbered-card pattern (MMA); None = unnumbered
+    )
     number_label: str = ""  # prefix for a numbered card, e.g. "UFC" → "UFC 329"
     strip_re: re.Pattern | None = None  # leading card-prefix to strip from a subtitle
-    fight_night_re: re.Pattern | None = None  # "Fight Night" detection (MMA); None = off
+    fight_night_re: re.Pattern | None = (
+        None  # "Fight Night" detection (MMA); None = off
+    )
     fight_night_label: str = "Fight Night"
     # Sports.key(s) of the schedule (events table) source: scheduled bouts (Odds API/
     # ESPN/StatPal) that surface a card BEFORE Kalshi lists it, and whose fight-start
@@ -145,8 +150,18 @@ def make_combat_config(
 # locale-dependent). Used to build a card date-token from an events-table bout's
 # commence_time that ALIGNS with the Kalshi ticker token (`YYMONDD`, e.g. 26JUL18).
 _MONTHS = (
-    "jan", "feb", "mar", "apr", "may", "jun",
-    "jul", "aug", "sep", "oct", "nov", "dec",
+    "jan",
+    "feb",
+    "mar",
+    "apr",
+    "may",
+    "jun",
+    "jul",
+    "aug",
+    "sep",
+    "oct",
+    "nov",
+    "dec",
 )
 
 
@@ -161,7 +176,9 @@ def event_commence_token(commence) -> str | None:
     if commence is None:
         return None
     try:
-        return f"{commence.year % 100:02d}{_MONTHS[commence.month - 1]}{commence.day:02d}"
+        return (
+            f"{commence.year % 100:02d}{_MONTHS[commence.month - 1]}{commence.day:02d}"
+        )
     except (AttributeError, IndexError, TypeError):
         return None
 
@@ -321,7 +338,9 @@ def card_label(
     """
     candidates = [main_event_name, *extra_titles]
     number = card_number(cfg, *candidates)
-    subtitle = _strip_card_prefix(cfg, main_event_name) or (main_event_name or "").strip()
+    subtitle = (
+        _strip_card_prefix(cfg, main_event_name) or (main_event_name or "").strip()
+    )
 
     if number:
         # Avoid "UFC 329: UFC 329: …" if the subtitle still carried the number.
@@ -356,7 +375,10 @@ def classify_prop(
     ("A vs B") classifies as None."""
     eid = external_id or ""
     for prefix, ptype in cfg.prop_ticker_types.items():
-        if re.search(rf"\b{prefix}\b", eid, re.IGNORECASE) or f":{prefix}-" in eid.upper():
+        if (
+            re.search(rf"\b{prefix}\b", eid, re.IGNORECASE)
+            or f":{prefix}-" in eid.upper()
+        ):
             return ptype
         if prefix in eid.upper():
             return ptype
@@ -546,6 +568,91 @@ def card_status_span(bouts):
     # list, and dropping rows out of the middle must not make the pair depend on
     # which ones happened to be dropped.
     return min(times), max(times)
+
+
+def _fighter_identity(name: str | None) -> str:
+    """A competitor's full name folded for equality — diacritics stripped, case
+    and punctuation dropped, whitespace collapsed.
+
+    Used ONLY to decide whether two rows name the same person
+    (:func:`card_rows_are_not_a_schedule`); never a display string, and never a
+    cross-source match key — for that, spellings genuinely differ and
+    :func:`player_key` is the right tool.
+    """
+    folded = strip_diacritics((name or "").strip()).lower()
+    folded = re.sub(r"[^a-z0-9 ]", " ", folded)
+    return " ".join(folded.split())
+
+
+def card_rows_are_not_a_schedule(bouts) -> bool:
+    """True when a card's OWN bout rows prove they are not a schedule (#4485/#4821).
+
+    Two independent contradictions, required TOGETHER:
+
+    1. **A fighter is booked twice.** Some competitor appears in two or more of
+       the card's bouts. Nobody fights twice on one card, so at least one of
+       those rows is not a booking (#4560 — Makhachev vs Morales *and* vs Prates,
+       created two minutes apart).
+    2. **Every bout is stamped at one instant.** All bouts share a single
+       ``commence_time``, which is a placeholder where a schedule should be — a
+       card's fights run over hours.
+
+    **The conjunction is the whole point, and each clause alone is measurably
+    unsafe.** Censused on production 2026-09-17 over every upcoming MMA and
+    boxing card (30 cards, 139 bout rows):
+
+    * *Stacked alone* would suppress **tonight's real boxing card** — four bouts
+      all stamped ``22:00``, ``d+0``. A promotion that stamps its whole card at
+      the broadcast time is not lying about anything.
+    * *Double-booked alone* would suppress a **real 12-bout boxing card two days
+      out**, where exactly one fighter (Joe Howarth) carries a duplicate row.
+      One dirty row does not make the card fictional.
+    * *Together* they matched **3 cards of 30, every one of them MMA and ≥106
+      days out* — 2027-01-01, 2027-04-25, 2027-08-01. Every card inside 106 days
+      was untouched.
+
+    That distance is an OUTCOME of the predicate, never an input to it:
+    contamination is not a function of distance (a 17-day card is contaminated
+    while a 101-day card is roster-clean), so no day count is tuned here and
+    none should be added. A card that is genuinely scheduled far out keeps its
+    slot; a card whose rows contradict themselves loses it however near it is.
+
+    Deliberately narrow in two more ways. It reads only the events-table roster,
+    so a card the venue actually lists is never judged by it; and it needs two
+    bouts, because a lone row cannot contradict itself.
+
+    Identity is the FULL folded name, not :func:`player_key`'s surname, and the
+    match must cross two bouts. Suppression's dangerous direction is the false
+    POSITIVE, and a surname key has two of them: "Anderson Silva vs Thiago
+    Silva" double-books itself inside one bout, and two unrelated Silvas on one
+    stacked card book each other. Both are real MMA shapes. A duplicate row is
+    the same provider echoing itself, so it repeats the name verbatim — all
+    three live specimens match on the full name ("Islam Makhachev", "Sean
+    Strickland", "Magomed Ankalaev"), and nothing is bought by looking looser.
+    """
+    rows = [b for b in (bouts or []) if getattr(b, "commence_time", None) is not None]
+    if len(rows) < 2:
+        return False
+
+    if len({b.commence_time for b in rows}) != 1:
+        return False
+
+    seen: set[str] = set()
+    for b in rows:
+        # Per-bout set first: the two corners of ONE bout are never a double
+        # booking, however their names normalize.
+        corners = {
+            key
+            for key in (
+                _fighter_identity(b.home_team_name),
+                _fighter_identity(b.away_team_name),
+            )
+            if key
+        }
+        if corners & seen:
+            return True
+        seen |= corners
+    return False
 
 
 def bout_order_key(ev):
@@ -829,6 +936,15 @@ async def list_card_concepts(
             latest = kalshi["fights"][-1]["commence"]
             earliest = kalshi["fights"][0]["commence"]
         else:
+            continue
+
+        # #4485/#4821: a card whose OWN rows prove they are not a schedule is not
+        # a card. Gated on the events-only branch — a card the venue lists
+        # (`kalshi["fights"]`) has corroboration this predicate cannot overrule,
+        # and all three live specimens are events-only. See
+        # `card_rows_are_not_a_schedule` for the census and for why each of its
+        # two clauses is unsafe alone.
+        if not (kalshi and kalshi["fights"]) and card_rows_are_not_a_schedule(bouts):
             continue
 
         # #4505: the live window opens at THIS card's first bout, never at a fixed
@@ -1155,7 +1271,7 @@ class CombatEventAdapter:
         # Card fighter surnames — for tying name-only props (Polymarket) to the card.
         card_surnames: set[str] = set()
         for f in fights:
-            for o in (f.outcomes or []):
+            for o in f.outcomes or []:
                 k = player_key(o.name)
                 if k:
                     card_surnames.add(k)
@@ -1205,7 +1321,9 @@ class CombatEventAdapter:
 
         # Stable prop ordering: by type (method, rounds, distance, occurrence).
         _ptype_order = {"method": 0, "rounds": 1, "distance": 2, "occurrence": 3}
-        props.sort(key=lambda p: (_ptype_order.get(p.get("prop_type"), 9), p["market_id"]))
+        props.sort(
+            key=lambda p: (_ptype_order.get(p.get("prop_type"), 9), p["market_id"])
+        )
 
         children.extend(props)
 
@@ -1286,7 +1404,10 @@ class CombatEventAdapter:
                 home_prob = max(0.0, min(1.0, float(home_prob)))
                 pair = [
                     {"name": ev.home_team_name, "probability": round(home_prob, 4)},
-                    {"name": ev.away_team_name, "probability": round(1.0 - home_prob, 4)},
+                    {
+                        "name": ev.away_team_name,
+                        "probability": round(1.0 - home_prob, 4),
+                    },
                 ]
             else:
                 pair = [
@@ -1295,7 +1416,9 @@ class CombatEventAdapter:
                 ]
             return sorted(
                 pair,
-                key=lambda o: o["probability"] if o["probability"] is not None else -1.0,
+                key=lambda o: (
+                    o["probability"] if o["probability"] is not None else -1.0
+                ),
                 reverse=True,
             )
 
