@@ -3428,7 +3428,13 @@ def space_discover_concept_families(
             and family == previous_family
             and not _spacing_is_anchor(head)
             # the head is always the most-delayed pending card, so bounding it
-            # bounds every deferral
+            # bounds every deferral. MEASURED (2026-09-17, 783 ladder shapes +
+            # 2,000 random pools at 30-80% concept density): the delay this
+            # clause reads never exceeds 3, so it never actually fires — the
+            # binding constraint is the candidate-side break below. Kept as the
+            # invariant's second half rather than deleted as dead: it is what
+            # makes the bound true for any pool, not just the ones measured.
+            # Its mutant `<=` is therefore EQUIVALENT and no test can kill it.
             and slot - head_index < max_displacement
         ):
             for offset_in_pending in range(1, len(pending)):
