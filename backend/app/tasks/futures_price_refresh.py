@@ -1169,6 +1169,7 @@ async def _write_prices(
       write.
     """
     from app.models.models import FuturesOddsSnapshot, FuturesOutcome
+    from app.utils.feed_market_quality import is_empty_book_midpoint
     from app.utils.odds_math import probability_to_american
     from app.utils.price_change_stamp import price_changed_at_value
     from sqlalchemy import case, func, or_, update as sa_update
@@ -1220,6 +1221,49 @@ async def _write_prices(
         legs = _legs(item)
         if not legs:
             stats["unknown_outcomes"] += 1
+            continue
+
+        # #6676. THIS WRITER HAD NO UNTRADEABLE-BOOK GUARD AT ALL, and it is the
+        # dominant writer on the rows it touches. `is_empty_book_midpoint` is
+        # imported rather than restated so #5247's measured constants have one
+        # definition; the ingest half (`tasks/polymarket.py`) already declines on
+        # the same predicate, and this is the other door into the same column.
+        #
+        # THE TEST IS ON THE ITEM, NOT THE LEG, AND THAT IS THE WHOLE FIX.
+        # `_legs` can return the yes leg AND the no leg, and the no leg's book is
+        # `complementary_book(bid, ask)` = `(1 - ask, 1 - bid)` — the same CLOB
+        # addressed from the other token. The empty-book thresholds are NOT
+        # complementary (`1 - 0.02 = 0.98`, not `0.95`), so a per-leg test fires
+        # on yes and MISSES no whenever `0.95 <= ask < 0.98`: measured on
+        # production 2026-09-17, 131 of 499 open Polymarket yes-leg specimens sit
+        # in exactly that band. Declining per leg would have half-fixed a quarter
+        # of the class and left the phantom complement printing — 49% on one row
+        # and 51% on the row beneath it, which is the shape a reader sees.
+        # Testing the venue's own quote once and skipping the whole item is also
+        # the truer statement: "this book is empty" is a fact about the market,
+        # not about which side of it you address.
+        #
+        # `is_fabricated_midpoint` is DELIBERATELY NOT imported here, though the
+        # ingest half carries it. Measured on the same pass, over open markets:
+        # it matches 8,357 Kalshi outcomes against the empty-book test's 667, and
+        # 7,715 of those are two-sided real quotes spanning 0.10–0.90 — honest
+        # wide-market lines whose price happens to sit at the midpoint of a book
+        # that is not empty. This function is SHARED by both venues, so importing
+        # it would freeze those 7,715 Kalshi prices as stale to catch a class the
+        # empty-book test already catches (the 642 that overlap). The narrower
+        # predicate is not the timid choice here, it is the correct one.
+        #
+        # Forward-only by construction (gotcha #21): a decline skips the update
+        # and the snapshot, and never nulls a stored price.
+        if is_empty_book_midpoint(prob, item.get("yes_bid"), item.get("yes_ask")):
+            # Counted in LEGS, like its `out_of_range` sibling above, so the two
+            # refusal counters are on one scale — an item declined here suppresses
+            # every leg it would have written, and counting it as 1 would make the
+            # decomposed pair look half the size of the range refusal it sits
+            # beside.
+            stats["legs_declined_empty_book"] = stats.get(
+                "legs_declined_empty_book", 0
+            ) + len(legs)
             continue
 
         for outcome_id, side in legs:
@@ -2300,6 +2344,13 @@ async def _refresh_stale_futures_prices(
         # there is a different fact from one the venue never priced, and both
         # venues pass through this function.
         "legs_declined_out_of_range": 0,
+        # #6676, the untradeable-book half. Initialised to 0 and reported
+        # unconditionally for the reason the counters below are: a pass that
+        # declined nothing and a pass whose guard never ran both read as absent
+        # otherwise, and this guard's whole point is that its predecessor was
+        # silent. Zero here is the healthy steady state; a jump is the venue
+        # quoting empty books at us, not a regression in this task.
+        "legs_declined_empty_book": 0,
         # #4253. The Kalshi half of the same withdrawal, counted SEPARATELY from
         # `legs_retired` because it answers a different venue question — "the
         # venue no longer lists this contract", not "the venue lists it and
