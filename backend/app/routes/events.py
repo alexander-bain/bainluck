@@ -19861,6 +19861,10 @@ async def get_event_odds_history(
     # one id — that page's payload is unchanged point for point, by
     # construction rather than by equivalence.
     score_history = []
+    #: #6155 — the row the served score series came from. The authority trace
+    #: below is read on `event_id` alone, and a score only means something in
+    #: its OWN row's team slots, so the two are compared only on one row.
+    score_rows_event_id = event_id
     try:
         score_result = await db.execute(
             select(ScoreSnapshot)
@@ -19877,6 +19881,7 @@ async def get_event_odds_history(
             score_snapshots = [
                 s for s in score_snapshots if s.event_id == score_series_row
             ]
+            score_rows_event_id = score_series_row
 
         score_history = [
             {
@@ -20159,6 +20164,26 @@ async def get_event_odds_history(
         # Fallback to StatPal play-by-play data
         scoring_plays = extract_scoring_plays(
             (event.win_probability_sources or {}).get("statpal_plays", [])
+        )
+
+    # #6155 — a COMPLETED game's stored score line still replays readings a
+    # lagging feed appended before #6056/#6251 closed the writers. Withhold one
+    # only when this event's own positioned ESPN trace proves it superseded;
+    # full rule, refusals and the stated residual are in the helper. ESPN's
+    # box-score play list only: the StatPal fallback is "last 10", and an
+    # incomplete list would read as "no play inside the bracket".
+    score_history_withheld: list[dict] = []
+    if espn_scoring and score_rows_event_id == event_id:
+        from app.utils.score_history_authority import (
+            split_superseded_score_history,
+        )
+
+        score_history, score_history_withheld = split_superseded_score_history(
+            score_history,
+            espn_history,
+            scoring_plays,
+            event_completed=is_finished,
+            final_score=(event.home_score, event.away_score),
         )
 
     # ── Period markers from scoring_plays table ──
@@ -21068,6 +21093,7 @@ async def get_event_odds_history(
         "history": history,
         "bookmaker_history": bookmaker_history,
         "score_history": score_history,
+        "score_history_withheld": score_history_withheld,
         "espn_history": espn_history,
         "win_prob_history": win_prob_history,
         "win_prob_sources": win_prob_sources_meta,
