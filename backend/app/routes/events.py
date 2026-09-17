@@ -12272,9 +12272,16 @@ async def _venue_settlement(db: AsyncSession, event) -> dict | None:
     ask it at all.
 
     Additive and advisory, exactly like `_pinned_live_probability` above. It
-    never touches `event.status`, never writes, and never derives a winner —
-    the hero sentence and the countdown are ux's under notice 41 (#6381 is the
-    consumer issue).
+    never touches `event.status` and never writes — the hero sentence and the
+    countdown are ux's under notice 41 (#6381 is the consumer issue).
+
+    #6739 AMENDED THE SENTENCE THAT USED TO READ "and never derives a winner".
+    It still derives none: it REPORTS the side the venue graded, on the market
+    the shared recognizer calls the moneyline, or it reports nothing. What it
+    must never do — and the refusals in
+    :func:`~app.utils.venue_settlement.choose_settled_winner` are what stop it
+    — is infer a winner from a price, from a closed book, from a set, or from
+    "the other one must have lost".
 
     🔴 POSITIVE GRADES ONLY — ``is_winner IS TRUE``, never a count of graded
     legs and never a loss. A graded loss decides the other side only when some
@@ -12293,13 +12300,18 @@ async def _venue_settlement(db: AsyncSession, event) -> dict | None:
     from app.utils.venue_settlement import (
         VENUE_SETTLEMENT_SOURCE,
         choose_settled_score,
+        choose_settled_winner,
         is_full_scope_score_market,
     )
 
     try:
         graded = (
             await db.execute(
-                select(FuturesMarket.name, FuturesOutcome.name)
+                select(
+                    FuturesMarket.name,
+                    FuturesMarket.external_id,
+                    FuturesOutcome.name,
+                )
                 .join(FuturesOutcome, FuturesOutcome.market_id == FuturesMarket.id)
                 .where(
                     FuturesMarket.event_id == event.id,
@@ -12320,12 +12332,21 @@ async def _venue_settlement(db: AsyncSession, event) -> dict | None:
     # 1,344 events that can reach here the graded-row count is max 84, p99 20,
     # mean 3.2. A LIMIT would bound a read that is already bounded, at the cost
     # of silently truncating the one market whose name carries the score.
+    # SCORE FIRST, WINNER SECOND, AND THE ORDER IS NOT A PREFERENCE (#6739).
+    # A full-scope score already names the winner — "Aryna Sabalenka wins 2-0"
+    # — so the winner sentence is strictly the same statement with the score
+    # dropped. Asking for it first would replace 56 richer strings with poorer
+    # ones; `or` reaches it only where the score vocabulary has nothing, which
+    # is 265 of the 305 side-graded `suspended` rows measured 2026-09-17.
     return {
         "venue_settled": True,
         "venue_settled_result": choose_settled_score(
             outcome_name
-            for market_name, outcome_name in graded
+            for market_name, _market_external_id, outcome_name in graded
             if is_full_scope_score_market(market_name)
+        )
+        or choose_settled_winner(
+            graded, event.home_team_name, event.away_team_name
         ),
     }
 
