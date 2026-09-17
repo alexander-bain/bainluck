@@ -1190,6 +1190,26 @@ async def _compute_movers(
     # the sources whose stored snapshot is a PRICE. See #6675 and defect 4 above.
     old_probs = MoversResult()
     old_probs.requested = len(unique_ids)
+    # A source in neither bucket is being de-vigged by the default arm. That is
+    # right for a new Odds API sportsbook and WRONG for a new prediction market,
+    # and the two are indistinguishable from here — so say so once per read
+    # rather than let it ride silently. CI's source-scan is the real guard; this
+    # is the backstop for a source that arrives without a string literal.
+    unknown_sources = {
+        bookmaker
+        for book_columns in columns.values()
+        for bookmaker in book_columns
+        if bookmaker not in _ALREADY_PROBABILITY_SOURCES
+        and bookmaker not in _DEVIGGED_AT_INGEST_SOURCES
+    }
+    if unknown_sources:
+        logger.warning(
+            "_compute_movers: unclassified snapshot source(s) %s de-vigged by "
+            "default — if any of them stores a probability rather than a price, "
+            "its 24h deltas are re-scaled by the column sum (#6675)",
+            sorted(unknown_sources),
+        )
+
     for _market_id, book_columns in columns.items():
         # Keys are outcome ids; devig_consensus is key-agnostic.
         consensus = devig_consensus(

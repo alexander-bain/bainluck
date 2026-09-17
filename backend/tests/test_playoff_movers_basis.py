@@ -146,6 +146,43 @@ def test_the_two_source_sets_are_disjoint():
     assert not (_ALREADY_PROBABILITY_SOURCES & _DEVIGGED_AT_INGEST_SOURCES)
 
 
+def test_the_seven_odds_api_sportsbooks_are_classified():
+    """The book list measured on production, 2026-09-17 (2 days of snapshots).
+
+    D91 publishes this count to readers as "7 sportsbooks", so a change here is
+    also a change to what the attribution mark claims.
+    """
+    assert _DEVIGGED_AT_INGEST_SOURCES == {
+        "betmgm", "betrivers", "betonlineag", "bovada",
+        "draftkings", "fanduel", "lowvig",
+    }
+
+
+def test_compute_movers_passes_the_basis_and_announces_unknowns():
+    """Structural, in the house idiom of ``test_devig_nway.py``.
+
+    Driving the real coroutine needs a DB session, so the wiring is asserted on
+    the source the way #1844's own guards assert theirs. Two claims: the
+    de-vig call is handed the probability-source set (without it the whole fix
+    is inert), and the runtime backstop consults BOTH sets — a backstop that
+    only knew one of them would warn on every sportsbook, every read.
+    """
+    import inspect
+
+    from app.routes.playoffs import _compute_movers
+
+    src = inspect.getsource(_compute_movers)
+
+    assert "already_normalized=_ALREADY_PROBABILITY_SOURCES" in src, (
+        "the de-vig call no longer receives the basis; every probability "
+        "source is being re-scaled by its own column sum again (#6675)"
+    )
+    assert "_DEVIGGED_AT_INGEST_SOURCES" in src, "the unknown-source backstop is gone"
+    # #1844's guarantees ride in the same function and must not be traded away.
+    assert "DISTINCT ON" in src
+    assert "fos.id ASC" in src
+
+
 def _snapshot_writer_sources() -> set[str]:
     """Every string literal assigned to ``bookmaker=`` in the ingest tasks.
 

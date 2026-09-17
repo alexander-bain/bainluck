@@ -6,7 +6,7 @@ to probabilities, projected scores, and excitement indices.
 """
 
 import math
-from typing import Container, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Container, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from statistics import mean, median
 
