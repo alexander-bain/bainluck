@@ -228,8 +228,12 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
     # their third line", which is the two lines above: they refuse a market with
     # NO OUTCOMES, never one whose outcomes carry no price. So the half of the
     # class that lives one level down stayed open here for the whole of #2950's
-    # life, and the three `float(... or 0)` reads below are what renders it:
-    # every rung folds to 0.0 and the row headlines a confident `0%`.
+    # life: three `float(... or 0)` reads folded every rung to 0.0 and the row
+    # headlined a confident `0%`.
+    #
+    # Those three reads are GONE as of #6255 (below), which carries the same
+    # rule into the ladder itself. This refusal is still load-bearing and is not
+    # subsumed by it — it is what makes `priced` provably non-empty.
     #
     # Measured on production 2026-09-14, the same minute, across the three
     # dashboards that share this row shape — the already-fixed sibling is the
@@ -246,27 +250,55 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
     # returns on the next build.
     if not any(o.current_probability is not None for o in outcomes):
         return None
+    # #6255 — A RUNG WE HOLD NO PRICE FOR IS NOT A RUNG AT 0%.
+    #
+    # The refusal above is the same rule ONE LEVEL UP: a market nobody has
+    # priced is withdrawn rather than printed at 0%. It never reached inside a
+    # ladder that IS traded, so a real leader could stand over rungs whose
+    # `0%` was a NULL folded by `float(... or 0)` — indistinguishable on screen
+    # from a rung the market has priced at zero, which is DATA (#2950).
+    #
+    # Measured on the SERVED payload 2026-09-17 14:40Z, classifying every
+    # rung against `futures_outcomes` rather than trusting the `0.0`:
+    # 16 of the 177 rows these two dashboards serve carried a `0.0` rung;
+    # **13 were NULLs** and 3 were priced zeros. The 13 are 11 `* Election
+    # Winner` ladders here plus `Harry Potter … Rotten Tomatoes` and
+    # `Ligue 1: Team Points` on the sibling. Photographed at 390px the same
+    # day: `Democrat 98% · Republican 2% · Other 0%` on Massachusetts and
+    # Oregon, and `Republican Party 98% · Democratic Party 0.8% · E 0%` on
+    # MI-02 — a bare letter with a fabricated zero beside it.
+    #
+    # The 3 priced zeros are untouched, and `When will Nick Adams be
+    # confirmed…` — whose `Yes` leg is a real zero and whose row therefore
+    # still HEADLINES 0% — is the control that proves this reads the column
+    # and not the rendered number.
+    #
+    # 🔴 THIS IS NOT A REVERSAL OF #3758's "DEMOTED, NEVER DROPPED" (above).
+    # That ruling is about EXPIRED rungs and its stated reason is that such a
+    # rung's "price is real history". An unpriced rung has no price and no
+    # history, so the reason does not reach it. Expired-and-priced still sorts
+    # last and is still never dropped — the two rules compose, and the sort key
+    # below is unchanged for every rung that survives this filter.
+    #
+    # FILTERED BEFORE THE SLICE, NOT AFTER, and that is not cosmetic: the key
+    # is `(expired, -prob)` with `or 0`, so an UNPRICED LIVE rung outranks an
+    # expired PRICED one. Filtering first lets a real price take the slot that
+    # a NULL would otherwise have spent. `outcome_count` below still reads the
+    # full `outcomes` list, so the ladder's arity does not move.
+    priced = [o for o in outcomes if o.current_probability is not None]
     expired = expired_ladder_rungs(
-        [
-            (
-                o.name,
-                float(o.current_probability)
-                if o.current_probability is not None
-                else None,
-            )
-            for o in outcomes
-        ],
+        [(o.name, float(o.current_probability)) for o in priced],
         now,
     )
-    outcomes = sorted(
-        outcomes,
-        key=lambda o: (o.name in expired, -float(o.current_probability or 0)),
+    ranked = sorted(
+        priced,
+        key=lambda o: (o.name in expired, -float(o.current_probability)),
     )
-    top = outcomes[:3]
+    top = ranked[:3]
     top_outcomes = [
         {
             "name": o.name,
-            "prob": round(float(o.current_probability or 0) * 100, 1),
+            "prob": round(float(o.current_probability) * 100, 1),
         }
         for o in top
     ]
@@ -278,10 +310,19 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
 
     return {
         "q": market.name,
-        "prob": top_outcomes[0]["prob"] if top_outcomes else 0,
+        # #6255 — the `if top_outcomes else 0` sentinel is REMOVED, not kept as
+        # insurance. `priced` is non-empty by the refusal above, so this list
+        # cannot be empty, and #2950's own note in `economics._market_row` rules
+        # the idiom for exactly this shape: "the sentinel is removed rather than
+        # guarded … so no initialiser survives that could be mistaken for a
+        # measurement." A `0` returned here would be the very thing this ship
+        # exists to stop printing.
+        "prob": top_outcomes[0]["prob"],
         "src": _source(market),
         "market_id": market.id,
         "top_outcomes": top_outcomes,
+        # Every rung, priced or not — the filter above drops rungs from the
+        # SLICE, never from the ladder's arity.
         "outcome_count": len(outcomes),
     }
 

@@ -166,8 +166,12 @@ def _market_row(market: FuturesMarket, max_outcomes: int = 3) -> dict | None:
     # note records that `politics.py` and `entertainment.py` "already refuse on
     # their third line", which is the check above: it refuses a market with NO
     # OUTCOMES, never one whose outcomes carry no price. The `float(... or 0)`
-    # reads below are what renders the difference: every rung folds to 0.0 and
-    # the row headlines a confident `0%`.
+    # reads below were what rendered the difference: every rung folded to 0.0
+    # and the row headlined a confident `0%`.
+    #
+    # Those reads are GONE as of #6255 (below), which carries the same rule into
+    # the ladder itself. This refusal is still load-bearing and is not subsumed
+    # by it — it is what makes `priced` provably non-empty.
     #
     # Measured on production 2026-09-14, the same minute, across the three
     # dashboards that share this row shape — the already-fixed sibling is the
@@ -183,11 +187,37 @@ def _market_row(market: FuturesMarket, max_outcomes: int = 3) -> dict | None:
     # a market that gets its first price returns on the next build.
     if not any(o.current_probability is not None for o in outcomes):
         return None
-    top = outcomes[:max_outcomes]
+    # #6255 — A RUNG WE HOLD NO PRICE FOR IS NOT A RUNG AT 0%.
+    #
+    # The refusal above is the same rule ONE LEVEL UP. It never reached inside
+    # a ladder that IS traded, so `float(... or 0)` printed a NULL rung as a
+    # confident `0%` under a real leader, indistinguishable from a rung the
+    # market has priced at zero — which is DATA and stays (#2950).
+    #
+    # ⚠️ "FEWER THAN THREE PRICED OUTCOMES" UNDERSTATES THE REACH HERE, because
+    # this builder is called with `max_outcomes=8` on several sections (unlike
+    # the politics twin's fixed 3). Measured on the served payload 2026-09-17
+    # 14:40Z: `Harry Potter … Rotten Tomatoes` has SIX priced rungs and still
+    # showed two unpriced ones in an eight-slot rack, and `Ligue 1: Team
+    # Points` showed seven, of a ladder whose 71 of 72 rungs are unpriced.
+    #
+    # `Which movie has 2nd/3rd biggest opening weekend` is the control on the
+    # other side: its `0.0` rung is genuinely priced and is untouched.
+    #
+    # `outcome_count` keeps reading the full list — the filter drops rungs from
+    # the SLICE, never from the ladder's arity.
+    priced = [o for o in outcomes if o.current_probability is not None]
+    top = priced[:max_outcomes]
     outcome_count = len(outcomes)
     return {
         "q": market.name,
-        "prob": round(float(outcomes[0].current_probability or 0) * 100, 1),
+        # #6255 — `priced[0]`, not `outcomes[0]`. Both name the leader on every
+        # ladder that has one priced rung above zero, but they part when every
+        # priced rung is a zero: the `or 0` made a NULL tie with a real zero and
+        # the stable sort then handed the headline to whichever came first in
+        # the ladder. Reading the filtered list means the number, the rungs and
+        # the hook's leader are all the same object.
+        "prob": round(float(priced[0].current_probability) * 100, 1),
         "src": _source(market),
         "market_id": market.id,
         "external_id": market.external_id,
@@ -242,9 +272,14 @@ def _market_row(market: FuturesMarket, max_outcomes: int = 3) -> dict | None:
         # card is not a new layout, it is the majority-adjacent one the page
         # already ships. The frontend gates all six render sites on `m.hook &&`.
         #
-        # `outcomes[0]` IS the leader here, unlike on the futures detail page:
-        # this list is sorted by `current_probability` immediately above and
-        # this route withholds no prices, so there is no null to sink.
+        # `priced[0]` IS the leader here, unlike on the futures detail page.
+        #
+        # #6255 CORRECTED THE OBJECT THIS READS. The line above used to say
+        # "this route withholds no prices, so there is no null to sink" — and
+        # that premise is exactly what changed: the route now withholds unpriced
+        # rungs from the slice. `priced` is the same list the rungs and the
+        # headline are built from, sorted by `current_probability` above, so the
+        # staleness gate cannot come to disagree with the leader the card shows.
         "hook": (
             None
             if is_hook_stale(
@@ -253,9 +288,9 @@ def _market_row(market: FuturesMarket, max_outcomes: int = 3) -> dict | None:
                 hook_leader_at_generation=getattr(
                     market, "hook_leader_at_generation", None
                 ),
-                current_leader_name=outcomes[0].name,
+                current_leader_name=priced[0].name,
                 current_leader_probability=float(
-                    outcomes[0].current_probability or 0
+                    priced[0].current_probability
                 ),
                 market_metadata=getattr(market, "market_metadata", None),
             )

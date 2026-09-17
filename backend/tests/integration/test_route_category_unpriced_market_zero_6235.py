@@ -60,14 +60,21 @@ not 10 of 893: the sort and the extremeness gate were pulling opposite ways and
 the fabricated value won. Backfill is ample (893 congressional candidates for
 10 slots), so the sections refill rather than empty.
 
-NOT IN SCOPE, FILED SEPARATELY. A **partially** priced ladder can still put an
-unpriced rung in its top three and print `0%` beside it (measured: 544 politics
-+ 14 entertainment markets have fewer than 3 priced outcomes). That is the same
-sentence one level down, but `_market_row`'s #3758 comment rules explicitly that
-a rung is *"DEMOTED, NEVER DROPPED ... a ladder whose rungs have ALL expired is
-unchanged rather than emptied"*, so whether an unpriced rung is dropped, demoted
-or rendered as "—" is a judgement that belongs with its own issue, not a silent
-widening here. The controls below pin that this ship does **not** touch it.
+NOT IN SCOPE HERE — SHIPPED SINCE, AS #6255. A **partially** priced ladder could
+still put an unpriced rung in its top three and print `0%` beside it (measured:
+544 politics + 14 entertainment markets have fewer than 3 priced outcomes). That
+is the same sentence one level down, and `_market_row`'s #3758 comment rules
+that a rung is *"DEMOTED, NEVER DROPPED ... a ladder whose rungs have ALL expired
+is unchanged rather than emptied"*, so whether an unpriced rung is dropped,
+demoted or rendered as "—" was a judgement that belonged with its own issue
+rather than being a silent widening here.
+
+#6255 took it and chose DROP, on the ground that #3758's ruling is about
+**expired** rungs and its stated reason — that such a rung's *"price is real
+history"* — does not reach a rung that has no price at all. The control below
+was written naming itself as the test that ship must rewrite; it has been
+rewritten and now pins the boundary from the other side. Expired-and-priced
+rungs are still demoted and still never dropped.
 
 Fixtures use ``Decimal``, not ``float``: ``current_probability`` is
 ``Numeric(7, 6)``, so production hands these functions a ``Decimal`` — and
@@ -368,15 +375,22 @@ class TestControls:
             )
             assert row["prob"] == 0.0
 
-    def test_CONTROL_an_unpriced_rung_inside_a_traded_ladder_is_untouched(self):
-        """Explicitly OUT OF SCOPE, pinned so the scope cannot drift silently.
+    def test_an_unpriced_rung_inside_a_traded_ladder_is_now_dropped_6255(self):
+        """REWRITTEN BY #6255 — deliberately, which is what this control asked.
 
-        544 politics + 14 entertainment markets carry fewer than 3 priced
-        outcomes, so a `0%` rung can still appear UNDER a real leader. Both
-        builders still print that rung today, and `_market_row`'s #3758 comment
-        ("DEMOTED, NEVER DROPPED") is why changing it is its own judgement call
-        rather than a rider on this one. When that issue ships, this control is
-        the test it must come back and rewrite — deliberately, not by accident.
+        Its previous body asserted `rungs["At least 42%"] == 0.0` and said so in
+        its own docstring: *"When that issue ships, this control is the test it
+        must come back and rewrite — deliberately, not by accident."* This is
+        that rewrite. The assertion is INVERTED rather than deleted, so the
+        scope boundary #6235 drew is still pinned — from the other side.
+
+        #6235 withdraws a market nobody has priced; #6255 carries the same
+        sentence one level down and withdraws a RUNG nobody has priced. The
+        leader and its price are unchanged, which is the point: this drops an
+        absence, never data.
+
+        The full guard set for the rung-level half lives in
+        `test_route_category_unpriced_rung_6255.py`.
         """
         m = _market(
             market_id=8,
@@ -389,9 +403,13 @@ class TestControls:
             row = _row(builder, m)
             assert row is not None and row["prob"] == 72.0
             rungs = {o["name"]: o["prob"] for o in row["top_outcomes"]}
-            assert rungs["At least 42%"] == 0.0, (
-                "the unpriced-rung half of this class moved; it has its own "
-                "issue and its own controls"
+            assert "At least 42%" not in rungs, (
+                "an unpriced rung is back in the served slice; #6255 drops it "
+                "rather than printing the NULL as 0%"
+            )
+            assert rungs == {"At least 40%": 72.0}
+            assert row["outcome_count"] == 2, (
+                "the rung left the SLICE, not the ladder — arity must not move"
             )
 
     def test_CONTROL_outcome_count_still_counts_every_rung(self):
