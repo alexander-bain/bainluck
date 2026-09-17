@@ -174,8 +174,14 @@ class TestEveryCallSitePassesTheFirstBout:
         # other way — an adapter that calls it directly is an adapter that can
         # put the live pill back on a card that is off, which is the exact defect
         # the block was about.
-        assert src.count("card_status_from_bouts(") == 2
+        # #2602 added a THIRD site (a card only the venue lists). It holds no
+        # bout rows at all — the venue's markets are not `events` rows — so it
+        # hands over an EMPTY list with the venue's own fight times as the
+        # fallback pair, which is the same shape the Kalshi-only arm uses and
+        # keeps the called-off rule ahead of it.
+        assert src.count("card_status_from_bouts(") == 3
         assert "combat_status(" not in src
+        assert "[], now, fallback_first=earliest, fallback_last=latest" in src
         # And it is the FIRST bout, not the last wearing the name. Passing the
         # first-bout term is not the fix if the value handed over is `bouts[-1]` —
         # that is a mutant the asserts above do not kill, so the fallback arms are

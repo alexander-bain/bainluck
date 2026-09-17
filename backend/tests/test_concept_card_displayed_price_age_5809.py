@@ -279,19 +279,22 @@ def test_an_unreadable_probability_sorts_below_every_readable_one():
 # GUARD: every adapter folds over its DISPLAYED rows, not over a market
 # ---------------------------------------------------------------------------
 
-#: (module, the name the adapter must pass as the outcomes argument). Each is
-#: the adapter's own already-filtered list — the one `competitors` was built
-#: from. `event_combat` passes `main_event.outcomes` because `_fight_outcomes`
-#: applies no name filter there, so the market's outcomes ARE the displayed set;
-#: it is recorded here so that stops being an accident.
+#: (module, the names the adapter must pass as the outcomes argument — one per
+#: envelope it builds). Each is the adapter's own already-filtered list, the one
+#: `competitors` was built from. `event_combat` passes the market's own outcomes
+#: at both of its priced sites because neither `_fight_outcomes` nor
+#: `_build_venue_envelope`'s `_competitors` applies a name filter there, so the
+#: market's outcomes ARE the displayed set; recorded here so that stops being an
+#: accident. A SET, and every call is checked — reading only the first call let a
+#: second site pass unmeasured.
 EXPECTED_OUTCOME_ARGUMENTS = {
-    "event_cycling": "real_outcomes",
-    "event_awards": "marquee_outcomes",
-    "event_election": "marquee_outcomes",
-    "event_f1": "field_outcomes",
-    "event_soccer": "ranked",
-    "event_combat": "main_event.outcomes",
-    "event_tennis": "winner.outcomes",
+    "event_cycling": {"real_outcomes"},
+    "event_awards": {"marquee_outcomes"},
+    "event_election": {"marquee_outcomes"},
+    "event_f1": {"field_outcomes"},
+    "event_soccer": {"ranked"},
+    "event_combat": {"main_event.outcomes", "main_bout.outcomes"},
+    "event_tennis": {"winner.outcomes"},
 }
 
 
@@ -315,11 +318,17 @@ def _concept_helper_calls() -> dict[str, list[ast.Call]]:
 
 
 def test_guard_every_adapter_calls_the_concept_helper_exactly_once():
+    """Once per ENVELOPE the adapter builds — `event_combat` builds a priced
+    Kalshi card and (#2602) a priced venue card, and both must date themselves."""
     calls = _concept_helper_calls()
-    missing = sorted(m for m, c in calls.items() if len(c) != 1)
+    missing = sorted(
+        m
+        for m, c in calls.items()
+        if len(c) != len(EXPECTED_OUTCOME_ARGUMENTS[m])
+    )
     assert not missing, (
-        "each concept adapter must call `concept_price_observed_at_iso` exactly "
-        f"once; wrong count in: {missing}"
+        "each concept adapter must call `concept_price_observed_at_iso` once per "
+        f"priced envelope it builds; wrong count in: {missing}"
     )
 
 
@@ -338,15 +347,17 @@ def test_guard_the_outcomes_argument_is_the_displayed_list_not_a_market():
     docstring). So the source is where it has to be caught.
     """
     calls = _concept_helper_calls()
-    actual: dict[str, str] = {}
+    actual: dict[str, set] = {}
     for module, module_calls in calls.items():
         assert module_calls, f"{module} does not call the concept helper at all"
-        first = module_calls[0].args[0]
-        actual[module] = ast.unparse(first).replace(" or []", "").strip()
+        actual[module] = {
+            ast.unparse(c.args[0]).replace(" or []", "").strip()
+            for c in module_calls
+        }
 
     # `event_tennis` passes a `getattr(...) or []` guard; normalise to the target.
-    if actual.get("event_tennis", "").startswith("getattr("):
-        actual["event_tennis"] = "winner.outcomes"
+    if any(a.startswith("getattr(") for a in actual.get("event_tennis", set())):
+        actual["event_tennis"] = {"winner.outcomes"}
 
     assert actual == EXPECTED_OUTCOME_ARGUMENTS, (
         "an adapter changed WHICH rows date its card. The argument must be the "

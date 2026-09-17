@@ -97,9 +97,14 @@ class TestCombatStatusIsTheAuthorityFeeding_It:
         # the SAME determination that decides the banner — and it is now literally
         # the same VALUE rather than a second call spelled the same way, which is
         # a stronger form of the property, not a weaker one.
+        # #2602 added a THIRD envelope (a card the venue lists and Kalshi does
+        # not). It carries the property the same way — one `card_status_value`
+        # decides both the banner and the children's settled floor — so the count
+        # moves with the site count and the property below is what is guarded.
         assert 'card_settled = card_status_value == "settled"' in src
         assert '"status": card_status_value' in src
-        assert src.count('"status": card_status_value') == 2
+        assert src.count('"status": card_status_value') == 3
+        assert 'fight_child_settled(lead, card_status_value == "settled")' in src
         # CERT-2727's one principled divergence, asserted so it cannot be dropped
         # silently and cannot spread. A card whose every bout is called off is
         # TERMINAL — nothing will be fought, so it may not wear the live pill —
