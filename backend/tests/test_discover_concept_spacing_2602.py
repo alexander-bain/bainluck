@@ -474,3 +474,44 @@ def test_a_production_shaped_upcoming_card_is_still_movable():
     out, meta = space_discover_concept_families(items)
     assert meta["moved"] > 0
     assert _longest_run(out, P) == 1
+
+
+def _displacement_ladder(n_concepts: int) -> list[dict]:
+    """A run long enough that the head's own delay walks up to the bound.
+
+    The 40 random pools above never reach it: a card accrues delay only while
+    later cards are pulled past it, and at 25% concept density that tops out at
+    three. Five same-family concepts followed by five separators is the smallest
+    deterministic shape that drives the head to exactly `K`, which is the only
+    input at which the head's `<` bound check differs from `<=`.
+    """
+    items = [_fut(i, 90 - i) for i in range(P)]
+    items += [_concept(f"lad{i}") for i in range(n_concepts)]
+    items += [_fut(600 + i, 20 - i, "weather") for i in range(n_concepts)]
+    return items
+
+
+@pytest.mark.parametrize("n_concepts", [5, 6, 8])
+def test_the_bound_is_reached_exactly_and_never_exceeded(n_concepts):
+    items = _displacement_ladder(n_concepts)
+    out, meta = space_discover_concept_families(items)
+    pos = {k: i for i, k in enumerate(_keys(items))}
+    moves = [abs(pos[k] - j) for j, k in enumerate(_keys(out))]
+    # `== K`, not `<= K`: a bound nothing ever reaches is a bound no test can
+    # tell from a bound one slot looser.
+    assert max(moves) == K
+    assert meta["max_displacement_seen"] == K
+    assert sorted(_keys(out)) == sorted(_keys(items))
+    assert _keys(out[:P]) == _keys(items[:P])
+
+
+def test_every_card_that_waits_is_still_served():
+    # The multiset tests above compare sorted key lists, which a pass that both
+    # dropped and duplicated could still satisfy. This one counts.
+    items = _displacement_ladder(6)
+    out, meta = space_discover_concept_families(items)
+    assert len(out) == len(items)
+    assert len(set(_keys(out))) == len(out)
+    assert meta["moved"] > 0
+    for it in items:
+        assert it in out
