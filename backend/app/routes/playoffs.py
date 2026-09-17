@@ -3188,24 +3188,131 @@ async def get_playoff_grid_cached(
     return result
 
 
-def _grid_column_resolved(teams: list, key: str, eps: float = 0.01) -> bool:
-    """Whether a grid column is season-state RESOLVED (#927).
+#: Cell states that record a VENUE SETTLEMENT rather than a price — the
+#: register's terminal results (``app.utils.grid_register.TERMINAL_RESULTS``,
+#: plus the tournament register's "lost"). A cell in one of these carries no
+#: probability and needs none: the outcome has been graded.
+_GRID_DECIDED_STATES = frozenset({"won", "eliminated", "lost"})
 
-    A column is resolved when every team that has a cell for it is decided —
-    its merged_probability is within ε of 0 (eliminated) or 1 (clinched). This is
-    a DERIVED display signal only: it reads the existing probabilities and never
-    mutates them or the column set, so grid accuracy is untouched. Empty columns
-    are treated as not-resolved (nothing to collapse). E.g. mid-June NBA
-    make_playoffs/division resolve; MLB make_playoffs (live spread) does not.
+#: Fraction of the grid's rows that must carry a cell before the column may be
+#: called DECIDED (#6442). Measured on all 14 live grids 2026-09-17 06:26Z: of
+#: the 33 columns the fleet serves, 22 cover 100% of their rows and the lowest
+#: coverage on a column of full-league shape is NBA ``division`` at 29/30 =
+#: 0.967, while the defect this floor removes is 1/36 = 0.028. Nothing sits
+#: between 0.60 and 0.967, so the floor is not tuned to a boundary case.
+_GRID_RESOLVED_COVERAGE = 0.9
+
+
+def _grid_price_is_decided(p: float, eps: float) -> bool:
+    """A price within ε of 0 (eliminated) or 1 (clinched).
+
+    Necessary for a cell to be decided, never sufficient: #6442's Barcelona
+    cleared it at 0.99 on a market trading until 2027-04-01. Callers must pair
+    it with :func:`_grid_column_still_trading`.
     """
-    probs = []
+    return p <= eps or p >= 1.0 - eps
+
+
+def _grid_column_still_trading(entries: list | None, now: datetime | None = None) -> bool:
+    """Whether a market behind a grid column has not finished trading (#6442).
+
+    ``entries`` is the column's ``column_data`` list of ``(market, outcome)``.
+    A market is still trading when it is not ``status='resolved'`` and its
+    ``resolution_date`` — which since CAL-P989 holds Kalshi's ``close_time``,
+    "when trading actually stopped", not the ``expiration_time`` backstop — is
+    still in the future.
+
+    That direction is the measured-reliable one. ``app/utils/
+    kalshi_resolution_window.py`` sampled 179 Kalshi events: **0 of 130 still
+    active** markets had a past ``close_time``, so a future ``resolution_date``
+    is trustworthy evidence that the question is open. The converse is only
+    39/49, which is why a past date is read here as nothing more than "no
+    objection" — permission for the price arm, never a settlement on its own.
+
+    ``resolution_date IS NULL`` cannot contradict anything and is skipped;
+    gotcha #33 (settled Kalshi markets keep ``status='open'``) is why the
+    status test alone would be the wrong gate and why both are read together.
+    """
+    if not entries:
+        return False
+    now = now or datetime.now(timezone.utc)
+    for market, _outcome in entries:
+        if getattr(market, "status", None) == "resolved":
+            continue
+        rd = getattr(market, "resolution_date", None)
+        if rd is None:
+            continue
+        if rd.tzinfo is None:
+            rd = rd.replace(tzinfo=timezone.utc)
+        if rd > now:
+            return True
+    return False
+
+
+def _grid_column_resolved(
+    teams: list,
+    key: str,
+    eps: float = 0.01,
+    entries: list | None = None,
+    now: datetime | None = None,
+) -> bool:
+    """Whether a grid column is season-state RESOLVED (#927, corrected #6442).
+
+    This is a DERIVED display signal only: it reads the existing cells and
+    never mutates them or the column set, so grid accuracy is untouched. The
+    frontend prints it as the ``DECIDED`` sublabel on the column header and
+    then renders every cell as a decided glyph — ``✓`` clinched, ``—``
+    eliminated — so a wrong ``True`` does not de-emphasize a column, it states
+    a result. E.g. mid-June NBA make_playoffs/division resolve; MLB
+    make_playoffs (live spread) does not.
+
+    A column is resolved only when ALL of:
+
+    * **Coverage.** At least ``_GRID_RESOLVED_COVERAGE`` of the grid's rows
+      carry a cell for it. #6442: the UCL ``quarterfinal`` column had ONE
+      priced club of 36 and resolved, because the old loop appended only cells
+      that HAD a value and then ran ``all()`` over a one-element list — the 35
+      empty rows were skipped rather than counted against the claim, and the
+      page told a reader in September that Barcelona had clinched a
+      quarter-final and 35 clubs were out. Absent is not eliminated.
+    * **Every present cell decided.** By venue settlement
+      (``_GRID_DECIDED_STATES``) or by a price within ε of 0 or 1. A cell that
+      is present but neither — state ``missing``, or any unpriced non-terminal
+      cell — refuses the column.
+    * **No live market contradicting it.** An extreme price is a QUOTE, not a
+      grade (the class of #5896/#5771). Barcelona's 0.99 cleared ``p >= 1 - eps``
+      on the boundary exactly while ``KXUCLROUND-27QUAR`` was ``status='open'``
+      and due to resolve 2027-04-01, seven months out. Settled cells are exempt
+      from this test: they carry their own grade, so a column that is decided at
+      the venue still resolves even if a straggler market is open.
+
+    Either of the first two faults alone was enough for #6442; both were
+    present, and both are now closed independently.
+    """
+    if not teams:
+        return False
+    cells = []
     for t in teams:
         cell = (t.get("cells") or {}).get(key)
-        if cell and cell.get("merged_probability") is not None:
-            probs.append(float(cell["merged_probability"]))
-    if not probs:
+        if cell:
+            cells.append(cell)
+    if not cells:
         return False
-    return all(p <= eps or p >= 1.0 - eps for p in probs)
+    if len(cells) < _GRID_RESOLVED_COVERAGE * len(teams):
+        return False
+
+    still_trading = _grid_column_still_trading(entries, now=now)
+    for cell in cells:
+        if cell.get("state") in _GRID_DECIDED_STATES:
+            continue
+        p = cell.get("merged_probability")
+        if p is None:
+            return False
+        if not _grid_price_is_decided(float(p), eps):
+            return False
+        if still_trading:
+            return False
+    return True
 
 
 # Gender exclusion: Men's leagues should not include Women's markets and vice versa
@@ -4604,9 +4711,14 @@ async def get_playoff_grid(
                 "market_id": col_market_id,
                 "market_ids": col_market_ids_unique,
                 # Derived display signal (#927): true when every team is decided
-                # (0/1) for this column, so the frontend can de-emphasize it instead
+                # for this column, so the frontend can de-emphasize it instead
                 # of showing dead "live" bars. Does not change probabilities/columns.
-                "resolved": _grid_column_resolved(teams, col.key),
+                # #6442: the column's own (market, outcome) entries go in too, so
+                # the predicate can tell a settled grade from a 0.99 quote on a
+                # market that is still trading.
+                "resolved": _grid_column_resolved(
+                    teams, col.key, entries=column_data.get(col.key)
+                ),
             })
 
     # Group teams by conference if configured
