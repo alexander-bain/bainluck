@@ -80,15 +80,24 @@ SOURCE_STATPAL = "statpal"      # tier 1: the scoring_plays table (play-by-play)
 SOURCE_ESPN_BOX = "espn_box"    # tier 2: ESPN box-score scoring plays
 SOURCE_WIN_PROB = "win_prob"    # tier 3: win_prob_snapshots game_state
 SOURCE_ESTIMATED = "estimated"  # tier 4: arithmetic on commence_time
+#: The ESPN status-text stream (`espn_history`), as distinct from its box score.
+#: Added by #6718: the observed-transition tier reads two different state series
+#: and stamped every marker `win_prob`, so the payload could not say which
+#: instrument saw a transition. No client branches on `source` (checked across
+#: `lib/periodMarkers.ts`, both chart components, and `ios/**`, which decodes no
+#: marker at all), and this one is as measured as the other three.
+SOURCE_ESPN_STATE = "espn_state"
 
 # How much a marker's timestamp can be trusted AS A PERIOD START (#5140). Additive:
 # a client that ignores `precision` reads exactly what it read before.
-PRECISION_BOUNDARY = "boundary_observed"  # start clock, or bracketed within one poll
-PRECISION_FIRST_SEEN = "first_seen"       # period already running when first polled
+PRECISION_BOUNDARY = "boundary_observed"  # bracketed inside POLL_TOLERANCE
+PRECISION_FIRST_SEEN = "first_seen"       # bracketed, but wider than that
 PRECISION_FIRST_SCORE = "first_score"     # first SCORE of the period, not its start
 
 #: Sources that mean "an instrument observed this period start".
-MEASURED_SOURCES = frozenset({SOURCE_STATPAL, SOURCE_ESPN_BOX, SOURCE_WIN_PROB})
+MEASURED_SOURCES = frozenset({
+    SOURCE_STATPAL, SOURCE_ESPN_BOX, SOURCE_WIN_PROB, SOURCE_ESPN_STATE,
+})
 
 
 def _parse(ts: Any) -> Optional[datetime]:
@@ -269,51 +278,121 @@ def estimated_period_markers(
     return []
 
 
-# ── Observed game-state transitions (#5140) ──────────────────────────────────
+# ── Observed game-state transitions (#5140, corrected #6718) ─────────────────
 #
 # Tiers 1 and 2 answer "when was the first SCORE of period N", which is bounded
 # below by that score and cannot answer "when did period N begin" (Chiefs-Broncos
 # 14638896: Q2 drawn at 01:33:43Z, its only touchdown; the feed had said
-# `15:00 - 2nd Quarter` at 00:54:43Z). The state stream answers it directly, at
-# poll resolution, from rows already in the payload.
+# `15:00 - 2nd Quarter` at 00:54:43Z). The state stream answers it directly, from
+# rows already in the payload.
+#
+# WHAT A MARKER HERE CLAIMS, and it is not a point. ESPN's status text carries no
+# event time — it is what OUR poll saw, when our poll saw it. So a marker is only
+# ever the late end of an interval: the period began after `not_before` (the last
+# observation that showed an EARLIER state) and at or before `timestamp`. That
+# interval is the honest artifact and it is served. `precision` names how wide it
+# is; it is a label on the bracket, never a promise about the error:
+#
+#   boundary_observed  the bracket is inside POLL_TOLERANCE
+#   first_seen         wider, but inside MAX_FIRST_SEEN_BRACKET
+#   (no marker)        wider still, or no lower bound at all
+#
+# BOTH CONSTANTS ARE JUDGEMENT, NOT ARITHMETIC (#6718 finding 5). They are cutoffs
+# chosen to sort tight brackets from loose ones on the cadence these games actually
+# poll at. Nothing here establishes a one-poll error bound, and no docstring should
+# claim one: a caller that needs the real uncertainty reads `not_before`.
+#
+# THREE THINGS THIS REFUSES TO DO, each because the first cut did it (#6718):
+#
+#   * claim a boundary with no lower bound. The first cut let a `15:00` game clock
+#     stand in for the bracket, so a first-ever row was served as the TIGHTEST
+#     precision with `not_before: null` — which production did, on 14638896 and
+#     15304451. A start clock can persist before play begins and is not an event
+#     timestamp, so it corroborates and never substitutes: no earlier qualifying
+#     observation means NO MARKER.
+#   * read two sources contradicting each other as an observation. When one capture
+#     instant carries two different states, that instant is evidence of
+#     disagreement, not of a transition; it can neither carry a marker nor bound
+#     one. The first cut emitted a zero-width bracket (`not_before == timestamp`)
+#     labelled `boundary_observed`.
+#   * let a stale row tighten a bracket. A lagging source can deliver an EARLIER
+#     state at a LATER capture time; sorting by capture time does not resolve that.
+#     Such a row proves nothing about the state at its own capture instant, so it
+#     is refused as a lower bound — otherwise it makes a loose bracket look tight.
 #
 # Football only, on purpose. The vocabulary below is ESPN's football status text;
 # innings, sets, halves and hockey periods keep the existing tiers untouched.
 TRANSITION_SPORT_PREFIXES = ("americanfootball_",)
 
-#: Two consecutive state rows this close bracket a boundary "at poll resolution".
+#: A bracket this tight is called `boundary_observed`. A sorting cutoff on the
+#: cadence these games poll at — not an error bound. See the note above.
 POLL_TOLERANCE = timedelta(seconds=150)
-#: A period first seen mid-way, with nothing observed for longer than this before
-#: it, is an unknown — better absent than drawn late (the first-score defect again).
+#: Wider than this and the period's start is unknown: absent beats drawn late,
+#: which is the first-score defect over again.
 MAX_FIRST_SEEN_BRACKET = timedelta(minutes=20)
 
+#: ESPN football status text. The overtime arm accepts the ordinal in either
+#: position and with or without a space — `OT`, `2nd OT`, `2OT`, `Overtime 2` —
+#: because a college game reaching a fourth overtime must not fold into the first
+#: (#6718 finding 2: `(?:\d\w*\s+)?` swallowed the ordinal and every OT ranked
+#: alike, so the `placed` dedupe dropped all but one).
 _FOOTBALL_STATE = re.compile(
     r"^(?:(?P<clock>\d{1,2}:\d{2})\s*-\s*)?"
-    r"(?:(?P<end>end\s+of\s+)?(?P<q>[1-4])(?:st|nd|rd|th)\s+quarter"
+    r"(?P<end>end\s+of\s+)?"
+    r"(?:"
+    r"(?P<q>[1-4])(?:st|nd|rd|th)\s+quarter"
     r"|(?P<ht>half\s*time)"
-    r"|(?P<endot>end\s+of\s+)?(?:\d\w*\s+)?(?P<ot>overtime|ot))$",
+    r"|(?:(?P<otpre>\d+)(?:st|nd|rd|th)?\s*)?(?:overtime|ot)(?:\s*(?P<otpost>\d+))?"
+    r")$",
     re.IGNORECASE,
 )
-_ORDINAL = {1: "1st", 2: "2nd", 3: "3rd", 4: "4th"}
+
+#: Ranks are spaced so a break can sit between two periods without colliding with
+#: either: quarter q is `q*100`, its end `q*100+50`, halftime `260` (after the end
+#: of the 2nd, before the 3rd), overtime n `500+(n-1)*100`. A rank orders the
+#: game's states; it is never a duration.
+_QUARTER_RANK = 100
+_BREAK_OFFSET = 50
+_HALFTIME_RANK = 260
+_OVERTIME_BASE = 500
 
 
-def _football_state(raw: Any) -> Optional[tuple[int, Optional[str], Optional[str]]]:
-    """``(rank, served label or None for a break we do not draw, clock)``."""
+def _ordinal(n: int) -> str:
+    """`1st`, `2nd`, `3rd`, `4th`… including the teens, which are all `th`."""
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    return f"{n}{ {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th') }"
+
+
+def _football_state(raw: Any) -> Optional[tuple[int, Optional[str]]]:
+    """``(rank, served label)``, or ``None`` when this is not football state text.
+
+    The label is ``None`` for a break we do not draw (`End of 1st Quarter`): it
+    still ORDERS the stream, and it is one of the most useful lower bounds there
+    is, but it is not a period a chart puts a chip on.
+    """
     if not isinstance(raw, str):
         return None
     m = _FOOTBALL_STATE.match(raw.strip())
     if not m:
         return None  # "Final", a pre-game date string, another sport's text
+    end = bool(m.group("end"))
     if m.group("q"):
         q = int(m.group("q"))
-        if m.group("end"):
-            return (q * 10 + 5, None, None)
-        return (q * 10, f"{_ORDINAL[q]} Quarter", m.group("clock"))
+        rank = q * _QUARTER_RANK
+        return (rank + _BREAK_OFFSET, None) if end else (rank, f"{_ordinal(q)} Quarter")
     if m.group("ht"):
-        return (25, "Halftime", None)
-    if m.group("endot"):
-        return (55, None, None)
-    return (50, "Overtime", m.group("clock"))
+        return (_HALFTIME_RANK + _BREAK_OFFSET, None) if end else (_HALFTIME_RANK, "Halftime")
+    n_raw = m.group("otpre") or m.group("otpost")
+    try:
+        n = int(n_raw) if n_raw else 1
+    except ValueError:
+        n = 1
+    n = max(n, 1)
+    rank = _OVERTIME_BASE + (n - 1) * _QUARTER_RANK
+    if end:
+        return (rank + _BREAK_OFFSET, None)
+    return (rank, "Overtime" if n == 1 else f"{_ordinal(n)} Overtime")
 
 
 def observed_transition_markers(
@@ -322,67 +401,119 @@ def observed_transition_markers(
 ) -> list[dict]:
     """Period markers from the game-state stream; ``[]`` when it cannot say.
 
-    ``observations`` are ``{"timestamp", "period"}`` rows from any state-bearing
-    series (``espn_history``, ``win_prob_history[*].game_state``). Order and
-    duplicates do not matter: rows are de-duplicated and sorted by CAPTURE time,
-    so late delivery of an old row changes nothing.
+    ``observations`` are ``{"timestamp", "period", "source"}`` rows from any
+    state-bearing series (``espn_history``, ``win_prob_history[*].game_state``).
+    ``source`` is carried onto the marker it produces, so the payload can say
+    which instrument saw the transition rather than attributing every marker to
+    one tier (#6718 finding 3); it falls back to :data:`SOURCE_WIN_PROB`.
 
-    What this refuses to do:
-
-    * interpolate a start from the game clock (breaks and stoppages make that a
-      guess) — the clock only classifies, it never moves a timestamp;
-    * place a period nobody saw start. Every marker carries ``not_before`` — the
-      previous state row — so the boundary is claimed only inside
-      ``(not_before, timestamp]``. No previous row, or a wide bracket on a
-      mid-period first sighting, means no marker: absent, never kickoff;
-    * trust a one-row blip: a first sighting immediately followed by an EARLIER
-      state is discarded, and the period is taken from its next sighting.
+    Every marker returned carries a real ``not_before``. See the module note
+    above for the three shapes this refuses and why each one cost a wrong screen.
     """
     if not sport_key or not sport_key.startswith(TRANSITION_SPORT_PREFIXES):
         return []
 
+    rows: list[tuple[datetime, int, Optional[str], Any, Any]] = []
     seen: set[tuple[datetime, int]] = set()
-    rows: list[tuple[datetime, int, Optional[str], Optional[str], Any]] = []
     for obs in observations or ():
-        when = _parse(obs.get("timestamp"))
-        state = _football_state(obs.get("period"))
+        when = _parse((obs or {}).get("timestamp"))
+        state = _football_state((obs or {}).get("period"))
         if when is None or state is None or (when, state[0]) in seen:
             continue
         seen.add((when, state[0]))
-        rows.append((when, state[0], state[1], state[2], obs.get("timestamp")))
+        rows.append((when, state[0], state[1], obs.get("timestamp"), obs.get("source")))
+    if not rows:
+        return []
     rows.sort(key=lambda r: (r[0], r[1]))
+
+    # One capture instant carrying two different states is two sources
+    # disagreeing, not a transition. It neither carries a marker nor bounds one.
+    ranks_at: dict[datetime, set[int]] = {}
+    for when, rank, *_ in rows:
+        ranks_at.setdefault(when, set()).add(rank)
+    contradictory = {when for when, ranks in ranks_at.items() if len(ranks) > 1}
+
+    # A one-row forward blip — a lone sighting immediately retracted by an earlier
+    # state — is not a sighting of that period. Its true start is then unbracketed,
+    # so a later sighting can never be better than `first_seen`.
+    #
+    # THE RETRACTION MUST BE CORROBORATED, or this rule eats the stale-row case it
+    # sits next to. "The next row is lower" is true both when THIS row is a
+    # spurious forward jump and when a LAGGING SOURCE delivers one old state after
+    # a perfectly good transition — opposite anomalies, identical one-row
+    # lookahead. Requiring a second low row to agree separates them: a real blip is
+    # followed by the stream continuing below it, while a stale delivery is a
+    # single row the stream immediately climbs back over. Without this, a genuine
+    # 3rd Quarter followed 44 minutes later by a lagging 2nd Quarter row lost its
+    # marker entirely (measured while writing #6718).
+    is_blip: list[bool] = []
+    for i, (_w, rank, *_r) in enumerate(rows):
+        retracted = i + 1 < len(rows) and rows[i + 1][1] < rank
+        is_blip.append(retracted and i + 2 < len(rows) and rows[i + 2][1] < rank)
+
+    # A row may bound a later marker only if it is non-contradictory, not a blip,
+    # and does not regress below the running maximum — a regression is a stale row
+    # delivered late, and it says nothing about the state at its own capture
+    # instant. A blip is excluded from the running maximum for the same reason.
+    can_bound: list[bool] = []
+    running_max = -1
+    for i, (when, rank, *_r) in enumerate(rows):
+        if is_blip[i] or when in contradictory:
+            can_bound.append(False)
+            continue
+        can_bound.append(rank >= running_max)
+        running_max = max(running_max, rank)
+
+    # First occurrence of each rank, BLIPS EXCLUDED. Counting the blip as the first
+    # sighting is what made the genuine 3rd Quarter unreachable: the spurious row
+    # owned the rank, and the real transition 43 minutes later was skipped as a
+    # repeat (caught by `test_a_one_row_blip_into_the_next_period_is_not_its_start`).
+    first_index: dict[int, int] = {}
+    for i, (_w, rank, *_r) in enumerate(rows):
+        if not is_blip[i]:
+            first_index.setdefault(rank, i)
 
     markers: list[dict] = []
     placed: set[str] = set()
-    blipped: set[str] = set()
-    top_rank = -1
-    for i, (when, rank, label, clock, raw_ts) in enumerate(rows):
-        first_of_rank = rank > top_rank
-        blip = i + 1 < len(rows) and rows[i + 1][1] < rank
-        if not blip:
-            top_rank = max(top_rank, rank)
-        elif label and first_of_rank:
-            blipped.add(label)  # its real start is now unbracketed: never "observed"
-        if label is None or label in placed or not first_of_rank or blip:
+    unbracketed: set[str] = set()
+
+    for i, (when, rank, label, raw_ts, source) in enumerate(rows):
+        if is_blip[i]:
+            if label:
+                unbracketed.add(label)
             continue
-        previous = rows[i - 1] if i else None
-        gap = (when - previous[0]) if previous else None
-        at_start_clock = clock == "15:00"
-        if label in blipped:
-            precision = PRECISION_FIRST_SEEN
-        elif at_start_clock or (gap is not None and gap <= POLL_TOLERANCE):
-            precision = PRECISION_BOUNDARY
-        elif gap is not None and gap <= MAX_FIRST_SEEN_BRACKET:
+        if label is None or label in placed or first_index.get(rank) != i:
+            continue
+        if when in contradictory:
+            placed.add(label)  # seen, but the instant contradicts itself
+            continue
+
+        bound = None
+        for j in range(i - 1, -1, -1):
+            if can_bound[j] and rows[j][1] < rank and rows[j][0] < when:
+                bound = rows[j]
+                break
+        if bound is None:
+            # No observation places this period's start after anything. Absent,
+            # never kickoff — and never dressed as an observation.
+            placed.add(label)
+            continue
+
+        gap = when - bound[0]
+        if label in unbracketed or gap > POLL_TOLERANCE:
             precision = PRECISION_FIRST_SEEN
         else:
-            placed.add(label)  # seen, but its start is unknown: never re-place it later
+            precision = PRECISION_BOUNDARY
+        if gap > MAX_FIRST_SEEN_BRACKET:
+            placed.add(label)  # seen, but its start is unknown
             continue
+
         placed.add(label)
         markers.append({
             "timestamp": raw_ts,
             "period": label,
-            "source": SOURCE_WIN_PROB,
+            "source": source or SOURCE_WIN_PROB,
             "precision": precision,
-            "not_before": previous[4] if previous else None,
+            "not_before": bound[3],
         })
     return markers

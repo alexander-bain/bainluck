@@ -257,11 +257,87 @@ def _time_it(fn, sources, bucket_seconds=60):
     return time.perf_counter() - started, out
 
 
-#: The shipped implementation must build the specimen's line in well under this.
-#: It measures ~0.015 s; the budget leaves ~30x of headroom for a slow CI box,
-#: and the control below proves the budget is still tight enough to catch the
-#: defect it was written for.
-_BUDGET_S = 0.5
+#: A CRASH GUARD, AND NO LONGER THE PROOF OF ANYTHING. Re-sized 2026-09-17 after
+#: this file's clock control went red on master sha `2d2374a57` (shard 3) at
+#: `shipped 0.421s vs oracle 3.390s` — 8.05x against a 10x bar.
+#:
+#: THE CLOCK CANNOT CARRY THIS PROOF, and that is a measurement rather than a
+#: preference. Same specimen, same run, two machines:
+#:
+#:            shipped    oracle    oracle/shipped
+#:   laptop    0.022s    1.80s        ~82x
+#:   CI        0.421s    3.39s         ~8x
+#:
+#: The MACHINE spread on the shipped arm (0.022 -> 0.421, ~19x) is larger than
+#: the gap between the two implementations on the slow machine (~8x). So no
+#: single wall-clock threshold can separate "linear" from "quadratic" on both
+#: boxes: any bar tight enough to fail the oracle on the laptop fails the fix on
+#: CI. The old budget was inside that squeeze — 0.421s of an 0.5s budget is 84%
+#: spent, so the FIRST arm was one noisy run from red too, not just the ratio.
+#:
+#: The real invariant is counted, not timed: see `_point_reads` and
+#: `test_the_implementation_it_replaced_reads_every_point_again_per_bucket`,
+#: which measures 972x on any machine because it counts work instead of seconds.
+#: This budget stays only to catch a catastrophic blow-up (an accidental O(n^2)
+#: that takes minutes), and 2.0 s is chosen as ~5x the slowest shipped run ever
+#: observed. It is deliberately LOOSE ENOUGH THAT THE ORACLE WOULD PASS IT on the
+#: laptop, which is exactly why the anti-vacuity control had to stop being a
+#: clock comparison.
+_BUDGET_S = 2.0
+
+
+def _point_reads(fn, sources=None, bucket_seconds=60):
+    """Count how many times `fn` reads a source point's timestamp. No clock.
+
+    THIS IS THE FILE'S REAL CONTROL. The pre-#6546 implementation restarts its
+    scan from the front of every source for every bucket, so it reads each
+    point's timestamp once per bucket it precedes; the one-pass scan reads each
+    point a constant number of times. That difference is arithmetic — it is the
+    same on a laptop, on a loaded CI runner, and under a debugger — where the
+    ratio of their run times is a property of the box.
+
+    Returns `(reads, output)`. The output is returned so the caller can prove
+    the probe did not perturb the computation: a probe that quietly broke the
+    implementation would report a small, meaningless count.
+    """
+
+    class _Probe:
+        """Forwards to a real point, counting reads of `.timestamp` only."""
+
+        __slots__ = ("_p", "_box")
+
+        def __init__(self, p, box):
+            object.__setattr__(self, "_p", p)
+            object.__setattr__(self, "_box", box)
+
+        @property
+        def timestamp(self):
+            self._box[0] += 1
+            return self._p.timestamp
+
+        @property
+        def home_probability(self):
+            return self._p.home_probability
+
+    box = [0]
+    src = {
+        key: [_Probe(p, box) for p in points]
+        for key, points in (sources or _specimen_shape()).items()
+    }
+    out = fn(src, bucket_seconds=bucket_seconds)
+    return box[0], out
+
+
+#: Measured 2026-09-17 on the specimen: shipped 17,935 reads for 5,978 points
+#: (3.0 per point — one pass), oracle 17,436,154 (972x). A bar of 50x sits an
+#: order of magnitude below the observed ratio and cannot be reached by any
+#: amount of machine noise, because no machine noise enters a count.
+_MIN_READ_RATIO = 50
+
+#: One pass means reads grow with the POINT COUNT, not with points x buckets.
+#: Measured 3.0 reads per point; 10 leaves room for an honest refactor and still
+#: fails instantly if a per-bucket rescan comes back (the oracle reads 2,917).
+_MAX_READS_PER_POINT = 10
 
 
 class TestItAgreesWithWhatItReplaced:
@@ -387,23 +463,45 @@ class TestItIsLinearAndTheBudgetIsNotVacuous:
             f"— this is the four seconds of app time #6546 measured"
         )
 
-    def test_the_implementation_it_replaced_blows_that_budget(self):
-        """THE CONTROL. Without this the arm above measures the laptop.
+    def test_the_implementation_it_replaced_reads_every_point_again_per_bucket(self):
+        """THE CONTROL. Counted, not timed — see `_BUDGET_S` for why.
 
-        The oracle is the code that ran in production on 2026-09-16; it must be
-        comfortably over the budget on the same machine, in the same run, on the
-        same data.
+        This replaces a `shipped_s * 10 < oracle_s` wall-clock ratio that went
+        red on master at 8.05x against its 10x bar. It was not a regression: the
+        two implementations are only ~8x apart on a loaded CI runner, while the
+        same shipped code varies ~19x between machines, so the bar was measuring
+        the box. Counting the work removes the box from the measurement entirely.
+
+        The oracle restarts each source scan per bucket; the shipped one-pass
+        scan does not. Measured: 972x, on identical output.
         """
-        oracle_s, _ = _time_it(_oracle_aggregated_probability, _specimen_shape())
-        shipped_s, _ = _time_it(compute_aggregated_probability, _specimen_shape())
-        assert oracle_s > _BUDGET_S, (
-            f"the pre-#6546 implementation built the specimen in {oracle_s:.2f}s, "
-            "inside the budget — the budget no longer catches the defect it was "
-            "written for and needs re-sizing against a current measurement"
+        oracle_reads, oracle_out = _point_reads(_oracle_aggregated_probability)
+        shipped_reads, shipped_out = _point_reads(compute_aggregated_probability)
+
+        # ANTI-VACUITY, FIRST. A probe that broke either implementation would
+        # report a small count and this test would "pass" by measuring nothing.
+        # Both must still produce the real answer, and the same one.
+        assert shipped_out, "the probed run produced no line — the probe is broken"
+        assert _as_tuples(shipped_out) == _as_tuples(
+            compute_aggregated_probability(_specimen_shape(), bucket_seconds=60)
+        ), "the counting probe changed the shipped result — the counts are meaningless"
+        assert _as_tuples(oracle_out) == _as_tuples(shipped_out), (
+            "the two implementations disagree under the probe — this file's "
+            "equivalence arms are the place to look, not the budget"
         )
-        assert shipped_s * 10 < oracle_s, (
-            f"shipped {shipped_s:.3f}s vs oracle {oracle_s:.3f}s — less than the "
-            "order of magnitude the one-pass scan is supposed to buy"
+
+        points = sum(len(v) for v in _specimen_shape().values())
+        assert shipped_reads <= points * _MAX_READS_PER_POINT, (
+            f"the shipped scan read {shipped_reads:,} timestamps for {points:,} "
+            f"points ({shipped_reads / points:.1f} each) — more than a constant "
+            "number of passes, so the carry-forward is rescanning"
+        )
+        assert oracle_reads > shipped_reads * _MIN_READ_RATIO, (
+            f"the pre-#6546 implementation read {oracle_reads:,} timestamps vs "
+            f"the shipped {shipped_reads:,} ({oracle_reads / max(shipped_reads, 1):.0f}x). "
+            "Under 50x means the control no longer reproduces the per-bucket "
+            "rescan it exists to represent, so this file has stopped guarding "
+            "the defect it was written for."
         )
 
     def test_quadrupling_the_input_does_not_sixteen_times_the_work(self):

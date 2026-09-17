@@ -45,6 +45,15 @@ THE FIX is additive by construction: ``token_for_outcome`` returns
 ``yes_token_of``'s answer whenever it has one, so no leg that streams today can
 be moved, re-attributed or lost.  It only ever fills where the answer was None.
 
+⚠️ SUPERSEDED IN PART, 2026-09-17 (#837), and the two reversed assertions in
+``TestTheYesPathIsUnchanged`` carry the argument in full.  "Additive" bought its
+safety by letting a MARKET-level question — "which token is this market's YES
+side" — answer a ROW-level one, and that is what let a row of ours named ``No``
+be handed the ``Yes`` book.  ``token_for_outcome`` now reads OUR OWN ROW'S NAME
+first and falls back to ``yes_token_of``; every case this file measured is
+unchanged, because in all of them the name matched what the Yes path returned or
+matched nothing at all.
+
 The tests below pin, in order: the Yes path is untouched and still wins; the
 fallback attributes BY NAME and never by position; it refuses every shape it
 cannot prove; it is reachable through ``topup_outcome_clob_tokens`` with our own
@@ -142,18 +151,50 @@ class TestTheYesPathIsUnchanged:
         assert token_for_outcome(market, "Wolfsberger AC") == YES_TOKEN
         assert token_for_outcome(market, "Wolfsberger AC") == yes_token_of(market)
 
-    def test_the_yes_token_wins_even_when_the_outcome_name_also_matches(self):
-        """A market naming BOTH a "Yes" and our outcome is ambiguous in
-        principle.  The Yes reading is the one Q500 proved against production,
-        so it takes precedence and the fallback never sees this shape."""
-        market = _FakeMarket(YES_CONDITION, [YES_TOKEN, NO_TOKEN], ["Yes", "Detroit Tigers"])
-        assert token_for_outcome(market, "Detroit Tigers") == YES_TOKEN
+    def test_our_own_name_beats_a_yes_this_row_does_not_own(self):
+        """REVERSED 2026-09-17 (#837), and the reversal is the point of the note.
 
-    def test_the_no_token_is_still_never_returned(self):
-        """Q500's three-way trap, re-pinned here because this file adds a second
-        way to reach a token and must not open a second way to reach the NO."""
+        This assertion used to read ``== YES_TOKEN``, on the reasoning that a
+        market naming BOTH a "Yes" and our outcome is ambiguous and the Yes
+        reading was the one Q500 had proved.  It is not ambiguous: "Yes" is a
+        DIFFERENT outcome of this market, and an outcome named exactly what our
+        row is named is our row's book.  Taking index 0 here attributes our leg
+        to somebody else's.
+
+        Q500's case is untouched and is the test above — our row named
+        "Wolfsberger AC" against ``["Yes","No"]`` matches nothing, falls through,
+        and still gets the YES token.  What changed is only which signal is read
+        FIRST, and it is read first because the market-level question
+        ``yes_token_of`` answers cannot see which of our rows is asking.
+        """
+        market = _FakeMarket(YES_CONDITION, [YES_TOKEN, NO_TOKEN], ["Yes", "Detroit Tigers"])
+        assert token_for_outcome(market, "Detroit Tigers") == NO_TOKEN
+
+    def test_a_three_way_outcome_still_never_reaches_the_no_token(self):
+        """Q500's trap, re-aimed at the shape it was actually about.
+
+        On a THREE-WAY field market the NO book is P(not this outcome) — the
+        other two contenders combined — so no row of ours owns it and nothing
+        may return it.  That is what this pinned, and it still holds: our row is
+        named for a team, matches neither "Yes" nor "No", and lands on the YES
+        token.
+
+        🔴 IT USED TO PIN IT WITH ``token_for_outcome(market, "No")``, which is
+        not that shape — it is a row literally named "No" on a two-way, and
+        those are ours.  Our outcome rows suffix the condition id ``_yes`` /
+        ``_no`` and a Yes/No sub-market mints both; measured on production
+        2026-09-17 09:2xZ, two live rows carry exactly that shape, and the old
+        assertion certified the YES token being written to them.  One is
+        ``0xd7a5b002…`` at ``outcomePrices ["0.9995","0.0005"]`` — the leg would
+        read 99.95% where its own truth is 0.05%.  NEITHER IS INVERTED IN
+        PRODUCTION: both markets carry market-level ``clob_token_ids``, so the
+        Q489 zip attributes their legs and this function is never asked about
+        them.  What the green row certified was a latent branch, not a live
+        defect — the reach measurement is in the module's own work-set comment.
+        The two-way case is pinned in ``test_poly_topup_both_legs_837.py``.
+        """
         market = _FakeMarket(YES_CONDITION, [YES_TOKEN, NO_TOKEN], ["Yes", "No"])
-        assert token_for_outcome(market, "No") != NO_TOKEN
+        assert token_for_outcome(market, "Wolfsberger AC") != NO_TOKEN
 
 
 # --------------------------------------- the head-to-head fallback fills ----

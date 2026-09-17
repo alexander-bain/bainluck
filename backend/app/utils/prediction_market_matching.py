@@ -2604,6 +2604,73 @@ def kalshi_match_segment_key(external_id: Optional[str]) -> Optional[str]:
     return f"{sport_key}:{game_id}"
 
 
+#: #6720 — the sports beyond tennis whose Kalshi tickers carry a per-GAME
+#: segment shared by every series that prices that game, measured on production
+#: 2026-09-17 against the four worked specimens in the issue.
+#:
+#: Soccer is matched by PREFIX because Kalshi prices each league through its own
+#: series family (`KXBUNDESLIGA*`, `KXLALIGA*`, `KXEPL*`, `KXSERIEA*`,
+#: `KXLIGUE1*`) and `get_sport_key_from_ticker` resolves each to its own
+#: `soccer_*` key; listing them one by one would silently drop the next league
+#: Kalshi adds.
+_KALSHI_GAME_SEGMENT_SPORT_PREFIXES = ("soccer",)
+_KALSHI_GAME_SEGMENT_SPORT_KEYS = frozenset({
+    "americanfootball_nfl",
+    "baseball_mlb",
+    "mma_mixed_martial_arts",
+})
+
+
+def kalshi_game_segment_key(external_id: Optional[str]) -> Optional[str]:
+    """Kalshi's OWN key for one GAME, qualified by sport. #6720.
+
+    The same idea as ``kalshi_match_segment_key`` — which this delegates to
+    first, so every tennis answer is unchanged — extended to the sports where
+    the identical ticker grammar was measured:
+
+        KXBUNDESLIGASCORE-26SEP12SCFBMG   on the ESPN-anchored event
+        KXBUNDESLIGATOTAL-26SEP12SCFBMG   on an id-less Kalshi auto-create
+        KXBUNDESLIGASPREAD-26SEP12SCFBMG  on the same auto-create
+
+    ``26SEP12SCFBMG`` is Kalshi's own event segment, repeated verbatim by every
+    series that prices that fixture. Two markets returning the same value are
+    the same game because Kalshi says so — a shared provider id on the
+    candidate, which is what gotcha #32 requires before anything is drained.
+    No name is compared and no time window is opened.
+
+    **Why this is a SEPARATE function rather than a wider sport set inside
+    ``kalshi_match_segment_key``.** That helper has two other consumers —
+    ``is_kalshi_tennis_prop_ticker`` (may this market invent an Event?) and
+    ``is_kalshi_match_segment_ticker`` (may an unlink arm second-guess this
+    link?). Both encode things that are true of TENNIS and not of soccer: the
+    prop test is scored against ``_KALSHI_TENNIS_MATCH_SERIES``, so every soccer
+    ticker would classify as a prop and lose the right to create its own event;
+    and the unlink test exists because a tennis segment's date is the DRAW date,
+    whereas a soccer segment's date is the fixture's own. Widening the shared
+    helper would have reached both. This one is read by the segment reconciler
+    and by nothing else.
+    """
+    tennis = kalshi_match_segment_key(external_id)
+    if tennis:
+        return tennis
+    if not external_id:
+        return None
+    from app.utils.sport_keys import get_sport_key_from_ticker
+
+    sport_key = get_sport_key_from_ticker(external_id)
+    if not sport_key:
+        return None
+    if not (
+        sport_key in _KALSHI_GAME_SEGMENT_SPORT_KEYS
+        or sport_key.startswith(_KALSHI_GAME_SEGMENT_SPORT_PREFIXES)
+    ):
+        return None
+    game_id = kalshi_game_id(external_id)
+    if not game_id:
+        return None
+    return f"{sport_key}:{game_id}"
+
+
 # The Kalshi tennis series that price the MATCH ITSELF — who wins it. Everything
 # else carrying a match segment (set winners, exact score, game totals, game and
 # set handicaps) is a PROP *about* a match, and a prop is not evidence that a

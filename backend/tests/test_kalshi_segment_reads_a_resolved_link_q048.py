@@ -219,9 +219,15 @@ class _Result:
 class _FakeSession:
     """Returns a fixed row set — it models what the query FOUND, not the query."""
 
-    def __init__(self, markets, provenance, sport_ids=None):
+    def __init__(self, markets, provenance, anchored, sport_ids=None):
         self._markets = markets
         self._provenance = provenance
+        # #6720: the reconcile now decides on the provider anchor, so the row
+        # set it reads carries `espn_id`/`external_id`. The specimen's REAL
+        # event is the anchored one and the GHOST is the id-less auto-create —
+        # which is the same fact this suite always modelled through
+        # `odds_api` vs `kalshi_ticker`, now stated on the axis that decides.
+        self._anchored = set(anchored)
         self._sport_ids = sport_ids or {}
         self.updates = []
         self.commits = 0
@@ -235,7 +241,11 @@ class _FakeSession:
             return _Result(self._markets)
         if "events" in text:
             return _Result([
-                (eid, src, self._sport_ids.get(eid))
+                (
+                    eid, src, self._sport_ids.get(eid),
+                    f"espn-{eid}" if eid in self._anchored else None,
+                    None,
+                )
                 for eid, src in self._provenance.items()
             ])
         raise AssertionError(f"unexpected statement: {text[:120]}")
@@ -269,6 +279,7 @@ def _valmon_session(include_winner):
     return _FakeSession(
         markets=markets,
         provenance={REAL_EVENT: "odds_api", GHOST_EVENT: "kalshi_ticker"},
+        anchored={REAL_EVENT},
     )
 
 
@@ -344,6 +355,7 @@ class TestTruncationRefuses:
         session = _FakeSession(
             markets=markets,
             provenance={GHOST_EVENT: "kalshi_ticker", REAL_EVENT: "odds_api"},
+            anchored={REAL_EVENT},
         )
         stats = await _reconcile_kalshi_match_segments(session)
 
@@ -369,6 +381,7 @@ class TestTruncationRefuses:
         ]
         session = _FakeSession(
             markets=markets, provenance={GHOST_EVENT: "kalshi_ticker"},
+            anchored=set(),
         )
         with caplog.at_level(logging.ERROR):
             await _reconcile_kalshi_match_segments(session)
