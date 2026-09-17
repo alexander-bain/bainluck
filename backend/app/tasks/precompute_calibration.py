@@ -8891,6 +8891,7 @@ async def _precompute_calibration_main():
         save_phase_ledger,
     )
     from app.utils.calibration_phase_ledger import (
+        CHECKPOINT_REASON_READ_FAILED,
         RESUMABLE_PHASES,
         REFUSE,
         health_for,
@@ -8908,19 +8909,48 @@ async def _precompute_calibration_main():
     )
 
     if action == REFUSE:
-        # Another worker holds an unexpired lease on the checkpoint. Running a
-        # second build against it is how two workers each advance half of one.
-        logger.info(
-            "calibration main build: checkpoint leased by %s — skipping",
-            runner.checkpoint.owner,
-        )
+        # Standing down, for one of two unrelated reasons, and the difference is
+        # the whole of this branch's diagnostics (#6599):
+        #
+        #   lease_held_by_other — another worker holds an unexpired lease on the
+        #     checkpoint. Running a second build against it is how two workers
+        #     each advance half of one. A HEALTHY outcome; the hourly one-off
+        #     exits 0 on it (`run_calibration_hourly.is_checkpoint_declined`).
+        #   read_failed — the durable read did not ANSWER. The build did not
+        #     happen and nobody has vetted why, so it must NOT read as a clean
+        #     decline: a distinct `reason` is what makes the one-off exit 1,
+        #     with no change to the script, because it matches on both fields.
+        #
+        # Both stand down rather than run, which is the fix: a beat that runs on
+        # a blank checkpoint writes it over the row it could not read.
+        unreadable = runner.checkpoint_reason == CHECKPOINT_REASON_READ_FAILED
+        if unreadable:
+            logger.warning(
+                "calibration main build: checkpoint unreadable (%s) — skipping "
+                "rather than rebuilding over a checkpoint we could not read",
+                runner.checkpoint_reason,
+            )
+        else:
+            logger.info(
+                "calibration main build: checkpoint leased by %s — skipping",
+                runner.checkpoint.owner,
+            )
         runner.ledger.elapsed_ms = 0
         ledger_write = await save_phase_ledger(
-            runner, {"terminal": "overlap_refused", "checkpoint_action": action}
+            runner,
+            {
+                "terminal": "overlap_refused",
+                "checkpoint_action": action,
+                # The terminal vocabulary is graded by the budget corpus and has
+                # one word for "refused"; the reason is what separates the two
+                # causes inside it, and it is written on every refusal so the
+                # ring can count them apart.
+                "checkpoint_reason": runner.checkpoint_reason,
+            },
         )
         return {
             "status": "skipped",
-            "reason": "checkpoint_leased",
+            "reason": "checkpoint_unreadable" if unreadable else "checkpoint_leased",
             "owner": runner.checkpoint.owner,
             "ledger_write": ledger_write,
         }

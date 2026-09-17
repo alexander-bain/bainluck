@@ -470,9 +470,27 @@ def test_the_stand_down_shape_still_matches_its_producer(job):
         "expected exactly one REFUSE branch in this function; the guard can no "
         "longer tell which stand-down it is reading"
     )
-    branch = body.split("if action == REFUSE:", 1)[1][:1200]
+    branch = body.split("if action == REFUSE:", 1)[1][:2400]
     assert f'"status": "{CHECKPOINT_DECLINED_STATUS}"' in branch
-    assert f'"reason": "{CHECKPOINT_DECLINED_REASON}"' in branch
+    # #6599: the branch now emits TWO reasons, so the pair is read as literals
+    # rather than as the `"reason": X` phrase — the producer chooses between
+    # them on one line and no single phrase contains either any more.
+    assert f'"{CHECKPOINT_DECLINED_REASON}"' in branch
+    assert '"checkpoint_unreadable"' in branch
+
+
+def test_an_unreadable_checkpoint_is_not_the_vetted_decline(job):
+    """#6599, and the whole reason the second reason exists.
+
+    A stand-down because the durable read did not ANSWER is a build that did not
+    happen for a reason nobody has vetted. Exiting 0 on it would put a green
+    tick over an hour in which the rebuild did not run — the #1515 silence this
+    job was built to end, arriving through the door the #6599 fix opened.
+    """
+    summary = {"status": "skipped", "reason": "checkpoint_unreadable"}
+
+    assert job.is_checkpoint_declined(summary) is False
+    assert job.exit_code_for(summary) == job.EXIT_FAILED
 
 
 # ---------------------------------------------------------------------------
