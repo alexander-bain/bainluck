@@ -99,7 +99,7 @@ refuses to run anywhere but `bainluck-heavy`, which is the attended step itself
 by a person invoking this script on a named app, never by a release.
 
     heroku run:detached -a bainluck-heavy -- \\
-        python3 backend/scripts/repair_2486_espn_win_prob_scale.py --plan
+        python3 scripts/repair_2486_espn_win_prob_scale.py --plan
     …                                       --apply --limit 25    # first batch
     …                                       --apply               # the rest
     …                                       --restore             # the undo
@@ -107,6 +107,14 @@ by a person invoking this script on a named app, never by a release.
 `--plan` is the default and writes nothing at all. Non-detached `heroku run`
 fails silently in the sandbox (gotcha #48) — use `run:detached` and read the
 output back from the logs.
+
+THE PATH CARRIES NO `backend/`, and that is not a typo to be helpfully fixed.
+The Heroku deploy root already IS `backend/` — that is where the Procfile lives,
+and its own release line reads `python3 scripts/assert_migrations_applied.py`.
+A `backend/scripts/…` argument therefore makes the dyno exit on a missing file
+BEFORE the script starts: no app gate, no writer gate, no plan, and nothing in
+the logs that looks like this script declining. The 2026-09-16 attended attempt
+died exactly there and ran no repair at all.
 """
 
 import argparse
