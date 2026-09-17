@@ -510,7 +510,11 @@ class TestTheSweepReportsItsOwnConsumer:
 
 import contextlib  # noqa: E402
 
-import app.tasks.polymarket_container_twin_sweep as sweep  # noqa: E402
+# The import-from form, matching how this module is already aliased at the top
+# of Part A. A plain `import app.tasks.polymarket_container_twin_sweep as sweep`
+# beside the `from ... import X` lines above trips CodeQL's
+# `py/import-and-import-from` (a note, no security severity) for no benefit.
+from app.tasks import polymarket_container_twin_sweep as sweep  # noqa: E402
 from app.utils.task_verdict import ENFORCED_TASKS, verdict_for  # noqa: E402
 
 
