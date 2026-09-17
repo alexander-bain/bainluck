@@ -89,6 +89,14 @@ US_SEP_CPI = (364212, "CPI in September", "2026-10-14")
 US_OCT_CPI = (363921, "CPI in October", "2026-11-10")
 US_NOV_CPI = (363886, "CPI in November", "2026-12-10")
 
+# A real tie, and they are common: eight Kalshi markets price the September
+# print, and these two carry the SAME stored `resolution_date` to the second
+# (`2026-10-14 12:25:00+00:00`). A stable sort would leave such a pair in DB
+# order, which is the undefined order this ship is replacing — so the tie-break
+# is load-bearing, and this pair is what makes it testable.
+SEP_TIE_A = (364212, "CPI in September", "2026-10-14T12:25:00")
+SEP_TIE_B = (55686485, "CPI core in September", "2026-10-14T12:25:00")
+
 THE_2030S = {DEC_2030[0], DEC_2034[0], DEC_2036[0]}
 
 
@@ -287,6 +295,24 @@ class TestTheServedCard:
             assert isinstance(block["brackets"], list) and block["brackets"]
             assert isinstance(block["peakIs"], int)
             assert isinstance(block["mo"], str)
+
+    async def test_two_releases_at_the_same_minute_order_deterministically(
+        self, client, mock_db
+    ):
+        # Fed in DESCENDING id order, so "it came out sorted" cannot be the
+        # input order surviving a stable sort — which is exactly what the
+        # tie-break exists to prevent.
+        blocks = await _blocks(client, mock_db, specs=[SEP_TIE_B, SEP_TIE_A])
+        assert [b["market_id"] for b in blocks] == [SEP_TIE_A[0], SEP_TIE_B[0]]
+
+    async def test_the_tie_break_decides_which_of_the_two_is_next(
+        self, client, mock_db
+    ):
+        # The badge rides the ordering, so an undefined tie is an undefined
+        # superlative: two markets resolving in the same second would otherwise
+        # take turns being "NEXT" between precomputes.
+        blocks = await _blocks(client, mock_db, specs=[SEP_TIE_B, SEP_TIE_A])
+        assert [b["market_id"] for b in blocks if b["is_next"]] == [SEP_TIE_A[0]]
 
     async def test_a_single_release_still_carries_the_badge(self, client, mock_db):
         # The degenerate case: one block must still be next, not zero.

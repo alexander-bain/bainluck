@@ -276,9 +276,18 @@ export default function EconomicsPage() {
         {/* Inflation */}
         {t.inflation && t.inflation.count > 0 && (
           <section className="mb-12">
+            {/* Not "CPI releases": the branch feeding this card admits any
+                market whose name carries "cpi" OR "inflation", so South
+                Africa's August print, euro-area annual inflation and headline
+                PCE have always been eligible for it. Ordering the blocks by
+                release date (#2564) puts one of them first instead of leaving
+                it to row order, which makes a title naming only CPI a claim the
+                card's own first row contradicts. Widened to what it draws
+                rather than narrowing the pool by country, which no field on the
+                market states. */}
             <SectionHeader
               kicker="Inflation & Consumer Prices"
-              title="CPI releases · Market expectations"
+              title="Inflation releases · Market expectations"
               count={t.inflation.count}
             />
             <div className="grid md:grid-cols-[1.6fr_1fr] gap-3.5">
