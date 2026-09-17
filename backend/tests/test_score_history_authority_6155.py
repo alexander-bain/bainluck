@@ -435,12 +435,54 @@ class TestTheFilterDoesNotMoveTheChartsFurniture:
     like a period-marker regression on the same page."""
 
     def test_the_markers_and_the_drawn_span_are_untouched(self):
+        """The assertion is a DIFFERENCE, never a transcript of the markers.
+
+        The first cut pinned the literal list the route served at the time
+        (`("1", "espn_box")` x4). #5140 landed mid-review and moved football
+        onto observed transitions — `("1st Quarter", "win_prob")` x5, with a
+        Halftime — so the pin reddened at the desk on a payload this filter had
+        not touched. Re-deriving that list from this branch's own output would
+        have made the test agree with whatever the code now does, which is how
+        a pinning test quietly becomes a mirror.
+
+        So the control is the SAME fixture served with the filter disabled.
+        Whatever tier computes the markers, withholding a reading may not
+        change them — which is the claim, and it survives the next tier
+        change too.
+
+        WHAT THIS ASSERTION IS AND IS NOT, measured rather than assumed. The
+        marker equality is a TRIPWIRE, not a demonstration: on this fixture it
+        cannot currently fire. Replacing the filter with one that withholds
+        EVERY reading (49 of 49) leaves all five markers in place, as do
+        dropping only the first, only the last, or all but the first. The
+        reason is the one `period_markers.py` already states — the measured
+        tiers take their timestamps from the very series that define the
+        renderable span, so the domain guard is a no-op for them by
+        construction, and `espn_history` sustains the score renderer's span on
+        its own regardless of what `score_history` does. The assertion that
+        carries weight here is the span one below: the withhold path needs a
+        reading to be strictly bracketed by two authority rows (`prv >= 0 and
+        nxt < len(authority)`), so the extremes are structurally kept. The
+        equality is retained because it costs one serve and would catch a
+        future tier whose markers are NOT span-derived (tier 4 `estimated` is
+        exactly that shape).
+        """
+        import app.utils.score_history_authority as authority
+
+        real = authority.split_superseded_score_history
+        authority.split_superseded_score_history = lambda history, *a, **k: (history, [])
+        try:
+            _, unfiltered = _real(NFL_ID, "americanfootball_nfl")
+        finally:
+            authority.split_superseded_score_history = real
         _, payload = _real(NFL_ID, "americanfootball_nfl")
-        assert [(m["period"], m["source"]) for m in payload["period_markers"]] == [
-            ("1", "espn_box"), ("2", "espn_box"), ("3", "espn_box"), ("4", "espn_box")
-        ]
-        stored, served = _everything(payload), payload["score_history"]
+
         assert payload["score_history_withheld"], "otherwise this passes vacuously"
+        assert not unfiltered.get("score_history_withheld"), "the control must be unfiltered"
+        assert payload["period_markers"], "no markers at all would pass vacuously"
+        assert payload["period_markers"] == unfiltered["period_markers"]
+
+        stored, served = _everything(payload), payload["score_history"]
         assert (served[0]["timestamp"], served[-1]["timestamp"]) == (
             stored[0]["timestamp"], stored[-1]["timestamp"]
         ), "the first and last stored readings are never withheld, so the span holds"
