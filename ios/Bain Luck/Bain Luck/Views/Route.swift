@@ -11,8 +11,13 @@ enum Route: Hashable {
     case leagueGrid(slug: String)
     case golfCategory
     case golfLeaderboard
+    /// One golf tournament — `/api/golf/tournaments/{slug}` (#1471).
+    ///
+    /// ⚠️ **NOT `tournamentHub`.** These two look interchangeable and are not:
+    /// a golf slug sent to the registered hub is a guaranteed 404. See the
+    /// destination switch below.
     case golfTournament(slug: String, name: String)
-    /// A registered tournament hub — `/api/tournaments/{slug}`.
+    /// A registered tournament hub — `/api/tournaments/{slug}`. **Tennis draws.**
     case tournamentHub(slug: String, name: String)
     case futuresList
     case teamDetail(slug: String)
@@ -41,7 +46,19 @@ struct RouteDestination: View {
         case .leagueGrid(let slug): LeagueGridView(slug: slug)
         case .golfCategory: GolfCategoryView()
         case .golfLeaderboard: GolfCategoryView()
-        case .golfTournament(_, let name): SportCategoryView(categoryKey: "golf", categoryName: name)
+        // #1471. This read `SportCategoryView(categoryKey: "golf", …)` and
+        // discarded the slug with `_`, so EVERY tournament row on the Golf page
+        // led back to a golf-shaped list of the same cards — Alex's "duplicate
+        // card", written literally in the route table. A slug is carried here
+        // to be used; an empty one is the only case with nowhere to go, and it
+        // falls back to the category rather than opening a screen that can only
+        // fail.
+        case .golfTournament(let slug, let name):
+            if slug.isEmpty {
+                GolfCategoryView()
+            } else {
+                GolfTournamentView(slug: slug, displayName: name)
+            }
         case .tournamentHub(let slug, let name): TournamentHubView(slug: slug, displayName: name)
         case .futuresList: FuturesListView()
         case .teamDetail(let slug): TeamDetailView(slug: slug)

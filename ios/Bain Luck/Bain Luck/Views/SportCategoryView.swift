@@ -316,7 +316,18 @@ struct SportCategoryView: View {
             // than a link that does nothing. A tap that looks live and isn't is
             // the defect one layer in.
             if let slug = tournament.slug, !slug.isEmpty {
-                NavigationLink(value: Route.tournamentHub(slug: slug, name: tournament.name)) {
+                // #1471, AND THE ROUTE MATTERS. This was `Route.tournamentHub`,
+                // which calls `/api/tournaments/{slug}` — the registered TENNIS
+                // hub. A feed `tournament` card is golf (pinned server-side by
+                // `test_feed_tournament_destination_1471.py`), so that call
+                // could only ever 404: measured 2026-09-16,
+                // `/api/tournaments/biltmore-championship-asheville` →
+                // `404 {"detail":"No registered tournament …"}`. That is the
+                // "Couldn't load Biltmore Championship Asheville" on Alex's
+                // phone, and why its Retry never helped — the retry re-made the
+                // same call. `/api/golf/tournaments/{slug}` served 132 golfers
+                // for the same slug in the same minute.
+                NavigationLink(value: Route.golfTournament(slug: slug, name: tournament.name)) {
                     conceptLikeRow(
                         title: tournament.name,
                         subtitle: [tournament.tourLabel, tournament.venue]
