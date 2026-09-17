@@ -1847,6 +1847,58 @@ def _ticker_period(ticker: str | None) -> str | None:
     return match.group(0) if match else None
 
 
+#: The same question asked of a market's NAME, for the venue that has no ticker
+#: to ask it of (#6619).
+#:
+#: Polymarket's `external_id` is a bare integer — `'977353'` — so
+#: `_ticker_period` reads a series with no period token in it, answers `None`,
+#: and every caller below proceeds as though the market asked about the WHOLE
+#: GAME. The segment marker for those rows lives in `futures_markets.name`
+#: ("Deportivo Alavés vs. Valencia CF - Halftime Result"), which no classifier
+#: read. Measured 2026-09-16: 203 Polymarket half markets already carry a
+#: PERMANENT `game_score` verdict decided from the full-time score, on events
+#: holding zero `scoring_plays` and no period linescore — i.e. the refusal
+#: `_period_scores` exists to perform was never reached.
+#:
+#: Tight on purpose, and measured against every name in the table that contains
+#: the word "half": `Halfpipe`, `Half-Life`, `Top Half`/`Bottom Half` (World Cup
+#: bracket sides), `EPL Top Half Finishers` and `halfway-house` are the complete
+#: set of non-segment uses (19 markets), and none of them matches. `half` alone
+#: would have swept all 19 in.
+_NAME_PERIOD_RE = re.compile(
+    r"\b(?:(?P<h1>half[ -]?time|(?:1st|first)\s+half)"
+    r"|(?P<h2>(?:2nd|second)\s+half))\b",
+    re.IGNORECASE,
+)
+
+
+def _name_period(name: str | None) -> str | None:
+    """``"1h"``/``"2h"`` when a market's NAME binds it to a half; else ``None``."""
+    match = _NAME_PERIOD_RE.search(name or "")
+    if match is None:
+        return None
+    return "1h" if match.group("h1") else "2h"
+
+
+def _market_period(ticker: str | None, name: str | None) -> str | None:
+    """The period this market's question is about, from whichever field says so.
+
+    ONE CLASSIFIER, TWO CALLERS — `_ticker_period`'s rule, extended to the field
+    the second venue writes the answer in. The ticker is consulted FIRST and
+    wins: it is the more precise signal, it is the one `_PERIOD_SERIES_RE` was
+    measured against, and deferring to it keeps this a pure no-op for every
+    Kalshi market that already classified.
+
+    So the only rows whose behaviour changes are ones a period token could not
+    reach — and each of those is, today, being graded against a score that
+    cannot answer its question. Nothing correct is withdrawn: the failure mode
+    of this change is "still no verdict" (`_period_scores` refuses a half it
+    cannot rebuild), never "a wrong one". That is #5052's argument and #4923's
+    rule, applied to the arm #4923 could not see.
+    """
+    return _ticker_period(ticker) or _name_period(name)
+
+
 #: The periods `_period_scores` can actually rebuild a score for. Everything
 #: else stays REFUSED — #4923's rule that a wrong verdict is replaced by no
 #: verdict first, and the refusal stays counted as `refused_period`.
@@ -2126,7 +2178,7 @@ async def _resolve_kalshi_from_scores(scan_out: dict | None = None):
                 # keeps it in the scan for the venue's own settlement, and an
                 # ungraded row is a state every surface already renders
                 # honestly (#1638 / `_settled_grade_fields`).
-                if _ticker_period(row.ticker) is not None:
+                if _market_period(row.ticker, row.market_name) is not None:
                     stats["refused_period"] += 1
                     continue
 
@@ -3143,7 +3195,7 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
                 # mode of this change is "still no verdict" (a 2H market whose
                 # halftime score cannot be rebuilt falls to `no_plays`, exactly
                 # as a 1H one does), never "a wrong one".
-                period = _ticker_period(row.ticker)
+                period = _market_period(row.ticker, row.market_name)
                 if period is not None and period not in _RECONSTRUCTABLE_PERIODS:
                     stats["refused_period"] += 1
                     continue
