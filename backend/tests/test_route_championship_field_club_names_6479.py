@@ -83,6 +83,11 @@ def _outcome(oid, ticker, name, prob):
         current_probability=prob,
         current_american_odds=400,
         rank=1,
+        # #6676: the search builder judges the stored BOOK as well as the price.
+        # Both sides None is "no book at all", which `is_empty_book_midpoint`
+        # passes through by construction, so nothing in this file moves.
+        current_yes_bid=None,
+        current_yes_ask=None,
         rank_change_24h=None,
         probability_change_24h=None,
         opening_probability=None,

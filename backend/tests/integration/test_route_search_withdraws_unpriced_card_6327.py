@@ -63,7 +63,7 @@ def _outcome(oid, name, prob):
         id=oid, name=name, probability=prob, current_probability=prob,
         opening_probability=prob, is_winner=None, price=prob,
         probability_change_24h=None, american_odds=None,
-        current_american_odds=None, current_yes_ask=None, rank=None,
+        current_american_odds=None, current_yes_ask=None, current_yes_bid=None, rank=None,
         sort_order=oid, external_id=f"OUT-{oid}",
     )
 

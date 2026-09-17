@@ -321,9 +321,14 @@ class TestFieldOutcome:
 
 
 def _oc(name, prob, mv=None, oid=1, odds=None, rank=None):
+    # #6676: the builder now reads the stored BOOK as well as the price. Both sides
+    # default to None — no book at all, which `is_empty_book_midpoint` passes through
+    # by construction — so every ranking/shape assertion in this file is unmoved and
+    # the new guard's own tests carry the book cases.
     return SimpleNamespace(
         id=oid, name=name, current_probability=prob, external_id=None,
         current_american_odds=odds, rank=rank, probability_change_24h=mv,
+        current_yes_bid=None, current_yes_ask=None,
     )
 
 

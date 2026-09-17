@@ -79,6 +79,11 @@ class _Outcome:
         self.last_updated = last_updated
         self.name = name
         self.current_probability = prob
+        # #6676: the builder reads the stored book too. None on both sides is "no
+        # book at all", which the empty-book predicate passes through — so this
+        # file's default `prob=0.5` stays a real 50% and no stamp assertion moves.
+        self.current_yes_bid = None
+        self.current_yes_ask = None
         self.current_american_odds = None
         self.rank = None
         self.probability_change_24h = None

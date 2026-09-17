@@ -81,11 +81,17 @@ from app.routes.events import (
 class _Outcome:
     """The attributes the search builder reads off an ORM outcome row."""
 
-    def __init__(self, oid, name="Leg", prob=None, ask=None):
+    def __init__(self, oid, name="Leg", prob=None, ask=None, bid=None):
         self.id = oid
         self.name = name
         self.current_probability = prob
         self.current_yes_ask = ask
+        # #6676: the builder judges the BOOK as well as the price. `bid` defaults to
+        # None — no two-sided quote — and `is_empty_book_midpoint` passes a one-sided
+        # or absent book through untouched, so every assertion in this file (which is
+        # about NULL vs stored-zero PRICES) is unmoved. The empty-book cases live in
+        # test_search_empty_book_6676.py.
+        self.current_yes_bid = bid
         self.current_american_odds = None
         self.rank = None
         self.probability_change_24h = None
