@@ -114,6 +114,7 @@ def _runner(
     completed: tuple[int, ...] = (),
     cancelled: tuple[int, ...] = (),
     headroom_ms: int | None = PROD_HEADROOM_MS,
+    bound_ms: int | None = PROD_FENCE_MS,
     banked: int = PROD_BANKED,
     record_cancel_counter: bool = True,
 ) -> cmb.PhaseRunner:
@@ -123,6 +124,16 @@ def _runner(
     cancel path in ``precompute_calibration`` — rather than derived from the
     stage tally, because the predicate under test reads that counter and a fake
     that derived it could never see the two disagree.
+
+    **#6599: the BOUND is recorded beside the headroom, because the fence writes
+    them as a pair and the predicate now reads them as one.** This rig recorded
+    only the headroom, which left its beats unable to say how much window the
+    fence had to work with — and "347,841 ms of headroom" means opposite things
+    against a 483,000 ms bound (the LEVEL bit, this specimen) and against a
+    350,000 ms one (the window bit). Both values here are production's own, off
+    the 12:32:16Z row, so the beats below describe the beat they always claimed
+    to. See ``test_calibration_window_bound_is_not_a_level_refutation_6599.py``
+    for the latch that made the missing half matter.
     """
     runner = cmb.PhaseRunner(
         plan=_plan(
@@ -147,6 +158,8 @@ def _runner(
         runner.ledger.record_gauge(
             f"staged:unit_bound_headroom_ms:{PHASE_FUTURES}", headroom_ms
         )
+    if bound_ms is not None:
+        runner.ledger.record_gauge(f"staged:unit_bound_ms:{PHASE_FUTURES}", bound_ms)
     runner.ledger.record_gauge("staged:units_banked", banked)
     return runner
 
