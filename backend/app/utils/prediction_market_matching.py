@@ -2013,7 +2013,90 @@ _BARE_ABBREV_OWNER: dict[str, str] = {
 }
 
 
-def _resolve_team_abbrev(abbrev: str, sport_suffix: str) -> Optional[str]:
+#: The one suffix every soccer competition shares — the namespace #6295 is about.
+_SOC_ABBREV_SUFFIX = "_soc"
+
+
+#: Which COMPETITION owns each ``_soc`` key in ``_KALSHI_TEAM_ABBREVS`` (#6295).
+#:
+#: `_BARE_ABBREV_OWNER` one level down. That map stops a key owned by another
+#: SPORT answering your ticker; six soccer competitions share the single `_soc`
+#: suffix, so the same collision reopened inside it — `lev_soc` is the
+#: Bundesliga block's Bayer Leverkusen and it was answering La Liga tickers that
+#: mean Levante, `par_soc` is the Champions League block's Paris Saint-Germain
+#: and it was answering a Serie A ticker that means Parma.
+#:
+#: One flat namespace cannot hold both Levante and Bayer Leverkusen under `lev`,
+#: which is why declaring the owner is the fix and a wider map is not.
+#:
+#: Measured on production 2026-09-16 over every open Kalshi `A vs B` market
+#: (1,400 tickers, 136 soccer): three phantom events, all `kalshi`-minted with
+#: no anchor of either kind — 15312871 "Bayer Leverkusen v Athletic Club" LIVE
+#: on the La Liga page, 15312872 "Villarreal v Bayer Leverkusen", and 15312896
+#: "Paris Saint-Germain v Genoa" on the Serie A page.
+#:
+#: The owner is the block the key was written in, so this map is a transcription
+#: of `_KALSHI_TEAM_ABBREVS`'s own section comments, not a second opinion about
+#: which league a club plays in. `tests/test_soc_league_namespace_6295.py`
+#: asserts it stays one: add a `_soc` key and you MUST declare its competition.
+_SOC_ABBREV_LEAGUE_OWNER: dict[str, str] = {
+    # EPL
+    **{a: "soccer_epl" for a in (
+        "ars", "avl", "bou", "bre", "bha", "che", "cry", "eve", "ful", "ips",
+        "lei", "liv", "mci", "mun", "new", "nfo", "sou", "tot", "whu", "wol",
+        "bur", "lut", "she",
+    )},
+    # La Liga — `bar` is listed again in the Champions League block below; it is
+    # Barcelona in both, and the club's own league is the honest owner.
+    **{a: "soccer_spain_la_liga" for a in (
+        "rma", "mad", "fcb", "bar", "atm", "bet", "sev", "vil", "ath", "rso",
+        "val", "gir", "get", "osa", "cel", "mal", "ray", "ala", "esp", "las",
+        "leg", "vll",
+    )},
+    # Bundesliga
+    **{a: "soccer_germany_bundesliga" for a in (
+        "bay", "bvb", "rbl", "lev", "bmg", "wob", "svw", "scf", "sge", "tsg",
+        "m05", "fca", "fcub", "hdh", "ksh", "vfb", "boc", "dsc",
+    )},
+    # Serie A
+    **{a: "soccer_italy_serie_a" for a in (
+        "juv", "acm", "int", "nap", "rom", "laz", "fio", "ata", "bol", "tor",
+        "udi", "emp", "sas", "gen", "mon", "lec", "cag", "ver", "sal", "fro",
+    )},
+    # Ligue 1
+    **{a: "soccer_france_ligue_one" for a in (
+        "psg", "asm", "olm", "ol", "lil", "ren", "nic", "len", "str", "nan",
+        "tou", "rei", "leh", "ang", "aux", "steti",
+    )},
+    # Champions League — the block's own heading. `par` is the only key it adds
+    # that no domestic block already holds, and it is exactly the one that was
+    # answering a Serie A ticker.
+    **{a: "soccer_uefa_champs_league" for a in (
+        "par",
+    )},
+}
+
+
+#: The soccer competitions `_KALSHI_TEAM_ABBREVS` actually enumerates a field for.
+#:
+#: Ownership can only REFUSE for these. A cup or continental ticker
+#: (`soccer_uefa_champs_league`, `soccer_other`, bare `soccer`) draws its field
+#: from everywhere, so every domestic key is legitimately in scope for it and a
+#: refusal there would spend correct resolutions to buy nothing. That is why
+#: `KXUEL…LEVCEL` ("Leverkusen vs NK Celje", where `cel` resolves La Liga's
+#: Celta Vigo) is NOT fixed here — a competition whose field includes clubs we
+#: hold no code for at all is a different question, recorded on #6295 rather
+#: than half-answered by this map.
+_SOC_LEAGUES_WITH_OWN_VOCABULARY: frozenset[str] = frozenset(
+    _SOC_ABBREV_LEAGUE_OWNER.values()
+) - {"soccer_uefa_champs_league"}
+
+
+def _resolve_team_abbrev(
+    abbrev: str,
+    sport_suffix: str,
+    sport_key: Optional[str] = None,
+) -> Optional[str]:
     """Resolve one ticker abbreviation WITHIN the asking sport (#2706).
 
     The sport-scoped key wins. Failing that, the bare key is allowed only when
@@ -2025,6 +2108,14 @@ def _resolve_team_abbrev(abbrev: str, sport_suffix: str) -> Optional[str]:
     exactly these markets the title already carries the answer
     ("PHI Eagles vs TEN Titans"), whereas a wrong team silently searches for a
     game that does not exist and lands as ``name_mismatch``.
+
+    ``sport_key`` is the asking ticker's COMPETITION, and it is consulted only
+    inside the shared `_soc` namespace (#6295). Six soccer competitions share
+    that one suffix, so the sport-scoped key winning is not enough on its own:
+    `lev_soc` is the Bundesliga's Bayer Leverkusen and a La Liga ticker reading
+    `LEV` means Levante. Omitting it leaves today's answer untouched, which is
+    what the `sport_suffix_override` caller wants — a repay of a historical
+    resolution must not be re-decided by a rule that did not exist then.
     """
     if sport_suffix == _ABBREV_NAMESPACE_UNKNOWN:
         # #3672. We hold no abbreviation vocabulary for this sport, so every
@@ -2034,11 +2125,48 @@ def _resolve_team_abbrev(abbrev: str, sport_suffix: str) -> Optional[str]:
     if sport_suffix:
         scoped = _KALSHI_TEAM_ABBREVS.get(abbrev + sport_suffix)
         if scoped:
+            if _soc_key_belongs_to_another_competition(abbrev, sport_suffix, sport_key):
+                # #6295. The scoped key exists but it is another competition's
+                # club. Refusing hands the market-title parse back the answer it
+                # already had right ("Villarreal vs Levante") instead of minting
+                # a fixture between two clubs that never meet.
+                return None
             return scoped
         owner = _BARE_ABBREV_OWNER.get(abbrev)
         if owner is not None and owner != sport_suffix:
             return None
     return _KALSHI_TEAM_ABBREVS.get(abbrev)
+
+
+def _soc_key_belongs_to_another_competition(
+    abbrev: str,
+    sport_suffix: str,
+    sport_key: Optional[str],
+) -> bool:
+    """Is this `_soc` key owned by a competition other than the one asking? (#6295)
+
+    Four conditions, all required, so the refusal can only ever fire on the
+    collision it was written for:
+
+    1. we are in the shared soccer namespace at all;
+    2. the caller told us which competition is asking (an omitted `sport_key`
+       keeps the pre-#6295 answer — see `_resolve_team_abbrev`);
+    3. the asker is a league this map enumerates a field for, never a cup;
+    4. the key is declared, and declared to somebody else.
+
+    Condition 2 is DELIBERATELY REDUNDANT with condition 3 — `None` can never be
+    a member of a set of sport keys, so deleting it changes no behaviour and a
+    mutation pass reports it as an equivalent mutant. It is kept because it is
+    the condition the `sport_suffix_override` contract actually depends on, and
+    a reader who has to derive that from "None is not in the frozenset" will one
+    day widen condition 3 and silently break the #3672 repair.
+    """
+    if sport_suffix != _SOC_ABBREV_SUFFIX or sport_key is None:
+        return False
+    if sport_key not in _SOC_LEAGUES_WITH_OWN_VOCABULARY:
+        return False
+    owner = _SOC_ABBREV_LEAGUE_OWNER.get(abbrev)
+    return owner is not None and owner != sport_key
 
 
 #: The namespace of a sport this module knows no abbreviations for — #3672.
@@ -2182,7 +2310,7 @@ def extract_team_code_from_outcome_ticker(
         return None
 
     suffix = _SPORT_KEY_TO_ABBREV_SUFFIX.get(sport_key, _ABBREV_NAMESPACE_UNKNOWN)
-    nickname = _resolve_team_abbrev(code, suffix)
+    nickname = _resolve_team_abbrev(code, suffix, sport_key)
     return (code, nickname) if nickname else None
 
 
@@ -2276,6 +2404,12 @@ def extract_team_codes_from_ticker(
     # Nothing legitimate needs the old fallthrough: all 36 prefixes that own the
     # bare namespace are `kxnba*` and every one of them is registered, so a ticker
     # reaching this default is by construction a sport we hold no vocabulary for.
+    # The COMPETITION, carried beside the suffix rather than re-derived later.
+    # Six soccer competitions map to the one `_soc` suffix, so the suffix alone
+    # cannot say whether `lev` is this ticker's club (#6295). It stays None under
+    # an override: that caller is replaying a historical resolution and must not
+    # have it re-decided by a rule that postdates the row it is grading.
+    sport_key: Optional[str] = None
     if sport_suffix_override is not None:
         sport_suffix = sport_suffix_override
     else:
@@ -2284,6 +2418,7 @@ def extract_team_codes_from_ticker(
         for prefix, suffix in _SPORT_ABBREV_SUFFIX.items():
             if ext_lower.startswith(prefix):
                 sport_suffix = suffix
+                sport_key = _TICKER_TO_SPORT_PREFIX.get(prefix)
                 break
 
     # Try all possible split points (2+2, 2+3, 3+2, 3+3)
@@ -2297,9 +2432,10 @@ def extract_team_codes_from_ticker(
         if len(abbrev_b) < 2 or len(abbrev_b) > 3:
             continue
 
-        # Look up both abbreviations inside the asking sport's namespace (#2706).
-        name_a = _resolve_team_abbrev(abbrev_a, sport_suffix)
-        name_b = _resolve_team_abbrev(abbrev_b, sport_suffix)
+        # Look up both abbreviations inside the asking sport's namespace (#2706),
+        # and inside the asking COMPETITION when that namespace is shared (#6295).
+        name_a = _resolve_team_abbrev(abbrev_a, sport_suffix, sport_key)
+        name_b = _resolve_team_abbrev(abbrev_b, sport_suffix, sport_key)
 
         if name_a and name_b:
             best_pair = ((abbrev_a, name_a), (abbrev_b, name_b))
