@@ -80,6 +80,96 @@ final class FeaturedTournamentSubtitleTests: XCTestCase {
         )
     }
 
+    // MARK: - The fact behind the line (ux/1304's consumer)
+
+    /// `isBeingPlayed(asOf:)` names the clock rule the subtitle was already
+    /// applying, so a caller that needs the FACT does not compare rendered
+    /// strings or re-parse `liveThrough` against its own `now`.
+    ///
+    /// The consumer is Browse's ordering — a featured hub leads only while its
+    /// edition is being played — and this test exists because a second detector
+    /// of one rule is how two surfaces come to disagree about whether a
+    /// tournament is on. That is not hypothetical here: Browse's first card on
+    /// 2026-09-16 was the US Open, three days after its final, while the hub it
+    /// led to said "No match is being played right now".
+    func testTheFactAndTheLineAgreeAtEveryClock() {
+        // Sampled either side of the boundary and far outside it, including the
+        // two instants the boundary tests above pin. If these two ever disagree
+        // at any clock, one of them has grown its own copy of the rule.
+        let clocks = [
+            "2026-09-05T18:00:00+00:00",   // mid-tournament
+            "2026-09-14T05:59:59+00:00",   // a second inside
+            "2026-09-14T06:00:00+00:00",   // the inclusive last instant
+            "2026-09-14T06:00:01+00:00",   // a second outside
+            "2026-09-16T18:40:00+00:00",   // the day this was shot
+            "2027-03-11T12:00:00+00:00",   // half a year later
+            "2020-01-01T00:00:00+00:00",   // before the edition existed
+        ]
+        for clock in clocks {
+            let now = at(clock)
+            XCTAssertEqual(
+                usOpen2026.isBeingPlayed(asOf: now),
+                usOpen2026.subtitle(asOf: now) == usOpen2026.liveSubtitle,
+                "at \(clock) the fact and the line disagree, so there are two clock rules now"
+            )
+        }
+    }
+
+    /// The boundary is the SAME boundary — inclusive — read directly off the
+    /// fact rather than inferred from the string.
+    func testTheFactIsInclusiveAtTheLastInstantAndFalseOneSecondLater() {
+        XCTAssertTrue(usOpen2026.isBeingPlayed(asOf: at("2026-09-14T06:00:00+00:00")))
+        XCTAssertFalse(usOpen2026.isBeingPlayed(asOf: at("2026-09-14T06:00:01+00:00")))
+    }
+
+    /// The fact fails to `false` on every input the subtitle understates on.
+    /// A hub wrongly called finished sits lower in a list and keeps its results;
+    /// a hub wrongly called live leads the tab three days after its final.
+    func testTheFactUnderstatesOnAnAbsentOrUnparsableDate() {
+        let undated = FeaturedTournament(
+            slug: "the-open",
+            title: "The Open Championship",
+            liveSubtitle: "Live rounds and leaderboard",
+            restingSubtitle: "Results and winner odds",
+            icon: "figure.golf"
+        )
+        XCTAssertFalse(
+            undated.isBeingPlayed(asOf: at("2026-07-16T12:00:00+00:00")),
+            "a hub nobody dated asserts a state nobody can check"
+        )
+
+        let typo = FeaturedTournament(
+            slug: "masters",
+            title: "The Masters",
+            liveSubtitle: "Live rounds and leaderboard",
+            restingSubtitle: "Results and winner odds",
+            liveThrough: "not a date",
+            icon: "figure.golf"
+        )
+        XCTAssertFalse(
+            typo.isBeingPlayed(asOf: at("2026-04-10T18:00:00+00:00")),
+            "an unparsable window would otherwise lead Browse forever"
+        )
+    }
+
+    /// Nothing shipped in the catalog claims to be being played on the day this
+    /// landed — the same assertion as the resting-line scan below, taken on the
+    /// fact so a future consumer of it is covered too.
+    func testNoShippedHubIsBeingPlayedOnTheDayThisLanded() {
+        let now = at("2026-09-16T18:40:00+00:00")
+        for hub in featuredTournaments where hub.isBeingPlayed(asOf: now) {
+            XCTAssertNotNil(
+                hub.liveThrough,
+                "\(hub.slug) reports as being played with no window saying until when"
+            )
+        }
+        XCTAssertFalse(
+            featuredTournaments.first(where: { $0.slug == "us-open" })?
+                .isBeingPlayed(asOf: now) ?? false,
+            "the US Open still reports as being played three days after Zverev won it"
+        )
+    }
+
     // MARK: - Every failure is an understatement, never a lie
 
     func testAHubWithNoEndDateNeverClaimsToBeLive() {

@@ -66,10 +66,30 @@ nonisolated struct FeaturedTournament: Identifiable, Equatable, Sendable {
     /// card already on screen when the final ends keeps its wording until the
     /// next render. That is a day-scale line on a static list, not a score.
     func subtitle(asOf now: Date = Date()) -> String {
-        guard let end = parseFlexibleDate(liveThrough), now <= end else {
-            return restingSubtitle
-        }
-        return liveSubtitle
+        isBeingPlayed(asOf: now) ? liveSubtitle : restingSubtitle
+    }
+
+    /// Whether this edition is still being played, as of `now`.
+    ///
+    /// **This is the one clock rule, and every caller that needs the FACT must
+    /// come through here** — a caller that instead compares rendered subtitles,
+    /// or re-parses `liveThrough` against its own `now`, is a second detector of
+    /// one rule, which is how two surfaces come to disagree about whether a
+    /// tournament is on. `subtitle(asOf:)` is the first such caller; ux/1304's
+    /// Browse ordering (a featured hub leads only while its edition is being
+    /// played) is the second, and is why this is named rather than inlined.
+    ///
+    /// `FeaturedHubSubtitleGoesThroughTheClock`'s `UNCLOCKED_TELLS` forbids
+    /// `liveSubtitle`/`restingSubtitle` outside this catalog for exactly that
+    /// reason. **Grep for `isBeingPlayed` before writing a third one.**
+    ///
+    /// Fails to `false` on an absent, unparsable or un-bumped date — the same
+    /// understatement `subtitle(asOf:)` is built on, and for the same reason:
+    /// a hub wrongly called finished sits lower in a list and keeps its results,
+    /// where a hub wrongly called live leads the tab three days after its final.
+    func isBeingPlayed(asOf now: Date = Date()) -> Bool {
+        guard let end = parseFlexibleDate(liveThrough), now <= end else { return false }
+        return true
     }
 }
 
