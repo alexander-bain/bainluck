@@ -162,6 +162,18 @@ for category, keys in SPORT_AFFINITY_MAPPING.items():
         for key in keys:
             SPORT_KEY_TO_CATEGORY[key] = category
 
+# A client key that reached `_expand_sport_affinities` before it had a mapping was
+# passed through VERBATIM (the unrecognised-key branch below) and is sitting in
+# `users.sport_affinities` under its own name. This lookup is exact, so adding the
+# mapping alone repairs only the NEXT save and is inert for every reader who
+# already made the choice — which is the entire population the repair is for.
+# Naming the stored key here is what makes it retroactive (#6671, CERT-2999).
+_PASS_THROUGH_STORED_KEYS: dict[str, str] = {
+    "aussierules": "aussierules",
+}
+for stored_key, category in _PASS_THROUGH_STORED_KEYS.items():
+    SPORT_KEY_TO_CATEGORY.setdefault(stored_key, category)
+
 
 def _expand_sport_affinities(frontend_affinities: dict[str, float]) -> dict[str, float]:
     """Expand user-friendly sport keys to full backend sport_key format.

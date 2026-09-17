@@ -145,6 +145,29 @@ def test_giving_aussierules_a_mapping_does_not_move_what_the_feed_reads(sport_ke
     assert after == before
 
 
+def test_the_key_stored_BEFORE_the_mapping_existed_is_still_served_back():
+    """The repair must reach the readers who already made the choice (CERT-2999).
+
+    Adding the mapping fixes the next save. Every reader who tapped AFL before it
+    has `{"aussierules": 0.3}` sitting in `users.sport_affinities` verbatim, and
+    `SPORT_KEY_TO_CATEGORY` is an exact lookup — so without `_PASS_THROUGH_STORED_KEYS`
+    this ship is forward-only and inert on exactly its own population: Settings
+    goes on rendering "Nah" and no unrelated PUT can return a value it never
+    received. Discriminating: delete that dict and this reads `{}`.
+    """
+    assert _compress_sport_affinities({"aussierules": 0.3}) == {"aussierules": 0.3}
+
+
+def test_the_pre_fix_shape_migrates_to_the_expanded_one_on_the_next_save():
+    """Opening Settings and saving unchanged moves a legacy row onto the real keys.
+
+    The value must survive that migration — this is the only path off the
+    pass-through key, and a reader takes it without knowing they have.
+    """
+    migrated = _expand_sport_affinities(_compress_sport_affinities({"aussierules": 0.3}))
+    assert migrated == dict.fromkeys(_LIVE_AUSSIERULES_SPORT_KEYS, 0.3)
+
+
 def test_a_stored_aussierules_affinity_is_served_back_to_the_client():
     """The defect itself: the tile could be set and never read back.
 
