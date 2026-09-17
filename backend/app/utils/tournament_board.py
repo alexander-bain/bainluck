@@ -386,6 +386,70 @@ def _decided_order_key(
     )
 
 
+def decided_board_order(
+    rows: list[dict[str, Any]],
+    draw_progress: Optional[DrawProgress],
+) -> Optional[tuple[dict[str, Any], list[dict[str, Any]]]]:
+    """``(winner_row, rows in the RESULT's order)``, or ``None`` if undecided (#6644).
+
+    The one place that answers "is this draw over, and if so what order does its
+    field take".  It is public because the PLAYOFF GRID has to ask the same
+    question: the grid is built in the ``rest`` fragment 173 lines before
+    ``apply_final_result`` runs in ``first``, it copies a board row's ``rank``
+    by value, and it orders its rows by the order of the list it is handed — so
+    on a finished draw it froze the PRE-SETTLE order and the hub printed Ben
+    Shelton 2nd on the board and 21st in the grid, one screen apart.
+
+    Returning the order rather than applying it is what lets both callers share
+    it.  A second copy of these guards is the bug one rewrite away: "decided"
+    has to mean the same thing on both surfaces or they disagree again with the
+    two answers merely swapped.
+
+    ``sorted`` and not ``list.sort``: the grid is handed the boards' own row
+    objects and must not reorder a list its caller has not finished building.
+
+    THE REFUSALS ARE PART OF THE CONTRACT, not defensive padding — each one is a
+    case where ``apply_final_result`` publishes nothing, and a grid that
+    reordered itself on a draw the board left alone would re-create the
+    disagreement from the other side:
+
+    * no ``DrawProgress``, or no champion — the draw is not over, or we cannot
+      prove it is;
+    * the champion is not ON these rows — settling a field around a winner we
+      cannot place would erase the board and name nobody;
+    * another row already claims the title — two authorities disagreeing about
+      who won, where publishing either is picking a side of a contradiction.
+
+    Non-dict rows are dropped here, which is what ``apply_final_result`` already
+    did with the list it re-published.
+    """
+    if not isinstance(draw_progress, DrawProgress):
+        return None
+    winner_key = draw_progress.champion
+    if not isinstance(winner_key, str) or not winner_key:
+        return None
+    usable = [row for row in rows if isinstance(row, dict)]
+    if not usable:
+        return None
+    # Key only, and no name fallback is needed: `build_progress` has already
+    # resolved ESPN's name into the register's `entity_key` space, which is the
+    # space these rows are keyed in. A miss here is a real miss.
+    winner_row = next(
+        (row for row in usable if row.get("entity_key") == winner_key), None
+    )
+    if winner_row is None:
+        return None
+    if any(
+        row is not winner_row and row.get("state") == TERMINAL_WON for row in usable
+    ):
+        return None
+    ordered = sorted(
+        usable,
+        key=lambda row: _decided_order_key(row, winner_row, draw_progress.reached),
+    )
+    return winner_row, ordered
+
+
 def _board_summary(rows: list[dict[str, Any]], now: datetime) -> dict[str, Any]:
     """The board-level freshness verdict and its counts, from the rows as served.
 
@@ -1154,35 +1218,17 @@ def apply_final_result(
     for board in boards:
         if not isinstance(board, dict):
             continue
-        draw_progress = progress.get(board.get("draw"))
-        if not isinstance(draw_progress, DrawProgress):
-            continue
-        winner_key = draw_progress.champion
-        if not isinstance(winner_key, str) or not winner_key:
-            continue
-
-        rows = [row for row in (board.get("rows") or []) if isinstance(row, dict)]
-        if not rows:
-            continue
-        # The champion has to be ON this board. Settling 44 rows around a winner
-        # we could not place would erase the board and name nobody — strictly
-        # worse than the stale prices it replaced. Key only, and no name
-        # fallback is needed: `build_progress` has already resolved ESPN's name
-        # into the register's `entity_key` space, which is the space these rows
-        # are keyed in. A miss here is a real miss.
-        winner_row = next(
-            (row for row in rows if row.get("entity_key") == winner_key), None
+        # IS THIS DRAW OVER, AND WHAT ORDER DOES ITS FIELD TAKE. Both answers
+        # come from `decided_board_order` — which states every refusal below it
+        # — because the playoff grid has to ask the identical question in the
+        # other fragment, and "decided" meaning two things is #6644.
+        decided = decided_board_order(
+            board.get("rows") or [], progress.get(board.get("draw"))
         )
-        if winner_row is None:
+        if decided is None:
             continue
-        # A board already naming a DIFFERENT champion is two authorities
-        # disagreeing about who won. Publishing either is picking a side of a
-        # contradiction; the board keeps what it had and the disagreement stays
-        # visible upstream.
-        if any(
-            row is not winner_row and row.get("state") == TERMINAL_WON for row in rows
-        ):
-            continue
+        winner_row, rows = decided
+        winner_key = winner_row.get("entity_key")
 
         banner = {
             key: board.get(key)
@@ -1200,10 +1246,8 @@ def apply_final_result(
         # outright market's last prices happened to put it. `_decided_order_key`
         # states why each element of the key is there; the ordering is total,
         # so the `_rank_rows` below re-sorts on a constant key and PRESERVES
-        # this order rather than competing with it.
-        rows.sort(
-            key=lambda row: _decided_order_key(row, winner_row, draw_progress.reached)
-        )
+        # this order rather than competing with it. The sort itself happened in
+        # `decided_board_order` above, where the grid can reach it (#6644).
         board["rows"] = rows
         # ABSENT on an undecided board, never `None`: a reader testing
         # `board.decided` gets one answer, and there is no second falsy shape to

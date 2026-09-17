@@ -114,6 +114,7 @@ from app.utils.futures_source_merge import blend_with_verdict
 from app.utils.market_liquidity import LIQUIDITY_UNKNOWN, thinnest_liquidity
 from app.utils.tournament_board import (
     _age_hours,
+    decided_board_order,
     draw_label,
     freshest_observation,
     governing_age_hours,
@@ -678,6 +679,42 @@ def build_playoff_grid(
     reg = TournamentRegister(register)
     cells_by_key = reg.reach_cells(draw)
 
+    # ═══ A FINISHED DRAW IS ORDERED BY WHAT HAPPENED (#6644) ═══
+    #
+    # The rows arrive in the board's rank order and that is the right order
+    # right up until the draw ends — at which point `apply_final_result`
+    # reorders the board by the RESULT, 173 lines after this grid was built, in
+    # the other fragment. The grid kept the order it was handed, so the hub
+    # ranked Ben Shelton 2nd on the board and 21st in the grid on one screen.
+    #
+    # ASKING `progress` RATHER THAN WAITING FOR THE BOARD is what makes this
+    # stable: `progress` is built once above the fragment split and is already
+    # in hand here (it settles every reach cell below), so a `rest`-only
+    # request — which builds no boards and runs no overlay at all — gets the
+    # same order as a full one. The alternative, settling the boards before the
+    # split, would break the ruling at `apply_final_result`'s call site that
+    # the result runs AFTER the final's blend overlay.
+    #
+    # This is deliberately NOT the sibling reconciliation `FINAL_ROUND` rules
+    # out. That one is a PRICE the grid would have to import from a section a
+    # client need not have asked for; this is a RESULT, from an input this
+    # function already takes, so the grid's answer still cannot depend on which
+    # sections were requested.
+    decided = decided_board_order(board_rows, prog)
+    decided_rank: dict[str, int] = {}
+    if decided is not None:
+        _, board_rows = decided
+        # The board re-stamps `1..N` over this same order (`_rank_rows`, on a
+        # constant key, preserving it). The grid copies `rank` by VALUE, so
+        # without this it would carry the dead pre-settle numbers beside the
+        # new order — the "2nd and 21st" contradiction surviving in the payload
+        # after being fixed on the page. Board rows only: a ladder-only row has
+        # no rank and must not acquire one.
+        decided_rank = {
+            str(row.get("entity_key")): index
+            for index, row in enumerate(board_rows, start=1)
+        }
+
     reach_rounds = reg.reach_rounds(draw)
     columns = [
         {
@@ -842,7 +879,11 @@ def build_playoff_grid(
             # this file — `player_image` returns the two pinned URLs and
             # nothing else, so the grid still reads only the register.
             "image": player_image(reg.by_entity.get(str(entity_key)) or {}),
-            "rank": board_row.get("rank"),
+            # The board's rank, which on a decided draw is the one the result
+            # produced rather than the one the dead outright prices left (#6644,
+            # `decided_rank` above). Still one ranking: both surfaces stamp
+            # `1..N` over the same order, from the same key.
+            "rank": decided_rank.get(str(entity_key), board_row.get("rank")),
             # Whether this row is on the championship board. The UI uses it to
             # explain the empty title cell in a word rather than leaving the
             # reader to wonder why the last column stops half way down.
