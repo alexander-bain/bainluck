@@ -438,6 +438,26 @@ _MERGE_RULES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"World Series Matchup", re.I), "world_series_matchup"),
     (re.compile(r"^(AL|NL)\s+(East|West|Central)\s+Winner$", re.I), r"\1_\2"),
 
+    # MLB awards (#4414). The award rules further up take an optional
+    # FOUR-LETTER LEAGUE prefix (`NBA MVP`, `NFL MVP`), which cannot express a
+    # race scoped by league WITHIN the sport, so `AL MVP` and `MLB: 2026 AL MVP`
+    # both cleaned to "AL MVP", both returned None, and the event page rendered
+    # the same race twice with two disagreeing numbers.
+    #
+    # The league word is CAPTURED, never consumed as a prefix: `al_mvp` and
+    # `nl_mvp` are different races and merging them would be the strictly worse
+    # bug — a duplicate is visibly odd, a wrong merge is invisibly wrong. The
+    # award names are ENUMERATED rather than matched by grammar because `AL` is
+    # also how several clubs arrive in uppercase ("AL Ahly SC (Egy) vs Club
+    # Africain", "AL Suqoor vs Al-Fateh", "AL Wakrah SC vs. Al Rayyan SC"), and
+    # a `^(AL|NL)\s+(.+)$` rule would mint a merge group for every one of them.
+    (re.compile(r"^(AL|NL)\s+Hank Aaron(?: Award)?$", re.I), r"\1_hank_aaron"),
+    (re.compile(r"^(AL|NL)\s+All-Star$", re.I), r"\1_all_star"),
+    (re.compile(
+        r"^(AL|NL)\s+(MVP|Cy Young|Rookie of the Year|Manager of the Year|"
+        r"Reliever of the Year|Comeback Player of the Year)$", re.I,
+    ), r"\1_\2"),
+
     # NCAA
     (re.compile(r"NCAA(?:B)? Champion", re.I), "ncaa_champion"),
     (re.compile(r"Make Final Four", re.I), "make_final_four"),
