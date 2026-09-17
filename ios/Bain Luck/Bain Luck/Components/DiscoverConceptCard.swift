@@ -81,12 +81,15 @@ struct NativeConceptDiscoverCard: View {
 
                         Spacer(minLength: 0)
 
-                        if let domain = data.domain, !domain.isEmpty {
-                            Text(domain.uppercased())
-                                .font(.caption2.bold())
-                                .foregroundStyle(.white.opacity(0.7))
-                                .lineLimit(1)
-                        }
+                        // #5603: the SPORT, not the adapter key. `data.domain` is
+                        // "ufc" on every card this adapter emits — a slap-fighting
+                        // card wore a UFC chip. The rule (and its fallback for
+                        // payloads served before the server half) is
+                        // `FeedConceptData.sportChip`.
+                        Text(data.sportChip)
+                            .font(.caption2.bold())
+                            .foregroundStyle(.white.opacity(0.7))
+                            .lineLimit(1)
                     }
 
                     Text(properTitleCase(data.name))

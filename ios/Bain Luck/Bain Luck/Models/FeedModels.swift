@@ -377,7 +377,20 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
 nonisolated struct FeedConceptData: Decodable, Identifiable, Sendable {
     let key: String
     let name: String
+    /// ⚠️ ROUTING, NOT A CLAIM ABOUT THE SPORT. Every card the combat adapter
+    /// emits carries `domain == "ufc"` — it is the adapter key, the URL segment
+    /// and the gradient, never something a source said. Measured 2026-09-17:
+    /// 8 of 8 concept cards on `GET /api/feed?limit=150` read `ufc`, including
+    /// **Power Slap 23** (slap fighting) and Contender Series cards. Use
+    /// ``sportLabel`` for anything a reader sees; use this only to route.
     let domain: String?
+    /// What to CALL this card's sport — the only field here a source stands
+    /// behind (#5603 / Brief 18). Absent, never blank, when the server has
+    /// nothing to say. Values by evidence: `UFC` (a venue's own fight series, or
+    /// every venue title names it), `Combat` (a venue title names another
+    /// promotion), `MMA` (schedule rows only, no promoter named). Boxing is its
+    /// own adapter and emits nothing here, as does every non-combat domain.
+    let sportLabel: String?
     let status: String?
     let startDate: String?
     let isMajor: Bool?
@@ -399,6 +412,36 @@ nonisolated struct FeedConceptData: Decodable, Identifiable, Sendable {
     let leader: FeedConceptLeader?
 
     var id: String { key }
+
+    /// The sport chip a reader sees on a concept card.
+    ///
+    /// Mirrors web's `conceptDomainLabel` (`frontend/components/discover/utils.ts`)
+    /// exactly, so the two surfaces cannot drift into labelling one card two ways.
+    ///
+    /// 🪤 **The fallback is the whole fix — it is NOT `sportLabel ?? domain`.**
+    /// That spelling reinstates the defect for every payload without the field:
+    /// every response served before the backend half released, every one sitting
+    /// in a `URLCache`, and every device still running an older build. Those are
+    /// exactly the cards nobody re-checks after the ship.
+    ///
+    /// So when the server has said nothing, `ufc` — the one mixed namespace —
+    /// degrades to the honest **COMBAT** rather than asserting UFC. Power Slap
+    /// and Contender Series cards ride that adapter, so `UFC` there is a claim no
+    /// source made. Every other domain keeps the label it has always had: `boxing`
+    /// is its own adapter and its own sport, so `BOXING` is true.
+    ///
+    /// A blank string falls through rather than winning, or the chip renders
+    /// empty — the one outcome worse than either label.
+    static func sportChip(sportLabel: String?, domain: String?) -> String {
+        let declared = (sportLabel ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !declared.isEmpty { return declared.uppercased() }
+        let routing = (domain ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if routing.lowercased() == "ufc" { return "COMBAT" }
+        return routing.isEmpty ? "EVENT" : routing.uppercased()
+    }
+
+    /// This card's chip.
+    var sportChip: String { Self.sportChip(sportLabel: sportLabel, domain: domain) }
 }
 
 /// #1882: the favourite of an unsettled concept. Deliberately the same shape as
