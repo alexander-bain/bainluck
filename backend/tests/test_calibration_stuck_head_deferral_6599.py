@@ -252,7 +252,7 @@ class _Bus:
         )
         return cursor, action, reason
 
-    async def save(self, cursor, terminal=None):
+    async def save(self, cursor, terminal=None, banks_a_unit=True):
         self.payload = cursor.as_payload()
         self.payload["terminal"] = terminal or self.payload.get("terminal")
         self.writes += 1

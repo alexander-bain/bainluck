@@ -214,7 +214,7 @@ def wiring(monkeypatch):
             now=0.0,
         )
 
-    async def fake_save(cursor, *, terminal):
+    async def fake_save(cursor, *, terminal, banks_a_unit=True):
         store["cursor"] = stamp_served_at(cursor, now=1_700_000_000.0).as_payload()
         return True
 

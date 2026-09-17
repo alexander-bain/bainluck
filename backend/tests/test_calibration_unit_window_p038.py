@@ -223,7 +223,9 @@ def staged_env(monkeypatch):
             "resumable",
         )
 
-    async def _save(cursor, terminal=None):
+    async def _save(cursor, terminal=None, banks_a_unit=True):
+        # CAL-P1302: the cancellation-memory save passes False. Accepted here
+        # because this double always succeeds and never reaches the tally.
         saved.append(len(cursor.committed_units))
         return True
 

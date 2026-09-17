@@ -476,7 +476,9 @@ def loop_env(monkeypatch):
             "resumable",
         )
 
-    async def _save(cursor, terminal=None):
+    async def _save(cursor, terminal=None, banks_a_unit=True):
+        # CAL-P1302: accepted, unused — this double never fails, so the tally
+        # the flag governs is never reached.
         return True
 
     monkeypatch.setattr(cmb, "load_staged_cursor", _load)
