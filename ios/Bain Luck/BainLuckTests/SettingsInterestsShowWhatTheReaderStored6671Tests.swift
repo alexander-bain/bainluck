@@ -15,6 +15,22 @@ import XCTest
 ///
 ///   * WRITE — a tile's `key` must be a key the server expands.
 ///   * READ  — a tile's `servedKeys` must be categories the server can emit.
+///
+/// The two fixtures below were COMPUTED from that module's AST, not read off it
+/// by eye (29 write keys, 26 servable categories). Re-derive after any change
+/// to `SPORT_AFFINITY_MAPPING`:
+///
+///     cd backend && python3 -c "
+///     import ast
+///     t = ast.parse(open('app/routes/user.py').read())
+///     m = next(ast.literal_eval(n.value) for n in t.body
+///              if getattr(getattr(n, 'target', None), 'id', '') == 'SPORT_AFFINITY_MAPPING')
+///     print(sorted(m))
+///     s = {}
+///     for cat, keys in m.items():
+///         for k in keys:
+///             s.setdefault(k, cat) if cat in {'football','basketball','golf'} else s.__setitem__(k, cat)
+///     print(sorted(set(s.values())))"
 @MainActor
 final class SettingsInterestsShowWhatTheReaderStored6671Tests: XCTestCase {
 
