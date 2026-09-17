@@ -234,6 +234,34 @@ def test_other_sports_are_untouched(ticker, team_a, team_b):
     assert extract_teams_from_ticker(ticker) == (team_a, team_b)
 
 
+#: The OTHER reader of `_resolve_team_abbrev`: a Kalshi OUTCOME ticker, which
+#: names one team per rung (`KXSB-27-LAR`). It derives its own competition and so
+#: has its own plumbing, and a mutation pass found nothing pinned it — the fix
+#: was already correct here and the suite was simply blind to the call site.
+#: (ticker, expected — None means the code is another competition's club)
+OUTCOME_TICKERS = [
+    # La Liga rung whose code is the Bundesliga's: refused.
+    ("KXLALIGAGAME-26SEP16LEVATH-LEV", None),
+    # The other rung of the SAME board, whose code La Liga does own: kept.
+    ("KXLALIGAGAME-26SEP16LEVATH-ATH", ("ath", "Athletic Club")),
+    # The owning league still gets the very code La Liga was refused.
+    ("KXBUNDESLIGAGAME-26SEP19BMGM05-LEV", ("lev", "Bayer Leverkusen")),
+    # Serie A rung whose code is the Champions League block's PSG: refused.
+    ("KXSERIEAGAME-26SEP20PARGEN-PAR", None),
+    # Non-soccer rung: untouched.
+    ("KXSB-27-LAR", ("lar", "Rams")),
+]
+
+
+@pytest.mark.parametrize("ticker,expected", OUTCOME_TICKERS)
+def test_the_outcome_ticker_path_obeys_the_same_ownership(ticker, expected):
+    from app.utils.prediction_market_matching import (
+        extract_team_code_from_outcome_ticker,
+    )
+
+    assert extract_team_code_from_outcome_ticker(ticker) == expected
+
+
 def test_a_cup_ticker_may_still_use_every_domestic_code():
     """A continental competition draws its field from everywhere.
 

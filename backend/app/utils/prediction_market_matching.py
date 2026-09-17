@@ -2153,6 +2153,13 @@ def _soc_key_belongs_to_another_competition(
        keeps the pre-#6295 answer — see `_resolve_team_abbrev`);
     3. the asker is a league this map enumerates a field for, never a cup;
     4. the key is declared, and declared to somebody else.
+
+    Condition 2 is DELIBERATELY REDUNDANT with condition 3 — `None` can never be
+    a member of a set of sport keys, so deleting it changes no behaviour and a
+    mutation pass reports it as an equivalent mutant. It is kept because it is
+    the condition the `sport_suffix_override` contract actually depends on, and
+    a reader who has to derive that from "None is not in the frozenset" will one
+    day widen condition 3 and silently break the #3672 repair.
     """
     if sport_suffix != _SOC_ABBREV_SUFFIX or sport_key is None:
         return False
