@@ -3375,6 +3375,333 @@ async def _refresh_linked_polymarket_books(deadline_s: float | None = None) -> d
     return stats
 
 
+# =========================================================================
+# Sunk open events (#6758) — the poll's writer, re-aimed at rows it can no
+# longer reach
+# =========================================================================
+#
+# `_poll_polymarket_markets` reads the newest 2,000 open events by `startDate`
+# (Gamma's offset cap). Measured 2026-09-17 16:39Z on Discover's saved pages:
+# offset 0 is 16:33Z and offset 1900 is 05:35Z — the whole window is ~10.5 hours
+# deep and 86-91% of it is five-minute crypto candles the writer discards. So an
+# open event gets roughly ten hourly visits after it is listed and then none.
+#
+# That would be harmless if everything were written on first sight. It is not,
+# and correctly so: a child whose book is empty is REFUSED (#151/#1578/#6676 —
+# "it is re-captured next cycle once a real bid/trade appears"). For a fight
+# listed two weeks out, the book opens long after the last cycle that can see
+# it. Event 1013438 (Dumont–Perez, listed 09-12, fights 09-26): parent row
+# 60880026 held since 09-12 with 0 legs and 0 of 19 children.
+#
+# `_refresh_linked_polymarket_books` (#3613) is the same idea and cannot cover
+# this: it needs an `events` link (these cards have none), it needs ZERO outcome
+# rows (a parent holding one prop is excluded for good), and it writes parent
+# legs only — never the child market rows a bout page is made of.
+#
+# This pass adds no pricing and no writer. It selects open parents the poll has
+# stopped touching (`volume_updated_at`, the poll's own stamp), re-reads them by
+# id (`/events?id=`, not subject to the offset cap) and hands the parsed events
+# to `_process_event_batch` — the poll's own function. A recovered event is
+# written exactly as if the poll had reached it, every refusal included.
+
+#: Six missed hourly polls. The window was ~10.5h deep when measured; a row the
+#: poll has not stamped for six hours has left it or is about to.
+SUNK_POLY_STALE_HOURS = 6
+
+#: Rows resolving inside this horizon are read every pass, soonest first.
+#: #3613's measured figure, reused rather than re-chosen.
+SUNK_POLY_IMMINENT_DAYS = LINKED_POLY_BOOK_HORIZON_DAYS
+
+#: Per-pass ceilings. 600 events = 30 Gamma calls, the same ceiling as #3613.
+_SUNK_POLY_IMMINENT_MAX = 300
+_SUNK_POLY_ROTATE_MAX = 300
+_SUNK_POLY_DEADLINE_S = 240.0
+
+_SUNK_POLY_CURSOR_KEY = "bainluck:polymarket_sunk_recovery:cursor"
+#: Ids the venue would not give us an OPEN event for. Without this they would be
+#: re-selected every pass (nothing stamps them) and hold the imminent head — the
+#: #2222 failure. Expires with the staleness window, so each is retried.
+_SUNK_POLY_REFUSED_KEY = "bainluck:polymarket_sunk_recovery:refused"
+
+_SUNK_POLY_WHERE = """
+      FROM futures_markets fm
+     WHERE fm.source = 'polymarket'
+       AND fm.status = 'open'
+       -- Parents only: `/events?id=` addresses the Gamma EVENT id. Children are
+       -- reached through their parent, which is how the poll reaches them.
+       AND fm.external_id NOT LIKE '0x%'
+       AND (fm.volume_updated_at IS NULL
+            OR fm.volume_updated_at < NOW() - make_interval(hours => :stale_hours))
+       -- A floor as well as an order (gotcha #41): never spend the pass on rows
+       -- whose resolution is already behind us — settlement owns those.
+       AND (fm.resolution_date IS NULL
+            OR fm.resolution_date > NOW() - make_interval(hours => :stale_hours))
+       AND NOT (fm.external_id = ANY(:refused))
+"""
+
+_SUNK_POLY_IMMINENT_SQL = text(
+    "SELECT fm.id, fm.external_id"
+    + _SUNK_POLY_WHERE
+    + """
+       AND fm.resolution_date <= NOW() + make_interval(days => :horizon_days)
+     ORDER BY fm.resolution_date, fm.id
+     LIMIT :max_rows
+    """
+)
+
+#: Everything else — politics, entertainment, economics, season-long futures —
+#: by id behind a cursor, so a far-dated row is reached in a bounded number of
+#: passes however large the imminent arm is. Same shape as the status sync.
+_SUNK_POLY_ROTATE_SQL = text(
+    "SELECT fm.id, fm.external_id"
+    + _SUNK_POLY_WHERE
+    + """
+       AND (fm.resolution_date IS NULL
+            OR fm.resolution_date > NOW() + make_interval(days => :horizon_days))
+       AND fm.id > :cursor
+     ORDER BY fm.id
+     LIMIT :max_rows
+    """
+)
+
+
+def sunk_event_is_open(event) -> bool:
+    """Whether a re-read event may go to the poll's writer. Pure.
+
+    The poll gets this for free from `closed=false` on the list request; an
+    id-addressed read has no such filter, and the writer stamps
+    `status='open' if event.active` — Gamma keeps `active=true` on a CLOSED
+    event, so without this a settled fight would be re-opened and re-priced.
+    """
+    return bool(
+        getattr(event, "active", False)
+        and not getattr(event, "closed", False)
+        and not getattr(event, "archived", False)
+    )
+
+
+def sunk_event_child_census(event) -> tuple[int, int]:
+    """`(children at the venue, children the writer would price)`. Pure.
+
+    Exists so the pass can never report a half-written event as recovered: the
+    second number comes from the writer's own resolver, not a second opinion.
+    """
+    markets = list(getattr(event, "markets", None) or [])
+    priced = sum(1 for m in markets if (_resolve_market_probability(m) or 0) > 0)
+    return len(markets), priced
+
+
+async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> dict:
+    """#6758: re-read open Polymarket parents the discovery poll no longer reaches."""
+    import asyncio
+    import time as _time
+
+    import httpx
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
+    from app.services.polymarket_api import PolymarketAPIService
+    from app.tasks.redis_state import get_redis_client
+    from app.utils.market_label_normalization import compute_market_tier
+    from app.utils.odds_math import probability_to_american
+
+    started = _time.monotonic()
+    budget = _SUNK_POLY_DEADLINE_S if deadline_s is None else deadline_s
+
+    stats: dict = {
+        "imminent_selected": 0,
+        "rotate_selected": 0,
+        "imminent_pool_at_limit": False,
+        "batches_read": 0,
+        "batches_unreadable": 0,
+        "events_reached": 0,
+        "events_absent_at_venue": 0,
+        "events_closed_at_venue": 0,
+        "events_fully_priced_at_venue": 0,
+        "events_partially_priced_at_venue": 0,
+        "events_unpriced_at_venue": 0,
+        "children_at_venue": 0,
+        "children_priced_at_venue": 0,
+        "deadline_hit": False,
+        "rate_limited": False,
+        "errors": [],
+        # What the poll's writer counts, under the poll's own key names.
+        "writer": {
+            "events_processed": 0, "markets_processed": 0, "outcomes_updated": 0,
+            "snapshots_created": 0, "legs_retired": 0, "errors": [],
+            "by_category": {}, "crypto_skipped": 0,
+        },
+    }
+
+    # Redis is an optimisation here, never a precondition: with no cursor the
+    # rotate arm restarts at 0, with no refused-set nothing is excluded, and the
+    # LIMITs bound the pass either way.
+    rc = None
+    cursor = 0
+    refused: list[str] = []
+    try:
+        rc = get_redis_client()
+        cursor = int(rc.get(_SUNK_POLY_CURSOR_KEY) or 0)
+        raw = rc.smembers(_SUNK_POLY_REFUSED_KEY) or ()
+        refused = sorted(m.decode() if isinstance(m, bytes) else str(m) for m in raw)
+    except Exception as exc:  # noqa: BLE001
+        stats["errors"].append(f"redis read: {str(exc)[:80]}")
+        rc, cursor, refused = None, 0, []
+
+    base = {
+        "stale_hours": SUNK_POLY_STALE_HOURS,
+        "horizon_days": SUNK_POLY_IMMINENT_DAYS,
+        "refused": refused,
+    }
+    async with get_task_session() as session:
+        imminent = (
+            await session.execute(
+                _SUNK_POLY_IMMINENT_SQL, {**base, "max_rows": _SUNK_POLY_IMMINENT_MAX}
+            )
+        ).fetchall()
+        rotate = (
+            await session.execute(
+                _SUNK_POLY_ROTATE_SQL,
+                {**base, "max_rows": _SUNK_POLY_ROTATE_MAX, "cursor": cursor},
+            )
+        ).fetchall()
+        wrapped = False
+        if not rotate and cursor:
+            # Past the tail: the population shrank under the cursor. Wrap NOW
+            # rather than spending a pass to discover it.
+            wrapped = True
+            cursor = 0
+            rotate = (
+                await session.execute(
+                    _SUNK_POLY_ROTATE_SQL,
+                    {**base, "max_rows": _SUNK_POLY_ROTATE_MAX, "cursor": 0},
+                )
+            ).fetchall()
+        # Plain scalars before any commit (gotcha #6).
+        imminent_ids = [str(r.external_id) for r in imminent]
+        rotate_pairs = [(int(r.id), str(r.external_id)) for r in rotate]
+
+    stats["imminent_selected"] = len(imminent_ids)
+    stats["rotate_selected"] = len(rotate_pairs)
+    stats["imminent_pool_at_limit"] = len(imminent_ids) >= _SUNK_POLY_IMMINENT_MAX
+    stats["cursor_wrapped"] = wrapped
+
+    if not imminent_ids and not rotate_pairs:
+        # Gotcha #53: say which question returned nothing.
+        stats["terminal"] = "no_sunk_open_events"
+        return stats
+
+    rotate_id_by_ext = {ext: mid for mid, ext in rotate_pairs}
+    seen: set[str] = set()
+    work: list[str] = []
+    for ext in imminent_ids + [ext for _mid, ext in rotate_pairs]:
+        if ext not in seen:  # one Gamma id, one write — never twice in a pass
+            seen.add(ext)
+            work.append(ext)
+
+    newly_refused: list[str] = []
+    last_rotate_id_done = cursor
+    service = PolymarketAPIService()
+    try:
+        for start in range(0, len(work), _LINKED_POLY_ID_BATCH):
+            if _time.monotonic() - started > budget:
+                stats["deadline_hit"] = True
+                break
+            if start:
+                await asyncio.sleep(0.3)
+
+            chunk = work[start : start + _LINKED_POLY_ID_BATCH]
+            try:
+                raw_events = await service.get_events_by_ids(chunk)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 429:
+                    # Stop, keep the cursor where it is, retry next pass.
+                    stats["rate_limited"] = True
+                    break
+                stats["batches_unreadable"] += 1
+                stats["errors"].append(f"batch {chunk[0]}…: HTTP {exc.response.status_code}")
+                continue
+            except Exception as exc:  # noqa: BLE001 — one batch may not end the run
+                stats["batches_unreadable"] += 1
+                stats["errors"].append(f"batch {chunk[0]}…: {str(exc)[:120]}")
+                continue
+            stats["batches_read"] += 1
+
+            parsed = {}
+            for raw in raw_events:
+                event = service._parse_event(raw)
+                if event and event.id:
+                    parsed[str(event.id)] = event
+
+            to_write = []
+            for ext in chunk:
+                event = parsed.get(ext)
+                if event is None:
+                    # Recorded, never acted on (gotcha #53): one absent read
+                    # retires nothing. It is only kept out of the next passes.
+                    stats["events_absent_at_venue"] += 1
+                    newly_refused.append(ext)
+                    continue
+                stats["events_reached"] += 1
+                if not sunk_event_is_open(event):
+                    stats["events_closed_at_venue"] += 1
+                    newly_refused.append(ext)
+                    continue
+                n_children, n_priced = sunk_event_child_census(event)
+                stats["children_at_venue"] += n_children
+                stats["children_priced_at_venue"] += n_priced
+                if n_priced == 0:
+                    stats["events_unpriced_at_venue"] += 1
+                elif n_priced < n_children:
+                    stats["events_partially_priced_at_venue"] += 1
+                else:
+                    stats["events_fully_priced_at_venue"] += 1
+                # Unpriced events go to the writer too: its upsert is what stamps
+                # `volume_updated_at`, which is what takes the row out of the
+                # next six hours of passes. It writes no price for them.
+                to_write.append(event)
+
+            if to_write:
+                await _process_event_batch(
+                    to_write, stats["writer"], FuturesMarket, FuturesOutcome,
+                    FuturesOddsSnapshot, pg_insert, probability_to_american,
+                    compute_market_tier,
+                )
+
+            # Advance only over a batch that was READ. An unreadable batch
+            # `continue`s above, so its rows are met again next lap at the
+            # latest; a 429 or the deadline leaves the cursor before them.
+            done_rotate = [rotate_id_by_ext[e] for e in chunk if e in rotate_id_by_ext]
+            if done_rotate:
+                last_rotate_id_done = max(last_rotate_id_done, max(done_rotate))
+    finally:
+        await service.close()
+
+    if rc is not None:
+        try:
+            rc.setex(_SUNK_POLY_CURSOR_KEY, 86400 * 7, str(last_rotate_id_done))
+            if newly_refused:
+                rc.sadd(_SUNK_POLY_REFUSED_KEY, *newly_refused)
+                rc.expire(_SUNK_POLY_REFUSED_KEY, SUNK_POLY_STALE_HOURS * 3600)
+        except Exception as exc:  # noqa: BLE001
+            stats["errors"].append(f"redis write: {str(exc)[:80]}")
+
+    # One sweep, after the writes, for the reason the poll gives.
+    if stats["writer"]["events_processed"]:
+        stats["sub_markets_linked"] = await link_polymarket_sub_markets()
+
+    stats["cursor"] = last_rotate_id_done
+    stats["elapsed_s"] = round(_time.monotonic() - started, 1)
+    # Never "complete": one pass is one slice of a lap, and an event the venue
+    # has not priced is not recovered however cleanly the pass ran.
+    stats["terminal"] = (
+        "rate_limited" if stats["rate_limited"]
+        else "deadline" if stats["deadline_hit"]
+        else "slice_done"
+    )
+    return stats
+
+
 async def _backfill_polymarket_price_history(
     limit: int = 500,
     fidelity: int = 60,
