@@ -13083,6 +13083,9 @@ def _assign_wall_clock_timestamps(
         if home_score is not None and away_score is not None:
             timestamp = score_to_timestamp.get((int(home_score), int(away_score)))
 
+        # #5140: a carried timestamp keeps the play in ORDER; it is not when the
+        # play happened. Say so, so nothing downstream reads it as an observation.
+        resolved = bool(timestamp)
         if not timestamp:
             timestamp = last_timestamp
 
@@ -13105,6 +13108,7 @@ def _assign_wall_clock_timestamps(
             "away_score": away_score,
             "period": period_str,
             "clock": play.get("clock"),
+            "timestamp_resolved": resolved,
         })
 
     return [p for p in result if p["timestamp"]]
@@ -20162,6 +20166,15 @@ async def get_event_odds_history(
     # This provides reliable period boundaries even when ESPN history is empty
     # and win_prob_history lacks period data (e.g., stat_model-only games).
     period_markers = []
+    # #5140 — for football the scoring-play tiers below answer "when was the
+    # period's first SCORE", not "when did it begin". They stay as the fallback,
+    # labelled as such; observed game-state transitions replace them further down.
+    _is_transition_sport = bool(event.sport and event.sport.key) and event.sport.key.startswith(
+        pm_source.TRANSITION_SPORT_PREFIXES
+    )
+    _first_score = (
+        {"precision": pm_source.PRECISION_FIRST_SCORE} if _is_transition_sport else {}
+    )
     try:
         from app.models.models import ScoringPlay
         pm_result = await db.execute(
@@ -20182,6 +20195,7 @@ async def get_event_odds_history(
                 "timestamp": row.first_seen.isoformat(),
                 "period": row.period,
                 "source": pm_source.SOURCE_STATPAL,
+                **_first_score,
             }
             for row in pm_result.all()
         ]
@@ -20196,10 +20210,14 @@ async def get_event_odds_history(
         for play in scoring_plays:
             period = play.get("period")
             ts = play.get("timestamp")
+            # #5140: an unresolved play carries its predecessor's timestamp (or the
+            # first snapshot's). That is not a sighting of this period — skip it.
+            if play.get("timestamp_resolved") is False:
+                continue
             if period and ts and period not in first_seen:
                 first_seen[period] = ts
         period_markers = [
-            {"timestamp": ts, "period": period, "source": pm_source.SOURCE_ESPN_BOX}
+            {"timestamp": ts, "period": period, "source": pm_source.SOURCE_ESPN_BOX, **_first_score}
             for period, ts in sorted(first_seen.items(), key=lambda x: x[1])
         ]
 
@@ -20235,6 +20253,23 @@ async def get_event_odds_history(
                 {"timestamp": ts, "period": period, "source": pm_source.SOURCE_WIN_PROB}
                 for period, ts in sorted(first_seen_wp.items(), key=lambda x: x[1])
             ]
+
+    # #5140 — football: where the state stream SAW the periods change, that is the
+    # answer, and it outranks every first-score tier above. `[]` (another sport, or
+    # nothing observed) leaves the chain exactly as it was.
+    if _is_transition_sport:
+        _observed = pm_source.observed_transition_markers(
+            event.sport.key,
+            [{"timestamp": eh.get("timestamp"), "period": eh.get("period")} for eh in espn_history]
+            + [
+                {"timestamp": pt.get("timestamp"), "period": pt["game_state"].get("period")}
+                for pts in win_prob_history.values()
+                for pt in pts
+                if isinstance(pt.get("game_state"), dict)
+            ],
+        )
+        if _observed:
+            period_markers = _observed
 
     # Fourth fallback: sport-specific estimated period markers.
     # For completed events with no period data from any source, use

@@ -1517,8 +1517,10 @@ class ESPNAPIService:
 
                 home_score_str = play.get("homeScore", "")
                 away_score_str = play.get("awayScore", "")
-                home_score = int(home_score_str) if home_score_str else None
-                away_score = int(away_score_str) if away_score_str else None
+                # #5140: a score of 0 is a score. `if x` turned an integer 0 into None,
+                # and a None side is what makes the wall-clock lookup miss.
+                home_score = int(home_score_str) if home_score_str not in ("", None) else None
+                away_score = int(away_score_str) if away_score_str not in ("", None) else None
 
                 # Team info
                 team_data = play.get("team", {})
