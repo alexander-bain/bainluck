@@ -7,8 +7,15 @@
 are correctly linked to their real ESPN-anchored game. **Zero of the 14 reach
 either serve path.** The string "Fantasy" appears nowhere in
 `/api/events/{id}/related-futures` or `/api/events/{id}/game-markets` for any of
-them, while sibling prop families on the SAME events — Passing Yards, Rushing
-Yards, Receiving Yards, Touchdowns — render as settled Won/Lost cards.
+them.
+
+CORRECTED 2026-09-17 while CERT-3024 was being graded: this docstring said the
+sibling families "render as settled Won/Lost cards". They do not.
+`Atlanta vs Pittsburgh: Passing Yards` is a whole-game `field` market of the
+SAME shape as Fantasy Points and is missing from 13 of the 14 pages too. Fantasy
+Points is one member of a cohort, not a singleton — see the step 9 comment in
+`app/routes/events.py` for the `_classify_game_market` split, and #6769 for the
+half of that cohort this filter cannot reach.
 
 The link is not the cause: `/related-futures?debug=true` on 14780144 reports
 `game_prop_count: 61`, so the market IS in the pass-2 set. It is dropped
@@ -30,8 +37,13 @@ no contest segment — a whole-game prop has no window to close. Neither branch
 takes them and there is no third, so the rows simply cease to exist: no count,
 no log, no empty state.
 
-The sibling families differ in one respect only — `_classify_game_market` files
-them as `team_total`, so they never pass through this filter at all.
+`_classify_game_market`, replayed on the real stored names, splits the missing
+cohort in two: `Passing Touchdowns`, `Rushing + Receiving Yards`, `Team Sacks`
+and `Team Field Goals` are `player_prop` and reach this filter exactly as
+Fantasy Points does, so the third branch readmits them too; `Passing Yards`,
+`Rushing Yards`, `Total Touchdowns`, `Passing Attempts`, `Receptions` and
+`Team Total Yards` are `team_total`/`game_total`/`other`, never pass through
+this filter at all, and are #6769 rather than this ship.
 
 ## The rule these tests pin
 

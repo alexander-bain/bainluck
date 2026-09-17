@@ -14702,6 +14702,97 @@ def _settled_over_verdict(
     }
 
 
+# CERT-3024 / #6751: which `resolution_source` values are an AUTHORITATIVE VENUE
+# SETTLEMENT — the venue told us this leg settled and which side won.
+#
+# THIS IS AN ALLOWLIST AND ITS DEFAULT IS REFUSE, which is the whole of the
+# safety argument. UX-P044 (#1642) is precisely the bug where the *presence* of
+# a `resolution_source` was read as licence to believe `is_winner`: measured on
+# 19 settled events / 358 rendered cards, 70 showed a red MISS built from a
+# generic source plus a Boolean defaulting to False. So membership is by VALUE,
+# never by "a source exists", and an unrecognised source — including a future
+# one nobody has taught this set — withholds exactly as a NULL does.
+#
+# Measured on the 14 `KXNFLFFPTS` specimen markets, 2026-09-17: 185 outcome rows
+# carry `api_settlement` (168) and `clean_resolution` (17), and no other value.
+# Site-wide coverage share of these two values is NOT measured (the census timed
+# out from a build lane; parked in PARKED-MEASUREMENTS.md against this ship),
+# which is the second reason the price corroboration below is not optional.
+_AUTHORITATIVE_SETTLEMENT_SOURCES = frozenset({"api_settlement", "clean_resolution"})
+
+# The settled price a venue-graded leg must show to CORROBORATE its own
+# `is_winner`. A settled leg prices out: measured across those same 185 rows,
+# winners sit at 0.97–1.00 and losers at 0.00–0.03, with nothing within 0.4 of
+# the midpoint. These bounds are deliberately far looser than the observation.
+_VENUE_GRADE_WIN_FLOOR = 0.9
+_VENUE_GRADE_LOSS_CEILING = 0.1
+
+
+def _venue_typed_hit(outcome) -> Optional[bool]:
+    """Type a verdict from an authoritative venue settlement, or withhold. (#6751)
+
+    THE READER ADJUDICATES ON `hit` AND ON NOTHING ELSE. `frontend/lib/propGrade.ts`
+    is the one settled-state authority and its rule is "only `hit` types a
+    verdict" (ruling 003 / UX-P040 / UX-P044) — a row carrying
+    `hit: null, is_winner: <bool>, resolution_source: <str>` renders
+    `Resolved · grading unavailable`, by design, however authoritative that
+    source actually is. CERT-3024 BLOCKed #6751's first attempt for exactly
+    this: the fix put the settled fantasy-points rows back in the payload, and
+    the reader still would not grade them, because `KXNFLFFPTS` has no
+    fantasy-points stat mapping and so the box score can never type their `hit`.
+    Publishing a canonical typed `hit` HERE is the only place that can be fixed
+    without weakening that module, which must not be weakened.
+
+    TWO INDEPENDENT SIGNALS MUST AGREE, and that is what makes this safe rather
+    than a re-run of UX-P044:
+
+      1. the venue's own settlement, by allowlisted source VALUE, and
+      2. the settled PRICE of this same leg.
+
+    `is_winner` alone cannot be trusted — it is a non-nullable column defaulting
+    to False, so on an ungraded row it is indistinguishable from "graded a
+    loser", which is the 6,032-row cohort the withholding rule exists for. The
+    price is a signal that cohort does not forge: an ungraded row carries a
+    NULL source and is refused at the first gate regardless.
+
+    Disagreement between the two is a CONFLICT and withholds. That is the
+    void/retracted/partial-settlement case arriving without needing its own
+    vocabulary: a leg the venue calls a winner while its book says 0.02 is not a
+    leg this function is willing to grade for a reader.
+
+    Returns True/False only when both signals agree; None means withhold, and
+    None is what every unrecognised, missing, conflicting or malformed input
+    returns. Caller must never coerce that None to a Boolean.
+    """
+    source = getattr(outcome, "resolution_source", None)
+    if not isinstance(source, str) or source not in _AUTHORITATIVE_SETTLEMENT_SOURCES:
+        return None
+    # `is True` / `is False` rather than truthiness: a stray 0/1/"" must not
+    # type a verdict, and `is_winner` is the exact field whose sloppy reading
+    # this whole module is an apology for.
+    won = getattr(outcome, "is_winner", None)
+    if won is not True and won is not False:
+        return None
+    price = getattr(outcome, "current_probability", None)
+    if price is None:
+        return None
+    try:
+        p = float(price)
+    except (TypeError, ValueError):
+        return None
+    # Stored as a 0–1 probability on this column; normalise a 0–100 write rather
+    # than silently reading 97 as "above the floor" (it would be, vacuously).
+    if p > 1.0:
+        p = p / 100.0
+    if not 0.0 <= p <= 1.0:
+        return None
+    if won and p >= _VENUE_GRADE_WIN_FLOOR:
+        return True
+    if not won and p <= _VENUE_GRADE_LOSS_CEILING:
+        return False
+    return None
+
+
 def _grade_settled_prop(event_finished, ctx, market, outcome, threshold, is_under) -> dict:
     """Compute {actual, hit, is_winner, resolution_source} for a settled prop.
 
@@ -14709,6 +14800,14 @@ def _grade_settled_prop(event_finished, ctx, market, outcome, threshold, is_unde
     box score needed). actual/hit are derived from the box score and are None
     when the player/stat can't be resolved. Returns {} for non-settled events
     so live/scheduled payloads carry none of these keys.
+
+    #6751/CERT-3024: when the box score cannot type `hit` — no player, no stat
+    mapping, an unresolvable composite — an authoritative venue settlement that
+    its own settled price corroborates types it instead (`_venue_typed_hit`).
+    THE BOX SCORE ALWAYS WINS where it produced an answer: this fallback is only
+    ever consulted while `hit` is still None, so no row that grades today can
+    change its verdict, and `actual` is never invented — a venue-typed row still
+    carries `actual: None` and shows the reader a verdict without a stat line.
     """
     if not event_finished:
         return {}
@@ -14718,8 +14817,29 @@ def _grade_settled_prop(event_finished, ctx, market, outcome, threshold, is_unde
         "is_winner": getattr(outcome, "is_winner", None),
         "resolution_source": getattr(outcome, "resolution_source", None),
     }
+
+    def _finish(res: dict) -> dict:
+        """Every exit from this function goes through here. (#6751)
+
+        The venue fallback is applied at ONE place rather than at each of the
+        five `return`s, because the box-score paths bail early and often — a
+        missing ctx, an unresolvable player, an unmapped stat, an incomplete
+        composite — and each of those is a row the reader was being shown
+        ungraded. A fallback wired into only some of them would have graded the
+        no-stat-mapping case (the certed specimen) and silently kept withholding
+        the others, which is the same shape of partial fix as the missing `else`
+        in step 9 that #6751 exists to close.
+
+        Guarded on `res["hit"] is None` so the box score is never overwritten.
+        """
+        if res.get("hit") is None:
+            venue_hit = _venue_typed_hit(outcome)
+            if venue_hit is not None:
+                res["hit"] = venue_hit
+        return res
+
     if ctx is None:
-        return result
+        return _finish(result)
     # #5097: the PLAYER is resolved before the stat key, because for the handful
     # of names that are true of a batter and a pitcher alike, which key to read
     # is a fact about the player's own line and not about the market name.
@@ -14764,10 +14884,10 @@ def _grade_settled_prop(event_finished, ctx, market, outcome, threshold, is_unde
         if isinstance(player_stats, dict):
             break
     if not isinstance(player_stats, dict):
-        return result
+        return _finish(result)
     stat_keys = _prop_stat_keys(market, ctx, player_stats)
     if not stat_keys:
-        return result
+        return _finish(result)
     # #1728: `found = any leg resolved` published a PARTIAL sum as a confident
     # actual — a "Hits + Runs + RBIs" prop whose rbis leg was missing rendered
     # the hits+runs subtotal and a red MISS off it. A composite grades only
@@ -14775,11 +14895,11 @@ def _grade_settled_prop(event_finished, ctx, market, outcome, threshold, is_unde
     # `actual`/`hit` stay None and the client renders the withheld state.
     total = ctx["sum_stats"](player_stats, stat_keys)
     if total is None:
-        return result
+        return _finish(result)
     result["actual"] = total
     if threshold is not None:
         result["hit"] = (total < threshold) if is_under else (total >= threshold)
-    return result
+    return _finish(result)
 
 
 # #5509: how late a pin may be stamped and still count as pregame. The live
@@ -17222,13 +17342,31 @@ async def _build_game_markets(
     # 2026-09-17: all 16 of those markets are tier-5, `resolved`, NFL, and 14 are
     # correctly linked to their real ESPN-anchored game. **Zero of the 14 reach
     # either serve path**; the string "Fantasy" appears nowhere in
-    # `/related-futures` or `/game-markets` for any of them, while their sibling
-    # families on the SAME events (Passing Yards, Rushing Yards, Touchdowns)
-    # render as settled Won/Lost cards throughout. The difference is only that
-    # `_classify_game_market` files those as `team_total` and never sends them
-    # through this filter. Every leg of a settled market has priced out to 0.0 or
-    # 1.0, so none survives the interest band; `prop_window_closed` returns False
-    # because "Fantasy Points" names no contest segment. Neither branch takes it.
+    # `/related-futures` or `/game-markets` for any of them. Every leg of a
+    # settled market has priced out to 0.0 or 1.0, so none survives the interest
+    # band; `prop_window_closed` returns False because "Fantasy Points" names no
+    # contest segment. Neither branch takes it.
+    #
+    # AND FANTASY POINTS IS NOT A SINGLETON — the first draft of this comment
+    # said its sibling families "render as settled Won/Lost cards throughout",
+    # and that was measured FALSE while CERT-3024 was being graded. Corrected
+    # here rather than left to mislead the next reader of this filter:
+    # `Atlanta vs Pittsburgh: Passing Yards` is not a per-player prop, it is a
+    # whole-game `field` market of the SAME shape as Fantasy Points, and it is
+    # missing from 13 of those 14 pages too. `_classify_game_market` replayed on
+    # the real stored names splits that cohort in two:
+    #
+    #   player_prop -> Fantasy Points, Passing Touchdowns, Rushing + Receiving
+    #                  Yards, Team Sacks, Team Field Goals. These reach step 9,
+    #                  fail both branches for the same reason, and are what the
+    #                  third branch below readmits.
+    #   team_total / game_total / other -> Passing Yards, Rushing Yards, Total
+    #                  Touchdowns, Passing Attempts, Receptions, Team Total
+    #                  Yards. These never enter step 9 at all, so this branch
+    #                  cannot help them; they are dropped further down the serve
+    #                  path and are tracked separately as #6769.
+    #
+    # So this filter's third branch restores a COHORT, not one market family.
     #
     # The third branch is LAST on purpose, so it changes no row either existing
     # branch already claims. In particular a graded row whose window IS provably
