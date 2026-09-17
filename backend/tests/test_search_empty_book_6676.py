@@ -56,12 +56,12 @@ still disagreed about whether they have a price — the same sentence
 
 ═══ WHAT THIS SHIP DELIBERATELY DOES NOT DO ═══
 
-🔴 **The promoted rung can itself be #5333's.** On *Lions vs. Bills - Player
-Props* the four legs dropped here are replaced by `0.505 on 0.03/0.97` rows —
-the identical shape one cent outside `EMPTY_BOOK_MAX_BID`. That cohort is
-#5333's measured ship. No constant moves here; widening the bound would take a
-population this ship never measured. The reader is strictly better off and the
-residual is named rather than quietly inherited.
+✅ **The promoted rung was #5333's, and #5333 landed.** On *Lions vs. Bills -
+Player Props* the four legs dropped here were replaced by `0.505 on 0.03/0.97`
+rows — the identical shape one cent outside the then-0.02 `EMPTY_BOOK_MAX_BID`.
+The bound is 0.05 on its own measurement now, so those are dropped too and
+`TestTheBounds` records the flip. No constant moves in THIS file either way; it
+pins that the shared one has not been moved here by accident.
 
 * **Read-side only** (gotcha #21). Nothing rewrites a stored price; the WRITER
   half is #6676's other end in `tasks/polymarket.py`.
@@ -345,19 +345,29 @@ class TestARealPriceSurvives:
 
 
 class TestTheBounds:
-    def test_a_three_cent_bid_is_5333s_and_is_NOT_taken_here(self):
-        """`EMPTY_BOOK_MAX_BID` is 0.02 and inclusive. One cent out is another ship.
+    def test_a_three_cent_bid_was_5333s_and_IS_taken_here_now(self):
+        """FLIPPED by #5333 (bid bound 0.02 -> 0.05, 2026-09-17).
 
-        The literal shape promoted onto the Lions/Bills card by this very fix.
+        The literal shape this ship promoted onto the Lions/Bills card: a 0.505 leg
+        on 0.03/0.97 replacing the 0.01/0.95 legs it dropped. It is dropped too now,
+        so the slice reaches further down the honest ladder instead of stopping on
+        the next phantom.
         """
         market = _Market([_Outcome(1, "Team First TD", 0.505, 0.03, 0.97)])
 
-        assert [o["name"] for o in _build_search_top_outcomes(market)] == ["Team First TD"]
+        assert _build_search_top_outcomes(market) == []
 
     def test_the_bid_bound_is_inclusive_at_two_cents(self):
         market = _Market([_Outcome(1, "Total Corners O/U 12.5", 0.50, 0.02, 0.98)])
 
         assert _build_search_top_outcomes(market) == []
+
+    def test_a_six_cent_bid_is_past_the_5333_bound_and_is_kept(self):
+        """The new edge, on the side the bid decides: the price sits exactly on the
+        book's own midpoint, so only the bound can be what keeps it."""
+        market = _Market([_Outcome(1, "Team First TD", (0.06 + 0.97) / 2, 0.06, 0.97)])
+
+        assert [o["name"] for o in _build_search_top_outcomes(market)] == ["Team First TD"]
 
     def test_an_ask_below_the_bound_is_a_book_that_bounds_something(self):
         market = _Market([_Outcome(1, "Half ask", 0.475, 0.01, 0.94)])

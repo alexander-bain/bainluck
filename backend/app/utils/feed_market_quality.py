@@ -193,8 +193,8 @@ def fabricated_midpoint_sql(probability: str, yes_bid: str, yes_ask: str) -> str
 # decay as the population turns over. The three bounds together CONFINE this predicate
 # to near-coin-flips and nothing else:
 #
-#     bid <= 0.02 and ask >= 0.95   =>  midpoint in [0.475, 0.510]
-#     |price - midpoint| <= 0.01    =>  price    in [0.465, 0.520]
+#     bid <= 0.05 and ask >= 0.95   =>  midpoint in [0.475, 0.525]
+#     |price - midpoint| <= 0.01    =>  price    in [0.465, 0.535]
 #
 # A row outside that band is UNREACHABLE by this function no matter how the market
 # moves. Every honest line the ship is afraid of — Rodgers at 0.76, Herbert at 0.72,
@@ -215,12 +215,52 @@ def fabricated_midpoint_sql(probability: str, yes_bid: str, yes_ask: str) -> str
 # Polymarket ingest, and widening it there would move populations this ship never
 # measured.
 #
-# KNOWN INCOMPLETE, and it is an under-reach rather than a regression: a two-leg market
-# can have both legs on empty books with one leg's bid just over 0.02 (0.03-0.05), so
-# the phantom leg drops and its equally-phantom complement survives alone. Measured on
-# the same window: 109 such rows, all in the same 0.49-0.505 band. Both legs were
-# phantom before this ship and one is phantom after, so no reader is worse off. The bid
-# bound is the previous cert's measured constant and moving it is its own ship (#5333).
+# THE BID BOUND MOVED 0.02 -> 0.05 ON ITS OWN MEASUREMENT (#5333, 2026-09-17). The
+# under-reach #5247 named and left open: a two-leg market can have BOTH legs on empty
+# books with one leg's bid a cent or two over 0.02, so the phantom leg dropped and its
+# equally-phantom complement survived alone reading "Under 51%". Re-measured on
+# production against open markets, the cohort the move newly reaches:
+#
+#     bid cent   both-extreme rows   of those, ON their midpoint
+#       0.03            898                  824
+#       0.04            239                  200
+#       0.05            125                   95
+#                                    -----------
+#                                          1,119   price range 0.490 - 0.525
+#
+# Inside the derived band [0.465, 0.535] with 1c of headroom on the high side, so the
+# move cannot reach an honest line for the same geometric reason the ask move could not.
+# The tolerance still does the discriminating work inside the cohort: 74 of the 898 3c
+# rows sit OFF their midpoint and are kept.
+#
+# The stop is at 0.05 because that is the constant #5333 measured and argued; the decay
+# past it (45 rows at 6c, 17 at 7c, 9 at 8c) is smooth, with no empty band to cut in, so
+# any further widening would be a knob and not a measurement. One measured constant at a
+# time is the discipline #5247's first cut broke by guessing two.
+#
+# 🔴 WHAT THIS COSTS, MEASURED AND NOT ASSERTED — AND THE LIMIT NOBODY MAY OVERSTATE.
+# 42 of the 1,119 rows carry any trade evidence at all (a non-null `volume` or a
+# `price_changed_at`). Triaged one by one against Gamma rather than inferred from the
+# stored row (the stored `volume` column is Gamma's LIFETIME `volume`, not `volume24hr`,
+# so it is not evidence that the price being served was traded): on 29 of them the last
+# trade is FAR from the number we print — "Bryce Harper on the cover of MLB The Show 27"
+# last traded at 0.07 while we serve 0.500, the Joe Rogan "Tesla" market at 0.031 while
+# we serve 0.515 — so refusing those is the fix working, not collateral. TWO rows are a
+# genuinely traded 0.500 on a now-empty book (Kovalova Daria vs Dronova Uliana, both
+# legs, Gamma `lastTradePrice` 0.500 on $93.70 of 24h volume) and this predicate
+# WITHDRAWS THEM. That is 2 of 1,119, named, and it is the honest cost.
+#
+# It is consistent with what this function claims and with nothing more. The claim is
+# "no current quote supports the value being SERVED" — the Kovalova book is 0.03/0.97
+# right now, so the claim holds on those two rows too. What may NOT be said, on a page,
+# in a PR or to a reader, is that a genuine traded 50% is always preserved here. It is
+# not, and it cannot be: this is a pure function of three columns, and the serve path
+# has no provenance column to read. The WRITER knows — `_resolve_market_probability_
+# with_source` returns "last_trade_price" vs "outcome_prices" and its volume-gated
+# exception keeps a traded 50% on purpose — but that label is consumed by
+# `classify_pair_opening` and never persisted on `futures_outcomes`, so the reader
+# cannot see it. Closing that is a provenance rail (a new column, a migration and every
+# writer), not a constant, and it is not in this ship.
 #
 # No trade check is needed and none is done — deliberately, so this stays a pure
 # function on three columns the serve path already holds and adds no query to a hot
@@ -230,7 +270,7 @@ def fabricated_midpoint_sql(probability: str, yes_bid: str, yes_ask: str) -> str
 # empty book's midpoint is one no trade informed. A historical trade can exist without
 # having moved the stored price, so this predicate claims only what it can see — that
 # the value being SERVED is unsupported by any current quote.
-EMPTY_BOOK_MAX_BID = 0.02
+EMPTY_BOOK_MAX_BID = 0.05
 EMPTY_BOOK_MIN_ASK = 0.95
 EMPTY_BOOK_MIDPOINT_TOLERANCE = 0.01
 

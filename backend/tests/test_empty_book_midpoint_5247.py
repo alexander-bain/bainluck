@@ -128,7 +128,16 @@ class TestRowsThatMustSurvive:
 
 class TestTheBoundaries:
     def test_a_bid_one_tick_above_the_floor_is_kept(self):
-        assert is_empty_book_midpoint(0.51, EMPTY_BOOK_MAX_BID + 0.01, 0.99) is False
+        """Priced at the book's EXACT midpoint, so only the bid bound can keep it.
+
+        Written as `0.51` against a 0.03/0.99 book until #5333 moved the bound to
+        0.05, at which point 0.51 stopped being that book's midpoint and the
+        assertion would have passed on the tolerance instead — a boundary test
+        that no longer tests its own boundary. Derived now, so it cannot go
+        vacuous the next time the constant moves.
+        """
+        bid = EMPTY_BOOK_MAX_BID + 0.01
+        assert is_empty_book_midpoint((bid + 0.99) / 2, bid, 0.99) is False
 
     def test_an_ask_one_tick_below_the_ceiling_is_kept(self):
         assert is_empty_book_midpoint(0.485, 0.02, EMPTY_BOOK_MIN_ASK - 0.01) is False
@@ -159,7 +168,10 @@ class TestTheBoundaries:
         """
         band_lo = EMPTY_BOOK_MIN_ASK / 2 - EMPTY_BOOK_MIDPOINT_TOLERANCE
         band_hi = (EMPTY_BOOK_MAX_BID + 1.0) / 2 + EMPTY_BOOK_MIDPOINT_TOLERANCE
-        assert (band_lo, band_hi) == pytest.approx((0.465, 0.52))
+        # 0.52 until #5333 moved the bid bound 0.02 -> 0.05; the literal is kept
+        # (rather than derived twice) precisely so a constant move has to stop here
+        # and re-state the band it bought.
+        assert (band_lo, band_hi) == pytest.approx((0.465, 0.535))
 
         # Dense sweep: nothing outside the derived band may ever be refused. Bids run
         # to 20c -- far past EMPTY_BOOK_MAX_BID and past any plausible widening of it,

@@ -4034,16 +4034,21 @@ def _resolve_market_probability_with_source(market) -> tuple[float | None, str |
     # this is the line that makes ingest and serve read the same rows the same way.
     # Nothing here is a new threshold: both predicates are imported, not restated.
     #
-    # 🪤 THIS DOES NOT CLOSE THE CLASS, AND THAT IS DELIBERATE. `EMPTY_BOOK_MAX_BID`
-    # is 0.02, so a 3c bid still escapes BOTH predicates — the live specimen above is
-    # exactly that shape and is still admitted here. Widening the bound is #5333's
-    # ship, on #5333's own measurement (it has sibling-complement and product checks
-    # this fix does not discharge), and it is a shared constant the serve side and
-    # the calibration SQL mirror also read. `test_5333_is_still_open_on_a_3c_bid`
-    # pins the escape so the remainder cannot be forgotten or silently absorbed.
+    # #5333 CLOSED THE 3c ESCAPE (2026-09-17): `EMPTY_BOOK_MAX_BID` moved 0.02 -> 0.05
+    # on its own measurement, so the live specimen above — 0.5 on 0.03 / 0.98 — is now
+    # refused here rather than written. Nothing in THIS block changed; the constant is
+    # imported, and `feed_market_quality` carries the measurement, the derived band
+    # [0.465, 0.535] and the cost. The tests that pinned the escape open have flipped,
+    # which is how #5333 was required to announce itself.
     #
-    # A genuine traded 50% still survives: the volume-gated last-trade exception
-    # below runs after this test, unchanged.
+    # A traded 50% still survives HERE, and the mechanism is a substitution, not a
+    # keep: the volume-gated exception below runs after this test and returns
+    # `last_trade_price` rather than the midpoint. 🪤 That protection does NOT reach
+    # the serve path, because the label it produces is consumed by
+    # `classify_pair_opening` and never persisted — so a genuine traded 0.50 stored
+    # here on a 3c/97c book is still withdrawn by the reader's copy of the predicate.
+    # Measured at 2 rows of 1,119; see `feed_market_quality`. Do not describe the
+    # serve side as preserving traded 50%.
     if is_fabricated_midpoint(
         prob, market.best_bid, market.best_ask
     ) or is_empty_book_midpoint(prob, market.best_bid, market.best_ask):

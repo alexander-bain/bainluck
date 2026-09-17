@@ -2030,11 +2030,19 @@ def _leg_prices_an_empty_book(outcome) -> bool:
     here rewrites a stored price, and withholding rather than rewriting is the
     standing rule, because ``calibration_probability`` coalesces to stored values
     (gotcha #144 / ruling 103) and an invented price becomes a forecast we are
-    graded on. The WRITER still stores these rows — that is #6676's ingest half —
-    and the 3c-bid cohort this predicate's bound does not reach is #5333's
-    measured ship. Neither is widened here; a genuine 50% on a tight book, a
-    traded 50%, a one-sided real ask and every model price (both book columns
-    NULL) are all passed through by the predicate's own construction.
+    graded on. A genuine 50% on a tight book (49c/51c), a one-sided real ask and
+    every model price (both book columns NULL) are all passed through by the
+    predicate's own construction.
+
+    🪤 "A TRADED 50% IS PASSED THROUGH" USED TO BE ON THAT LIST AND IT WAS WRONG.
+    The #5333 bid-bound move (0.02 -> 0.05, 2026-09-17) made it measurable: of the
+    1,119 rows it newly reaches, two are a genuinely traded 0.500 sitting on a
+    now-empty 3c/97c book, and this function withdraws them. It cannot do
+    otherwise — it reads three columns and the serve path carries no provenance of
+    where a stored price came from. The writer's volume-gated last-trade exception
+    protects the ingest side by SUBSTITUTING the trade price; nothing carries that
+    label through to here. So the honest sentence for this surface is "no current
+    quote supports this number", never "this number was never real".
     """
     return is_empty_book_midpoint(
         outcome.current_probability,

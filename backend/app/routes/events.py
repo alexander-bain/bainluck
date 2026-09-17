@@ -22880,9 +22880,18 @@ def _leg_prices_an_empty_book(outcome) -> bool:
     :func:`_futures_market_prices_only_empty_books`.
 
     Read-side only (gotcha #21): nothing here rewrites a stored price. The WRITER
-    half is #6676's other end (`tasks/polymarket.py`), and the 3c cohort this
-    predicate's `EMPTY_BOOK_MAX_BID` bound does not reach is #5333's measured ship
-    — neither is widened here.
+    half is #6676's other end (`tasks/polymarket.py`). The 3c cohort this
+    predicate's `EMPTY_BOOK_MAX_BID` bound did not reach was #5333, and #5333
+    landed: the bound is 0.05 on its own measurement and this call site inherited
+    the widening without a line changing here, which is what delegating to one
+    named predicate buys.
+
+    🪤 IT DOES NOT FOLLOW THAT EVERY WITHDRAWN LEG WAS NEVER TRADED. The predicate
+    reads three columns and there is no provenance column on the serve path, so a
+    genuinely traded 0.50 whose book has since emptied is withdrawn with the
+    phantoms — measured at 2 rows of 1,119 in #5333's cohort, named there. What
+    this surface can honestly say is that the number it withheld was supported by
+    no current quote; it may not say the number was never real.
     """
     return is_empty_book_midpoint(
         outcome.current_probability,
@@ -23023,13 +23032,12 @@ def _build_search_top_outcomes(
     # inside `_normalize_search_outcome_probs`' divisor deflates every real number on
     # a mutually-exclusive board, which is a second, quieter lie.
     #
-    # 🔴 THE PROMOTED RUNG CAN STILL BE #5333's, and this ship does not pretend
-    # otherwise: on *Lions vs. Bills - Player Props* the four legs this drops are
-    # replaced by 0.505-on-0.03/0.97 rows — the same shape one cent outside
-    # `EMPTY_BOOK_MAX_BID`. That cohort is #5333's measured ship and widening the
-    # constant here would take a population this one never measured. The reader is
-    # strictly better off (four fabricated rungs become four real-book rungs) and
-    # the residual is named rather than quietly inherited.
+    # THE PROMOTED RUNG WAS #5333's AND #5333 LANDED. On *Lions vs. Bills - Player
+    # Props* the four legs this drops were replaced by 0.505-on-0.03/0.97 rows — the
+    # same shape one cent outside the then-0.02 `EMPTY_BOOK_MAX_BID`. The bound is
+    # 0.05 on its own measurement now, so the promoted rung is dropped here too and
+    # the slice reaches further down the honest ladder. Nothing on this line changed
+    # to get that: the constant lives in one place and every call site moved with it.
     real = [o for o in real if not _leg_prices_an_empty_book(o)]
     # #6327: a market where NOTHING is priced draws a ranked ladder of dashes —
     # sixteen rungs, an order implying a favourite, and not one number. Measured
