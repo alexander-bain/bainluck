@@ -327,9 +327,10 @@ ADAPTER_MODULES = (
     "event_concept",
 )
 
-#: Nine `primary` dicts across the eight modules — combat builds two (a card
-#: with a priced main event and one with no futures market yet).
-EXPECTED_ENVELOPE_SITES = 9
+#: Ten `primary` dicts across the eight modules — combat builds THREE: a card
+#: with a priced main event, one with no futures market yet, and (#2602) one
+#: the venue lists that Kalshi does not.
+EXPECTED_ENVELOPE_SITES = 10
 
 
 def _utils_dir() -> Path:

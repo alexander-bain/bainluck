@@ -338,6 +338,150 @@ def any_card_token(cfg: CombatSportConfig, external_id: str | None) -> str | Non
     return m.group(1).lower() if m else None
 
 
+# ---------------------------------------------------------------------------
+# Venue-sourced card identity (#2602) — a card token for a row with no ticker.
+# ---------------------------------------------------------------------------
+
+#: A venue bout title: ``"<promotion>: <A> vs. <B> (<weight class>, <segment>)"``.
+#: Polymarket writes this shape for every combat bout it lists, and the promotion
+#: is everything before the FIRST colon.
+_VENUE_TITLE_RE = re.compile(r"^\s*([^:]{2,}?)\s*:\s*(\S.*?)\s*$")
+
+#: A trailing "(Bantamweight, Main Card)" — the venue's own annotation on a
+#: matchup, never part of a fighter's name.
+_TRAILING_PAREN_RE = re.compile(r"\s*\([^()]*\)\s*$")
+
+
+def venue_card_promotion(name: str | None) -> str | None:
+    """The PROMOTION a venue bout title names, or None if it isn't a bout title.
+
+    Two conditions, both required: a colon with something before it, and a
+    MATCHUP after it. The second is what keeps the card's own props out —
+    "O/U 2.5 Rounds" and "Will Theo Haig win in Round 3?" carry no colon at all,
+    and a title that does carry one but no "A vs B" is not a bout either.
+    """
+    m = _VENUE_TITLE_RE.match(name or "")
+    if not m:
+        return None
+    promo, matchup = m.group(1).strip(), m.group(2)
+    if not promo or not _MATCHUP_RE.search(matchup):
+        return None
+    return promo
+
+
+def venue_fight_start(meta):
+    """The venue's OWN fixture instant for this row (tz-aware UTC), or None.
+
+    Delegates to the matcher's parser rather than re-spelling the ISO read —
+    :func:`app.tasks.prediction_market_matching._parse_venue_game_start` exists
+    so a second reader can ask this of a metadata dict without a second parse,
+    and its docstring says so. Lazily imported: `event_combat` is on the serve
+    path and must not pull a task module in at import time.
+    """
+    from app.tasks.prediction_market_matching import _parse_venue_game_start
+
+    return _parse_venue_game_start(meta)
+
+
+def venue_card_token(cfg: CombatSportConfig, name: str | None, meta) -> str | None:
+    """Card token for a venue bout row that carries no card FIGHT ticker.
+
+    #2602. Kalshi stamps a card's identity into its ticker (`KXUFCFIGHT-26SEP19…`)
+    and :func:`card_token` reads it; Polymarket has no ticker, so every one of its
+    bouts produced ``None`` and **no venue-only card could form at all**. Measured
+    on production 2026-09-17: 115 open MMA markets from Polymarket, **zero** with a
+    card ticker, hiding three real cards we already hold rows for — UFC Fight Night
+    26 Sep (11 bouts), Dana White's Contender Series 22 Sep (5), Power Slap 23
+    18 Sep (1).
+
+    The identity is the PAIR — the promotion the title names, and the venue's own
+    fight date:
+
+    * The date alone is wrong, and #4093 already proved it insufficient. The events
+      table carries "Darren Till vs Yoel Romero" on 2026-09-26, a different
+      promotion entirely; a date-only key swallows it into the UFC Fight Night card.
+    * The promotion alone is generic — "UFC Fight Night" recurs every few weeks.
+
+    The date comes from ``venue_game_start`` and never from ``commence_time``,
+    which for a Polymarket row is Gamma's ``startDate`` — the LISTING stamp. All
+    28 open MMA rows that carry both disagree: the 11 bouts of the 26 Sep card are
+    stamped ``commence_time 2026-09-12 22:00``, two weeks early, so a token built
+    from it scatters one card across the wrong day and the card never forms.
+
+    **A NUMBERED card unifies onto the bare date token.** "UFC 331" is globally
+    unique on its date and is exactly what the ticker path already keys, so the
+    scoped token would mint a SECOND card beside the Kalshi one. The 22 open
+    Polymarket "UFC 331" rows carry no ``venue_game_start`` today, so this arm is
+    unreachable on current data — it is here because the arm that repairs that
+    (#6758) would otherwise split a live card the day it lands.
+    """
+    token = event_commence_token(venue_fight_start(meta))
+    if token is None:
+        return None
+    promo = venue_card_promotion(name)
+    if promo is None:
+        return None
+    if card_number(cfg, promo) is not None:
+        return token
+    slug = re.sub(r"[^a-z0-9]", "", strip_diacritics(promo).lower())
+    return f"{token}{slug}" if slug else None
+
+
+def venue_bout_group(meta) -> str | None:
+    """The venue's own EVENT id for this bout, so one bout counts once.
+
+    Polymarket publishes a bout as an event-level parent row plus its
+    condition-id children, and both can be named as the matchup — `61241595`
+    and `61278158` are one DWCS fight. Both carry
+    ``market_metadata['polymarket_event_id']``, so it is the dedupe key.
+    """
+    if not isinstance(meta, dict):
+        return None
+    raw = meta.get("polymarket_event_id")
+    return str(raw) if raw not in (None, "") else None
+
+
+def title_bout_sides(name: str | None) -> tuple[str, str] | None:
+    """The two fighters a venue bout title names, as DISPLAY strings.
+
+    "UFC Fight Night: Norma Dumont vs. Ailin Perez (Women's Bantamweight,
+    Prelims)" -> ``("Norma Dumont", "Ailin Perez")``. The trailing parenthetical
+    is the venue's annotation, not part of the second fighter's name.
+    """
+    m = _VENUE_TITLE_RE.match(name or "")
+    if not m:
+        return None
+    parts = _MATCHUP_RE.split(m.group(2))
+    if len(parts) != 2:
+        return None
+    sides = tuple(_TRAILING_PAREN_RE.sub("", p).strip() for p in parts)
+    if not all(sides) or _fighter_identity(sides[0]) == _fighter_identity(sides[1]):
+        return None
+    return sides
+
+
+def venue_bout_is_priced(name: str | None, outcome_names) -> bool:
+    """Are these two outcomes the two FIGHTERS this bout's title names?
+
+    The gate that stops a prop pair being served as a fight. A venue bout row is
+    two-sided far more often than it is a moneyline: `61241597` is titled
+    "Dana White's Contender Series: Norbert Növényi Jr. vs. Theo Haig" and its two
+    outcomes are **"Haig in Round 3" and "Növényi Jr. in Round 2"** — two props on
+    the bout, summing to nothing in particular. Counting outcomes would render
+    them as the fighters' win probabilities.
+
+    So the test is EXACT folded-name equality against the titled pair, never
+    surname containment (:func:`player_key` matches both of those props to both
+    fighters). Strictness fails in the safe direction: a refused pair renders as
+    a bout with no prices, which is what the reader sees today anyway.
+    """
+    sides = title_bout_sides(name)
+    if sides is None:
+        return False
+    got = {_fighter_identity(n) for n in outcome_names if n and str(n).strip()}
+    return len(got) == 2 and got == {_fighter_identity(s) for s in sides}
+
+
 def card_number(cfg: CombatSportConfig, *texts: str | None) -> str | None:
     """Canonical numbered-card label (e.g. "UFC 329") from any text, or None for an
     unnumbered card (or a sport with no numbering, i.e. cfg.number_re is None)."""
@@ -898,11 +1042,37 @@ async def list_card_concepts(
     cards: dict[str, dict] = {}
     for mid, ext_id, name, commence, meta in rows:
         token = card_token(cfg, ext_id)
+        promo = None
+        group = mid
         if token is None:
-            continue  # not a fight ticker (prop/future) — cards are keyed by fights
-        c = cards.setdefault(token, {"token": token, "fights": [], "titles": []})
+            # #2602: no card ticker — this is a venue (Polymarket) row, whose
+            # card identity is the promotion its title names plus the venue's
+            # OWN fight date. Its `commence_time` is the LISTING stamp and is
+            # replaced here, or the card dates itself two weeks early.
+            token = venue_card_token(cfg, name, meta)
+            if token is None:
+                continue  # a prop/future, or a row the venue gives no fixture for
+            promo = venue_card_promotion(name)
+            commence = venue_fight_start(meta)
+            group = venue_bout_group(meta) or mid
+        c = cards.setdefault(
+            token,
+            {"token": token, "fights": [], "titles": [], "promotions": [], "ticker": 0},
+        )
         evt_title = (meta or {}).get("event_title") if isinstance(meta, dict) else None
-        c["fights"].append({"id": mid, "name": name, "commence": commence})
+        c["fights"].append(
+            {
+                "id": mid,
+                "name": name,
+                "commence": commence,
+                "group": group,
+                "venue": promo is not None,
+            }
+        )
+        if promo is None:
+            c["ticker"] += 1
+        else:
+            c["promotions"].append(promo)
         if evt_title:
             c["titles"].append(evt_title)
 
@@ -930,10 +1100,19 @@ async def list_card_concepts(
         for token, card in cards.items():
             keep = _survivor.get(token, token)
             target = folded_cards.setdefault(
-                keep, {"token": keep, "fights": [], "titles": []}
+                keep,
+                {
+                    "token": keep,
+                    "fights": [],
+                    "titles": [],
+                    "promotions": [],
+                    "ticker": 0,
+                },
             )
             target["fights"].extend(card["fights"])
             target["titles"].extend(card["titles"])
+            target["promotions"].extend(card["promotions"])
+            target["ticker"] += card["ticker"]
         cards = folded_cards
         folded_bouts: dict[str, list] = {}
         for token, group in event_bouts.items():
@@ -989,13 +1168,33 @@ async def list_card_concepts(
         # Name/numbering: Kalshi carries the numbered-card label ("UFC 329") and
         # event_titles; events rows only carry fighter names, so an events-only card
         # falls through to its headline bout ("Du Plessis vs Usman", is_major=False).
-        if kalshi and kalshi["fights"]:
+        if kalshi and kalshi["fights"] and not kalshi["ticker"]:
+            # #2602: a VENUE-only card. Its name is the promotion the venue's own
+            # titles carry ("UFC Fight Night", "Power Slap 23") — provider
+            # identity, not the refused `_concept_headline` heuristic of naming a
+            # card after one of its bouts. There is no main-event signal to pick
+            # one with: every bout of the card shares a single `venue_game_start`,
+            # so a "latest bout" tiebreak would name the card after whichever row
+            # sorted last. `fight_count` counts BOUTS, not rows — the venue
+            # publishes a bout as a parent row plus condition-id children and both
+            # can be named as the matchup (`venue_bout_group`).
             kalshi["fights"].sort(key=_ct)
-            main = kalshi["fights"][-1]
+            main_id = None
+            fight_count = len({f["group"] for f in kalshi["fights"]})
+            name = max(set(kalshi["promotions"]), key=kalshi["promotions"].count)
+            is_major = False
+        elif kalshi and kalshi["fights"]:
+            kalshi["fights"].sort(key=_ct)
+            # #2602: on a card a NUMBERED venue row unified onto (see
+            # `venue_card_token`), the main event is picked from the TICKER
+            # fights. A venue parent row carries the matchup in its title and no
+            # moneyline under it, so letting it win the tiebreak would cost the
+            # card the headline bout the Kalshi market can actually price.
+            main = [f for f in kalshi["fights"] if not f["venue"]][-1]
             label, is_major = card_label(cfg, main["name"], tuple(kalshi["titles"]))
             main_id = main["id"]
             main_event_commence[main_id] = main["commence"]
-            fight_count = len(kalshi["fights"])
+            fight_count = len({f["group"] for f in kalshi["fights"]})
             name = label or main["name"]
         else:
             # ONE main-event determination, shared with `_build_events_envelope`
@@ -1177,9 +1376,15 @@ class CombatEventAdapter:
         # L2-113: accept a human slug (`ufc-329-mcgregor-vs-holloway-26jul18`) by
         # extracting the card date-token — the real identity — from it. A bare token
         # ("26jul18") already IS the token, so this is a no-op for legacy links.
+        # #2602: the token is the date AND EVERYTHING AFTER IT, not the date
+        # alone. A venue card's token carries its promotion as a suffix
+        # (`26sep26ufcfightnight`), and `card_slug` puts the token last, so the
+        # tail from the date is exactly the token. For every legacy slug — a bare
+        # token, or `ufc-329-mcgregor-vs-holloway-26jul18` — the tail IS the
+        # match, so this is a no-op there.
         _tok = _DATE_TOKEN_RE.search(target)
         if _tok:
-            target = _tok.group(0)
+            target = target[_tok.start() :]
 
         q = (
             select(FuturesMarket)
@@ -1208,12 +1413,21 @@ class CombatEventAdapter:
         # Collect this card's Kalshi FIGHTS: ticker date-token on the card AND
         # two-sided.
         fights = []
+        venue_bouts = []
         for m in markets:
-            if card_token(cfg, m.external_id) not in card_tokens:
-                continue
-            if len(m.outcomes or []) != 2:  # a real fight is two-sided
-                continue
-            fights.append(m)
+            if card_token(cfg, m.external_id) in card_tokens:
+                if len(m.outcomes or []) != 2:  # a real fight is two-sided
+                    continue
+                fights.append(m)
+            elif (
+                venue_card_token(cfg, m.name, getattr(m, "market_metadata", None))
+                in card_tokens
+            ):
+                # #2602: a venue bout of this card. NOT filtered on outcome count
+                # here — most carry none, and the ones that carry two often carry
+                # two PROPS (`venue_bout_is_priced`). The envelope decides what
+                # can be priced; the card still lists the bout either way.
+                venue_bouts.append(m)
 
         bouts = sorted(
             (b for t in card_tokens for b in bouts_by_token.get(t, [])),
@@ -1234,6 +1448,13 @@ class CombatEventAdapter:
             # overrule, so the `fights` path below is untouched. `None` is the
             # adapter's "no such card": `build_and_cache` writes the negative
             # marker and the route 404s, exactly as for an unknown token.
+            # #2602: a card the VENUE lists and Kalshi does not. Preferred over
+            # the schedule envelope because it is the corroborated source — the
+            # venue is publishing this card, which is the same standing the
+            # `fights` path has and which `card_rows_are_not_a_schedule` exists
+            # to defer to.
+            if venue_bouts:
+                return self._build_venue_envelope(target, venue_bouts, now)
             if bouts and not card_rows_are_not_a_schedule(bouts):
                 return self._build_events_envelope(target, bouts, now)
             return None
@@ -1420,6 +1641,172 @@ class CombatEventAdapter:
                 ),
             },
             "sections": sections,
+            "children": children,
+            "movers": [],
+        }
+
+    def _build_venue_envelope(self, target: str, rows: list, now) -> dict:
+        """Card page for a card only the VENUE lists (#2602).
+
+        The third envelope, beside the Kalshi one and the schedule one, and it
+        exists because neither of those can reach a Polymarket-only card: Kalshi's
+        keys on a ticker these rows do not have, and the schedule's keys on the
+        events table, which holds no row for them.
+
+        **Prices are conditional and the condition is strict.** A venue bout is
+        published as an event-level parent row plus condition-id children, and
+        only one of those is ever the moneyline. Measured on production
+        2026-09-17, of the 19 open MMA rows named as bouts exactly **2** carry a
+        genuine two-sided fighter-named market; the rest carry nothing, one
+        unrelated prop, or — `61241597` — two props ("Haig in Round 3" /
+        "Növényi Jr. in Round 2") under a matchup title. So a bout shows prices
+        only when its outcomes ARE the two fighters its title names
+        (:func:`venue_bout_is_priced`), and otherwise shows the two fighters with
+        ``probability: None``.
+
+        That null is the honest answer and not a degradation to be hidden: we do
+        not hold the price. The venue does publish one for most of these bouts and
+        our scan cannot currently reach it (#6758) — when that lands, the same
+        rows start pricing here with no change to this function.
+
+        **No main event is claimed from nothing.** Every bout of a venue card
+        shares one ``venue_game_start``, so there is no time signal to rank them
+        by. The pick is the venue's own segment annotation ("Main Card" ahead of
+        "Prelims") and then the first row we ever saw — stable and
+        self-consistent, the same standing :func:`main_bout_of` documents for
+        itself, and explicitly not authoritative.
+        """
+        cfg = self.cfg
+
+        def _meta_of(m):
+            return getattr(m, "market_metadata", None)
+
+        # One bout per venue event id: the parent row and its condition-id child
+        # are the same fight. Prefer whichever of them can actually be priced.
+        by_group: dict[str, Any] = {}
+        for m in rows:
+            key = venue_bout_group(_meta_of(m)) or f"market:{m.id}"
+            current = by_group.get(key)
+            if current is None or (
+                venue_bout_is_priced(m.name, [o.name for o in (m.outcomes or [])])
+                and not venue_bout_is_priced(
+                    current.name, [o.name for o in (current.outcomes or [])]
+                )
+            ):
+                by_group[key] = m
+
+        def _segment_rank(m) -> int:
+            return 0 if "main card" in (m.name or "").lower() else 1
+
+        bouts = sorted(by_group.values(), key=lambda m: (_segment_rank(m), m.id))
+
+        starts = [
+            s for s in (venue_fight_start(_meta_of(m)) for m in bouts) if s is not None
+        ]
+        earliest = min(starts) if starts else None
+        latest = max(starts) if starts else None
+        # CERT-2727: through the shared entry point, never `combat_status`
+        # directly — an adapter that calls it directly is one that can put the
+        # live pill back on a card that is off. We hold no bout ROWS for a
+        # venue-only card (the venue's markets are not `events` rows, and their
+        # `commence_time` is the listing stamp), so the bout list is empty and
+        # the venue's own fight times are the FALLBACK pair — which is exactly
+        # what that argument documents itself as: unknown, not off.
+        card_status_value = card_status_from_bouts(
+            [], now, fallback_first=earliest, fallback_last=latest
+        )
+
+        promotions = [p for p in (venue_card_promotion(m.name) for m in bouts) if p]
+        card_name = max(set(promotions), key=promotions.count) if promotions else target
+
+        def _competitors(m):
+            sides = title_bout_sides(m.name)
+            if sides is None:
+                return []
+            outs = list(m.outcomes or [])
+            if not venue_bout_is_priced(m.name, [o.name for o in outs]):
+                # The two fighters, no numbers. Never a price we cannot stand up.
+                return [{"name": s, "probability": None} for s in sides]
+            priced = [
+                {
+                    "name": o.name,
+                    "probability": (
+                        round(float(o.current_probability), 4)
+                        if o.current_probability is not None
+                        else None
+                    ),
+                }
+                for o in outs
+            ]
+            return sorted(
+                priced,
+                key=lambda o: (
+                    o["probability"] if o["probability"] is not None else -1.0
+                ),
+                reverse=True,
+            )
+
+        def _bout_label(m) -> str:
+            """The matchup, without the promotion the card is already named."""
+            match = _VENUE_TITLE_RE.match(m.name or "")
+            return (match.group(2) if match else (m.name or "")).strip()
+
+        def _child(m):
+            outs = _competitors(m)
+            lead = outs[0]["probability"] if outs else None
+            return {
+                "market_id": m.id,
+                "market_name": _bout_label(m),
+                "source": m.source,  # data-only (audit); not rendered (D1)
+                "kind": "fight",
+                "settled": fight_child_settled(lead, card_status_value == "settled"),
+                "probability": lead,
+                "outcomes": outs,
+            }
+
+        children = [_child(m) for m in bouts]
+        main_bout = bouts[0] if bouts else None
+        main_competitors = _competitors(main_bout) if main_bout else []
+        main_priced = main_bout is not None and venue_bout_is_priced(
+            main_bout.name, [o.name for o in (main_bout.outcomes or [])]
+        )
+
+        return {
+            "event": {
+                "key": f"event:{cfg.domain}:{target}",
+                "slug": card_slug(card_name, target),
+                "domain": cfg.domain,
+                "name": card_name,
+                "status": card_status_value,
+                "start_date": earliest.isoformat() if earliest is not None else None,
+                "end_date": None,
+                "venue": None,
+                "location": None,
+                "is_major": False,
+            },
+            "primary": {
+                "kind": "co_equal_list",
+                "label": "Main event",
+                "competitors": main_competitors,
+                # Only a bout we can price has a history worth charting.
+                "evolution_market_id": main_bout.id if main_priced else None,
+                "price_observed_at": (
+                    concept_price_observed_at_iso(
+                        main_bout.outcomes or [],
+                        "co_equal_list",
+                        len(main_competitors),
+                    )
+                    if main_priced
+                    else None
+                ),
+            },
+            "sections": [
+                {
+                    "type": "matchup",
+                    "label": "Fights",
+                    "market_ids": [m.id for m in bouts],
+                }
+            ],
             "children": children,
             "movers": [],
         }
