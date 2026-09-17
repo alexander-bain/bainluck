@@ -20672,7 +20672,11 @@ async def get_event_odds_history(
 
     aggregate_line = []
     try:
-        from app.utils.aggregation import compute_aggregated_probability, TimestampedProb
+        from app.utils.aggregation import (
+            TimestampedProb,
+            compute_aggregated_probability,
+            pregame_boundary,
+        )
 
         agg_sources: dict[str, list] = {}
 
@@ -20701,7 +20705,15 @@ async def get_event_odds_history(
                 agg_sources[source_key] = source_points
 
         if len(agg_sources) > 1:  # Only compute if multiple sources exist
-            agg_result = compute_aggregated_probability(agg_sources, bucket_seconds=60)
+            # #4976/#1999: pre-game buckets do not decay — the hero's own gate,
+            # asked per bucket. See `pregame_boundary`.
+            agg_result = compute_aggregated_probability(
+                agg_sources,
+                bucket_seconds=60,
+                pregame_until=pregame_boundary(
+                    event.status, event.commence_time, now
+                ),
+            )
             aggregate_line = [
                 {
                     "timestamp": p.timestamp.isoformat(),
