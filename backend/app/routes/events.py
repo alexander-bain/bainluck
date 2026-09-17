@@ -23481,9 +23481,27 @@ async def get_event_odds_history(
         now=now,
     )
 
+    # #4976/#1999: pre-game buckets do not decay — the hero's own gate, asked
+    # per bucket. See `pregame_boundary`.
+    #
+    # 🔴 OUTSIDE the try below, and for the reason the win-prob block already
+    # states: that block swallows every exception, so a boundary that raised
+    # INSIDE it would take the whole blend line down silently. Measured
+    # (live/353, executed route harness): with the call inside the try, a raise
+    # here serves HTTP 200 carrying `aggregate_line: []` — the reader loses the
+    # Bain Luck line entirely, every other series still draws, and nothing is
+    # logged. Out here the same raise surfaces, which is what gotcha #53 and
+    # `series_event_ids` above both ask for.
+    from app.utils.aggregation import pregame_boundary
+
+    chart_pregame_until = pregame_boundary(event.status, event.commence_time, now)
+
     aggregate_line = []
     try:
-        from app.utils.aggregation import compute_aggregated_probability, TimestampedProb
+        from app.utils.aggregation import (
+            TimestampedProb,
+            compute_aggregated_probability,
+        )
 
         agg_sources: dict[str, list] = {}
 
@@ -23512,7 +23530,11 @@ async def get_event_odds_history(
                 agg_sources[source_key] = source_points
 
         if len(agg_sources) > 1:  # Only compute if multiple sources exist
-            agg_result = compute_aggregated_probability(agg_sources, bucket_seconds=60)
+            agg_result = compute_aggregated_probability(
+                agg_sources,
+                bucket_seconds=60,
+                pregame_until=chart_pregame_until,
+            )
             aggregate_line = [
                 {
                     "timestamp": p.timestamp.isoformat(),

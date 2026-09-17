@@ -470,6 +470,71 @@ def _relative_decay_applies(status: Optional[str]) -> bool:
     return (status or "").lower() not in _PREGAME_STATUSES
 
 
+def pregame_boundary(
+    status: Optional[str],
+    commence_time: Optional[datetime],
+    now: Optional[datetime] = None,
+) -> Optional[datetime]:
+    """The instant before which a CHART bucket is pre-game (#4976, under #1999).
+
+    `_relative_decay_applies` answers "is this event pre-game?" for the hero,
+    which renders one instant and so can ask the event's status. The chart
+    renders every instant the event has had, and only the newest of them has a
+    status — so the same question is asked per bucket, of the clock:
+
+    * the event has NOT started (``scheduled``): every bucket drawn so far is
+      pre-game, including the ones after a slipped ``commence_time`` on a
+      delayed start — the hero is not decaying there, so neither may the line;
+    * the event HAS started: the buckets before ``commence_time`` were pre-game
+      when they happened, and the in-play rule (#1829/#6461) owns the rest;
+    * no ``commence_time``: ``None`` — nothing to measure a bucket against.
+
+    THREE THINGS THIS DOES THAT #1999 COULD NOT, SAID OUT LOUD BECAUSE THE HERO
+    HAS NO HISTORY AND SO NEVER HAD TO DECIDE THEM (authority review, #4976).
+
+    1. IT IS NOT CONFINED TO ``scheduled`` EVENTS. Every started status —
+       ``live``, ``completed``, ``suspended``, ``voided`` — takes the second
+       branch, so the pre-kickoff SEGMENT of an already-finished chart stops
+       decaying too. On the production board of 2026-09-17 that is 3,692 of
+       5,965 events in the last seven days, against 2,188 ``scheduled`` ones.
+       The reasoning transfers cleanly (before first pitch nothing was moving,
+       whatever the event later became) but the blast radius is the whole
+       history of the product's charts, not one pre-game cohort, and a review
+       that reads only the ``scheduled`` specimen has not seen it.
+
+    2. ``commence_time`` IS THE LISTED START, NOT AN EVIDENCED ONE. Alex,
+       2026-09-14: "Scheduled kickoff/capture timestamps are not automatically
+       actual start/finish." No column in this schema records an observed
+       start, so there is nothing better to ask. The consequence is a ONE-TIME
+       RECLASSIFICATION, not a steady state: a delayed fixture is expressed here
+       as ``scheduled`` with a ``commence_time`` in the past (14 such rows on
+       2026-09-17), and while it holds that status the whole timeline is
+       pre-game; the instant it flips to ``live`` the slipped window falls back
+       onto the in-play rule and those buckets are redrawn. Measured on a
+       two-hour slip: 8 of 12 buckets move, the largest by 16.0pp, on one
+       refresh. That is narrower than today's behaviour in BOTH states, so it is
+       not a regression — but it is a real inconsistency and it is bounded only
+       by the evidenced-actual-start work (#6158 / #5140 / #1833). When an
+       observed start lands, this helper takes it and the inconsistency closes.
+
+    3. AN UNKNOWN STATUS TAKES THE PRE-GAME EXEMPTION HERE, WHERE THE HERO
+       REFUSES IT. ``_relative_decay_applies(None)`` is ``True`` — #1999's
+       monotone default keeps decaying an event whose status we cannot read.
+       This function gives an unknown status the second branch instead, so its
+       pre-kickoff buckets are exempt. That is deliberate: "this bucket is
+       earlier than the listed start" is a fact about the clock and does not
+       need the status to be legible. It is NOT the monotone default, and
+       earlier drafts of this docstring claimed it was.
+    """
+    if commence_time is None:
+        return None
+    if not _relative_decay_applies(status):
+        return max(commence_time, now) if now is not None else datetime.max.replace(
+            tzinfo=commence_time.tzinfo
+        )
+    return commence_time
+
+
 def _relative_staleness_multiplier(
     relative_age_seconds: float,
     floor: float = HERO_MIN_STALENESS_MULTIPLIER,
@@ -668,9 +733,57 @@ def compute_aggregated_probability(
     sources: dict[str, list[TimestampedProb]],
     bucket_seconds: int = 30,
     custom_weights: Optional[dict[str, float]] = None,
+    pregame_until: Optional[datetime] = None,
 ) -> list[TimestampedProb]:
     """
     Aggregate multiple probability sources into a single time series.
+
+    ── #4976: RELATIVE DECAY IS AN IN-PLAY RULE HERE TOO (#1999) ────────────
+
+    Buckets that end at or before ``pregame_until`` (see `pregame_boundary`) do
+    not decay: every source that has spoken keeps its base weight, exactly as
+    the hero has refused to decay a ``scheduled`` event since #1999. #6461 put
+    this series on the hero's recency RULE but not on the hero's GATE, so
+    before kickoff the sportsbook consensus — repriced a few times a day —
+    still left the pool 40 minutes after each write and rejoined on the next,
+    and a two-source weighted median is whichever source is heavier.
+    Specimen, St Gallen v Sion 15305934, production payload 2026-09-17: both
+    inputs flat (betting 0.562-0.608, polymarket 0.440-0.460) and the served
+    pre-match line crossed the gap 45 times. ``None`` keeps every bucket on the
+    in-play rule, bit-for-bit the previous behaviour.
+
+    WHAT THE 45 ACTUALLY MEASURES, AND IT IS NOT ALL CADENCE (authority review,
+    #4976). The oscillation's AMPLITUDE is the gap between the two sources, so
+    the count of 5pp steps is the cadence defect multiplied by the disagreement.
+    On that specimen the disagreement is #1011's question-meaning bug — stored
+    sportsbook rows are home-win GIVEN NO DRAW (~0.59) against Polymarket's
+    unconditional ~0.45 — and on a semantically compatible pair the same defect,
+    through this same code, produces no 5pp steps at all:
+
+        pair (flat inputs, identical cadence mismatch)   before -> after
+        two-way vs three-way, 14pp apart      3 steps >=5pp, TV 0.42  ->  0, 0.0
+        compatible venues, 4.0pp apart        0 steps >=5pp, TV 0.12  ->  0, 0.0
+        compatible venues, 1.5pp apart        0 steps >=5pp, TV 0.045 ->  0, 0.0
+
+    So this gate is worth a flat line rather than a 1-4 point wobble on a
+    healthy fixture, and the headline number belongs to #1011/#5493. Neither of
+    those closes on this change: a steady 0.59 is the same two-way number the
+    hero shows, drawn without a jump. Legible is not truthful.
+
+    AND IT DOES NOT STOP THE CHART DRAWING A VALUE NO VENUE STATED. #5425's tie
+    rule averages the straddling pair on an EXACT cumulative-weight tie, and its
+    own docstring notes that #1999 "made that shape common by switching the
+    pre-game decay off". Doing the same here has the same effect: two venues at
+    EQUAL base weight (kalshi 0.8 / polymarket 0.8) tie in every pre-game bucket
+    once the decay stops differentiating them. Measured, 45 pre-game buckets,
+    0.62 against 0.56:
+
+        before   21 of 45 buckets draw the unstated midpoint, oscillating (TV 0.57)
+        after    45 of 45 draw it, flat (TV 0.0)
+
+    That is #5425 working as ruled, not fabrication — but "no value is invented"
+    is a property of an UNEQUAL-weight pair (3.0 vs 0.8 cannot tie), not of this
+    function, and must not be asserted of it in general.
 
     For each time bucket:
     1. Find the latest reading from each source (carried forward)
@@ -809,6 +922,8 @@ def compute_aggregated_probability(
             bucket_tz = pts[0].timestamp.tzinfo
             break
 
+    pregame_epoch = pregame_until.timestamp() if pregame_until is not None else None
+
     # For each bucket, find latest reading per source
     aggregated: list[TimestampedProb] = []
 
@@ -817,6 +932,9 @@ def compute_aggregated_probability(
 
         readings: list[SourceReading] = []
         limit = bucket_ts + bucket_seconds
+        # #4976/#1999: a bucket wholly before kickoff is pre-game. `<=` so the
+        # bucket that CONTAINS kickoff already runs the in-play rule.
+        bucket_is_pregame = pregame_epoch is not None and limit <= pregame_epoch
 
         # Pass 1: what each source is saying in this bucket, and WHEN it said
         # it. No weighting yet — the reference the weights are measured against
@@ -858,7 +976,11 @@ def compute_aggregated_probability(
                 source_key, 0.5
             )  # Default weight for unknown sources
 
-            if reference_epoch is None or source_key in _UNCAPPED_SOURCES:
+            if (
+                reference_epoch is None
+                or source_key in _UNCAPPED_SOURCES
+                or bucket_is_pregame
+            ):
                 relative_age = 0.0
             else:
                 # Cannot go negative, so there is no clamp to write: every
