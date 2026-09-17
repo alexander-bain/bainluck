@@ -18,17 +18,42 @@ any kind: a grep of the module for ``is_fabricated_midpoint``,
 (``tasks/polymarket.py``) had been guarded; this is the other door into the same
 column, and on the rows it touches it is the dominant writer.
 
-THE TEST THAT MATTERS IS ``test_the_complement_leg_is_declined_with_its_twin``.
-``_legs`` returns the yes leg AND the no leg, and the no leg's book is
-``complementary_book(bid, ask)`` = ``(1 - ask, 1 - bid)``. The empty-book
-thresholds are not complementary — ``1 - EMPTY_BOOK_MAX_BID`` is 0.98, but
-``EMPTY_BOOK_MIN_ASK`` is 0.95 — so a guard applied per LEG fires on yes and
-misses no for every book with ``0.95 <= ask < 0.98``. Measured on production the
-same day: 131 of 499 open Polymarket yes-leg specimens sit in that band. A
-per-leg guard would therefore have half-fixed a quarter of the class and left
-the phantom complement printing on the row directly beneath the one it repaired.
-That test fails against a per-leg guard and passes against an item-level one; it
-is the only test here that can tell the two apart.
+THE GUARD IS ASKED OF THE ITEM, NOT THE LEG. ``_legs`` returns the yes leg AND
+the no leg, and on the one path that builds a no leg the book is
+``complementary_book(bid, ask)`` = ``(1 - ask, 1 - bid)`` — the same CLOB
+addressed from the other token. So whether a per-LEG guard is equivalent to a
+per-ITEM one depends entirely on whether the predicate answers a book and its
+complement the same way, and that has moved twice in one day:
+
+    bounds in force          asymmetric legs   what escapes alone
+    bid<=0.02, ask>=0.95           18          0.95 <= ask < 0.98 — 131 of 499
+                                               open Polymarket yes-leg
+                                               specimens, a quarter of the class
+    bid<=0.05, ask>=0.95  (#5333)   6          ``ask == 0.95`` exactly, on the
+                                               float boundary: ``1 - 0.95`` is
+                                               ``0.050000000000000044``
+    ask - bid >= 0.90     (#6727)   0          nothing — the spread is invariant
+                                               under the flip, so the class is
+                                               empty by construction
+
+Swept over all 5,050 integer-cent books with the writer's own arithmetic. (A
+sweep that tidies the complement with ``round()`` reports the middle row as 0
+too, and concludes the guard was never load-bearing. It was, on a quarter of the
+class, and it still is on the six.)
+
+SO THE ASYMMETRY IS REAL, IS CLOSING, AND CLOSES ENTIRELY UNDER #6727 — at which
+point this guard is defence in depth on this path. IT STAYS, and
+``test_a_per_leg_guard_would_split_the_pair`` is what keeps it able to go red.
+Two reasons no constant can retire: the equivalence rests on the predicate
+staying exactly symmetric under complementation, which is a property of today's
+shape rather than an invariant anything enforces; and ``_legs`` writes whatever
+``item["no"]`` holds, so a second producer passing the venue's own no-token book
+instead of the derived one reopens the split the same day it lands.
+
+Which is why the controls below assert the reader-visible outcome — the pair is
+declined WHOLE — and deliberately never assert the complement's own verdict.
+That verdict is the thing that moves, and pinning it is what made this file red
+against two certed shas on 2026-09-17 (#5333 and #6727, notice 47(a)).
 
 THE CONTROLS ARE LOAD-BEARING, and one of them is a fence.
 ``test_a_wide_but_real_kalshi_book_is_still_written`` encodes a measurement:
@@ -47,6 +72,7 @@ import inspect
 import pytest
 
 from app.tasks import futures_price_refresh as fpr
+from app.tasks.polymarket import complementary_book
 from app.utils.feed_market_quality import (
     is_empty_book_midpoint,
     is_fabricated_midpoint,
@@ -86,24 +112,32 @@ class TestThePhantomCoinFlipNeverReachesTheRow:
         assert stats["legs_declined_empty_book"] == 2
 
     async def test_the_complement_leg_is_declined_with_its_twin(self):
-        """The asymmetric band, and the reason the guard tests the ITEM.
+        """The production-shaped pair: the derived complement goes with its twin.
 
-        ``ask = 0.96`` is inside ``[0.95, 0.98)``. The yes leg is an empty-book
-        midpoint; the no leg's derived book is ``(0.04, 0.99)``, whose bid of 4c
-        is ABOVE ``EMPTY_BOOK_MAX_BID``, so the predicate is False on that leg
-        read alone. A per-leg guard writes it — 51% on an empty book, sitting
-        under the 49% it just declined.
+        ``ask = 0.96`` sits inside the band this ship measured, and the no leg's
+        book is built by the writer's own ``complementary_book`` rather than
+        typed, so the specimen is what the Polymarket path actually assembles.
+
+        What is asserted is the reader-visible outcome — neither row moves. The
+        complement's OWN verdict is not asserted here: at the bounds this file
+        was written against it was False (the leg escaped a per-leg read), under
+        #6727's spread form it is True, and pinning either one turns this control
+        red on a predicate change that does not touch the ship. The module
+        docstring carries that table; ``test_a_per_leg_guard_would_split_the
+        _pair`` is what still tells a per-leg guard from a per-item one.
         """
+        yes_bid, yes_ask = 0.01, 0.96
+        no_bid, no_ask, _ = complementary_book(yes_bid, yes_ask, None)
         item = {
             "external_id": "0xband",
             "probability": 0.485,
-            "yes_bid": 0.01,
-            "yes_ask": 0.96,
-            "no": {"probability": 0.515, "yes_bid": 0.04, "yes_ask": 0.99},
+            "yes_bid": yes_bid,
+            "yes_ask": yes_ask,
+            "no": {"probability": 0.515, "yes_bid": no_bid, "yes_ask": no_ask},
         }
-        # The asymmetry is real and not an assumption of this test.
-        assert is_empty_book_midpoint(0.485, 0.01, 0.96) is True
-        assert is_empty_book_midpoint(0.515, 0.04, 0.99) is False
+        # The yes leg is an empty-book midpoint under every shape the predicate
+        # has had: the two-bound pair at either setting, and the spread form.
+        assert is_empty_book_midpoint(0.485, yes_bid, yes_ask) is True
 
         session = _WriteSession(rows=_pair_rows("0xband"))
         stats: dict = {}
@@ -112,9 +146,56 @@ class TestThePhantomCoinFlipNeverReachesTheRow:
         )
         assert written == 0
         assert session.updates == 0, (
-            "the complement leg was written: the guard is per-leg, and 26% of "
-            "the measured class is only half-fixed"
+            "the complement leg was written: the guard is per-leg, so the "
+            "phantom complement prints on the row beneath the one it declined"
         )
+        assert stats["legs_declined_empty_book"] == 2
+
+    async def test_a_per_leg_guard_would_split_the_pair(self):
+        """THE CONTROL THAT OUTLIVES THE CONSTANTS. Read the module docstring.
+
+        The no leg here carries a book that BOUNDS SOMETHING — ``0.40 / 0.60``,
+        a 20c spread with a real bid on it — so no shape of
+        ``is_empty_book_midpoint``, past or present, calls it an empty book. The
+        yes leg is an empty book under all three. A guard asked per LEG therefore
+        declines the yes leg and WRITES the no leg, splitting the pair; a guard
+        asked of the ITEM declines both, which is what this asserts.
+
+        This pairing is not one the Polymarket path can produce today — that path
+        derives the no side by identity, so its two books always agree, and after
+        #6727 they always get the same verdict. It is constructed on purpose,
+        because every specimen that is both production-shaped AND distinguishing
+        depends on the empty-book bounds being non-complementary, and #6727 makes
+        them complementary. What is pinned here is the SHAPE of the guard, which
+        is the thing a later reader would change: ``_legs`` writes whatever
+        ``item["no"]`` holds, and a second producer passing the venue's own
+        no-token book makes this specimen live rather than constructed.
+        """
+        yes_bid, yes_ask = 0.01, 0.96
+        no_bid, no_ask = 0.40, 0.60
+        # Not an assumption: the no leg's book is honest by any reading of the
+        # predicate, so only an item-level guard has grounds to decline it.
+        assert is_empty_book_midpoint(0.485, yes_bid, yes_ask) is True
+        assert is_empty_book_midpoint(0.50, no_bid, no_ask) is False
+
+        item = {
+            "external_id": "0xsplit",
+            "probability": 0.485,
+            "yes_bid": yes_bid,
+            "yes_ask": yes_ask,
+            "no": {"probability": 0.50, "yes_bid": no_bid, "yes_ask": no_ask},
+        }
+        session = _WriteSession(rows=_pair_rows("0xsplit"))
+        stats: dict = {}
+        written = await fpr._write_prices(
+            session, 61176445, "polymarket", [item], stats
+        )
+        assert written == 0
+        assert session.updates == 0, (
+            "the pair split: the guard read the LEG, so the yes row was "
+            "declined and its twin was written anyway"
+        )
+        assert session.inserts == 0
         assert stats["legs_declined_empty_book"] == 2
 
 
