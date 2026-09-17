@@ -712,7 +712,12 @@ class TestWeatherEvents:
 
         item = body["hurricane"][0]
         assert item["q"] == "Will a hurricane hit the Gulf Coast in 2026?"
-        assert item["prob"] == 60  # highest prob is "No" at 60%
+        # 40, the Yes price — the answer to the question actually asked. This
+        # line read `== 60  # highest prob is "No" at 60%` until #2563: the card
+        # printed the dearest leg whatever it was, so a question about a
+        # hurricane hitting land answered with the 60% chance that none does.
+        # The assertion was describing the scan, not defending the reader.
+        assert item["prob"] == 40
         assert item["src"] == "kalshi"
         assert isinstance(item["closes"], str)
 

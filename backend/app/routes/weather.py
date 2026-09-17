@@ -400,6 +400,55 @@ def _adds_to_the_question(name: str, question: str | None) -> bool:
     return re.search(rf"(?<!\w){re.escape(normalized)}(?!\w)", haystack) is None
 
 
+def _prices_the_negation(outcome) -> bool:
+    """Is ``outcome``'s price the price of the question NOT happening?
+
+    True for a bare ``No`` leg, and for a ``_GARBAGE_OUTCOME_RE`` placeholder,
+    whose name is not a name and whose price is therefore about nothing the
+    reader can see.
+
+    KEPT SEPARATE FROM ``_adds_to_the_question`` ON PURPOSE, and the pair looks
+    close enough to merge until you try it. Redundancy and negation are
+    different faults with different remedies:
+
+        Will Tropical Storm Lowell strengthen to a hurricane?
+            "Tropical Storm Lowell strengthen to a hurricane"  0.88   <- correct
+            "Stays a tropical storm"                           0.10
+
+    The dearest leg here repeats the question word for word, so its NAME is not
+    worth printing — but 88% is exactly the right number, and a rule that
+    refused it would hand the card to a 10% also-ran. A redundant name costs the
+    reader a word; a negation costs them the truth. So redundancy suppresses the
+    NAME only (``_leader_outcome_name``), and this predicate — negation — is the
+    only thing that may move the NUMBER.
+    """
+    name = (outcome.name or "").strip()
+    if not name:
+        return True
+    if _GARBAGE_OUTCOME_RE.match(name):
+        return True
+    return bool(re.match(r"^no$", name, re.I))
+
+
+def _best_non_negated_outcome(market: FuturesMarket):
+    """Dearest outcome that is not the question's negation, or None.
+
+    Same scan as ``_leader_outcome`` — same 0.0 floor, same strict ``>`` so the
+    first of a tie wins. A bare ``Yes`` leg is eligible: it is a real answer to a
+    real question, and on a binary it is THE answer.
+    """
+    best = None
+    best_prob = 0.0
+    for outcome in market.outcomes or []:
+        if _prices_the_negation(outcome):
+            continue
+        probability = float(outcome.current_probability or 0)
+        if probability > best_prob:
+            best_prob = probability
+            best = outcome
+    return best
+
+
 def _leader_outcome(market: FuturesMarket):
     """The outcome whose probability ``_highest_prob`` prints, or None.
 
@@ -440,12 +489,42 @@ def _card_outcome(market: FuturesMarket):
     ``_is_daily_rain_market`` and ``_nyc_rain_outcome`` live down with the rest
     of the rain helpers, whose rules they are; calling forward is fine at
     runtime and keeps each rule in one family.
+
+    THE ``No`` LEG NEVER WINS THIS SCAN (#2563). A plain ``_leader_outcome``
+    takes the dearest outcome whatever it is named, and ``_leader_outcome_name``
+    then refuses to print "Yes"/"No" because on a binary they only restate the
+    question. Apart, each rule is right; together they delete the number's
+    referent and leave the price of the question's NEGATION sitting under the
+    question, in green, behind a nearly full bar. Production, 2026-09-17:
+
+        Which cities face tornado risk on September 16?          98%
+        Will a hurricane make landfall in Virginia by Nov 30?     96%
+
+    The first is the price of "No" over 25 cities (2.3% that any city does); the
+    second is 95.5% that no hurricane lands (4.5% that one does). Both read to
+    any reader as the opposite of what the market says, and 96% under a
+    hurricane question is the most alarming number on the page.
+
+    So when the dearest leg prices the NEGATION, the card is about the dearest
+    leg that does not — the leading city on a which-city market, the ``Yes`` leg
+    on a yes/no one. Nothing else moves: a market whose dearest outcome is a
+    real answer keeps it, redundantly named or not.
+
+    Measured over the whole served weather population on 2026-09-17 (405 open
+    markets, 95 with "No" dearest), every one of the 95 has such a leg, so the
+    final ``or leader`` has no production specimen and exists to preserve
+    today's number rather than ship an unexercised withholding path.
     """
     if _is_daily_rain_market(market):
         nyc = _nyc_rain_outcome(market)
         if nyc is not None and nyc.current_probability is not None:
             return nyc
-    return _leader_outcome(market)
+
+    leader = _leader_outcome(market)
+    if leader is None or not _prices_the_negation(leader):
+        return leader
+
+    return _best_non_negated_outcome(market) or leader
 
 
 def _card_probability(market: FuturesMarket) -> float:
@@ -510,6 +589,8 @@ def _leader_outcome_name(market: FuturesMarket) -> str | None:
         return None
     if _UNINFORMATIVE_LEADER_RE.match(name) or _GARBAGE_OUTCOME_RE.match(name):
         return None
+    # Redundancy suppresses the NAME and nothing else — `_prices_the_negation`
+    # has the note on why the number may not follow it.
     if not _adds_to_the_question(name, market.name):
         return None
     return name
