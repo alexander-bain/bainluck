@@ -95,10 +95,29 @@ nonisolated struct EconomicsInflationTheme: Decodable, Sendable {
 
 /// CPI release market distribution and display metadata.
 nonisolated struct CPIRelease: Decodable, Identifiable, Sendable {
-    var id: String { mo }
+    /// Keyed on the market, never on `mo`. A period label is a hint, not an
+    /// identity: on 2026-09-17 three of the six live blocks read `Sep` — the US
+    /// September CPI print, US core, and Argentina's monthly inflation — and two
+    /// more read `Sep 2026`. Duplicate ids in a `ForEach` are what made the iPad
+    /// card row photograph as one month repeated with byte-identical values and
+    /// an identical bar chart (#2564). The sibling `EconomicsMarket` on this same
+    /// page has always keyed this way; `mo` never could, because the venue's own
+    /// names carry no year.
+    var id: String { "\(marketId ?? 0)-\(q ?? mo)" }
     let mo: String
+    /// The market's own question, in the venue's words. Optional on purpose: a
+    /// cached or pre-#6738 payload still decodes the section rather than failing
+    /// the whole `EconomicsInflationTheme` and emptying the row.
+    let q: String?
     let brackets: [[WeatherAnyCodable]]?
+    /// True on EVERY block, deliberately — the section gates and counts on it
+    /// (`releases.filter { $0.upcoming == true }`), so it means "has not happened
+    /// yet", which is true of all of them. It is not the superlative.
     let upcoming: Bool?
+    /// Exactly one block carries true. This — not `upcoming` — is what the NEXT
+    /// badge reads; badging on `upcoming` is why all six blocks claimed to be
+    /// next.
+    let isNext: Bool?
     let peakIs: Int?
     let marketId: Int?
 }

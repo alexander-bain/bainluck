@@ -391,7 +391,11 @@ struct EconomicsView: View {
                             title: "CPI Releases",
                             count: upcoming.count
                         )
-                        Text("Modal outcome per month from Kalshi bracket markets")
+                        // Was "Modal outcome per month from Kalshi bracket
+                        // markets", which was wrong twice: the blocks are per
+                        // MARKET, not per month (three read `Sep` today), and one
+                        // of the six live blocks is Polymarket, not Kalshi.
+                        Text("The most likely outcome in each market")
                             .font(.system(size: 12, design: .monospaced))
                             .foregroundStyle(DS.textMuted)
                     }
@@ -441,13 +445,16 @@ struct EconomicsView: View {
 
     private func cpiCard(_ release: CPIRelease) -> some View {
         SectionCard {
-            // Header
+            // Header. The period label is a kicker, not the title: several of
+            // these blocks share one (three `Sep` on 2026-09-17), so on its own
+            // it names no release. The market's own question is the title (#2564).
             HStack {
-                Text(release.mo)
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(DS.textPrimary)
+                Text(release.mo.uppercased())
+                    .font(.system(size: 10, weight: .heavy))
+                    .tracking(0.6)
+                    .foregroundStyle(DS.textMuted)
                 Spacer()
-                if release.upcoming == true {
+                if release.isNext == true {
                     Text("NEXT")
                         .font(.system(size: 9, weight: .heavy))
                         .tracking(0.5)
@@ -466,6 +473,18 @@ struct EconomicsView: View {
                     .background(DS.amber.opacity(0.10))
                     .clipShape(Capsule())
             }
+
+            // The question, which is the only thing that separates one block
+            // from another. Two lines are always reserved so a one-line and a
+            // two-line question sit at the same height in the scroller.
+            Text(release.q ?? release.mo)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(DS.textPrimary)
+                .lineLimit(2, reservesSpace: true)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 2)
 
             // Peak bucket label
             if let brackets = release.brackets,
@@ -494,10 +513,12 @@ struct EconomicsView: View {
                 cpiHistogram(brackets: brackets, peakIdx: release.peakIs)
             }
 
-            FooterNote(
-                left: "Resolves on release day",
-                right: "Kalshi"
-            )
+            // No venue mark. It was hardcoded "Kalshi" and is false on this row
+            // today: of the six blocks live on 2026-09-17, `market_id` 60760395
+            // ("Argentina Monthly Inflation - September") is Polymarket. The
+            // payload carries no `src` for a CPI block, so the honest mark is
+            // none at all until it does (asked of ux, the payload's owner).
+            FooterNote(left: "Resolves on release day")
         }
         #if os(macOS)
         .frame(width: 300)
