@@ -128,6 +128,13 @@ SPORT_AFFINITY_MAPPING: dict[str, list[str]] = {
     "boxing": ["boxing_boxing"],
     "cricket": ["cricket_icc_world_cup", "cricket_test_match"],
     "rugby": ["rugbyleague_nrl", "rugbyunion_six_nations"],
+    # `aussierules_afl` alone would cover the other two by the prefix fallback in
+    # `_lookup_sport_affinity`; all three are named because this dict is also the
+    # REVERSE map's source (`SPORT_KEY_TO_CATEGORY`), and that lookup is exact —
+    # a backend key missing from here is a stored affinity the preferences
+    # endpoint silently declines to serve back. Keys per `utils/sport_keys.py`
+    # plus the live `aussierules_aflw` (#6671).
+    "aussierules": ["aussierules_afl", "aussierules_aflw", "aussierules_other"],
     "motorsport": ["motorsport_formula1"],
     "esports": ["esports_lol", "esports_csgo", "esports_dota2", "esports_valorant"],
     # --- Beyond Sports (prediction market categories) ---

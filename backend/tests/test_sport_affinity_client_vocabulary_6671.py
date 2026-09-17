@@ -18,12 +18,15 @@ moves — prose in an issue cannot do that.
 These are contract tests, not a snapshot of a defect: all three pass today.
 """
 
+import pytest
+
 from app.routes.user import (
     SPORT_AFFINITY_MAPPING,
     SPORT_KEY_TO_CATEGORY,
     _compress_sport_affinities,
     _expand_sport_affinities,
 )
+from app.utils.personalization import _lookup_sport_affinity
 
 #: Every key `GET /api/me/preferences` can put in `sport_affinities`. This is the
 #: list a client's preference grid must be keyed on. Adding a sport means adding
@@ -47,6 +50,7 @@ SERVED_AFFINITY_VOCABULARY = {
     "boxing",
     "cricket",
     "rugby",
+    "aussierules",
     "motorsport",
     "esports",
     # beyond sports
@@ -111,3 +115,45 @@ def test_saving_the_served_dict_unchanged_does_not_move_a_stored_value():
     stored = _expand_sport_affinities(served)
     resaved = _expand_sport_affinities(_compress_sport_affinities(stored))
     assert resaved == stored
+
+
+#: Every `aussierules` sport_key an event can actually carry: the two in
+#: `utils/sport_keys.py` plus the women's code, which is live (18 rows read
+#: 2026-09-15, `tasks/polymarket.py:203`) without being in that map.
+_LIVE_AUSSIERULES_SPORT_KEYS = [
+    "aussierules_afl",
+    "aussierules_aflw",
+    "aussierules_other",
+]
+
+
+@pytest.mark.parametrize("sport_key", _LIVE_AUSSIERULES_SPORT_KEYS)
+def test_giving_aussierules_a_mapping_does_not_move_what_the_feed_reads(sport_key):
+    """Adding the category is a DISPLAY repair, so ranking must read the same.
+
+    Before the mapping existed, `_expand_sport_affinities` passed `aussierules`
+    through verbatim (`user.py`, the unrecognised-key branch) and the feed found
+    it through `_lookup_sport_affinity`'s `affinity_key == root` fallback — so
+    AFL already ranked correctly and only Settings was blind. With the mapping,
+    the same tap stores three exact keys instead. Both shapes must answer the
+    same for every live key, or a display fix has quietly become a ranking
+    change (#6671).
+    """
+    before = _lookup_sport_affinity(sport_key, {"aussierules": 0.3})
+    after = _lookup_sport_affinity(sport_key, _expand_sport_affinities({"aussierules": 0.3}))
+    assert before == 0.3, "the pre-mapping pass-through shape must still be readable"
+    assert after == before
+
+
+def test_a_stored_aussierules_affinity_is_served_back_to_the_client():
+    """The defect itself: the tile could be set and never read back.
+
+    `_compress_sport_affinities` skips backend keys absent from
+    `SPORT_KEY_TO_CATEGORY`, so before the mapping every `aussierules_*` key was
+    dropped on the way out and the iPhone Settings tile rendered "Nah" for a
+    reader who had rated AFL. Discriminating: delete the mapping entry and
+    `compressed` is `{}`.
+    """
+    stored = _expand_sport_affinities({"aussierules": 0.3})
+    assert set(stored) == set(_LIVE_AUSSIERULES_SPORT_KEYS)
+    assert _compress_sport_affinities(stored) == {"aussierules": 0.3}
