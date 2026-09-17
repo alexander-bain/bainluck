@@ -13,7 +13,12 @@ final class PreferencesViewModel: ObservableObject {
     @Published private(set) var prefs: PreferencesResponse?
     @Published private(set) var loading = true
     @Published private(set) var error: String?
+    /// Tile-keyed, NOT server-keyed — see `OnboardingSportsData.tileAffinities`.
     @Published private(set) var sportAffinities: [String: Double] = [:]
+
+    /// The last payload the server served, kept verbatim so a save can pass
+    /// through categories this build has no tile for instead of erasing them.
+    private var servedAffinities: [String: Double] = [:]
 
     // MARK: - Morning Digest (push preference)
     @Published private(set) var morningDigestEnabled = false
@@ -74,9 +79,14 @@ final class PreferencesViewModel: ObservableObject {
     /// opt-in reappearing on the toggle) is unit-testable without the network.
     /// A missing/omitted `push_preferences` block keeps Morning Digest OFF —
     /// never a silent opt-in.
+    ///
+    /// The served affinities are in the compressed server vocabulary (`nfl`,
+    /// `college_football`, `golf_pga`, …) and the grid asks by tile key, so they
+    /// are translated here rather than stored raw (#6671).
     func apply(loaded response: PreferencesResponse) {
         prefs = response
-        sportAffinities = response.sportAffinities
+        servedAffinities = response.sportAffinities
+        sportAffinities = OnboardingSportsData.tileAffinities(fromServed: response.sportAffinities)
         // Reflect the server's stored value; opt-in default is false.
         morningDigestEnabled = response.pushPreferences?.morningDigest ?? false
         morningDigestError = nil
@@ -135,9 +145,15 @@ final class PreferencesViewModel: ObservableObject {
         }
     }
 
+    /// The body the next save will PUT. Exposed (not private) so a test can
+    /// prove one tap sends that tile once and drops nothing else.
+    var affinitySavePayload: [String: Double] {
+        OnboardingSportsData.savePayload(tiles: sportAffinities, preserving: servedAffinities)
+    }
+
     private func saveAffinities() async {
         do {
-            _ = try await APIClient.shared.updateSportAffinities(sportAffinities)
+            _ = try await APIClient.shared.updateSportAffinities(affinitySavePayload)
             logger.info("Sport affinities saved")
         } catch {
             logger.error("Save affinities failed: \(error)")
