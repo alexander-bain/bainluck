@@ -134,13 +134,27 @@ class TestOneRuleTwoSurfaces:
         """
         assert _leg_prices_an_empty_book(outcome(0.5, 0.03, 0.98)) is True
 
-    def test_a_bid_past_the_new_bound_is_still_out_of_reach(self):
-        """The tripwire re-armed one cent past the new edge, decided by the bid:
-        the price is the book's exact midpoint, so the tolerance cannot be what
-        keeps it."""
-        assert _leg_prices_an_empty_book(
-            outcome((0.06 + 0.97) / 2, 0.06, 0.97)
-        ) is False
+    def test_the_compensated_book_came_into_reach_with_6727(self):
+        """FLIPPED AGAIN, by the same mechanism, and that is the tripwire working.
+
+        This was re-armed by #5333 one cent past its new bid bound — `0.06/0.97`
+        asserted OUT OF REACH — so that the next person to widen had to come here
+        first. #6727 did, and found the premise wrong rather than the cent: a
+        0.06/0.97 book is 91 cents of nothing, and refusing to call it empty
+        because one SIDE missed by a cent is the arbitrariness, not a safeguard.
+        The pair of bounds became one statement about the spread. This is the
+        return trip.
+        """
+        assert _leg_prices_an_empty_book(outcome((0.06 + 0.97) / 2, 0.06, 0.97)) is True
+
+    def test_a_book_one_cent_short_of_the_spread_is_still_out_of_reach(self):
+        """The tripwire re-armed at the edge that decides now: the WIDTH.
+
+        The price is the book's exact midpoint, so the tolerance cannot be what
+        keeps it — only the spread being one cent too short.
+        """
+        assert _leg_prices_an_empty_book(outcome((0.06 + 0.95) / 2, 0.06, 0.95)) is False
+        assert _leg_prices_an_empty_book(outcome((0.0 + 0.89) / 2, 0.0, 0.89)) is False
 
 
 class TestGenuinePricesSurvive:

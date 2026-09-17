@@ -233,15 +233,20 @@ class TestWhatThisFixDidNotReachUntil5333:
         """The shape #6676 measured live and could not take. It is taken now."""
         assert _select(_gamma("Set Handicap", [0.5, 0.5], 0.03, 0.98)) == (None, None)
 
-    def test_the_bound_is_inclusive_at_five_cents_and_open_at_six(self):
-        """Where the new edge is, asserted on the side the bid decides.
+    def test_the_bound_is_inclusive_at_five_cents_and_open_at_a_short_spread(self):
+        """Where the new edge is, asserted on the side the WIDTH decides.
 
         Both rows sit EXACTLY on their own midpoint, so the tolerance cannot be
-        what separates them — only the bid bound can. A tolerance-decided pair
+        what separates them — only the bound can. A tolerance-decided pair
         here would be a vacuous boundary test.
+
+        #6727 flipped the second assertion: it read `0.06/0.97 is False`, keeping a
+        91-cent-wide book because the bid missed by a cent. The separator is the
+        spread now, so the short book is the one that is kept.
         """
         assert is_empty_book_midpoint((0.05 + 0.97) / 2, 0.05, 0.97) is True
-        assert is_empty_book_midpoint((0.06 + 0.97) / 2, 0.06, 0.97) is False
+        assert is_empty_book_midpoint((0.06 + 0.95) / 2, 0.06, 0.95) is False
+        assert is_empty_book_midpoint((0.06 + 0.97) / 2, 0.06, 0.97) is True
 
 
 class TestTheGuardIsActuallyAtBothCallSites:

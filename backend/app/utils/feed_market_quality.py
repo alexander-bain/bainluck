@@ -274,6 +274,107 @@ EMPTY_BOOK_MAX_BID = 0.05
 EMPTY_BOOK_MIN_ASK = 0.95
 EMPTY_BOOK_MIDPOINT_TOLERANCE = 0.01
 
+# ---------------------------------------------------------------------------
+# #6727: THE TWO BOUNDS ARE ONE STATEMENT ABOUT THE SPREAD, AND SAYING IT THAT
+# WAY IS WHAT CLOSES THE REMAINDER. Not a widening — a change of shape.
+#
+# The reader who forced this: "Milwaukee Bucks 48% to be Steph Curry's next team",
+# photographed on production at 390px on 2026-09-17 immediately after #6676's search
+# half went live. Its book was 0.01 / 0.94 — one cent under `EMPTY_BOOK_MIN_ASK`, the
+# mirror image of the 3c bid #5333 had just closed. On the same card, four legs at
+# 0.01/0.95 were correctly refused and this one survived, so the page printed exactly
+# one manufactured coin flip beside four honest prices.
+#
+# WHY NOT MOVE THE ASK BOUND, which is what the defect looks like it asks for. The two
+# bounds are not symmetric. Moving the BID bound barely moves the reachable price band
+# (#5333 took it from [0.465, 0.535] to [0.465, 0.535] — the ask sets the floor, so the
+# bid move only touched the ceiling). Moving the ASK bound drops the FLOOR, and fast:
+# at `ask >= 0.85` the predicate reaches 0.415, which is honest longshot territory, and
+# the measured decay above 0.85 has no gap to cut in (95, 42, 50, 22, 18, 23, 15, 10,
+# 19, 14 on-midpoint rows per cent). Any cut inside that is a knob, which is what #5247
+# and #5333 both refused to ship.
+#
+# THE SHAPE INSTEAD. What the pair of bounds is really asserting is that the quote
+# bounds NOTHING — that the interval [bid, ask] is so wide it constrains no price
+# inside it, so a value sitting at its centre was produced by arithmetic and not by
+# anyone's belief. That is a statement about the WIDTH, and the width is one number:
+#
+#     bid <= 0.05 AND ask >= 0.95   ==>   ask - bid >= 0.90
+#
+# The spread form is a strict SUPERSET of the pair (measured below: 0 rows lost out of
+# 132,550), and it adds exactly the rows where one side is a cent less extreme and the
+# other side more than compensates — 0.01/0.94, 0.06/0.99, 0.00/0.91.
+#
+# 🔒 AND IT CANNOT DROP THE FLOOR, WHICH IS THE WHOLE REASON THIS SHAPE IS SAFE WHERE
+# AN ASK MOVE IS NOT. The spread ties the two sides together, so with `bid >= 0` and
+# `ask <= 1` the reachable midpoint is confined to [S/2, 1 - S/2] for spread bound S,
+# whatever the ask does. At S = 0.90 that is [0.45, 0.55], and +/- the tolerance the
+# band is [0.44, 0.56]. An ask-bound widening to 0.85 reaches 0.415; this shape cannot
+# reach below 0.44 at any ask, because reaching a price p requires a bid of
+# p - S/2, which for p = 0.28 (a #5247 kept control) is NEGATIVE and therefore
+# unreachable. The safety argument is now readable directly off the constant — band
+# = [S/2, 1 - S/2] — instead of being a joint property of two numbers that move
+# independently. That is the actual gain here, and it is why this is worth a shape
+# change rather than a third measured cent.
+#
+# THE CONSTANT IS DERIVED, NOT CHOSEN. `EMPTY_BOOK_MIN_SPREAD` is the subtraction of
+# the two constants above, so this ship introduces NO new tuned number and the pair
+# stays the single source of truth. Moving either one re-derives the spread and
+# re-derives the band, and the band tests restate what it bought.
+#
+# 🪤 THE ROUNDING, AND EXACTLY WHAT IT IS AND IS NOT FOR. In IEEE754 `0.95 - 0.05` is
+# 0.8999999999999999 while `0.99 - 0.09` is exactly 0.9. Measured over all 1,322,301
+# 4dp books in the relevant corner: against the DERIVED bound the rounding changes
+# nothing (0 disagreements) — both sides carry the same representation error, so it is
+# defensive here, not load-bearing, and this comment says so rather than claiming a
+# save it did not make. What it does buy is independence from how the bound is spelled:
+# against a LITERAL `0.90` the unrounded compare disagrees on 234 of those books, every
+# one a genuine 90c spread wrongly kept, including the exact-threshold 0.05/0.95 that
+# the old pair accepted. A future edit that inlines `0.90` is the likely spelling, and
+# rounding is what stops that from silently breaking the superset property.
+# 4dp is exact for these columns: `current_yes_bid`/`current_yes_ask` are Numeric(5,4).
+#
+# 📏 MEASURED ON PRODUCTION, 2026-09-17, open markets, read-only db-query.
+# 132,550 outcomes carrying a two-sided book:
+#
+#     rows matching the OLD pair                      10,538
+#     rows matching the NEW spread form               10,829
+#     LOST (old but not new)                               0   <- superset, measured
+#     newly reached                                      291
+#     of those, sitting ON their own midpoint            164   <- the class refused
+#     their price range                        0.450 - 0.535   <- inside [0.44, 0.56]
+#
+# The 164 land on 110 markets, 71 of which keep no surviving two-sided-book leg at all
+# — and that is the #5333 ship generalised, not a new cost: they are cards where EVERY
+# priced leg is a phantom. "Alphabet's Market Cap end of September 2026?" serves seven
+# mutually exclusive buckets at 0.470-0.480 that sum to ~3.3; SpaceX's identical ladder
+# is ALREADY printing a gapped 3-of-7 today because the old pair catches its 0.01/0.95
+# legs and leaves its 0.01/0.94 ones, which is the #1574 gapped-ladder defect caused by
+# the bound being one cent short. `phantom_book_leaves_nothing_real` drops such a card
+# rather than leaving the gap.
+#
+# 🔴 WHAT THIS COSTS, TRIAGED ROW BY ROW AGAINST GAMMA AND NOT INFERRED.
+# 14 of the 164 carry any trade evidence (a non-null `volume` or a `price_changed_at`).
+# All 14 were read against Gamma directly (curl — `urllib` gets 403 from gamma-api),
+# and on every one the last trade is FAR from the number we print: Jade Kawamoto last
+# traded 0.43 against our 0.490, the Big Brother "Veto" market 0.97 against our 0.490,
+# Ben Johns 0.77 against our 0.525, Sabrina Carpenter 0.13 against our 0.465, Jazz
+# Chisholm 0.02 against our 0.485. Two are worse than fabricated, they are STALE: a
+# Rounds Handicap leg Gamma now prices at 0.9995 on $3,496 of 24h volume is stored here
+# as 0.490, and an exact-score leg Gamma prices at 0.0385 is stored as 0.470.
+# So: ZERO genuinely-traded rows are withdrawn by this cohort — a strictly better cost
+# than #5333, which named two (Kovalova/Dronova) and withdrew them on purpose.
+#
+# That is a statement about THIS cohort and today's read, not a guarantee. The limit
+# recorded above still binds and is not weakened here: this is a pure function of three
+# columns, the serve path has no provenance column, and a genuine traded 50% on a book
+# that has since emptied WOULD be withdrawn. #6727 names that rail as still unbuilt.
+EMPTY_BOOK_MIN_SPREAD = round(EMPTY_BOOK_MIN_ASK - EMPTY_BOOK_MAX_BID, 4)
+
+# The Numeric(5,4) precision the two book columns are stored at. Rounding both sides of
+# the spread comparison to this is exact for every value the columns can hold.
+_BOOK_PRICE_DECIMALS = 4
+
 
 def is_empty_book_midpoint(
     probability: "float | None",
@@ -284,10 +385,19 @@ def is_empty_book_midpoint(
 
     Three conditions, all required:
       1. a two-sided quote exists (both bid and ask present),
-      2. it is empty on BOTH sides -- ``yes_bid <= EMPTY_BOOK_MAX_BID`` and
-         ``yes_ask >= EMPTY_BOOK_MIN_ASK``, so the quote bounds nothing, and
+      2. the quote bounds NOTHING -- its spread is at least
+         ``EMPTY_BOOK_MIN_SPREAD``, so no price inside it is constrained, and
       3. the stored probability sits ON that book's midpoint, within
          ``EMPTY_BOOK_MIDPOINT_TOLERANCE``.
+
+    Condition 2 was written as two separate bounds (``yes_bid <= EMPTY_BOOK_MAX_BID``
+    AND ``yes_ask >= EMPTY_BOOK_MIN_ASK``) until #6727. The spread form is what those
+    two were jointly asserting, it is a strict superset of them (measured: 0 of 132,550
+    rows lost), and it closes the case they could not see -- a book one cent less
+    extreme on one side and more than compensated on the other, like the 0.01/0.94 that
+    printed "Milwaukee Bucks 48%" beside four correctly-refused legs. See the constants
+    above for why this is a shape change and not a widening, and for the reason it
+    cannot drop the band's floor the way moving the ask bound would.
 
     Condition 3 is not decoration. A both-extremes book whose price is far from its
     midpoint got that price from a real trade (Kalshi falls back to ``last_price`` on a
@@ -300,14 +410,32 @@ def is_empty_book_midpoint(
     honest longshot lines. Both-null (a model price: DataGolf, odds_api, a derived
     complement) has no book at all and is passed through untouched.
 
-    Callers refuse to SERVE the outcome rather than rewriting it; read-side only
-    (gotcha #21), and nothing here mutates a stored price.
+    THIS HELPER IS NO LONGER READ-SIDE ONLY, and the prose saying so was stale from
+    #6676 until CERT-3015 named it (follow-up
+    ``6676-UPDATE-SHARED-PREDICATE-DOCSTRING-FOR-WRITER-CONSUMER``). There are five
+    consumers in two classes, and they differ in what refusal MEANS:
+
+      * READ side -- ``routes/events.py`` (``game-markets`` and the search slice) and
+        ``routes/futures.py`` (the grouped feed). These refuse to SERVE the outcome;
+        nothing is rewritten and no stored price is mutated (gotcha #21).
+      * WRITE side -- ``tasks/polymarket.py``, at
+        ``_resolve_market_probability_with_source`` and ``_parent_outcome_data``.
+        These DECLINE THE UPSERT, so the row is never written in the first place.
+
+    The consequence worth knowing before changing anything here: the write side is
+    forward-only. Widening this predicate does not shrink the STORED class -- existing
+    rows stay and go stale -- so an after-check that expects the stored count to fall
+    is measuring the wrong thing. The read side is what a person sees change, and it
+    changes the moment the release is live.
     """
     if probability is None or yes_bid is None or yes_ask is None:
         return False
     bid = float(yes_bid)
     ask = float(yes_ask)
-    if bid > EMPTY_BOOK_MAX_BID or ask < EMPTY_BOOK_MIN_ASK:
+    # Rounded so the compare does not depend on how the bound was spelled: against a
+    # literal 0.90 an unrounded `>=` refuses 234 genuine 90c books including the
+    # exact-threshold 0.05/0.95. 4dp is exact for these Numeric(5,4) columns.
+    if round(ask - bid, _BOOK_PRICE_DECIMALS) < EMPTY_BOOK_MIN_SPREAD:
         return False
     return abs(float(probability) - (bid + ask) / 2) <= EMPTY_BOOK_MIDPOINT_TOLERANCE
 

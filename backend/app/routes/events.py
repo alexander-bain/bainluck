@@ -22884,7 +22884,9 @@ def _leg_prices_an_empty_book(outcome) -> bool:
     predicate's `EMPTY_BOOK_MAX_BID` bound did not reach was #5333, and #5333
     landed: the bound is 0.05 on its own measurement and this call site inherited
     the widening without a line changing here, which is what delegating to one
-    named predicate buys.
+    named predicate buys. #6727 then replaced the two bounds with the one statement
+    they were jointly making -- the spread -- and this call site inherited that the
+    same way.
 
     🪤 IT DOES NOT FOLLOW THAT EVERY WITHDRAWN LEG WAS NEVER TRADED. The predicate
     reads three columns and there is no provenance column on the serve path, so a
@@ -23038,6 +23040,13 @@ def _build_search_top_outcomes(
     # 0.05 on its own measurement now, so the promoted rung is dropped here too and
     # the slice reaches further down the honest ladder. Nothing on this line changed
     # to get that: the constant lives in one place and every call site moved with it.
+    #
+    # #6727 IS THE SAME STORY ON THE ASK SIDE, and this very card is its specimen:
+    # after the above landed, `Milwaukee Bucks 48%` on 0.01 / 0.94 was left standing
+    # beside four honest rows, one cent outside `EMPTY_BOOK_MIN_ASK`. The predicate
+    # now asks whether the quote bounds anything at all (spread >= 0.90) instead of
+    # testing each side against its own bound. This line did not change for that
+    # either.
     real = [o for o in real if not _leg_prices_an_empty_book(o)]
     # #6327: a market where NOTHING is priced draws a ranked ladder of dashes —
     # sixteen rungs, an order implying a favourite, and not one number. Measured

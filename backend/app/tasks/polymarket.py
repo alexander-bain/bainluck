@@ -4025,8 +4025,9 @@ def _resolve_market_probability_with_source(market) -> tuple[float | None, str |
     #   is_fabricated_midpoint  wide book coverage (spread >= 0.20), razor tolerance
     #                           (0.0005) — catches the 206 of 209 wide-book markets
     #                           that sat EXACTLY on their midpoint in the 03:41Z scan.
-    #   is_empty_book_midpoint  narrow book coverage (bid <= 0.02 AND ask >= 0.95),
-    #                           generous tolerance (0.01) — written for #5247's
+    #   is_empty_book_midpoint  a quote that bounds nothing (spread >= 0.90 since
+    #                           #6727; two bounds, bid <= 0.05 AND ask >= 0.95,
+    #                           before it), generous tolerance (0.01) — for #5247's
     #                           "a venue's own mid is not obliged to be the exact
     #                           arithmetic mean of the two sides it reports".
     #
@@ -4038,8 +4039,15 @@ def _resolve_market_probability_with_source(market) -> tuple[float | None, str |
     # on its own measurement, so the live specimen above — 0.5 on 0.03 / 0.98 — is now
     # refused here rather than written. Nothing in THIS block changed; the constant is
     # imported, and `feed_market_quality` carries the measurement, the derived band
-    # [0.465, 0.535] and the cost. The tests that pinned the escape open have flipped,
-    # which is how #5333 was required to announce itself.
+    # and the cost. The tests that pinned the escape open have flipped, which is how
+    # #5333 was required to announce itself.
+    #
+    # #6727 THEN CLOSED THE ASK SIDE BY CHANGING SHAPE (same day): the two bounds are
+    # one statement about the spread, so the pair became `ask - bid >= 0.90` — a
+    # strict superset (0 of 132,550 production rows lost) that also catches the
+    # compensated book the pair could not see, e.g. 0.01 / 0.94. Again nothing in
+    # THIS block changed. The band it can reach is [0.44, 0.56] and, because the
+    # spread ties the two sides together, it cannot widen further at any ask.
     #
     # A traded 50% still survives HERE, and the mechanism is a substitution, not a
     # keep: the volume-gated exception below runs after this test and returns

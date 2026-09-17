@@ -53,6 +53,17 @@ no provenance column and this is a pure function of three. The honest sentence f
 the serve surfaces is "no current quote supports this number" — never "this number
 was never real".
 
+═══ AMENDED BY #6727 (same day, after this shipped) ═══
+
+The derived band quoted above, [0.465, 0.535], is #5333's. #6727 replaced the pair of
+bounds with the single statement they were jointly making — `ask - bid >= 0.90` — after
+a 0.01/0.94 book printed "Milwaukee Bucks 48%" one cent outside `EMPTY_BOOK_MIN_ASK`.
+That is a strict superset (0 of 132,550 production rows lost), so every acceptance case
+below still holds and #5333's ship is untouched; the band it can now reach is
+[0.44, 0.56], and the boundary tests in this file that read "one cent past the BID bound
+is kept" were restated against the spread, each with the reason at the assertion. The
+narrative above is left as #5333 wrote it.
+
 RED-FIRST, with the constant reverted to 0.02 and nothing else touched: **17
 failed, 14 passed, exit 1** (fixed: 31 passed, exit 0). The 14 that pass unfixed
 are the survival controls and the two writer-side traded-50% cases — they are
@@ -77,6 +88,7 @@ from app.utils.feed_market_quality import (
     EMPTY_BOOK_MAX_BID,
     EMPTY_BOOK_MIDPOINT_TOLERANCE,
     EMPTY_BOOK_MIN_ASK,
+    EMPTY_BOOK_MIN_SPREAD,
     is_empty_book_midpoint,
 )
 
@@ -385,11 +397,22 @@ class TestTheBound:
     def test_the_constant_is_five_cents(self):
         assert EMPTY_BOOK_MAX_BID == 0.05
 
-    def test_the_bound_is_inclusive_and_the_next_cent_is_out(self):
+    def test_the_bound_is_inclusive_and_the_next_cent_of_SPREAD_is_out(self):
         """Both rows sit exactly on their own midpoint, so the tolerance cannot be
-        what separates them — only the bid bound can."""
+        what separates them — only the book's width can.
+
+        #6727 amended the second row. It was `0.06/0.97 is False` — one cent past the
+        bid bound, kept although the book is 91 cents wide. The separator is the
+        spread now, so the pair is restated at one cent of spread either side of it.
+        A 0.05 bid still stands for #5333's own ship: it is refused at 0.95, which is
+        the widest ask the 2c-era bound would ever have been paired with.
+        """
+        assert is_empty_book_midpoint((0.05 + 0.95) / 2, 0.05, 0.95) is True
         assert is_empty_book_midpoint((0.05 + 0.97) / 2, 0.05, 0.97) is True
-        assert is_empty_book_midpoint((0.06 + 0.97) / 2, 0.06, 0.97) is False
+        # one cent of spread short — kept, and it is the width doing the keeping
+        assert is_empty_book_midpoint((0.06 + 0.95) / 2, 0.06, 0.95) is False
+        # ...the same 6c bid against one more cent of ask is refused
+        assert is_empty_book_midpoint((0.06 + 0.96) / 2, 0.06, 0.96) is True
 
     def test_the_reach_is_still_confined_to_the_coin_flip_band(self):
         """THE SAFETY PROPERTY at the new constant. Derived, then swept.
@@ -398,9 +421,11 @@ class TestTheBound:
         constant move is exactly the edit that can break it, and a ship that moves
         a constant should carry its own proof rather than borrow one.
         """
-        band_lo = EMPTY_BOOK_MIN_ASK / 2 - EMPTY_BOOK_MIDPOINT_TOLERANCE
-        band_hi = (EMPTY_BOOK_MAX_BID + 1.0) / 2 + EMPTY_BOOK_MIDPOINT_TOLERANCE
-        assert (band_lo, band_hi) == pytest.approx((0.465, 0.535))
+        # Re-derived off the spread by #6727; see that ship's band test for why the
+        # spread form is the one that cannot drop the floor.
+        band_lo = EMPTY_BOOK_MIN_SPREAD / 2 - EMPTY_BOOK_MIDPOINT_TOLERANCE
+        band_hi = (1.0 - EMPTY_BOOK_MIN_SPREAD / 2) + EMPTY_BOOK_MIDPOINT_TOLERANCE
+        assert (band_lo, band_hi) == pytest.approx((0.44, 0.56))
 
         for bid_c in range(0, 26):
             for ask_c in range(0, 101):
@@ -415,13 +440,13 @@ class TestTheBound:
     def test_the_measured_cohort_sits_inside_the_band_with_headroom(self):
         """0.490 - 0.525 measured, against a band top of 0.535. A cohort pressed
         against its own bound is a cohort that will spill past it next week."""
-        band_hi = (EMPTY_BOOK_MAX_BID + 1.0) / 2 + EMPTY_BOOK_MIDPOINT_TOLERANCE
+        band_hi = (1.0 - EMPTY_BOOK_MIN_SPREAD / 2) + EMPTY_BOOK_MIDPOINT_TOLERANCE
         assert 0.525 < band_hi
         assert band_hi - 0.525 >= 0.01
 
     def test_the_honest_lines_are_outside_the_band_by_construction(self):
-        band_lo = EMPTY_BOOK_MIN_ASK / 2 - EMPTY_BOOK_MIDPOINT_TOLERANCE
-        band_hi = (EMPTY_BOOK_MAX_BID + 1.0) / 2 + EMPTY_BOOK_MIDPOINT_TOLERANCE
+        band_lo = EMPTY_BOOK_MIN_SPREAD / 2 - EMPTY_BOOK_MIDPOINT_TOLERANCE
+        band_hi = (1.0 - EMPTY_BOOK_MIN_SPREAD / 2) + EMPTY_BOOK_MIDPOINT_TOLERANCE
         for real_price in (0.76, 0.72, 0.89, 0.99, 0.78, 0.185, 0.28, 0.01):
             assert not (band_lo <= real_price <= band_hi), real_price
 
@@ -438,3 +463,4 @@ class TestTheBound:
             src = inspect.getsource(module)
             assert "EMPTY_BOOK_MAX_BID = " not in src, module.__name__
             assert "EMPTY_BOOK_MIN_ASK = " not in src, module.__name__
+            assert "EMPTY_BOOK_MIN_SPREAD = " not in src, module.__name__
