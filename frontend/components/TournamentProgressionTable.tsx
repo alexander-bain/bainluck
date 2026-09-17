@@ -406,7 +406,38 @@ export default function TournamentProgressionTable({
           onScroll={syncScrollAffordance}
           className="overflow-x-auto -mx-2 px-2"
         >
-          <table className="w-full border-collapse text-sm min-w-[500px]">
+          {/* NO FIXED PIXEL FLOOR ON THIS TABLE (#6722). It carried
+              `min-w-[500px]`, and a floor WIDER than the content does not
+              protect the data columns — it hands them to the Team column.
+              `table-layout: auto` distributes a table's surplus width across
+              columns in proportion to their existing widths, and the sticky
+              Team column is always the widest, so it takes the lion's share.
+              Measured on production at 390px (scroller clientW=350):
+
+                grid  cols  tableW  Team   first data col   row-1 numbers seen
+                nfl    4     542    148px  x=199            2 of 4
+                epl    3     500    182px  x=242            1 of 3
+                mls    2     500    211px  x=271            1 of 2
+                ucl    1     500    285px  x=345            0 of 1
+
+              Team's natural width is 148px — the name span is already capped
+              at `max-w-[104px]`. Every pixel above 148 is surplus the floor
+              manufactured, and the fewer data columns there are the more of it
+              lands on Team: +34 at three columns, +137 at one. At one column
+              that puts `Champion` at x=345 against a visible edge of 370, so
+              the Champions League grid asserted a ranking of 36 clubs and
+              showed a reader no quantity and no column name at all.
+
+              The floor was never what stopped columns cramping — auto layout
+              cannot shrink a table below its min-content width, which is why
+              NFL measures 542px at BOTH 320px and 390px with or without it.
+              Removing it is therefore a no-op wherever the content already
+              needs 500px (nfl: every field byte-identical) and a repair
+              wherever it does not (ucl overflow 166 -> 0, mls 166 -> 17,
+              epl 166 -> 69). Desktop is untouched: at 1280px the floor never
+              bound. If a column ever does need a floor, give it to THAT
+              column — a floor on the table is a floor on the widest cell. */}
+          <table className="w-full border-collapse text-sm">
             <thead ref={headRef}>
               <tr className="border-b border-white/10">
                 {/* Rank column */}
