@@ -1038,6 +1038,28 @@ jobs:
             exit 1
           fi
 
+      - name: "#6757 a no-result marker cannot protect an unsupported price (real Postgres)"
+        # `/futures/2951399` printed thirteen identical 49s on an open market
+        # resolving in 2027 because every leg carried `ungradeable_result` — the
+        # RETRACTION sentinel, "asserts no winner" — and #6757's grade exemption
+        # read any non-null `resolution_source` as a result to protect. This
+        # gate calls the real detail and history routes against seeded
+        # synthetic rows: the retracted empty-book midpoints are withheld, a
+        # retracted leg on a real quote keeps its price, and a genuinely
+        # settled field (api_settlement winner AND loser) keeps every result
+        # and its completed chart. The withheld-id union is NOT stubbed here,
+        # which is what a mock-session test cannot promise.
+        #
+        # Same skip-detection as every gate in this job.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_futures_no_result_price_exemption_6757_pg.py \
+            -v -rs 2>&1 | tee /tmp/no_result_6757.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/no_result_6757.txt; then
+            echo "::error::#6757 no-result exemption contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#5789 the #5621 repair cannot select a real game (real Postgres)"
         # The repair retires phantom NFL fantasy-points events. Its population
         # was "every event carrying a kxnflffpts market", which was the right
