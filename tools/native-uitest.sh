@@ -265,10 +265,23 @@ if [ -n "$REARM" ]; then
   export TEST_RUNNER_BL_UITEST_REARM_FIRST_RUN_GATES=1
 fi
 
+# Master's resolved SPM checkout (#117). A tree that has not been built here has
+# no package graph, and the two Firebase BINARY targets are zips from
+# dl.google.com that this sandbox cannot fetch — so the run dies EXIT 74 with
+# `Could not resolve package dependencies`, no 'All tests' summary, and the
+# verdict below correctly reports "the run did not reach the end". Measured
+# 2026-09-18 on the B16 snapshot worktree, and it is the reason the affected
+# interaction check for that candidate could not be run at all. Absent store ⇒
+# flag omitted, so a machine with egress resolves normally.
+SPM_STORE="${BAINLUCK_SPM_STORE:-$HOME/Library/Developer/Xcode/DerivedData/Bain_Luck-cwkxplfeuucvrvbplvqqlcgmpcgx/SourcePackages}"
+SPM_FLAGS=()
+[ -d "$SPM_STORE" ] && SPM_FLAGS=(-clonedSourcePackagesDirPath "$SPM_STORE")
+
 xcodebuild test \
   -project "$PROJECT" -scheme "$SCHEME" \
   -destination "id=$DEVICE" \
   ${ONLY_ARG[@]+"${ONLY_ARG[@]}"} \
+  ${SPM_FLAGS[@]+"${SPM_FLAGS[@]}"} \
   OTHER_SWIFT_FLAGS="$SWIFT_FLAGS" > "$LOG" 2>&1
 EXIT=$?
 echo "EXIT CODE: $EXIT   log: $LOG"
