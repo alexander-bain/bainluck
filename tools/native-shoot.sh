@@ -53,7 +53,10 @@
 #     -disableAutomaticPackageResolution \
 #     OTHER_SWIFT_FLAGS='$(inherited) -Xfrontend -disable-sandbox' build
 #
-# IF A SHOT COMES BACK WITH THE NOTIFICATION ALERT, ERASE AND RE-SHOOT — do not
+# IF A SHOT COMES BACK WITH THE NOTIFICATION ALERT, ERASE AND RE-SHOOT — on the
+# DISPOSABLE device this resolves by default, never on the reserved one (the
+# guard refuses it, exit 7). MEASURED 2026-09-18: erase + re-shoot cleared an
+# alert that had swallowed two `--scroll` shots in a row. Do not
 # conclude the suppression failed. `-suppress_notification_prompt` is checked at
 # the single call site (`Bain_LuckApp` → `requestPermissionAfterDelay`) and there
 # is no other authorization request in the tree, but MEASURED over 8 shoots on
@@ -80,7 +83,13 @@
 # against the newest Swift source in the tree. A source newer than the binary is
 # a REFUSAL, not a warning (`--allow-stale` overrides and says so in the output).
 set -u
-SIM="${NATIVE_SHOOT_SIM:-76D961F0-8575-479F-ABCE-652D8A79DBF9}"   # iPhone 17 — PIN IT, `booted` picks the iPad
+. "$(dirname "$0")/reserved-sim-guard.sh"
+# PIN IT — `booted` picks the iPad. The default used to BE the reserved device
+# (76D961F0), which made this tool's own "ERASE AND RE-SHOOT" remedy destroy
+# Alex's row-19 evidence; it now resolves a disposable iPhone of the same model.
+SIM="${NATIVE_SHOOT_SIM:-$(bl_default_shoot_sim)}"
+: "${SIM:?no disposable iPhone simulator available — set NATIVE_SHOOT_SIM}"
+bl_refuse_reserved_sim "$SIM" native-shoot.sh
 BUNDLE=com.bainluck.Bain-Luck
 OUT="${NATIVE_SHOOT_OUT:-/Users/bain/bainluck-dev/native/artifacts-native-020}"
 DERIVED="${NATIVE_SHOOT_DERIVED:-$HOME/Library/Developer/Xcode/DerivedData}"

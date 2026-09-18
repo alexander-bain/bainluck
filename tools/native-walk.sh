@@ -164,6 +164,11 @@ esac
 
 DEV="${1:?device udid}"
 OUT="${2:?output png path}"
+
+# The udid arrives from the caller, so the caller can hand us Alex's reserved
+# device by copy-paste. This walk installs and launches; refuse it here too.
+. "$(dirname "$0")/reserved-sim-guard.sh"
+bl_refuse_reserved_sim "$DEV" native-walk.sh
 ROUTE="${3:-}"
 SCROLL="${4:-}"
 
