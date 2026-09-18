@@ -4902,13 +4902,43 @@ async def _sync_polymarket_resolved_status():
     _TIME_BUDGET_S = 600.0
     _deadline = _time.monotonic() + _TIME_BUDGET_S
 
+    #: #6919. Path-door recoveries allowed per run — one HTTP call each, against
+    #: a walk that already saturates its wall budget (`swept_full_population`
+    #: read false on 2026-09-18 with 4,000 of 18,692 events swept). The refused
+    #: population measured 26 ids in a 12,700-id run, so this is ~4x headroom
+    #: over the observed rate and still a hard stop if that rate ever changes.
+    #: Exhausting it is not silent: the remainder lands in
+    #: `events_path_door_unattempted` and the next run's cursor walks past them
+    #: again, which is exactly the state this counter exists to make visible.
+    _PATH_DOOR_MAX_PER_RUN = 100
+    _path_door_budget = _PATH_DOOR_MAX_PER_RUN
+
     stats = {
         "events_requested": 0,
         "events_returned": 0,
         # Requested ids Gamma did not answer for. A real signal now, and only
         # now: `get_events_by_ids` sends an explicit `limit`, so a short page no
         # longer means "the batch was silently truncated" (gotcha #53).
+        #
+        # #6919: it is still not the VENUE's absence. It is the LIST door's, and
+        # the path door answers for the same id — see the recovery arm below.
+        # The three counters that follow PARTITION this one:
+        # `events_not_found` == recovered_via_path_door + absent_at_path_door
+        #                       + path_door_unattempted (+ any id whose retry
+        #                       errored, which lands in `errors`).
         "events_not_found": 0,
+        # Ids the list door refused and `/events/{id}` answered for. This is the
+        # population that was previously unreachable by this task at any cadence.
+        "events_recovered_via_path_door": 0,
+        # Ids BOTH doors refused — a genuine 404. "The venue does not know this
+        # id" and "we asked the wrong door" are different findings and must
+        # never share a counter (gotcha #53), which is the whole reason this
+        # arm exists at all.
+        "events_absent_at_path_door": 0,
+        # Refused ids the recovery arm never got to, because the per-run cap or
+        # the wall deadline stopped it. A non-zero value here means the run's
+        # `events_absent_at_path_door` is a floor, not a census.
+        "events_path_door_unattempted": 0,
         # Events Gamma returned with every leg still trading. Not a failure —
         # the long-horizon-futures class — but it must be visible, because a run
         # where this is the whole population resolved nothing for a good reason
@@ -5156,6 +5186,70 @@ async def _sync_polymarket_resolved_status():
 
             stats["events_returned"] += len(raw_events)
             stats["events_not_found"] += len(batch_ids) - len(raw_events)
+
+            # --- #6919: the refused ids, re-asked at the door that answers ---
+            #
+            # MEASURED 2026-09-18 against live Gamma. `/events?id=744619` returns
+            # `[]` — bare, with `active=false`, and with `closed=true&active=false`
+            # — while `/events/744619` returns 200 with the full nested payload,
+            # `closed: true`, and four legs quoting terminal prices. Same for
+            # 792826. So an id in `events_not_found` above is not an id the venue
+            # has forgotten; it is an id we asked the wrong door about, and for
+            # the markets behind it this task is not slow, it is BLIND — no
+            # cadence, no budget and no cursor position can ever reach them.
+            #
+            # The cost of the blindness, measured the same morning: of eighteen
+            # wholly-settled Polymarket markets still carried `open`, eleven
+            # drained inside a single run of this task and the remaining SEVEN
+            # were exactly the markets of those two events — including the four
+            # "Will there be N hurricanes during the Atlantic Hurricane Season in
+            # 2026?" questions a reader still meets on search, priced "No 100%",
+            # 51 days after the venue closed the book.
+            #
+            # `settled_legs` accepts the path payload unchanged (verified on both
+            # specimens: 744619 -> 4 settled / 0 open, 792826 -> 14 settled / 7
+            # open), so recovered events join `raw_events` and every downstream
+            # rule — the per-leg closed test, the mixed-children guard, the
+            # winner-proof split — applies to them exactly as written.
+            #
+            # Bounded three ways, because this arm is one HTTP call per id and
+            # the batch walk is already wall-limited: a per-run cap, the same
+            # `_deadline` the walk yields to, and a 429 that stops the arm for
+            # the rest of the run rather than spending the budget on refusals.
+            # What it never does is guess: an id both doors refuse is a genuine
+            # absence and is counted as one.
+            _missing = [
+                eid for eid in batch_ids
+                if str(eid) not in {str(r.get("id")) for r in raw_events}
+            ]
+            for _eid in _missing:
+                if _path_door_budget <= 0 or _time.monotonic() >= _deadline:
+                    stats["events_path_door_unattempted"] += 1
+                    continue
+                _path_door_budget -= 1
+                try:
+                    _recovered = await service.get_event_by_id(str(_eid))
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 429:
+                        # Spend nothing further on a door that is refusing us;
+                        # the batch walk keeps its own 429 handling above.
+                        stats["errors"].append(
+                            f"path door rate_limited at event {_eid}"
+                        )
+                        _path_door_budget = 0
+                        continue
+                    stats["errors"].append(
+                        f"path door event {_eid}: HTTP {e.response.status_code}"
+                    )
+                    continue
+                except Exception as e:  # one bad id never wipes the run (#42)
+                    stats["errors"].append(f"path door event {_eid}: {e}")
+                    continue
+                if _recovered is None:
+                    stats["events_absent_at_path_door"] += 1
+                    continue
+                stats["events_recovered_via_path_door"] += 1
+                raw_events = [*raw_events, _recovered]
 
             # --- what the venue says is over, leg by leg --------------------
             settled_cids: list[str] = []

@@ -284,12 +284,26 @@ class _Harness:
     id off it, and fails on the defect.
     """
 
-    def __init__(self, events):
+    def __init__(self, events, list_door_refuses=(), path_door_absent=(),
+                 path_door_raises=None):
         self.events = list(events)
         self.by_id = {str(e["id"]): e for e in self.events}
         self.statements = []
         self.paged_calls = []
         self.id_calls = []
+        # #6919. Ids the LIST door (`/events?id=`) answers `[]` for. Measured
+        # live 2026-09-18 on 744619 and 792826: bare, `active=false` and
+        # `closed=true&active=false` all return an empty array while
+        # `/events/{id}` returns 200 with the full payload. The refusal is the
+        # door's, not the venue's, and it is invisible to every other guard in
+        # this file because the old fake answered for every id it knew.
+        self.list_door_refuses = {str(i) for i in list_door_refuses}
+        #: Ids BOTH doors refuse — a genuine 404, which `get_event_by_id`
+        #: reports as `None`.
+        self.path_door_absent = {str(i) for i in path_door_absent}
+        #: An exception the path door raises instead of answering.
+        self.path_door_raises = path_door_raises
+        self.path_calls = []
 
     def install(self, monkeypatch, open_count=5, stale_open=32090):
         monkeypatch.setattr(
@@ -354,7 +368,18 @@ class _Harness:
                     harness.by_id[str(i)]
                     for i in event_ids
                     if str(i) in harness.by_id
+                    and str(i) not in harness.list_door_refuses
                 ]
+
+            async def get_event_by_id(self, event_id):
+                # The path door. `None` means 404 — the one case the real
+                # method collapses, and the only one (gotcha #36).
+                harness.path_calls.append(str(event_id))
+                if harness.path_door_raises is not None:
+                    raise harness.path_door_raises
+                if str(event_id) in harness.path_door_absent:
+                    return None
+                return harness.by_id.get(str(event_id))
 
             async def close(self):
                 return None
@@ -786,3 +811,200 @@ class TestTheNeedleNeverPutsAnExceptionOnTheWire:
 
         assert out["stale_open"] == 32090, out
         assert out["issue"] == 2637, out
+
+
+#: #6919 — an event the LIST door refuses. Its shape is 744619's, reduced:
+#: every leg over, quoting terminal prices, on an event the venue marked closed
+#: 51 days before we measured it. Our five rows for it were still `open`.
+REFUSED_SETTLED_EVENT = {
+    "id": "744619",
+    "closed": True,
+    "markets": [
+        {
+            "conditionId": "0xhurricane13",
+            "closed": True,
+            "outcomePrices": '["0", "1"]',
+        },
+        {
+            "conditionId": "0xhurricane46",
+            "closed": True,
+            "outcomePrices": '["0", "1"]',
+        },
+    ],
+}
+
+
+@pytest.mark.asyncio
+class TestAnIdTheListDoorRefusesIsAskedAtTheDoorThatAnswers:
+    """#6919 — `events_not_found` was a false absence, and it was the WHOLE
+    residue.
+
+    `get_events_by_ids` asks `/events?id=..`. Measured against live Gamma on
+    2026-09-18, that door answers `[]` for event 744619 under every filter
+    combination tried (bare, `active=false`, `closed=true&active=false`) while
+    `/events/744619` answers 200 with the full nested payload, `closed: true`
+    and four legs quoting `["0","1"]`. Same for 792826. The ids therefore landed
+    in `events_not_found` — a counter whose own comment reasons carefully about
+    truncation and never about the door — and the markets behind them could not
+    be resolved by this task at ANY cadence, cursor position or budget.
+
+    The cost, measured the same morning: of eighteen wholly-settled Polymarket
+    markets carried `open`, eleven drained inside ONE run of this task and the
+    remaining SEVEN were exactly those two events' markets — among them the four
+    "Will there be N hurricanes during the Atlantic Hurricane Season in 2026?"
+    questions a reader still met on search, priced "No 100%", 51 days after the
+    venue closed the book.
+
+    These guards are written against the pre-fix tree, where the recovery arm
+    does not exist: the refused event is simply never resolved and the counters
+    are absent from `stats` (KeyError), so each one fails on the defect rather
+    than on a missing helper (ruling 050).
+    """
+
+    async def test_the_refused_event_is_resolved_after_all(self, monkeypatch):
+        """THE guard. The list door says nothing; the path door has it."""
+        h = _Harness(
+            [REFUSED_SETTLED_EVENT], list_door_refuses=["744619"]
+        ).install(monkeypatch)
+
+        stats = await poly_mod._sync_polymarket_resolved_status()
+
+        assert h.path_calls == ["744619"], (
+            "the id the list door refused was never re-asked at the path "
+            f"door; path_calls={h.path_calls}"
+        )
+        assert h.resolve_params, (
+            "an event whose every leg the venue closed was left open, because "
+            "the only door we asked returned an empty array"
+        )
+        assert sorted(h.resolve_params[0]["raw_cids"]) == [
+            "0xhurricane13",
+            "0xhurricane46",
+        ], h.resolve_params[0]["raw_cids"]
+        assert stats["events_recovered_via_path_door"] == 1, stats
+
+    async def test_an_id_both_doors_refuse_is_an_absence_not_a_recovery(
+        self, monkeypatch
+    ):
+        """The counter split that is the point of the arm.
+
+        "We asked the wrong door" and "the venue does not know this id" are
+        different findings. Folding them into one number is what hid this for as
+        long as it was hidden (gotcha #53), so a genuine 404 must land in its
+        own counter and resolve nothing.
+        """
+        h = _Harness(
+            [REFUSED_SETTLED_EVENT],
+            list_door_refuses=["744619"],
+            path_door_absent=["744619"],
+        ).install(monkeypatch)
+
+        stats = await poly_mod._sync_polymarket_resolved_status()
+
+        assert h.path_calls == ["744619"], h.path_calls
+        assert stats["events_absent_at_path_door"] == 1, stats
+        assert stats["events_recovered_via_path_door"] == 0, stats
+        assert h.resolve_params == [], (
+            "a market was resolved on an id NEITHER door answered for; "
+            f"params={h.resolve_params}"
+        )
+
+    async def test_a_recovered_event_still_obeys_the_per_leg_closed_test(
+        self, monkeypatch
+    ):
+        """A recovered payload is not a privileged one.
+
+        The whole risk of adding a second door is that its answers skip the
+        rules the first door's answers pass through. So the mixed event — one
+        leg over, one still quoting 0.535/0.465 — is served ONLY at the path
+        door here, and the trading leg must still be excluded and the parent
+        still withheld, exactly as `test_a_live_leg_is_never_marked_resolved`
+        and the children guard require of a list-door answer.
+        """
+        h = _Harness([MIXED_EVENT], list_door_refuses=["92611"]).install(
+            monkeypatch
+        )
+
+        stats = await poly_mod._sync_polymarket_resolved_status()
+
+        assert stats["events_recovered_via_path_door"] == 1, stats
+        assert h.resolve_params, "the recovered event resolved nothing at all"
+        params = h.resolve_params[0]
+        assert params["raw_cids"] == ["0xsettled"], params["raw_cids"]
+        assert "0xtrading" in params["open_cids"], (
+            "the still-trading leg of a RECOVERED event did not reach the "
+            "mixed-children guard, so a payload that came in the second door "
+            f"skipped a rule the first door's answers obey; params={params}"
+        )
+        assert "0xtrading_yes" in params["open_cids"], params["open_cids"]
+        assert "0xsettled" not in params["open_cids"], params["open_cids"]
+        assert stats["open_legs_seen"] == 1, stats
+
+    async def test_the_arm_is_capped_and_says_so_when_it_runs_out(
+        self, monkeypatch
+    ):
+        """One HTTP call per refused id, against a walk that already saturates
+        its wall budget. The cap is therefore load-bearing — and exhausting it
+        must be legible, or a later run's `events_absent_at_path_door` reads as
+        a census when it is a floor.
+        """
+        many = [
+            {
+                "id": str(900000 + i),
+                "closed": True,
+                "markets": [
+                    {
+                        "conditionId": f"0xcap{i}",
+                        "closed": True,
+                        "outcomePrices": '["1", "0"]',
+                    }
+                ],
+            }
+            for i in range(120)
+        ]
+        refused = [e["id"] for e in many]
+        h = _Harness(many, list_door_refuses=refused).install(monkeypatch)
+
+        stats = await poly_mod._sync_polymarket_resolved_status()
+
+        assert len(h.path_calls) == 100, (
+            "the recovery arm made an unbounded number of calls; "
+            f"n={len(h.path_calls)}"
+        )
+        assert stats["events_recovered_via_path_door"] == 100, stats
+        assert stats["events_path_door_unattempted"] == 20, (
+            "the ids the cap skipped were not reported, so the run's absence "
+            f"counters read as a census; stats={stats}"
+        )
+
+    async def test_a_429_stops_the_arm_without_wiping_the_run(
+        self, monkeypatch
+    ):
+        """A door that is refusing us must not have the rest of the budget
+        spent on it, and one bad id must never wipe the pass (gotcha #42).
+        """
+        import httpx as _httpx
+
+        boom = _httpx.HTTPStatusError(
+            "rate limited",
+            request=_httpx.Request("GET", "https://gamma/events/1"),
+            response=_httpx.Response(429),
+        )
+        events = [REFUSED_SETTLED_EVENT, {**MIXED_EVENT, "id": "92611"}]
+        h = _Harness(
+            events,
+            list_door_refuses=["744619", "92611"],
+            path_door_raises=boom,
+        ).install(monkeypatch)
+
+        stats = await poly_mod._sync_polymarket_resolved_status()
+
+        assert len(h.path_calls) == 1, (
+            "the arm kept calling a door that answered 429; "
+            f"path_calls={h.path_calls}"
+        )
+        assert any("rate_limited" in e for e in stats["errors"]), stats
+        assert stats["events_recovered_via_path_door"] == 0, stats
+        assert "unresolved_before" in stats, (
+            "a 429 at the path door aborted the whole run; stats=%s" % stats
+        )
