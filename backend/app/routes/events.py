@@ -20137,6 +20137,120 @@ async def _end_cap_hides_every_point(db, event_id: int, end_cap) -> bool:
     return earliest_odds is not None and earliest_odds > end_cap
 
 
+#: The pre-window half of the odds read — everything banked BEFORE the span the
+#: chart draws. 3,000 is the number the single shared cap carried before #6921,
+#: kept here deliberately: applied to this population alone it preserves, row
+#: for row, what the old query served, so the split can only ever add.
+EVENT_HISTORY_PRE_WINDOW_SNAPSHOT_CAP = 3000
+
+#: The in-window half — the game itself. Measured on production 2026-09-18 over
+#: the five heaviest completed events of the preceding four days, the largest
+#: in-window population was 2,254 rows (MLB 15313117); NFL sat at 1,722–1,746.
+#: 6,000 is 2.7x the worst observed. The whole uncapped read of the single
+#: heaviest event in that window (14638896, 6,885 rows) planned at 52 ms,
+#: entirely from shared buffers, 0 disk reads — so this ceiling is a guard
+#: against a runaway writer, not a latency tax anyone is currently paying.
+EVENT_HISTORY_IN_WINDOW_SNAPSHOT_CAP = 6000
+
+
+async def _snapshots_with_split_budget(
+    db,
+    base_query,
+    *,
+    split_at,
+    pre_window_extra=None,
+):
+    """Read odds snapshots giving the rows the chart draws a budget of their own.
+
+    #6921. Every odds read on this route used to be one statement —
+    ``ORDER BY captured_at LIMIT 3000`` — and ascending-plus-LIMIT keeps the
+    OLDEST 3,000 rows and drops the newest. On a marquee fixture the oldest rows
+    are months of pre-season line drift and the newest rows are the game, so the
+    cap deleted exactly the half a reader came for. Measured on production
+    2026-09-18, against the served payload and not a model of it:
+
+        14638896  NFL, completed    6,885 rows  5,163 of them pre-kickoff
+                  -> the 3,000 kept were ALL pre-kickoff; the chart carried
+                     ONE point inside its own rendered axis, and every one of
+                     its 18 sportsbook series ended 2026-08-26, three weeks
+                     before the game it is a chart of.
+        14638444  NFL, completed    3,957 rows  2,211 pre-kickoff
+                  -> 79 of 732 points in-axis; both DraftKings and FanDuel
+                     stop dead at 01:36Z on a game that ran to 03:30Z.
+        15297681  EPL, completed    3,164 rows  2,928 pre-kickoff
+                  -> 17 in-axis on a 19:00 kickoff; the line dies at 19:16Z.
+
+    And it is not only a settled-page defect: the live/scheduled branch windows
+    at ``now - hours`` with ``hours=48`` from the event page, and two MLB games
+    in the same four days banked 3,078 and 3,030 rows inside that window — so a
+    LIVE chart can lose its own leading edge, which is worse.
+
+    🔴 The fix is NOT to flip the sort to DESC. The chart's "All" range renders
+    every point it is handed (``OddsChart.filteredHistory`` returns ``history``
+    untouched when ``timeRange === "all"``), so the opening line and the
+    pre-match drift are drawn, not dead weight. DESC would repair the game by
+    deleting the season.
+
+    So the budget is split instead of shared: rows at or after ``split_at`` —
+    the span the chart draws — are read on their own ceiling and can no longer
+    be crowded out by rows before it. The property that makes this safe to ship
+    is that it is purely ADDITIVE; no row served today stops being served.
+    Proof, for a population P and today's rule "first 3,000 of P by time":
+
+      * |P before split| >= 3,000 -> today served the first 3,000 of the pre
+        population and nothing else. The pre read here has the same ORDER BY,
+        the same ceiling and the same population, so it returns that identical
+        set, and the in-window read is added on top.
+      * |P before split| = k < 3,000 -> today served all k pre rows plus the
+        first 3,000-k in-window rows. Here the pre read returns all k (k is
+        under its ceiling) and the in-window read returns the first 6,000,
+        which contains those 3,000-k.
+
+    ``split_at`` of None means the caller has no trustworthy boundary (an event
+    with no ``commence_time``). There is nothing to split on, so it degrades to
+    the single read it replaced — at the SUM of the two ceilings, which keeps
+    the additive property rather than quietly re-imposing the old cap.
+
+    ``pre_window_extra`` is for the live branch, whose pre-window rows are not
+    "everything older" but the narrower set the old OR admitted: a snapshot
+    banked before the cutoff that was still valid inside it.
+    """
+    if split_at is None:
+        result = await db.execute(
+            base_query.order_by(OddsSnapshot.captured_at).limit(
+                EVENT_HISTORY_PRE_WINDOW_SNAPSHOT_CAP
+                + EVENT_HISTORY_IN_WINDOW_SNAPSHOT_CAP
+            )
+        )
+        return list(result.scalars().all())
+
+    pre_query = base_query.where(OddsSnapshot.captured_at < split_at)
+    if pre_window_extra is not None:
+        pre_query = pre_query.where(pre_window_extra)
+    pre_rows = (
+        await db.execute(
+            pre_query.order_by(OddsSnapshot.captured_at).limit(
+                EVENT_HISTORY_PRE_WINDOW_SNAPSHOT_CAP
+            )
+        )
+    ).scalars().all()
+
+    in_rows = (
+        await db.execute(
+            base_query.where(OddsSnapshot.captured_at >= split_at)
+            .order_by(OddsSnapshot.captured_at)
+            .limit(EVENT_HISTORY_IN_WINDOW_SNAPSHOT_CAP)
+        )
+    ).scalars().all()
+
+    # Re-sorted rather than concatenated. Both halves come back ascending and
+    # the two ranges cannot interleave, so `pre + in` is already ordered — but
+    # every consumer below (the minute grouping, `history[0]`/`history[-1]` for
+    # the axis) reads this list positionally, and a sort that costs nothing is
+    # cheaper than a reader having to re-derive that argument.
+    return sorted([*pre_rows, *in_rows], key=lambda s: s.captured_at)
+
+
 def _event_started_long_ago_unsettled(event, now, hours: int) -> bool:
     """An event whose start is older than the whole requested window, still open.
 
@@ -20721,11 +20835,18 @@ async def get_event_odds_history(
     if is_stale_open:
         # No cutoff and no end cap — see `_event_started_long_ago_unsettled` on
         # why `commence_time` cannot be trusted to bound this cohort.
-        result = await db.execute(
-            select(OddsSnapshot)
-            .where(OddsSnapshot.event_id.in_(series_event_ids))
-            .order_by(OddsSnapshot.captured_at)
-            .limit(3000)
+        #
+        # #6921 splits the read budget all the same. `commence_time` is a
+        # placeholder here and so is a poor BOUND, but a split point is not a
+        # bound: a wrong one only mis-allocates budget between two reads whose
+        # union is a superset of the single read it replaced, and it cannot hide
+        # a row (see `_snapshots_with_split_budget` on why this is additive).
+        snapshots_override = await _snapshots_with_split_budget(
+            db,
+            select(OddsSnapshot).where(
+                OddsSnapshot.event_id.in_(series_event_ids)
+            ),
+            split_at=event.commence_time,
         )
         cutoff = None
     elif is_finished:
@@ -20755,7 +20876,13 @@ async def get_event_odds_history(
         )
         if end_cap:
             query = query.where(OddsSnapshot.captured_at <= end_cap)
-        result = await db.execute(query.order_by(OddsSnapshot.captured_at).limit(3000))
+        # #6921: the game gets a budget of its own. `_domain_start` for a
+        # finished event is `commence_time`, so that is the boundary between the
+        # months of pre-season drift the "All" range compresses onto a few
+        # pixels and the span the chart is actually a chart of.
+        snapshots_override = await _snapshots_with_split_budget(
+            db, query, split_at=event.commence_time
+        )
         cutoff = None
 
         # live/068: a cap that lands before the first point is not trimming a
@@ -20771,7 +20898,6 @@ async def get_event_odds_history(
         # stale tail, which is the very thing the cap exists to prevent. Only the
         # commence-derived cap can be a placeholder artefact (gotcha #14), and
         # only it may be widened.
-        snapshots_override = result.scalars().all()
         if (
             end_cap is not None
             and not snapshots_override
@@ -20782,14 +20908,13 @@ async def get_event_odds_history(
             if await _end_cap_hides_every_point(db, event_id, end_cap):
                 end_cap = None
                 end_cap_relaxed = True
-                snapshots_override = (
-                    await db.execute(
-                        select(OddsSnapshot)
-                        .where(OddsSnapshot.event_id.in_(series_event_ids))
-                        .order_by(OddsSnapshot.captured_at)
-                        .limit(3000)
-                    )
-                ).scalars().all()
+                snapshots_override = await _snapshots_with_split_budget(
+                    db,
+                    select(OddsSnapshot).where(
+                        OddsSnapshot.event_id.in_(series_event_ids)
+                    ),
+                    split_at=event.commence_time,
+                )
     else:
         # Include snapshots where:
         # 1. captured_at >= cutoff (created within the window), OR
@@ -20797,32 +20922,29 @@ async def get_event_odds_history(
         # This ensures we show trend lines even when odds haven't changed for a while
         cutoff = now - timedelta(hours=hours)
 
-        result = await db.execute(
-            select(OddsSnapshot)
-            .where(
-                and_(
-                    OddsSnapshot.event_id.in_(series_event_ids),
-                    or_(
-                        # Case 1: Snapshot created within the time window
-                        OddsSnapshot.captured_at >= cutoff,
-                        # Case 2: Snapshot created before window but was valid during it
-                        and_(
-                            OddsSnapshot.captured_at < cutoff,
-                            or_(
-                                OddsSnapshot.valid_until >= cutoff,
-                                # Include if valid_until is NULL (snapshot never superseded)
-                                OddsSnapshot.valid_until.is_(None)
-                            )
-                        )
-                    )
-                )
-            )
-            .order_by(OddsSnapshot.captured_at)
-            .limit(3000)
+        # #6921. The same split, and this branch needs it MORE than the settled
+        # one, not less: `hours` is 48 from the event page, and two MLB games in
+        # the four days to 2026-09-18 banked 3,078 and 3,030 rows inside a 48h
+        # window — over the old shared cap — so an ascending LIMIT was dropping
+        # the leading edge of a chart that is still being drawn.
+        #
+        # The two cases the old OR admitted map exactly onto the two halves:
+        # case 1 (banked inside the window) is the in-window read, case 2
+        # (banked before it, still valid inside it) is the pre-window read and
+        # is passed as `pre_window_extra` so it stays the narrower set it was.
+        snapshots_override = await _snapshots_with_split_budget(
+            db,
+            select(OddsSnapshot).where(
+                OddsSnapshot.event_id.in_(series_event_ids)
+            ),
+            split_at=cutoff,
+            pre_window_extra=or_(
+                OddsSnapshot.valid_until >= cutoff,
+                # Include if valid_until is NULL (snapshot never superseded)
+                OddsSnapshot.valid_until.is_(None),
+            ),
         )
-    snapshots = (
-        snapshots_override if snapshots_override is not None else result.scalars().all()
-    )
+    snapshots = snapshots_override if snapshots_override is not None else []
 
     # ── One row per sportsbook, never a union (#6399) ────────────────────────
     #
