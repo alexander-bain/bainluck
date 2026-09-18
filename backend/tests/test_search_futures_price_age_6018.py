@@ -349,3 +349,159 @@ def test_the_answer_tracks_which_rows_are_served(served_ids, expected_index):
     served = [{"id": i} for i in served_ids]
 
     assert _served_prices_as_of(market, served) == stamps[expected_index].isoformat()
+
+
+# ---------------------------------------------------------------------------
+# #6923 — A RUNG THAT RENDERS AS A DASH MUST NOT DATE THE CARD.
+#
+# The scope above ("served, not the whole ladder") was right and incomplete, and
+# the gap let the SAME dead-tail row reach the card by the other door.
+# `_build_search_top_outcomes` drops placeholder names, duplicates, unbacked
+# legs, empty books and the all-null case — but ONE priceless rung survives
+# whenever fewer than `limit` priced rows do, and it sorts to the bottom on
+# `current_probability or 0`, so it lands in the slice precisely on the SHORT
+# ladders. Its stamp then wins the `min`. A ranking cannot exclude what there is
+# no replacement for; only a predicate can (#6256 argues this in full).
+#
+# Three FETCHED served payloads, `GET /api/events/search`, 2026-09-18 ~10:57Z —
+# not modelled rows:
+#
+#   market  name                                     served pip   priced rows written
+#   113826  NH-01 House Election Winner              2026-05-12   2026-09-18 10:08Z
+#   113631  2026 Taiwanese Local Elections: Party…   2026-05-12   2026-09-18 10:08Z
+#   108301  When will Young Thug and Gunna make…     2026-04-09   2026-09-11 18:48Z
+#
+# 113826 read back from `futures_outcomes` the same minute: `Other` (69767247)
+# `current_probability` NULL, `last_updated` 2026-05-12T16:15:52.059317Z — the
+# served value byte-for-byte; both priced legs 2026-09-18T10:08:03.552167Z.
+#
+# 108301 is why no name filter closes this: its priceless rung is `Before 2026`,
+# not `Other`.
+# ---------------------------------------------------------------------------
+
+
+class TestAPricelessRungNeverDatesTheCard:
+    def test_the_nh01_specimen_is_dated_by_its_two_priced_legs(self):
+        """113826. Printed "May 12" over two prices written that morning."""
+        priced_at = datetime(2026, 9, 18, 10, 8, 3, 552167, tzinfo=UTC)
+        may = datetime(2026, 5, 12, 16, 15, 52, 59317, tzinfo=UTC)
+        market = _Market(
+            id=113826,
+            name="NH-01 House Election Winner",
+            outcomes=[
+                _Outcome(1631286, priced_at, name="Stefany Shaheen (D)", prob=0.9225),
+                _Outcome(1631287, priced_at, name="Anthony DiLorenzo (R)", prob=0.06),
+                _Outcome(69767247, may, name="Other", prob=None),
+            ],
+        )
+        # The slice really does carry the dash — that IS the defect. The two
+        # tests above this class model the tail case, where it does not.
+        served = [{"id": 1631286}, {"id": 1631287}, {"id": 69767247}]
+
+        assert _served_prices_as_of(market, served) == priced_at.isoformat()
+        assert _served_prices_as_of(market, served) != may.isoformat()
+
+    def test_a_priceless_rung_not_named_other_is_dropped_too(self):
+        """108301 `Before 2026`. A name filter would miss this one."""
+        priced_at = datetime(2026, 9, 11, 18, 48, tzinfo=UTC)
+        april = datetime(2026, 4, 9, 4, 45, 15, tzinfo=UTC)
+        market = _Market(
+            id=108301,
+            outcomes=[
+                _Outcome(1, priced_at, name="2027", prob=0.31),
+                _Outcome(2, priced_at, name="2028", prob=0.12),
+                _Outcome(3, april, name="Before 2026", prob=None),
+            ],
+        )
+
+        assert _served_prices_as_of(
+            market, [{"id": 1}, {"id": 2}, {"id": 3}]
+        ) == priced_at.isoformat()
+
+    def test_a_card_whose_every_drawn_row_is_a_dash_says_nothing(self):
+        """No price on the card, so no price to be as-of. None, not the epoch.
+
+        The consumer renders nothing on None — an empty corner claims nothing,
+        which is the designed honest answer (notice 34).
+        """
+        market = _Market(
+            outcomes=[
+                _Outcome(1, datetime(2026, 5, 12, tzinfo=UTC), prob=None),
+                _Outcome(2, datetime(2026, 4, 9, tzinfo=UTC), prob=None),
+            ],
+        )
+
+        assert _served_prices_as_of(market, [{"id": 1}, {"id": 2}]) is None
+
+    def test_a_stale_price_the_card_DRAWS_still_ages_it(self):
+        """Not "drop the oldest": drop the UNPRINTABLE.
+
+        A stale price the reader can SEE must still age the card — that is the
+        floor doctrine, and it is the half a careless fix silently deletes.
+        """
+        fresh = datetime(2026, 9, 18, 10, 8, tzinfo=UTC)
+        stale_but_drawn = datetime(2026, 8, 1, 9, 0, tzinfo=UTC)
+        older_and_priceless = datetime(2026, 5, 12, 16, 15, tzinfo=UTC)
+        market = _Market(
+            outcomes=[
+                _Outcome(1, fresh, prob=0.6),
+                _Outcome(2, stale_but_drawn, prob=0.4),
+                _Outcome(3, older_and_priceless, name="Other", prob=None),
+            ],
+        )
+
+        assert _served_prices_as_of(
+            market, [{"id": 1}, {"id": 2}, {"id": 3}]
+        ) == stale_but_drawn.isoformat()
+
+
+class TestItAgreesWithTheFuturesCardOnWhatPrintsAPrice:
+    """The scope key is `outcome_prints_a_price`, not a rule local to search.
+
+    #6256 made that function "the one predicate both sides of the card must
+    agree on" so that what counts as printable moves in ONE place. These two
+    tests exist to fail if a later edit here quietly forks it.
+    """
+
+    def test_a_zero_leg_does_not_date_the_card_while_it_renders_a_dash(self):
+        """🔴 The truthiness is inherited ON PURPOSE and is #6195, not a bug here.
+
+        `float(p) if p else None` means a `0.0` leg renders `—` today, so it may
+        not date a mark today — exactly as `outcome_prints_a_price` decides for
+        the futures card. If this file instead asserted `is not None`, search
+        would date its pip from a row showing a dash while Discover did not, and
+        the two surfaces would disagree about the same market.
+
+        When #6195 lands and a `0.0` leg renders `0%`, this test is the one that
+        must be re-read: the leg regains its vote through the shared predicate,
+        with no edit to `_served_prices_as_of`.
+        """
+        fresh = datetime(2026, 9, 18, 10, 8, tzinfo=UTC)
+        stale_zero = datetime(2026, 5, 12, 16, 15, tzinfo=UTC)
+        market = _Market(
+            outcomes=[
+                _Outcome(1, fresh, name="Favourite", prob=0.97),
+                _Outcome(2, stale_zero, name="Eliminated", prob=0.0),
+            ],
+        )
+
+        assert _served_prices_as_of(market, [{"id": 1}, {"id": 2}]) == fresh.isoformat()
+
+    def test_it_is_literally_the_shared_predicate_and_not_a_copy(self):
+        """Pins the wiring, so a hand-rolled re-implementation fails here.
+
+        Asserted by behaviour and not by `is`: the values that flip the shared
+        predicate must flip this helper's answer with it.
+        """
+        from app.utils.futures_market_snapshot import outcome_prints_a_price
+
+        stale = datetime(2026, 5, 12, tzinfo=UTC)
+        fresh = datetime(2026, 9, 18, tzinfo=UTC)
+        for prob, printable in ((None, False), (0.0, False), (0.06, True)):
+            probe = _Outcome(2, stale, prob=prob)
+            assert outcome_prints_a_price(probe) is printable, prob
+            market = _Market(outcomes=[_Outcome(1, fresh, prob=0.9), probe])
+            expected = stale if printable else fresh
+            assert _served_prices_as_of(
+                market, [{"id": 1}, {"id": 2}]
+            ) == expected.isoformat(), prob
