@@ -549,11 +549,12 @@ def test_the_two_builders_agree_on_the_canonical_key():
 # (CLAUDE.md), and #1091's "game events are never capped into an empty tab".
 # A reader who swipes eight football cards away is asking for less football.
 #
-# `admission_multiplier` adds only the swipe-derived category dismissal back.
-# The onboarding gates — "Nah" to a sport, "only if it's wild" — are intentional
-# exclusions the reader chose, and they stay inside the number so they keep
-# filtering. The tests below assert BOTH: the downrank survives, and so do the
-# deliberate filters.
+# `admission_multiplier` adds the rank-only terms back: the swipe-derived
+# dismissals and — since #1927's wide half (Alex, 2026-09-17: a Nah "needs to be
+# a ranking signal, not a death certificate") — the sport "Nah" penalty. "Only if
+# it's wild" is the one onboarding control that stays inside the number, because
+# a higher bar IS its meaning. The tests below assert BOTH: the downrank
+# survives, and so does that deliberate bar.
 
 _EVENT_MIN_SCORE = 30  # the ordinary event admission floor in `feed.py`
 _FUTURES_MIN_SCORE = 15  # the ordinary futures floor
@@ -675,11 +676,14 @@ async def test_the_downrank_still_reorders_against_an_untouched_sport():
 
 
 @pytest.mark.asyncio
-async def test_a_nah_sport_is_still_filtered():
-    """CONTROL. The onboarding exclusions must keep excluding.
-
-    `sport_nah` is read off `p_result.reasons` by the gate and its penalty is
-    INSIDE `admission_multiplier`, so a "Nah" sport is untouched by this repair.
+async def test_a_nah_sport_ranks_down_and_is_no_longer_filtered():
+    """#1927, wide half — this test used to be the CONTROL that a Nah sport is
+    still filtered (`admission_multiplier == 1 + NAH_AFFINITY_PENALTY`). Alex's
+    ruling retired the filter, so the Nah now sits with the swipe terms: the
+    rank still carries the full penalty and the admission number carries none
+    of it. The specimen is the IMPLICIT Nah (a sport absent from the reader's
+    affinities), which the brief names as its own state: "missing preference
+    is not an explicit rejection".
     """
     from app.utils.personalization import (
         NAH_AFFINITY_PENALTY,
@@ -694,8 +698,10 @@ async def test_a_nah_sport_is_still_filtered():
     p_result = compute_event_multiplier(ctx, None, None, "americanfootball_nfl", None)
 
     assert any("sport_nah" in r for r in p_result.reasons)
-    assert p_result.admission_multiplier == pytest.approx(1.0 + NAH_AFFINITY_PENALTY)
-    assert _discover_admission_score(40, p_result) < _EVENT_MIN_SCORE
+    assert p_result.sport_nah is True
+    assert p_result.multiplier == pytest.approx(1.0 + NAH_AFFINITY_PENALTY)
+    assert p_result.admission_multiplier == pytest.approx(1.0)
+    assert _discover_admission_score(40, p_result) >= _EVENT_MIN_SCORE
 
 
 @pytest.mark.asyncio

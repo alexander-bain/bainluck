@@ -406,42 +406,84 @@ class TestTheTickerIsOnlyReadOffTheSourceThatIssuesIt:
 # ---------------------------------------------------------------------------
 
 from app.routes.feed import (  # noqa: E402
-    _DEFAULT_FEED_TOURS,
-    _compute_user_feed_tours,
+    _TOUR_AFFINITY_KEYS,
+    _keyed_item_sport_identity,
+    _rank_keyed_items_by_sport_affinity,
 )
 
 
 class TestTheDiscoverFeedSurvivesAnUnknownTour:
-    """`tour: None` must un-badge a card, never delete it.
+    """`tour: None` must un-badge a card, never delete it — and, since #1927's
+    wide half, never RANK it as a tour the reader picked either.
 
     Under the old blind default an unevidenced tournament arrived at the feed as
-    `"pga"`, so it passed the tour filter and printed a "PGA Tour:" reason. Saying
-    "unknown" honestly is only an improvement if neither of those silently breaks.
+    `"pga"`, so it passed the tour filter and printed a "PGA Tour:" reason.
+    Saying "unknown" honestly is only an improvement if neither of those
+    silently breaks. The per-tour filter itself is gone (#1927: a reader's golf
+    affinities rank tournaments, they do not delete them), so the eligibility
+    half is now trivially true for every audience; what remains to pin is the
+    other direction — an unknown tour is NEUTRAL under the sport dial, it does
+    not inherit the boost of a tour the reader chose.
     """
 
-    def test_an_unknown_tour_is_still_eligible_for_the_default_audience(self):
-        """The filter is `t.get("tour") not in feed_tours` — None must be a member."""
-        assert None in _DEFAULT_FEED_TOURS, (
-            "a tournament whose tour we cannot evidence would be dropped from "
-            "Discover entirely rather than merely losing its badge"
+    def test_an_unknown_tour_has_no_sport_identity_to_personalize(self):
+        """The filter used to read `t.get("tour") not in feed_tours` — None had
+        to be a member. Now the dial reads `_keyed_item_sport_identity`, and
+        None resolves to nothing, which the pass treats as neutral."""
+        item = {"type": "tournament", "score": 60, "data": {"tour": None}}
+        assert _keyed_item_sport_identity(item) == (None, None)
+
+    def test_the_named_tours_all_resolve_to_an_affinity_key(self):
+        """Vacuity companion: None was made neutral, nothing was traded away."""
+        assert {"pga", "major", "dp_world", "lpga", "liv"} <= set(_TOUR_AFFINITY_KEYS)
+        for tour in ("pga", "major", "dp_world", "lpga", "liv"):
+            key, category = _keyed_item_sport_identity(
+                {"type": "tournament", "score": 60, "data": {"tour": tour}}
+            )
+            assert key == _TOUR_AFFINITY_KEYS[tour] and category is None
+
+    def test_an_anonymous_reader_is_untouched(self):
+        from app.utils.personalization import PersonalizationContext
+
+        items = [{"type": "tournament", "score": 60, "data": {"tour": None}}]
+        assert (
+            _rank_keyed_items_by_sport_affinity(
+                items, ctx=PersonalizationContext(), my_teams_only=False
+            )
+            == items
         )
 
-    def test_the_named_tours_are_all_still_eligible(self):
-        """Vacuity companion: None was added, nothing was traded away for it."""
-        assert {"pga", "major", "dp_world", "lpga", "liv"} <= _DEFAULT_FEED_TOURS
+    def test_a_user_who_picked_specific_tours_does_not_boost_an_unknown_one(self):
+        """The other direction: None must NOT leak into a per-tour preference.
 
-    def test_an_anonymous_reader_gets_the_default_set(self):
-        assert _compute_user_feed_tours(None) == set(_DEFAULT_FEED_TOURS)
+        The reader loves DP World and said Nah to PGA. The DP World card keeps
+        its own score (a loved tour was always simply KEPT — the keyed pass
+        applies the dial's negative side only, Brief24A), the PGA card ranks
+        DOWN (and is still served — #1927), and the unknown-tour card keeps its
+        score exactly: it is neither of those tours.
+        """
+        from app.utils.personalization import PersonalizationContext
 
-    def test_a_user_who_picked_specific_tours_is_not_given_unknown_ones(self):
-        """The other direction: None must NOT leak into a per-tour preference."""
-        ctx = SimpleNamespace(
+        ctx = PersonalizationContext(
             is_authenticated=True,
             sport_affinities={"golf_dp_world": 0.9, "golf_pga": 0.0},
         )
-        tours = _compute_user_feed_tours(ctx)
-        assert tours == {"dp_world"}, tours
-        assert None not in tours
+        items = [
+            {"type": "tournament", "score": 60, "data": {"tour": None, "key": "u"}},
+            {"type": "tournament", "score": 60, "data": {"tour": "dp_world", "key": "d"}},
+            {"type": "tournament", "score": 60, "data": {"tour": "pga", "key": "p"}},
+        ]
+        ranked = {
+            it["data"]["key"]: it
+            for it in _rank_keyed_items_by_sport_affinity(
+                items, ctx=ctx, my_teams_only=False
+            )
+        }
+        assert ranked["u"]["score"] == 60 and "personalized" not in ranked["u"]
+        assert ranked["d"]["score"] == 60 and "personalized" not in ranked["d"]
+        assert 0 < ranked["p"]["score"] < 60
+        # and the shared list's dicts were not mutated in place
+        assert items[1]["score"] == 60 and items[2]["score"] == 60
 
 
 #: LAT-P181 — this was the literal `datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)`
