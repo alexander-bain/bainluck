@@ -268,6 +268,51 @@ watch_for_stall () {   # <pid> <logfile> <limit-seconds>
   return 0
 }
 
+# Which Swift files this run is being asked to prove. Writes CHANGED and
+# CHANGED_ERR; CHANGED_ERR non-empty means "could not tell", which fails the gate
+# and is worded differently from "nothing changed" (#5428's lesson).
+#
+# 🪤 SHALLOWNESS IS NOT THE TEST. THE MISSING MERGE BASE IS.
+# This refused outright when `rev-parse --is-shallow-repository` said true. Every
+# lane worktree on this machine IS shallow, and one rebased onto current master
+# (notice 47a, the normal state of anything being offered) resolves a merge base
+# perfectly well — it is `origin/master` itself. So the proof that a stale cache
+# did not fake the build was switched off for every native ship, the gate exited
+# 1 on runs where both real gates passed, and "COULD NOT TELL" was printed about
+# a question git could answer in full. Measured on b57235c0e (#4838): refused as
+# shallow, while `git merge-base origin/master HEAD` returned 9c8787a23 and the
+# three-dot diff named both changed files.
+#
+# Now git is ASKED, and shallowness only EXPLAINS a real failure — which is what
+# #5428 actually observed. A named function for the same reason the three above
+# are: --selftest drives THIS code against real throwaway repositories, and a
+# check that reasons about shallowness in a copy could not have caught this.
+resolve_changed_swift () {   # <root> <base>
+  _rc_root="$1"; _rc_base="$2"
+  CHANGED=""
+  CHANGED_ERR=""
+  if ! _rc_mb="$(git -C "$_rc_root" merge-base "$_rc_base" HEAD 2>&1)"; then
+    CHANGED_ERR="no merge base between $_rc_base and HEAD: $_rc_mb
+      Remedy: git -C $_rc_root fetch origin master   (or pass --base <ref>)"
+    if [ "$(git -C "$_rc_root" rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+      CHANGED_ERR="$CHANGED_ERR
+      The repository is also SHALLOW (#5428), which is the likeliest cause:
+      git -C $_rc_root fetch --unshallow
+      The build and tests still mean what they say; the recompile proof does not."
+    fi
+    return 0
+  fi
+  # Pathspec is `ios/*.swift`, not `*.swift`: git's `*` crosses `/`, so this is
+  # every Swift file under ios/ and nothing outside it. Scoped because the proof
+  # asks "did THIS BUILD compile it", and only ios/ is in the project — the
+  # shared checkout carries untracked scratch copies of the whole iOS tree
+  # (cert-scratch-*/), 226 of which the unscoped pathspec claimed as changed.
+  CHANGED=$( { git -C "$_rc_root" diff --name-only "$_rc_mb" HEAD -- 'ios/*.swift';
+               git -C "$_rc_root" diff --name-only -- 'ios/*.swift';
+               git -C "$_rc_root" ls-files --others --exclude-standard -- 'ios/*.swift'; } \
+             | sed '/^$/d' | sort -u )
+}
+
 # ── --selftest: prove the rule above, on log shapes, with no Xcode ───────────
 # A gate that lied is being repaired; the repair owes proof that it no longer
 # does. These fixtures go through notice10_select() itself, not a copy of it.
@@ -541,6 +586,67 @@ if [ -n "$SELFTEST" ]; then
   rc_check "and it got to write again after the quiet spell" \
     "$(/usr/bin/grep -c '^post ' "$ST_DIR/quiet.log")" 3
 
+  # ── the recompile proof's INPUT: which files changed ───────────────────────
+  # Real throwaway repositories, because the bug was a claim ABOUT git that git
+  # disagreed with — a fixture that mocked git would have agreed with the claim.
+  say "--selftest — resolve_changed_swift: shallow is not the same as baseless"
+
+  st_git () { _d="$1"; shift; git -C "$_d" -c user.email=gate@selftest -c user.name=gate "$@"; }
+  st_commit () { st_git "$1" add -A; st_git "$1" commit -q -m "$2"; }
+
+  ST_UP="$ST_DIR/upstream"
+  mkdir -p "$ST_UP/ios"
+  git init -q -b master "$ST_UP"
+  echo "// one" > "$ST_UP/ios/A.swift"; st_commit "$ST_UP" one
+  echo "// two" > "$ST_UP/ios/B.swift"; st_commit "$ST_UP" two
+
+  # A. THE REGRESSION: a shallow clone whose base resolves fine. This is every
+  #    lane worktree on this machine after a notice-47a rebase.
+  ST_SHALLOW="$ST_DIR/shallow"
+  git clone -q --depth 1 "file://$ST_UP" "$ST_SHALLOW" 2>/dev/null
+  st_git "$ST_SHALLOW" checkout -q -b work
+  echo "// changed" >> "$ST_SHALLOW/ios/A.swift"; st_commit "$ST_SHALLOW" work
+
+  # ANTI-VACUITY FIRST: if the clone is not actually shallow, case A passes for
+  # the wrong reason and says nothing about the defect.
+  rc_check "fixture A really is a shallow clone" \
+    "$(git -C "$ST_SHALLOW" rev-parse --is-shallow-repository)" true
+
+  resolve_changed_swift "$ST_SHALLOW" origin/master
+  rc_check "shallow + resolvable base -> no error (the #4838 gate run)" "${CHANGED_ERR:-none}" none
+  rc_check "...and it names the changed file" "$CHANGED" "ios/A.swift"
+
+  # B. A GENUINELY BASELESS repo, not shallow: the error must survive the fix.
+  ST_NOBASE="$ST_DIR/nobase"
+  mkdir -p "$ST_NOBASE/ios"
+  git init -q -b master "$ST_NOBASE"
+  echo "// root one" > "$ST_NOBASE/ios/A.swift"; st_commit "$ST_NOBASE" one
+  st_git "$ST_NOBASE" checkout -q --orphan lonely
+  echo "// root two" > "$ST_NOBASE/ios/C.swift"; st_commit "$ST_NOBASE" two
+
+  resolve_changed_swift "$ST_NOBASE" master
+  if [ -n "$CHANGED_ERR" ] && [ "${CHANGED_ERR#*no merge base}" != "$CHANGED_ERR" ]; then
+    echo "  ok    unrelated histories -> still refused, by name"
+  else
+    echo "  FAIL  unrelated histories -> got \"${CHANGED_ERR:-<empty>}\""; ST_FAIL=1
+  fi
+  if [ "${CHANGED_ERR#*SHALLOW}" = "$CHANGED_ERR" ]; then
+    echo "  ok    ...and it does not blame shallowness on a repo that is not shallow"
+  else
+    echo "  FAIL  ...but it blamed shallowness on a full clone"; ST_FAIL=1
+  fi
+
+  # C. #5428's OWN CASE: shallow AND baseless. The unshallow remedy is the whole
+  #    value of that issue and must still be printed.
+  st_git "$ST_SHALLOW" checkout -q --orphan stranded
+  echo "// stranded" > "$ST_SHALLOW/ios/D.swift"; st_commit "$ST_SHALLOW" stranded
+  resolve_changed_swift "$ST_SHALLOW" origin/master
+  if [ "${CHANGED_ERR#*fetch --unshallow}" != "$CHANGED_ERR" ]; then
+    echo "  ok    shallow AND baseless -> the #5428 remedy is still offered"
+  else
+    echo "  FAIL  shallow AND baseless -> lost the unshallow remedy: \"${CHANGED_ERR:-<empty>}\""; ST_FAIL=1
+  fi
+
   rm -rf "$ST_DIR"
   say "done (--selftest) — $([ $ST_FAIL -eq 0 ] && echo 'all cases passed' || echo 'FAILURES ABOVE'); nothing was built"
   exit $ST_FAIL
@@ -597,28 +703,7 @@ FAILED=0
 TESTPROOF_UNSEEN=0
 
 # ── 0b. CHANGED SWIFT FILES — computed ONCE, and never silently empty ────────
-# Returns via CHANGED / CHANGED_ERR. CHANGED_ERR non-empty means "could not
-# tell", which is a gate failure and is worded differently from "nothing changed".
-CHANGED=""
-CHANGED_ERR=""
-if [ "$(git -C "$GATE_ROOT" rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
-  CHANGED_ERR="the repository is SHALLOW (#5428), so no merge base with $BASE can exist.
-      Remedy: git -C $GATE_ROOT fetch --unshallow
-      The build and tests below still mean what they say; the recompile proof does not."
-elif ! MB="$(git -C "$GATE_ROOT" merge-base "$BASE" HEAD 2>&1)"; then
-  CHANGED_ERR="no merge base between $BASE and HEAD: $MB
-      Remedy: git -C $GATE_ROOT fetch origin master   (or pass --base <ref>)"
-else
-  # Pathspec is `ios/*.swift`, not `*.swift`: git's `*` crosses `/`, so this is
-  # every Swift file under ios/ and nothing outside it. Scoped because the proof
-  # asks "did THIS BUILD compile it", and only ios/ is in the project — the
-  # shared checkout carries untracked scratch copies of the whole iOS tree
-  # (cert-scratch-*/), 226 of which the unscoped pathspec claimed as changed.
-  CHANGED=$( { git -C "$GATE_ROOT" diff --name-only "$MB" HEAD -- 'ios/*.swift';
-               git -C "$GATE_ROOT" diff --name-only -- 'ios/*.swift';
-               git -C "$GATE_ROOT" ls-files --others --exclude-standard -- 'ios/*.swift'; } \
-             | sed '/^$/d' | sort -u )
-fi
+resolve_changed_swift "$GATE_ROOT" "$BASE"
 
 # #5635: the proof is split by which log COULD contain the file. Before this,
 # every changed file was grepped for in the macOS build log, so every
