@@ -23,6 +23,7 @@ from app.utils.kalshi_empty_book import KALSHI_BOOKMAKER
 from app.utils.futures_unsupported_price import (
     POLYMARKET_BOOKMAKER,
     WITHHELD_PRICE_FIELDS,
+    market_is_proved_exclusive_field,
     midpoint_refuted_by_last_trade,
     needs_trade_disconfirmation,
     needs_trade_evidence,
@@ -2866,8 +2867,9 @@ async def get_multi_market_history(
     # ladder refuses to print. The filter keys on each row's own `bookmaker`
     # exactly so the honest contributors at that timestamp survive it.
     _multi_outcomes = [o for m in markets for o in m.outcomes]
+    _multi_field_ids = _exclusive_field_outcome_ids(markets)
     snapshots = _drop_unsupported_snapshot_points(
-        list(snap_result.scalars().all()), _multi_outcomes
+        list(snap_result.scalars().all()), _multi_outcomes, _multi_field_ids
     )
 
     # ── UX-1052 item 7 — THE SAME SPARSE-WINDOW WIDENING ITS SIBLING HAS ──
@@ -2902,7 +2904,7 @@ async def get_multi_market_history(
                 .order_by(FuturesOddsSnapshot.captured_at)
             )
             extended = _drop_unsupported_snapshot_points(
-                list(ext_result.scalars().all()), _multi_outcomes
+                list(ext_result.scalars().all()), _multi_outcomes, _multi_field_ids
             )
             if len(extended) > len(snapshots):
                 snapshots = extended
@@ -2981,7 +2983,34 @@ def _as_float(value) -> Optional[float]:
     return None if value is None else float(value)
 
 
-def _drop_unsupported_snapshot_points(snapshots: list, outcomes) -> list:
+def _exclusive_field_outcome_ids(markets) -> set[int]:
+    """Outcome ids belonging to markets the classifier PROVED are single-winner fields.
+
+    #6846's chart arm needs the field verdict per POINT, and a snapshot row knows
+    only its ``outcome_id`` — so the market-level verdict is resolved to a set of
+    outcome ids once, by the caller that still has the markets in hand, and the
+    filter below does a set membership test per row.
+
+    Accepts one market or many: ``/multi-history`` and the league timeline chart
+    several markets at once, and each is judged on its OWN shape, so a proved
+    field's legs are screened while a sibling binary's are not. Fails closed on a
+    market missing either column (``getattr``), which serves the point.
+    """
+    ids: set[int] = set()
+    for market in markets:
+        if market is None:
+            continue
+        if market_is_proved_exclusive_field(
+            getattr(market, "market_type", None),
+            getattr(market, "market_metadata", None),
+        ):
+            ids.update(o.id for o in getattr(market, "outcomes", ()) or ())
+    return ids
+
+
+def _drop_unsupported_snapshot_points(
+    snapshots: list, outcomes, exclusive_field_outcome_ids: set | None = None
+) -> list:
     """Remove the chart points whose own row says nothing supported that price (#5898).
 
     THE LADDER AND THE CHART MUST NOT DISAGREE. ``/api/futures/{id}`` withholds an
@@ -3016,6 +3045,13 @@ def _drop_unsupported_snapshot_points(snapshots: list, outcomes) -> list:
     # only an affirmative loser is asked the question at all. One dict, so an
     # outcome we did not load still fails the `in` test above and keeps its points.
     grades = {o.id: (o.resolution_source, o.is_winner) for o in outcomes}
+    # #6846. Same premise as #6757's arm below, one rule further on: without this
+    # the 2027 Masters table would print "—" against Ryan Gerard and Tiger Woods
+    # while the Probability Trend above them went on drawing those very legs as a
+    # flat line at 39%. An id we were given no verdict for is not in the set, so
+    # it keeps every point — absence is not evidence, here as everywhere else in
+    # this function.
+    in_field = exclusive_field_outcome_ids or set()
     kept = []
     for snapshot in snapshots:
         if snapshot.outcome_id in grades:
@@ -3051,6 +3087,7 @@ def _drop_unsupported_snapshot_points(snapshots: list, outcomes) -> list:
                 _as_float(getattr(snapshot, "yes_ask", None)),
                 _as_float(getattr(snapshot, "last_price", None)),
                 is_winner=is_winner,
+                in_exclusive_field=snapshot.outcome_id in in_field,
             ):
                 continue
         kept.append(snapshot)
@@ -3076,7 +3113,31 @@ async def _unsupported_price_outcome_ids(
     Absence fails OPEN. An outcome with no Kalshi snapshot is left exactly as it
     is served today — see ``price_is_unsupported`` for why "we never looked" and
     "we looked and it never traded" may not be collapsed into one answer.
+
+    #6846 WIDENS THE SCREEN FOR ONE CLASS OF MARKET AND NOTHING ELSE. The shape
+    verdict is read ONCE per market, not once per leg — it is a property of the
+    market — and when the classifier PROVES a single-winner partition the
+    ask-only bound is dropped for every leg of it. Measured on production
+    2026-09-18: of 21,274 proved exclusive Kalshi fields, 654 hold a leg this
+    widening fires on; 548 of those 654 already sum above 100%, 49 seat an
+    ask-only leg above their best two-sided book, and the touched fields sum to
+    a mean of 1.97. It fires on distortion, not on breadth.
+
+    TWENTY OF THE 654 LOSE EVERY PRICED LEG, and that is the correct outcome
+    rather than a cost to be engineered around: a field whose only priced legs
+    are all untaken offers has no price discovery to show, and Alex's standing
+    rule is that a number which cannot be shown honestly leaves the space empty.
+    The legs keep their names, exactly as the 33 never-priced legs on the
+    specimen market already render.
     """
+    # `getattr` for the same reason the outcome reads below use it: a caller may
+    # hand this a market object that never loaded these columns, and an absent
+    # attribute must read as "not proved" rather than raise or, worse, be taken
+    # for evidence. The gate fails closed on None, so the leg is served.
+    in_exclusive_field = market_is_proved_exclusive_field(
+        getattr(market, "market_type", None),
+        getattr(market, "market_metadata", None),
+    )
     candidates = [
         o
         for o in market.outcomes
@@ -3085,6 +3146,7 @@ async def _unsupported_price_outcome_ids(
             o.resolution_source,
             _as_float(getattr(o, "current_yes_bid", None)),
             _as_float(getattr(o, "current_yes_ask", None)),
+            in_exclusive_field=in_exclusive_field,
         )
     ]
     if not candidates:
@@ -3134,6 +3196,7 @@ async def _unsupported_price_outcome_ids(
             _as_float(latest_trade.get(o.id)),
             has_trade_evidence=o.id in latest_trade
             and latest_trade[o.id] is not None,
+            in_exclusive_field=in_exclusive_field,
         )
     }
 
@@ -4292,8 +4355,9 @@ async def get_probability_timeline(
     # decides a median by position, so a refused Polymarket midpoint can BE the
     # published bucket value. Filtered on the same rule and before the same
     # sparse decision as `/history`.
+    _field_ids = _exclusive_field_outcome_ids([market])
     snapshots = _drop_unsupported_snapshot_points(
-        list(result.scalars().all()), charted_outcomes
+        list(result.scalars().all()), charted_outcomes, _field_ids
     )
 
     # Auto-extend for sparse markets (same logic as /history endpoint). Skipped
@@ -4317,7 +4381,7 @@ async def get_probability_timeline(
             )
             ext_result = await db.execute(ext_query)
             extended_snapshots = _drop_unsupported_snapshot_points(
-                list(ext_result.scalars().all()), charted_outcomes
+                list(ext_result.scalars().all()), charted_outcomes, _field_ids
             )
             if len(extended_snapshots) > len(snapshots):
                 snapshots = extended_snapshots
@@ -4578,7 +4642,9 @@ async def get_cross_source_timeline(
     # per-row bookmaker key, so the sibling market's point at that timestamp is
     # untouched.
     snapshots = _drop_unsupported_snapshot_points(
-        list(result.scalars().all()), [o for m in markets for o in m.outcomes]
+        list(result.scalars().all()),
+        [o for m in markets for o in m.outcomes],
+        _exclusive_field_outcome_ids(markets),
     )
 
     if not snapshots:
@@ -4852,8 +4918,11 @@ async def get_futures_history(
     # the denominator of the book's own overround, and a book's quoted column is
     # what it quoted. Dropping part of it would inflate every outcome that
     # survived — a second error to cover the first.
+    _history_field_ids = _exclusive_field_outcome_ids([market])
     snapshots = _drop_unsupported_snapshot_points(
-        [r for r in field_rows if r.outcome_id in charted_ids], charted_outcomes
+        [r for r in field_rows if r.outcome_id in charted_ids],
+        charted_outcomes,
+        _history_field_ids,
     )
 
     # Auto-extend if sparse
@@ -4877,6 +4946,7 @@ async def get_futures_history(
             extended_snapshots = _drop_unsupported_snapshot_points(
                 [r for r in extended_field if r.outcome_id in charted_ids],
                 charted_outcomes,
+                _history_field_ids,
             )
             if len(extended_snapshots) > len(snapshots):
                 snapshots = extended_snapshots
