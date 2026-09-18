@@ -48,11 +48,21 @@ interface SportDirectoryEntry {
 // is to tell eleven sports apart, so two sports wearing one glyph is the same
 // defect as three wearing the trophy. That constraint is why MMA reads 🥋 and
 // not 🥊: the two cards are adjacent at 390px, and the glove belongs to Boxing.
+//
+// The tints avoid `emerald`, `amber` and `slate`. Those three are declared as
+// flat strings in `tailwind.config.ts` (`emerald: '#10B981'`), which REPLACES
+// the whole default scale — so `bg-emerald-50` is not a class Tailwind can
+// emit, and an element wearing it renders with no background at all. Measured:
+// zero `emerald` and zero `amber` utilities exist in 128 KB of built CSS.
+// Golf carried `bg-emerald-50` here and had therefore been untinted; it reads
+// teal now. See #7056 for the site-wide defect, and the `tint` guard in
+// `__tests__/tailwindScansEveryClassEmitter7015.test.ts`, which fails if a
+// tint ever names a flat-overridden family again.
 const SPORT_DIRECTORY: Record<string, SportDirectoryEntry> = {
   golf: {
     icon: "⛳",
     description: "PGA Tour, DP World Tour, LPGA, LIV & more",
-    tint: "bg-emerald-50 hover:bg-emerald-100",
+    tint: "bg-teal-50 hover:bg-teal-100",
   },
   basketball: {
     icon: "🏀",
@@ -91,8 +101,11 @@ const SPORT_DIRECTORY: Record<string, SportDirectoryEntry> = {
   },
   boxing: {
     icon: "🥊",
+    // yellow, not amber: amber cannot render (see the note above), and the
+    // child route's own Boxing league card is `bg-yellow-50`, so the tap lands
+    // on the same colour it left.
     description: "Title fights & marquee bouts",
-    tint: "bg-amber-50 hover:bg-amber-100",
+    tint: "bg-yellow-50 hover:bg-yellow-100",
   },
   motorsports: {
     icon: "🏎️",
