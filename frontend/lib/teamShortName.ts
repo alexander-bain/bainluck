@@ -245,6 +245,55 @@ export function isNonDistinctiveTrailingWord(token: string): boolean {
 }
 
 /**
+ * The sport keys whose competitor is a PERSON rather than a club.
+ *
+ * #4624 — the discriminator #4466 said was not in the string, and it is not:
+ * "Paris Saint Germain" and "Eloy Mendez Alcantara" are both three
+ * all-distinctive words, so no filter that keeps the club working can tell them
+ * apart. The SPORT tells them apart, and both clients hold it already.
+ *
+ * Matched against the key's FIRST SEGMENT, never as a substring: every
+ * production key is `<sport>_<tour-or-league>` (`tennis_atp_us_open`,
+ * `mma_mixed_martial_arts`), so the segment is the sport. A `contains` would
+ * answer for keys nobody listed, and England's Boxing Day fixtures are a
+ * plausible `soccer_england_boxing_day_*` — under a substring matcher every
+ * club in it would be badged as a person.
+ *
+ * `motorsport` is deliberately absent (0 of its 31 production names reach the
+ * fork, so the entry would be unobservable) and `esports` is absent because
+ * those competitors are organisations, which is the club case the fork exists
+ * for. This is the iPhone's `individualSportPrefixes`
+ * (`TeamShortName.swift`) and the two sets are compared out of source by
+ * `__tests__/teamDesignatorParityAcrossClients.test.ts`.
+ */
+export const INDIVIDUAL_SPORT_PREFIXES: ReadonlySet<string> = new Set([
+  "tennis",
+  "golf",
+  "mma",
+  "boxing",
+]);
+
+/**
+ * Does this sport key name a competition between PEOPLE?
+ *
+ * Null, undefined or empty answers `false`, so a caller that does not know its
+ * sport keeps exactly the badge it paints today. The gate can only ever be
+ * opened by a caller that positively knows.
+ */
+export function namesAPerson(sportKey: string | null | undefined): boolean {
+  // The type test is not belt-and-braces, and a passing suite went red proving
+  // it: `teamCrestBadge` gained a second parameter, and `names.map(teamCrestBadge)`
+  // — point-free, legal, and in this repo — hands `map`'s INDEX in as the sport.
+  // A number reached `.trim()` and threw, which would have been a blank card
+  // rather than a wrong badge. Anything that is not a string means "the caller
+  // did not tell me the sport", which is the shipped rule.
+  if (typeof sportKey !== "string") return false;
+  const key = sportKey.trim().toLowerCase();
+  if (!key) return false;
+  return INDIVIDUAL_SPORT_PREFIXES.has(key.split("_")[0]);
+}
+
+/**
  * The letters a crest square falls back to when no logo or flag exists.
  *
  * #2882's neighbour, found on the same LOOK. The card built this inline as
@@ -360,7 +409,10 @@ export function teamCrestInitials(name: string | null | undefined): string {
  * first surname ("SIN", "HUN") and that decision is not #4466's to reopen — a
  * pair is not a compound name, it is two names.
  */
-export function teamCrestBadge(name: string | null | undefined): string {
+export function teamCrestBadge(
+  name: string | null | undefined,
+  sportKey?: string | null,
+): string {
   const full = (name ?? "").trim();
   if (!full) return "";
   // #3110 pinned the doubles tile at three letters of the first surname, and
@@ -374,14 +426,26 @@ export function teamCrestBadge(name: string | null | undefined): string {
     .filter(Boolean)
     .filter(token => !isNonDistinctiveTrailingWord(token));
   const shipped = teamShortName(full).slice(0, 3).toUpperCase();
+  const initials = distinctive
+    .map(word => word.charAt(0))
+    .join("")
+    .slice(0, 3)
+    .toUpperCase();
+  // #4624 — the fork is for CLUBS, so a person's sport closes it and the badge
+  // is the rule that shipped before it: for a three-part name, their surname.
+  // "Eloy Mendez Alcantara" is `ALC`, not `EMA`. `shortNameBadge` is the SAME
+  // expression the fewer-than-three path already takes, so a person is badged
+  // by the rule this module applies to every two-part name rather than by a
+  // third one — and a surname that spells an unshippable badge keeps the
+  // initials, which is the backstop below read the other way round.
+  const person = distinctive.length >= 3 && namesAPerson(sportKey);
+  const surname = person ? shortNameBadge(full, distinctive) : "";
   const candidate =
     distinctive.length < 3
       ? shortNameBadge(full, distinctive)
-      : distinctive
-          .map(word => word.charAt(0))
-          .join("")
-          .slice(0, 3)
-          .toUpperCase();
+      : person && !UNSHIPPABLE_BADGES.has(surname)
+        ? surname
+        : initials;
   // Backstop for the residue the token filter cannot reach: a three-part PERSON
   // name is all-distinctive by construction ("Ana Sofia Sanchez" -> "ASS"), and
   // no filter that keeps "Paris Saint Germain" working can tell the two apart

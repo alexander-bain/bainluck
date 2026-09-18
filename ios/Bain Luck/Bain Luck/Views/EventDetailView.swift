@@ -762,6 +762,10 @@ struct EventDetailView: View {
                         teamName: event.awayTeam,
                         color: colors.away,
                         size: logoSize,
+                        // #4624 — the hero knew the sport and did not pass it,
+                        // so a tennis player's circle took the compound-CLUB
+                        // fork and drew their initials instead of their surname.
+                        sportKey: event.sport,
                         // #4720 — the hero draws BOTH circles, so the badge is
                         // resolved against the other side and cannot print the
                         // word the two clubs share.
@@ -1167,6 +1171,7 @@ struct EventDetailView: View {
                         teamName: event.homeTeam,
                         color: colors.home,
                         size: logoSize,
+                        sportKey: event.sport,
                         opponentName: event.awayTeam
                     )
                     Text(event.homeTeam)

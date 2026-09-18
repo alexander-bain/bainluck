@@ -133,7 +133,10 @@ describe("#4466 the badge derivation", () => {
   it("gives one club the SAME badge under both stored spellings", () => {
     // The half a single-specimen fix passes and a reader still fails: one club
     // must not wear two different badges on two rows of the same page.
-    const [a, b] = PSG_SPELLINGS.map(teamCrestBadge);
+    // Not point-free: since #4624 the badge takes a second parameter, so
+    // `.map(teamCrestBadge)` would hand `map`'s INDEX in as the sport key.
+    // The pin for that hazard lives in `teamDesignatorParityAcrossClients`.
+    const [a, b] = PSG_SPELLINGS.map(name => teamCrestBadge(name));
     expect(a).toBe(b);
     // And it is the club's real abbreviation, not an accident of agreement.
     expect(a).toBe("PSG");

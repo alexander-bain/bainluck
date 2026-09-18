@@ -28,6 +28,7 @@ import {
   HAND_PICKED_LABELS,
   handPickedKey,
   isNonDistinctiveTrailingWord,
+  namesAPerson,
   teamCrestBadge,
   teamShortName,
   teamShortNames,
@@ -90,6 +91,14 @@ const webSuffixes = tokensInLiteral(
 const swiftUnshippable = tokensInLiteral(
   swiftSource,
   /private static let unshippableBadges\s*:\s*Set<String>\s*=/,
+);
+const swiftIndividualSports = tokensInLiteral(
+  swiftSource,
+  /static let individualSportPrefixes\s*:\s*Set<String>\s*=/,
+);
+const webIndividualSports = tokensInLiteral(
+  webSource,
+  /const INDIVIDUAL_SPORT_PREFIXES\s*:\s*ReadonlySet<string>\s*=/,
 );
 const webUnshippable = tokensInLiteral(
   webSource,
@@ -387,6 +396,105 @@ describe("#4539 — one badge rule, two clients", () => {
     // `CrestBadgeInitialsTests` asserts the identical pair on the iPhone.
     expect(teamCrestBadge("Paris Saint Germain")).toBe("PSG");
     expect(teamCrestBadge("Paris Saint-Germain")).toBe("PSG");
+  });
+});
+
+/**
+ * #4624 — the sport that closes the fork, which is a LIST and therefore the
+ * same divergence risk as the two sets above.
+ *
+ * The fork's own comment says no filter can tell a three-word club from a
+ * three-word person from the string. The sport can, both clients hold it, and
+ * neither was passing it to the badge — so "Eloy Mendez Alcantara" badged `EMA`
+ * on the iPhone and `EMA` on the browser. Identically wrong is still wrong, and
+ * the way it stops being identical is one client widening its list alone.
+ */
+describe("#4624 — one person/club discriminator, two clients", () => {
+  it("both prefix sets were actually found and read", () => {
+    // The reachability check. A regex that matches nothing yields [], and the
+    // comparison below then passes having compared two empty sets.
+    expect(swiftIndividualSports.length).toBe(4);
+    expect(webIndividualSports.length).toBe(4);
+    expect(swiftIndividualSports).toContain("tennis");
+    expect(webIndividualSports).toContain("tennis");
+  });
+
+  it("the two prefix sets are identical", () => {
+    const swift = new Set(swiftIndividualSports);
+    const web = new Set(webIndividualSports);
+    expect([...web].filter((t) => !swift.has(t))).toEqual([]);
+    expect([...swift].filter((t) => !web.has(t))).toEqual([]);
+  });
+
+  it("both clients read the key's first SEGMENT, not a substring of it", () => {
+    // England's Boxing Day fixtures are a plausible key, and a `contains`
+    // matcher would badge every club in it as a person. The browser's predicate
+    // is executed; the iPhone's is read out of its source, where the `split` is
+    // the whole of the claim.
+    expect(namesAPerson("soccer_england_boxing_day_cup")).toBe(false);
+    expect(namesAPerson("tennis_atp_us_open")).toBe(true);
+    expect(namesAPerson(null)).toBe(false);
+    // A point-free `names.map(teamCrestBadge)` hands `map`'s INDEX in as the
+    // sport. It is legal, it is in this repo, and before the type test it threw
+    // — a blank card, not a wrong badge. `#4466`'s own suite caught it.
+    expect(namesAPerson(0 as unknown as string)).toBe(false);
+    expect(namesAPerson(1 as unknown as string)).toBe(false);
+    // Both halves of that hazard are pinned here. The COMPILER half: delete the
+    // directive below and `npm run typecheck` goes red, because the signature
+    // does refuse `map`'s index — so the shape cannot reach a shipping call site
+    // unnoticed. The RUNTIME half: the badge is still correct when it does,
+    // which is why this is a guard and not an outage.
+    const pointFree = ["Paris Saint Germain", "Paris Saint-Germain"].map(
+      // @ts-expect-error — `map` passes (value, INDEX, array); the index is not
+      // a sport key, and `namesAPerson` absorbs it rather than throwing.
+      teamCrestBadge,
+    );
+    expect(pointFree).toEqual(["PSG", "PSG"]);
+    expect(swiftCode).toMatch(/key\.split\(separator: "_"\)\.first/);
+    expect(swiftCode).toMatch(/individualSportPrefixes\.contains\(sport\)/);
+  });
+
+  it("the iPhone closes the fork on a person's sport, and only there", () => {
+    // Structural: the gate is inside the fork, so the two clients cannot end up
+    // with one of them applying it to every name.
+    expect(swiftCode).toMatch(/namesAPerson\(sportKey: sportKey\)/);
+    expect(swiftCode).toMatch(/distinctive\.count\s*>=\s*3/);
+  });
+
+  it("the two clients badge the issue's own names the same way", () => {
+    // The reader-visible anchor, asserted on the browser here and on the iPhone
+    // in `CrestBadgeNamesAPerson4624Tests` — the same four names, the same four
+    // answers, under a key and without one.
+    for (const [name, initials, surname] of [
+      ["Eloy Mendez Alcantara", "EMA", "ALC"],
+      ["Constantin Bittoun Kouzmine", "CBK", "KOU"],
+      ["Sherif Ahmed Abdelaziz", "SAA", "ABD"],
+      ["Petr Bar Biryukov", "PBB", "BIR"],
+    ]) {
+      expect(teamCrestBadge(name)).toBe(initials);
+      expect(teamCrestBadge(name, "soccer_epl")).toBe(initials);
+      expect(teamCrestBadge(name, "tennis_other")).toBe(surname);
+    }
+  });
+
+  it("a club keeps its badge under every key, including a person's sport", () => {
+    for (const key of [undefined, "soccer_france_ligue_one", "tennis_atp"]) {
+      expect(teamCrestBadge("Paris Saint Germain", key)).toBe("PSG");
+    }
+    expect(teamCrestBadge("Notre Dame Fighting Irish", "americanfootball_ncaaf")).toBe("NDF");
+  });
+
+  it("a surname that spells an unshippable badge keeps the initials", () => {
+    // The only direction this change can make a badge worse, closed on both
+    // clients by the same clause.
+    expect(teamCrestBadge("Juan Carlos Assis", "tennis_other")).toBe("JCA");
+    expect(teamCrestBadge("Juan Carlos Alves", "tennis_other")).toBe("ALV");
+  });
+
+  it("a doubles pair is untouched under a person's sport", () => {
+    expect(teamCrestBadge("Siniakova / Townsend", "tennis_wta")).toBe(
+      teamCrestBadge("Siniakova / Townsend"),
+    );
   });
 });
 
