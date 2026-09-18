@@ -804,7 +804,25 @@ async def browse_futures(
         select(FuturesMarket, func.count().over().label("browse_total"))
         .options(selectinload(FuturesMarket.outcomes))
         .where(*base_filters)
-        .order_by(FuturesMarket.resolution_date.asc().nulls_last())
+        # `resolution_date` alone is NOT a page-able order: it is massively
+        # non-unique (golf's 88 open markets hold a 26-row tie and a 20-row tie;
+        # economics resolves ~1,500 daily markets at the same 20:00Z instant).
+        # A tie block is ordered arbitrarily, and Postgres is free to resolve it
+        # DIFFERENTLY for each `OFFSET+LIMIT` because a top-N sort only has to
+        # produce the first `offset+limit` rows — so the same row can land on
+        # page 2 and again on page 4, and whichever row it displaced is never
+        # served at all. Measured on production 2026-09-18 at the reader's own
+        # `limit=20`: a reader who clicks "Load more" until it stops sees 88
+        # golf slots holding 79 distinct markets — 9 of 88 are unreachable by
+        # ANY sequence of clicks. `motorsports` is the control that names the
+        # mechanism rather than correlating with it: its biggest tie block is 11
+        # rows, under the page size, and it loses nothing.
+        # The fix is a total order, which is the idiom this file already uses
+        # for group members (`group_position.nulls_last(), FuturesMarket.id`).
+        # `id` is the PK, so the sort is now unique and OFFSET paging is
+        # consistent; it costs one extra comparison on ties in a sort node the
+        # query already pays for, and adds no index requirement.
+        .order_by(FuturesMarket.resolution_date.asc().nulls_last(), FuturesMarket.id.asc())
         .limit(limit)
         .offset(offset)
     )
@@ -1199,7 +1217,12 @@ async def faceted_futures_search(
             .options(selectinload(FuturesMarket.outcomes))
             .outerjoin(trending_sub, FuturesMarket.id == trending_sub.c.market_id)
             .where(*conditions)
-            .order_by(trending_sub.c.max_move.desc().nulls_last())
+            # Same total-order rule as `/browse` — see that comment. This sort
+            # needs it MOST: `max_move` is NULL for every market with no 24h
+            # movement, so `nulls_last()` parks a very large block at the tail
+            # in arbitrary order. Measured on production 2026-09-18, golf at
+            # `per_page=20`: 88 slots, 78 distinct markets.
+            .order_by(trending_sub.c.max_move.desc().nulls_last(), FuturesMarket.id.asc())
             .offset(offset_val)
             .limit(per_page)
         )
@@ -1208,7 +1231,12 @@ async def faceted_futures_search(
             select(FuturesMarket)
             .options(selectinload(FuturesMarket.outcomes))
             .where(*conditions)
-            .order_by(FuturesMarket.updated_at.desc().nulls_last())
+            # Total order, as above. NOTE the honest bound: this fixes the TIE
+            # half only. `updated_at` is rewritten by price polling, so a row
+            # whose timestamp genuinely changes between two page fetches can
+            # still move across a boundary — that is inherent to offset paging
+            # over a mutating sort key and is NOT claimed fixed here.
+            .order_by(FuturesMarket.updated_at.desc().nulls_last(), FuturesMarket.id.asc())
             .offset(offset_val)
             .limit(per_page)
         )
@@ -1218,7 +1246,10 @@ async def faceted_futures_search(
             select(FuturesMarket)
             .options(selectinload(FuturesMarket.outcomes))
             .where(*conditions)
-            .order_by(FuturesMarket.resolution_date.asc().nulls_last())
+            # Total order, as above: this is the DEFAULT sort, so it is the one
+            # the native futures browser pages on. Measured on production
+            # 2026-09-18, golf at `per_page=20`: 88 slots, 79 distinct.
+            .order_by(FuturesMarket.resolution_date.asc().nulls_last(), FuturesMarket.id.asc())
             .offset(offset_val)
             .limit(per_page)
         )
