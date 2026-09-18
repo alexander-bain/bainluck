@@ -276,6 +276,17 @@ COVERED = (
     # rows); every other row goes through the ORM so Python-side defaults
     # apply.
     "test_event_subresources_resolve_twin_id_6975_pg.py",
+    # #6955 (CERT-3074's named follow-up). Seeds `futures_markets` by raw
+    # INSERT for both club-noun rails and drives their real apply / partial
+    # compare-and-set / D51 undo. Two columns carry the lesson:
+    # `llm_sport_category` is NULLABLE and so invisible to the NOT-NULL arm
+    # below, yet it is the entire subject — a seed without it would leave every
+    # row already agreeing with the venue and the rails would correctly plan
+    # nothing, making every assertion true of rows that were never wrong; and
+    # `market_metadata`, also nullable, which must be real JSONB because the
+    # Polymarket rail reaches its container row through
+    # `market_metadata->>'polymarket_event_id'`.
+    "test_repair_club_noun_apply_restore_6955_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"
