@@ -8,6 +8,7 @@ import TournamentProgressionTable from "@/components/TournamentProgressionTable"
 import { SkeletonGrid } from "@/components/SkeletonCard";
 import ErrorMessage from "@/components/ErrorMessage";
 import { gridCellsToProgression } from "@/lib/gridCellState";
+import { conferenceSectionHeadings } from "@/lib/playoffConferenceSections";
 import {
   usePageTracking,
   useScrollDepth,
@@ -612,18 +613,25 @@ export default function PlayoffGridPage({
     if (!gridData) return null;
 
     if (gridData.grouped_teams) {
-      // Conference/region split
-      return Object.entries(gridData.grouped_teams)
-        .filter(([conf]) => !conferenceFilter || conf === conferenceFilter)
-        .map(([conf, teams]) => ({
-          label: conf,
-          data: teamsToProgression(
-            gridData.columns,
-            teams,
-            gridData.league,
-            conf,
-          ),
-        }));
+      // Conference/region split. #6999: the conference name gets ONE place to
+      // be printed, and which place depends on how many sections survive the
+      // chip filter. `conferenceSectionHeadings` owns that whole decision —
+      // both render sites below read its output and neither re-derives it,
+      // because two independently-written conditions for one decision is
+      // exactly how this shipped the name twice in the first place.
+      const grouped = gridData.grouped_teams;
+      return conferenceSectionHeadings(
+        Object.keys(grouped),
+        conferenceFilter,
+      ).map(({ conf, label, tournamentName }) => ({
+        label,
+        data: teamsToProgression(
+          gridData.columns,
+          grouped[conf],
+          gridData.league,
+          tournamentName,
+        ),
+      }));
     }
 
     // Flat list — apply conference filter client-side if needed
@@ -852,7 +860,12 @@ export default function PlayoffGridPage({
             {sections &&
               sections.map((section, idx) => (
                 <div key={section.label || idx} className="mb-6">
-                  {section.label && sections.length > 1 && (
+                  {/* #6999: `label` is non-null only when the section heading
+                      is the conference's one place — the `sections.length > 1`
+                      test that used to live here is now folded into
+                      `headingCarriesConference` above, beside the card title it
+                      has to agree with. */}
+                  {section.label && (
                     <h2 className="text-base font-semibold text-text-primary mb-2">
                       {section.label}
                     </h2>
