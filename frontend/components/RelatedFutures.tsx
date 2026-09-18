@@ -9,6 +9,7 @@ import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { disambiguateLabels } from "@/lib/labelDisambiguation";
 import { teamShortName, teamShortNames } from "@/lib/teamShortName";
 import { teamTextColor } from "@/lib/teamColors";
+import { awardPriceIsStale } from "@/lib/awardPriceAge";
 import EntityImage from "./EntityImage";
 import AdvancementPath from "@/components/event/AdvancementPath";
 
@@ -1379,6 +1380,13 @@ function deduplicateAwards(futures: RelatedFuture[]): { future: RelatedFuture; s
     const p = f.probability;
     if (p === null || p === undefined) return false;
     if (p < 0.01 || p > 0.99) return false;
+    // #3117: and a price the venue can no longer move is not an award
+    // probability. Market 479 (Kalshi KXNFLSBMVP-26) put a 2026-02-04 price
+    // under this week's crests on 9 of 40 sampled pages — 22 of the 81 rows
+    // these cards render — eight of them at the untraded 0.500 midpoint, on a
+    // field summing to 1,967%. The venue serves that event with zero markets.
+    // Reasoning, measurements and the fail-open rule: lib/awardPriceAge.ts.
+    if (awardPriceIsStale(f.last_updated)) return false;
     return true;
   });
 
@@ -2467,19 +2475,36 @@ export default function RelatedFutures({
   const awayChamp = findBestChampionship(away_team_futures);
   const showTitleComparison = !!(homeChamp && awayChamp);
 
-  // Merge awards across both teams
-  const mergedAwards = [
-    ...deduplicateAwards(homeCats.awards).map((a) => ({
-      ...a,
-      teamColor: hColor,
-      teamLabel: homeShort,
-    })),
-    ...deduplicateAwards(awayCats.awards).map((a) => ({
-      ...a,
-      teamColor: aColor,
-      teamLabel: awayShort,
-    })),
-  ].sort((a, b) => (b.future.probability || 0) - (a.future.probability || 0));
+  // Awards, per side — #3117.
+  //
+  // These two lists were built exactly like this, then concatenated into one
+  // `mergedAwards`, and then split back apart by `teamColor` at the point of
+  // render. The round trip could only ever return what went in, EXCEPT when
+  // the two colours are equal: then both filters match every row and each
+  // crest draws the other team's nominees as well as its own.
+  //
+  // That is not hypothetical and it is the shape Alex filed. `/events/15304746`
+  // serves `#002a5c` as the primary colour of BOTH the Seattle Seahawks and the
+  // Dallas Cowboys, so on 2026-09-18 that page still printed one identical
+  // six-row list under each crest — Dak Prescott and CeeDee Lamb as Seahawks,
+  // Sam Darnold as a Cowboy. Of 16 sampled pages that draw both award cards,
+  // 1 collapses; over all 1,305 future events 586 (45%) have `hColor ===
+  // aColor`, 577 of them because BOTH teams' colours are null and fall to
+  // DEFAULT_COLOR together — most of those simply draw no awards.
+  //
+  // The payload already arrives partitioned by side, which is an identity the
+  // renderer cannot get wrong. A colour is a paint value two teams may share;
+  // it was never an identity. Keep the sides apart and sort within each.
+  const byProbabilityDesc = (
+    a: { future: RelatedFuture },
+    b: { future: RelatedFuture },
+  ) => (b.future.probability || 0) - (a.future.probability || 0);
+  const homeAwards = deduplicateAwards(homeCats.awards)
+    .map((a) => ({ ...a, teamColor: hColor, teamLabel: homeShort }))
+    .sort(byProbabilityDesc);
+  const awayAwards = deduplicateAwards(awayCats.awards)
+    .map((a) => ({ ...a, teamColor: aColor, teamLabel: awayShort }))
+    .sort(byProbabilityDesc);
 
   // `mergedNovelty` was DELETED here. It merged and sorted the novelty rows for
   // `NoveltyScroll`, which — like `MatchupGrid` — is declared in this file and
@@ -2584,8 +2609,6 @@ export default function RelatedFutures({
   };
   const homePathEntries = buildPathEntries(homePlayoff);
   const awayPathEntries = buildPathEntries(awayPlayoff);
-  const homeAwards = mergedAwards.filter((a) => a.teamColor === hColor);
-  const awayAwards = mergedAwards.filter((a) => a.teamColor === aColor);
 
   // #3775 again, one level down. The old `seasonCount` was a SUM over both
   // teams gating a grid of TWO cards, so a game whose season context all
