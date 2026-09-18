@@ -16,21 +16,22 @@ import XCTest
 ///   * WRITE — a tile's `key` must be a key the server expands.
 ///   * READ  — a tile's `servedKeys` must be categories the server can emit.
 ///
-/// The two fixtures below were COMPUTED from that module's AST, not read off it
-/// by eye (29 write keys, 26 servable categories). Re-derive after any change
-/// to `SPORT_AFFINITY_MAPPING`:
+/// Both halves are now on master: iOS keys the tiles on the served vocabulary,
+/// and `SPORT_AFFINITY_MAPPING` carries `"aussierules"` (`user.py:137`), which
+/// was the one case iOS could not fix alone. The AFL control that used to live
+/// at the bottom of this file asserted the OPPOSITE — and kept passing after the
+/// server shipped, because it read the stale fixture below rather than the
+/// module. A fixture pinned to a moving module is a guard aimed at itself.
+///
+/// The two fixtures below were COMPUTED from that module, not read off it by eye
+/// (30 write keys, 27 servable categories). Re-derive after any change to
+/// `SPORT_AFFINITY_MAPPING` — read the built objects, not an AST re-implementation
+/// of how they are built:
 ///
 ///     cd backend && python3 -c "
-///     import ast
-///     t = ast.parse(open('app/routes/user.py').read())
-///     m = next(ast.literal_eval(n.value) for n in t.body
-///              if getattr(getattr(n, 'target', None), 'id', '') == 'SPORT_AFFINITY_MAPPING')
-///     print(sorted(m))
-///     s = {}
-///     for cat, keys in m.items():
-///         for k in keys:
-///             s.setdefault(k, cat) if cat in {'football','basketball','golf'} else s.__setitem__(k, cat)
-///     print(sorted(set(s.values())))"
+///     from app.routes import user as U
+///     print(sorted(U.SPORT_AFFINITY_MAPPING))
+///     print(sorted(set(U.SPORT_KEY_TO_CATEGORY.values())))"
 @MainActor
 final class SettingsInterestsShowWhatTheReaderStored6671Tests: XCTestCase {
 
@@ -45,6 +46,7 @@ final class SettingsInterestsShowWhatTheReaderStored6671Tests: XCTestCase {
         "baseball", "hockey", "soccer",
         "golf_pga", "golf_dp_world", "golf_lpga", "golf_liv", "golf",
         "tennis", "mma", "boxing", "cricket", "rugby",
+        "aussierules",
         "motorsport", "esports",
         "politics", "entertainment", "crypto", "economics",
         "tech", "weather", "geopolitics", "culture",
@@ -59,6 +61,7 @@ final class SettingsInterestsShowWhatTheReaderStored6671Tests: XCTestCase {
         "baseball", "hockey", "soccer",
         "golf_pga", "golf_dp_world", "golf_lpga", "golf_liv",
         "tennis", "mma", "boxing", "cricket", "rugby",
+        "aussierules",
         "motorsport", "esports",
         "politics", "entertainment", "crypto", "economics",
         "tech", "weather", "geopolitics", "culture",
@@ -94,8 +97,6 @@ final class SettingsInterestsShowWhatTheReaderStored6671Tests: XCTestCase {
 
     func testEveryTileWritesAKeyTheServerExpands() {
         for item in OnboardingSportsData.allItems {
-            // AFL is the one known gap and has its own control below.
-            if item.key == "aussierules" { continue }
             XCTAssertTrue(
                 serverExpandsTheseWriteKeys.contains(item.key),
                 "tile '\(item.name)' writes '\(item.key)', which SPORT_AFFINITY_MAPPING "
@@ -106,7 +107,6 @@ final class SettingsInterestsShowWhatTheReaderStored6671Tests: XCTestCase {
 
     func testEveryTileReadsCategoriesTheServerCanActuallyServe() {
         for item in OnboardingSportsData.allItems {
-            if item.key == "aussierules" { continue }
             XCTAssertFalse(item.servedKeys.isEmpty, "\(item.name) declares no served key")
             for served in item.servedKeys {
                 XCTAssertTrue(
@@ -241,7 +241,7 @@ final class SettingsInterestsShowWhatTheReaderStored6671Tests: XCTestCase {
     // MARK: - Onboarding writes the same vocabulary
 
     func testOnboardingDefaultsUseKeysTheServerExpands() {
-        for (key, _) in OnboardingSportsData.defaultAffinities where key != "aussierules" {
+        for (key, _) in OnboardingSportsData.defaultAffinities {
             XCTAssertTrue(
                 serverExpandsTheseWriteKeys.contains(key),
                 "onboarding would submit '\(key)', which the server stores verbatim and never reads"
@@ -252,35 +252,96 @@ final class SettingsInterestsShowWhatTheReaderStored6671Tests: XCTestCase {
         XCTAssertEqual(OnboardingSportsData.defaultAffinities["college_basketball"], 1.0)
     }
 
-    // MARK: - The one gap iOS cannot close
+    // MARK: - The gap that is now closed
 
-    /// AFL has no entry in SPORT_AFFINITY_MAPPING, so the tile is dead in BOTH
-    /// directions no matter what iOS spells it: the tap is stored verbatim, and
-    /// `_compress_sport_affinities` skips unknown keys, so the value can never
-    /// come back. The backend keys (`aussierules_afl`, `aussierules_other`)
-    /// already exist in `sport_keys.py`, so the server fix is one mapping line.
+    /// AFL was dead in BOTH directions: the tap was stored verbatim because
+    /// `SPORT_AFFINITY_MAPPING` had no `aussierules` entry, and
+    /// `_compress_sport_affinities` — an exact lookup against the reverse of that
+    /// same dict — then skipped it, so the value could never come back.
     ///
-    /// The round trip below is the real evidence. The fixture assertion is the
-    /// reminder: whoever adds the server mapping updates that fixture, and this
-    /// control then fails and points at the AFL tile's missing `servedKeys`.
-    func testAFLCannotHoldAValueUntilTheServerHasACategoryForIt() {
-        XCTAssertFalse(
+    /// The server mapping shipped (`user.py:137`), so this is the round trip the
+    /// tile could not previously survive: tap, send, serve back, read the level.
+    /// The write key doubles as the served key, which is why the tile needs no
+    /// explicit `servedKeys`.
+    func testAFLHoldsItsValueThroughTheRoundTripNowTheServerMapsIt() {
+        XCTAssertTrue(
             serverExpandsTheseWriteKeys.contains("aussierules"),
-            "the server now expands aussierules — give the AFL tile its servedKeys and drop this control"
+            "the AFL tap is stored verbatim again — SPORT_AFFINITY_MAPPING lost its aussierules entry"
+        )
+        XCTAssertTrue(
+            serverCanServeTheseCategories.contains("aussierules"),
+            "compression can no longer emit aussierules, so the tile would read Nah forever"
+        )
+        XCTAssertEqual(
+            OnboardingSportsData.allItems.first { $0.name == "AFL" }?.servedKeys,
+            ["aussierules"]
         )
 
-        // The reader taps AFL: the app does send it...
+        // The reader taps AFL, and the app sends exactly that key...
         let model = loadedModel()
         model.setAffinity("aussierules", level: .loveIt)
         XCTAssertEqual(model.affinitySavePayload["aussierules"], 1.0)
 
-        // ...but the next load cannot see it, because compression dropped it.
+        // ...and the next load reads it back, instead of the "Nah" of #6671.
         let reloaded = PreferencesViewModel(morningDigestUpdater: { $0 })
         reloaded.apply(loaded: PreferencesResponse(
             homeLocation: nil,
-            sportAffinities: servedPayload,   // what the server actually serves back
+            sportAffinities: servedPayload.merging(["aussierules": 1.0]) { _, new in new },
             onboardingCompleted: true, favorites: [], pushPreferences: nil
         ))
-        XCTAssertEqual(reloaded.affinityLevel(for: "aussierules"), .nah)
+        XCTAssertEqual(reloaded.affinityLevel(for: "aussierules"), .loveIt)
+    }
+
+    /// The #6671 payload as the SERVER actually builds it, not as a fixture
+    /// imagines it: this dictionary is the verbatim output of
+    /// `_compress_sport_affinities(_expand_sport_affinities(body))` for a reader
+    /// who set all 22 tiles, one distinct level each, run against
+    /// `backend/app/routes/user.py` on this tree.
+    ///
+    /// An all-one-value probe cannot see one tile's value landing on another —
+    /// which was the second half of #6671, where a single NFL tap moved College
+    /// Football. Distinct levels are what make that observable.
+    func testTheRealServedPayloadLightsAllTwentyTwoTilesAtTheLevelTheReaderSet() {
+        let served: [String: Double] = [
+            "nfl": 1.0, "college_football": 0.3, "nba": 0.1, "college_basketball": 1.0,
+            "baseball": 0.3, "hockey": 0.1, "mma": 1.0, "boxing": 0.3,
+            "golf_pga": 0.1, "golf_dp_world": 0.1, "golf_lpga": 0.1, "golf_liv": 0.1,
+            "tennis": 1.0, "soccer": 0.3, "cricket": 0.1, "rugby": 1.0,
+            "aussierules": 0.3,
+            "politics": 0.1, "entertainment": 1.0, "crypto": 0.3, "economics": 0.1,
+            "tech": 1.0, "weather": 0.3, "geopolitics": 0.1, "culture": 1.0,
+        ]
+        let expected: [String: AffinityLevel] = [
+            "nfl": .loveIt, "college_football": .bigMoments, "nba": .ifWild,
+            "college_basketball": .loveIt, "baseball": .bigMoments, "hockey": .ifWild,
+            "mma": .loveIt, "boxing": .bigMoments, "golf": .ifWild, "tennis": .loveIt,
+            "soccer": .bigMoments, "cricket": .ifWild, "rugby": .loveIt,
+            "aussierules": .bigMoments,
+            "politics": .ifWild, "entertainment": .loveIt, "crypto": .bigMoments,
+            "economics": .ifWild, "tech": .loveIt, "weather": .bigMoments,
+            "geopolitics": .ifWild, "culture": .loveIt,
+        ]
+
+        let model = PreferencesViewModel(morningDigestUpdater: { $0 })
+        model.apply(loaded: PreferencesResponse(
+            homeLocation: nil, sportAffinities: served,
+            onboardingCompleted: true, favorites: [], pushPreferences: nil
+        ))
+
+        XCTAssertEqual(
+            expected.count, OnboardingSportsData.allItems.count,
+            "a tile was added or removed — extend this payload rather than narrowing it"
+        )
+        for item in OnboardingSportsData.allItems {
+            XCTAssertEqual(
+                model.affinityLevel(for: item.key), expected[item.key],
+                "tile '\(item.name)' reads \(model.affinityLevel(for: item.key).label) "
+                + "from the payload the server actually serves"
+            )
+        }
+        XCTAssertFalse(
+            OnboardingSportsData.allItems.contains { model.affinityLevel(for: $0.key) == .nah },
+            "#6671 is exactly a tile reading Nah for a reader who set it"
+        )
     }
 }
