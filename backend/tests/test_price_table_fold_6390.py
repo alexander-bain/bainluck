@@ -482,13 +482,79 @@ class _HistoryRouteSession:
                 ids.add(value)
         return ids or None
 
+    @staticmethod
+    def _captured_at_bounds(statement):
+        """Every `captured_at` comparison this statement compiled, as (op, when).
+
+        🔴 THE THIRD FAIL-OPEN THIS RIG HAD, found by #6921. A stub that reads
+        the event-id filter and ignores the time bounds answers EVERY odds
+        statement with the same rows — so when #6921 split the one read into a
+        pre-window read and an in-window read, this rig handed both of them the
+        whole population and `snapshot_count` doubled to 60. The doubling is the
+        rig's, not the route's: on a real session those two WHERE clauses are
+        disjoint by construction. Left unhonoured, the same blindness would let
+        a future mutant that dropped a bound entirely pass here.
+
+        Read off the compiled text rather than by walking the clause tree,
+        because the text is what names the OPERATOR — `min(bounds)`, the idiom
+        the sibling rig in `test_history_window_stale_open_event` uses, cannot
+        tell `captured_at < :x` from `captured_at >= :x` and would apply a
+        lower bound to the query that wants an upper one.
+        """
+        import re
+
+        params = statement.compile().params
+        bounds = []
+        for op, key in re.findall(
+            r"captured_at\s*(<=|>=|<|>)\s*:(\w+)", str(statement)
+        ):
+            when = params.get(key)
+            if isinstance(when, datetime):
+                bounds.append((op, when))
+        return bounds
+
+    @classmethod
+    def _within_bounds(cls, snapshot, bounds):
+        for op, when in bounds:
+            got = snapshot.captured_at
+            if op == "<" and not got < when:
+                return False
+            if op == "<=" and not got <= when:
+                return False
+            if op == ">" and not got > when:
+                return False
+            if op == ">=" and not got >= when:
+                return False
+        return True
+
+    @staticmethod
+    def _row_limit(statement):
+        """The statement's own LIMIT, or None.
+
+        Honoured for the same reason the time bounds are: a stub that ignores
+        it cannot witness a cap at all, so #6921's "the ceiling is still a
+        ceiling" guard would pass against a route that had no ceiling left.
+        """
+        limit = getattr(statement, "_limit", None)
+        return limit if isinstance(limit, int) else None
+
     async def execute(self, statement, *_a, **_kw):
         sql = " ".join(str(statement).split())
         if "odds_snapshots" in sql:
             ids = self._requested_ids(statement)
             self.odds_id_filters.append(ids)
-            rows = [s for s in self.snapshots if ids is None or s.event_id in ids]
-            return _HistoryResult(sorted(rows, key=lambda s: s.captured_at))
+            bounds = self._captured_at_bounds(statement)
+            rows = [
+                s
+                for s in self.snapshots
+                if (ids is None or s.event_id in ids)
+                and self._within_bounds(s, bounds)
+            ]
+            rows.sort(key=lambda s: s.captured_at)
+            limit = self._row_limit(statement)
+            if limit is not None:
+                rows = rows[:limit]
+            return _HistoryResult(rows)
         if is_series_fold(sql):
             return _HistoryResult(self.fold_rows)
         if "FROM events" in sql:
