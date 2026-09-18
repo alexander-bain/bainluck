@@ -35,12 +35,32 @@
 set -u
 
 MODE="${1:-test}"
-DEVICE="${2:-iPhone 17}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT="$REPO_ROOT/ios/Bain Luck/Bain Luck.xcodeproj"
 SCHEME="Bain Luck"
+
+# native/233 — the reserved set, from the one file that owns it. This preflight
+# used to keep its own copy of the constant, which is how it went on protecting
+# one device after Alex signed in on a second: a second copy is a second thing
+# to remember. The refusal below stays local because the gate RETURNS its codes
+# rather than exiting; only the membership question is shared.
+. "$REPO_ROOT/tools/reserved-sim-guard.sh"
+
+# THE DEFAULT DEVICE IS RESOLVED, NOT NAMED. It was the literal string
+# `iPhone 17`, and on 2026-09-18 that stopped naming a device at all: Alex's two
+# signed-in simulators are BOTH called exactly `iPhone 17`, so the ambiguity
+# refusal above fired on every bare invocation (exit 6) and the only two devices
+# it offered as disambiguations were the two nobody may touch. The gate was
+# unrunnable by default and its own advice pointed at the reserved pair.
+#
+# `bl_default_shoot_sim` returns a UDID, which is unambiguous by construction and
+# already excludes the whole reserved set. The old name stays as the fallback for
+# a machine with no iPhone at all, so the "no such device" message (exit 5) still
+# reads the way it always did rather than as an empty destination.
+DEVICE="${2:-$(bl_default_shoot_sim)}"
+DEVICE="${DEVICE:-iPhone 17}"
 
 # #117: master's already-resolved package store. A worktree cannot afford its
 # own resolution, so it borrows one. Overridable for a different machine.
@@ -62,11 +82,28 @@ preflight() {
         return 4
     fi
 
-    # Exact-name match against AVAILABLE devices only. `simctl list devices`
-    # without `available` also lists unavailable runtimes, which would let an
-    # unbootable device pass this check and fail identically inside xcodebuild.
-    ALL_UDIDS="$(xcrun simctl list devices available 2>/dev/null \
-        | sed -n "s/^ *${DEVICE} (\([0-9A-F-]\{36\}\)) (.*/\1/p")"
+    # A UDID IS ACCEPTED AS WELL AS A NAME, and is what the default now is.
+    #
+    # native/233: the destination was resolved by NAME only, which is the one
+    # form that can be ambiguous — and on 2026-09-18 the default name `iPhone 17`
+    # matched both of Alex's signed-in devices and nothing else, so the gate
+    # refused every bare invocation. A UDID cannot be ambiguous, so the picker
+    # hands one over and this branch takes it. Still checked against AVAILABLE,
+    # so a UDID that is real but unbootable is refused here rather than inside
+    # xcodebuild.
+    case "$DEVICE" in
+        [0-9A-Fa-f]*-*-*-*-*)
+            ALL_UDIDS="$(xcrun simctl list devices available 2>/dev/null \
+                | sed -n "s/^ *.* (\(${DEVICE}\)) (.*/\1/p")"
+            ;;
+        *)
+            # Exact-name match against AVAILABLE devices only. `simctl list devices`
+            # without `available` also lists unavailable runtimes, which would let an
+            # unbootable device pass this check and fail identically inside xcodebuild.
+            ALL_UDIDS="$(xcrun simctl list devices available 2>/dev/null \
+                | sed -n "s/^ *${DEVICE} (\([0-9A-F-]\{36\}\)) (.*/\1/p")"
+            ;;
+    esac
     UDID="$(printf '%s\n' "$ALL_UDIDS" | head -1)"
 
     # A NAME THAT MATCHES TWO DEVICES IS A TYPO, NOT A CHOICE.
@@ -98,18 +135,21 @@ preflight() {
         return 5
     fi
 
-    # THE RESERVED DEVICE IS REFUSED BY UDID, NOT BY NAME.
+    # A RESERVED DEVICE IS REFUSED BY UDID, NOT BY NAME.
     #
-    # `iPhone 17` / 76D961F0 holds Alex's signed-in existing account — the
-    # launch candidate's row-19 evidence, which only he can re-create because
-    # no lane may sign in. It was reinstalled by some gate on 2026-09-17 and the
-    # state had to be restored. Codex reserved it by directive the same day; a
+    # Two `iPhone 17`s hold Alex's signed-in account — 76D961F0 (iOS 26.5) and
+    # DD0DC456 (iOS 27.0), the one he signed in on after the first was
+    # reinstalled by some gate on 2026-09-17. Only he can re-create that state,
+    # because no lane may sign in. Codex reserved the first by directive; a
     # directive protects the lanes that read it, and this protects the ones that
-    # do not. Defaults to protecting: an unset variable is the reserved UDID,
-    # never an empty allowlist.
-    RESERVED_UDID="${BAINLUCK_RESERVED_SIMULATOR:-76D961F0-8575-479F-ABCE-652D8A79DBF9}"
-    if [ "$UDID" = "$RESERVED_UDID" ]; then
-        echo "GATE PREFLIGHT FAILED: '${DEVICE}' resolves to the RESERVED simulator ${UDID}." >&2
+    # do not.
+    #
+    # The set lives in `tools/reserved-sim-guard.sh` and is a LIST. It was a
+    # scalar here and there, which could express one protected device on a
+    # machine that had two — and the name is no help either, since both are
+    # named exactly `iPhone 17`.
+    if bl_is_reserved_sim "$UDID"; then
+        echo "GATE PREFLIGHT FAILED: '${DEVICE}' resolves to a RESERVED simulator ${UDID}." >&2
         echo "" >&2
         echo "  That device holds Alex's signed-in account for the launch check." >&2
         echo "  Installing, erasing or running a gate on it destroys evidence" >&2
@@ -118,7 +158,7 @@ preflight() {
     fi
 
     echo "PREFLIGHT OK: destination '${DEVICE}' -> ${UDID}"
-    echo "PREFLIGHT OK: not the reserved device ${RESERVED_UDID}"
+    echo "PREFLIGHT OK: not a reserved device ($(printf '%s' "$BL_RESERVED_SIMS" | /usr/bin/grep -c . ) protected)"
     echo "PREFLIGHT OK: SPM store ${SPM_STORE}"
     return 0
 }

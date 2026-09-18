@@ -163,15 +163,23 @@ fi
 # not installed, and 70 reads like a test failure while meaning the run never
 # started (gotcha #124). Names churn between Xcode releases and between laptops.
 if [ -z "$DEVICE" ]; then
-  # `head -1` over every available iPhone MEASURED to 76D961F0 — the RESERVED
+  # `head -1` over every available iPhone MEASURED to 76D961F0 — a RESERVED
   # device — so this runner installed and ran UITests on Alex's signed-in
   # launch candidate by DEFAULT. Same `head -1` hazard the gate's preflight was
-  # built for (#6910); the reserved UDID is excluded before the pick.
-  SIMLINE=$(xcrun simctl list devices available \
-    | /usr/bin/grep -E '^[[:space:]]+iPhone ' \
-    | /usr/bin/grep -v "$BL_RESERVED_SIM" | head -1)
-  DEVICE=$(printf '%s' "$SIMLINE" | sed -E 's/.*\(([0-9A-Fa-f-]{36})\).*/\1/')
-  SIMNAME=$(printf '%s' "$SIMLINE" | sed -E 's/^[[:space:]]+//; s/ \(.*//')
+  # built for (#6910).
+  #
+  # native/233: this used to be a bespoke `grep -v` against a single reserved
+  # UDID, which is the shape that can only ever exclude ONE device — see the
+  # guard file's header for what that cost. `bl_default_shoot_sim` is the same
+  # pick against the whole reserved LIST, and it is what the other four shoot
+  # tools already call; a copy here is a copy to forget to update.
+  DEVICE=$(bl_default_shoot_sim)
+  # Guarded: an empty DEVICE would make `grep -F ""` match every line and hand
+  # the "no iPhone here" case a multi-line name. It is refused two lines down,
+  # and it is refused reading like itself.
+  SIMNAME=""
+  [ -n "$DEVICE" ] && SIMNAME=$(xcrun simctl list devices available \
+    | /usr/bin/grep -F "$DEVICE" | sed -E 's/^[[:space:]]+//; s/ \(.*//')
 else
   SIMNAME=$(xcrun simctl list devices available | /usr/bin/grep "$DEVICE" | sed -E 's/^[[:space:]]+//; s/ \(.*//')
 fi
