@@ -2639,6 +2639,37 @@ jobs:
             exit 1
           fi
 
+      - name: "#6977 diacritic search fold, three rails (real Postgres)"
+        # A plain-keyboard reader reached NONE of an accented club's rows.
+        # Measured on production 2026-09-18, same minute, two spellings:
+        # `Atlético Madrid` -> 10 events / 1 team / 10 futures all naming the
+        # club; `Atletico Madrid` -> 1 event (a duplicate), 0 teams, and 10
+        # futures of which ONE named the club. The page looked full and answered
+        # someone else's question.
+        #
+        # This cannot be a unit test. The fold is spent as SQL on three rails
+        # that only Postgres serves — pg_trgm-servable ILIKE ANDed with a
+        # `to_tsvector` word test for events, FTS-OR-ILIKE for futures, and a
+        # pure FTS gate for teams. The pure half (the map's invariants and the
+        # expansion behaviour) is `tests/test_diacritic_search_folds_6977.py`,
+        # which runs on every push and cannot skip.
+        #
+        # The case that matters most is the EQUALITY one: asserting the typed
+        # spelling finds rows would still pass if the accented spelling had
+        # quietly regressed to the same small set.
+        #
+        # Same skip detection as every gate in this job: pytest exits 0 when
+        # each test skips, and a gate that silently did not run reads exactly
+        # like one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_diacritic_fold_pg_6977.py \
+            -v -rs 2>&1 | tee /tmp/diacriticfold.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/diacriticfold.txt; then
+            echo "::error::#6977 diacritic fold contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

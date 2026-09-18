@@ -16,6 +16,8 @@ Public API:
 import re
 import unicodedata
 
+from app.config.diacritic_search_folds import DIACRITIC_SEARCH_FOLDS
+
 # Reserve/youth team suffixes to strip during normalization
 _RESERVE_SUFFIX_RE = re.compile(
     r"\s+(?:reserves?|ii|iii|iv|b|c|u\d{1,2}|under[\s-]?\d{1,2}|youth|academy|women|w|2)\s*$",
@@ -115,17 +117,56 @@ _GENERAL_ABBREVIATIONS: dict[str, str] = {
 
 
 def expand_search_terms(terms: list[str]) -> list[tuple[str, str | None]]:
-    """Expand search terms using city and general abbreviation dictionaries.
+    """Expand search terms using city, general abbreviation and diacritic folds.
 
     Returns a list of (original_term, expanded_or_None) tuples.
     Example: ["LA", "mayor"] → [("LA", "los angeles"), ("mayor", None)]
+
+    #6977 adds the third dictionary, and it is LAST on purpose — it fills an
+    empty expansion slot and never displaces one, so `la` keeps `los angeles`.
+    Measured at generation time, the fold keys do not collide with the city (42),
+    general (19) or sport-synonym (13) dictionaries at all, so the ordering is
+    belt-and-braces rather than a live tie-break.
+
+    The fold is what lets a plain keyboard reach accented rows: `atletico` →
+    `atlético`, which the route then spends as the ordinary second ILIKE it
+    already builds for every expansion. Folding the QUERY rather than the column
+    is the whole point — `unaccent` is not installed here, and a functional fold
+    over `events.home_team_name` would defeat the `gin_trgm_ops` index and
+    reproduce the seq scan that got LAT-P002 reverted. See
+    `app/config/diacritic_search_folds.py` for the corpus and the measurement.
     """
     result: list[tuple[str, str | None]] = []
     for term in terms:
         lower = term.lower()
-        expansion = _CITY_ABBREVIATIONS.get(lower) or _GENERAL_ABBREVIATIONS.get(lower)
+        expansion = (
+            _CITY_ABBREVIATIONS.get(lower)
+            or _GENERAL_ABBREVIATIONS.get(lower)
+            or DIACRITIC_SEARCH_FOLDS.get(lower)
+        )
         result.append((term, expansion))
     return result
+
+
+def diacritic_fold_query(q: str) -> str | None:
+    """Rewrite a typed query into the spelling the venues store, or None (#6977).
+
+    ``"Atletico Madrid"`` -> ``"atlético Madrid"``. Returns None when no token has
+    a fold, which is the overwhelming majority of queries and the path on which
+    every caller must build exactly the SQL it builds today.
+
+    This exists because the Teams surface cannot use the per-term expansion above:
+    :func:`_build_team_search_filter` gates on a full-text match over the WHOLE
+    query string, not on ``(term, expansion)`` pairs, so a fold has to arrive as a
+    rewritten query. Splitting on whitespace matches how that route derives its
+    terms (``_q_identity.strip().split()``), so the two cannot disagree about what
+    a token is.
+    """
+    tokens = q.split()
+    folded = [DIACRITIC_SEARCH_FOLDS.get(t.lower(), t) for t in tokens]
+    if folded == tokens:
+        return None
+    return " ".join(folded)
 
 
 # Special letter transliterations not handled by NFD decomposition.

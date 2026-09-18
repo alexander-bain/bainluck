@@ -101,7 +101,7 @@ from app.utils.game_window import (
     filter_state_bearing_rows as _filter_state_bearing_rows,
     game_state_window as _game_state_window,
 )
-from app.utils.name_normalization import expand_search_terms
+from app.utils.name_normalization import diacritic_fold_query, expand_search_terms
 from app.config.team_aliases import (
     team_nickname_event_expansions,
     team_nickname_search_expansions,
@@ -3033,6 +3033,20 @@ def _build_team_search_filter(q: str):
             ).op("@@")(prefix_q)
             for column in _team_ts_columns()
         ]
+    # #6977: the team CARD was missing for every accented club, because this gate
+    # is FTS over the whole query and `to_tsvector('Atlético Madrid')` yields the
+    # lexeme `atlético` — which `Atletico` is not. The per-term expansion the
+    # event and futures rails ride cannot help here (this takes a query string,
+    # not `(term, expansion)` pairs), so the fold arrives as a rewritten query.
+    #
+    # Whole-lexeme only, deliberately: this mirrors the arms above and adds no
+    # prefix arm, keeping #4126's ranking contract untouched. Purely ADDITIVE —
+    # `diacritic_fold_query` returns None for every query without an accented
+    # variant, so the SQL for those is byte-identical to today and only queries
+    # that currently return no team at all pay for the extra arms.
+    folded_q = diacritic_fold_query(q)
+    if folded_q is not None:
+        arms += [_fts_filter(column, folded_q) for column in _team_ts_columns()]
     return or_(*arms)
 
 
