@@ -781,7 +781,7 @@ export default function MarketMapSection({
     const scored = pace?.total_scored ?? (homeScore != null && awayScore != null ? homeScore + awayScore : null);
     /* #6831: A RUN-FORWARD OF NOTHING IS NOT A FORECAST.
        `pace.projected_total` is the score so far extrapolated over the whole
-       game — measured on `/events/14638444` at 00:50Z, `total_scored 6` with
+       game — measured on `/events/14638444` at 00:29Z, `total_scored 6` with
        `fraction_elapsed 0.097` gave `projected_total 62`, i.e. exactly
        `scored / elapsed`. So a scoreless game projects 0 at EVERY elapsed
        fraction, and 0 is not null: both consumers below drew it. On tonight's

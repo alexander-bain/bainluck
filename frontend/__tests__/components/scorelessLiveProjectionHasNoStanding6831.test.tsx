@@ -3,7 +3,7 @@
  *
  * ═══ THE SPECIMEN ═══
  *
- * Production, 2026-09-18 00:46Z, `/events/14638444` — Lions @ Bills, live,
+ * Production, 2026-09-18 00:27Z, `/events/14638444` — Lions @ Bills, live,
  * 11:08 into the 1st quarter, score 0 – 0. Read at 390px during the notice-42
  * live-marquee mystery shop:
  *
@@ -19,7 +19,7 @@
  * ═══ WHY IT IS STRUCTURAL AND NOT A BAD MINUTE ═══
  *
  * `pace.projected_total` is the score so far run forward over the whole game.
- * Measured on the same event at 00:50Z, once Buffalo had scored:
+ * Measured on the same event at 00:29Z, once Buffalo had scored:
  *
  *     pace = { total_scored: 6, projected_total: 62, fraction_elapsed: 0.097 }
  *
@@ -155,7 +155,7 @@ describe("#6831 — a scoreless live game has no projection to print", () => {
 
   it("CONTROL: still draws a projection that HAS standing", () => {
     // The same event 4 minutes later, once Buffalo had scored — the real
-    // 00:50Z payload. If the fix were `projected = null` this goes red.
+    // 00:29Z payload. If the fix were `projected = null` this goes red.
     const text = renderCard({
       home_score: 6,
       away_score: 0,
