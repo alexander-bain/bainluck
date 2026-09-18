@@ -605,11 +605,19 @@ export function feedContextSnippet(item: FeedItem): string {
     // heading before it is considered, so a candidate that is NOTHING but the
     // heading no longer wins the chain over one that says something.
     const data = item.data as FeedFuturesData;
-    return firstMeaningful(
-      [item.context_summary, item.headline, item.reason, data.hook_description].map(
-        (candidate) => stripCardTitleHead(candidate, data.name),
-      ),
-    );
+    // The heading is an ARGUMENT here, never a candidate: it is what the card
+    // already prints, so it can only ever be subtracted. Hoisted to a local so
+    // the four doors below stay the four doors — `test_silent_first_page_cards_
+    // yield_the_slot_4695` reads this array literal to keep the backend silence
+    // predicate and this chain from drifting apart, and a bare `data.name`
+    // inside it would read as a fifth door.
+    const heading = data.name;
+    return firstMeaningful([
+      stripCardTitleHead(item.context_summary, heading),
+      stripCardTitleHead(item.headline, heading),
+      stripCardTitleHead(item.reason, heading),
+      stripCardTitleHead(data.hook_description, heading),
+    ]);
   }
   if (item.context_summary) return item.context_summary;
   // UX-P045 — on a SETTLED event card, prefer `reason` over `headline`.
