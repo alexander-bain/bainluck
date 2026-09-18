@@ -49,7 +49,11 @@ from sqlalchemy import text
 
 from app.tasks.base import get_task_session
 from app.tasks.redis_state import get_redis_client
-from app.utils.market_shape import CLASSIFIER_VERSION, classify_market_semantics
+from app.utils.market_shape import (
+    CLASSIFIER_VERSION,
+    classify_market_semantics,
+    venue_leg_count,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +79,13 @@ def _source_kind(source, external_id, meta: dict) -> str | None:
     if source == "datagolf" and external_id and ":" in str(external_id):
         return str(external_id).rsplit(":", 1)[-1]
     return None
+
+
+# #3721: the predicate moved to `app.utils.market_shape` when the event-page
+# route became its second caller — one meaning, one definition. Re-exported
+# under the private name this module has always used so the task's own call
+# sites and tests keep reading the same way.
+_venue_leg_count = venue_leg_count
 
 
 async def _backfill_market_shapes(
@@ -124,7 +135,7 @@ async def _backfill_market_shapes(
                         """
                         SELECT id, source, external_id, event_id, group_id,
                                group_type, mutually_exclusive, market_type,
-                               market_metadata
+                               market_metadata, name
                         FROM futures_markets
                         WHERE id > :cursor
                           AND status IS DISTINCT FROM 'resolved'
@@ -195,6 +206,7 @@ async def _backfill_market_shapes(
                 mutually_exclusive,
                 old_market_type,
                 market_metadata,
+                market_name,
             ) in rows:
                 meta = _as_dict(market_metadata)
                 stored_shape = _as_dict(meta.get("shape"))
@@ -214,6 +226,9 @@ async def _backfill_market_shapes(
                     conditional=bool(meta.get("conditional", False)),
                     parent_condition_id=meta.get("parent_condition_id"),
                     group_type=group_type,
+                    venue_leg_count=_venue_leg_count(
+                        meta, market_name, mutually_exclusive
+                    ),
                 )
                 new_shape = result["display_shape"]
 
@@ -370,7 +385,7 @@ async def census_resolved_market_shapes(
                     """
                     SELECT id, source, external_id, event_id, group_id,
                            group_type, mutually_exclusive, market_type,
-                           market_metadata
+                           market_metadata, name
                     FROM futures_markets
                     WHERE id > :cursor
                       AND status = 'resolved'
@@ -437,6 +452,7 @@ async def census_resolved_market_shapes(
             mutually_exclusive,
             old_market_type,
             market_metadata,
+            market_name,
         ) in rows:
             meta = _as_dict(market_metadata)
             stored_shape = _as_dict(meta.get("shape"))
@@ -454,6 +470,9 @@ async def census_resolved_market_shapes(
                 conditional=bool(meta.get("conditional", False)),
                 parent_condition_id=meta.get("parent_condition_id"),
                 group_type=group_type,
+                venue_leg_count=_venue_leg_count(
+                    meta, market_name, mutually_exclusive
+                ),
             )
             new_shape = result["display_shape"]
             stored_v = stored_shape.get("classifier_version", stored_shape.get("v"))

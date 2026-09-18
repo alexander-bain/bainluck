@@ -333,6 +333,7 @@ def input_fingerprint(
     conditional: bool = False,
     parent_condition_id=None,
     push_possible=None,
+    venue_leg_count: int | None = None,
 ) -> str:
     """Stable 20-hex fingerprint of every input that can change a market's
     semantics (Queue #260 Item 2). Recompute is triggered when this differs from
@@ -353,6 +354,14 @@ def input_fingerprint(
         "parent_condition_id": parent_condition_id,
         "push_possible": push_possible,
     }
+    # Added CONDITIONALLY, and that is deliberate (#3721). An unconditional key
+    # would change the fingerprint of all ~15k non-null-shape rows at once and
+    # force a full re-stamp of the table for a rule that can only apply to the
+    # handful of markets that carry a venue leg count. Keyed in only where it
+    # is known, the fingerprint moves for exactly the rows whose `exhaustive`
+    # this input can change, which is what the recompute trigger is for.
+    if venue_leg_count is not None:
+        payload["venue_leg_count"] = _int(venue_leg_count)
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode()).hexdigest()[:20]
 
@@ -367,6 +376,7 @@ def _outcome_relation(
     parent_condition_id,
     push_possible,
     event_id: int | None,
+    venue_leg_count: int | None = None,
 ) -> dict:
     """Probabilistic-semantics core: derive the outcome relation, exhaustiveness,
     winner cardinality, push capability, confidence, and evidence.
@@ -457,6 +467,47 @@ def _outcome_relation(
     if relation == REL_COMPETITORS and ew == 1 and mutually_exclusive is True:
         exhaustive = True
 
+    # Item 4 guard (#3721): A SLICE IS DECLARED A SLICE.
+    #
+    # 🔴 `mutually_exclusive` is a fact about the VENUE'S field; `exhaustive` is
+    # stamped on OUR outcome set. Every branch above reads the first and writes
+    # the second, so when we hold fewer legs than the venue served, the claim
+    # "these outcomes partition the space" is made about a set that demonstrably
+    # does not. Nothing above can notice, because the leg count the venue served
+    # was never an input.
+    #
+    # Measured specimen: Polymarket event 1011354, "Club Atlético de Madrid vs.
+    # Real Madrid CF - 1st Half Exact Score", read from Gamma 2026-09-18 — nine
+    # open legs at the venue, six of them stored here. The parent's own metadata
+    # recorded `market_count: 9` beside `outcome_count: 6` and still stamped
+    # `exhaustive: true, confidence: high`, and the event page drew the six as a
+    # complete field summing to 41%. `0 - 0` and `0 - 1` are missing, and so is
+    # `Any Other Score` — the largest rung at the venue.
+    #
+    # This is not a display nicety. `shape.exhaustive` is read as proof of a
+    # partition by `tasks/precompute_calibration.py` (its "PROVED single-winner
+    # exhaustive partition" population) and by `utils/feed_market_quality.py`,
+    # whose band is definitional — "an exhaustive partition sums to 1". A slice
+    # certified exhaustive is judged against an arithmetic it cannot satisfy.
+    #
+    # `False`, not `None`: we are not ignorant of the partition here, we can
+    # prove it is incomplete. The relation (`exclusive_ranges`, `competitors`)
+    # is untouched — the legs we DO hold are still mutually exclusive, they just
+    # do not exhaust the field. Confidence is untouched too: the classifier is
+    # not less sure, it is differently informed.
+    #
+    # Only ever narrows. A caller that cannot establish the venue's own leg
+    # count for THIS market passes nothing and every stamp is byte-identical to
+    # before — which is the whole reason the count is threaded in rather than
+    # inferred from a sibling count that means something else.
+    if (
+        exhaustive is True
+        and venue_leg_count is not None
+        and 0 < len(names) < venue_leg_count
+    ):
+        exhaustive = False
+        evidence.append(f"partial_field:{len(names)}of{venue_leg_count}")
+
     return {
         "outcome_relation": relation,
         "exhaustive": exhaustive,
@@ -465,6 +516,51 @@ def _outcome_relation(
         "confidence": confidence,
         "evidence": sorted(set(evidence)),
     }
+
+
+def venue_leg_count(meta: dict, name, mutually_exclusive) -> int | None:
+    """How many legs the venue serves for THIS market, or ``None`` (#3721).
+
+    🔴 THE WHOLE DIFFICULTY IS THAT ``market_count`` MEANS TWO DIFFERENT THINGS.
+    On a Polymarket row that IS the venue event — a negRisk ladder, where the
+    single FuturesMarket carries the event's legs as its own outcomes — it is
+    this ladder's rung count. On a row that is one sub-market OF a venue event
+    (a game's moneyline, a spread, a player prop) it is the count of the
+    parent's SIBLINGS, which has nothing to do with this row's two outcomes.
+
+    Measured on production 2026-09-18: the unscoped ``declared > stored`` test
+    reads 12,271 open Polymarket markets, of which the overwhelming majority are
+    the second kind and are not short at all. Scoped by the ``event_title ==
+    name`` identity below it reads 2,639, and a seven-market sample of those
+    agreed with Gamma's own open-leg count 7 for 7. Returning a sibling count
+    here would strip ``exhaustive`` from ordinary Yes/No pairs — a far worse
+    error than the one being fixed — so this refuses unless the row IS the
+    ladder.
+
+    ``mutually_exclusive`` is required because both consumers can only act on a
+    field the venue itself calls a partition, and keeping the test here keeps
+    the refusal next to the reason for it.
+
+    LIVES HERE, BESIDE THE CLASSIFIER, BECAUSE IT HAS TWO CALLERS AND ONE
+    MEANING. It was written inside ``tasks/backfill_market_shapes`` when the
+    stamp was its only consumer; ``routes/events`` now asks the same question of
+    the same row at serve time, and a route may not import a heavy task module
+    to get it. This module is pure stdlib by contract (see the header), so it is
+    the one place both can reach. Restating the scoping rule in the route would
+    be the real hazard: the two copies would drift and the page and the stamp
+    would disagree about which markets are ladders.
+    """
+    if not mutually_exclusive:
+        return None
+    title = str(meta.get("event_title") or "").strip()
+    if not title or title != str(name or "").strip():
+        return None
+    raw = meta.get("market_count")
+    try:
+        count = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return count if count > 0 else None
 
 
 def classify_market_semantics(
@@ -482,8 +578,15 @@ def classify_market_semantics(
     conditional: bool = False,
     parent_condition_id=None,
     group_type: str | None = None,
+    venue_leg_count: int | None = None,
 ) -> dict:
     """The semantics v2 contract (Queue #260) for one futures market.
+
+    ``venue_leg_count`` is the number of legs the VENUE serves for this market,
+    when the caller can establish it for THIS market and not for a parent or a
+    sibling set. Supplying it lets the Item 4 guard refuse to call our stored
+    subset an exhaustive partition (#3721); omitting it leaves every output
+    exactly as it was.
 
     Returns a dict carrying BOTH the display geometry (``display_shape`` /
     ``side_kind``) and the probabilistic semantics (``outcome_relation`` /
@@ -517,6 +620,7 @@ def classify_market_semantics(
         parent_condition_id=parent_condition_id,
         push_possible=push_possible,
         event_id=event_id,
+        venue_leg_count=venue_leg_count,
     )
 
     fingerprint = input_fingerprint(
@@ -532,6 +636,7 @@ def classify_market_semantics(
         conditional=conditional,
         parent_condition_id=parent_condition_id,
         push_possible=push_possible,
+        venue_leg_count=venue_leg_count,
     )
 
     return {
