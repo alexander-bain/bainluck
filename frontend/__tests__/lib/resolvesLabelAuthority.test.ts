@@ -85,19 +85,96 @@ function stripComments(src: string): string {
  */
 const CONSTRUCTION = /["'`]Resolves \$\{|["'`]Resolves (today|tomorrow|tonight)\b/;
 
+/**
+ * UX-P?? (#6773) — THE SHAPE THE PATTERN ABOVE CANNOT SEE: JSX TEXT.
+ *
+ * `CONSTRUCTION` requires a quote or a backtick before the word, because every
+ * drift this lane had seen was a template literal. `/entertainment` built the
+ * label a fourth way — as a JSX text node followed by an expression container:
+ *
+ *     {resolves && <span>· Resolves {formatDate(resolves)}</span>}
+ *     Resolves {formatDate(market.resolution_date)}
+ *
+ * There is no quote, and `{` is not `${`, so the guard scanned that file every
+ * run and passed it. It sat there for as long as the equality assertion has
+ * existed, printing no year on 40 of the 114 dated rows `GET /api/entertainment`
+ * served on 2026-09-18 — four of them 2027, one of them 2099 — and the previous
+ * day, west of UTC, on the 6 that carry `T00:00:00+00:00`.
+ *
+ * Note `Resolves\s*\{` cannot also match `` `Resolves ${d}` ``: the `$` sits
+ * between the space and the brace, so the two alternatives stay disjoint and
+ * widening here cannot double-count the template shape.
+ */
+const JSX_CONSTRUCTION = /Resolves\s*\{/;
+
+/**
+ * ── WHY THE JSX SHAPE IS A CONJUNCTION AND THE TEMPLATE SHAPE IS NOT ──
+ *
+ * `Resolves {x}` alone is too broad to be a verdict, and the file this guard
+ * lives in already records why that matters: "a guard nobody believes is worse
+ * than no guard." Widening to the bare JSX shape flags
+ * `components/weather/WeatherHero.tsx` — which implements no date rule at all.
+ * Its `current.closes` is a string the BACKEND formatted
+ * (`_format_closes(m.resolution_date)`, `backend/app/routes/weather.py:977`);
+ * the component prints what it was handed. That is a real defect class if the
+ * server gets the day wrong, but it is not a frontend formatting authority
+ * question and no amount of adopting `formatResolvesLabel` would touch it.
+ *
+ * So the JSX shape counts only in a file that ALSO converts a date to a local
+ * display string — the actual act this authority exists to own. Pass-throughs of
+ * a preformatted string are exonerated by construction rather than by an
+ * exemption entry, which is the difference between narrowing a pattern and
+ * growing back the list UX-P054 deleted.
+ */
+const LOCAL_DATE_CONVERSION = /\.toLocale(Date|Time)?String\(/;
+
+/** True when this source builds the deadline rule itself, by either shape. */
+function constructsDeadlineRule(src: string): boolean {
+  const code = stripComments(src);
+  return (
+    CONSTRUCTION.test(code) ||
+    (JSX_CONSTRUCTION.test(code) && LOCAL_DATE_CONVERSION.test(code))
+  );
+}
+
+/**
+ * ── THE ONE EXCLUSION, AND WHY IT IS A SCAN BOUNDARY AND NOT AN EXEMPTION ──
+ *
+ * #1717's ruling is about a READER misreading "Resolves Jan 14" as this January.
+ * Admin surfaces are operator tools with the opposite requirement, and widening
+ * to the JSX shape reaches two of them:
+ *
+ *   - `components/admin/LabelingCard.tsx` prints `Resolves {whenLabel(...)}` —
+ *     a weekday AND a time ("Sat, Dec 20, 3:00 PM"). That is a different
+ *     sentence, chosen so a labeler can see the instant; `formatResolvesLabel`
+ *     would delete the time.
+ *   - `app/admin/eval/page.tsx` prints a month/day/YEAR already, and shows rows
+ *     whose resolution date has passed — which the authority renders as "",
+ *     because a reader must not be told a gone date. An evaluation tool must be.
+ *
+ * Both are named here rather than listed in `PERMITTED`, because the claim is
+ * not "these two files may drift" — it is "this guard's subject is the reader's
+ * page." Anything under a directory named `admin` is outside the scan; the test
+ * below pins that the exclusion is exactly that and not one path wider.
+ */
+function isAdminPath(rel: string): boolean {
+  return rel.split(path.sep).includes("admin");
+}
+
 /** Files that construct a "Resolves ..." string, discovered rather than listed. */
 function resolvesConstructionSites(): string[] {
   const hits: string[] = [];
   const walk = (dir: string) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+      if (entry.name === "admin") continue;
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         walk(full);
         continue;
       }
       if (!/\.(ts|tsx)$/.test(entry.name)) continue;
-      if (CONSTRUCTION.test(stripComments(fs.readFileSync(full, "utf8")))) {
+      if (constructsDeadlineRule(fs.readFileSync(full, "utf8"))) {
         hits.push(path.relative(FRONTEND, full));
       }
     }
@@ -166,14 +243,25 @@ describe("#1717 — one formatting authority for 'Resolves <date>'", () => {
     expect(fs.existsSync(path.join(FRONTEND, "app/futures/[id]/page.tsx"))).toBe(true);
     // ...and that file no longer builds the string.
     const src = fs.readFileSync(path.join(FRONTEND, "app/futures/[id]/page.tsx"), "utf8");
-    expect(CONSTRUCTION.test(stripComments(src))).toBe(false);
+    expect(constructsDeadlineRule(src)).toBe(false);
+  });
+
+  it("`app/entertainment/page.tsx` builds no label of its own (#6773)", () => {
+    // The file the quote-prefixed pattern could not see. Pinned by name because
+    // a generic equality would go green again the moment someone re-adds a
+    // private formatter under a different helper name.
+    const full = path.join(FRONTEND, "app/entertainment/page.tsx");
+    const src = fs.readFileSync(full, "utf8");
+    expect(constructsDeadlineRule(src)).toBe(false);
+    // ...and the private helper itself is gone, not merely unused.
+    expect(stripComments(src)).not.toMatch(/function formatDate\s*\(/);
   });
 
   it("`components/FeedCard.tsx` no longer runs a ladder of its own", () => {
     // The converted debt. Pinned by name because it is the specific regression
     // #1719 fixed, and a generic "one site" assertion would not name it.
     const src = fs.readFileSync(path.join(FRONTEND, "components/FeedCard.tsx"), "utf8");
-    expect(CONSTRUCTION.test(stripComments(src))).toBe(false);
+    expect(constructsDeadlineRule(src)).toBe(false);
     expect(stripComments(src)).not.toMatch(/function formatResolutionDate/);
   });
 
@@ -229,8 +317,74 @@ describe("#1717 — one formatting authority for 'Resolves <date>'", () => {
     for (const f of ["app/economics/page.tsx", "app/kernels-preview/page.tsx"]) {
       const full = path.join(FRONTEND, f);
       if (!fs.existsSync(full)) continue;
-      expect(CONSTRUCTION.test(stripComments(fs.readFileSync(full, "utf8")))).toBe(false);
+      expect(constructsDeadlineRule(fs.readFileSync(full, "utf8"))).toBe(false);
     }
+  });
+
+  it("#6773 — the JSX shape is caught, both directions (gotcha #43)", () => {
+    // CATCHES the two shapes `/entertainment` actually shipped...
+    const jsxReal = [
+      'const f = (i: string) => new Date(i).toLocaleDateString("en-US", {});\n' +
+        "<span>· Resolves {f(resolves)}</span>",
+      'const f = (i: string) => new Date(i).toLocaleDateString("en-US", {});\n' +
+        "<div>\n  Resolves {f(market.resolution_date)}\n</div>",
+    ];
+    for (const real of jsxReal) expect(constructsDeadlineRule(real)).toBe(true);
+
+    // ...and the template shape the old pattern already caught is UNCHANGED, so
+    // the widening is additive rather than a rewrite of the working half.
+    expect(constructsDeadlineRule("return `Resolves ${d.toLocaleDateString()}`;")).toBe(
+      true,
+    );
+    expect(constructsDeadlineRule('if (x) return "Resolves today";')).toBe(true);
+
+    // DOES NOT fire on a file that prints a string somebody else formatted. This
+    // is the whole reason the JSX arm is a conjunction; without it, WeatherHero
+    // is a false positive and the exemption list grows back.
+    expect(
+      constructsDeadlineRule(
+        '<span className="font-mono">Resolves {current.closes}</span>',
+      ),
+    ).toBe(false);
+
+    // ...nor on the prose and fixture shapes, which have no brace at all.
+    for (const innocent of [
+      'const d = new Date(x).toLocaleDateString();\n<FooterNote right="Resolves post-FOMC" />',
+      'const d = new Date(x).toLocaleDateString();\ntitle="Resolves daily."',
+      'const d = new Date(x).toLocaleDateString();\nstateLabel="Resolves Sep 17"',
+    ]) {
+      expect(constructsDeadlineRule(innocent)).toBe(false);
+    }
+
+    // ...nor on a MENTION in documentation, which the widening must not regress.
+    expect(
+      constructsDeadlineRule(
+        "/** prints `Resolves {date}` when dated. */\n" +
+          "const d = new Date(x).toLocaleDateString();",
+      ),
+    ).toBe(false);
+  });
+
+  it("#6773 — the admin exclusion is exactly one path segment wide", () => {
+    // A scan boundary is only honest while it is narrow, so pin the predicate
+    // rather than trusting the walk. `admin` as a SEGMENT, never a substring:
+    // a future `app/administration/` or `components/AdminBanner.tsx` is scanned.
+    expect(isAdminPath(path.join("app", "admin", "eval", "page.tsx"))).toBe(true);
+    expect(isAdminPath(path.join("components", "admin", "LabelingCard.tsx"))).toBe(true);
+    expect(isAdminPath(path.join("app", "entertainment", "page.tsx"))).toBe(false);
+    expect(isAdminPath(path.join("app", "administration", "page.tsx"))).toBe(false);
+    expect(isAdminPath(path.join("components", "AdminBanner.tsx"))).toBe(false);
+
+    // And the two excluded files are named, not merely skipped — if either stops
+    // building the string the exclusion has outlived its reason (#1525) and this
+    // test says so out loud rather than staying quietly green.
+    const stillBuild = ["app/admin/eval/page.tsx", "components/admin/LabelingCard.tsx"]
+      .filter((f) => fs.existsSync(path.join(FRONTEND, f)))
+      .filter((f) => constructsDeadlineRule(fs.readFileSync(path.join(FRONTEND, f), "utf8")));
+    expect(stillBuild).toEqual([
+      "app/admin/eval/page.tsx",
+      "components/admin/LabelingCard.tsx",
+    ]);
   });
 });
 

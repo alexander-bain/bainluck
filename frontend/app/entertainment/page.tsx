@@ -11,6 +11,7 @@ import { NO_READING, probabilityParts } from "@/lib/probabilityDisplay";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { twoLegCardPair } from "@/lib/twoLegCardPair";
 import { eventPath } from "@/lib/eventKey";
+import { formatResolvesLabel } from "@/lib/gameTimeLabel";
 import type {
   EntertainmentData,
   EntMarketRow,
@@ -180,6 +181,11 @@ function MetaRow({
   volume?: number | null;
   resolves?: string | null;
 }) {
+  // #6773 — the authority, not a private formatter. See the note above
+  // `formatDate`'s grave at the foot of this file. The guard is now on the
+  // LABEL rather than on the wire value, because `formatResolvesLabel` answers
+  // "" for a date that has gone and a row must not print a bare "· Resolves".
+  const resolvesLine = formatResolvesLabel(resolves);
   return (
     <div className={s.metaRow}>
       <EntSourceChip source={src} />
@@ -188,7 +194,7 @@ function MetaRow({
           Vol ${volume >= 1000 ? `${(volume / 1000).toFixed(0)}k` : volume}
         </span>
       )}
-      {resolves && <span>· Resolves {formatDate(resolves)}</span>}
+      {resolvesLine && <span>· {resolvesLine}</span>}
     </div>
   );
 }
@@ -1176,6 +1182,10 @@ function MomentCard({ market }: { market: EntMarketRow }) {
   const pair = twoLegCardPair(market);
   const yesNo =
     market.outcome_count <= 2 && pair.oneQuestion ? pair.second : null;
+  // #6773 — see MetaRow. Guarding on the label rather than the wire value also
+  // removes the chip entirely for a gone date, where it used to sit in the
+  // header row stating a day in the past as though it were still coming.
+  const resolvesLine = formatResolvesLabel(market.resolution_date);
   return (
     <Link href={`/futures/${market.market_id}`}>
       <div className={`${s.card} ${s.masonryCard}`} style={{ padding: 16 }}>
@@ -1191,11 +1201,11 @@ function MomentCard({ market }: { market: EntMarketRow }) {
             emoji={KIND_EMOJI[market.kind] || "✦"}
             label={KIND_LABEL[market.kind] || "Market"}
           />
-          {market.resolution_date && (
+          {resolvesLine && (
             <div
               style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-muted)" }}
             >
-              Resolves {formatDate(market.resolution_date)}
+              {resolvesLine}
             </div>
           )}
         </div>
@@ -1594,11 +1604,34 @@ function formatTimeAgo(iso: string): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
-function formatDate(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  } catch {
-    return iso;
-  }
-}
+/**
+ * #6773 — `formatDate` USED TO LIVE HERE, AND BOTH ITS CALLERS WERE DEADLINES.
+ *
+ * It was a five-line `toLocaleDateString("en-US", { month, day })` feeding
+ * `· Resolves {formatDate(resolves)}` in `MetaRow` and `Resolves {formatDate(
+ * market.resolution_date)}` in `MomentCard`, and it got the two things
+ * `lib/gameTimeLabel.ts` exists to get right both wrong:
+ *
+ *   - NO YEAR (#1717). On `GET /api/entertainment` 2026-09-18, 40 of the 114
+ *     dated rows resolve in a year that is not this one — 2027, 2028, 2030 and
+ *     a 2099 — and every one of them read as this year. "Resolves Jan 14" about
+ *     January 2031 is the verbatim misreading that ruling was issued over.
+ *   - A DAY EARLY WEST OF UTC (#4081). 6 of those 114 carry exactly
+ *     `T00:00:00+00:00`, a declared calendar day wearing an instant's clothes;
+ *     `new Date(...).toLocaleDateString()` in a Pacific browser renders the day
+ *     before. `isDeclaredCalendarDay` is the discriminator and the authority
+ *     already applies it.
+ *
+ * Deleted rather than corrected in place: a fourth private copy of a rule that
+ * has one home is the drift `__tests__/lib/resolvesLabelAuthority.test.ts`
+ * exists to make unrepresentable — and that guard scanned this file every run
+ * without seeing it, because its pattern required a quote before the word and
+ * these two sites were JSX text. The pattern is widened in the same change.
+ *
+ * WHAT ELSE CAME WITH THE AUTHORITY, stated because it is a behaviour change
+ * and not only a formatting one: a resolution date that has already passed now
+ * renders nothing at all, where it used to print the gone day as though it were
+ * still coming. Measured on the same payload: 0 of 114 rows are past today, so
+ * this empties no card currently on the page — but it is why both call sites
+ * guard on the LABEL instead of on `resolution_date`.
+ */
