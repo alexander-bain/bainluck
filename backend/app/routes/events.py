@@ -15508,6 +15508,182 @@ def _settled_book_belongs_to_another_fixture(event, market, market_outcomes, now
     return market_assigned_settled(market, list(market_outcomes))
 
 
+#: The event states this gate treats as A MATCH IN PLAY (#6815).
+#:
+#: SCOPED TO `live` DELIBERATELY, AND THE MEASUREMENT IS WHY. The honest
+#: statement of the rule below — "a closed book we cannot grade may not print a
+#: price" — is true of more rows than this, and asked of every unfinished event
+#: it reaches a population the ship never reasoned about. Every assigned-settled
+#: market on an event `_event_is_really_finished` calls unfinished, production
+#: 2026-09-17 23:4xZ, counted by the event's own status and whether the market
+#: produced a winner::
+#:
+#:                     has a winner   NO winner (this gate would drop)
+#:     live <6h              39                 13   ← the filed class
+#:     suspended         4,756                1,090
+#:     voided           13,349               18,828
+#:     scheduled         2,751                  481
+#:
+#: The `voided` tail is 3,710 dead fixtures cancelled days ago, not pages a
+#: reader is watching, and blanking them is a different question with a
+#: different answer (a voided event's markets are void, which is a thing to SAY,
+#: not a thing to hide). `suspended` is worse than it looks: 915 of its events
+#: commenced more than a day ago, so it is this codebase's graveyard status as
+#: much as a rain delay. Neither is the defect that was filed, and a gate that
+#: takes them is a 20,000-market behaviour change riding a 13-market ship.
+#:
+#: What the shipped predicate drops once the tier test below is applied too,
+#: production 2026-09-18 00:0xZ (`sql_fingerprint f501b6da7ac1f79a`): of 78
+#: settled markets on 24 live events, **13 on 7 events** — 64 keep their rows
+#: because the market produced a winner, 1 because it is not fully graded.
+_IN_PLAY_EVENT_STATUSES = frozenset({"live"})
+
+
+def _outcome_is_graded_at_verdict_tier(outcome) -> bool:
+    """:func:`_row_is_graded_at_verdict_tier`, asked of an ORM row (#6815).
+
+    The serve-time gates below the loop ask that question of a SERVED dict, and
+    this one has to ask it before the dicts exist. It builds the two keys that
+    function reads rather than re-testing them, so "graded strongly enough to be
+    an answer" has one definition: the tier table stays in
+    ``resolution_authority``, ``ungradeable_result`` stays out of the set in both
+    places, and a later tier change cannot move one caller without the other.
+    """
+    return _row_is_graded_at_verdict_tier(
+        {
+            "is_winner": getattr(outcome, "is_winner", None),
+            "resolution_source": getattr(outcome, "resolution_source", None),
+        }
+    )
+
+
+def _closed_book_cannot_price_a_live_game(
+    event, market, market_outcomes, now, market_has_a_winner: bool
+) -> bool:
+    """A settled market with no provable verdict, priced on a match in play (#6815).
+
+    THE THIRD REFUSAL IN THE SAME FAMILY, AND THE ONE #6169 LEFT BEHIND.
+    ``_verdict_is_provable`` already refuses to state a VERDICT for a market
+    that is graded and has no winner — a voided market is graded a loser on
+    every leg, so "this leg lost" proves nothing about the other side. That
+    refusal is right and stays. But it is a refusal about the verdict channel
+    only, and the row still carries its last price: withholding the grade
+    removes the mark that said the number was a settlement and leaves the number
+    printing as a live quote. A withheld verdict and a served fossil price are
+    the same wrong statement; refusing one and serving the other is not a
+    position. (#5481 was this exact trap in its other form, and #6595 is the
+    withhold that created it there.)
+
+    ── THE SPECIMEN ─────────────────────────────────────────────────────────────
+
+    ``/events/15313988`` — Guadalajara Open doubles, Bucsa/Melichar v
+    Kozyreva/Lumsden, ``live``, shopped at 390px 2026-09-17 23:35Z with the hero
+    reading ``LIVE 83% – 17%`` over a win-probability chart whose last point is
+    six seconds old. Directly beneath it, *Additional Markets*::
+
+        Bucsa/Melichar vs Kozyreva/Lumsden                        9h ago
+          Bucsa/Melichar wins Set 1     ████████████████████     >99%
+          Kozyreva/Lumsden wins Set 1                             <1%
+
+    Set 1 finished hours ago. Market ``61276254`` is ``status='resolved'``, and
+    BOTH its legs are stored ``is_winner=False`` with
+    ``resolution_source='clob_authoritative'`` beside prices of 0.9995 and
+    0.0005 — the venue graded the market and nobody won it. So the page cannot
+    say who took the set (``_verdict_is_provable`` is doing its job), and
+    instead offers a reader a 99% *probability* on a question that was answered
+    before they opened the page.
+
+    ── THE DISCRIMINATOR IS THE GRADE, NOT `status` — AND THE TESTS SAID SO ────
+
+    #6815's body rules out ``fm.status`` because ``_build_game_markets``
+    deliberately ignores it for LINKED rows — "resolved markets on completed
+    games should show" — and it is right. This gate was FIRST written on
+    ``market_assigned_settled`` alone, and the existing suite refused it, which
+    is the whole reason the predicate has its last line:
+
+    * ``test_game_markets.test_linked_market_ignores_stale_category_and_status_filters``
+      — a linked ``status='closed'`` market with an UNGRADED 0.54 leg on a
+      ``live`` event, asserted to render. That is the contract #6815 warned
+      about, stated as a test.
+    * ``test_…_6312.test_a_resolved_margin_market_on_a_LIVE_game_publishes_nothing``
+      — a ``resolved`` market mixing one graded loser with one ungraded 0.40
+      leg, where #6312 drops the graded leg and keeps the other.
+
+    Both are markets the venue closed while nothing was graded, or only partly
+    graded. Neither is the specimen. What makes the specimen decidable is not
+    that the book is shut — it is that **the market was graded, at verdict tier,
+    on every leg, and none of them won**: the exact population
+    :func:`_verdict_is_provable` already refuses to speak for. So the last line
+    is ``all(_outcome_is_graded_at_verdict_tier(...))``, and this gate is an
+    extension of #6169 into the price channel rather than a status rule wearing
+    a different hat.
+
+    THE HALF THIS DELIBERATELY DOES NOT TAKE, and it is #6815's other specimen:
+    a leg the venue has closed that we never graded at all — Set 2 at 71% beside
+    Set 1 on the same card, and 1,143 linked rows like it. It needs a rule that
+    can overrule "trust linked markets for status" without blanking the settled
+    cards that contract protects, and PR ``d0800601a`` (#6734, live on v4705) is
+    only its substrate. Left open on #6815 with the two tests above named, not
+    smuggled in behind a predicate that happens to reach it.
+
+    ── THE FOUR REFUSALS ───────────────────────────────────────────────────────
+
+    * **A finished event keeps everything** — settled means settled (gotcha #43)
+      and #6169/#6312 already own what a finished page may claim. Delivered by
+      the status scope rather than by a call to ``_event_is_really_finished``,
+      which the two sibling gates open with: that call is UNREACHABLE here,
+      because it admits only ``completed``/``closed`` and nothing but ``live``
+      gets past the scope. It was written, measured dead against the mutation
+      that deletes it, and removed — a defensive line no test can kill is a line
+      the next reader trusts for a guarantee it is not providing.
+    * **A market that produced a WINNER keeps everything.** That is #5771's
+      protected cohort — a live match's genuinely-graded first set — and it is
+      the information a withdrawal would destroy. It is also the only direction
+      that needs the sibling: ``markets_with_a_winner`` is built from the
+      UNFILTERED outcomes by the loop's own #6169 set, so this gate and
+      ``_verdict_is_provable`` cannot disagree about whether a market settled.
+    * **Only a match IN PLAY.** See :data:`_IN_PLAY_EVENT_STATUSES` for the
+      measured reason, and #5771 owns the not-yet-started half regardless.
+    * **A market with one ungraded leg keeps ALL of them.** ``all``, not
+      ``any``: a partly-graded market still has a leg whose number is the only
+      thing anyone can say about it, and the graded legs there are #6312's and
+      #6169's to drop one at a time. This gate only takes a market that has
+      nothing left to say.
+    * **Unsettled markets are untouched.** No status, no grade, no drop — a
+      quiet book on a live match is #6734's ingest question, not this one.
+
+    ── AND WHY THIS IS TOP-OF-LOOP WHERE #6025 IS `other`-ONLY ─────────────────
+
+    ``_settled_market_graded_nothing`` is the FINISHED-event twin of this rule
+    and withdraws from the ``other`` section alone, because the other sections
+    have grading rails that do not need a price: ``_grade_settled_prop`` reads
+    totals and player props off the box score, and withdrawing at the top of the
+    loop would delete what those rails recover. **Neither rail exists on a match
+    in play.** There is no final box score to grade against, and
+    ``_score_proves_this_grade`` returns False on its first line for an
+    unfinished event — so here the frozen price really is the only thing any
+    section can say, and every section says it wrong. Same placement as #5771
+    and #5481 for the same reason, and the difference from #6025 is the event's
+    state rather than a change of mind about scope.
+    """
+    if market_outcomes is None:
+        return False
+    if market_has_a_winner:
+        return False
+    if (getattr(event, "status", None) or "") not in _IN_PLAY_EVENT_STATUSES:
+        return False
+    # Belt and braces with the status above, and the reason is #46: a row can be
+    # `live` with a commence_time in the FUTURE, and #5771 owns every settled
+    # market on a fixture that has not kicked off. Asked the same way and with
+    # the same naive-datetime coercion as the two gates above so the three
+    # partition the population rather than overlapping on it.
+    if _event_has_not_kicked_off(event, now):
+        return False
+    if not market_assigned_settled(market, list(market_outcomes)):
+        return False
+    return all(_outcome_is_graded_at_verdict_tier(o) for o in market_outcomes)
+
+
 # How far a market's own trading window may outlive the fixture it hangs off
 # before the market is asking a different question (#6026). A game's own book
 # stops trading within hours of the whistle; one still due to trade next spring
@@ -16804,6 +16980,22 @@ async def _build_game_markets(
         # reach.
         if _settled_book_belongs_to_another_fixture(
             event, market, market_outcomes, _gm_now
+        ):
+            continue
+
+        # #6815: and a settled market on a game in play whose verdict we already
+        # refuse to state may not print its last price either. `_verdict_is_provable`
+        # withholds the grade on an all-legs-lost market; without this the row keeps
+        # the fossil number and the withhold has only removed the label. Same
+        # placement and same reason as the two gates above, and it reads the #6169
+        # winner set built above the loop so the two cannot disagree about whether a
+        # market settled. See `_closed_book_cannot_price_a_live_game`.
+        if _closed_book_cannot_price_a_live_game(
+            event,
+            market,
+            market_outcomes,
+            _gm_now,
+            market.id in markets_with_a_winner,
         ):
             continue
 
