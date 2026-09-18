@@ -1012,6 +1012,8 @@ def clear_shared_builds(namespace: Optional[str] = None) -> None:
     Redis tier: a test that clears this is simulating a COLD WORKER, and a cold
     worker is exactly the process that still sees Redis.
     """
+    global _rail_last_flush_at, _rail_reaped
+
     if namespace is None:
         _store.clear()
         _locks.clear()
@@ -1022,6 +1024,12 @@ def clear_shared_builds(namespace: Optional[str] = None) -> None:
         # or the two views disagree about the same worker boundary.
         _ns_stats.clear()
         _ns_failure_reasons.clear()
+        # LAT-P272: the rail's rate limit and its once-per-process reap are part
+        # of what "this is a cold worker" means. Leaving them set would let one
+        # test's flush suppress the next test's — the class of cross-test leak
+        # that makes a rail look like it never publishes.
+        _rail_last_flush_at = 0.0
+        _rail_reaped = False
         return
     _store.pop(namespace, None)
     _locks.pop(namespace, None)
@@ -1182,6 +1190,402 @@ def shared_build_stats() -> dict[str, Any]:
     out["cross_worker_enabled"] = int(cross_worker_enabled())
     out["by_namespace"] = {ns: dict(c) for ns, c in _ns_stats.items()}
     out["failure_reasons"] = {ns: dict(c) for ns, c in _ns_failure_reasons.items() if c}
+    return out
+
+
+# --- LAT-P272 (#2143 residual): THE SPLIT HAS NO DYNO-INDEPENDENT READ -------
+#
+# LAT-P225 made a cross-worker failure name its cause. It did not make that name
+# READABLE. `shared_build_stats()` is a plain in-memory dict, so
+# `/api/admin/shared-build-stats` answers from whichever of
+# (dynos x WEB_CONCURRENCY) processes the router happened to land the request
+# on, and the endpoint's own docstring says so: "a zero here cannot show that
+# nothing is being refused fleet-wide".
+#
+# 🔴 THAT IS NOT A CAVEAT, IT IS THE MEASUREMENT. The defect this rail exists to
+# size is ITSELF worker-asymmetric — measured 2026-09-18 02:50-03:01Z, the quiet
+# web worker failed ~1 in 6 of its cross-worker reads while the busy one failed
+# none of 51. An instrument that samples one unidentified worker at random
+# cannot measure a per-worker asymmetry: N samples of the endpoint are N draws
+# from an unknown mixture, and Heroku pids repeat across dynos, so even
+# `worker_pid` cannot tell two workers apart with certainty. The same window
+# proved the cost concretely — `cross_worker_declined_age` was PRESENT after the
+# release (so the code was live) and its VALUE was never readable.
+#
+# So each process publishes its own counters to one shared Redis hash, keyed by
+# an identity that is unique across dynos, and the admin route merges them. The
+# precedent is the warm rail's status key
+# (`bainluck:precompute:feed_live_prewarm:last`): a shared rail is how a
+# per-process fact becomes an operator-readable one in this codebase.
+#
+# FOUR PROPERTIES, each paid for by a trap already banked on this issue:
+#
+# 1. **A SNAPSHOT, NEVER A DELTA.** Each field holds that worker's LIFETIME
+#    counters, so a flush that never happens (no client, a stall) loses nothing
+#    — the next successful flush carries the failures the lost one would have.
+#    A delta rail would silently under-count exactly on the workers whose Redis
+#    is worst, which is the population the rail exists to find.
+# 2. **IT RIDES THE FAILURE IT REPORTS.** The flush is attempted only after a
+#    cross-worker read that did NOT hit, i.e. on a request that is already
+#    paying the rebuild (692-775 ms for `market_load`). It can never appear on
+#    the fast path, and it is rate-limited to one attempt per
+#    `FAILURE_RAIL_FLUSH_PERIOD_S` per process on top of that.
+# 3. **IT NEVER TOUCHES THE COUNTERS IT CARRIES.** No `_bump`, no
+#    `_bump_failure`, on any branch. An instrument that books its own Redis
+#    failures into `failure_reasons` would manufacture the readings it exists to
+#    report — and would do it hardest on the broken workers.
+# 4. **BOUNDED, AND IT REAPS ITS OWN DEAD.** One field per live process is a few
+#    hundred bytes; a restarted dyno leaves its field behind. The first flush of
+#    each process (and only the first) drops fields older than
+#    `FAILURE_RAIL_STALE_S`, which is exactly when a new field appears, so the
+#    hash cannot grow across restarts. The reader ALSO ignores stale fields, so
+#    a reaped-but-not-yet-overwritten field can never be summed into a live
+#    total.
+#
+# WHAT IT STILL CANNOT DO, stated because a silent hole here is the whole
+# failure mode of the thing it replaces: a worker that has never taken a
+# non-hit cross-worker read has no field, and is invisible. Under real traffic
+# that window is seconds (a miss is routine and counts), but the reader reports
+# `workers` by name and age rather than a bare total so an operator can see how
+# many reported rather than assume a denominator.
+FAILURE_RAIL_KEY = "bainluck:sharedcache:failure_reasons"
+
+#: Refreshed on every flush. Long enough that a worker flushing on a quiet night
+#: keeps the hash alive, short enough that a fleet which stops flushing entirely
+#: stops being described by an hour-old picture.
+FAILURE_RAIL_TTL_S = 3600
+
+#: Minimum seconds between flush ATTEMPTS in one process. The rail's whole cost.
+FAILURE_RAIL_FLUSH_PERIOD_S = 30.0
+
+#: A field older than this is not summed, and is reaped by the next process's
+#: first flush. Deliberately many flush periods wide: a live worker that goes
+#: quiet for ten minutes must not be mistaken for a dead one.
+FAILURE_RAIL_STALE_S = 900.0
+
+#: Fields the reader will parse. A guard against a key that somehow grew past
+#: its reaper — the reader stays bounded rather than trusting the writer.
+FAILURE_RAIL_MAX_FIELDS = 256
+
+_rail_last_flush_at: float = 0.0
+_rail_reaped = False
+_rail_process_started_at = time.time()
+
+
+def worker_identity() -> str:
+    """This process's identity, unique across dynos.
+
+    `DYNO` ("web.1") is what makes it unique: Heroku pids repeat across dynos,
+    so a pid alone collides and two workers would share one field — the rail
+    would then report the fleet as smaller than it is and overwrite one worker's
+    counters with another's. Falls back to the hostname, then to a literal, so a
+    local process still gets a stable name.
+    """
+    host = os.environ.get("DYNO") or os.environ.get("HOSTNAME") or "local"
+    return f"{host}:{os.getpid()}"
+
+
+def failure_rail_snapshot(*, now: Optional[float] = None) -> dict[str, Any]:
+    """This process's contribution to the shared rail. Pure, no I/O.
+
+    Carries the aggregate cross-worker counters BESIDE the failure split,
+    because "quiet worker vs busy worker" is the reading the split has to be
+    interpreted against: four failures means one thing in 12 reads and another
+    in 51. The split alone cannot express a rate, and a rate computed across
+    merged workers would average away the asymmetry it exists to show.
+    """
+    at = time.time() if now is None else now
+    reasons_total: dict[str, int] = {}
+    for _reasons in _ns_failure_reasons.values():
+        for _reason, _count in _reasons.items():
+            reasons_total[_reason] = reasons_total.get(_reason, 0) + _count
+    return {
+        "at": at,
+        "started_at": _rail_process_started_at,
+        "pid": os.getpid(),
+        "dyno": os.environ.get("DYNO") or "",
+        "cross_worker": {
+            k: v for k, v in _stats.items() if k.startswith("cross_worker_")
+        },
+        "failure_reasons": {ns: dict(c) for ns, c in _ns_failure_reasons.items() if c},
+        "failure_reasons_total": dict(sorted(reasons_total.items())),
+    }
+
+
+def _rail_flush_due(now: float) -> bool:
+    """True when this process may attempt a flush. Rate limit only, no I/O."""
+    return (now - _rail_last_flush_at) >= FAILURE_RAIL_FLUSH_PERIOD_S
+
+
+async def _reap_stale_rail_fields(client, now: float) -> int:
+    """Drop fields whose snapshot is older than `FAILURE_RAIL_STALE_S`.
+
+    Called on a process's FIRST flush and never again: that is the moment this
+    process's own field appears, so reaping there keeps the hash's size a
+    function of the LIVE fleet rather than of how many times it has restarted.
+    Never raises; a reap that cannot run costs a few stale bytes, which the
+    reader ignores anyway.
+    """
+    from app.utils import request_cache as _rc
+
+    result = await _rc.bounded_redis_call(
+        lambda: client.hgetall(FAILURE_RAIL_KEY),
+        deadline_ms=REDIS_PUBLISH_DEADLINE_MS,
+    )
+    if result.is_failure or not result.is_ok or not isinstance(result.value, dict):
+        return 0
+    dead: list[str] = []
+    for raw_field, raw_value in list(result.value.items())[:FAILURE_RAIL_MAX_FIELDS]:
+        field = _as_text(raw_field)
+        if field is None or field == worker_identity():
+            continue
+        parsed = _parse_rail_field(raw_value)
+        # An unparseable field is dead by definition — nothing can read it, and
+        # leaving it would make the hash grow on exactly the writer that is
+        # broken.
+        if (
+            parsed is None
+            or (now - float(parsed.get("at") or 0.0)) > FAILURE_RAIL_STALE_S
+        ):
+            dead.append(field)
+    if not dead:
+        return 0
+    drop = await _rc.bounded_redis_call(
+        lambda: client.hdel(FAILURE_RAIL_KEY, *dead),
+        deadline_ms=REDIS_PUBLISH_DEADLINE_MS,
+        treat_none_as_miss=False,
+    )
+    return len(dead) if not drop.is_failure else 0
+
+
+def _as_text(raw: Any) -> Optional[str]:
+    if isinstance(raw, (bytes, bytearray)):
+        try:
+            return raw.decode("utf-8")
+        except Exception:
+            return None
+    if isinstance(raw, str):
+        return raw
+    return None
+
+
+def _parse_rail_field(raw: Any) -> Optional[dict[str, Any]]:
+    """One field's JSON, or None. Never raises — a bad field is skipped, not fatal."""
+    text = _as_text(raw)
+    if text is None:
+        return None
+    try:
+        parsed = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+async def flush_failure_rail(*, force: bool = False) -> bool:
+    """Publish this process's snapshot to the shared hash. Never raises.
+
+    Returns True only when Redis accepted the write, so a caller (and the test
+    that matters) can tell "published" from "attempted and could not".
+
+    Deliberately bumps NOTHING. A flush that times out must not appear in
+    `failure_reasons` as a `publish_timeout`: that counter describes the CACHE
+    failing to share an artifact a reader wanted, and conflating the instrument
+    with its subject would inflate the exact number this rail reports, worst on
+    the workers whose Redis is worst.
+    """
+    global _rail_last_flush_at, _rail_reaped
+
+    if not cross_worker_enabled():
+        return False
+    now = time.time()
+    if not force and not _rail_flush_due(now):
+        return False
+    # Stamped BEFORE the I/O, not after: a stalling Redis must not let the
+    # rate limit lapse and turn one 250 ms attempt per 30 s into one per
+    # non-hit read.
+    _rail_last_flush_at = now
+
+    from app.utils import request_cache as _rc
+
+    try:
+        client = await _shared_redis_client()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.debug("failure rail: no redis client", exc_info=True)
+        return False
+
+    if not _rail_reaped:
+        # Once per process, whatever the outcome — a reap that fails must not be
+        # retried on every flush for the life of the dyno.
+        _rail_reaped = True
+        try:
+            await _reap_stale_rail_fields(client, now)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.debug("failure rail: reap failed", exc_info=True)
+
+    try:
+        blob = json.dumps(
+            failure_rail_snapshot(now=now), separators=(",", ":"), ensure_ascii=False
+        )
+    except (TypeError, ValueError):  # pragma: no cover - snapshot is plain ints
+        logger.debug("failure rail: unserialisable snapshot", exc_info=True)
+        return False
+
+    result = await _rc.bounded_redis_call(
+        lambda: client.hset(FAILURE_RAIL_KEY, worker_identity(), blob),
+        deadline_ms=REDIS_PUBLISH_DEADLINE_MS,
+        treat_none_as_miss=False,
+    )
+    if result.is_failure:
+        return False
+    # The TTL rides every flush, so the hash outlives a single worker's silence
+    # but not the whole fleet's. Its failure is not the write's failure: the
+    # snapshot is already stored and readable.
+    await _rc.bounded_redis_call(
+        lambda: client.expire(FAILURE_RAIL_KEY, FAILURE_RAIL_TTL_S),
+        deadline_ms=REDIS_PUBLISH_DEADLINE_MS,
+        treat_none_as_miss=False,
+    )
+    return True
+
+
+async def read_failure_rail(*, now: Optional[float] = None) -> dict[str, Any]:
+    """Merge every LIVE worker's snapshot into one fleet reading. Never raises.
+
+    `available` is the first thing a reader must check and the reason this
+    returns a dict rather than a total: an empty hash and an unreachable Redis
+    produce the same zeros, and reporting those zeros as a fleet total would
+    recreate — on a wider surface — the "reads zero, therefore clean" error this
+    rail was built to remove.
+
+    Stale fields are reported by count and excluded from the totals. A field
+    whose worker died an hour ago carries real failures that really happened,
+    but attributing them to the current fleet would make every dyno restart look
+    like a regression that never heals.
+    """
+    at = time.time() if now is None else now
+    out: dict[str, Any] = {
+        "available": False,
+        "reason": None,
+        "key": FAILURE_RAIL_KEY,
+        "workers": [],
+        "worker_count": 0,
+        "stale_worker_count": 0,
+        "stale_after_s": FAILURE_RAIL_STALE_S,
+        "failure_reasons_total": {},
+        "by_namespace": {},
+        "cross_worker_total": {},
+    }
+    if not cross_worker_enabled():
+        out["reason"] = "cross-worker tier disabled"
+        return out
+
+    from app.utils import request_cache as _rc
+
+    try:
+        client = await _shared_redis_client()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        out["reason"] = "no redis client"
+        return out
+
+    result = await _rc.bounded_redis_call(
+        lambda: client.hgetall(FAILURE_RAIL_KEY), deadline_ms=REDIS_READ_DEADLINE_MS
+    )
+    if result.is_failure:
+        out["reason"] = f"redis {result.status}"
+        return out
+    raw = result.value if isinstance(result.value, dict) else {}
+
+    # From here the read SUCCEEDED, so an empty hash is a real (if uninformative)
+    # answer and must be distinguishable from the failures above.
+    out["available"] = True
+    reasons_total: dict[str, int] = {}
+    by_ns: dict[str, dict[str, int]] = {}
+    cw_total: dict[str, int] = {}
+    stale = 0
+    workers: list[dict[str, Any]] = []
+
+    for raw_field, raw_value in list(raw.items())[:FAILURE_RAIL_MAX_FIELDS]:
+        field = _as_text(raw_field)
+        parsed = _parse_rail_field(raw_value)
+        if field is None or parsed is None:
+            stale += 1
+            continue
+        stamped = parsed.get("at")
+        age_s = (
+            max(0.0, at - float(stamped))
+            if isinstance(stamped, (int, float)) and not isinstance(stamped, bool)
+            else None
+        )
+        if age_s is None or age_s > FAILURE_RAIL_STALE_S:
+            stale += 1
+            continue
+        cw = parsed.get("cross_worker")
+        cw = cw if isinstance(cw, dict) else {}
+        totals = parsed.get("failure_reasons_total")
+        totals = totals if isinstance(totals, dict) else {}
+        per_ns = parsed.get("failure_reasons")
+        per_ns = per_ns if isinstance(per_ns, dict) else {}
+
+        for name, count in cw.items():
+            if isinstance(count, int) and not isinstance(count, bool):
+                cw_total[str(name)] = cw_total.get(str(name), 0) + count
+        for reason, count in totals.items():
+            if isinstance(count, int) and not isinstance(count, bool):
+                reasons_total[str(reason)] = reasons_total.get(str(reason), 0) + count
+        for ns, ns_reasons in per_ns.items():
+            if not isinstance(ns_reasons, dict):
+                continue
+            bucket = by_ns.setdefault(str(ns), {})
+            for reason, count in ns_reasons.items():
+                if isinstance(count, int) and not isinstance(count, bool):
+                    bucket[str(reason)] = bucket.get(str(reason), 0) + count
+
+        reads = (
+            int(cw.get("cross_worker_hits") or 0)
+            + int(cw.get("cross_worker_misses") or 0)
+            + int(cw.get("cross_worker_failures") or 0)
+        )
+        workers.append(
+            {
+                "worker": field,
+                "age_s": round(age_s, 1),
+                "uptime_s": (
+                    round(
+                        max(0.0, float(parsed["at"]) - float(parsed["started_at"])), 1
+                    )
+                    if isinstance(parsed.get("started_at"), (int, float))
+                    and not isinstance(parsed.get("started_at"), bool)
+                    else None
+                ),
+                "cross_worker": {str(k): v for k, v in cw.items()},
+                # The per-worker rate is the whole point of splitting by worker:
+                # a merged rate averages the quiet worker's 1-in-6 into the busy
+                # one's 0-in-51 and reports a healthy fleet.
+                "cross_worker_reads": reads,
+                "failure_rate": (
+                    round(int(cw.get("cross_worker_failures") or 0) / reads, 4)
+                    if reads
+                    else None
+                ),
+                "failure_reasons_total": {str(k): v for k, v in totals.items()},
+            }
+        )
+
+    workers.sort(key=lambda w: (-(w["failure_rate"] or 0.0), w["worker"]))
+    out["workers"] = workers
+    out["worker_count"] = len(workers)
+    out["stale_worker_count"] = stale
+    out["failure_reasons_total"] = dict(sorted(reasons_total.items()))
+    out["by_namespace"] = {
+        ns: dict(sorted(c.items())) for ns, c in sorted(by_ns.items())
+    }
+    out["cross_worker_total"] = dict(sorted(cw_total.items()))
     return out
 
 
@@ -1501,6 +1905,30 @@ async def _shared_redis_client() -> Any:
 
 
 async def _read_cross_worker(
+    namespace: str, key: tuple, ttl_s: float, read_bound: Optional[float] = None
+) -> tuple[bool, Any, float]:
+    """`_read_cross_worker_inner`, plus the shared-rail flush on a non-hit.
+
+    THE FLUSH IS BEHIND `not hit` AND NOTHING ELSE, which is the whole latency
+    argument (LAT-P272). A non-hit means this caller is about to rebuild — 692-775 ms
+    for `market_load` — so a bounded 250 ms write, rate-limited to one attempt
+    per `FAILURE_RAIL_FLUSH_PERIOD_S` per process, cannot be the slow part of any
+    request it can appear on. On a hit the rail is not touched at all, so the
+    fast path this cache exists to protect is byte-for-byte what it was.
+
+    It is a WRAPPER rather than a call at each of the seven return sites
+    deliberately: an eighth branch added later inherits the flush instead of
+    being the one that silently stops reporting.
+    """
+    hit, value, age_s = await _read_cross_worker_inner(
+        namespace, key, ttl_s, read_bound
+    )
+    if not hit:
+        await flush_failure_rail()
+    return hit, value, age_s
+
+
+async def _read_cross_worker_inner(
     namespace: str, key: tuple, ttl_s: float, read_bound: Optional[float] = None
 ) -> tuple[bool, Any, float]:
     """Return `(hit, value, age_s)` from the Redis tier. Never raises.
