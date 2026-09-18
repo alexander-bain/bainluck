@@ -777,4 +777,32 @@
   .presHeroHead {
     flex-wrap: wrap;
   }
+
+  /* #6932 — the same defect, one level down, and #4651 above is why it was left.
+
+     Dropping the controls onto their own line bought the row the card's full
+     interior instead of what the question left over, and that was enough to stop
+     the PAGE scrolling. It was not enough to fit them: measured on production at
+     390px, the actions block still wants ~335px against 318px of interior, so its
+     right edge landed 17px past the card's content box. The grey track of the
+     Merged/Kalshi/Polymarket toggle crossed the card's rounded corner and
+     `Polymarket` — a button, not a label — sat on the boundary. `.presHeroHead`
+     could not absorb it: its wrap only decides where the actions block STARTS,
+     never how wide it is allowed to be.
+
+     So the same declaration is needed on the block itself, and it resolves the
+     same way: the source toggle drops under Rankings/Trends, both flush left,
+     the whole control stack inside the card. Verified by injecting this rule into
+     the live page (`tools/ux1336-preshero-actions-wrap-6932.mjs`):
+     escape 17px -> 0, `.presHeroHead` self-clip 17px -> 0, block height 28.5 ->
+     61px (it wrapped — it did not fit by shrinking), and at 1280px every one of
+     those numbers is unchanged, which is what keeps this inside the 720px block.
+
+     What must NOT wrap is either segmented control itself: `.sourceToggle` and
+     `.heroVariantToggle` are single objects whose shared track is the affordance,
+     and a `Polymarket` that fell to a second line INSIDE the grey pill would be a
+     worse defect than the spill. They stay nowrap, and the guard pins that. */
+  .presHeroActions {
+    flex-wrap: wrap;
+  }
 }
