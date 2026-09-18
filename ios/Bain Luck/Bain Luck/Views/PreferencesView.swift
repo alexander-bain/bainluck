@@ -1,6 +1,69 @@
 import Combine
 import SwiftUI
 
+// MARK: - Affinity row layout metrics
+
+/// The geometry of one Settings → Your Interests row, named in one place so the
+/// guard test measures the row the view actually draws (#6681).
+///
+/// These were literals scattered through `affinityCard`, which is why nothing
+/// could tell that the name label had only ~100pt to live in on the device the
+/// defect was filed from. A test that re-declared them would drift from the
+/// view on the first padding change and then pass forever; sharing them is what
+/// makes `SettingsInterestTileNamesAreReadable6681Tests` a real check.
+///
+/// Not a full model of SwiftUI layout — the row is
+/// `[emoji | name] Spacer() [four capsules]` inside two levels of horizontal
+/// padding, and only the name is compressible. Validated against a photograph:
+/// at 402pt these numbers predict exactly the three names that truncate on the
+/// device, and no others.
+enum AffinityRowMetrics {
+    /// `VStack(spacing: 6) { … }.padding(.horizontal)` around the rows.
+    /// SwiftUI's default horizontal padding is 16pt on iPhone.
+    static let gridHorizontalPadding: CGFloat = 16
+    /// The card's own inset, inside the grid padding.
+    static let cardHorizontalPadding: CGFloat = 14
+    /// `HStack(spacing:)` holding [name group, Spacer, capsules] — two gaps.
+    static let rowSpacing: CGFloat = 10
+    static let emojiWidth: CGFloat = 28
+    static let emojiNameSpacing: CGFloat = 8
+    /// Gaps between the four capsules — three of them.
+    static let capsuleSpacing: CGFloat = 5
+    /// Applied to each side of every capsule label.
+    static let capsuleHorizontalPadding: CGFloat = 10
+    static let capsuleFontSize: CGFloat = 11
+
+    /// How far the tile name may shrink before it truncates instead.
+    ///
+    /// 0.65 and not the 0.85 first proposed on #6681. Measured against the real
+    /// font at the three widths that matter, the scale each name NEEDS is:
+    ///
+    ///   | name               | 375pt | 393pt | 402pt |
+    ///   |--------------------|-------|-------|-------|
+    ///   | College Football   | 0.632 | 0.788 | 0.866 |
+    ///   | College Basketball | 0.553 | 0.689 | 0.757 |
+    ///   | Entertainment      | 0.718 | 0.894 | 0.983 |
+    ///
+    /// A floor of 0.85 clears College Football and Entertainment but leaves
+    /// College Basketball truncated on every phone — the longest name, and the
+    /// one whose neighbour two rows up shares its first eight characters. 0.65
+    /// clears all three at 393pt and above with margin. 375pt (SE 3rd gen,
+    /// 13 mini) keeps a named residual; see the guard test.
+    static let nameMinimumScaleFactor: CGFloat = 0.65
+
+    /// Width left for the name on a screen `width` points across, with the
+    /// capsule block measured by the caller (it depends on the font).
+    static func nameBudget(screenWidth: CGFloat, capsuleBlockWidth: CGFloat) -> CGFloat {
+        screenWidth
+            - 2 * gridHorizontalPadding
+            - 2 * cardHorizontalPadding
+            - emojiWidth
+            - emojiNameSpacing
+            - 2 * rowSpacing
+            - capsuleBlockWidth
+    }
+}
+
 // MARK: - Affinity button colors
 
 private let affinityColor: [AffinityLevel: Color] = [
@@ -461,24 +524,39 @@ struct PreferencesView: View {
         let isActive = currentLevel != .nah
         let activeColor = affinityColor[currentLevel] ?? .gray
 
-        return HStack(spacing: 10) {
+        return HStack(spacing: AffinityRowMetrics.rowSpacing) {
             // Emoji + name
-            HStack(spacing: 8) {
+            HStack(spacing: AffinityRowMetrics.emojiNameSpacing) {
                 Text(item.emoji)
                     .font(.title3)
-                    .frame(width: 28)
+                    .frame(width: AffinityRowMetrics.emojiWidth)
 
+                // #6681 — the four capsules are `.fixedSize()` and the Spacer
+                // absorbs nothing, so the name is the only thing in this row
+                // that can give, and three of the 22 gave: "College Foo…",
+                // "College Basketball", "Entertainm…". The name is also the
+                // ONLY thing telling one row from the next — every row's
+                // capsules read Love/Big/Wild/Nah — so a truncated name is a
+                // row a reader cannot identify.
+                //
+                // A floor, not a size: `minimumScaleFactor` shrinks only the
+                // labels that would otherwise truncate, so 19 of 22 are
+                // untouched. Wrapping to two lines was the alternative and was
+                // weighed — it keeps full size but makes 3 of 22 rows taller,
+                // and the ragged rhythm costs more scanning than a slightly
+                // smaller label on three rows.
                 Text(item.name)
                     .font(.subheadline)
                     .fontWeight(isActive ? .semibold : .regular)
                     .foregroundStyle(isActive ? .primary : .secondary)
                     .lineLimit(1)
+                    .minimumScaleFactor(AffinityRowMetrics.nameMinimumScaleFactor)
             }
 
             Spacer()
 
             // Affinity capsules
-            HStack(spacing: 5) {
+            HStack(spacing: AffinityRowMetrics.capsuleSpacing) {
                 ForEach(AffinityLevel.allCases, id: \.rawValue) { level in
                     let selected = currentLevel == level
                     let color = affinityColor[level] ?? .gray
@@ -489,10 +567,13 @@ struct PreferencesView: View {
                         }
                     } label: {
                         Text(level.shortLabel)
-                            .font(.system(size: 11, weight: selected ? .bold : .medium))
+                            .font(.system(
+                                size: AffinityRowMetrics.capsuleFontSize,
+                                weight: selected ? .bold : .medium
+                            ))
                             .lineLimit(1)
                             .fixedSize()
-                            .padding(.horizontal, 10)
+                            .padding(.horizontal, AffinityRowMetrics.capsuleHorizontalPadding)
                             .padding(.vertical, 6)
                             .foregroundStyle(selected ? .white : color.opacity(0.7))
                             .background(
@@ -513,7 +594,7 @@ struct PreferencesView: View {
                 }
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, AffinityRowMetrics.cardHorizontalPadding)
         .padding(.vertical, 10)
         .background(
             isActive
