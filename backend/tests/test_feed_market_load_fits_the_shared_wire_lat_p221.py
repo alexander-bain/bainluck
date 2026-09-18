@@ -116,6 +116,27 @@ PROD_MARKETS = 700
 #: same query read 9,326 an hour earlier. Do not re-point this constant for a
 #: drift of a few rows; it is here to catch the 35% kind, and re-measuring the
 #: baseline must never become a way of quietly absorbing growth.
+#:
+#: 🔴 2026-09-18 11:59Z, LAT-P274: THE SAME QUERY READ 9,818 — 5.3% above this
+#: constant, hours after it was written. DELIBERATELY NOT RE-POINTED HERE, for
+#: two reasons. (1) Re-pointing would not buy a green; at ~16.8 nodes/outcome
+#: that shape is ~164,900 nodes against the 200,000 alarm, so this file is
+#: honestly green either way, and moving the number would only exercise the
+#: habit this docstring warns about. (2) `MEASURED_ENVELOPE_BYTES`,
+#: `PROD_*_TEXT_BYTES` and `MEASURED_NODES` are NOT derivable from this count —
+#: they need the 40-real-row pull and the decomposition described above, and a
+#: population re-point without them would leave the file internally
+#: inconsistent, which is worse than leaving it slightly behind.
+#:
+#: 🟢 THE STANDING ANSWER TO THIS FILE'S OWN QUESTION — "what re-measures the
+#: number it is comparing to?" — IS NO LONGER "a person, when they remember".
+#: LAT-P274 records the node count `assert_plain_data` actually walks, per
+#: namespace, on every production build, and warns once past
+#: `pic.NODE_GROWTH_ALARM`. So the failure this file already suffered once
+#: (sizing 6,904 while production carried 9,325) is now reported by production
+#: itself rather than waiting on the next hand re-measure. Read
+#: `/api/admin/shared-build-stats` -> `node_high_water` before trusting the
+#: constant above.
 PROD_OUTCOMES = 9_325
 #: Mean bytes of the variable-width text a row actually carries (names, external
 #: ids, urls, hooks, and `market_metadata`, which dominates the market row).
@@ -362,7 +383,13 @@ HEADROOM_FACTOR = 1.5
 #: fraction of the cap it warns about rises with the cap, so raising the safety
 #: cap to repair the ordering defect would have relaxed this alarm in the same
 #: commit. `test_the_growth_alarm_is_not_tied_to_the_safety_cap` pins that.
-NODE_GROWTH_ALARM = 200_000
+#:
+#: 2026-09-18, LAT-P274: MOVED INTO THE APP AND IMPORTED HERE, so the fixture
+#: guard below and the production alarm in `_note_nodes` are the SAME number
+#: rather than two constants that agree until one of them is edited. This file
+#: sizes a synthetic fixture from a hand-copied population; production now
+#: reports the node count it actually walked. Two instruments, one threshold.
+NODE_GROWTH_ALARM = pic.NODE_GROWTH_ALARM
 
 #: Plausibility band for the fixture's own compression ratio. The storage
 #: assertion below runs the fixture through the REAL `wire_encode`, which makes
