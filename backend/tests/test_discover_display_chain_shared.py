@@ -228,6 +228,11 @@ class TestChainContract:
             # because that is the only order in which it sees the same twenty
             # cards `boring-rate@20` / `ladder-rate@20` are counted over.
             "first_page_quality_floor",
+            # #2602: same-domain concept spacing is the LAST writer of Discover
+            # order — after the floor, so nothing downstream re-forms the run,
+            # and outside `items[:DISCOVER_COMPOSITION_WINDOW]`, so it cannot
+            # undo the floor either. Tick outside the gate, per the convention.
+            "concept_spacing",
             # #2709: sports live completeness runs LAST, for the same reason the
             # quality floor runs late — the window it reasons about is the first
             # page of the SERVED order. Note this fires here even though this
