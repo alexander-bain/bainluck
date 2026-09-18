@@ -91,14 +91,20 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable, Mapping
 
+import re
+
 from app.utils.event_completion import is_retired_event_status
-from app.utils.prediction_market_matching import _strip_more_markets
+from app.utils.prediction_market_matching import (
+    _DERIVATIVE_SUFFIX_RE,
+    _strip_more_markets,
+)
 
 __all__ = [
     "NOT_A_TWIN",
     "REFUSE_AMBIGUOUS",
     "REFUSE_ANCHORED",
     "REFUSE_DEAD_CANONICAL",
+    "REFUSE_GENERIC_LABEL",
     "REFUSE_MIXED_KICKOFF",
     "REFUSE_NO_ELECTION",
     "TWIN_FOUND",
@@ -107,7 +113,9 @@ __all__ = [
     "ContainerRow",
     "ContainerTag",
     "family_key",
+    "fixture_label",
     "holds_base_title",
+    "names_two_sides",
     "plan_container_tags",
 ]
 
@@ -117,7 +125,28 @@ TWIN_FOUND = "TWIN_FOUND"
 #: Two or more rows under one key hold the base title, so the venue's own
 #: structure does not say which is the fixture. Refused: under-tagging is the
 #: intended failure direction. 3 of 183 keys on 2026-09-17.
+#:
+#: 🔴 **THIS IS THE GUARD THAT HOLDS BACK THE GENERIC-LABEL FALSE PAIR**, and it
+#: is why :func:`fixture_label` could be widened without one. Measured over the
+#: sweep's own ±45d window on 2026-09-18, four families are two rows that are
+#: NOT one fixture: ``'Games Total: O/U 2.5' @ 2026-09-15T14:00`` is ``Phantom v
+#: G2 Ares`` and ``ASTRAL v Rune Eaters``, two different esports matches whose
+#: Polymarket markets carry a market label instead of a fixture title and a
+#: rounded shared kickoff. Every one of the four carries ``base_holders == 2``:
+#: a generic label has no derivative suffix to strip, so both rows hold it
+#: unchanged and land here. A widening that reads 0 as ambiguous too would have
+#: bought nothing and refused five genuine fixtures; one that read >1 as
+#: confirmed would tag a live esports match as a copy of another.
 REFUSE_AMBIGUOUS = "REFUSE_AMBIGUOUS"
+
+#: A family with NO base-title holder whose label does not name two sides. The
+#: zero-holder path has no base-titled market confirming the fixture, so the
+#: label itself must carry the second signal notice 40 requires. Measured to
+#: read zero on the live population — every zero-holder family there is a
+#: ``"X vs. Y"`` fixture title — and kept because the generic labels that DO
+#: occur ("Games Total: O/U 2.5") are one unstripped derivative suffix away
+#: from arriving here with no base holder at all.
+REFUSE_GENERIC_LABEL = "REFUSE_GENERIC_LABEL"
 
 #: The row the key would call a duplicate is named by an authority that knows
 #: the fixture independently of us, and the canonical is not. Tagging THAT row
@@ -255,26 +284,72 @@ class ContainerPlan:
     rows_considered: int = 0
 
 
+#: A label that names two sides. Required only on the zero-base-holder path —
+#: see :data:`REFUSE_GENERIC_LABEL`. Deliberately a token test and not a parse:
+#: the question is whether the venue wrote a FIXTURE title here at all, not who
+#: is playing, and every genuine label on the measured population answers it
+#: (``'CA Osasuna vs. Rayo Vallecano de Madrid'``) while every generic one does
+#: not (``'Games Total: O/U 2.5'``). ``vs.`` and ``vs`` both occur live.
+_VS_TOKEN_RE = re.compile(r"\svs\.?\s", re.IGNORECASE)
+
+
+def names_two_sides(label: str) -> bool:
+    """Does this label read as a fixture title rather than a market label?"""
+    return bool(label) and _VS_TOKEN_RE.search(label) is not None
+
+
+def fixture_label(name: str | None) -> str:
+    """The venue's title for the FIXTURE, with the market type taken off.
+
+    Two shipped strippers, in the one order that terminates: the derivative
+    market type first (``… - 1st Half Exact Score``), then the container suffix
+    (``… - More Markets`` / ``… - Player Props``). Neither is re-spelled here —
+    ``_DERIVATIVE_SUFFIX_RE`` is #2871's own vocabulary and carries the
+    exclusions this key depends on, chief among them that ``- Game 4`` is NOT a
+    market type but a distinct game in a series (guarded there by
+    ``test_series_game_number_is_NOT_stripped``). A private regex written fresh
+    here would be a second, staler copy of that judgement — exactly the failure
+    :func:`holds_base_title` was already spelled to avoid.
+
+    🔴 **WHY THE KEY HAD TO WIDEN AT ALL.** The container stripper alone knows
+    two suffixes, so a fixture the venue split into only PERIOD and PROP events
+    formed no family: each derivative was its own key naming one row, and
+    ``split_keys_examined`` never counted it. The sweep then reported
+    ``to_tag: 0, terminal: complete, "every split family in the window is
+    already tagged"`` — drained, measured, and blind to the class by
+    construction. Measured 2026-09-18: the Atlético–Real Madrid derby served
+    9 legs on one page and 1 on the other, both reader-reachable, while that
+    verdict read healthy.
+
+    Widening can only ever ADD rows to a family, never re-elect one: a row
+    joining under the wider label holds no base-titled market (if it did, its
+    own title WAS the narrow key and it was already in the family), so
+    ``base_holders`` is unchanged for every family that already formed.
+    """
+    stripped = _DERIVATIVE_SUFFIX_RE.sub("", (name or "").strip())
+    return _strip_more_markets(stripped).strip()
+
+
 def family_key(market: ContainerMarket) -> tuple[str, str]:
     """The venue-composed identity of the fixture this market belongs to.
 
-    Both halves are the venue's, and neither is ours: the title with the
-    container suffix removed by the one stripper the forward fix already uses,
-    and the kickoff Polymarket published.
+    Both halves are the venue's, and neither is ours: the title with the market
+    type removed by :func:`fixture_label`, and the kickoff Polymarket published.
     """
-    return (_strip_more_markets(market.name or "").strip(), market.venue_game_start)
+    return (fixture_label(market.name), market.venue_game_start)
 
 
 def holds_base_title(market: ContainerMarket) -> bool:
-    """Is this market the fixture's OWN market rather than a container of it?
+    """Is this market the fixture's OWN market rather than a derivative of it?
 
-    True exactly when stripping the container suffix changed nothing. Spelled as
-    a comparison against :func:`_strip_more_markets` rather than a second regex
-    so that a suffix added there cannot leave a second, staler test behind —
-    the failure ``_POLYMARKET_CONTAINER_SUFFIXES`` warns about in its own note.
+    True exactly when stripping the market type changed nothing. Spelled as a
+    comparison against :func:`fixture_label` — the same function that builds the
+    key — rather than a second regex, so that a suffix added there cannot leave
+    a second, staler test behind: the failure
+    ``_POLYMARKET_CONTAINER_SUFFIXES`` warns about in its own note.
     """
     name = (market.name or "").strip()
-    return bool(name) and _strip_more_markets(name).strip() == name
+    return bool(name) and fixture_label(name) == name
 
 
 def _classify_family(
@@ -305,8 +380,26 @@ def _classify_family(
     """
     if len(event_ids) < 2:
         return NOT_A_TWIN, []
-    if len(base_holders) != 1:
+
+    # ZERO base holders and MANY are opposite states and were one branch.
+    #
+    # MANY is genuine ambiguity: two rows both claim the fixture's own title and
+    # the venue's structure does not say which is the copy. It still refuses,
+    # and :data:`REFUSE_AMBIGUOUS` records what that guard is load-bearing for.
+    #
+    # ZERO is not ambiguity — it is the venue publishing a fixture as period and
+    # prop events ONLY, with no base-titled market anywhere. Nothing competes to
+    # be the canonical; the question "which row is the copy" is answered by the
+    # election below exactly as it is for a one-holder family. Refusing it cost
+    # five live fixtures on 2026-09-18 — the Atlético–Real Madrid derby among
+    # them, two reader-reachable pages two days before kick-off.
+    #
+    # The base title was the second signal notice 40 requires, so with no holder
+    # the LABEL has to carry it: a fixture title, not a market label.
+    if len(base_holders) > 1:
         return REFUSE_AMBIGUOUS, []
+    if not base_holders and not names_two_sides(key[0]):
+        return REFUSE_GENERIC_LABEL, []
 
     members = {eid: (rows.get(eid) or ContainerRow(eid)) for eid in event_ids}
 
