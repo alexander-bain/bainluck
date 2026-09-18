@@ -96,6 +96,7 @@ from sqlalchemy import select  # noqa: E402
 from app.models.models import Base, Event, OddsSnapshot, Sport  # noqa: E402
 from app.routes.events import list_events  # noqa: E402
 from app.services.anchor_channel import duplicate_tag  # noqa: E402
+from app.utils.draw_priced_winner import away_is_the_complement  # noqa: E402
 from app.utils.event_twin_fold import fold_twin_events, twin_fold_key  # noqa: E402
 from app.utils.soccer_team_matching import soccer_pair_matches  # noqa: E402
 
@@ -372,7 +373,28 @@ class TestTheSurvivingCardKeepsWhatTheHiddenRowHeld:
             "suppressed holds one — the card lost a number by being deduped"
         )
         assert card["opening_odds"]["home_probability"] == pytest.approx(OPEN_HOME)
-        assert card["opening_odds"]["away_probability"] == pytest.approx(OPEN_AWAY)
+
+        # ── #6960 AMENDED THE AWAY HALF, AND NOT THIS FILE'S SUBJECT ─────────
+        #
+        # This test is about the FOLD: does the surviving card still carry the
+        # pre-match line its suppressed twin held? The `home_probability`
+        # assertion above is that subject and is unchanged.
+        #
+        # The away half used to pin 0.2472, which with OPEN_HOME sums to
+        # EXACTLY 1.0000 — and on a draw-priced sport a pair summing to 1 has no
+        # room for the draw, so that second number is not the away team's price.
+        # `get_event` has withheld it since #6238; #6960 brought the LIST arm
+        # into line, so this now reads `None` on both routes instead of 0.2472
+        # on one and `None` on the other.
+        #
+        # The premise is asserted rather than assumed: without it a later change
+        # that broke the fold entirely would satisfy `is None` for the wrong
+        # reason.
+        assert away_is_the_complement(OPEN_AWAY, OPEN_HOME, SPORT_KEY), (
+            "the fixture pair is no longer an exact complement, so the "
+            "withhold below is being asserted for a reason that no longer holds"
+        )
+        assert card["opening_odds"]["away_probability"] is None
 
     def test_the_fold_is_gap_fill_and_never_replaces_the_canonicals_own_line(self):
         """A card printing a correct pair today can never have it changed.
