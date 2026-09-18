@@ -141,6 +141,43 @@ FEED_LIVE_REPUBLISH_BUDGET_S = 20
 #: change to any of the three numbers has to say where it is taking it back from.
 FEED_LIVE_REPUBLISH_MIN_HEADROOM_S = 10
 
+
+def warm_rail_max_shared_artifact_age_s() -> float:
+    """The oldest shared artifact a WARM REBUILD may consume, in seconds.
+
+    --- LAT-P271 (#2143): the invariant above, applied to the page base --------
+
+    The reserve is derived for the response entry the warmer publishes itself,
+    and that entry does NOT spend the artifact age (#3841: "recorded, never
+    spent"). The PAGE BASE does — `routes/feed.py` publishes it with
+    `oldest_artifact_age_s=_consumed_age_s`, correctly, because the base is the
+    whole list and the total-age ceiling is a rule about served content. Nobody
+    re-derived the cadence arithmetic for that second publication, so the rail
+    has been republishing page one on a 30 s period while the base it publishes
+    in the same request lives `CEILING - age`.
+
+    MEASURED ON PRODUCTION 2026-09-18 03:49Z, `/api/admin/feed-live-prewarm/last`:
+    `discover_native` reported `artifact_age_s: 31.3`, so its base was born with
+    28.7 s of life under a rail that returns in 30 s + up to 20 s of budget. Ten
+    samples of `offset=100` at 26 s spacing, fresh session each, took two full
+    cold builds — 1.88 s and 2.15 s — while page one stayed warm throughout.
+
+    So the bound is not a new number. Rearranged, the #2236 invariant
+    `PERIOD + BUDGET + MIN_HEADROOM == CEILING` says the base clears its own
+    republish exactly when `age <= CEILING - PERIOD - BUDGET`, and that quantity
+    IS `FEED_LIVE_REPUBLISH_MIN_HEADROOM_S`. Computed from the three constants
+    rather than written as 10, so a change to any of them moves this with it
+    instead of leaving a stale literal behind — which is the failure mode the
+    comment above ("the next change has to say where it is taking it back from")
+    is already watching for.
+    """
+    return max(
+        0.0,
+        float(FEED_RESPONSE_STALE_TTL_LIVE_SECONDS)
+        - float(FEED_LIVE_REPUBLISH_PERIOD_S)
+        - float(FEED_LIVE_REPUBLISH_BUDGET_S),
+    )
+
 # --- #3233: the term the budget never counted — how much ONE build costs ------
 # The two numbers above bound the pass. Neither says anything about the work
 # inside it, and that gap is what #3233 measured: the pass ran its targets
