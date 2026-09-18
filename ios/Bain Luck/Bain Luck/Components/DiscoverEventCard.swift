@@ -39,11 +39,30 @@ struct NativeEventDiscoverCard: View {
     /// unchanged. What it gains is the collision arm: two crests that do not
     /// read apart (or one crest sitting on this card's own default) no longer
     /// produce a flat bar. #2902.
-    private var barColors: (away: Color, home: Color) {
-        ProbabilityBarPalette.colors(
+    /// #7036 — the palette's contract is that the two sides read apart from EACH
+    /// OTHER; nothing in it makes either side read against the white card. This
+    /// card paints both win-probability percentages as text in these colours
+    /// (and, in the collapsed one-number branch, the side's NAME as well), so a
+    /// club storing `#ffffff` put its number on Discover — the app's default
+    /// landing surface — in white on white. `TeamTextContrast` reports a colour
+    /// under the WCAG floor as absent, so the palette's existing
+    /// default-and-ladder path runs and the pair contract is re-derived rather
+    /// than bypassed.
+    ///
+    /// Exposed rather than `private` because the floor's WIRING is the part no
+    /// unit test of the helper can see: a revert to
+    /// `ProbabilityBarPalette.colors(awayHex:homeHex:)` compiles, renders and
+    /// leaves every contrast test green. A test drives this on a real payload.
+    var barColorHexes: (away: String, home: String) {
+        TeamTextContrast.cardColorHexes(
             awayHex: event.awayTeamData?.primaryColor,
             homeHex: event.homeTeamData?.primaryColor
         )
+    }
+
+    private var barColors: (away: Color, home: Color) {
+        let hexes = barColorHexes
+        return (Color(hex: hexes.away), Color(hex: hexes.home))
     }
 
     private var awayColor: Color { barColors.away }

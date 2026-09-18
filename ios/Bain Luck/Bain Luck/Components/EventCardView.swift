@@ -77,11 +77,28 @@ struct EventCardView: View {
     /// whose sides have no brand colour (all tennis, all golf pairings, any
     /// unmapped team) drew a bar with no visible split. The palette guarantees
     /// the pair reads apart; see `ProbabilityBarPalette`.
-    private var barColors: (away: Color, home: Color) {
-        ProbabilityBarPalette.colors(
+    ///
+    /// #7036 — and reading apart from EACH OTHER is not the same guarantee as
+    /// reading against the WHITE CARD. This row paints the leading side's
+    /// percentage as text (`sideColor`) and both sides as thin bar segments, so
+    /// a club whose stored `primary_color` is `#ffffff` rendered a card with no
+    /// visible number at all — Rennes v Lyon on the Sports tab, sitting between
+    /// neighbours that all showed one. Going through `TeamTextContrast` puts the
+    /// WCAG floor under the same palette rather than beside it.
+    ///
+    /// Exposed rather than `private` because the floor's WIRING is the part no
+    /// unit test of the helper can see: a revert to
+    /// `ProbabilityBarPalette.colors(awayHex:homeHex:)` compiles, renders and
+    /// leaves every contrast test green. A test drives this on a real payload.
+    var barColorHexes: (away: String, home: String) {
+        TeamTextContrast.cardColorHexes(
             awayHex: event.awayTeamData?.primaryColor,
             homeHex: event.homeTeamData?.primaryColor
         )
+    }
+    private var barColors: (away: Color, home: Color) {
+        let hexes = barColorHexes
+        return (Color(hex: hexes.away), Color(hex: hexes.home))
     }
     private var awayColor: Color { barColors.away }
     private var homeColor: Color { barColors.home }

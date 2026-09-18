@@ -42,7 +42,7 @@ final class TeamTextContrastTests: XCTestCase {
 
     func testTheReportedPairEndsUpAsTwoLegibleDistinguishableColours() {
         // The whole fix, through the exact entry point the event page calls.
-        let pair = C.eventPageColorHexes(awayHex: "#ffffff",   // Fulham, away
+        let pair = C.cardColorHexes(awayHex: "#ffffff",   // Fulham, away
                                          homeHex: "#d11317")   // Liverpool, home
         XCTAssertNotEqual(pair.away, "#FFFFFF", "Fulham's card is still being painted white on white")
         XCTAssertTrue(C.readableOnCard(pair.away), "away segment \(pair.away) is invisible on the card")
@@ -52,15 +52,17 @@ final class TeamTextContrastTests: XCTestCase {
                       "\(pair.away)/\(pair.home) — flooring one side collapsed #2902's pair contract")
     }
 
-    func testTheEventPageEntryPointNeverYieldsAnInvisibleSideForAnyStoredColour() {
+    func testTheSharedEntryPointNeverYieldsAnInvisibleSideForAnyStoredColour() {
         // The property that makes this a fix rather than a special case for
-        // Fulham: whatever pair of stored colours the page is handed, neither
-        // resolved side is invisible and the two still read apart.
+        // Fulham: whatever pair of stored colours a card is handed, neither
+        // resolved side is invisible and the two still read apart. This is the
+        // entry point the event page, the Sports/My Stuff row and the Discover
+        // game card all resolve through, so the property is asserted once.
         let stored: [String?] = [nil, "", "#ffffff", "#FFFFFF", "ffffff", "#ffff00", "#fdb927",
                                  "#d11317", "#2563EB", "#64748B", "#000000", "not-a-color"]
         for away in stored {
             for home in stored {
-                let pair = C.eventPageColorHexes(awayHex: away, homeHex: home)
+                let pair = C.cardColorHexes(awayHex: away, homeHex: home)
                 XCTAssertTrue(C.readableOnCard(pair.away),
                               "away \(String(describing: away)) / home \(String(describing: home)) -> \(pair.away) is invisible")
                 XCTAssertTrue(C.readableOnCard(pair.home),
@@ -85,7 +87,7 @@ final class TeamTextContrastTests: XCTestCase {
             "EventDetailView.teamColors has been renamed — re-aim this guard, do not delete it"
         )
         let body = source[funnel.lowerBound...].prefix(600)
-        XCTAssertTrue(body.contains("TeamTextContrast.eventPageColors"),
+        XCTAssertTrue(body.contains("TeamTextContrast.cardColors"),
                       "teamColors no longer routes through the #7036 floor")
         XCTAssertFalse(body.contains("ProbabilityBarPalette.colors"),
                        "teamColors calls the palette directly again, bypassing the floor")
