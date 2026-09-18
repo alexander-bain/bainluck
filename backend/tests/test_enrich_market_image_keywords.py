@@ -19,7 +19,10 @@ specimen among them — are not revisited by that task and are not repaired here
 
 import pytest
 
-from app.tasks.enrich_markets import _extract_image_keywords
+from app.tasks.enrich_markets import (
+    _extract_image_keywords,
+    _image_query_candidates,
+)
 
 
 class TestQuestionGrammarNeverEatsASlot:
@@ -118,3 +121,93 @@ class TestTheCategoryFallbackStillCatches:
     def test_no_category_and_no_words_yields_an_empty_query(self):
         # enrich_market_images skips on a blank query rather than searching for "".
         assert _extract_image_keywords("Will the A?", None) == ""
+
+
+# ---------------------------------------------------------------------------
+# CERT-3047's required repair — the category is an INDEPENDENT RELEVANCE SIGNAL.
+# ---------------------------------------------------------------------------
+
+
+class TestTheOriginalFiledSpecimenIsPinned:
+    """#4962's FIRST specimen — "Presidents Cup Winner", category `golf`.
+
+    Trimming the name is not enough and the cert said so: the name reduces to
+    exactly "Presidents Cup", which is a real question with a real answer that
+    is not ours. Measured against the live Pexels API 2026-09-18: "Presidents
+    Cup" returns the White House, the White House, Mount Rushmore, Mount
+    Rushmore and one golf course; "Presidents Cup golf" returns five golf
+    photographs. The signal that tells them apart was in the row all along.
+
+    Provider result sets drift, so the ASSERTION is on the query we construct —
+    deterministic and replayable — never on what came back that night.
+    """
+
+    def test_the_golf_signal_reaches_pexels(self):
+        first = _image_query_candidates("Presidents Cup Winner", "golf")[0]
+        assert "golf" in first.split(), (
+            f"the original #4962 specimen still asks Pexels {first!r} — the row "
+            "knew it was golf and the query did not"
+        )
+        assert "Presidents" in first and "Cup" in first
+
+    def test_the_name_query_is_unchanged_and_is_still_the_fallback(self):
+        # The repair may not cost a row a picture it would have had.
+        candidates = _image_query_candidates("Presidents Cup Winner", "golf")
+        assert candidates[-1] == _extract_image_keywords("Presidents Cup Winner", "golf")
+        assert candidates[-1] == "Presidents Cup"
+        assert len(candidates) == 2
+
+
+class TestTheCategoryIsCarriedAsWords:
+    def test_an_underscored_machine_token_becomes_words(self):
+        # `table_tennis` is 2,762 imageless open rows. "table_tennis" is not a
+        # word anybody photographs.
+        first = _image_query_candidates("Wang Chuqin to win", "table_tennis")[0]
+        assert first.endswith("table tennis")
+        assert "_" not in first
+
+    @pytest.mark.parametrize("category", ["other", "sports", "sport", "", None, "   "])
+    def test_a_category_that_pictures_nothing_is_not_appended(self, category):
+        candidates = _image_query_candidates("Manchester United title", category)
+        assert candidates == [_extract_image_keywords("Manchester United title", category)]
+
+    def test_a_category_already_in_the_name_is_not_repeated(self):
+        candidates = _image_query_candidates("Golf Masters champion", "golf")
+        assert len(candidates) == 1, f"asked Pexels for golf twice: {candidates!r}"
+
+    def test_only_the_missing_half_of_a_two_word_category_is_added(self):
+        first = _image_query_candidates("Tennis table showdown", "table_tennis")[0]
+        assert first.split().count("table") == 1
+
+    def test_the_all_grammar_fallback_does_not_search_its_category_twice(self):
+        # `_extract_image_keywords` already answers "politics" here.
+        assert _image_query_candidates("Will the A?", "politics") == ["politics"]
+
+    def test_a_blank_query_yields_no_candidates_at_all(self):
+        assert _image_query_candidates("Will the A?", None) == []
+
+
+class TestEveryCandidateListIsUsable:
+    """A widening matched by grammar reaches rows nobody reasoned about, so the
+    INVARIANTS are asserted over the shapes this repair can produce."""
+
+    @pytest.mark.parametrize(
+        "name,category",
+        [
+            ("Presidents Cup Winner", "golf"),
+            ("Will Taylor Swift meet with Pope Leo XIV before 2027?", "entertainment"),
+            ("FC Bayern München vs. 1. FC Union Berlin", "soccer"),
+            ("Wang Chuqin to win", "table_tennis"),
+            ("Will the A?", "politics"),
+            ("Spread: FC Bayern München (-3.5)", "soccer"),
+        ],
+    )
+    def test_at_most_two_candidates_none_blank_no_duplicates(self, name, category):
+        candidates = _image_query_candidates(name, category)
+        assert len(candidates) <= 2
+        assert all(c.strip() for c in candidates)
+        assert len(set(candidates)) == len(candidates)
+        if candidates:
+            # The last candidate is always exactly what this task asked for
+            # before the qualifier existed — that is what makes it a fallback.
+            assert candidates[-1] == _extract_image_keywords(name, category)
