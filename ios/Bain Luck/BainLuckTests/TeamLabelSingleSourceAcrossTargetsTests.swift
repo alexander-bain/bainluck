@@ -30,11 +30,9 @@ final class TeamLabelSingleSourceAcrossTargetsTests: XCTestCase {
 
     /// The iOS project root — `ios/Bain Luck/` — walked from this test's own
     /// location, the idiom `MarketMapColumnHeaders5656Tests` established.
-    private var projectRoot: URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()   // BainLuckTests
-            .deletingLastPathComponent()   // Bain Luck (project dir)
-    }
+    /// Symlink-resolved via `ProjectTree`: see that file for why a worktree
+    /// under `/tmp` made this scan print a census of six phantom offenders.
+    private var projectRoot: URL { ProjectTree.root() }
 
     /// Deriving a team's short label by taking the last whitespace-separated
     /// token. Every known instance of this bug is spelled one of these two ways.
@@ -70,17 +68,10 @@ final class TeamLabelSingleSourceAcrossTargetsTests: XCTestCase {
 
     /// Every Swift file in the project, as (path-relative-to-root, contents).
     private func swiftSources() throws -> [(String, String)] {
-        let root = projectRoot
-        let e = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)
-        var out: [(String, String)] = []
-        while let url = e?.nextObject() as? URL {
-            guard url.pathExtension == "swift" else { continue }
-            let rel = url.path.replacingOccurrences(of: root.path + "/", with: "")
+        try ProjectTree.swiftSources(under: projectRoot, minimumFiles: 100)
             // This file quotes the defect in its own documentation.
-            if rel.hasSuffix("TeamLabelSingleSourceAcrossTargetsTests.swift") { continue }
-            out.append((rel, try String(contentsOf: url, encoding: .utf8)))
-        }
-        return out
+            .filter { !$0.path.hasSuffix("TeamLabelSingleSourceAcrossTargetsTests.swift") }
+            .map { ($0.path, $0.text) }
     }
 
     /// A team-label derivation, as opposed to a player's surname or initials —
