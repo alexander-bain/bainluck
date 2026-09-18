@@ -215,6 +215,7 @@ from app.utils.feed_cache import (
     live_total_age_headroom_s,
     payload_contains_live_event,
     render_feed_page_from_base,
+    warm_rail_max_shared_artifact_age_s,
 )
 from app.utils.feed_editions import (
     EDITION_LEASE_SECONDS,
@@ -3343,6 +3344,30 @@ async def get_feed(
     _prewarm_rebuild = bool(
         getattr(request, "scope", None) and request.scope.get(FEED_PREWARM_SCOPE_KEY)
     )
+    # --- LAT-P271 (#2143): the warm rail refreshes its inputs, it does not
+    # inherit them -------------------------------------------------------------
+    #
+    # This request is the warmer's own rebuild, and what it publishes has to
+    # outlive the gap to the next one. Page one does (the rail does not spend the
+    # artifact age on it, #3841); the PAGE BASE published further down does spend
+    # it, so a build assembled from one-cycle-old shared artifacts hands page two
+    # a base with less life than the period that is meant to replace it. Measured
+    # on production: `artifact_age_s: 31.3` against a 60 s ceiling, so 28.7 s of
+    # base life under a 30 s period — and two of ten `offset=100` probes paid a
+    # full ~2 s cold build while page one stayed warm.
+    #
+    # 🔴 A BOUND ON THE READ, NEVER A DELETION. The refused artifact stays in
+    # both tiers and stays valid for every request that is not this one; this
+    # build simply rebuilds it and republishes it on its normal TTL, so the
+    # sibling shapes later in the same pass consume the YOUNGER one. Spelling it
+    # as `drop_entries_older_than` — the shape the over-ceiling path uses — would
+    # invalidate the artifact fleet-wide every 30 s and turn a refresh into a
+    # herd on the most expensive endpoint we have.
+    #
+    # Request-scoped by the same argument as the reuse sinks above: each request
+    # runs in its own task and therefore its own context copy.
+    if _prewarm_rebuild:
+        _pic.bind_max_shared_age(warm_rail_max_shared_artifact_age_s())
     debug_global = debug and not debug_personalization and not my_teams_only
     feed_user = None if debug_global else user
     feed_session_id = None if debug_global else session_id

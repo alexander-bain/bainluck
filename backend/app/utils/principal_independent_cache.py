@@ -871,6 +871,14 @@ _stats: dict[str, int] = {
     "cross_worker_failures": 0,
     "cross_worker_publishes": 0,
     "cross_worker_publish_refused": 0,
+    # LAT-P271: a read that FOUND its artifact, intact and inside the namespace
+    # TTL, and declined it for being older than the caller's own bound. Its own
+    # counter and not `cross_worker_misses`, because the two have opposite
+    # readings: a miss says sharing did not reach this worker, this says sharing
+    # reached it and the warm rail chose to refresh instead. Folding it into
+    # misses would make the fix that closes the page-two hole look, on every
+    # dashboard, exactly like the tier degrading.
+    "cross_worker_declined_age": 0,
 }
 
 # --- LAT-P223 (#2143 residual): THE AGGREGATE CANNOT NAME THE ARTIFACT ------
@@ -1208,13 +1216,25 @@ def _lock_for(namespace: str, key: tuple) -> asyncio.Lock:
 
 
 def _read_fresh(
-    namespace: str, key: tuple, ttl_s: float, now: float
+    namespace: str,
+    key: tuple,
+    ttl_s: float,
+    now: float,
+    read_bound: Optional[float] = None,
 ) -> tuple[bool, Any, float]:
     """`(hit, value, age_s)` from the process-local tier.
 
     `age_s` (LAT-P230) is how old the entry already was — the first term of the
     total-age sum in `feed_cache.live_total_age_headroom_s()`. A miss reports
     `0.0`, which is never read: the caller only consults the age on a hit.
+
+    🔴 TWO BOUNDS, AND ONLY ONE OF THEM EVICTS (LAT-P271). `ttl_s` is the
+    namespace's own expiry and an entry past it is dead for everybody, so it is
+    dropped. `read_bound` is one CALLER declining an artifact that is still
+    perfectly valid for its siblings — the warm rail refusing inputs old enough
+    to shorten the page base below the republish period. Evicting on that would
+    let one narrow reader delete a live process's shared tier out from under
+    every other request in it, which is the herd this parameter exists to avoid.
     """
     entries = _store.get(namespace)
     if not entries:
@@ -1226,6 +1246,8 @@ def _read_fresh(
     age_s = now - stored_at
     if age_s > ttl_s:
         entries.pop(key, None)
+        return False, None, 0.0
+    if read_bound is not None and age_s > read_bound:
         return False, None, 0.0
     return True, value, max(0.0, age_s)
 
@@ -1275,6 +1297,63 @@ def bind_reuse_sink(
         _tier_sink_var.set(tier_sink)
     if age_sink is not None:
         _age_sink_var.set(age_sink)
+
+
+# LAT-P271 (#2143): the oldest artifact THIS context is willing to consume.
+#
+# Not a fourth sink — a sink records what happened, this decides what may. It is
+# here for the same reason the sinks are: `canonical_counts` is resolved three
+# frames below the route and threading a bound through a scoring signature is
+# how the stage headers came to be missing from five return paths.
+#
+# 🔴 IT BOUNDS THE READ AND NEVER THE WRITE, and that asymmetry is the whole
+# design. A context that declines a 31s-old artifact BUILDS a fresh one and
+# publishes it on the namespace's normal TTL, so every other worker is handed
+# the younger artifact instead of the older one. Spelling this as a shorter
+# `ttl_s` instead would shorten the PUBLISHED life too and make the decliner's
+# freshness everybody's expiry — a herd, not a refresh.
+#
+# `None` means "the namespace TTL", which is the only bound there has ever been,
+# so an unbound context is byte-for-byte the behaviour that shipped.
+_max_shared_age_var: ContextVar[Optional[float]] = ContextVar(
+    "feed_shared_max_age", default=None
+)
+
+
+def bind_max_shared_age(max_age_s: Optional[float]) -> None:
+    """Refuse shared artifacts older than `max_age_s` for this context.
+
+    `None` clears the bound. A value <= 0 means "consume nothing shared", which
+    is a rebuild, not an error — `get_or_build` still publishes what it builds.
+    """
+    _max_shared_age_var.set(max_age_s)
+
+
+def max_shared_age_s() -> Optional[float]:
+    """The bound bound by `bind_max_shared_age`, or `None`."""
+    return _max_shared_age_var.get()
+
+
+def _shared_read_bound(ttl_s: float, max_age_s: Optional[float]) -> float:
+    """The age a stored artifact may have and still be READ, in seconds.
+
+    The namespace TTL unless a narrower bound is asked for; never wider, because
+    a caller may only ever decline an artifact the TTL already allows, never
+    admit one it does not.
+    """
+    if max_age_s is None:
+        return ttl_s
+    return min(ttl_s, max(0.0, float(max_age_s)))
+
+
+@contextlib.contextmanager
+def max_shared_age_scope(max_age_s: Optional[float]) -> Iterator[None]:
+    """Apply `bind_max_shared_age` for the duration of this scope."""
+    token = _max_shared_age_var.set(max_age_s)
+    try:
+        yield
+    finally:
+        _max_shared_age_var.reset(token)
 
 
 @contextlib.contextmanager
@@ -1422,7 +1501,7 @@ async def _shared_redis_client() -> Any:
 
 
 async def _read_cross_worker(
-    namespace: str, key: tuple, ttl_s: float
+    namespace: str, key: tuple, ttl_s: float, read_bound: Optional[float] = None
 ) -> tuple[bool, Any, float]:
     """Return `(hit, value, age_s)` from the Redis tier. Never raises.
 
@@ -1494,6 +1573,11 @@ async def _read_cross_worker(
     age_s = max(0.0, time.time() - float(stored_wall))
     if age_s > ttl_s:
         _bump(namespace, "cross_worker_misses")
+        return False, None, 0.0
+    # LAT-P271. Checked AFTER the TTL so the two stay distinguishable, and the
+    # entry is left in Redis: this caller is declining it, not condemning it.
+    if read_bound is not None and age_s > read_bound:
+        _bump(namespace, "cross_worker_declined_age")
         return False, None, 0.0
 
     try:
@@ -1610,6 +1694,7 @@ async def get_or_build(
     builder: Callable[[], Awaitable[Any]],
     *,
     ttl_s: Optional[float] = None,
+    max_age_s: Optional[float] = None,
     reuse_sink: Optional[list] = None,
     clock: Optional[Callable[[], float]] = None,
 ) -> Any:
@@ -1621,9 +1706,18 @@ async def get_or_build(
     Tiers, in order (LAT-P103): process-local dict → Redis → `builder`. The
     Redis hop happens only after the local tier has already missed, so a warm
     worker pays nothing for it and a cold one trades ~1ms against the rebuild.
+
+    `max_age_s` (LAT-P271) narrows what may be READ without touching what is
+    written: an artifact older than it is declined, rebuilt, and republished on
+    the namespace's own TTL. Defaults to the ambient `bind_max_shared_age`
+    bound, which is `None` — the namespace TTL — for every caller that has not
+    asked for a narrower one.
     """
     _clock = clock or time.monotonic
     _ttl = shared_build_ttl_s(namespace) if ttl_s is None else ttl_s
+    _read_bound = _shared_read_bound(
+        _ttl, _max_shared_age_var.get() if max_age_s is None else max_age_s
+    )
 
     if _ttl <= 0:
         _stats["builds"] += 1
@@ -1639,7 +1733,7 @@ async def get_or_build(
         _stats["builds"] += 1
         return await builder()
 
-    ok, value, age_s = _read_fresh(namespace, key, _ttl, _clock())
+    ok, value, age_s = _read_fresh(namespace, key, _ttl, _clock(), _read_bound)
     if ok:
         # L1 hit — the Redis tier is never consulted here. This is the path the
         # module docstring's "deliberately NOT Redis" sentence is about, and it
@@ -1668,7 +1762,7 @@ async def get_or_build(
     try:
         # Re-read under the lock: the caller we queued behind may have just
         # stored it, which is the whole point of coalescing.
-        ok, value, age_s = _read_fresh(namespace, key, _ttl, _clock())
+        ok, value, age_s = _read_fresh(namespace, key, _ttl, _clock(), _read_bound)
         if ok:
             _note_reuse(namespace, reuse_sink, SHARED_TIER_LOCAL)
             _note_age(namespace, age_s)
@@ -1679,7 +1773,7 @@ async def get_or_build(
         # against a hit. A cold worker (fresh dyno, restarted worker, or simply
         # one of the other `WEB_CONCURRENCY` processes) reaches the artifact
         # here instead of rebuilding it.
-        ok, value, age_s = await _read_cross_worker(namespace, key, _ttl)
+        ok, value, age_s = await _read_cross_worker(namespace, key, _ttl, _read_bound)
         if ok:
             # Promote into L1 so this worker's NEXT request skips the hop too.
             #
