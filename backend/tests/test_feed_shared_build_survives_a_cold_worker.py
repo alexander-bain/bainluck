@@ -343,6 +343,79 @@ def test_a_payload_carrying_the_codec_sentinel_as_a_real_key_still_round_trips()
     assert pic.decode_shared_payload(pic.encode_shared_payload(value)) == value
 
 
+def test_a_payload_whose_strings_start_with_the_scalar_sentinel_round_trips():
+    """The price of the compact scalar tags: `~` is reserved in the STRING
+    space now, not just the dict-key space.
+
+    A scalar tag is `"~D0.15"` rather than `{"__pic__":"dec","v":"0.15"}`
+    because that is 27.8% of `market_load`'s wire — but it only stays a codec
+    and not a corruption if a genuine string beginning with `~` survives it.
+    The escape is doubling, and it has to hold at every depth and for the
+    degenerate strings, which is what this covers. A `~` that arrives with an
+    unknown second character is REFUSED rather than passed through, because a
+    reader that guesses is the invisible-type failure the codec exists to stop.
+    """
+    value = {
+        "bare": "~",
+        "doubled": "~~",
+        "tripled": "~~~",
+        "looks_tagged": "~D0.155000",
+        "looks_like_a_date": "~T2026-09-04T04:47:12",
+        "unknown_kind": "~Q whatever",
+        "not_at_the_start": "a ~D0.15 in the middle",
+        "nested": [{"deep": ("~", Decimal("0.15"), "~Dnot a decimal")}],
+        # Keys are NEVER walked by the decoder, so they need no escape — and
+        # this pins that, because an encoder that started escaping them would
+        # round-trip a DIFFERENT dict and nothing else would notice.
+        "~D0.15": "a key that looks like a tag",
+        # The same claim on the OTHER dict form. A dict with non-string keys
+        # takes the `map` escape, where keys go through `_encode_key`/
+        # `_decode_key` rather than the fast path above — a different pair of
+        # functions making the same promise, so it gets its own specimen.
+        "mixed_keys_with_a_tag_key": {1: "one", "~T2026-01-01": "two", None: "~D3"},
+    }
+    pic.assert_plain_data(value)
+
+    restored = pic.decode_shared_payload(pic.encode_shared_payload(value))
+
+    assert restored == value
+    for field in ("bare", "doubled", "tripled", "looks_tagged", "unknown_kind"):
+        assert type(restored[field]) is str, f"{field} came back as a scalar tag"
+    assert type(restored["nested"][0]["deep"][1]) is Decimal
+    assert list(restored) == list(value), "a key was rewritten by the escape"
+
+
+def test_an_unknown_scalar_tag_is_refused_rather_than_read_as_a_string():
+    """The other half of the escape: a reader must not invent a value.
+
+    A `~X…` on the wire means the writer had a vocabulary this reader does not.
+    Passing it back as a plain string would be exactly the failure at the top of
+    the codec block — one worker's `Decimal` arriving as another's `str`, with
+    nothing raised and nothing logged. `_read_cross_worker` already treats a
+    decode exception as a miss, so refusing costs a rebuild and nothing more.
+    """
+    with pytest.raises(pic._CodecRefused):
+        pic.decode_shared_payload(json.dumps({"x": "~Z1"}))
+
+
+def test_the_compact_scalar_tags_are_actually_compact():
+    """The ship, asserted rather than trusted.
+
+    This is the only guard that would notice the codec quietly going back to
+    the dict form — every other test here asks whether it round-trips, and the
+    dict form round-trips perfectly. It was 32 bytes to express 8 characters
+    (44 once escaped into the envelope string), across six `Decimal` columns per
+    outcome row and ~9,300 outcomes.
+    """
+    one = pic.encode_shared_payload({"p": Decimal("0.155000")})
+
+    assert "~D0.155000" in one, f"the scalar tag is not the compact form: {one}"
+    assert pic._TAG not in one, "a scalar still carries the dict tag"
+    # The whole encoded dict, for a value of eight characters. The dict form was
+    # 40 bytes here; a regression to it fails this by a wide margin.
+    assert len(one) <= 24, f"a tagged Decimal costs {len(one)} B: {one}"
+
+
 def test_non_finite_floats_cross_as_themselves_rather_than_becoming_null():
     """`orjson` would turn these into `null`, which is a WRONG score, not a
     missing one. The codec is a mirror, not a filter."""

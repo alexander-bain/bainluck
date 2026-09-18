@@ -579,7 +579,48 @@ _MAX_DEPTH = 16
 # the old 200,000 under its own name (`NODE_GROWTH_ALARM`) to ask it — written
 # as a constant rather than a fraction of this one, precisely so that raising
 # this number can never be a way of quieting that one.
-_MAX_NODES = 300_000
+#
+# ── 2026-09-18, SAME DAY: the compact codec moves this again, and NARROWS the
+#    argument above rather than repeating it ──────────────────────────────────
+#
+# 300,000 was set against a decode budget that admitted 18,839 outcomes. The
+# compact scalar tags took the envelope to 0.722x, so the SAME 6 MB now admits
+# 29,869 outcomes — and 29,869 outcomes is 444,271 nodes. The ordering invariant
+# (`test_the_node_cap_never_refuses_what_the_decode_budget_accepts`) therefore
+# broke in the direction it was written to catch: narrowing the wire lets more
+# rows through the byte cap, while the walk that the node cap bounds does not
+# shrink at all, because nodes are scalars and the codec does not touch them.
+#
+# So it goes to 500,000, and the honest part is that the margin it rests on is
+# THINNER than the one recorded above. Re-measured on the re-pointed fixture,
+# with `_MAX_NODES` lifted for the probe so the scales being priced are the ones
+# the cap refuses:
+#
+#     outcomes    nodes     walk      encode (the dump)    dump/walk
+#      9,325    156,640    25.6 ms         34.3 ms           1.3x
+#     18,000    278,141    46.2 ms         65.8 ms           1.4x
+#     28,000    418,138    63.5 ms         86.5 ms           1.4x
+#     29,869    444,271    59.0 ms         72.1 ms           1.2x   <- the crossing
+#
+# The recorded 2-3x is now 1.2-1.4x, and this change is the reason: the encode is
+# exactly what got cheaper. The DIRECTION still decides it — the walk is never
+# the most expensive thing done to the value, because `_publish_cross_worker`
+# encodes before either cap is consulted, so refusing at the walk saves work the
+# caller has already spent. But a future narrowing of the wire would eventually
+# invert this, and at that point the answer is chunking the publish, not another
+# raise here. Whoever reads this next: re-run the table before moving the number.
+#
+# WHY 500,000 AND NOT 450,000, which also holds today. 450,000 clears the 444,271
+# by 1.3%, and the note this block replaces says in as many words that a thin
+# margin here is what goes red the moment the outcome row grows a column back.
+# One column per outcome at this scale is ~30,000 nodes, so 450,000 would be
+# re-broken by the very next one; 500,000 absorbs it. That is the whole argument
+# and it is arithmetic, not taste.
+#
+# `NODE_GROWTH_ALARM` is untouched at 200,000 and is now the FIRST of the three
+# alarms to fire (~11,900 outcomes, against the byte alarm's ~17,500) — which is
+# the anti-ratchet working: this raise bought no silence.
+_MAX_NODES = 500_000
 
 _KEY_SCALARS = (bool, int, float, str)
 
@@ -777,8 +818,73 @@ def cross_worker_enabled() -> bool:
 # codec is the inverse of itself by construction and `test_..._cold_worker.py`
 # proves it over the whole admitted type space, including the sentinel-key
 # escape hatch below.
+#
+# ── LAT-P221 next ship (2026-09-18): THE TAG WAS THE ARTIFACT ────────────────
+#
+# The three SCALAR tags used to be two-key dicts, and that is where
+# `futures.market_load` — the biggest shared artifact we have — was spending its
+# wire. `{"__pic__":"dec","v":"0.155000"}` is 32 bytes to express 8 characters,
+# and it is nested inside the envelope as a JSON *string*, so every quote is
+# escaped on the way out and the real cost is 44. The outcome row carries SIX
+# `Decimal` columns (`current_probability`, `probability_change_24h`,
+# `opening_probability`, `calibration_probability`, `current_yes_bid`,
+# `current_yes_ask`) over ~9,300 outcomes.
+#
+# So a scalar tag is now a PREFIXED STRING: `"~D0.155000"`, 14 bytes escaped.
+# Measured on the LAT-P221 production-shape fixture, same seed, same run:
+#
+#     envelope        3,785,526 B -> 2,734,169 B   (0.722x, -27.8%)
+#     per outcome         259.7 B ->     157.5 B   (-39%)
+#     per market        1,922.0 B ->   1,790.5 B   (-7%)
+#     stored (zlib)   1,069,487 B -> 1,007,473 B   (0.942x — see below)
+#     inflate + parse      20.9 ms ->     11.5 ms   (-45%, and it holds the GIL)
+#
+# The last two lines are the point and the caveat. STORAGE barely moves, because
+# zlib was already eating the repetition — a tag repeated 56,000 times is the
+# most compressible thing on the wire. What it could not eat is the DECODE: the
+# reader inflates and then parses the whole thing, and `json.loads` holds the GIL
+# for the entire C-level parse (gotcha #38), so those 9.4 ms are 9.4 ms the
+# worker's event loop is stopped on every cross-worker read. Compression hid the
+# cost exactly where it was cheapest to look.
+#
+# WHY A PREFIXED STRING AND NOT A SHORTER KEY. `{"~":"dec","v":…}` would have
+# saved 6 bytes of the 22 and kept the shape; the string form saves 20 because it
+# deletes the dict, both its keys, and (escaped) eight of its quotes. The cost is
+# that the codec now has to reserve a prefix in the STRING space rather than the
+# dict-key space, so a genuine string that starts with `~` is escaped by doubling
+# it. That keeps the codec a bijection over the whole string space — which is the
+# only thing that licenses this at all — and costs one byte on a string shape we
+# do not have. `test_a_payload_whose_strings_start_with_the_scalar_sentinel...`
+# is the guard.
+#
+# DICT KEYS ARE NOT TOUCHED, in either direction, and that is load-bearing: the
+# decoder never walks a key, so a key that starts with `~` needs no escape and
+# gets none. The `map`/`tup` tags keep the old dict form — they are rare, a list
+# form would be ambiguous against a data list, and neither is where the bytes are.
+#
+# ROLLOUT. `WIRE_ENVELOPE_VERSION` goes to 2 in the same commit, so a worker
+# running either build reads only its own wire and a mixed fleet cannot produce
+# the invisible failure at the top of this block. The cost is one TTL of extra
+# rebuilds per namespace at release, which is what a cold worker already does.
 
 _TAG = "__pic__"
+
+#: The scalar sentinel. One byte in JSON (a control character would be ``,
+#: six), and `~` leads no string this codec has ever been handed.
+_SCALAR = "~"
+_SCALAR_DATETIME = "T"
+_SCALAR_DATE = "E"
+_SCALAR_DECIMAL = "D"
+
+
+#: Bumped whenever the CODEC changes shape, so the two builds of a mid-release
+#: fleet read only their own wire. A reader that met a wire it half-understood
+#: would produce the invisible failure this whole block is about; a reader that
+#: declines one simply rebuilds, which is what a cold worker does anyway.
+#:
+#: v1 — scalar tags as two-key dicts (`{"__pic__":"dec","v":"0.15"}`).
+#: v2 — scalar tags as prefixed strings (`"~D0.15"`), LAT-P221's next ship.
+WIRE_ENVELOPE_VERSION = 2
 
 
 class _CodecRefused(TypeError):
@@ -797,16 +903,21 @@ def _decode_key(key: Any) -> Any:
 
 
 def _encode(node: Any) -> Any:
-    if node is None or isinstance(node, (bool, int, float, str)):
+    if node is None or isinstance(node, (bool, int, float)):
         return node
+    if isinstance(node, str):
+        # The only string the wire cannot carry as itself is one that would read
+        # back as a scalar tag. Doubling is the escape, and it is checked before
+        # anything else because strings are most of the nodes.
+        return _SCALAR + node if node.startswith(_SCALAR) else node
     # `datetime` is a subclass of `date`, so it MUST be tested first or every
     # timestamp comes back with its time-of-day silently truncated.
     if isinstance(node, datetime):
-        return {_TAG: "dt", "v": node.isoformat()}
+        return _SCALAR + _SCALAR_DATETIME + node.isoformat()
     if isinstance(node, date):
-        return {_TAG: "d", "v": node.isoformat()}
+        return _SCALAR + _SCALAR_DATE + node.isoformat()
     if isinstance(node, Decimal):
-        return {_TAG: "dec", "v": str(node)}
+        return _SCALAR + _SCALAR_DECIMAL + str(node)
     if isinstance(node, tuple):
         return {_TAG: "tup", "v": [_encode(v) for v in node]}
     if isinstance(node, list):
@@ -825,6 +936,22 @@ def _encode(node: Any) -> Any:
 
 
 def _decode(node: Any) -> Any:
+    if isinstance(node, str):
+        if not node.startswith(_SCALAR):
+            return node
+        kind, rest = node[1:2], node[2:]
+        if kind == _SCALAR:
+            return node[1:]  # an escaped real string, un-doubled
+        if kind == _SCALAR_DATETIME:
+            return datetime.fromisoformat(rest)
+        if kind == _SCALAR_DATE:
+            return date.fromisoformat(rest)
+        if kind == _SCALAR_DECIMAL:
+            return Decimal(rest)
+        # Not silently passed through as a string. An unknown scalar tag means
+        # the writer had a vocabulary this reader does not, and passing it on
+        # would be the exact invisible type failure this codec exists to stop.
+        raise _CodecRefused(f"unknown scalar tag {node[:2]!r}")
     if isinstance(node, list):
         return [_decode(v) for v in node]
     if not isinstance(node, dict):
@@ -833,12 +960,6 @@ def _decode(node: Any) -> Any:
     if tag is None:
         return {k: _decode(v) for k, v in node.items()}
     raw = node.get("v")
-    if tag == "dt":
-        return datetime.fromisoformat(raw)
-    if tag == "d":
-        return date.fromisoformat(raw)
-    if tag == "dec":
-        return Decimal(raw)
     if tag == "tup":
         return tuple(_decode(v) for v in raw)
     if tag == "map":
@@ -2097,8 +2218,20 @@ async def _read_cross_worker_inner(
     except (ValueError, TypeError):
         _bump_failure(namespace, FAIL_BAD_JSON)
         return False, None, 0.0
-    if not isinstance(envelope, dict) or envelope.get("v") != 1:
+    if not isinstance(envelope, dict):
         _bump_failure(namespace, FAIL_BAD_ENVELOPE)
+        return False, None, 0.0
+    version = envelope.get("v")
+    if version != WIRE_ENVELOPE_VERSION:
+        # A well-formed envelope of ANOTHER version is the other half of a
+        # mid-release fleet, not corruption — so it is a MISS, on the same
+        # reading as the namespace/key mismatch below. Counting it as a failure
+        # would light the failure rail on every deploy for one TTL and teach
+        # everyone to ignore it. A `v` that is not an int at all is malformed.
+        if isinstance(version, int) and not isinstance(version, bool):
+            _bump(namespace, "cross_worker_misses")
+        else:
+            _bump_failure(namespace, FAIL_BAD_ENVELOPE)
         return False, None, 0.0
 
     # A digest is a hash. Identity is the stored key repr, checked here, so a
@@ -2164,7 +2297,7 @@ async def _publish_cross_worker(
 
     envelope = json.dumps(
         {
-            "v": 1,
+            "v": WIRE_ENVELOPE_VERSION,
             "ns": namespace,
             "k": repr(key),
             "stored_wall": time.time(),

@@ -1638,7 +1638,10 @@ async def test_the_stale_redis_artifact_is_invalidated_so_request_two_rebuilds(
     redis.contents[redis_key] = pic.wire_encode(
         json.dumps(
             {
-                "v": 1,
+                # This build's wire, not a literal. Planted at v1 the reader
+                # would decline it on the VERSION and this test would pass
+                # without ever reaching the age check it is about.
+                "v": pic.WIRE_ENVELOPE_VERSION,
                 "ns": ns,
                 "k": repr(key),
                 "stored_wall": time_module.time() - 70.0,
@@ -1706,7 +1709,9 @@ async def test_a_sibling_republication_is_not_invalidated():
     redis.contents[redis_key] = pic.wire_encode(
         json.dumps(
             {
-                "v": 1,
+                # This build's wire, not a literal — see the note on the sibling
+                # plant above.
+                "v": pic.WIRE_ENVELOPE_VERSION,
                 "ns": ns,
                 "k": repr(key),
                 "stored_wall": time_module.time() - 3.0,

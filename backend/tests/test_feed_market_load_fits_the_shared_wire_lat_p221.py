@@ -57,6 +57,21 @@ to end.
 When this file goes red, the answer is NOT to raise a cap. It is that the
 artifact outgrew its wire and needs a narrower one (drop a column, compact the
 row form, or chunk the publish).
+
+2026-09-18: IT WENT RED IN NINE DAYS' TIME AND THE ANSWER WAS THE SECOND ONE.
+The byte alarm was ~16% of population growth away, so the row form was compacted
+rather than the cap raised: `principal_independent_cache`'s three SCALAR tags
+became prefixed strings instead of two-key dicts, `{"__pic__":"dec","v":"0.15"}`
+-> `"~D0.15"`. The outcome row carries six `Decimal` columns and there are ~9,300
+outcomes, so it is a per-outcome saving, which at ~13 legs per market is worth
+~13x a per-market one. Envelope 0.722x, and the reader's inflate-and-parse 20.9
+-> 11.5 ms of GIL-held work on every cross-worker read (gotcha #38). The full
+argument, the rollout, and what it cost is the block above `_TAG` in that module.
+
+What it did NOT buy is storage — zlib was already eating the repeated tag, so the
+stored blob moved 0.942x. That is worth carrying: compression hid this cost
+exactly where it was cheapest to look, and the storage budget is the wrong
+instrument for asking whether the wire is wide.
 """
 
 from __future__ import annotations
@@ -108,8 +123,18 @@ PROD_OUTCOMES = 9_325
 #: market row nearly doubled (955 -> 1,864, `market_metadata` having grown) and
 #: the outcome row shrank (68 -> 47). They moved in OPPOSITE directions, which
 #: is why neither can be inferred from the other or from the row counts.
-PROD_MARKET_TEXT_BYTES = 1_864
-PROD_OUTCOME_TEXT_BYTES = 47
+#:
+#: Re-measured again 2026-09-18 08:55Z with the compact codec: 1,864 -> 1,448 and
+#: 47 -> 53. NOTHING ABOUT THE CODEC MOVED THESE — it does not touch text. The
+#: SAMPLE moved: every-17th of the ordered top-700 selected different markets
+#: (776 real outcomes behind the 40 sampled markets in the morning read, 613 in
+#: this one), which is the composition churn the population note above describes,
+#: seen from the text side. Two pulls 10 minutes apart returned byte-identical
+#: numbers, so this is a real read of a churning composition and not sampling
+#: noise — and it is why the envelope control below carries a +/-10% band rather
+#: than an equality.
+PROD_MARKET_TEXT_BYTES = 1_448
+PROD_OUTCOME_TEXT_BYTES = 53
 
 #: The measured envelope of the REAL artifact, encoded by this module's own
 #: codec over 40 real production rows and extrapolated to the shape above. It is
@@ -130,7 +155,21 @@ PROD_OUTCOME_TEXT_BYTES = 47
 #: The 40 are sampled SYSTEMATICALLY across the ordered top-700 (every 17th),
 #: not `LIMIT 40`: the order key is `market_tier ASC NULLS LAST`, so a head
 #: sample would measure tier-1 text widths and call them the population's.
-MEASURED_ENVELOPE_BYTES = 3_827_678
+#:
+#: 🟢 2026-09-18 08:55Z — THE COMPACT CODEC. 3,827,678 -> 2,760,864 B (2.76 MB).
+#: Re-measured by the method above, not scaled: the same 40-real-row pull, cast
+#: back to python types, through the same `encode_shared_payload`, which is now
+#: the compact one. Per market 2,539 -> 1,905.8 B, per outcome 220 -> 153.0 B,
+#: spine 122 B unchanged.
+#:
+#: TWO INDEPENDENT MEASUREMENTS, which is the only reason a drop this large is
+#: accepted rather than re-checked. (1) This file's own fixture, seed and text
+#: constants held fixed and ONLY the codec swapped: 3,785,526 -> 2,734,169 B,
+#: 0.722x. (2) The real-row pull above, which also absorbs the sample churn in
+#: `PROD_*_TEXT_BYTES`: 2,760,864 B. Applying (1)'s ratio to the old measured
+#: artifact predicts 2,763,582 B, and (2) read 2,760,864 — 0.1% apart, from a
+#: synthetic fixture and a production pull that share no inputs.
+MEASURED_ENVELOPE_BYTES = 2_760_864
 #: Fraction of nullable columns left `None`. CALIBRATED, not chosen: it is the
 #: one free parameter, and it is set to whatever reproduces
 #: `MEASURED_ENVELOPE_BYTES`. Re-calibrate it when the shape constants move.
@@ -143,7 +182,13 @@ MEASURED_ENVELOPE_BYTES = 3_827_678
 #: across all text columns of a synthetic row, so it absorbs the difference
 #: between that flat budget and production's very uneven one. It is a fitting
 #: parameter for the envelope, never a claim about how null production is.
-NULL_RATE = 0.34
+#:
+#: Re-calibrated again 2026-09-18 for the compact codec and the re-read text
+#: widths: 0.34 -> 0.23, putting the fixture at 2,742,650 B against the measured
+#: 2,760,864 B (ratio 0.993). Production's own observed null rate on this pull is
+#: 0.438 — still a different quantity, and still not reconciled, for the reason
+#: in the paragraph above.
+NULL_RATE = 0.23
 
 #: Node count of the fixture, measured 2026-09-05 (LAT-P230 ITEM 2a). Nodes are
 #: what `assert_plain_data` counts, and they are a function of the SHAPE alone —
@@ -254,7 +299,17 @@ NULL_RATE = 0.34
 #: The budget assertion below is UNCHANGED and still has room, but LESS of it:
 #: 156,466 against the 200,000 growth alarm is 78%, where the 2026-09-04 shape
 #: sat at 61%. The BYTE alarm is the tighter one now — see `HEADROOM_FACTOR`.
-MEASURED_NODES = 156_466
+#:
+#: 2026-09-18, the compact codec: 156,466 -> 156,640, +174. THE CODEC CONTRIBUTES
+#: NOTHING TO THIS and that is the point of printing the delta rather than
+#: skipping it — `_count_validator_nodes` walks the PLAIN value, where a
+#: `Decimal` is one node whether the wire spends 32 bytes on it or 12. The whole
+#: +174 is the RNG-stream term the deltas above document, reached by a third
+#: route: `NULL_RATE` 0.34 -> 0.23 and the two text widths all change how many
+#: draws `_texty` and `_row_at_kinds` consume, so `market_metadata` cells flip
+#: between `None` (1 node) and a populated dict (4 nodes) — 58 of them, 58 x 3.
+#: A delta here that does NOT decompose is the drift this assertion exists for.
+MEASURED_NODES = 156_640
 
 #: The alarm fires BEFORE breakage, not at it. A guard that goes red at the
 #: moment the share stops working has told us nothing the latency would not
@@ -277,12 +332,26 @@ MEASURED_NODES = 156_466
 #:
 #: At the rate this population has actually grown — 6,904 to 9,325 in the
 #: fourteen days nobody was re-measuring it, ~173 outcomes a day — the byte
-#: alarm is about nine days out. THAT IS THE GUARD WORKING, not a reason to
-#: pre-emptively soften it: the whole design is to be red while there is still
-#: room, and there are 8,000 outcomes of room between the alarm and the
-#: breakage. When it goes, the answer is the one this module's docstring gives
-#: and not a larger number here: the artifact outgrew its wire and needs a
-#: narrower one (drop a column, compact the row form, or chunk the publish).
+#: alarm is about nine days out.
+#:
+#: 🟢 THAT IS THE ONE THE COMPACT CODEC WAS BUILT FOR, AND IT IS PAID. The
+#: factor itself is UNCHANGED — the remedy was the one the docstring prescribes
+#: (compact the row form), not a larger number here. Re-bisected at the shipped
+#: constants, 700-outcome granularity:
+#:
+#:              before        after
+#:    9,325     today         today
+#:   11,900       —           the NODE alarm trips        (+27.6%)
+#:   14,700       —           the STORE alarm trips       (+57.6%)
+#:   17,500       —           the BYTE alarm trips        (+87.7%)
+#:   29,869       —           the share actually breaks
+#:
+#: So the byte alarm went from ~9 days of runway to ~7 weeks, and the order
+#: changed: the NODE alarm is the first to fire again, as it was on 2026-09-04.
+#: Read that as the design working rather than as a new problem — the codec
+#: cannot answer a node count (nodes are scalars; see `_MAX_NODES`), so when the
+#: node alarm goes the answer is fewer rows or chunking the publish, and it must
+#: NOT be answered by moving `NODE_GROWTH_ALARM`.
 HEADROOM_FACTOR = 1.5
 
 #: The NODE growth alarm (LAT-P273). Keeps the 200,000 that `pic._MAX_NODES`
@@ -300,7 +369,31 @@ NODE_GROWTH_ALARM = 200_000
 #: it sensitive to how compressible this file's filler happens to be — so the
 #: band is what stops a future edit buying a green with easier text. Measured:
 #: 4.2x on the real artifact, 3.8x on the fixture, both at zlib level 1.
-COMPRESSION_RATIO_BAND = (3.0, 6.0)
+#:
+#: 🔴 2026-09-18: THE COMPACT CODEC SEPARATED THESE TWO NUMBERS, and the band had
+#: to be re-derived rather than widened to fit. Re-measured at zlib level 1:
+#: 3.85-3.88x on real rows (two pulls), 2.68x on this fixture. Under the old
+#: codec both sat near 4x — because the two-key tag dict, repeated ~56,000 times,
+#: was the most compressible thing on the wire and dominated BOTH. Remove it and
+#: the fixture's own filler entropy shows through: `_texty` appends a random
+#: number to every word, which is less repetitive than production's names and
+#: `market_metadata`.
+#:
+#: THE BOUND THAT MATTERS IS THE UPPER ONE, and it is now pinned to the measured
+#: real ratio. The failure this assertion exists to stop is a fixture that
+#: compresses BETTER than production — that buys a green on the storage budget
+#: with text production does not have. A fixture that compresses WORSE is
+#: conservative: it reports 1.02 MB stored where the real artifact is ~0.71 MB,
+#: so the storage assertion fails early rather than late. That is the direction
+#: to be wrong in, and it is recorded here rather than tuned away, because
+#: tuning `_texty`'s entropy to hit a compression target would add a SECOND free
+#: parameter to a fixture whose whole discipline is having exactly one
+#: (`NULL_RATE`).
+#:
+#: Consequence worth knowing before reading a red: the store alarm now fires at
+#: ~14,700 outcomes on this fixture, ahead of the byte alarm's ~17,500, and it
+#: is the pessimistic one of the three.
+COMPRESSION_RATIO_BAND = (2.5, 3.9)
 
 
 def _texty(rng: random.Random, n_bytes: int) -> str:
@@ -602,7 +695,10 @@ def test_the_fixture_is_the_measured_node_shape(payload):
 def test_a_production_scale_market_load_fits_the_node_budget(payload):
     """The cap that had no production-scale guard until LAT-P230.
 
-    Today: 122,749 nodes against a 200,000 alarm — 61%, 1.63x of headroom.
+    Today: 156,640 nodes against a 200,000 alarm — 78%, 1.28x of headroom, and
+    since the compact codec this is the FIRST of the three alarms to fire
+    (~11,900 outcomes, against the byte alarm's ~17,500). The codec cannot
+    answer it: see below.
 
     LAT-P273 re-pointed this at `NODE_GROWTH_ALARM` instead of
     `pic._MAX_NODES / HEADROOM_FACTOR`. The number is the same 200,000 it has
@@ -741,8 +837,32 @@ async def test_a_node_cap_breach_defeats_even_the_local_tier(payload, monkeypatc
 #: the outcome row ever grows a column back, it is the one that goes red. The
 #: fix then is the node cap, not this constant: a `market_load` that fits the
 #: wire must not be refused for being long.
-DECODE_BUDGET_OUTCOMES = 18_839
-DECODE_BUDGET_NODES = 289_659
+#:
+#: 2026-09-18, the compact codec — AND THAT THIN HEADROOM WENT NEGATIVE, exactly
+#: as predicted, just not by the predicted cause. 18,839 -> 29,869 outcomes,
+#: 289,659 -> 444,271 nodes, re-bisected on this fixture at one-outcome
+#: granularity: 29,869 encodes to 6,291,399 B against the 6,291,456 B cap — 57
+#: bytes of margin — and 29,870 encodes to 6,291,784 B, which does not fit.
+#:
+#: 🪤 The first bisection returned 27,999 and was WRONG, because its ceiling was
+#: `40 * PROD_MARKETS = 28,000` and the real crossing is past it: a bisection
+#: whose bracket never contains the answer converges to its own ceiling and
+#: reports it with full confidence. `test_the_decode_budget_scale_is_what_it_says`
+#: caught it on the one-more-round assertion, which is precisely the job that
+#: control was given. The ceiling is now found by doubling until the envelope is
+#: PROVEN over the cap, never assumed.
+#:
+#: The asymmetry the 2026-09-04 note records is the whole story: the codec made
+#: BYTES cheaper and left NODES untouched, so the decode budget now admits half
+#: again as many rows while the walk that `_MAX_NODES` bounds is unchanged.
+#: `_MAX_NODES` moves 300,000 -> 500,000 in the same commit, which is what the
+#: invariant's own failure message prescribes — raise the SAFETY cap, never lower
+#: the growth alarm. The measured walk-vs-encode table behind that number is in
+#: `principal_independent_cache.py` above `_MAX_NODES`, and it is thinner than
+#: the one it replaces: 1.2-1.4x, not 2-3x, because this change is precisely what
+#: made the encode side cheaper.
+DECODE_BUDGET_OUTCOMES = 29_869
+DECODE_BUDGET_NODES = 444_271
 
 def test_the_decode_budget_scale_is_what_it_says():
     """Control for the two constants above.
@@ -889,7 +1009,10 @@ def test_the_shared_redis_client_hands_back_bytes_not_str():
 def _envelope(payload: dict) -> dict:
     """The envelope `_publish_cross_worker` builds, built the same way."""
     return {
-        "v": 1,
+        # Not a literal: the version is part of what the publisher writes, and a
+        # sizing helper that drifts off the real envelope is measuring a shape
+        # production does not have.
+        "v": pic.WIRE_ENVELOPE_VERSION,
         "ns": "market_load",
         "k": "('market_load', 2, 'digest')",
         "stored_wall": 1_788_000_000.0,
