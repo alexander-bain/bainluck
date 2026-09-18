@@ -203,6 +203,86 @@ def _google_email_verified(userinfo: dict) -> bool:
     return False
 
 
+# --- Provider profile fields are fitted to their own columns (#7047) ------
+#
+# A provider's profile strings are unbounded; ours are ``VARCHAR(n)``. On
+# 2026-09-18 a real Google sign-in handed Postgres a 1,343-character
+# googleusercontent avatar URL for a ``VARCHAR(512)`` column, the INSERT raised
+# ``StringDataRightTruncation``, and the phone showed "Server error (500).
+# Please try again." twice. An avatar is cosmetic; it must never be able to
+# fail authentication.
+#
+# So every provider-controlled string is fitted to its column BEFORE it reaches
+# the session, and the two kinds of field are fitted differently because the
+# right answer differs:
+#
+# * A URL has no valid prefix. Truncating a signed googleusercontent URL
+#   produces a broken image, so an oversize URL is DROPPED and the client falls
+#   back to initials — a missing avatar, not a failed sign-in.
+# * A display name does have a valid prefix, so an oversize one is truncated:
+#   the reader keeps (most of) their own name on screen.
+# * Identity is never shortened. A truncated email or uid is a DIFFERENT
+#   account, so an oversize one is refused at the door instead of stored.
+#
+# The limits are read off the model, not typed here, so widening a column (the
+# durable follow-up for the avatar, which needs a migration) relaxes these
+# automatically and can never leave the two numbers disagreeing.
+_DISPLAY_NAME_MAX = User.__table__.c.display_name.type.length
+_PHOTO_URL_MAX = User.__table__.c.photo_url.type.length
+_EMAIL_MAX = User.__table__.c.email.type.length
+_FIREBASE_UID_MAX = User.__table__.c.firebase_uid.type.length
+
+
+def _fit_display_name(name: Optional[str]) -> Optional[str]:
+    """Truncate a provider display name to the column width."""
+    if not name or _DISPLAY_NAME_MAX is None:
+        return name
+    return name[:_DISPLAY_NAME_MAX]
+
+
+def _fit_photo_url(url: Optional[str]) -> Optional[str]:
+    """Drop a provider photo URL that does not fit the column.
+
+    A prefix of a URL is not a URL, so the only honest options are the whole
+    thing or nothing.
+    """
+    if not url or _PHOTO_URL_MAX is None:
+        return url
+    if len(url) > _PHOTO_URL_MAX:
+        logger.warning(
+            "Profile photo URL dropped: %d chars exceeds the %d-char column",
+            len(url),
+            _PHOTO_URL_MAX,
+        )
+        return None
+    return url
+
+
+def _identity_fits(email: Optional[str], firebase_uid: Optional[str] = None) -> bool:
+    """Whether the identity strings fit their columns without being shortened."""
+    if email and _EMAIL_MAX is not None and len(email) > _EMAIL_MAX:
+        return False
+    if (
+        firebase_uid
+        and _FIREBASE_UID_MAX is not None
+        and len(firebase_uid) > _FIREBASE_UID_MAX
+    ):
+        return False
+    return True
+
+
+def _reject_unstorable_identity(
+    email: Optional[str], firebase_uid: Optional[str] = None
+) -> None:
+    """Refuse an identity we could only store by changing it."""
+    if not _identity_fits(email, firebase_uid):
+        logger.warning("Sign-in refused: identity does not fit the account columns")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Account identity is too long to store",
+        )
+
+
 # --- Endpoints ---
 
 @router.get("/status")
@@ -269,14 +349,18 @@ async def google_sign_in(
 
     firebase_uid = claims.get("uid")
     email = claims.get("email")
-    name = claims.get("name")
-    picture = claims.get("picture")
+    # Fitted to their columns before any write — an oversize avatar URL or name
+    # must not become a 500 on a working sign-in (#7047).
+    name = _fit_display_name(claims.get("name"))
+    picture = _fit_photo_url(claims.get("picture"))
 
     if not firebase_uid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Token missing uid claim",
         )
+
+    _reject_unstorable_identity(email, firebase_uid)
 
     # Look up or create user
     result = await db.execute(
@@ -427,8 +511,10 @@ async def google_access_token_sign_in(
         )
 
     email = userinfo.get("email")
-    name = userinfo.get("name")
-    picture = userinfo.get("picture")
+    # Fitted to their columns before Firebase, the token mint or the INSERT —
+    # this is the path that 500'd on a 1,343-char avatar URL (#7047).
+    name = _fit_display_name(userinfo.get("name"))
+    picture = _fit_photo_url(userinfo.get("picture"))
 
     if not email:
         raise HTTPException(
@@ -443,6 +529,10 @@ async def google_access_token_sign_in(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Google email not verified",
         )
+
+    # Identity is checked before Firebase so a token we could never store does
+    # not mint a Firebase user on its way to failing (#7047).
+    _reject_unstorable_identity(email)
 
     # Get or create Firebase user (uses email lookup to match existing accounts)
     firebase_uid = get_or_create_firebase_user(email, name, picture)
@@ -575,11 +665,14 @@ async def apple_sign_in(
             detail="Apple token missing email claim",
         )
 
-    # Build display name from first auth data (only available once)
+    # Build display name from first auth data (only available once), fitted to
+    # its column — the name is request-supplied here, so it is unbounded (#7047).
     display_name = None
     if body.first_name or body.last_name:
         parts = [p for p in [body.first_name, body.last_name] if p]
-        display_name = " ".join(parts) if parts else None
+        display_name = _fit_display_name(" ".join(parts)) if parts else None
+
+    _reject_unstorable_identity(email)
 
     # Get or create Firebase user (uses email lookup to match existing accounts)
     logger.info("Apple auth: getting/creating Firebase user for email=%s", email)
@@ -697,7 +790,9 @@ async def update_profile(
 ):
     """Update the current user's profile."""
     if body.display_name is not None:
-        user.display_name = body.display_name
+        # Request-supplied and therefore unbounded; same column, same rule as
+        # the sign-in paths (#7047).
+        user.display_name = _fit_display_name(body.display_name)
 
     # Re-fetch with preferences
     result = await db.execute(
