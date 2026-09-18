@@ -50,6 +50,7 @@ from sqlalchemy import text
 # raised before argparse ran, so the script could not select a row, let alone
 # write one, and the catch-up this whole ship depends on was a no-op.
 from app.services.kalshi_api import KalshiAPIService
+from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
 from app.utils.kalshi_resolution_window import (
     derive_resolution_window,
     derive_venue_settlement,
@@ -576,18 +577,90 @@ def band_rank_sql(n_tokens: int) -> str:
     return f"CASE {arms} ELSE {n_tokens} END"
 
 
+# ---------------------------------------------------------------------------
+# The fully-retracted band — #7000
+# ---------------------------------------------------------------------------
+#
+# A SECOND ORDER TERM, ranked BELOW the played-game band and above everything
+# else, for the one cohort in this population that NO grading band can ever ask
+# about. A market whose every leg carries `ungradeable_result` is invisible to
+# all three bands in `backfill_winners`: band 1 excludes retracted legs by name
+# ("it is a decision, not a gap"), band 2 requires `status = 'resolved'`, and
+# band 3 requires at least one leg carrying an AUTHORITATIVE source — which this
+# cohort, by definition, has none of. So if the venue has finalised it, nothing
+# in the product will ever find out. This sweep is the only rail that can, and
+# until now it ranked them by the inherited `updated_at ASC`, i.e. by the
+# poller's coverage.
+#
+# WHY THE RETRACTION IS EVIDENCE AND NOT NOISE. `repair_kalshi_fabricated_loss`
+# writes `ungradeable_result` over a leg that was carrying `api_settlement` and
+# nothing else ("Every target leg carries ``api_settlement`` and is a loss"), so
+# a retracted leg is a FORMER venue grade: we read a settlement for that exact
+# ticker once. The retraction says the venue's `result` was `scalar`/empty at
+# that moment, and `resolution_authority` calls it "reversible by evidence and
+# by nothing else" — but no rail ever goes back for the evidence. This order
+# term is that visit.
+#
+# MEASURED ON PRODUCTION 2026-09-18 20:45-21:05Z. The cohort is **3,464 open
+# families** (4,696 including already-resolved ones), 2,902 of them tier 1-3.
+# Probed at Kalshi itself (notice 26/27), 25 tickers drawn pseudo-randomly
+# across staleness bands: **3 finalised with a full set of per-leg results**
+# (`KXEMMYCOUNT-26WID` 19/19, `KXVOTEPRIMARY-CTPRIMARY01D26LBRO` 9/9,
+# `KXPRIMARYMOV-CTPRIMARY01D26` 9/9), the rest genuinely `active` — 2027 NFL and
+# NCAAF seeding, December hurricanes, midterms. So the cohort's yield is ~12%,
+# against **the beat's own measured base-order yield of 0.8%** (4 `newly_past`
+# from 500 reads, 2026-09-05). Fifteen times the corrections per venue read, on
+# a budget that is already being spent.
+#
+# IT RANKS SECOND, NOT FIRST, AND THAT IS THE MEASUREMENT TALKING: the
+# played-game band probed at ~67% and this one at ~12%, so promoting this above
+# it would spend the batch's head on the weaker signal. Non-cohort rows keep
+# their inherited order among themselves exactly as before.
+#
+# A STALENESS GATE WAS TRIED AND REJECTED, because the rejection is the useful
+# part. "Every leg retracted AND not price-polled for a day" looks like "it has
+# left the venue's open listing" (gotcha #33), and the split is even cleanly
+# bimodal — 1,747 rows unseen for >12h against 1,135 seen inside 6h, with
+# nothing in between. It is still wrong: the head of that stale cohort probed as
+# `KXSWEDENPARLI-26`, `KXHOUSERACE-DCAL-26` and eight 2027 `KXNFLSEED` tickers,
+# every one of them `active` at the venue. This module already says why in its
+# own words — "the poller's COVERAGE, not the venue's listing, dominates the
+# stamp" — and the measurement reproduced it. Membership is therefore the
+# retraction ALONE; no date, no stamp.
+#
+# SQLite-compatible on purpose, like the band above: the guards execute this SQL
+# against SQLite, so this is a correlated `EXISTS` pair and nothing cleverer.
+RETRACTED_COHORT_RANK_SQL = f"""CASE WHEN EXISTS (
+                     SELECT 1 FROM futures_outcomes fo
+                      WHERE fo.market_id = futures_markets.id
+                        AND COALESCE(fo.resolution_source, '') = '{RETRACTION_SOURCE}'
+                 ) AND NOT EXISTS (
+                     SELECT 1 FROM futures_outcomes fo
+                      WHERE fo.market_id = futures_markets.id
+                        AND COALESCE(fo.resolution_source, '') <> '{RETRACTION_SOURCE}'
+                 ) THEN 0 ELSE 1 END"""
+
+
 def banded_select_sql(n_tokens: int) -> str:
-    """`SELECT_SQL` with the band rank prefixed onto its ORDER BY, nothing else.
+    """`SELECT_SQL` with the two band ranks prefixed onto its ORDER BY, nothing else.
 
     Built by surgery on `SELECT_SQL` itself rather than by restating it, so the
     two cannot drift: if the predicate changes, this changes with it, and if
     this ever stops being a pure re-ordering the guard that compares the two
     heads fails.
+
+    #7000 adds the fully-retracted rank as a SECOND term, after the played-game
+    band and before the inherited ordering — see
+    :data:`RETRACTED_COHORT_RANK_SQL` for the two yields that fix that position.
     """
     head, sep, tail = SELECT_SQL.partition("ORDER BY")
     if not sep:  # pragma: no cover — a SELECT_SQL with no ORDER BY is a bug
         raise ValueError("SELECT_SQL has no ORDER BY to prefix")
-    return f"{head}ORDER BY {band_rank_sql(n_tokens)},\n             {tail.lstrip()}"
+    return (
+        f"{head}ORDER BY {band_rank_sql(n_tokens)},\n"
+        f"             {RETRACTED_COHORT_RANK_SQL},\n"
+        f"             {tail.lstrip()}"
+    )
 
 
 def row_is_in_band(external_id: Optional[str], tokens: list[str]) -> bool:
@@ -608,7 +681,7 @@ def row_is_in_band(external_id: Optional[str], tokens: list[str]) -> bool:
 #: behave differently: the never-swept tail can only shrink (the poller writes
 #: `expiration_time` on every upsert), while the provisional set refills every time
 #: a market is swept before it settles.
-COUNT_SQL = """
+COUNT_SQL = f"""
     SELECT
         count(*) AS eligible_total,
         count(*) FILTER (
@@ -618,7 +691,24 @@ COUNT_SQL = """
         count(*) FILTER (
             WHERE expiration_time IS NOT NULL
               AND (resolution_date IS NULL OR resolution_date >= expiration_time)
-        ) AS provisional_recheck
+        ) AS provisional_recheck,
+        -- #7000: how big the promoted cohort still is. APPENDED, never inserted:
+        -- `totals` is read positionally, so a new column may only go last.
+        -- Population-level rather than per-batch because the batch's rows are a
+        -- fixed 5-tuple that `handle()` unpacks by position, and widening that
+        -- to report a counter would be a row-contract change for a log line.
+        count(*) FILTER (
+            WHERE EXISTS (
+                      SELECT 1 FROM futures_outcomes fo
+                       WHERE fo.market_id = futures_markets.id
+                         AND COALESCE(fo.resolution_source, '') = '{RETRACTION_SOURCE}'
+                  )
+              AND NOT EXISTS (
+                      SELECT 1 FROM futures_outcomes fo
+                       WHERE fo.market_id = futures_markets.id
+                         AND COALESCE(fo.resolution_source, '') <> '{RETRACTION_SOURCE}'
+                  )
+        ) AS fully_retracted_total
     FROM futures_markets
     WHERE source = 'kalshi'
       AND status = 'open'
@@ -709,6 +799,7 @@ async def run_backfill(
     if supplied:
         rows = list(rows)
         eligible_total = excluded_purged = never_swept = provisional_recheck = -1
+        fully_retracted_total = -1
     else:
         async with session_maker() as session:
             rows = (
@@ -730,6 +821,7 @@ async def run_backfill(
         excluded_purged = int(totals[1]) if totals else -1
         never_swept = int(totals[2]) if totals else -1
         provisional_recheck = int(totals[3]) if totals else -1
+        fully_retracted_total = int(totals[4]) if totals else -1
 
     stats = {
         "eligible_total": eligible_total,
@@ -740,6 +832,13 @@ async def run_backfill(
         # reason this sweep is not a one-off (CAL-P992).
         "never_swept": never_swept,
         "provisional_recheck": provisional_recheck,
+        # #7000: the cohort promoted to second rank — every leg retracted, so no
+        # grading band in `backfill_winners` can ever ask about it. Unlike
+        # `candidates_in_band` this is the POPULATION, not the batch (the batch's
+        # rows are a fixed 5-tuple). It should fall as the sweep walks the cycle;
+        # a flat number across a full wrap means the promotion is not reaching
+        # them and is the thing to re-measure.
+        "fully_retracted_total": fully_retracted_total,
         "candidates": len(rows),
         # #3284: how much of this batch the played-game band actually supplied.
         # The band is an ORDER, so this is the number that says whether it is
@@ -996,7 +1095,13 @@ async def run_backfill(
 #: without deleting it (it expires on its own TTL) and starts one clean cycle at
 #: the head, which is exactly where the band is. Any future change to the ORDER
 #: BY must bump this again for the same reason.
-SWEEP_CURSOR_KEY = "bainluck:kalshi_resolution_sweep:offset:v2"
+#:
+#: 🔁 **VERSIONED at `:v3` by #7000**, under the standing instruction in the line
+#: above. The fully-retracted rank (:data:`RETRACTED_COHORT_RANK_SQL`) is a new
+#: ORDER BY term, so every offset banked under `:v2` names a different 500 rows
+#: than it would under this ordering. One clean cycle from the head is also what
+#: the change is FOR — the promoted cohort is at the head.
+SWEEP_CURSOR_KEY = "bainluck:kalshi_resolution_sweep:offset:v3"
 
 #: 30 days. Long enough that a fortnight of failed beats does not silently reset
 #: the sweep to the jammed head; short enough that a stale cursor left behind by

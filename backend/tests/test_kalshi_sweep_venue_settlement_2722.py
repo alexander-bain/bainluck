@@ -209,7 +209,9 @@ def _drive(legs, *, apply=True, rows=(EARLY_FINALIZED_ROW,)):
     venue = _Venue(legs)
 
     def maker():
-        return _FakeSession(recorder, list(rows), (len(rows), 0, 0, len(rows)))
+        return _FakeSession(
+            recorder, list(rows), (len(rows), 0, 0, len(rows), 0)
+        )  # 5 cols: #7000 appended fully_retracted_total to COUNT_SQL
 
     report = asyncio.run(
         sweep.run_backfill(
