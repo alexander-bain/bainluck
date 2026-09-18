@@ -27,9 +27,11 @@ from app.routes.events import (
     _format_team_data,
     _normalize_futures_dedup_key,
 )
+from app.routes.futures import _withheld_price_outcome_ids
 from app.services import get_db
 from app.services.anchor_channel import market_born_duplicates_on_page
 from app.utils.aggregation import compute_aggregate_probability
+from app.utils.outcome_display import normalize_display_probs
 from app.utils.event_rails import (
     commence_time_was_never_a_kickoff,
     live_first_order,
@@ -2222,7 +2224,9 @@ def _live_first(sorted_outcomes: list, market_status: str | None = None) -> list
     return live + won + lost
 
 
-def _serialize_outcomes(sorted_outcomes: list, market=None) -> list[dict]:
+def _serialize_outcomes(
+    sorted_outcomes: list, market=None, withheld_ids: set[int] | None = None
+) -> list[dict]:
     """The top ten outcomes in the shape every league/hub card renders.
 
     ``market`` is what lets a bare "Yes" name its side (#3089): the side lives
@@ -2260,7 +2264,7 @@ def _serialize_outcomes(sorted_outcomes: list, market=None) -> list[dict]:
     # prices. `_live_first` derives the same flag from the same list.
     field_has_winner = _field_has_a_winner(sorted_outcomes)
     ordered = _live_first(sorted_outcomes, market_status)
-    return [
+    rows = [
         {
             "id": o.id,
             # Renamed for READING only. The row keeps its id, so anything that
@@ -2278,8 +2282,58 @@ def _serialize_outcomes(sorted_outcomes: list, market=None) -> list[dict]:
             "settled": _outcome_is_settled(o, market_status, field_has_winner),
             "is_winner": o.is_winner,
         }
-        for o in ordered[:10]
+        for o in ordered
     ]
+
+    # #7016. WITHHELD HERE, ABOVE THE NORMALIZE, AND THAT ORDER IS LOAD-BEARING
+    # — the same sentence `routes/futures.py` writes over its own copy of these
+    # two steps. `normalize_display_probs` reads a missing value as 0 and writes
+    # back only truthy ones, so nulling FIRST takes the refused row out of the
+    # divisor without touching a row that survives; nulling second would leave
+    # every surviving price squeezed by a number we had already decided we may
+    # not print.
+    #
+    # The key stays PRESENT and null, never omitted: the clients test
+    # `!== null` and `undefined !== null` is true. Withheld, never rewritten
+    # (gotcha #21) — the row keeps its name and its rank and prints the
+    # no-price mark these cards already draw for a null.
+    for row in rows:
+        if row["id"] in (withheld_ids or ()):
+            row["probability"] = None
+            # The 24h-change twin of the same refused number. This payload's
+            # spelling of `probability_change_24h`, which is in the detail
+            # route's `WITHHELD_PRICE_FIELDS` for the reason that applies
+            # identically here: leaving the movement lets a reader reconstruct
+            # the price the line above just refused. There is no `american_odds`
+            # in this shape, so that field of the three has nothing to null.
+            row["movement_24h"] = None
+
+    # #7016 item 1. The exclusive-field squeeze the detail route applies and this
+    # one never did: `/hub/boxing` printed a Middleweight field summing to 299%
+    # against the detail's 100.3%. Asked of the function that does the scaling —
+    # it reports whether the printed column actually moved — rather than
+    # re-derived from its thresholds, which would be a second answer free to
+    # drift from the first.
+    #
+    # OVER THE WHOLE FIELD, THEN SLICED, AND THAT IS THE WHOLE TRAP. This payload
+    # serves the top ten and the detail serves all N, so normalizing the
+    # truncated list would divide by a smaller sum, inflate all ten, and
+    # manufacture a BRAND-NEW disagreement with the detail route on the exact
+    # rows this issue exists to reconcile. `field_has_winner` above is derived
+    # from the whole field for the same reason (#3617).
+    if normalize_display_probs(
+        rows, mutually_exclusive=getattr(market, "mutually_exclusive", True)
+    ):
+        # #5539, inherited with the squeeze rather than invented: once the
+        # printed column has moved, a raw opening beside it is a movement the
+        # reader can compute and we never observed. Withheld, not rescaled —
+        # rescaling would invent an opening, and `calibration_probability`
+        # coalesces to `opening_probability` (gotcha #144), so an invented one
+        # becomes a forecast we are graded on.
+        for row in rows:
+            row["opening_probability"] = None
+
+    return rows[:10]
 
 
 def _competition_echoes_name(competition: str, market_name: str | None) -> bool:
@@ -2486,7 +2540,30 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
             resolved_skipped[section] = resolved_skipped.get(section, 0) + 1
             continue
 
-        outcomes_data = _serialize_outcomes(sorted_outcomes, market)
+        # #7016. THE THIRD CALLER OF ONE HELPER, never a second spelling of it.
+        # This module served `top_outcomes` straight off the stored column, so
+        # `/api/hub/boxing` printed Tyson Fury at 0.97 while `/api/futures/2951423`
+        # served that same leg `null` with `prices_withheld: 1`, and a
+        # Featherweight ladder published nine legs at a flat 0.49 the detail route
+        # withheld in full. #6993 had just hung the four arms on this one hook for
+        # exactly that reason, so the hub asks it rather than re-deriving it —
+        # adding a fifth arm there reaches this card for free.
+        #
+        # NOT this file's own "unreported rail" below: that withholds result-less
+        # GAME ROWS and is not a price policy. Nothing here had ever asked whether
+        # a published price was supported.
+        #
+        # COST, because this runs per market on a list route where the detail
+        # route runs it once. Two of the four arms are pure passes over
+        # `market.outcomes`, already in memory from `selectinload`, and they are
+        # the two that catch both specimens above. The other two screen on those
+        # same in-memory columns first and only reach the snapshot table for a
+        # market holding a candidate leg. Placed BELOW the `_effectively_resolved`
+        # skip so a market this loop drops never pays even that. If the page ever
+        # does feel it, the answer is to batch the two queries across the page —
+        # never to drop an arm and re-open the split.
+        withheld_ids = await _withheld_price_outcome_ids(db, market)
+        outcomes_data = _serialize_outcomes(sorted_outcomes, market, withheld_ids)
 
         market_data = {
             "id": market.id,
@@ -3627,6 +3704,9 @@ async def build_linked_matches(
             if len(sorted_outcomes[:10]) <= len(prior["top_outcomes"]):
                 continue
             rows = [r for r in rows if r["id"] != prior["id"]]
+        # #7016. Below the dedup `continue`s on purpose: a card this loop is
+        # about to discard never pays for the two short-circuiting queries.
+        withheld_ids = await _withheld_price_outcome_ids(db, market)
         row = {
             "id": market.id,
             "name": market.name,
@@ -3640,7 +3720,9 @@ async def build_linked_matches(
                 else None
             ),
             "outcome_count": len(market.outcomes),
-            "top_outcomes": _serialize_outcomes(sorted_outcomes, market),
+            "top_outcomes": _serialize_outcomes(
+                sorted_outcomes, market, withheld_ids
+            ),
             "canonical_market_key": market.canonical_market_key,
             "group_id": market.group_id,
             "section": "matches",
