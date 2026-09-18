@@ -28,6 +28,7 @@ WHAT IS GRADED, AND IN WHICH DIRECTION
 """
 
 import json
+import logging
 import os
 import sys
 from dataclasses import dataclass, replace
@@ -69,6 +70,7 @@ from app.tasks.reconcile_shared_fixture_ids import (  # noqa: E402
     plan_shared_fixture_duplicates,
     reconcile_shared_fixture_ids,
 )
+import app.tasks.reconcile_shared_fixture_ids as task  # noqa: E402
 from app.tasks.stamp_v1_statpal_fixtures import is_statpal_contest_id  # noqa: E402
 from app.utils.event_twin_fold import twin_identity_rank  # noqa: E402
 from app.utils.proven_duplicates import not_a_proven_duplicate  # noqa: E402
@@ -802,3 +804,170 @@ class TestOneSportTwoKeys6333:
         # LEFT, so a row whose sport is missing still arrives and fails closed
         # rather than vanishing from the group and leaving a lone row.
         assert "LEFT JOIN sports s" in SELECT_ROWS_FOR_FIXTURES
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Part F — the deploy-order guard (#6333 follow-up)
+#
+# This module was the ONLY one of the four duplicate-tag writers without it.
+# The three siblings (`tennis_twin_sweep`, `soccer_ghost_twin_sweep`,
+# `polymarket_container_twin_sweep`) refuse to write the tag when the read side
+# is not folding. Here the reason is stronger, not weaker: in all 28 groups
+# measured on production 2026-09-18 the tagged row is the one HOLDING the
+# markets and the canonical is the one serving an empty rail, so tagging
+# without the fold hands the reader the blank page.
+# ════════════════════════════════════════════════════════════════════════════
+
+
+class TestNoFoldNoTags:
+    def test_the_fold_is_live_today(self):
+        """`_build_game_markets` calls `folded_event_ids`. If this ever fails,
+        the read side has been unwired and this writer must stop writing."""
+        assert task.fold_is_live() is True
+
+    def test_it_detects_the_fold_being_unwired(self, monkeypatch):
+        """Non-vacuous: the guard must be capable of returning False."""
+        import app.routes.events as events
+
+        def _no_fold(*a, **kw):  # pragma: no cover - never called
+            return None
+
+        monkeypatch.setattr(events, "_build_game_markets", _no_fold)
+        assert task.fold_is_live() is False
+
+    def test_an_unreadable_consumer_fails_CLOSED(self, monkeypatch):
+        """"Cannot prove it" is not "it is fine" — an import or source read that
+        blows up must read as NO FOLD, never as a licence to write."""
+        import app.routes.events as events
+
+        monkeypatch.delattr(events, "_build_game_markets")
+        assert task.fold_is_live() is False
+
+    @pytest.mark.asyncio
+    async def test_tags_are_withheld_when_the_fold_is_gone(self, monkeypatch):
+        monkeypatch.setattr(task, "fold_is_live", lambda: False)
+        session = _FakeSession(_rows(MLB_PAIRS))
+        out = await reconcile_shared_fixture_ids(
+            session, [g[0] for g in MLB_PAIRS], is_contest_id=is_statpal_contest_id
+        )
+
+        assert out["tags_planned"] == 5
+        assert out["tags_written"] == 0
+        # The write is what must not happen — asserted on the session, not on
+        # the summary, so a summary that merely lied would still fail here.
+        assert not [sql for sql, _ in session.statements if "UPDATE" in sql]
+        assert session.commits == 0
+
+    @pytest.mark.asyncio
+    async def test_the_refusal_is_LOUD_and_not_mistakable_for_the_steady_state(
+        self, monkeypatch, caplog
+    ):
+        """The trap this guard has to clear.
+
+        `planned 5 / written 0` is this function's documented HEALTHY second
+        pass (`test_a_second_pass_plans_the_same_and_writes_nothing`). So a
+        guard that only declined to write would be invisible in precisely the
+        two numbers a reader checks. The refusal must carry its own signal.
+        """
+        monkeypatch.setattr(task, "fold_is_live", lambda: False)
+        session = _FakeSession(_rows(MLB_PAIRS))
+        with caplog.at_level(logging.ERROR):
+            refused = await reconcile_shared_fixture_ids(
+                session, [g[0] for g in MLB_PAIRS], is_contest_id=is_statpal_contest_id
+            )
+
+        # Restore the REAL `fold_is_live` for the comparison arm — the healthy
+        # run has to be genuinely healthy, or the two sides are the same run.
+        monkeypatch.undo()
+        healthy_session = _FakeSession(_rows(MLB_PAIRS), rowcounts=[0, 0, 0, 0, 0])
+        healthy = await reconcile_shared_fixture_ids(
+            healthy_session,
+            [g[0] for g in MLB_PAIRS],
+            is_contest_id=is_statpal_contest_id,
+        )
+
+        # Identical on the two numbers that would normally be read...
+        assert (refused["tags_planned"], refused["tags_written"]) == (5, 0)
+        assert (healthy["tags_planned"], healthy["tags_written"]) == (5, 0)
+        # ...and unambiguously different everywhere it matters.
+        assert refused["fold_is_live"] is False
+        assert healthy["fold_is_live"] is True
+        assert refused["fold_refused"] == 5
+        assert healthy["fold_refused"] == 0
+        assert "folded_event_ids" in refused["reason"]
+        assert "reason" not in healthy
+        assert any(
+            "REFUSED" in r.message or "REFUSED" in r.getMessage()
+            for r in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_plan_is_still_returned_so_the_loss_is_countable(
+        self, monkeypatch
+    ):
+        """Withholding the write must not also withhold the evidence: the
+        receipts say exactly which rows went untagged."""
+        monkeypatch.setattr(task, "fold_is_live", lambda: False)
+        session = _FakeSession(_rows(MLB_PAIRS))
+        out = await reconcile_shared_fixture_ids(
+            session, [g[0] for g in MLB_PAIRS], is_contest_id=is_statpal_contest_id
+        )
+        assert len(out["duplicate_tag_receipts"]) == 5
+        assert out["failed_event_ids"] == []
+
+    @pytest.mark.asyncio
+    async def test_a_dry_run_still_plans_and_still_reports_the_fold(
+        self, monkeypatch
+    ):
+        """Where this DEPARTS from the three siblings, on purpose.
+
+        They refuse on the plan alone. This function documents that
+        `apply=False` returns the same list the apply path would write, and
+        callers plan with it — so refusing to plan would break a contract in
+        order to protect a write a dry run never performs. The fold state is
+        still reported, so a dry run is not blind to it.
+        """
+        monkeypatch.setattr(task, "fold_is_live", lambda: False)
+        session = _FakeSession(_rows(MLB_PAIRS))
+        out = await reconcile_shared_fixture_ids(
+            session,
+            [g[0] for g in MLB_PAIRS],
+            is_contest_id=is_statpal_contest_id,
+            apply=False,
+        )
+        assert out["tags_planned"] == 5
+        assert out["fold_is_live"] is False
+        assert out["fold_refused"] == 0
+        assert not [sql for sql, _ in session.statements if "UPDATE" in sql]
+
+    @pytest.mark.asyncio
+    async def test_nothing_to_write_is_not_a_refusal(self, monkeypatch):
+        """An empty plan must not trip the guard — no plan, no harm, and a
+        `fold_refused` of 0 keeps the metric honest."""
+        monkeypatch.setattr(task, "fold_is_live", lambda: False)
+        session = _FakeSession([])
+        out = await reconcile_shared_fixture_ids(
+            session, ["9999999"], is_contest_id=is_statpal_contest_id
+        )
+        assert out["tags_planned"] == 0
+        assert "reason" not in out
+        assert out["fold_refused"] == 0
+
+    def test_all_four_duplicate_tag_writers_now_guard_the_fold(self):
+        """The gap this closes, asserted as a class rather than as a case.
+
+        If a fifth writer is added without a guard, or one of the four loses
+        its own, this fails — which is the only way the next author finds out.
+        """
+        import app.tasks.polymarket_container_twin_sweep as polymarket_container_twin_sweep
+        import app.tasks.soccer_ghost_twin_sweep as soccer_ghost_twin_sweep
+        import app.tasks.tennis_twin_sweep as tennis_twin_sweep
+
+        for module in (
+            task,
+            tennis_twin_sweep,
+            soccer_ghost_twin_sweep,
+            polymarket_container_twin_sweep,
+        ):
+            assert hasattr(module, "fold_is_live"), module.__name__
+            assert module.fold_is_live() is True, module.__name__
