@@ -9488,6 +9488,12 @@ async def _score_events(
                 opening_home_prob=opening_home_prob,
                 home_score=event.home_score,
                 away_score=event.away_score,
+                # #6238 — a caption that names the away side quotes the board's
+                # own away price, not `1 − home`, which on a draw-priced sport
+                # is "the home team does not win" (the served duel withholds
+                # exactly this number; the sentence was still saying it).
+                sport=event.sport.key if event.sport else "",
+                opening_away_prob=opening_away_prob,
             )
 
             # #6181 — THE PRE-MATCH ROW AND THE SENTENCE UNDER IT ARE ONE ANSWER.
@@ -9528,6 +9534,10 @@ async def _score_events(
                 away_score=event.away_score,
                 event_tags=_event_tags,
                 prematch_percents=_prematch_percents,
+                # #6238 — same two arguments as the claim above; this call
+                # composes the same sentence for the `reason` field.
+                sport=event.sport.key if event.sport else "",
+                opening_away_prob=opening_away_prob,
             )
 
             # Compute event_tags on-the-fly (fresh, not stale persisted)

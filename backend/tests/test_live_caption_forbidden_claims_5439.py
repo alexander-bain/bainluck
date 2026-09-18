@@ -583,6 +583,14 @@ class TestTheCaptionSlotIsWired:
                 "opening_home_prob",
                 "home_probability",
                 "status",
+                # #6238 — both default to None, and both defaults are the
+                # pre-fix behaviour: without `sport` the composer cannot know
+                # the board prices a draw, and without the stored away opening
+                # it has nothing to quote but `1 − home`. An optional argument
+                # left off does not raise here either; it silently restores the
+                # defect on whichever call site forgot it.
+                "sport",
+                "opening_away_prob",
             } <= passed, f"compose_live_claim is under-fed at line {call.lineno}"
 
     def test_the_caption_slot_no_longer_serves_the_bare_bucket_label(self):

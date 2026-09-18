@@ -81,9 +81,12 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   // This card keeps its home number and loses only the away one. It can afford
   // to drop the slot outright rather than dash it — the strip is
   // `justify-between`, so with the away span gone the home number stays hard
-  // right, under the home crest, exactly where the pair already put it. The
-  // surfaces that had to name a survivor are the ones where position was doing
-  // the naming and collapsing moved the number.
+  // right, under the home crest, exactly where the pair already put it.
+  //
+  // CORRECTED 2026-09-18 (discover/198): that last sentence used to end "…and
+  // needs no renaming", and a LOOK at page one says otherwise — position does
+  // not survive the collapse for a reader. The number is labelled with the home
+  // team on the withheld arm; see the strip below.
   const awayWithheld = awayIsTheComplement(awayProb, homeProb, data.sport);
   // UX-P114 — the two numbers below are two sides of ONE question (the feed
   // derives away as `1 - home`), so they are decided together or they sum to 101.
@@ -323,15 +326,36 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
                 Win Probability
                 <SignalBars tier={data.confidence_tier} />
               </span>
-              <span
-                className={`font-bold ${authorityClass}`.trim()}
-                style={{ color: barPair.home }}
-                data-testid="event-card-home-probability"
-                data-probability={homeProb}
-                data-rendered-percent={homePct ?? undefined}
-                data-authority-tier={data.confidence_tier ?? undefined}
-              >
-                {formatProbability(homeProb, { rendered: homePct })}
+              <span className="flex items-center gap-1.5 min-w-0">
+                {/* #6238 follow-on — WHEN THE PAIR COLLAPSES TO ONE NUMBER, THE
+                    NUMBER HAS TO SAY WHOSE IT IS. The withhold above left the
+                    home figure hard right under the home crest and called that
+                    naming enough; on production 2026-09-18 19:37Z page one rank
+                    1 it was not. Elche CF @ Espanyol, live, 2-0 to ELCHE, drew
+                    `Win Probability 24%` — Espanyol's — directly above the
+                    card's own caption naming Elche. Two numbers about two teams
+                    in adjacent lines with neither one labelled, and the
+                    crest strip is a separate block a reader has already left.
+                    Only on the collapsed arm: a two-sided card is named by
+                    position and colour, and nothing there changes. */}
+                {awayWithheld && (
+                  <span
+                    className="text-text-muted text-[10px] truncate max-w-[10rem]"
+                    data-testid="event-card-probability-owner"
+                  >
+                    {data.home_team}
+                  </span>
+                )}
+                <span
+                  className={`font-bold ${authorityClass}`.trim()}
+                  style={{ color: barPair.home }}
+                  data-testid="event-card-home-probability"
+                  data-probability={homeProb}
+                  data-rendered-percent={homePct ?? undefined}
+                  data-authority-tier={data.confidence_tier ?? undefined}
+                >
+                  {formatProbability(homeProb, { rendered: homePct })}
+                </span>
               </span>
             </div>
             {/* #6238 — a two-colour split is the same claim in pixels as the
