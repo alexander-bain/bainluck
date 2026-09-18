@@ -9,15 +9,32 @@ phone** — which is the failure this issue was opened for.
 
 The deletion is `routes/feed.py`'s "Nah" hard filter: it reads a REASON STRING
 off the personalization result and `continue`s, so it never sees the number the
-scorer computed. For a followed team in a Nah sport that number is:
+scorer computed. CERT-2676 named this exact shape one clause to the left — "the
+gate reads the admission score, the rank reads the penalty" — and the same
+reasoning had not been carried across to the hard filter beside it.
 
-    your_team:0.80  +  sport_nah:-0.60  ->  multiplier 1.20
+WHICH NUMBER, EXACTLY — corrected 2026-09-18 (the first version of this file got
+it wrong, and the same wrong number was written into the comment in `feed.py`).
+The relation decides the sign, and only ONE of the three is a net boost:
 
-a NET BOOST. The two signals had already been weighed against each other, the
-follow had already won, and the gate was deleting the winner. CERT-2676 named
-this exact shape one clause to the left — "the gate reads the admission score,
-the rank reads the penalty" — and the same reasoning had not been carried across
-to the hard filter beside it.
+    follow      your_team:0.80    + sport_nah:-0.60  ->  1.20   net BOOST
+    local       local_team:0.30   + sport_nah:-0.60  ->  0.70   net PENALTY
+    alma_mater  alma_mater:0.30   + sport_nah:-0.60  ->  0.70   net PENALTY
+
+Account 364 — the only account with real phone history, and so the entire
+production population of this defect — stores **`local` for all five** of its
+favourites. Not one is a `follow`. So the reading this file shipped with ("the
+follow outweighed the Nah; the gate was deleting the winner") described a case
+that does not occur on production, and the case that DOES occur arrives on a
+multiplier BELOW neutral.
+
+The ship is still right, on the narrower ground that a 0.70 card is a downrank
+and `#1091`'s rule is that game events are never capped into an empty tab —
+keep-and-downrank beats delete. But "the follow won" is not the justification,
+and `test_the_relation_decides_the_sign` below now pins all three signs so the
+claim cannot silently regrow. What makes the ship land is the ADMISSION FLOOR,
+not the sign: at 0.70 a real card still clears `min_score` 30, which is what
+`test_the_penalised_relations_still_clear_the_admission_floor` measures.
 
 The controls carry as much of this file as the arm does. A Nah still deletes
 (this is not a quiet repeal of the preference); a `rival` relation still deletes,
@@ -102,16 +119,77 @@ def test_the_futures_path_never_sets_it():
     assert r.has_standing_team_relationship is False
 
 
-def test_the_followed_game_in_a_nah_sport_is_a_net_boost():
-    """The defect in one number: the gate was deleting a card the scorer rated
-    ABOVE neutral for this reader. If this ever drops to <= 1.0 the rescue below
-    stops being "read the score you already computed" and becomes a policy
-    change, which is a different ship and a different ruling."""
-    r = _score({"follow"})
+#: The sign of `relation + Nah`, per relation. `follow` is the only net boost;
+#: production's account has none of them. See the module docstring.
+_EXPECTED_SIGN = {"follow": "boost", "local": "penalty", "alma_mater": "penalty"}
+
+
+def test_every_standing_relationship_has_a_declared_sign():
+    """Keeps the table below honest when a fourth relation is added: a new member
+    of `STANDING_TEAM_RELATIONSHIPS` with no declared sign fails HERE, rather
+    than silently not being tested by the parametrize that reads this dict."""
+    assert set(_EXPECTED_SIGN) == set(STANDING_TEAM_RELATIONSHIPS)
+
+
+@pytest.mark.parametrize("relation", sorted(_EXPECTED_SIGN))
+def test_the_relation_decides_the_sign(relation):
+    """THE CORRECTION. This test used to run on `follow` alone and assert
+    `multiplier > 1.0` for it, with a docstring saying that a drop to <= 1.0
+    would make the rescue "a policy change ... a different ship". Production's
+    only affected account holds `local` on all five favourites, so it was always
+    <= 1.0 there — the guarantee was true of the one relation tested and false of
+    the one that actually occurs.
+
+    Pinning all three signs is what stops the 1.20 reading coming back."""
+    r = _score({relation})
     assert any(x.startswith("sport_nah") for x in r.reasons), r.reasons
-    assert r.multiplier > 1.0, r.multiplier
-    # and the unfollowed twin, for contrast
-    assert _score().multiplier < 1.0
+    if _EXPECTED_SIGN[relation] == "boost":
+        assert r.multiplier > 1.0, (relation, r.multiplier)
+    else:
+        assert r.multiplier < 1.0, (relation, r.multiplier)
+    # and the reader with no relationship at all, for contrast
+    assert _score().multiplier < r.multiplier
+
+
+@pytest.mark.parametrize(
+    "relation", sorted(r for r, s in _EXPECTED_SIGN.items() if s == "penalty")
+)
+def test_the_penalised_relations_still_clear_the_admission_floor(relation):
+    """WHAT MAKES THE SHIP LAND, and the thing no test measured: surviving the
+    "Nah" filter is worth nothing if the card then fails the admission gate two
+    clauses below it.
+
+    The gate is `_discover_admission_score(base_score, p_result) < min_score`
+    with `min_score` 30 on this path (not low-affinity, not my_teams_only, and
+    the multiplier is under 1.0 so the 10-floor branch is not taken either), so a
+    0.70 card needs `base_score >= 43`.
+
+    The two base scores below were REPLAYED on 2026-09-18 from production's
+    stored rows through the released scorers, and each is confirmed against the
+    score `/api/feed` served for it that minute:
+
+      * 100 — `15313872` Red Sox @ Rangers, finished, EI 0.87 (served at 80 on
+        `?sport=baseball_mlb`, 100 decayed by ~2.9h of completed-game freshness;
+        the decay runs AFTER this gate, so it moves rank and never admission)
+      * 65 — `15314172` Red Sox @ Rays, scheduled (served at 65)
+
+    The non-follower control is the half that makes this a result rather than a
+    restatement: the SAME upcoming fixture is below the floor at 0.40, so the
+    ship admits the reader's team and not the sport."""
+    from app.routes.feed import _discover_admission_score
+
+    min_score = 30
+    r = _score({relation})
+    for base_score in (100, 65):
+        assert _discover_admission_score(base_score, r) >= min_score, (
+            relation,
+            base_score,
+            r.multiplier,
+        )
+
+    # CONTROL: the same upcoming card for a reader with no relationship is NOT
+    # admitted. If this ever passes, the gate has stopped reading the relation.
+    assert _discover_admission_score(65, _score()) < min_score
 
 
 def test_the_affinity_under_test_really_is_a_nah():

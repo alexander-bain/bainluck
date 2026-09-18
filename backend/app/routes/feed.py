@@ -9173,10 +9173,23 @@ async def _score_events(
             #
             # #1927 — OR unless the reader follows one of the teams playing. That
             # is not a softening of the preference; it is the gate finally reading
-            # the number the scorer already computed. A followed team in a "Nah"
-            # sport arrives here at `your_team:0.80` + `sport_nah:-0.60` = a
-            # multiplier of **1.20** — the two signals were weighed, the follow
-            # won, and this line was deleting the winner. CERT-2676 named exactly
+            # the number the scorer already computed. The two signals were weighed
+            # and the follow won — and this line was deleting the winner.
+            #
+            # The multiplier the winner arrives on is NOT always > 1.0, and the
+            # first version of this comment said it was: it quoted
+            # `your_team:0.80` + `sport_nah:-0.60` = **1.20** as though every
+            # standing relationship were a `follow`. Measured on the one account
+            # with real phone history (2026-09-18), all five of its favourites
+            # store `relation_type='local'`, so the real arithmetic is
+            # `LOCAL_BONUS 0.30` − `0.60` = **0.70** — a net PENALTY. The gate is
+            # still wrong to delete: a 0.70 card is a downrank, and #1091's rule
+            # is that game events are never capped into an empty tab. But the
+            # justification is "keep-and-downrank beats delete", never "the
+            # follow outweighs the Nah", which is only true for `follow`.
+            # `has_standing_team_relationship` reads STANDING_TEAM_RELATIONSHIPS,
+            # so `local` and `alma_mater` reach this line on penalties too.
+            # CERT-2676 named exactly
             # this shape one clause to the left ("the gate reads the admission
             # score, the rank reads the penalty"); the reason string is a display
             # vocabulary and was never fit to decide eligibility.
