@@ -124,31 +124,61 @@ def _asyncpg_url(url: str) -> str:
     )
 
 
+async def _drop_runtime_tables(engine) -> None:
+    """Remove the repair's runtime DDL. Setup AND teardown, and teardown is the
+    one that is load-bearing for the rest of the job.
+
+    `bak_create` is `CREATE TABLE ... (LIKE futures_markets INCLUDING DEFAULTS)`,
+    and `INCLUDING DEFAULTS` copies `id`'s default EXPRESSION — which is
+    `nextval('futures_markets_id_seq')`. The backup table therefore holds a
+    dependency on the SOURCE table's sequence, so while it exists
+
+        DROP TABLE futures_markets
+
+    fails with `DependentObjectsStillExistError`. Neither table is on
+    `Base.metadata`, so `drop_all` cannot see either one.
+
+    The `search-recall` job runs its real-Postgres gates in sequence against ONE
+    database, and the next gate's fixture begins by dropping the schema. Leaving
+    these two tables behind therefore does not fail THIS file — it fails the
+    gate that runs after it, several hundred lines away, with an error naming
+    neither #6919 nor this test. Measured: with setup-only cleanup, this file
+    passed 10/10 and `test_search_diacritic_fold_pg_6977.py` then raised 5
+    errors, locally and in CI alike.
+    """
+    from sqlalchemy import text
+
+    async with engine.begin() as conn:
+        await conn.execute(text(f"DROP TABLE IF EXISTS {MANIFEST_TABLE}"))
+        await conn.execute(text(f"DROP TABLE IF EXISTS {BAK_TABLE}"))
+
+
 @pytest.fixture
 async def session():
     """Real Postgres with the real schema, dropped and rebuilt.
 
-    The two `bak_6919_*` tables are runtime DDL the repair creates on first
-    `--backup`; they are not on `Base.metadata`, so `drop_all` cannot see them
-    and they would survive between tests carrying another arm's manifest. Dropped
-    by name for the same reason the repair creates them by name.
+    Cleans the repair's runtime tables on the way IN so no arm inherits another
+    arm's manifest, and on the way OUT so the database is left exactly as it was
+    found — see :func:`_drop_runtime_tables` for why the second one matters to a
+    gate this file never mentions.
     """
-    from sqlalchemy import text
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     import app.models.models  # noqa: F401 — registers every table on Base
     from app.services.database import Base
 
     engine = create_async_engine(_asyncpg_url(DB_URL))
+    await _drop_runtime_tables(engine)
     async with engine.begin() as conn:
-        await conn.execute(text(f"DROP TABLE IF EXISTS {MANIFEST_TABLE}"))
-        await conn.execute(text(f"DROP TABLE IF EXISTS {BAK_TABLE}"))
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     maker = async_sessionmaker(engine, expire_on_commit=False)
-    async with maker() as s:
-        yield s
-    await engine.dispose()
+    try:
+        async with maker() as s:
+            yield s
+    finally:
+        await _drop_runtime_tables(engine)
+        await engine.dispose()
 
 
 async def _seed(session):
@@ -303,6 +333,33 @@ class TestTheWriteLands:
             assert after[mid] == before[mid], (
                 f"{mid} is open at the venue and must not have been touched"
             )
+
+    async def test_the_backup_table_inherits_the_sources_sequence_so_teardown_is_required(
+        self, session, monkeypatch
+    ):
+        """Pin the reason `_drop_runtime_tables` runs on the way out.
+
+        `INCLUDING DEFAULTS` copies `id`'s default EXPRESSION, so the backup
+        table depends on `futures_markets_id_seq` and blocks
+        `DROP TABLE futures_markets` for as long as it exists. That is a fact
+        about the SHIPPED `bak_create`, not about this file, and it is asserted
+        here so that deleting the teardown reds an arm whose name says why —
+        rather than reddening the next gate in the job with an error naming
+        neither #6919 nor this test.
+        """
+        from sqlalchemy import text
+
+        await _seed(session)
+        assert await _repair(session, monkeypatch, backup=True) == 0
+
+        default = (await session.execute(text(
+            "SELECT column_default FROM information_schema.columns "
+            f"WHERE table_name = '{BAK_TABLE}' AND column_name = 'id'"
+        ))).scalar_one()
+        assert default and "futures_markets_id_seq" in default, (
+            "if the backup stops inheriting the source's sequence this arm may "
+            "be retired — but check the teardown before retiring it"
+        )
 
     async def test_the_backup_and_manifest_hold_the_drained_rows_and_only_those(
         self, session, monkeypatch
