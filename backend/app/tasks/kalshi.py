@@ -6467,8 +6467,23 @@ async def _create_settled_market(
         return "pre_gap"
 
     category = _kalshi_category_to_internal(event.category)
+    # #7012, CERT-3087. THE SECOND WRITER, and the reason this line is not just
+    # the poller's line copied. `backfill_settled_gap_creation` is beat-scheduled
+    # and active, and it INSERTS `llm_sport_category` — so a classifier repaired
+    # only at the poll site leaves a live path minting exactly the rows the ship
+    # claims to have stopped. Measured on the headline specimen at the writer
+    # level: without this, `KXKRAKENBANKPUBLIC-27JAN01` is created `hockey`.
+    #
+    # The evidence is free here for the same reason it is free there — the tag
+    # lookup is cached per series and short-circuits without a call for a mapped
+    # ticker, which is most of this backfill's population.
+    series_meta = await _resolve_series_tag_result(service, event.event_ticker)
     sport_category = _categorize_kalshi_market(
-        event.title, event.category, event.event_ticker
+        event.title,
+        event.category,
+        event.event_ticker,
+        series_tag=series_meta.tag,
+        series_category=series_meta.category,
     )
     if sport_category == "crypto" or category == "crypto":
         return "skip"

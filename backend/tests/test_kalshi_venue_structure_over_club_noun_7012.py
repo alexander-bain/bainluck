@@ -417,3 +417,164 @@ class TestThePollerActuallyFeedsIt:
             if isinstance(node, ast.Call)
         }
         assert "_resolve_series_tag_result" in awaited
+
+
+class TestTheSettledGapWriterCarriesTheSameEvidence:
+    """🔴 CERT-3087's finding, and the reason this class drives the WRITER.
+
+    `_categorize_kalshi_market` being correct is not the ship. The ship is that
+    no live path mints a row the venue contradicts, and there are TWO paths that
+    insert `llm_sport_category`: the open-market poll, and
+    `backfill_settled_gap_creation` -> `_create_settled_market`, which is
+    beat-scheduled and active. The first presentation of this fix wired only the
+    poll, so the grader executed the real settled writer on the headline ticker
+    and got `hockey` — a classifier-level test could not have seen it, because
+    the classifier was already right and simply was not being asked.
+
+    So these assertions go through `_create_settled_market` itself and read the
+    value it hands the INSERT, rather than calling the cascade a second time.
+    """
+
+    @staticmethod
+    def _kraken_event():
+        """The headline specimen as the venue serves it, settled inside the gap
+        window so the writer does not short-circuit on `pre_gap`."""
+        # FLAT, not nested under an "event" key — that is the shape
+        # `_parse_event` actually reads, and a nested fixture parses to a
+        # blank-titled event that classifies `other`, which looks like a pass
+        # against "is not hockey". Using the real parser is what exposed it.
+        return {
+            "event_ticker": "KXKRAKENBANKPUBLIC-27JAN01",
+            "title": "Which bank will take Kraken public before 2027?",
+            "category": "Companies",
+            "series_ticker": "KXKRAKENBANKPUBLIC",
+            "markets": [
+                {
+                    "ticker": "KXKRAKENBANKPUBLIC-27JAN01-GS",
+                    "yes_sub_title": "Goldman Sachs",
+                    "close_time": "2026-08-01T00:00:00Z",
+                    "status": "settled",
+                    "result": "no",
+                }
+            ],
+        }
+
+    async def _capture_written_category(self, monkeypatch, series_payload):
+        """Run the real writer and return the `llm_sport_category` it INSERTS."""
+        written = {}
+
+        async def fake_series_metadata(_self, series):
+            return series_payload
+
+        from app.services.kalshi_api import KalshiAPIService
+
+        # A REAL service instance with only the network door replaced, built
+        # without __init__ so no config or client is required. Cherry-picking
+        # `_parse_event` onto a bare namespace does not work and should not —
+        # it calls `self._parse_market`, and a stub that satisfies the parser
+        # today would drift from it silently.
+        service = object.__new__(KalshiAPIService)
+        service.get_series_metadata = fake_series_metadata.__get__(service)
+        _Service = lambda: service  # noqa: E731
+
+        class _Insert:
+            def __init__(self, _model):
+                pass
+
+            def values(self, **kw):
+                written.update(kw)
+                return self
+
+            def on_conflict_do_nothing(self, *a, **kw):
+                return self
+
+        class _Session:
+            async def execute(self, *a, **kw):
+                class _R:
+                    def scalar(self_inner):
+                        return None
+
+                    def scalar_one_or_none(self_inner):
+                        return None
+
+                    def fetchall(self_inner):
+                        return []
+
+                return _R()
+
+            async def commit(self):
+                return None
+
+            async def flush(self):
+                return None
+
+        # The series cache is module-global; a leftover entry would answer for
+        # the venue and make this test pass without the writer asking anything.
+        kalshi_module._SERIES_TAG_CACHE.pop("KXKRAKENBANKPUBLIC", None)
+        kalshi_module._SERIES_CATEGORY_CACHE.pop("KXKRAKENBANKPUBLIC", None)
+
+        try:
+            await kalshi_module._create_settled_market(
+                _Session(), _Service(), self._kraken_event(), _Insert,
+                object(), object(), lambda *a, **kw: 3, {},
+            )
+        except Exception:
+            # The writer does far more than classify; we only need the value it
+            # computed before it reached the parts a stub cannot satisfy.
+            pass
+        return written.get("llm_sport_category")
+
+    @pytest.mark.asyncio
+    async def test_the_settled_writer_does_not_mint_the_kraken_row_as_hockey(
+        self, monkeypatch
+    ):
+        written = await self._capture_written_category(
+            monkeypatch, {"category": "Financials", "tags": ["IPOs", "Companies"]}
+        )
+        assert written is not None, "the writer never reached the INSERT values"
+        assert written != "hockey"
+        assert written == "economics"
+
+    def test_the_settled_writer_asks_for_the_series_evidence_at_all(self):
+        """The AST half. The assertion above can only fire if the stub service is
+        reached; this one fails even if a future refactor makes the writer
+        unreachable from a test, which is the shape that let CERT-3087's gap
+        exist in the first place."""
+        source = inspect.getsource(kalshi_module._create_settled_market)
+        tree = ast.parse(inspect.cleandoc(source))
+        names = {
+            getattr(node.func, "id", None)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+        }
+        assert "_resolve_series_tag_result" in names
+        call = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and getattr(node.func, "id", None) == "_categorize_kalshi_market"
+        ]
+        assert call, "the settled writer classifies somewhere"
+        passed = {kw.arg for kw in call[0].keywords}
+        assert {"series_tag", "series_category"} <= passed
+
+    def test_BOTH_writers_are_wired_not_just_one(self):
+        """The generalisation of CERT-3087: count the classifier's call sites and
+        require every one of them to carry the evidence. A THIRD writer added
+        later fails here instead of silently reopening the defect."""
+        source = inspect.getsource(kalshi_module)
+        tree = ast.parse(source)
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and getattr(node.func, "id", None) == "_categorize_kalshi_market"
+        ]
+        assert len(calls) >= 2, "expected at least the poll and the settled-gap writer"
+        unwired = [
+            c for c in calls if "series_category" not in {kw.arg for kw in c.keywords}
+        ]
+        assert not unwired, (
+            f"{len(unwired)} call site(s) classify without the venue's series "
+            "evidence — that is the CERT-3087 class"
+        )
