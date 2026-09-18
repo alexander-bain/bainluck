@@ -392,7 +392,17 @@ struct PlayerPropsCardView: View {
     }
 
     private func statGroupView(_ group: StatGroup, card: PlayerCard) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        // #6826 — DOES ANY RUNG UNDER THIS CAPTION CARRY A VERDICT? The caption
+        // labels the rungs directly beneath it, so it is answered on the group,
+        // by the same `verdict(for:)` that draws the ✓/– — never by the status
+        // alone and never by a second grading rule. On a live or scheduled game
+        // the caption ignores this value; it is computed honestly rather than
+        // stubbed so the argument never carries a claim the rungs do not.
+        let hasGradedRung = group.rungs.contains {
+            verdict(for: $0, card: card, statType: group.type).hit != nil
+        }
+
+        return VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 4) {
                 Text(cleanStatLabel(group.type, player: card.name).uppercased())
                     .font(.system(size: 8, weight: .bold))
@@ -400,7 +410,7 @@ struct PlayerPropsCardView: View {
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
                 Text(EventState.propsChanceCaption(
-                    eventStatus, commenceTime: commenceTime
+                    eventStatus, commenceTime: commenceTime, hasGradedRung: hasGradedRung
                 ))
                     .font(.system(size: 8))
                     .foregroundStyle(.quaternary)

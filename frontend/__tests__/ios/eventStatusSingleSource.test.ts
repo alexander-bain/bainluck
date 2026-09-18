@@ -680,11 +680,26 @@ describe("#4018 — a card stops forecasting a game that can never be graded", (
     // exactly the #4002 mutant this file exists to kill — and CI compiles no
     // Swift. Re-inlining `Text("chance of hitting")` leaves every Swift test
     // green and is caught only here.
+    //
+    // #6826 ADDED THE THIRD ARGUMENT, and this assertion moved with it rather
+    // than being loosened to ignore the argument list. On a FINAL game whose
+    // rungs carry no verdict the card drew no value and no ✓/–, so the old
+    // status-only predicate captioned a frozen 99% "chance of hitting" four
+    // days after the whistle (event 15297724). `hasGradedRung` is the group's
+    // own answer, and the two `not.toMatch`es below are the point: a literal
+    // `true` would restore the defect while leaving every other assertion —
+    // here and in Swift — green.
     const props = read("Components/PlayerPropsCardView.swift");
     expect(props).toMatch(
-      /Text\(EventState\.propsChanceCaption\(\s*eventStatus, commenceTime: commenceTime\s*\)\)/,
+      /Text\(EventState\.propsChanceCaption\(\s*eventStatus, commenceTime: commenceTime, hasGradedRung: hasGradedRung\s*\)\)/,
     );
     expect(props).not.toMatch(/Text\("chance of hitting"\)/);
+    expect(props).not.toMatch(/hasGradedRung: (?:true|false)\b/);
+    // ...and the flag is the group's, answered by the same `verdict(for:)` that
+    // draws the mark, so the caption can never claim a grade the row withholds.
+    expect(props).toMatch(
+      /let hasGradedRung = group\.rungs\.contains \{\s*verdict\(for: \$0, card: card, statType: group\.type\)\.hit != nil\s*\}/,
+    );
   });
 
   it("the props card is handed the clock, not just the status", () => {

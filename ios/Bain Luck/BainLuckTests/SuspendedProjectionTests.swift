@@ -171,8 +171,17 @@ final class SuspendedProjectionTests: XCTestCase {
     /// that stopped. The 62% is a real quote and stays; three words change.
     func testAnAbandonedGamesPropsCaptionIsPastTense() {
         XCTAssertEqual(
-            EventState.propsChanceCaption("suspended", commenceTime: started, now: afterStart),
+            EventState.propsChanceCaption("suspended", commenceTime: started, now: afterStart,
+                                          hasGradedRung: false),
             "last quoted chance"
+        )
+        // #6826 — the abandoned arm answers before the graded arm is consulted.
+        // An abandoned game that somehow carried a verdict is still abandoned.
+        XCTAssertEqual(
+            EventState.propsChanceCaption("suspended", commenceTime: started, now: afterStart,
+                                          hasGradedRung: true),
+            "last quoted chance",
+            "D120's ruling is about the game stopping, not about the grade"
         )
     }
 
@@ -183,30 +192,119 @@ final class SuspendedProjectionTests: XCTestCase {
     /// `isSuspended(status)`.
     func testAFixtureSuspendedBeforeItIsPlayedKeepsThePresentTenseCaption() {
         XCTAssertEqual(
-            EventState.propsChanceCaption("suspended", commenceTime: started, now: beforeStart),
+            EventState.propsChanceCaption("suspended", commenceTime: started, now: beforeStart,
+                                          hasGradedRung: false),
             "chance of hitting",
             "a fixture still to be played is still a chance of hitting"
         )
     }
 
-    /// THE CONTROL. D120 ruled on ABANDONED games. A finished game's props card
-    /// draws the actual value and a ✓/– beside every rung, so its caption reads as
-    /// the historical quote it is — and Alex has not been asked about it. This
-    /// fails if the predicate is widened to `!canStillBeGraded`, which is the
-    /// tempting one-line generalisation.
+    /// THE CONTROL. D120 ruled on ABANDONED games, and #6826 narrowed the
+    /// finished arm to a group with NO verdict under it. A finished group that
+    /// draws the actual value and a ✓/– beside its rungs still captions itself
+    /// the way it always did — that is the arm the original note protects, and
+    /// it is 259 of the 297 priced groups measured. This still fails if the
+    /// predicate is widened to `!canStillBeGraded`, which is the tempting
+    /// one-line generalisation and would move every settled props card.
     func testEveryOtherStateKeepsTheCaptionItHadBeforeD120() {
         for (status, now) in [("completed", afterStart), ("closed", afterStart),
                               ("live", afterStart), ("scheduled", beforeStart)] {
             XCTAssertEqual(
-                EventState.propsChanceCaption(status, commenceTime: started, now: now),
+                EventState.propsChanceCaption(status, commenceTime: started, now: now,
+                                              hasGradedRung: true),
                 "chance of hitting",
                 "D120 did not rule on \(status)"
             )
         }
         XCTAssertEqual(
-            EventState.propsChanceCaption(nil, commenceTime: nil, now: afterStart),
+            EventState.propsChanceCaption(nil, commenceTime: nil, now: afterStart,
+                                          hasGradedRung: true),
             "chance of hitting",
             "a status-less row is not an abandoned one"
+        )
+    }
+
+    // MARK: - #6826: a finished group with nothing graded under the caption
+
+    /// THE SHIP. `bainluck://events/15297724` — Manchester United 0–1 Manchester
+    /// City, FINAL, played Sep 13. Served rungs (both of them):
+    ///
+    ///     {"outcome_name": "Manchester City: 6+", "over_probability": 0.99,
+    ///      "actual": null, "hit": null,
+    ///      "is_winner": true, "resolution_source": "clean_resolution"}
+    ///
+    /// The card drew no value and no mark, and captioned a frozen 99% "chance of
+    /// hitting" four days after the whistle — while the Additional Markets card
+    /// two rows down on the same screen already said "settled".
+    func testAFinishedGroupWithNoVerdictUnderItIsPastTense() {
+        for status in ["completed", "closed"] {
+            XCTAssertEqual(
+                EventState.propsChanceCaption(status, commenceTime: started, now: afterStart,
+                                              hasGradedRung: false),
+                "last quoted chance",
+                "\(status) with nothing graded beneath the caption is a frozen quote"
+            )
+        }
+    }
+
+    /// 🔴 THE SCOPE ASSERTION, AND THE ONE THE ISSUE'S OWN WORDING WOULD HAVE
+    /// FAILED. #6826 asked for "a finished EVENT with zero gradeable rungs".
+    /// Measured on production 2026-09-17 across 6 finished events carrying
+    /// priced prop groups: 297 groups, 38 ungraded, and **36 of those 38 sit on
+    /// events that also carry graded groups** (5 of the 6 events are mixed).
+    /// An event-scoped predicate repairs the filed specimen's 2 rungs and leaves
+    /// 95% of the class on the screen. So the flag is per-GROUP: two groups on
+    /// ONE event, same status, same instant, must be able to disagree.
+    func testTwoGroupsOnOneFinishedEventCanDisagree() {
+        let graded = EventState.propsChanceCaption(
+            "completed", commenceTime: started, now: afterStart, hasGradedRung: true)
+        let ungraded = EventState.propsChanceCaption(
+            "completed", commenceTime: started, now: afterStart, hasGradedRung: false)
+        XCTAssertEqual(graded, "chance of hitting")
+        XCTAssertEqual(ungraded, "last quoted chance")
+        XCTAssertNotEqual(graded, ungraded, "the flag, not the status, decides")
+    }
+
+    /// A live or scheduled game is untouched however the flag reads: an ungraded
+    /// rung there is simply one that has not happened yet, and "last quoted
+    /// chance" over a game in progress would be the #4021 defect inverted.
+    func testAnUnfinishedGameIgnoresTheGradedFlag() {
+        for status in ["live", "scheduled", "in_progress"] {
+            XCTAssertEqual(
+                EventState.propsChanceCaption(status, commenceTime: started, now: afterStart,
+                                              hasGradedRung: false),
+                "chance of hitting",
+                "\(status) has not stopped, so nothing about it is 'last quoted'"
+            )
+        }
+        XCTAssertEqual(
+            EventState.propsChanceCaption(nil, commenceTime: nil, now: afterStart,
+                                          hasGradedRung: false),
+            "chance of hitting",
+            "an unknown status is not a finished one"
+        )
+    }
+
+    /// 🔴 NO VERDICT IS TYPED FROM `is_winner` / `resolution_source`, AND THIS
+    /// CAPTION MUST NOT BECOME THE BACK DOOR. The filed rows carry
+    /// `is_winner: true, resolution_source: "clean_resolution"` — tier 1 on
+    /// `resolution_authority.py`, whose writer is literally
+    /// `SET is_winner = (fo.current_probability >= 0.95)`, so the "venue's word"
+    /// and the corroborating price are one signal. CERT-3024 BLOCKed decoding it
+    /// and CERT-3025 refined why. The rung therefore still draws NO mark, and
+    /// the caption change is the only thing #6826 buys.
+    func testTheCleanResolutionRowStillDrawsNoMark() {
+        let verdict = PlayerPropsCardView.rungVerdict(
+            servedActual: nil, servedHit: nil, threshold: 6, boxActual: nil
+        )
+        XCTAssertNil(verdict.hit, "hit: null is withheld, whatever is_winner says")
+        XCTAssertNil(verdict.actual, "actual: null manufactures no final value")
+        // ...and that withholding is exactly what makes the caption past-tense,
+        // so the two rules agree on this row instead of contradicting.
+        XCTAssertEqual(
+            EventState.propsChanceCaption("completed", commenceTime: started, now: afterStart,
+                                          hasGradedRung: verdict.hit != nil),
+            "last quoted chance"
         )
     }
 
@@ -214,7 +312,8 @@ final class SuspendedProjectionTests: XCTestCase {
     /// projection gate above. Pinned so the two cards cannot drift apart on it.
     func testADatelessSuspendedRowGetsThePastTenseCaptionToo() {
         XCTAssertEqual(
-            EventState.propsChanceCaption("suspended", commenceTime: nil, now: afterStart),
+            EventState.propsChanceCaption("suspended", commenceTime: nil, now: afterStart,
+                                          hasGradedRung: false),
             "last quoted chance"
         )
     }

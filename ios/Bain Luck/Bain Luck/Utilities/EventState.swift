@@ -287,18 +287,43 @@ enum EventState {
     /// and captioning a fixture nobody has played "last quoted chance" is the same
     /// false settled claim one size smaller.
     ///
-    /// 🔴 DELIBERATELY NOT TENSED FOR A FINISHED GAME. "chance of hitting" is
-    /// present tense over a completed game too, but that is a different wording
-    /// call and Alex has not made it: on a final this card draws the actual value
-    /// and a ✓/– beside every rung, so the caption reads as the historical quote
-    /// it is. Widening the predicate to `!canStillBeGraded` would change every
-    /// settled props card in the app on a ruling that covered abandoned ones.
+    /// 🔴 NOT TENSED BY THE FINISHED STATUS ALONE, and #6826 is the reason the
+    /// third argument exists rather than a `!canStillBeGraded` widening. The
+    /// original rule left a finished game on "chance of hitting" because on a
+    /// final this card draws the actual value and a ✓/– beside every rung, so
+    /// the caption reads as the historical quote it is. That premise is a claim
+    /// about the RUNGS, not about the status — and on Manchester United 0–1
+    /// Manchester City (15297724, FINAL, Sep 13) it is false: the served rungs
+    /// carry `actual: null, hit: null`, so the card drew no value and no mark
+    /// and captioned a frozen 99% "chance of hitting" four days after the
+    /// whistle. So the predicate reads the premise directly — is there a
+    /// verdict under this caption — instead of trusting the status to imply it.
+    ///
+    /// ``hasGradedRung`` IS SCOPED TO THE GROUP THE CAPTION SITS ON, not to the
+    /// event, and that is measured rather than assumed. Across 6 finished
+    /// events carrying priced prop groups (2026-09-17, `/api/events/{id}/
+    /// game-markets`): 297 priced groups, 38 of them with no verdict on any
+    /// rung — and 36 of those 38 sit on events that ALSO carry graded groups.
+    /// An event-scoped predicate would therefore have repaired the 2 rungs of
+    /// the filed specimen and left 95% of the class saying "chance of hitting"
+    /// over a finished game with nothing beneath it. Five of the six events
+    /// were mixed; only the filed soccer one was uniformly ungraded.
+    ///
+    /// A graded group is unchanged in every case: there the ✓/– marks carry the
+    /// settled meaning exactly as the original note describes.
     static func propsChanceCaption(
-        _ status: String?, commenceTime: Date?, now: Date = Date()
+        _ status: String?,
+        commenceTime: Date?,
+        now: Date = Date(),
+        hasGradedRung: Bool
     ) -> String {
-        isSuspendedAndStarted(status, commenceTime: commenceTime, now: now)
-            ? "last quoted chance"
-            : "chance of hitting"
+        if isSuspendedAndStarted(status, commenceTime: commenceTime, now: now) {
+            return "last quoted chance"
+        }
+        if isFinished(status) && !hasGradedRung {
+            return "last quoted chance"
+        }
+        return "chance of hitting"
     }
 
     /// Which grid section a status belongs to.
