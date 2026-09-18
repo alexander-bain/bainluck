@@ -165,6 +165,16 @@ MEASURED_NODES = 122_749
 #: 2.79 MB, so ~1.4x growth trips this file and ~2.1x actually breaks the share.
 HEADROOM_FACTOR = 1.5
 
+#: The NODE growth alarm (LAT-P273). Keeps the 200,000 that `pic._MAX_NODES`
+#: used to be, because 200,000 was always the defensible answer to "is this
+#: artifact getting big?" and only ever the wrong answer to "is it unsafe to
+#: walk?" — the two questions that one number was serving. Deliberately a
+#: constant and NOT `pic._MAX_NODES / HEADROOM_FACTOR`: an alarm expressed as a
+#: fraction of the cap it warns about rises with the cap, so raising the safety
+#: cap to repair the ordering defect would have relaxed this alarm in the same
+#: commit. `test_the_growth_alarm_is_not_tied_to_the_safety_cap` pins that.
+NODE_GROWTH_ALARM = 200_000
+
 #: Plausibility band for the fixture's own compression ratio. The storage
 #: assertion below runs the fixture through the REAL `wire_encode`, which makes
 #: it sensitive to how compressible this file's filler happens to be — so the
@@ -288,8 +298,15 @@ _DERIVED_OUTCOME_KINDS = {
 }
 
 
-def _production_scale_payload() -> dict:
-    """A `to_plain`-shaped artifact at the measured production shape."""
+def _production_scale_payload(n_outcomes: int | None = None) -> dict:
+    """A `to_plain`-shaped artifact at the measured production shape.
+
+    `n_outcomes` overrides the outcome population for the ONE guard that has to
+    ask about a scale the population has not reached yet
+    (`test_the_node_cap_never_refuses_what_the_decode_budget_accepts`). Every
+    other caller takes the default and is about the measured shape.
+    """
+    n_total = PROD_OUTCOMES if n_outcomes is None else n_outcomes
     rng = random.Random(20260904)
     market_kinds = _column_kinds(FuturesMarket, fs.MARKET_COLUMNS) + [
         _DERIVED_KINDS[name] for name in fs.DERIVED_MARKET_COLUMNS
@@ -306,8 +323,8 @@ def _production_scale_payload() -> dict:
     outcome_null = _nullable(FuturesOutcome, fs.OUTCOME_COLUMNS) + [True] * len(
         fs.DERIVED_OUTCOME_COLUMNS
     )
-    per_market = PROD_OUTCOMES // PROD_MARKETS
-    remainder = PROD_OUTCOMES - per_market * PROD_MARKETS
+    per_market = n_total // PROD_MARKETS
+    remainder = n_total - per_market * PROD_MARKETS
     rows = []
     for i in range(PROD_MARKETS):
         n = per_market + (1 if i < remainder else 0)
@@ -465,16 +482,23 @@ def test_the_fixture_is_the_measured_node_shape(payload):
 def test_a_production_scale_market_load_fits_the_node_budget(payload):
     """The cap that had no production-scale guard until LAT-P230.
 
-    Today: 114,421 nodes against 200,000 — 57% of the cap, 1.75x of headroom.
+    Today: 122,749 nodes against a 200,000 alarm — 61%, 1.63x of headroom.
+
+    LAT-P273 re-pointed this at `NODE_GROWTH_ALARM` instead of
+    `pic._MAX_NODES / HEADROOM_FACTOR`. The number is the same 200,000 it has
+    always been; what changed is that it no longer MOVES when the safety cap
+    does, so raising the cap to fix the ordering defect could not buy a green
+    here. See `test_the_growth_alarm_is_not_tied_to_the_safety_cap`.
     """
     nodes = _count_validator_nodes(payload)
 
-    assert nodes <= pic._MAX_NODES / HEADROOM_FACTOR, (
-        f"market_load validates to {nodes:,} nodes; the cap is "
-        f"{pic._MAX_NODES:,} and this guard wants {HEADROOM_FACTOR}x headroom. "
-        f"Breaching it does not merely stop the Redis publish — the artifact "
-        f"stops being cached AT ALL, local tier included, silently, on every "
-        f"build. Narrow the row form; do not raise the cap."
+    assert nodes <= NODE_GROWTH_ALARM, (
+        f"market_load validates to {nodes:,} nodes, past the "
+        f"{NODE_GROWTH_ALARM:,} growth alarm. The share still WORKS — the safety "
+        f"cap is {pic._MAX_NODES:,} — and that is the point: this fires while "
+        f"there is still room. Nodes are scalars, so narrowing the row form "
+        f"cannot answer it; fewer rows or fewer columns can. Do not answer it by "
+        f"moving this constant."
     )
 
 
@@ -488,6 +512,11 @@ async def test_a_node_cap_breach_defeats_even_the_local_tier(payload, monkeypatc
     """
     pic.clear_shared_builds("lat_p230_nodecap")
     monkeypatch.setenv("FEED_SHARED_BUILD_CROSS_WORKER", "0")
+
+    # Captured before the patch below: the control at the end has to restore the
+    # REAL cap, and a literal here would silently stop being the real cap the
+    # next time it moves (it moved in LAT-P273).
+    real_max_nodes = pic._MAX_NODES
 
     builds = {"n": 0}
 
@@ -509,11 +538,123 @@ async def test_a_node_cap_breach_defeats_even_the_local_tier(payload, monkeypatc
     # And the control: under the real cap the same artifact caches normally, so
     # the assertion above is about the cap and not about a broken fixture.
     pic.clear_shared_builds("lat_p230_nodecap")
-    monkeypatch.setattr(pic, "_MAX_NODES", 200_000)
+    monkeypatch.setattr(pic, "_MAX_NODES", real_max_nodes)
     builds["n"] = 0
     for _ in range(3):
         await pic.get_or_build("lat_p230_nodecap", ("k",), _build, ttl_s=600.0)
     assert builds["n"] == 1
+
+
+# --- LAT-P273 (#2143 residual): THE TWO CAPS ARE IN THE WRONG ORDER ---------
+#
+# The test directly above proves the node cap's failure mode is the bad one: a
+# byte breach degrades to "local tier only", a NODE breach degrades to no cache
+# anywhere, silently, on every build. This section proves the consequence nobody
+# had measured: *the bad failure fires first.*
+#
+# Measured 2026-09-18 with this file's own fixture, `/tmp/lat536_cross.py`:
+#
+#     outcomes    nodes     envelope B      what happens
+#      6,904    122,749      3,028,144      (the shape recorded above)
+#      9,326    156,690      3,767,604      TODAY's production population
+#     12,421    200,00x      4,702,xxx      <== NODE cap. Silent. No cache at all.
+#     17,631    272,88x      6,291,xxx      <== BYTE cap. Loud. Local tier lives.
+#
+# So the artifact loses its cache ENTIRELY 5,210 outcomes before it is even close
+# to the wire it is checked against — and the only signal is a `logger.warning`,
+# because `refused` is a namespace-less top-level counter while the byte refusal
+# is per-namespace and computed onto `/api/admin/shared-build-stats` as
+# `publish_refused_namespaces`. The failure with no instrument is the one that
+# arrives first.
+#
+# WHY "NARROW THE ROW FORM" — the remedy this file prescribes for a byte breach —
+# CANNOT BE THE REMEDY HERE. Nodes are scalars. `market_load` is a table of
+# (rows x columns) scalars, every column load-bearing with a named incident
+# behind it (`futures_market_snapshot.OUTCOME_COLUMNS`), and the walker counts
+# cells. Column-major, compaction, a tighter text form: all of them leave the
+# scalar count identical. Only fewer rows or fewer columns move a node count, and
+# neither is available. A remedy that does not exist is not a remedy.
+#
+# WHAT THE NODE CAP IS ACTUALLY BOUNDING, measured rather than assumed. It bounds
+# `assert_plain_data`'s walk, at ~0.13 us/node on this fixture:
+#
+#     nodes     walk      json.dumps of the same value
+#     122,749   15.7 ms   45.3 ms
+#     250,045   32.0 ms   59.9 ms
+#
+# The walk is 2-3x CHEAPER than the `json.dumps` that the byte budget already
+# permits on the very same value, so capping the walk tighter than the dump is
+# backwards on its own terms. And the work a breach forfeits is not speculative:
+# `futures.market_load` measured 1,037 ms unshared against 105 ms reused
+# (#2143, lat520's per-stage table, 2026-09-17).
+#
+# Hence the split, which is the LAT-P221 lesson applied to the third cap: ONE
+# NUMBER WAS SERVING TWO UNRELATED BOUNDS. `_MAX_NODES` is the SAFETY bound — how
+# big a value may be before we refuse to validate it — and it now sits above the
+# byte budget so the loud, partial, instrumented failure always fires first.
+# `NODE_GROWTH_ALARM` is the GROWTH alarm, and it keeps the old 200,000 number,
+# because 200,000 was always the defensible answer to "is this artifact getting
+# big?" and only ever the wrong answer to "is it unsafe to walk?".
+
+#: The largest `market_load` that still fits `MAX_ENVELOPE_BYTES`, and its node
+#: count. MEASURED by bisection on this file's own fixture, not extrapolated —
+#: `test_the_decode_budget_scale_is_what_it_says` is the control that keeps it
+#: honest, so a future edit cannot quietly retune it into fiction.
+DECODE_BUDGET_OUTCOMES = 17_630
+DECODE_BUDGET_NODES = 272_886
+
+def test_the_decode_budget_scale_is_what_it_says():
+    """Control for the two constants above.
+
+    Without this, `DECODE_BUDGET_NODES` is a number someone typed. With it, the
+    guard below is a statement about the real crossing point: this scale fits the
+    decode budget and one step past it does not.
+    """
+    at_budget = _production_scale_payload(DECODE_BUDGET_OUTCOMES)
+    assert _envelope_bytes(at_budget) <= pic.MAX_ENVELOPE_BYTES
+    assert _count_validator_nodes(at_budget) == DECODE_BUDGET_NODES
+
+    # One outcome per market more — the smallest step this fixture can take —
+    # and the envelope no longer fits. So `DECODE_BUDGET_OUTCOMES` really is at
+    # the edge and not merely somewhere below it.
+    past_budget = _production_scale_payload(DECODE_BUDGET_OUTCOMES + PROD_MARKETS)
+    assert _envelope_bytes(past_budget) > pic.MAX_ENVELOPE_BYTES
+
+
+def test_the_node_cap_never_refuses_what_the_decode_budget_accepts():
+    """The ordering invariant. RED at `_MAX_NODES = 200_000`, which is the point.
+
+    An artifact that the decode budget accepts must not be refused by the node
+    budget, because the node refusal is the one that defeats every tier and
+    carries no per-namespace counter.
+    """
+    assert DECODE_BUDGET_NODES <= pic._MAX_NODES, (
+        f"a market_load that FITS the decode budget ({pic.MAX_ENVELOPE_BYTES:,} B) "
+        f"validates to {DECODE_BUDGET_NODES:,} nodes against a node cap of "
+        f"{pic._MAX_NODES:,}. The node cap therefore bites FIRST — and it is the "
+        f"cap whose breach un-shares the artifact from every tier, silently, "
+        f"where a byte breach only loses the cross-worker hop and is counted "
+        f"per namespace. Raise the SAFETY cap (`_MAX_NODES`); do not lower the "
+        f"growth alarm (`NODE_GROWTH_ALARM`)."
+    )
+
+
+def test_the_growth_alarm_is_not_tied_to_the_safety_cap():
+    """The anti-ratchet. This is what stops the fix above buying a green.
+
+    An alarm written as a fraction of the cap it warns about is not an alarm:
+    raising the cap raises the alarm with it, and the growth the alarm existed to
+    report disappears in the same commit. So the two are separate numbers, and
+    the alarm must fire strictly first.
+    """
+    assert NODE_GROWTH_ALARM < pic._MAX_NODES, (
+        f"the growth alarm ({NODE_GROWTH_ALARM:,}) must fire BEFORE the safety "
+        f"cap ({pic._MAX_NODES:,}) or it is not an alarm"
+    )
+    assert DECODE_BUDGET_NODES <= pic._MAX_NODES, (
+        "the safety cap must still admit everything the decode budget does — "
+        "see the ordering invariant above"
+    )
 
 
 @pytest.mark.asyncio
