@@ -3437,6 +3437,39 @@ def _empty_book_outcome_ids(market: FuturesMarket) -> set[int]:
     }
 
 
+async def _withheld_price_outcome_ids(
+    db: AsyncSession, market: FuturesMarket
+) -> set[int]:
+    """Every outcome of this market whose served price is refused, all four arms.
+
+    #6993. THE ARMS WERE ALREADY COMPOSED — in the body of
+    :func:`get_futures_market`, where only that route could reach them. The group
+    route serves the SAME market's prices and never asked, so one page carried both
+    answers at once.
+
+    WHAT A READER SAW. ``/futures/109485`` — "How low will the Nasdaq-100 get in
+    2026?" — drew the ``# OR BELOW`` ladder rung **``≤ 24800  100%``** with a full
+    green bar, while the "All Outcomes" table BELOW IT ON THE SAME SCREEN folded
+    that identical outcome (id ``1597367``) away into "More outcomes (1)" because
+    its price is withheld. Detail served ``probability: None`` for the leg; the
+    group payload served ``1.0`` for it in the same minute. The ladder is the only
+    ladder that draws for a threshold-shaped market — ``ownLadderRungs`` returns
+    ``[]`` whenever ``thresholdEntries`` is non-empty — so on exactly this class of
+    market the withhold was not merely duplicated, it was BYPASSED.
+
+    ONE HELPER, NOT A FIFTH SPELLING. This is the #6960 lesson applied before the
+    second copy exists rather than after: the four arms hang from one hook, so a
+    route that serves a price cannot accidentally serve the refused one. Adding an
+    arm here reaches every caller, which is the property the in-line union did not
+    have.
+    """
+    ids = await _unsupported_price_outcome_ids(db, market)
+    ids |= await _refuted_midpoint_outcome_ids(db, market)
+    ids |= _book_refuted_outcome_ids(market)
+    ids |= _empty_book_outcome_ids(market)
+    return ids
+
+
 @router.get("/{market_id}")
 async def get_futures_market(
     market_id: int,
@@ -3487,10 +3520,11 @@ async def get_futures_market(
     # counts ROWS rather than reasons. What it is not is a fourth spelling of the
     # same rule — it is the single predicate three other read surfaces already
     # call, asked on this route for the first time.
-    unsupported_price_ids = await _unsupported_price_outcome_ids(db, market)
-    unsupported_price_ids |= await _refuted_midpoint_outcome_ids(db, market)
-    unsupported_price_ids |= _book_refuted_outcome_ids(market)
-    unsupported_price_ids |= _empty_book_outcome_ids(market)
+    #
+    # #6993 lifted this union into `_withheld_price_outcome_ids` so the group
+    # route serves the same refusal. The composition is unchanged; it just has a
+    # name now, and a second caller.
+    unsupported_price_ids = await _withheld_price_outcome_ids(db, market)
 
     detail = _format_market_detail(market, bookmakers, unsupported_price_ids)
     if len(bookmakers) > 1 and source_breakdown:
@@ -6110,8 +6144,29 @@ async def get_group(
     market_list = []
     all_outcomes = []
     for m in markets:
+        # #6993 — THE SAME REFUSAL THE DETAIL ROUTE SERVES FOR THIS MARKET. These
+        # outcomes feed `threshold_groups` below, and for a threshold-shaped
+        # market that ladder is the ONLY ladder the page draws (the detail
+        # payload's own ladder stands down whenever `thresholdEntries` is
+        # non-empty), so serving the raw column here did not duplicate the
+        # withhold — it bypassed it. `/futures/109485` drew `≤ 24800  100%` off
+        # this dict while the table beside it folded the same outcome away.
+        #
+        # `american_odds` is nulled with the price rather than recomputed from it
+        # for the reason `WITHHELD_PRICE_FIELDS` states: it is the refused number
+        # in another notation, and leaving it lets any consumer reconstruct
+        # exactly the price this rule just refused.
+        withheld = await _withheld_price_outcome_ids(db, m)
         outcomes = []
-        for o in sorted(m.outcomes, key=lambda x: -(x.current_probability or 0)):
+        # Sort on the SERVED value, not the stored one. Ordering by the raw column
+        # would seat a withheld leg — `1597367` is a stored 1.0 — at the top of
+        # the board with no number beside it, which is the withhold announcing
+        # itself as a leader. Withheld rows sort as unpriced and sink, matching
+        # `probability ?? 0` on the clients.
+        for o in sorted(
+            m.outcomes,
+            key=lambda x: -(0 if x.id in withheld else (x.current_probability or 0)),
+        ):
             od = {
                 "id": o.id,
                 "name": o.name,
@@ -6120,6 +6175,12 @@ async def get_group(
                 "market_id": m.id,
                 "source": m.source,
             }
+            if o.id in withheld:
+                # Keyed on presence so the refusal covers any price field this
+                # payload gains later, the way the detail arm's does.
+                for field in WITHHELD_PRICE_FIELDS:
+                    if field in od:
+                        od[field] = None
             outcomes.append(od)
             all_outcomes.append(od)
 
