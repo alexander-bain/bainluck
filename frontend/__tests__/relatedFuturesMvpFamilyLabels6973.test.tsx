@@ -1,0 +1,363 @@
+/**
+ * #6973 — A PLAYER AWARDS CHIP ANSWERS THE QUESTION ITS OWN LABEL NAMES.
+ *
+ * ═══ WHAT WAS ON PRODUCTION ═══
+ *
+ * `/events/14781131` (Saints @ Ravens) at 390px, 2026-09-18 15:47Z. Both team
+ * cards, one chip each:
+ *
+ *     LJ  Lamar Jackson    MVP 83%      <- P(MVP FINALIST). The winner market said 11%.
+ *     TS  Tyler Shough     MVP 61%      <- P(MVP FINALIST). The winner market said 1.5%.
+ *
+ * A reader was shown Tyler Shough at a 61% chance of winning MVP. The market
+ * said 1.5%. And the genuine winner row was not merely mislabelled — it was
+ * DROPPED, so the page had no second number to compare against.
+ *
+ * The served payload, verbatim, is the fixture below: the backend distinguishes
+ * these markets perfectly (`clean_label: "MVP Finalists"` vs `"MVP"`). The
+ * frontend threw the distinction away.
+ *
+ * ═══ MECHANISM: A LABEL IS A DEDUPE KEY ═══
+ *
+ * `shortAwardLabel` returned the bare string "MVP" for every market in the MVP
+ * family, because one generic `/\bmvp\b|most valuable/` arm caught them all.
+ * `deduplicateAwards` then keys on `merge_group || shortAwardLabel(...)`:
+ *
+ *     40532    "MVP Winner?"     merge_group "mvp"  -> key `lamar jackson::mvp`
+ *     59164988 "MVP Finalists"   merge_group null   -> key `lamar jackson::mvp`
+ *
+ * Same key, and the collision resolves by KEEPING THE HIGHER PROBABILITY. A
+ * finalist price is structurally higher than a winner price, so the finalist
+ * row wins this collision EVERY TIME — it was never a tie-break that happened
+ * to go the wrong way, it was systematically inverted.
+ *
+ * ═══ WHY THIS TEST RENDERS THE COMPONENT INSTEAD OF CALLING THE HELPER ═══
+ *
+ * The defect is not in `shortAwardLabel` and it is not in `deduplicateAwards`.
+ * Both were doing exactly what they said. It is in the JOIN: one function's
+ * return value is silently load-bearing as the other's identity key. A unit
+ * test of the label function would have passed against a page that still drew
+ * 83%, because "returns 'MVP' for 'MVP Finalists'" is only wrong once you know
+ * what the string is used for. So every assertion here is made against the
+ * rendered markup of the real component, driven by the real payload shape —
+ * the same reason `relatedFuturesAwardsDeadMarket3117` renders rather than
+ * unit-tests, and the harness is borrowed from it.
+ *
+ * ═══ BOTH DIRECTIONS (gotcha #43) ═══
+ *
+ * "The finalist number stops being labelled MVP" is passed perfectly by a card
+ * that draws nothing at all, and "both rows survive" by a dedupe that never
+ * merges anything. So the suppression assertions are paired with controls: the
+ * genuine winner row must be PRESENT with its own number, and two rows that
+ * really are the same question must still collapse to one.
+ *
+ * ═══ THE STAMPS ARE OFFSETS, NOT LITERAL DATES (gotcha #44) ═══
+ *
+ * `last_updated` must stay inside the 90-day `awardPriceIsStale` gate or these
+ * rows vanish for an unrelated reason and every assertion below passes
+ * vacuously. `daysAgo` offsets first and never branches on the clock. The real
+ * production stamps were 2026-09-16T14:52:34Z (59164988) and
+ * 2026-09-18T13:51:25Z (40532).
+ *
+ *   npx jest --testPathPatterns=relatedFuturesMvpFamilyLabels6973
+ */
+
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import RelatedFutures from "@/components/RelatedFutures";
+import type { RelatedFuture, RelatedFuturesResponse } from "@/lib/types";
+
+const EVENT_ID = 14781131;
+const HOME = "Baltimore Ravens";
+const AWAY = "New Orleans Saints";
+const HOME_COLOR = "#241773";
+const AWAY_COLOR = "#d3bc8d";
+
+function daysAgo(n: number): string {
+  return new Date(Date.now() - n * 86_400_000).toISOString();
+}
+
+/** Both production rows were well inside the 90-day award-price gate. */
+const FRESH = daysAgo(2);
+
+function award(over: Partial<RelatedFuture>): RelatedFuture {
+  return {
+    market_id: 40532,
+    market_name: "MVP Winner?",
+    clean_label: "MVP",
+    display_category: "award",
+    merge_group: "mvp",
+    market_tier: 3,
+    category: "championship",
+    source: "kalshi",
+    outcome_id: 1,
+    outcome_name: "Lamar Jackson",
+    probability: 0.11,
+    american_odds: 700,
+    probability_change_24h: null,
+    opening_probability: 0.11,
+    rank: 1,
+    relevance_score: 30.1,
+    relevance_reason: "award watch",
+    last_updated: FRESH,
+    next_update_expected: "",
+    resolution_date: "2027-02-10T15:00:00+00:00",
+    ...over,
+  };
+}
+
+/** The two rows production served for Lamar Jackson, verbatim but for the stamp. */
+const LAMAR_FINALIST = award({
+  market_id: 59164988,
+  market_name: "MVP Finalists",
+  clean_label: "MVP Finalists",
+  merge_group: null,
+  outcome_id: 222322891,
+  outcome_name: "Lamar Jackson",
+  probability: 0.83,
+});
+const LAMAR_WINNER = award({ outcome_id: 643797, outcome_name: "Lamar Jackson", probability: 0.11 });
+
+/** And for Tyler Shough — 61% against a served 1.5%, the sharper of the two. */
+const SHOUGH_FINALIST = award({
+  market_id: 59164988,
+  market_name: "MVP Finalists",
+  clean_label: "MVP Finalists",
+  merge_group: null,
+  outcome_id: 222322892,
+  outcome_name: "Tyler Shough",
+  probability: 0.61,
+});
+const SHOUGH_WINNER = award({ outcome_id: 643798, outcome_name: "Tyler Shough", probability: 0.015 });
+
+let swrPayload: RelatedFuturesResponse;
+
+jest.mock("swr", () => ({
+  __esModule: true,
+  default: () => ({
+    data: swrPayload,
+    error: undefined,
+    isLoading: false,
+    mutate: () => undefined,
+  }),
+}));
+
+function render(home: RelatedFuture[], away: RelatedFuture[]): string {
+  swrPayload = {
+    event_id: EVENT_ID,
+    home_team: HOME,
+    away_team: AWAY,
+    home_team_futures: home,
+    away_team_futures: away,
+    series_markets: [],
+    total_count: home.length + away.length,
+    summary: null,
+    event_status: "scheduled",
+    box_score: null,
+    league_context: null,
+  } as RelatedFuturesResponse;
+
+  return renderToStaticMarkup(
+    React.createElement(RelatedFutures, {
+      eventId: EVENT_ID,
+      homeTeam: HOME,
+      awayTeam: AWAY,
+      homeTeamColor: HOME_COLOR,
+      awayTeamColor: AWAY_COLOR,
+    }),
+  );
+}
+
+function card(html: string, side: "home" | "away"): string {
+  const h = html.indexOf('data-testid="home-team-card"');
+  const a = html.indexOf('data-testid="away-team-card"');
+  expect(h).toBeGreaterThanOrEqual(0);
+  expect(a).toBeGreaterThan(h);
+  return side === "home" ? html.slice(h, a) : html.slice(a);
+}
+
+/**
+ * The award chips a card drew, as `{label, pct}`.
+ *
+ * Read out of the markup rather than asserted as a substring, because
+ * `toContain("MVP 11%")` is satisfied by the string "MVP Finalist 11%" — the
+ * exact confusion under test would slip through the obvious assertion.
+ */
+function chips(cardHtml: string): { label: string; pct: number }[] {
+  // 🪤 DO NOT FLATTEN THE TAGS AWAY AND REGEX THE RESULT. A chip renders as
+  // `<span>MVP Finalist <span>83%</span></span>`, and the player's name is the
+  // span immediately before it. Strip the tags to spaces and any regex for
+  // "<words> <digits>%" reads `Lamar Jackson MVP` as the label, because nothing
+  // in the flattened string marks where one element ended and the next began.
+  //
+  // (An earlier draft passed by flattening tags to a NUL byte, which worked only
+  // because NUL cannot occur in the text and so acted as the boundary marker
+  // this split makes explicit. CI's `nulByteFreeSource` guard rejected the file,
+  // correctly — and the accident was doing real work, so removing the NUL broke
+  // seven tests. The boundary was the point; the sentinel was incidental.)
+  //
+  // Element boundaries ARE the structure here, so split on them and pair each
+  // percent run with the run that precedes it.
+  const runs = cardHtml
+    .split(/<[^>]+>/)
+    .map((s) => s.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+
+  const out: { label: string; pct: number }[] = [];
+  for (let i = 1; i < runs.length; i++) {
+    const pct = runs[i].match(/^(\d+)%$/);
+    if (pct) out.push({ label: runs[i - 1], pct: Number(pct[1]) });
+  }
+  return out;
+}
+
+const labelled = (cardHtml: string, label: string) =>
+  chips(cardHtml).filter((c) => c.label === label);
+
+describe("#6973 · the parser this guard reasons with", () => {
+  it("reads the chips out of a rendered card at all", () => {
+    // Asserted before anything is asserted ABOUT the chips: a selector that
+    // silently matches nothing would make every suppression test below pass on
+    // an empty set, which is exactly the failure this whole class is about.
+    const found = chips(card(render([LAMAR_FINALIST, LAMAR_WINNER], [SHOUGH_WINNER]), "home"));
+    expect(found.length).toBeGreaterThan(0);
+    expect(found.every((c) => Number.isFinite(c.pct))).toBe(true);
+  });
+});
+
+describe("#6973 · a finalist price is never drawn as the winner probability", () => {
+  it("THE REPORTED PAGE: Lamar Jackson's 83% is labelled a FINALIST, not MVP", () => {
+    const home = card(render([LAMAR_FINALIST, LAMAR_WINNER], [SHOUGH_WINNER]), "home");
+
+    // THE REGRESSION ASSERTION. Before the fix this read `MVP 83%`.
+    expect(labelled(home, "MVP")).not.toContainEqual({ label: "MVP", pct: 83 });
+    expect(labelled(home, "MVP Finalist")).toContainEqual({ label: "MVP Finalist", pct: 83 });
+  });
+
+  it("CONTROL — and the real winner row is PRESENT, not merely relabelled", () => {
+    // The defect dropped this row. A fix that renamed the finalist chip and
+    // still swallowed the 11% would pass the assertion above and leave the
+    // reader with no answer to the question they were asking.
+    const home = card(render([LAMAR_FINALIST, LAMAR_WINNER], [SHOUGH_WINNER]), "home");
+    expect(labelled(home, "MVP")).toContainEqual({ label: "MVP", pct: 11 });
+  });
+
+  it("the 40x case: Tyler Shough's 61% and 1.5% both survive, correctly labelled", () => {
+    const away = card(render([LAMAR_WINNER], [SHOUGH_FINALIST, SHOUGH_WINNER]), "away");
+    expect(labelled(away, "MVP Finalist")).toContainEqual({ label: "MVP Finalist", pct: 61 });
+    expect(labelled(away, "MVP")).toContainEqual({ label: "MVP", pct: 2 }); // 0.015 rounds to 2
+    expect(labelled(away, "MVP")).not.toContainEqual({ label: "MVP", pct: 61 });
+  });
+
+  it("ORDER IS THE ARGUMENT: the finalist row alone still does not print a bare MVP", () => {
+    // With no winner row to collide with, the old code drew `MVP 83%` just the
+    // same — the collision made the defect WORSE (it deleted the true row) but
+    // the mislabel never needed it. Pinning this keeps a future "fix" that only
+    // resolves the collision from being mistaken for a fix of the label.
+    const home = card(render([LAMAR_FINALIST], [SHOUGH_WINNER]), "home");
+    expect(labelled(home, "MVP")).toHaveLength(0);
+    expect(labelled(home, "MVP Finalist")).toContainEqual({ label: "MVP Finalist", pct: 83 });
+  });
+});
+
+describe("#6973 · the rest of the MVP family is separated too", () => {
+  // These two arms ship with the Finalists fix because they are the same defect
+  // and the same three lines. Neither has a live population today — market 479's
+  // Championship-MVP prices are ~226 days old and the 90-day award-price gate
+  // drops them, and there is no NBA finals market in season — so they are
+  // guarded HERE rather than claimed as a visible change. An unguarded arm is a
+  // liability whether or not anyone can see it yet.
+
+  it("a Championship MVP market does not collide with the season MVP", () => {
+    const championship = award({
+      market_id: 479,
+      market_name: "Pro Football Championship MVP?",
+      clean_label: "NFL Championship MVP?",
+      merge_group: null,
+      outcome_id: 6958,
+      outcome_name: "Lamar Jackson",
+      probability: 0.4,
+    });
+    const home = card(render([championship, LAMAR_WINNER], [SHOUGH_WINNER]), "home");
+    expect(labelled(home, "Championship MVP")).toContainEqual({ label: "Championship MVP", pct: 40 });
+    expect(labelled(home, "MVP")).toContainEqual({ label: "MVP", pct: 11 });
+    expect(labelled(home, "MVP")).not.toContainEqual({ label: "MVP", pct: 40 });
+  });
+
+  it("`Finals MVP` reaches its own branch — it was unreachable dead code below the generic arm", () => {
+    // This arm existed before the fix and could never fire: it sat BELOW the
+    // generic `\bmvp\b` return. Restoring reachability is part of the ship, so
+    // it is asserted rather than assumed.
+    const finals = award({
+      market_id: 90001,
+      market_name: "NBA Playoffs: Finals MVP",
+      clean_label: "Finals MVP",
+      merge_group: null,
+      outcome_id: 90002,
+      outcome_name: "Lamar Jackson",
+      probability: 0.3,
+    });
+    const home = card(render([finals, LAMAR_WINNER], [SHOUGH_WINNER]), "home");
+    expect(labelled(home, "Finals MVP")).toContainEqual({ label: "Finals MVP", pct: 30 });
+    expect(labelled(home, "MVP")).not.toContainEqual({ label: "MVP", pct: 30 });
+  });
+});
+
+describe("#6973 · THE JOIN: with no merge_group, the label IS the identity", () => {
+  it("two unmerged award markets for one player stay two chips", () => {
+    // This is the assertion the rest of the file needed and did not have.
+    //
+    // `deduplicateAwards` keys on `merge_group || shortAwardLabel(...)`, so the
+    // label is load-bearing as an IDENTITY, not just as display text — but only
+    // where `merge_group` is null, which is exactly the finalists market's
+    // shape. Every other case above happens to pair a null-merge_group row with
+    // a `merge_group: "mvp"` row, so the key stays distinct through the
+    // merge_group alone and those tests pass even if the label is dropped from
+    // the key entirely. Mutating that join proved it: `awardKey = merge_group ||
+    // "award"` SURVIVED the whole suite.
+    //
+    // Both rows here carry `merge_group: null`, which is how production serves
+    // 59164988 and 479. Now the label is the only thing keeping them apart, and
+    // a fix that separates the LABELS while letting something else collapse the
+    // KEY is caught here rather than on a reader's screen.
+    const finalist = LAMAR_FINALIST; // merge_group null, 83%
+    const championship = award({
+      market_id: 479,
+      market_name: "Pro Football Championship MVP?",
+      clean_label: "NFL Championship MVP?",
+      merge_group: null,
+      outcome_id: 6958,
+      outcome_name: "Lamar Jackson",
+      probability: 0.4,
+    });
+    const home = card(render([finalist, championship], [SHOUGH_WINNER]), "home");
+
+    expect(labelled(home, "MVP Finalist")).toContainEqual({ label: "MVP Finalist", pct: 83 });
+    expect(labelled(home, "Championship MVP")).toContainEqual({ label: "Championship MVP", pct: 40 });
+    // And specifically NOT one chip at the higher price, which is what a
+    // collapsed key produces.
+    expect(chips(home).filter((c) => c.pct === 40 || c.pct === 83)).toHaveLength(2);
+  });
+});
+
+describe("#6973 · dedupe still merges what genuinely IS one question", () => {
+  it("CONTROL — two sources on the same MVP-winner question still collapse to one chip", () => {
+    // The fix works by splitting a dedupe key. The way to break it in the other
+    // direction is to split keys that should stay together, and the page would
+    // then print the same question twice at two prices. `merge_group` is what
+    // holds these together across sources; this is that guarantee, not a
+    // restatement of the diff.
+    const polymarketSameQuestion = award({
+      market_id: 7585490,
+      market_name: "Pro Football: 2026 MVP Winner",
+      clean_label: "MVP",
+      merge_group: "mvp",
+      source: "polymarket",
+      outcome_id: 40281027,
+      outcome_name: "Lamar Jackson",
+      probability: 0.1,
+    });
+    const home = card(render([LAMAR_WINNER, polymarketSameQuestion], [SHOUGH_WINNER]), "home");
+    expect(labelled(home, "MVP")).toHaveLength(1);
+  });
+});
