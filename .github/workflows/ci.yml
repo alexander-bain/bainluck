@@ -2698,6 +2698,39 @@ jobs:
             exit 1
           fi
 
+      - name: "#6955 club-noun rails: apply, partial CAS and the D51 undo (real Postgres)"
+        # CERT-3074's named follow-up. Both club-noun rails carry ~55 guards
+        # apiece and every one drives a stub session, which can prove the rail
+        # ISSUES a statement but never that the statement DOES anything — the
+        # stub is also the thing deciding what comes back.
+        #
+        # Four behaviours in the write block belong to PostgreSQL and are faked
+        # by any stub: `id = ANY(:ids)`, the NULL-safe `IS NOT DISTINCT FROM`
+        # compare-and-set, `RETURNING id`, and transaction-scoped
+        # `SET LOCAL statement_timeout`. The CAS is not theoretical here — the
+        # Kalshi poller runs every two hours and does reach these rows.
+        #
+        # The partial-apply case commits from a SECOND connection in the window
+        # between the rail's SELECT and its UPDATE, so the losing row loses for
+        # the real reason. The load-bearing assertion is that the D51 undo,
+        # actually executed, restores what moved and leaves the concurrently
+        # written row alone: an undo built from `planned` rather than from
+        # `RETURNING` would revert somebody else's correct write during the one
+        # operation an operator runs because they believe it is safe.
+        #
+        # Parametrised over both rails on purpose — their write blocks are the
+        # same shape and drift between them is the likeliest regression.
+        #
+        # Same skip detection as every gate in this job, for the same reason.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_club_noun_apply_restore_6955_pg.py \
+            -v -rs 2>&1 | tee /tmp/clubnoun6955.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/clubnoun6955.txt; then
+            echo "::error::#6955 apply/CAS/restore gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
