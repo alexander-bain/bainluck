@@ -336,6 +336,12 @@ class _Run:
         self.per_beat_cancel_entries: list[int] = []
         self.per_beat_splits: list[int] = []
         self.first_armed: list[int] = []
+        #: Per beat, the ``staged:unit_cancel_conclusive:*`` gauges that beat
+        #: wrote — the loop's record of "the evidence was conclusive", kept
+        #: apart from what the split then did with it.
+        self.per_beat_conclusive: list[dict[str, int]] = []
+        #: Per beat, ``(ref, cancelled_after_ms)`` for every cancellation.
+        self.per_beat_cancel_ms: list[list[int]] = []
         #: The PUBLISHED census, present only on a run that completed.
         self.census: dict | None = None
 
@@ -449,6 +455,14 @@ def drive(monkeypatch):
             out.per_beat_cancel_entries.append(len(cancels))
             out.per_beat_splits.append(len(splits))
             out.first_armed.append(runner.armed[0] if runner.armed else 0)
+            out.per_beat_conclusive.append(
+                {
+                    name: value
+                    for name, value in runner.ledger.stages.items()
+                    if name.startswith("staged:unit_cancel_conclusive:")
+                }
+            )
+            out.per_beat_cancel_ms.append([ms for _vms, ms in db.cancelled])
             if splits:
                 out.splits = max(out.splits, len(splits))
                 if out.first_split_beat is None:
@@ -731,6 +745,93 @@ class TestAConclusiveCancellationCutsOnBeatOne:
         assert run.first_split_beat is None, (
             "and nothing may be cut on evidence the build has not got — "
             "ruling 075, and the reason this is not a tolerance"
+        )
+
+
+# =============================================================================
+# 1b. THE EVIDENCE IS RECORDED AS EVIDENCE — gotcha #53
+# =============================================================================
+
+
+class TestTheConclusiveReadIsLegibleOnItsOwn:
+    """``staged:unit_cancel_conclusive:{ref}`` is written, and it means one thing.
+
+    The loop records this gauge BEFORE the split is attempted, and the comment
+    beside it says why: the four ``SPLIT_*`` outcomes mean four different
+    things, so "the evidence was conclusive and the cut was refused" has to be
+    readable apart from "the evidence never arrived" (gotcha #53). Nothing
+    asserted that until this class did. A mutant that deletes the
+    ``record_gauge`` call — leaving the cut itself untouched — passed all 21
+    tests of this file, which is precisely the state gotcha #53 describes: the
+    diagnostic that distinguishes two causes is absent, and its absence looks
+    exactly like the innocent case.
+
+    The two arms below are the whole point. The gauge tracks the PREDICATE, not
+    the split: the control runs the identical rig with
+    ``cancellation_is_conclusive`` stubbed to False and must record none of
+    these at all, or the gauge is noise rather than a reading.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_beat_that_cuts_records_the_evidence_it_cut_on(self, drive):
+        cand = await drive(buckets=16, oversized_slots=16, max_beats=3)
+
+        assert cand.first_split_beat == 1, (
+            "this test is about what beat 1 RECORDED; if the cut moved, fix "
+            f"that first — got beat {cand.first_split_beat}"
+        )
+        beat_one = cand.per_beat_conclusive[0]
+        assert len(beat_one) == 1, (
+            "one cancellation on beat 1 ⇒ exactly one conclusive gauge; got "
+            f"{beat_one}"
+        )
+
+        name, value = next(iter(beat_one.items()))
+        ref = name.split("staged:unit_cancel_conclusive:", 1)[1]
+        assert ref, f"the gauge must name the SLOT it is about; got {name!r}"
+
+        # It carries the DURATION, not a flag — a `1` here would be a boolean
+        # wearing a measurement's name, and the number is the whole reason a
+        # later reader can tell a proof from a bad minute.
+        assert value == cand.per_beat_cancel_ms[0][0], (
+            f"the gauge must carry the cancellation's own duration; gauge "
+            f"{value} vs cancelled_after_ms {cand.per_beat_cancel_ms[0]}"
+        )
+        assert value > 1, (
+            f"a duration, not a flag; got {value}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_control_records_no_such_gauge_on_any_beat(self, drive):
+        base = await drive(
+            buckets=16, oversized_slots=16, max_beats=3, conclusive_splits=False
+        )
+
+        assert base.first_split_beat is None, (
+            "the control must not cut in three beats, or this measures the rig"
+        )
+        assert all(not beat for beat in base.per_beat_conclusive), (
+            "the gauge follows the predicate, not the cancellation — the "
+            "control cancels on every beat and must still record none; got "
+            f"{base.per_beat_conclusive}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_scrap_bounded_cancellation_records_nothing(self, drive):
+        """The inert arm: a cancellation the predicate refuses leaves no gauge.
+
+        Same rig as
+        :meth:`TestTheCandidateIsInertWhereOrderingWasRefuted.test_a_scrap_bounded_cancellation_is_not_a_proof`
+        — a slot stopped by a measured basis rather than by the window. The cut
+        does not happen there, and neither does the reading.
+        """
+        run = await drive(buckets=8, oversized_slots=0, slow_slots=8, max_beats=3)
+
+        assert run.first_split_beat is None, (
+            f"nothing here is conclusive; got a cut on beat {run.first_split_beat}"
+        )
+        assert all(not beat for beat in run.per_beat_conclusive), (
+            f"and so nothing should be recorded; got {run.per_beat_conclusive}"
         )
 
 
