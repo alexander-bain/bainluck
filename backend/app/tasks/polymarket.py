@@ -168,6 +168,37 @@ _TAG_TO_CATEGORY: dict[str, str] = {
     "table tennis": "table_tennis",
     "table-tennis": "table_tennis",
     "setka": "table_tennis",
+    # #6651 (Alex's 2026-09-16 phone test, #6444): "Attractive 2027 PPA Tour
+    # finals for women card never explains its sport/league." The card could
+    # not, because the row has nothing to say — `llm_sport_category`, `sport`
+    # and `sport_name` are all NULL, and `discover/FuturesCard.tsx:130` falls
+    # back through all three to the literal string "Markets".
+    #
+    # The venue knew all along. Read off Gamma 2026-09-17, all three live PPA
+    # events carry the sport as their own tag:
+    #
+    #     1024935  2027-ppa-tour-finals-to-reach-semifinals-mens
+    #     1024933  2027-ppa-tour-finals-player-to-qualify-mens
+    #     1024934  2027-ppa-tour-finals-player-to-qualify-womens
+    #         all three: labels ['PPA', 'Sports', 'Pickleball']
+    #
+    # `pickleball` was not here, so the specific-tag loop missed, the `sports`
+    # arm returned (championship, None), and arm 2's `categorize_by_rules` /
+    # `detect_league` found nothing in "2027 PPA Tour Finals…" — measured
+    # ('championship', None, 'fallback') on all four production titles. Unlike
+    # the AFL case below the fallback does not GUESS wrong here; it declines,
+    # which is why the row is NULL rather than mislabelled.
+    #
+    # Measured population 2026-09-17, and the split is by status, not by row:
+    # 178 OPEN polymarket rows NULL, against 141 resolved already carrying
+    # `pickleball` and 18 `tennis`. So this is not a new value — it is the one
+    # this family already settles on once anything classifies it, and the live
+    # cohort is exactly the half a reader meets.
+    #
+    # `ppa` is deliberately NOT mapped: it is the tour, not the sport, and the
+    # sport tag is present on every event. One key, matched by the venue's own
+    # word for the sport.
+    "pickleball": "pickleball",
     "boxing": "boxing",
     "cricket": "cricket",
     "ipl": "cricket",
@@ -372,6 +403,20 @@ _SPORT_CATEGORIES = {
     # a separate list (`_LINK_RATE_SPORT_CATEGORIES`, admin_matching.py) and
     # table_tennis is deliberately absent from it, as #1230 requires.
     "table_tennis",
+    # #6651, and present for exactly the reason `table_tennis` above is: without
+    # it the `pickleball` tag entry would return ("pickleball", "pickleball")
+    # and put a SPORT name in the internal category field. `championship` is
+    # what this family already carries when it is classified (production
+    # 2026-09-17: the 141 resolved `pickleball` rows), so honouring the tag is
+    # byte-identical to the answer those rows already hold, not a new shape.
+    #
+    # Like `table_tennis`, `pickleball` has no key in
+    # `LLM_CATEGORY_TO_SPORT_PREFIX` and that is deliberate, not an omission to
+    # be tidied later: `auto_create_sport_key_from_category` returns None on a
+    # category with no prefix, so this cannot mint a `pickleball_other` event
+    # for a sport we run no fixtures for. The category labels the card; it does
+    # not open a matching rail.
+    "pickleball",
 }
 
 
