@@ -36,11 +36,15 @@ claim cannot silently regrow. What makes the ship land is the ADMISSION FLOOR,
 not the sign: at 0.70 a real card still clears `min_score` 30, which is what
 `test_the_penalised_relations_still_clear_the_admission_floor` measures.
 
-The controls carry as much of this file as the arm does. A Nah still deletes
-(this is not a quiet repeal of the preference); a `rival` relation still deletes,
-because a rival is INFERRED from a follow rather than performed by the reader;
-and a game in a sport that is not Nah is served either way, so the arm cannot
-pass for the trivial reason that the harness admits everything.
+The controls carry as much of this file as the arm does. When this file was
+written a Nah still deleted and a `rival` relation still deleted; #1927's WIDE
+half (Alex, 2026-09-17: "a ranking signal, not a death certificate") retired
+the delete for everyone, so those two controls now pin the replacement contract
+instead — the unrelated game is SERVED and RANKED BELOW the followed one, and a
+rival's game is served on the same terms as any other (a rival is inferred, not
+performed, so it earns no standing rescue — and needs none). A game in a sport
+that is not Nah is served either way, so the arm cannot pass for the trivial
+reason that the harness admits everything.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -173,9 +177,12 @@ def test_the_penalised_relations_still_clear_the_admission_floor(relation):
         the decay runs AFTER this gate, so it moves rank and never admission)
       * 65 — `15314172` Red Sox @ Rays, scheduled (served at 65)
 
-    The non-follower control is the half that makes this a result rather than a
-    restatement: the SAME upcoming fixture is below the floor at 0.40, so the
-    ship admits the reader's team and not the sport."""
+    When this file was written the non-follower control asserted the SAME
+    upcoming fixture was below the floor at 0.40 — "the ship admits the reader's
+    team and not the sport". #1927's WIDE half retired that: a Nah is a rank
+    term and is held OUT of the admission multiplier entirely, so the
+    no-relationship reader's card is admitted too and the relation separates the
+    two by RANK instead. The controls below pin the replacement contract."""
     from app.routes.feed import _discover_admission_score
 
     min_score = 30
@@ -187,9 +194,20 @@ def test_the_penalised_relations_still_clear_the_admission_floor(relation):
             r.multiplier,
         )
 
-    # CONTROL: the same upcoming card for a reader with no relationship is NOT
-    # admitted. If this ever passes, the gate has stopped reading the relation.
-    assert _discover_admission_score(65, _score()) < min_score
+    # CONTROL 1 — the ship itself: the Nah is OUT of the admission multiplier,
+    # so the same card for a reader with no relationship admits at its base
+    # score. Putting the penalty back into `admission_multiplier` (the
+    # deletion, re-created one clause down) fails HERE.
+    assert _discover_admission_score(65, _score()) == 65
+
+    # CONTROL 2 — the floor is still a floor, not an unconditional admit: a
+    # genuinely low-scoring card is still refused. Without this the assertions
+    # above pass for a function that returns `base_score` unconditionally.
+    assert _discover_admission_score(20, _score()) < min_score
+
+    # CONTROL 3 — the relation still decides, but now in RANK rather than
+    # admission. If this ever fails, the Nah has stopped reading the relation.
+    assert _score().multiplier < r.multiplier
 
 
 def test_the_affinity_under_test_really_is_a_nah():
@@ -289,15 +307,34 @@ async def test_the_gate_keeps_a_game_the_reader_has_a_standing_relationship_with
 
 
 @pytest.mark.asyncio
-async def test_the_gate_still_deletes_a_nah_sport_with_no_relationship():
-    """THE CONTROL that keeps the preference real. A rescue written as an
-    unconditional `True` passes every arm above and fails here."""
-    assert await _served(_ctx()) == []
+async def test_a_nah_sport_with_no_relationship_is_served_and_ranked_below():
+    """THE CONTROL that keeps the preference real — rewritten for #1927's wide
+    half. It used to assert `== []`. The Nah is now a rank signal: the same
+    game is served, and it ranks BELOW the copy the reader has a standing
+    relationship with, so a rescue written as an unconditional `True` (or a
+    Nah made inert) still fails here."""
+    unrelated = await _served(_ctx())
+    followed = await _served(_ctx({"follow"}))
+    assert len(unrelated) == 1, "the Nah deleted the game — that is the retired filter"
+    assert len(followed) == 1
+    assert unrelated[0]["score"] < followed[0]["score"], (
+        unrelated[0]["score"],
+        followed[0]["score"],
+    )
+    assert any(r.startswith("sport_nah") for r in unrelated[0]["personalization_reasons"])
 
 
 @pytest.mark.asyncio
-async def test_a_rival_alone_is_still_deleted():
-    assert await _served(_ctx({"rival"})) == []
+async def test_a_rival_alone_is_served_without_a_standing_rescue():
+    """A rival is inferred from a follow, not performed, so it sets no standing
+    flag (asserted above). Under the wide half it needs none: the game is
+    served like any other Nah-sport game, and the rival term ranks it as the
+    scorer always did."""
+    items = await _served(_ctx({"rival"}))
+    assert len(items) == 1
+    reasons = items[0]["personalization_reasons"]
+    assert any(r.startswith("rival_") for r in reasons), reasons
+    assert any(r.startswith("sport_nah") for r in reasons), reasons
 
 
 @pytest.mark.asyncio
@@ -312,9 +349,8 @@ async def test_my_stuff_is_unchanged():
     """`my_teams_only` already exempted itself from the filter; this ship must
     not have made that exemption conditional on the new flag.
 
-    A `rival` relation is the specimen that separates the two: My Stuff admits
-    the game because `my_teams_only` is true, NOT because of the rescue — the
-    same context is deleted on Discover two tests above. (My Stuff also needs a
+    A `rival` relation is the specimen: My Stuff admits the game because
+    `my_teams_only` is true, NOT because of any rescue. (My Stuff also needs a
     relation of some kind to select the event at all, `feed.py:8887`, which is
     why the plain no-relation context cannot be used here.)"""
     assert len(await _served(_ctx({"rival"}), my_teams_only=True)) == 1

@@ -2492,6 +2492,63 @@ jobs:
             exit 1
           fi
 
+      - name: "#1927 a negative rank term never excludes, at the route (real Postgres)"
+        # The wide half of #1927. Discover judges a live game "exceptional" by
+        # reading its personalised `score`, so a stored Nah (×0.4) or eight real
+        # dismisses (×0.15) brought an 82-point game to the editorial chain as 32
+        # or 12: judged routine, capped to 35, then deleted by the noise filter
+        # for lacking team media — where the identical ANONYMOUS candidate was
+        # kept. The fix reads `_admission_score` (rank-only negatives out, every
+        # positive term in) at the three consumers.
+        #
+        # Real Postgres because the claim is about what `GET /api/feed` SERVES a
+        # signed-in reader, not about what a scorer returns: the subject has to
+        # survive selection, the editorial chain, the noise filter and
+        # pagination, and the unit files grade each of those in isolation while
+        # the defect lived in their composition. `routes/events._team_cache` is
+        # process-global and keyed by team name; both files reset it per request,
+        # which is also why they cannot share a session double.
+        #
+        # Same skip detection as every gate in this job: pytest exits 0 when each
+        # test skips, so adding the file is not adding the gate — these two were
+        # written opt-in on SEARCH_TEST_DATABASE_URL and, until this step, were
+        # collected by the unit shards (which do not set it) and named by nothing
+        # in this job, i.e. they would have run nowhere.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_feed_negative_rank_keeps_discover_eligibility_1927a_pg.py \
+            -v -rs 2>&1 | tee /tmp/negrank1927a.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/negrank1927a.txt; then
+            echo "::error::#1927 negative-rank admission gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#1927 swipes rank and never hide a sport, at the route (real Postgres)"
+        # The companion. Alex's ruling of 2026-09-17 — "a nah swipe should NOT
+        # hide the whole sport … Swiping needs to be a ranking signal, not a
+        # death certificate" — graded through the real authenticated route for
+        # neutral, negative, positive and unknown-identity readers.
+        #
+        # The load-bearing arms are the ones a session double cannot answer:
+        # pagination over one pool losing or duplicating no card, and one
+        # principal's page never leaking into another's. Both are properties of
+        # the built pool across requests, and the second is the reason the
+        # process-global team cache is reset per request.
+        #
+        # Controls that keep it from passing vacuously: a genuinely ineligible
+        # no-media game stays out for EVERY reader (the ship must not have turned
+        # the noise filter off), and the anonymous reader's Discover is unchanged.
+        #
+        # Same skip detection as every gate in this job, for the same reason.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_feed_swipes_rank_never_hide_a_sport_1927_pg.py \
+            -v -rs 2>&1 | tee /tmp/swiperank1927.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/swiperank1927.txt; then
+            echo "::error::#1927 swipes-rank-never-hide gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

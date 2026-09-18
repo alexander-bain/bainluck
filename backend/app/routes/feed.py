@@ -270,6 +270,7 @@ from app.utils.personalization import (
     canonical_discover_category,
     compute_event_multiplier,
     compute_futures_multiplier,
+    compute_sport_affinity_multiplier,
     followed_sport_categories,
     my_stuff_admits_followed_sport,
 )
@@ -1249,9 +1250,48 @@ def _discover_event_excitement_score(item: dict) -> float:
     de-saturation constants move. ``score`` is bounded 0-98 and is the number
     the blast radius was measured against: at ``>= 85`` it admitted 6 of 35 live
     survivors, all tier:1/2, and 0 non-major at any bar down to 75.
+
+    #1927 (Brief24A) — THE ADMISSION NUMBER, NOT THE RANK. Every consumer of
+    this reading decides ELIGIBILITY: the demotion exception, the noise
+    filter's two ``not exception`` arms and the imminent-marquee selection.
+    ``score`` on a signed-in reader's item is ``base * multiplier`` with every
+    rank-only negative term inside it — the sport Nah, the eight-swipe category
+    floor, the feature dislike, the semantic resemblance penalty — so a 97-point
+    live game arrived here as 38 for a Nah reader and 19 for an eight-swipe
+    reader, was judged "not exceptional", capped to 35, and, when its teams
+    carried no media, DELETED where the identical anonymous candidate was kept.
+    That is the "equivalent exclusion through a downstream admission/quality
+    floor fed the same negative signal" Alex's ruling forbids.
+
+    So an unsettled game reads ``_admission_score`` when the scorer stamped one:
+    ``_discover_admission_score(base, p_result)`` = ``base *
+    admission_multiplier``, the SAME number the event gate compares to its floor
+    (CERT-2676), with the rank-only negatives held out and every positive term
+    — follow, local, alma mater, loved sport, pin — still in. Deliberately NOT
+    ``base_score``: that would also delete today's boost-driven exceptions for a
+    loved sport (a routine game a reader loves clearing 80 on the boost alone),
+    and the brief names that as the thing not to do. ``admission_multiplier``
+    is ``>= multiplier`` by construction, so this reading is monotone: nothing
+    that was exceptional stops being exceptional; what changes is that a
+    negative rank term can no longer make an eligible card ineligible. The
+    display ``score`` still carries the full penalty and still RANKS. "If it's
+    wild" (``sport_suppress``) is inside ``admission_multiplier`` on purpose
+    and keeps its higher bar here exactly as at the gate.
+
+    Fallback to ``score`` when the key is absent — a fixture built by hand, a
+    page base published before this ship, the admin side-by-side's copied
+    pools — which is exactly the pre-Brief24A behaviour for those callers. The
+    key is underscore-private and scrubbed with the other internal keys before
+    the payload is published.
     """
     if _discover_event_is_settled(item):
         return _discover_event_ei_score(item)
+    admission = item.get("_admission_score")
+    if admission is not None:
+        try:
+            return float(admission)
+        except (TypeError, ValueError):
+            pass
     try:
         return float(item.get("score", 0) or 0)
     except (TypeError, ValueError):
@@ -1942,6 +1982,12 @@ def _demote_non_exceptional_discover_events(
         # filter alone would have bought the card nothing.
         if _item_is_kept_final(item, kept):
             continue
+        # #1927 (Brief24A) — the exception is an ELIGIBILITY question and reads
+        # the admission number (`_discover_event_excitement_score`), so a
+        # negative rank term cannot turn "exceptional" into "capped and, one
+        # pass down, deleted". The cap itself still writes the RANK: a Nah
+        # reader's exceptional game keeps its penalised `score`, which is how
+        # the negative term stays observable in the ordering.
         if not _is_discover_event_demotion_exception(item):
             item["score"] = min(item["score"], 35)
             # Keep the ordering score in lockstep so demoted events actually fall
@@ -2025,6 +2071,14 @@ def _filter_discover_event_noise(
             filtered.append(item)
             continue
 
+        # #1927 (Brief24A) — both `not exception` arms below are admission
+        # decisions and the exception reads the admission number, so for the
+        # same candidate they answer the neutral and the negative reader the
+        # same way. The `< 45` reading of `score` stays: it is the demotion
+        # cap's own consequence (a non-exceptional game is capped to 35 first),
+        # not a second penalty path — an exceptional game never reaches it.
+        # A genuinely non-exceptional no-media game still fails here for
+        # EVERY reader; nothing below exempts "no media" as such.
         if item.get("score", 0) < 45 and not _is_discover_event_demotion_exception(
             item
         ):
@@ -2851,6 +2905,127 @@ def _drop_dismissed_keyed_items(
         return True
 
     return [item for item in items if _keeps(item)]
+
+
+def _keyed_item_sport_identity(item: dict) -> tuple[str | None, str | None]:
+    """``(sport_key, sport_category)`` for a string-keyed card, from the
+    mappings that ALREADY name its sport — never from its title. #1927.
+
+    * ``tournament``: ``data.tour`` → ``_TOUR_AFFINITY_KEYS`` (``pga`` →
+      ``golf_pga`` …), the same table the old per-tour filter read. A
+      tournament whose tour is unevidenced (``None``, UX-P185) has no key and
+      no category here: it is NOT guessed to be the tour the reader picked,
+      and it is not guessed to be the one they said Nah to either.
+    * ``concept``: ``data.domain`` → the ``llm_sport_category`` its
+      ``ConceptSource`` declares (``ufc`` → ``mma``, ``f1`` → ``motorsports``,
+      ``cycling`` → ``cycling``). The one enumeration of the concept tier
+      (``event_concept_population.CONCEPT_SOURCES``), read rather than copied.
+
+    ``(None, None)`` means "this card's sport identity is not established", and
+    the caller treats it as NEUTRAL — the limit the brief asks to be named
+    rather than papered over with a title heuristic.
+    """
+    data = item.get("data") or {}
+    item_type = item.get("type")
+    if item_type == "tournament":
+        tour = data.get("tour")
+        key = _TOUR_AFFINITY_KEYS.get(tour) if isinstance(tour, str) else None
+        return (key, None) if key else (None, None)
+    if item_type == "concept":
+        from app.utils.event_concept_population import CONCEPT_SOURCES
+
+        domain = data.get("domain")
+        for source in CONCEPT_SOURCES:
+            if source.label == domain:
+                return None, source.category
+        return None, None
+    return None, None
+
+
+def _rank_keyed_items_by_sport_affinity(
+    items: list[dict],
+    *,
+    ctx: PersonalizationContext,
+    my_teams_only: bool,
+) -> list[dict]:
+    """Apply the reader's sport-affinity DIAL to concept and tournament cards —
+    the same dial the event and futures scorers apply — as a rank multiplier
+    and nothing else. #1927, wide half.
+
+    Why here and not in the tier builders: the sibling of
+    `_drop_dismissed_keyed_items` for the same reason it gives — the concept
+    build runs behind `_shared_get_or_build`, whose key carries no viewer, so
+    anything per-reader written inside it would be served to the next reader
+    in the bucket. This pass runs on the built list, per principal, and returns
+    NEW dicts for the cards it touches so the shared artifact is never mutated.
+
+    Why at all: before this ship a golf tournament in a tour the reader had
+    said Nah to — or in any tour, for a reader whose affinities simply lacked
+    golf — was DELETED by `_score_golf_tournaments`'s per-tour filter, while a
+    UFC card had no preference term of any kind. Both now read the one dial:
+    ranked down (`NAH_AFFINITY_PENALTY`), ranked up (`HIGH_AFFINITY_BONUS`),
+    never removed. There is no admission floor on these card types for the
+    penalty to leak into; `_rank_key` reads `score` for them, so that is the
+    number scaled. Marquee pins are left alone — a pin is a position, not a
+    score.
+
+    Skipped under `my_teams_only` exactly as the dismissal pass is: that
+    surface's contract is the follow list, not the sport dial. Neutral for a
+    card whose sport identity `_keyed_item_sport_identity` cannot establish.
+
+    NEGATIVE SIDE ONLY (Brief24A). Before #1927's wide half a loved tour was
+    simply KEPT at its own score and a UFC card carried no preference term at
+    all — no keyed card type had a positive ranking policy. The first cut of
+    this pass applied the dial's boost too, which multiplied every loved
+    tournament and concept by `1 + HIGH_AFFINITY_BONUS` (×1.5) — a new positive
+    policy nobody asked for, riding a repair whose whole subject is that a
+    negative signal must rank and never exclude. So the dial's boost is not
+    applied here: a card the reader loves is served exactly as the anonymous
+    reader sees it (no `personalized` mark, pre-Brief24 behaviour), and only
+    the negative terms — Nah (`NAH_AFFINITY_PENALTY`) and "if it's wild"
+    (`LOW_AFFINITY_PENALTY`) — scale the score. Events and futures keep their
+    existing `sport_boost` in their own scorers; the shared helper is
+    unchanged, this call site declines its positive side.
+    """
+    if my_teams_only or not ctx or not ctx.sport_affinities:
+        return items
+
+    ranked: list[dict] = []
+    for item in items:
+        sport_key, sport_category = _keyed_item_sport_identity(item)
+        if not sport_key and not sport_category:
+            ranked.append(item)
+            continue
+        p_result = compute_sport_affinity_multiplier(
+            ctx, sport_key=sport_key, sport_category=sport_category
+        )
+        if not p_result.is_personalized or p_result.multiplier >= 1.0:
+            # Neutral, or the dial's POSITIVE side — declined here (see above).
+            ranked.append(item)
+            continue
+        try:
+            base_score = float(item.get("score", 0) or 0)
+        except (TypeError, ValueError):
+            ranked.append(item)
+            continue
+        scaled = max(1, min(98, int(base_score * p_result.multiplier)))
+        updated = {
+            **item,
+            "score": scaled,
+            "personalized": True,
+            "base_score": int(base_score),
+            "multiplier": round(p_result.multiplier, 2),
+            "personalization_reasons": list(p_result.reasons),
+        }
+        if "_rank_score" in item:
+            try:
+                updated["_rank_score"] = max(
+                    1.0, float(item["_rank_score"]) * p_result.multiplier
+                )
+            except (TypeError, ValueError):
+                pass
+        ranked.append(updated)
+    return ranked
 
 
 def _dedupe_futures_by_group_id(futures_items: list[dict]) -> list[dict]:
@@ -4480,6 +4655,12 @@ async def get_feed(
                 tournament_items = _drop_dismissed_keyed_items(
                     tournament_items, ctx=ctx, my_teams_only=my_teams_only
                 )
+                # #1927 — the reader's golf affinities RANK the tournaments
+                # here (per principal, after the build) where they used to be
+                # a per-tour delete inside the builder.
+                tournament_items = _rank_keyed_items_by_sport_affinity(
+                    tournament_items, ctx=ctx, my_teams_only=my_teams_only
+                )
                 if tournament_items:
                     feed_items.extend(tournament_items)
             except Exception as e:
@@ -4643,6 +4824,11 @@ async def get_feed(
                 )
                 concept_items = _drop_dismissed_keyed_items(
                     concept_items or [], ctx=ctx, my_teams_only=my_teams_only
+                )
+                # #1927 — same dial as events/futures, applied on THIS side of
+                # the principal-independent cache (see the pass's docstring).
+                concept_items = _rank_keyed_items_by_sport_affinity(
+                    concept_items, ctx=ctx, my_teams_only=my_teams_only
                 )
                 if concept_items:
                     feed_items.extend(concept_items)
@@ -9165,50 +9351,56 @@ async def _score_events(
             )
             personalized_score = min(98, int(base_score * p_result.multiplier))
 
-            # --- "Nah" sport hard filter ---
-            # If the user explicitly said "Nah" to this sport, don't show it
-            # UNLESS it's a championship or playoff game.  A user who said "Nah"
-            # to soccer shouldn't see Champions League regular matches, but a
-            # World Cup Final is a genuine cultural event worth surfacing.
+            # --- "Nah" sport: a RANK signal, not a filter (#1927, wide half) ---
             #
-            # #1927 — OR unless the reader follows one of the teams playing. That
-            # is not a softening of the preference; it is the gate finally reading
-            # the number the scorer already computed. The two signals were weighed
-            # and the follow won — and this line was deleting the winner.
+            # This used to be a hard filter: `continue` on the `sport_nah` reason
+            # unless the game was a championship/playoff or (the narrow #1927
+            # fix) the reader had a standing relationship with one of the teams.
+            # Alex's ruling of 2026-09-17 retires the filter: "a nah swipe should
+            # NOT hide the whole sport … Swiping needs to be a ranking signal,
+            # not a death certificate." The reader who stores `baseball_mlb: 0.0`
+            # still sees baseball ranked down by `NAH_AFFINITY_PENALTY` — the
+            # scorer's number is unchanged — but no longer sees it deleted.
             #
-            # The multiplier the winner arrives on is NOT always > 1.0, and the
-            # first version of this comment said it was: it quoted
-            # `your_team:0.80` + `sport_nah:-0.60` = **1.20** as though every
-            # standing relationship were a `follow`. Measured on the one account
-            # with real phone history (2026-09-18), all five of its favourites
-            # store `relation_type='local'`, so the real arithmetic is
-            # `LOCAL_BONUS 0.30` − `0.60` = **0.70** — a net PENALTY. The gate is
-            # still wrong to delete: a 0.70 card is a downrank, and #1091's rule
-            # is that game events are never capped into an empty tab. But the
-            # justification is "keep-and-downrank beats delete", never "the
-            # follow outweighs the Nah", which is only true for `follow`.
-            # `has_standing_team_relationship` reads STANDING_TEAM_RELATIONSHIPS,
-            # so `local` and `alma_mater` reach this line on penalties too.
-            # CERT-2676 named exactly
-            # this shape one clause to the left ("the gate reads the admission
-            # score, the rank reads the penalty"); the reason string is a display
-            # vocabulary and was never fit to decide eligibility.
+            # CERT-2676 named this shape one clause to the left ("the gate reads
+            # the admission score, the rank reads the penalty"); the reason
+            # string is a display vocabulary and was never fit to decide
+            # eligibility.
             #
-            # Measured on production 2026-09-17: the one account with real phone
-            # history stores `baseball_mlb: 0.0` alongside five followed teams, and
-            # all 5 MLB games in that minute's payload were deleted for it. A
-            # reader who tapped follow on a team is telling you about THAT team;
-            # a sport they skipped at onboarding four months ago cannot outrank it.
+            # Two things this line is NOT: it is not a claim that the stored Nah
+            # came from swipes (the interactions route writes
+            # `discover_interactions` only; `sport_affinities` is written by the
+            # onboarding and preferences routes in `routes/user.py`), and it is
+            # not a change to any other gate. "If it's wild" below keeps its 55
+            # bar; My Stuff keeps its own contract; the safety/eligibility gates
+            # above this point are untouched.
             #
-            # Deliberately NOT touched: the "if it's wild" bar below (0.05–0.2 is
-            # a request for fewer, not none, and the follow bonus already lifts the
-            # score toward it), and the futures gate at the other call site, which
-            # has no home/away pair and so no relationship to read.
-            is_nah = any("sport_nah" in r for r in p_result.reasons)
-            if is_nah and not my_teams_only and not p_result.has_standing_team_relationship:
-                if importance not in ("championship", "playoff"):
-                    continue
-                # Championship/playoff in a "Nah" sport: override but explain
+            # What survives of the old block is its one RANK effect: a
+            # championship or playoff game in a Nah sport is floored at 35 so a
+            # World Cup Final still surfaces above the routine slate. The
+            # standing-relationship arm needs no clause now — not because the
+            # relationship outweighs the Nah, but because the gate no longer
+            # deletes anything. Do not restate the arithmetic as a boost:
+            # `your_team:0.80` − `0.60` = 1.20 is the `follow` case ONLY.
+            # Measured on the one account with real phone history (2026-09-18),
+            # all five of its favourites store `relation_type='local'`, so the
+            # usual arithmetic is `LOCAL_BONUS 0.30` − `0.60` = **0.70**, a net
+            # PENALTY — and `has_standing_team_relationship` reads
+            # STANDING_TEAM_RELATIONSHIPS, so `local` and `alma_mater` reach
+            # this line on penalties too. Keep-and-downrank is the
+            # justification; "the follow outweighs the Nah" never was.
+            #
+            # The admission number `_discover_admission_score` reads below holds
+            # the Nah term OUT (`PersonalizationResult.admission_multiplier`), so
+            # the `min_score` floor cannot re-create the deletion one clause down
+            # — that is the "equivalent downstream score-floor" the ruling names.
+            if (
+                p_result.sport_nah
+                and not my_teams_only
+                and not p_result.has_standing_team_relationship
+                and importance in ("championship", "playoff")
+            ):
+                # Championship/playoff in a "Nah" sport: rank floor, explained
                 personalized_score = max(personalized_score, 35)
 
             # --- "If it's wild" sport — higher bar ---
@@ -9236,12 +9428,12 @@ async def _score_events(
             # away asked for less football, not for none — and #1091's rule is
             # that game events are never capped into an empty tab.
             #
-            # `admission_multiplier` is the same product with only the
-            # swipe-derived category dismissal added back. Every gate above it
-            # still bites: the "Nah" filter and the low-affinity 55 bar read
-            # `p_result.reasons` and the onboarding penalties are still inside
-            # this number. `personalized_score` — with the full penalty — is
-            # what ranks, which is the entire behaviour of #5453.
+            # `admission_multiplier` is the same product with the rank-only
+            # terms added back: the swipe-derived dismissals and, since #1927's
+            # wide half, the sport "Nah" penalty. The low-affinity 55 bar still
+            # bites — "if it's wild" stays inside this number. `personalized_score`
+            # — with the full penalty — is what ranks, which is the entire
+            # behaviour of #5453.
             admission_score = _discover_admission_score(base_score, p_result)
             if admission_score < min_score:
                 continue
@@ -9468,6 +9660,14 @@ async def _score_events(
                 # Both are computed together above the reason text, where the
                 # completed-game freshness decay scales them by one shared factor.
                 "_rank_score": _rank_score,
+                # #1927 (Brief24A) — the ELIGIBILITY reading, carried past the
+                # gate so Discover's editorial chain can ask "is this game
+                # exceptional?" of the same number the gate read
+                # (`_discover_admission_score`: rank-only negatives out, every
+                # positive term in) instead of the penalised display score.
+                # Read by `_discover_event_excitement_score`; private, scrubbed
+                # with every other `_` key before the payload is published.
+                "_admission_score": admission_score,
                 "reason": reason,
                 # T10-1 (#5439) resolves #4596 HERE, through claim selection.
                 #
@@ -11825,18 +12025,21 @@ async def _score_futures(
                 personalized_score = max(1, int(personalized_score - FEED_RECYCLE_PENALTY))
                 rank_score = max(1.0, rank_score - FEED_RECYCLE_PENALTY)
 
-            # --- "Nah" category hard filter for futures ---
-            is_nah = any("sport_nah" in r for r in p_result.reasons)
-            if is_nah and not my_teams_only:
-                continue  # No override for futures — no "championship" equivalent
-
+            # #1927, wide half — the "Nah" category hard filter for futures
+            # stood here (`continue` on the `sport_nah` reason, no override).
+            # Retired on Alex's 2026-09-17 ruling: the Nah is a rank signal.
+            # `personalized_score` / `rank_score` above already carry its
+            # penalty; the admission number below holds it out, so neither the
+            # 55 bar nor the 15 bar can re-create the deletion.
+            #
             # CERT-2676, futures side — same rule as the event gate above: a
-            # swipe-derived downrank may set the ORDER and may not decide
+            # rank-only downrank may set the ORDER and may not decide
             # eligibility. Both bars below read the admission score, which still
             # carries the onboarding "if it's wild" penalty that the 55 bar is
-            # there to enforce; only the category dismissal is added back.
-            # The recycle penalty stays applied to both, since a recycled card
-            # ranking below fresh ones IS an implicit serving floor by design.
+            # there to enforce; the category dismissal and the Nah term are
+            # added back. The recycle penalty stays applied to both, since a
+            # recycled card ranking below fresh ones IS an implicit serving
+            # floor by design.
             admission_score = _discover_admission_score(
                 base_score, p_result, recycled=is_recycled
             )
@@ -12566,15 +12769,20 @@ def _outcomes_overlap(item_a: dict, item_b: dict) -> bool:
 # old process-local ``_golf_cache`` + inline ``get_golf`` rebuild is retired so a
 # dyno restart no longer pays the ~8.9s cold rebuild on the request path.
 
-# `None` is a member on purpose (UX-P185). A tournament whose tour we cannot
-# evidence used to reach the filter below as a guessed "pga" and therefore always
-# passed it; now that it honestly says "unknown", leaving None out would delete it
-# from Discover instead of merely un-badging it. It stays eligible for the DEFAULT
-# audience and is deliberately absent from the per-tour sets computed below — an
-# unknown tour cannot claim to be the tour a user actually picked.
-_DEFAULT_FEED_TOURS = frozenset({"pga", "major", "dp_world", "lpga", "liv", None})
-
-# Map tournament tour values to user affinity keys
+# Map tournament tour values to user affinity keys.
+#
+# #1927, wide half: this table used to feed `_compute_user_feed_tours`, a
+# per-tour DELETE — a reader whose affinities held `golf_lpga: 0.0` never saw
+# an LPGA tournament, and a reader whose affinities held no golf key at all
+# never saw any tournament. Alex's 2026-09-17 ruling ("a ranking signal, not a
+# death certificate") retires that filter; the table now resolves a
+# tournament's tour to the affinity key the shared sport dial reads
+# (`_keyed_item_sport_identity` → `_rank_keyed_items_by_sport_affinity`,
+# applied at the call site), so a Nah'd tour ranks down and a loved tour ranks
+# up, and neither is removed. A tournament whose tour is unevidenced (`None`,
+# UX-P185) has no row here and is treated as neutral — it is not guessed to be
+# the tour the reader picked (that half of UX-P185's rule stands), and it is
+# not guessed to be one they refused either.
 _TOUR_AFFINITY_KEYS: dict[str, str] = {
     "pga": "golf_pga",
     "major": "golf_pga",  # Majors bundled with PGA Tour
@@ -12582,37 +12790,6 @@ _TOUR_AFFINITY_KEYS: dict[str, str] = {
     "lpga": "golf_lpga",
     "liv": "golf_liv",
 }
-
-
-def _compute_user_feed_tours(ctx) -> set[str | None]:
-    """Compute which golf tours a user wants to see based on sport affinities.
-
-    `None` is a legal member and means "tour unknown" — see `_DEFAULT_FEED_TOURS`.
-    """
-    if not ctx or not ctx.is_authenticated or not ctx.sport_affinities:
-        return set(_DEFAULT_FEED_TOURS)
-
-    has_any_golf = any(k.startswith("golf") for k in ctx.sport_affinities)
-    if not has_any_golf:
-        return set()  # User went through onboarding, no golf interest
-
-    # Check for new-style tour-level keys
-    has_tour_keys = any(
-        k in ctx.sport_affinities
-        for k in ("golf_pga", "golf_dp_world", "golf_lpga", "golf_liv")
-    )
-    if not has_tour_keys:
-        # Legacy user — has golf_masters_tournament_winner etc. but no tour keys
-        # Show all tours (preserves old behavior)
-        return set(_DEFAULT_FEED_TOURS)
-
-    # New-style user — filter by tour preference. No None: an unevidenced tour
-    # cannot claim to be one of the tours this user chose.
-    tours: set[str | None] = set()
-    for tour, affinity_key in _TOUR_AFFINITY_KEYS.items():
-        if ctx.sport_affinities.get(affinity_key, 0.0) > 0.05:
-            tours.add(tour)
-    return tours
 
 
 async def _score_golf_tournaments(
@@ -12631,8 +12808,9 @@ async def _score_golf_tournaments(
     The heavy DB + DataGolf rebuild (``get_golf``) no longer runs on the ordinary
     request path: ``get_golf_base`` reads a bounded, freshness-tagged base from
     Redis (fresh <=300s, else truthfully-labeled last-good) so a dyno restart
-    never pays the ~8.9s inline rebuild (#1475/#1459). Per-user tour filtering,
-    scoring, headline/reason, and marquee pinning stay request-side below.
+    never pays the ~8.9s inline rebuild (#1475/#1459). Scoring, headline/reason,
+    and marquee pinning stay request-side below; the reader's golf affinities
+    rank the result at the call site (#1927).
 
     Queue 281 (#1475): when ``provenance_sink`` is passed, the golf-base tier that
     served this request (``fresh``/``last_good``/``inline``/``unavailable``) is
@@ -12684,19 +12862,19 @@ async def _score_golf_tournaments(
 
     feed_items: list[dict] = []
 
-    # Per-user tour filtering based on sport affinities
-    feed_tours = _compute_user_feed_tours(ctx)
-    if not feed_tours:
-        return []  # User has no golf interest
+    # #1927, wide half — no per-user tour filtering here any more. This loop
+    # used to `return []` for a reader whose affinities held no golf key and
+    # `continue` past any tour the reader had at <= 0.05, which was the sport
+    # "Nah" deleting a whole card family. The reader's golf affinities now
+    # RANK the tournaments, per principal, at the call site
+    # (`_rank_keyed_items_by_sport_affinity`); this builder is principal-
+    # independent, like the concept builder beside it. `ctx` stays in the
+    # signature for the callers that pass it.
 
     for t in tournaments:
         # Only include tournaments with golfer data
         golfers = t.get("golfers", [])
         if not golfers:
-            continue
-
-        # Only include tours the user follows
-        if t.get("tour") not in feed_tours:
             continue
 
         # Only include winner/outright markets (skip top-20, make-cut, etc.)

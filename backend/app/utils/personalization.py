@@ -9,7 +9,8 @@ Design principles:
 - Users without onboarding completed still benefit from any favorites they've set
 - Multiplier is computed on-the-fly, not stored in DB
 - Rival bonus applies when the rival is *losing*, adding schadenfreude
-- Sport affinities scale smoothly: high affinity boosts, low suppresses
+- Sport affinities scale smoothly: high affinity boosts, low suppresses —
+  and none of it excludes: a sport "Nah" is a rank signal (#1927)
 - Stacking is capped to prevent extreme scores
 
 Multiplier sources (applied additively, then clamped):
@@ -171,12 +172,22 @@ class PersonalizationResult:
     #: seeing football — they asked to see less of it — and #1091's rule is that
     #: game events are never capped into an empty tab.
     #:
-    #: Deliberately NOT "the multiplier without any penalty". The sport-level
-    #: gates are intentional exclusions the reader chose at onboarding — "Nah"
-    #: to a sport, "only if it's wild" — and they stay inside this number so
-    #: they keep filtering. What is lifted out is EVERY NEGATIVE TERM A SWIPE
-    #: WROTE — the category dismissal, the feature dislike, and the semantic
-    #: resemblance penalty; `rank` still sees all of them, which is the point.
+    #: Deliberately NOT "the multiplier without any penalty". What is lifted
+    #: out is every RANK-ONLY negative term: EVERY NEGATIVE TERM A SWIPE WROTE
+    #: — the category dismissal, the feature dislike, and the semantic
+    #: resemblance penalty — and, since #1927's wide half, the sport "Nah"
+    #: penalty too. `rank` still sees all of them, which is the point.
+    #:
+    #: The "Nah" term moved from "intentional exclusion" to "rank-only" on
+    #: Alex's ruling of 2026-09-17: "a nah swipe should NOT hide the whole
+    #: sport … Swiping needs to be a ranking signal, not a death certificate."
+    #: A stored `baseball_mlb: 0.0` and a sport that is simply absent from the
+    #: reader's affinities both produce `sport_nah`, and neither is allowed to
+    #: decide eligibility — the row cannot say how the value got there, and a
+    #: missing preference is not an explicit rejection. What DOES stay inside
+    #: this number is "only if it's wild" (`sport_suppress`): that is a
+    #: separate explicit control whose whole meaning is a higher bar, and its
+    #: interpretation is unchanged.
     #:
     #: That list is a description, not the contract, and it is not the thing to
     #: extend when a fourth term appears. CERT-2672/2676/2681 were three
@@ -185,8 +196,20 @@ class PersonalizationResult:
     #: admission at two gates, then at a third, then the feature and semantic
     #: terms turned out to decide it too. The contract is the invariant, and it
     #: is pinned as one: for a reader whose ONLY signal is swipes, this is
-    #: exactly 1.0 — see `test_no_swipe_derived_term_of_any_name_reaches_admission`.
+    #: exactly 1.0 — see `test_no_swipe_derived_term_of_any_name_reaches_admission`
+    #: — and for a reader whose only NEGATIVE signal is a sport Nah it is also
+    #: exactly 1.0 (`test_swipes_rank_never_hide_a_sport_1927.py`).
     admission_multiplier: float = 1.0
+
+    #: True when the sport-affinity dial read "Nah" for this card — an explicit
+    #: `<= NAH_AFFINITY_THRESHOLD` value OR an absent sport (implicit). #1927.
+    #:
+    #: A field rather than `any("sport_nah" in r for r in reasons)` for the same
+    #: reason `has_standing_team_relationship` is one: the reason strings are a
+    #: display vocabulary, and the gate that parsed them was the defect. Read
+    #: by `routes/feed.py` only to apply the championship/playoff RANK floor in
+    #: a Nah sport; nothing reads it to exclude.
+    sport_nah: bool = False
 
     #: True when the reader has a STANDING relationship with one of the teams in
     #: this matchup — a follow, their home metro, or their alma mater. #1927.
@@ -203,6 +226,103 @@ class PersonalizationResult:
     #: the reader performed: they tapped follow, they set a home location, they
     #: named a school.
     has_standing_team_relationship: bool = False
+
+
+def sport_affinity_term(
+    ctx: PersonalizationContext,
+    *,
+    sport_key: Optional[str],
+    sport_category: Optional[str] = None,
+) -> tuple[float, Optional[str]]:
+    """THE ONE sport-affinity dial, for every sports card type. #1927.
+
+    Returns ``(bonus, reason)``: the additive multiplier term the reader's
+    stored sport affinities contribute to this card, and its display reason
+    (``sport_boost`` / ``sport_suppress`` / ``sport_nah``), or ``(0.0, None)``
+    when the dial has nothing to say.
+
+    One function rather than the two inline copies the event and futures
+    scorers used to carry, and rather than a third and fourth for concept and
+    tournament cards, because the contract has to be the same everywhere it is
+    read: the dial RANKS. It never decides eligibility — see
+    ``PersonalizationResult.admission_multiplier`` for where its Nah term is
+    held out of the admission number, and ``routes/feed.py``'s keyed-item pass
+    for the card types that have no admission gate at all.
+
+    What it reads, in order, all pre-existing:
+
+    * nothing, when the reader has no stored affinities (anonymous, or signed in
+      and never onboarded) — the dial is silent, not "Nah";
+    * nothing, when the card is not a sports card (``_is_sports_candidate``,
+      Queue #255 Item 2) — politics is not a sport the reader skipped;
+    * ``_lookup_sport_affinity`` on ``sport_key`` (exact, then sport-root
+      prefix), falling back to ``_match_sport_affinity`` on ``sport_category``;
+    * a sport the reader stored nothing for reads as ``0.0`` — the implicit
+      "Nah" of a reader who went through onboarding and did not pick it. It
+      ranks exactly like an explicit Nah and, like it, excludes nothing.
+
+    No new constants: ``HIGH_AFFINITY_BONUS`` / ``LOW_AFFINITY_PENALTY`` /
+    ``NAH_AFFINITY_PENALTY`` at their existing thresholds.
+    """
+    if not ctx.sport_affinities:
+        return 0.0, None
+    if not _is_sports_candidate(sport_key, sport_category):
+        return 0.0, None
+
+    affinity: Optional[float] = None
+    if sport_key:
+        affinity = _lookup_sport_affinity(sport_key, ctx.sport_affinities)
+    if affinity is None and sport_category:
+        affinity = _match_sport_affinity(sport_category, ctx.sport_affinities)
+    if affinity is None:
+        # Sport not in user's affinities at all — implicit "Nah"
+        affinity = 0.0
+
+    if affinity >= HIGH_AFFINITY_THRESHOLD:
+        return HIGH_AFFINITY_BONUS, f"sport_boost:{HIGH_AFFINITY_BONUS:.2f}"
+    if affinity <= NAH_AFFINITY_THRESHOLD:
+        return NAH_AFFINITY_PENALTY, f"sport_nah:{NAH_AFFINITY_PENALTY:.2f}"
+    if affinity < LOW_AFFINITY_THRESHOLD:
+        return LOW_AFFINITY_PENALTY, f"sport_suppress:{LOW_AFFINITY_PENALTY:.2f}"
+    return 0.0, None
+
+
+def _is_nah_term(bonus: float, reason: Optional[str]) -> bool:
+    return bool(reason) and reason.startswith("sport_nah") and bonus < 0
+
+
+def compute_sport_affinity_multiplier(
+    ctx: Optional[PersonalizationContext],
+    *,
+    sport_key: Optional[str],
+    sport_category: Optional[str] = None,
+) -> PersonalizationResult:
+    """The dial alone, as a clamped multiplier — for cards that carry no team
+    pair, no outcomes and no swipe-token identity: concept cards (a UFC card,
+    a Grand Prix) and golf tournaments. #1927.
+
+    Rank-only by construction: ``admission_multiplier`` stays ``1.0`` because
+    these card types have no admission floor to read it, and the caller applies
+    ``multiplier`` to the card's ordering score and nothing else. A ``None``
+    context, or a card whose sport identity the caller could not establish
+    (``sport_key`` and ``sport_category`` both ``None``), is neutral — the
+    caller names that limit rather than guessing a sport from a title.
+    """
+    if ctx is None:
+        return PersonalizationResult()
+    bonus, reason = sport_affinity_term(
+        ctx, sport_key=sport_key, sport_category=sport_category
+    )
+    if not reason:
+        return PersonalizationResult()
+    multiplier = max(MIN_MULTIPLIER, min(MAX_MULTIPLIER, 1.0 + bonus))
+    return PersonalizationResult(
+        multiplier=multiplier,
+        reasons=[reason],
+        is_personalized=True,
+        admission_multiplier=1.0,
+        sport_nah=_is_nah_term(bonus, reason),
+    )
 
 
 def compute_event_multiplier(
@@ -238,9 +358,12 @@ def compute_event_multiplier(
         return PersonalizationResult()
 
     bonus = 0.0
-    # The part of `bonus` that came from a swipe-away (CERT-2676).
-    dismiss_bonus = 0.0
+    # The part of `bonus` that RANKS but may not decide eligibility: every
+    # swipe-derived negative term (CERT-2676/2681) and the sport "Nah" term
+    # (#1927). Subtracted back out of `admission_multiplier` below.
+    rank_only_bonus = 0.0
     reasons = []
+    sport_nah = False
 
     team_ids = [tid for tid in [home_team_id, away_team_id] if tid is not None]
 
@@ -287,24 +410,20 @@ def compute_event_multiplier(
                 reasons.append(f"rival_playing:{RIVAL_PLAYING_BONUS:.2f}")
 
     # --- Sport affinity ---
-    # If the user has sport affinities set (completed onboarding), apply
-    # their preferences. When no matching affinity is found for a sport,
-    # treat it as implicit "Nah" — the user went through onboarding and
-    # didn't express interest in this sport.
-    if sport_key and ctx.sport_affinities:
-        affinity = _lookup_sport_affinity(sport_key, ctx.sport_affinities)
-        if affinity is None:
-            # Sport not in user's affinities at all — implicit "Nah"
-            affinity = 0.0
-        if affinity >= HIGH_AFFINITY_THRESHOLD:
-            bonus += HIGH_AFFINITY_BONUS
-            reasons.append(f"sport_boost:{HIGH_AFFINITY_BONUS:.2f}")
-        elif affinity <= NAH_AFFINITY_THRESHOLD:
-            bonus += NAH_AFFINITY_PENALTY
-            reasons.append(f"sport_nah:{NAH_AFFINITY_PENALTY:.2f}")
-        elif affinity < LOW_AFFINITY_THRESHOLD:
-            bonus += LOW_AFFINITY_PENALTY
-            reasons.append(f"sport_suppress:{LOW_AFFINITY_PENALTY:.2f}")
+    # The shared dial (`sport_affinity_term`): boost / suppress / Nah, with an
+    # absent sport reading as implicit "Nah". #1927: the Nah term is RANK-ONLY
+    # — held out of `admission_multiplier` exactly as the swipe terms below
+    # are, so the gate in `routes/feed.py` reads a number that excludes nothing
+    # the reader did not explicitly bar. "If it's wild" (`sport_suppress`)
+    # stays inside the admission number: that control's meaning IS a higher
+    # bar, and it is unchanged here.
+    sport_bonus, sport_reason = sport_affinity_term(ctx, sport_key=sport_key)
+    if sport_reason:
+        bonus += sport_bonus
+        reasons.append(sport_reason)
+        if _is_nah_term(sport_bonus, sport_reason):
+            sport_nah = True
+            rank_only_bonus += sport_bonus
 
     category_bonus = _category_affinity_bonus(ctx, _category_from_sport_key(sport_key))
     if category_bonus:
@@ -317,7 +436,7 @@ def compute_event_multiplier(
         # category affinity is a boost, and a boost that could not raise a card
         # past an admission floor would be a different bug.
         if category_bonus < 0:
-            dismiss_bonus += category_bonus
+            rank_only_bonus += category_bonus
 
     feature_bonus, feature_reason = _feature_affinity_bonus(ctx, feature_tokens)
     if feature_bonus:
@@ -328,7 +447,7 @@ def compute_event_multiplier(
         # an "if it's wild" reader a base-98 card cleared the 55 bar at 68
         # without them and fell to 44 with them. A downrank does not decide
         # eligibility whatever the term is NAMED.
-        dismiss_bonus += min(0.0, feature_bonus)
+        rank_only_bonus += min(0.0, feature_bonus)
 
     semantic_bonus, semantic_reason = _semantic_dismiss_bonus(ctx, feature_tokens)
     if semantic_bonus:
@@ -337,7 +456,7 @@ def compute_event_multiplier(
         # CERT-2681, and this one is dismiss-derived by construction — it is a
         # penalty for RESEMBLING recent swipes. `min` rather than a bare add
         # only so the invariant holds if it ever learns a positive side.
-        dismiss_bonus += min(0.0, semantic_bonus)
+        rank_only_bonus += min(0.0, semantic_bonus)
 
     # --- Minor pro league suppression ---
     # If the event is from a minor pro league (XFL, CFL, AHL, etc.) and
@@ -356,7 +475,7 @@ def compute_event_multiplier(
     # --- Clamp and return ---
     multiplier = max(MIN_MULTIPLIER, min(MAX_MULTIPLIER, 1.0 + bonus))
     admission_multiplier = max(
-        MIN_MULTIPLIER, min(MAX_MULTIPLIER, 1.0 + bonus - dismiss_bonus)
+        MIN_MULTIPLIER, min(MAX_MULTIPLIER, 1.0 + bonus - rank_only_bonus)
     )
 
     return PersonalizationResult(
@@ -365,6 +484,7 @@ def compute_event_multiplier(
         is_personalized=bool(reasons),
         admission_multiplier=admission_multiplier,
         has_standing_team_relationship=has_standing_team_relationship,
+        sport_nah=sport_nah,
     )
 
 
@@ -405,9 +525,11 @@ def compute_futures_multiplier(
         return PersonalizationResult()
 
     bonus = 0.0
-    # The part of `bonus` that came from a swipe-away (CERT-2676).
-    dismiss_bonus = 0.0
+    # Rank-only terms — the swipe-derived negatives (CERT-2676) and the sport
+    # "Nah" term (#1927). Same accumulator, same subtraction as the event path.
+    rank_only_bonus = 0.0
     reasons = []
+    sport_nah = False
 
     # --- Check if any outcome team is a user favorite ---
     matched_follow = False
@@ -445,37 +567,22 @@ def compute_futures_multiplier(
                 break  # One match is enough
 
     # --- Sport affinity ---
-    # Prefer direct sport_key lookup over category substring matching.
-    # With split affinities (nfl vs college_football), a direct lookup on
-    # "americanfootball_nfl" correctly returns the NFL affinity, not the
-    # max of NFL + college football from substring matching on "football".
-    # Queue #255 Item 2: gate the sport-affinity block (incl. its implicit "Nah"
-    # fallback) on the candidate being a genuine sports card. Otherwise a single
-    # onboarding sport preference hard-drops every non-sports future (politics,
-    # economics, tech, entertainment, health, weather, culture) via an unmatched
-    # sports key. Non-sports candidates skip straight to category/feature
-    # personalization below. Explicit sports "Nah" (an un-picked *sport*) still
-    # suppresses, because those candidates pass _is_sports_candidate.
-    if ctx.sport_affinities and _is_sports_candidate(sport_key, sport_category):
-        matched_affinity = None
-        if sport_key:
-            matched_affinity = _lookup_sport_affinity(sport_key, ctx.sport_affinities)
-        if matched_affinity is None and sport_category:
-            matched_affinity = _match_sport_affinity(sport_category, ctx.sport_affinities)
-
-        # If user has affinities but nothing matched, treat as implicit "Nah"
-        if matched_affinity is None:
-            matched_affinity = 0.0
-
-        if matched_affinity >= HIGH_AFFINITY_THRESHOLD:
-            bonus += HIGH_AFFINITY_BONUS
-            reasons.append(f"sport_boost:{HIGH_AFFINITY_BONUS:.2f}")
-        elif matched_affinity <= NAH_AFFINITY_THRESHOLD:
-            bonus += NAH_AFFINITY_PENALTY
-            reasons.append(f"sport_nah:{NAH_AFFINITY_PENALTY:.2f}")
-        elif matched_affinity < LOW_AFFINITY_THRESHOLD:
-            bonus += LOW_AFFINITY_PENALTY
-            reasons.append(f"sport_suppress:{LOW_AFFINITY_PENALTY:.2f}")
+    # The shared dial. It prefers the direct sport_key lookup over category
+    # substring matching (split affinities: "americanfootball_nfl" returns the
+    # NFL affinity, not the max of NFL + college football), and it is gated on
+    # the candidate being a genuine sports card (Queue #255 Item 2) so a single
+    # onboarding sport preference never touches politics/economics/tech. #1927:
+    # its Nah term is rank-only — held out of the admission number below, so
+    # the 15 and 55 bars in `feed.py` no longer read it.
+    sport_bonus, sport_reason = sport_affinity_term(
+        ctx, sport_key=sport_key, sport_category=sport_category
+    )
+    if sport_reason:
+        bonus += sport_bonus
+        reasons.append(sport_reason)
+        if _is_nah_term(sport_bonus, sport_reason):
+            sport_nah = True
+            rank_only_bonus += sport_bonus
 
     category_bonus = _category_affinity_bonus(ctx, sport_category)
     if category_bonus:
@@ -484,20 +591,20 @@ def compute_futures_multiplier(
         # CERT-2676, futures side. Same rule, same reason: `feed.py` gates
         # futures on `personalized_score < 15` and on the low-affinity 55 bar.
         if category_bonus < 0:
-            dismiss_bonus += category_bonus
+            rank_only_bonus += category_bonus
 
     feature_bonus, feature_reason = _feature_affinity_bonus(ctx, feature_tokens)
     if feature_bonus:
         bonus += feature_bonus
         reasons.append(feature_reason)
         # CERT-2681, futures side — same term, same writer, same rule.
-        dismiss_bonus += min(0.0, feature_bonus)
+        rank_only_bonus += min(0.0, feature_bonus)
 
     semantic_bonus, semantic_reason = _semantic_dismiss_bonus(ctx, feature_tokens)
     if semantic_bonus:
         bonus += semantic_bonus
         reasons.append(semantic_reason)
-        dismiss_bonus += min(0.0, semantic_bonus)
+        rank_only_bonus += min(0.0, semantic_bonus)
 
     # --- Pinned item bonus ---
     if futures_market_id and futures_market_id in ctx.pinned_futures_ids:
@@ -507,7 +614,7 @@ def compute_futures_multiplier(
     # --- Clamp and return ---
     multiplier = max(MIN_MULTIPLIER, min(MAX_MULTIPLIER, 1.0 + bonus))
     admission_multiplier = max(
-        MIN_MULTIPLIER, min(MAX_MULTIPLIER, 1.0 + bonus - dismiss_bonus)
+        MIN_MULTIPLIER, min(MAX_MULTIPLIER, 1.0 + bonus - rank_only_bonus)
     )
 
     return PersonalizationResult(
@@ -515,6 +622,7 @@ def compute_futures_multiplier(
         reasons=reasons,
         is_personalized=bool(reasons),
         admission_multiplier=admission_multiplier,
+        sport_nah=sport_nah,
     )
 
 
@@ -571,6 +679,39 @@ def _match_sport_affinity(
         if category_lower == "esports" and "esports" in key_lower:
             if best_match is None or affinity > best_match:
                 best_match = affinity
+
+    if best_match is None:
+        # ADDITIVE RETRY, never a re-interpretation. It is reached only when the
+        # scan above matched NOTHING, so it can turn a miss into a match and can
+        # never change a match the direct pass already made.
+        #
+        # The six clauses above are a hand-maintained approximation of one fact
+        # `sport_keys.py` already holds canonically: the feed/LLM category
+        # vocabulary and the sport-key vocabulary are different vocabularies.
+        # `LLM_CATEGORY_TO_SPORT_PREFIX` is the map between them and is the
+        # single source of truth, so read it rather than adding a seventh clause.
+        #
+        # CERT-3059's finding, and the reason this is not a guard-gap tidy: a
+        # concept card declares `motorsports` (plural) while onboarding stores
+        # `motorsport_formula1`, and `"motorsports" in "motorsport_formula1"` is
+        # False on the trailing `s` alone. A reader who had explicitly LOVED F1
+        # read as an implicit Nah — a score-60 F1 card served at 24 carrying
+        # `sport_nah:-0.60`, a positive signal inverted into a penalty.
+        #
+        # Who NEWLY matches: of the sixteen entries in the map, only
+        # `motorsports` can reach this line. `football`→`americanfootball` and
+        # `hockey`→`icehockey` differ from their category but already match
+        # directly (substring), and the other thirteen map a category to itself.
+        # So this repairs F1 and moves nothing else — asserted in
+        # `test_the_retry_moves_only_motorsports`.
+        from app.utils.sport_keys import LLM_CATEGORY_TO_SPORT_PREFIX
+
+        prefix = LLM_CATEGORY_TO_SPORT_PREFIX.get(category_lower)
+        if prefix and prefix != category_lower:
+            for sport_key, affinity in sport_affinities.items():
+                if prefix in sport_key.lower():
+                    if best_match is None or affinity > best_match:
+                        best_match = affinity
 
     return best_match
 
