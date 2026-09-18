@@ -127,6 +127,7 @@ serves for Lazio–AC Milan.)
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 from dataclasses import dataclass
@@ -562,6 +563,38 @@ async def shared_fixture_ids_on_our_rows(
     return [str(r[0]).strip() for r in rows if r[0] and str(r[0]).strip()]
 
 
+def fold_is_live() -> bool:
+    """Does the event page fold a tagged duplicate's markets onto its canonical?
+
+    🔴 **The deploy-order guard, and this module was the only one of the four
+    duplicate-tag writers without it.** ``tennis_twin_sweep``,
+    ``soccer_ghost_twin_sweep`` and ``polymarket_container_twin_sweep`` each
+    refuse to write the tag when the read side is not folding, for a reason that
+    applies here with more force, not less: **the rows this module tags are the
+    ones holding the prices.** In all 28 groups measured on 2026-09-18 it is the
+    real-league row that serves an empty rail and the ``*_other`` catch-all
+    carrying the markets, so tagging without the fold does not remove a
+    duplicate card — it takes the only priced row off the board and leaves the
+    reader the blank one. The tag is inert without ``folded_event_ids``, so
+    writing it is not a partial win.
+
+    #6333 raised the stakes rather than creating them: narrowing
+    ``SPLIT_SPORT`` admitted 66 further groups into this write path, all of them
+    of exactly that shape.
+
+    Source inspection rather than a live request, because the question is about
+    THIS process's code and not about a round trip — the same form the three
+    siblings use, so the four guards read alike. It cannot detect a fold that is
+    wired but broken; that is what the end-to-end route guards are for.
+    """
+    try:
+        from app.routes.events import _build_game_markets
+
+        return "folded_event_ids" in inspect.getsource(_build_game_markets)
+    except Exception:  # noqa: BLE001 — unreadable source is "cannot prove it"
+        return False
+
+
 async def reconcile_shared_fixture_ids(
     session: Any,
     fixture_ids: Sequence[str],
@@ -596,6 +629,43 @@ async def reconcile_shared_fixture_ids(
     ).all()
     plan, refusals = plan_shared_fixture_duplicates(rows, is_contest_id=is_contest_id)
 
+    folding = fold_is_live()
+    if plan and apply and not folding:
+        # Never silent, and never mistakable for the steady state. This
+        # function's own contract says "planned 4 / written 0" is the NORMAL
+        # second pass, so a guard that merely declined to write would be
+        # invisible in exactly the metrics a reader would check (gotcha #53:
+        # "it returned" is not "it worked"). Hence a distinct key, a reason,
+        # and a log line at ERROR.
+        #
+        # Gated on `apply` rather than on the plan alone — which is where this
+        # departs from the three siblings, deliberately. This function
+        # documents that `apply=False` returns the same list the apply path
+        # would write, and callers plan with it; refusing to plan would break
+        # that contract to protect a write that a dry run does not perform.
+        # `fold_is_live` is reported on BOTH paths, so a dry run still shows it.
+        logger.error(
+            "shared-fixture duplicate tagging REFUSED: _build_game_markets no "
+            "longer calls folded_event_ids, so %s tag(s) were not written",
+            len(plan),
+        )
+        return {
+            "fixtures_examined": len(wanted),
+            "tags_planned": len(plan),
+            "tags_written": 0,
+            "fold_is_live": False,
+            "fold_refused": len(plan),
+            "reason": (
+                f"_build_game_markets no longer calls folded_event_ids, so "
+                f"{len(plan)} duplicate(s) were NOT tagged — in this module's "
+                f"population the tagged row is the one holding the markets, so "
+                f"tagging without the fold serves the reader the empty row"
+            ),
+            "duplicate_tag_receipts": [item.receipt() for item in plan],
+            "duplicate_refusal_receipts": refusals,
+            "failed_event_ids": [],
+        }
+
     written = 0
     failed: list[int] = []
     if apply:
@@ -629,6 +699,11 @@ async def reconcile_shared_fixture_ids(
         # already there contributes 0 — "planned 4 / written 0" is the steady
         # state of a second pass, not a failure (gotcha #53: say which).
         "tags_written": written,
+        # Reported on the healthy path too, so "is the read side still folding?"
+        # is answerable from any pass's metrics rather than only from the one
+        # that refused — an absent key and a False key are not the same fact.
+        "fold_is_live": folding,
+        "fold_refused": 0,
         "duplicate_tag_receipts": [item.receipt() for item in plan],
         "duplicate_refusal_receipts": refusals,
         "failed_event_ids": failed,
