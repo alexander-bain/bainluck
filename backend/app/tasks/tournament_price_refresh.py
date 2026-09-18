@@ -313,6 +313,12 @@ async def _refresh_registered_tournament_prices(
         # other: `legs_settled` are rows this pass graded from a closed venue
         # book, and after grading they leave the population for good.
         "legs_settled": 0,
+        # #6919. Legs graded vs MARKET ROWS closed, and they differ on purpose:
+        # one condition can be two rows here (the ladder copy and the
+        # sub-market copy) and each row has two legs. The row count is the one
+        # a reader feels, because `status` is what decides whether we are still
+        # asking the question.
+        "markets_settled": 0,
         # A closed book that named no winner — see `settled_yes_probability`.
         # Reported rather than dropped: a register whose legs all close without
         # a result is a venue change, and it would otherwise look like a quiet
@@ -468,7 +474,7 @@ async def _write_refreshed_prices(
     markets: list[Any], stats: dict[str, Any], *, now: datetime
 ) -> None:
     """Update every registered outcome these markets price, and snapshot it."""
-    from sqlalchemy import select, text, update
+    from sqlalchemy import func, select, text, update
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
     from app.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
@@ -579,6 +585,57 @@ async def _write_refreshed_prices(
             if settled is None and getattr(market, "closed", False):
                 stats["closed_without_result"] += 1
                 continue
+
+            # ── #6919: THE ROW THE READER MEETS SAYS WHETHER THE QUESTION IS
+            # STILL BEING ASKED, AND UNTIL NOW THIS RAIL NEVER WROTE IT.
+            #
+            # Below, a settled book grades the legs `api_settlement` — tier-3,
+            # the venue's own answer. The market row was left `status='open'`
+            # with `settled_at IS NULL`, so the same market both had a winner
+            # and was still open: 18 markets / 34 legs in that shape on
+            # production 2026-09-18, 11 of them linked to an event and so on a
+            # game page, presented as a live question under a result we had
+            # already written.
+            #
+            # It is this rail's job and not the poll's. `submarket_is_open`
+            # (#6734) is the other status writer and it lives only in
+            # `_process_event_batch`, whose population is the newest 2,000
+            # active+unclosed Gamma events by `startDate` (#219E's offset cap).
+            # Replayed against the venue that morning, that window reached back
+            # ~11 hours and excluded 218 of the 226 Gamma events on our live
+            # slate; for those the only other settlement rail is a CLOB
+            # `market_resolved` websocket push, which has no reconciliation.
+            # This rail addresses markets BY CONDITION ID, so it is the one door
+            # that does not care how long ago the event was listed.
+            #
+            # THE GATE IS NOT WIDENED: `settled_yes_probability` is the same
+            # decision that gates the grade, unchanged. An open book falls
+            # through here untouched, and a closed book between the bars already
+            # `continue`d above into `closed_without_result` — we write down the
+            # settlement we are acting on, and never one we had to infer.
+            #
+            # `settled_at` is COALESCEd, the LINKLOSS-02 idiom
+            # `_process_event_batch` uses for the same pair of columns: status
+            # and settled_at are one fact, and a re-run must not restamp a
+            # settlement that already has a date.
+            if settled is not None:
+                await session.execute(
+                    update(FuturesMarket)
+                    .where(
+                        # LAT-P240 again: leading column first, same as the
+                        # volume UPDATE above, or this scans the index.
+                        FuturesMarket.source == "polymarket",
+                        FuturesMarket.external_id == market.condition_id,
+                    )
+                    .values(
+                        status="resolved",
+                        settled_at=func.coalesce(
+                            FuturesMarket.settled_at, now
+                        ),
+                        updated_at=now,
+                    )
+                )
+                stats["markets_settled"] += 1
 
             probability = settled
             if probability is None:

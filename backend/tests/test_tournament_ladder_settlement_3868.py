@@ -151,6 +151,9 @@ def _stats() -> dict:
         "unpriced": 0,
         "volume_observed": 0,
         "legs_settled": 0,
+        # #6919 added the market-row counter beside the leg counter; this
+        # double mirrors the rail's real census, so it carries it too.
+        "markets_settled": 0,
         "closed_without_result": 0,
         "legs_reached_by_condition": 0,
     }

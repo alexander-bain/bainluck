@@ -927,6 +927,10 @@ async def _refresh_stale_polymarket_conditions(
         "unpriced": 0,
         "not_returned": 0,
         "legs_settled": 0,
+        # #6919: the market rows this run marked resolved, reported even
+        # when zero — a settlement backstop that settles nothing has not
+        # proved it can settle anything.
+        "markets_settled": 0,
         "closed_without_result": 0,
         "legs_reached_by_condition": 0,
         "budget_exhausted": False,
