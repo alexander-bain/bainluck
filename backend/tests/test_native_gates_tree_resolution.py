@@ -23,6 +23,16 @@ script printed "no changed Swift files — nothing to prove". **A vacuous pass,
 worded identically to the legitimate no-op.** The check that exists specifically
 to catch "you did not build what you think you built" is the one that went quiet.
 
+AMENDED 2026-09-18 (native/231): SHALLOW IS NOT THE SAME AS BASELESS.
+The paragraph above is right about what #5428 saw and wrong about what causes it.
+A depth-1 clone whose base ref IS its own HEAD — every lane worktree on this
+machine, and the fixture this file used — resolves a merge base instantly. Both
+the script and this suite refused on shallowness itself, so the recompile proof
+ran nowhere and the gate exited 1 on runs whose build and tests passed. The
+blind case is a MISSING MERGE BASE; shallowness only explains one. The two tests
+below now separate them, and #5428's own case (shallow *and* stranded) is still
+guarded, remedy and all.
+
 HOW THESE TESTS AVOID BEING VACUOUS THEMSELVES
 ----------------------------------------------
 They do not grep the script for `rev-parse --show-toplevel`; a source-scan would
@@ -183,20 +193,72 @@ def test_a_real_no_op_reports_a_comparison_that_happened(tmp_path):
     assert "CANNOT DETERMINE" not in out
 
 
-def test_a_shallow_repo_fails_and_says_shallow(tmp_path):
-    """#5428's clone made the proof vacuous and reported it as a pass."""
-    origin = make_repo(tmp_path / "origin")
-    shallow = tmp_path / "shallow"
+def shallow_clone_of(origin, dest):
+    """A depth-1 clone, asserted to really be shallow before anything reads it."""
     subprocess.run(
-        ["git", "clone", "-q", "--depth", "1", f"file://{origin}", str(shallow)],
+        ["git", "clone", "-q", "--depth", "1", f"file://{origin}", str(dest)],
         capture_output=True,
         text=True,
         timeout=120,
         check=True,
     )
-    assert git(shallow, "rev-parse", "--is-shallow-repository") == "true"
+    assert git(dest, "rev-parse", "--is-shallow-repository") == "true"
+    git(dest, "config", "user.email", "gate@test")
+    git(dest, "config", "user.name", "gate")
+    return dest
+
+
+def strand(repo, swift_name="Stranded.swift"):
+    """Put the repo on a branch that shares no history with anything — the only
+    way a merge base actually goes missing."""
+    git(repo, "checkout", "-q", "--orphan", "stranded")
+    git(repo, "rm", "-rqf", ".")
+    ios = repo / "ios" / "Bain Luck"
+    ios.mkdir(parents=True, exist_ok=True)
+    (ios / "Bain Luck.xcodeproj").mkdir(exist_ok=True)
+    (ios / "Bain Luck.xcodeproj" / "project.pbxproj").write_text("// stub\n")
+    (ios / swift_name).write_text("// stranded\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "stranded")
+    return repo
+
+
+def test_a_shallow_repo_with_a_resolvable_base_is_not_blind(tmp_path):
+    """SHALLOWNESS IS NOT BLINDNESS, and this file used to assert that it was.
+
+    The original test cloned `--depth 1` and required exit 1 with the SHALLOW
+    remedy — but that clone's `master` IS its own HEAD, so `git merge-base` answers
+    instantly. The script agreed with the test by refusing a priori on
+    `rev-parse --is-shallow-repository`, and between them they turned the
+    recompile proof off for every lane worktree on this machine (all shallow) and
+    made the gate exit 1 on runs whose build and tests both passed.
+
+    Measured on b57235c0e in ~/bainluck-dev/native, 2026-09-18: the script said
+    CANNOT DETERMINE while `git merge-base origin/master HEAD` returned
+    9c8787a234 and the three-dot diff named both changed files.
+
+    #5428's real observation is the case below this one, and it is still guarded.
+    """
+    origin = make_repo(tmp_path / "origin")
+    shallow = shallow_clone_of(origin, tmp_path / "shallow")
+    (shallow / "ios" / "Bain Luck" / "Changed.swift").write_text("// in the clone\n")
 
     rc, out = explain(shallow, "--base", "master")
+    assert rc == 0, f"a resolvable comparison was refused as blind:\n{out}"
+    assert "CANNOT DETERMINE" not in out, out
+    assert "Changed.swift" in out, f"the proof ran but saw nothing:\n{out}"
+
+
+def test_a_shallow_repo_that_really_has_no_base_still_says_shallow(tmp_path):
+    """#5428's own case, kept: shallow AND baseless must name the unshallow remedy.
+
+    Without this, the fix above would read as deleting the protection rather than
+    aiming it.
+    """
+    origin = make_repo(tmp_path / "origin")
+    shallow = strand(shallow_clone_of(origin, tmp_path / "shallow"))
+
+    rc, out = explain(shallow, "--base", "origin/master")
     assert rc == 1, f"a blind proof must not exit 0:\n{out}"
     assert "SHALLOW" in out, out
     assert "fetch --unshallow" in out, "no remedy named"
@@ -240,12 +302,11 @@ def test_one_unambiguous_marker_separates_blind_from_no_op(tmp_path):
     clean_rc, clean_out = explain(clean, "--base", "master")
 
     origin = make_repo(tmp_path / "origin")
-    shallow = tmp_path / "shallow"
-    subprocess.run(
-        ["git", "clone", "-q", "--depth", "1", f"file://{origin}", str(shallow)],
-        capture_output=True, text=True, timeout=120, check=True,
-    )
-    shallow_rc, shallow_out = explain(shallow, "--base", "master")
+    # Shallow AND stranded: the blind case. A depth-1 clone on its own branch is
+    # NOT blind (see above), and using one here would assert the marker on a run
+    # that could see perfectly well.
+    shallow = strand(shallow_clone_of(origin, tmp_path / "shallow"))
+    shallow_rc, shallow_out = explain(shallow, "--base", "origin/master")
 
     unrelated = make_repo(tmp_path / "unrelated")
     git(unrelated, "checkout", "-q", "--orphan", "other")
