@@ -24057,6 +24057,29 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         else (event.opening_home_probability, event.opening_away_probability)
     )
 
+    # ── #6960: THE THIRD ARM OF #5271 / #6238 ────────────────────────────────
+    #
+    # `1 - P(home)` is "the home team does not win" — on a draw-priced sport,
+    # away win OR draw. #5271 withheld that in native, #6238 in `get_event`.
+    # This formatter serves `GET /api/events` and `GET /api/events/search` and
+    # was in neither scope, so it went on serving the fabrication to every list
+    # surface and to native. Measured 2026-09-18: `soccer_epl` 10/10,
+    # `soccer_spain_la_liga` 12/12 and `soccer_italy_serie_a` 10/10 priced rows
+    # served a pair summing to exactly 1.0000, while the DETAIL route served
+    # `None` for the same column on the same rows — 15313996 list 0.7750 /
+    # detail None, over a three-way pricing that team 0.465.
+    #
+    # The comment on the hero site below has warned about exactly this since
+    # Q441: two independent copies of the same six lines, and fixing one is how
+    # a lane ships half a fix.
+    #
+    # 🔴 WITHHELD AT THE SERVING BOUNDARY ONLY, and deliberately so. The derived
+    # `_hero_away` still flows to `compute_highlight` below exactly as it does
+    # today, because that is ranking and this is a truth fix — nulling the
+    # variable itself would silently move card scores. Only what leaves in the
+    # response changes.
+    _event_sport_key = event.sport.key if event.sport else None
+
     current_home_prob = None
     current_away_prob = None
     current_spread = None
@@ -24092,7 +24115,11 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         response["current_odds"] = {
             "captured_at": captured_at.isoformat() if captured_at else None,
             "home_probability": _hero_home,
-            "away_probability": _hero_away,
+            # #6960 site 1. The home leg is NOT the defect and is left exactly
+            # as it is; only the invented slot goes.
+            "away_probability": printable_away(
+                _hero_away, _hero_home, _event_sport_key
+            ),
             "spread": aggregated["home_spread"],
             "over_under": aggregated["over_under"],
             "projected_home_score": aggregated["projected_home_score"],
@@ -24165,7 +24192,21 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     )
     if _hero is not None:
         response["hero_probability"] = _hero.home_probability
-        response["hero_probability_away"] = _hero.away_probability
+        # #6960 site 2 — the field native, My Stuff and share cards bind to.
+        #
+        # THE SETTLED ARM IS EXEMPT, and not because of its arithmetic. A
+        # settled hero is 1.0/0.0, or 0.5/0.5 on a draw, and every one of those
+        # pairs sums to exactly 1.0 — so the predicate alone would read a RESULT
+        # as a fabricated forecast and delete the losing side of a finished
+        # soccer match. "Settled means settled" outranks this issue: a result is
+        # not a price and was never derived from the home number. The gate is
+        # the hero's own `source` vocabulary, exactly as in `get_event`.
+        _hero_away_out = _hero.away_probability
+        if _hero.source != "settled":
+            _hero_away_out = printable_away(
+                _hero_away_out, _hero.home_probability, _event_sport_key
+            )
+        response["hero_probability_away"] = _hero_away_out
         response["hero_probability_source"] = _hero.source
         if _hero.settled_result is not None:
             response["hero_settled_result"] = _hero.settled_result
@@ -24232,7 +24273,16 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     ):
         response["opening_odds"] = {
             "home_probability": float(_open_home),
-            "away_probability": float(_open_away) if _open_away else None,
+            # #6960 site 3. This arm never derived `1 - home`, so what it drops
+            # is only a STORED pair that is itself an exact complement. A
+            # de-vigged three-way opening (0.3107 / 0.4216, sum 0.7323) is a
+            # real away price and survives — deleting one we can source is the
+            # mirror-image defect of printing one we cannot.
+            "away_probability": printable_away(
+                float(_open_away) if _open_away else None,
+                float(_open_home),
+                _event_sport_key,
+            ),
             # #5414: `is not None`, not truthiness. A pick'em game opens at a
             # spread of exactly 0.0 — falsy — so this reported "no opening line"
             # for 557 of the 7,717 events with an opening spread (7.2%, measured
