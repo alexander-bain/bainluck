@@ -133,12 +133,11 @@ enum OnboardingSportsData {
         SportItem(key: "soccer", name: "Soccer", emoji: "\u{26BD}", isDefault: false),
         SportItem(key: "cricket", name: "Cricket", emoji: "\u{1F3CF}", isDefault: false),
         SportItem(key: "rugby", name: "Rugby", emoji: "\u{1F3C9}", isDefault: false),
-        // #6671: `aussierules` is NOT in SPORT_AFFINITY_MAPPING, so this tap is
-        // stored verbatim, compresses away, and never comes back — the tile
-        // always reads "Nah". iOS cannot fix that alone; the server needs
-        // `"aussierules": ["aussierules_afl", "aussierules_other"]` (both keys
-        // already exist in `sport_keys.py`). Tracked in #6671; do not delete the
-        // tile to make the grid look consistent.
+        // #6671: the server now expands `aussierules` to
+        // `aussierules_afl` / `aussierules_aflw` / `aussierules_other`
+        // (`SPORT_AFFINITY_MAPPING`, `backend/app/routes/user.py`) and
+        // `_compress_sport_affinities` serves it back under that same word, so
+        // the write key doubles as the served key and the tile round-trips.
         SportItem(key: "aussierules", name: "AFL", emoji: "\u{1F3C9}", isDefault: false),
     ]
 

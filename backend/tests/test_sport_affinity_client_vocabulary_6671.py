@@ -32,6 +32,19 @@ from app.utils.personalization import _lookup_sport_affinity
 #: list a client's preference grid must be keyed on. Adding a sport means adding
 #: it here deliberately — and a client that has not adopted the new key will show
 #: its "no opinion" state for it, which is the cost this list exists to make visible.
+#:
+#: TWO CLIENT-SIDE MIRRORS OF THIS LIST MUST MOVE WITH IT, and neither is compiled
+#: by CI, so this test is the only place the drift is caught:
+#:
+#:   * `ios/Bain Luck/Bain Luck/Models/OnboardingModels.swift` — the tile `key`s
+#:     and `servedKeys`.
+#:   * `ios/Bain Luck/BainLuckTests/SettingsInterestsShowWhatTheReaderStored6671Tests.swift`
+#:     — `serverExpandsTheseWriteKeys` and `serverCanServeTheseCategories`.
+#:
+#: This is not hypothetical: adding `aussierules` here left both Swift fixtures
+#: stale, and the AFL control in that test file went on asserting the server did
+#: NOT map it — passing, because it read the stale fixture rather than this module.
+#: If you red this test, grep those two files for the key before you fix the list.
 SERVED_AFFINITY_VOCABULARY = {
     # sports — note the pro/college splits and the four golf tours
     "nfl",
