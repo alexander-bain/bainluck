@@ -84,6 +84,40 @@ _TITLE_ACRONYMS = {
     "nfl", "mlb", "nhl", "cpi", "ppi", "wti", "ecb", "fbi", "gdp", "tv",
 }
 
+# ── A KEY THAT NAMES OUR RANKING IS NOT A NAME FOR THE READER'S SPORT (#6941) ─
+#
+# Three of the keys `_story_key` can mint describe how WE score a market, not
+# what it is about: `niche_low_signal_sports`, `minor_soccer_leagues`,
+# `daily_equity_direction`. Un-slugified they read "Niche Low Signal Sports",
+# "Minor Soccer Leagues", "Daily Equity Direction" — and both surfaces that head
+# a group with this vocabulary print the string verbatim, so a darts fan
+# searching "darts" was headed NICHE LOW SIGNAL SPORTS and a search for "Chiefs"
+# put MINOR SOCCER LEAGUES over Lamontville Golden Arrows vs. Kaizer Chiefs, one
+# of the biggest clubs in Africa in its country's top flight. "Niche", "low
+# signal" and "minor" are our ranking's opinion of a market's pull, not a fact
+# about the competition, and "equity direction" is desk jargon (notice 34).
+#
+# THEY GET A NEUTRAL DISPLAY NAME AND DELIBERATELY NOT AN AUTHORED ONE. A key in
+# `AUTHORED_STORY_TITLES` is a claim that the family is one story we can also ask
+# one sentence about, and these three are not: the first spans darts, snooker and
+# esports, the second spans every league outside the named tier. So the name goes
+# here and the question resolution below is left exactly as it was — `authored`
+# is still the only source that pre-empts a family's own shared phrase, and the
+# `story_title` tier still fires for these keys, so what folds on Discover today
+# folds on Discover after this, with the neutral noun in the sentence instead of
+# the verdict. Nothing about scoring, eligibility or ordering reads either map.
+#
+# Dropping the family instead was measured and rejected: `/search?q=darts` serves
+# this key as its ONLY family (production, 2026-09-18 23:18Z), so failing closed
+# empties the answers block outright, and a family's headline need not be inside
+# the flat `futures` slice — for "Chiefs", member 61290314 is not — so the drop
+# would take a market off the page rather than un-scaffold it.
+NEUTRAL_STORY_TITLES = {
+    "story:niche_low_signal_sports": "Other Sports",
+    "story:minor_soccer_leagues": "Soccer",
+    "story:daily_equity_direction": "Daily Market Moves",
+}
+
 # One structured log line per unknown story_key per PROCESS lifetime, so a newly
 # minted key surfaces in ops without spamming every feed request.
 _UNKNOWN_STORY_KEYS_LOGGED: set[str] = set()
@@ -107,10 +141,19 @@ def _derive_story_title(story_key: str) -> str:
 
 
 def _resolve_story_title(story_key: str) -> tuple[str, str]:
-    """``(label, title_source)`` where ``title_source`` is ``authored``/``fallback``."""
+    """``(label, title_source)`` — source ``authored``/``neutral``/``fallback``.
+
+    ``neutral`` is the #6941 tier above: a display name for a key that names our
+    own ranking. It is NOT ``authored`` on purpose — see `NEUTRAL_STORY_TITLES`
+    — and every reader of this function treats it exactly as it treats
+    ``fallback``, so naming one of these keys moves a string and nothing else.
+    """
     authored = AUTHORED_STORY_TITLES.get(story_key)
     if authored:
         return authored, "authored"
+    neutral = NEUTRAL_STORY_TITLES.get(story_key)
+    if neutral:
+        return neutral, "neutral"
     if story_key not in _UNKNOWN_STORY_KEYS_LOGGED:
         _UNKNOWN_STORY_KEYS_LOGGED.add(story_key)
         logger.info(
@@ -224,7 +267,10 @@ def resolve_story_question(
     # and `_resolve_story_title` already logs each unknown key once so the tail
     # can be authored rather than guessed at.
     title, title_source = _resolve_story_title(story_key)
-    if title_source == "fallback" and title != "Related markets":
+    # `neutral` rides with `fallback` deliberately (#6941): a key that names our
+    # ranking is still unauthored, so it keeps this weaker tier — which is what
+    # makes naming one of those keys a copy change and not a folding change.
+    if title_source in ("fallback", "neutral") and title != "Related markets":
         return f"What's the latest on {title}?", "story_title"
     return None, "none"
 
