@@ -407,7 +407,10 @@ describe("#6238 Discover's event card", () => {
     expect(text(html)).toContain(HOME_TEXT);
     expect(text(html)).not.toContain(AWAY_TEXT);
     // The strip is `justify-between`, so with the away span gone the home
-    // number stays hard right under the home crest and needs no renaming.
+    // number stays hard right under the home crest. It is also LABELLED there
+    // now — "needs no renaming" was this comment's original claim and page one
+    // disproved it on 2026-09-18 (discover/198, `drawPricedCardNamesItsNumber`).
+    // Both assertions below are unchanged; only the reasoning moved.
     expect(html).toContain('data-testid="event-card-home-probability"');
     expect(html).not.toContain('data-testid="event-card-away-probability"');
   });

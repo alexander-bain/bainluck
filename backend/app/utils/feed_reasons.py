@@ -10,6 +10,7 @@ import re
 from datetime import datetime, timezone
 from typing import Mapping, NamedTuple, Optional
 
+from app.utils.draw_priced_winner import away_is_the_complement, sport_prices_a_draw
 from app.utils.graded_card import rendered_percent
 from app.utils.highlights import CLOSE_MATCHUP_MIN, select_live_claim
 from app.utils.outcome_display_names import (
@@ -1149,6 +1150,46 @@ class LiveClaim(NamedTuple):
     sentence: str
 
 
+def _away_kickoff_price(
+    opening_away_prob: Optional[float],
+    opening_home_prob: float,
+    sport: Optional[str],
+) -> Optional[float]:
+    """The away side's OWN pre-game price, or None when we cannot source one.
+
+    #6238's rule, reaching the caption (`utils/draw_priced_winner`). On a
+    two-way sport ``1 − home`` IS the away team's price and this returns it
+    unchanged — every NFL, MLB and NBA sentence keeps the number it has always
+    stated. On a sport whose winner market prices a draw, that same arithmetic
+    is *"the home team does not win"* — away win OR draw — and the draw is a
+    quarter of the board, so the sentence hands the reader a number the venue
+    never quoted for that team.
+
+    Measured on production 2026-09-18 19:37Z, page one, rank 1: Elche CF @
+    Espanyol, live and 2-0 to Elche, captioned **"Elche CF leading after
+    starting at 46%"**. 46 is ``1 − 0.5352``. The board in the same payload
+    priced Elche at **0.204** (``opening_odds``: home 0.5352, away 0.204, sum
+    0.739 — de-vigged three-way since #1011), so the sentence overstated the
+    underdog's kickoff chance by 26 points, and the 26 points are the draw.
+    It also flattened the better true story: a 20% side is two goals up.
+
+    The substitution is safe HERE, where the withhold is right on the served
+    duel, because this sentence quotes ONE number rather than a pair — no
+    two-producer duel can form, and the number it now quotes comes from the
+    same ``Event.opening_*`` row as the favourite's. When the stored away
+    opening is absent, or is itself the complement, there is nothing to
+    substitute and the claim is suppressed (ruling 146: suppress the sentence,
+    never the card).
+    """
+    if not sport_prices_a_draw(sport):
+        return 1 - opening_home_prob
+    if opening_away_prob is None:
+        return None
+    if away_is_the_complement(opening_away_prob, opening_home_prob, sport):
+        return None
+    return opening_away_prob
+
+
 def compose_live_claim(
     *,
     home_team: str,
@@ -1159,6 +1200,8 @@ def compose_live_claim(
     opening_home_prob: Optional[float],
     home_score: Optional[int],
     away_score: Optional[int],
+    sport: Optional[str] = None,
+    opening_away_prob: Optional[float] = None,
 ) -> Optional[LiveClaim]:
     """The one supported claim this live card may make, or None. (T10-1, #5439)
 
@@ -1205,11 +1248,24 @@ def compose_live_claim(
     # a date, rightly — but this baseline is the kickoff of a game the card says
     # is LIVE, so the instant is not in doubt and the sentence should not borrow
     # a phrase that means it is.
+    #
+    # #6238 — AND THE BASELINE IS THE UNDERDOG'S OWN PRICE, NOT THE FAVOURITE'S
+    # COMPLEMENT. Which side is the underdog is `underdog_leads`' determination
+    # and is left exactly as it was; only the NUMBER moves, and only on the away
+    # side, where `1 − home` is not that team's price on a draw-priced sport.
+    # `_away_kickoff_price` carries the specimen and the argument.
+    away_is_the_underdog = opening_home_prob > 0.5
     if claim == "underdog_lead":
-        underdog = away_team if opening_home_prob > 0.5 else home_team
-        underdog_opening = (
-            opening_home_prob if opening_home_prob < 0.5 else 1 - opening_home_prob
-        )
+        if away_is_the_underdog:
+            underdog = away_team
+            underdog_opening = _away_kickoff_price(
+                opening_away_prob, opening_home_prob, sport
+            )
+            if underdog_opening is None:
+                return None
+        else:
+            underdog = home_team
+            underdog_opening = opening_home_prob
         return LiveClaim(
             "underdog_lead",
             f"{underdog} leading after starting at {_display_pct(underdog_opening)}%",
@@ -1224,6 +1280,21 @@ def compose_live_claim(
     if change > 0:
         mover, was, now_prob = home_team, opening_home_prob, home_probability
     else:
+        # #6238 — BOTH ENDPOINTS OF AN AWAY MOVE ARE THE COMPLEMENT ON A
+        # DRAW-PRICED SPORT: `was` is `1 − home` by construction here, and the
+        # `now` in hand is `current_odds.away_probability`, which the feed
+        # derives the same way (sum 1.0000 on 13 of 13 live soccer cards,
+        # measured 2026-09-16). There is no away substitution to make — the
+        # away side has no sourced CURRENT price anywhere in this payload — so
+        # the same price event is told from the side we can source. It is one
+        # move: the home team's chance falling IS the reason the away team's
+        # rose, and both numbers here are the honest home leg.
+        if sport_prices_a_draw(sport):
+            return LiveClaim(
+                "movement",
+                f"{home_team} chance fell from {_display_pct(opening_home_prob)}% "
+                f"to {_display_pct(home_probability)}%",
+            )
         mover = away_team
         was = 1 - opening_home_prob
         now_prob = (
@@ -1247,6 +1318,8 @@ def generate_event_reason(
     away_score: Optional[int] = None,
     event_tags: Optional[list[str]] = None,
     prematch_percents: Optional[Mapping[str, Optional[int]]] = None,
+    sport: Optional[str] = None,
+    opening_away_prob: Optional[float] = None,
 ) -> str:
     """
     Generate a one-line explanation for why an event is interesting.
@@ -1497,6 +1570,11 @@ def generate_event_reason(
             opening_home_prob=opening_home_prob,
             home_score=home_score,
             away_score=away_score,
+            # #6238 — the composer cannot tell a three-way board from a two-way
+            # one without the sport, and it cannot quote the away side's own
+            # kickoff price without the stored away opening.
+            sport=sport,
+            opening_away_prob=opening_away_prob,
         )
 
         if claim is not None and claim.claim_type == "underdog_lead":
@@ -1518,7 +1596,18 @@ def generate_event_reason(
     if "major_prob_swing" in reasons:
         if opening_home_prob is not None and home_probability is not None:
             change = home_probability - opening_home_prob
-            direction_team = home_team if change > 0 else away_team
+            # #6238, the third arm — THE DELTA IS THE HOME LEG'S, WHOEVER IT IS
+            # ATTRIBUTED TO. This sentence states no level, so it cannot be
+            # repaired by substituting a price; the only question is whose move
+            # it is. On a two-way board a home fall of 10 points IS an away rise
+            # of 10 and the attribution is sound. On a draw-priced one the draw
+            # takes an unknown share of it, so "Elche CF odds shifted 10%" is a
+            # number we did not measure about that team. "Shifted" carries no
+            # direction, so naming the home side states exactly what moved.
+            if sport_prices_a_draw(sport):
+                direction_team = home_team
+            else:
+                direction_team = home_team if change > 0 else away_team
             pct_change = abs(round(change * 100))
             return f"{direction_team} odds shifted {pct_change}% since open"
         return ""
