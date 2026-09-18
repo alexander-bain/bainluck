@@ -391,7 +391,10 @@ def test_the_declined_counter_is_bumped_on_the_decline_and_nothing_else_is():
             self._raw = pic.wire_encode(
                 json.dumps(
                     {
-                        "v": 1,
+                        # This build's wire, not a literal: a planted envelope
+                        # is only a test of the READ path if the reader would
+                        # accept it (it declines any other codec version).
+                        "v": pic.WIRE_ENVELOPE_VERSION,
                         "ns": NS,
                         "k": repr(KEY),
                         "stored_wall": stored_wall,

@@ -248,7 +248,9 @@ async def test_a_hit_never_touches_the_rail(fake_redis):
 
     envelope = json.dumps(
         {
-            "v": 1,
+            # This build's wire, not a literal — the reader declines any other
+            # codec version, and a planted envelope it declines is not a hit.
+            "v": pic.WIRE_ENVELOPE_VERSION,
             "ns": NS,
             "k": repr(KEY),
             "stored_wall": _t.time(),
