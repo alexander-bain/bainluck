@@ -20377,6 +20377,155 @@ def _served_point_bounds(win_prob_history: dict, history: list):
     return earliest, latest
 
 
+#: The one ``?range=`` value that asks this route for the span the chart's
+#: default view actually draws. Anything else — absent, empty, misspelt, or a
+#: value a future client invents — is today's whole-journey payload, so an
+#: unrecognised range can never delete a point. Fail-open is the only safe
+#: direction for a parameter whose job is to omit data.
+EVENT_HISTORY_RANGE_SINCE_START = "since_start"
+
+
+def _point_is_at_or_after(point: dict, boundary: datetime) -> bool:
+    """Is this served point at or after ``boundary``? An unplaceable point is KEPT.
+
+    Fail-open by construction. A timestamp this cannot parse is a point whose
+    position is unknown, and dropping an unknown is exactly how a trim deletes
+    the game it was asked to preserve. Keeping it costs bytes and cannot cost a
+    reader a line.
+    """
+    raw = (point or {}).get("timestamp")
+    if not raw:
+        return True
+    try:
+        return datetime.fromisoformat(raw) >= boundary
+    except (TypeError, ValueError):
+        return True
+
+
+def _omit_pre_kickoff_points(
+    *,
+    commence_time,
+    history: list,
+    bookmaker_history: dict,
+    win_prob_history: dict,
+    win_prob_sources_meta: dict,
+    aggregate_line: list,
+    espn_history: list,
+) -> bool:
+    """Serve only the span a started game's chart draws, when the caller asks.
+
+    #6925. Measured on production 2026-09-18 against the SERVED payload, not a
+    model of it, by running THIS function over the real response — one
+    instrument on both sides of the arrow, so the ratio is not an artifact of
+    measuring "before" and "after" two different ways:
+
+        14638896  KC-DEN,  completed   2,299,202 B ->   588,254 B   3.9x   89.3% pre-kickoff
+        14638444  BUF-DET, completed   1,926,219 B ->   613,793 B   3.1x   85.6% pre-kickoff
+        15297681  LEE-NEW, completed   1,506,850 B ->   106,770 B  14.1x   93.9% pre-kickoff
+
+    and a FINISHED game's chart opens on "Since Start", not "All"
+    (``OddsChart.tsx:416`` — ``(isClosed || isLive) && hasPostStartData ?
+    "live" : "all"``). So the event page ships 86-94% of its largest payload in
+    order that the first paint may draw exactly none of it.
+
+    🔴 THESE RATIOS ARE SMALLER THAN THE ISSUE'S AND THAT IS #6924's DOING, NOT
+    A CORRECTION OF ITS ARITHMETIC. The issue measured 9.9x / 4.3x / 24.6x
+    before the split budget landed. That ship put back the in-window rows the
+    old shared cap was deleting, so there is more GAME in the payload now and
+    the pre-kickoff half is a smaller multiple of it. The deferral is worth
+    less than it was on the day it was filed; the honest number is this one.
+
+    🔴 THE COST IS NOT THE WIRE, WHICH IS WHY THIS TRIMS WHAT IS EMITTED AND NOT
+    WHAT IS READ. 2.3 MB uncompressed is ~84 KB gzipped on the wire — 21x — so
+    any fix framed as "saves 2 MB of transfer" is aiming at a number that
+    does not exist. Nor is it the database: ``EXPLAIN (ANALYZE, BUFFERS)`` of the
+    whole uncapped 6,885-row read for 14638896 is 52.2 ms, 1,565 shared hit
+    blocks, 0 read blocks. What is left is serialize here and ``JSON.parse``
+    there, and both are paid per emitted point.
+
+    🔴 A DEFERRAL, NOT A THINNING. The issue proposed one reading per book per
+    hour before kick-off. That spends fidelity to buy bytes, and the "All" range
+    renders every point it is handed (``OddsChart.filteredHistory`` returns
+    ``history`` untouched), so the reader who taps it pays for the saving.
+    Omitting a half the caller can ask for again costs no fidelity at all. On
+    the three specimens the default view's render inputs are byte-identical
+    either way; the boot payload is 3.9x / 3.1x / 14.1x smaller.
+
+    🔴 IT RUNS LAST, AFTER ``_project_served_game_state``. Every server-side
+    reader on this route — ``aggregate_line``, ``time_domain``, the blend-edge
+    pin, ``withhold_settled_market_series``, the period-marker fallback, the
+    ESPN score supplement, ``_filter_state_bearing_rows`` — has already run
+    against the whole dict. Nothing in this route's own reasoning can observe
+    the trim, so a ``range=since_start`` payload differs from today's by POINTS
+    and never by a conclusion. That is the property that makes this cheap to
+    review: there is one place to look.
+
+    🔴 THE FALLBACK IS THE CLIENT'S OWN CONDITION, NOT AN APPROXIMATION OF IT.
+    ``hasPostStartData`` (same file, :400) is "any point in ``history``, any
+    ``win_prob_history`` series, or ``espn_history`` at or after
+    ``commence_time``", and when it is false the chart defaults to "All" — the
+    one view that draws the half this would remove. So when no series has a
+    post-kick-off point, this trims nothing. A client may therefore pass
+    ``range=since_start`` unconditionally: on a scheduled game, on a game we
+    have no in-play readings for, and on a row with no ``commence_time`` at all,
+    it is handed today's payload rather than a chart it must immediately
+    re-fetch to draw.
+
+    🔴 AN EMPTIED SERIES KEEPS ITS KEY. This follows the filter directly above
+    it in the route (#1828's ``_filter_state_bearing_rows``), which can also
+    empty a source and answers by updating ``snapshot_count`` rather than
+    removing the entry — so no client meets a shape this route does not already
+    serve, and ``bookmaker_count`` still counts the books the event has.
+
+    ``espn_history`` and ``score_history`` are deliberately NOT trimmed. Both
+    are in-game series by construction (measured 0% pre-kickoff on all three
+    specimens), so trimming them would be a no-op that still had to be reasoned
+    about, and ``espn_history`` is read here to decide the fallback.
+
+    Returns True iff points were actually omitted. The route serves that as
+    ``pre_window_omitted`` so a caller can tell "there is a second request that
+    would tell you more" from "this is the whole journey".
+    """
+    if not commence_time:
+        return False
+
+    # The client's `hasPostStartData`, computed over the same three series.
+    has_post_start = any(
+        _point_is_at_or_after(point, commence_time)
+        for points in [history, espn_history, *win_prob_history.values()]
+        for point in (points or [])
+    )
+    if not has_post_start:
+        return False
+
+    omitted = 0
+
+    def _since_kickoff(points):
+        nonlocal omitted
+        kept = [
+            point
+            for point in (points or [])
+            if _point_is_at_or_after(point, commence_time)
+        ]
+        omitted += len(points or []) - len(kept)
+        return kept
+
+    history[:] = _since_kickoff(history)
+    if aggregate_line:
+        aggregate_line[:] = _since_kickoff(aggregate_line)
+    for bookmaker in list(bookmaker_history):
+        bookmaker_history[bookmaker] = _since_kickoff(bookmaker_history[bookmaker])
+    for source in list(win_prob_history):
+        win_prob_history[source] = _since_kickoff(win_prob_history[source])
+        # Keep the advertised count honest — it is rendered.
+        if source in win_prob_sources_meta:
+            win_prob_sources_meta[source]["snapshot_count"] = len(
+                win_prob_history[source]
+            )
+
+    return omitted > 0
+
+
 def _extend_win_prob_history_to_live_edge(
     win_prob_history: dict,
     win_prob_sources_meta: dict,
@@ -20691,6 +20840,17 @@ def one_row_per_bookmaker_in_bucket(snaps: list) -> list:
 async def get_event_odds_history(
     event_id: int,
     hours: int = Query(24, description="Hours of history to return"),
+    chart_range: str = Query(
+        "all",
+        alias="range",
+        description=(
+            "'all' (the default, and today's payload unchanged) serves the whole "
+            "journey. 'since_start' omits points captured before kick-off — the "
+            "half a started game's chart does not draw on first paint (#6925). "
+            "Ignored when no series has a post-kick-off point, so it is always "
+            "safe to send."
+        ),
+    ),
     response: Response = None,
     db: AsyncSession = Depends(get_db),
 ):
@@ -22354,6 +22514,25 @@ async def get_event_odds_history(
     # See `_project_served_game_state` (#6546).
     _project_served_game_state(win_prob_history)
 
+    # #6925 — LAST of the last, and after the projection above for the same
+    # reason that one is last: by here every server-side reader on this route
+    # has already seen the whole dict, so a caller asking for the game cannot
+    # change a single conclusion this route drew — only how many points travel.
+    # `snapshot_count` below is deliberately left describing the READ (the rows
+    # this route loaded) rather than the emit; `points` and each source's
+    # `snapshot_count` describe what was served.
+    pre_window_omitted = False
+    if chart_range == EVENT_HISTORY_RANGE_SINCE_START:
+        pre_window_omitted = _omit_pre_kickoff_points(
+            commence_time=event.commence_time,
+            history=history,
+            bookmaker_history=bookmaker_history,
+            win_prob_history=win_prob_history,
+            win_prob_sources_meta=win_prob_sources_meta,
+            aggregate_line=aggregate_line,
+            espn_history=espn_history,
+        )
+
     return {
         "event_id": event_id,
         "home_team": event.home_team_name,
@@ -22380,6 +22559,10 @@ async def get_event_odds_history(
         # hero it was served. False on a settled row, on a stale pre-match line
         # and whenever there is no line at all.
         "blend_edge_pinned": blend_edge_pinned,
+        # #6925: true iff `range=since_start` actually removed points, i.e. iff
+        # a second request without it would tell this caller more. False on
+        # every payload served today, including every `range=all` one.
+        "pre_window_omitted": pre_window_omitted,
         "pm_spread_data": pm_spread_data if pm_spread_data else None,
         "points": len(history),
         "bookmaker_count": len(bookmaker_history),
