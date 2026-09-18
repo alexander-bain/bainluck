@@ -48,6 +48,64 @@ func percentNumber(_ percent: Double) -> String {
     return "\(Int(percent.rounded()))"
 }
 
+/// The MAGNITUDE of a 24-hour move, to the one precision every badge that prints
+/// a move must share. Input is percentage POINTS; the caller draws the direction
+/// (an arrow or a sign) and the unit, which is why this returns no sign of its own.
+///
+/// #6931: `probability_change_24h` had five renderers in `ios/**` and they printed
+/// one number four ways. Measured on `/api/futures/114175` (2026-09-18 ~11:0xZ),
+/// Ciryl Gane served `0.005`:
+///
+/// | surface | rule it used | printed |
+/// |---|---|---|
+/// | futures hero badge | `Int((m * 100).rounded())` + `%` | **↑1%** |
+/// | chart participant table (`changeLabel`) | `%.1f` + `%` | **+0.5%** |
+/// | All Outcomes ladder (`DeltaBadge`) | `%.1f` + `pp` | **↗0.5pp** |
+/// | related-futures pill (`MovementPill`) | `%.1f%%` | **0.5%** |
+/// | movers card (`MoverCardView`) | `formatProbability` | **↑<1%** |
+///
+/// The first three are on ONE screen at once (`artifacts-native-021/`), and the
+/// biggest type carried the wrong one. The hero's integer was not merely coarse:
+/// its own gate admits a move at `abs >= 0.005`, so every move in `[0.5, 1.5)`
+/// points printed `1%` and the smallest move it will ever show was DOUBLED.
+///
+/// One decimal, because that is what the renderer standing next to it on the same
+/// screen already used and was already right. The hero moves to the table's rule;
+/// the table does not move to the hero's.
+///
+/// THE UNIT IS NOT THIS FUNCTION'S BUSINESS and deliberately does not come along.
+/// `DeltaBadge`'s `pp` is the technically exact word for a probability delta and is
+/// also the only `pp` in the app, on a surface shared with Entertainment and
+/// Politics; `%` is what the hero, the table and the pill already say to a casual
+/// fan. Unifying the WORD is a copy decision across three surfaces, filed, not
+/// smuggled in behind an arithmetic fix.
+func deltaPointsNumber(_ points: Double) -> String {
+    String(format: "%.1f", abs(points))
+}
+
+/// The futures hero badge's whole decision — whether to draw at all, and what
+/// number to draw — as one value a test can call.
+///
+/// It lives here rather than inside `FuturesDetailView` because a `@ViewBuilder`
+/// returning `some View` cannot be asserted on: while the gate and the string sat
+/// in the view, the only thing tying a test to the hero was a source scan for the
+/// call, and a scan cannot tell you what the badge SAYS. #6931's first cut had
+/// exactly that hole — reverting the view to its integer rounding left all four
+/// behavioural tests GREEN and only the scan red, because they were exercising a
+/// copy of the arithmetic that the test file had written out for itself.
+///
+/// The `0.005` floor is the badge's own and is unchanged by #6931. Note it is NOT
+/// shared with the chart's participant table, which has no floor: a served
+/// `-0.0035` is drawn there and declined here. That asymmetry predates this and is
+/// pinned rather than fixed.
+///
+/// Returns `nil` when the badge draws nothing. The arrow carries the direction, so
+/// the string is an unsigned magnitude.
+func futuresHeroMoveText(_ change: Double?) -> String? {
+    guard let m = change, abs(m) >= 0.005 else { return nil }
+    return "\(deltaPointsNumber(m * 100))%"
+}
+
 /// The absent-value marker for a number we do not have. `ladderPercent` already
 /// returns this for a nil rung; the two spellings must not drift, and
 /// `MissingProbabilityRenderTests` fails if they do.
