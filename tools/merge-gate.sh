@@ -813,6 +813,27 @@ pr_closing_scan () {
 # A keyword adjacent to a reference — the POSITIVE form of the negated pattern
 # above, reusing the same two vocabularies so the two can never drift. This is
 # what a quoted row would do to whatever it is pasted into.
+#
+# ⭐ DO NOT RECONSTRUCT THIS PATTERN OUTSIDE THIS FILE. RUN `--lint-body`.
+# The reconstruction that circulated on 2026-09-17 —
+#
+#     source <(/usr/bin/grep -E '^CLOSING_…=|^SELF_CLOSING_RE=' tools/merge-gate.sh)
+#     /usr/bin/grep -oiE "$SELF_CLOSING_RE" <body-file>
+#
+# — was published as a habit worth keeping and is INERT, in two independent
+# ways, and both of them fail OPEN:
+#   · `source <(…)` sets NOTHING under bash 3.2.57, which is `/bin/bash` on
+#     these machines (measured: `source <(echo FOO=bar); echo $FOO` prints
+#     empty). Sourcing a real FILE works; the process substitution does not.
+#   · the path is relative, so the same command run from `.claude/handoff/`
+#     greps a file that is not there and assigns nothing either.
+# Either way `$SELF_CLOSING_RE` is the EMPTY STRING, `grep -oiE ""` prints no
+# output and exits 0, and the instruction "any output = that push acts on that
+# issue" then reads a body carrying `closes #6739` as clean. An empty pattern
+# and a clean body produce the same zero bytes — gotcha #53, in the one tool
+# written to stop that class. `--lint-body` takes a ref OR a file, uses the live
+# pattern with no sourcing and no cwd dependence, and refuses to lint an empty
+# string rather than call it clean.
 SELF_CLOSING_RE="(^|[^A-Za-z])(${CLOSING_KEYWORDS})[[:space:]]*:?[[:space:]]+${CLOSING_REFERENCE}"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -850,7 +871,10 @@ SELF_CLOSING_RE="(^|[^A-Za-z])(${CLOSING_KEYWORDS})[[:space:]]*:?[[:space:]]+${C
 # reference — for the reason spelled out at `pr_closing_scan` above: this row
 # gets pasted into PR bodies, merge bodies, certs and ledger rows, and the first
 # draft of that one was itself a closing directive. The same guard covers this.
-BDECL_VERDICT=""; BDECL_DETAIL=""
+# `BDECL_NUMS` carries the bare numbers on their own so a VERDICT line can name
+# them without re-deriving them from the prose of `BDECL_DETAIL`. Same paste
+# discipline as the detail string: numbers only, no `#`, no keyword in reach.
+BDECL_VERDICT=""; BDECL_DETAIL=""; BDECL_NUMS=""
 body_declares_scan () {
   local text="$1" nums
   # `grep -o` exits 1 on no match, which under `pipefail` would take the whole
@@ -862,6 +886,7 @@ body_declares_scan () {
     | $GREP -oiE "$SELF_CLOSING_RE" 2>/dev/null \
     | $GREP -oE '[0-9]+$' 2>/dev/null \
     | sort -nu | tr '\n' ' ' | sed 's/ *$//; s/ / · /g')"
+  BDECL_NUMS="$nums"
   if [ -z "$nums" ]; then
     BDECL_VERDICT=none
     BDECL_DETAIL="declares nothing — no keyword adjacent to a reference in this body"
@@ -1014,8 +1039,31 @@ if [ "$SHA_IN" = "--lint-body" ]; then
   # intended, and this mode is the last moment the text can be changed for free.
   body_declares_scan "$lb_text"
   echo "  declares: $BDECL_DETAIL"
+  # ⭐ A VERDICT MAY NOT ANSWER A NARROWER QUESTION THAN THE ONE IT IS READ FOR.
+  # The declares row above is printed on both paths, and it was still not
+  # enough: on 2026-09-17 int418 linted a body, read the last line, and banked
+  # it — the last line is what a verdict line trains you to read, and every
+  # other mode of this script ends in one. A body quoting `close: #N` while
+  # explaining the trap (int416's second error, the same day, on live's #6739)
+  # printed `declares 6739 — the push WILL shut them` and then, one line below
+  # it, `VERDICT: CLEAN`. Both sentences were true; the pair is a lie.
+  #
+  # So the word CLEAN never stands alone over a non-empty declares row. It still
+  # EXITS 0 — that is the load-bearing decision recorded at `body_declares_scan`
+  # and it is unchanged: a deliberate close is the normal case, and a mode that
+  # exits 1 on the majority of merges is a mode that gets tuned out, taking the
+  # negated rows that catch the real defect with it. The exit code answers "may
+  # I push"; the sentence answers "what will this push shut". Only the second
+  # one was wrong, so only the second one moves.
   if [ "$CLOSE_VERDICT" = clean ]; then
-    echo "  VERDICT: CLEAN — no negated closing keyword in this body."
+    if [ "$BDECL_VERDICT" = found ]; then
+      echo "  VERDICT: CLEAN OF NEGATIONS — but this body SHUTS $BDECL_NUMS on merge."
+      echo "  That is not the same as clean, and it is the pair int416 read past."
+      echo "  Intended? Say so in the offer and push. Not intended? Reword now —"
+      echo "  'git commit --amend' is free until the push, and nothing after it is."
+      exit 0
+    fi
+    echo "  VERDICT: CLEAN — no negated closing keyword, and this body shuts nothing."
     exit 0
   fi
   echo "  FOUND: $CLOSE_DETAIL"
@@ -2118,6 +2166,35 @@ FIXEOF
   # matters: that is where a body with no negation used to leave silently.
   check "body declares: --lint-body prints it before the verdict, so a CLEAN body still shows it" \
     "printf '%s' \"\$_code\" | /usr/bin/grep -q '^  echo \"  declares: \$BDECL_DETAIL\"'"
+
+  # ⭐ BEHAVIOURAL, AND THE STRUCTURAL CHECK ABOVE IS WHY THEY ARE NEEDED. That
+  # one proves the declares row is PRINTED. It passed all week, and could not
+  # see that the line UNDERNEATH it said `VERDICT: CLEAN` over a row reading
+  # `the push WILL shut them` — the defect was the PAIR, and only a real run
+  # produces a pair. So these invoke the mode rather than reading the source.
+  _lb_tmp="$(mktemp "${TMPDIR:-/tmp}/mergegate-lintbody.XXXXXX")"
+  printf 'Explaining the trap: writing "close: #6739" in a body shuts it.\n6739 must STAY OPEN.\n' > "$_lb_tmp"
+  check "--lint-body: a quoted keyword reaches the VERDICT line, not only the declares row" \
+    "bash \"\$self\" --lint-body \"\$_lb_tmp\" | /usr/bin/grep -qE '^  VERDICT: CLEAN OF NEGATIONS — but this body SHUTS 6739 on merge\\.$'"
+  # The exit code is the half that must NOT move: it answers "may I push", and
+  # a deliberate close is the normal case (see `body_declares_scan`).
+  check "--lint-body: a body that shuts something still EXITS 0 — only the sentence moved" \
+    "bash \"\$self\" --lint-body \"\$_lb_tmp\" >/dev/null"
+  printf 'A merge that mentions issue 6739 in passing and shuts nothing at all.\n' > "$_lb_tmp"
+  check "--lint-body: a body that shuts nothing says so, in its own words" \
+    "bash \"\$self\" --lint-body \"\$_lb_tmp\" | /usr/bin/grep -qE '^  VERDICT: CLEAN — no negated closing keyword, and this body shuts nothing\\.$'"
+  # The converse, which is what makes the first check non-vacuous: the two
+  # verdict sentences are mutually exclusive, so neither can be printed always.
+  check "--lint-body: the shuts-something sentence cannot appear over an empty declares row" \
+    "! bash \"\$self\" --lint-body \"\$_lb_tmp\" | /usr/bin/grep -q 'SHUTS'"
+  # This mode's whole output is quoted — into merge bodies, offers, ledger rows.
+  # The first draft of the row it sits under WAS itself a closing directive
+  # (`will close: #6739`, PR #6768), so the verdict sentences are held to the
+  # same bar as the detail strings, against the live pattern rather than a copy.
+  printf 'Explaining the trap: writing "close: #6739" in a body shuts it.\n' > "$_lb_tmp"
+  check "--lint-body: its own verdict output is not a closing directive when quoted" \
+    "! bash \"\$self\" --lint-body \"\$_lb_tmp\" | /usr/bin/grep -v '^  source=' | /usr/bin/grep -qiE \"\$SELF_CLOSING_RE\""
+  rm -f "$_lb_tmp"
 
   # The summary cannot be tested by running this mode (it would recurse), so it
   # is pinned to the line it guards — the failure being guarded is someone
