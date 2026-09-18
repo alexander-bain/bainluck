@@ -518,6 +518,51 @@ def _outcome_relation(
     }
 
 
+def venue_leg_count(meta: dict, name, mutually_exclusive) -> int | None:
+    """How many legs the venue serves for THIS market, or ``None`` (#3721).
+
+    🔴 THE WHOLE DIFFICULTY IS THAT ``market_count`` MEANS TWO DIFFERENT THINGS.
+    On a Polymarket row that IS the venue event — a negRisk ladder, where the
+    single FuturesMarket carries the event's legs as its own outcomes — it is
+    this ladder's rung count. On a row that is one sub-market OF a venue event
+    (a game's moneyline, a spread, a player prop) it is the count of the
+    parent's SIBLINGS, which has nothing to do with this row's two outcomes.
+
+    Measured on production 2026-09-18: the unscoped ``declared > stored`` test
+    reads 12,271 open Polymarket markets, of which the overwhelming majority are
+    the second kind and are not short at all. Scoped by the ``event_title ==
+    name`` identity below it reads 2,639, and a seven-market sample of those
+    agreed with Gamma's own open-leg count 7 for 7. Returning a sibling count
+    here would strip ``exhaustive`` from ordinary Yes/No pairs — a far worse
+    error than the one being fixed — so this refuses unless the row IS the
+    ladder.
+
+    ``mutually_exclusive`` is required because both consumers can only act on a
+    field the venue itself calls a partition, and keeping the test here keeps
+    the refusal next to the reason for it.
+
+    LIVES HERE, BESIDE THE CLASSIFIER, BECAUSE IT HAS TWO CALLERS AND ONE
+    MEANING. It was written inside ``tasks/backfill_market_shapes`` when the
+    stamp was its only consumer; ``routes/events`` now asks the same question of
+    the same row at serve time, and a route may not import a heavy task module
+    to get it. This module is pure stdlib by contract (see the header), so it is
+    the one place both can reach. Restating the scoping rule in the route would
+    be the real hazard: the two copies would drift and the page and the stamp
+    would disagree about which markets are ladders.
+    """
+    if not mutually_exclusive:
+        return None
+    title = str(meta.get("event_title") or "").strip()
+    if not title or title != str(name or "").strip():
+        return None
+    raw = meta.get("market_count")
+    try:
+        count = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return count if count > 0 else None
+
+
 def classify_market_semantics(
     *,
     outcome_names: list[str] | None,

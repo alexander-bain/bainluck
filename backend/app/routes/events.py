@@ -14260,6 +14260,92 @@ def _match_winner_rank_beats(challenger, incumbent, blended_observed_at) -> bool
     return c_id < i_id
 
 
+def _withhold_partial_field_markets(other_rows: list, markets: list) -> list:
+    """A field card accounts for the whole question, or it is not shown (#3721).
+
+    🔴 THE CARD CLAIMS COMPLETENESS BY ITS SHAPE. A list of mutually exclusive
+    outcomes under one heading says "this is what can happen"; the reader has no
+    way to ask whether a row is missing, and nothing on the card offers one.
+
+    Measured specimen, `/events/15312071` at 2026-09-18 21:00Z — the Atlético
+    Madrid v Real Madrid derby, two days out. "1st Half Exact Score" drew six
+    rungs summing to **41%**. Polymarket serves nine legs for that market
+    (Gamma event 1011354, read the same hour): `0 - 0`, `0 - 1` and
+    `Any Other Score` were absent, the last of them the venue's LARGEST rung at
+    38.5%. A reader looking for the most likely half-time scoreline in a derby
+    was shown a ladder that starts at 1 - 0 and never mentions 0 - 0.
+
+    WHY THE MISSING LEGS CANNOT SIMPLY BE SHOWN, which is what decided this:
+    ingest refuses those three prices on purpose. `is_fabricated_midpoint`
+    declines a venue price sitting exactly on the midpoint of a book wider than
+    20c, because #151 measured ~150K such rows resolving nowhere near the number
+    they asserted. Driving the shipped ingest functions on that same Gamma
+    payload writes THREE of the nine legs, not six — so the fix cannot be "store
+    them anyway": we would be printing numbers we have already proved are not
+    beliefs. Nor can they be stored unpriced: `mergeOutcomes` renders a null
+    probability as `0%`, which is a new false statement rather than an absent
+    one. What is left is the honest option, and it is Alex's own standing rule
+    for this exact situation — if a number cannot be shown honestly, leave the
+    space empty rather than explain the emptiness.
+
+    THE PREDICATE IS THE CLASSIFIER'S, NOT A SECOND OPINION.
+    :func:`app.utils.market_shape.venue_leg_count` is the same function that
+    decides whether `shape.exhaustive` may stand, and it REFUSES far more often
+    than it answers — read its docstring before widening anything here. It is
+    what keeps an ordinary two-leg moneyline, whose `market_count` counts its
+    parent's forty siblings, from being judged a short field.
+
+    Counted against production 2026-09-18: of the markets on event pages this
+    predicate can judge, 1,033 Polymarket fields are complete and stay, 1,023
+    are short and are withheld, and all 791 Kalshi fields are complete — so the
+    cost falls entirely on the source whose ladders are actually arriving in
+    pieces. On the derby page it withholds three cards and leaves the Kalshi
+    match-winner (3 legs of 3) and the player-props card (not a partition at
+    all, so the predicate never looks at it) untouched.
+
+    Rows from a market carrying no ``_market_id`` are passed through: they
+    cannot be attributed to a market, so nothing can be proved about them.
+    """
+    from app.utils.market_shape import venue_leg_count
+
+    # Counted from rows that name ONE market. A step-9b merged row belongs to
+    # every market that fed it, so crediting it to each would let one merge make
+    # a complete field look short — a card would then be withheld for having
+    # been merged, which is not a fact about the venue's field at all. A market
+    # seen only through merged rows is therefore never judged here.
+    held_by_market: dict = {}
+    for row in other_rows:
+        ids = _row_market_ids(row)
+        if len(ids) != 1:
+            continue
+        market_id = next(iter(ids))
+        held_by_market[market_id] = held_by_market.get(market_id, 0) + 1
+    if not held_by_market:
+        return other_rows
+
+    withheld: set = set()
+    for market in markets:
+        held = held_by_market.get(market.id)
+        if not held:
+            continue
+        meta = market.market_metadata if isinstance(market.market_metadata, dict) else {}
+        declared = venue_leg_count(meta, market.name, market.mutually_exclusive)
+        if declared is not None and held < declared:
+            withheld.add(market.id)
+
+    if not withheld:
+        return other_rows
+
+    # A merged row (step 9b) carries several ids and survives unless EVERY
+    # market behind it is short — the same test the redundant-parent drop makes,
+    # and for the same reason: half a merged row is not a thing we can serve.
+    return [
+        row
+        for row in other_rows
+        if not (_row_market_ids(row) and _row_market_ids(row) <= withheld)
+    ]
+
+
 def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
     """Classify a game-level market name into a type.
 
@@ -18860,6 +18946,16 @@ async def _build_game_markets(
     other_markets = _fold_duplicate_match_winner_markets(
         other_markets, event.home_team_name, event.away_team_name
     )
+
+    # ── #3721 — A SLICE IS NOT SHOWN AS THE FIELD ───────────────────────────
+    #
+    # AFTER the fold, and for the same reason the fold runs after the drops
+    # above: "how many legs of this market reach the reader?" is only a fact at
+    # this point. Asked earlier it would be a forecast, and a market that a
+    # later filter then empties would have been judged on legs the page never
+    # showed — the count has to be the rendered one, because the completeness
+    # claim the reader reads is made by the rendered rows and by nothing else.
+    other_markets = _withhold_partial_field_markets(other_markets, markets)
 
     # #6447 — THE CARDS STOP NAMING A CLUB THAT DOES NOT EXIST.
     #
