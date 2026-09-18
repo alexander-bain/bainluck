@@ -1258,10 +1258,38 @@ FAILURE_RAIL_TTL_S = 3600
 #: Minimum seconds between flush ATTEMPTS in one process. The rail's whole cost.
 FAILURE_RAIL_FLUSH_PERIOD_S = 30.0
 
-#: A field older than this is not summed, and is reaped by the next process's
-#: first flush. Deliberately many flush periods wide: a live worker that goes
-#: quiet for ten minutes must not be mistaken for a dead one.
-FAILURE_RAIL_STALE_S = 900.0
+# TWO WINDOWS, NOT ONE, AND THE REASON WAS MEASURED RATHER THAN REASONED.
+#
+# Sampling production 05:37-05:42Z on 2026-09-18, release v4713 landed mid-run
+# and the counters did this:
+#
+#     05:40:33  pid 11  hits 34  misses 14  publishes 14
+#     05:41:10  pid 11  hits  0  misses  0  publishes  0
+#
+# Same pid, two different process generations, 37 seconds apart — and v4712 had
+# landed only 37 MINUTES before v4713. So on this fleet a worker's whole counter
+# history is "since the last release", releases are frequent, and a dead
+# generation's field sits in the hash looking perfectly fresh.
+#
+# With one window that is a silent over-count: if the replacement process comes
+# up under a different pid, the dead generation's LIFETIME counters are summed
+# beside the live one's for the whole window — worst in the minutes right after
+# every deploy, which is exactly when someone is looking. So:
+#
+#: Arithmetic window. Only fields at least this fresh are summed into the fleet
+#: totals. Tight, because the cost of including a dead generation is a wrong
+#: number, while the cost of excluding a merely-quiet worker is a missing row
+#: that is still PRINTED (see `read_failure_rail` — stale fields stay in
+#: `workers` with `stale: true`, so nothing becomes invisible, it only stops
+#: being added up).
+FAILURE_RAIL_FRESH_S = 180.0
+
+#: Deletion window, deliberately an order of magnitude wider. Reaping is
+#: destructive — a quiet worker's field holds real counters that no longer exist
+#: anywhere else once the row is gone — so the reaper waits until a field is
+#: beyond any doubt abandoned. Nothing requires these two to be equal, and
+#: making them equal would either over-count or delete live data.
+FAILURE_RAIL_STALE_S = 3600.0
 
 #: Fields the reader will parse. A guard against a key that somehow grew past
 #: its reaper — the reader stays bounded rather than trusting the writer.
@@ -1462,7 +1490,7 @@ async def flush_failure_rail(*, force: bool = False) -> bool:
 
 
 async def read_failure_rail(*, now: Optional[float] = None) -> dict[str, Any]:
-    """Merge every LIVE worker's snapshot into one fleet reading. Never raises.
+    """Merge every FRESH worker's snapshot into one fleet reading. Never raises.
 
     `available` is the first thing a reader must check and the reason this
     returns a dict rather than a total: an empty hash and an unreachable Redis
@@ -1470,10 +1498,19 @@ async def read_failure_rail(*, now: Optional[float] = None) -> dict[str, Any]:
     recreate — on a wider surface — the "reads zero, therefore clean" error this
     rail was built to remove.
 
-    Stale fields are reported by count and excluded from the totals. A field
-    whose worker died an hour ago carries real failures that really happened,
-    but attributing them to the current fleet would make every dyno restart look
-    like a regression that never heals.
+    STALE FIELDS ARE PRINTED AND NOT ADDED UP, which is a deliberately different
+    treatment from "dropped". A field left by a process that a release replaced
+    holds real failures that really happened, and summing it would make every
+    deploy look like a regression that never heals (see `FAILURE_RAIL_FRESH_S`
+    for the measurement that forced the split). But DROPPING it would hide a
+    worker, and a rail whose whole purpose is that a zero must not read as
+    "clean" cannot afford an invisible row. So every parseable field appears in
+    `workers` with its `age_s` and a `stale` flag; only the fresh ones reach
+    `failure_reasons_total`, `by_namespace` and `cross_worker_total`.
+
+    An operator reading in the minutes after a deploy therefore sees two
+    generations side by side — one with a small `uptime_s`, one going stale —
+    instead of one silently inflated total.
     """
     at = time.time() if now is None else now
     out: dict[str, Any] = {
@@ -1482,8 +1519,14 @@ async def read_failure_rail(*, now: Optional[float] = None) -> dict[str, Any]:
         "key": FAILURE_RAIL_KEY,
         "workers": [],
         "worker_count": 0,
+        "fresh_worker_count": 0,
         "stale_worker_count": 0,
+        "unparseable_field_count": 0,
+        "fresh_after_s": FAILURE_RAIL_FRESH_S,
         "stale_after_s": FAILURE_RAIL_STALE_S,
+        "totals_scope": (
+            "fresh workers only — a `stale: true` row is printed but never summed"
+        ),
         "failure_reasons_total": {},
         "by_namespace": {},
         "cross_worker_total": {},
@@ -1517,13 +1560,17 @@ async def read_failure_rail(*, now: Optional[float] = None) -> dict[str, Any]:
     by_ns: dict[str, dict[str, int]] = {}
     cw_total: dict[str, int] = {}
     stale = 0
+    unparseable = 0
     workers: list[dict[str, Any]] = []
 
     for raw_field, raw_value in list(raw.items())[:FAILURE_RAIL_MAX_FIELDS]:
         field = _as_text(raw_field)
         parsed = _parse_rail_field(raw_value)
+        # Counted separately from `stale`: a field nothing can decode is a
+        # WRITER defect, and folding it into the age bucket would file a bug as
+        # an expected restart.
         if field is None or parsed is None:
-            stale += 1
+            unparseable += 1
             continue
         stamped = parsed.get("at")
         age_s = (
@@ -1531,9 +1578,9 @@ async def read_failure_rail(*, now: Optional[float] = None) -> dict[str, Any]:
             if isinstance(stamped, (int, float)) and not isinstance(stamped, bool)
             else None
         )
-        if age_s is None or age_s > FAILURE_RAIL_STALE_S:
-            stale += 1
-            continue
+        # An unstampable field cannot be shown to be current, so it is never
+        # summed — but it is still printed, with `age_s: null` saying why.
+        is_fresh = age_s is not None and age_s <= FAILURE_RAIL_FRESH_S
         cw = parsed.get("cross_worker")
         cw = cw if isinstance(cw, dict) else {}
         totals = parsed.get("failure_reasons_total")
@@ -1541,19 +1588,24 @@ async def read_failure_rail(*, now: Optional[float] = None) -> dict[str, Any]:
         per_ns = parsed.get("failure_reasons")
         per_ns = per_ns if isinstance(per_ns, dict) else {}
 
-        for name, count in cw.items():
-            if isinstance(count, int) and not isinstance(count, bool):
-                cw_total[str(name)] = cw_total.get(str(name), 0) + count
-        for reason, count in totals.items():
-            if isinstance(count, int) and not isinstance(count, bool):
-                reasons_total[str(reason)] = reasons_total.get(str(reason), 0) + count
-        for ns, ns_reasons in per_ns.items():
-            if not isinstance(ns_reasons, dict):
-                continue
-            bucket = by_ns.setdefault(str(ns), {})
-            for reason, count in ns_reasons.items():
+        if is_fresh:
+            for name, count in cw.items():
                 if isinstance(count, int) and not isinstance(count, bool):
-                    bucket[str(reason)] = bucket.get(str(reason), 0) + count
+                    cw_total[str(name)] = cw_total.get(str(name), 0) + count
+            for reason, count in totals.items():
+                if isinstance(count, int) and not isinstance(count, bool):
+                    reasons_total[str(reason)] = (
+                        reasons_total.get(str(reason), 0) + count
+                    )
+            for ns, ns_reasons in per_ns.items():
+                if not isinstance(ns_reasons, dict):
+                    continue
+                bucket = by_ns.setdefault(str(ns), {})
+                for reason, count in ns_reasons.items():
+                    if isinstance(count, int) and not isinstance(count, bool):
+                        bucket[str(reason)] = bucket.get(str(reason), 0) + count
+        else:
+            stale += 1
 
         reads = (
             int(cw.get("cross_worker_hits") or 0)
@@ -1563,7 +1615,8 @@ async def read_failure_rail(*, now: Optional[float] = None) -> dict[str, Any]:
         workers.append(
             {
                 "worker": field,
-                "age_s": round(age_s, 1),
+                "stale": not is_fresh,
+                "age_s": round(age_s, 1) if age_s is not None else None,
                 "uptime_s": (
                     round(
                         max(0.0, float(parsed["at"]) - float(parsed["started_at"])), 1
@@ -1586,10 +1639,15 @@ async def read_failure_rail(*, now: Optional[float] = None) -> dict[str, Any]:
             }
         )
 
-    workers.sort(key=lambda w: (-(w["failure_rate"] or 0.0), w["worker"]))
+    # Fresh first, then worst rate first inside each group: the operator's eye
+    # must land on a worker that is failing NOW, not on a dead generation whose
+    # lifetime rate happens to be higher.
+    workers.sort(key=lambda w: (w["stale"], -(w["failure_rate"] or 0.0), w["worker"]))
     out["workers"] = workers
     out["worker_count"] = len(workers)
+    out["fresh_worker_count"] = len(workers) - stale
     out["stale_worker_count"] = stale
+    out["unparseable_field_count"] = unparseable
     out["failure_reasons_total"] = dict(sorted(reasons_total.items()))
     out["by_namespace"] = {
         ns: dict(sorted(c.items())) for ns, c in sorted(by_ns.items())

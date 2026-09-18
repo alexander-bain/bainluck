@@ -28,9 +28,9 @@ never readable.
 
 Not a duration, not a failure rate, and not a flush CADENCE in wall-clock terms
 (all three are flake generators — LAT-P084). They assert: the merge arithmetic,
-that the rail excludes its own dead, that a failed read is never reported as a
-clean zero, that the instrument books nothing into the counters it carries, and
-that the fast path never touches it.
+that a generation a release replaced is printed but never summed, that a failed
+read is never reported as a clean zero, that the instrument books nothing into
+the counters it carries, and that the fast path never touches it.
 """
 
 from __future__ import annotations
@@ -423,10 +423,11 @@ async def test_the_rail_reads_a_bytes_returning_client(fake_redis, monkeypatch):
     fleet = await pic.read_failure_rail(now=now)
 
     assert fleet["available"] is True
-    assert fleet["worker_count"] == 2, "a bytes field name was not decoded"
+    assert fleet["worker_count"] == 3, "a bytes field name was not decoded"
+    assert fleet["fresh_worker_count"] == 2
     assert fleet["stale_worker_count"] == 1
     assert fleet["failure_reasons_total"] == {pic.FAIL_READ_TIMEOUT: 4}
-    assert {w["worker"] for w in fleet["workers"]} == {"web.3:41", mine}
+    assert {w["worker"] for w in fleet["workers"]} == {"web.3:41", "web.3:42", mine}
 
     # ...and the reap must drop exactly the dead field, naming it as decoded
     # text, even though it arrived as bytes. An undecoded name here is an HDEL
@@ -437,10 +438,26 @@ async def test_the_rail_reads_a_bytes_returning_client(fake_redis, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_a_dead_workers_field_is_excluded_from_the_fleet_total(fake_redis):
-    """A restarted dyno's field carries failures that really happened. Counting
-    them into the CURRENT fleet would make every restart look like a regression
-    that never heals, because a lifetime counter from a dead process never falls.
+async def test_a_generation_a_release_replaced_is_printed_but_never_summed(fake_redis):
+    """THE DEPLOY GATE, and it was written from a measurement, not a worry.
+
+    Sampling production 05:37-05:42Z on 2026-09-18, release v4713 landed
+    mid-run:
+
+        05:40:33  pid 11  hits 34  misses 14  publishes 14
+        05:41:10  pid 11  hits  0  misses  0  publishes  0
+
+    Same pid, two process generations, 37 s apart — and v4712 had landed 37
+    MINUTES earlier. So dead generations are common, recent and frequent here.
+    If the replacement comes up under a different pid, the dead field is a
+    separate row holding LIFETIME counters that can never fall, and summing it
+    inflates the fleet for the whole window — worst in the minutes after a
+    deploy, which is when someone is looking.
+
+    Both halves are asserted, because each alone is a different bug: excluded
+    from the TOTALS (or every deploy reads as a regression), and still PRESENT
+    in `workers` (or a rail built so a zero cannot read as "clean" acquires an
+    invisible row).
     """
     import time as _t
 
@@ -449,7 +466,7 @@ async def test_a_dead_workers_field_is_excluded_from_the_fleet_total(fake_redis)
         fake_redis,
         "web.1:10",
         _snapshot(
-            at=now - pic.FAILURE_RAIL_STALE_S - 60,
+            at=now - pic.FAILURE_RAIL_FRESH_S - 1,
             hits=1,
             misses=1,
             failures=99,
@@ -466,9 +483,55 @@ async def test_a_dead_workers_field_is_excluded_from_the_fleet_total(fake_redis)
 
     fleet = await pic.read_failure_rail(now=now)
 
-    assert fleet["worker_count"] == 1
-    assert fleet["stale_worker_count"] == 1
     assert fleet["failure_reasons_total"] == {pic.FAIL_READ_ERROR: 1}
+    assert fleet["cross_worker_total"]["cross_worker_failures"] == 1
+    assert fleet["fresh_worker_count"] == 1
+    assert fleet["stale_worker_count"] == 1
+    # ...and the dead generation is still on the page, flagged, sorted last.
+    assert fleet["worker_count"] == 2
+    rows = {w["worker"]: w for w in fleet["workers"]}
+    assert rows["web.1:10"]["stale"] is True
+    assert rows["web.1:12"]["stale"] is False
+    assert (
+        fleet["workers"][-1]["worker"] == "web.1:10"
+    ), "a dead row sorted above a live one"
+
+
+@pytest.mark.asyncio
+async def test_the_reaper_waits_far_longer_than_the_arithmetic_does(fake_redis):
+    """The two windows are not the same number and must not collapse into one.
+
+    Reaping is destructive — once the field is gone its counters exist nowhere —
+    so the reaper waits for `FAILURE_RAIL_STALE_S`, an order of magnitude past
+    the `FAILURE_RAIL_FRESH_S` at which a row merely stops being added up. A
+    field between the two is exactly the interesting case: not trusted, not
+    deleted, still readable.
+    """
+    import time as _t
+
+    assert pic.FAILURE_RAIL_STALE_S > pic.FAILURE_RAIL_FRESH_S * 5
+
+    now = _t.time()
+    between = (pic.FAILURE_RAIL_FRESH_S + pic.FAILURE_RAIL_STALE_S) / 2
+    _seed_field(
+        fake_redis,
+        "web.5:31",
+        _snapshot(
+            at=now - between,
+            hits=4,
+            misses=1,
+            failures=7,
+            reasons={pic.FAIL_BAD_JSON: 7},
+        ),
+    )
+
+    fleet = await pic.read_failure_rail(now=now)
+    assert fleet["failure_reasons_total"] == {}, "an untrusted row was summed"
+    assert [w["worker"] for w in fleet["workers"]] == ["web.5:31"]
+
+    await pic.flush_failure_rail(force=True)
+    assert fake_redis.hdel_calls == [], "a row that is merely untrusted was deleted"
+    assert "web.5:31" in _rail(fake_redis)
 
 
 @pytest.mark.asyncio
@@ -509,6 +572,10 @@ async def test_the_first_flush_of_a_process_reaps_stale_fields_once(fake_redis):
 async def test_an_unparseable_field_is_skipped_not_fatal(fake_redis):
     """One corrupt field must not take the whole fleet reading down with it —
     the reading is needed most when something is wrong.
+
+    And it is counted on its OWN line, not folded into `stale`: a field nothing
+    can decode is a writer defect, while a stale one is an ordinary restart.
+    Reporting a bug as an expected event is how it stays unfixed.
     """
     import time as _t
 
@@ -524,7 +591,9 @@ async def test_an_unparseable_field_is_skipped_not_fatal(fake_redis):
 
     assert fleet["available"] is True
     assert fleet["worker_count"] == 1
-    assert fleet["stale_worker_count"] == 1
+    assert fleet["fresh_worker_count"] == 1
+    assert fleet["stale_worker_count"] == 0
+    assert fleet["unparseable_field_count"] == 1
     assert fleet["failure_reasons_total"] == {pic.FAIL_BAD_JSON: 2}
 
 
