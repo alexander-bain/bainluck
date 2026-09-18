@@ -21,7 +21,7 @@ import Sparkline from "@/components/Sparkline";
 import { formatSpan, seriesFreshness, seriesHasHole, seriesWindowLabel } from "@/lib/seriesFreshness";
 import { eventPath } from "@/lib/eventKey";
 import { twoLegCardPair } from "@/lib/twoLegCardPair";
-import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
+import { renderedDuelPercents, renderedOutcomeRowPercents } from "@/lib/renderedPercent";
 import s from "./politics.module.css";
 import { BORDER_COLOR, SourceBadge } from "@/components/politics/atoms";
 import { CrossSourceSpotlight } from "@/components/politics/CrossSourceSpotlight";
@@ -517,6 +517,15 @@ function ChamberControlCard({
   chamber: string;
   probs: ChamberControl;
 }) {
+  // #6778: the two sides are one question in FIXED positions, so they round once
+  // together through the pair contract (#2831) instead of independently. The
+  // served pair is an exact complement on a half-percent grid — Senate control
+  // is `41.5 / 58.5` — and `Math.round` is half-up, so both sides rounded UP at
+  // once and the card printed `42% R vs 59% D`. `renderedDuelPercents` rounds
+  // the favourite and derives the other, which is the same rule the market cards
+  // a few hundred pixels down this page already use. The BAR stays on the raw
+  // values: it is drawing the split, not printing it.
+  const [gopPct, demPct] = renderedDuelPercents(probs.gop / 100, probs.dem / 100);
   const gopLeads = probs.gop >= probs.dem;
   return (
     <Link href={`/futures/${probs.market_id}`}>
@@ -545,7 +554,7 @@ function ChamberControlCard({
                 color: gopLeads ? "#DC2626" : "#9CA3AF",
               }}
             >
-              {Math.round(probs.gop)}%
+              {gopPct ?? Math.round(probs.gop)}%
             </span>
             <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>R</span>
           </div>
@@ -558,7 +567,7 @@ function ChamberControlCard({
                 color: !gopLeads ? "#2563EB" : "#9CA3AF",
               }}
             >
-              {Math.round(probs.dem)}%
+              {demPct ?? Math.round(probs.dem)}%
             </span>
             <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>D</span>
           </div>
