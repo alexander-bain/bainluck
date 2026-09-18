@@ -171,7 +171,19 @@ AUTHORED_STORY_QUESTIONS = {
     # Sport
     "story:fifa_world_cup": "Who wins the World Cup?",
     "story:basketball_finals_path": "Who reaches the NBA Finals?",
-    "story:ufc_events": "Who wins on the next card?",
+    # #2602/#6444 split the numbered cards out into `story:ufc_event:331`, which
+    # asks "What happens at UFC 331?". What stays behind under this key is, by
+    # the minting rule's own words, everything that "names no single card" —
+    # `\bufc\b.*\b(title|champion|main event)\b`. All 37 live members
+    # (futures_markets, 2026-09-18) are season-long championship questions:
+    # "Who will be UFC Heavyweight champion at the end of 2026?" and "Will Ciryl
+    # Gane become UFC champion in 2026?". None is a fight, so "Who wins on the
+    # next card?" — the sentence this family inherited before the split — was
+    # false of every one of them, and a phone shot of Discover found three of
+    # them folded under it. No year in the sentence: the year the members state
+    # moves, and `_members_span_multiple_seasons` already refuses a family that
+    # spans two of them.
+    "story:ufc_events": "Who ends up with a UFC title?",
     "story:grand_slam_tennis": "Who wins the Slam?",
     "story:golf_truist_championship": "Who wins the Truist Championship?",
 }
