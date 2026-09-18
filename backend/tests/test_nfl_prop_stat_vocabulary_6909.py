@@ -26,8 +26,16 @@ Two things this file pins that the diff alone does not say:
 
 The census runs the REAL route grading functions over the REAL captured payload
 and asserts both directions (gotcha #43): every intended row newly grades, and
-ZERO rows of any other class move. The 11 newly-graded verdicts below were each
+ZERO rows of any other class move. The 13 newly-graded verdicts below were each
 hand-checked against the box-score line quoted beside them.
+
+** THIS SHIP IS NARROW AND SAYS SO. ** It does not make every NFL prop
+gradeable: 178 of the 510 rows still carry no stat line after it. What it
+claims is that none of them is an unexplained gap —
+`test_every_row_still_without_a_stat_line_is_accounted_for` sorts every one
+into a named bucket and fails if any lands outside them. Team totals and
+cross-player superlatives are named follow-ups there, which is why #6909 stays
+open.
 """
 
 import json
@@ -112,6 +120,10 @@ EXPECTED_NEWLY_GRADED = {
     ("Deebo Samuel Sr.: 6+", "Receptions"): (6.0, True),
     ("Puka Nacua: 6+", "Receptions"): (5.0, False),
     ("Colby Parkinson: 2+", "Receptions"): (1.0, False),
+    # Second pass (CERT-3058's required repair). Both legs are keys ESPN
+    # already writes, so the composite is the whole fix.
+    ("Kyren Williams: 70+", "Rushing + Receiving Yards"): (65.0, False),
+    ("Christian McCaffrey: 110+", "Rushing + Receiving Yards"): (88.0, False),
 }
 
 
@@ -190,7 +202,11 @@ def test_no_row_that_graded_before_changes_its_verdict(captured, ctx):
             box_confirmed += 1
     assert flips == []
     assert preserved == 475
-    assert box_confirmed == 312
+    # 312 on the first pass; the `kxnflrryds` composite gives seven already-typed
+    # rungs a stat line without moving one of them. Each of those seven is also
+    # checked individually below, because a count rising is not the same claim as
+    # the right seven rising.
+    assert box_confirmed == 319
 
 
 def test_the_newly_graded_rows_corroborate_the_venue_in_the_band_it_refuses(
@@ -207,7 +223,7 @@ def test_the_newly_graded_rows_corroborate_the_venue_in_the_band_it_refuses(
     cannot speak for the rows it refuses.
 
     The box score supplies that missing ground truth, and the venue was right
-    all 11 times, INCLUDING "Brock Purdy: 7+" at a settled price of 0.89 that a
+    all 13 times, INCLUDING "Brock Purdy: 7+" at a settled price of 0.89 that a
     looser floor would have graded a HIT off a 5-carry game. So the constants
     stay where they are.
     """
@@ -217,7 +233,7 @@ def test_the_newly_graded_rows_corroborate_the_venue_in_the_band_it_refuses(
             continue
         assert graded["hit"] == row["is_winner"], _label(row, captured)
         checked += 1
-    assert checked == 11
+    assert checked == 13
 
 
 def test_the_rushing_attempts_key_is_carries_not_rushing_attempts():
@@ -265,6 +281,173 @@ def test_team_and_leaderboard_tickers_are_not_swept_up_by_a_player_prefix():
         "kxnflfg",
         "kxnflmostrshyds",
         "kxnflmostrecyds",
-        "kxnflrryds",
     ):
         assert _stats(f"{ticker}-26sep10sflar") is None, ticker
+
+
+# --------------------------------------------------------------------------
+# CERT-3058's required repair: the Rushing + Receiving Yards composite.
+# --------------------------------------------------------------------------
+
+
+def test_kxnflrryds_reads_both_component_keys_and_neither_alone():
+    """The composite, and the prefix neighbourhood it lands in.
+
+    `kxnflrryds` shares the `kxnflr` stem with `kxnflrshyds`, `kxnflrecyds` and
+    `kxnflrec`, so the thing to prove is not only that it resolves but that it
+    did not disturb — or get answered by — any of the three it sits beside.
+    """
+    assert _stats("kxnflrryds-26sep10sflar") == ["rushing yards", "receiving yards"]
+    assert _stats("kxnflrshyds-26sep10sflar") == ["rushing yards"]
+    assert _stats("kxnflrecyds-26sep10sflar") == ["receiving yards"]
+    assert _stats("kxnflrec-26sep10sflar") == ["receptions"]
+
+
+def test_kxnflrryds_grades_the_two_withheld_rungs_off_the_summed_line(captured, ctx):
+    """The rows a reader was watching print "Resolved · grading unavailable".
+
+    Hand-checked against the box score, which is the bar the first pass set and
+    the reason this family was held back from it: Kyren Williams 41 rushing +
+    24 receiving = 65 against a 70+ rung, Christian McCaffrey 68 + 20 = 88
+    against 110+. Both MISS.
+    """
+    newly = {}
+    for row, graded in _grade_every_prop(captured, ctx):
+        if "RRYDS" not in captured["markets"][str(row["_market_id"])]["external_id"]:
+            continue
+        if row["hit"] is None and graded.get("hit") is not None:
+            newly[row["outcome_name"]] = (graded["actual"], graded["hit"])
+    assert newly == {
+        "Kyren Williams: 70+": (65.0, False),
+        "Christian McCaffrey: 110+": (88.0, False),
+    }
+
+
+def test_kxnflrryds_preserves_every_verdict_it_newly_explains(captured, ctx):
+    """The winner/loser preservation half, named row by row.
+
+    Seven already-typed rungs gain a stat line here. A count is not enough: a
+    composite that summed the WRONG two keys would still raise the count, and
+    the three rungs that sit either side of Deebo Samuel's 60 yards are the
+    ones that would expose it. The ladder is the independent second signal —
+    40+ HIT, 65+ MISS, 90+ MISS can only bracket one number.
+    """
+    gained = {}
+    for row, graded in _grade_every_prop(captured, ctx):
+        if "RRYDS" not in captured["markets"][str(row["_market_id"])]["external_id"]:
+            continue
+        if row["hit"] is None or graded.get("actual") is None:
+            continue
+        assert graded["hit"] == row["hit"], row["outcome_name"]
+        gained[row["outcome_name"]] = (graded["actual"], graded["hit"])
+    assert gained == {
+        "Deebo Samuel Sr.: 40+": (60.0, True),
+        "Deebo Samuel Sr.: 65+": (60.0, False),
+        "Deebo Samuel Sr.: 90+": (60.0, False),
+        "Kyren Williams: 95+": (65.0, False),
+        "Kyren Williams: 120+": (65.0, False),
+        "Christian McCaffrey: 135+": (88.0, False),
+        "Christian McCaffrey: 160+": (88.0, False),
+    }
+
+
+def test_a_receiver_who_never_carried_is_withheld_rather_than_summed_as_zero(
+    captured, ctx
+):
+    """The three rows this repair deliberately does NOT grade, and why.
+
+    Puka Nacua IS in the box score, with 74 receiving yards and no `rushing
+    yards` key at all — he never carried. Reading that absence as a zero would
+    give 74 and grade his 100+/125+/150+ rungs, and on this game it would even
+    be right. It stays withheld anyway: `_sum_prop_stats` withholds on any
+    unresolvable leg (#1728), and the absence of a key cannot distinguish "did
+    not carry" from "the parse dropped the rushing group". Buying three
+    verdicts by weakening that is the trade #1728 exists to refuse.
+
+    So this is a pinned withholding, not an oversight — the same standing the
+    deliberate absences above have.
+    """
+    withheld = set()
+    for row, graded in _grade_every_prop(captured, ctx):
+        if "RRYDS" not in captured["markets"][str(row["_market_id"])]["external_id"]:
+            continue
+        if graded.get("actual") is None:
+            withheld.add(row["outcome_name"])
+    assert withheld == {"Puka Nacua: 100+", "Puka Nacua: 125+", "Puka Nacua: 150+"}
+    assert "rushing yards" not in captured["box_score_players"]["Puka Nacua"]
+    assert captured["box_score_players"]["Puka Nacua"]["receiving yards"] == 74.0
+
+
+# The families this ship maps. Kept beside the accounting test below so the
+# taxonomy cannot drift away from the table it describes.
+_MAPPED_NFL_FAMILIES = frozenset(
+    {
+        "kxnflpassyds",
+        "kxnflrshyds",
+        "kxnflrecyds",
+        "kxnflpasstds",
+        "kxnflpasscomp",
+        "kxnflpassint",
+        "kxnflrshatt",
+        "kxnfllongrsh",
+        "kxnfllongrec",
+        "kxnflrec",
+        "kxnflrryds",
+    }
+)
+
+
+def _residual_bucket(ticker):
+    if ticker in ("kxnfltd", "kxnflpassatt"):
+        return "deliberate withholding"
+    if ticker.startswith("kxnflteam") or ticker == "kxnflfg":
+        return "team-level, not a player prop"
+    if ticker.startswith("kxnflmost"):
+        return "cross-player superlative"
+    if ticker in _MAPPED_NFL_FAMILIES:
+        return "mapped family, leg absent from the box score"
+    return "UNCLASSIFIED"
+
+
+def test_every_row_still_without_a_stat_line_is_accounted_for(captured, ctx):
+    """The ship is NARROW, and this is the test that keeps the claim honest.
+
+    #6909 does not make every NFL prop gradeable and must not be read as if it
+    did: after this repair 178 of the 510 captured rows still carry no stat
+    line. What it does claim is that none of them is an unexplained gap. Each
+    falls in exactly one bucket, and **UNCLASSIFIED must be empty** — that is
+    the assertion, the counts beside it are just the current census.
+
+    Two of these buckets are follow-ups with a named shape, not pattern-fills,
+    and they are why #6909 stays OPEN:
+
+    * `kxnflteam*` / `kxnflfg` (40) — team totals. They need a team-level
+      aggregate the player map cannot express; `box_score_data["players"]` is
+      keyed by player and has no team row to read.
+    * `kxnflmost*` (25) — "Most Receiving Yards" is a superlative across
+      players, not an "N+" threshold against one. `_PROP_RE` does not even
+      parse it, so it needs a different grader, not a different key.
+
+    The other two are settled questions, not follow-ups: 65 are the deliberate
+    withholdings pinned above, and 48 are rows whose leg the box score simply
+    does not carry (a back with no receiving line, a receiver who never
+    carried), which `_sum_prop_stats` withholds by #1728's rule.
+    """
+    import collections
+
+    buckets = collections.Counter()
+    for row, graded in _grade_every_prop(captured, ctx):
+        if graded.get("actual") is not None:
+            continue
+        meta = captured["markets"][str(row["_market_id"])]
+        ticker = (meta["external_id"] or "").split("-")[0].lower()
+        buckets[_residual_bucket(ticker)] += 1
+
+    assert buckets["UNCLASSIFIED"] == 0, "a residual row no bucket explains"
+    assert dict(buckets) == {
+        "deliberate withholding": 65,
+        "mapped family, leg absent from the box score": 48,
+        "team-level, not a player prop": 40,
+        "cross-player superlative": 25,
+    }
+    assert sum(buckets.values()) == 178

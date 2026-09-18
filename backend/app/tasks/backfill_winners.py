@@ -4700,6 +4700,14 @@ _COMBO_STATS = {
     # prefix-matched `kxmlbhr` above and published the batter's HOME RUN total
     # as its actual. A 2-hit game printed a red MISS on a prop that hit.
     "kxmlbhrr": ["hits", "runs", "rbis"],
+    # #6909 second pass. Held back from the first because every verdict there
+    # was hand-checked against a real box-score line and this family was not;
+    # it is here now on the same evidence. Both legs are keys ESPN already
+    # writes for every skill player, so this needs no new vocabulary — only
+    # the composite. Kyren Williams 41 rushing + 24 receiving = 65 against a
+    # 70+ rung, Christian McCaffrey 68 + 20 = 88 against 110+: both MISS, and
+    # both were printing "Resolved · grading unavailable".
+    "kxnflrryds": ["rushing yards", "receiving yards"],
 }
 
 
