@@ -195,8 +195,20 @@ MUTANTS: list[tuple[str, str, pathlib.Path, str, str]] = [
         "M16",
         "L1 pins a final game forever again — the original #6355 defect",
         ROUTE,
-        "    if age < ttl:\n        return cached_response",
-        '    if cached_status in ("completed", "closed") or age < ttl:\n        return cached_response',
+        # 🔴 THE ANCHOR CARRIES THE LINE ABOVE IT, AND THAT IS NOT DECORATION.
+        # `    if age < ttl:\n        return cached_response` was unique in this
+        # ROUTE until #6883 gave the related-futures reader one door down the
+        # same file the identical age bound — deliberately, since the whole
+        # point of that ship is that the page's two tiers stop disagreeing. The
+        # scan reported it as `matches 2x ... the mutant is not provably aimed`,
+        # which is the correct verdict: an anchor that matches twice could be
+        # mutating either tier. `_GAME_MARKETS_LIVE_TTL` names this one.
+        #
+        # The fix is to RE-TARGET, never to baseline the ambiguity — the mutant
+        # still has to prove THIS reader is pinned, and a baselined needle
+        # proves nothing while still being counted in the kill line.
+        "        else _GAME_MARKETS_LIVE_TTL\n    )\n    if age < ttl:\n        return cached_response",
+        '        else _GAME_MARKETS_LIVE_TTL\n    )\n    if cached_status in ("completed", "closed") or age < ttl:\n        return cached_response',
     ),
     (
         "M17",

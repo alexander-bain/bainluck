@@ -46,6 +46,16 @@ ROUTE = ROOT / "app" / "routes" / "events.py"
 MODULE = ROOT / "app" / "utils" / "related_futures_cache.py"
 SUITE = ROOT / "tests" / "test_related_futures_shared_cache_lat_p136.py"
 
+#: 🔴 BOTH SUITES RUN, FOR THE SIBLING BATTERY'S REASON. #6883's behaviour — the
+#: L1 final bound, the build check on both levels, and the build-time stamp — is
+#: asserted in its own file, so M14-M19 below would SURVIVE against a suite that
+#: cannot see them, and a "19/19 killed" line would prove less than the old
+#: "13/13" did.
+SUITES = (
+    SUITE,
+    ROOT / "tests" / "test_a_completed_event_s_bigger_picture_is_not_pinned_6883.py",
+)
+
 #: (id, target, description, old, new). `old` must appear EXACTLY once in
 #: `target` — a mutation that matches zero or many places is a harness bug
 #: reported as such, never counted as a kill.
@@ -188,12 +198,69 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         """FRESH_TTL_LIVE = 60""",
         """FRESH_TTL_LIVE = _gmc.FRESH_TTL_LIVE""",
     ),
+    # -----------------------------------------------------------------------
+    # #6883. The tier shipped as a copy of the sibling's PRE-#6355 shape: the
+    # L1 final entry never aged out, and neither level knew what a release was.
+    # Every replacement below is spelled so it is NOT byte-identical to the
+    # sibling harness's — the rule this file's header already carries for M1
+    # and M4 — and every one is multi-line or under `MIN_LITERAL`, so none of
+    # them reads to `scan_mutation_residue.py` Pass B as a loose mutant.
+    # -----------------------------------------------------------------------
+    (
+        "M14",
+        ROUTE,
+        "L1 pins a final game forever again — the #6883 defect itself",
+        '''        rfc.FRESH_TTL_FINAL\n        if cached_status in ("completed", "closed")''',
+        '''        10**9\n        if cached_status in ("completed", "closed")''',
+    ),
+    (
+        "M15",
+        ROUTE,
+        "L1 serves an entry built by a DIFFERENT release, at any age",
+        """    if cached_build != _current_build_id():\n        return None\n    age = _time.time() - cached_at""",
+        """    if False:\n        return None\n    age = _time.time() - cached_at""",
+    ),
+    (
+        "M16",
+        ROUTE,
+        "L1 stamps the READ time, so the two levels' bounds compose to ~2x",
+        """    _related_futures_cache[event_id] = (\n        _memo_stamp(response),""",
+        """    _related_futures_cache[event_id] = (\n        __import__("time").time(),""",
+    ),
+    (
+        "M17",
+        MODULE,
+        "L2 serves a fresh primary slot built by a DIFFERENT release",
+        """    primary = read_slot(client, keys.primary)\n    if primary is not None:\n        if payload_is_current_build(primary):""",
+        """    primary = read_slot(client, keys.primary)\n    if primary is not None:\n        if primary is not None:""",
+    ),
+    (
+        "M18",
+        MODULE,
+        "the mirror becomes a SECOND DOOR for the same dead build's bytes",
+        """    if not payload_is_current_build(mirror):""",
+        # 22 chars, so Pass A clears it — and `mirror` is never None here, so
+        # the refusal can no longer fire. Deliberately not the sibling's
+        # `if False:`.
+        """    if mirror is None:""",
+    ),
+    (
+        "M19",
+        MODULE,
+        "the stored payload stops naming its build — the check goes blind",
+        '''    envelope[SOURCE_STATUS_FIELD] = str(source_status or "")\n    envelope[BUILD_FIELD] = current_build_id()''',
+        # Multi-line, so Pass B cannot read the replacement as a loose mutant.
+        # An empty build reads as "cannot tell" and `payload_is_current_build`
+        # fails OPEN on it — which is correct, and is exactly why a writer that
+        # silently stopped stamping would be invisible without this mutant.
+        '''    envelope[SOURCE_STATUS_FIELD] = str(source_status or "")\n    envelope[BUILD_FIELD] = ""''',
+    ),
 ]
 
 
 def _run_suite() -> int:
     return subprocess.run(
-        [sys.executable, "-m", "pytest", str(SUITE), "-q", "--no-header", "-x"],
+        [sys.executable, "-m", "pytest", *[str(s) for s in SUITES], "-q", "--no-header", "-x"],
         cwd=ROOT,
         capture_output=True,
         text=True,
