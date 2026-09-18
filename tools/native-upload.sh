@@ -341,6 +341,18 @@ else
   note "asc key : ABSENT — archive and export still run; upload does not"
 fi
 
+# Master's resolved SPM checkout, borrowed rather than re-resolved (#117). See
+# the archive step for the measurement; stated here because a preflight that
+# does not name it cannot be read as the reason an archive later worked.
+SPM_STORE="${BAINLUCK_SPM_STORE:-$HOME/Library/Developer/Xcode/DerivedData/Bain_Luck-cwkxplfeuucvrvbplvqqlcgmpcgx/SourcePackages}"
+SPM_FLAGS=()
+if [ -d "$SPM_STORE" ]; then
+  SPM_FLAGS=(-clonedSourcePackagesDirPath "$SPM_STORE")
+  note "spm     : borrowing $SPM_STORE"
+else
+  note "spm     : no store at $SPM_STORE — the archive will resolve packages itself"
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo
   echo "PREFLIGHT: FAIL — nothing was built."
@@ -376,7 +388,8 @@ if [ "$MODE" = "dry-run" ]; then
   echo "would run, in order:"
   echo "  xcodebuild -project '<repo>/ios/Bain Luck/Bain Luck.xcodeproj' -scheme '$SCHEME' \\"
   echo "    -destination 'generic/platform=iOS' -archivePath '$ARCHIVE' \\"
-  echo "    -disableAutomaticPackageResolution CURRENT_PROJECT_VERSION=$EFFECTIVE_BUILD \\"
+  echo "    -disableAutomaticPackageResolution ${SPM_FLAGS[*]+${SPM_FLAGS[*]}} \\"
+  echo "    CURRENT_PROJECT_VERSION=$EFFECTIVE_BUILD \\"
   echo "    OTHER_SWIFT_FLAGS='\$(inherited) -Xfrontend -disable-sandbox' archive"
   echo "  xcodebuild -exportArchive -archivePath '$ARCHIVE' \\"
   echo "    -exportOptionsPlist '$EXPORT_OPTIONS' -exportPath '$EXPORT_DIR'"
@@ -399,12 +412,29 @@ else
   # CURRENT_PROJECT_VERSION on the command line reaches EVERY target, which is
   # what we want — App Store Connect rejects a widget whose CFBundleVersion does
   # not match its host app's.
+  # AND `-disableAutomaticPackageResolution` IS NOT ENOUGH ON ITS OWN (#117).
+  # It stops xcodebuild UPDATING the package graph; it does not conjure one. A
+  # `--repo` tree that has never been built — which is exactly what an archive
+  # candidate is, a snapshot worktree checked out to be archived — has no
+  # resolved checkout at all, so the archive resolves from scratch and dies
+  # fetching the two Firebase BINARY targets from dl.google.com, which this
+  # sandbox cannot reach. Measured 2026-09-18 archiving `22bf6e21d` for build 15:
+  #
+  #     xcodebuild archive exit: 74
+  #     Could not resolve package dependencies: … downloadError("The request timed out.")
+  #
+  # and then, correctly, `FAIL: no archive at …` — this script grades artifacts,
+  # so it did not call a network timeout a build failure. It just could not run.
+  # Same store, same variable, same reason as `scripts/ios_native_gate.sh` and
+  # (since native/233c) `tools/native-gates.sh`; absent store ⇒ flag omitted, so
+  # a machine with egress is unaffected.
   xcodebuild \
     -project "$PROJECT" \
     -scheme "$SCHEME" \
     -destination 'generic/platform=iOS' \
     -archivePath "$ARCHIVE" \
     -disableAutomaticPackageResolution \
+    ${SPM_FLAGS[@]+"${SPM_FLAGS[@]}"} \
     CURRENT_PROJECT_VERSION="$EFFECTIVE_BUILD" \
     OTHER_SWIFT_FLAGS='$(inherited) -Xfrontend -disable-sandbox' \
     archive > "$ARCHIVE_LOG" 2>&1
