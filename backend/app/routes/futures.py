@@ -29,6 +29,7 @@ from app.utils.futures_unsupported_price import (
     needs_trade_evidence,
     price_is_unsupported,
     price_refuted_by_live_book,
+    row_carries_a_verdict,
     snapshot_price_is_unsupported,
 )
 from app.utils.game_market_club_names import repair_field_outcome_name
@@ -3104,7 +3105,17 @@ def _drop_unsupported_snapshot_points(
             # through midpoints of a 0.002/0.938 book before it was decided.
             # Settled means settled: the completed journey is shown whole, and the
             # ladder's arm exempts the grade for the same reason.
-            if resolution_source is None and is_empty_book_midpoint(
+            #
+            # A RETRACTION IS NOT A GRADE (#6757 residual). `ungradeable_result`
+            # asserts no result, so there is no result for the exemption to
+            # protect — only the empty-book midpoint it was written to withhold.
+            # `row_carries_a_verdict` is #6876's canonical spelling of that
+            # question, already asked by `needs_trade_evidence` and
+            # `price_refuted_by_live_book` two calls below; asking it here too is
+            # what stops the ladder, the chart and the price rails disagreeing
+            # about one row. The exemption is only WITHDRAWN: the retracted row
+            # is then judged by the same empty-book predicate as an ungraded one.
+            if not row_carries_a_verdict(resolution_source) and is_empty_book_midpoint(
                 _as_float(snapshot.probability),
                 _as_float(getattr(snapshot, "yes_bid", None)),
                 _as_float(getattr(snapshot, "yes_ask", None)),
@@ -3399,11 +3410,29 @@ def _empty_book_outcome_ids(market: FuturesMarket) -> set[int]:
     1,910 of THOSE carry one or two legs — an untraded binary whose only book is
     empty, which is exactly the row that should print nothing rather than a
     manufactured coin flip. Eleven markets with six or more legs blank entirely.
+
+    A RETRACTION IS NOT A GRADE, and this is the one refinement the exemption
+    has needed since it shipped. ``ungradeable_result`` is the no-result
+    sentinel (CAL-P056): a leg carrying it has been declared unknowable, not
+    decided, so there is no result for the exemption to protect — only the
+    empty-book midpoint it was written to withhold. ``/futures/2951399`` printed
+    thirteen identical 49s under that badge on an open market resolving in
+    2027, ``prices_withheld: 0`` beneath them.
+
+    THE TEST IS NOT WRITTEN HERE. :func:`row_carries_a_verdict` (#6876) is the
+    codebase's one spelling of "is there a grade at all", and this route's price
+    rails already ask it — ``needs_trade_evidence`` and
+    ``price_refuted_by_live_book`` both call it. This arm and the chart arm in
+    :func:`_drop_unsupported_snapshot_points` call the same function so the
+    ladder, the graph and the rails cannot read one row three ways. Every other
+    non-null source keeps the exemption exactly as before: whether a terminal
+    no-winner source such as ``all_losers`` should also yield is a settlement
+    question, and the tests pin today's answer so it is changed visibly.
     """
     return {
         o.id
         for o in market.outcomes
-        if getattr(o, "resolution_source", None) is None
+        if not row_carries_a_verdict(getattr(o, "resolution_source", None))
         and _leg_prices_an_empty_book(o)
     }
 
