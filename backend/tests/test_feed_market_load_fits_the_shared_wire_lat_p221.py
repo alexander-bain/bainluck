@@ -26,15 +26,33 @@ artifact they existed for was refused in production on every single build. That
 is the class this file closes: a bound that is only ever exercised against
 fixtures smaller than the thing it bounds is not a bound, it is a decoration.
 
-HOW TO RE-MEASURE THE SHAPE BELOW (it is a population, so it moves):
+HOW TO RE-MEASURE THE SHAPE BELOW (it is a population, so it moves — and it
+moved 35% in the two weeks nobody re-read it; see the block above
+`PROD_MARKETS`):
 
     POST /api/admin/db-query
-    SELECT count(*) FROM futures_markets
-     WHERE status='open' AND event_id IS NULL
-       AND (resolution_date IS NULL OR resolution_date >= now())
-       AND name NOT LIKE '%% vs %%' AND name NOT LIKE '%% vs. %%'
-    -- and the outcome count / mean text widths for the top 700 of those,
-    -- ordered by market_tier ASC NULLS LAST, resolution_date ASC NULLS LAST.
+    WITH top700 AS (
+      SELECT id, row_number() OVER (ORDER BY market_tier ASC NULLS LAST,
+                                             resolution_date ASC NULLS LAST) AS rn
+        FROM futures_markets
+       WHERE status='open' AND event_id IS NULL
+         AND (resolution_date IS NULL OR resolution_date >= now())
+         AND name NOT LIKE '%% vs %%' AND name NOT LIKE '%% vs. %%'
+       ORDER BY market_tier ASC NULLS LAST, resolution_date ASC NULLS LAST
+       LIMIT 700)
+    SELECT (SELECT count(*) FROM top700) AS n_markets,
+           (SELECT count(*) FROM futures_outcomes o
+              JOIN top700 t ON o.market_id = t.id) AS n_outcomes
+
+`MEASURED_ENVELOPE_BYTES` is NOT re-pointed from that count. It is re-measured
+by pulling 40 of those markets (every 17th by `rn`, never `LIMIT 40` — the
+order key is the tier and the head is all one tier) with their outcomes,
+casting the values back to their python types, encoding them through
+`encode_shared_payload`, and extrapolating spine + per-market + per-outcome to
+the counts above. Scaling the old constant by the fixture's own growth would
+make `test_the_fixture_reproduces_the_measured_artifact` a fixture held to a
+target derived from itself, i.e. exactly the decoration this file was written
+to end.
 
 When this file goes red, the answer is NOT to raise a cap. It is that the
 artifact outgrew its wire and needs a narrower one (drop a column, compact the
@@ -58,26 +76,74 @@ from app.utils import principal_independent_cache as pic
 #: the isoformat length is what the codec pays for.
 _A_TIMESTAMP = datetime(2026, 9, 4, 4, 47, 12, 123456, tzinfo=timezone.utc)
 
-# --- the measured production shape, 2026-09-04 ------------------------------
+# --- the measured production shape, 2026-09-18 (was 2026-09-04) -------------
+#
+# 🔴 RE-POINTED 2026-09-18, and the reason is this file's OWN failure class.
+# LAT-P221 exists because "every guard tested that the cache WORKS, none tested
+# that the artifact FITS" — and the first version of it then rebuilt that exact
+# failure one level up, by pinning the population it fits against to a number
+# hand-copied on 2026-09-04 and never re-read. Two weeks later the outcome
+# population was 9,325 and this file was still sizing 6,904: it was measuring a
+# population that no longer existed, which is the same decoration in a
+# different place. Ask of any size guard: what re-measures the number it is
+# comparing to?
+#
 #: Candidate-base size. The eight Discover pools are capped at 80/80/80/120/100/
 #: 100/80/80 = 720 ids before dedup, so 700 is the population's real ceiling and
-#: not an estimate.
+#: not an estimate. This one does NOT move with the population — it is the only
+#: constant here that is structural rather than measured.
 PROD_MARKETS = 700
-#: Measured, not derived: 6,904 outcomes across those 700 markets.
-PROD_OUTCOMES = 6_904
+#: Measured, not derived: 9,325 outcomes across those 700 markets (2026-09-18,
+#: the re-measure SQL in this module's docstring; was 6,904 on 2026-09-04, so
+#: the population grew 35% in two weeks).
+#:
+#: This is a LIVE population and it moves by ones between any two reads — the
+#: same query read 9,326 an hour earlier. Do not re-point this constant for a
+#: drift of a few rows; it is here to catch the 35% kind, and re-measuring the
+#: baseline must never become a way of quietly absorbing growth.
+PROD_OUTCOMES = 9_325
 #: Mean bytes of the variable-width text a row actually carries (names, external
 #: ids, urls, hooks, and `market_metadata`, which dominates the market row).
-PROD_MARKET_TEXT_BYTES = 955
-PROD_OUTCOME_TEXT_BYTES = 68
+#: Re-measured 2026-09-18 over the same 40 real rows as the envelope below: the
+#: market row nearly doubled (955 -> 1,864, `market_metadata` having grown) and
+#: the outcome row shrank (68 -> 47). They moved in OPPOSITE directions, which
+#: is why neither can be inferred from the other or from the row counts.
+PROD_MARKET_TEXT_BYTES = 1_864
+PROD_OUTCOME_TEXT_BYTES = 47
 
 #: The measured envelope of the REAL artifact, encoded by this module's own
 #: codec over 40 real production rows and extrapolated to the shape above. It is
 #: what `test_the_fixture_reproduces_the_measured_artifact` holds the fixture to.
-MEASURED_ENVELOPE_BYTES = 2_928_973
+#:
+#: Re-measured 2026-09-18: 2,928,973 -> 3,827,678 B (3.83 MB). METHOD MATTERS
+#: MORE THAN THE NUMBER, because the cheap way to re-point this is to scale it
+#: with the fixture's own growth — and that would make the control vacuous, a
+#: fixture held to a target derived from itself. So it is measured the way the
+#: original was and the docstring says: 40 real markets and their 776 real
+#: outcomes pulled from the candidate-base population, cast back to their
+#: PYTHON types (a `Decimal` and a `datetime` are the only tagged values on this
+#: wire — left as strings they under-measure the artifact by exactly the thing
+#: that makes it expensive), encoded through `encode_shared_payload`, then
+#: decomposed into spine + per-market + per-outcome and extrapolated to 700 /
+#: 9,325. Per market 2,539 B, per outcome 220 B, spine 122 B.
+#:
+#: The 40 are sampled SYSTEMATICALLY across the ordered top-700 (every 17th),
+#: not `LIMIT 40`: the order key is `market_tier ASC NULLS LAST`, so a head
+#: sample would measure tier-1 text widths and call them the population's.
+MEASURED_ENVELOPE_BYTES = 3_827_678
 #: Fraction of nullable columns left `None`. CALIBRATED, not chosen: it is the
 #: one free parameter, and it is set to whatever reproduces
 #: `MEASURED_ENVELOPE_BYTES`. Re-calibrate it when the shape constants move.
-NULL_RATE = 0.25
+#:
+#: Re-calibrated 2026-09-18 with the shape constants above: 0.25 -> 0.34, which
+#: puts the fixture at 3,785,526 B against the measured 3,827,678 B (ratio
+#: 0.989, band 0.9-1.1). Worth recording that production's OWN observed null
+#: rate over the same 40 rows is 0.519, not 0.34 — the two are not the same
+#: quantity and should not be reconciled: this parameter spreads one text budget
+#: across all text columns of a synthetic row, so it absorbs the difference
+#: between that flat budget and production's very uneven one. It is a fitting
+#: parameter for the envelope, never a claim about how null production is.
+NULL_RATE = 0.34
 
 #: Node count of the fixture, measured 2026-09-05 (LAT-P230 ITEM 2a). Nodes are
 #: what `assert_plain_data` counts, and they are a function of the SHAPE alone —
@@ -156,13 +222,67 @@ NULL_RATE = 0.25
 #:
 #: The budget assertion below is again UNCHANGED and still has room: 122,749
 #: against a 200,000 cap is 61%, and the 1.5x alarm still sits at 133,333.
-MEASURED_NODES = 122_749
+#:
+#: 2026-09-18 — the first move of this constant that is NOT a schema change.
+#: Every delta above was a column arriving or leaving; this one is the
+#: POPULATION, re-pointed from the stale 2026-09-04 shape (see the block at the
+#: top of this file). 122,749 -> 156,466, +33,717, and it decomposes on three
+#: terms that were each measured by holding the other two fixed rather than
+#: inferred from the total:
+#:
+#: +33,930  outcomes 6,904 -> 9,325. 2,421 new outcome rows at 14 nodes each
+#:          (13 values + the row's own list) is +33,894; the residual +36 is the
+#:          RNG-stream term below, shifted by the extra draws those rows consume.
+#:     -48  the text widths (955/68 -> 1,864/47). This term SHOULD be zero —
+#:          node count is a function of the shape, not of how wide the text is —
+#:          and it is not, because `_texty` loops until it has filled its budget
+#:          and so consumes a budget-dependent number of `rng` draws. Changing a
+#:          text width therefore shifts every later draw, flipping a handful of
+#:          `market_metadata` cells between `None` (1 node) and a populated dict
+#:          (4 nodes). Recorded rather than rounded away: it is the same RNG
+#:          coupling the two deltas above already document, reached by a new
+#:          route, and a future reader re-measuring only the counts would
+#:          otherwise find 48 nodes they cannot account for.
+#:    -165  `NULL_RATE` 0.25 -> 0.34. 55 `market_metadata` cells flip from a
+#:          populated dict to `None` at 4 nodes against 1, i.e. 55 x 3.
+#:
+#: The harness that produced these was first checked against the constant it was
+#: replacing — at the old four constants it returns 122,749 exactly — because a
+#: decomposition from a harness that cannot reproduce the baseline is arithmetic
+#: about nothing.
+#:
+#: The budget assertion below is UNCHANGED and still has room, but LESS of it:
+#: 156,466 against the 200,000 growth alarm is 78%, where the 2026-09-04 shape
+#: sat at 61%. The BYTE alarm is the tighter one now — see `HEADROOM_FACTOR`.
+MEASURED_NODES = 156_466
 
 #: The alarm fires BEFORE breakage, not at it. A guard that goes red at the
 #: moment the share stops working has told us nothing the latency would not
 #: have; the point is to be red while there is still room to fix it. 1.5 puts
-#: the alarm at a 4.0 MB envelope against a 6 MB bound — today's artifact is
-#: 2.79 MB, so ~1.4x growth trips this file and ~2.1x actually breaks the share.
+#: the alarm at a 4.19 MB envelope against a 6.29 MB bound.
+#:
+#: 🔴 2026-09-18: THIS IS NOW THE TIGHTEST OF THE THREE ALARMS, and the margin
+#: is small. Today's artifact is 3.83 MB, so ~1.10x growth in BYTES trips this
+#: file and ~1.64x actually breaks the share. On 2026-09-04 those were ~1.4x and
+#: ~2.1x and the NODE alarm was the one to watch; the population grew 35% in two
+#: weeks while the node count grew 27%, so the byte alarm overtook it.
+#:
+#: Measured in the units that actually move — the outcome population — by
+#: bisecting this fixture against each alarm:
+#:
+#:    9,325  today
+#:   10,836  the BYTE alarm trips        (+16.2%)
+#:   12,435  the NODE alarm trips        (+33.4%)
+#:   18,839  the share actually breaks   (`DECODE_BUDGET_OUTCOMES`)
+#:
+#: At the rate this population has actually grown — 6,904 to 9,325 in the
+#: fourteen days nobody was re-measuring it, ~173 outcomes a day — the byte
+#: alarm is about nine days out. THAT IS THE GUARD WORKING, not a reason to
+#: pre-emptively soften it: the whole design is to be red while there is still
+#: room, and there are 8,000 outcomes of room between the alarm and the
+#: breakage. When it goes, the answer is the one this module's docstring gives
+#: and not a larger number here: the artifact outgrew its wire and needs a
+#: narrower one (drop a column, compact the row form, or chunk the publish).
 HEADROOM_FACTOR = 1.5
 
 #: The NODE growth alarm (LAT-P273). Keeps the 200,000 that `pic._MAX_NODES`
@@ -600,8 +720,29 @@ async def test_a_node_cap_breach_defeats_even_the_local_tier(payload, monkeypatc
 #: count. MEASURED by bisection on this file's own fixture, not extrapolated —
 #: `test_the_decode_budget_scale_is_what_it_says` is the control that keeps it
 #: honest, so a future edit cannot quietly retune it into fiction.
-DECODE_BUDGET_OUTCOMES = 17_630
-DECODE_BUDGET_NODES = 272_886
+#:
+#: Re-bisected 2026-09-18 with the re-pointed shape constants: 17,630 -> 18,839
+#: outcomes, 272,886 -> 289,659 nodes. These are DERIVED from the fixture's text
+#: widths, so they had to move when those did, and the direction is the
+#: interesting part: the crossing point went UP even though the market row
+#: nearly doubled, because the outcome row shrank (68 -> 47 B) and at this scale
+#: there are ~27 outcomes per market. A per-outcome saving buys far more budget
+#: than a per-market cost spends — the same asymmetry #5809 was built on.
+#:
+#: Re-bisected at ONE-outcome granularity, which is the resolution the control
+#: below checks: 18,839 encodes to 6,289,600 B against the 6,291,456 B cap, and
+#: 18,840 encodes to 6,294,448 B, so this is the actual edge and not merely a
+#: point below it.
+#:
+#: 🔴 The headroom `test_the_node_cap_never_refuses_what_the_decode_budget_accepts`
+#: asserts is now THIN: 289,659 against `pic._MAX_NODES` of 300,000 is 3.4%,
+#: where the 2026-09-04 shape had 9%. That test is LAT-P273's invariant — the
+#: safety cap must never refuse an artifact the decode budget accepts — and if
+#: the outcome row ever grows a column back, it is the one that goes red. The
+#: fix then is the node cap, not this constant: a `market_load` that fits the
+#: wire must not be refused for being long.
+DECODE_BUDGET_OUTCOMES = 18_839
+DECODE_BUDGET_NODES = 289_659
 
 def test_the_decode_budget_scale_is_what_it_says():
     """Control for the two constants above.
