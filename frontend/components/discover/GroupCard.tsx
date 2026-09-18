@@ -69,7 +69,14 @@ export function GroupCard({ items, title, sharedQuestion, positionIndex }: Group
       >
         <div className="flex flex-col gap-1 min-w-0">
           <span className="flex items-center gap-2 min-w-0">
-            <span className={`${catStyle.bg} ${catStyle.text} text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full whitespace-nowrap`}>
+            {/* `truncate` (not a bare `whitespace-nowrap`) because `title` is not always the short
+                category word this chip was sized for: a golf group arrives as the 45-character
+                "Nationwide Children's Hospital Championship", and a nowrap chip with no width cap
+                grew 13.6px past the card, where the card's own `overflow-hidden` cut it mid-word
+                with nothing to tell the reader a word was missing (#6929). `min-w-0` is what lets
+                a flex item shrink below its content at all; `truncate` is what makes the shortfall
+                legible as an ellipsis instead of a clean-looking cut. */}
+            <span className={`${catStyle.bg} ${catStyle.text} text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full min-w-0 max-w-full truncate`}>
               {catStyle.emoji} {title}
             </span>
             {!sharedQuestion && (
