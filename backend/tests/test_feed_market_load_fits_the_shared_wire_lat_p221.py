@@ -157,6 +157,53 @@ PROD_OUTCOMES = 9_325
 PROD_MARKET_TEXT_BYTES = 1_448
 PROD_OUTCOME_TEXT_BYTES = 53
 
+#: Nodes in ONE real `market_metadata` cell. LAT-P276.
+#:
+#: 🔴 THE ONE COLUMN WHOSE NODE COUNT IS NOT A FUNCTION OF THE SHAPE, and the
+#: reason the block above `MEASURED_NODES` used to claim that nodes "do not move
+#: with text widths" and was wrong about production. `market_metadata` is JSONB:
+#: `assert_plain_data` descends into it and counts every value, so its node count
+#: moves with its CONTENT, which is exactly the quantity the byte constants track
+#: and this one was declared exempt from. The fixture modelled it as a fixed
+#: three-key dict — 4 nodes, nulled at `NULL_RATE` — and therefore could not see
+#: that growth at all.
+#:
+#: CENSUSED 2026-09-18 15:00Z, all 700 rows of the candidate population (not a
+#: sample — the mean over the every-17th sample of 40 reads 74.8, inflated by one
+#: 1,184-node cell, and a constant that unstable is not a constant):
+#:
+#:     populated      700 / 700     the fixture nulls 23% of them
+#:     total nodes    33,923        the fixture models 2,317
+#:     mean            48.46        median 26, p90 26, max 1,184
+#:
+#: So 31,606 nodes — ~16% of the artifact — were structurally invisible to this
+#: file's node model. That is most of the gap LAT-P274 measured on production the
+#: same morning: the guard's model said ~163,000 while production's own walk said
+#: 200,121, over the alarm, while this file sat green.
+#:
+#: The MEAN is the right statistic and the median is the wrong one: the artifact
+#: carries the sum over 700 cells, so a long right tail is part of the size being
+#: bounded. 700 x 48 = 33,600 against the censused 33,923, i.e. 1% low.
+PROD_MARKET_METADATA_NODES = 48
+
+#: Serialized bytes of that cell, from the same 700-row census: mean 1,004 of the
+#: 1,448 the whole market row carries. The block above `PROD_MARKET_TEXT_BYTES`
+#: has always said `market_metadata` "dominates the market row"; this is that
+#: sentence as a number, and it is why the column cannot take the flat
+#: `budget // len(text_cols)` share the other text columns take.
+#:
+#: 🔴 IT IS ALSO WHY `NULL_RATE` IS NOT THE KNOB HERE, and the wrong fix is worth
+#: recording because it fits and is still wrong. A real 48-node cell has a floor
+#: cost of ~1 kB of keys, so on the flat split the fixture ran 26% over the
+#: measured envelope, and `NULL_RATE` 0.23 -> 0.75 brings that back to 0.990 —
+#: in band, one free parameter, exactly what this file's own red says to do. It
+#: is refused because `NULL_RATE` nulls EVERY nullable column, and three
+#: quarters of the `Decimal` and `datetime` ones going `None` is the failure
+#: `_column_kinds` exists to stop ("encodes to 58% of the real artifact, sails
+#: under the cap the real one is breaching"). Fitting the envelope by deleting
+#: the tagged values is buying the byte assertion with the thing it measures.
+PROD_MARKET_METADATA_TEXT_BYTES = 1_004
+
 #: The measured envelope of the REAL artifact, encoded by this module's own
 #: codec over 40 real production rows and extrapolated to the shape above. It is
 #: what `test_the_fixture_reproduces_the_measured_artifact` holds the fixture to.
@@ -217,6 +264,17 @@ NULL_RATE = 0.23
 #: the `market_metadata` dicts — so unlike the byte constants this one does not
 #: move with text widths. Deterministic given the shape constants above, which is
 #: what makes a 1.5x alarm on it a real signal rather than a flaky one.
+#:
+#: 🔴 2026-09-18, LAT-P276: THE SENTENCE ABOVE IS FALSE OF PRODUCTION AND WAS THE
+#: WHOLE DEFECT. `market_metadata` is JSONB, `assert_plain_data` descends into
+#: it, and its node count therefore moves with its CONTENT — the one quantity
+#: this constant was declared exempt from. The clause "plus the `market_metadata`
+#: dicts" was carrying the entire exception and nobody priced it: the fixture
+#: modelled a flat three-key dict at 4 nodes, nulled 23% of them, and so could
+#: not see that column grow at all. Censused over all 700 production rows, a real
+#: cell is 48 nodes and is never null. The paragraph is left standing rather than
+#: rewritten because it is the claim this file got wrong, and a size guard whose
+#: own model is quietly corrected is the failure class this file exists to close.
 #:
 #: Re-measured 2026-09-05 after rebasing onto master: 114,421 -> 115,133. The
 #: cause is the `price_polled_at` derived snapshot field that landed on master
@@ -330,7 +388,35 @@ NULL_RATE = 0.23
 #: draws `_texty` and `_row_at_kinds` consume, so `market_metadata` cells flip
 #: between `None` (1 node) and a populated dict (4 nodes) — 58 of them, 58 x 3.
 #: A delta here that does NOT decompose is the drift this assertion exists for.
-MEASURED_NODES = 156_640
+#:
+#: 2026-09-18, LAT-P276, the metadata model: 156,640 -> 187,953, +31,313. It
+#: decomposes EXACTLY, to zero residual, and there is no RNG-stream term for the
+#: first time in this constant's history — `_metadata_at` slices text the caller
+#: already drew and draws nothing itself, and the null verdict is still taken for
+#: every nullable column, so the stream is byte-identical to the one that
+#: produced 156,640:
+#:
+#:   +23,276  529 cells that were a populated 3-key dict (4 nodes) become a real
+#:            one (48). Replayed against `git show HEAD:` of this file, not
+#:            inferred from the delta.
+#:    +8,037  171 cells that were `None` (1 node) become the same 48. Production
+#:            nulls 0 of 700, so those were the fixture leaving empty a column
+#:            production always fills.
+#:
+#: 🟢 AND THE CONSTANT IS NOW INDEPENDENT OF `NULL_RATE`, measured: 187,953 at
+#: 0.23, 0.35, 0.45, 0.55, 0.65 and 0.75 alike. Every column is worth one node
+#: whether it is `None` or not, and the only one that was not is now never null.
+#: So the byte-fitting parameter can no longer move the node count — which is
+#: what the +174 delta above was, and it cannot recur.
+#:
+#: 🔴 THE CORRECTED MODEL AGREES WITH PRODUCTION, WHICH THE OLD ONE DID NOT.
+#: LAT-P274's gauge walked 200,121 nodes on production the same morning. At the
+#: 9,818 outcomes the population query read at 11:59Z this fixture now says
+#: 194,855 — 2.6% apart, where the old model said ~163,000 and was 23% low ACROSS
+#: the alarm line. That residual is the mean-vs-census 1% (700 x 48 = 33,600
+#: against a censused 33,923) plus high-water semantics, and it is small enough
+#: that the two instruments are now measuring the same artifact.
+MEASURED_NODES = 187_953
 
 #: The alarm fires BEFORE breakage, not at it. A guard that goes red at the
 #: moment the share stops working has told us nothing the latency would not
@@ -366,6 +452,28 @@ MEASURED_NODES = 156_640
 #:   14,700       —           the STORE alarm trips       (+57.6%)
 #:   17,500       —           the BYTE alarm trips        (+87.7%)
 #:   29,869       —           the share actually breaks
+#:
+#: 🔴 2026-09-18, LAT-P276 — RE-BISECTED ON THE CORRECTED NODE MODEL, AND THE
+#: NODE ROW ABOVE WAS WRONG BY MOST OF ITS RUNWAY:
+#:
+#:              stated        corrected
+#:    9,616     —             TODAY (censused 15:00Z; the constant says 9,325)
+#:   11,900     10,500        the NODE alarm trips   (+27.6% -> +9.2%)
+#:   14,700     14,700        the STORE alarm trips  (unmoved)
+#:   17,500     16,800        the BYTE alarm trips   (unmoved but for the text split)
+#:
+#: AND PRODUCTION HAS ALREADY CROSSED IT. `/api/admin/shared-build-stats` read
+#: `node_high_water.market_load` = 200,121 against the 200,000 alarm at 14:30Z,
+#: while this file sat green and promised another 27.6% of population growth.
+#: Nothing is refused (`_MAX_NODES` is 500,000 and `refused: 0`), so no reader
+#: has lost anything — but the runway a person would have read off this table was
+#: three times what it was.
+#:
+#: 🪤 A SINGLE READ OF THAT GAUGE IS NOT A PRODUCTION READING. `market_load`'s
+#: key is a digest of the market ids, so the artifact is key-dependent and two
+#: web workers read 200,121 and 26,988 in the same minute — a filtered feed
+#: builds a small one. Sample across workers and take the MAX, or say
+#: "per-worker" in the same sentence.
 #:
 #: So the byte alarm went from ~9 days of runway to ~7 weeks, and the order
 #: changed: the NODE alarm is the first to fire again, as it was on 2026-09-04.
@@ -439,6 +547,81 @@ def _texty(rng: random.Random, n_bytes: int) -> str:
     return " ".join(out)[:n_bytes]
 
 
+def _metadata_at(text: str, n_nodes: int = PROD_MARKET_METADATA_NODES) -> dict:
+    """A `market_metadata` cell with production's KEYS and node cardinality.
+
+    Takes the text the caller already drew rather than drawing its own, and
+    slices it across the string values. That is deliberate and it is what makes
+    this change decomposable: the cell spends exactly the bytes the old
+    single-string cell spent and consumes exactly the same RNG draws, so the
+    whole `MEASURED_NODES` delta is the node model and carries no stream term
+    (the trap the +730 and +174 deltas above had to unpick).
+
+    🔴 THE KEY NAMES COME OUT OF THE TEXT BUDGET, NOT ON TOP OF IT.
+    `PROD_MARKET_TEXT_BYTES` is measured as the bytes a real market row's
+    variable-width text occupies, and its own docstring names `market_metadata`
+    as the column that dominates it — so that 1,448 B is the SERIALIZED cell,
+    keys included. Adding production's keys around a full-budget string instead
+    of inside it put the fixture at 127% of the measured envelope: a heavier
+    artifact than production, which fails the byte assertion in the safe
+    direction but is still a fixture that is not the thing it stands in for.
+
+    The key names are the real ones, censused over all 700 rows — `shape`
+    697/700, `event_title` 683, `market_count` 676, `polymarket_event_id` 633,
+    `neg_risk` 616, `content_understanding_v1` 577, and the twelve `shape`
+    sub-keys. They are not decoration: repeated key names are the most
+    compressible thing left on this wire now the tag dict is gone, and they are
+    most of why real rows compress 3.85x where this fixture managed 2.68x
+    (`COMPRESSION_RATIO_BAND`). A fixture with production's node count but not
+    production's keys would buy the node fix by making the storage assertion
+    less honest.
+    """
+    def _build(title: str) -> dict:
+        # Nesting to depth 4, which is production's max (median 3). The census
+        # MINIMUM is 20 nodes and these real keys cost exactly that: a cell
+        # carrying only them IS a real cell. The population's remaining nodes
+        # live in `content_understanding_v1`, the variable-width key and the
+        # whole right tail, so the remainder goes there rather than spread over
+        # invented keys.
+        cell = {
+            "shape": {
+                "v": 2,
+                "shape": "unshaped",
+                "evidence": ["expected_winners:1", "mutually_exclusive:true"],
+                "side_kind": None,
+                "confidence": "low",
+                "exhaustive": None,
+                "outcome_count": 0,
+                "expected_winners": 1,
+                "outcome_relation": "unknown",
+                "input_fingerprint": text[:20],
+                "push_void_capable": False,
+                "classifier_version": 2,
+            },
+            "neg_risk": True,
+            "market_count": 71,
+            "polymarket_event_id": text[20:26],
+            "event_title": title,
+        }
+        remainder = n_nodes - _count_validator_nodes(cell) - 1  # -1: the dict itself
+        if remainder < 0:
+            raise AssertionError(
+                f"n_nodes={n_nodes} is below what this cell's real keys already "
+                f"cost; the censused minimum is 20"
+            )
+        cell["content_understanding_v1"] = {
+            f"theme_{i}": (text[i : i + 12] if i % 3 else i) for i in range(remainder)
+        }
+        return cell
+
+    # Priced twice: once with no title to find what the structure costs, then
+    # again with the title the leftover budget affords. `json.dumps` is the
+    # right ruler here even though the wire is the module's codec — the codec
+    # only tags `Decimal` and `datetime`, and this cell carries neither.
+    overhead = len(json.dumps(_build(""), separators=(",", ":"), ensure_ascii=False))
+    return _build(text[26 : max(26, len(text) - overhead)])
+
+
 _WORDS = (
     "winner championship market open close outright tournament round leader "
     "polymarket kalshi series playoff conference division award nominee "
@@ -485,11 +668,26 @@ def _row_at_kinds(
     rng: random.Random, kinds: list[str], nullable: list[bool], text_budget: int
 ) -> list:
     """One positional row whose values have production's TYPES and text width."""
-    text_cols = [i for i, k in enumerate(kinds) if k in ("str", "json")] or [0]
-    per_text = max(1, text_budget // len(text_cols))
+    # `market_metadata` is taken off the top at its censused width and the rest
+    # of the budget is split among the plain text columns. A flat split gives
+    # the column that carries 69% of the row's text the same share as a name or
+    # a url, which is the uneven-vs-flat mismatch the `NULL_RATE` block says it
+    # is absorbing — absorbed here instead, where it was measured.
+    json_cols = [i for i, k in enumerate(kinds) if k == "json"]
+    str_cols = [i for i, k in enumerate(kinds) if k == "str"]
+    meta_budget = PROD_MARKET_METADATA_TEXT_BYTES if json_cols else 0
+    text_cols = str_cols or json_cols or [0]
+    per_text = max(1, (text_budget - meta_budget) // len(text_cols))
     row: list = []
     for i, kind in enumerate(kinds):
-        if nullable[i] and rng.random() < NULL_RATE:
+        # The draw happens for every nullable column whatever the kind, because
+        # the RNG stream's shape is load-bearing here (see `MEASURED_NODES`) —
+        # but `market_metadata`'s verdict is IGNORED. Censused 2026-09-18: it is
+        # populated on 700 of 700 production rows, so nulling 23% of them was a
+        # fixture that left a column empty which production always fills, which
+        # is the failure `_column_kinds` was written to stop, one column over.
+        nulled = nullable[i] and rng.random() < NULL_RATE
+        if nulled and kind != "json":
             # A `None` is four bytes and no tag. Production rows are full of
             # them (no image, no hook, no closing line), so a fixture that
             # fills every nullable column is not a heavier version of the real
@@ -504,7 +702,7 @@ def _row_at_kinds(
         elif kind == "int":
             row.append(rng.randrange(1, 900_000))
         elif kind == "json":
-            row.append({"shape": _texty(rng, per_text), "v": 2, "confidence": "low"})
+            row.append(_metadata_at(_texty(rng, meta_budget)))
         else:
             row.append(_texty(rng, per_text))
     return row
@@ -601,6 +799,68 @@ def test_the_fixture_is_the_measured_production_shape(payload):
     assert len(payload["rows"]) == PROD_MARKETS
     assert sum(len(r[1]) for r in payload["rows"]) == PROD_OUTCOMES
     pic.assert_plain_data(payload)  # must not raise, or it is not shareable
+
+
+def test_every_market_carries_a_censused_metadata_cell(payload):
+    """The control for LAT-P276, and the one this file did not have.
+
+    `MEASURED_NODES` alone cannot catch this class. A cell that went back to a
+    flat three-key dict would move that constant, and moving that constant is a
+    routine, sanctioned act with a decomposition paragraph to write — the file's
+    whole history is such paragraphs. So the thing that was wrong for two weeks
+    (a JSONB column modelled as a scalar-ish stub) has to be asserted as a SHAPE,
+    not as a total, or the next re-measure quietly absorbs it again.
+
+    All three assertions are censused facts about production, 2026-09-18 15:00Z,
+    all 700 rows of the candidate population — not preferences about the fixture.
+    """
+    kinds = _column_kinds(FuturesMarket, fs.MARKET_COLUMNS) + [
+        _DERIVED_KINDS[name] for name in fs.DERIVED_MARKET_COLUMNS
+    ]
+    json_at = [i for i, k in enumerate(kinds) if k == "json"]
+    assert json_at, "no JSONB column in the market row — has market_metadata moved?"
+
+    cells = [row[0][json_at[0]] for row in payload["rows"]]
+
+    # 1. Populated on 700 of 700. The fixture nulled 23% of them.
+    assert [c for c in cells if c is None] == [], (
+        f"{sum(c is None for c in cells)} of {len(cells)} metadata cells are None. "
+        f"Production nulls 0 of 700 — a fixture that empties a column production "
+        f"always fills is the `_column_kinds` failure, one column over."
+    )
+
+    # 2. The censused node count, per cell and in total. This is the assertion
+    #    the flat 4-node dict fails.
+    assert {_count_validator_nodes(c) for c in cells} == {PROD_MARKET_METADATA_NODES}
+
+    # ...and the total is pinned to the CENSUS, not to the constant above, or
+    # this clause is self-referential: lowering `PROD_MARKET_METADATA_NODES`
+    # would lower both sides of an equality against it and stay green. Mutation
+    # caught exactly that — 48 -> 21 left the first assertion passing. 33,923 is
+    # the measured total over all 700 rows; the band is what a live population
+    # may drift by between censuses, not room to shrink the model into.
+    censused_total = 33_923
+    total = sum(_count_validator_nodes(c) for c in cells)
+    assert 0.9 <= total / censused_total <= 1.1, (
+        f"the fixture's metadata is {total:,} nodes against a censused "
+        f"{censused_total:,} ({total / censused_total:.0%}). Re-census all 700 "
+        f"rows before moving either number — this is the column whose growth "
+        f"the node model was blind to, so absorbing a drift here is the defect."
+    )
+
+    # 3. Production's real keys, so the storage assertion stays honest — repeated
+    #    key names are most of why real rows compress 3.85x where this fixture
+    #    managed 2.68x before them, and 3.03x after.
+    censused = {
+        "shape",
+        "event_title",
+        "market_count",
+        "polymarket_event_id",
+        "neg_risk",
+        "content_understanding_v1",
+    }
+    assert censused <= set(cells[0]), sorted(censused - set(cells[0]))
+    assert isinstance(cells[0]["shape"], dict), "the `shape` sub-dict is 697/700"
 
 
 def test_the_fixture_reproduces_the_measured_artifact(payload):
@@ -888,8 +1148,20 @@ async def test_a_node_cap_breach_defeats_even_the_local_tier(payload, monkeypatc
 #: `principal_independent_cache.py` above `_MAX_NODES`, and it is thinner than
 #: the one it replaces: 1.2-1.4x, not 2-3x, because this change is precisely what
 #: made the encode side cheaper.
-DECODE_BUDGET_OUTCOMES = 29_869
-DECODE_BUDGET_NODES = 444_271
+#: 2026-09-18, LAT-P276, the metadata model: 29,869 -> 28,818 outcomes and
+#: 444,271 -> 460,855 nodes. Re-bisected by the method above and not scaled —
+#: ceiling found by doubling until 37,300 outcomes was PROVEN over the cap, then
+#: one-outcome granularity: 28,818 encodes to 6,290,891 B against the 6,291,456 B
+#: cap (565 B of margin) and 28,819 to 6,291,929 B, which does not fit.
+#:
+#: Both moved and they moved in OPPOSITE directions, which is the whole content
+#: of this change restated at the other end of the scale: a real `market_metadata`
+#: cell is heavier in bytes (so fewer rows fit the decode budget) AND far heavier
+#: in nodes (so the rows that do fit walk to more). The ordering invariant below
+#: still holds — 460,855 against a 500,000 cap — but on 92% of it where it used
+#: to sit at 89%, and that margin is now the honest one.
+DECODE_BUDGET_OUTCOMES = 28_818
+DECODE_BUDGET_NODES = 460_855
 
 def test_the_decode_budget_scale_is_what_it_says():
     """Control for the two constants above.
