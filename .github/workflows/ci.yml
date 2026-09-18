@@ -512,6 +512,40 @@ jobs:
             exit 1
           fi
 
+      - name: Proven-duplicate search BRIDGE contract (real Postgres)
+        # #5821 / CERT-3073. The step above proves the tagged twin stops being a
+        # second search result. This proves the reader still reaches the game:
+        # when the suppressed row was the ONLY row their text reached, removing
+        # it leaves NOTHING, and the bridge walks them to the canonical instead.
+        # Measured on production 2026-09-18, `q=Atletico Madrid` returned only
+        # the duplicate while the canonical was reachable only with the accent.
+        #
+        # It needs real Postgres for the same reason its sibling does: the recall
+        # arms compile to trigram and word-boundary SQL that SQLite cannot serve,
+        # and the duplicate predicate is a prefix LIKE over a JSONB array.
+        #
+        # The ship is asserted THROUGH THE ROUTE (`GET /api/events/search`), not
+        # by handing a filter to the helper. The version of these cases that
+        # lived in the unit file built its own arm from the whole query, which is
+        # a predicate the route never builds for a two-word search — it matched
+        # zero rows against a faithful seed, so the walk it claimed to prove was
+        # never executed. Using the house builder is not the same as using the
+        # reader's filter.
+        #
+        # They previously sat as a `skipif` class in
+        # `tests/test_proven_duplicate_search_bridge_5821.py`, where nothing ever
+        # set SEARCH_TEST_DATABASE_URL — so they SKIPPED on every run, and armed
+        # by hand they could not build their own fixture. That is precisely the
+        # failure this job's skip detection exists to end, so they are wired here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_proven_duplicate_bridge_pg_5821.py \
+            -v -rs 2>&1 | tee /tmp/dupbridge.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/dupbridge.txt; then
+            echo "::error::proven-duplicate search BRIDGE contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Tennis twin sweep write/undo contract (real Postgres)
         # #2878 / CERT-2142. The sweep's whole effect is one jsonb element
         # appended to `events.event_tags`, and its idempotence claim lives

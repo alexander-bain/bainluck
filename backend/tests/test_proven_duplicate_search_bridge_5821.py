@@ -83,7 +83,6 @@ def _array_on_sqlite(type_, compiler, **kw):  # pragma: no cover - DDL shim
 from app.models.models import Base, Event, Sport  # noqa: E402
 from app.services.anchor_channel import DUPLICATE_TAG_PREFIX, duplicate_tag  # noqa: E402
 from app.utils.proven_duplicates import (  # noqa: E402
-    bridged_canonical_ids,
     is_a_proven_duplicate,
     not_a_proven_duplicate,
 )
@@ -212,127 +211,14 @@ class TestThePredicatesPartition:
 
 # ════════════════════════════════════════════════════════════════════════════
 # Part B — the walk itself, executed against a real engine.
+#
+# MOVED to `tests/integration/test_search_proven_duplicate_bridge_pg_5821.py`,
+# and do not rebuild it here. As a `skipif`-gated class in this file it SKIPPED
+# on every run — nothing in CI set `SEARCH_TEST_DATABASE_URL` for this path, and
+# pytest exits 0 on a skip, so it read exactly like a passing gate. Armed by hand
+# it could not even construct its fixture. It now runs as its own step in the
+# `search-recall` job, which fails the build if the case skips.
 # ════════════════════════════════════════════════════════════════════════════
-
-
-@pytest.mark.skipif(
-    not DB_URL, reason="needs SEARCH_TEST_DATABASE_URL (CI's postgres gate)"
-)
-@pytest.mark.asyncio
-class TestTheBridgeWalksToTheCanonical:
-    """Executed on Postgres because the recall arm under test is the production
-    one — `_event_name_match` compiles to trigram/word-boundary SQL that SQLite
-    cannot serve, and a test that swapped in a hand-rolled ILIKE would be
-    asserting against a filter no reader ever runs."""
-
-    @staticmethod
-    async def _seeded():
-        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
-        engine = create_async_engine(DB_URL)
-        async with engine.begin() as conn:
-            await conn.run_sync(
-                lambda sync: Base.metadata.create_all(
-                    sync, tables=[Sport.__table__, Event.__table__], checkfirst=True
-                )
-            )
-        sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
-        return engine, sessionmaker
-
-    @staticmethod
-    def _arm(query: str):
-        """The route's OWN recall builder, not a second spelling of it."""
-        from app.routes.events import _event_name_match
-
-        return _event_name_match(query, None)
-
-    async def test_the_unaccented_spelling_reaches_the_accented_canonical(self):
-        """The ship, in one assertion: the reader who cannot type an accent is
-        walked from the row we declined to print to the row we print instead."""
-        engine, sessionmaker = await self._seeded()
-        try:
-            async with sessionmaker() as db:
-                await db.execute(
-                    Sport.__table__.insert().values(
-                        id=S_SOCCER, key="soccer_spain_la_liga", name="La Liga"
-                    )
-                )
-                await db.execute(
-                    Event.__table__.insert().values(
-                        id=CANONICAL_ID,
-                        sport_id=S_SOCCER,
-                        home_team_name=CANONICAL_HOME,
-                        away_team_name=CANONICAL_AWAY,
-                        commence_time=KICKOFF,
-                        status="scheduled",
-                    )
-                )
-                await db.execute(
-                    Event.__table__.insert().values(
-                        id=GHOST_ID,
-                        sport_id=S_SOCCER,
-                        home_team_name=GHOST_HOME,
-                        away_team_name=GHOST_AWAY,
-                        commence_time=KICKOFF,
-                        status="scheduled",
-                        event_tags=[duplicate_tag(CANONICAL_ID)],
-                    )
-                )
-                await db.commit()
-
-                reached = await bridged_canonical_ids(
-                    db, self._arm(UNACCENTED_QUERY), limit=64
-                )
-                assert reached == [CANONICAL_ID]
-
-                await db.execute(
-                    Event.__table__.delete().where(
-                        Event.id.in_([CANONICAL_ID, GHOST_ID])
-                    )
-                )
-                await db.execute(
-                    Sport.__table__.delete().where(Sport.id == S_SOCCER)
-                )
-                await db.commit()
-        finally:
-            await engine.dispose()
-
-    async def test_an_untagged_match_is_never_bridged(self):
-        """THE REFUSAL DIRECTION. A bridge that fired on an untagged row would
-        resurrect rows the surface deliberately declined — the mirror image of
-        the defect, and invisible to the test above."""
-        engine, sessionmaker = await self._seeded()
-        try:
-            async with sessionmaker() as db:
-                await db.execute(
-                    Sport.__table__.insert().values(
-                        id=S_SOCCER, key="soccer_spain_la_liga", name="La Liga"
-                    )
-                )
-                await db.execute(
-                    Event.__table__.insert().values(
-                        id=GHOST_ID,
-                        sport_id=S_SOCCER,
-                        home_team_name=GHOST_HOME,
-                        away_team_name=GHOST_AWAY,
-                        commence_time=KICKOFF,
-                        status="scheduled",
-                        event_tags=["provenance:source:kalshi"],
-                    )
-                )
-                await db.commit()
-
-                assert await bridged_canonical_ids(
-                    db, self._arm(UNACCENTED_QUERY), limit=64
-                ) == []
-
-                await db.execute(Event.__table__.delete().where(Event.id == GHOST_ID))
-                await db.execute(
-                    Sport.__table__.delete().where(Sport.id == S_SOCCER)
-                )
-                await db.commit()
-        finally:
-            await engine.dispose()
 
 
 # ════════════════════════════════════════════════════════════════════════════
