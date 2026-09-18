@@ -117,6 +117,112 @@ final class PriceAgeIsThePriceClock6018Tests: XCTestCase {
         XCTAssertNil(FuturesPriceAge.pricesAsOf(outcomes))
     }
 
+    // MARK: - A priceless row does not date the prices
+
+    /// Decodes the real `/api/futures/114175` shape, trimmed to 3 priced + 2
+    /// priceless rows with the production stamps.
+    private func ufc114175Outcomes() throws -> [FuturesOutcome] {
+        let json = """
+        [
+          {"id": 1, "name": "Tom Aspinall", "probability": 0.66,
+           "last_updated": "2026-09-18T09:50:24.382335+00:00"},
+          {"id": 2, "name": "Ciryl Gane", "probability": 0.21,
+           "last_updated": "2026-09-18T09:50:24.382340+00:00"},
+          {"id": 3, "name": "Jon Jones", "probability": 0.08,
+           "last_updated": "2026-09-18T09:51:02.113004+00:00"},
+          {"id": 4, "name": "Fighter E", "probability": null,
+           "last_updated": "2026-05-12T16:16:06.970740+00:00"},
+          {"id": 5, "name": "Other", "probability": null,
+           "last_updated": "2026-05-12T16:16:06.970740+00:00"}
+        ]
+        """
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode([FuturesOutcome].self, from: Data(json.utf8))
+    }
+
+    /// 🔴 THE MUTANT THIS EXISTS TO KILL IS `.filter` DELETED — and it is
+    /// invisible to every assertion in the section above, because those all call
+    /// `oldestStamp`, which takes `[String?]` and never sees a probability. Two
+    /// sessions were lost to exactly that: a battery that mutates the rule
+    /// cannot observe a change to what the rule is fed. So this drives
+    /// `pricesAsOf` with a MIXED ladder, which is the only shape that tells the
+    /// two implementations apart.
+    ///
+    /// Production 2026-09-18 10:2xZ, market 114175: 14 priced rows floored at
+    /// 09:50Z that morning, 5 priceless rows (`Fighter D/E/F/G`, `Other`) all
+    /// stamped 2026-05-12. The page printed "Updated May 12 at 9:16 AM" over a
+    /// 66% hero and a 7-day chart that had visibly moved.
+    func test_a_priceless_row_does_not_age_the_page_by_four_months() throws {
+        let asOf = try XCTUnwrap(FuturesPriceAge.pricesAsOf(ufc114175Outcomes()))
+        XCTAssertEqual(
+            iso.string(from: asOf), "2026-09-18T09:50:24Z",
+            """
+            The stamp aged itself to a row that draws no number. A `probability` \
+            of nil means `outcomeRow` renders no figure, so `last_updated` there \
+            dates a placeholder write, not a price (#4568 is the upstream half). \
+            Folding it into the floor printed May 12 over prices twenty minutes \
+            old on market 114175.
+            """
+        )
+    }
+
+    /// The floor still wins AMONG the priced rows — the filter narrows the set,
+    /// it does not turn the rule into a `max`. A `.filter` paired with a newest
+    /// -wins fold would pass the test above (both answer 09:5x on that ladder,
+    /// since the priced rows are minutes apart) and re-introduce the flattering
+    /// half of #6018. Here the oldest priced row is nine days back and the
+    /// priceless row is older still, so only floor-over-priced answers Sep 09.
+    func test_the_floor_still_wins_among_the_priced_rows() throws {
+        let json = """
+        [
+          {"id": 1, "name": "Refreshed favourite", "probability": 0.7,
+           "last_updated": "2026-09-18T09:50:24+00:00"},
+          {"id": 2, "name": "Frozen tail", "probability": 0.02,
+           "last_updated": "2026-09-09T08:50:00+00:00"},
+          {"id": 3, "name": "Other", "probability": null,
+           "last_updated": "2026-05-12T16:16:06+00:00"}
+        ]
+        """
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let outcomes = try decoder.decode([FuturesOutcome].self, from: Data(json.utf8))
+
+        let asOf = try XCTUnwrap(FuturesPriceAge.pricesAsOf(outcomes))
+        XCTAssertEqual(iso.string(from: asOf), "2026-09-09T08:50:00Z")
+    }
+
+    /// A ladder with NO priced row says nothing. This kills the tidy-looking
+    /// repair — filter, then fall back to the whole set when the filter empties
+    /// it — which passes both tests above and prints the placeholder date on
+    /// exactly the markets where there is no price to vouch for.
+    func test_a_ladder_with_no_priced_row_says_nothing() throws {
+        let json = """
+        [
+          {"id": 1, "name": "Fighter F", "probability": null,
+           "last_updated": "2026-05-12T16:16:06+00:00"},
+          {"id": 2, "name": "Fighter G", "probability": null,
+           "last_updated": "2026-05-12T16:16:06+00:00"}
+        ]
+        """
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let outcomes = try decoder.decode([FuturesOutcome].self, from: Data(json.utf8))
+
+        XCTAssertNil(
+            FuturesPriceAge.pricesAsOf(outcomes),
+            "No row carries a price, so no honest freshness claim exists (notice 34)."
+        )
+    }
+
+    /// The inverse mutant: keeping only the PRICELESS rows. It would pass the
+    /// nil case above and read as a plausible edit; on 114175 it prints the very
+    /// May 12 this ship removes.
+    func test_the_filter_keeps_the_priced_rows_not_the_priceless_ones() throws {
+        let asOf = try XCTUnwrap(FuturesPriceAge.pricesAsOf(ufc114175Outcomes()))
+        XCTAssertNotEqual(iso.string(from: asOf), "2026-05-12T16:16:06Z")
+    }
+
     // MARK: - The view
 
     private func detailSource() throws -> String {
