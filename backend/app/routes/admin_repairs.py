@@ -35,7 +35,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | kalshi-empty-book-openings-restore
              | pm-ungraded-loss | pm-ungraded-loss-restore
              | kalshi-series-tag-category
-             | polymarket-club-noun-category | kalshi-club-noun-category }
+             | polymarket-club-noun-category | kalshi-club-noun-category
+             | kalshi-venue-topic-badges }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -598,6 +599,48 @@ _REPAIRS = {
         "app.tasks.repair_kalshi_club_noun_category",
         "repair",
     ),
+    # #7012, the REPAIR half: Kalshi rows wearing a sport badge their own venue
+    # contradicts — `109341` "Which bank will take Kraken public before 2027?"
+    # stored `hockey`, "Will BMW release a Fully Electric M3" stored
+    # `motorsports`, MrBeast's NIL donation stored `baseball`. The classifier
+    # half (same branch) teaches the cascade to demote a bare name guess to the
+    # venue's topic and moves ZERO stored rows, because #1888's
+    # `coalesce(nullif(existing,'other'), new)` never overwrites a real tag.
+    #
+    # 🔴 NOT a widening of `kalshi-club-noun-category` above. That bound is
+    # frozen and applied, and its twelfth entry is a deliberate
+    # proof-of-refusal control — widening it would destroy the control and
+    # re-run an applied one-shot. This population is also two orders of
+    # magnitude larger and still moving, so it is derived by a PREDICATE at run
+    # time rather than frozen as a list that would be stale on merge.
+    #
+    # Candidates: `llm_sport_category` outside the house `NON_SPORT_LLM_CATEGORIES`
+    # AND stored `category` a non-sport topic OR `other`. The `other` arm is not
+    # optional — our `category` column collapses every word it does not model
+    # into `other`, and `109341` (venue says `Companies`) lives there, so a
+    # topic-only census omits the specimen this issue is named for.
+    #
+    # Gate: the venue's `/events/{ticker}` + `/series/{ticker}` reply run through
+    # the SHIPPED `_categorize_kalshi_market`, with the SHIPPED `_pick_series_tag`
+    # and the `series_category` #7012 adds — the only signal that reaches
+    # `109341` (event `Companies`, series `Financials` → economics). No sport
+    # rules of its own. Destinations are bounded by the poller's own
+    # `_VENUE_TOPIC_DEMOTION_TARGETS`, imported, so `crypto` (which the poller
+    # DROPS) and `other` can never be written.
+    #
+    # Membership is id identity: the venue must echo back the ticker we asked
+    # about. Writes `llm_sport_category` ONLY — not `updated_at` (CERT-2382),
+    # not `status` (calibration's population gate), not `category` (this rail's
+    # own candidate instrument). Paging is a KEYSET on `id`, never an offset:
+    # an apply removes rows from its own population. Default scope is `open`
+    # (50 candidates, every reader-visible row); `status_scope=resolved|all`
+    # makes the 4,134-row resolved tail addressable rather than dropped.
+    # D51: `restore_sql` travels with the plan, built from RETURNING on apply.
+    # ATTENDED ONLY: never wire this to a beat; it is a terminating repair.
+    "kalshi-venue-topic-badges": (
+        "app.tasks.repair_kalshi_venue_topic_badges",
+        "repair",
+    ),
     # #4365 part 2 (lane1b/109): two Kalshi NHL game props stored `basketball`.
     # Same two-gate shape as the certed `repair_kalshi_senate_category` — frozen
     # id bound AND the SHIPPED `_categorize_kalshi_market` independently agreeing
@@ -1085,6 +1128,18 @@ async def run_repair(
                     "stored per population, so this selects WHICH approval an "
                     "apply is bound to — it is not a filter.",
     ),
+    status_scope: str = Query(
+        None,
+        description="Which market STATUS a repair's population covers "
+                    "('open' | 'resolved' | 'all'), for repairs whose candidate "
+                    "predicate spans both and whose two halves have very "
+                    "different reader value and very different cost. Like "
+                    "?band= it is a scope selector, not a verdict: it changes no "
+                    "judgment about any row it admits. Refused BY NAME on an "
+                    "unknown value rather than defaulted, because a typo that "
+                    "quietly became 'open' would report a complete pass over a "
+                    "population the operator did not ask for.",
+    ),
     undo_identity: str = Query(
         None,
         description="Put ONE earlier apply's rows back, for repairs that write a "
@@ -1130,6 +1185,7 @@ async def run_repair(
             ("plan_hash", plan_hash),
             ("expected_blank", expected_blank),
             ("population", population),
+            ("status_scope", status_scope),
             ("probe", probe),
             ("undo_identity", undo_identity),
         )
