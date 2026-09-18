@@ -2037,3 +2037,162 @@ class TestUclChampionColumnAcceptanceSet:
             == "championship"
         ]
         assert champions == ["Champions League Winner"], champions
+
+
+class TestSiblingCompetitionOutOfTheBundesligaGrid:
+    """#6905 (Alex, p1): "Bundesliga" names at least three competitions.
+
+    It is the German for "federal league", not one league's proper name, so the
+    child competition's title CONTAINS the parent's string and no positive gate
+    can separate them. Read from production 2026-09-18, seven of the top ten
+    rows of the Champion column were 2. Bundesliga clubs and Eintracht
+    Braunschweig was ranked SECOND to win the Bundesliga, above Dortmund. The
+    grid caps at 18, so the intruders pushed Augsburg and M'gladbach off — and
+    M'gladbach's 84% Relegated was the highest number in the division.
+    """
+
+    SECOND_DIVISION = ("2. Bundesliga: 2026-27 Winner", "836242")
+    AUSTRIAN_RELEGATION = ("Austrian Bundesliga: Teams relegated (2026-27)", "904914")
+
+    def test_the_second_division_is_refused(self):
+        passes, column = _admitted(*self.SECOND_DIVISION, BUNDESLIGA_CONFIG,
+                                   source="polymarket")
+        assert passes is False
+        assert column is None
+
+    def test_the_austrian_league_is_refused(self):
+        """Not named in #6905 — found by enumerating this grid's admitted set.
+
+        A different COUNTRY's top flight, reaching the Relegated column.
+        """
+        passes, column = _admitted(*self.AUSTRIAN_RELEGATION, BUNDESLIGA_CONFIG,
+                                   tier=5, source="polymarket")
+        assert passes is False
+        assert column is None
+
+    def test_both_refusals_are_the_exclusion_patterns(self):
+        """Anti-vacuity: drop the patterns and both markets come straight back.
+
+        Without this, either test would pass if some unrelated filter happened
+        to reject the row, and the fix could be deleted without a red test.
+        """
+        import dataclasses
+
+        unfixed = dataclasses.replace(BUNDESLIGA_CONFIG, league_exclude_patterns=[])
+        passes, column = _admitted(*self.SECOND_DIVISION, unfixed, source="polymarket")
+        assert passes is True and column == "championship", (
+            "the exclusion patterns are not what refuse 2. Bundesliga"
+        )
+        passes, column = _admitted(*self.AUSTRIAN_RELEGATION, unfixed,
+                                   tier=5, source="polymarket")
+        assert passes is True and column == "relegation", (
+            "the exclusion patterns are not what refuse the Austrian league"
+        )
+
+    def test_the_real_bundesliga_markets_are_still_admitted(self):
+        """The control. A gate that empties the grid also passes every test above.
+
+        These four are the grid's entire live market set (production
+        2026-09-18). If an exclusion is ever widened to `\\bBundesliga\\b` or
+        anchored on the season, this is what goes red.
+        """
+        for name, eid, tier, col in (
+            ("Bundesliga Champion", "KXBUNDESLIGA-27", 1, "championship"),
+            ("Bundesliga Relegation", "KXBUNDESLIGARELEGATION-27", 5, "relegation"),
+            ("Bundesliga: Teams relegated (2026-27)", "836999", 5, "relegation"),
+            ("Bundesliga Top 4 Finishers (2026-27)", "837000", 5, "top_4"),
+        ):
+            passes, column = _admitted(name, eid, BUNDESLIGA_CONFIG, tier=tier)
+            assert passes is True, f"{name} was refused by the #6905 exclusion"
+            assert column == col, f"{name} -> {column}, expected {col}"
+
+    def test_the_child_leagues_other_rows_are_refused_too(self):
+        """The same two competitions publish twenty-one rows, not two.
+
+        The patterns are anchored on the qualifier rather than on the one
+        reported title, so the siblings never enter either. Note the promotion
+        market contains BOTH strings — the exclusion runs before any inclusion
+        path, which is why it is still refused.
+        """
+        for name in (
+            "2. Bundesliga: 2026-27 Runner-Up",
+            "2. Bundesliga: 3rd Place Finish 2026-27",
+            "2. Bundesliga: Team promoted to Bundesliga (2026-27)",
+            "Austrian Bundesliga: 2026-27 Winner",
+            "Austrian Bundesliga: Team with Most Clean Sheets 2026-27",
+            "Will Rapid Wien be relegated from the 2026-27 Austrian Bundesliga?",
+        ):
+            assert _market_passes_league_filter(name, "0", BUNDESLIGA_CONFIG) is False, name
+
+    def test_the_season_roll_does_not_reopen_it(self):
+        for name in ("2. Bundesliga: 2027-28 Winner",
+                     "Austrian Bundesliga: Teams relegated (2027-28)"):
+            assert _market_passes_league_filter(name, "999999", BUNDESLIGA_CONFIG) is False, name
+
+
+class TestAsianConfederationOutOfTheUefaGrid:
+    """#6905, second grid: the AFC Champions League in the UEFA table.
+
+    Polymarket 60607650 "AFC Champions League Elite 2026-27 Winner" is tier 2,
+    so the tier path never fired — it was admitted by the Champion column's
+    NAME rule, and raising the tier bar would not have stopped it. Fifteen of
+    the 36 rows served on 2026-09-18 were AFC clubs: Shanghai Port ranked SIXTH
+    to win the UEFA Champions League, above Manchester City. The grid caps at
+    36, so fifteen genuine UEFA clubs were pushed off.
+    """
+
+    AFC = ("AFC Champions League Elite 2026-27 Winner", "994393")
+
+    def test_it_is_refused(self):
+        passes, column = _admitted(*self.AFC, CHAMPIONS_LEAGUE_CONFIG,
+                                   tier=2, source="polymarket")
+        assert passes is False
+        assert column is None
+
+    def test_the_refusal_is_the_exclusion_pattern(self):
+        """Anti-vacuity: drop the pattern and it comes back to the Champion column."""
+        import dataclasses
+
+        unfixed = dataclasses.replace(
+            CHAMPIONS_LEAGUE_CONFIG, league_exclude_patterns=[]
+        )
+        passes, column = _admitted(*self.AFC, unfixed, tier=2, source="polymarket")
+        assert passes is True and column == "championship", (
+            "the exclusion pattern is not what refuses the AFC competition"
+        )
+
+    def test_the_uefa_markets_are_still_admitted(self):
+        """The control, and the reason the pattern carries the `AFC` qualifier.
+
+        `\\bChampions\\s+League\\b` alone is the parent gate; narrowing it would
+        take the real competition out with the sibling.
+        """
+        for name, eid in (
+            ("Champions League Winner", "KXUCL-27"),
+            ("UEFA Champions League: League Phase Winner", "994400"),
+            ("UEFA Champions League 2027: Home country of champion", "994401"),
+        ):
+            assert _market_passes_league_filter(
+                name, eid, CHAMPIONS_LEAGUE_CONFIG
+            ) is True, f"{name} was refused by the #6905 exclusion"
+
+    def test_the_nfl_conference_cannot_collide(self):
+        """`AFC` is also the American Football Conference.
+
+        The pattern requires "Champions League" immediately after, and this
+        exclusion is scoped to the soccer config the NFL grid never reads. If
+        someone ever loosens it to a bare `\\bAFC\\b`, this goes red.
+        """
+        from app.config.league_configs import NFL_CONFIG
+
+        for name, eid in (
+            ("AFC Championship Winner", "KXNFLAFC-27"),
+            ("AFC North Division Winner", "KXNFLAFCNORTH-27"),
+        ):
+            assert _market_passes_league_filter(name, eid, NFL_CONFIG) is True, name
+
+    def test_the_season_roll_does_not_reopen_it(self):
+        assert _market_passes_league_filter(
+            "AFC Champions League Elite 2027-28 Winner", "999999",
+            CHAMPIONS_LEAGUE_CONFIG,
+        ) is False
