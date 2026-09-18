@@ -1159,9 +1159,48 @@ _US_STATE_ALT = (
     r"district of columbia|puerto rico"
 )
 
+# `AK-AL`, `TX-32` — a US congressional district, as ONE copy for the same
+# reason `_US_STATE_ALT` above is one copy. #6936: this file carried the shape
+# TWICE, and the second copy (the first alternative of
+# `_REGIONAL_US_ELECTION_RE`) had drifted in both directions at once — it
+# dropped the separator requirement AND sat inside an `re.IGNORECASE` block, so
+# `[A-Z]{2}` matched lowercase and `[-\s]?` matched nothing. Any two letters
+# beside a small number keyed as a congressional district.
+#
+# Measured over the 500 highest-volume open markets whose name can carry the
+# shape: the loose copy claimed 91 rows, of which 64 are not districts —
+# 59 esports fixtures (`BO1`/`BO3`/`BO5`: "Counter-Strike: MOUZ vs Natus Vincere
+# (BO3)"), 4 dated commodity prices ("Brent crude oil price … at 5:00 PM EDT",
+# which the `story:oil` arm twelve lines below would otherwise have claimed) and
+# an AI benchmark ("… be 60% or higher"). The strict spelling claims 27 and all
+# 27 are real district codes. Case-sensitivity ALONE does not do it: it removes
+# the 5 lowercase hits and leaves all 59 `BO3`s, because those are already
+# upper-case — the separator is what tells a district from a shorthand.
+#
+# The blast radius is not only the label a reader sees over a card group
+# (#6936's specimen: four hurricane questions headed REGIONAL US ELECTIONS).
+# `regional_election` forces `quality_class = "low_quality"` and the key carries
+# a diversity cap of 1, so a mis-keyed esports or oil card spends the one slot a
+# genuine local-election card should get.
+#
+# WHAT IS SHARED IS THE POSTAL CODE AND THE SEPARATOR, NOT THE WHOLE PATTERN,
+# and the difference below is deliberate rather than the drift this repairs.
+# The at-large arm (`AK-AL`) belongs to the SUB-NATIONAL key only: the regional
+# arm runs first (`_story_key`, ~line 1990), so folding `AL` into it moves
+# at-large seats out of `story:us_state_races`. CI said so —
+# `test_us_congressional_districts` went red on exactly that, which is why the
+# two suffixes are named separately here instead of collapsed into one.
+_US_DISTRICT_CODE = r"\b[A-Z]{2}[-\s]"
+_US_DISTRICT_NUMBERED_PATTERN = _US_DISTRICT_CODE + r"\d{1,2}\b"
+_US_DISTRICT_PATTERN = _US_DISTRICT_CODE + r"(?:\d{1,2}|AL)\b"
+
 _REGIONAL_US_ELECTION_RE = re.compile(
     r"("
-    r"\b[A-Z]{2}[-\s]?\d{1,2}\b|"
+    # Scoped `(?-i:…)` rather than dropping IGNORECASE from the whole pattern:
+    # the office alternatives below are correct case-insensitively and must stay
+    # that way. The two-letter postal code is what makes it a district rather
+    # than a word, so only this alternative is case-sensitive.
+    r"(?-i:" + _US_DISTRICT_NUMBERED_PATTERN + r")|"
     r"\b(state house|state senate|city council|county executive|school board)\b|"
     r"\b(republican|democratic|gop|dem)\s+(nominee|primary)\b|"
     r"\b(governor|senate|house)\s+(nominee|primary)\b|"
@@ -1212,7 +1251,9 @@ _US_STATE_RE = re.compile(r"\b(" + _US_STATE_ALT + r")\b", re.IGNORECASE)
 
 # `AK-AL`, `TX-32` — a US congressional district. Deliberately case-SENSITIVE:
 # the two-letter postal code is what makes it a district rather than a word.
-_US_DISTRICT_RE = re.compile(r"\b[A-Z]{2}[-\s](?:\d{1,2}|AL)\b")
+# Compiled from the shared `_US_DISTRICT_PATTERN` above, which is where that
+# sentence is now enforced rather than merely stated (#6936).
+_US_DISTRICT_RE = re.compile(_US_DISTRICT_PATTERN)
 
 # Federal-level markers. A market carrying one is national, not sub-national, and
 # must not be swept into either family. NOTE `federal` is deliberately ABSENT:
