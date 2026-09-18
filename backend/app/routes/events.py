@@ -18628,7 +18628,8 @@ async def _build_game_markets(
 # The L1. Kept as-is: it is faster than a Redis round trip and it was never the
 # defect (LAT-P136 / P127-2 — the defect is that it was the ONLY cache the tier
 # had; see `utils/related_futures_cache.py` for the ten-event cold measurement).
-_related_futures_cache: dict[int, tuple[float, str, dict]] = {}
+_related_futures_cache: dict[int, tuple[float, str, str, dict]] = {}
+# event_id → (timestamp, source_status, build_id, response)
 _RELATED_FUTURES_LIVE_TTL = 60
 _RELATED_FUTURES_MAX_SIZE = 30
 
@@ -18654,8 +18655,11 @@ async def get_related_futures(
 
     Serve order, fastest first:
 
-      L1  in-memory dict  — same process, same 60 s rule. Kept: it is faster
-                            than a Redis round trip and it was never the defect.
+      L1  in-memory dict  — same process. 60 s for a live game, and since #6883
+                            `rfc.FRESH_TTL_FINAL` for a finished one rather than
+                            forever. Kept: it is faster than a Redis round trip
+                            and it was never the LAT-P136 defect, but its
+                            unbounded final entry was the whole of #6883's.
       L2  Redis primary   — SHARED across every worker and dyno. This is the new
                             one, and it is what makes the second person to open
                             a game anywhere not pay for it.
@@ -18676,7 +18680,8 @@ async def get_related_futures(
         )
         return response
 
-    # L1 — in-memory (completed games cached indefinitely, live 60 s).
+    # L1 — in-memory. Live 60 s, completed `rfc.FRESH_TTL_FINAL` (#6883), and a
+    # miss whenever the entry was built by another release.
     cached = _read_related_futures_memo(event_id)
     if cached is not None:
         return cached
@@ -18715,28 +18720,78 @@ async def get_related_futures(
 
 
 def _read_related_futures_memo(event_id: int):
-    """The L1 read. Extracted so the policy above reads as a ladder."""
+    """The L1 read. Extracted so the policy above reads as a ladder.
+
+    🔴 A FINAL GAME'S ENTRY IS AGE-BOUNDED (#6883). It used to be returned
+    forever:
+
+        if cached_status in ("completed", "closed"):
+            return cached_response
+
+    — so once a worker had warmed L1 for a completed event it NEVER consulted
+    Redis for that event again, and the whole L2 ladder below (mirror,
+    `stale_ok`, exactly-one-rebuild, and the build check) was unreachable from
+    behind it. The only exits were eviction (`_RELATED_FUTURES_MAX_SIZE = 30`)
+    or the process dying, and neither of those is a clock: it could not be
+    waited out. MEASURED on production 2026-09-18: 12 of 12 requests to
+    `/events/15298552` returned a body built at 05:50:05Z — 30 minutes after the
+    release of the #6806 fix that changed it, on the single web dyno that
+    release had just started. The fix was live and the page was not.
+
+    That was never a decision — it is what a dict with no expiry does, and this
+    tier's `FRESH_TTL_FINAL` docstring ALREADY claims the hour ("an hour bounds
+    how long a payload can go on claiming a season market is ungraded after it
+    was graded"). L1 silently overrode the bound its own module documents; it
+    now uses that same number, so the two levels agree instead of one pinning.
+
+    The build check is here too, and it is the half that catches a payload the
+    release invalidated at ANY age — age cannot express "built by code that no
+    longer exists", because such a payload is young, not old. A per-process dict
+    is usually emptied by the release anyway; this covers a worker that outlives
+    the deploy, and costs one string compare.
+    """
     import time as _time
+
+    from app.utils import related_futures_cache as rfc
 
     entry = _related_futures_cache.get(event_id)
     if entry is None:
         return None
-    cached_at, cached_status, cached_response = entry
-    if cached_status in ("completed", "closed"):
-        return cached_response
-    if (_time.time() - cached_at) < _RELATED_FUTURES_LIVE_TTL:
+    cached_at, cached_status, cached_build, cached_response = entry
+    if cached_build != _current_build_id():
+        return None
+    age = _time.time() - cached_at
+    ttl = (
+        rfc.FRESH_TTL_FINAL
+        if cached_status in ("completed", "closed")
+        else _RELATED_FUTURES_LIVE_TTL
+    )
+    if age < ttl:
         return cached_response
     return None
 
 
 def _write_related_futures_memo(event_id: int, source_status, response) -> None:
-    """The L1 write, with its size bound. Behaviour unchanged."""
-    import time as _time
+    """The L1 write, with its size bound. Now stamped with the build (#6883).
 
+    The timestamp is the payload's own build time, not this moment — `_memo_stamp`,
+    shared with the sibling tier, and the reason is #6394's: the read is not the
+    build. A body L2 hands over as `live` one second inside `FRESH_TTL_FINAL`,
+    stamped here with a brand-new clock, would be served for another full hour,
+    so the two bounds would COMPOSE to ~2x the number both levels believe they
+    are enforcing. Eviction sorts on the same field, so the entry dropped when
+    the bound is reached is the one holding the OLDEST CONTENT rather than the
+    one this process happened to read first.
+    """
     if len(_related_futures_cache) >= _RELATED_FUTURES_MAX_SIZE:
         oldest = min(_related_futures_cache, key=lambda k: _related_futures_cache[k][0])
         del _related_futures_cache[oldest]
-    _related_futures_cache[event_id] = (_time.time(), str(source_status or ""), response)
+    _related_futures_cache[event_id] = (
+        _memo_stamp(response),
+        str(source_status or ""),
+        _current_build_id(),
+        response,
+    )
 
 
 async def _publish_related_futures(

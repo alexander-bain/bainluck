@@ -97,6 +97,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.utils import game_markets_cache as _gmc
+from app.utils.db_session_identity import current_build_id
 from app.utils.event_concept_cache import (
     AVAILABILITY_LIVE,
     AVAILABILITY_STALE_OK,
@@ -148,6 +149,13 @@ FINAL_STATUSES = _gmc.FINAL_STATUSES
 #: four `empty` exits do not carry `event_status` at all.
 SOURCE_STATUS_FIELD = _gmc.SOURCE_STATUS_FIELD
 
+#: The build that produced the payload (#6355), **imported from the sibling** so
+#: the two tiers that serve one page cannot disagree about what a deploy
+#: invalidates. #6883: this tier shipped without it, and `FRESH_TTL_FINAL` above
+#: is why that mattered — age alone cannot express "built by code that no longer
+#: exists", because the payload a release invalidates is YOUNG, not old.
+BUILD_FIELD = _gmc.BUILD_FIELD
+
 
 def is_final(status: Any) -> bool:
     """True when `status` is a finished game, by the page's own definition."""
@@ -194,8 +202,27 @@ def stamp(
     )
     envelope = dict(enveloped.get(ENVELOPE_FIELD) or {})
     envelope[SOURCE_STATUS_FIELD] = str(source_status or "")
+    envelope[BUILD_FIELD] = current_build_id()
     enveloped[ENVELOPE_FIELD] = envelope
     return enveloped
+
+
+def build_id_of(payload: Any) -> str:
+    """The build that produced a stored payload, or `""` when it does not say."""
+    return _gmc.build_id_of(payload)
+
+
+def payload_is_current_build(payload: Any) -> bool:
+    """Was this payload built by the code that is running right now? (#6355)
+
+    Delegated, and that includes the sibling's deliberate FAIL-OPEN in BOTH
+    directions — an unknown stored build (every payload written before this
+    ship) and an unknown running build (local dev, CI, any app without dyno
+    metadata) both read as "cannot tell", whose only safe answer is to serve.
+    So this can turn a serve into a rebuild only when both builds are known and
+    they differ. The full reasoning is on `_gmc.payload_is_current_build`.
+    """
+    return _gmc.payload_is_current_build(payload)
 
 
 def source_status_of(payload: Any) -> str:
@@ -236,9 +263,14 @@ def mirror_is_servable(
 def read(event_id: int, rc=None) -> tuple[dict[str, Any] | None, str]:
     """Read the tier for `event_id`. Returns `(body, state)`.
 
-    `state` is one of `live`, `stale_ok`, `stale_too_old`, `miss` — the serve
-    decision, made here and published in the body's envelope, never re-derived
-    by a consumer (contract rule 1).
+    `state` is one of `live`, `stale_ok`, `stale_too_old`, `stale_build`, `miss`
+    — the serve decision, made here and published in the body's envelope, never
+    re-derived by a consumer (contract rule 1).
+
+    `stale_build` (#6355, brought to this tier by #6883) is its own state and is
+    not folded into `miss`: "there was nothing cached" and "there was something
+    cached and a deploy made it a lie" are different facts about the tier, and
+    only the second one is supposed to be rare.
 
     Never raises: every Redis helper below is best-effort by construction, and a
     cache that cannot be read must cost a rebuild, not a 500.
@@ -250,11 +282,40 @@ def read(event_id: int, rc=None) -> tuple[dict[str, Any] | None, str]:
 
     primary = read_slot(client, keys.primary)
     if primary is not None:
-        return with_availability(primary, AVAILABILITY_LIVE), "live"
+        if payload_is_current_build(primary):
+            return with_availability(primary, AVAILABILITY_LIVE), "live"
+        # Young, and built by code that is no longer running. NOT demoted to the
+        # mirror path — the mirror is the same bytes from the same dead build,
+        # so serving it stale would launder the pre-ship payload through a
+        # second door and call it a policy. A rebuild is the only honest exit.
+        #
+        # ⚠️ NEITHER `event_id` NOR THE STORED BUILD IS INTERPOLATED: CodeQL
+        # grades a path parameter reaching a log line `py/log-injection` at
+        # MEDIUM — a notice-32 refuse — and grades a string read back out of
+        # Redis the same way. `current_build_id()` comes from the environment
+        # and is not a taint source. The signal worth having here is the COUNT
+        # of these lines just after a release, not which event; the refused
+        # payload names its own build in the envelope this module publishes.
+        logger.info(
+            "related-futures: a slot built by another release was refused "
+            "(running build %s) — rebuilding",
+            current_build_id(),
+        )
+        return None, "stale_build"
 
     mirror = read_slot(client, keys.stale)
     if mirror is None:
         return None, "miss"
+    if not payload_is_current_build(mirror):
+        # `event_id` deliberately absent, per the primary branch above. The
+        # sibling line below it DOES carry the id and is pre-existing debt a new
+        # line must not add to.
+        logger.info(
+            "related-futures: a mirror built by another release was refused "
+            "(running build %s) — reader will rebuild",
+            current_build_id(),
+        )
+        return None, "stale_build"
     servable, reason = mirror_is_servable(mirror)
     if not servable:
         logger.info(

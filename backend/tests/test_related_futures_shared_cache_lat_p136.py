@@ -152,11 +152,25 @@ def test_a_finished_game_s_fresh_ttl_is_finite_and_therefore_TIGHTER():
 
 
 def test_final_statuses_match_the_in_memory_tier_s_own_definition():
-    """Finality must not acquire a second definition on the way into Redis."""
+    """Finality must not acquire a second definition on the way into Redis.
+
+    #6883 changed the INSTRUMENT, not the intent. This used to stamp the entry
+    at epoch 0 and assert it came back, which only ever proved the unbounded
+    branch existed. A final entry is now served because it is INSIDE
+    `FRESH_TTL_FINAL` — the assertion below fails just as loudly if `is_final`
+    and the L1 ever disagree about a status, and it no longer passes for the
+    one reason #6883 exists to remove.
+    """
+    import time as _time
+
     for status in ("completed", "closed"):
         assert rfc.is_final(status)
-        # ...and the L1 read agrees, which is the branch that has always existed.
-        events_route._related_futures_cache[1] = (0.0, status, {"x": 1})
+        events_route._related_futures_cache[1] = (
+            _time.time(),
+            status,
+            events_route._current_build_id(),
+            {"x": 1},
+        )
         assert events_route._read_related_futures_memo(1) == {"x": 1}
         events_route._related_futures_cache.clear()
 
@@ -169,6 +183,7 @@ def test_the_L1_still_expires_a_LIVE_entry_on_its_own_ttl():
     events_route._related_futures_cache[1] = (
         _time.time() - (events_route._RELATED_FUTURES_LIVE_TTL + 1),
         "live",
+        events_route._current_build_id(),
         {"x": 1},
     )
     assert events_route._read_related_futures_memo(1) is None
