@@ -19206,13 +19206,18 @@ async def _build_related_futures(
 
     # 6. Classify each outcome as home or away
     # Priority: team_id (reliable for player outcomes) > name matching (team outcomes)
+    #
+    # #6806 — a pattern counts only where it occupies WHOLE TOKENS of the label.
+    # This used to be a bare substring test, so `Lech` (from "Lech Poznań")
+    # assigned Anderlecht's and Lechia Gdańsk's championship prices to Lech.
+    # The SQL net above (`ILIKE '%Lech%'`) still RETRIEVES those rows — it is a
+    # superset, and step 5 carries no result cap for a false row to consume —
+    # and this test is the seam that decides whether a candidate is served.
+    # Rule, escapes and controls: `app/utils/team_pattern_match.py`.
+    from app.utils.team_pattern_match import any_pattern_matches_token
+
     def _matches_any(name: str, patterns: list[str]) -> bool:
-        name_lower = name.lower()
-        for p in patterns:
-            clean = p.replace("\\%", "%").replace("\\_", "_").replace("\\\\", "\\")
-            if clean.lower() in name_lower:
-                return True
-        return False
+        return any_pattern_matches_token(name or "", patterns)
 
     # 7. Count bookmakers per outcome for liquidity scoring
     outcome_ids = [o.id for o in outcomes]
