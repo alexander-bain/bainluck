@@ -4192,6 +4192,54 @@ def soccer_ghost_twin_sweep_task(self, apply: bool = True,
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
+                 name="app.tasks.polymarket_container_twin_sweep")
+def polymarket_container_twin_sweep_task(self, apply: bool = True,
+                                         lookback: int | None = None,
+                                         lookahead: int | None = None):
+    """#5821 — the same fold, for the class the other two sweeps cannot see.
+
+    Polymarket publishes one fixture as several Gamma events, and the
+    `- More Markets` container is the one derivative #2871 deliberately lets
+    mint a row. So a fixture's spread and every total end up on a second row
+    that `fold_twin_events` hides — the card is folded and its markets are not.
+
+    Neither sibling can reach it: `tennis_twin_sweep` blocks on a surname pair,
+    and `soccer_ghost_twin_sweep` requires one side to be fixture-anchored while
+    here NEITHER side is. The evidence that separates these two rows is the
+    venue's own — which row holds the base-titled market under a shared
+    (base title, venue_game_start) key. Hence a sibling, not a parameter.
+
+    APPLY BY DEFAULT, for the reason the other two are: this appends a
+    reversible label with no deleter and banks the prior value first (D51).
+
+    Its band sits on the POPULATION, never on the plan. The legacy split
+    families are a fixed backlog this drains and the forward fix
+    (`_polymarket_container_sibling_event_id`) stops refilling, so an empty plan
+    is the healthy END STATE and a plan floor would start failing on the day the
+    ship is finished.
+
+    🔴 THE WINDOW IS RESOLVED FROM THE MODULE, NEVER RE-TYPED HERE — the #3813
+    failure, where a pinned signature default and a pinned beat kwarg left the
+    module's constant read by nothing that runs. `None` means "whatever the
+    module says", which is the only spelling that cannot drift from it.
+    """
+    from app.tasks.polymarket_container_twin_sweep import (
+        DEFAULT_LOOKAHEAD_DAYS,
+        DEFAULT_LOOKBACK_DAYS,
+        run_polymarket_container_twin_sweep,
+    )
+
+    return _tracked_run(
+        "polymarket_container_twin_sweep",
+        run_polymarket_container_twin_sweep(
+            apply=apply,
+            lookback=DEFAULT_LOOKBACK_DAYS if lookback is None else lookback,
+            lookahead=DEFAULT_LOOKAHEAD_DAYS if lookahead is None else lookahead,
+        ),
+    )
+
+
 # --- Duplicate Event Cleanup ---
 
 
@@ -5400,6 +5448,24 @@ celery_app.conf.beat_schedule = {
     "soccer-ghost-twin-sweep": {
         "task": "app.tasks.soccer_ghost_twin_sweep",
         "schedule": crontab(minute="9,49"),
+        "kwargs": {"apply": True},
+        "options": {"queue": "background"},
+    },
+    # #5821 — the container-split fold. Undo:
+    # `scripts/restore_5821_container_twin_tags.py --apply`.
+    #
+    # HOURLY, not half-hourly. The forward fix has taken new splits to 0–2 a
+    # day, so this drains a fixed backlog rather than chasing a front, and its
+    # read is the widest of the three sweeps (11,391 market rows over ±45d).
+    # :27 keeps it clear of the soccer sweep's :9/:49 and of the accuracy
+    # rebuild that starts at :15.
+    #
+    # NO `lookback`/`lookahead` HERE, DELIBERATELY — the #3813 failure, where a
+    # pinned beat kwarg made this entry a second copy of the window and the
+    # module's own constant was then read by nothing that runs.
+    "polymarket-container-twin-sweep": {
+        "task": "app.tasks.polymarket_container_twin_sweep",
+        "schedule": crontab(minute="27"),
         "kwargs": {"apply": True},
         "options": {"queue": "background"},
     },

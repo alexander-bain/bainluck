@@ -874,6 +874,19 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     deliberately asserted as a SPLIT and not just a total, because a total
     holds constant while 45 becomes 60 and 57 becomes 42.
 
+    🔴 **RE-DERIVED at lane1/402 (2026-09-17, #5821): 123 → 124, explicit
+    80 → 81.** This lane added `polymarket-container-twin-sweep`
+    (`crontab(minute=27)`, the Polymarket-container arm of the #2693 duplicate
+    fold — the repair CERT-2793 required) with an explicit
+    `options={"queue": "background"}`. RE-DERIVED by running the census below
+    over the assembled schedule, which printed `explicit 81 implicit 43 total
+    124`, never by adding one to 123 (#1910). The fall-through half is UNMOVED
+    at **43** — the new beat named its queue rather than defaulting into it,
+    the benign direction this docstring reserves. The cost declaration (one
+    fire an hour, one bounded 11,391-row read, converging on `no_work` as the
+    backlog drains, and why `:27` rather than a minute its two sibling sweeps
+    already hold) is on `BACKGROUND_BEAT_COUNT`.
+
     🔴 **RE-DERIVED at LAT-P193 (2026-09-01, #2614): 109 → 110, explicit
     64 → 65.** This lane added `backfill-image-dimensions`
     (`crontab(minute=5, hour="*/6")`, the true-pixel-dimension backfill) with an
@@ -1015,9 +1028,9 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 80, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 81, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 43, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 123
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 124
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

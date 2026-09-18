@@ -289,6 +289,16 @@ class TestEnforcementScope:
             # raised (`measured: false`). Terminals come from
             # `app/tasks/soccer_ghost_twin_sweep.py`.
             "soccer_ghost_twin_sweep",
+            # #5821 (CERT-3030): the Polymarket-container arm of the same fold.
+            # The specimen for this set's other failure mode — not an unenrolled
+            # task, but an enrolled-shaped one whose words are not in the
+            # vocabulary. It returned `applied` and `planned`, so every run
+            # classified `unrecognised:terminal:applied`, non-authoritative,
+            # while `_tracked_run` advanced `last_success_at` anyway. The ship's
+            # own after-check grades on that receipt, so the measurement and the
+            # thing it measured shared a failure mode. Enrolled in the change
+            # that gives it real terminals, never before it.
+            "polymarket_container_twin_sweep",
             # #1912 (CAL-P065): the two halves of the Polymarket ownership
             # hole, enrolled TOGETHER because separately each one looked fine.
             # The Gamma rail discarded 9,748 markets a run as

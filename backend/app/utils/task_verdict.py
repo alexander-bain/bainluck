@@ -298,6 +298,27 @@ ENFORCED_TASKS = frozenset({
     # population and is `failed`. A plan floor copied from the sibling would
     # have made this task red on most days and taught everyone to ignore it.
     "soccer_ghost_twin_sweep",         # terminal + measured + fold_live + rows_read
+    # #5821 (CERT-3030). The Polymarket-container arm of the same fold. Enrolled
+    # in the change that gives it real terminals, because enrolment alone would
+    # have been a no-op in the literal sense this file keeps warning about: it
+    # returned `applied` and `planned`, neither of which is in the vocabulary,
+    # so every run — including a good one — classified as
+    # `unrecognised:terminal:applied` and read GREEN anyway.
+    #
+    # The specific false GREEN it was caught on: `_tracked_run` advances
+    # `last_success_at` on any non-raising return, and the after-check for this
+    # ship grades on exactly that receipt, so a pass whose population read had
+    # gone dark would have advanced the receipt and been read as proof the fix
+    # had landed. The measurement and the thing measured shared a failure mode.
+    #
+    # Its floor is on the POPULATION READ, like the soccer sibling and unlike
+    # the tennis one, for a reason stronger than episodicity: this backlog
+    # DRAINS. After the first successful pass every family in the window is
+    # labelled and every later pass plans zero forever, so `complete` with
+    # `tagged: 0` is the permanent healthy state and a plan floor would be red
+    # for good. See `MIN_MARKETS_FLOOR` for why 500 against a twice-measured
+    # ~11,400.
+    "polymarket_container_twin_sweep",  # terminal + measured + fold_live + markets_read
     # #1912 (CAL-P065) — the two halves of the Polymarket ownership hole,
     # enrolled TOGETHER because separately each looked fine. The Gamma rail
     # discarded 9,748 markets a run as `unsupported_lookup` to a CLOB rail

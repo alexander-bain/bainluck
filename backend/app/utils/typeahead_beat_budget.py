@@ -1581,7 +1581,36 @@ def free_background_slots(
 #: background beat this week writes the IDENTICAL `BACKGROUND_BEAT_COUNT = 122`
 #: and `git merge` sees no conflict while the composed tree is 123. Re-run the
 #: census on the composed tree before merging this.
-BACKGROUND_BEAT_COUNT = 123
+#:
+#: 🔴 RE-DERIVED at lane1/402 (2026-09-17, #5821): 123 → **124**, explicit
+#: 80 → **81**, fall-through UNMOVED at 43. One beat added,
+#: `polymarket-container-twin-sweep` (`crontab(minute=27)`) with an EXPLICIT
+#: `options={"queue": "background"}` — the Polymarket-container arm of the
+#: #2693 duplicate fold, the repair CERT-2793 required. On 2026-09-17 it had
+#: 180 split families holding 1,544 markets off the page they belong to.
+#:
+#: RE-DERIVED by running the census over the assembled `beat_schedule`, which
+#: printed `explicit 81 implicit 43 total 124`, never by adding one to 123
+#: (#1910). The benign direction again: the fall-through half — the half this
+#: guard exists to watch — is untouched.
+#:
+#: Cost shape, declared because this file is where `background` gets argued
+#: about: ONE fire an hour, not two. Each pass is one bounded read of 11,391
+#: market rows over 1,845 events (measured ±45d, 2026-09-17) and, once the
+#: legacy backlog is drained, zero writes forever — the forward fix
+#: `_polymarket_container_sibling_event_id` stops the population refilling, so
+#: this converges on `no_work` rather than running hot. `:27` collides with
+#: `tennis-twin-sweep` (`:27/:57`) on the hour, which is why this one is
+#: HOURLY rather than half-hourly and why the third sweep,
+#: `soccer-ghost-twin-sweep`, sits at `:9/:49`: at most two of the three ever
+#: want the queue's two slots in the same minute. `:27` is also clear of the
+#: `:15` accuracy-page rebuild start.
+#:
+#: ⚠️ The merge hazard applies to THIS line: another lane adding a background
+#: beat this week writes the identical `BACKGROUND_BEAT_COUNT = 124` against a
+#: base of 123 while this branch writes 124, and the composed tree is 125 with
+#: no textual conflict. Re-run the census after any rebase.
+BACKGROUND_BEAT_COUNT = 124
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
