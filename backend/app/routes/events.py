@@ -3406,6 +3406,36 @@ _SPORT_TEAM_TOTAL_RANGE: dict[str, tuple[float, float]] = {
     "cricket": (20, 500),
 }
 
+
+def _total_threshold_in_sport_range(
+    market_type: str, threshold: float, sport_prefix: Optional[str]
+) -> bool:
+    """Is this rung's line a plausible POINTS total for this sport? (#6769)
+
+    THE ONE reading of the two tables above. Step 7a of `_build_game_markets`
+    deletes the rungs this answers False for, and the bucket-build loop asks the
+    same question ~600 lines earlier to find the graded rungs 7a is ABOUT to
+    delete, so it can serve their verdict instead. Two readers of one table are
+    two chances to disagree about a band — CERT-2486 is what a second call site
+    costs in this file — so both go through here.
+
+    Fails open exactly as 7a always has: an unknown sport, or a market type the
+    tables do not cover (period totals are not range-guarded), is in range.
+    """
+    if not sport_prefix:
+        return True
+    if market_type == "game_total":
+        band = _SPORT_TOTAL_RANGE.get(sport_prefix)
+    elif market_type == "team_total":
+        band = _SPORT_TEAM_TOTAL_RANGE.get(sport_prefix)
+    else:
+        band = None
+    if not band:
+        return True
+    lo, hi = band
+    return lo <= threshold <= hi
+
+
 _event_detail_cache: dict[int, tuple[float, str, dict]] = {}  # event_id → (timestamp, status, response)
 _EVENT_DETAIL_LIVE_TTL = 30
 _EVENT_DETAIL_DEFAULT_TTL = 300
@@ -13471,6 +13501,46 @@ _PLAYER_OUTCOME_RE = re.compile(
     r"(?:\s+[A-Z][A-Za-z'.]+(?:-[A-Z][A-Za-z']+)*)+\s*:\s*\d",
 )
 
+#: A LADDER LEG THAT NAMES ITS OWN SUBJECT: "<subject>: N+" (#6769).
+#:
+#: `_PLAYER_OUTCOME_RE` above recognises a player by the SPELLING of a name — two
+#: capitalised tokens of letters — and that is narrower than the legs Kalshi
+#: ships inside one stat market. Measured on the public `/game-markets` payloads
+#: of the #6751 NFL cohort, 2026-09-17:
+#:
+#:   "Josh Allen: 40+"      recognised   -> player_props, served graded
+#:   "C.J. Stroud: 10+"     REFUSED (an initial carries a full stop)
+#:   "T.J. Hockenson: 15+"  REFUSED
+#:   "New Orleans: 250+"    recognised   (two words — by accident, it is a team)
+#:   "Detroit: 250+"        REFUSED (one word)
+#:
+#: A refused leg of a `team_total`-classified market fell through to
+#: `totals_thresholds` as a rung of one side's POINTS total. Inside the sport's
+#: team band it was SERVED that way — event 14780141 printed C.J. Stroud's six
+#: Rushing Yards rungs in `team_totals[]` as `team_name: "Houston Texans"`; all
+#: 18 colon-subject rows in `team_totals[]` across the 14 banked payloads are
+#: this misfiling and none is a real points total. Outside the band step 7a
+#: deleted it: Stroud's Passing Yards rungs are absent beside nine served Josh
+#: Allen rungs of the SAME market, and `Team Total Yards` is absent whole from
+#: Atlanta–Pittsburgh, where both subjects are one word.
+#:
+#: This does not try to out-spell names. It reads the SHAPE, which is exact: a
+#: subject containing a letter, a colon, one number, a plus sign, end of string.
+#: A points-total leg never has it — "Houston over 20.5 points scored",
+#: "Over 45.5", Polymarket's bare "Over" carry no colon — so nothing that is a
+#: points rung today can match. It is consulted only AFTER `_PLAYER_OUTCOME_RE`
+#: has said no, so no leg that routes today routes differently.
+_SUBJECT_LADDER_LEG_RE = re.compile(
+    r"^\s*(?=[^:]*[A-Za-z])[^:]+:\s*\d+(?:\.\d+)?\+\s*$"
+)
+
+
+def _leg_names_its_own_subject(outcome_name: Optional[str]) -> bool:
+    """True for a "<subject>: N…" ladder leg — a player's or a team's own stat
+    line, never a rung of a side's points total. See `_SUBJECT_LADDER_LEG_RE`."""
+    name = outcome_name or ""
+    return bool(_PLAYER_OUTCOME_RE.match(name) or _SUBJECT_LADDER_LEG_RE.match(name))
+
 
 def _is_team_stat_market(name: str) -> bool:
     """Check if this is a team-level stat market (not a player prop).
@@ -16888,6 +16958,9 @@ async def _build_game_markets(
     for o in outcomes:
         outcomes_by_market[o.market_id].append(o)
 
+    # #6769: the sport band step 7a guards with, needed ~600 lines before 7a.
+    _gm_sport_prefix = sport_key.split("_")[0] if sport_key else None
+
     # Queue #190 Item 3: build the settled player-prop grading context once.
     # Only reads box_score_data for completed/closed events — None otherwise.
     _prop_ctx = _build_prop_grade_context(event) if event_is_finished else None
@@ -17086,7 +17159,13 @@ async def _build_game_markets(
                 # Detect player props hiding inside team_total markets.
                 # Kalshi names markets "Team at Team: Steals" but outcomes
                 # are per-player: "Joel Embiid: 1+". Route these to player_props.
-                if market_type == "team_total" and _PLAYER_OUTCOME_RE.match(o.name):
+                #
+                # #6769: …and "C.J. Stroud: 10+" / "Detroit: 250+" are the same
+                # leg with a name `_PLAYER_OUTCOME_RE` cannot spell. They were
+                # served as the home side's POINTS ladder or deleted by 7a; see
+                # `_SUBJECT_LADDER_LEG_RE`. State-independent on purpose — a leg
+                # must not change buckets when the whistle blows.
+                if market_type == "team_total" and _leg_names_its_own_subject(o.name):
                     tt_opening_over = None
                     if o.opening_probability is not None:
                         tt_op = float(o.opening_probability)
@@ -17130,6 +17209,60 @@ async def _build_game_markets(
                 # purpose: the half-inverted row this repairs existed because
                 # the price was normalised here and the grade was spread raw.
                 _grade = _settled_grade_fields(market, o, **_grade_ctx)
+
+                # #6769 — A GRADED RUNG THE RANGE GUARD IS ABOUT TO DELETE IS
+                # SERVED AS A RESULT INSTEAD.
+                #
+                # "Buffalo vs Houston: Total Touchdowns" says "total" and names no
+                # period, so it classifies `game_total` — the game's combined
+                # POINTS. Its lines are single digits; football's band is 15–120;
+                # step 7a therefore deletes every rung, graded or not, and the
+                # settled market reaches no bucket: no card, no count, no empty
+                # state. 7a is RIGHT that 4.5 is not a points total and must not
+                # sit on the totals map or price the projection, so the rung
+                # still never enters `totals_thresholds`. What changes is that a
+                # verdict is not thrown away with it.
+                #
+                # Its destination is `other[]`, the section that already speaks
+                # graded non-score questions ("1st Touchdown", `stat_total`'s
+                # "Total Bases"), in that section's own row shape — the LEG's
+                # name, the LEG's price and the LEG's grade, not the over-axis
+                # normalisation a totals row wears — which web
+                # (`OtherMarketRow`) and native (`GameMarketOther`) both decode
+                # today.
+                #
+                # 🔴 THE CONTAMINATION GUARD IS NOT LOOSENED. 7a exists for a
+                # mislinked or name-matched foreign market ("an NHL Over 5.5 on
+                # an NBA page"). A rung is rescued only when ALL of these hold,
+                # and otherwise falls through to be dropped exactly as today:
+                #   * `_settled_grade_fields` PUBLISHED a verdict — the market is
+                #     `resolved`, the row carries a `resolution_source`, it did
+                #     not settle before kick-off (#6595) and does not contradict
+                #     the final score (#6627). Never a 0/1 price, a closed market
+                #     or a final whistle on its own.
+                #   * the market carries a STORED link to this fixture (or a row
+                #     the fold proved is this fixture). Step 3's name-and-time
+                #     fallback markets have `event_id IS NULL` and are refused.
+                if (
+                    _grade["resolution_source"] is not None
+                    and market.event_id in market_event_ids
+                    and not _total_threshold_in_sport_range(
+                        market_type, threshold, _gm_sport_prefix
+                    )
+                ):
+                    other_markets.append({
+                        "market_name": market.name,
+                        "outcome_name": o.name,
+                        "observed_at": _observed(o),
+                        # Same expression as the `other` branch below, so the
+                        # two ways into this section cannot serve two shapes.
+                        "probability": round(prob, 4) if prob else None,
+                        "source": market.source,
+                        **_grade,
+                        "_market_id": market.id,
+                    })
+                    continue
+
                 _inverted = bool(is_under and not is_over)
                 _market_settled = market.id in markets_with_a_winner
                 totals_thresholds.append({
@@ -17469,17 +17602,24 @@ async def _build_game_markets(
     # outside the expected range for this sport.  This catches cross-game
     # contamination from mis-linked markets (e.g., an NHL "Over 5.5" showing
     # on an NBA page, or an NBA "Over 220.5" on an NHL page).
-    sport_prefix = sport_key.split("_")[0] if sport_key else None
-    game_range = _SPORT_TOTAL_RANGE.get(sport_prefix) if sport_prefix else None
+    #
+    # #6769: the band test lives in `_total_threshold_in_sport_range`, because
+    # the bucket-build loop now asks it too — a GRADED rung this guard would
+    # delete on a linked market is served in `other[]` rather than lost, and the
+    # two must not disagree about where a band ends. What still reaches this
+    # guard out of band is ungraded, unlinked or unresolved, and is dropped
+    # exactly as before.
+    sport_prefix = _gm_sport_prefix
+    # Still read below, by the period-total ceiling (`period_ceiling`).
     team_range = _SPORT_TEAM_TOTAL_RANGE.get(sport_prefix) if sport_prefix else None
-
-    if game_range:
-        lo, hi = game_range
-        game_totals = [t for t in game_totals if lo <= t["threshold"] <= hi]
-
-    if team_range:
-        lo, hi = team_range
-        team_total_items = [t for t in team_total_items if lo <= t["threshold"] <= hi]
+    game_totals = [
+        t for t in game_totals
+        if _total_threshold_in_sport_range("game_total", t["threshold"], sport_prefix)
+    ]
+    team_total_items = [
+        t for t in team_total_items
+        if _total_threshold_in_sport_range("team_total", t["threshold"], sport_prefix)
+    ]
 
     # 7a-ii. A match totals map is a MATCH map — tennis games (#3161), esports
     # maps (#3608). This runs BEFORE the monotonicity pass on purpose: mixing
