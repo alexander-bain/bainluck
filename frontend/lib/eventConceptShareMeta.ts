@@ -67,6 +67,7 @@
  * specimen.
  */
 
+import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { formatShareProbability, truncateShareText } from "@/lib/share";
 
 /** The slice of `GET /api/event/{key}` this copy reads. */
@@ -85,6 +86,15 @@ export interface EventConceptShareSource {
     status?: string | null;
     venue?: string | null;
     location?: string | null;
+    /**
+     * The SPORT, as distinct from `domain`, which is the event-key namespace
+     * this codebase routes on (#5603). Read by the card's pill through
+     * `conceptDomainLabel`; absent on an envelope minted before PR #6801, which
+     * is the case that helper's fallback exists for.
+     */
+    sport_label?: string | null;
+    /** The routing namespace, when the envelope carries it. */
+    domain?: string | null;
   } | null;
   primary?: {
     label?: string | null;
@@ -165,7 +175,7 @@ function pricedCompetitors(
     (competitor): competitor is EventConceptShareCompetitor => competitor != null
   );
 
-  return [...competitors]
+  const priced = [...competitors]
     .sort((a, b) => (b.probability ?? -1) - (a.probability ?? -1))
     .map((competitor) => {
       const name = cleanText(competitor.name);
@@ -177,6 +187,92 @@ function pricedCompetitors(
         : null;
     })
     .filter((competitor): competitor is PricedCompetitor => competitor !== null);
+
+  // TWO-SIDED IS A PROPERTY OF THE CONTEST, NOT OF THE SURVIVORS — see
+  // `pairedDuel`. `competitors` is the field as served, before the 0% drop.
+  return competitors.length === 2 ? pairedDuel(priced) : priced;
+}
+
+/**
+ * #6849 — THE TWO NUMBERS A PASTED LINK UNFURLED WITH SUMMED TO 101.
+ *
+ * Production 2026-09-18 04:42Z, `/event/ufc/power-slap-23-26sep18powerslap23`:
+ *
+ *     og:title        Power Slap 23: Brandon Wilson 68%, Brian Ellis 33%
+ *     og:description  Main event. Brandon Wilson 68%, Brian Ellis 33%.
+ *     the card        Brandon Wilson 68%  ·  Brian Ellis 33%
+ *
+ * The payload is an exact complement — `0.675` and `0.325`, summing to 1.000 —
+ * so the extra point is entirely ours: each side went through
+ * `formatShareProbability` on its own and `Math.round` takes a half away from
+ * zero on BOTH. `renderedDuelPercents` is the product's standing answer
+ * (#2060/UX-P114); #4963 taught the `/events/[id]` card the same lesson and
+ * #6844 the event page's own hero, off this same specimen. This is the third
+ * surface to adopt an existing rule, not a new one.
+ *
+ * ═══ WHY HERE, AND NOT IN THE TWO READERS ═══
+ *
+ * The filed issue puts it in `opengraph-image.tsx`, where the card builds its
+ * rows. But the CAPTION is the other half of one unfurl and reads the same
+ * `priced` list, so fixing only the picture leaves a card drawing 68/32 under a
+ * title saying 68/33 — and this module exists because the two must not diverge
+ * (see the header, and `eventConceptShareFacts`' own note). So the pairing
+ * belongs on the list they share.
+ *
+ * 🔴 BUT NOT UNDER THEIR PREDICATE. Both readers branch on "exactly two PRICED
+ * competitors", and that is a fine rule for NAMING both sides — it is not one
+ * for normalizing them, because it counts SURVIVORS. `US_OPEN` in this module's
+ * own suite is the counter-example and it caught the first version of this fix:
+ * four competitors, `0.565 / 0.425 / 0.0 / 0.0`, the two longshots dropped by
+ * `formatShareProbability`, leaving two survivors whose 0.99 total lands inside
+ * the complement band BY COINCIDENCE. Normalizing there claims Zverev and
+ * Shelton are the two sides of one question when 136 other entrants exist, and
+ * it moved the printed title from 56% to 57%. Naming two leaders is a display
+ * choice; pairing them is an arithmetic claim about the contest's SHAPE, so the
+ * predicate is the field as SERVED — `competitors.length === 2` — and a 25-way
+ * race with 23 unpriced can never reach it. (discover/169 flagged the same
+ * hazard for `TwoSidedTimeline`'s `.slice(0, 2)` on 2026-09-18 04:30Z and left
+ * it to this lane; #6861 carries it, with this fixture as the evidence that the
+ * class is real rather than theoretical.)
+ *
+ * ═══ UNCONDITIONAL, WHICH IS WIDER THAN THE SUM ═══
+ *
+ * `renderedDuelPercents` carries its own complement band, so a pair that should
+ * not total 100 is passed through rather than normalized (inventing probability
+ * is the failure `renderedCardPercents` documents). What DOES change on that
+ * pass-through is the rounding: `renderedPercent` recovers the quoted decimal
+ * before rounding and `formatShareProbability` does not, so the four wire values
+ * #3867 measured — 0.145, 0.285, 0.565, 0.575 — move by a point. Taken
+ * deliberately: the page's own hero has printed the `renderedPercent` answer
+ * since #6844, so leaving the formatter's here would trade a sum defect for an
+ * unfurl that disagrees with the page it depicts.
+ *
+ * 🔴 AND IT CAN MANUFACTURE A CERTAINTY, SO #6029's RULE IS RE-CHECKED AFTER IT.
+ *
+ * Normalizing divides by the true total, so a pair totalling under 1.0 pushes
+ * its leader UP: `0.9895 / 0.0005` totals 0.99, normalizes to 0.99949 and prints
+ * "100%" from a raw price of 0.9895 that `isForecast` — which reads the RAW
+ * fraction against `PRINTS_AS_CERTAIN` — correctly calls a forecast. That is
+ * precisely the sentence #6029 exists to stop ("leads at 100%" is not a sentence
+ * a live market can produce), arriving by an arithmetic route that constant
+ * cannot see. So a pairing that prints a certainty withholds the board WHOLE —
+ * the same trade `isForecast` makes, for the same reason, on the number actually
+ * printed rather than on the one that went in. No specimen: derived from the
+ * band and pinned by its own test, because the corner is rare and silent.
+ */
+function pairedDuel(priced: PricedCompetitor[]): PricedCompetitor[] {
+  if (priced.length !== 2) return priced;
+
+  // Sorted best-first above, so index 0 is the favourite — the side
+  // `renderedDuelPercents` leaves untouched and derives the other from.
+  const [first, second] = renderedDuelPercents(priced[0].fraction, priced[1].fraction);
+  if (first === null || second === null) return priced;
+  if (first >= 100) return [];
+
+  return [
+    { ...priced[0], probability: `${first}%` },
+    { ...priced[1], probability: `${second}%` },
+  ];
 }
 
 /**
