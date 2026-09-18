@@ -141,6 +141,35 @@ def test_an_empty_external_id_is_refused():
     assert venue_event("")["reachable"] is False
 
 
+def test_the_venue_call_carries_a_user_agent_gamma_will_serve(monkeypatch):
+    """Gamma answers urllib's default `Python-urllib/3.x` with 403 Forbidden.
+
+    Notice 39 routes every outbound call through `tagged()`, and for a
+    third-party host that correctly returns `{}` — so `headers=tagged(url)`
+    alone leaves the default UA in place and every venue read fails. Measured:
+    it degraded all seven candidates to `reachable: False`. Fail-closed, so it
+    could not drain anything wrong, but the drain would do nothing at all, and
+    the CI tag guard cannot see it because it reads the call site, not the
+    response. The two-argument form of `tagged()` MERGES, which is why it is
+    used here; this test is what stops someone "simplifying" it back.
+    """
+    import urllib.request as ur
+
+    from scripts import repair_6919_stranded_settled_polymarket_markets as mod
+
+    seen = {}
+
+    def fake_urlopen(req, timeout=None):
+        seen["ua"] = req.get_header("User-agent")
+        raise OSError("stop here — the header is what is under test")
+
+    monkeypatch.setattr(ur, "urlopen", fake_urlopen)
+    mod.venue_event("1004380")
+
+    assert seen.get("ua"), "no User-Agent was set on the venue request"
+    assert "python-urllib" not in seen["ua"].lower()
+
+
 # --- D51 and notice 47(c) ---------------------------------------------------
 
 def test_backup_is_exact_refuses_a_reconciliation_that_checked_nothing():

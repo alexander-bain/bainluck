@@ -93,11 +93,19 @@ decides one.
   ⚠️ FAIL CLOSED ON ANYTHING UNVERIFIABLE. A non-numeric `external_id` (a 64-hex
   condition, i.e. the sub-market half of the pair arm three describes) is NOT
   addressable at `/events/{id}`, and `/markets?condition_ids=` omits closed
-  markets unless `&closed=true` — a door that answers `[]` for "settled". Rather
-  than ship a settlement writer with an untested venue path and no specimen to
-  test it on, such a row is REFUSED by name under `unverifiable`. Zero of
-  today's 7 are this shape. When one appears, the refusal is visible in the plan
-  and the path gets built against a real row.
+  markets unless `&closed=true` — a door that answers `[]` for "settled", which
+  is also what it answers for "no such condition" (gotcha #53: one body, two
+  meanings). Disambiguating that needs a second call, and a settlement writer is
+  the last place to ship a venue path nobody has run. So such a row is REFUSED
+  BY NAME under `unverifiable` and appears in the plan saying so.
+
+  THE POPULATION IS LIVE AND THIS BRANCH IS NOT HYPOTHETICAL. It was written
+  against zero specimens at 19:4xZ; by 19:5xZ one had arrived — `13791198`
+  "Trump eliminates capital gains tax", 2 legs, 1 winner, `resolution_date`
+  2025-12-31, keyed `0x3e685c84…`. It is plausibly drainable and it is NOT
+  drained, because "plausibly" is not the standard this script holds. Building
+  the condition door is a follow-up with its own live verification, not a thing
+  to bolt on mid-flight; the specimen is banked for it.
 
 ═══ WHAT IT WRITES
 
@@ -256,10 +264,26 @@ def venue_event(external_id: str) -> dict[str, Any]:
         return {"reachable": False,
                 "reason": "unverifiable: external_id is not a numeric Gamma "
                           "event id, and /events/{id} cannot address it"}
+    # Notice 39: every outbound call site states who made it, through the one
+    # helper — a second answer to "should this be tagged?" is a second thing to
+    # drift. Gamma is a third-party host, so `tagged()` correctly attaches no
+    # origin header and returns `{}` for a bare call.
+    #
+    # 🪤 WHICH IS WHY THE USER-AGENT IS PASSED THROUGH IT, NOT AROUND IT.
+    # `tagged(url)` alone leaves urllib to send its default `Python-urllib/3.x`,
+    # and Gamma answers that **403 Forbidden** — measured, every event id. The
+    # two-argument form MERGES, so the agent tag rule and a UA the venue will
+    # actually serve are not in competition. The failure was invisible to the CI
+    # guard (which reads the call site, not the response) and visible only by
+    # running the call: it degraded every row to `reachable: False`, i.e. to a
+    # blanket refusal. Fail-closed, so it could not have drained anything wrong
+    # — but it would have drained nothing at all.
+    from app.utils.agent_origin import tagged
+
+    url = f"{GAMMA}/events/{external_id}"
     try:
         req = urllib.request.Request(
-            f"{GAMMA}/events/{external_id}",
-            headers={"User-Agent": "bainluck-repair-6919"},
+            url, headers=tagged(url, {"User-Agent": "bainluck-repair-6919"})
         )
         with urllib.request.urlopen(req, timeout=VENUE_TIMEOUT) as resp:
             body = resp.read().decode("utf-8")
