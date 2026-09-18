@@ -756,12 +756,40 @@ if [ -n "$EXPLAIN" ]; then
   exit 0
 fi
 
+# ── 0. THE SPM STORE (gotcha #117) ───────────────────────────────────────────
+#
+# A FRESH WORKTREE HAS NO RESOLVED SPM CHECKOUT, AND THIS GATE COULD NOT BE RUN
+# IN ONE (native/233c, 2026-09-18). Both invocations below re-resolved the
+# package graph from scratch, and two Firebase BINARY targets are zips fetched
+# from dl.google.com — which this sandbox cannot reach. Measured twice on the
+# B16 snapshot worktree: `Could not resolve package dependencies … downloadError
+# ("The request timed out.")`, EXIT 74 on the macOS build AND on the test run.
+#
+# 74 is the failure mode this whole file exists to prevent: it is not a compile
+# error and not a test result, and the summary printed `macOS build: FAIL` for a
+# build that never started. `scripts/ios_native_gate.sh` has borrowed master's
+# store since #117 was banked; this script never did, so the gate was unusable
+# in exactly the isolated worktree an archive candidate is validated in.
+#
+# Override with BAINLUCK_SPM_STORE, same variable the other gate reads. If the
+# store is absent the flag is simply not passed — resolving normally is correct
+# on a machine with egress, and a hard failure here would break the common case.
+SPM_STORE="${BAINLUCK_SPM_STORE:-$HOME/Library/Developer/Xcode/DerivedData/Bain_Luck-cwkxplfeuucvrvbplvqqlcgmpcgx/SourcePackages}"
+SPM_FLAGS=()
+if [ -d "$SPM_STORE" ]; then
+  SPM_FLAGS=(-clonedSourcePackagesDirPath "$SPM_STORE")
+  echo "  SPM store  : $SPM_STORE"
+else
+  echo "  SPM store  : none at $SPM_STORE — resolving packages normally"
+fi
+
 # ── 1. THE macOS BUILD ───────────────────────────────────────────────────────
 say "macOS build (the target that went dark for five days)"
 MACLOG="$LOGDIR/macos-build.txt"
 xcodebuild build \
   -project "$PROJECT" -scheme "$SCHEME" \
   -destination 'platform=macOS,arch=arm64' \
+  ${SPM_FLAGS[@]+"${SPM_FLAGS[@]}"} \
   OTHER_SWIFT_FLAGS="$SWIFT_FLAGS" > "$MACLOG" 2>&1
 MAC_EXIT=$?
 echo "EXIT CODE: $MAC_EXIT   log: $MACLOG"
@@ -830,16 +858,33 @@ fi
 # ── 3. BainLuckTests ─────────────────────────────────────────────────────────
 # Resolve a simulator that EXISTS on this machine. A hardcoded name that is not
 # installed exits 70, which reads like a test failure and is not one.
+#
+# 🔴 THIS WAS THE SIXTH ENTRYPOINT (native/233c, 2026-09-18). The pick used to be
+# `simctl list … | head -1` with NO reserved filter, in the one rig tool that
+# INSTALLS A TEST BUNDLE — so the guard covering five shoot tools and the other
+# gate did not cover the one that writes to a device. It was safe only by the
+# order `simctl` happens to list in (`iPhone 17 Pro`, the disposable, is oldest);
+# delete or re-create one device and the next gate run installs onto whichever
+# iPhone sorts first, which can be either of Alex's signed-in phones.
+#
+# It was invisible for the same reason the scalar was: the self-test's own
+# entrypoint list did not name this file. Both are fixed together — a guard that
+# does not know about a caller is not guarding it.
 say "BainLuckTests"
-SIMLINE=$(xcrun simctl list devices available | /usr/bin/grep -E '^[[:space:]]+iPhone ' | head -1)
-UDID=$(printf '%s' "$SIMLINE" | sed -E 's/.*\(([0-9A-Fa-f-]{36})\).*/\1/')
-SIMNAME=$(printf '%s' "$SIMLINE" | sed -E 's/^[[:space:]]+//; s/ \(.*//')
+. "$(dirname "$0")/reserved-sim-guard.sh"
+UDID=$(bl_default_shoot_sim)
+SIMNAME=$(xcrun simctl list devices available 2>/dev/null \
+  | /usr/bin/grep -F "$UDID" | sed -E 's/^[[:space:]]+//; s/ \(.*//')
 
 if [ -z "$UDID" ]; then
-  echo "  NO iPhone SIMULATOR AVAILABLE — cannot run BainLuckTests on this machine."
-  echo "  (xcrun simctl list devices available showed no iPhone.)"
+  echo "  NO DISPOSABLE iPhone SIMULATOR AVAILABLE — cannot run BainLuckTests here."
+  echo "  (Every available iPhone is reserved, or there is none at all. This gate"
+  echo "   installs a test bundle, so it will not borrow a reserved device.)"
   exit 1
 fi
+# Belt and braces: the picker already excludes the whole reserved set, so this
+# can only fire if someone reintroduces a bespoke pick above.
+bl_refuse_reserved_sim "$UDID" native-gates.sh
 echo "  simulator: $SIMNAME  ($UDID)"
 
 TESTLOG="$LOGDIR/tests.txt"
@@ -869,6 +914,7 @@ set -m
 xcodebuild test \
   -project "$PROJECT" -scheme "$SCHEME" \
   -destination "id=$UDID" \
+  ${SPM_FLAGS[@]+"${SPM_FLAGS[@]}"} \
   OTHER_SWIFT_FLAGS="$SWIFT_FLAGS" > "$TESTLOG" 2>&1 &
 XCB_PID=$!
 set +m
