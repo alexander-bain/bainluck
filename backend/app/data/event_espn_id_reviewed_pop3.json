@@ -1,0 +1,491 @@
+{
+ "schema": "event-espn-id-reviewed-set/v1",
+ "issue": "#2693",
+ "population": 3,
+ "source_artifact": "artifacts-lane1-409/pop3_verification.json, corrected by artifacts-lane1-410/pop3_strict_reverification.json",
+ "source_section": "the 53 unheld, uniquely-resolved wrong anchors - the 46 whose true id ESPN reports `completed: true` AND `STATUS_FINAL`",
+ "reviewed_at": "2026-09-18",
+ "committed_by": "lane1/409, scoped down to 46 by lane1/410 under CERT-3046; same attended protocol as populations 1 and 2",
+ "operation": "UPDATE events.espn_id ONLY — correction, never deletion (ruling 079)",
+ "explicitly_not_written": [
+  "home_score / away_score - 18 of these 46 rows ALREADY hold the correct final, so a repair that also 'tidied' the score would overwrite a correct final with another game's on 18 rows. Same refusal as population 2, measured again on this cohort.",
+  "commence_time - it is the ADDRESSED field here, never a written one. It equals the true game's start TO THE MINUTE on all 46 (delta 0.0 on every row), which is precisely what proves espn_id is the drifted field and not the time.",
+  "status / completed_at — #1981's writer owns these",
+  "box_score_data - every row here carries one, and on a wrongly anchored row it was fetched for the wrong game. MEASURED on 2026-09-18, this is the reader-visible cost: on 27 of these 46 rows the stored inning-by-inning line score sums to the WRONG game's score, so the event page prints a final and a line score that contradict each other (ev12306380 shows 8-2 above a line adding to 1-7; ev12312422 shows 0-5 above 2-3). 18 agree and 1 has no line stored. It is still NOT rewritten here: `game_state_backfill` re-fetches it from `event.espn_id`, so correcting the id is what lets the owning writer replace it. A repair that wrote the payload itself would be forging an observation.",
+  "no deletion of any row, under any branch (ruling 079)"
+ ],
+ "why_this_file_is_committed": [
+  "The reviewed object is a SET OF TRIPLES, not a count — an approval given over a number",
+  "does not transfer to whatever a later re-derivation finds under that number.",
+  "",
+  "Every row here was cross-checked TWICE against ESPN, independently of the repair",
+  "rail's own computation and independently of the stored espn_id. First by the deriving",
+  "pass: a scoreboard sweep of 192 ET dates, 3/19-9/26, 2,522 fixtures, which is a",
+  "DEREFERENCE of each stored id and not a model of it (an id-vs-date curve screen was",
+  "built first and measured at ~10% precision / 40% recall, and is recorded as a negative",
+  "result rather than used). Second by an independent /summary read of all 53 targets,",
+  "asserting per row: the true game's start equals our commence_time to the minute, both",
+  "team names match in the correct home/away orientation, and ESPN state is FINAL.",
+  "Result: 50 AGREE, 3 REJECT - and that AGREE count was WRONG BY FOUR; see the POSTPONED block below, which is why the set here is 46.",
+  "",
+  "The defect is legible in the rows themselves: on every one of the 46, the WRONG id is",
+  "an earlier meeting of the SAME series between the SAME two clubs — `wrong_id_is` and",
+  "`true_id_is` are printed side by side so a reviewer can see that without a tool.",
+  "",
+  "THREE rows were examined and are deliberately ABSENT, and two of them are close calls",
+  "stated plainly rather than quietly rounded in:",
+  "  12828738 (true 401814817) and 13362745 (true 401814863) match on teams, on FINAL,",
+  "  and on the exact score, and miss the to-the-minute test by ONE minute (we store",
+  "  :21 and :06, ESPN says :20 and :05). They are almost certainly correct. They are",
+  "  out because this population's admission test is 'proven', not 'probably', and a",
+  "  write rail is the wrong place to spend a precedent for loosening it; admitting them",
+  "  is a population 4 with its own review, not an edit to this file.",
+  "  15185681 has a commence_time 240 minutes off and a stored score matching no game",
+  "  within three days. Population 2's reviewed set named this same row as deliberately",
+  "  absent for the same reason on 2026-08-20; this pass reached that verdict again",
+  "  independently, which is the cross-check working.",
+  "",
+  "Also OUT OF THIS POPULATION, by construction and not by omission:",
+  "  11 rows whose correct id is ALREADY HELD by a second events row. Those are twins,",
+  "  and 10 of the 11 pairs render two different final scores for one game. The holder",
+  "  must be folded BEFORE the loser can be re-stamped, so they are a fold ship, not a",
+  "  re-stamp ship, and the rail's own true_id_holders gate would refuse them anyway.",
+  "  5 doubleheader rows whose date+pair resolves to TWO ESPN ids, so which meeting the",
+  "  row means is not decidable from the anchor alone. Population 2 excluded its three",
+  "  doubleheaders for this reason; this follows that precedent.",
+  "",
+  "FOUR MORE ROWS WERE REMOVED AFTER REVIEW, and the reason is a defect in this file's own",
+  "second cross-check rather than anything about the rows:",
+  "  14914436 (401815716), 14941557 (401815751), 14960344 (401815848) and 14955785",
+  "  (401815904) each dereference live as STATUS_POSTPONED, `completed: false`, 0-0. The",
+  "  verifying pass defined final as ESPN `state == 'post'`, AND ESPN USES 'post' FOR",
+  "  POSTPONED AS WELL AS FOR FINAL, so all four were classified AGREE by a predicate that",
+  "  could not tell the two apart. The committed rows even printed the word Postponed in",
+  "  their own `true_id_is` text.",
+  "  They are a CLASS, not four accidents: a postponed original keeps its id and the make-up",
+  "  game is played under a DIFFERENT one, so our row - which carries a real final from the",
+  "  make-up - can never be anchored to the shell. The make-up id is not derivable from the",
+  "  sweep that found these (it looked at the original date), so the correct id is unknown and",
+  "  these rows stay wrongly anchored until a pass that asks for it. Re-stamping them would",
+  "  have pointed four completed rows at an authority record that says no game was played.",
+  "  Found by CERT-3046. The predicate is now `completed is True` AND `STATUS_FINAL`, all 46",
+  "  survivors were re-checked under it (46 STRICT_FINAL, 0 NOT_FINAL), and",
+  "  `test_no_reviewed_row_names_a_non_final_game` guards every population against the class."
+ ],
+ "rows": [
+  {
+   "event_id": 12306380,
+   "matchup": "San Diego Padres @ Pittsburgh Pirates",
+   "our_commence_time": "2026-04-08T16:35Z",
+   "wrong_espn_id": "401814847",
+   "wrong_id_is": "2026-04-07T22:40Z Final San Diego Padres 1 @ Pittsburgh Pirates 7",
+   "true_espn_id": "401814862",
+   "true_id_is": "2026-04-08T16:35Z Final San Diego Padres 8 @ Pittsburgh Pirates 2"
+  },
+  {
+   "event_id": 12312422,
+   "matchup": "Milwaukee Brewers @ Boston Red Sox",
+   "our_commence_time": "2026-04-08T17:35Z",
+   "wrong_espn_id": "401814846",
+   "wrong_id_is": "2026-04-07T22:45Z Final Milwaukee Brewers 2 @ Boston Red Sox 3",
+   "true_espn_id": "401814861",
+   "true_id_is": "2026-04-08T17:35Z Final Milwaukee Brewers 0 @ Boston Red Sox 5"
+  },
+  {
+   "event_id": 12317696,
+   "matchup": "Baltimore Orioles @ Chicago White Sox",
+   "our_commence_time": "2026-04-08T18:10Z",
+   "wrong_espn_id": "401814849",
+   "wrong_id_is": "2026-04-07T19:10Z Final Baltimore Orioles 4 @ Chicago White Sox 2",
+   "true_espn_id": "401814864",
+   "true_id_is": "2026-04-08T18:10Z Final Baltimore Orioles 5 @ Chicago White Sox 3"
+  },
+  {
+   "event_id": 12322706,
+   "matchup": "Los Angeles Dodgers @ Toronto Blue Jays",
+   "our_commence_time": "2026-04-08T19:07Z",
+   "wrong_espn_id": "401814845",
+   "wrong_id_is": "2026-04-07T23:07Z Final Los Angeles Dodgers 4 @ Toronto Blue Jays 1",
+   "true_espn_id": "401814860",
+   "true_id_is": "2026-04-08T19:07Z Final Los Angeles Dodgers 3 @ Toronto Blue Jays 4"
+  },
+  {
+   "event_id": 12344435,
+   "matchup": "Chicago Cubs @ Tampa Bay Rays",
+   "our_commence_time": "2026-04-08T22:40Z",
+   "wrong_espn_id": "401814842",
+   "wrong_id_is": "2026-04-07T22:40Z Final Chicago Cubs 9 @ Tampa Bay Rays 2",
+   "true_espn_id": "401814857",
+   "true_id_is": "2026-04-08T22:40Z Final Chicago Cubs 6 @ Tampa Bay Rays 2"
+  },
+  {
+   "event_id": 12404851,
+   "matchup": "Cincinnati Reds @ Miami Marlins",
+   "our_commence_time": "2026-04-09T16:10Z",
+   "wrong_espn_id": "401814858",
+   "wrong_id_is": "2026-04-08T22:40Z Final Cincinnati Reds 4 @ Miami Marlins 7",
+   "true_espn_id": "401814872",
+   "true_id_is": "2026-04-09T16:10Z Final Cincinnati Reds 1 @ Miami Marlins 8"
+  },
+  {
+   "event_id": 12409488,
+   "matchup": "Athletics @ New York Yankees",
+   "our_commence_time": "2026-04-09T17:35Z",
+   "wrong_espn_id": "401814856",
+   "wrong_id_is": "2026-04-08T23:05Z Final Athletics 3 @ New York Yankees 2",
+   "true_espn_id": "401814871",
+   "true_id_is": "2026-04-09T17:35Z Final Athletics 1 @ New York Yankees 0"
+  },
+  {
+   "event_id": 12409489,
+   "matchup": "Detroit Tigers @ Minnesota Twins",
+   "our_commence_time": "2026-04-09T17:40Z",
+   "wrong_espn_id": "401814865",
+   "wrong_id_is": "2026-04-08T23:40Z Final Detroit Tigers 6 @ Minnesota Twins 8",
+   "true_espn_id": "401814874",
+   "true_id_is": "2026-04-09T17:40Z Final Detroit Tigers 1 @ Minnesota Twins 3"
+  },
+  {
+   "event_id": 12468412,
+   "matchup": "Colorado Rockies @ San Diego Padres",
+   "our_commence_time": "2026-04-10T01:40Z",
+   "wrong_espn_id": "401814888",
+   "wrong_id_is": "2026-04-11T01:40Z Final Colorado Rockies 2 @ San Diego Padres 5",
+   "true_espn_id": "401814875",
+   "true_id_is": "2026-04-10T01:40Z Final/12 Colorado Rockies 3 @ San Diego Padres 7"
+  },
+  {
+   "event_id": 12653629,
+   "matchup": "Houston Astros @ Seattle Mariners",
+   "our_commence_time": "2026-04-11T01:40Z",
+   "wrong_espn_id": "401814904",
+   "wrong_id_is": "2026-04-12T01:40Z Final Houston Astros 7 @ Seattle Mariners 8",
+   "true_espn_id": "401814889",
+   "true_id_is": "2026-04-11T01:40Z Final Houston Astros 6 @ Seattle Mariners 9"
+  },
+  {
+   "event_id": 12665586,
+   "matchup": "Texas Rangers @ Los Angeles Dodgers",
+   "our_commence_time": "2026-04-11T02:10Z",
+   "wrong_espn_id": "401814905",
+   "wrong_id_is": "2026-04-12T01:10Z Final Texas Rangers 3 @ Los Angeles Dodgers 6",
+   "true_espn_id": "401814890",
+   "true_id_is": "2026-04-11T02:10Z Final Texas Rangers 7 @ Los Angeles Dodgers 8"
+  },
+  {
+   "event_id": 13308264,
+   "matchup": "Texas Rangers @ Athletics",
+   "our_commence_time": "2026-04-14T01:40Z",
+   "wrong_espn_id": "401814945",
+   "wrong_id_is": "2026-04-15T01:40Z Final Texas Rangers 1 @ Athletics 2",
+   "true_espn_id": "401814930",
+   "true_id_is": "2026-04-14T01:40Z Final Texas Rangers 8 @ Athletics 1"
+  },
+  {
+   "event_id": 14811069,
+   "matchup": "Toronto Blue Jays @ Baltimore Orioles",
+   "our_commence_time": "2026-05-29T23:05Z",
+   "wrong_espn_id": "401815532",
+   "wrong_id_is": "2026-05-28T22:35Z Final Toronto Blue Jays 2 @ Baltimore Orioles 1",
+   "true_espn_id": "401815541",
+   "true_id_is": "2026-05-29T23:05Z Final Toronto Blue Jays 6 @ Baltimore Orioles 5"
+  },
+  {
+   "event_id": 14842144,
+   "matchup": "Kansas City Royals @ Cincinnati Reds",
+   "our_commence_time": "2026-06-02T23:10Z",
+   "wrong_espn_id": "401815581",
+   "wrong_id_is": "2026-06-01T23:10Z Final Kansas City Royals 9 @ Cincinnati Reds 2",
+   "true_espn_id": "401815592",
+   "true_id_is": "2026-06-02T23:10Z Final/10 Kansas City Royals 3 @ Cincinnati Reds 4"
+  },
+  {
+   "event_id": 14842152,
+   "matchup": "San Francisco Giants @ Milwaukee Brewers",
+   "our_commence_time": "2026-06-02T23:40Z",
+   "wrong_espn_id": "401815584",
+   "wrong_id_is": "2026-06-01T23:40Z Final San Francisco Giants 2 @ Milwaukee Brewers 16",
+   "true_espn_id": "401815599",
+   "true_id_is": "2026-06-02T23:40Z Final San Francisco Giants 3 @ Milwaukee Brewers 8"
+  },
+  {
+   "event_id": 14842153,
+   "matchup": "Chicago White Sox @ Minnesota Twins",
+   "our_commence_time": "2026-06-03T17:40Z",
+   "wrong_espn_id": "401815597",
+   "wrong_id_is": "2026-06-02T23:40Z Final Chicago White Sox 4 @ Minnesota Twins 6",
+   "true_espn_id": "401815612",
+   "true_id_is": "2026-06-03T17:40Z Final Chicago White Sox 8 @ Minnesota Twins 0"
+  },
+  {
+   "event_id": 14876709,
+   "matchup": "Seattle Mariners @ Detroit Tigers",
+   "our_commence_time": "2026-06-06T17:10Z",
+   "wrong_espn_id": "401815632",
+   "wrong_id_is": "2026-06-05T22:40Z Final Seattle Mariners 3 @ Detroit Tigers 7",
+   "true_espn_id": "401815647",
+   "true_id_is": "2026-06-06T17:10Z Final Seattle Mariners 4 @ Detroit Tigers 0"
+  },
+  {
+   "event_id": 14878578,
+   "matchup": "Baltimore Orioles @ Toronto Blue Jays",
+   "our_commence_time": "2026-06-06T19:07Z",
+   "wrong_espn_id": "401815628",
+   "wrong_id_is": "2026-06-05T23:07Z Final Baltimore Orioles 13 @ Toronto Blue Jays 3",
+   "true_espn_id": "401815643",
+   "true_id_is": "2026-06-06T19:07Z Final Baltimore Orioles 4 @ Toronto Blue Jays 6"
+  },
+  {
+   "event_id": 14876710,
+   "matchup": "Tampa Bay Rays @ Miami Marlins",
+   "our_commence_time": "2026-06-06T20:10Z",
+   "wrong_espn_id": "401815633",
+   "wrong_id_is": "2026-06-05T23:10Z Final Tampa Bay Rays 6 @ Miami Marlins 0",
+   "true_espn_id": "401815648",
+   "true_id_is": "2026-06-06T20:10Z Final Tampa Bay Rays 3 @ Miami Marlins 4"
+  },
+  {
+   "event_id": 14903733,
+   "matchup": "Philadelphia Phillies @ Toronto Blue Jays",
+   "our_commence_time": "2026-06-09T23:07Z",
+   "wrong_espn_id": "401815675",
+   "wrong_id_is": "2026-06-08T23:07Z Final Philadelphia Phillies 5 @ Toronto Blue Jays 2",
+   "true_espn_id": "401815686",
+   "true_id_is": "2026-06-09T23:07Z Final Philadelphia Phillies 2 @ Toronto Blue Jays 3"
+  },
+  {
+   "event_id": 14904833,
+   "matchup": "Seattle Mariners @ Baltimore Orioles",
+   "our_commence_time": "2026-06-10T22:35Z",
+   "wrong_espn_id": "401815676",
+   "wrong_id_is": "2026-06-08T22:35Z Final Seattle Mariners 6 @ Baltimore Orioles 3",
+   "true_espn_id": "401815702",
+   "true_id_is": "2026-06-10T22:35Z Final Seattle Mariners 2 @ Baltimore Orioles 7"
+  },
+  {
+   "event_id": 14914348,
+   "matchup": "Los Angeles Dodgers @ Pittsburgh Pirates",
+   "our_commence_time": "2026-06-10T22:40Z",
+   "wrong_espn_id": "401815683",
+   "wrong_id_is": "2026-06-09T22:40Z Final Los Angeles Dodgers 12 @ Pittsburgh Pirates 3",
+   "true_espn_id": "401815698",
+   "true_id_is": "2026-06-10T22:40Z Final Los Angeles Dodgers 8 @ Pittsburgh Pirates 9"
+  },
+  {
+   "event_id": 14914435,
+   "matchup": "St. Louis Cardinals @ New York Mets",
+   "our_commence_time": "2026-06-11T17:10Z",
+   "wrong_espn_id": "401815703",
+   "wrong_id_is": "2026-06-10T23:10Z Final St. Louis Cardinals 9 @ New York Mets 2",
+   "true_espn_id": "401815715",
+   "true_id_is": "2026-06-11T17:10Z Final St. Louis Cardinals 4 @ New York Mets 5"
+  },
+  {
+   "event_id": 14943407,
+   "matchup": "New York Yankees @ Toronto Blue Jays",
+   "our_commence_time": "2026-06-13T19:07Z",
+   "wrong_espn_id": "401815723",
+   "wrong_id_is": "2026-06-12T23:37Z Final New York Yankees 5 @ Toronto Blue Jays 8",
+   "true_espn_id": "401815738",
+   "true_id_is": "2026-06-13T19:07Z Final New York Yankees 3 @ Toronto Blue Jays 1"
+  },
+  {
+   "event_id": 14941556,
+   "matchup": "Texas Rangers @ Boston Red Sox",
+   "our_commence_time": "2026-06-13T20:10Z",
+   "wrong_espn_id": "401815726",
+   "wrong_id_is": "2026-06-12T23:10Z Final Texas Rangers 1 @ Boston Red Sox 10",
+   "true_espn_id": "401815741",
+   "true_id_is": "2026-06-13T20:10Z Final Texas Rangers 3 @ Boston Red Sox 6"
+  },
+  {
+   "event_id": 14953886,
+   "matchup": "Pittsburgh Pirates @ Athletics",
+   "our_commence_time": "2026-06-18T01:40Z",
+   "wrong_espn_id": "401815787",
+   "wrong_id_is": "2026-06-17T01:40Z Final Pittsburgh Pirates 6 @ Athletics 5",
+   "true_espn_id": "401815801",
+   "true_id_is": "2026-06-18T01:40Z Final Pittsburgh Pirates 12 @ Athletics 4"
+  },
+  {
+   "event_id": 14948374,
+   "matchup": "San Francisco Giants @ Miami Marlins",
+   "our_commence_time": "2026-06-19T23:10Z",
+   "wrong_espn_id": "401815829",
+   "wrong_id_is": "2026-06-20T20:10Z Final San Francisco Giants 3 @ Miami Marlins 6",
+   "true_espn_id": "401815815",
+   "true_id_is": "2026-06-19T23:10Z Final San Francisco Giants 3 @ Miami Marlins 4"
+  },
+  {
+   "event_id": 14959726,
+   "matchup": "Chicago White Sox @ Detroit Tigers",
+   "our_commence_time": "2026-06-20T17:10Z",
+   "wrong_espn_id": "401815812",
+   "wrong_id_is": "2026-06-19T22:40Z Final Chicago White Sox 3 @ Detroit Tigers 4",
+   "true_espn_id": "401815825",
+   "true_id_is": "2026-06-20T17:10Z Final Chicago White Sox 1 @ Detroit Tigers 4"
+  },
+  {
+   "event_id": 14959969,
+   "matchup": "Cincinnati Reds @ New York Yankees",
+   "our_commence_time": "2026-06-20T17:35Z",
+   "wrong_espn_id": "401815813",
+   "wrong_id_is": "2026-06-19T23:05Z Final Cincinnati Reds 0 @ New York Yankees 5",
+   "true_espn_id": "401815826",
+   "true_id_is": "2026-06-20T17:35Z Final Cincinnati Reds 10 @ New York Yankees 2"
+  },
+  {
+   "event_id": 14963883,
+   "matchup": "Houston Astros @ Toronto Blue Jays",
+   "our_commence_time": "2026-06-23T20:07Z",
+   "wrong_espn_id": "401815855",
+   "wrong_id_is": "2026-06-22T23:07Z Final Houston Astros 2 @ Toronto Blue Jays 4",
+   "true_espn_id": "401815868",
+   "true_id_is": "2026-06-23T20:07Z Final/11 Houston Astros 9 @ Toronto Blue Jays 7"
+  },
+  {
+   "event_id": 14963882,
+   "matchup": "Kansas City Royals @ Tampa Bay Rays",
+   "our_commence_time": "2026-06-23T22:40Z",
+   "wrong_espn_id": "401815856",
+   "wrong_id_is": "2026-06-22T22:40Z Final Kansas City Royals 2 @ Tampa Bay Rays 1",
+   "true_espn_id": "401815869",
+   "true_id_is": "2026-06-23T22:40Z Final Kansas City Royals 12 @ Tampa Bay Rays 5"
+  },
+  {
+   "event_id": 14966114,
+   "matchup": "Chicago Cubs @ New York Mets",
+   "our_commence_time": "2026-06-25T23:10Z",
+   "wrong_espn_id": "401815854",
+   "wrong_id_is": "2026-06-22T23:10Z Postponed Chicago Cubs 0 @ New York Mets 0",
+   "true_espn_id": "401815897",
+   "true_id_is": "2026-06-25T23:10Z Final/10 Chicago Cubs 4 @ New York Mets 3"
+  },
+  {
+   "event_id": 14968280,
+   "matchup": "Texas Rangers @ Toronto Blue Jays",
+   "our_commence_time": "2026-06-26T23:07Z",
+   "wrong_espn_id": "401815927",
+   "wrong_id_is": "2026-06-27T19:07Z Final Texas Rangers 7 @ Toronto Blue Jays 4",
+   "true_espn_id": "401815912",
+   "true_id_is": "2026-06-26T23:07Z Final Texas Rangers 5 @ Toronto Blue Jays 4"
+  },
+  {
+   "event_id": 14969289,
+   "matchup": "Philadelphia Phillies @ New York Mets",
+   "our_commence_time": "2026-06-28T17:40Z",
+   "wrong_espn_id": "401815925",
+   "wrong_id_is": "2026-06-27T20:10Z Final Philadelphia Phillies 2 @ New York Mets 6",
+   "true_espn_id": "401815940",
+   "true_id_is": "2026-06-28T17:40Z Final Philadelphia Phillies 5 @ New York Mets 4"
+  },
+  {
+   "event_id": 14969736,
+   "matchup": "Pittsburgh Pirates @ Philadelphia Phillies",
+   "our_commence_time": "2026-06-30T22:40Z",
+   "wrong_espn_id": "401815954",
+   "wrong_id_is": "2026-06-29T22:40Z Final Pittsburgh Pirates 11 @ Philadelphia Phillies 7",
+   "true_espn_id": "401815967",
+   "true_id_is": "2026-06-30T22:40Z Final Pittsburgh Pirates 0 @ Philadelphia Phillies 8"
+  },
+  {
+   "event_id": 14969739,
+   "matchup": "Cincinnati Reds @ Milwaukee Brewers",
+   "our_commence_time": "2026-06-30T23:40Z",
+   "wrong_espn_id": "401815957",
+   "wrong_id_is": "2026-06-29T23:40Z Final Cincinnati Reds 3 @ Milwaukee Brewers 5",
+   "true_espn_id": "401815971",
+   "true_id_is": "2026-06-30T23:40Z Final Cincinnati Reds 2 @ Milwaukee Brewers 7"
+  },
+  {
+   "event_id": 14985694,
+   "matchup": "Athletics @ Chicago White Sox",
+   "our_commence_time": "2026-07-11T18:10Z",
+   "wrong_espn_id": "401816105",
+   "wrong_id_is": "2026-07-10T23:40Z Final Athletics 1 @ Chicago White Sox 14",
+   "true_espn_id": "401816120",
+   "true_id_is": "2026-07-11T18:10Z Final Athletics 0 @ Chicago White Sox 1"
+  },
+  {
+   "event_id": 14983952,
+   "matchup": "New York Yankees @ Washington Nationals",
+   "our_commence_time": "2026-07-11T20:05Z",
+   "wrong_espn_id": "401816101",
+   "wrong_id_is": "2026-07-10T22:45Z Final New York Yankees 5 @ Washington Nationals 3",
+   "true_espn_id": "401816116",
+   "true_id_is": "2026-07-11T20:05Z Final New York Yankees 4 @ Washington Nationals 2"
+  },
+  {
+   "event_id": 14984776,
+   "matchup": "Cleveland Guardians @ Miami Marlins",
+   "our_commence_time": "2026-07-11T20:10Z",
+   "wrong_espn_id": "401816098",
+   "wrong_id_is": "2026-07-10T23:10Z Final Cleveland Guardians 3 @ Miami Marlins 2",
+   "true_espn_id": "401816113",
+   "true_id_is": "2026-07-11T20:10Z Final Cleveland Guardians 4 @ Miami Marlins 1"
+  },
+  {
+   "event_id": 14983955,
+   "matchup": "Seattle Mariners @ Tampa Bay Rays",
+   "our_commence_time": "2026-07-11T20:10Z",
+   "wrong_espn_id": "401816103",
+   "wrong_id_is": "2026-07-10T23:10Z Final Seattle Mariners 2 @ Tampa Bay Rays 7",
+   "true_espn_id": "401816118",
+   "true_id_is": "2026-07-11T20:10Z Final Seattle Mariners 1 @ Tampa Bay Rays 6"
+  },
+  {
+   "event_id": 14983956,
+   "matchup": "Boston Red Sox @ New York Mets",
+   "our_commence_time": "2026-07-11T20:10Z",
+   "wrong_espn_id": "401816096",
+   "wrong_id_is": "2026-07-10T23:50Z Final Boston Red Sox 6 @ New York Mets 2",
+   "true_espn_id": "401816111",
+   "true_id_is": "2026-07-11T20:10Z Final Boston Red Sox 4 @ New York Mets 0"
+  },
+  {
+   "event_id": 14985693,
+   "matchup": "Philadelphia Phillies @ Detroit Tigers",
+   "our_commence_time": "2026-07-12T17:40Z",
+   "wrong_espn_id": "401816117",
+   "wrong_id_is": "2026-07-11T22:10Z Final Philadelphia Phillies 4 @ Detroit Tigers 2",
+   "true_espn_id": "401816132",
+   "true_id_is": "2026-07-12T17:40Z Final Philadelphia Phillies 5 @ Detroit Tigers 0"
+  },
+  {
+   "event_id": 15036493,
+   "matchup": "San Francisco Giants @ Seattle Mariners",
+   "our_commence_time": "2026-07-18T02:10Z",
+   "wrong_espn_id": "401816168",
+   "wrong_id_is": "2026-07-19T00:08Z Final/10 San Francisco Giants 3 @ Seattle Mariners 4",
+   "true_espn_id": "401816153",
+   "true_id_is": "2026-07-18T02:10Z Final San Francisco Giants 7 @ Seattle Mariners 0"
+  },
+  {
+   "event_id": 15167599,
+   "matchup": "Chicago White Sox @ Toronto Blue Jays",
+   "our_commence_time": "2026-07-18T19:07Z",
+   "wrong_espn_id": "401816141",
+   "wrong_id_is": "2026-07-17T23:15Z Final Chicago White Sox 12 @ Toronto Blue Jays 4",
+   "true_espn_id": "401816156",
+   "true_id_is": "2026-07-18T19:07Z Final Chicago White Sox 0 @ Toronto Blue Jays 1"
+  },
+  {
+   "event_id": 15169792,
+   "matchup": "Miami Marlins @ Milwaukee Brewers",
+   "our_commence_time": "2026-07-18T20:10Z",
+   "wrong_espn_id": "401816148",
+   "wrong_id_is": "2026-07-17T23:40Z Final/10 Miami Marlins 1 @ Milwaukee Brewers 2",
+   "true_espn_id": "401816163",
+   "true_id_is": "2026-07-18T20:10Z Final Miami Marlins 6 @ Milwaukee Brewers 8"
+  },
+  {
+   "event_id": 15169791,
+   "matchup": "Texas Rangers @ Atlanta Braves",
+   "our_commence_time": "2026-07-18T20:10Z",
+   "wrong_espn_id": "401816146",
+   "wrong_id_is": "2026-07-17T23:15Z Final Texas Rangers 1 @ Atlanta Braves 15",
+   "true_espn_id": "401816161",
+   "true_id_is": "2026-07-18T20:10Z Final Texas Rangers 7 @ Atlanta Braves 6"
+  }
+ ]
+}
