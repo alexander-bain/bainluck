@@ -43,6 +43,13 @@ from app.utils.game_market_club_names import (
     repair_field_outcome_name,
 )
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
+
+# #6923. The search card's age pip and the futures card's age mark must agree on
+# what "prints a price" means, so both call the one predicate; `routes/feed.py`
+# imports it under the same alias for the same reason (#6256).
+from app.utils.futures_market_snapshot import (
+    outcome_prints_a_price as _outcome_prints_a_price,
+)
 from app.utils.prematch_reading import opening_consensus_has_frozen
 from app.utils.period_window_grade import grade_period_window
 from app.utils.final_score_margin import margin_verdict_from_final_score
@@ -24752,10 +24759,34 @@ def _served_prices_as_of(
     a long dead tail — a 0.1% leg nobody refreshes, or the `Other` rung 9413479
     carries from May — from ageing a card whose visible answers are current.
 
-    None when no served row carries a stamp (the lean typeahead shape omits it,
-    and a market can have no outcomes at all). The consumer renders nothing on
-    None rather than falling back to `updated_at`: an empty space is honest and
-    the old pip was not.
+    ═══ AND SERVED IS NOT ENOUGH: IT MUST ALSO PRINT A PRICE (#6923) ═══
+
+    The scope above was right and incomplete, and the gap is the same dead-tail
+    row arriving by the other door. `_build_search_top_outcomes` drops
+    placeholder names, duplicates, unbacked legs, empty books and the all-null
+    case — but ONE priceless rung survives whenever fewer than `limit` priced
+    rows do, and it sorts to the bottom on `current_probability or 0`, so it
+    lands in the slice precisely on the SHORT ladders. Its stamp then wins the
+    `min`. Measured 2026-09-18: `?q=NH-01 House Election Winner` printed
+    **"May 12"** over two prices written that morning at 10:08Z, because the
+    `Other` rung renders as a dash and was last written 2026-05-12T16:15:52Z —
+    this docstring's own `Other`-rung case, reaching the card instead of the tail
+    it was scoped away from. A ranking cannot exclude what there is no
+    replacement for; only a predicate can (#6256 says this in full).
+
+    That predicate is `outcome_prints_a_price` and is deliberately NOT a local
+    rule: it is the one both sides of a card must agree on, so that what counts
+    as printable moves in one place. In particular its truthiness on `0.0` is
+    reproduced on purpose — a `0.0` leg renders `—` today, so it may not date the
+    mark today, and when #6195 makes it render `0%` it regains its vote here with
+    no edit to this function. Keying on the served dict's `probability` instead
+    would read the same value one step later and duplicate that decision.
+
+    None when no served row both prints a price and carries a stamp (the lean
+    typeahead shape omits the id, a market can have no outcomes at all, and a
+    card whose every drawn row is a dash has no price to be as-of). The consumer
+    renders nothing on None rather than falling back to `updated_at`: an empty
+    space is honest and the old pip was not.
     """
     served_ids = {o.get("id") for o in served if o.get("id") is not None}
     if not served_ids:
@@ -24770,6 +24801,7 @@ def _served_prices_as_of(
         stamp
         for o in market.outcomes
         if o.id in served_ids
+        and _outcome_prints_a_price(o)
         and (stamp := getattr(o, "last_updated", None)) is not None
     ]
     if not stamps:
