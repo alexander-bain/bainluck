@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 
 import pytest
 
@@ -39,6 +40,7 @@ from app.utils.repair_apply_plan import (
 REPO = pathlib.Path(__file__).resolve().parents[2]
 REVIEWED = REPO / "backend/app/data/event_espn_id_reviewed_pop1.json"
 REVIEWED_POP2 = REPO / "backend/app/data/event_espn_id_reviewed_pop2.json"
+REVIEWED_POP3 = REPO / "backend/app/data/event_espn_id_reviewed_pop3.json"
 
 
 def _row(event_id=1, wrong="100", true="200", commence="2026-08-18T22:40:00Z"):
@@ -147,6 +149,188 @@ class TestTheReviewedSetPopulation2:
         blob = " ".join(json.loads(REVIEWED_POP2.read_text())["explicitly_not_written"])
         assert "home_score" in blob and "away_score" in blob
         assert "commence_time" in blob
+
+
+class TestReviewedSetPopulation3:
+    """#2693, lane1/409 — the same class as population 2, on a disjoint cohort.
+
+    46 settled MLB rows whose `espn_id` names an EARLIER MEETING OF THE SAME
+    SERIES between the same two clubs. **18 already hold the correct final
+    score**, which is again why this is a linkage repair and not a score one.
+
+    It was 50 until CERT-3046: four targets dereferenced as STATUS_POSTPONED
+    because the deriving pass read ESPN `state == "post"` as final, and ESPN uses
+    "post" for postponed too. See `TestNoReviewedRowNamesAGameNeverPlayed`.
+    """
+
+    def test_it_is_committed_and_holds_the_forty_six_reviewed_triples(self):
+        data = json.loads(REVIEWED_POP3.read_text())
+        assert len(data["rows"]) == 46
+        assert data["population"] == 3
+        assert data["issue"] == "#2693"
+
+    def test_every_reviewed_row_carries_all_four_addressed_fields(self):
+        for row in json.loads(REVIEWED_POP3.read_text())["rows"]:
+            for key in ("event_id", "wrong_espn_id", "true_espn_id", "our_commence_time"):
+                assert row.get(key) not in (None, ""), f"{row.get('event_id')}: {key}"
+
+    def test_no_reviewed_row_is_self_pointing(self):
+        for row in json.loads(REVIEWED_POP3.read_text())["rows"]:
+            assert row["wrong_espn_id"] != row["true_espn_id"]
+
+    def test_every_event_id_appears_once(self):
+        ids = [r["event_id"] for r in json.loads(REVIEWED_POP3.read_text())["rows"]]
+        assert len(ids) == len(set(ids))
+
+    def test_no_two_rows_claim_the_same_true_id(self):
+        """`ix_events_espn_id` is NOT unique, so nothing downstream would object."""
+        rows = json.loads(REVIEWED_POP3.read_text())["rows"]
+        true_ids = [r["true_espn_id"] for r in rows]
+        assert len(true_ids) == len(set(true_ids))
+
+    def test_no_true_id_of_one_row_is_the_wrong_id_of_another(self):
+        """The cycle case, which the per-row gate cannot see.
+
+        Every row is applied in its own transaction, so if row A's TRUE id were
+        row B's WRONG id, the order of application would decide whether B's
+        compare-and-set still matches — a plan whose outcome depends on its own
+        row order. Measured absent when this population was derived; pinned here
+        so a later edit cannot quietly introduce one.
+        """
+        rows = json.loads(REVIEWED_POP3.read_text())["rows"]
+        assert not ({r["true_espn_id"] for r in rows} & {r["wrong_espn_id"] for r in rows})
+
+    def test_the_registry_resolves_population_3(self):
+        """Resolves to THIS population's file, not merely to a readable one.
+
+        The first version of this test read the file by path for its count and
+        asked the registry only for a status of "ok" — so pointing `"3"` at
+        population 2's file passed it. A mutation proved that (the battery's M3
+        survivor), which is why the loaded payload is now asserted to be this
+        population: a mis-pointed registry entry would hand an operator another
+        population's approved rows under this one's name.
+        """
+        rows = rail.rows_from_reviewed(json.loads(REVIEWED_POP3.read_text()))
+        assert len(rows) == 46
+
+        loaded, reason = rail._load_reviewed_set("3")
+        assert reason == "ok"
+        assert loaded["population"] == 3
+        assert len(loaded["rows"]) == 46
+        assert len(rail.rows_from_reviewed(loaded)) == 46
+
+    def test_it_shares_no_event_id_with_the_populations_before_it(self):
+        """Disjointness is the claim that lets this be a new population at all.
+
+        Two populations naming one event would apply the same row twice under two
+        approvals, and the second would find its compare already spent.
+        """
+        def ids(path):
+            return {r["event_id"] for r in json.loads(path.read_text())["rows"]}
+
+        assert not ids(REVIEWED_POP3) & ids(REVIEWED)
+        assert not ids(REVIEWED_POP3) & ids(REVIEWED_POP2)
+
+    def test_the_score_columns_are_named_as_explicitly_not_written(self):
+        """18 correct finals get overwritten if a later edit lets this write scores."""
+        blob = " ".join(json.loads(REVIEWED_POP3.read_text())["explicitly_not_written"])
+        assert "home_score" in blob and "away_score" in blob
+        assert "commence_time" in blob
+
+    def test_box_score_data_is_named_as_explicitly_not_written(self):
+        """This population's own addition to the refusal list.
+
+        The wrong id's reader-visible cost is `box_score_data`, fetched from
+        `event.espn_id` by `game_state_backfill`. The tempting move is to clear or
+        rewrite it here; the rail writes ONE column, and the payload's own writer
+        replaces it once the id is right.
+        """
+        blob = " ".join(json.loads(REVIEWED_POP3.read_text())["explicitly_not_written"])
+        assert "box_score_data" in blob
+
+    def test_the_three_examined_rows_are_absent_and_named(self):
+        """A row left out is recorded with its reason, never silently dropped."""
+        data = json.loads(REVIEWED_POP3.read_text())
+        present = {r["event_id"] for r in data["rows"]}
+        blob = " ".join(data["why_this_file_is_committed"])
+        for absent in (12828738, 13362745, 15185681):
+            assert absent not in present
+            assert str(absent) in blob
+
+    def test_the_four_postponed_rows_are_absent_and_named(self):
+        """CERT-3046's finding, pinned so a re-derivation cannot re-admit them.
+
+        Named separately from the three above because the reason is different in
+        kind: those were examined and judged unproven, these were ADMITTED by a
+        predicate that could not distinguish postponed from final.
+        """
+        data = json.loads(REVIEWED_POP3.read_text())
+        present = {r["event_id"] for r in data["rows"]}
+        blob = " ".join(data["why_this_file_is_committed"])
+        for absent in (14914436, 14941557, 14960344, 14955785):
+            assert absent not in present
+            assert str(absent) in blob
+
+    def test_every_row_names_a_game_that_reached_a_final(self):
+        """Population 3 is settled rows by construction, so every target is a Final.
+
+        Extra-inning finals ("Final/10") are finals and are present here; the
+        sibling class guard below is the one that covers the never-played states,
+        because population 1's targets are legitimately SCHEDULED.
+        """
+        for row in json.loads(REVIEWED_POP3.read_text())["rows"]:
+            assert "final" in (row["true_id_is"] or "").lower(), row["event_id"]
+
+
+class TestNoReviewedRowNamesAGameNeverPlayed:
+    """The guard for CERT-3046's class, across EVERY population.
+
+    Four population-3 targets were committed naming games that ESPN reports as
+    STATUS_POSTPONED, `completed: false`, 0-0. The deriving pass asked whether
+    ESPN's `state` was `"post"` — **and ESPN uses `"post"` for postponed as well
+    as for final**, so a postponed shell passed a test named `is_final`. The
+    rows even printed the word "Postponed" in their own `true_id_is`.
+
+    Re-anchoring to such an id is worse than leaving the row alone: our row
+    carries a real final from the MAKE-UP game, which ESPN plays under a
+    DIFFERENT id, so the repair would point a completed row at an authority
+    record saying no game happened.
+
+    This reads the reviewed files rather than ESPN on purpose — a guard that
+    needed the network could not run in CI, and the committed text is what a
+    reviewer approves. The predicate on the deriving side is now `completed is
+    True` AND `STATUS_FINAL`.
+
+    **`wrong_id_is` IS DELIBERATELY NOT CHECKED, and the first draft of this
+    guard checked it and failed.** Population 3's row 14966114 is anchored TODAY
+    to a postponed Cubs/Mets shell and the repair moves it onto the make-up game
+    (`Final/10`, 4-3). A row whose WRONG id names a game that was never played is
+    the defect at its worst, not a flaw in the set — widening this guard to the
+    wrong side would forbid repairing exactly those rows.
+    """
+
+    NEVER_PLAYED = re.compile(r"postpon|cancel|suspend", re.IGNORECASE)
+
+    @pytest.mark.parametrize("path", [REVIEWED, REVIEWED_POP2, REVIEWED_POP3])
+    def test_no_reviewed_row_names_a_non_final_game(self, path):
+        for row in json.loads(path.read_text())["rows"]:
+            text = row.get("true_id_is") or ""
+            assert not self.NEVER_PLAYED.search(text), (
+                f"{path.name} row {row['event_id']}: true_id_is names a game that was "
+                f"never played — {text!r}"
+            )
+
+    def test_the_guard_bites_on_the_row_that_caused_it(self):
+        """A guard that cannot fail is not a guard (the strawman control).
+
+        Feeds it one of the four rows CERT-3046 rejected, verbatim, and requires
+        the refusal — so a later edit that loosens `NEVER_PLAYED` into something
+        that matches nothing is caught here rather than in production.
+        """
+        rejected = "2026-06-11T23:40Z Postponed Atlanta Braves 0 @ Chicago White Sox 0"
+        assert self.NEVER_PLAYED.search(rejected)
+        kept = "2026-04-08T16:35Z Final San Diego Padres 8 @ Pittsburgh Pirates 2"
+        assert not self.NEVER_PLAYED.search(kept)
 
 
 # ---------------------------------------------------------------------------

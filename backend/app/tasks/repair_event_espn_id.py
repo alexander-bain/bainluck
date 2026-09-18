@@ -135,6 +135,32 @@ REVIEWED_SET_REGISTRY: dict[str, str] = {
     # score**, so the score remedy the flow printed on every one of these lines
     # would have overwritten a correct score with another game's.
     "2": "app/data/event_espn_id_reviewed_pop2.json",
+    # Population 3 — #2693, lane1/409. The same class as population 2, found by
+    # a different instrument and on a disjoint cohort (0 event ids in common with
+    # either population above): 46 settled MLB rows whose `espn_id` names an
+    # EARLIER MEETING OF THE SAME SERIES between the same two clubs, while
+    # `commence_time` matches the true start to the minute on every one.
+    #
+    # Derived by DEREFERENCE, not by a model: a 192-date ESPN scoreboard sweep
+    # asked what each stored id actually is. An id-vs-date curve screen was built
+    # first, measured at ~10% precision / 40% recall, and discarded — it is in the
+    # artifact as a negative result so nobody rebuilds it.
+    #
+    # IT WAS 50 UNTIL CERT-3046. Four targets dereferenced as STATUS_POSTPONED,
+    # `completed: false`, 0-0, because the verifying pass read ESPN `state ==
+    # "post"` as final — and ESPN uses "post" for POSTPONED as well. A postponed
+    # original keeps its id while the make-up game is played under a different
+    # one, so those rows can never be anchored to the shell they named; they are
+    # named absent in the file and `TestNoReviewedRowNamesAGameNeverPlayed`
+    # guards every population against the class.
+    #
+    # **18 of the 46 already hold the correct final score**, so as with population
+    # 2 this is a LINKAGE repair and the score columns stay out of it. What the id
+    # does reach is `box_score_data`: every row carries one, fetched by
+    # `game_state_backfill` from `event.espn_id` — on a wrongly anchored row that
+    # is another game's box score on the page. This rail corrects the id and lets
+    # that writer replace the payload; it never writes the payload itself.
+    "3": "app/data/event_espn_id_reviewed_pop3.json",
 }
 
 REASON_UNKNOWN_POPULATION = "UNKNOWN_POPULATION"
