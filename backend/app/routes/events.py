@@ -33,6 +33,17 @@ from app.services.anchor_channel import (
     resolve_market_born_duplicate,
 )
 from app.utils.agent_origin import ORIGIN_HEADER, ORIGIN_USER
+# #6993: the four-arm price refusal, asked here so the search surfaces cannot
+# serve a number the detail page refuses. Imported from the route that owns it
+# rather than copied, which is the whole point of the hook — its own docstring
+# says "ONE HELPER, NOT A FIFTH SPELLING", and an arm added there must reach
+# this caller too. `WITHHELD_PRICE_FIELDS` travels with it so the spellings of
+# "the price" stay in one list.
+#
+# Module-level and safe: `routes/futures.py` imports nothing from this module
+# (its three cross-route imports — feed, golf — are function-local), so there is
+# no cycle to defer around. `tests/test_startup.py` is the standing guard.
+from app.routes.futures import WITHHELD_PRICE_FIELDS, _withheld_price_outcome_ids
 from app.utils.feed_reasons import _points as format_movement_points
 from app.utils.game_market_club_names import (
     SEARCH_CARD_FIELDS,
@@ -7365,8 +7376,22 @@ async def search_events(
     # the whole defect), so the map is keyed over both. A dict comprehension
     # collapses by id, so on every query that promotes nothing this is exactly the
     # old map: `futures_markets` is a slice of `deduped_futures`.
+    # #6993: the refusal set per market, built here because the union is
+    # `async(db, market)` (two arms read the snapshot table) and the formatter
+    # below is sync. Same keying as the map it feeds, so a market formatted once
+    # is also asked once.
+    #
+    # The cost is bounded by the union's own screen, not by this loop: each arm
+    # filters the outcome rows already in memory and returns early when nothing
+    # reaches a candidate shape, so a market with no suspicious book pays no
+    # query at all. Browse measured 16 of 200 markets paying one; a search page
+    # carries a page of futures, not two hundred.
+    _withheld_by_market = {
+        m.id: await _search_withheld_price_ids(db, m)
+        for m in (*deduped_futures, *futures_markets)
+    }
     _formatted_by_id = {
-        m.id: _format_futures_for_search(m)
+        m.id: _format_futures_for_search(m, _withheld_by_market.get(m.id))
         for m in (*deduped_futures, *futures_markets)
     }
     formatted_futures = [_formatted_by_id[m.id] for m in futures_markets]
@@ -9366,7 +9391,16 @@ async def typeahead_search(
             "sport_key": market.llm_sport_category,
             # #993 Slice A: carry the answer (top 3, #23-normalized) so the
             # dropdown shows "Lakers 62% · Cavs 18%", not just a title to click.
-            "top_outcomes": _build_search_top_outcomes(market, limit=3, lean=True),
+            # #6993: the dropdown is where a reader meets the refused price
+            # FIRST — one tap above the page that renders the same leg as a
+            # dash. `lean=True` carries no `id`, so the builder keys the
+            # refusal on the ORM row; see the note beside the zip there.
+            "top_outcomes": _build_search_top_outcomes(
+                market,
+                limit=3,
+                lean=True,
+                withheld=await _search_withheld_price_ids(db, market),
+            ),
             # RANKING evidence, private and stripped before the response. The
             # three rows above are a DISPLAY cut; using them as the market's
             # owned-outcome evidence made display truncation silently truncate
@@ -24904,7 +24938,10 @@ def _futures_card_has_no_answer(market: "FuturesMarket") -> bool:
 
 
 def _build_search_top_outcomes(
-    market: "FuturesMarket", limit: int = 5, lean: bool = False
+    market: "FuturesMarket",
+    limit: int = 5,
+    lean: bool = False,
+    withheld: Optional[set[int]] = None,
 ) -> list[dict]:
     """Top-N real outcomes for search surfaces, normalized (#23). Shared by the
     full search formatter and the typeahead futures branch.
@@ -24913,6 +24950,22 @@ def _build_search_top_outcomes(
     movement only — no id/odds/rank) to keep the dropdown response small.
     Placeholder outcomes are filtered; probabilities are #23-normalized so the
     displayed distribution reads sensibly (e.g. "Lakers 62% · Cavs 18%").
+
+    ``withheld`` is #6993's fourth and last surface. The four-arm refusal union
+    lives in ``routes/futures.py::_withheld_price_outcome_ids`` and reaches the
+    detail, group, browse and faceted routes; THIS builder never asked it, so
+    ``/api/events/search?q=Nasdaq-100`` served outcome ``1597367`` at
+    ``probability: 1.0`` — rank 1, the card's whole headline — while
+    ``/futures/109485`` served the same leg as ``None`` in the same minute, and
+    the search card is one tap above the page that contradicts it.
+
+    IT IS PASSED IN, NOT COMPUTED HERE, and that is forced rather than chosen:
+    the union is ``async(db, market)`` because two of its arms read the snapshot
+    table, while this builder is synchronous and is called from a dict
+    comprehension that formats each market exactly once (the L2-38 latency
+    shape). Both callers are ``async`` route handlers holding a session, so they
+    build the map and hand each market its own set. ``None`` means "nobody
+    asked" and is a pass-through — every existing caller keeps its behaviour.
     """
     # Q480: one condition, one outcome. A Polymarket parent can hold both the bare
     # rung (`0x…`, named "90+") and that same condition's `_yes`/`_no` legs (named
@@ -25017,7 +25070,28 @@ def _build_search_top_outcomes(
     # `probability: None` rungs, and the search card is withdrawn by the caller.
     if not any(o.current_probability is not None for o in real):
         return []
-    real.sort(key=lambda o: o.current_probability or 0, reverse=True)
+    # SORT ON THE SERVED VALUE, not the stored one — #6993, and the same line
+    # browse and faceted needed for the same reason. Ordering by the raw column
+    # is what put a withheld stored `1.0` at rank 1 in the first place, and on
+    # this builder rank 1 is not a detail anyone has to scroll to: it is the
+    # first thing the dropdown and the results card print.
+    #
+    # BEFORE the `[:limit]` slice, for the reason the four drops above all give
+    # in full — demotion alone only keeps a row out of a top-N slot while the
+    # list is LONGER than N, and these slices are 3 and 5. On the specimen the
+    # refused leg is one of nineteen, so demotion moves it off the card
+    # entirely; on a short ladder it stays, nulled, which is the honest answer.
+    #
+    # `0`, not `-1`: a genuine `0.0` price sorts here too, and the two are
+    # equally uninteresting as headlines. The nulling below is what tells them
+    # apart on the wire, not this ordering.
+    _withheld_ids = withheld or set()
+    real.sort(
+        key=lambda o: 0
+        if o.id in _withheld_ids
+        else (o.current_probability or 0),
+        reverse=True,
+    )
     top = real[:limit]
     # #6479, and it is the SAME rung a reader meets on the detail page. Search
     # ranks these boards by probability, so the truncated name is not buried in
@@ -25053,6 +25127,58 @@ def _build_search_top_outcomes(
             }
             for o, name in named
         ]
+    # #6993: null the refused price, keyed on presence, exactly as the detail,
+    # group, browse and faceted arms do — `WITHHELD_PRICE_FIELDS` is the one
+    # place the spellings of "the price" are listed, so `movement` (this
+    # payload's name for the 24h delta) is covered without a local rule.
+    #
+    # HERE, ABOVE `_normalize_search_outcome_probs`, AND THAT IS LOAD-BEARING —
+    # the same ordering the detail serializer documents. A refused `1.0` left in
+    # place until after the #23 squeeze would still sit in the divisor and go on
+    # halving every honest row on the board, which is the refusal leaking back
+    # in as a quieter lie about the legs we DO print.
+    #
+    # `_drop_dominant_field_outcomes` and `_leader_pick_order` below then judge
+    # the number RENDERED rather than the stored one, which is what they both
+    # document wanting: a withheld row reads as priceless and can neither
+    # headline the card nor be mistaken for a dominant field.
+    #
+    # KEYED ON THE ORM ROW, NOT ON `od["id"]`, AND THAT IS NOT A STYLE CHOICE:
+    # the lean typeahead shape has no `id` key at all (the docstring above says
+    # so, and `_served_prices_as_of` relies on it). `od.get("id")` would be
+    # `None` for every dropdown row, match nothing, and leave the refused price
+    # headlining the one surface a reader meets FIRST — a fix that reads as
+    # shipped and withholds nothing. `named` and `out` are built from the same
+    # list in the same order in both branches, so the zip is exact.
+    if _withheld_ids:
+        for (o, _name), od in zip(named, out):
+            if o.id in _withheld_ids:
+                for field in WITHHELD_PRICE_FIELDS:
+                    if field in od:
+                        od[field] = None
+                # `rank` IS NOT IN THE TUPLE AND MUST NOT JOIN IT. The stored
+                # column is seeded from the price at ingest — outcome 1597367's
+                # stored rank is literally `1` BECAUSE its price is the refused
+                # `1.0` — so serving it beside `probability: null` publishes
+                # "this is the favourite", the refused claim in a third costume.
+                #
+                # Nulled HERE rather than in the shared tuple because the other
+                # four surfaces already answer this correctly and differently:
+                # `_format_market_detail` treats the column as "the SEED, not
+                # the served answer" and overwrites it from the display order at
+                # `assign_display_ranks` (#2556), which is why detail serves this
+                # same leg as rank 19 of 19. Adding `rank` to the tuple would
+                # null a number that is already honest there. Bringing #2556's
+                # display-rank pass to search is the fuller answer and it belongs
+                # to that ship, not this one — it would move `rank` on every row
+                # of every search card, and this arm is about one refused price.
+                #
+                # Safe on the wire: no search surface renders this field, and the
+                # clients that read `rank` elsewhere already handle null
+                # (`rank={outcome.rank ?? index + 1}` on the futures page, and
+                # the team/my-stuff cards gate `#{rank} of {total}` on truthiness).
+                if "rank" in od:
+                    od["rank"] = None
     # #199: don't sum-to-1 non-mutually-exclusive participation families
     # (golf make-cut/top-N) — that squashed an honest 87% make-cut to ~20% in search.
     _normalize_search_outcome_probs(
@@ -25076,6 +25202,51 @@ def _build_search_top_outcomes(
         out, lambda o: o.get("name"), lambda o: o.get("probability")
     )
     return _leader_pick_order(out)  # #993 shared leader-pick (Other/Field never headlines)
+
+
+async def _search_withheld_price_ids(db, market: "FuturesMarket") -> set[int]:
+    """#6993's refusal set for one market, or an empty set if the row cannot say.
+
+    A thin boundary around the shared four-arm union, and it exists for the
+    reason :func:`_served_prices_as_of` and :func:`_market_facts` both state at
+    length: reading a row inside the search formatters is done defensively,
+    because the doubles that reach this path are not mapped rows and **a
+    serializer must not be the thing that 500s a search page**.
+
+    The union reads ``resolution_source`` and ``current_probability`` straight
+    off the outcome — correct on the futures routes, whose callers hold real
+    rows — so pointing it at the search path raised ``AttributeError`` through
+    an entire request on the first try. Twenty-eight route tests that had been
+    green went red, and that is a signal about this call's contract, not
+    twenty-eight fixtures to go and edit (``_market_facts`` says exactly this,
+    having learned it from the same class of failure).
+
+    🔴 FAIL OPEN, AND THE DIRECTION IS THE WHOLE JUDGEMENT. A row we cannot read
+    is left PRICED rather than refused. The other direction — treating an
+    unreadable row as ungraded and withholding it — risks withholding a graded
+    row, which deletes a result (#6532), and settled means settled. Serving a
+    price we might have refused is the recoverable error; deleting a result a
+    reader is owed is not.
+
+    ``AttributeError`` and nothing wider, and it is LOUD. A real ``FuturesOutcome``
+    always answers, so this can only fire on a double or on a column that has
+    been renamed out from under the union — the second of which is a real defect
+    that must not be swallowed silently ("it returned" is not "it worked").
+    Caught rather than enumerated as an attribute checklist on purpose: the union
+    is designed to GAIN arms, and a checklist here would go quietly stale the
+    first time a new arm reads a new column — the exact fifth-spelling drift the
+    hook exists to prevent.
+    """
+    try:
+        return await _withheld_price_outcome_ids(db, market)
+    except AttributeError:
+        logger.warning(
+            "search: could not evaluate the #6993 price refusal for market %s; "
+            "serving its prices unrefused",
+            getattr(market, "id", None),
+            exc_info=True,
+        )
+        return set()
 
 
 def _search_owned_outcome_names(market: "FuturesMarket") -> tuple[str, ...]:
@@ -25497,7 +25668,9 @@ def _search_team_evidence(row: dict) -> "_SearchEvidence":
 
 
 def _served_prices_as_of(
-    market: FuturesMarket, served: list[dict]
+    market: FuturesMarket,
+    served: list[dict],
+    withheld: Optional[set[int]] = None,
 ) -> Optional[str]:
     """When the prices on THIS card were last written, or None if we cannot say.
 
@@ -25556,6 +25729,24 @@ def _served_prices_as_of(
     space is honest and the old pip was not.
     """
     served_ids = {o.get("id") for o in served if o.get("id") is not None}
+    if not served_ids:
+        return None
+    # #6993 IS THIS DOCSTRING'S OWN DEFECT ARRIVING BY A THIRD DOOR. The section
+    # above scoped the stamp to rows that print a price, because a row rendering
+    # `—` must not date a mark covering the numbers beside it. A withheld leg is
+    # exactly such a row — and it is invisible to that scoping, because
+    # `_outcome_prints_a_price` reads the ORM row's `current_probability`, which
+    # still holds the refused `1.0` long after the serializer nulled it on the
+    # wire. So outcome 1597367, last written 2026-04-13, would go on setting the
+    # `min` for a card that prints none of its number: five months of decay
+    # claimed over prices refreshed this morning, which is the `Other`-rung case
+    # above with a different cause.
+    #
+    # Subtracted HERE rather than taught to `outcome_prints_a_price`: that
+    # predicate is the one both sides of the card must agree on and it reads a
+    # row, not a response, so it cannot know what one caller chose to refuse.
+    # Its three other consumers never asked this question.
+    served_ids -= withheld or set()
     if not served_ids:
         return None
     # `getattr` with a default, which is this module's house idiom for reading a
@@ -25679,11 +25870,21 @@ async def _repair_search_card_club_names(
     return changed
 
 
-def _format_futures_for_search(market: FuturesMarket) -> dict:
-    """Format a futures market for search results (answer-first, #23-normalized)."""
+def _format_futures_for_search(
+    market: FuturesMarket, withheld: Optional[set[int]] = None
+) -> dict:
+    """Format a futures market for search results (answer-first, #23-normalized).
+
+    ``withheld`` is #6993's refusal set for THIS market, computed by the async
+    caller (this formatter is sync and runs inside the format-once dict
+    comprehension). It reaches two places, and both are needed: the prices the
+    card prints, and the age pip that dates them.
+    """
     # top_outcomes: top 5 real outcomes, placeholder-filtered + #23-normalized
     # (shared with typeahead via _build_search_top_outcomes).
-    top_outcomes = _build_search_top_outcomes(market, limit=5, lean=False)
+    top_outcomes = _build_search_top_outcomes(
+        market, limit=5, lean=False, withheld=withheld
+    )
     real_count = len(
         [o for o in market.outcomes if not _is_placeholder_outcome_name(o.name)]
     )
@@ -25714,5 +25915,5 @@ def _format_futures_for_search(market: FuturesMarket) -> dict:
         # #6018: the age of the PRICES on this card. `updated_at` above is kept
         # byte-for-byte (it is the row's write time and other readers key off
         # it); this is the additive field the age pip reads instead.
-        "prices_updated_at": _served_prices_as_of(market, top_outcomes),
+        "prices_updated_at": _served_prices_as_of(market, top_outcomes, withheld),
     }
