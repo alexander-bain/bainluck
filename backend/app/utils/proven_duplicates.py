@@ -95,7 +95,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from sqlalchemy import Boolean, Integer, String, func, literal, or_, select
+from sqlalchemy import Boolean, Integer, String, and_, func, literal, or_, select
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.expression import ColumnElement
 from sqlalchemy.sql.visitors import InternalTraversal
@@ -126,6 +126,80 @@ def not_a_proven_duplicate():
     return or_(
         Event.event_tags.is_(None),
         func.cast(Event.event_tags, String).notlike(_DUPLICATE_TAG_LIKE),
+    )
+
+
+def is_a_proven_duplicate():
+    """The EXACT complement of :func:`not_a_proven_duplicate` — the rows it hides.
+
+    Written for #5821's search bridge, and the reason it exists as a function
+    rather than a ``not_()`` around its sibling is that the two must stay exact
+    complements as the tag vocabulary moves. ``not_()`` would also be correct
+    today; a second hand-rolled expression would not be, and this module already
+    carries the scar of a predicate pasted into four call sites.
+
+    ``NULL LIKE x`` is NULL rather than TRUE, so the LIKE arm alone would already
+    exclude untagged rows. The ``IS NOT NULL`` arm is stated anyway because it is
+    what makes this *visibly* the De Morgan mirror of the sibling above — a
+    reader checking that the pair partitions the table should not have to
+    remember Postgres' three-valued logic to do it.
+
+    🔴 **It answers "which rows did the surface decline to print?", never "what
+    should I print?"** Rendering these rows is printing the duplicate card again,
+    which is the whole defect ``not_a_proven_duplicate`` exists to end. The only
+    sanctioned use is to reach the canonical they name, via
+    :func:`canonical_id_from_tags`.
+
+    Unindexable by construction: the prefix LIKE cannot be served by
+    ``ix_events_event_tags`` (see the module docstring's 4-orders-of-magnitude
+    measurement). So it belongs only on a path that is ALREADY narrowed by a
+    selective condition — in the search bridge, the reader's own recall arm — and
+    never as the leading predicate of a scan.
+    """
+    return and_(
+        Event.event_tags.is_not(None),
+        func.cast(Event.event_tags, String).like(_DUPLICATE_TAG_LIKE),
+    )
+
+
+async def bridged_canonical_ids(db, recall_filter, *, limit: int) -> list[int]:
+    """The canonical ids named by the proven duplicates ``recall_filter`` reaches.
+
+    #5821. :func:`not_a_proven_duplicate` can only ever REMOVE a row the recall
+    already reached, and when that row was the reader's ONLY match, suppressing
+    the duplicate card leaves nothing at all — a fold that costs a way in. This
+    is the walk back: *"whose page should the reader have been sent to?"*
+
+    It answers in IDS and nothing else. It does not decide whether those rows are
+    printable — the caller re-applies its own surface scope, so a canonical that
+    is out of window, wrong sport or blank is refused exactly as it would be if
+    the reader had reached it by name. The bridge can only offer a row the
+    surface was already willing to print.
+
+    ``recall_filter`` is the caller's OWN matching condition, passed in rather
+    than rebuilt here, and that is load-bearing twice over: the reader's text is
+    the selective leader this query needs (``is_a_proven_duplicate`` is a prefix
+    LIKE and cannot be served by ``ix_events_event_tags``), and a second spelling
+    of "what the reader matched" is the drift this module has already been
+    repaired for once. ``Sport`` is deliberately not joined: every arm that
+    references it is a league-token arm, and a caller holding one has no business
+    bridging to a single fixture.
+
+    ``limit`` truncates in the safe direction only. The ids are deduped and the
+    caller still scopes them, so a cut scan offers FEWER ways in, never a wrong
+    one.
+    """
+    rows = await db.execute(
+        select(Event.event_tags).where(recall_filter, is_a_proven_duplicate()).limit(limit)
+    )
+    return sorted(
+        {
+            canonical
+            for canonical in (
+                canonical_id_from_tags(tags) for tags in rows.scalars().all()
+            )
+            if canonical is not None
+        }
     )
 
 

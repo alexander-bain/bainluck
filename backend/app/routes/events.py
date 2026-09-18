@@ -143,6 +143,7 @@ from app.utils.blank_event_cards import not_a_blank_card
 from app.utils.feed_market_quality import has_no_real_price, is_empty_book_midpoint
 from app.utils.proven_duplicates import (
     FoldedBlendView,
+    bridged_canonical_ids,
     canonical_id_from_tags,
     folded_card_numbers_batch,
     folded_probability_sources_batch,
@@ -3946,6 +3947,24 @@ async def faceted_search(
 # whole bug.
 _SEARCH_DEADLINE_MS = int(os.getenv("SEARCH_DEADLINE_MS", "20000"))
 
+# #5821: how many proven-duplicate rows the empty-rail bridge will read before it
+# stops looking for a canonical to walk to.
+#
+# It bounds a pool that is already narrowed twice over — the reader's own recall
+# arm, and a rail that returned zero — so in practice it is reached only by a
+# query whose text matches a great many duplicates at once. 64 is chosen against
+# the shape of the data rather than as a round number: measured on production
+# 2026-09-18, the 617 tagged rows resolve to a maximum of **23 duplicates naming
+# one canonical** (Frech–Jović, which the venue re-published per market), with
+# the next heaviest at 8 — so 64 clears the worst family that exists today by
+# nearly 3x. Truncation is safe in the
+# direction that matters anyway: the ids are deduped and every survivor still has
+# to clear `event_scope_conditions`, so a cut scan can only offer the reader
+# fewer ways in, never a wrong one.
+_SEARCH_BRIDGE_GHOST_SCAN_LIMIT = int(
+    os.getenv("SEARCH_BRIDGE_GHOST_SCAN_LIMIT", "64")
+)
+
 # Floor: never hand a stage a bound so small that a healthy query cannot finish.
 # If less than this remains, the deadline check skips the stage outright (an honest
 # "we ran out of time") instead of starting a query that is designed to be killed.
@@ -5536,6 +5555,141 @@ async def search_events(
         total_count = 0
         degraded.append("event_count")
     _mark("event_count")
+
+    # #5821 — THE PROVEN-DUPLICATE BRIDGE: a fold must never cost the reader a way in.
+    #
+    # `not_a_proven_duplicate` is SCOPE, and the comment where it is added says what
+    # it does: it "can only ever REMOVE a row that the recall arms already reached".
+    # That is exactly right, and it is the defect. When the removed row was the ONLY
+    # row the reader's text reached, suppressing the duplicate card does not leave
+    # one card — it leaves NOTHING, which is strictly worse than the two-card bug.
+    #
+    # Measured on production 2026-09-18, before this arm existed:
+    #
+    #     q=Atletico Madrid      1 event   — ONLY the duplicate 15307707, 0 teams
+    #     q=Atlético Madrid     10 events  — canonical 15312071 first, 1 team
+    #     q=Real Madrid         16 events  — canonical 15312071 first, 1 team
+    #
+    # The canonical is stored accented and search does no diacritic folding, so the
+    # unaccented duplicate was the reader's ONLY route to that derby. Tagging it —
+    # which is the right call, the two rows are one game — takes a plain-keyboard
+    # reader from the wrong page to an empty one.
+    #
+    # NEITHER EXISTING RESCUE CAN COVER IT, which is why this is a third arm and not
+    # a tweak to one of them. The resolved-team rescue below needs `_q_identity` to
+    # match `Team.name`, and the team row is accented too (`teams n=0`, measured in
+    # the same pass). The trigram fallback is `len(terms) == 1` and this query is two.
+    #
+    # WHY IT OUTRANKS BOTH: they guess — a spelling neighbour, or a club the string
+    # resembles. This one does not guess at all. The registry already PROVED these
+    # two rows are one game, on an id-anchored correspondence (ruling 048 arm B), and
+    # this arm only walks that finding to the row we chose to print instead. So it
+    # runs first, and a rail it fills is never then "corrected" to a spelling
+    # neighbour.
+    #
+    # ONLY ON THE EMPTY RAIL, for the reason the resolved-team arm gives one screen
+    # down and with the same consequence: on every query whose rail is not empty the
+    # compiled SQL is unchanged and no extra statement is issued. That matters more
+    # here than there, because `is_a_proven_duplicate` is a prefix LIKE and cannot be
+    # served by `ix_events_event_tags` — it is affordable strictly because the
+    # reader's own recall arm leads it and has already narrowed the pool.
+    #
+    # 🔴 KNOWN LIMIT, MEASURED RATHER THAN ASSUMED. A rail that is non-empty can
+    # still be missing a bridged canonical: if the text reaches OTHER events as well
+    # as the duplicate, `total_count` is not 0 and this arm does not fire. Production
+    # 2026-09-18, all 617 tagged rows: 34 carry an ASCII duplicate against an accented
+    # canonical, of which **3 rows / 1 canonical** are upcoming — so the population
+    # that can hide behind a non-empty rail today is one row, and paying an
+    # unindexable LIKE on every search to reach it is the wrong trade. The general
+    # repair is diacritic-insensitive recall, which removes the asymmetry at its
+    # source rather than bridging around it, and is its own ship (#6977).
+    #
+    # SCOPE COMES FROM `event_scope_conditions` — the canonical must clear every rule
+    # the surface already applies (window, status, sport, not-blank). The bridge can
+    # therefore only ever admit a row search would have been willing to print; it
+    # cannot smuggle one past a filter. The ghost side is deliberately NOT scoped
+    # that way: a duplicate is often the blank row, and demanding it render would
+    # refuse precisely the folds most worth bridging.
+    # `not sport_alias_keys` for the reason both sibling rescues carry it, plus one
+    # this arm owns: a league token contributes a `Sport.key IN (...)` recall arm,
+    # and pairing that with an unindexable prefix LIKE is the one shape where this
+    # query has no selective leader. A reader typing "la liga" is also not asking to
+    # be sent to one specific fixture.
+    _bridged_canonical_ids: list[int] = []
+    if total_count == 0 and not degraded and not sport_alias_keys:
+        try:
+            _bridged_canonical_ids = await bridged_canonical_ids(
+                db,
+                or_(*_event_recall_arms),
+                limit=_SEARCH_BRIDGE_GHOST_SCAN_LIMIT,
+            )
+
+            if _bridged_canonical_ids:
+                _bridge_conditions = [
+                    Event.id.in_(_bridged_canonical_ids),
+                    *event_scope_conditions,
+                ]
+                _bridge_count_r = await db.execute(
+                    select(func.count())
+                    .select_from(Event)
+                    .join(Sport, Event.sport_id == Sport.id)
+                    .where(*_bridge_conditions)
+                )
+                _bridge_count = _bridge_count_r.scalar()
+                # Counted BEFORE `query` is replaced, exactly as the resolved-team
+                # arm does it: a bridge that lands on nothing printable leaves the
+                # primary statement untouched rather than swapping in an empty one.
+                if _bridge_count:
+                    query = (
+                        select(Event)
+                        .join(Sport, Event.sport_id == Sport.id)
+                        .options(selectinload(Event.sport))
+                        .where(*_bridge_conditions)
+                        .order_by(
+                            *((_day_boost,) if _day_boost is not None else ()),
+                            status_order,
+                            tag_boost,
+                            # `search_rank` is absent for the reason the
+                            # resolved-team arm states: every row here scores 0
+                            # against the literal query — the canonical is the row
+                            # the reader's spelling did NOT reach — so the key would
+                            # order nothing while reading as relevance.
+                            case(
+                                (
+                                    Event.status.in_(["live", "scheduled"]),
+                                    Event.commence_time,
+                                ),
+                                else_=None,
+                            ).asc().nulls_last(),
+                            case(
+                                (
+                                    Event.status.in_(
+                                        ["completed", "closed", EVENT_SUSPENDED]
+                                    ),
+                                    Event.commence_time,
+                                ),
+                                else_=None,
+                            ).desc().nulls_last(),
+                        )
+                    )
+                    total_count = _bridge_count
+                    # The reader's own string is withheld for the reason the
+                    # resolved-team arm's log line gives: CodeQL flags `q` reaching
+                    # a log verbatim as log injection. Ids are ours.
+                    logger.info(
+                        "search proven-duplicate bridge -> %s (%d events)",
+                        ", ".join(str(i) for i in _bridged_canonical_ids),
+                        _bridge_count,
+                    )
+        except Exception as exc:  # noqa: BLE001 — the bridge is best-effort
+            # Recovered on ANY failure and not only a timeout, for the reason the
+            # sibling rescues give: any error here leaves the transaction aborted
+            # and would fail every later stage on InFailedSqlTransaction (#1494
+            # (1e)), which does not care what aborted it. Failing closed leaves
+            # `total_count` at 0 and the arms below behave exactly as they do today.
+            logger.warning("search proven-duplicate bridge failed: %s", exc)
+            await _recover_search_session(db, _deadline)
+            _bridged_canonical_ids = []
 
     # Fuzzy fallback: re-query with trigram similarity when ILIKE finds nothing
     fuzzy_corrected: str | None = None
