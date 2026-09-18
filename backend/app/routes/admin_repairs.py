@@ -34,7 +34,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | kalshi-empty-book-openings
              | kalshi-empty-book-openings-restore
              | pm-ungraded-loss | pm-ungraded-loss-restore
-             | kalshi-series-tag-category }
+             | kalshi-series-tag-category
+             | polymarket-club-noun-category }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -530,6 +531,44 @@ _REPAIRS = {
     # wire this to a beat; it is a terminating repair, not a standing job.
     "polymarket-senate-category": (
         "app.tasks.repair_polymarket_senate_category",
+        "repair",
+    ),
+    # #6955 (discover/194, the repair CERT-3072 required): the Polymarket rows a
+    # club noun dragged onto a sport shelf. Four enumerated events — three
+    # hurricane families the venue tags `Weather`, and the Kraken IPO event it
+    # tags `Crypto` — all stored `hockey`, none of them reachable by the poller:
+    # `744619` is closed/archived at the venue so the active-only discovery pass
+    # will never hand it back, and the ACTIVE replacement `765230` sits outside
+    # that pass's newest-first horizon (offsets 0-1900 read, 2100 is a Gamma
+    # 422). The classifier half of #6955 is correct and cannot move them.
+    #
+    # Same two-gate shape as its two enumerated siblings — frozen id bound AND
+    # the SHIPPED ingest cascade independently agreeing per event, via
+    # `classify_event_payload`, so the rail carries no sport rules of its own.
+    # Censused against the VENUE (notice 26), not our mirror: of 165 events whose
+    # name matches the storm/kraken class and that are stored under a sport,
+    # the cascade confirms 160 as genuine sport (Carolina Hurricanes, Seattle
+    # Kraken, Miami Hurricanes, Iowa State Cyclones) and moves these 4.
+    #
+    # 🔴 IT DOES NOT SELECT ON `polymarket_event_id` ALONE, and that is the whole
+    # reason it is a module rather than four ids appended to a sibling. On this
+    # bound that key finds 4 of 12 rows and misses all four cards #6955 was filed
+    # about: only the container row carries it, members carry the event solely in
+    # `group_id`. Nor is the group trusted on its own — it holds a stranger
+    # ('Israel x Hamas Ceasefire Phase II by February 28?' under Kraken IPO), so
+    # a group row joins only when the venue event's own `markets[]` names its
+    # question. That row is refused BY ID in `not_named_by_venue`.
+    #
+    # Writes `llm_sport_category` ONLY — not `updated_at` (a card renders it as
+    # its own relative date; CERT-2382), not `status`, not `category`. Safe
+    # against "settled means settled": a taxonomy badge is never a result, which
+    # is why resolved rows are inside the population rather than filtered out.
+    # D51: every planned row carries its `before` and the payload carries a
+    # runnable `restore_sql`, on the dry run as well as the apply, built from
+    # RETURNING on an apply. Takes no bounds — the population is the frozen list.
+    # ATTENDED ONLY: never wire this to a beat; it is a terminating repair.
+    "polymarket-club-noun-category": (
+        "app.tasks.repair_polymarket_club_noun_category",
         "repair",
     ),
     # #4365 part 2 (lane1b/109): two Kalshi NHL game props stored `basketball`.
