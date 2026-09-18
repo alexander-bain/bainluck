@@ -531,6 +531,64 @@ function firstMeaningful(candidates: (string | null | undefined)[]): string {
   return "";
 }
 
+/** The backend's word-boundary truncation mark, as `_short_market_name` writes
+ *  it: a run of text followed by `...` (never a single `…` glyph). */
+const TRUNCATED_HEAD_RE = /^(.{12,}?)\.\.\.(?=\s|$)/;
+
+/**
+ * Drop a leading restatement of the card's own heading.
+ *
+ * #6903. `generate_futures_headline` substitutes the MARKET NAME for the subject
+ * whenever the mover's own label cannot stand alone — a bare number, a month-day
+ * such as `October 31`, `Yes`/`No` (`_weak_outcome_label`):
+ *
+ *     "Ren Zhengfei public appearance odds up 53.5 points"
+ *     "Velo Point of Sale Growth in September resolves within a month"
+ *
+ * That substitution is right for a BUNDLE MEMBER ROW, which prints `headline` and
+ * nothing else. On a card that prints `data.name` as its heading one line above it
+ * is a sentence the reader has just read, and it is at the FRONT — so on a
+ * `truncate`d badge the restatement is the part that survives and the movement the
+ * string exists to deliver is the part that falls off ("Ren Zhengfei public
+ * appearanc…", measured on production /categories/tech 2026-09-18 08:20Z; 14 of 244
+ * served futures cards carry the shape, 7 of them with `resolves within a month` as
+ * their whole payload behind the title).
+ *
+ * #6560 fixed the `reason`-shaped half of this class and measured `headline`
+ * restating the name 0 of 27 — on 27 cards that happened to carry no weak-label
+ * template. This is the residual, and it is the same DELETION `stripMarketNameTail`
+ * already performs on the other end of the sentence (UX-1052): no copy is minted
+ * here, only a clause the reader has already read is removed (ruling 003).
+ */
+export function stripCardTitleHead(
+  text: string | null | undefined,
+  marketName?: string | null,
+): string {
+  const raw = (text ?? "").trim();
+  // The heading prints without its trailing `?`, and so does `_short_market_name`.
+  const name = (marketName ?? "").trim().replace(/\s*\?\s*$/, "");
+  if (!raw || !name) return raw;
+
+  let cut = -1;
+  if (raw.toLowerCase().startsWith(name.toLowerCase())) {
+    cut = name.length;
+  } else {
+    const truncated = raw.match(TRUNCATED_HEAD_RE);
+    // Only a head that is genuinely a PREFIX of this card's name — never any
+    // sentence that happens to contain an ellipsis.
+    if (truncated && name.toLowerCase().startsWith(truncated[1].trim().toLowerCase())) {
+      cut = truncated[0].length;
+    }
+  }
+  if (cut < 0) return raw;
+
+  const rest = raw.slice(cut).replace(/^[\s:,;–—-]+/, "");
+  // Nothing but the heading: the caller falls through to its next candidate
+  // rather than printing an empty badge or a blank caption line.
+  if (!rest) return "";
+  return rest.charAt(0).toUpperCase() + rest.slice(1);
+}
+
 export function feedContextSnippet(item: FeedItem): string {
   if (item.type === "futures") {
     // #4265 — ONE chain with iOS (`DiscoverCaption.feedCaption`), graded
@@ -542,13 +600,16 @@ export function feedContextSnippet(item: FeedItem): string {
     // "MLB World Series Winner" — while `headline` is "Los Angeles Dodgers
     // leads at 31%". The UX-P045 promotion below is a SETTLED-EVENT rule
     // (`headline` is a bucket label there) and deliberately does not carry.
+    //
+    // #6903 — and each candidate loses a leading restatement of that same
+    // heading before it is considered, so a candidate that is NOTHING but the
+    // heading no longer wins the chain over one that says something.
     const data = item.data as FeedFuturesData;
-    return firstMeaningful([
-      item.context_summary,
-      item.headline,
-      item.reason,
-      data.hook_description,
-    ]);
+    return firstMeaningful(
+      [item.context_summary, item.headline, item.reason, data.hook_description].map(
+        (candidate) => stripCardTitleHead(candidate, data.name),
+      ),
+    );
   }
   if (item.context_summary) return item.context_summary;
   // UX-P045 — on a SETTLED event card, prefer `reason` over `headline`.
