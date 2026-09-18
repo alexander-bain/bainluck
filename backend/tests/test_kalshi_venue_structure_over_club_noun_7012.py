@@ -578,3 +578,251 @@ class TestTheSettledGapWriterCarriesTheSameEvidence:
             f"{len(unwired)} call site(s) classify without the venue's series "
             "evidence — that is the CERT-3087 class"
         )
+
+
+class TestFailClosedOnUnresolvedSeriesEvidence:
+    """CERT-3089's required repair: ``7012-FAIL-CLOSED-ON-UNRESOLVED-SERIES-EVIDENCE``.
+
+    🔴 THE FINDING, and it was correct. ``_resolve_series_tag_result`` returns
+    ``resolved=False`` with an empty tag AND an empty category when the venue
+    does not answer (429/5xx/timeout). Both creation writers read ``.tag`` and
+    ``.category`` and ignored ``.resolved`` — so on a transient failure the
+    cascade fell through to the NAME rules and classified the headline Kraken
+    row ``hockey``, which is precisely the guess this issue exists to stop.
+
+    WHY A TRANSIENT FAILURE IS NOT A TRANSIENT DEFECT, which is the whole
+    reason this is a BLOCK and not a nicety: #1888's upsert is
+    ``coalesce(nullif(existing,'other'), new)``. The moment a name-guessed
+    sport lands it is protected from every future poll. One rate limit buys a
+    permanently mis-badged row that only an attended repair rail can undo —
+    CERT-2737's shape, one layer along.
+
+    ``SeriesTagResult``'s own docstring already said ``resolved=False`` is
+    "never written". The class was right and both its callers were wrong.
+
+    WHY THE FALLBACK IS ``other`` rather than a skip: ``other`` is the single
+    value #1888 EXEMPTS from its write-once protection, so it is the one answer
+    a later poll with real evidence is allowed to upgrade. Fail-closed here
+    means "say we do not know yet", not "drop the market".
+    """
+
+    UNRESOLVED = object()  # sentinel: the service raises rather than answers
+
+    # -- the rule, at the cascade ------------------------------------------
+
+    def test_a_name_derived_sport_is_withheld_when_the_venue_did_not_answer(self):
+        """The headline specimen, with evidence missing."""
+        verdict = kalshi_module._categorize_kalshi_market(
+            "Which bank will take Kraken public before 2027?",
+            None,  # no event category either — nothing but the name
+            "KXKRAKENBANKPUBLIC-27JAN01",
+            series_tag=None,
+            series_category=None,
+            series_evidence_unresolved=True,
+        )
+        assert verdict == "other", (
+            "with no venue evidence the name says 'hockey'; persisting that is "
+            "the defect, and #1888 would then protect it forever"
+        )
+
+    def test_CONTROL_the_same_inputs_RESOLVED_still_answer_from_the_name(self):
+        """🔴 The half that can fail.
+
+        If this also returned `other`, the guard above would be passing because
+        the rule broke everything rather than because it fires on the right
+        input.
+        """
+        verdict = kalshi_module._categorize_kalshi_market(
+            "Which bank will take Kraken public before 2027?",
+            None,
+            "KXKRAKENBANKPUBLIC-27JAN01",
+            series_tag=None,
+            series_category=None,
+            series_evidence_unresolved=False,
+        )
+        assert verdict == "hockey", (
+            "unchanged for every caller that has evidence — this is the "
+            "behaviour the repair is narrowing, and it must still be reachable"
+        )
+
+    def test_a_mapped_ticker_is_UNAFFECTED_because_it_needs_no_series(self):
+        """Step 1 is authoritative and asks the venue nothing.
+
+        Failing closed here would turn a venue outage into mass mis-classification
+        of the rows we are most certain about — the opposite of the ship.
+        """
+        verdict = kalshi_module._categorize_kalshi_market(
+            "Carolina Hurricanes vs Montreal Canadiens",
+            None,
+            "KXNHLGAME-26FEB26TBCAR",
+            series_tag=None,
+            series_category=None,
+            series_evidence_unresolved=True,
+        )
+        assert verdict == "hockey", "a mapped ticker never needed the series"
+
+    def test_the_venues_own_category_still_answers_when_the_SERIES_is_dark(self):
+        """Step 4 reads the EVENT category, which arrives on the event payload
+        and is not lost when the series door fails. Fail-closed must not throw
+        away evidence we still hold."""
+        verdict = kalshi_module._categorize_kalshi_market(
+            "Some market with no name rule at all",
+            "Politics",
+            "KXUNMAPPEDTICKER-26",
+            series_tag=None,
+            series_category=None,
+            series_evidence_unresolved=True,
+        )
+        assert verdict == "politics"
+
+    def test_the_league_detection_step_fails_closed_too(self):
+        """Step 3 is a name guess like step 2, so it carries the same rule — a
+        gate on one name-derived path and not the next one down is a gap."""
+        source = inspect.getsource(kalshi_module._categorize_kalshi_market)
+        tree = ast.parse(inspect.cleandoc(source))
+        guards = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.If)
+            and isinstance(n.test, ast.Name)
+            and n.test.id == "series_evidence_unresolved"
+        ]
+        assert len(guards) >= 2, (
+            "both name-derived paths (the rules engine and league detection) "
+            "must fail closed; found only "
+            f"{len(guards)}"
+        )
+
+    # -- the rule, at BOTH writers -----------------------------------------
+
+    def test_BOTH_writers_pass_the_resolved_flag(self):
+        """The generalisation, in the shape that caught CERT-3087.
+
+        Counts the classifier's call sites off the AST and requires EVERY one
+        to carry the unresolved flag, so a third writer added later fails here
+        instead of silently reopening this.
+        """
+        tree = ast.parse(inspect.getsource(kalshi_module))
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and getattr(node.func, "id", None) == "_categorize_kalshi_market"
+        ]
+        assert len(calls) >= 2, "expected at least the poll and settled-gap writers"
+        unwired = [
+            c
+            for c in calls
+            if "series_evidence_unresolved" not in {kw.arg for kw in c.keywords}
+        ]
+        assert not unwired, (
+            f"{len(unwired)} creation call site(s) classify without knowing "
+            "whether the venue actually answered — the CERT-3089 class"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_settled_writer_does_not_mint_hockey_when_the_venue_is_dark(
+        self, monkeypatch
+    ):
+        """🔴 The BLOCK's own reproduction, driven through the REAL writer.
+
+        `_capture_written_category` builds a real `KalshiAPIService` with only
+        the network door replaced, so `_parse_event` is the shipped parser.
+        Here that door RAISES, which is what a 429/5xx/timeout looks like from
+        inside `_resolve_series_tag_result`.
+        """
+        helper = TestTheSettledGapWriterCarriesTheSameEvidence()
+
+        class _Boom(Exception):
+            pass
+
+        async def raising(_self, series):
+            raise _Boom("429 Too Many Requests")
+
+        from app.services.kalshi_api import KalshiAPIService
+
+        original = getattr(KalshiAPIService, "get_series_metadata", None)
+        written = {}
+
+        # Reuse the real harness, swapping in a door that fails.
+        async def _capture():
+            service = object.__new__(KalshiAPIService)
+            service.get_series_metadata = raising.__get__(service)
+
+            class _Insert:
+                def __init__(self, _model):
+                    pass
+
+                def values(self, **kw):
+                    written.update(kw)
+                    return self
+
+                def on_conflict_do_nothing(self, *a, **kw):
+                    return self
+
+            class _Session:
+                async def execute(self, *a, **kw):
+                    class _R:
+                        def scalar(self_inner):
+                            return None
+
+                        def scalar_one_or_none(self_inner):
+                            return None
+
+                        def fetchall(self_inner):
+                            return []
+
+                    return _R()
+
+                async def commit(self):
+                    return None
+
+                async def flush(self):
+                    return None
+
+            kalshi_module._SERIES_TAG_CACHE.pop("KXKRAKENBANKPUBLIC", None)
+            kalshi_module._SERIES_CATEGORY_CACHE.pop("KXKRAKENBANKPUBLIC", None)
+            # A live failure record would suppress the retry and change which
+            # branch we are testing.
+            kalshi_module._SERIES_TAG_FAILURE_UNTIL.pop("KXKRAKENBANKPUBLIC", None)
+            try:
+                await kalshi_module._create_settled_market(
+                    _Session(), (lambda: service)(), helper._kraken_event(), _Insert,
+                    object(), object(), lambda *a, **kw: 3, {},
+                )
+            except Exception:
+                pass
+
+        await _capture()
+        assert original is getattr(KalshiAPIService, "get_series_metadata", None)
+
+        assert written.get("llm_sport_category") is not None, (
+            "the writer never reached the INSERT values — the test is vacuous"
+        )
+        assert written["llm_sport_category"] != "hockey", (
+            "a rate limit must not mint the club-noun guess #1888 then freezes"
+        )
+        assert written["llm_sport_category"] == "other", (
+            "'other' is the one value a later poll is allowed to upgrade"
+        )
+
+    def test_the_poller_passes_the_flag_from_the_result_object(self):
+        """Not a literal `False`, which would satisfy the AST guard and do
+        nothing — it must read the result's own `resolved`."""
+        # NOT `cleandoc` — `_poll_kalshi_markets` is module-level, so its source
+        # already starts at column 0 and cleandoc re-indents the docstring into
+        # a syntax error. The sibling helper is nested, which is why the same
+        # call works there.
+        tree = ast.parse(inspect.getsource(kalshi_module._poll_kalshi_markets))
+        call = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+            and getattr(n.func, "id", None) == "_categorize_kalshi_market"
+        ][0]
+        kw = {k.arg: k for k in call.keywords}["series_evidence_unresolved"]
+        assert isinstance(kw.value, ast.UnaryOp) and isinstance(
+            kw.value.op, ast.Not
+        ), "expected `not series_meta.resolved`, not a constant"
+        assert isinstance(kw.value.operand, ast.Attribute)
+        assert kw.value.operand.attr == "resolved"
