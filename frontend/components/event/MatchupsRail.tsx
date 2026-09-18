@@ -17,11 +17,14 @@ import {
   splitChildren,
 } from "@/lib/eventConceptDisplay";
 import { groupMatchupsByFamily } from "@/lib/matchupFamilies";
+import { servedBoutPercents } from "@/lib/servedBoutPercents";
 import type { EventConceptChild } from "@/lib/types";
 import FighterAvatar from "./FighterAvatar";
 import MatchupDuel from "./MatchupDuel";
 
-function topOutcomes(child: EventConceptChild): { name: string; probability: number | null }[] {
+function topOutcomes(
+  child: EventConceptChild,
+): { name: string; probability: number | null; rendered_percent?: number | null }[] {
   const outs = child.outcomes || [];
   if (outs.length > 0) {
     return [...outs]
@@ -34,6 +37,12 @@ function topOutcomes(child: EventConceptChild): { name: string; probability: num
 
 function MatchupCard({ child, dim }: { child: EventConceptChild; dim?: boolean }) {
   const outs = topOutcomes(child);
+  // #6816: a bout's two numbers are ONE decision, made by the server for a pair
+  // it has proven is one question. Both served or neither — `null` prints exactly
+  // what this card printed before. Only when the card shows the WHOLE market:
+  // two rows sliced off a longer field are not a pair.
+  const served =
+    (child.outcomes || []).length === 2 ? servedBoutPercents(outs) : outs.map(() => null);
   const lead = childLeader(child);
   return (
     <div
@@ -66,7 +75,7 @@ function MatchupCard({ child, dim }: { child: EventConceptChild; dim?: boolean }
                     <span className="text-sm text-text-primary truncate">{o.name}</span>
                   </div>
                   <span className="font-mono text-xs font-semibold text-text-primary tabular-nums shrink-0">
-                    {formatProbability(o.probability)}
+                    {formatProbability(o.probability, { rendered: served[i] })}
                   </span>
                 </div>
                 {pct != null && (

@@ -163,15 +163,41 @@ nonisolated struct EventConceptOutcome: Decodable, Equatable, Sendable {
     /// `{name, probability}` and nothing else — verified against the production
     /// capture of `event:ufc:26sep19`). `nil` on fight cards today.
     let won: Bool?
+    /// #6816 — the whole percent the SERVER decided this row prints, when the
+    /// child is a bout it has proven is two sides of one question
+    /// (`event_combat.with_bout_display_percents`, the
+    /// `contracts/rendered_percent.json` duel rule). `nil` on a payload cached
+    /// before the field shipped, on a prop, and on any pair the server made no
+    /// claim about. NEVER read per row — `ConceptCardPresentation.servedPercents`
+    /// takes the two together or not at all.
+    let renderedPercent: Int?
 
     /// Spelled out (rather than left to the memberwise init) so that `won`
     /// carries a default: every existing caller that names an outcome by
     /// `{name, probability}` keeps compiling, and a caller that means "graded"
     /// has to say so.
-    init(name: String, probability: Double?, won: Bool? = nil) {
+    init(name: String, probability: Double?, won: Bool? = nil, renderedPercent: Int? = nil) {
         self.name = name
         self.probability = probability
         self.won = won
+        self.renderedPercent = renderedPercent
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, probability, won, renderedPercent
+    }
+
+    /// Written out for ONE reason: a malformed `rendered_percent` must cost the
+    /// row its served integer and nothing else. Under the synthesized decode a
+    /// `"73"` or a `72.5` THROWS, the throw fails the child (`LossyChild`), and a
+    /// display nicety deletes a whole bout from the card. `name`, `probability`
+    /// and `won` decode exactly as the synthesized init decoded them.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        probability = try c.decodeIfPresent(Double.self, forKey: .probability)
+        won = try c.decodeIfPresent(Bool.self, forKey: .won)
+        renderedPercent = try? c.decodeIfPresent(Int.self, forKey: .renderedPercent)
     }
 }
 
@@ -191,6 +217,12 @@ nonisolated struct ConceptBoutRow: Equatable, Identifiable, Sendable {
     /// Both fighters, favourite first. A missing price stays `nil` — it is
     /// drawn as the app's absent-price mark, never as 0% and never as 50%.
     let fighters: [EventConceptOutcome]
+    /// #6816 — the served whole percent for each of `fighters`, index for index,
+    /// or all `nil` when the server made no two-sided decision. Handed to
+    /// `formatProbabilityOrDash(_:renderedPercent:)`, where `nil` prints exactly
+    /// what this row printed before — and where the `<1%` / `>99%` rule still
+    /// runs on the probability.
+    let percents: [Int?]
     let isSettled: Bool
     /// The fighter a settled bout names, or `nil` when the payload does not
     /// say. See `ConceptCardPresentation.settledWinner`.
@@ -248,12 +280,46 @@ nonisolated struct ConceptCardPresentation: Equatable, Sendable {
                 id: child.marketId.map(String.init) ?? "bout-\(index)",
                 title: child.marketName ?? fighters.map(\.name).joined(separator: " vs "),
                 fighters: Array(fighters.prefix(2)),
+                percents: Self.servedPercents(
+                    Array(fighters.prefix(2)), outcomeCount: (child.outcomes ?? []).count),
                 isSettled: settled,
                 winner: Self.settledWinner(child, fighters),
                 isMainEvent: isMain,
                 target: ConceptCardRouting.boutTarget(for: child)
             )
         }
+    }
+
+    /// The two whole percents a bout prints, as the SERVER decided them — or
+    /// nothing (#6816).
+    ///
+    /// WHAT A READER SAW, on this screen, against production 2026-09-17:
+    /// **Arman Tsarukyan 74% / Mauricio Ruffy 28%**. The quotes are 0.735 / 0.275
+    /// — a half-cent grid, so both sides sit on a rounding boundary and a row
+    /// that formats each fighter on its own rounds both up.
+    ///
+    /// BOTH OR NEITHER (#2279's rule — `duelPercents` in `RenderedPercent.swift`
+    /// — on this envelope). The two integers are one decision: exactly two
+    /// fighters, the market's WHOLE outcome list (never the top two of a longer
+    /// one), both values present and both a whole percent. Anything else returns
+    /// `nil` for every row, and the row prints what it always printed. A served
+    /// 73 beside a locally rounded 28 is the same defect from the other side.
+    ///
+    /// NO LOCAL NORMALISE, deliberately — the one difference from `duelPercents`.
+    /// A game strip's sides are a complement by construction. A concept child's
+    /// two rows are not: the same array carries a Yes/No claim, two props under a
+    /// matchup title, a draw leg. Whether two rows are one question is a fact
+    /// about the MARKET — its series, its venue's published draw / no-contest
+    /// rule, who its rows name — which the server can read and this struct
+    /// cannot. The
+    /// web arm is `frontend/lib/servedBoutPercents.ts`; the two are pinned to one
+    /// fixture, which is the builder's own output.
+    static func servedPercents(_ fighters: [EventConceptOutcome], outcomeCount: Int) -> [Int?] {
+        let none = [Int?](repeating: nil, count: fighters.count)
+        guard fighters.count == 2, outcomeCount == 2 else { return none }
+        let served = fighters.compactMap(\.renderedPercent)
+        guard served.count == 2, served.allSatisfy({ (0...100).contains($0) }) else { return none }
+        return served
     }
 
     /// Whether a bout may be DRAWN as decided — "Final", no price.

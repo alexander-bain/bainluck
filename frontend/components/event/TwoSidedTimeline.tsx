@@ -12,6 +12,7 @@ import { fetchFuturesHistory } from "@/lib/api";
 import { formatProbability } from "@/lib/api";
 import { fieldOrder } from "@/lib/eventConceptDisplay";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
+import { servedBoutPercents } from "@/lib/servedBoutPercents";
 import type { EventConceptCompetitor, FuturesOutcomeHistory } from "@/lib/types";
 import { FuturesChart } from "@/components/FuturesChart";
 import FighterAvatar from "./FighterAvatar";
@@ -81,14 +82,33 @@ export default function TwoSidedTimeline({
      do not have, and the `<1%` / `>99%` boundary rules, which run on the
      PROBABILITY and must not be re-derived from the integer.
 
-     Unlike the surfaces above there is no served `*_rendered_percent` on an event
-     competitor, so here the local pairing is the answer and not a fallback.
+     When #6844 shipped there was no served `*_rendered_percent` on an event
+     competitor, so this local pairing was the answer rather than a fallback.
+     #6816 added one for a bout the builder can PROVE is one question, so it is
+     now the fallback for everything else — which is still most of this surface.
+     Amended here by discover/169 rather than left standing, because a comment
+     that says a field does not exist outlives the day it stopped being true.
 
      🪤 DELIBERATELY NOT `aPct`: the split bar above draws the split, it does not
      print it, so pairing its width would move a pixel to fix a word (#6778's
      lesson). And this must sit AFTER the `pair.length < 2` return — `renderedDuelPercents`
      is a claim about two sides of ONE question, and a one-sided card has none. */
   const [aRendered, bRendered] = renderedDuelPercents(a.probability, b.probability);
+  /* #6816, ON TOP OF #6844 AND NOT INSTEAD OF IT. The builder now DECIDES the pair
+     for a bout whose venue settlement contract it has on record
+     (`event_combat.with_bout_display_percents`) and serves it as `rendered_percent`
+     on each row. That decision is better evidenced than a local pairing — a client
+     cannot know a family's published draw / no-contest rule — so it WINS when it is
+     there. Both or neither, via `servedBoutPercents`, and only when these two ARE
+     the whole field rather than the top two of a longer one.
+
+     When the server makes no claim (`null`) #6844's pairing above stands exactly as
+     it merged: a payload built before this shipped, or a pair the builder refuses,
+     prints what this hero printed yesterday. Nothing here removes a number #6844
+     put on the screen, and the rail (`MatchupsRail`) is the surface where the
+     served value is the only pairing there has ever been. */
+  const [aServed, bServed] =
+    (competitors || []).length === 2 ? servedBoutPercents(pair) : [null, null];
   const outcomes: FuturesOutcomeHistory[] = data?.outcomes ?? [];
   const hasHistory = outcomes.some(
     (o) => o.history.filter((p) => p.probability != null).length >= 2,
@@ -112,10 +132,10 @@ export default function TwoSidedTimeline({
       </div>
       <div className="flex items-center justify-between font-mono text-lg font-semibold tabular-nums mb-1.5">
         <span className="text-accent-brand">
-          {formatProbability(a.probability, { rendered: aRendered })}
+          {formatProbability(a.probability, { rendered: aServed ?? aRendered })}
         </span>
         <span className="text-text-secondary">
-          {formatProbability(b.probability, { rendered: bRendered })}
+          {formatProbability(b.probability, { rendered: bServed ?? bRendered })}
         </span>
       </div>
       {aPct != null && (

@@ -149,7 +149,12 @@ struct ConceptCardView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        Text(formatProbabilityOrDash(fighter.probability))
+                        // #6816: the pair is ONE decision, served by the
+                        // builder; `nil` prints exactly what this printed before.
+                        Text(formatProbabilityOrDash(
+                            fighter.probability,
+                            renderedPercent: bout.percents.indices.contains(index)
+                                ? bout.percents[index] : nil))
                             .font(.subheadline)
                             .fontWeight(.semibold)
                             .monospacedDigit()
