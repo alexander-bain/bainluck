@@ -69,12 +69,19 @@ ASK_ONLY_TRUSTED_MAX = 0.50
 KALSHI_BOOKMAKER = "kalshi"
 
 
-def is_lone_ask_on_empty_book(
+def _is_ask_only_book(
     yes_bid: Optional[float],
     yes_ask: Optional[float],
     last_price: Optional[float],
 ) -> bool:
-    """True when this book carries no price, only an untaken offer.
+    """The book SHAPE both ask-only rules share: a zero bid, an ask, no trade.
+
+    Factored out of :func:`is_lone_ask_on_empty_book` for #6846 so the second
+    caller cannot restate it. This is the shape question only — "is this an
+    untaken offer and nothing else" — with no view on what ask level may still
+    be trusted as a price. That judgement is the caller's, because it is the
+    only part of the rule that differs between a standalone binary and a member
+    of a single-winner field.
 
     All three arguments are decimal probabilities (0-1), matching what
     ``futures_odds_snapshots`` stores and what ``kalshi_api`` parses.
@@ -90,7 +97,80 @@ def is_lone_ask_on_empty_book(
         return False
     if last_price is not None and last_price > 0:
         return False
+    return yes_ask > 0
+
+
+def is_lone_ask_on_empty_book(
+    yes_bid: Optional[float],
+    yes_ask: Optional[float],
+    last_price: Optional[float],
+) -> bool:
+    """True when this book carries no price, only an untaken offer.
+
+    Behaviour is unchanged by #6846's refactor: :func:`_is_ask_only_book` already
+    requires ``yes_ask > 0``, so the ``> ASK_ONLY_TRUSTED_MAX`` term below is
+    what it always was and this function answers exactly what it answered
+    before. The write side is bound to it — ``_kalshi_yes_probability`` rule 3 —
+    so it does not move.
+    """
+    if not _is_ask_only_book(yes_bid, yes_ask, last_price):
+        return False
     return yes_ask > ASK_ONLY_TRUSTED_MAX
+
+
+def is_lone_ask_in_exclusive_field(
+    yes_bid: Optional[float],
+    yes_ask: Optional[float],
+    last_price: Optional[float],
+) -> bool:
+    """The same book shape, asked of a leg inside a PROVED single-winner field (#6846).
+
+    :data:`ASK_ONLY_TRUSTED_MAX` does not apply here, and the reason is not that
+    the bound is too loose — it is that the bound answers a question this caller
+    is not asking.
+
+    WHAT AN ASK-ONLY BOOK ACTUALLY STATES. An ask at 39c with no bid and no trade
+    says one thing: the outcome is worth *at most* 39c. It is an UPPER BOUND.
+    ``feed_market_quality.is_empty_book_midpoint`` passes these through and its
+    docstring defends them as "honest longshot lines", which is fair for a
+    standalone binary — an upper bound is a defensible thing to print when it is
+    the only number in the frame and nothing is summed against it.
+
+    WHY A FIELD IS A DIFFERENT FRAME. Inside a proved exhaustive single-winner
+    partition the numbers are read against each other and they are summed.
+    Rendering a column of upper bounds as if each were a point estimate is not a
+    small overstatement of each leg; it inverts the ranking and destroys the
+    distribution. Both consequences were measured on production 2026-09-18 over
+    the 654 proved fields this fires on: 548 sum above 100%, 49 seat an ask-only
+    leg above their best two-sided book, 562 do one or the other, and the mean
+    field sums to **1.97**.
+
+    THE SPECIMEN. ``/futures/61056094`` ("2027 The Masters Champion") printed
+    Ryan Gerard, Collin Morikawa, Jon Rahm and Bryson DeChambeau as joint
+    favourites at 39% and Tiger Woods at 38%, over a field summing to 554%, while
+    Scottie Scheffler carried no price at all. Every one of those 14 legs stores
+    ``yes_bid 0.0000 / yes_ask = the served price / last_price 0.0000``. Scheffler
+    is blank *because his book is real*: his bid of 0.0010 is above zero, so rule
+    3's one-sided-bid term excludes him and rule 4 returns ``None``. The legs
+    nobody will trade outranked every leg somebody will.
+
+    AND THE LEVEL IS NOT THE DEFENCE EITHER, which is why no replacement constant
+    is introduced. ``kalshi_empty_book``'s own measurement — a 1-in-211 sample of
+    all resolved Kalshi legs, earliest snapshot per leg — reads this shape at a
+    mean stored 0.369 against a realized 6.2%. That is the band ``0.50`` trusts,
+    and it is the band the Masters legs sit in. A tighter number would be a new
+    constant nobody has measured; refusing the shape inside a field is the rule
+    the module already argues, applied to the frame that makes it false.
+
+    WITHHOLDING, NEVER REWRITING (gotcha #21). The leg keeps its name and loses
+    its number, exactly as the 33 legs on that market that were never priced at
+    all already render — so the page needs no new empty state. Renormalizing
+    instead would divide a partial field and still name Ryan Gerard the
+    favourite, and an invented price becomes a forecast we are graded on
+    (``calibration_probability`` coalesces to stored values, gotcha #144 /
+    ruling 103).
+    """
+    return _is_ask_only_book(yes_bid, yes_ask, last_price)
 
 
 #: Tolerance for :func:`book_refutes_price`, in decimal probability. Kalshi

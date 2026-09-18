@@ -104,8 +104,26 @@ from app.utils.feed_market_quality import is_fabricated_midpoint
 from app.utils.kalshi_empty_book import (
     KALSHI_BOOKMAKER,
     book_refutes_price,
+    is_lone_ask_in_exclusive_field,
     is_lone_ask_on_empty_book,
 )
+
+#: The outcome relations that PROVE a single-winner partition (#6846). Mirrors
+#: ``app.tasks.precompute_calibration.EXCLUSIVITY_PROVED_RELATIONS``, which is the
+#: canonical list and cannot be imported here: it lives in a 7,700-line Celery
+#: task module that the web dyno does not load today (verified — ``app.main``
+#: imports leave ``precompute_calibration`` out of ``sys.modules``), and pulling
+#: it onto the futures serve path to read one frozenset would drag calibration's
+#: whole dependency tree into every request. D45 also forbids this lane editing
+#: that file to lift the symbol out.
+#:
+#: A copied policy drifts, which this codebase says in its own words
+#: (``kalshi_empty_book``: "a price policy that exists twice drifts"). So the two
+#: are pinned together by ``tests/test_ask_only_exclusive_field_6846.py``, which
+#: imports BOTH and asserts they agree across the classifier's full verdict
+#: matrix — the same protection ``ASK_ONLY_TRUSTED_MAX`` gets from being bound to
+#: rule 3 by a test rather than by an import.
+EXCLUSIVITY_PROVED_RELATIONS = frozenset({"competitors", "exclusive_ranges"})
 
 #: The bookmaker string the Polymarket futures writers stamp on every snapshot
 #: (``app/tasks/polymarket.py``, four call sites) and the ``source`` a Polymarket
@@ -113,8 +131,10 @@ from app.utils.kalshi_empty_book import (
 POLYMARKET_BOOKMAKER = "polymarket"
 
 __all__ = [
+    "EXCLUSIVITY_PROVED_RELATIONS",
     "POLYMARKET_BOOKMAKER",
     "WITHHELD_PRICE_FIELDS",
+    "market_is_proved_exclusive_field",
     "midpoint_refuted_by_last_trade",
     "needs_trade_disconfirmation",
     "needs_trade_evidence",
@@ -122,6 +142,54 @@ __all__ = [
     "price_refuted_by_live_book",
     "snapshot_price_is_unsupported",
 ]
+
+
+def market_is_proved_exclusive_field(
+    market_type: Optional[str],
+    market_metadata: Optional[dict],
+) -> bool:
+    """True when the classifier PROVED this market is a single-winner partition (#6846).
+
+    Evidence comes from the persisted shape classifier
+    (``market_metadata->'shape'``, Queue #260 semantics v2) and never from
+    ``futures_markets.mutually_exclusive``. That column DEFAULTS TO TRUE and is
+    set for Yes/No claims and two-competitor duels alike, so it is not evidence
+    of anything — the finding ``precompute_calibration`` recorded when its own
+    census showed the default-true gate admitting 51,424 markets whose relation
+    the classifier explicitly declined to resolve and 27,958 cumulative-threshold
+    ladders whose rungs co-win (gotcha #17).
+
+    Four conditions, all required, mirroring
+    ``precompute_calibration.market_exclusivity_is_proved``:
+
+      * ``market_type == 'field'`` — the ">2 competitors, one wins" verdict,
+      * ``shape.exhaustive`` is true — only set when the SOURCE proves it,
+      * ``shape.expected_winners == 1`` — not a Top-N or participation contract,
+      * ``shape.outcome_relation`` is an exclusive relation — never
+        ``cumulative_thresholds``, ``independent_participation`` or ``unknown``.
+
+    FAILS CLOSED, which is the direction that matters for a rule that withholds.
+    Absent metadata, an unparsed shape, an unrecognised relation or a classifier
+    that declined all return False, and the leg is served exactly as it is today.
+    The refusal only ever fires where the partition is proved.
+
+    Values may arrive from JSONB as native types or as strings, so ``'true'`` and
+    ``'1'`` are accepted alongside ``True`` and ``1`` — the same coercion the
+    canonical helper does, for the same reason.
+    """
+    if market_type != "field":
+        return False
+    if not isinstance(market_metadata, dict):
+        return False
+    shape = market_metadata.get("shape")
+    if not isinstance(shape, dict):
+        return False
+    if str(shape.get("exhaustive")).strip().lower() != "true":
+        return False
+    if str(shape.get("expected_winners")).strip() != "1":
+        return False
+    return (shape.get("outcome_relation") or "") in EXCLUSIVITY_PROVED_RELATIONS
+
 
 #: Every field that is a restatement of the refused price. They fall together or
 #: the refusal is cosmetic: ``current_american_odds`` is the same number in
@@ -140,6 +208,8 @@ def needs_trade_evidence(
     resolution_source: Optional[str],
     yes_bid: Optional[float],
     yes_ask: Optional[float],
+    *,
+    in_exclusive_field: bool = False,
 ) -> bool:
     """True if this row could be an unsupported price and a trade read decides it.
 
@@ -163,10 +233,21 @@ def needs_trade_evidence(
         return False
     if yes_bid is None or yes_ask is None:
         return False
-    # The cheap half of `is_lone_ask_on_empty_book`, which is the whole of it
-    # apart from the trade term. Stated as a delegation, not a re-implementation:
-    # passing a last_price of 0 asks that predicate the bid/ask half of its own
-    # question, so this can never drift away from the rule it screens for.
+    # The cheap half of the ask-only rules, which is the whole of them apart from
+    # the trade term. Stated as a delegation, not a re-implementation: passing a
+    # last_price of 0 asks the predicate the bid/ask half of its own question, so
+    # this can never drift away from the rule it screens for.
+    #
+    # #6846: `in_exclusive_field` is the caller's answer to a question about the
+    # MARKET, not about this row, and it is a keyword defaulting to False so every
+    # existing caller keeps the behaviour it has today. Inside a PROVED
+    # single-winner partition the ask bound is dropped — an ask-only book states
+    # an upper bound, and a field's column is read as a distribution. Only the
+    # BOUND changes; the grade exemption, the venue scope and the book shape are
+    # identical in both frames. The argument and its measurement live on
+    # `is_lone_ask_in_exclusive_field`.
+    if in_exclusive_field:
+        return is_lone_ask_in_exclusive_field(yes_bid, yes_ask, 0.0)
     return is_lone_ask_on_empty_book(yes_bid, yes_ask, 0.0)
 
 
@@ -178,6 +259,7 @@ def price_is_unsupported(
     last_price: Optional[float],
     *,
     has_trade_evidence: bool,
+    in_exclusive_field: bool = False,
 ) -> bool:
     """True when no current quote and no recorded trade supports the served price.
 
@@ -201,10 +283,21 @@ def price_is_unsupported(
     folding it in here would be this lane re-deriving a measured policy on a
     hunch.
     """
-    if not needs_trade_evidence(source, resolution_source, yes_bid, yes_ask):
+    if not needs_trade_evidence(
+        source,
+        resolution_source,
+        yes_bid,
+        yes_ask,
+        in_exclusive_field=in_exclusive_field,
+    ):
         return False
     if not has_trade_evidence:
         return False
+    # #6846. Both terms carry the same frame or the screen and the verdict
+    # disagree: the field form would admit a leg the standalone form then
+    # acquits, and the row would be counted as a candidate and served anyway.
+    if in_exclusive_field:
+        return is_lone_ask_in_exclusive_field(yes_bid, yes_ask, last_price)
     return is_lone_ask_on_empty_book(yes_bid, yes_ask, last_price)
 
 
@@ -412,6 +505,7 @@ def snapshot_price_is_unsupported(
     last_price: Optional[float],
     *,
     is_winner: Optional[bool] = None,
+    in_exclusive_field: bool = False,
 ) -> bool:
     """All three arms above, asked of ONE historical ``futures_odds_snapshots`` row (#5898).
 
@@ -518,6 +612,7 @@ def snapshot_price_is_unsupported(
         yes_ask,
         last_price,
         has_trade_evidence=has_trade_evidence,
+        in_exclusive_field=in_exclusive_field,
     ):
         return True
     if price_refuted_by_live_book(
