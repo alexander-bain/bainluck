@@ -52,7 +52,7 @@ func percentNumber(_ percent: Double) -> String {
 /// a move must share. Input is percentage POINTS; the caller draws the direction
 /// (an arrow or a sign) and the unit, which is why this returns no sign of its own.
 ///
-/// #6923: `probability_change_24h` had five renderers in `ios/**` and they printed
+/// #6931: `probability_change_24h` had five renderers in `ios/**` and they printed
 /// one number four ways. Measured on `/api/futures/114175` (2026-09-18 ~11:0xZ),
 /// Ciryl Gane served `0.005`:
 ///
@@ -81,6 +81,29 @@ func percentNumber(_ percent: Double) -> String {
 /// smuggled in behind an arithmetic fix.
 func deltaPointsNumber(_ points: Double) -> String {
     String(format: "%.1f", abs(points))
+}
+
+/// The futures hero badge's whole decision — whether to draw at all, and what
+/// number to draw — as one value a test can call.
+///
+/// It lives here rather than inside `FuturesDetailView` because a `@ViewBuilder`
+/// returning `some View` cannot be asserted on: while the gate and the string sat
+/// in the view, the only thing tying a test to the hero was a source scan for the
+/// call, and a scan cannot tell you what the badge SAYS. #6931's first cut had
+/// exactly that hole — reverting the view to its integer rounding left all four
+/// behavioural tests GREEN and only the scan red, because they were exercising a
+/// copy of the arithmetic that the test file had written out for itself.
+///
+/// The `0.005` floor is the badge's own and is unchanged by #6931. Note it is NOT
+/// shared with the chart's participant table, which has no floor: a served
+/// `-0.0035` is drawn there and declined here. That asymmetry predates this and is
+/// pinned rather than fixed.
+///
+/// Returns `nil` when the badge draws nothing. The arrow carries the direction, so
+/// the string is an unsigned magnitude.
+func futuresHeroMoveText(_ change: Double?) -> String? {
+    guard let m = change, abs(m) >= 0.005 else { return nil }
+    return "\(deltaPointsNumber(m * 100))%"
 }
 
 /// The absent-value marker for a number we do not have. `ladderPercent` already

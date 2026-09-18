@@ -110,9 +110,9 @@ enum EvolutionLeaderboardGeometry {
 
     /// The sign is drawn here and the magnitude comes from `deltaPointsNumber`, so
     /// this row and the futures hero badge cannot disagree about one field again
-    /// (#6923). The strings are byte-for-byte what this function always returned —
+    /// (#6931). The strings are byte-for-byte what this function always returned —
     /// `printf` rounds the magnitude and prepends the sign, so pulling the sign out
-    /// front changes nothing; `AHeroMoveAgreesWithTheTable6923Tests` sweeps it.
+    /// front changes nothing; `AHeroMoveAgreesWithTheTable6931Tests` sweeps it.
     static func changeLabel(_ pct: Double) -> String {
         if pct > 0 { return "+\(deltaPointsNumber(pct))%" }
         if pct < 0 { return "-\(deltaPointsNumber(pct))%" }

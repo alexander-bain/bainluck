@@ -1,7 +1,7 @@
 import XCTest
 @testable import Bain_Luck
 
-/// #6923 — **the futures hero badge stops overstating the move.**
+/// #6931 — **the futures hero badge stops overstating the move.**
 ///
 /// THE SPECIMEN, measured twice against production on 2026-09-18 (native/227 at
 /// ~10:5xZ, re-read by native/229 at ~11:0xZ, same value): `/api/futures/114175`,
@@ -23,14 +23,18 @@ import XCTest
 /// The fix is that the hero draws the magnitude through `deltaPointsNumber`, the
 /// rule the table beside it was already using and already right about. The table
 /// delegates to the same call so the two cannot drift apart again.
-final class AHeroMoveAgreesWithTheTable6923Tests: XCTestCase {
+final class AHeroMoveAgreesWithTheTable6931Tests: XCTestCase {
 
-    /// The hero badge's own arithmetic, lifted verbatim from
-    /// `FuturesDetailView.detailMovementBadge` — the gate, then the string beside
-    /// the arrow. The arrow carries the sign, so the number is a magnitude.
+    /// The badge's OWN decision, called directly. Not a copy of it.
+    ///
+    /// The first cut of this file re-implemented the gate and the string here, and
+    /// mutation testing caught that: reverting `FuturesDetailView` to
+    /// `Int((m * 100).rounded())` left every behavioural test below green, because
+    /// none of them touched the view. `futuresHeroMoveText` now holds the gate and
+    /// the string, the `@ViewBuilder` draws its result, and these assertions are
+    /// about what the hero badge says.
     private func heroBadgeText(_ change: Double?) -> String? {
-        guard let m = change, abs(m) >= 0.005 else { return nil }
-        return "\(deltaPointsNumber(m * 100))%"
+        futuresHeroMoveText(change)
     }
 
     // MARK: - The specimen
@@ -45,9 +49,9 @@ final class AHeroMoveAgreesWithTheTable6923Tests: XCTestCase {
 
         XCTAssertEqual(hero, "0.5%")
         XCTAssertEqual(table, "+0.5%")
-        XCTAssertNotEqual(hero, "1%", "the hero doubled the smallest move it can show (#6923)")
+        XCTAssertNotEqual(hero, "1%", "the hero doubled the smallest move it can show (#6931)")
         XCTAssertEqual(hero, String(table.dropFirst()),
-                       "hero and chart table disagree about one field again (#6923)")
+                       "hero and chart table disagree about one field again (#6931)")
     }
 
     /// The defect's other end. The two renderings AGREE at exactly 1.0 point, which
@@ -63,7 +67,7 @@ final class AHeroMoveAgreesWithTheTable6923Tests: XCTestCase {
         let atFloor = heroBadgeText(0.005)
         let atCeiling = heroBadgeText(0.0149)
         XCTAssertNotEqual(atFloor, atCeiling,
-                          "0.5 and 1.49 points both printed `1%` before #6923")
+                          "0.5 and 1.49 points both printed `1%` before #6931")
     }
 
     /// Every admissible move in the band the integer rule flattened now prints a
@@ -73,9 +77,9 @@ final class AHeroMoveAgreesWithTheTable6923Tests: XCTestCase {
 
         XCTAssertFalse(band.contains(nil), "the gate admits all of these")
         XCTAssertGreaterThan(Set(band.map { $0 ?? "" }).count, 1,
-                             "the band collapsed to one string again (#6923)")
+                             "the band collapsed to one string again (#6931)")
         for value in band {
-            XCTAssertNotEqual(value, "1%", "the flattened spelling is back (#6923)")
+            XCTAssertNotEqual(value, "1%", "the flattened spelling is back (#6931)")
         }
     }
 
@@ -170,9 +174,9 @@ final class AHeroMoveAgreesWithTheTable6923Tests: XCTestCase {
 
         XCTAssertTrue(source.contains("private func detailMovementBadge"),
                       "this scan no longer aims at anything — re-aim it")
-        XCTAssertTrue(source.contains("deltaPointsNumber(m * 100)"),
-                      "the hero badge stopped delegating to the shared rule (#6923)")
-        XCTAssertFalse(source.contains("Text(\"\\(abs(Int((m * 100).rounded())))%\")"),
-                       "the hero badge rounds the move to an integer again (#6923)")
+        XCTAssertTrue(source.contains("futuresHeroMoveText(m)"),
+                      "the hero badge stopped drawing the shared decision (#6931)")
+        XCTAssertFalse(source.contains("Int((m * 100).rounded())"),
+                       "the hero badge rounds the move to an integer again (#6931)")
     }
 }
