@@ -33,7 +33,11 @@ import type {
   ESPNHistoryPoint,
 } from "@/lib/types";
 import type { PeriodBoundary } from "@/lib/periodMarkers";
-import { dedupePeriodLabels } from "@/lib/periodMarkers";
+import {
+  dedupePeriodLabels,
+  assignPeriodLabelRows,
+  PERIOD_LABEL_ROW_HEIGHT_PX,
+} from "@/lib/periodMarkers";
 
 interface ScoreDifferentialChartProps {
   history: OddsHistoryPoint[];
@@ -649,7 +653,14 @@ export default function ScoreDifferentialChart({
     // whether they were actually close together.
     const deduped = dedupePeriodLabels(filtered, chartDuration);
 
-    return deduped.map((b) => ({
+    // #6882's stagger, shared with the win-probability chart for the same reason
+    // the collapse rule is: it is the same pixel problem on the same page at the
+    // same width, and this chart measured 5.5px of clear space between `HT` and
+    // `Q3` where the one above measured 3.4px. A private copy is how `TB2`/`T5T6`
+    // happened; there is exactly one implementation and both charts call it.
+    const rowed = assignPeriodLabelRows(deduped, chartDuration);
+
+    return rowed.map((b) => ({
       ...b,
       time: format(parseISO(b.timestamp), labelFormat),
       // UX-P022: labels used to ALTERNATE insideTopLeft / insideTopRight, which
@@ -797,6 +808,11 @@ export default function ScoreDifferentialChart({
          no `<ReferenceLine>` inside `ResponsiveContainer` without a viewport,
          so a guard hunting the label in server markup passes on both arms. */
       data-period-boundaries={filteredPeriodBoundaries.length}
+      /* #6882: which row each surviving label lands on, in x order —
+         "0,0,1,0" is the NFL shape. recharts draws no <ReferenceLine> in a
+         server render (no viewport), so the stagger is unobservable in the
+         markup; this is the same channel CERT-1984 opened for the count. */
+      data-period-label-rows={filteredPeriodBoundaries.map((b) => (b as { labelRow?: number }).labelRow ?? 0).join(",")}
     >
       {/* Time range selector */}
       <div className="flex flex-wrap items-center gap-1 shrink-0">
@@ -919,6 +935,8 @@ export default function ScoreDifferentialChart({
                 label={{
                   value: b.label,
                   position: ((b as { labelPosition?: string }).labelPosition || "insideTopLeft") as "insideTopLeft" | "insideTopRight",
+                  // #6882 — see the twin in OddsChart. Row 0 passes 0.
+                  dy: ((b as { labelRow?: number }).labelRow || 0) * PERIOD_LABEL_ROW_HEIGHT_PX,
                   style: { fontSize: 10, fill: "rgba(0,0,0,0.5)", fontWeight: 600 },
                 }}
               />
