@@ -62,17 +62,14 @@ ALLOWED_APPS = ("bainluck",)
 
 def _constants():
     from app.tasks.espn_sync import (
-        SUSPENDED_RESUME_WINDOW,
         UNREACHABLE_SUSPENDED_BACKUP_TABLE,
         UNREACHABLE_SUSPENDED_BUDGET_KEY,
         UNREACHABLE_SUSPENDED_INFLIGHT_KEY,
         UNREACHABLE_SUSPENDED_INFLIGHT_TTL,
         UNREACHABLE_SUSPENDED_MAX_BUDGET,
+        unreachable_suspended_floor,
     )
-    from app.utils.event_completion import (
-        UNREACHABLE_SUSPENDED_MARGIN,
-        UNREACHABLE_SUSPENDED_TERMINAL,
-    )
+    from app.utils.event_completion import UNREACHABLE_SUSPENDED_TERMINAL
 
     return {
         "table": UNREACHABLE_SUSPENDED_BACKUP_TABLE,
@@ -81,22 +78,53 @@ def _constants():
         "inflight_ttl": UNREACHABLE_SUSPENDED_INFLIGHT_TTL,
         "max_budget": UNREACHABLE_SUSPENDED_MAX_BUDGET,
         "terminal": UNREACHABLE_SUSPENDED_TERMINAL,
-        # Derived from the arm's own constants, never restated here — a runbook
-        # that hand-types 72 is a runbook that disagrees with the code the day
-        # either number moves.
-        "floor_hours": (
-            SUSPENDED_RESUME_WINDOW + UNREACHABLE_SUSPENDED_MARGIN
-        ).total_seconds() / 3600.0,
+        # 🔴 CALL THE ARM'S FUNCTION; DO NOT RE-ADD ITS INGREDIENTS (#6927
+        # after-check). This read `SUSPENDED_RESUME_WINDOW +
+        # UNREACHABLE_SUSPENDED_MARGIN` = **72h** while the arm calls
+        # `unreachable_suspended_floor()` = `max(SUSPENDED_RESUME_WINDOW,
+        # ODDS_SCORES_LOOKBACK) + UNREACHABLE_SUSPENDED_MARGIN` = **96h**. The
+        # old line's own comment — "derived from the arm's own constants, never
+        # restated here, a runbook that hand-types 72 is a runbook that
+        # disagrees with the code" — described the defect it was sitting on:
+        # re-adding the ingredients IS restating the formula, and it silently
+        # stopped tracking the arm the day #6347 added the second door to the
+        # `max`. Measured 2026-09-18: 494 rows clear 72h, 177 clear 96h, so the
+        # dry-run invented 317 rows of backlog that the arm cannot touch.
+        "floor_hours": unreachable_suspended_floor().total_seconds() / 3600.0,
     }
 
 
 #: The population, spelled exactly as the arm's SELECT spells it. Kept here as
 #: one string so ``--dry-run`` reports the same rows the arm would act on.
+#:
+#: 🔴 IT DID NOT, AND THE COMMENT ABOVE IS WHY NOBODY LOOKED (#6927
+#: after-check). This is a SECOND COPY of a screen that lives in
+#: `espn_sync._transition_event_statuses_impl`, and a second copy drifts. Two
+#: clauses had gone missing, in opposite directions, and the operator's only
+#: "change nothing, see what it would touch" instrument was wrong both ways:
+#:
+#:   * `~market_anchored_exists` was absent entirely — so the dry-run counted
+#:     rows the arm refuses. Measured on production 2026-09-18 at the 96h floor:
+#:     **177 of 177** eligible rows carry a market and are refused, so the
+#:     uncorrected dry-run reported a backlog of which NONE was real.
+#:   * the `or_` second arm (`commence_time_source = 'odds_api'` with an
+#:     `external_id` PRESENT, #6347) was absent — so it also MISSED 147 rows the
+#:     arm does act on.
+#:
+#: This is the same defect #6927 fixed in the arm itself: one rule, two copies,
+#: and the copy nobody executes is the one that rots. Kept as SQL rather than
+#: reusing the arm's SQLAlchemy screen because extracting that screen is an
+#: app-code change to a task that writes a terminal status; the guard test
+#: `test_the_door_scripts_dry_run_matches_the_arm_6927` is what holds the two
+#: spellings together until it is.
 _SCOPE_SQL = """
     FROM events e
     JOIN sports s ON s.id = e.sport_id
    WHERE e.status = 'suspended'
-     AND e.external_id IS NULL
+     AND (e.external_id IS NULL OR e.commence_time_source = 'odds_api')
+     AND NOT EXISTS (
+           SELECT 1 FROM futures_markets f WHERE f.event_id = e.id
+         )
      AND e.espn_id IS NULL
      AND e.statpal_fixture_id IS NULL
      AND e.home_score IS NULL
