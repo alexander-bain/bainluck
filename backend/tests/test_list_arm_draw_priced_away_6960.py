@@ -91,9 +91,7 @@ def _event(
         away_team_name=AWAY,
         commence_time=_offset(hours),
         status=status,
-        win_probability_sources={
-            "polymarket": {"value": home_prob, "type": "market"}
-        },
+        win_probability_sources={"polymarket": {"value": home_prob, "type": "market"}},
     )
     if opening is not None:
         event.opening_home_probability, event.opening_away_probability = opening
@@ -142,9 +140,9 @@ class TestTheListFormatterWithholds:
         )
         current = response["current_odds"]
 
-        assert current["home_probability"] == pytest.approx(SOCCER_HOME_PROB), (
-            "the home leg is not the defect and must survive untouched"
-        )
+        assert current["home_probability"] == pytest.approx(
+            SOCCER_HOME_PROB
+        ), "the home leg is not the defect and must survive untouched"
         assert current["away_probability"] is None, (
             "the list formatter served `1 - home` as the away team's price; "
             f"the fixture's own three-way prices them {MARKET_AWAY}"
@@ -157,9 +155,9 @@ class TestTheListFormatterWithholds:
         )
 
         assert response["hero_probability"] == pytest.approx(SOCCER_HOME_PROB)
-        assert response["hero_probability_away"] is None, (
-            f"served {FABRICATED_AWAY} for {AWAY} on production 2026-09-18"
-        )
+        assert (
+            response["hero_probability_away"] is None
+        ), f"served {FABRICATED_AWAY} for {AWAY} on production 2026-09-18"
 
     def test_a_complement_opening_pair_is_withheld_too(self):
         """The stored pair can itself be a complement; the detail arm withholds it."""
@@ -208,9 +206,9 @@ class TestTheListFormatterRefusesToWithhold:
             "opening_odds"
         ]
 
-        assert opening["away_probability"] == pytest.approx(0.4216), (
-            "a de-vigged away price is sourced, not fabricated"
-        )
+        assert opening["away_probability"] == pytest.approx(
+            0.4216
+        ), "a de-vigged away price is sourced, not fabricated"
 
     def test_a_settled_draw_keeps_both_sides(self):
         """0.5/0.5 sums to 1.0 and a numeric test would delete half a result."""
@@ -262,13 +260,9 @@ class TestTheTwoArmsAgree:
             _event(sport_key, home_prob), None
         )["hero_probability_away"]
 
-        expected = printable_away(
-            round(1.0 - home_prob, 6), home_prob, sport_key
-        )
+        expected = printable_away(round(1.0 - home_prob, 6), home_prob, sport_key)
 
-        assert served == (
-            pytest.approx(expected) if expected is not None else None
-        ), (
+        assert served == (pytest.approx(expected) if expected is not None else None), (
             f"{sport_key}: the list arm and the detail rule disagree on one "
             "row — which is the whole defect, not a detail of it"
         )
