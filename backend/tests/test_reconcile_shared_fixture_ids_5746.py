@@ -59,14 +59,18 @@ from app.services.anchor_channel import duplicate_tag  # noqa: E402
 from app.tasks.reconcile_shared_fixture_ids import (  # noqa: E402
     APPEND_DUPLICATE_TAG,
     REFUSAL_ALREADY_SUPPRESSED,
+    REFUSAL_DEAD_CANONICAL,
     REFUSAL_KICKOFF_DIFFERS,
     REFUSAL_NOT_A_CONTEST_ID,
     REFUSAL_ORIENTATION,
+    REFUSAL_SPLIT_LEAGUE,
     REFUSAL_SPLIT_SPORT,
+    SELECT_ROWS_FOR_FIXTURES,
     plan_shared_fixture_duplicates,
     reconcile_shared_fixture_ids,
 )
 from app.tasks.stamp_v1_statpal_fixtures import is_statpal_contest_id  # noqa: E402
+from app.utils.event_twin_fold import twin_identity_rank  # noqa: E402
 from app.utils.proven_duplicates import not_a_proven_duplicate  # noqa: E402
 
 MLB, NBA, NHL, BUNDESLIGA, SERIE_A = 1, 2, 3, 4, 5
@@ -98,6 +102,14 @@ class Row:
     external_id: Optional[str] = None
     win_probability_sources: Optional[dict] = None
     event_tags: Any = None
+    #: #6333. Both default to `None` — the answer the LEFT JOIN gives for a row
+    #: whose sport we could not read — so every group written before this pass
+    #: existed keeps being graded through the fail-closed arm rather than
+    #: silently acquiring the new reach.
+    sport_key: Optional[str] = None
+    #: `status`, under the alias the SELECT projects it by. Named so that a test
+    #: reading it cannot accidentally hand `twin_identity_rank` its `.status`.
+    retirement_status: Optional[str] = None
 
 
 # ── The 12 production groups, verbatim ───────────────────────────────────────
@@ -604,3 +616,189 @@ class TestTheReaderSeesOneCard:
             s.commit()
             printed = s.scalars(select(Event.id).where(not_a_proven_duplicate())).all()
         assert printed == [15309733]
+
+
+# ── #6333: one sport wearing two keys is not a cross-sport collision ──────────
+#
+# The two specimens below are production rows, copied verbatim from the pass of
+# 2026-09-18 12:06:12Z, which refused 66 groups on `SPLIT_SPORT` — every one a
+# real-league row beside `soccer_other`, holding 1,229 open markets between
+# them. `twin_identity_rank` had already elected the real-league row in 66 of
+# 66; only this refusal stood between the group and its tag.
+
+SOCCER_OTHER = 6
+BUNDESLIGA_2 = 7
+EFL_CUP = 8
+BASKETBALL = 9
+
+#: 9545060 — SpVgg Greuther Fürth v 1. FC Magdeburg, 2026-09-18 16:30Z. The
+#: catch-all row is `voided` (its page answers 410) and holds all 34 of the
+#: fixture's open markets; the page a reader opens served an empty market rail.
+FURTH_CANONICAL = Row(
+    15310337, BUNDESLIGA_2, "9545060", "Greuther Fürth", "1. FC Magdeburg",
+    _at("2026-09-18T16:30:00"), external_id="c0ffee", sport_key="soccer_germany_bundesliga2",
+    retirement_status="scheduled", win_probability_sources={"betting": {}, "espn": {}},
+)
+FURTH_CATCHALL = Row(
+    15305212, SOCCER_OTHER, "9545060", "SpVgg Greuther Fürth", "1. FC Magdeburg",
+    _at("2026-09-18T16:30:00"), sport_key="soccer_other", retirement_status="voided",
+)
+
+#: 9542014 — Coventry City v Aston Villa. The same shape with a `completed`
+#: canonical and a `suspended` catch-all, so the ship is not pinned to one
+#: status pair.
+COVENTRY_CANONICAL = Row(
+    15301301, EFL_CUP, "9542014", "Coventry City", "Aston Villa",
+    _at("2026-09-16T18:45:00"), 2, 1, external_id="deadbeef", sport_key="soccer_england_efl_cup",
+    retirement_status="completed", win_probability_sources={"betting": {}},
+)
+COVENTRY_CATCHALL = Row(
+    15312269, SOCCER_OTHER, "9542014", "Coventry City FC", "Aston Villa FC",
+    _at("2026-09-16T18:45:00"), sport_key="soccer_other", retirement_status="suspended",
+)
+
+
+class TestOneSportTwoKeys6333:
+    def test_the_furth_pair_is_tagged_onto_the_row_a_reader_opens(self):
+        """The ship, on the specimen: 34 stranded markets get a page.
+
+        The direction is asserted explicitly rather than by counting tags — a
+        tag pointing the other way would also be one tag, and it would suppress
+        the scheduled Bundesliga 2 fixture behind a `voided` row that 410s.
+        """
+        tags, refusals = _plan([FURTH_CATCHALL, FURTH_CANONICAL])
+        assert refusals == []
+        assert len(tags) == 1
+        assert tags[0].canonical_id == 15310337
+        assert tags[0].duplicate_id == 15305212
+
+    def test_the_coventry_pair_is_tagged(self):
+        """Same shape, `completed` canonical and `suspended` catch-all."""
+        tags, refusals = _plan([COVENTRY_CATCHALL, COVENTRY_CANONICAL])
+        assert refusals == []
+        assert [(t.canonical_id, t.duplicate_id) for t in tags] == [
+            (15301301, 15312269)
+        ]
+
+    def test_before_this_change_both_pairs_were_split_sport(self):
+        """The guard that pins WHY they were refused, not merely that they are not.
+
+        A `sport_id` comparison is what the module used to make, and it is still
+        the answer whenever the two keys are not one sport. Asserting the old
+        predicate here keeps the change honest: these rows DO differ on
+        `sport_id`, so the new reach comes from reading the key, not from the
+        pair having quietly become same-`sport_id`.
+        """
+        for catchall, canonical in (
+            (FURTH_CATCHALL, FURTH_CANONICAL),
+            (COVENTRY_CATCHALL, COVENTRY_CANONICAL),
+        ):
+            assert catchall.sport_id != canonical.sport_id
+
+    def test_two_real_sports_sharing_an_id_are_still_a_collision(self):
+        """D55/#2879 is untouched: basketball and soccer are two families."""
+        canonical = replace(FURTH_CANONICAL, sport_key="basketball_nba", sport_id=BASKETBALL)
+        tags, refusals = _plan([FURTH_CATCHALL, canonical])
+        assert tags == []
+        assert refusals[0]["reason"] == REFUSAL_SPLIT_SPORT
+
+    def test_an_absent_sport_key_fails_closed(self):
+        """A row whose `sports` join gave no key is refused, not folded.
+
+        Two unknown keys must not compare equal and admit each other on the
+        strength of knowing nothing about either — and this is the arm every
+        group graded before #6333 still travels, since `Row.sport_key` defaults
+        to `None`.
+
+        🔴 BOTH-ABSENT IS THE CASE THAT NEEDS ITS OWN ARM, and it is asserted
+        here because the one-absent case does NOT reach it: `'soccer' != None`
+        already refuses on the family comparison, so a test that only knocked
+        out one key would pass with the fail-closed branch deleted and report a
+        guard it never exercised.
+        """
+        for missing in (None, ""):
+            one_absent = _plan(
+                [replace(FURTH_CATCHALL, sport_key=missing), FURTH_CANONICAL]
+            )
+            both_absent = _plan(
+                [
+                    replace(FURTH_CATCHALL, sport_key=missing),
+                    replace(FURTH_CANONICAL, sport_key=missing),
+                ]
+            )
+            for tags, refusals in (one_absent, both_absent):
+                assert tags == []
+                assert refusals[0]["reason"] == REFUSAL_SPLIT_SPORT
+
+    def test_two_different_real_competitions_are_reported_not_tagged(self):
+        """One sport, two keys, neither a catch-all — `SPLIT_LEAGUE`.
+
+        Zero of the 66 production groups are this, and it is refused rather
+        than tagged because a shared fixture id says the rows are one contest
+        and says nothing about which competition it belongs to.
+        """
+        member = replace(
+            FURTH_CATCHALL, sport_key="soccer_germany_bundesliga", sport_id=BUNDESLIGA
+        )
+        tags, refusals = _plan([member, FURTH_CANONICAL])
+        assert tags == []
+        assert refusals[0]["reason"] == REFUSAL_SPLIT_LEAGUE
+
+    def test_two_catchalls_are_reported_not_tagged(self):
+        """`catchalls != 1` is both-or-neither, so the both arm is graded too."""
+        canonical = replace(
+            FURTH_CANONICAL, sport_key="soccer_other", sport_id=SOCCER_OTHER + 100
+        )
+        tags, refusals = _plan([FURTH_CATCHALL, canonical])
+        assert tags == []
+        assert refusals[0]["reason"] == REFUSAL_SPLIT_LEAGUE
+
+    def test_a_retired_canonical_is_refused(self):
+        """`DEAD_CANONICAL`: never suppress a servable row for one that 410s.
+
+        Built as the inversion `twin_identity_rank` records under "THE WORLD CUP
+        PAIRS" — the catch-all row holds the only price and wins on source
+        count — with the catch-all `voided`, which is what makes it a loss
+        rather than a traded label.
+        """
+        catchall = replace(
+            FURTH_CATCHALL,
+            external_id="feedface",
+            win_probability_sources={"polymarket": {}, "kalshi": {}, "betting": {}},
+        )
+        canonical = replace(FURTH_CANONICAL, external_id=None, win_probability_sources=None)
+        tags, refusals = _plan([catchall, canonical])
+        assert tags == []
+        assert refusals[0]["reason"] == REFUSAL_DEAD_CANONICAL
+        # ...and the same group with a servable winner is tagged, so the refusal
+        # is reading the status and not the inversion it was built from.
+        tags, refusals = _plan(
+            [replace(catchall, retirement_status="scheduled"), canonical]
+        )
+        assert [t.canonical_id for t in tags] == [15305212]
+
+    def test_the_retirement_probe_does_not_wake_the_completed_rung(self):
+        """The alias is the whole point: `status` stays invisible to the election.
+
+        `twin_identity_rank`'s rung 4 is `status == 'completed'`. This SELECT has
+        never projected `status`, so the rung has always tied here; serving
+        `DEAD_CANONICAL` must not change that, because switching on a rung of
+        the election on a COMMITTING path is a different change with its own
+        measurement (#5841).
+        """
+        completed = Row(
+            1, BUNDESLIGA_2, "1", "a", "b", _at("2026-09-18T16:30:00"),
+            retirement_status="completed",
+        )
+        assert getattr(completed, "status", None) is None
+        assert twin_identity_rank(completed)[3] == 0
+        assert "AS retirement_status" in SELECT_ROWS_FOR_FIXTURES
+        assert "e.status," not in SELECT_ROWS_FOR_FIXTURES
+
+    def test_the_select_projects_what_the_row_mirror_claims(self):
+        """The mirror is only worth having if a rename in the statement breaks it."""
+        for column in ("s.key AS sport_key", "e.status AS retirement_status"):
+            assert column in SELECT_ROWS_FOR_FIXTURES
+        # LEFT, so a row whose sport is missing still arrives and fails closed
+        # rather than vanishing from the group and leaving a lone row.
+        assert "LEFT JOIN sports s" in SELECT_ROWS_FOR_FIXTURES
