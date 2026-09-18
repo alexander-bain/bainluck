@@ -77,7 +77,12 @@ export function ThemeBundleCard({ items, title, sharedQuestion, storyKey, positi
             question is the line the reader actually reads. */}
         <div className="flex flex-col gap-1 min-w-0">
           <span className="flex items-center gap-2 min-w-0">
-            <span className={`${catStyle.bg} ${catStyle.text} text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full whitespace-nowrap`}>
+            {/* `truncate` (not a bare `whitespace-nowrap`) — the comment above says the chip stays
+                the category badge it was, but `title` is not always a short category word, and the
+                chip cannot enforce that from here. A 45-character tournament name grew it 13.6px
+                past the card, where the card's `overflow-hidden` cut it mid-word (#6929). Same
+                markup and same defect as GroupCard; fixed the same way so the two do not drift. */}
+            <span className={`${catStyle.bg} ${catStyle.text} text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full min-w-0 max-w-full truncate`}>
               {catStyle.emoji} {title}
             </span>
             {!sharedQuestion && (
