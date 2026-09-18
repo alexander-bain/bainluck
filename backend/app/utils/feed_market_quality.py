@@ -1042,14 +1042,36 @@ def _is_asset_price_level(name: str) -> bool:
 
 # R8: "#1 yes, #2 no." A "will X be number one" market is eligible; runner-up /
 # "#2" / non-winning-rank markets are downranked.
+#
+# ── #6949: THE ORDINAL-PLACE FORM IS THE ONE THE VENUES ACTUALLY WRITE ──
+#
+# R8 knew "second place" and "finish 2nd" but not the bare `<ordinal> Place`
+# title Polymarket and Kalshi use ("Brazil Presidential Election First Round:
+# 2nd Place"). Measured on production 2026-09-18 over the 228 open markets whose
+# name carries an ordinal beside "place": the pre-#6949 pattern claimed 3 of
+# them — the three that spell "second place" in words — and let the other 171
+# non-#1 rows through as eligible. Two of those were the top of page one that
+# morning (ids 129271 / 129272, served ranks 1 and 3, `compelling` +12 where R8
+# intends -35), so a reader's first three cards were 1st, 2nd and 3rd place in
+# one Brazilian election.
+#
+# "1st place" is a WINNER market and stays eligible, so the ordinal alternative
+# is deliberately unguarded here and the exemption lives in `_NUMBER_ONE_RE`
+# below — one guard for every alternative, and it covers a name that mentions
+# both ("1st or 2nd place" is a top-2 market, not a runner-up). Both directions
+# measured on the same 228 rows: 171 claimed, all genuinely non-#1; 0 of the 54
+# rows naming 1st/first place claimed; 0 previously-claimed rows lost.
 _NUMBER_ONE_RE = re.compile(
-    r"(#\s?1\b|\bnumber one\b|\bno\.?\s?1\b|\btop of\b|\b(reach|hit|be|stay)\s+#?\s?1\b)",
+    r"(#\s?1\b|\bnumber one\b|\bno\.?\s?1\b|\btop of\b|\b(reach|hit|be|stay)\s+#?\s?1\b|"
+    r"\b(1st|first)\s+(?:or\s+\d+(?:st|nd|rd|th)\s+)?place\b)",
     re.IGNORECASE,
 )
 _RUNNER_UP_RE = re.compile(
     r"(#\s?[2-9]\d*\b|\bnumber (two|three|four|five)\b|\bno\.?\s?[2-9]\b|"
     r"\brunner.?up\b|\bfinish (second|third|fourth|2nd|3rd|4th)\b|"
-    r"\b(come|finish|place)\s+(in\s+)?(second|2nd)\b|\bsecond place\b)",
+    r"\b(come|finish|place)\s+(in\s+)?(second|2nd)\b|\bsecond place\b|"
+    r"\b\d+(st|nd|rd|th)\s+place\b|"
+    r"\b(second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s+place\b)",
     re.IGNORECASE,
 )
 
