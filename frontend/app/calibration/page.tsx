@@ -13,6 +13,9 @@ import CalibrationChart from "@/components/CalibrationChart";
 // UX-P128: the Source Comparison row prints numbers, so it is mountable rather
 // than inline — a render defect is not provable by grepping the page source.
 import SourceComparisonRow from "@/components/SourceComparisonRow";
+// #6292: same reason as UX-P128 above — the bucket table's phone layout is a
+// markup fact, so it is mountable rather than inline.
+import CalibrationBucketTable from "@/components/CalibrationBucketTable";
 import { CalibrationCardNote } from "@/components/CalibrationCardNote";
 import {
   buildSourcePanels,
@@ -1495,38 +1498,12 @@ export default function CalibrationPage() {
       {/* Table */}
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
         <h2 className="text-title-3 text-text-primary mb-3">Calibration Table<CohortTag cohort={cohort} /></h2>
-        <div className="overflow-x-auto scroll-shadow-x">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-text-muted uppercase tracking-normal sm:tracking-wide">
-                <th className="pb-2 pr-1 sm:pr-4">Bucket</th>
-                <th className="pb-2 pr-1 sm:pr-4 text-right">N</th>
-                <th className="pb-2 pr-1 sm:pr-4 text-right">Avg Predicted</th>
-                <th className="pb-2 pr-1 sm:pr-4 text-right">Actual Rate</th>
-                <th className="pb-2 pr-1 sm:pr-4 text-right">95% CI</th>
-                <th className="pb-2 text-right">Error</th>
-              </tr>
-            </thead>
-            <tbody>
-              {cohortBuckets.map(b => (
-                <tr key={b.bucket} className="border-t border-surface-border">
-                  <td className="py-2 pr-1 sm:pr-4">{b.bucket}</td>
-                  <td className="py-2 pr-1 sm:pr-4 text-right tabular-nums">{b.n.toLocaleString()}</td>
-                  <td className="py-2 pr-1 sm:pr-4 text-right tabular-nums">{b.avgProb}%</td>
-                  <td className="py-2 pr-1 sm:pr-4 text-right tabular-nums">{b.actual}%</td>
-                  <td className="py-2 pr-1 sm:pr-4 text-right tabular-nums text-text-muted">
-                    {b.ciLower.toFixed(1)}-{b.ciUpper.toFixed(1)}%
-                  </td>
-                  <td className={`py-2 text-right tabular-nums ${
-                    Math.abs(b.error) < 3 ? "text-text-muted" : b.error > 0 ? "text-green-600" : "text-red-600"
-                  }`}>
-                    {b.error > 0 ? "+" : ""}{b.error}pp
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        {/* #6292 / CAL-P1353: six columns do not fit 390px, and the one that fell
+            off the edge was `Error`. Extracted so the markup can be rendered and
+            asserted on its own — a node-environment suite has no layout engine,
+            so the component IS the only thing a test can see. The measurement,
+            the reasoning and the production probe are in the component's header. */}
+        <CalibrationBucketTable buckets={cohortBuckets} />
       </section>
 
       {/* By Source — one panel per PROVIDER, matching Source Comparison above.
