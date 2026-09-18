@@ -566,7 +566,7 @@ struct EventDetailView: View {
     /// the substituted value, so flooring one side cannot collapse the two onto
     /// one colour. See `TeamTextContrast`.
     private func teamColors(_ event: EventDetail) -> (away: Color, home: Color) {
-        TeamTextContrast.eventPageColors(
+        TeamTextContrast.cardColors(
             awayHex: event.awayTeamData?.primaryColor,
             homeHex: event.homeTeamData?.primaryColor
         )

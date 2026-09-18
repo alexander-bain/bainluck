@@ -97,27 +97,39 @@ enum TeamTextContrast {
         readableOnCard(hex) ? hex : nil
     }
 
-    // MARK: - What the event page calls
+    // MARK: - What a card calls
 
-    /// The event page's away/home pair: #2902's palette with #7036's floor under
-    /// it, as hexes.
+    /// A card's away/home pair: #2902's palette with #7036's floor under it, as
+    /// hexes.
     ///
-    /// This exists as a named function rather than two lines inside
-    /// `EventDetailView.teamColors` because otherwise **the floor's wiring is
-    /// the one part of this fix no test can reach** — the unit tests below would
-    /// all stay green against a call site that had quietly gone back to passing
-    /// raw `primaryColor`, which is precisely the mutant worth killing. Hoisting
-    /// it here leaves only a single-expression delegation in the view.
-    static func eventPageColorHexes(awayHex: String?, homeHex: String?) -> (away: String, home: String) {
+    /// **Named for the surface, not for one page.** This shipped as
+    /// `eventPageColorHexes` when the event page was the only caller. It is now
+    /// what every white card in the app resolves its pair through — the event
+    /// page's Championship Path, the Sports/My Stuff/feed row
+    /// (`EventCardView`), and the Discover game card
+    /// (`NativeEventDiscoverCard`) — because the defect was never the event
+    /// page's: it is one function of the stored colour and the surface, and all
+    /// three surfaces are `Color.cardBackground`. A name that says "event page"
+    /// on a function three other screens depend on is how the next caller talks
+    /// itself into a fourth copy.
+    ///
+    /// This exists as a named function rather than two lines inside each view
+    /// because otherwise **the floor's wiring is the one part of this fix no
+    /// test can reach** — the unit tests below would all stay green against a
+    /// call site that had quietly gone back to passing raw `primaryColor`, which
+    /// is precisely the mutant worth killing. Hoisting it here leaves only a
+    /// single-expression delegation in each view, and each view exposes that
+    /// delegation so a test can drive it on a real payload.
+    static func cardColorHexes(awayHex: String?, homeHex: String?) -> (away: String, home: String) {
         ProbabilityBarPalette.pair(
             awayHex: usableForText(awayHex),
             homeHex: usableForText(homeHex)
         )
     }
 
-    /// `eventPageColorHexes` as `Color`s, away first — the form the views take.
-    static func eventPageColors(awayHex: String?, homeHex: String?) -> (away: Color, home: Color) {
-        let hexes = eventPageColorHexes(awayHex: awayHex, homeHex: homeHex)
+    /// `cardColorHexes` as `Color`s, away first — the form the views take.
+    static func cardColors(awayHex: String?, homeHex: String?) -> (away: Color, home: Color) {
+        let hexes = cardColorHexes(awayHex: awayHex, homeHex: homeHex)
         return (Color(hex: hexes.away), Color(hex: hexes.home))
     }
 }
