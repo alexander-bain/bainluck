@@ -249,4 +249,29 @@ final class CrestBadgeNamesAPerson4624Tests: XCTestCase {
                           "hero circle \(index) draws a badge without telling it the sport")
         }
     }
+
+    /// The circle's OWN body, for the same reason and found the same way: a
+    /// mutation that deleted `sportKey:` from `initialsFallback` left every test
+    /// above green. `TeamLogoView.badge` is static and directly asserted, so the
+    /// RULE is covered — but `initialsFallback` is a `some View` body, so whether
+    /// the view actually hands its property to that rule is reachable only from
+    /// the source. It is the identical omission the hero had, one layer down: the
+    /// property has been on this view since the ESPN logo fallback, and the badge
+    /// was the one thing not reading it.
+    func testTheCircleBodyPassesItsOwnSportKey() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()   // BainLuckTests
+                .deletingLastPathComponent()   // Bain Luck (project dir)
+                .appendingPathComponent("Bain Luck/Components/TeamLogoView.swift"),
+            encoding: .utf8
+        )
+        XCTAssertFalse(source.isEmpty, "TeamLogoView.swift is not where this test thinks it is")
+        let calls = source.components(separatedBy: "Self.badge(").dropFirst()
+        XCTAssertEqual(calls.count, 1, "the circle's badge call count moved; re-read this guard")
+        for call in calls {
+            XCTAssertTrue(call.prefix(while: { $0 != ")" }).contains("sportKey: sportKey"),
+                          "the circle draws its own badge without telling it the sport it holds")
+        }
+    }
 }
