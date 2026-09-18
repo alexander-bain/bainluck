@@ -2575,6 +2575,13 @@ export interface EventConceptResponse {
     // the clean tournament slug). Absent on domains that haven't adopted it yet.
     slug?: string | null;
     domain: string;
+    // #5603 (Brief18), event-page half: the EVIDENCED sport for this event, when
+    // the server has one. `domain` is the routing namespace (`event:ufc:<token>`
+    // covers all of MMA plus slap fighting), so it is not a label — see
+    // `conceptDomainLabel`. Absent, never null-as-blank, on every domain the
+    // backend makes no claim about, and absent from any envelope cached before
+    // PR #6801 released (`/api/event` carries an 86400s positive mirror).
+    sport_label?: string | null;
     name: string | null;
     status: "upcoming" | "live" | "settled";
     start_date?: string | null;
