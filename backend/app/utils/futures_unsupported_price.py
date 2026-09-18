@@ -107,6 +107,7 @@ from app.utils.kalshi_empty_book import (
     is_lone_ask_in_exclusive_field,
     is_lone_ask_on_empty_book,
 )
+from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
 
 #: The outcome relations that PROVE a single-winner partition (#6846). Mirrors
 #: ``app.tasks.precompute_calibration.EXCLUSIVITY_PROVED_RELATIONS``, which is the
@@ -125,6 +126,23 @@ from app.utils.kalshi_empty_book import (
 #: rule 3 by a test rather than by an import.
 EXCLUSIVITY_PROVED_RELATIONS = frozenset({"competitors", "exclusive_ranges"})
 
+#: Every ``resolution_source`` that is a RETRACTION rather than a verdict (#6876).
+#: Imported, never restated: ``kalshi_fabricated_loss`` already names the one
+#: spelling, and ``resolution_authority`` already classifies it — tier 1 TERMINAL,
+#: "a RETRACTION, not a grade ... It asserts no winner, so it is structurally
+#: no-winner and calibration-truth INELIGIBLE".
+#:
+#: The set has exactly one member and the other seven tier-1 sources are
+#: deliberately NOT in it. ``did_not_play``, ``withdrew``, ``all_losers``,
+#: ``pass2_loser`` and ``date_passed`` all DECLARE a loss and ``clean_resolution``
+#: is a soft close - every one of them is a settlement value of 0, which is the
+#: thing the grade exemption exists to protect. Only ``ungradeable_result`` says
+#: "we asked and there is no result", and only it is therefore still a quote.
+#: Keying on the named retraction rather than on a property (tier, calibration
+#: eligibility) is deliberate: those answer "how good is this grade", and the
+#: question here is "is there a grade at all".
+RETRACTED_GRADE_SOURCES = frozenset({RETRACTION_SOURCE})
+
 #: The bookmaker string the Polymarket futures writers stamp on every snapshot
 #: (``app/tasks/polymarket.py``, four call sites) and the ``source`` a Polymarket
 #: futures market carries. One spelling, named once.
@@ -133,8 +151,10 @@ POLYMARKET_BOOKMAKER = "polymarket"
 __all__ = [
     "EXCLUSIVITY_PROVED_RELATIONS",
     "POLYMARKET_BOOKMAKER",
+    "RETRACTED_GRADE_SOURCES",
     "WITHHELD_PRICE_FIELDS",
     "market_is_proved_exclusive_field",
+    "row_carries_a_verdict",
     "midpoint_refuted_by_last_trade",
     "needs_trade_disconfirmation",
     "needs_trade_evidence",
@@ -142,6 +162,77 @@ __all__ = [
     "price_refuted_by_live_book",
     "snapshot_price_is_unsupported",
 ]
+
+
+def row_carries_a_verdict(resolution_source: Optional[str]) -> bool:
+    """True when this ``resolution_source`` means a result was actually declared (#6876).
+
+    THE GRADE EXEMPTIONS IN THIS FILE ASK THIS QUESTION AND USED TO SPELL IT
+    ``resolution_source is not None``. That spelling is right for every source but
+    one, and the one it is wrong about is the second-largest source on the very
+    population those exemptions screen.
+
+    WHAT A READER SAW. ``/futures/52755817`` ("2026 Pro Basketball Cup Champion")
+    printed **eight teams at 29%** - Portland, Sacramento, Brooklyn, Chicago, the
+    Clippers, Memphis and Milwaukee tied behind Oklahoma City's 30%, ranked 2
+    through 9 by nothing - over a 30-team single-winner column summing to **489%**,
+    with ``prices_withheld: 0`` and a Probability Trend drawing three flat
+    overlapping lines because they are the same number. Seven of those eight have
+    never traded: ``current_yes_bid 0.0000 / current_yes_ask 0.2900 / newest Kalshi
+    snapshot last_price 0.0000``. The market resolves **2027-01-31**.
+
+    WHY EVERY SHIPPED RAIL MISSED IT. The market's shape is PROVED exclusive
+    (``field / exhaustive / expected_winners 1 / competitors``), so #6846's
+    widening applies and the ask bound is dropped - but every leg carries
+    ``resolution_source = 'ungradeable_result'``, and :func:`needs_trade_evidence`
+    returned False at its grade clause before the field term was ever reached. The
+    exemption written to protect verdicts was claimed by rows that have none.
+
+    ``ungradeable_result`` IS A RETRACTION, AND THIS CODEBASE ALREADY SAYS SO in
+    three places that predate this function. ``resolution_authority`` classifies it
+    tier 1 TERMINAL with the words "a RETRACTION, not a grade ... It asserts no
+    winner, so it is structurally no-winner and calibration-truth INELIGIBLE";
+    ``routes/league_futures.py`` repeats "``ungradeable_result`` is a RETRACTION";
+    ``routes/events.py`` keeps it OUT of the verdict set and carries a tier test
+    that exists to hold it out. It is the grader recording that it could not grade.
+    There is no result to delete and no settled-language answer (#4788, #5549,
+    #5820) to pre-empt, because the row renders no verdict today - that is what the
+    retraction means. The number beside it is a live quote and must face the price
+    rails like any other quote.
+
+    MEASURED, production 2026-09-18. Open Kalshi legs quoting an ask-only book
+    (``current_yes_bid = 0``, ``ask > 0``, a price served), by what sits in
+    ``resolution_source``::
+
+        NULL (rail runs - correct)                     12,656 legs / 1,448 markets
+        ungradeable_result (rail disarmed by this bug) 10,759 legs /   999 markets
+        api_settlement (real verdict - stays exempt)    6,111 legs / 1,106 markets
+        clean_resolution / all_losers / pass2_loser        109 legs /    28 markets
+
+    Of the 10,759, those that also pass a bound term are 8,112 legs / 558 markets
+    (proved field) and 265 legs / 55 markets (standalone, ``ask > 0.50``). Replaying
+    the WHOLE predicate including the trade read, on a 1-in-10 sample of those: 255
+    of 820 proved-field legs are withheld (31%, 131 markets) and **0 of 31**
+    standalone legs are. Two thirds keep their number because they carry a real
+    recorded trade, which is rule 2 ("trade evidence beats a wide book") doing
+    exactly its job. On the specimen, 10 of the 14 ask-only legs go blank and four
+    keep their price - the seven-way 29% tie collapses to the one leg somebody
+    traded at 29.
+
+    FAILS CLOSED, WHICH FOR A RULE THAT WITHHOLDS MEANS "KEEP THE EXEMPTION". The
+    test is written as a denylist of one rather than an allowlist of the seven known
+    verdict sources, deliberately: a source this file has never heard of - a new
+    grader, a rail added after this was written - reads as a verdict and keeps
+    today's exemption, so the only row this change can newly blank is one carrying
+    the single source the codebase already calls a retraction. An allowlist would
+    silently start withholding on every future source the day it shipped, which is
+    the opposite of the direction a withholding rule should guess in.
+    ``resolution_authority.KNOWN_SOURCES`` is the completeness guard for that space
+    and it is not this function's job to duplicate it.
+    """
+    if resolution_source is None:
+        return False
+    return resolution_source not in RETRACTED_GRADE_SOURCES
 
 
 def market_is_proved_exclusive_field(
@@ -226,10 +317,16 @@ def needs_trade_evidence(
     wire. Withholding here would quietly pre-empt that answer and delete a
     result. Measured: 4,444 of the 6,918 open Kalshi legs quoting an empty book
     are graded, so this clause is the majority of the raw shape, not a corner.
+
+    #6876 NARROWS "GRADED" TO "CARRIES A VERDICT" AND CHANGES NOTHING ELSE. The
+    clause above is right about every source that declares a result and wrong about
+    the one that retracts one: ``ungradeable_result`` asserts no winner, so the
+    number beside it is still a quote. :func:`row_carries_a_verdict` holds that
+    distinction, with the measurement and the reader-visible cost.
     """
     if (source or "").strip().lower() != KALSHI_BOOKMAKER:
         return False
-    if resolution_source is not None:
+    if row_carries_a_verdict(resolution_source):
         return False
     if yes_bid is None or yes_ask is None:
         return False
@@ -370,6 +467,18 @@ def price_refuted_by_live_book(
     An UNGRADED row is a quote and gets the shipped predicate whole, both arms: a
     number the live book prices out is refuted whichever side prices it out.
 
+    AND A RETRACTED ROW IS AN UNGRADED ROW (#6876), which is the same sentence
+    applied to a source that only looks like a grade. All 34,992 open Kalshi legs
+    carrying ``ungradeable_result`` also carry ``is_winner = false``, so every one
+    of them used to take the graded-LOSER branch below and be asked the ask arm
+    alone. That branch is justified by "its number must be ~0" - true of a declared
+    loss, false of a retraction, whose number is a live quote. So they now take the
+    ungraded path and are asked both arms. Measured delta on production 2026-09-18:
+    **10 legs on open markets** (the bid arm; the ask arm already fired on 157 of
+    them and those verdicts do not move). The graded winner, the verdict-less graded
+    row and the genuinely graded loser are all untouched -
+    :func:`row_carries_a_verdict` affirms every source but the one.
+
     SCOPED TO KALSHI, DELIBERATELY, and this one does not port. Polymarket's rule
     for these columns is a different one (gotcha #19: a wide spread falls back to
     ``lastTradePrice``), so a Polymarket price legitimately sits above its own ask
@@ -388,7 +497,7 @@ def price_refuted_by_live_book(
         return False
     if probability is None:
         return False
-    if resolution_source is not None:
+    if row_carries_a_verdict(resolution_source):
         if is_winner is not False:
             return False
         # A graded loser: the ask arm alone, for the reason above. Passing no bid
@@ -439,6 +548,16 @@ def needs_trade_disconfirmation(
     :func:`needs_trade_evidence` gives at length: once ``resolution_source`` is
     set the number is a settlement value, not a quote, and withholding it would
     delete a result and pre-empt the settled-language ship (#4788, #5549, #5820).
+
+    THIS CLAUSE KEEPS THE BARE ``is not None`` TEST WHILE ITS TWO SIBLINGS MOVED TO
+    :func:`row_carries_a_verdict` (#6876), and that is measured, not an oversight.
+    The retraction the helper carves out is written on KALSHI rows only - 34,993
+    open plus 3,854 resolved, and **zero** Polymarket legs on production 2026-09-18
+    - while this function returns False for anything that is not Polymarket two
+    lines down. Routing it through the helper would read as consistency and would in
+    fact be an unmeasured widening on a population that does not exist. If a
+    Polymarket writer ever mints a retraction, this is the line that has to change,
+    and this paragraph is why.
     """
     if (source or "").strip().lower() != POLYMARKET_BOOKMAKER:
         return False
