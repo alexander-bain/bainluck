@@ -234,11 +234,24 @@ class TestTheSerializerPublishesTheRefusal:
     def test_every_restatement_of_the_price_falls_with_it(self):
         """Leaving `american_odds` would let any consumer reconstruct exactly the
         price just refused; leaving `probability_change_24h` prints a move
-        measured from a number we declined to state."""
+        measured from a number we declined to state.
+
+        EXACT EQUALITY, STILL, AND IT BINDS BOTH WAYS. Dropping a spelling makes
+        the refusal reconstructible; ADDING one that is not a restatement of the
+        price would null a field the reader is entitled to (a name, an id, a
+        resolution source). So the set is enumerated rather than bounded, and a
+        new member has to be argued for here.
+
+        `movement` (#6993) is the fourth. It is not a new field — it is
+        `probability_change_24h` under the name `/browse` and `/faceted` give it,
+        and the tuple is keyed on PRESENCE, so a payload that spells the delta
+        differently slipped the refusal while looking covered.
+        """
         assert set(WITHHELD_PRICE_FIELDS) == {
             "probability",
             "american_odds",
             "probability_change_24h",
+            "movement",
         }
 
     def test_an_untouched_row_keeps_everything(self):

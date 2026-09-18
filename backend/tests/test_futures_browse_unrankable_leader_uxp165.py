@@ -76,6 +76,17 @@ class FakeOutcome:
         self.external_id = None
         self.current_probability = prob
         self.probability_change_24h = movement
+        # #6993: browse now asks `_withheld_price_outcome_ids` before it sorts,
+        # and the Kalshi/Polymarket arms read these three off the outcome row.
+        # A production row always carries them (browse `selectinload`s the whole
+        # entity), so their absence here was a gap in the fake, not a contract
+        # the route may not rely on. NULL/None throughout is the shape of an
+        # ungraded leg with no book — which screens out of every arm before any
+        # query, so these specimens exercise ranking exactly as they did before.
+        self.resolution_source = None
+        self.current_yes_bid = None
+        self.current_yes_ask = None
+        self.is_winner = False
 
 
 class FakeMarket:

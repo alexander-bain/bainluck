@@ -287,10 +287,21 @@ def market_is_proved_exclusive_field(
 #: another notation, and ``probability_change_24h`` is a delta measured FROM the
 #: value being withheld — publishing "up 50.0 pts" while refusing to say up to
 #: what is the #5539 mistake in a second costume.
+#:
+#: THE TUPLE IS KEYED ON PRESENCE, SO IT COVERS A FIELD A PAYLOAD GAINS LATER —
+#: BUT NOT ONE IT SPELLS DIFFERENTLY. #6993's browse/faceted arm is that case:
+#: both serve the 24h delta under the key ``movement``, so a presence-keyed loop
+#: over the three names above walked straight past it and would have served
+#: ``{"probability": null, "movement": 0.5}`` — the withheld number's own delta,
+#: which is the second costume this comment already warns about. It is listed
+#: here rather than nulled at those two call sites so the set of "spellings of
+#: the refused price" stays in one place; presence-keying means no existing
+#: caller changes behaviour by its addition.
 WITHHELD_PRICE_FIELDS = (
     "probability",
     "american_odds",
     "probability_change_24h",
+    "movement",
 )
 
 
