@@ -81,6 +81,33 @@ GHOST_AWAY = "Real Madrid"
 UNACCENTED_QUERY = "Atletico Madrid"
 
 
+@pytest.fixture(autouse=True)
+def _isolate_the_bridge_from_the_diacritic_fold(monkeypatch):
+    """#6977 shipped, so this file must now say which mechanism it is grading.
+
+    The counterfactual below foresaw this in writing: "if search ever learns to
+    fold diacritics (#6977) this case is the one that will go red, and it
+    should: the bridge would no longer be what earns that row." It did, and it
+    was right — with the fold live, `Atletico Madrid` reaches the accented
+    canonical DIRECTLY, so the positive case above would pass with the bridge
+    deleted, and the two counterfactuals fail because their premise is gone.
+
+    The fold is switched off HERE, and only here, so this file keeps grading the
+    BRIDGE in isolation. The alternative — re-specimening onto a name the fold
+    cannot reach — would have thrown away a fixture transcribed from production,
+    to test the same thing less faithfully.
+
+    This is isolation, not suppression: the fold's own ship is proved on the same
+    specimen, through the same route, in
+    `test_search_diacritic_fold_pg_6977.py`. Both mechanisms are live in
+    production and BOTH reach this derby; that redundancy is deliberate, and
+    #6977's module docstring carries the mutation measurements for it.
+    """
+    from app.utils import name_normalization
+
+    monkeypatch.setattr(name_normalization, "DIACRITIC_SEARCH_FOLDS", {})
+
+
 @pytest.fixture
 async def maker():
     """A clean schema and a sessionmaker, per test.
