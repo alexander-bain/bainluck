@@ -233,14 +233,18 @@ class TestTheRefactorDidNotMoveTheShippedRule:
                         )
 
     def test_the_default_keeps_every_existing_caller_where_it_was(self):
+        # No `last_price` dimension here, deliberately: `needs_trade_evidence`
+        # takes no such argument — it is the cheap row-only screen, and the trade
+        # term is `price_is_unsupported`'s. An earlier revision looped one anyway
+        # and CodeQL called it (py/unused-loop-variable, "1 new alert including 1
+        # error"): three identical assertions wearing a matrix's clothes.
         for bid in (None, 0.0, 0.001):
             for ask in (None, 0.39, 0.98):
-                for last in (None, 0.0, 0.3):
-                    assert needs_trade_evidence("kalshi", None, bid, ask) is (
-                        needs_trade_evidence(
-                            "kalshi", None, bid, ask, in_exclusive_field=False
-                        )
+                assert needs_trade_evidence("kalshi", None, bid, ask) is (
+                    needs_trade_evidence(
+                        "kalshi", None, bid, ask, in_exclusive_field=False
                     )
+                )
 
 
 class TestExclusivityIsProvedNotAssumed:
