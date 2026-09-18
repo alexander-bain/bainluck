@@ -1281,6 +1281,17 @@ async def get_shared_build_stats(
     nobody could act on, because the number could not say which of the ten it
     was. `failure_reasons_total` sums them so the fused counter and the named
     causes can be checked against each other from one read.
+
+    LAT-P272 adds `fleet`, and it is the half that makes the split ACTIONABLE.
+    Naming the cause was worth little while the number could only be read one
+    unidentified worker at a time: the asymmetry above IS the finding, and no
+    number of samples of a per-process dict can measure it — N samples are N
+    draws from an unknown mixture, and Heroku pids repeat across dynos, so even
+    `worker_pid` cannot separate two workers with certainty. Every worker now
+    publishes its snapshot to one Redis hash and this merges them, so
+    `fleet.workers[]` carries a per-worker failure RATE against that worker's
+    own read volume. **Read `fleet.available` first** — an unreachable rail and
+    a clean fleet both produce zeros, and only one of them means clean.
     """
     _check_admin_secret(secret, request=request)
 
@@ -1289,7 +1300,9 @@ async def get_shared_build_stats(
     from app.utils.principal_independent_cache import (
         CROSS_WORKER_FAILURE_REASONS,
         SHARED_ARTIFACT_NAMES,
+        read_failure_rail,
         shared_build_stats,
+        worker_identity,
     )
 
     stats = shared_build_stats()
@@ -1308,18 +1321,34 @@ async def get_shared_build_stats(
     for _ns_reasons in (stats.get("failure_reasons") or {}).values():
         for _reason, _count in _ns_reasons.items():
             reasons_total[_reason] = reasons_total.get(_reason, 0) + _count
+
+    # LAT-P272. The fleet half. Everything above this line describes ONE process
+    # and cannot be made to describe more by sampling it repeatedly. `fleet` is
+    # read from the shared rail every worker publishes to, so
+    # `fleet.workers[].failure_rate` answers what the per-process view
+    # structurally cannot: WHICH worker is failing, and at what rate against its
+    # own read volume. Never raises — a rail it cannot read comes back
+    # `available: false` with a reason, and this endpoint still serves `stats`.
+    fleet = await read_failure_rail()
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "worker_pid": _os.getpid(),
-        "scope": "this worker process only — see `caveat`",
+        "worker_identity": worker_identity(),
+        "scope": (
+            "`stats` = this worker process only (see `caveat`); "
+            "`fleet` = every worker that has reported to the shared rail"
+        ),
         "caveat": (
-            "In-memory per-process counters. A NONZERO value is real; a zero is "
-            "not proof of absence, because this request sampled one worker of "
-            "WEB_CONCURRENCY and that worker may be freshly started."
+            "`stats` is in-memory per-process counters. A NONZERO value is real; "
+            "a zero is not proof of absence, because this request sampled one "
+            "worker of WEB_CONCURRENCY and that worker may be freshly started. "
+            "For a fleet-wide reading use `fleet`, and check `fleet.available` "
+            "before reading any number inside it."
         ),
         "stats": stats,
         "publish_refused_namespaces": refused,
         "failure_reasons_total": dict(sorted(reasons_total.items())),
+        "fleet": fleet,
         "shared_artifact_names": sorted(SHARED_ARTIFACT_NAMES),
         "known_failure_reasons": sorted(CROSS_WORKER_FAILURE_REASONS),
     }
