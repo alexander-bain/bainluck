@@ -5,7 +5,8 @@
  * The team endpoint doesn't ship rival probabilities, but the existing
  * `/api/playoffs/{slug}` championship grid already carries every team's per-stage
  * merged probability plus `division`/`conference` metadata. We reuse it: filter
- * to the current team's division, project the Division / Playoffs / Champion
+ * to the current team's division WITHIN ITS CONFERENCE (#6992 — the division name
+ * alone is not a unique pool in MLB), project the Division / Playoffs / Champion
  * columns, and mark the current team's row so the page can highlight it.
  *
  * Kept side-effect-free and SSR-safe so it is unit-testable and generalizes
@@ -85,7 +86,20 @@ export function buildDivisionRace(
   const me = findTeam(grid.teams, teamId, teamName);
   if (!me || !me.division) return null;
 
-  const peers = grid.teams.filter((t) => t.division === me.division);
+  // #6992 — the pool is the (conference, division) PAIR, not the division name.
+  // MLB serves `division` UNQUALIFIED ("East"/"Central"/"West") with the league in
+  // `conference`, so keying on the name alone matched BOTH leagues' East: ten teams,
+  // two ~certain division leaders (Rays 94% and Braves 98%), and a DIVISION column
+  // summing to 206%. All three MLB divisions, all 30 team pages. NFL pre-qualifies
+  // its names ("AFC East") and NBA/NHL names are unique across conferences, so the
+  // extra clause narrows nothing there — measured on all four live grids.
+  // Fail open when the grid doesn't carry OUR conference: we cannot narrow honestly,
+  // and comparing against a null would drop every peer and silently empty the
+  // section. Same rule the `div_rank` label already follows on the team page — a
+  // number must name the pool it was counted over.
+  const peers = grid.teams.filter(
+    (t) => t.division === me.division && (!me.conference || t.conference === me.conference),
+  );
   if (peers.length < 2) return null;
 
   const meId = me.team_id;
