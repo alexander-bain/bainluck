@@ -15,10 +15,8 @@ and are marked `swift: True` — they are slower and are run with --swift.
 """
 
 import pathlib
-import shutil
 import subprocess
 import sys
-import tempfile
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 VIEW = REPO / "ios/Bain Luck/Bain Luck/Views/PreferencesView.swift"
@@ -175,9 +173,10 @@ def main() -> int:
             path.write_text(original.replace(old, new), encoding="utf-8")
 
         try:
-            with tempfile.TemporaryDirectory():
-                green, summary = run_swift() if is_swift else run_backend()
+            green, summary = run_swift() if is_swift else run_backend()
         finally:
+            # Always restore, including on Ctrl-C: a mutant left in the tree is
+            # a defect shipped by the battery that was meant to catch it.
             path.write_text(original, encoding="utf-8")
 
         if is_control:

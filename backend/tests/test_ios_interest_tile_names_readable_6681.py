@@ -68,26 +68,46 @@ def _source() -> str:
     )
 
 
-def test_the_tile_name_render_carries_the_scale_floor():
-    """The floor is on the NAME, anchored to that render and no other."""
-    src = _source()
+def _name_render_block(src: str) -> str:
+    """The `Text(item.name)` render plus the modifier chain hanging off it.
 
-    # Anchor on the render itself: Text(item.name) through to the floor, with
-    # only modifier lines between.  A floor added anywhere else in the file
-    # cannot satisfy this.
-    name_render = re.search(
-        r"Text\(item\.name\)(?:\s*\.\w+\([^\n]*\)|\s*\.\w+\s*\{[^\n]*)*"
-        r"\s*\.minimumScaleFactor\(AffinityRowMetrics\.nameMinimumScaleFactor\)",
-        src,
-    )
-    assert name_render, (
+    Walked line by line rather than matched with one regex spanning the chain:
+    the obvious pattern for "a call followed by any number of `.modifier(...)`"
+    puts an alternation inside a star, which backtracks exponentially and which
+    CodeQL correctly refuses (2 high-severity alerts on the first cut of this
+    file).  A linear walk is also the clearer statement of the intent — take
+    the render line, then every line that continues its chain.
+    """
+    lines = src.splitlines()
+    for index, line in enumerate(lines):
+        if "Text(item.name)" not in line:
+            continue
+        block = [line]
+        for following in lines[index + 1:]:
+            if not following.strip().startswith("."):
+                break
+            block.append(following)
+        return "\n".join(block)
+    return ""
+
+
+def test_the_tile_name_render_carries_the_scale_floor():
+    """The floor is on the NAME, anchored to that render and no other.
+
+    A floor added anywhere else in the file cannot satisfy this: the block is
+    the tile-name render and its own chain, nothing else.
+    """
+    block = _name_render_block(_source())
+    assert block, "The `Text(item.name)` render is gone or renamed"
+
+    assert ".minimumScaleFactor(AffinityRowMetrics.nameMinimumScaleFactor)" in block, (
         "The Settings → Your Interests tile name no longer carries "
         "`.minimumScaleFactor(AffinityRowMetrics.nameMinimumScaleFactor)`. "
         "Without it the three long names truncate again (#6681) and the Swift "
         "guard, which measures the constant rather than the view, stays green."
     )
 
-    assert ".lineLimit(1)" in name_render.group(0), (
+    assert ".lineLimit(1)" in block, (
         "The name render lost `.lineLimit(1)`. minimumScaleFactor only shrinks "
         "text that would otherwise truncate; with wrapping allowed the row "
         "grows instead and the measured budget stops describing it."
