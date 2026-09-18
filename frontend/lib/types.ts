@@ -2480,6 +2480,9 @@ export interface SportHierarchyListResponse {
 export interface EventConceptCompetitor {
   name: string;
   probability: number | null;
+  // #6816: the server's decided whole percent for a proven two-sided bout's hero
+  // (combat `co_equal_list`). Both-or-neither via `servedBoutPercents`.
+  rendered_percent?: number | null;
   // L2-81: authoritative settled winner flag (from resolution). When the event is
   // settled the leaderboard renders the champion as "Won" instead of a stale %.
   won?: boolean | null;
@@ -2553,7 +2556,16 @@ export interface EventConceptChild {
   // (or a `settled` outcome carries `won:true`) the stage card renders the winner +
   // "Won" chip instead of two riders at 90%+ stale independent-binary prices.
   graded_winner?: string | null;
-  outcomes?: { name: string; probability: number | null; won?: boolean | null }[];
+  // #6816: `rendered_percent` — the whole percent the SERVER decided for this row
+  // when the child is a proven two-sided bout (combat `kind: "fight"`), so the pair
+  // cannot print 74 / 28. Read it through `servedBoutPercents` (both or neither),
+  // never per row. Absent on a pre-#6816 cached envelope and on every other child.
+  outcomes?: {
+    name: string;
+    probability: number | null;
+    won?: boolean | null;
+    rendered_percent?: number | null;
+  }[];
   // L2-84: UFC cards tag children so the page splits fights (matchups rail) from
   // props (dedicated props section). Other domains leave these unset (all → rail).
   // L2-130: soccer bracket games tag `kind:"matchup"` and render as team duels.

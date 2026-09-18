@@ -32,6 +32,7 @@ from sqlalchemy.orm import selectinload
 from app.utils.event_matcher import player_key
 from app.utils.feed_market_quality import bout_price_is_supported
 from app.utils.futures_market_snapshot import concept_price_observed_at_iso
+from app.utils.graded_card import rendered_duel_percents
 from app.utils.name_normalization import clean_slug, strip_diacritics
 from app.utils.settledness import price_converged, settled_under_assigned_state
 
@@ -589,6 +590,386 @@ def printable_probabilities(sides) -> list[float | None]:
     if len(triples) == 2 and not bout_price_is_supported(triples):
         return [None] * len(triples)
     return values
+
+
+# ---------------------------------------------------------------------------
+# #6816 — the two whole percents a PROVEN bout prints, decided once, here.
+# ---------------------------------------------------------------------------
+
+#: The additive wire field. The SAME name and meaning the feed already serves on a
+#: card's outcome rows (`feed._apply_card_percents`, #2060/#2088): the whole percent
+#: the server rendered for this row under the card rule, never one independent
+#: rounding per side. Optional on the wire — a payload cached before this shipped
+#: does not carry it, and a consumer falls back WHOLE to what it printed before.
+DISPLAY_PERCENT_FIELD = "rendered_percent"
+
+#: Outcome names that are an ANSWER, not a fighter. A two-row market carrying one
+#: of these is a claim, a draw leg or a ladder rung, and is never a bout's pair.
+_NOT_A_FIGHTER = frozenset(
+    {
+        "yes",
+        "no",
+        "draw",
+        "tie",
+        "no contest",
+        "nc",
+        "over",
+        "under",
+        "other",
+        "neither",
+        "field",
+    }
+)
+
+#: Words that make a row a PROP PHRASE rather than a person's name. Containment
+#: alone is the trap `venue_bout_is_priced` documents: "Haig in Round 3" contains
+#: the titled "Haig", and so would pass for the fighter. A name carries none of
+#: these and no digits; a row that does is refused.
+_PROP_PHRASE_WORDS = frozenset(
+    {
+        "in",
+        "by",
+        "round",
+        "rounds",
+        "ko",
+        "tko",
+        "decision",
+        "submission",
+        "distance",
+        "points",
+        "wins",
+        "win",
+        "to",
+        "or",
+        "and",
+        "method",
+        "finish",
+        "stoppage",
+    }
+)
+
+#: `FuturesMarket.market_type` values a proven bout may carry. NULL is admitted
+#: because the shape backfill has not reached every row (`market_shape`'s own
+#: header: the column was 100% NULL at census) — an ASSIGNED shape that is not a
+#: duel is a refusal; an unassigned one is no evidence either way.
+_BOUT_MARKET_TYPES = frozenset({None, "duel"})
+
+
+# ---------------------------------------------------------------------------
+# #6816 (Brief 22A) — the SETTLEMENT CONTRACT is the proof a pair is one question.
+# ---------------------------------------------------------------------------
+#
+# Two rows, matching names and a sum near one are SHAPE and ARITHMETIC evidence.
+# They say the rows are the two fighters; they do not say what the venue pays
+# when neither fighter wins. That is the missing term, and it is not a corner
+# case: a fight CAN end in a draw or a no contest, and "mutually exclusive" —
+# at most one side resolves Yes — is satisfied by a rule that pays BOTH sides
+# nothing on a draw. Under such a rule the two quotes are not complements: the
+# draw's probability lives in the gap between them, can sit below a point, and
+# a pair normalised across the band would round that third result into one
+# fighter's number. Neither can a near-one sum stand in for the rule — two
+# separate quotes can sum near one by coincidence.
+#
+# So a family's two rows may only print as ONE decision when its settlement
+# contract makes the pair EXHAUSTIVE — in every way the bout can end, the two
+# contracts pay out summing to the whole. That rule is not inferable from the
+# row: the ingest stores no rules text, ``futures_markets.mutually_exclusive``
+# DEFAULTS TO TRUE at ingest (`kalshi_api.KalshiEvent`) and in the column, and
+# the shape classifier's own ``exhaustive`` verdict for a two-name duel is that
+# flag read back (`market_shape._outcome_relation`: ``bool(mutually_exclusive)``).
+# So it is established OUT OF BAND, from the venue's published rules, and
+# recorded here per (source, fight-winner series) with the words the venue used.
+#
+# THE PRODUCT CONVENTIONS THIS APPLIES (existing, not new policy):
+#   * Queue 299 / C119 (`precompute_calibration.EXCLUSIVITY_EVIDENCE_RULE_TEXT`,
+#     `market_exclusivity_is_proved`): a pair is only ever normalised on POSITIVE
+#     exclusivity evidence; the default-true `mutually_exclusive` column "is not
+#     evidence"; a market that loses candidacy is not dropped — it keeps its raw
+#     price. This registry is that rule at the bout-display seam.
+#   * `tournament_match.threshold_labels`: a two-sided pair whose tie is a PUSH
+#     (a void / refund) "does not sum to the whole and cannot be normalized into
+#     a split" — the card is dropped rather than printing a number "whose meaning
+#     we would be guessing". So a void / refund draw rule is a REFUSAL here, not
+#     a licence; it would need its own reading, and no third win probability is
+#     ever invented for it.
+#   * `settled_hero.resolve_settled_hero`: the product's own drawn two-sided
+#     event settles 0.5 / 0.5 with ``result="draw"`` — the pair still sums to
+#     the whole. A venue rule that settles a draw the same way is the one rule
+#     under which two fighter contracts ARE a complement pair in every state.
+#
+# WHAT IS RECORDED FOR KALSHI ``KXUFCFIGHT`` (three read-only public GETs,
+# 2026-09-17 ~6:37 pm PT, verbatim bytes preserved under
+# ``artifacts/other-model-combat-pair-display-execution/revision-a/kalshi-reads/``):
+#   GET /trade-api/v2/series/KXUFCFIGHT — ``product_metadata.important_info``
+#   (id ``UFC-RULES4``), and GET /trade-api/v2/markets?series_ticker=KXUFCFIGHT
+#   &status=open — ``rules_secondary`` on all 24 open markets (the 12 bouts of
+#   the 2026-09-19 card, ``KXUFCFIGHT-26SEP19…``), both quoted below. A tie or
+#   no contest settles each fighter's contract at 0.50, so the pair pays
+#   (1, 0), (0, 1) or (0.5, 0.5): the whole, in every result. The cancellation
+#   clause ("a fair price for each fighter in accordance with the rules") is a
+#   called-off bout, not a result, and is not interpreted as one here — a
+#   called-off card is already handled by `card_is_called_off`.
+#   GET /trade-api/v2/events/KXUFCFIGHT-26SEP19TSARUF confirms the flag and the
+#   rule are different things: the event is ``mutually_exclusive: true`` AND
+#   settles a draw 50/50 — the flag never carried the draw rule.
+#
+# NOT RECORDED — and therefore on the independent-display fallback, printing
+# exactly what it printed before #6816: ``KXBOXING`` (its rule was not read; a
+# boxing draw is live and its rule may differ) and every Polymarket bout (the
+# venue branch's proof was `venue_bout_is_priced`, which is participant
+# mapping, not a settlement contract). Adding a family here requires the
+# venue's published rule, quoted, with the endpoint and the read date.
+
+
+@dataclass(frozen=True)
+class BoutSettlementContract:
+    """How one fight-winner series pays out when the bout has no winner."""
+
+    source: str  #: `FuturesMarket.source` the rule belongs to ("kalshi")
+    series: str  #: the fight-winner ticker series ("KXUFCFIGHT")
+    draw_rule: str  #: one line, our words: what each contract pays on a draw / NC
+    rule_id: str  #: the venue's own identifier for the rule text
+    read_at: str  #: ISO-8601 UTC instant of the read
+    endpoints: tuple[str, ...]  #: the public URLs read, verbatim bytes kept
+    verbatim: tuple[str, ...]  #: the venue's sentences, exactly as served
+
+    @property
+    def pair_sums_to_one(self) -> bool:
+        """Every settlement state pays the two contracts a total of 1.00.
+
+        Recorded as a derived property rather than a flag so a future entry
+        cannot be marked complementary without writing down WHY: the rule must
+        settle a draw / no contest as a half to EACH side. A void / refund rule,
+        or a both-sides-No rule, is recorded but never pairs.
+        """
+        return self.draw_rule.startswith("each side settles at 0.50")
+
+
+#: Established venue rules, keyed by (source, fight-winner series). READ-ONLY at
+#: runtime. Every entry quotes the venue; none is inferred from a row.
+COMPLEMENTARY_BOUT_CONTRACTS: dict[tuple[str, str], BoutSettlementContract] = {
+    ("kalshi", "KXUFCFIGHT"): BoutSettlementContract(
+        source="kalshi",
+        series="KXUFCFIGHT",
+        draw_rule=(
+            "each side settles at 0.50 on a draw / no contest, so the pair pays "
+            "the whole in every result"
+        ),
+        rule_id="UFC-RULES4",
+        read_at="2026-09-18T01:37:23Z",
+        endpoints=(
+            "https://api.elections.kalshi.com/trade-api/v2/series/KXUFCFIGHT",
+            "https://api.elections.kalshi.com/trade-api/v2/markets"
+            "?series_ticker=KXUFCFIGHT&status=open&limit=40",
+            "https://api.elections.kalshi.com/trade-api/v2/events/"
+            "KXUFCFIGHT-26SEP19TSARUF",
+        ),
+        verbatim=(
+            # series.product_metadata.important_info.markdown (id UFC-RULES4)
+            "If the following fight ends in a draw or no contest, the market "
+            "will resolve to 50/50. If the fight is cancelled, the market will "
+            "resolve to a fair price for each fighter in accordance with the "
+            "rules.",
+            # markets[*].rules_secondary, identical clause on all 24 open markets
+            "If the fight is declared a tie or no contest, the market will "
+            "resolve to 50/50 for both fighters. If the fight is cancelled or "
+            "rescheduled to over two weeks away, the market will resolve to a "
+            "fair price in accordance with the rules.",
+        ),
+    ),
+}
+
+#: ``<SERIES>-<YYMONDD>…`` — the series token a ticker carries ahead of its card
+#: date, with or without a ``kalshi:`` prefix (both spellings exist in the
+#: column: `card_token`'s docstring shows the prefixed form, the ingest writes
+#: the bare event ticker).
+_TICKER_SERIES_RE = re.compile(r"(?:^|:)([A-Za-z]+)-\d{2}[A-Za-z]{3}\d{2}")
+
+
+def ticker_series(external_id: str | None) -> str | None:
+    """The ticker series ahead of a card date-token, uppercased, or None.
+
+    ``"kalshi:KXUFCFIGHT-26SEP19TSARUF"`` and ``"KXUFCFIGHT-26SEP19TSARUF"`` are
+    both ``"KXUFCFIGHT"``; a venue id (``"0x…"``) or a bare title is None.
+    """
+    if not external_id:
+        return None
+    m = _TICKER_SERIES_RE.search(external_id)
+    return m.group(1).upper() if m else None
+
+
+def bout_settlement_contract(market) -> BoutSettlementContract | None:
+    """The established settlement contract for this row's family, or None.
+
+    Read off the row in hand — its ``source`` and the series its ``external_id``
+    carries — against `COMPLEMENTARY_BOUT_CONTRACTS`. None means "no venue rule
+    is on record for this family", which is a refusal, never a default.
+    """
+    source = getattr(market, "source", None)
+    series = ticker_series(getattr(market, "external_id", None))
+    if not isinstance(source, str) or series is None:
+        return None
+    return COMPLEMENTARY_BOUT_CONTRACTS.get((source.lower(), series))
+
+
+def _ticker_title_sides(name: str | None) -> tuple[str, str] | None:
+    """The two sides a TICKER bout's title names, or None.
+
+    :func:`title_bout_sides` is the venue grammar and requires the promotion
+    prefix ("UFC Fight Night: A vs. B"). A ticker row is titled both ways —
+    "331: Tsarukyan vs Ruffy" and a bare "Jones vs Gane" — so the prefix is
+    optional here and everything else is that function's rule.
+    """
+    text = (name or "").strip()
+    if ":" in text:
+        text = text.split(":", 1)[1]
+    parts = _MATCHUP_RE.split(_TRAILING_PAREN_RE.sub("", text).strip())
+    if len(parts) != 2:
+        return None
+    first, second = (p.strip() for p in parts)
+    if not first or not second:
+        return None
+    if _fighter_identity(first) == _fighter_identity(second):
+        return None
+    return first, second
+
+
+def bout_sides_are_its_titled_fighters(name: str | None, outcome_names) -> bool:
+    """Do these two outcome rows name the two fighters the bout's TITLE names?
+
+    The participant-mapping half of "is this pair two sides of one question".
+    A Kalshi fight row is titled by SURNAME ("331: Tsarukyan vs Ruffy") and its
+    outcomes carry full names ("Arman Tsarukyan"), so this cannot be
+    :func:`venue_bout_is_priced`'s exact equality — that rule is right for a
+    venue row, whose title spells both fighters out, and would refuse every
+    ticker bout. Here each titled side must be CONTAINED, as whole folded words,
+    in exactly one outcome, and the two sides must land on two different rows.
+
+    Strict in the safe direction: an unparseable title, a generic answer
+    ("Yes", "Draw", "No Contest"), a prop phrase that merely CONTAINS a fighter
+    ("Haig in Round 3"), a side that matches both rows (two fighters
+    sharing the only word the title gives) or neither — all False, and a False
+    here costs nothing but the pair treatment: the bout prints exactly what it
+    printed before.
+    """
+    sides = _ticker_title_sides(name)
+    if sides is None:
+        return False
+    rows = [_fighter_identity(n) for n in outcome_names]
+    if len(rows) != 2 or not all(rows) or rows[0] == rows[1]:
+        return False
+    if any(r in _NOT_A_FIGHTER for r in rows):
+        return False
+    row_tokens = [set(r.split()) for r in rows]
+    for tokens in row_tokens:
+        if tokens & _PROP_PHRASE_WORDS or any(ch.isdigit() for t in tokens for ch in t):
+            return False
+    landed: list[int] = []
+    for side in sides:
+        # A bare number in a title is the rematch ordinal ("McGregor vs
+        # Holloway 2"), not part of anybody's name.
+        side_tokens = {t for t in _fighter_identity(side).split() if not t.isdigit()}
+        if not side_tokens:
+            return False
+        hits = [i for i, tokens in enumerate(row_tokens) if side_tokens <= tokens]
+        if len(hits) != 1:
+            return False
+        landed.append(hits[0])
+    return sorted(landed) == [0, 1]
+
+
+def ticker_bout_is_one_question(cfg: CombatSportConfig, market) -> bool:
+    """Is this ticker row a bout whose two rows are two sides of ONE question?
+
+    The issue's hypothesis ("these are two legs of one complementary question")
+    is checked, not assumed. Two rows, or a sum near one, prove nothing — a prop
+    pair under a matchup title is two rows (`venue_bout_is_priced`'s specimen)
+    and independent binaries can sum to anything (gotcha #23). What is required,
+    all of it read off the row already in hand (no new query):
+
+    1. STABLE IDENTITY — the external id is this sport's FIGHT-WINNER series
+       (`card_token`: ``KXUFCFIGHT-…``), not a method/round/distance series,
+       which share the card's date token but not this prefix.
+    2. SETTLEMENT CONTRACT — the row's (source, series) has a venue rule on
+       record under which the two contracts pay the whole in EVERY result,
+       draw and no contest included (`bout_settlement_contract`,
+       `BoutSettlementContract.pair_sums_to_one`). This is the term shape and
+       arithmetic cannot supply. Mutually exclusive is not it: "at most one
+       side wins" is true of a rule that pays neither side on a draw, and the
+       ``mutually_exclusive`` flag is default-true at ingest besides. A family
+       with no rule on record is refused — missing provenance is not proof —
+       and prints exactly what it printed before.
+    3. ARITY — exactly two outcome rows.
+    4. MARKET TYPE — an assigned shape other than ``duel``, or a flag that
+       AFFIRMATIVELY says ``mutually_exclusive=False``, is contrary evidence
+       and refuses. Neither a True flag nor an absent one is evidence FOR.
+    5. PARTICIPANTS — the two rows ARE the two fighters the title names
+       (:func:`bout_sides_are_its_titled_fighters`).
+
+    The band in `graded_card` is then arithmetic on a pair already established
+    to be one question — it removes a stale or wide quote's vig symmetrically.
+    It is NOT a substitute for term 2: a third result can be priced under a
+    point and still sit inside it, which is why the contract is required first.
+    """
+    if card_token(cfg, getattr(market, "external_id", None)) is None:
+        return False
+    contract = bout_settlement_contract(market)
+    if contract is None or not contract.pair_sums_to_one:
+        return False
+    outcomes = list(getattr(market, "outcomes", None) or [])
+    if len(outcomes) != 2:
+        return False
+    if getattr(market, "mutually_exclusive", None) is False:
+        return False
+    if getattr(market, "market_type", None) not in _BOUT_MARKET_TYPES:
+        return False
+    return bout_sides_are_its_titled_fighters(
+        getattr(market, "name", None), [getattr(o, "name", None) for o in outcomes]
+    )
+
+
+def with_bout_display_percents(
+    outcomes: list[dict], *, one_question: bool
+) -> list[dict]:
+    """Stamp a bout's two served rows with the whole percents they print (#6816).
+
+    WHAT A READER SAW. `event:ufc:26sep19`, production 2026-09-17: **Arman
+    Tsarukyan 74% / Mauricio Ruffy 28%**. The quotes are 0.735 / 0.275 — a
+    half-cent grid, so BOTH sides sit on a rounding boundary and both round up.
+    Three more bouts on the card did the same.
+
+    THIS ADDS NO PROBABILITY POLICY. ``probability`` is returned untouched, at
+    the precision it arrived with — nothing stored, charted, graded or settled
+    moves, and no winner is inferred from these integers. The percents are
+    `graded_card.rendered_duel_percents`, the contract three runtimes already
+    share (`contracts/rendered_percent.json`): same band, same normalize →
+    round the favourite once → derive the other, and outside the band each side
+    rounds on its own exactly as before. `printable_probabilities` is NOT made a
+    normaliser — it is shared with prop ladders and owns price support only.
+
+    PRICE SUPPORT COMES FIRST, structurally: this runs on the OUTPUT of
+    `printable_probabilities`, so a withheld leg arrives here as ``None`` and the
+    pair is served as ``None`` / ``None``. No complement resurrects a refused
+    side, because a percent is only ever written beside a probability that was
+    already allowed to print.
+
+    BOTH OR NEITHER. The two integers are one decision. A pair that is not a
+    proven, fully priced two-sided bout gets ``None`` on both rows — never one
+    served value beside a locally derived one (#2279's defect). ``None`` is
+    "checked, makes no claim"; an absent key is "built before this shipped".
+    Both mean the consumer prints what it always printed.
+    """
+    rows = [dict(o) for o in outcomes]
+    percents: list[int | None] = [None] * len(rows)
+    if one_question and len(rows) == 2:
+        first, second = rows[0].get("probability"), rows[1].get("probability")
+        if first is not None and second is not None:
+            served = rendered_duel_percents(first, second)
+            if all(p is not None for p in served):
+                percents = served
+    for row, percent in zip(rows, percents):
+        row[DISPLAY_PERCENT_FIELD] = percent
+    return rows
 
 
 def card_number(cfg: CombatSportConfig, *texts: str | None) -> str | None:
@@ -1706,7 +2087,7 @@ class CombatEventAdapter:
         # LESS settled — the direction #1803's docstring says is safe.
         card_settled = card_status_value == "settled" and not card_is_called_off(bouts)
 
-        def _fight_outcomes(m):
+        def _fight_outcomes(m, *, bout=False):
             outs = sorted(
                 (m.outcomes or []),
                 key=lambda o: float(o.current_probability or 0),
@@ -1720,13 +2101,23 @@ class CombatEventAdapter:
                 (o.current_probability, o.current_yes_bid, o.current_yes_ask)
                 for o in outs
             )
-            return [
+            served = [
                 {"name": o.name, "probability": p}
                 for o, p in zip(outs, printable)
             ]
+            if not bout:
+                # A prop (method / round / distance) — its rows are separate
+                # questions. Served exactly as before: no field, no pairing.
+                return served
+            # #6816: a FIGHT's two rows print as one decision. After price
+            # support (the percents are taken from `printable`, so a withheld
+            # leg stays withheld) and only for a pair proven to be one question.
+            return with_bout_display_percents(
+                served, one_question=ticker_bout_is_one_question(cfg, m)
+            )
 
         # primary = the main-event fighters (co-equal, head-to-head).
-        competitors = _fight_outcomes(main_event)
+        competitors = _fight_outcomes(main_event, bout=True)
 
         def _title_of(m):
             meta = getattr(m, "market_metadata", None)
@@ -1748,7 +2139,7 @@ class CombatEventAdapter:
                     card_surnames.add(k)
 
         def _child(m, kind, prop_type=None):
-            outs = _fight_outcomes(m)
+            outs = _fight_outcomes(m, bout=kind == "fight")
             lead_prob = outs[0]["probability"] if outs else None
             # #1803: assigned card status first, price inference as the fallback.
             # Pure + unit-tested in `fight_child_settled` (this builder is a large
@@ -1947,7 +2338,10 @@ class CombatEventAdapter:
             outs = list(m.outcomes or [])
             if not venue_bout_is_priced(m.name, [o.name for o in outs]):
                 # The two fighters, no numbers. Never a price we cannot stand up.
-                return [{"name": s, "probability": None} for s in sides]
+                return with_bout_display_percents(
+                    [{"name": s, "probability": None} for s in sides],
+                    one_question=False,
+                )
             # #6777 — see `printable_probabilities`. This is the branch the Power
             # Slap 23 specimen renders through, and `venue_bout_is_priced` above
             # has already established that these two outcomes ARE the two
@@ -1959,12 +2353,22 @@ class CombatEventAdapter:
             priced = [
                 {"name": o.name, "probability": p} for o, p in zip(outs, printable)
             ]
-            return sorted(
-                priced,
-                key=lambda o: (
-                    o["probability"] if o["probability"] is not None else -1.0
+            # #6816 / Brief 22A: `venue_bout_is_priced` proves the two rows are
+            # the two fighters — participant mapping — and NOT what the venue
+            # pays when neither wins. A venue bout prints as one decision only
+            # once its family's settlement rule is on record in
+            # `COMPLEMENTARY_BOUT_CONTRACTS`; no Polymarket rule has been read,
+            # so this is None today and the pair prints exactly as before.
+            contract = bout_settlement_contract(m)
+            return with_bout_display_percents(
+                sorted(
+                    priced,
+                    key=lambda o: (
+                        o["probability"] if o["probability"] is not None else -1.0
+                    ),
+                    reverse=True,
                 ),
-                reverse=True,
+                one_question=contract is not None and contract.pair_sums_to_one,
             )
 
         def _bout_label(m) -> str:
@@ -2073,12 +2477,20 @@ class CombatEventAdapter:
                     {"name": ev.home_team_name, "probability": None},
                     {"name": ev.away_team_name, "probability": None},
                 ]
-            return sorted(
-                pair,
-                key=lambda o: (
-                    o["probability"] if o["probability"] is not None else -1.0
+            # #6816: this pair is a complement BY CONSTRUCTION (`p`, `1 - p`)
+            # and still printed 74 / 27 off 0.735 / 0.265 — floats that sum to
+            # one are not integers that sum to a hundred. No settlement contract
+            # is in question here: there is ONE probability shown two ways, not
+            # two venue contracts, so no third result can be rounded into it.
+            return with_bout_display_percents(
+                sorted(
+                    pair,
+                    key=lambda o: (
+                        o["probability"] if o["probability"] is not None else -1.0
+                    ),
+                    reverse=True,
                 ),
-                reverse=True,
+                one_question=True,
             )
 
         # The SAME determination `list_card_concepts` names the card after, so the

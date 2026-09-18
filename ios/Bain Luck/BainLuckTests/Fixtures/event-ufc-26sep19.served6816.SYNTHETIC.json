@@ -1,0 +1,322 @@
+{
+ "children": [
+  {
+   "kind": "fight",
+   "market_id": 60306300,
+   "market_name": "331: Aswell vs Yoo",
+   "outcomes": [
+    {
+     "name": "Joo Sang Yoo",
+     "probability": 0.665,
+     "rendered_percent": 67
+    },
+    {
+     "name": "Michael Aswell",
+     "probability": 0.325,
+     "rendered_percent": 33
+    }
+   ],
+   "probability": 0.665,
+   "settled": false,
+   "source": "kalshi"
+  },
+  {
+   "kind": "fight",
+   "market_id": 60306299,
+   "market_name": "331: Gandra vs Diaz",
+   "outcomes": [
+    {
+     "name": "Ryan Gandra",
+     "probability": 0.815,
+     "rendered_percent": 82
+    },
+    {
+     "name": "Osman Diaz",
+     "probability": 0.185,
+     "rendered_percent": 18
+    }
+   ],
+   "probability": 0.815,
+   "settled": false,
+   "source": "kalshi"
+  },
+  {
+   "kind": "fight",
+   "market_id": 60306298,
+   "market_name": "331: O'Neill vs Moura",
+   "outcomes": [
+    {
+     "name": "Casey O'Neill",
+     "probability": 0.665,
+     "rendered_percent": 67
+    },
+    {
+     "name": "Eduarda Moura",
+     "probability": 0.335,
+     "rendered_percent": 33
+    }
+   ],
+   "probability": 0.665,
+   "settled": false,
+   "source": "kalshi"
+  },
+  {
+   "kind": "fight",
+   "market_id": 60306297,
+   "market_name": "331: Chikadze vs Brito",
+   "outcomes": [
+    {
+     "name": "Joanderson Brito",
+     "probability": 0.785,
+     "rendered_percent": 78
+    },
+    {
+     "name": "Giga Chikadze",
+     "probability": 0.225,
+     "rendered_percent": 22
+    }
+   ],
+   "probability": 0.785,
+   "settled": false,
+   "source": "kalshi"
+  },
+  {
+   "kind": "fight",
+   "market_id": 60306296,
+   "market_name": "331: Shahbazyan vs Ferreira",
+   "outcomes": [
+    {
+     "name": "Edmen Shahbazyan",
+     "probability": 0.615,
+     "rendered_percent": 62
+    },
+    {
+     "name": "Brunno Ferreira",
+     "probability": 0.385,
+     "rendered_percent": 38
+    }
+   ],
+   "probability": 0.615,
+   "settled": false,
+   "source": "kalshi"
+  },
+  {
+   "kind": "fight",
+   "market_id": 60306295,
+   "market_name": "331: Tuivasa vs Despaigne",
+   "outcomes": [
+    {
+     "name": "Robelis Despaigne",
+     "probability": 0.845,
+     "rendered_percent": 85
+    },
+    {
+     "name": "Tai Tuivasa",
+     "probability": 0.155,
+     "rendered_percent": 15
+    }
+   ],
+   "probability": 0.845,
+   "settled": false,
+   "source": "kalshi"
+  },
+  {
+   "kind": "fight",
+   "market_id": 60306294,
+   "market_name": "331: Vera vs Jourdain",
+   "outcomes": [
+    {
+     "name": "Charles Jourdain",
+     "probability": 0.655,
+     "rendered_percent": 66
+    },
+    {
+     "name": "Marlon Vera",
+     "probability": 0.345,
+     "rendered_percent": 34
+    }
+   ],
+   "probability": 0.655,
+   "settled": false,
+   "source": "kalshi"
+  },
+  {
+   "kind": "fight",
+   "market_id": 60306293,
+   "market_name": "331: Steveson vs Sharaf",
+   "outcomes": [
+    {
+     "name": "Gable Steveson",
+     "probability": 0.915,
+     "rendered_percent": 92
+    },
+    {
+     "name": "Sean Sharaf",
+     "probability": 0.085,
+     "rendered_percent": 8
+    }
+   ],
+   "probability": 0.915,
+   "settled": false,
+   "source": "kalshi"
+  },
+  {
+   "kind": "fight",
+   "market_id": 60306292,
+   "market_name": "331: Menifield vs Baraniewski",
+   "outcomes": [
+    {
+     "name": "Iwo Baraniewski",
+     "probability": 0.695,
+     "rendered_percent": 70
+    },
+    {
+     "name": "Alonzo Menifield",
+     "probability": 0.305,
+     "rendered_percent": 30
+    }
+   ],
+   "probability": 0.695,
+   "settled": false,
+   "source": "kalshi"
+  },
+  {
+   "kind": "fight",
+   "market_id": 60306290,
+   "market_name": "331: Pitbull vs Choi",
+   "outcomes": [
+    {
+     "name": "Doo Ho Choi",
+     "probability": 0.725,
+     "rendered_percent": 72
+    },
+    {
+     "name": "Patricio Pitbull",
+     "probability": 0.285,
+     "rendered_percent": 28
+    }
+   ],
+   "probability": 0.725,
+   "settled": false,
+   "source": "kalshi"
+  },
+  {
+   "kind": "fight",
+   "market_id": 60306289,
+   "market_name": "331: Tsarukyan vs Ruffy",
+   "outcomes": [
+    {
+     "name": "Arman Tsarukyan",
+     "probability": 0.735,
+     "rendered_percent": 73
+    },
+    {
+     "name": "Mauricio Ruffy",
+     "probability": 0.275,
+     "rendered_percent": 27
+    }
+   ],
+   "probability": 0.735,
+   "settled": false,
+   "source": "kalshi"
+  },
+  {
+   "kind": "fight",
+   "market_id": 60306288,
+   "market_name": "331: Van vs Pantoja",
+   "outcomes": [
+    {
+     "name": "Joshua van",
+     "probability": 0.565,
+     "rendered_percent": 57
+    },
+    {
+     "name": "Alexandre Pantoja",
+     "probability": 0.435,
+     "rendered_percent": 43
+    }
+   ],
+   "probability": 0.565,
+   "settled": false,
+   "source": "kalshi"
+  },
+  {
+   "kind": "prop",
+   "market_id": 60305330,
+   "market_name": "Will Giga Chikadze win in Round 3?",
+   "outcomes": [
+    {
+     "name": "Yes",
+     "probability": null
+    },
+    {
+     "name": "No",
+     "probability": null
+    }
+   ],
+   "probability": null,
+   "prop_type": "rounds",
+   "settled": false,
+   "source": "polymarket"
+  }
+ ],
+ "event": {
+  "domain": "ufc",
+  "end_date": null,
+  "is_major": false,
+  "key": "event:ufc:26sep19",
+  "location": null,
+  "name": "331: Van vs Pantoja",
+  "slug": "331-van-vs-pantoja-26sep19",
+  "sport_label": "UFC",
+  "start_date": "2026-09-20T07:20:00+00:00",
+  "status": "upcoming",
+  "venue": null
+ },
+ "movers": [],
+ "primary": {
+  "competitors": [
+   {
+    "name": "Joshua van",
+    "probability": 0.565,
+    "rendered_percent": 57
+   },
+   {
+    "name": "Alexandre Pantoja",
+    "probability": 0.435,
+    "rendered_percent": 43
+   }
+  ],
+  "evolution_market_id": 60306288,
+  "kind": "co_equal_list",
+  "label": "Main event",
+  "price_observed_at": "2026-09-17T21:26:29+00:00"
+ },
+ "sections": [
+  {
+   "label": "Fights",
+   "market_ids": [
+    60306300,
+    60306299,
+    60306298,
+    60306297,
+    60306296,
+    60306295,
+    60306294,
+    60306293,
+    60306292,
+    60306290,
+    60306289,
+    60306288
+   ],
+   "type": "matchup"
+  },
+  {
+   "label": "Props",
+   "market_ids": [
+    60305330
+   ],
+   "type": "props"
+  }
+ ]
+}
