@@ -411,8 +411,26 @@ function shortAwardLabel(marketName: string, cleanLabel?: string): string {
     .replace(/^(?:Eastern|Western)\s+Conf(?:erence)?\s+/i, "")
     .trim();
   // Common abbreviations
-  if (/\bmvp\b|most\s+valuable/i.test(cleaned)) return "MVP";
+  //
+  // #6973 — THE MVP FAMILY IS SEVERAL DIFFERENT QUESTIONS AND MUST NOT COLLAPSE INTO ONE LABEL.
+  //
+  // These labels are not decoration: `deduplicateAwards` keys on them (`merge_group ||
+  // shortAwardLabel(...)`), so two markets reduced to the same label are treated as one
+  // question and the HIGHER probability wins. When the generic `\bmvp\b` arm below caught
+  // everything, market 59164988 "MVP Finalists" and market 40532 "MVP Winner?" both keyed on
+  // "mvp" — and a finalist price is structurally higher than a winner price, so the finalist
+  // row won that collision every time. Measured on production 2026-09-18 15:47Z,
+  // /events/14781131: Lamar Jackson drawn as `MVP 83%` when the MVP-winner market said 11%,
+  // and Tyler Shough as `MVP 61%` against a served 1.5%. The winner rows were not merely
+  // mislabelled, they were dropped.
+  //
+  // So the specific arms MUST precede the generic one. `finals mvp` was already written below
+  // it and was therefore dead code — unreachable, and the same collision waiting for the NBA
+  // finals. Order is the whole correctness argument here; keep the generic return last.
+  if (/\bfinalists?\b/i.test(cleaned) && /\bmvp\b|most\s+valuable/i.test(cleaned)) return "MVP Finalist";
   if (/\bfinals\s+mvp\b/i.test(cleaned)) return "Finals MVP";
+  if (/\b(?:championship|super\s*bowl|world\s+series|grand\s+final)\b[^.]*?\bmvp\b/i.test(cleaned)) return "Championship MVP";
+  if (/\bmvp\b|most\s+valuable/i.test(cleaned)) return "MVP";
   if (/\brookie\s+of\s+the\s+year\b/i.test(cleaned)) return "Rookie of the Year";
   if (/\bdefensive\s+player/i.test(cleaned)) return "DPOY";
   if (/\bmost\s+improved/i.test(cleaned)) return "Most Improved";
