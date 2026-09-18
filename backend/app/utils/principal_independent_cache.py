@@ -630,12 +630,19 @@ _KEY_SCALARS = (bool, int, float, str)
 # --------------------------------------------------------------------------
 
 
-def assert_plain_data(value: Any) -> None:
+def assert_plain_data(value: Any) -> int:
     """Raise `NotPlainData` unless `value` is safe to hold across requests.
 
     "Safe" means: no ORM instances, no live sessions, no objects with identity
     or lazy-loading behaviour — only inert data a JSON encoder would accept
     (plus datetime/date/Decimal, which the feed's own card dicts carry).
+
+    Returns the number of nodes walked. LAT-P274: the walk has always had to
+    count (that is how `_MAX_NODES` is enforced) and always threw the count
+    away, which left every size guard over this cache depending on a constant
+    someone had to re-measure by hand. Returning it costs nothing and is the
+    only production-truthful answer to "how big is this artifact now?".
+    Callers that ignore the return are unaffected.
     """
     nodes = 0
 
@@ -663,6 +670,7 @@ def assert_plain_data(value: Any) -> None:
         )
 
     _walk(value, 0, "value")
+    return nodes
 
 
 def assert_shared_key(key: Any) -> None:
@@ -1073,6 +1081,93 @@ MAX_TRACKED_NAMESPACES = 64
 _NS_OVERFLOW_BUCKET = "_other"
 
 
+# --- LAT-P274 (#2143 residual): THE SIZE GUARD HAD NOTHING RE-MEASURING IT ---
+#
+# `test_feed_market_load_fits_the_shared_wire_lat_p221` asks the right question
+# of every size guard — "what re-measures the number it is comparing to?" — and
+# does not answer it for ITSELF. Its `PROD_OUTCOMES` is hand-copied from a
+# production query, so the alarm can only ever be as fresh as the last person to
+# run that query by hand. It has already failed exactly that way once: copied on
+# 2026-09-04 and never re-read, it was still sizing 6,904 outcomes two weeks
+# later while production carried 9,325 — a 35% blind spot in the guard itself.
+#
+# 🔴 THE COUNT IT NEEDS IS ALREADY COMPUTED, ON EVERY BUILD, AND THROWN AWAY.
+# `assert_plain_data` walks the whole artifact counting nodes (it must, to
+# enforce `_MAX_NODES`) and then discards `nodes` when it returns. So production
+# has measured the real number on every cold `/api/feed` this cache has ever
+# served, and never once recorded it.
+#
+# Measured 2026-09-18 11:59Z, the same query that file documents: the population
+# is 9,818 outcomes against the 9,325 that file records — 5.3% stale within a
+# day of being written, and ~19% of the remaining runway to the node alarm
+# already spent. Not a crisis; precisely the drift the constant cannot see.
+#
+# So: record what the walk already counted. This is a GAUGE, not a counter, and
+# that is why it does NOT live in `_ns_stats`/`by_namespace` — the LAT-P272
+# fleet rail SUMS those across workers, and the sum of per-worker maxima is a
+# number with no meaning. A fleet view of this needs MAX semantics and is
+# deliberately not built here.
+NODE_GROWTH_ALARM = 200_000
+#: The growth alarm, owned here so the fixture guard and production compare
+#: against ONE number (`test_..._lat_p221` imports it).
+#:
+#: Deliberately a constant and NOT `_MAX_NODES / HEADROOM_FACTOR`, preserving
+#: LAT-P273's separation: an alarm expressed as a fraction of the cap it warns
+#: about RISES with that cap, so raising the safety cap would silently relax the
+#: alarm in the same commit. `_MAX_NODES` is the SAFETY bound ("is it unsafe to
+#: walk?"); this is the GROWTH bound ("is this artifact getting big?"). One
+#: number served both until LAT-P273 and that is why neither was trustworthy.
+#:
+#: When this fires the answer is fewer rows or chunking the publish. Nodes are
+#: scalars, so compacting the row form cannot answer it — the compact codec of
+#: 2026-09-18 moved the envelope 0.722x and the node count by +174, which is
+#: noise. DO NOT answer it by raising this number.
+
+#: Per-namespace HIGH-WATER node count for this process. High-water and not last
+#: -seen because the artifact's size churns with its composition (the top-700
+#: population reshuffles between builds) and the question being asked is "how
+#: big has this ever got here", which a last-write gauge answers wrongly at
+#: exactly the moment it matters.
+#:
+#: 🪤 Per-PROCESS, so every release zeroes it and a Heroku pid is not an identity
+#: across one. The durable signal is the `logger.warning` below, which lands in
+#: the log stream; this map is the cheap read.
+_ns_nodes: dict[str, int] = {}
+
+#: Namespaces that have already logged the crossing in THIS process. The alarm
+#: is worth saying once and worth not saying on every cold feed thereafter.
+_ns_node_alarmed: set[str] = set()
+
+
+def _note_nodes(namespace: str, nodes: int) -> None:
+    """Record the node count `assert_plain_data` just walked, and alarm on growth.
+
+    Fail-OPEN by construction: crossing the growth alarm changes nothing about
+    whether the artifact is shared. `_MAX_NODES` is what refuses; this only
+    speaks. An alarm that also degraded the cache would make the operator's
+    incentive to silence it the opposite of the one we want.
+    """
+    bucket_name = namespace
+    if bucket_name not in _ns_nodes and len(_ns_nodes) >= MAX_TRACKED_NAMESPACES:
+        bucket_name = _NS_OVERFLOW_BUCKET
+    if nodes > _ns_nodes.get(bucket_name, 0):
+        _ns_nodes[bucket_name] = nodes
+
+    if nodes > NODE_GROWTH_ALARM and namespace not in _ns_node_alarmed:
+        _ns_node_alarmed.add(namespace)
+        logger.warning(
+            "shared artifact namespace=%s validated to %d nodes, past the %d "
+            "growth alarm (safety cap %d — the share still WORKS, and that is "
+            "the point: this fires while there is still room). Nodes are "
+            "scalars, so narrowing the row form cannot answer it; fewer rows or "
+            "chunking the publish can. Do not answer it by raising the alarm.",
+            namespace,
+            nodes,
+            NODE_GROWTH_ALARM,
+            _MAX_NODES,
+        )
+
+
 def _bump(namespace: str, counter: str) -> None:
     """Record `counter` for `namespace` on both the aggregate and the per-namespace view."""
     _stats[counter] += 1
@@ -1194,6 +1289,12 @@ def clear_shared_builds(namespace: Optional[str] = None) -> None:
         # or the two views disagree about the same worker boundary.
         _ns_stats.clear()
         _ns_failure_reasons.clear()
+        # LAT-P274: the node gauge is the same worker boundary as the counters.
+        # The once-per-process alarm latch resets with it, or one test's crossing
+        # silences the next test's — the cross-test leak that makes an alarm look
+        # like it never fires.
+        _ns_nodes.clear()
+        _ns_node_alarmed.clear()
         # LAT-P272: the rail's rate limit and its once-per-process reap are part
         # of what "this is a cold worker" means. Leaving them set would let one
         # test's flush suppress the next test's — the class of cross-test leak
@@ -1360,6 +1461,13 @@ def shared_build_stats() -> dict[str, Any]:
     out["cross_worker_enabled"] = int(cross_worker_enabled())
     out["by_namespace"] = {ns: dict(c) for ns, c in _ns_stats.items()}
     out["failure_reasons"] = {ns: dict(c) for ns, c in _ns_failure_reasons.items() if c}
+    # LAT-P274. A top-level key of its own, NOT a `by_namespace` entry: the
+    # LAT-P272 fleet rail sums `by_namespace` across workers, and the sum of
+    # per-worker high-water marks is a number with no meaning. `node_alarm` ships
+    # beside the gauge so a reader never has to guess what the values are being
+    # judged against.
+    out["node_high_water"] = dict(_ns_nodes)
+    out["node_alarm"] = NODE_GROWTH_ALARM
     return out
 
 
@@ -2475,7 +2583,8 @@ async def get_or_build(
         built = await builder()
 
         try:
-            assert_plain_data(built)
+            # LAT-P274: the count this walk has always taken and always discarded.
+            _note_nodes(namespace, assert_plain_data(built))
         except NotPlainData as exc:
             # Fail-closed on sharing, fail-open on the response.
             logger.warning(
