@@ -2667,6 +2667,44 @@ jobs:
             exit 1
           fi
 
+      - name: "#6919 the attended drain's write and its D51 undo (real Postgres)"
+        # D51(b) is what permits this repair to be applied to production
+        # unattended, and it permits it BECAUSE there is a backup and a
+        # one-command undo. Before this gate,
+        # `restore_6919_stranded_settled_polymarket_markets.py` had no test of
+        # any kind, and the repair's sixteen guards are all pure-function
+        # (`classify`, `venue_says_settled`, `backup_is_exact`,
+        # `wrong_app_refusal`) — not one of them executes a statement. An undo
+        # that has never been run is a claim, not a safeguard.
+        #
+        # Five behaviours in the pair are the server's and a stub fakes every
+        # one, because the stub is also the thing deciding what comes back:
+        # `RETURNING settled_at` (whose value the manifest records and the undo
+        # later compare-and-swaps against), `COALESCE(settled_at, :now)` over a
+        # stored value, `fetchone() is None` as the CAS verdict, `to_regclass`
+        # as the whole of "no backup, no write", and
+        # `settled_at IS NOT DISTINCT FROM :set_settled_at` in the undo's CAS.
+        #
+        # The arm that is the reason for the file executes the CERT-2439 lesson
+        # instead of quoting it: a drained row that `sync_polymarket_resolved_status`
+        # or the CLOB websocket re-stamps afterwards must be LEFT resolved and
+        # keep its manifest entry, which is why the undo reads the manifest and
+        # not the backup snapshot. Proved non-vacuous by mutation before wiring
+        # — dropping the CAS half re-opens that row (1 red), and never spending
+        # the manifest row reds the idempotence and declined-row arms (2 red).
+        #
+        # Runs the SHIPPED scripts with `get_task_session` pointed at this
+        # database; only the Gamma HTTP call is substituted. Same skip detection
+        # as every gate in this job, for the same reason.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_drain_6919_apply_restore_real_postgres.py \
+            -v -rs 2>&1 | tee /tmp/drain6919.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/drain6919.txt; then
+            echo "::error::#6919 drain apply/restore gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#6977 diacritic search fold, three rails (real Postgres)"
         # A plain-keyboard reader reached NONE of an accented club's rows.
         # Measured on production 2026-09-18, same minute, two spellings:
