@@ -64,11 +64,10 @@ final class BrowseHidesTheChallengeTile6445Tests: XCTestCase {
 
     /// `ios/Bain Luck/Bain Luck` — the phone/iPad/Mac app's own source. The
     /// watch app is a sibling target with no reference to either route.
+    /// Symlink-resolved via `ProjectTree` — see that file for why a worktree
+    /// under `/tmp` turned every relative path here into `/privateViews/…`.
     private static var appRoot: URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()   // BainLuckTests
-            .deletingLastPathComponent()   // Bain Luck (project dir)
-            .appendingPathComponent("Bain Luck")
+        ProjectTree.root().appendingPathComponent("Bain Luck")
     }
 
     /// #6501's stripper: line comments removed, then all whitespace.
@@ -78,15 +77,16 @@ final class BrowseHidesTheChallengeTile6445Tests: XCTestCase {
             .stripped(String(contentsOf: url, encoding: .utf8))
     }
 
-    /// Every `.swift` file under the app source, in a stable order.
-    private static func appSwiftFiles() -> [URL] {
-        guard let walker = FileManager.default.enumerator(
-            at: appRoot, includingPropertiesForKeys: nil
-        ) else { return [] }
-        return walker
-            .compactMap { $0 as? URL }
-            .filter { $0.pathExtension == "swift" }
-            .sorted { $0.path < $1.path }
+    /// Every `.swift` file under the app source, as (path-relative-to-appRoot,
+    /// url), in a stable order.
+    ///
+    /// THROWS rather than returning `[]` when the walk fails — `testTheWalk…`
+    /// below names that failure mode ("an `offences == []` is also what a walk
+    /// returns when it enumerated nothing") and the old `guard … else
+    /// { return [] }` was it. The relative path now comes from `ProjectTree`,
+    /// which refuses a file that is not under the root instead of deforming it.
+    private static func appSwiftFiles() throws -> [(path: String, url: URL)] {
+        try ProjectTree.swiftFiles(under: appRoot, minimumFiles: 100)
     }
 
     private static func occurrences(of needle: String, in code: String) -> Int {
@@ -181,10 +181,7 @@ final class BrowseHidesTheChallengeTile6445Tests: XCTestCase {
     func testNoEntryPointToThePredictionsExperienceEscapesTheFlag() throws {
         var offences: [String] = []
 
-        for file in Self.appSwiftFiles() {
-            let relative = file.path.replacingOccurrences(
-                of: Self.appRoot.path + "/", with: ""
-            )
+        for (relative, file) in try Self.appSwiftFiles() {
             if relative == Self.deepLinkResolver { continue }
 
             let code = try PredictionsExperienceIsGatedEverywhere6501Tests
@@ -215,14 +212,11 @@ final class BrowseHidesTheChallengeTile6445Tests: XCTestCase {
     /// it is judging. An `offences == []` above is also what a walk returns when
     /// it enumerated nothing — the unrunnable-check failure mode.
     func testTheWalkReachesTheWholeAppAndFindsEveryKnownCallSite() throws {
-        let files = Self.appSwiftFiles()
+        let files = try Self.appSwiftFiles()
         XCTAssertGreaterThan(files.count, 50, "the walk is not seeing the app tree")
 
         var found: [String: Int] = [:]
-        for file in files {
-            let relative = file.path.replacingOccurrences(
-                of: Self.appRoot.path + "/", with: ""
-            )
+        for (relative, file) in files {
             let code = try PredictionsExperienceIsGatedEverywhere6501Tests
                 .stripped(String(contentsOf: file, encoding: .utf8))
             for routeCase in Self.routeCases {

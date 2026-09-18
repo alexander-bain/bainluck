@@ -152,11 +152,8 @@ final class SportCategoryLabelSingleSourceTests: XCTestCase {
 
     /// The iOS project root — `ios/Bain Luck/` — walked from this test's own
     /// location, the idiom `TeamLabelSingleSourceAcrossTargetsTests` uses.
-    private var projectRoot: URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()   // BainLuckTests
-            .deletingLastPathComponent()   // Bain Luck (project dir)
-    }
+    /// Symlink-resolved via `ProjectTree` — see that file.
+    private var projectRoot: URL { ProjectTree.root() }
 
     /// Names that mean "this is the market's category vocabulary".
     private let categoryTokens = [
@@ -175,17 +172,9 @@ final class SportCategoryLabelSingleSourceTests: XCTestCase {
     private let knownOutstanding: [String] = []
 
     private func swiftSources() throws -> [(path: String, text: String)] {
-        let root = projectRoot
-        let e = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)
-        var out: [(String, String)] = []
-        while let url = e?.nextObject() as? URL {
-            guard url.pathExtension == "swift" else { continue }
-            let rel = url.path.replacingOccurrences(of: root.path + "/", with: "")
+        try ProjectTree.swiftSources(under: projectRoot, minimumFiles: 100)
             // This file quotes the defect in its own documentation.
-            if rel.hasSuffix("SportCategoryLabelSingleSourceTests.swift") { continue }
-            out.append((rel, try String(contentsOf: url, encoding: .utf8)))
-        }
-        return out
+            .filter { !$0.path.hasSuffix("SportCategoryLabelSingleSourceTests.swift") }
     }
 
     /// Every place a file cases something, as (0-based line index, line).

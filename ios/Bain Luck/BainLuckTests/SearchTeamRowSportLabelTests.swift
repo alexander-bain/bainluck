@@ -298,23 +298,12 @@ final class SearchTeamRowSportLabelTests: XCTestCase {
     /// which is why the team row's `sportKey` shape walked past it. This scan
     /// is about the SHAPE instead: splitting a key on "_" and casing the
     /// result is not a label, wherever it appears.
-    private var projectRoot: URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()   // BainLuckTests
-            .deletingLastPathComponent()   // Bain Luck (project dir)
-    }
+    /// Symlink-resolved via `ProjectTree` — see that file.
+    private var projectRoot: URL { ProjectTree.root() }
 
     private func appSources() throws -> [(path: String, text: String)] {
-        let root = projectRoot
-        let e = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)
-        var out: [(String, String)] = []
-        while let url = e?.nextObject() as? URL {
-            guard url.pathExtension == "swift" else { continue }
-            let rel = url.path.replacingOccurrences(of: root.path + "/", with: "")
-            guard !rel.hasPrefix("BainLuckTests/") else { continue }
-            out.append((rel, try String(contentsOf: url, encoding: .utf8)))
-        }
-        return out
+        try ProjectTree.swiftSources(under: projectRoot, minimumFiles: 100)
+            .filter { !$0.path.hasPrefix("BainLuckTests/") }
     }
 
     /// Lines that split a key on "_" AND shout the result. Comments are
