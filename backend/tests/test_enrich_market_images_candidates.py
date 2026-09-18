@@ -168,3 +168,75 @@ async def test_a_blank_query_row_is_skipped_without_spending_a_request(rig):
     await enrich_markets.enrich_market_images(limit=10)
 
     assert asked == ["Presidents Cup golf"]
+
+
+# ---------------------------------------------------------------------------
+# The D51 re-pick path's interlock (scripts/repair_4962_market_image_repick.py).
+# ---------------------------------------------------------------------------
+
+
+class TestTheRepickInterlock:
+    """Clearing a picture is only a repair if the NEXT pick asks something else.
+
+    The script refuses any row whose query the deployed code rebuilds
+    identically — otherwise it deletes a photograph and re-fetches the same one.
+    """
+
+    @staticmethod
+    def _script():
+        import importlib.util
+        import pathlib
+
+        path = (
+            pathlib.Path(__file__).resolve().parents[1]
+            / "scripts"
+            / "repair_4962_market_image_repick.py"
+        )
+        spec = importlib.util.spec_from_file_location("repair_4962", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_both_filed_rows_get_a_different_query(self):
+        script = self._script()
+        for name, category in [
+            ("Presidents Cup Winner", "golf"),
+            ("Will Taylor Swift meet with Pope Leo XIV before 2027?", "entertainment"),
+        ]:
+            old, new, changed = script.query_changed(name, category)
+            assert changed, f"{name!r} would re-fetch the same photograph: {old!r}"
+            assert old != new
+
+    def test_the_legacy_extractor_reproduces_the_filed_defect(self):
+        # The comparison is only worth anything if the "old" side is really the
+        # query that fetched the Thunderbirds and the swimmer.
+        script = self._script()
+        assert script._legacy_image_keywords("Presidents Cup Winner", "golf") == "Presidents Cup"
+        assert (
+            script._legacy_image_keywords(
+                "Will Taylor Swift meet with Pope Leo XIV before 2027?", "entertainment"
+            )
+            == "Will Taylor Swift meet"
+        )
+
+    def test_a_row_the_fix_does_not_move_is_reported_unchanged(self):
+        # A name that reduces to its own category gains nothing and must not be
+        # cleared.
+        script = self._script()
+        _old, _new, changed = script.query_changed("politics", "politics")
+        assert changed is False
+
+    def test_the_default_scope_is_exactly_the_two_filed_rows(self):
+        script = self._script()
+        assert script._parse_ids(None) == (16757297, 109295)
+        assert script._parse_ids("1, 2 3") == (1, 2, 3)
+
+    def test_the_producer_app_is_the_main_app_not_heavy(self):
+        # `app.tasks.enrich_market_images` is not in HEAVY_TASKS, so the deploy
+        # that will re-pick these rows is `bainluck`. If that ever changes, this
+        # fails rather than the script silently gating on the wrong app.
+        from app.tasks import HEAVY_TASKS
+
+        script = self._script()
+        assert "app.tasks.enrich_market_images" not in HEAVY_TASKS
+        assert script.PRODUCER_APP == "bainluck"
