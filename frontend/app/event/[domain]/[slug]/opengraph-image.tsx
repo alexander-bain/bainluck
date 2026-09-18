@@ -1,5 +1,6 @@
 import { ImageResponse } from "next/og";
 
+import { conceptDomainLabel } from "@/components/discover/utils";
 import { UnfurlCard, accentFor } from "@/components/og/UnfurlCard";
 import {
   eventConceptShareFacts,
@@ -42,27 +43,49 @@ async function fetchConcept(
 }
 
 /**
- * The pill, from the route's own segment.
+ * THE PILL (#6849). One helper, whether or not the payload arrived.
  *
- * The domain is the one signal available BEFORE the payload — and, unlike
- * anything in the envelope, it is still available when the fetch fails, so the
- * unresolved card is still coloured and labelled like the family it belongs to.
- * Spellings the segment uses that a reader would not: everything else is
- * capitalised as-is.
+ * ═══ WHAT IT USED TO SAY ═══
+ *
+ * A local `DOMAIN_LABEL` map keyed on the URL SEGMENT, whose `ufc: "UFC"` entry
+ * put a **UFC** pill on Power Slap 23. Read from production 2026-09-18 03:00Z,
+ * `/event/ufc/power-slap-23-26sep18powerslap23/opengraph-image`: a slap-fighting
+ * card, in the one picture that reaches iMessage, Slack and X, naming a
+ * promotion the event has nothing to do with. `domain` is the event-key
+ * namespace this codebase ROUTES on — `UFC_CONFIG` declares it to cover all of
+ * MMA plus every `KXUFC*` Kalshi ticker — so it was never a sport (#5603).
+ *
+ * ═══ WHY THE OLD COMMENT WAS RIGHT AND STILL LOST ═══
+ *
+ * It defended the segment as "the one signal available BEFORE the payload, and
+ * still available when the fetch fails". Both halves are true, and neither is a
+ * reason to ignore the payload when it DOES resolve — which it does on line 97,
+ * three lines above the pill. `conceptDomainLabel` is the same function
+ * `ConceptCard`, `FeedCard` and (since #6842) the event page's own header call,
+ * so the picture and the page it depicts cannot drift: one card family, one
+ * label (notice 35). Measured 04:40Z, `/api/event` serves
+ * `event.sport_label: "Combat"` for this card and `"UFC"` for `event:ufc:26sep20`
+ * — the evidence to tell them apart is on the wire today.
+ *
+ * ═══ THE UNRESOLVED CARD KEEPS THE FALLBACK, BUT NOT THE UFC ENTRY ═══
+ *
+ * Passing `null` as the label is the honest input for a card that has no
+ * payload, and the helper's own unevidenced arm answers it: a combat-namespace
+ * link with nothing behind it falls to `COMBAT`, which is strictly less than the
+ * envelope knows rather than more. That is #5603's fallback doing the work it
+ * was written for, not a second rule.
+ *
+ * 🪤 THIS RETIRES THE MAP, SO TWO LIVE PILLS CHANGE BEYOND THE FILED DEFECT:
+ * `/event/election/2026-midterms` (linked from `BottomNav` on every page of the
+ * site) goes `Election` → `ELECTION`, and `/event/f1/2026-azerbaijan-grand-prix`
+ * goes `Formula 1` → `F1`; both carry `sport_label: null` today, measured 04:41Z.
+ * Deliberate, and the reason not to keep a prettifier beside the helper: those
+ * two PAGES already print `ELECTION` and `F1` in their own chips, so the card
+ * disagreed with its subject before this and agrees with it after.
+ *
+ * There is no wrapper and no branch: `concept?.event?.sport_label` is `undefined`
+ * on exactly the failed fetch, which is the input the unevidenced arm answers.
  */
-const DOMAIN_LABEL: Record<string, string> = {
-  ufc: "UFC",
-  mma: "MMA",
-  f1: "Formula 1",
-  election: "Election",
-  awards: "Awards",
-};
-
-function domainLabel(domain: string): string {
-  const known = DOMAIN_LABEL[domain.toLowerCase()];
-  if (known) return known;
-  return domain.charAt(0).toUpperCase() + domain.slice(1);
-}
 
 /**
  * #5888 — a pasted `/event/<domain>/<slug>` link unfurled with the home page's
@@ -95,7 +118,9 @@ export default async function Image({
 }) {
   const { domain, slug } = await params;
   const concept = await fetchConcept(domain, slug);
-  const eyebrow = domainLabel(domain);
+  const eyebrow = conceptDomainLabel(concept?.event?.sport_label, domain);
+  // Still the routing segment, deliberately: the accent is the family's COLOUR
+  // and every `event:ufc:*` card belongs to the same one whatever it is called.
   const accent = accentFor(domain);
 
   if (!concept) {

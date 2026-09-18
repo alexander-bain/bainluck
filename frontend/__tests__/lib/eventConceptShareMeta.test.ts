@@ -307,7 +307,15 @@ describe("a settled event leads with the result, and only an authoritative one",
         ],
       },
     };
-    expect(buildEventConceptShareCopy(strayFlag).title).toContain("56%");
+    // #6849 — `57%`, not the `56%` this asserted before the pair was rounded
+    // once. The number is incidental to this test (its subject is the flag), but
+    // it is not arbitrary: trimming `US_OPEN` to two names makes the payload
+    // claim a TWO-SIDED contest, and `0.565 + 0.425 = 0.99` is a complement pair
+    // at the documented lower edge of the band, so it is normalized and the
+    // title totals 100 instead of 99. The unmodified four-competitor `US_OPEN`
+    // above still prints 56/43 — that is the guard that this fixture's arity,
+    // and not its numbers, is what moved it.
+    expect(buildEventConceptShareCopy(strayFlag).title).toContain("57%");
     expect(buildEventConceptShareCopy(strayFlag).title).not.toContain("won");
   });
 });
