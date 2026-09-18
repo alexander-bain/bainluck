@@ -195,6 +195,24 @@ struct NativeFuturesDiscoverCard: View {
                     }
                 }
 
+                // #2088 — the sentence a card carries when its numbers do not add
+                // up to 100. Web's `FeedCard` has drawn it since #2088; native had
+                // no `card_sum_reason` in the tree at all, so the identical card
+                // explained itself on the web and stood bare on the phone
+                // (production 2026-09-18: 2 of 92 feed cards, "Crude Oil all time
+                // high?" at 13/1 and the Mecca Agreement at 26/6).
+                //
+                // The words live in `CardSum.swift` so a guard can reach them — a
+                // branch spelled in a view body is a branch no gate can run, and CI
+                // compiles no Swift (#4302). The server's answer is taken verbatim
+                // and nothing is derived here; that file says why.
+                if let sumExplanation = cardSumExplanation(data.cardSumReason) {
+                    Text(sumExplanation)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 HStack(spacing: 8) {
                     if let mark = sourceMark {
                         Text(mark)

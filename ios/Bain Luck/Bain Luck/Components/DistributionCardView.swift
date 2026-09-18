@@ -335,7 +335,9 @@ private func distributionPreviewData(
         winnerOpeningProbability: nil,
         // #1885: a preview fixture belongs to no story family.
         storyKey: nil,
-        priceObservedAt: nil
+        priceObservedAt: nil,
+        // #2088: a preview fixture makes no claim about a card total.
+        cardSumReason: nil
     )
 }
 #endif

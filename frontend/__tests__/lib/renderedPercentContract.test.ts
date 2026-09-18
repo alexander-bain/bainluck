@@ -24,6 +24,7 @@
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 
+import { CARD_SUM_EXPLANATION } from "../../lib/cardSum";
 import {
   SUM_INDEPENDENT_PRICES,
   SUM_UNPRICED_OUTCOME,
@@ -72,6 +73,7 @@ interface Contract {
   card_rule: string;
   card_sum_rule: string;
   card_sum_cases: CardSumCase[];
+  card_sum_implementations: { runtime: string; path: string; symbol: string }[];
   implementations: {
     runtime: string;
     path: string;
@@ -512,6 +514,127 @@ d("the Swift DUEL table has not drifted from the contract", () => {
   it("is non-vacuous — the parse finds rows at all", () => {
     expect(rows().length).toBe(CONTRACT.duel_cases.length);
     expect(rows().length).toBeGreaterThanOrEqual(10);
+  });
+});
+
+// ── THE SWIFT CARD-SUM ARM (#2088) ───────────────────────────────────────────
+//
+// `card_sum_implementations` listed two runtimes where the scalar and duel arms
+// list three, and the iOS tree contained no reference to `card_sum_reason` in any
+// file — so a card that explained itself on the web stood bare on the phone.
+// Measured on production 2026-09-18, `GET /api/feed?limit=200`: 98 objects carry
+// the field and 2 read `independent_prices`.
+
+const SWIFT_CARD_SUM_IMPL = join(
+  REPO_ROOT,
+  "ios/Bain Luck/Bain Luck/Utilities/CardSum.swift"
+);
+const SWIFT_CARD_SUM_TEST = join(
+  REPO_ROOT,
+  "ios/Bain Luck/BainLuckTests/CardSumContractTests.swift"
+);
+const ds = existsSync(SWIFT_CARD_SUM_IMPL) ? describe : describe.skip;
+
+ds("the Swift CARD SUM table has not drifted from the contract", () => {
+  const src = readFileSync(SWIFT_CARD_SUM_TEST, "utf8");
+  const start = src.indexOf("CARD SUM ROWS BEGIN");
+  const end = src.indexOf("CARD SUM ROWS END");
+
+  const parseList = (s: string): (number | null)[] =>
+    s.trim() === ""
+      ? []
+      : s
+          .split(",")
+          .map((t) => t.trim())
+          .filter((t) => t.length > 0)
+          .map((t) => (t === "nil" ? null : Number(t)));
+
+  const rows = () => {
+    const block = src.slice(start, end);
+    // ([probs], [percents], sum, reason)
+    return [
+      ...block.matchAll(
+        /\(\s*\[([^\]]*)\]\s*,\s*\[([^\]]*)\]\s*,\s*(nil|-?\d+)\s*,\s*(nil|"[a-z_]+")\s*\)/g
+      ),
+    ].map((m) => ({
+      probabilities: parseList(m[1]),
+      percents: parseList(m[2]),
+      sum: m[3] === "nil" ? null : Number(m[3]),
+      reason: m[4] === "nil" ? null : m[4].slice(1, -1),
+    }));
+  };
+
+  it("has the delimited block the drift check reads", () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+  });
+
+  it("contains exactly the contract's card-sum rows, in order", () => {
+    expect(rows()).toEqual(
+      CONTRACT.card_sum_cases.map((c) => ({
+        probabilities: c.probabilities,
+        percents: c.percents,
+        sum: c.sum,
+        reason: c.reason,
+      }))
+    );
+  });
+
+  it("is non-vacuous — the parse finds rows at all", () => {
+    expect(rows().length).toBe(CONTRACT.card_sum_cases.length);
+    expect(rows().length).toBeGreaterThanOrEqual(10);
+  });
+});
+
+ds("native draws the card-sum sentence, in web's words", () => {
+  const impl = readFileSync(SWIFT_CARD_SUM_IMPL, "utf8");
+
+  it("is registered as the third card-sum implementation", () => {
+    const runtimes = CONTRACT.card_sum_implementations.map(
+      (i: { runtime: string }) => i.runtime
+    );
+    expect(runtimes).toContain("swift");
+  });
+
+  it("carries both sentences verbatim, so the two surfaces cannot drift apart", () => {
+    // The words themselves, not a reference to them: this file and `lib/cardSum.ts`
+    // are the only two places a reader's sentence is spelled, and a second
+    // vocabulary for one fact is how two surfaces start disagreeing in front of a
+    // reader who opens both.
+    expect(impl).toContain(CARD_SUM_EXPLANATION[SUM_INDEPENDENT_PRICES]);
+    expect(impl).toContain(CARD_SUM_EXPLANATION[SUM_UNPRICED_OUTCOME]);
+  });
+
+  it("takes the served reason verbatim and derives no fallback", () => {
+    // Web keys its fallback on `"card_sum_reason" in data`; Swift cannot express
+    // that without a hand-written `init(from:)` over all of `FeedFuturesData`,
+    // because `decodeIfPresent` returns the same nil for an absent key and a served
+    // null. Measured 2026-09-18: the key is absent on 0 of 98 carrying objects and
+    // the served answer agrees with a local derivation on all 98, so a fallback's
+    // only reachable behaviour is overriding a server null it disagrees with.
+    //
+    // This pins the DECISION, so a later session re-adding `?? cardSumReason(...)`
+    // to the view has to come through here and read why it was removed.
+    const view = readFileSync(
+      join(REPO_ROOT, "ios/Bain Luck/Bain Luck/Components/DiscoverFuturesCard.swift"),
+      "utf8"
+    );
+    expect(view).toContain("cardSumExplanation(data.cardSumReason)");
+    expect(view).not.toMatch(/cardSumExplanation\([^)]*probabilities:/);
+  });
+
+  it("still implements the contract RULE, so the drift check has something to pin", () => {
+    // The rule is not called by the view, and that is deliberate — it exists so
+    // this runtime encodes the same decision and the not-firing direction is
+    // asserted here rather than assumed from web.
+    expect(impl).toContain("func cardSumReason(");
+    expect(impl).toContain("func cardSum(");
+  });
+
+  it("draws nothing for a reason this build does not recognise", () => {
+    // A phone ships for months against a moving server, so an unknown reason is the
+    // live case — and an empty explanation is worse than the unexplained card.
+    expect(impl).toMatch(/default:\s*\n\s*return nil/);
   });
 });
 
