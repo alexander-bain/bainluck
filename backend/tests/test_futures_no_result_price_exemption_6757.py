@@ -189,6 +189,31 @@ class TestTheLadderArm:
         )
         assert _empty_book_outcome_ids(market) == set()
 
+    def test_the_specimens_own_hero_survives_on_a_book_as_empty_as_its_siblings(self):
+        """THE PRODUCTION SHAPE, and it is not the one the fixtures above assume.
+
+        Read off the stored rows for market 2951399 (2026-09-18, `db-query`), the
+        93% hero's book is ``0.0100 / 0.9600`` — the SAME empty book as the
+        thirteen 49s beside it, not the two-sided quote a reader would guess from
+        the number. It survives on condition 3 alone: 0.93 is nowhere near that
+        book's 0.485 midpoint, so it was never manufactured from it, while its
+        siblings sit on theirs to the cent.
+
+        That distinction is the whole safety argument for this change, so it is
+        asserted on the real shape rather than on a tidier one: the arm withholds
+        a FABRICATED MIDPOINT, never merely a leg whose book is thin. A widening
+        that keyed on the empty book alone would pass every other test in this
+        class and blank the one number on the page worth printing.
+        """
+        from app.routes.futures import _empty_book_outcome_ids
+
+        hero = _leg(1, "Bruce Carrington", 0.930, 0.0100, 0.9600, RETRACTION_SOURCE)
+        sibling = _leg(2, "Title is vacant", 0.490, 0.0100, 0.9700, RETRACTION_SOURCE)
+        # `Nick Ball`, the other book on that page: 0.485 IS its midpoint.
+        near = _leg(3, "Nick Ball", 0.485, 0.0100, 0.9600, RETRACTION_SOURCE)
+
+        assert _empty_book_outcome_ids(_market([hero, sibling, near])) == {2, 3}
+
     def test_a_genuinely_graded_leg_on_a_stale_empty_book_is_still_exempt(self):
         """#6532's case, unchanged: a settled row's number is a result."""
         from app.routes.futures import _empty_book_outcome_ids
