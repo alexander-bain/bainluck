@@ -57,9 +57,32 @@ goes wrong. So the id is necessary and never sufficient.
     stamper's own :func:`is_statpal_contest_id`, passed in rather than
     re-implemented, so the two cannot drift into disagreeing about what an id is.
 ``SPLIT_SPORT``
-    The rows sharing the id are not in one sport. Two sports' id spaces overlap
+    The rows sharing the id are not in one SPORT. Two sports' id spaces overlap
     (D55/#2879 is exactly this), and a cross-sport pair is a collision, never a
     duplicate.
+
+    **It is the sport that decides this, not the ``sport_id`` (#6333).** Those
+    were the same test until 2026-09-18, when they stopped being: a classified
+    row and its own ``*_other`` catch-all are two ``sports`` rows and one sport,
+    so ``soccer_germany_bundesliga2`` beside ``soccer_other`` was read as a
+    cross-sport collision and refused. That refused **66 groups on the 12:06:12Z
+    pass**, holding **1,229 open markets**, 24 of them on fixtures whose own page
+    served an empty market rail — while `twin_identity_rank` had already elected
+    the real-league row as canonical in 66 of 66. The collision D55 names is
+    still refused, because two sports have two different families.
+
+``SPLIT_LEAGUE``
+    One sport, two keys, and NEITHER of them a catch-all — two rows each naming a
+    different real competition. A shared fixture id does not settle which
+    competition a contest belongs to, so this is reported rather than tagged.
+    Zero on 2026-09-18.
+
+``DEAD_CANONICAL``
+    The elected survivor is ``merged``/``voided`` and answers 410, so tagging
+    against it would take the contest off the site instead of folding it onto a
+    page. Zero on 2026-09-18, and it ships with the ``SPLIT_SPORT`` narrowing
+    because that narrowing is what first makes the shape reachable — see the
+    constant's own note.
 ``KICKOFF_DIFFERS``
     A member's ``commence_time`` is not the canonical's to the minute. **This is
     the load-bearing one.** Of the 12 production groups on 2026-09-12, THREE are
@@ -113,7 +136,8 @@ from typing import Any, Callable, Iterable, Optional, Sequence
 from sqlalchemy import text
 
 from app.services.anchor_channel import DUPLICATE_TAG_PREFIX, duplicate_tag
-from app.utils.event_twin_fold import twin_identity_rank
+from app.utils.event_completion import RETIRED_STATUSES
+from app.utils.event_twin_fold import _catchall_sport_prefix, twin_identity_rank
 from app.utils.proven_duplicates import orientation_agrees
 
 logger = logging.getLogger(__name__)
@@ -123,6 +147,33 @@ REFUSAL_SPLIT_SPORT = "SPLIT_SPORT"
 REFUSAL_KICKOFF_DIFFERS = "KICKOFF_DIFFERS"
 REFUSAL_ORIENTATION = "ORIENTATION_DISAGREES"
 REFUSAL_ALREADY_SUPPRESSED = "ALREADY_SUPPRESSED"
+
+#: Two rows of ONE sport whose keys name two different real competitions — not a
+#: catch-all beside its league. Refused rather than tagged (#6333): the shape
+#: this module measured is a classified row beside its own ``*_other``
+#: catch-all, and two rows each naming a DIFFERENT competition is a claim about
+#: league membership that a shared fixture id alone does not settle. **Zero on
+#: production 2026-09-18** over all 66 cross-key groups — it is here so that the
+#: group which is not that shape is reported instead of quietly tagged.
+REFUSAL_SPLIT_LEAGUE = "SPLIT_LEAGUE"
+
+#: The elected canonical is itself ``merged``/``voided``, so the page a reader
+#: would be sent to answers **410**. Refused because suppressing a servable row
+#: in favour of a retired one removes the contest from the site altogether —
+#: lane1's #6904 was exactly this, from the other end.
+#:
+#: 🔴 IT IS THIS CHANGE THAT MAKES THE HAZARD REACHABLE, which is why the guard
+#: ships with it rather than after it. Until now :data:`REFUSAL_SPLIT_SPORT`
+#: refused every cross-key group, so the catch-all row could never be tagged
+#: against; admitting those groups admits the shape
+#: :func:`~app.utils.event_twin_fold.twin_identity_rank` records under "THE
+#: WORLD CUP PAIRS", where a ``*_other`` row holding the only price wins on
+#: source count one rung above ``names_league``. That ordering is correct when
+#: both rows are servable — "a reader keeps the number and loses a label" — and
+#: it is not correct when the winner is retired, because then the reader keeps
+#: neither. **Zero on production 2026-09-18**: all 66 groups elect the
+#: real-league row, none of which is retired.
+REFUSAL_DEAD_CANONICAL = "DEAD_CANONICAL"
 
 #: How far back a pass looks for contests OUR OWN ROWS already share an id on.
 #:
@@ -195,21 +246,35 @@ HAVING count(*) > 1
 #: `ix_events_statpal_fixture_id`. `commence_time` is compared to the minute, so
 #: it is selected whole and truncated in Python rather than in SQL — a
 #: `date_trunc` here would be a second place the tolerance is written down.
+#: 🔴 ``status`` IS PROJECTED UNDER A NAME THE ELECTION CANNOT READ, AND THAT IS
+#: LOAD-BEARING RATHER THAN FUSSY. :func:`~app.utils.event_twin_fold.twin_identity_rank`
+#: reads ``getattr(event, "status", None)`` for its rung 4 (``status ==
+#: 'completed'``), and this SELECT has never projected ``status``, so that rung
+#: has always been INERT here — every row reads as not-completed and the rung
+#: ties. Projecting it as ``status`` to serve :data:`REFUSAL_DEAD_CANONICAL`
+#: would silently switch on a rung of the election on the WRITE path, which is a
+#: different change with a different measurement (`#5841` records it: 13 of 35
+#: groups hold a ``completed`` row beside a non-``completed`` one). The alias
+#: keeps the two decisions separate, and
+#: ``test_the_retirement_probe_does_not_wake_the_completed_rung`` pins it.
 SELECT_ROWS_FOR_FIXTURES = """
-SELECT id,
-       sport_id,
-       statpal_fixture_id,
-       home_team_name,
-       away_team_name,
-       commence_time,
-       home_score,
-       away_score,
-       espn_id,
-       external_id,
-       win_probability_sources,
-       event_tags
-  FROM events
- WHERE statpal_fixture_id = ANY(:fixture_ids)
+SELECT e.id,
+       e.sport_id,
+       s.key AS sport_key,
+       e.status AS retirement_status,
+       e.statpal_fixture_id,
+       e.home_team_name,
+       e.away_team_name,
+       e.commence_time,
+       e.home_score,
+       e.away_score,
+       e.espn_id,
+       e.external_id,
+       e.win_probability_sources,
+       e.event_tags
+  FROM events e
+  LEFT JOIN sports s ON s.id = e.sport_id
+ WHERE e.statpal_fixture_id = ANY(:fixture_ids)
 """
 
 #: One element appended, idempotent IN THE DATABASE. The `NOT … @>` is what makes
@@ -349,10 +414,91 @@ def plan_shared_fixture_duplicates(
     return tags, refusals
 
 
+def _canonical_is_retired(canonical: Any) -> bool:
+    """Would a reader sent to the elected survivor get a 410? (#6333)
+
+    Reads ``retirement_status``, the alias :data:`SELECT_ROWS_FOR_FIXTURES`
+    projects ``status`` under, so that asking this question cannot also wake
+    ``twin_identity_rank``'s ``status == 'completed'`` rung on the write path.
+    A row whose status we were not given is treated as SERVABLE: this guard
+    exists to stop a specific, measured inversion, and a guard that refuses on
+    absent information would silently stop the 3 tags a healthy pass writes.
+    """
+    status = getattr(canonical, "retirement_status", None)
+    return status in RETIRED_STATUSES
+
+
+def _sport_family(sport_key: Optional[str]) -> Optional[str]:
+    """The bare SPORT behind one of our keys, or ``None`` if we were not told it.
+
+    ``soccer_other`` → ``soccer``, ``soccer_germany_bundesliga2`` → ``soccer``.
+
+    The catch-all half is :func:`~app.utils.event_twin_fold._catchall_sport_prefix`
+    rather than a second suffix rule, for the reason that function gives about
+    its own spelling: stripping is the exact inverse of how a catch-all key is
+    formed, and a private copy here is how the two start disagreeing. Only the
+    real-league half is spelled locally, and it is the same ``split`` the matcher
+    scopes candidates with (`_score_candidates`) and the ghost sweep derives its
+    expected LLM category from.
+    """
+    if not sport_key:
+        return None
+    catchall = _catchall_sport_prefix(sport_key)
+    return catchall if catchall is not None else sport_key.split("_", 1)[0]
+
+
+def _split_sport_refusal(canonical: Any, member: Any) -> Optional[str]:
+    """Are these two rows different SPORTS, or one sport wearing two keys? (#6333)
+
+    The original test was ``member.sport_id != canonical.sport_id``, and it is
+    right about the thing it was written for and wrong about one shape it cannot
+    see. What it protects is D55/#2879 — **two sports' StatPal id spaces
+    overlap**, so a soccer fixture and a basketball fixture can wear one id and
+    are a collision, never a duplicate. That protection is untouched here: two
+    different sports have two different families and are still refused.
+
+    What it also refused is a classified row beside its OWN ``*_other``
+    catch-all. ``soccer_germany_bundesliga2`` and ``soccer_other`` are two
+    ``sports`` rows and therefore two ``sport_id``s, but they are one sport, and
+    a StatPal fixture id names one contest within it. Measured on production
+    2026-09-18, the pass at 12:06:12Z refused **66 groups** on ``SPLIT_SPORT``
+    and every one is that shape — a real-league row beside ``soccer_other``,
+    same kickoff minute, **1,229 open markets** sitting on the catch-all row
+    while 24 of the pages a reader opens serve an empty market rail.
+
+    FAILING CLOSED IS DELIBERATE. A row whose ``sports`` join gave us no key
+    reads as a different sport and is refused, because the alternative — a
+    missing key folding to a missing key and comparing equal — would admit two
+    genuinely unknown rows on the strength of knowing nothing about either.
+    """
+    if getattr(member, "sport_id", None) == getattr(canonical, "sport_id", None):
+        return None
+
+    canonical_key = getattr(canonical, "sport_key", None)
+    member_key = getattr(member, "sport_key", None)
+    canonical_family = _sport_family(canonical_key)
+    member_family = _sport_family(member_key)
+
+    if not canonical_family or not member_family:
+        return REFUSAL_SPLIT_SPORT
+    if canonical_family != member_family:
+        return REFUSAL_SPLIT_SPORT
+
+    catchalls = sum(
+        1
+        for key in (canonical_key, member_key)
+        if _catchall_sport_prefix(key) is not None
+    )
+    if catchalls != 1:
+        return REFUSAL_SPLIT_LEAGUE
+    return None
+
+
 def _refuse(canonical: Any, member: Any) -> Optional[str]:
     """The reason this member may not be tagged against this canonical, or None."""
-    if getattr(member, "sport_id", None) != getattr(canonical, "sport_id", None):
-        return REFUSAL_SPLIT_SPORT
+    split_sport = _split_sport_refusal(canonical, member)
+    if split_sport is not None:
+        return split_sport
     if not _same_minute(
         getattr(canonical, "commence_time", None),
         getattr(member, "commence_time", None),
@@ -367,6 +513,8 @@ def _refuse(canonical: Any, member: Any) -> Optional[str]:
         return REFUSAL_ORIENTATION
     if _already_suppressed(member):
         return REFUSAL_ALREADY_SUPPRESSED
+    if _canonical_is_retired(canonical):
+        return REFUSAL_DEAD_CANONICAL
     if _already_suppressed(canonical):
         # The elected survivor is itself somebody's duplicate. Tagging against it
         # builds a chain the read side does not follow, so the honest answer is
