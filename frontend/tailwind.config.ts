@@ -6,6 +6,18 @@ const config: Config = {
     content: [
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
+    // #7015. `lib/` was missing here, and the failure is silent in the worst
+    // way: a class name that lives ONLY in a lib module is purged, so the
+    // element renders with no background at all — no error, no warning, and a
+    // local `npm run build` is just as green as CI. Measured on production the
+    // moment `SPORT_COLORS` moved out of `app/sport/page.tsx`: `bg-emerald-50`,
+    // `bg-lime-50`, `bg-rose-50` and `bg-amber-50` were all absent from the
+    // served stylesheet, so Golf, Tennis and MMA lost tints they had had for
+    // months. `lib/eventKeyStats.ts` and `lib/eiColors.ts` were already paying
+    // this quietly. `__tests__/tailwindScansEveryClassEmitter7015.test.ts`
+    // computes the set of directories that emit class literals and fails if one
+    // is not covered here.
+    "./lib/**/*.{js,ts,jsx,tsx,mdx}",
   ],
   theme: {
   	extend: {
