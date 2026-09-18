@@ -216,16 +216,69 @@ async def _select_kalshi_settlement_tickers(
     fresh_limit, tail_limit = _fresh_settlement_budget(limit)
 
     # BAND 1 — what settled since the last cycle, newest first. Bounded on BOTH
-    # sides of now (`_FRESH_SETTLEMENT_FLOOR_DAYS`) and restricted to markets
-    # where NO outcome has been declared a WINNER, which is exactly what a reader
-    # sees as "settled, no result". Legs already carrying `ungradeable_result` are
-    # excluded: that is #1852's RETRACTION — the venue declared a `scalar`/empty
-    # result and we took the fabricated loss back out — so it is a decision, not
-    # a gap, and leaving it in would clog this band with markets no cycle can
-    # ever grade.
+    # sides of now (`_FRESH_SETTLEMENT_FLOOR_DAYS`) and restricted to markets with
+    # AT LEAST ONE LEG STILL LACKING AN AUTHORITATIVE GRADE, which is exactly what
+    # a reader sees as "settled, no result". Legs already carrying
+    # `ungradeable_result` are excluded: that is #1852's RETRACTION — the venue
+    # declared a `scalar`/empty result and we took the fabricated loss back out —
+    # so it is a decision, not a gap, and leaving it in would clog this band with
+    # markets no cycle can ever grade.
     #
-    # #5146 — WHY THE TEST IS `IS TRUE` AND NOT `IS NOT NULL`. This clause shipped
-    # as `NOT EXISTS (… fo.is_winner IS NOT NULL)`, reading "no grade on any leg".
+    # #6981 — WHY MEMBERSHIP IS NOT `NOT EXISTS (… fo.is_winner IS TRUE)`. Until
+    # now it was, and that read "this market has no winner" as a proxy for the
+    # sentence above. The proxy holds for a two-sided market and FAILS for a FIELD
+    # market, where one winner and twenty losers are twenty-one separate venue
+    # contracts that settle at DIFFERENT TIMES. The winner settles FIRST — the
+    # instant the first touchdown is scored — and its grade is then the very thing
+    # that evicts the market from this band, at exactly the moment the remaining
+    # legs become gradeable. The market fell to band 2's ~9-11 day alphabetical
+    # wrap with a graded winner sitting above priced losers on the page.
+    #
+    # MEASURED on production 2026-09-18 16:20-16:25Z, the specimen that named it:
+    # last night's Bills 41 - Lions 31 (event 14638444, final 03:30Z). Kalshi had
+    # all FIVE of its prop event tickers `finalized` with per-leg results — 151
+    # markets, `KXNFLREC-26SEP17DETBUF` alone carrying 38 `yes` — while we held 36
+    # grades of 151. Fifteen hours after the whistle the page printed `Josh Allen
+    # Won` above eighteen rows reading `last quote 1%`, and `No Touchdown ·
+    # last quote 4%` under a touchdown that had demonstrably happened. Band 1 could
+    # not see any of it: `is_winner IS TRUE` on Josh Allen (venue `close_time`
+    # 00:27:51Z) excluded a market whose other legs closed at 01:22:03Z.
+    # Inside the 3-day window that day: 427 tickers eligible, and **559 more,
+    # carrying 14,405 ungraded legs, excluded by that clause alone** — the
+    # locked-out cohort larger than the admitted one.
+    #
+    # This is the MIRROR of #5146 in the same clause: that fixed "one untouched leg
+    # hides the market", this fixes "one graded winner hides the market". Same false
+    # equivalence between a market and its legs, opposite direction. The EXISTS
+    # clause below already asks the right question, so the fix is a DELETION.
+    #
+    # BAND 3 NEEDS NO EDIT, and that is worth stating because it is the one place
+    # a reader will expect one. `_select_kalshi_early_settled_tickers` excludes
+    # what band 1 will take by carrying band 1's membership inverted — `NOT
+    # (status = 'resolved' AND EXISTS (…))`. That was an OVER-estimate of band 1
+    # while this clause stood (band 1 also required no winner); band 3's own
+    # `NOT EXISTS (is_winner IS TRUE)` meant the difference was empty, so nothing
+    # was ever lost. After the deletion the two are EXACT complements and the
+    # comment there becomes literally true. The bands stay disjoint either way.
+    #
+    # SAFE, and the load-bearing reason is not any of the three below — it is that
+    # THIS DELETION WIDENS NO POPULATION. Band 2's `EXISTS` is this band's own with
+    # the `ungradeable_result` limb removed, i.e. strictly WIDER, and band 2 has
+    # never carried a winner clause. So every ticker the deletion newly admits was
+    # already reachable by band 2 and already flows through the identical writer
+    # below; what changes is WHEN it is asked about, never WHETHER. A defect this
+    # could introduce would have to be a defect band 2 already has.
+    #
+    # The three local reasons, which is why band 2 is safe too: the grade is keyed
+    # on the venue's own per-ticker `result` and is idempotent, `api_settlement` is
+    # the top authority rung so no downgrade is reachable, and the
+    # `clean_resolution` price fallback fires only `if not nested` — when the venue
+    # returns NO markets — behind a `HAVING` that refuses any market holding a
+    # winner outside `OVERWRITABLE_WINNER_SOURCES` (`api_settlement` is not in it).
+    #
+    # #5146 — WHY THE TEST WAS `IS TRUE` AND NOT `IS NOT NULL`, kept because it is
+    # why the deleted clause could not simply be widened. It shipped as
+    # `NOT EXISTS (… fo.is_winner IS NOT NULL)`, reading "no grade on any leg".
     # It does not mean that. `futures_outcomes.is_winner` is
     # `nullable=True, default=False, server_default=text("false")`
     # (`app/models/models.py`), so a leg NO grader has ever touched stores FALSE —
@@ -300,11 +353,6 @@ async def _select_kalshi_settlement_tickers(
                   AND COALESCE(fm.settled_at, fm.resolution_date)
                       >= NOW() - make_interval(days => :floor_days)
                   AND COALESCE(fm.settled_at, fm.resolution_date) <= NOW()
-                  AND NOT EXISTS (
-                      SELECT 1 FROM futures_outcomes fo
-                      WHERE fo.market_id = fm.id
-                        AND fo.is_winner IS TRUE
-                  )
                   AND EXISTS (
                       SELECT 1 FROM futures_outcomes fo
                       WHERE fo.market_id = fm.id

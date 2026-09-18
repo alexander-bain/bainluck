@@ -6,20 +6,43 @@
 cycle asks the venue about. Everything the ship claims is in those two WHERE
 clauses:
 
-    -- band 1, new in #4057, grade test corrected in #5146
+    -- band 1, new in #4057; grade test corrected in #5146, DELETED in #6981
     COALESCE(fm.settled_at, fm.resolution_date) BETWEEN NOW() - :floor AND NOW()
-    AND NOT EXISTS (an outcome with is_winner IS TRUE)
     AND EXISTS (an outcome that is neither authoritative nor ungradeable_result)
-    ORDER BY MAX(COALESCE(fm.settled_at, fm.resolution_date)) DESC LIMIT :fresh
+    ORDER BY MAX(LEAST(fm.settled_at, fm.resolution_date)) DESC LIMIT :fresh
 
     -- band 2, the pre-existing alphabetical sweep
     fm.external_id > :cursor ... ORDER BY fm.external_id ASC LIMIT :tail
 
 A fake session that answers "any statement mentioning `futures_markets`" with a
-canned list agrees with itself: delete the floor, the blank test, the
-`ungradeable_result` exclusion or the upper bound and every unit test in
-`tests/test_kalshi_settlement_recency_band_4057.py` still passes, because a row
-is absent from that list only because the test author left it out.
+canned list agrees with itself: delete the floor, the `ungradeable_result`
+exclusion or the upper bound — or put the #6981 winner clause back — and every
+unit test in `tests/test_kalshi_settlement_recency_band_4057.py` still passes,
+because a row is absent from that list only because the test author left it out.
+
+## #6981 — the band stopped asking "does this market have a winner"
+
+Band 1 carried `NOT EXISTS (an outcome with is_winner IS TRUE)` from #4057 until
+2026-09-18, as a proxy for its real subject: what a reader sees as "settled, no
+result". The proxy holds for a two-sided market and fails for a FIELD, where one
+winner and twenty losers are twenty-one venue contracts that settle at DIFFERENT
+TIMES. The winner settles first — the instant the first touchdown is scored — and
+that grade was then the very thing that evicted the market, at exactly the moment
+its remaining legs became gradeable.
+
+Measured on production 2026-09-18 16:20-16:25Z: last night's Bills 41 - Lions 31
+(`/events/14638444`) had all five prop event tickers `finalized` at Kalshi with
+per-leg results — 151 markets — while we held 36 grades, and fifteen hours after
+the whistle the page printed `Josh Allen Won` above eighteen rows reading `last
+quote 1%`. Inside the band's own 3-day window that day, 427 tickers were eligible
+and **559 more, carrying 14,405 ungraded legs, were excluded by that clause
+alone** — the locked-out cohort larger than the admitted one.
+
+The `EXISTS` clause beneath it already asks the right question, so the ship is a
+deletion, and it widens nothing: band 2's `EXISTS` is strictly wider and has never
+had a winner clause, so every newly-admitted ticker was already reachable there
+and already flowed through the same writer. `FFF`/`FGG` are the both-directions
+pair, identical but for their legs.
 
 There is no local PostgreSQL in the agent sandbox, so CI is where this runs; the
 `search-recall` job's "Verify the gate is actually armed" step is what stops a
@@ -215,10 +238,24 @@ def _corpus() -> list[tuple]:
     # Distinct to the minute on purpose: the ordering arm below asserts an exact
     # list, and two rows sharing a timestamp would make it a coin toss.
     half_hour = now - timedelta(minutes=30)
+    # #6981's pair. `FFF` and `FGG` share this stamp deliberately — they are the
+    # both-directions control (gotcha #43) and must differ in their LEGS and in
+    # nothing else, so neither window position nor ordering can explain the
+    # difference between them. Safe as a tie because only one of the two is ever
+    # in the band, so the exact-list assertion still has a single answer.
+    thirty_five = now - timedelta(minutes=35)
     forty = now - timedelta(minutes=40)
     three_quarters = now - timedelta(minutes=45)
     fifty = now - timedelta(minutes=50)
     hour = now - timedelta(hours=1)
+    # `RRR` joined at `hour` with #6012 and tied `BBB` exactly, which the corpus's
+    # own opening comment forbids: two rows sharing an ordering key make the
+    # exact-list assertions in this file a coin toss that Postgres is free to
+    # break either way. Pre-existing and not #6981's doing — found while adding a
+    # third row at that stamp, which would have made it a three-way toss — but a
+    # flaky gate guarding a settlement ship is worth the one line. Between `BBB`
+    # and `ZZZ`, so no expectation in the file moves.
+    sixty_five = now - timedelta(minutes=65)
     two_hours = now - timedelta(hours=2)
     nine_days = now - timedelta(days=9)
     ten_days = now - timedelta(days=10)
@@ -237,9 +274,34 @@ def _corpus() -> list[tuple]:
         ("observed_only", "kalshi", "resolved", "CCC-26SEP10", three_quarters, nine_days, blank),
         ("stale", "kalshi", "resolved", "DDD-26SEP01", nine_days, nine_days, blank),
         ("future_dated", "kalshi", "resolved", "EEE-26DEC31", None, future, blank),
+        # #6981 — THE FIELD MARKET MID-SETTLEMENT, and the row that changed sides.
+        # One graded winner above one leg nobody has spoken for: last night's
+        # `Detroit vs Buffalo: 1st Touchdown` in two legs. Josh Allen's contract
+        # settles the instant he scores — 25 minutes into the game, `close_time`
+        # 00:27:51Z — and the other twenty settle at the whistle, so the winner's
+        # grade arrives FIRST and, under the clause this ship deletes, was the very
+        # thing that evicted the market at the moment its losers became gradeable.
+        # It fell to band 2's ~9-11 day alphabetical wrap and a reader saw `Josh
+        # Allen Won` above eighteen rows reading `last quote 1%` fifteen hours after
+        # the whistle. Production 2026-09-18: 559 tickers carrying 14,405 ungraded
+        # legs were locked out by that clause alone, against 427 admitted.
         (
-            "already_graded", "kalshi", "resolved", "FFF-26SEP10", hour, hour,
+            "winner_plus_blank", "kalshi", "resolved", "FFF-26SEP10",
+            thirty_five, thirty_five,
             [("leg-a", True, "api_settlement"), ("leg-b", None, None)],
+        ),
+        # #6981's control, and the half that keeps the fix honest in BOTH
+        # directions (gotcha #43). Byte-identical to `FFF` except that its second
+        # leg IS graded: the same field market AFTER the fast lane has done its
+        # work. Nothing is left to ask the venue, so it must stay out — which is
+        # what proves the band now keys on "a leg still has no authoritative
+        # grade" and not on "this market has no winner". Distinguished from `HHH`,
+        # which is fully graded but holds no winner at all and so cannot tell the
+        # old clause from the new one.
+        (
+            "fully_graded", "kalshi", "resolved", "FGG-26SEP10",
+            thirty_five, thirty_five,
+            [("leg-a", True, "api_settlement"), ("leg-b", False, "api_settlement")],
         ),
         (
             "ungradeable", "kalshi", "resolved", "GGG-26SEP10", hour, hour,
@@ -257,7 +319,8 @@ def _corpus() -> list[tuple]:
         # `HHH`, which has the tier-3 leg but NO ordinary one and is therefore
         # invisible to every band.
         (
-            "band_one_visible", "kalshi", "resolved", "RRR-26SEP10", hour, hour,
+            "band_one_visible", "kalshi", "resolved", "RRR-26SEP10",
+            sixty_five, sixty_five,
             [("leg-a", None, "api_settlement"), ("leg-b", False, None)],
         ),
         ("polymarket", "polymarket", "resolved", "III-26SEP10", hour, hour, blank),
@@ -360,6 +423,11 @@ def _corpus() -> list[tuple]:
 #: place in a capped band changes, which is the whole ship.
 EXPECTED_FRESH = [
     "AAA-26SEP10",
+    # #6981 — the field market mid-settlement. It carries a graded winner, which
+    # until this ship was disqualifying on its own; it also carries a leg no
+    # grader has spoken for, which is the only thing this band is supposed to ask
+    # about. Its fully-graded twin `FGG` sits at the SAME timestamp and is absent.
+    "FFF-26SEP10",
     "KKK-26SEP10",
     "LLL-26SEP10",
     "BBB-26SEP10",
@@ -597,7 +665,7 @@ async def test_the_fast_lane_returns_the_same_band_1_and_no_band_2(pg_engine):
     [
         ("DDD-26SEP01", "settled nine days ago — outside the floor, the tail's job"),
         ("EEE-26DEC31", "future-dated schedule — would park at the head forever"),
-        ("FFF-26SEP10", "already carries a grade — not a blank market"),
+        ("FGG-26SEP10", "every leg graded, winner included — nothing left to ask"),
         ("GGG-26SEP10", "every leg is ungradeable_result — a retraction, not a gap"),
         ("HHH-26SEP10", "every leg is already authoritative"),
         ("III-26SEP10", "polymarket, not kalshi"),
@@ -646,12 +714,22 @@ _SCHEDULE_ONLY_WINDOW = (
     "AND fm.resolution_date >= NOW() - INTERVAL '3 days' "
     "AND fm.resolution_date <= NOW()"
 )
-_BLANK = (
+#: #6981 DELETED the winner clause outright, so the shipped band now has NO
+#: winner-based membership test and the default below is the empty string. The
+#: two constants that follow are the clause's TWO HISTORICAL SHAPES, kept so each
+#: regression is EXECUTED against this server rather than described in a comment.
+#: Neither may come back: a market and its legs are not the same subject, and
+#: both shapes make that mistake — one in each direction.
+_NO_WINNER_CLAUSE = ""
+#: The clause as it shipped from #5146 until #6981: "this market has no winner",
+#: used as a proxy for "this market has no result". True of a two-sided market,
+#: false of a FIELD, whose winner settles before its losers.
+_WINNER_EXCLUSION = (
     "AND NOT EXISTS (SELECT 1 FROM futures_outcomes fo "
     "WHERE fo.market_id = fm.id AND fo.is_winner IS TRUE)"
 )
-#: The clause as it shipped from #4057 until #5146 — kept so the regression is
-#: EXECUTED against this server rather than described in a comment.
+#: The clause as it shipped from #4057 until #5146: "no leg has been touched",
+#: which read the column's own server-default FALSE as a grade.
 _BLANK_IS_NOT_NULL = (
     "AND NOT EXISTS (SELECT 1 FROM futures_outcomes fo "
     "WHERE fo.market_id = fm.id AND fo.is_winner IS NOT NULL)"
@@ -675,7 +753,7 @@ async def _mutated(
     engine,
     *,
     window=_WINDOW,
-    blank=_BLANK,
+    blank=_NO_WINNER_CLAUSE,
     gradeable=_GRADEABLE,
     order=_ORDER,
     limit=2000,
@@ -729,8 +807,34 @@ async def test_a_schedule_only_window_drops_the_row_production_is_made_of(pg_eng
 
 @needs_postgres
 @pytest.mark.asyncio
-async def test_dropping_the_blank_test_sweeps_in_an_already_graded_market(pg_engine):
-    assert "FFF-26SEP10" in await _mutated(pg_engine, blank="")
+async def test_restoring_the_winner_clause_hides_the_field_market_mid_settlement(
+    pg_engine,
+):
+    """#6981's regression, EXECUTED — and it moves exactly one row.
+
+    This arm used to run in the other direction: it deleted the clause and
+    asserted `FFF` swept in, as the harm the clause prevented. #6981 measured the
+    clause on production and found the harm is the clause — 559 tickers carrying
+    14,405 ungraded legs locked out against 427 admitted — so the same two states
+    are still executed here and only the labels have swapped.
+
+    The exact-list assertion is what makes it a guard rather than an anecdote. A
+    future edit that reintroduces a winner-based test in ANY form goes red here,
+    and the message says which row it cost. A wider or narrower clause than the
+    one deleted fails the same assertion for the opposite reason: it moves
+    something other than `FFF`.
+    """
+    got = await _mutated(pg_engine, blank=_WINNER_EXCLUSION)
+
+    assert "FFF-26SEP10" not in got, (
+        "the winner clause did not evict the field market, so the corpus no "
+        "longer reproduces #6981 and every assertion about the fix is vacuous"
+    )
+    assert got == [t for t in EXPECTED_FRESH if t != "FFF-26SEP10"], (
+        "the winner clause must cost this band the mid-settlement field market "
+        "and NOTHING else — otherwise this arm is measuring some other change "
+        "and the 559-vs-427 production split is not what it explains"
+    )
 
 
 @needs_postgres
@@ -753,14 +857,20 @@ async def test_the_pre_5146_grade_test_hides_the_default_false_rows(pg_engine):
     # NULL instead would keep this list shorter and make the control less like
     # production, which is the trade #5146 already ruled on.
     assert "RRR-26SEP10" not in got
+    # And `FFF` since #6981, for the OTHER reason — `IS NOT NULL` catches a real
+    # grade as well as a default, so the oldest shape of this clause costs the
+    # band both cohorts at once. Listed apart from the three above because it is
+    # a different defect sharing one clause, not a fourth default-FALSE row.
+    assert "FFF-26SEP10" not in got
     assert got == [
         t
         for t in EXPECTED_FRESH
-        if t not in {"KKK-26SEP10", "LLL-26SEP10", "RRR-26SEP10"}
+        if t not in {"KKK-26SEP10", "LLL-26SEP10", "RRR-26SEP10", "FFF-26SEP10"}
     ], (
         "the old clause must differ from the shipped one on the default-FALSE "
-        "rows and on NOTHING else — otherwise this arm is measuring some other "
-        "change and the 2,416-vs-7,927 production split is not what it explains"
+        "rows and the mid-settlement field market and on NOTHING else — "
+        "otherwise this arm is measuring some other change and the "
+        "2,416-vs-7,927 production split is not what it explains"
     )
 
 
@@ -853,7 +963,14 @@ async def test_least_ignores_nulls_so_a_one_column_row_keeps_its_old_key(pg_engi
     # unchanged must be identical too — here `AAA`, `KKK`, `LLL`, `ZZZ`, all of
     # which carry two agreeing timestamps. Asserted as relative order and not as
     # an index, because the catch-up rows moving past `BBB` is the ship.
-    unmoved = ["AAA-26SEP10", "KKK-26SEP10", "LLL-26SEP10", "BBB-26SEP10", "ZZZ-26SEP10"]
+    unmoved = [
+        "AAA-26SEP10",
+        "FFF-26SEP10",
+        "KKK-26SEP10",
+        "LLL-26SEP10",
+        "BBB-26SEP10",
+        "ZZZ-26SEP10",
+    ]
     old = await _mutated(pg_engine, order=_ORDER_OBSERVED)
     new = await _mutated(pg_engine, order=_ORDER)
     assert [t for t in old if t in unmoved] == [t for t in new if t in unmoved] == unmoved
