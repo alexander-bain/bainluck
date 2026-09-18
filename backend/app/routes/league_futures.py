@@ -2177,7 +2177,11 @@ def _outcome_is_settled(
     return can_write_winner(market_status, getattr(outcome, "resolution_source", None))
 
 
-def _live_first(sorted_outcomes: list, market_status: str | None = None) -> list:
+def _live_first(
+    sorted_outcomes: list,
+    market_status: str | None = None,
+    withheld_ids: set[int] | None = None,
+) -> list:
     """Open contenders first, settled ones behind them. (#3868, CERT-2215.)
 
     🔴 A SETTLED LEG MUST NOT TAKE A LIVE LEG'S SLOT. The card renders
@@ -2211,17 +2215,58 @@ def _live_first(sorted_outcomes: list, market_status: str | None = None) -> list
     ladder topped by em-dashes. Deriving the field's coherence HERE, from this
     function's own argument, fixes the ordering and the labels together —
     there is one predicate and both halves read it.
+
+    ── #7037: A WITHHELD PRICE MUST LOSE THE RANK IT WAS GIVEN BY THE PRICE ──
+
+    #7016 taught this payload to refuse a price it cannot stand behind. It did
+    not teach the ORDER to refuse it, so the refused leg kept the slot its raw
+    number had won: `/hub/boxing` drew Tyson Fury `–` at the top of the WBC
+    Heavyweight ladder, above Usyk's 93%. Deleting the number does not delete
+    the assertion — on these cards ROW ORDER IS THE ONLY RANKING SIGNAL there
+    is (`PropGroupCard` and `AwardCard` render the array as handed and neither
+    re-sorts), so the top slot went on saying "favourite" about exactly the
+    price we had just declined to publish. 13 cards across five hubs.
+
+    THE PREDICATE IS THE HOUSE'S, NOT A NEW ONE. `routes/futures.py` already
+    sorts `0 if o.id in withheld else <price>` in both its browse arm and
+    `get_group`, and states the general rule there: "the sort key has to know
+    about the withhold or a refused leg takes a slot it then renders empty."
+    This module is the arm that never adopted it. Same rule, same direction,
+    written in this function's bucket idiom rather than as a fourth copy of the
+    lambda.
+
+    APPLIED TO THE LIVE BUCKET ONLY, and that bound is the careful part. A
+    settled row draws Won/Lost and never a percentage, so its blankness asserts
+    no rank and demoting it would only push a winner below the losers — the
+    exact inversion the paragraphs above exist to prevent. Withholding moves a
+    row within the live group; it never moves a row across the live/settled
+    line.
+
+    STILL NOT FOLDED INTO `_sorted_outcomes`, for the reason already given: that
+    function feeds `_effectively_resolved`, which reads `[0]` as the leader.
+    Demoting a withheld leader there would change which markets the page
+    considers answered and silently drop cards — a different ship, and one
+    nobody has asked for. Whether a market whose leader is withheld should still
+    count as effectively resolved is a real question and is left open here.
     """
     field_has_winner = _field_has_a_winner(sorted_outcomes)
-    live, won, lost = [], [], []
+    withheld = withheld_ids or ()
+    live, live_withheld, won, lost = [], [], [], []
     for outcome in sorted_outcomes:
         if not _outcome_is_settled(outcome, market_status, field_has_winner):
-            live.append(outcome)
+            # #7037. Stable within each bucket, so the priced rows keep the
+            # probability order `_sorted_outcomes` gave them and the withheld
+            # rows keep theirs relative to each other — this demotes them as a
+            # block, it does not reshuffle the field.
+            if outcome.id in withheld:
+                live_withheld.append(outcome)
+            else:
+                live.append(outcome)
         elif getattr(outcome, "is_winner", None) is True:
             won.append(outcome)
         else:
             lost.append(outcome)
-    return live + won + lost
+    return live + live_withheld + won + lost
 
 
 def _serialize_outcomes(
@@ -2263,7 +2308,11 @@ def _serialize_outcomes(
     # the truncated payload would turn a coherent card's results back into
     # prices. `_live_first` derives the same flag from the same list.
     field_has_winner = _field_has_a_winner(sorted_outcomes)
-    ordered = _live_first(sorted_outcomes, market_status)
+    # #7037: the display ordering is told what the price guard refused, so a
+    # withheld leg stops holding the rank its refused number won. Passed here
+    # because this is the one place that knows both — the sort that ran before
+    # `withheld_ids` was computed could not have.
+    ordered = _live_first(sorted_outcomes, market_status, withheld_ids)
     rows = [
         {
             "id": o.id,
