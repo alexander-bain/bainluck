@@ -32,6 +32,7 @@ import {
   probabilitiesQuoteALine,
   TOTAL_MAP_HALVES,
 } from "@/lib/marketMapUtils";
+import { formatProbability } from "@/lib/api";
 
 /**
  * The rail colours, named once (#3210).
@@ -462,9 +463,25 @@ export default function MarketMapSection({
     const homeFavored = (homeWinProb ?? 0) > 0.5;
     const favoredAbbr = homeFavored ? hAbbr : aAbbr;
     const favoredProb = homeFavored ? homeWinProb : awayWinProb;
+    /* #6853: A LIVE GAME IS NEVER 100%.
+       This was `${Math.round(favoredProb * 100)}%`, an inline round that skips
+       the boundary rule every other percent on the page goes through. On the
+       marquee NFL game at 03:16Z, `2:50 - 4th Quarter`, `current_odds` served
+       `home_probability 0.999` and this card headlined **`BUF 100%`** one screen
+       below a hero reading **`>99%`** off the same number — a certainty claim on
+       a game that was still being played, contradicted by the page itself.
+       `formatProbability` is the function the hero uses, and its docstring
+       already states the rule this needs: "a served 100 over a probability of
+       0.996 is still `>99%`, because rounding may never move a probability
+       across a boundary it is not on". Every value inside 1–99% prints
+       identically, so this changes exactly the two ends that were lying.
+       Population: the closing stretch of any one-sided game — the window a
+       reader is most likely to have the page open.
+       The `isDone` arm is untouched: a settled card prints no headline here at
+       all (#5206), because the result is already on the card twice. */
     const headline = isDone || favoredProb == null
       ? ""
-      : `${favoredAbbr} ${Math.round(favoredProb * 100)}%`;
+      : `${favoredAbbr} ${formatProbability(favoredProb)}`;
 
     const markers: MarketMapMarker[] = [];
 
