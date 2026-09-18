@@ -35,7 +35,7 @@ transactional session and RETURNS its own before/after census in the response bo
              | kalshi-empty-book-openings-restore
              | pm-ungraded-loss | pm-ungraded-loss-restore
              | kalshi-series-tag-category
-             | polymarket-club-noun-category }
+             | polymarket-club-noun-category | kalshi-club-noun-category }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -569,6 +569,33 @@ _REPAIRS = {
     # ATTENDED ONLY: never wire this to a beat; it is a terminating repair.
     "polymarket-club-noun-category": (
         "app.tasks.repair_polymarket_club_noun_category",
+        "repair",
+    ),
+    # #6955, the KALSHI half: eleven Atlantic/Pacific hurricane-season rows
+    # stored `hockey` because "hurricanes" read as the Carolina club. Nine are
+    # open and a reader hits three of them searching "Atlantic hurricanes".
+    #
+    # 🔴 NOT the same cause as the Polymarket sibling above, and the difference
+    # is why this is a module rather than more ids in that list. There the
+    # poller never REACHES the rows (archived event, newest-first horizon).
+    # Here it reaches them every two hours and writes nothing, because Kalshi's
+    # upsert is `coalesce(nullif(existing,'other'), new)` (#1888) — a real tag
+    # is never overwritten, BY DESIGN. So the merged classifier fix cannot move
+    # one stored row and no amount of waiting will change that.
+    #
+    # Gate: the venue's own `/events/{ticker}` + `/series/{ticker}` reply run
+    # through the SHIPPED `_categorize_kalshi_market` — no rules of its own.
+    # Membership is id identity (our `external_id` IS the venue `event_ticker`),
+    # never a group guess. Writes `llm_sport_category` ONLY — not `updated_at`
+    # (CERT-2382), not `status` (calibration's population gate), not `category`.
+    # The twelfth bound ticker (`KXKRAKENBANKPUBLIC-27JAN01`) is expected to be
+    # REFUSED: the cascade reads the club noun at step 2 above the venue's
+    # `Companies` at step 4. It is in the bound so the dry run proves it.
+    # D51: `restore_sql` travels with the plan, built from RETURNING on apply.
+    # Takes no bounds — the population is the frozen list.
+    # ATTENDED ONLY: never wire this to a beat; it is a terminating repair.
+    "kalshi-club-noun-category": (
+        "app.tasks.repair_kalshi_club_noun_category",
         "repair",
     ),
     # #4365 part 2 (lane1b/109): two Kalshi NHL game props stored `basketball`.
