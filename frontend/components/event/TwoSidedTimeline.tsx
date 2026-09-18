@@ -92,8 +92,37 @@ export default function TwoSidedTimeline({
      🪤 DELIBERATELY NOT `aPct`: the split bar above draws the split, it does not
      print it, so pairing its width would move a pixel to fix a word (#6778's
      lesson). And this must sit AFTER the `pair.length < 2` return — `renderedDuelPercents`
-     is a claim about two sides of ONE question, and a one-sided card has none. */
-  const [aRendered, bRendered] = renderedDuelPercents(a.probability, b.probability);
+     is a claim about two sides of ONE question, and a one-sided card has none.
+
+     🔴 #6991 — AND ONLY WHEN THE FIELD *IS* THE PAIR. Pairing is not a rounding
+     tidy-up, it is an arithmetic claim that these two are the two sides of ONE
+     question, and `pair` is the top two of a field that may be much longer.
+     `co_equal_list` is emitted by three adapters, not just combat: `event_awards`
+     ("a bout only when the category came down to two nominees") and
+     `event_election` (races) both serve long fields, and the page renders this
+     hero on `isCoEqual` alone — `pair.length < 2` stops a field of one, never a
+     field of twenty-five.
+
+     Production 2026-09-18, `/event/awards/tonys-2026`: **Best Musical, five
+     nominees**, printing `Schmigadoon! >99%` over a quote of exactly `0.99`. The
+     top two summed to `0.99 + 0.0` — inside the band BY COINCIDENCE, because the
+     other three are `0.0` — so the pair was normalized by its true total,
+     `renderedPercent(0.99 / 0.99)` returned 100, and `probabilityParts` printed
+     the `>99%` boundary off an integer no quote supports. The missing point
+     belongs to the FIELD; normalizing hands it to the leader and manufactures a
+     certainty out of it (the failure `eventConceptShareMeta` documents and fences
+     on the unfurl, from its own `US_OPEN` counter-example).
+
+     So both arms now share ONE predicate. `servedBoutPercents` was already fenced
+     on it by #6816 — this is that fence reaching the arm that predates it, not a
+     new rule. `[null, null]` is the same "no claim" both arms speak: passed to
+     `formatProbability` it falls through to `renderedPercent` per value, which is
+     what a longer field's rows have always deserved. Every genuine bout has
+     exactly two competitors and is untouched. */
+  const fieldIsThePair = (competitors || []).length === 2;
+  const [aRendered, bRendered] = fieldIsThePair
+    ? renderedDuelPercents(a.probability, b.probability)
+    : [null, null];
   /* #6816, ON TOP OF #6844 AND NOT INSTEAD OF IT. The builder now DECIDES the pair
      for a bout whose venue settlement contract it has on record
      (`event_combat.with_bout_display_percents`) and serves it as `rendered_percent`
@@ -107,8 +136,7 @@ export default function TwoSidedTimeline({
      prints what this hero printed yesterday. Nothing here removes a number #6844
      put on the screen, and the rail (`MatchupsRail`) is the surface where the
      served value is the only pairing there has ever been. */
-  const [aServed, bServed] =
-    (competitors || []).length === 2 ? servedBoutPercents(pair) : [null, null];
+  const [aServed, bServed] = fieldIsThePair ? servedBoutPercents(pair) : [null, null];
   const outcomes: FuturesOutcomeHistory[] = data?.outcomes ?? [];
   const hasHistory = outcomes.some(
     (o) => o.history.filter((p) => p.probability != null).length >= 2,

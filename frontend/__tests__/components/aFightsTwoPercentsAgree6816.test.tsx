@@ -145,22 +145,27 @@ describe("#6816 — the main-event hero", () => {
     expect(heroNumbers(reversed)).toEqual(["57%", "43%"]);
   });
 
-  test("the top two of a LONGER field are never treated as a SERVED pair", () => {
+  test("the top two of a LONGER field are never treated as a pair, served OR local", () => {
     /* #6816's own arity rule: three rows are not a bout, so `servedBoutPercents`
-       makes no claim and the served 73 / 27 is not used. What prints is then
-       whatever #6844 decides, which for this field is its own local pairing —
-       that is ux's rule on ux's surface and #6816 neither adds nor removes it.
-       (Routed to ux as a note, not changed here: `renderedDuelPercents` runs on
-       the top two of a longer field, and 0.735 + 0.275 lands inside its band by
-       coincidence. Unreachable in practice — `TwoSidedTimeline` renders only for
-       a two-sided `co_equal_list` hero.) */
+       makes no claim and the served 73 / 27 is not used.
+
+       WHAT PRINTS INSTEAD CHANGED — this asserted 73 / 27 (#6844's local pairing)
+       until #6991. The note routed to ux here was right that `renderedDuelPercents`
+       ran on the top two of a longer field; it was WRONG that the case is
+       unreachable. `co_equal_list` is emitted by `event_awards` and
+       `event_election` as well as `event_combat`, and the page renders the hero on
+       `isCoEqual` alone, so a five-nominee category reached it: production
+       2026-09-18 printed `Schmigadoon! >99%` on `/event/awards/tonys-2026` over a
+       quote of exactly 0.99. #6991 fences the local arm on the SAME predicate this
+       test's subject already uses, so a longer field now prints each value on its
+       own — 74 / 28 here, which no longer claims to be a sum. */
     const field = [
       { name: "A", probability: 0.735, rendered_percent: 73 },
       { name: "B", probability: 0.275, rendered_percent: 27 },
       { name: "C", probability: 0.01, rendered_percent: 1 },
     ] as EventConceptCompetitor[];
     expect(servedBoutPercents(field)).toEqual([null, null, null]);
-    expect(heroNumbers(field)).toEqual(["73%", "27%"]);
+    expect(heroNumbers(field)).toEqual(["74%", "28%"]);
   });
 });
 
