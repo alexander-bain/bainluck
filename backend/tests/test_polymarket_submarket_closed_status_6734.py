@@ -154,15 +154,26 @@ class TestTheWriterActuallyAsksIt:
         code = self._code()
         assert "None if sub_open" in code
 
-    def test_only_the_parent_row_still_reads_the_events_flag(self):
-        """The parent row IS the event, so its two sites are correct as they are.
+    def test_no_status_site_anywhere_reads_the_events_raw_flag(self):
+        """RE-AIMED, deliberately — this test used to assert the opposite.
 
-        Pinned at exactly two so a third `event.active` site cannot reappear on
-        a sub-market without this failing.
+        It previously pinned the parent's two sites at `event.active` on the
+        reasoning "the parent row IS the event, so they are correct as they
+        are". That premise was wrong, and this file's own
+        `test_gammas_active_true_on_a_closed_event_does_not_keep_it_open`
+        already said why: Gamma keeps `active=true` on a CLOSED event, so
+        `event.active` alone is not "is this event open at the venue" on ANY
+        row. Measured on production 2026-09-18: 842 parents sitting `open` with
+        every outcome already graded, and 19 of a random 20 confirmed
+        `closed=true, active=true` at Gamma itself.
+
+        The parent half is `sunk_event_is_open`; the child half is
+        `submarket_is_open`. Neither reads the raw flag now, and this pins that
+        no site can drift back.
         """
         code = self._code()
-        assert len(re.findall(r'"open" if event\.active else "resolved"', code)) == 2
-        assert len(re.findall(r"None if event\.active", code)) == 1
+        assert len(re.findall(r'"open" if event\.active else "resolved"', code)) == 0
+        assert len(re.findall(r"None if event\.active", code)) == 0
 
 
 @pytest.mark.parametrize(

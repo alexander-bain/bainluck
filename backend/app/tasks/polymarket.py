@@ -2357,6 +2357,54 @@ async def _process_event_batch(
                 ) or None
 
                 _editorial = _matches_editorial_recall(event.title)
+
+                # #6734, THE PARENT HALF. `submarket_is_open` below fixed this
+                # same expression for the decomposed CHILD rows, and its
+                # docstring names this case in as many words: this function is
+                # fed by a `closed=True` tag sweep (the hourly poll, ~:1083) as
+                # well as by the open poll, and Gamma keeps `active=true` on a
+                # CLOSED event. The child writer was tightened; the parent
+                # writer on these lines was not.
+                #
+                # Measured 2026-09-18 on the specimen's own event: Gamma event
+                # 14366 ("Next Republican House Conference Chair?") answers
+                # `closed=true, active=true, endDate=2025-06-30` — settled for
+                # fifteen months, six legs terminal. Read off `active` alone it
+                # was re-stamped `open` every hour, `settled_at` nulled on the
+                # line below, and the resolver's `resolution_gate` stamp dropped
+                # by `preserve_venue_settled`'s REPLACE. The sweep re-resolved
+                # it; the next poll re-opened it. It oscillated rather than
+                # converging, which is why every measurement of the RESOLVER
+                # came back clean.
+                #
+                # Cost, the reason this is not cosmetic: 842 markets sitting
+                # `open` with EVERY outcome already graded `api_settlement`.
+                # Sampled 20 of them at random and asked Gamma directly — 19
+                # answered `closed=true`, and all 19 of those still carried
+                # `active=true`. The 20th ("Which artists will release new
+                # albums in 2026?") is genuinely open with one settled leg, and
+                # the predicate below correctly leaves it alone; that is the
+                # control, not a miss.
+                #
+                # Counting note, because the obvious query overstates this: a
+                # market with ANY graded outcome numbers 1,257, but 415 of those
+                # are live questions with one leg settled. And `settled_at IS
+                # NULL` holds for every `open` row by construction of the branch
+                # below, so it is a tautology here, not a fingerprint — the
+                # fully-graded count is the honest one.
+                #
+                # `sunk_event_is_open` is the predicate the recovery path
+                # already applies for exactly this reason, so it is reused here
+                # rather than restated — two copies of one venue rule drift.
+                #
+                # STRICTLY TIGHTENING, like the child fix: it adds ways to be
+                # `resolved` and removes none, so it can never turn a stored
+                # `resolved` back into `open`. `status` gates
+                # `/api/futures/{categories,faceted,grouped-feed,movers}`, so
+                # the only movement it can cause is rows leaving those surfaces
+                # — never a settled market being pushed onto one.
+                _venue_open = sunk_event_is_open(event)
+
                 # Build update set for on-conflict
                 update_set = {
                     "name": event.title,
@@ -2365,14 +2413,14 @@ async def _process_event_batch(
                     "canonical_market_key": canonical_key,
                     "commence_time": commence_time,
                     "resolution_date": resolution_date,
-                    "status": "open" if event.active else "resolved",
+                    "status": "open" if _venue_open else "resolved",
                     # LINKLOSS-02: the stamp is coupled to the status in the
                     # SAME statement. This poll rewrites `status` every hour and
                     # can flip a market back to 'open', so a stamp written
                     # anywhere else would survive the reopen. Resolved keeps the
                     # FIRST observation; open clears it.
                     "settled_at": (
-                        None if event.active
+                        None if _venue_open
                         else func.coalesce(FuturesMarket.settled_at, func.now())
                     ),
                     "category_tags": tags,
@@ -2410,7 +2458,9 @@ async def _process_event_batch(
                     mutually_exclusive=event.neg_risk,
                     commence_time=commence_time,
                     resolution_date=resolution_date,
-                    status="open" if event.active else "resolved",
+                    # Same rule on the INSERT arm: a parent first seen through
+                    # the `closed=True` sweep must not be born `open`.
+                    status="open" if _venue_open else "resolved",
                     category_tags=tags,
                     group_id=poly_group_id,
                     group_type=poly_group_type,
