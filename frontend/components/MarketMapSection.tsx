@@ -779,7 +779,33 @@ export default function MarketMapSection({
        set-count run forward — off a rail that reads to 40 games. */
     const pace = vocab.scoreboardCountsTheUnit ? gameMarkets.pace : null;
     const scored = pace?.total_scored ?? (homeScore != null && awayScore != null ? homeScore + awayScore : null);
-    const projected = pace?.projected_total ?? null;
+    /* #6831: A RUN-FORWARD OF NOTHING IS NOT A FORECAST.
+       `pace.projected_total` is the score so far extrapolated over the whole
+       game — measured on `/events/14638444` at 00:50Z, `total_scored 6` with
+       `fraction_elapsed 0.097` gave `projected_total 62`, i.e. exactly
+       `scored / elapsed`. So a scoreless game projects 0 at EVERY elapsed
+       fraction, and 0 is not null: both consumers below drew it. On tonight's
+       marquee NFL game, 11:08 into the 1st quarter at 0 – 0, this card headlined
+       "Projected 0" over its own `PRE-GAME 55` tile while the hero one screen up
+       read "Projected final: 32 – 24".
+       That is every live game between kickoff and the first score, which is the
+       window a reader is most likely to be watching.
+       This file already declines rather than fabricates twice — #5206's
+       `noForecast` and the neighbouring card's `isDone ? "" : …` — but both of
+       those rule on TENSE. Here the tense is right and the VALUE has no standing,
+       so it is the same posture on a new axis. Dropped at the single binding the
+       headline and the marker share, so the two halves of the card cannot
+       disagree about whether there is a projection at all.
+       `> 0` rather than `!= 0`: it also refuses a negative, which the estimator
+       cannot currently emit — this is the value we PRINT, so it is guarded on
+       what makes it printable, not on the upstream formula that happens to
+       produce it today.
+       Deliberately NOT touched: `paceProj` at the top of this block, which only
+       widens the rail's range. `actualTotal` already pushes the same 0, so the
+       rail is unchanged either way, and leaving it keeps this diff to the one
+       question it is answering. */
+    const projectedRaw = pace?.projected_total ?? null;
+    const projected = projectedRaw != null && projectedRaw > 0 ? projectedRaw : null;
     // #5414: the quoted pre-game total first, for the same reason the margin
     // map takes the quoted pre-game spread first — this value feeds a marker
     // labelled `Pre-game` on the live and settled arms, and `overUnder` is the
