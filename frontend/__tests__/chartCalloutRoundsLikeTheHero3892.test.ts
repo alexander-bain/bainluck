@@ -119,7 +119,16 @@ describe("#3892 — the chart callout rounds the probability, not the axis value
 
   test("a non-finite axis value yields nulls, not NaN% — the caller must fall back", () => {
     for (const bad of [Number.NaN, Number.POSITIVE_INFINITY]) {
-      expect(chartAxisPercents(bad)).toEqual({ home: null, away: null });
+      // #6858 added the two printable labels. They are null on exactly the
+      // branch the integers are, which is what lets the callout narrow once;
+      // `toEqual` over the WHOLE shape is deliberate, so a future field that
+      // forgets this branch fails here rather than interpolating "null%".
+      expect(chartAxisPercents(bad)).toEqual({
+        home: null,
+        away: null,
+        homeLabel: null,
+        awayLabel: null,
+      });
       expect(renderedPercent(chartAxisToHomeProb(bad))).toBeNull();
     }
   });

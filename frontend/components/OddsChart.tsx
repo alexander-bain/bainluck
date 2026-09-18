@@ -1296,12 +1296,25 @@ export default function OddsChart({
         // old code drew the literal text "NaN%" in that case. `null` here means
         // the label is not drawn at all, which is the honest answer when there
         // is no number — and it keeps the one rounding rule unduplicated.
-        if (percents.home === null || percents.away === null) return null;
+        // `homeLabel` is in the guard so the callout below gets a `string`, not
+        // a `string | null` it would have to re-check inside a render shape.
+        // The four are null together, so this widens nothing.
+        if (
+          percents.home === null ||
+          percents.away === null ||
+          percents.homeLabel === null
+        ) {
+          return null;
+        }
         return {
           time: chartData[i].time,
           delta,
           homeProb: percents.home,
           awayProb: percents.away,
+          // #6858 — the PRINTABLE form, carried from the same call that resolved
+          // the pair. The integer above stays for anything that measures (the
+          // plate is sized off the label's own length, so `<1%` widens it).
+          homeLabel: percents.homeLabel,
         };
       }
     }
@@ -1558,10 +1571,13 @@ export default function OddsChart({
                 // A book with no usable number is omitted rather than listed
                 // with a placeholder — same reason as the callout above.
                 if (percents.home === null || percents.away === null) return null;
+                // #6858 — the same boundary rule as the callout and the hero. A
+                // book quoting 0.999 read `100% / 0%` here while the hero on the
+                // same page read `>99%`.
                 return (
                   <p key={bookmaker} className="text-xs text-text-muted">
-                    {bookmaker}: {percents.home}% /{" "}
-                    {percents.away}%
+                    {bookmaker}: {percents.homeLabel} /{" "}
+                    {percents.awayLabel}
                   </p>
                 );
               })}
@@ -2071,7 +2087,10 @@ export default function OddsChart({
                     : sourceHex("betting");
                   // #4338 — the plate under the number. Anchored `end` at
                   // `cx - CALLOUT_GAP_PX`, so the glyphs run LEFT from there.
-                  const label = `${currentCallout.homeProb}%`;
+                  // #6858 — the boundary rule's answer, not the bare integer:
+                  // `0.001` prints `<1%` here exactly as it does in the hero
+                  // directly above. `label.length` still sizes the plate below.
+                  const label = currentCallout.homeLabel;
                   const textRight = cx - CALLOUT_GAP_PX;
                   const glyphWidth =
                     label.length * CALLOUT_FONT_PX * CALLOUT_MONO_ADVANCE_EM;

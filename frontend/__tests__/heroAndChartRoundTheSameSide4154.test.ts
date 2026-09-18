@@ -95,7 +95,15 @@ function heroPrints(event: EventDetailResponse) {
  * the two are comparable at all.
  */
 function chartPrints(homeProbability: number) {
-  return chartAxisPercents(homeProbToChartAxis(homeProbability));
+  // #6858 added `homeLabel`/`awayLabel` to `chartAxisPercents`. THIS suite's
+  // subject is which END gets rounded, so it compares the integer pair and
+  // deliberately does not restate the printable labels — those are pinned by
+  // `chartCalloutHonoursTheBoundaryRule6858`. Narrowing here rather than
+  // loosening the `toEqual`s below keeps them exhaustive over what they claim.
+  const { home, away } = chartAxisPercents(
+    homeProbToChartAxis(homeProbability),
+  );
+  return { home, away };
 }
 
 /** The rule this ship deletes: round `home` on its own, derive `away`. */

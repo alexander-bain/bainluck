@@ -26,6 +26,7 @@ import {
 import type { WinProbabilitySources } from "@/lib/probabilityEvidence";
 import { PROBABILITY_SOURCE_KEYS } from "@/lib/confidence";
 import { renderedDuelPercents, renderedPercent } from "@/lib/renderedPercent";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -762,10 +763,43 @@ export function chartAxisToHomeProb(axisValue: number): number {
  * Returns `null`s for a non-finite axis value, which is `renderedPercent`'s own
  * answer for "no number here". A caller rendering into JSX must supply its own
  * fallback rather than interpolating the null.
+ *
+ * ═══ #6858 — THE INTEGER IS NOT THE PRINTABLE ANSWER AT THE BOUNDARY ═══
+ *
+ * #4154 made the hero and the chart round the same end of the same pair, and
+ * they have agreed across `[0.01, 0.99]` ever since. They still disagreed at the
+ * two ends, because agreeing on the INTEGER is not the same as agreeing on what
+ * gets PRINTED: the hero prints through `probabilityParts`, which substitutes a
+ * marked form whenever rounding would claim a boundary the probability is
+ * strictly inside of — and a `number` cannot carry a marker at all. So this
+ * function handed back a faithful `0`, the callout interpolated it, and the
+ * chart told the reader a team still playing had exactly no chance.
+ *
+ * (The two spellings deliberately do not appear here. `probabilityDisplay` is
+ * their one home, and `probabilityDisplay.test.ts` fails any second module that
+ * writes them down — a guard this comment tripped on its first draft.)
+ *
+ * Read on production 2026-09-18 03:50Z on `/events/15298678` (Aces at Storm,
+ * live, ten minutes left in the fourth, served `home_probability: 0.001`): the
+ * hero printed the marked form and the callout printed a bare `0%`, both inside
+ * one phone screenful.
+ *
+ * The labels are returned from HERE rather than formatted at the two call sites
+ * for the reason the whole function exists: an expression repeated at two call
+ * sites is a rule that can drift at one of them. It also keeps the call count
+ * the `#3892` source guard pins at two.
+ *
+ * 🔴 That rule is STRICT on the probability, so a settled game's genuine `1` /
+ * `0` still prints the literal `100%` / `0%`. That is *settled means settled*,
+ * it is the wider regression a careless fix here would cause — an edge check on
+ * the ROUNDED integer would convert every finished game on the site — and it is
+ * pinned by its own case in `chartCalloutHonoursTheBoundaryRule6858`.
  */
 export function chartAxisPercents(axisValue: number): {
   home: number | null;
   away: number | null;
+  homeLabel: string | null;
+  awayLabel: string | null;
 } {
   const homeProb = chartAxisToHomeProb(axisValue);
   // The axis carries ONE end, and this function has always answered for both by
@@ -773,8 +807,18 @@ export function chartAxisPercents(axisValue: number): {
   // what lets the hero's rule decide the anchor; a non-finite axis value falls
   // out as a non-complement pair and yields the nulls documented above.
   const [away, home] = renderedDuelPercents(1 - homeProb, homeProb);
-  if (home === null || away === null) return { home: null, away: null };
-  return { home, away };
+  if (home === null || away === null) {
+    return { home: null, away: null, homeLabel: null, awayLabel: null };
+  }
+  // The DERIVED integer is passed as `rendered` so the boundary rule is applied
+  // on top of the pair this function already resolved — never re-rounded from
+  // the probability, which would reintroduce the 101 that deriving prevents.
+  return {
+    home,
+    away,
+    homeLabel: formatProbabilityPercent(homeProb, { rendered: home }),
+    awayLabel: formatProbabilityPercent(1 - homeProb, { rendered: away }),
+  };
 }
 
 /**
