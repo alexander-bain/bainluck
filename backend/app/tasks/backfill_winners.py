@@ -4637,6 +4637,42 @@ _PROP_TICKER_TO_STAT = {
     # so every one of its outcomes fell through to "cannot compute" and was
     # withheld — honest, but ungraded.
     "kxmlbrbi": "rbis",
+    # #6909: football had NO entry in either table and no name-path fallback
+    # either, so `_prop_stats_for_ticker` returned None for every NFL prop and
+    # `_grade_settled_prop` bailed before it read a stat. Measured on
+    # `/api/events/14632820/game-markets` (49ers-Rams, completed): `actual` was
+    # null on 510 of 510 rows and 35 printed "Resolved · grading unavailable"
+    # while that same event's `box_score_data` held the answer — Puka Nacua's
+    # line says 74 receiving yards, so the withheld "80+" was always a MISS.
+    #
+    # THE KEY IS WHAT THE BOX SCORE CALLS IT, NOT WHAT THE SERIES CALLS IT.
+    # Kalshi's Rushing Attempts series is KXNFLRSHATT; ESPN stores that quantity
+    # as "carries". Mapping it to a plausible-looking "rushing attempts" would
+    # have kept returning None forever and read as "still unmapped".
+    "kxnflpassyds": "passing yards",
+    "kxnflrshyds": "rushing yards",
+    "kxnflrecyds": "receiving yards",
+    "kxnflpasstds": "passing touchdowns",
+    "kxnflpasscomp": "completions",
+    # The DEFENSIVE key is "interceptions caught". Naming the thrown one
+    # explicitly is #1990's lesson: a stat true of both sides of the ball needs
+    # the side in the key, not in the caller's head.
+    "kxnflpassint": "interceptions thrown",
+    "kxnflrshatt": "carries",
+    "kxnfllongrsh": "long rush",
+    "kxnfllongrec": "long reception",
+    # ⚠ PREFIX OF "kxnflrecyds" (Receiving Yards). This is exactly the #1728
+    # collision, and it is safe ONLY because `_prop_stats_for_ticker` takes the
+    # LONGEST matching prefix — under first-match-wins every receiving-yards
+    # prop would grade off a reception COUNT. Guarded by
+    # `test_kxnflrecyds_outranks_the_kxnflrec_prefix_it_extends`.
+    "kxnflrec": "receptions",
+    # DELIBERATELY ABSENT, and each absence is a withholding rather than a gap
+    # to fill later by pattern: KXNFLPASSATT (an ESPN line has "completions",
+    # no attempts key — no quantity to read), KXNFLTD (a player "Touchdowns"
+    # prop does not say which of rushing/receiving/return TDs it sums), and
+    # KXNFLFFPTS (fantasy points is a scoring formula, not a box-score stat —
+    # #6751's venue fallback is what grades those).
 }
 
 _PROP_RE = re.compile(r"^(.+?):\s*(\d+)\+\s*$")
@@ -4664,6 +4700,14 @@ _COMBO_STATS = {
     # prefix-matched `kxmlbhr` above and published the batter's HOME RUN total
     # as its actual. A 2-hit game printed a red MISS on a prop that hit.
     "kxmlbhrr": ["hits", "runs", "rbis"],
+    # #6909 second pass. Held back from the first because every verdict there
+    # was hand-checked against a real box-score line and this family was not;
+    # it is here now on the same evidence. Both legs are keys ESPN already
+    # writes for every skill player, so this needs no new vocabulary — only
+    # the composite. Kyren Williams 41 rushing + 24 receiving = 65 against a
+    # 70+ rung, Christian McCaffrey 68 + 20 = 88 against 110+: both MISS, and
+    # both were printing "Resolved · grading unavailable".
+    "kxnflrryds": ["rushing yards", "receiving yards"],
 }
 
 
