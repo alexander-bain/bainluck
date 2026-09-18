@@ -130,8 +130,8 @@ const NOT_TEAM_LABELS = new Map<string, Array<[string, string]>>([
     join(IOS_ROOT, "Components/LadderCardView.swift"),
     [
       [
-        'default:             abbrev = String(label.prefix(3)).uppercased()',
-        "#4757 — a MILESTONE label, not a team. `shortDeltaLabel` abbreviates the ladder's last COLUMN for the '… 24H' header tag, and routing a milestone through a team-name helper would be a worse bug than the one it looks like. MEASURED against /api/playoffs/{mlb,nfl,nba,nhl} on 2026-09-10: the last column is 'World Series' / 'Super Bowl' / 'Champion' / 'Stanley Cup', so no team name reaches this line and no label yields a trailing space. Separately filed: the switch above it names 'PLAYOFFS' and 'DIVISION', neither of which is ever the last column, so three of four leagues fall to this default",
+        "return String(label.prefix(3))",
+        "#4757 — a MILESTONE label, not a team. `shortDeltaLabel` abbreviates the ladder's last COLUMN for the '… 24H' header tag, and routing a milestone through a team-name helper would be a worse bug than the one it looks like. MEASURED against /api/playoffs/{mlb,nfl,nba,nhl} on 2026-09-10 and again on 2026-09-18: the last column is 'World Series' / 'Super Bowl' / 'Champion' / 'Stanley Cup', so no team name reaches this line. #4838 (2026-09-18) FIXED the defect this entry recorded as separately filed — the switch is keyed on the column's API key now, so `championship` and `division` are named and only a column that cannot currently be last reaches this default at all. Re-keyed off the old text because that line no longer exists; the line it names is a fallback whose result is trimmed, so a label like 'AL / NL Champ' can no longer render 'AL  24H'",
       ],
     ],
   ],

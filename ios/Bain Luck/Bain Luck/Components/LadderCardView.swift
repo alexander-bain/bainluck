@@ -53,7 +53,7 @@ struct LadderCardView: View {
     let rungs: [LadderRung]
 
     /// Headline delta shown on the right of the header (e.g. the WS 24h move, in points).
-    var headlineDeltaLabel: String? = nil   // e.g. "WS 24H"
+    var headlineDeltaLabel: String? = nil   // e.g. "WIN 24H"
     var headlineDelta: Double? = nil         // in percentage points, e.g. -2.2
 
     var clinched: Bool = false
@@ -284,7 +284,7 @@ extension LadderRung {
 extension LadderCardView {
     /// Build a per-team ladder card from the championship-grid models
     /// (`GridTeam` + ordered `[GridColumn]`). The last column's 24h trend becomes the
-    /// headline delta ("WS 24H"), matching the design's per-card delta.
+    /// headline delta ("WIN 24H"), matching the design's per-card delta.
     init(gridTeam team: GridTeam, columns: [GridColumn], rank: Int? = nil) {
         let ordered = columns.sorted { $0.order < $1.order }
         let rungs = ordered.map { col -> LadderRung in
@@ -303,22 +303,61 @@ extension LadderCardView {
             rank: rank ?? team.seed,
             subtitle: team.record,
             rungs: rungs,
-            headlineDeltaLabel: lastLabel.map { shortDeltaLabel($0) },
+            headlineDeltaLabel: lastLabel.map { shortDeltaLabel(key: lastKey, label: $0) },
             headlineDelta: trend.map { $0 * 100 }
         )
     }
 }
 
-/// Abbreviates a milestone label for the compact "… 24H" header tag ("WORLD SERIES" → "WS 24H").
-private func shortDeltaLabel(_ label: String) -> String {
-    let abbrev: String
-    switch label.uppercased() {
-    case "WORLD SERIES": abbrev = "WS"
-    case "PLAYOFFS":     abbrev = "PO"
-    case "DIVISION":     abbrev = "DIV"
-    default:             abbrev = String(label.prefix(3)).uppercased()
+/// The compact header tag naming the rung a ladder card's 24h delta belongs to
+/// ("WIN 24H"). Keyed on the grid column's stable `key`, never on its display label.
+///
+/// #4838: this was keyed on `label.uppercased()` with cases `WORLD SERIES`,
+/// `PLAYOFFS` and `DIVISION`, and it is fed `ordered.last`. Measured on
+/// `/api/playoffs/{mlb,nfl,nba,nhl}` 2026-09-10 and again 2026-09-18, the last
+/// column is `key == "championship"` in every league we serve, and its LABEL is
+/// the one thing that differs:
+///
+/// | league | last label | printed |
+/// |---|---|---|
+/// | MLB | `World Series` | `WS 24H` — the only case that matched |
+/// | NFL | `Super Bowl` | `SUP 24H` |
+/// | NBA | `Champion` | `CHA 24H` |
+/// | NHL | `Stanley Cup` | `STA 24H` |
+///
+/// So three of four leagues printed a truncation, and `case "PLAYOFFS"` was dead
+/// outright — the served label is `Make Playoffs` and never equalled it.
+///
+/// THE WORD IS NOT INVENTED HERE. `WIN` is what the repo's only other
+/// milestone-abbreviation map already assigns to every championship spelling it
+/// knows (`frontend/components/ChampionshipGrid.tsx`: `Super Bowl`, `World Series`,
+/// `Stanley Cup`, `Championship` → `WIN`). One word across four leagues also costs
+/// the reader nothing, because `rungRow` prints the rung's FULL label directly
+/// below the tag either way. If the copy is ever overruled it is this one line.
+///
+/// Only `championship` and `division` are mapped, deliberately. `championship` is
+/// the only column that can reach this tag today; `division` keeps the word it
+/// already had. Inventing abbreviations for columns nothing can render would be
+/// guessing at copy, so the rest take the truncation — but a SANITIZED one, since
+/// MLB's `AL / NL Champ` has `prefix(3) == "AL "` and would have rendered
+/// `AL  24H` with a double space the moment a column reorder made it last.
+func shortDeltaLabel(key: String?, label: String) -> String {
+    let abbrev = deltaTagAbbreviation(key: key, label: label)
+    return abbrev.isEmpty ? "24H" : "\(abbrev) 24H"
+}
+
+/// The tag's abbreviation alone. Returns `""` when the label offers nothing to
+/// abbreviate, which is what makes the trailing/double space unrepresentable
+/// rather than merely absent today.
+private func deltaTagAbbreviation(key: String?, label: String) -> String {
+    switch key {
+    case "championship": return "WIN"
+    case "division":     return "DIV"
+    default:
+        return String(label.prefix(3))
+            .trimmingCharacters(in: .whitespaces)
+            .uppercased()
     }
-    return "\(abbrev) 24H"
 }
 
 // MARK: - Preview
@@ -339,7 +378,7 @@ private func shortDeltaLabel(_ label: String) -> String {
                     LadderRung(id: "lcs", label: "LCS", probability: 0.16),
                     LadderRung(id: "ws", label: "WORLD SERIES", probability: 0.069),
                 ],
-                headlineDeltaLabel: "WS 24H",
+                headlineDeltaLabel: "WIN 24H",
                 headlineDelta: -2.2
             )
 
