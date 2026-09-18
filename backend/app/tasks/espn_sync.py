@@ -3912,14 +3912,18 @@ async def _transition_event_statuses_impl() -> dict:
                 select(Event)
                 .where(
                     Event.status == EVENT_SUSPENDED,
+                    # #6927: the market test is a CONJUNCT of the whole screen,
+                    # not a member of the second arm. Nested inside the `and_`
+                    # it was asked only of rows whose `external_id` was present,
+                    # so a row with no `external_id` walked past the one rule
+                    # that was there to stop it. 7,360 of the 13,595 rows this
+                    # arm retired since 09-13 carried markets, and every one
+                    # came through the unguarded arm.
                     or_(
                         Event.external_id.is_(None),
-                        and_(
-                            Event.commence_time_source
-                            == ODDS_API_COMMENCE_SOURCE,
-                            ~market_anchored_exists,
-                        ),
+                        Event.commence_time_source == ODDS_API_COMMENCE_SOURCE,
                     ),
+                    ~market_anchored_exists,
                     Event.espn_id.is_(None),
                     Event.statpal_fixture_id.is_(None),
                     Event.home_score.is_(None),
@@ -3949,6 +3953,16 @@ async def _transition_event_statuses_impl() -> dict:
                     # is the second asking of the same question — deliberately,
                     # per the comment above the SELECT: the verdict never trusts
                     # the WHERE clause to have carried a rule for it.
+                    #
+                    # 🔴 THAT SENTENCE WAS FALSE FOR HALF THE POPULATION UNTIL
+                    # #6927, and this is the exact shape of comment that lets a
+                    # gap live. The screen excluded market-anchored rows only
+                    # on its `external_id`-present arm; the verdict's own market
+                    # test was nested in the same place, so BOTH askings were
+                    # inside the same branch and the "second asking" was no
+                    # independent check at all. Two copies of one rule do not
+                    # make a belt and braces if they hang from the same hook.
+                    # Both are unconditional now.
                     market_anchored=await _row_has_market_anchor(
                         session, event.id
                     ),

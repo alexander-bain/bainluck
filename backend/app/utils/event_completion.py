@@ -714,6 +714,37 @@ def suspended_row_is_unreachable(
     for provider_id in (espn_id, statpal_fixture_id):
         if provider_id is not None and str(provider_id).strip() != "":
             return False
+    # #6927: ASKED UNCONDITIONALLY, AND THAT IS THE WHOLE FIX.
+    #
+    # The market question used to be reachable only through the branch below,
+    # i.e. only for a row whose `external_id` was PRESENT. A row with no
+    # `external_id` was never asked it, so the refusal
+    # `_odds_api_external_id_is_inert` exists to make — "a row carrying a
+    # polymarket or kalshi_resolution_sweep market has a live door however it
+    # was minted" — simply never fired for that arm.
+    #
+    # It did not leak where it was applied. Measured on production 2026-09-18
+    # from the arm's own backup table, `backup_unreachable_suspended_5532`:
+    # 13,595 rows retired since 09-13, **7,360 of them carrying markets**, 921
+    # carrying an OPEN one — and every single one came through the unguarded
+    # arm, 0 through the guarded one. 296 of the 332 retired in the last 24h
+    # (89%) were in that class, so it was an ongoing loss and not a historical
+    # one. The door was closed at 11:27:08Z while this landed.
+    #
+    # `is not False` rather than a truth test, mirroring the sibling helper
+    # exactly: the keyword is required at every call site with no default, so
+    # anything that is not a literal `False` means the caller did not answer the
+    # question — and "the caller is out of date" must not look like "the row is
+    # genuinely inert". This can only ever refuse MORE rows, never retire one
+    # that is refused today, which is the only safe direction for an arm that
+    # writes a terminal status.
+    if market_anchored is not False:
+        return False
+    # Kept, not folded into the hoist above. The two are at different layers of
+    # one predicate — this one is about what a PRESENT `external_id` can still
+    # reach — and collapsing them would leave the surviving test load-bearing
+    # for a question it does not name. Same reason the caller asks the screen's
+    # WHERE clause a second time here.
     if _provider_id_present(external_id) and not _odds_api_external_id_is_inert(
         commence_time_source, market_anchored
     ):
