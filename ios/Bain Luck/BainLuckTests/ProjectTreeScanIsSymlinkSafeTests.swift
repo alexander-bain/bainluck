@@ -112,6 +112,60 @@ final class ProjectTreeScanIsSymlinkSafeTests: XCTestCase {
         }
     }
 
+    // MARK: - Nobody writes the sixth copy
+
+    /// NO GUARD STRIPS A ROOT OUT OF A PATH BY HAND AGAIN.
+    ///
+    /// The three tests above prove `ProjectTree` is right. None of them can see
+    /// a guard that stops calling it — and that is the shape this whole family
+    /// of failures takes, because the deformed path only appears when the root
+    /// is symlinked, and the suite normally runs from `/Users/...` where the
+    /// old idiom and the new one agree. A sixth scan written the old way would
+    /// be invisible here and red on the desk, which is exactly what happened.
+    ///
+    /// So the rule is asserted about the TREE, the way the guards this repairs
+    /// assert theirs. Comments are stripped first — `ProjectTreeScan.swift`
+    /// quotes the defect in its own documentation, and a guard that cannot tell
+    /// a defect from a description of one applies its pressure to the
+    /// explanation.
+    func testNoTestStripsAProjectRootByHand() throws {
+        let banned = ".path.replacingOccurrences(of:"
+        // Anti-vacuity: the matcher fires on the defect it was written for.
+        XCTAssertTrue(
+            matchesBannedStrip("let rel = url.path.replacingOccurrences(of: root.path + \"/\", with: \"\")", banned),
+            "the matcher no longer recognises the idiom it exists to ban"
+        )
+        XCTAssertFalse(
+            matchesBannedStrip("    /// let rel = url\(banned) root.path", banned),
+            "the matcher is reading comments, so it punishes documenting the fix"
+        )
+
+        var offenders: [String] = []
+        for (path, text) in try ProjectTree.swiftSources(under: ProjectTree.root(), minimumFiles: 100) {
+            // This file reproduces the old idiom on purpose, three lines up
+            // from an assertion that it disagrees with the new one.
+            guard !path.hasSuffix("ProjectTreeScanIsSymlinkSafeTests.swift") else { continue }
+            for (i, line) in text.components(separatedBy: .newlines).enumerated()
+            where matchesBannedStrip(line, banned) {
+                offenders.append("\(path):\(i + 1)")
+            }
+        }
+        XCTAssertEqual(
+            offenders, [],
+            """
+            A scan is stripping a project root out of a path by hand. That \
+            returns a deformed path instead of an error whenever the root is \
+            reached through a symlink — a worktree under /tmp — and the guard \
+            then reports a product defect that does not exist. Call \
+            ProjectTree.relativePath(of:under:) or ProjectTree.swiftFiles(under:).
+            """
+        )
+    }
+
+    private func matchesBannedStrip(_ line: String, _ banned: String) -> Bool {
+        (line.components(separatedBy: "//").first ?? line).contains(banned)
+    }
+
     /// An empty tree THROWS instead of returning an empty list.
     ///
     /// `offences == []` is also what a walk that enumerated nothing produces,
