@@ -490,7 +490,7 @@ export default async function Image({ params }: { params: { id: string } }) {
                 fontWeight: 900,
               }}
             >
-              {teamCrestBadge(awayTeam)}
+              {teamCrestBadge(awayTeam, event.sport_key || event.sport)}
             </div>
             <div style={{ fontSize: 44, fontWeight: 850, lineHeight: 1.05, color: awayNameColor }}>{awayTeam}</div>
             {awayHero !== null && (
@@ -527,7 +527,7 @@ export default async function Image({ params }: { params: { id: string } }) {
                 fontWeight: 900,
               }}
             >
-              {teamCrestBadge(homeTeam)}
+              {teamCrestBadge(homeTeam, event.sport_key || event.sport)}
             </div>
             <div style={{ fontSize: 44, fontWeight: 850, lineHeight: 1.05, textAlign: "right", color: homeNameColor }}>{homeTeam}</div>
             {homeHero !== null && (

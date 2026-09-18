@@ -120,11 +120,20 @@ struct TeamLogoView: View {
     /// PRODUCTION path rather than a paraphrase of it — `@testable import` does not
     /// reach `private`, and a rule restated in a test is the second copy this file
     /// was just cured of.
-    static func badge(teamName: String, opponentName: String?) -> String {
+    /// #4624 — `sportKey` is the view's own property, passed on rather than
+    /// added: it has been here since the ESPN logo fallback, and the badge is
+    /// the one thing on this circle that needed to know whether the competitor
+    /// is a person. A caller that does not supply it draws exactly the badge it
+    /// draws today.
+    static func badge(teamName: String, opponentName: String?, sportKey: String? = nil) -> String {
         guard let opponentName, !opponentName.isEmpty, opponentName != teamName else {
-            return TeamShortName.abbreviation(teamName)
+            return TeamShortName.abbreviation(teamName, sportKey: sportKey)
         }
-        return TeamShortName.abbreviationPair(away: teamName, home: opponentName).away
+        return TeamShortName.abbreviationPair(
+            away: teamName,
+            home: opponentName,
+            sportKey: sportKey
+        ).away
     }
 
     private var initialsFallback: some View {
@@ -136,7 +145,7 @@ struct TeamLogoView: View {
             // chord the circle can actually hold, so `minimumScaleFactor` shrinks a
             // wide trio to fit instead of truncating it to "BE…" — a badge that
             // ellipsises is worse than the letter it replaced.
-            Text(Self.badge(teamName: teamName, opponentName: opponentName))
+            Text(Self.badge(teamName: teamName, opponentName: opponentName, sportKey: sportKey))
                 .font(.system(size: size * 0.40, weight: .bold))
                 .lineLimit(1)
                 .minimumScaleFactor(0.45)

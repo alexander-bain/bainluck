@@ -151,6 +151,65 @@ enum TeamShortName {
         "nig", "sht", "tit", "twa", "wtf", "jiz", "pis", "sex", "hoe",
     ]
 
+    /// The sport keys whose competitor is a PERSON rather than a club.
+    ///
+    /// #4624 — the discriminator #4466 said did not exist in the string, and it
+    /// does not: no filter that keeps "Paris Saint Germain" → `PSG` can tell a
+    /// three-word club from a three-word person, because both are
+    /// all-distinctive by construction. The SPORT tells them apart, and the
+    /// clients hold it already — it is the key they were not passing to the
+    /// badge.
+    ///
+    /// Matched against the key's FIRST SEGMENT, never as a substring: every
+    /// production key is `<sport>_<tour-or-league>` (`tennis_atp_us_open`,
+    /// `mma_mixed_martial_arts`, `boxing_boxing`), so the segment is the sport
+    /// and a `contains` would be a prefix fallback that quietly answers for keys
+    /// nobody listed.
+    ///
+    /// Measured over the whole production population of individual-sport names,
+    /// both sides of every event in the last 45 days (2026-09-18, pulled in 16
+    /// hash chunks past the 500-row cap and reconciled against its own
+    /// `COUNT(*)`): tennis 4,577 distinct names · mma 624 · boxing 419 ·
+    /// motorsport 31 · golf 2.
+    ///
+    /// **Deliberately absent: `motorsport`.** A driver is a person and the entry
+    /// would be defensible, but not one of its 31 names reaches the fork this
+    /// gate opens, so the entry would be unobservable — a line no test could
+    /// hold. Add it with the first name that needs it. `esports` is absent for
+    /// the opposite reason: those competitors are ORGANISATIONS ("DMG Esports"),
+    /// which is the club case the fork was built for.
+    ///
+    /// **`golf` is in the set and its live population is two names from ONE
+    /// voided row**, `golf_other` 15192773 — a Philippine BASKETBALL fixture
+    /// mis-keyed as golf, so the only golf name this gate moves is "Phoenix Fuel
+    /// Masters" `PFM` → `MAS`. Said out loud rather than left for the next
+    /// reader to discover: the entry earns its place because a golfer is a
+    /// person for exactly the reason a tennis player is, not because the
+    /// measurement found one, and the mis-keyed row is a matching defect filed
+    /// on its own account.
+    ///
+    /// This is the browser's `INDIVIDUAL_SPORT_PREFIXES`
+    /// (`frontend/lib/teamShortName.ts`) and the two sets are compared out of
+    /// source by `frontend/__tests__/teamDesignatorParityAcrossClients.test.ts`,
+    /// exactly as `designators` and `unshippableBadges` are: a transcribed copy
+    /// that nothing checks is the third implementation this file exists to
+    /// prevent.
+    static let individualSportPrefixes: Set<String> = [
+        "tennis", "golf", "mma", "boxing",
+    ]
+
+    /// Does this sport key name a competition between PEOPLE?
+    ///
+    /// Nil or empty answers `false`, which is every surface that does not know
+    /// its sport — the badge it draws is unchanged from today. This gate can
+    /// only ever be opened by a caller that positively knows the sport, so a
+    /// missing key degrades to the shipped rule rather than to a guess.
+    static func namesAPerson(sportKey: String?) -> Bool {
+        guard let key = sportKey?.lowercased(), !key.isEmpty else { return false }
+        let sport = key.split(separator: "_").first.map(String.init) ?? key
+        return individualSportPrefixes.contains(sport)
+    }
+
     /// A founding year ("1. FC Heidenheim 1846") names a team no better than
     /// "FC" does, and the shipped rule printed it as the whole label.
     ///
@@ -278,7 +337,14 @@ enum TeamShortName {
     ///    → `SAI`. Splitting hyphens like spaces is what makes the two agree.
     ///
     /// See `distinctiveTokens` for why this is not a bare word count.
-    static func abbreviation(_ name: String) -> String {
+    ///
+    /// 4. **#4624 — the fork is for CLUBS, so a person's sport closes it.** The
+    ///    initials are right for a compound club name and wrong for a person's
+    ///    three names: "Eloy Mendez Alcantara" badged `EMA` where a tennis
+    ///    reader calls him Alcantara. `sportKey` is the discriminator (see
+    ///    `namesAPerson`), and it defaults to nil — every call site that does
+    ///    not know its sport keeps exactly the badge it draws today.
+    static func abbreviation(_ name: String, sportKey: String? = nil) -> String {
         // The shipped rule, still the answer for every two-part name — and the
         // fallback whenever the fork below declines. "Ipswich Town" is `IPS`,
         // "Boston Celtics" is `CEL`, "Altrincham FC" is `ALT`.
@@ -296,6 +362,23 @@ enum TeamShortName {
         if isDoublesPair(name) { return shipped }
         let distinctive = distinctiveTokens(name)
         guard distinctive.count >= 3 else { return shipped }
+        // #4624 — a PERSON is badged by the rule that shipped before the fork,
+        // which for a three-part name is their surname: "Eloy Mendez Alcantara"
+        // → `ALC`, not `EMA`. Returning `shipped` rather than the last
+        // distinctive token is deliberate — it is the SAME expression the
+        // browser reaches for the same names, so the two clients cannot drift
+        // apart on this population the way #4466/#4539 did. It also means a
+        // person suffix keeps its pre-existing answer ("Jesus Alejandro Ramos
+        // Jr" → `JES`, because `short` hands the whole name back when the last
+        // word is non-distinctive), which is a two-part-name weakness this fork
+        // never owned and is filed rather than fixed here.
+        //
+        // The unshippable clause is the one below, read the other way round: a
+        // person whose surname spells one of those three letters keeps the
+        // initials, because a badge nobody may ship is worse than initials.
+        if namesAPerson(sportKey: sportKey), !unshippableBadges.contains(shipped.lowercased()) {
+            return shipped
+        }
         // The initial is the token's first GLYPH, not its first character. A
         // token can open with punctuation the split does not separate on, and
         // `charAt(0)` then puts it on the badge: "Atalanta (1st Leg)" draws
@@ -556,16 +639,22 @@ enum TeamShortName {
     /// the proxy off the thing it proxied. Testing the labels directly restores
     /// all 114 of #3430's rescues byte-identical and leaves the fork to the pairs
     /// whose labels already differ — which is every pair the fork exists for.
+    ///
+    /// #4624 — `sportKey` describes the MATCHUP, so both sides are judged by it:
+    /// the two competitors of one fixture are both people or both clubs, and a
+    /// pair that answered the question twice could badge one side by the club
+    /// rule and the other by the person rule inside one matchup.
     static func abbreviationPair(
         away: String,
         home: String,
         awayServed: String? = nil,
-        homeServed: String? = nil
+        homeServed: String? = nil,
+        sportKey: String? = nil
     ) -> (away: String, home: String) {
         let awayAbbr = served(awayServed)
         let homeAbbr = served(homeServed)
-        let a = awayAbbr ?? abbreviation(away)
-        let h = homeAbbr ?? abbreviation(home)
+        let a = awayAbbr ?? abbreviation(away, sportKey: sportKey)
+        let h = homeAbbr ?? abbreviation(home, sportKey: sportKey)
         // A served pair still wins wherever it discriminates, exactly as before:
         // growth is only ever reached for labels we derived ourselves.
         let derived = awayAbbr == nil && homeAbbr == nil
