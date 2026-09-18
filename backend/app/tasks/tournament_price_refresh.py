@@ -318,6 +318,12 @@ async def _refresh_registered_tournament_prices(
         # sub-market copy) and each row has two legs. The row count is the one
         # a reader feels, because `status` is what decides whether we are still
         # asking the question.
+        #
+        # ASSIGNED FROM `rowcount`, never incremented per settled book: this
+        # counter is what the #6919 after-check reads as proof the fix is live
+        # and working, so it says how many rows CHANGED and nothing else. Its
+        # first cut counted intentions and reported 4 on a pass that moved one
+        # row — see the deferred close in `_write_refreshed_prices`.
         "markets_settled": 0,
         # A closed book that named no winner — see `settled_yes_probability`.
         # Reported rather than dropped: a register whose legs all close without
@@ -474,7 +480,7 @@ async def _write_refreshed_prices(
     markets: list[Any], stats: dict[str, Any], *, now: datetime
 ) -> None:
     """Update every registered outcome these markets price, and snapshot it."""
-    from sqlalchemy import func, select, text, update
+    from sqlalchemy import select, text, update
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
     from app.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
@@ -485,6 +491,10 @@ async def _write_refreshed_prices(
     )
     from app.utils.odds_math import probability_to_american
     from app.utils.winner_field_coherence import DUPLICATE_CONDITION_LEG_SQL
+
+    # #6919: conditions whose book this pass read as SETTLED. Collected in the
+    # loop, spent once after it — see the deferred close at the bottom.
+    settled_conditions: list[str] = []
 
     async with get_task_session() as session:
         for market in markets:
@@ -618,24 +628,32 @@ async def _write_refreshed_prices(
             # `_process_event_batch` uses for the same pair of columns: status
             # and settled_at are one fact, and a re-run must not restamp a
             # settlement that already has a date.
+            #
+            # ── AMENDED: THE CLOSE IS DEFERRED AND KEYED THROUGH THE LEGS,
+            # BECAUSE THIS LOOP REACHES MARKET ROWS TWO WAYS AND ONLY ONE OF
+            # THEM IS KEYED ON THE CONDITION.
+            #
+            # The first cut of this write did the UPDATE here, keyed
+            # `external_id == market.condition_id`. That is the SUB-MARKET row
+            # only. `by_condition` below (#3868) reaches a second, equally real
+            # market row — the PARENT LADDER, keyed on the Gamma EVENT id, whose
+            # legs carry the bare condition — and for those the UPDATE matched
+            # nothing at all. Measured on production in this rail's own
+            # 16:08:00–16:08:37Z pass, 2026-09-18: the counter claimed 4 markets
+            # settled and exactly ONE row changed, while 60755454 / 60755456 /
+            # 60755459 (CPBL, one `Yes` leg each, `external_id` 1004380 /
+            # 1004378 / 1004376) had that leg graded `api_settlement` at
+            # 16:08:02 and kept `status='open'`, `settled_at NULL`,
+            # `updated_at` still 09-11. The defect this write exists to fix,
+            # reproduced by the write itself on the arm it could not see.
+            #
+            # So the condition is REMEMBERED here and the rows are closed once,
+            # after the grading loop, addressed through the outcomes that
+            # actually carry the condition. Deferred and not merely re-keyed
+            # because the guard below has to see THIS pass's grades: run before
+            # them, it reads every leg we are about to answer as unanswered.
             if settled is not None:
-                await session.execute(
-                    update(FuturesMarket)
-                    .where(
-                        # LAT-P240 again: leading column first, same as the
-                        # volume UPDATE above, or this scans the index.
-                        FuturesMarket.source == "polymarket",
-                        FuturesMarket.external_id == market.condition_id,
-                    )
-                    .values(
-                        status="resolved",
-                        settled_at=func.coalesce(
-                            FuturesMarket.settled_at, now
-                        ),
-                        updated_at=now,
-                    )
-                )
-                stats["markets_settled"] += 1
+                settled_conditions.append(market.condition_id)
 
             probability = settled
             if probability is None:
@@ -837,6 +855,65 @@ async def _write_refreshed_prices(
                     )
                 )
                 stats["snapshots_written"] += 1
+
+        # ── #6919, THE DEFERRED CLOSE. One statement, after every leg this
+        # pass answers has been written.
+        #
+        # ADDRESSED THROUGH THE LEGS, NOT THE MARKET KEY. A condition reaches
+        # us as up to three outcome `external_id`s — the bare `<condition>` on
+        # a parent ladder row, and `<condition>_yes` / `<condition>_no` on the
+        # sub-market row — and the two live on DIFFERENT market rows. Keying
+        # the close on `futures_markets.external_id` saw only the second, which
+        # is how a fix for "a settled market is served as an open question"
+        # shipped and left 10 of them open (measured, production, 16:35Z
+        # 2026-09-18; the other 39 in that residue are arm one's and this
+        # statement reaches them by the same route).
+        #
+        # 🛑 THE `resolution_source IS NULL` GUARD IS THE WHOLE SAFETY OF THIS
+        # STATEMENT AND IT IS LOAD-BEARING, MEASURED, NOT ARGUED. A parent
+        # ladder owns one leg per child, so "this market owns a leg we just
+        # graded" is true of a US Open draw the moment ONE player's condition
+        # settles. Without the guard this UPDATE would close 389 open markets
+        # on production, 322 of them tier 1–3 — every live tournament ladder on
+        # a marquee surface, retired mid-event. With it, a market closes only
+        # when no leg it owns is still unanswered. The `EXISTS` beside it is
+        # not decoration: `NOT EXISTS` is vacuously true for a legless row.
+        #
+        # `status <> 'resolved'` is what makes `rowcount` honest, and honesty
+        # here is the point — the first cut incremented the counter once per
+        # settled book with no regard for whether a row moved, so the rail
+        # reported `markets_settled: 4` on a pass that changed ONE row. A
+        # counter that cannot be wrong about its own write is the cheapest
+        # liveness oracle we have; one that counts intentions is worse than
+        # none, because an after-check reads it as proof.
+        if settled_conditions:
+            leg_keys = [
+                key
+                for cid in settled_conditions
+                for key in (cid, f"{cid}_yes", f"{cid}_no")
+            ]
+            closed = await session.execute(
+                text(
+                    """
+                    UPDATE futures_markets fm
+                       SET status = 'resolved',
+                           settled_at = COALESCE(fm.settled_at, :now),
+                           updated_at = :now
+                     WHERE fm.source = 'polymarket'
+                       AND fm.status <> 'resolved'
+                       AND EXISTS (SELECT 1 FROM futures_outcomes fo
+                                    WHERE fo.market_id = fm.id
+                                      AND fo.external_id = ANY(:leg_keys))
+                       AND NOT EXISTS (SELECT 1 FROM futures_outcomes fo2
+                                        WHERE fo2.market_id = fm.id
+                                          AND fo2.resolution_source IS NULL)
+                       AND EXISTS (SELECT 1 FROM futures_outcomes fo3
+                                    WHERE fo3.market_id = fm.id)
+                    """
+                ),
+                {"now": now, "leg_keys": leg_keys},
+            )
+            stats["markets_settled"] = closed.rowcount
 
         await session.commit()
 

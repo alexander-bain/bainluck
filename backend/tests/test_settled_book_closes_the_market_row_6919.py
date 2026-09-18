@@ -86,16 +86,41 @@ class _Result:
         return iter(self._rows)
 
 
-class RecordingSession:
-    """Records every statement; answers the writer's two lookups separately."""
+def _is_the_close(stmt) -> bool:
+    """The deferred settlement UPDATE, told apart from the leg lookup.
 
-    def __init__(self, *, market_keyed=(), condition_keyed=()):
+    Both are `text()`, so `isinstance` cannot separate them; one is a SELECT
+    against `futures_outcomes` and the other an UPDATE against
+    `futures_markets`, and that is what we key on.
+    """
+    return (
+        isinstance(stmt, TextClause)
+        and "update futures_markets" in " ".join(str(stmt).split()).lower()
+    )
+
+
+class RecordingSession:
+    """Records every statement; answers the writer's three statements apart.
+
+    `closed_rows` is what the settlement UPDATE reports as `rowcount` — the
+    number of market rows that actually MOVED. It defaults to 0 rather than to
+    "however many legs you handed me", because the counter under test must be
+    able to say "I closed nothing" on a pass that closed nothing (see
+    `TestTheCounterCountsClosuresNotAttempts`).
+    """
+
+    def __init__(self, *, market_keyed=(), condition_keyed=(), closed_rows=0):
         self.statements: list[object] = []
+        self.calls: list[tuple[object, dict]] = []
         self._market_keyed = list(market_keyed)
         self._condition_keyed = list(condition_keyed)
+        self._closed_rows = closed_rows
 
     async def execute(self, stmt, *args, **kwargs):
         self.statements.append(stmt)
+        self.calls.append((stmt, dict(args[0]) if args and args[0] else {}))
+        if _is_the_close(stmt):
+            return _Result([object()] * self._closed_rows)
         if isinstance(stmt, TextClause):
             return _Result(self._condition_keyed)
         if getattr(stmt, "is_select", False):
@@ -157,9 +182,13 @@ def _parsed(**kw):
     return market
 
 
-async def _run(monkeypatch, market, *, market_keyed=(), condition_keyed=()):
+async def _run(
+    monkeypatch, market, *, market_keyed=(), condition_keyed=(), closed_rows=0
+):
     session = RecordingSession(
-        market_keyed=market_keyed, condition_keyed=condition_keyed
+        market_keyed=market_keyed,
+        condition_keyed=condition_keyed,
+        closed_rows=closed_rows,
     )
 
     @contextlib.asynccontextmanager
@@ -171,7 +200,8 @@ async def _run(monkeypatch, market, *, market_keyed=(), condition_keyed=()):
     monkeypatch.setattr(base, "get_task_session", _fake_session)
 
     stats = _stats()
-    await rail._write_refreshed_prices([market], stats, now=NOW)
+    markets = market if isinstance(market, list) else [market]
+    await rail._write_refreshed_prices(markets, stats, now=NOW)
     return session, stats
 
 
@@ -191,9 +221,31 @@ def _market_writes(session) -> list[dict]:
     return out
 
 
+def _close_writes(session) -> list[dict]:
+    """The deferred settlement UPDATE, as `{_sql, **bound params}`.
+
+    Since the parent-ladder repair the close is a single `text()` statement
+    issued once per PASS, addressed through the legs. `_market_writes` above
+    compiles ORM `Update` objects and cannot see it — which is exactly how a
+    guard suite can stay green while the write it guards stops firing, so both
+    shapes feed `_status_writes`.
+    """
+    out: list[dict] = []
+    for stmt, params in session.calls:
+        if not _is_the_close(stmt):
+            continue
+        row = dict(params)
+        row["_sql"] = " ".join(str(stmt).split())
+        out.append(row)
+    return out
+
+
 def _status_writes(session) -> list[dict]:
-    """Only the market UPDATEs that actually set `status`."""
-    return [w for w in _market_writes(session) if "status=" in w["_sql"].replace(" ", "")]
+    """Every market write that actually sets `status`, whichever shape it is."""
+    orm = [
+        w for w in _market_writes(session) if "status=" in w["_sql"].replace(" ", "")
+    ]
+    return orm + _close_writes(session)
 
 
 LEGS = ((SUB_YES_ID, "Yes", f"{CID}_yes"), (SUB_NO_ID, "No", f"{CID}_no"))
@@ -243,7 +295,9 @@ class TestASettledBookClosesTheMarketRowItGraded:
             "the rail graded both legs and left `futures_markets.status` "
             "untouched — this is #6919"
         )
-        assert any(v == "resolved" for v in writes[0].values())
+        sql = writes[0]["_sql"].lower()
+        assert "'resolved'" in sql
+        assert "futures_markets" in sql
 
     @pytest.mark.asyncio
     async def test_settled_at_moves_with_the_status_and_never_backwards(
@@ -257,13 +311,12 @@ class TestASettledBookClosesTheMarketRowItGraded:
         assert "coalesce" in sql
 
     @pytest.mark.asyncio
-    async def test_it_addresses_the_row_by_source_and_condition_id(
-        self, monkeypatch
-    ):
+    async def test_it_stays_inside_polymarket(self, monkeypatch):
         session, _ = await _run(monkeypatch, _parsed(), market_keyed=LEGS)
-        params = _status_writes(session)[0]
-        assert CID in params.values()
-        assert "polymarket" in params.values()
+        sql = _status_writes(session)[0]["_sql"].lower()
+        assert "source = 'polymarket'" in sql, (
+            "the close must never reach a Kalshi or Odds-API row"
+        )
 
     @pytest.mark.asyncio
     async def test_the_no_side_settlement_closes_the_row_too(self, monkeypatch):
@@ -314,3 +367,143 @@ class TestNothingElseIsClosed:
         )
         assert _market_writes(session), "the volume write disappeared"
         assert _status_writes(session) == []
+
+
+# ---------------------------------------------------------------------------
+# THE PARENT-LADDER REPAIR. #6919's first cut keyed the close on
+# `futures_markets.external_id == <condition>`, which is the SUB-MARKET row and
+# nothing else. #3868's comment in this very file names the OTHER row — a
+# parent ladder keyed on the Gamma EVENT id, whose legs carry the BARE
+# condition — and the first cut graded its legs and could not close it.
+#
+# Measured on production 2026-09-18, the fixed rail's own 16:08:02Z pass:
+# 60755454 / 60755456 / 60755459 (CPBL, `external_id` 1004380 / 1004378 /
+# 1004376 — numeric Gamma EVENT ids, never 64-hex conditions) had their `Yes`
+# leg graded `api_settlement` to the microsecond by that pass and kept
+# `status='open'`, `settled_at NULL`. All three are LINKED — i.e. on a game
+# page, a settled question served as one still being asked.
+# ---------------------------------------------------------------------------
+class TestTheCloseReachesTheParentLadderRow:
+    @pytest.mark.asyncio
+    async def test_it_is_addressed_through_the_legs_not_the_market_key(
+        self, monkeypatch
+    ):
+        session, _ = await _run(monkeypatch, _parsed(), market_keyed=LEGS)
+        sql = _status_writes(session)[0]["_sql"].lower()
+        assert "futures_outcomes" in sql, (
+            "a close keyed on `futures_markets.external_id` structurally "
+            "cannot reach an event-id-keyed ladder row — this is the defect"
+        )
+        assert "fm.external_id" not in sql
+
+    @pytest.mark.asyncio
+    async def test_the_bare_condition_is_among_the_keys_it_looks_for(
+        self, monkeypatch
+    ):
+        # THE ASSERTION THAT WOULD HAVE CAUGHT THE CPBL CLASS. The ladder's leg
+        # carries the BARE condition; only the sub-market's legs carry the
+        # `_yes` / `_no` suffixes. A close that looks for the suffixed forms
+        # alone closes half the rows it graded — and reports success.
+        session, _ = await _run(monkeypatch, _parsed(), market_keyed=LEGS)
+        keys = _status_writes(session)[0]["leg_keys"]
+        assert CID in keys, "the parent ladder's leg is unreachable"
+        assert f"{CID}_yes" in keys and f"{CID}_no" in keys
+
+    @pytest.mark.asyncio
+    async def test_one_statement_for_the_whole_pass_not_one_per_market(
+        self, monkeypatch
+    ):
+        other = "0x" + "ab" * 32
+        session, _ = await _run(
+            monkeypatch,
+            [_parsed(), _parsed(conditionId=other)],
+            market_keyed=LEGS,
+        )
+        writes = _status_writes(session)
+        assert len(writes) == 1, (
+            "the close is deferred to one statement after the grading loop, "
+            "so that it can see the grades THIS pass just wrote"
+        )
+        assert CID in writes[0]["leg_keys"] and other in writes[0]["leg_keys"]
+
+
+# ---------------------------------------------------------------------------
+# THE SAFETY CLAUSE. A parent ladder owns ONE LEG PER CHILD and its children
+# settle at different times — #3868's own words: a round-by-round ladder
+# settles over weeks. "This market owns a leg we just graded" is therefore true
+# of a live US Open draw the moment one player's condition settles, so the
+# reach above is only safe with the ungraded-leg gate beside it.
+#
+# Measured on production 2026-09-18 16:35Z: without the gate this statement
+# would close 389 open markets, 322 of them tier 1-3 — every live tournament
+# ladder on a marquee surface, retired mid-event.
+# ---------------------------------------------------------------------------
+class TestTheCloseCannotRetireALiveLadder:
+    @pytest.mark.asyncio
+    async def test_a_market_with_an_ungraded_leg_is_excluded(self, monkeypatch):
+        session, _ = await _run(monkeypatch, _parsed(), market_keyed=LEGS)
+        sql = " ".join(_status_writes(session)[0]["_sql"].split()).lower()
+        assert "not exists" in sql and "resolution_source is null" in sql, (
+            "without this gate the first child to settle closes the whole ladder"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_gate_is_resolution_source_and_never_is_winner(
+        self, monkeypatch
+    ):
+        # 🛑 MEASURED, AND NEARLY GOT WRONG. This file's own CERT-452 comment
+        # says `is_winner` is nullable with `default=False`, so an UNGRADED leg
+        # reads FALSE, not NULL — an `is_winner IS NULL` gate reads "nobody
+        # looked" as "graded". Production 2026-09-18 16:45Z, open markets whose
+        # every leg the gate calls graded: `is_winner IS NULL` → 12,926 (806
+        # linked); `resolution_source IS NULL` → 4,921 (64 linked). The wrong
+        # gate closes ~8,000 extra markets, 742 of them on game pages.
+        session, _ = await _run(monkeypatch, _parsed(), market_keyed=LEGS)
+        sql = _status_writes(session)[0]["_sql"].lower()
+        assert "is_winner" not in sql
+
+    @pytest.mark.asyncio
+    async def test_a_legless_row_is_not_swept_up(self, monkeypatch):
+        # `NOT EXISTS (... resolution_source IS NULL)` is VACUOUSLY TRUE for a
+        # market with no legs at all, so the positive existence test beside it
+        # is load-bearing, not decoration.
+        session, _ = await _run(monkeypatch, _parsed(), market_keyed=LEGS)
+        sql = " ".join(_status_writes(session)[0]["_sql"].split()).lower()
+        assert sql.count("exists") >= 3
+
+    @pytest.mark.asyncio
+    async def test_an_already_resolved_row_is_not_restamped(self, monkeypatch):
+        session, _ = await _run(monkeypatch, _parsed(), market_keyed=LEGS)
+        sql = _status_writes(session)[0]["_sql"].lower()
+        assert "status <> 'resolved'" in sql
+        assert "coalesce" in sql, "a second pass must not redate a settlement"
+
+
+# ---------------------------------------------------------------------------
+# THE COUNTER. `markets_settled` is what the #6919 after-check reads as proof
+# the fix is working, and the first cut incremented it once per settled BOOK
+# with the UPDATE's result discarded. On the 16:08:00-16:08:37Z production pass
+# it reported 4 while exactly ONE row moved. A counter that cannot be wrong
+# about its own write is the cheapest liveness oracle there is; one that counts
+# intentions is worse than none, because an after-check believes it.
+# ---------------------------------------------------------------------------
+class TestTheCounterCountsClosuresNotAttempts:
+    @pytest.mark.asyncio
+    async def test_a_settled_book_that_moves_no_row_counts_zero(self, monkeypatch):
+        session, stats = await _run(
+            monkeypatch, _parsed(), market_keyed=LEGS, closed_rows=0
+        )
+        assert _status_writes(session), "the close must still be attempted"
+        assert stats["legs_settled"] == 2, "the book really was settled"
+        assert stats["markets_settled"] == 0, (
+            "the rail graded legs and closed nothing, and said so"
+        )
+
+    @pytest.mark.asyncio
+    async def test_it_reports_what_the_update_reports(self, monkeypatch):
+        _, stats = await _run(
+            monkeypatch, _parsed(), market_keyed=LEGS, closed_rows=2
+        )
+        assert stats["markets_settled"] == 2, (
+            "both rows a condition can own — sub-market and ladder — count once"
+        )
