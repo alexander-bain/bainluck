@@ -18,6 +18,7 @@ from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport
 from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
 from app.utils.feed_market_quality import is_empty_book_midpoint
+from app.utils.futures_history_basis import devigged_consensus_by_time
 from app.utils.kalshi_empty_book import KALSHI_BOOKMAKER
 from app.utils.futures_unsupported_price import (
     POLYMARKET_BOOKMAKER,
@@ -2746,9 +2747,28 @@ async def get_multi_market_history(
     if not parsed_ids:
         raise HTTPException(status_code=400, detail="At least one market_id is required")
 
-    # Single market: delegate to the standard endpoint logic
+    # Single market: delegate to the standard endpoint logic.
+    #
+    # EVERY PARAMETER RESOLVED, and `outcome_id`/`champion` are why this reads
+    # verbose (#6838). A direct Python call gets the UNRESOLVED ``Query``
+    # default object, which is not None and is TRUTHY, so `if outcome_id:` took
+    # the single-outcome branch and filtered the chart to `[Query(...)]` — an id
+    # no column can be compared against. Measured on production 2026-09-18:
+    # `/api/futures/multi-history?market_ids=7&hours=168` **500s**, and a league
+    # stage tab whose stage carries exactly one market is the reader who gets it
+    # (this route is the ONLY path those tabs use). `champion` has carried a
+    # defensive coercion inside the handler for the same reason; `outcome_id`
+    # never did, and coercing there would hide the next caller's version of this
+    # rather than fix this one.
     if len(parsed_ids) == 1:
-        return await get_futures_history(parsed_ids[0], hours=hours, top_n=top_n, db=db)
+        return await get_futures_history(
+            parsed_ids[0],
+            outcome_id=None,
+            hours=hours,
+            top_n=top_n,
+            champion=None,
+            db=db,
+        )
 
     # Load all markets with their outcomes
     result = await db.execute(
@@ -4694,23 +4714,47 @@ async def get_futures_history(
 
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
+    # #4992 — THE WHOLE FIELD, IN THE QUERY THE CHART ALREADY RAN.
+    #
+    # The window used to select `outcome_ids` (the ten charted lines). It now
+    # selects every outcome of the market, because the de-vig below is only
+    # meaningful over a book's WHOLE quoted column: `remove_vig_nway` divides a
+    # column by its own sum, so ten of 205 outcomes would divide by the wrong
+    # number and force the ten to sum to 1.0. Widening the existing read keeps
+    # this route at one round trip per window instead of two.
+    #
+    # THE CHARTED SUBSET IS TAKEN BACK OUT IMMEDIATELY, so everything downstream
+    # — #5898's filter, the sparse tiers, the point counter — sees exactly the
+    # rows it saw before and none of their semantics move. The sparse tiers in
+    # particular ask "does this outcome have enough points to draw", and handing
+    # them a 205-outcome row count would answer a different question.
+    charted_ids = set(outcome_ids)
+
     # Fetch snapshots for the initial window
     snapshot_query = (
         select(FuturesOddsSnapshot)
+        .join(FuturesOutcome, FuturesOutcome.id == FuturesOddsSnapshot.outcome_id)
         .where(
-            FuturesOddsSnapshot.outcome_id.in_(outcome_ids),
+            FuturesOutcome.market_id == market_id,
             FuturesOddsSnapshot.captured_at >= cutoff,
         )
         .order_by(FuturesOddsSnapshot.captured_at)
     )
     result = await db.execute(snapshot_query)
+    field_rows = list(result.scalars().all())
     # #5898 — filtered BEFORE the sparse-window decision below, never after. The
     # tiers ask "does this outcome have enough points to draw", and a refused
     # point is not a point: counting it can leave a chart thin rather than widen
     # it. A market whose recent history is entirely fabricated now reaches back
     # for real history instead of charting the fabrication.
+    #
+    # `field_rows` is deliberately left unfiltered, and that is the one place the
+    # two diverge. #5898 governs which points a reader is SHOWN; `field_rows` is
+    # the denominator of the book's own overround, and a book's quoted column is
+    # what it quoted. Dropping part of it would inflate every outcome that
+    # survived — a second error to cover the first.
     snapshots = _drop_unsupported_snapshot_points(
-        list(result.scalars().all()), charted_outcomes
+        [r for r in field_rows if r.outcome_id in charted_ids], charted_outcomes
     )
 
     # Auto-extend if sparse
@@ -4719,18 +4763,25 @@ async def get_futures_history(
             extended_cutoff = datetime.now(timezone.utc) - timedelta(hours=extended_hours)
             ext_query = (
                 select(FuturesOddsSnapshot)
+                .join(
+                    FuturesOutcome,
+                    FuturesOutcome.id == FuturesOddsSnapshot.outcome_id,
+                )
                 .where(
-                    FuturesOddsSnapshot.outcome_id.in_(outcome_ids),
+                    FuturesOutcome.market_id == market_id,
                     FuturesOddsSnapshot.captured_at >= extended_cutoff,
                 )
                 .order_by(FuturesOddsSnapshot.captured_at)
             )
             ext_result = await db.execute(ext_query)
+            extended_field = list(ext_result.scalars().all())
             extended_snapshots = _drop_unsupported_snapshot_points(
-                list(ext_result.scalars().all()), charted_outcomes
+                [r for r in extended_field if r.outcome_id in charted_ids],
+                charted_outcomes,
             )
             if len(extended_snapshots) > len(snapshots):
                 snapshots = extended_snapshots
+                field_rows = extended_field
                 actual_hours = extended_hours
                 auto_extended = True
 
@@ -4774,23 +4825,63 @@ async def get_futures_history(
                 float(snapshot.probability)
             )
 
-    # Count total unique data points across all outcomes
-    total_data_points = sum(len(tg) for tg in outcome_time_groups.values())
+    # #4992 — THE HERO AND THE CHART UNDER IT, ON ONE SCALE. Keyed by BOOK, which
+    # `outcome_time_groups` above throws away: `remove_vig_nway` normalizes a
+    # book's column on that book's own outcome set, so a structure that has
+    # already averaged across books can never be de-vigged afterwards. Built
+    # from `field_rows` (the whole field) rather than `snapshots` (the ten
+    # charted lines) for the reason given where they are partitioned.
+    raw_by_time: dict[datetime, dict[str, dict[int, float]]] = defaultdict(
+        lambda: defaultdict(dict)
+    )
+    for row in field_rows:
+        if row.probability is not None:
+            raw_by_time[row.captured_at][row.bookmaker][row.outcome_id] = float(
+                row.probability
+            )
+
+    devigged = devigged_consensus_by_time(
+        raw_by_time,
+        mutually_exclusive=getattr(market, "mutually_exclusive", True),
+    )
+
+    # Counted as the series is BUILT, not off `outcome_time_groups` above, and
+    # #4992 is why it moved. This number is the only input to the `sparse` flag
+    # the chart's own empty-state reads, and the skip below can now drop a
+    # timestamp the grouping still holds — so counting the raw grouping would
+    # promise points that are never drawn, and a market whose every timestamp
+    # was refused would render a blank chart while reporting itself dense
+    # (gotcha #53: an absence and a fact must not share a shape).
+    total_data_points = 0
 
     # Build aggregated history: one data point per timestamp per outcome
     outcome_history = {}
     for oid, time_groups in outcome_time_groups.items():
         history = []
         for captured_at in sorted(time_groups.keys()):
-            probs = time_groups[captured_at]
-            avg_prob = mean(probs)
+            # #4992: a timestamp whose books all refused normalization is
+            # SKIPPED, never drawn raw. A gap in a line is honest; a raw point
+            # sitting between de-vigged ones is the defect itself, and it would
+            # be invisible — it renders as movement (gotcha #53).
+            point = devigged.get(captured_at)
+            if point is None or oid not in point:
+                continue
+            avg_prob = point[oid]
             history.append({
                 "timestamp": captured_at.isoformat(),
                 "probability": avg_prob,
-                "american_odds": probability_to_american(avg_prob) if avg_prob > 0 else None,
+                # WITHHELD, NOT RECONVERTED (#5835's rule, two screens up in
+                # this file). A de-vigged, squeezed probability is not a price
+                # any book quoted, so running it back through
+                # `probability_to_american` would print exactly the thing #6757
+                # just stopped this surface doing. Nothing renders this field
+                # off /history — the chart reads `probability`, and the
+                # progression table reads the DETAIL payload's odds.
+                "american_odds": None,
                 "bookmaker": "consensus",
             })
         elim = _detect_elimination(history)
+        total_data_points += len(history)
         outcome_history[oid] = {
             "outcome_id": oid,
             "name": outcome_names.get(oid, "Unknown"),
