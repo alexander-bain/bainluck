@@ -26,7 +26,7 @@ import EntityImage from "./EntityImage";
 import TournamentCard from "./TournamentCard";
 import { isNonSportsCategory, isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { useAnalyticsContext } from "@/components/Analytics";
-import { feedContextSnippet, feedItemHasRenderableContent, resolvesLabel, formatConceptMovement, conceptDomainLabel } from "@/components/discover/utils";
+import { feedContextSnippet, feedItemHasRenderableContent, resolvesLabel, formatConceptMovement, conceptDomainLabel, stripCardTitleHead } from "@/components/discover/utils";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import {
   SUSPENDED_LABEL,
@@ -1169,10 +1169,21 @@ function FuturesFeedCard({
   // McIlroy leads at 7%") back into the row that #4403 cleared. The `reason` test
   // is KEPT beside it, so the pill can only lose ground, never gain it: a pill
   // suppressed on today's page cannot be brought back by this change.
+  //
+  // #6903 — and the test runs on the badge the card would PRINT, which no longer
+  // leads with this card's own heading. `Ren Zhengfei public appearance odds up
+  // 53.5 points` (badge) over `Ren Zhengfei public appearance?` (heading) is not an
+  // echo of the CAPTION, so #4403 kept it — and `truncate` then rendered `Ren
+  // Zhengfei public appearanc…`, spending the row on the heading and losing the
+  // 53.5 points entirely. Stripped, it is `Odds up 53.5 points`: it fits, and it is
+  // the only place on the card that says what moved. The seven `… resolves within a
+  // month` badges measured beside it strip down to a sentence their own caption
+  // already carries and are suppressed by the unchanged echo test.
+  const headlinePill = stripCardTitleHead(item.headline, data.name);
   const showHeadlinePill =
-    Boolean(item.headline) &&
-    !headlineEchoesReason(item.headline, caption) &&
-    !headlineEchoesReason(item.headline, item.reason);
+    Boolean(headlinePill) &&
+    !headlineEchoesReason(headlinePill, caption) &&
+    !headlineEchoesReason(headlinePill, item.reason);
 
   const { track } = useAnalyticsContext();
 
@@ -1225,7 +1236,7 @@ function FuturesFeedCard({
                 data-testid="futures-card-headline-pill"
                 className="bg-accent-futures/15 text-accent-futures px-2 py-0.5 rounded text-[11px] font-semibold min-w-0 truncate"
               >
-                {item.headline}
+                {headlinePill}
               </span>
             )}
             <PersonalizedBadge
