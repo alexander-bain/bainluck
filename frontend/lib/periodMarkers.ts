@@ -66,6 +66,106 @@ export function dedupePeriodLabels<T extends { timestamp: string }>(
 }
 
 /**
+ * How much wider than the collapse threshold a gap must be before both labels
+ * read cleanly on the SAME row. Below this — but above the collapse threshold,
+ * so both markers are kept — the later label drops one row.
+ *
+ * #6882 — NFL HALFTIME IS THE PAIR THIS EXISTS FOR, AND IT IS STRUCTURAL.
+ * Measured on `/events/14638444` (Bills–Lions) at 390px with
+ * `tools/period-label-gap-6882.mjs`, which reads the painted `getBoundingClientRect()`
+ * of every marker label rather than its timestamp:
+ *
+ *   pair     clear gap (win prob / score diff)
+ *   Q2 → HT      60.4px / 64.3px
+ *   HT → Q3       3.4px /  5.5px   ← reads as one token, `HT Q3`
+ *   Q3 → Q4      22.6px / 25.4px
+ *
+ * `HT → Q3` is 15.0 min on a 191.6 min span = 7.83%, so it clears
+ * `PERIOD_LABEL_MIN_SPACING_FRACTION` by 1.6 minutes and both labels survive —
+ * and then sit 3.4px apart. NFL halftime is structurally ~15 min and an NFL
+ * broadcast structurally ~3.2 h, so this is a property of the sport: it happens
+ * on every NFL game, on the one boundary a reader most needs distinguished.
+ *
+ * 🪤 RAISING `PERIOD_LABEL_MIN_SPACING_FRACTION` IS THE WRONG FIX, TWICE.
+ * `dedupePeriodLabels` keeps the LATER of a too-close pair, so collapsing this
+ * one DELETES `HT` from every NFL chart — strictly worse than the crowding. And
+ * the constant is shared by both charts across every sport by deliberate design
+ * (#888 / latency/467), so any move is also a claim about innings, halves and
+ * hockey periods. The labels must both survive; only their layout changes.
+ *
+ * WHY 1.8. At 390px the plot is 252px wide (measured, above). Reading the 3.4px
+ * gap back through the 5px label offset puts a 2-character label at 11px bold at
+ * ~16.3px wide, so a 3-character one (`OT2`, `/Q1`) is ~24px. Clean separation
+ * needs the label's own width plus ~8px of air = ~32px of marker-to-marker
+ * distance, and 32/252 = 12.7% of the plot — 1.81× the 7% collapse threshold.
+ * Rounded to 1.8, the band is 7%–12.6%: `HT → Q3` (7.83%) staggers, `Q3 → Q4`
+ * (15.66%) does not, and neither sits near an edge.
+ *
+ * IT IS A MULTIPLE OF THE COLLAPSE THRESHOLD, NOT A SECOND INDEPENDENT NUMBER,
+ * so the two rules cannot drift apart: the band is by construction "survived the
+ * collapse, but only just", which is the defect stated exactly.
+ *
+ * Staying proportional rather than pixel-measured is forced, not preferred: both
+ * charts size themselves through `ResponsiveContainer width="100%"` and never
+ * learn their own pixel width, and the server render every guard test uses has
+ * no viewport at all. A pixel rule would be untestable and would behave
+ * differently in the rig than in the browser. Over-firing is the safe direction
+ * anyway — a staggered label is still wholly present and readable, where an
+ * over-collapsed one is gone.
+ */
+export const PERIOD_LABEL_STAGGER_SPACING_MULTIPLE = 1.8;
+
+/**
+ * Vertical drop, in px, of a label pushed to the second row. One line at the
+ * 10–11px the two charts label at; the drop is shared so they stagger alike.
+ */
+export const PERIOD_LABEL_ROW_HEIGHT_PX = 13;
+
+/**
+ * Assign each surviving period label a row — 0 for the top row, 1 for one line
+ * down — so that a pair too close to read side by side is spread vertically
+ * instead of being collapsed.
+ *
+ * Input must be timestamp-ascending and ALREADY DEDUPED: this decides layout for
+ * markers that are being drawn, and says nothing about which markers survive.
+ * The two steps are deliberately separate — collapsing is about what the chart
+ * claims, staggering is about how it reads.
+ *
+ * The FIRST of a crowded pair keeps the top row and the later one drops. That
+ * ordering is not arbitrary: on the pair this was built for the survivor of a
+ * collapse would have been `Q3`, so keeping the earlier label prominent is what
+ * puts `HT` back where a reader looks for it.
+ *
+ * TWO ROWS ARE PROVABLY ENOUGH, given the collapse rule ran first. A marker only
+ * drops when its predecessor is on row 0, so rows alternate at worst. Three
+ * consecutive crowded markers put A and C both on row 0 — and every kept pair is
+ * at least `PERIOD_LABEL_MIN_SPACING_FRACTION` apart, so A→C is at least twice
+ * that (14%), which already clears the 12.6% stagger band. A and C cannot
+ * collide, so no third row can be needed.
+ */
+export function assignPeriodLabelRows<T extends { timestamp: string }>(
+  ascending: T[],
+  chartDurationMs: number,
+): Array<T & { labelRow: number }> {
+  const staggerSpacing =
+    chartDurationMs *
+    PERIOD_LABEL_MIN_SPACING_FRACTION *
+    PERIOD_LABEL_STAGGER_SPACING_MULTIPLE;
+  const out: Array<T & { labelRow: number }> = [];
+  for (const b of ascending) {
+    const t = new Date(b.timestamp).getTime();
+    let labelRow = 0;
+    if (out.length > 0) {
+      const prev = out[out.length - 1];
+      const prevT = new Date(prev.timestamp).getTime();
+      if (t - prevT < staggerSpacing && prev.labelRow === 0) labelRow = 1;
+    }
+    out.push({ ...b, labelRow });
+  }
+  return out;
+}
+
+/**
  * Largest plausible gap WITHIN a single game's period/inning markers. No sport
  * that renders period gridlines (NBA/NFL/MLB/NHL/soccer) has a 6-hour mid-game
  * pause, so a gap this large means the marker stream jumped to a DIFFERENT

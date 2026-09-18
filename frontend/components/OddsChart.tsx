@@ -42,7 +42,11 @@ import type {
   ActiveChartPoint,
 } from "@/lib/types";
 import type { PeriodBoundary } from "@/lib/periodMarkers";
-import { dedupePeriodLabels } from "@/lib/periodMarkers";
+import {
+  dedupePeriodLabels,
+  assignPeriodLabelRows,
+  PERIOD_LABEL_ROW_HEIGHT_PX,
+} from "@/lib/periodMarkers";
 
 /** Fallback source configs when win_prob_sources metadata isn't available */
 // Colors come from the one source-color registry (@/lib/sourceColors) — the
@@ -1149,7 +1153,14 @@ export default function OddsChart({
     // (e.g., "End of Q2" and "HT" at nearly the same time -> keep "HT")
     const deduped = dedupePeriodLabels(filtered, chartDuration);
 
-    return deduped.map((b) => ({
+    // #6882: a pair can survive the collapse above and STILL be unreadable —
+    // NFL's `HT → Q3` clears 7% by 1.6 minutes and then paints 3.4px apart at
+    // 390px. Collapsing it would delete `HT` (the rule keeps the LATER marker),
+    // so the later label drops a row instead and both stay. Layout only; the set
+    // of markers drawn is exactly what `dedupePeriodLabels` returned.
+    const rowed = assignPeriodLabelRows(deduped, chartDuration);
+
+    return rowed.map((b) => ({
       ...b,
       time: format(parseISO(b.timestamp), labelFormat),
       // UX-P022: labels used to ALTERNATE insideTopLeft / insideTopRight. That
@@ -1600,6 +1611,11 @@ export default function OddsChart({
          pass on both arms and be worth nothing. This is the count actually
          rendered below, after the drawn-line bound. */
       data-period-boundaries={filteredPeriodBoundaries.length}
+      /* #6882: which row each surviving label lands on, in x order —
+         "0,0,1,0" is the NFL shape. recharts draws no <ReferenceLine> in a
+         server render (no viewport), so the stagger is unobservable in the
+         markup; this is the same channel CERT-1984 opened for the count. */
+      data-period-label-rows={filteredPeriodBoundaries.map((b) => (b as { labelRow?: number }).labelRow ?? 0).join(",")}
     >
       {/* Time range selector */}
       <div className="flex flex-wrap items-center gap-1 shrink-0">
@@ -1873,6 +1889,12 @@ export default function OddsChart({
                 label={{
                   value: b.label,
                   position: ((b as { labelPosition?: string }).labelPosition || "insideTopLeft") as "insideTopLeft" | "insideTopRight",
+                  // #6882: `dy` shifts the whole text block down from whatever
+                  // `position` computed — recharts keeps `dy` through
+                  // `filterProps` (it is an SVG text attribute) and `Text` adds it
+                  // to y. Row 0 passes 0, so an unstaggered label is byte-identical
+                  // to what it rendered before.
+                  dy: ((b as { labelRow?: number }).labelRow || 0) * PERIOD_LABEL_ROW_HEIGHT_PX,
                   style: { fontSize: 11, fill: "rgba(0,0,0,0.65)", fontWeight: 700 },
                 }}
               />
