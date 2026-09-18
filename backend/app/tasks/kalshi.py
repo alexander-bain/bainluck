@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 # Used to detect game-level events and construct better market names.
 from app.utils.sport_keys import (  # noqa: E402
     KALSHI_TICKER_TO_DISPLAY_LABEL as _KALSHI_GAME_TICKERS,
+    NON_SPORT_LLM_CATEGORIES,  # #7012 — the house predicate, not a local copy
     kalshi_futures_prefix_len as _kalshi_futures_prefix_len,
 )
 from app.utils.editorial_patterns import (
@@ -588,6 +589,14 @@ _SERIES_TAG_CACHE: dict[str, Optional[str]] = {}
 #: against a pathological ticker parse rather than an expected bound.
 _SERIES_TAG_CACHE_MAX = 5000
 
+#: #7012. Series ticker → the venue's CATEGORY for that series, filled from the
+#: same response as the tag. A second dict rather than a wider value in
+#: `_SERIES_TAG_CACHE`, because that cache's membership test (`in`) is the
+#: "have we asked?" predicate in three places and widening its value type is a
+#: change to all of them for no gain. Bounded by the same ceiling and written on
+#: the same line, so the two never disagree about whether a series was answered.
+_SERIES_CATEGORY_CACHE: dict[str, Optional[str]] = {}
+
 #: Series ticker → the monotonic clock reading after which a FAILED lookup may
 #: be retried. Separate from `_SERIES_TAG_CACHE` on purpose: that one holds the
 #: venue's answers and is permanent, this one holds our own inability to ask and
@@ -649,6 +658,14 @@ class SeriesTagResult:
     """
 
     tag: Optional[str] = None
+    #: #7012. The venue's category for the SERIES, carried back from the same
+    #: `/series/{ticker}` response the tag comes from — so it costs nothing
+    #: extra, and is available for exactly the population that reaches it (an
+    #: unmapped ticker; a mapped one short-circuits before the call). It is not
+    #: always the EVENT's category and that is the point: `109341`'s event says
+    #: `Companies`, which no mapper here models, while its series says
+    #: `Financials`, which `economics` has been one rule away from all along.
+    category: Optional[str] = None
     resolved: bool = True
     not_asked: bool = False
     #: True only when this result cost an actual `/series/{ticker}` request.
@@ -685,7 +702,10 @@ async def _resolve_series_tag_result(
     if not series:
         return SeriesTagResult(not_asked=True)
     if series in _SERIES_TAG_CACHE:
-        return SeriesTagResult(tag=_SERIES_TAG_CACHE[series])
+        return SeriesTagResult(
+            tag=_SERIES_TAG_CACHE[series],
+            category=_SERIES_CATEGORY_CACHE.get(series),
+        )
 
     # A recent failure suppresses the retry, but only until it expires — and it
     # still reports UNRESOLVED, never "no tag", so nothing downstream can write
@@ -715,8 +735,9 @@ async def _resolve_series_tag_result(
     except Exception as exc:
         logger.warning(
             "#5637: could not resolve the Kalshi series tag for %s (%s) — "
-            "falling back to name-based classification for this series and "
-            "retrying in %.0fs; the miss is NOT recorded as an answer",
+            "creation writers FAIL CLOSED to 'other' for this series rather "
+            "than persisting a name-derived sport (#7012/CERT-3089), and we "
+            "retry in %.0fs; the miss is NOT recorded as an answer",
             series,
             exc,
             _SERIES_TAG_FAILURE_TTL_SECONDS,
@@ -727,14 +748,47 @@ async def _resolve_series_tag_result(
         return SeriesTagResult(resolved=False, called=True)
 
     tags = (data or {}).get("tags") or []
-    tag = tags[0] if tags else None
+    tag = _pick_series_tag(tags)
+    venue_category = (data or {}).get("category")
     if len(_SERIES_TAG_CACHE) < _SERIES_TAG_CACHE_MAX:
         _SERIES_TAG_CACHE[series] = tag
+        _SERIES_CATEGORY_CACHE[series] = venue_category
     # An answer retires the failure record. Leaving it would be harmless today
     # (the permanent cache is consulted first) and a trap the moment anything
     # reads the failure map on its own.
     _SERIES_TAG_FAILURE_UNTIL.pop(series, None)
-    return SeriesTagResult(tag=tag, called=True)
+    return SeriesTagResult(tag=tag, category=venue_category, called=True)
+
+
+def _pick_series_tag(tags) -> Optional[str]:
+    """The tag step 1b should read, out of every tag the venue published.
+
+    #7012. This used to be ``tags[0]``, which throws away the venue's own answer
+    whenever the sport tag is not listed first. ``KXPERFORMSUPERBOWL`` is tagged
+    ``['Live Music', 'Football']``: the first tag resolves to nothing, step 1b
+    correctly declines, and the row is classified ``football`` by the NAME rules
+    reading "Pro Football Championship" — the right answer for the wrong reason,
+    with the venue's own ``Football`` tag sitting unread one element along.
+
+    #5637's census measured 95.6% of sports series carrying exactly one tag, so
+    this is the other 4.4%: series where the venue IS carrying the sport and the
+    rail cannot see it. It matters more than 4.4% suggests, because #7012's step
+    2 rule demotes a bare name guess to the venue's topic — and a row whose sport
+    tag went unread would be demoted on a topic the venue itself contradicts.
+    Reading every tag is what makes that rule safe rather than merely narrow.
+
+    Order within the mapping tags is the venue's, not ours: the FIRST tag that
+    maps to a sport wins, so a two-sport tagging is resolved the way the venue
+    listed it. Falls back to ``tags[0]`` when nothing maps, which is exactly
+    today's behaviour — the fall-through is unchanged for every series that has
+    no sport tag at all, and that is the overwhelming majority.
+    """
+    if not tags:
+        return None
+    for candidate in tags:
+        if series_tag_to_category(candidate):
+            return candidate
+    return tags[0]
 
 
 async def _resolve_series_tag(service, event_ticker: Optional[str]) -> Optional[str]:
@@ -800,6 +854,8 @@ def _categorize_kalshi_market(
     kalshi_category: Optional[str],
     event_ticker: Optional[str] = None,
     series_tag: Optional[str] = None,
+    series_category: Optional[str] = None,
+    series_evidence_unresolved: bool = False,
 ) -> str:
     """
     Determine llm_sport_category for a Kalshi market using pattern matching.
@@ -809,9 +865,16 @@ def _categorize_kalshi_market(
     1. Ticker prefix → sport key (authoritative — KXNHL is always hockey)
     1b. The SERIES TAG the venue itself carries (#5637) — structural evidence,
         so it outranks every guess made from the market's NAME below it
-    2. Rules engine on market name
+    2. Rules engine on market name — but a SPORT answer here yields to the
+       venue's own non-sport topic, because at this depth it rests on a name
+       token alone and those collide with the ordinary world (#7012)
     3. League detection → sport inference
     4. Kalshi's own category as fallback
+
+    ``series_category`` is the venue's category for the SERIES, which is not
+    always the event's: ``109341``'s event says ``Companies`` (modelled by
+    nothing here) while its series says ``Financials`` (``economics``). Optional
+    everywhere, so every existing caller keeps today's answer.
 
     Always returns a category (never None) — defaults to "other".
     """
@@ -859,8 +922,62 @@ def _categorize_kalshi_market(
         return category_from_tag
 
     # 2. Pattern matching on market name
+    #
+    # #7012. A name rule that answers a SPORT is only ever a guess about a
+    # token, and the tokens collide with the ordinary world: "Bills" is
+    # legislation, "PGA" is the Producers Guild, "Williams" is Williams-Sonoma,
+    # "Open" is open weights, "NBA YoungBoy" is a rapper, "Kraken" is an
+    # exchange. Reaching this line already means the two structural rails above
+    # declined — the ticker is unmapped and no tag the venue published maps to a
+    # sport — so a sport answer here rests on the name and nothing else.
+    #
+    # This is notice 40's doctrine ("the venue's own structure first; a title
+    # match alone is only a CANDIDATE, and enters only when a second independent
+    # signal agrees") applied one step lower than step 1b applies it. When the
+    # venue's category says a non-sport TOPIC and no venue signal anywhere says
+    # a sport, the topic is evidence and the name is a coincidence.
+    #
+    # 🔴 WHY THIS IS NOT "the venue's category beats the name rules". That wider
+    # form was the first draft and the live population refused it. Measured
+    # 2026-09-18 against Kalshi's own /series for all 29 open rows in the
+    # disagreement: `KXMLBCBA` is filed under `Entertainment` but TAGGED
+    # `Baseball`, and `KXPERFORMSUPERBOWL` under `Entertainment` tagged
+    # `['Live Music', 'Football']`. Both of our sport verdicts agree with the
+    # venue's own tag and disagree only with its category, so the wider rule
+    # would have overruled the venue using the venue. Those two are exactly the
+    # rows the tag rail must keep, which is why `_pick_series_tag` reading EVERY
+    # tag is this rule's prerequisite and not a tidy-up beside it: with it, both
+    # are answered at step 1b and never arrive here. 27 corrected, 2 untouched,
+    # and the 2 are chosen by the venue rather than by an exception list.
     result = categorize_by_rules(market_name)
     if result:
+        if result not in NON_SPORT_LLM_CATEGORIES:
+            topic = _venue_topic(kalshi_category, series_category)
+            if topic:
+                return topic
+            # 🔴 #7012 / CERT-3089 — FAIL CLOSED ON UNRESOLVED EVIDENCE.
+            #
+            # Reaching here with `series_evidence_unresolved` means the venue
+            # did not answer (429/5xx/timeout) and we are about to persist a
+            # SPORT derived from the market's NAME alone — the exact guess this
+            # whole issue exists to stop. `SeriesTagResult`'s own docstring
+            # already says `resolved=False` is "never written"; both writers
+            # read `.tag`/`.category` and ignored `.resolved`, so a single
+            # transient failure minted a name-guessed sport.
+            #
+            # It is not self-correcting, and that is what makes it a defect
+            # rather than a blip: #1888's upsert is
+            # `coalesce(nullif(existing,'other'), new)`, so the wrong label is
+            # protected from every future poll the moment it lands. One rate
+            # limit buys a permanently mis-badged row — CERT-2737's shape, one
+            # layer along.
+            #
+            # `other` is the correct fallback precisely BECAUSE #1888 exempts
+            # it: it is the one value a later poll is allowed to upgrade. So
+            # this trades a confident wrong answer for an honest blank that
+            # repairs itself on the next pass with evidence.
+            if series_evidence_unresolved:
+                return "other"
         return result
 
     # 3. League detection → sport inference
@@ -868,46 +985,110 @@ def _categorize_kalshi_market(
     if league:
         sport = infer_sport_from_league(league)
         if sport:
+            # Same fail-closed rule as step 2, and for the same reason: a
+            # league detected from the NAME is a guess, and without the venue's
+            # answer there is no second signal to confirm it. Guarded here too
+            # rather than only at step 2, because a rule that fails closed on
+            # one name-derived path and open on the next one down is not a
+            # rule — it is a gap with a comment.
+            if series_evidence_unresolved:
+                return "other"
             return sport
 
     # 4. Fall back to Kalshi's own category as a hint
-    if kalshi_category:
-        cat_lower = kalshi_category.lower()
-        # Map Kalshi categories directly to sport categories where unambiguous
-        kalshi_to_sport = {
-            "golf": "golf",
-            "tennis": "tennis",
-            "soccer": "soccer",
-            "hockey": "hockey",
-            "baseball": "baseball",
-            "basketball": "basketball",
-            "football": "football",
-        }
-        for keyword, sport in kalshi_to_sport.items():
-            if keyword in cat_lower:
-                return sport
-        if "olympic" in cat_lower:
-            return "olympics"
-        if "politic" in cat_lower or "election" in cat_lower:
-            return "politics"
-        if "entertainment" in cat_lower:
-            return "entertainment"
-        if "econom" in cat_lower or "fed" in cat_lower or "inflation" in cat_lower:
-            return "economics"
-        if "tech" in cat_lower or "crypto" in cat_lower:
-            return "tech" if "tech" in cat_lower else "crypto"
-        if "weather" in cat_lower or "climate" in cat_lower:
-            return "weather"
-        if "health" in cat_lower:
-            return "health"
-        if "legal" in cat_lower or "court" in cat_lower:
-            return "legal"
-        if "science" in cat_lower or "space" in cat_lower:
-            return "tech"
-        if "financ" in cat_lower:
-            return "economics"
+    return _kalshi_category_to_llm_category(kalshi_category) or "other"
 
-    return "other"
+
+def _kalshi_category_to_llm_category(kalshi_category: Optional[str]) -> Optional[str]:
+    """Kalshi's own category word → our ``llm_sport_category``, or ``None``.
+
+    Hoisted verbatim out of :func:`_categorize_kalshi_market` step 4 by #7012,
+    which needs the same translation at step 2 — the only behaviour change is
+    that the "nothing matched" case is now a returnable ``None`` instead of
+    falling off the end into ``"other"``, so a caller can tell "the venue said a
+    word we do not model" from "the venue said nothing". Step 4 restores the
+    old answer with ``or "other"`` and is byte-equivalent for every input.
+
+    Distinct from the sibling :func:`_kalshi_category_to_internal`, which
+    answers a different question (the ``category`` column: ``championship`` /
+    ``game_prop`` / a topic) off the same word. Two mappings, two columns; this
+    one is the sport-category half.
+    """
+    if not kalshi_category:
+        return None
+
+    cat_lower = kalshi_category.lower()
+    # Map Kalshi categories directly to sport categories where unambiguous
+    kalshi_to_sport = {
+        "golf": "golf",
+        "tennis": "tennis",
+        "soccer": "soccer",
+        "hockey": "hockey",
+        "baseball": "baseball",
+        "basketball": "basketball",
+        "football": "football",
+    }
+    for keyword, sport in kalshi_to_sport.items():
+        if keyword in cat_lower:
+            return sport
+    if "olympic" in cat_lower:
+        return "olympics"
+    if "politic" in cat_lower or "election" in cat_lower:
+        return "politics"
+    if "entertainment" in cat_lower:
+        return "entertainment"
+    if "econom" in cat_lower or "fed" in cat_lower or "inflation" in cat_lower:
+        return "economics"
+    if "tech" in cat_lower or "crypto" in cat_lower:
+        return "tech" if "tech" in cat_lower else "crypto"
+    if "weather" in cat_lower or "climate" in cat_lower:
+        return "weather"
+    if "health" in cat_lower:
+        return "health"
+    if "legal" in cat_lower or "court" in cat_lower:
+        return "legal"
+    if "science" in cat_lower or "space" in cat_lower:
+        return "tech"
+    if "financ" in cat_lower:
+        return "economics"
+
+    return None
+
+
+#: The topics a #7012 demotion may land on. ``NON_SPORT_LLM_CATEGORIES`` minus
+#: two that must never be a DESTINATION:
+#:
+#: * ``crypto`` — the poller DROPS a crypto verdict (``continue``, both call
+#:   sites), so demoting into it does not reclassify a market, it deletes one.
+#:   A wrongly-badged row is a discovery defect; a missing row is a hole, and
+#:   the two are not the same size. The venue saying "Crypto" over a name rule
+#:   saying "hockey" may well be right, but being right is not enough to earn a
+#:   one-way action from a rule whose whole warrant is that it is conservative.
+#: * ``other`` — not a topic, it is the absence of one. Demoting a confident
+#:   wrong sport to ``other`` trades a bad answer for no answer.
+_VENUE_TOPIC_DEMOTION_TARGETS: frozenset = frozenset(
+    NON_SPORT_LLM_CATEGORIES - {"crypto", "other"}
+)
+
+
+def _venue_topic(
+    kalshi_category: Optional[str], series_category: Optional[str]
+) -> Optional[str]:
+    """The non-sport topic the VENUE's own category implies, or ``None``.
+
+    Asks the event's category first and the series' second, because the event is
+    the more specific of the two — but the series is what rescues the #7012
+    headline specimen. ``109341`` ("Which bank will take Kraken public before
+    2027?") carries the EVENT category ``Companies``, a word neither of this
+    module's two mappers models, so it fell to ``other``; its SERIES category is
+    ``Financials``, which the ``"financ"`` rule above has mapped to
+    ``economics`` all along. The answer was one door over.
+    """
+    for word in (kalshi_category, series_category):
+        mapped = _kalshi_category_to_llm_category(word)
+        if mapped in _VENUE_TOPIC_DEMOTION_TARGETS:
+            return mapped
+    return None
 
 
 def _partition_new_events_first(events, existing_tickers):
@@ -1340,14 +1521,25 @@ async def _poll_kalshi_markets():
                     # whose name is a sport word ("AFC Wimbledon", "Racing
                     # Club") is sorted by the venue's tag instead of by the
                     # name rules. Mapped tickers make no call at all.
-                    series_tag = await _resolve_series_tag(
+                    # #7012: the result form, not `_resolve_series_tag`'s bare
+                    # tag, because the same cached response also carries the
+                    # venue's SERIES category — which is the only signal that
+                    # reaches `109341`, whose EVENT category (`Companies`) no
+                    # mapper here models. One call, two answers, no extra spend.
+                    series_meta = await _resolve_series_tag_result(
                         service, event.event_ticker
                     )
                     sport_category = _categorize_kalshi_market(
                         event.title,
                         event.category,
                         event.event_ticker,
-                        series_tag=series_tag,
+                        series_tag=series_meta.tag,
+                        series_category=series_meta.category,
+                        # CERT-3089: `resolved=False` means the venue did not
+                        # answer. Passing it is what stops one rate limit from
+                        # minting a name-guessed sport that #1888 then protects
+                        # forever.
+                        series_evidence_unresolved=not series_meta.resolved,
                     )
 
                     # Skip crypto markets entirely — they consume DB space
@@ -6313,8 +6505,27 @@ async def _create_settled_market(
         return "pre_gap"
 
     category = _kalshi_category_to_internal(event.category)
+    # #7012, CERT-3087. THE SECOND WRITER, and the reason this line is not just
+    # the poller's line copied. `backfill_settled_gap_creation` is beat-scheduled
+    # and active, and it INSERTS `llm_sport_category` — so a classifier repaired
+    # only at the poll site leaves a live path minting exactly the rows the ship
+    # claims to have stopped. Measured on the headline specimen at the writer
+    # level: without this, `KXKRAKENBANKPUBLIC-27JAN01` is created `hockey`.
+    #
+    # The evidence is free here for the same reason it is free there — the tag
+    # lookup is cached per series and short-circuits without a call for a mapped
+    # ticker, which is most of this backfill's population.
+    series_meta = await _resolve_series_tag_result(service, event.event_ticker)
     sport_category = _categorize_kalshi_market(
-        event.title, event.category, event.event_ticker
+        event.title,
+        event.category,
+        event.event_ticker,
+        series_tag=series_meta.tag,
+        series_category=series_meta.category,
+        # CERT-3089: the SECOND writer. Wired here as well as at the poll site
+        # because this one INSERTS too — a fail-closed rule applied at one of
+        # two creation paths is not a fail-closed rule.
+        series_evidence_unresolved=not series_meta.resolved,
     )
     if sport_category == "crypto" or category == "crypto":
         return "skip"
