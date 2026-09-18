@@ -29,15 +29,22 @@ so one backend string serves both and neither client changes (notice 41).
 
 NOT COVERED BY THIS FILE, and deliberately: 24 of the 27 literal story keys are
 authored; three are not — `story:niche_low_signal_sports`,
-`story:minor_soccer_leagues` and `story:daily_equity_direction` — so those still
-derive to "Niche Low Signal Sports", "Minor Soccer Leagues", "Daily Equity
-Direction". Authoring them requires an authored bundle QUESTION too
-(`test_discover_bundle_shared_question_4066.py` enforces title ⊆ question) and
-that sentence is a Discover product decision on Discover's surface. Routed, not
-silently patched here, because a label invented in the search layer would fork
-the very vocabulary this change exists to unify.
+`story:minor_soccer_leagues` and `story:daily_equity_direction`. When this file
+shipped those still derived to "Niche Low Signal Sports", "Minor Soccer Leagues"
+and "Daily Equity Direction". Authoring them requires an authored bundle
+QUESTION too (`test_discover_bundle_shared_question_4066.py` enforces
+title ⊆ question) and that sentence is a Discover product decision on Discover's
+surface. Routed, not silently patched here, because a label invented in the
+search layer would fork the very vocabulary this change exists to unify.
 `test_the_unauthored_keys_are_the_known_remainder` below PINS that remainder, so
 it cannot quietly grow.
+
+SINCE THEN, the second half of #6941 gave those three a NEUTRAL display name
+(`NEUTRAL_STORY_TITLES`) rather than an authored one, so the remainder pinned
+below is unchanged — they are still not authored — but they no longer reach a
+reader as a verdict. That half, and the class guard that no key can be
+title-cased onto a page at all, live in
+`test_search_family_header_neutral_titles_6941b.py`.
 """
 
 from types import SimpleNamespace
@@ -282,10 +289,13 @@ class TestTheVocabularyCannotSilentlyDrift:
     def test_the_unauthored_keys_are_the_known_remainder(self):
         """#6941's stated scope, pinned so it cannot grow unnoticed.
 
-        These derive rather than resolve, because authoring a title obliges an
-        authored bundle question (Discover's contract). If a FOURTH key joins
-        them, this reddens and the routing note needs rewriting — which is the
-        point: the remainder is a decision, not a drift.
+        These are not authored, because authoring a title obliges an authored
+        bundle question (Discover's contract). If a FOURTH key joins them, this
+        reddens and the routing note needs rewriting — which is the point: the
+        remainder is a decision, not a drift. (They no longer DERIVE either:
+        #6941's second half gives exactly these three a neutral display name.
+        Unauthored and un-derived are different states, and this assertion is
+        about the first one, so it is unchanged.)
 
         🪤 It caught me on its first run. I wrote this assertion with the two
         keys I had SEEN on production and it failed on a third,
