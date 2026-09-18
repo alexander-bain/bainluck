@@ -77,6 +77,42 @@ def _source_kind(source, external_id, meta: dict) -> str | None:
     return None
 
 
+def _venue_leg_count(meta: dict, name, mutually_exclusive) -> int | None:
+    """How many legs the venue serves for THIS market, or ``None`` (#3721).
+
+    🔴 THE WHOLE DIFFICULTY IS THAT ``market_count`` MEANS TWO DIFFERENT THINGS.
+    On a Polymarket row that IS the venue event — a negRisk ladder, where the
+    single FuturesMarket carries the event's legs as its own outcomes — it is
+    this ladder's rung count. On a row that is one sub-market OF a venue event
+    (a game's moneyline, a spread, a player prop) it is the count of the
+    parent's SIBLINGS, which has nothing to do with this row's two outcomes.
+
+    Measured on production 2026-09-18: the unscoped ``declared > stored`` test
+    reads 12,271 open Polymarket markets, of which the overwhelming majority are
+    the second kind and are not short at all. Scoped by the ``event_title ==
+    name`` identity below it reads 2,639, and a seven-market sample of those
+    agreed with Gamma's own open-leg count 7 for 7. Returning a sibling count
+    here would strip ``exhaustive`` from ordinary Yes/No pairs — a far worse
+    error than the one being fixed — so this refuses unless the row IS the
+    ladder.
+
+    ``mutually_exclusive`` is required because the guard downstream can only
+    narrow an ``exhaustive: true``, and that is reachable from a venue partition
+    flag. Asking for it here keeps the refusal near the reason for it.
+    """
+    if not mutually_exclusive:
+        return None
+    title = str(meta.get("event_title") or "").strip()
+    if not title or title != str(name or "").strip():
+        return None
+    raw = meta.get("market_count")
+    try:
+        count = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return count if count > 0 else None
+
+
 async def _backfill_market_shapes(
     limit: int = 40000,
     batch_size: int = 2000,
@@ -124,7 +160,7 @@ async def _backfill_market_shapes(
                         """
                         SELECT id, source, external_id, event_id, group_id,
                                group_type, mutually_exclusive, market_type,
-                               market_metadata
+                               market_metadata, name
                         FROM futures_markets
                         WHERE id > :cursor
                           AND status IS DISTINCT FROM 'resolved'
@@ -195,6 +231,7 @@ async def _backfill_market_shapes(
                 mutually_exclusive,
                 old_market_type,
                 market_metadata,
+                market_name,
             ) in rows:
                 meta = _as_dict(market_metadata)
                 stored_shape = _as_dict(meta.get("shape"))
@@ -214,6 +251,9 @@ async def _backfill_market_shapes(
                     conditional=bool(meta.get("conditional", False)),
                     parent_condition_id=meta.get("parent_condition_id"),
                     group_type=group_type,
+                    venue_leg_count=_venue_leg_count(
+                        meta, market_name, mutually_exclusive
+                    ),
                 )
                 new_shape = result["display_shape"]
 
@@ -370,7 +410,7 @@ async def census_resolved_market_shapes(
                     """
                     SELECT id, source, external_id, event_id, group_id,
                            group_type, mutually_exclusive, market_type,
-                           market_metadata
+                           market_metadata, name
                     FROM futures_markets
                     WHERE id > :cursor
                       AND status = 'resolved'
@@ -437,6 +477,7 @@ async def census_resolved_market_shapes(
             mutually_exclusive,
             old_market_type,
             market_metadata,
+            market_name,
         ) in rows:
             meta = _as_dict(market_metadata)
             stored_shape = _as_dict(meta.get("shape"))
@@ -454,6 +495,9 @@ async def census_resolved_market_shapes(
                 conditional=bool(meta.get("conditional", False)),
                 parent_condition_id=meta.get("parent_condition_id"),
                 group_type=group_type,
+                venue_leg_count=_venue_leg_count(
+                    meta, market_name, mutually_exclusive
+                ),
             )
             new_shape = result["display_shape"]
             stored_v = stored_shape.get("classifier_version", stored_shape.get("v"))
