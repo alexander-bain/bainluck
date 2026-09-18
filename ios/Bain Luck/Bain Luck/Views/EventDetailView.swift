@@ -552,8 +552,21 @@ struct EventDetailView: View {
     /// #2902 — the same both-sides-one-grey fallback the Sports card had, on the
     /// hero bar of every tennis and golf event page. One palette, one contract:
     /// the pair always reads apart. See `ProbabilityBarPalette`.
+    ///
+    /// #7036 — and a second, independent contract: the pair also has to be
+    /// visible on the page it is drawn on. Every consumer of this helper — the
+    /// hero, both charts, the spectrums, the player-prop rows, the source and
+    /// bookmaker tables, Championship Path, Related Futures — paints on the same
+    /// white card surface, so a club whose brand colour IS white (Fulham,
+    /// Tottenham, Real Madrid: 26 clubs store `#ffffff`) had its half of every
+    /// one of them painted invisible. A colour under the WCAG floor is reported
+    /// to the palette as **absent**, which is what makes this a floor under the
+    /// existing behaviour rather than a second palette: the palette then runs
+    /// its own default-and-ladder path and re-derives the #2902 pair contract on
+    /// the substituted value, so flooring one side cannot collapse the two onto
+    /// one colour. See `TeamTextContrast`.
     private func teamColors(_ event: EventDetail) -> (away: Color, home: Color) {
-        ProbabilityBarPalette.colors(
+        TeamTextContrast.eventPageColors(
             awayHex: event.awayTeamData?.primaryColor,
             homeHex: event.homeTeamData?.primaryColor
         )
