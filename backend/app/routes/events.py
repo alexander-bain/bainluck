@@ -1634,6 +1634,7 @@ def _compose_futures_families(
     """
     from collections import OrderedDict
 
+    from app.utils.discover_bundles import story_family_label
     from app.utils.feed_market_quality import _story_key
 
     query_label = " ".join(t for t, _ in expanded).strip()
@@ -1664,7 +1665,22 @@ def _compose_futures_families(
         if not any(_query_name_match(m, expanded) for m in members):
             continue
         if key.startswith("story:"):
-            label = key.split(":", 1)[1].replace("_", " ").title()
+            # #6941. The house vocabulary, never string surgery on the key. A
+            # story key is an INTERNAL RANKING IDENTIFIER, and the two prefixed
+            # families mint theirs per event and per tournament, so un-slugifying
+            # it headed this page with `Ufc Event:331` and
+            # `Golf Tournament:Bmw Pga Championship` — a machine key, colon and
+            # all, on a reader's screen (notice 34). `story_family_label` is the
+            # same resolver Discover heads its bundles with, so the two surfaces
+            # cannot drift into two names for one story.
+            label = story_family_label(key, [m.name or "" for m in members])
+            if not label:
+                # No honest headline (the bundler's own rule): drop the family
+                # rather than invent one. Families are ADDITIVE — every member is
+                # still in the flat `futures` list, and the page only hides ids a
+                # family actually drew — so the markets stay on the page and
+                # compete on their own.
+                continue
         else:  # entity:
             label = query_label.title()
         headline = members[0]  # reranked: name-match then volume

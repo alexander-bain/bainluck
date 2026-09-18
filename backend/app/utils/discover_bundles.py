@@ -716,6 +716,33 @@ def _golf_tournament_bundle_copy(
     return label, f"What happens at {article}{label}?"
 
 
+def story_family_label(story_key: str, member_names: list[str]) -> str | None:
+    """The reader-facing name for a story family, or ``None`` when none is honest.
+
+    ONE STORY VOCABULARY FOR EVERY SURFACE THAT HEADS A GROUP WITH IT (#6941).
+    The bundler below resolves a story key's display name three ways — the
+    authored map, the per-tournament golf copy, the per-event UFC name — and
+    `/api/events/search` resolved it a FOURTH way, by string surgery on the key
+    itself (`key.split(":", 1)[1].replace("_", " ").title()`). That fourth way
+    put the machine key on a reader's screen, colon included: searching
+    "UFC 331" headed its group `Ufc Event:331`, and "BMW PGA Championship" gave
+    `Golf Tournament:Bmw Pga Championship` — the very string the comment above
+    `_golf_tournament_bundle_copy` predicted, arriving on the other surface.
+
+    Neither prefix arm can be re-derived by a caller: a key minted per event or
+    per tournament "can never appear in AUTHORED_STORY_TITLES", so a second
+    implementation is a second thing to forget. Hence one function, called by
+    both. `None` means here exactly what it means to the bundler — no honest
+    headline exists, so the members are better off competing on their own.
+    """
+    if story_key.startswith(GOLF_TOURNAMENT_STORY_PREFIX):
+        resolved = _golf_tournament_bundle_copy(story_key, list(member_names))
+        return resolved[0] if resolved else None
+    if story_key.startswith(UFC_EVENT_STORY_PREFIX):
+        return ufc_event_display_name(story_key)
+    return _resolve_story_title(story_key)[0]
+
+
 def _make_theme_bundle_item(
     story_key: str, items: list[dict[str, Any]]
 ) -> dict[str, Any] | None:
