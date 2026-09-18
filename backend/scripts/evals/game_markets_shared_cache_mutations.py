@@ -92,8 +92,24 @@ MUTANTS: list[tuple[str, str, pathlib.Path, str, str]] = [
         "M5",
         "skip the shared write — back to a per-process cache with extra steps",
         ROUTE,
-        "    gmc.write(event_id, enveloped)",
-        "    pass",
+        # #6975 re-target: the single `gmc.write(event_id, enveloped)` this used
+        # to aim at became a loop that publishes under the requested id AND the
+        # served row's id. The mutant is unchanged in MEANING — drop the shared
+        # write, keep the per-process memo — and the loop header is carried in
+        # both strings so the replacement is unique in the file.
+        #
+        # The old replacement was the bare string `    pass`, which occurs 33x
+        # in this route. `scan_mutation_residue` only consults the replacement
+        # once the original is absent, so the moment this needle drifted the
+        # scan reported RESIDUE ("mutant present, original absent") for a mutant
+        # nobody had applied — a false kill that reads exactly like a real one.
+        # A replacement has no uniqueness contract, so nothing enforced this;
+        # keeping it distinctive is the only thing that does.
+        "    for cache_id in _game_markets_cache_ids(event_id, response):\n"
+        "        gmc.write(cache_id, enveloped)\n"
+        "        _write_game_markets_memo(cache_id, source_status, served)",
+        "    for cache_id in _game_markets_cache_ids(event_id, response):\n"
+        "        _write_game_markets_memo(cache_id, source_status, served)",
     ),
     (
         "M6",
@@ -134,8 +150,11 @@ MUTANTS: list[tuple[str, str, pathlib.Path, str, str]] = [
         "M11",
         "memoise the un-enveloped body — L1 and L2 readers get different payloads",
         ROUTE,
-        "    _write_game_markets_memo(event_id, source_status, served)\n    return served",
-        "    _write_game_markets_memo(event_id, source_status, response)\n    return served",
+        # #6975 re-target: same two lines, now inside the publish loop, so the
+        # id is `cache_id` rather than `event_id`. The mutant is unchanged —
+        # memoise `response` (un-enveloped) where `served` (enveloped) belongs.
+        "        _write_game_markets_memo(cache_id, source_status, served)\n    return served",
+        "        _write_game_markets_memo(cache_id, source_status, response)\n    return served",
     ),
     (
         "M12",

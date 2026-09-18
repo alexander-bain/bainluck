@@ -271,6 +271,11 @@ COVERED = (
     # loop drops anything older than seven days before the arm under test ever
     # sees it.
     "test_grid_book_refuted_price_6532_pg.py",
+    # #6975: seeds `sports` with an explicit reserved id (the #6221 sibling's
+    # reason — the shared CI database's sequence is behind its explicit-id
+    # rows); every other row goes through the ORM so Python-side defaults
+    # apply.
+    "test_event_subresources_resolve_twin_id_6975_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"
