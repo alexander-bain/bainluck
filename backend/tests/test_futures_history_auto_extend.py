@@ -2,6 +2,17 @@
 
 When a market has too few snapshots in the requested window, the history
 endpoint should automatically widen to 30d then 90d to surface more data.
+
+🔴 EVERY ``Query`` PARAMETER IS PASSED RESOLVED, and that is load-bearing — the
+same trap `test_futures_chart_unsupported_points_5898._history` documents.
+Omitting one hands the handler the unresolved ``Query`` DEFAULT OBJECT, which is
+not None and is TRUTHY, so ``if outcome_id:`` takes the single-outcome branch and
+``outcome_ids`` becomes ``[Query(...)]`` rather than the market's real ids.
+These four tests read as passing that way for as long as the only consumer of
+``outcome_ids`` was a SQL ``.in_()`` clause the mock session ignores. #4992 gave
+the handler a Python-side use for the same ids, the bogus id matched nothing,
+and all four went red at once — the fixtures had been exercising a path FastAPI
+never takes. Resolve the parameters; do not relax the assertions.
 """
 
 import pytest
@@ -106,7 +117,9 @@ class TestHistoryAutoExtend:
         db = AsyncMock()
         db.execute = mock_execute
 
-        result = await get_futures_history(market_id=1, hours=168, db=db)
+        result = await get_futures_history(
+            market_id=1, outcome_id=None, hours=168, top_n=10, champion=None, db=db
+        )
 
         assert result["hours"] == 168  # requested hours unchanged
         assert result["actual_hours"] == 720  # auto-extended to 30 days
@@ -171,7 +184,9 @@ class TestHistoryAutoExtend:
         db = AsyncMock()
         db.execute = mock_execute
 
-        result = await get_futures_history(market_id=1, hours=168, db=db)
+        result = await get_futures_history(
+            market_id=1, outcome_id=None, hours=168, top_n=10, champion=None, db=db
+        )
 
         assert result["hours"] == 168
         assert result["actual_hours"] == 2160  # 90 days
@@ -211,7 +226,9 @@ class TestHistoryAutoExtend:
         db = AsyncMock()
         db.execute = mock_execute
 
-        result = await get_futures_history(market_id=1, hours=168, db=db)
+        result = await get_futures_history(
+            market_id=1, outcome_id=None, hours=168, top_n=10, champion=None, db=db
+        )
 
         assert result["hours"] == 168
         assert result["actual_hours"] == 168  # no extension
@@ -247,7 +264,9 @@ class TestHistoryAutoExtend:
         db = AsyncMock()
         db.execute = mock_execute
 
-        result = await get_futures_history(market_id=1, hours=168, db=db)
+        result = await get_futures_history(
+            market_id=1, outcome_id=None, hours=168, top_n=10, champion=None, db=db
+        )
 
         assert "total_data_points" in result
         assert result["total_data_points"] == 30
