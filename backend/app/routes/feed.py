@@ -3492,15 +3492,37 @@ async def get_feed(
     # (quality caps, diversity, story caps, personalization, 0% suppression).
     #
     # Guarded so we only touch the MAIN feed request. Content-type-scoped
-    # requests are left raw: the sports-mode feed, single-sport/tag browses,
-    # my-teams, and the events-only backfill (include_futures=false) that feeds
-    # the native Live Now / Upcoming sections — demoting/removing its events
-    # would empty the live tab (#1091, CLAUDE.md: game events are never capped
-    # into an empty tab).
+    # requests are left raw: the sports-mode feed, single-sport/tag/category
+    # browses, my-teams, and the events-only backfill (include_futures=false)
+    # that feeds the native Live Now / Upcoming sections — demoting/removing its
+    # events would empty the live tab (#1091, CLAUDE.md: game events are never
+    # capped into an empty tab).
+    #
+    # #7007 — `category` was the one browse scope missing from that list, and
+    # the omission emptied its surface rather than merely re-ranking it. A
+    # `/categories/<slug>` request carries no `event_pct`, no `sport` and no
+    # `tags`, so it fell through here and was served as Discover: `event_pct`
+    # 0.15 opens the branch in `_rank_and_compose`, `_demote_non_exceptional_
+    # discover_events` caps every ordinary game at 35, and the noise filter's
+    # `< 45` check then deletes it. The cap sits strictly below that floor, so
+    # the wipe is arithmetic rather than marginal — no game can outrank any
+    # market on a category page. Measured on production 2026-09-18: 67 of 73
+    # games dropped, 5 of 7 categories emptied to zero, `/categories/football`
+    # serving 0 of 8 on an NFL Friday.
+    #
+    # The sibling browse is the proof it was never intended: `sport=football`
+    # is in this list and serves its 8 events, `category=football` was not and
+    # served none — two spellings of one claim disagreeing on identical rows.
+    # The adjacent gates already read `category` as a browse (the golf tier at
+    # `category not in GOLF_TIER_SPORTS` and the concept tier's
+    # `concept_filter_for_category`, both Q472/CERT-542); this is the third and
+    # last gate to hear it. A reader who tapped Browse → Football is not a
+    # Discover audience — they asked for football.
     if (
         event_pct is None
         and (mode or "").lower() != "sports"
         and sport is None
+        and category is None
         and tags is None
         and not my_teams_only
         and include_events
