@@ -1032,3 +1032,95 @@ class TestTheSettlementContractIsTheProof:
         assert ticker_series("0x1a2b3c") is None
         assert ticker_series("331: Tsarukyan vs Ruffy") is None
         assert ticker_series(None) is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# authority/446 — the contract proves the RESULT states, not a cancelled bout
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+#: The bout rows and the ticker rows have to land on ONE card, so the token is
+#: derived from the instant rather than written twice (gotcha #44: offset first,
+#: then truncate — this anchor has no `if` in it).
+_BOUT_AT = _far(2, hour=23)
+
+
+def _linked_bout(market_id, *, status):
+    """SYNTHETIC events-table bout row, on the same card token as the tickers."""
+    return SimpleNamespace(
+        id=market_id,
+        home_team_name="Arman Tsarukyan",
+        away_team_name="Mauricio Ruffy",
+        commence_time=_BOUT_AT,
+        status=status,
+        _home_prob=None,
+    )
+
+
+class TestACancelledBoutIsNotAProvenPair:
+    """`UFC-RULES4` says what a DRAW pays. It does not say what a cancelled
+    fight pays — the market-level clause says "a fair price in accordance with
+    the rules" for a cancellation OR a >2-week reschedule, and two independent
+    fair prices are not a promise that the pair sums to one.
+
+    `card_is_called_off` cannot carry this: it needs EVERY bout on the card to
+    be off. A single bout pulled for a missed weight walks past it, which is the
+    ordinary case, not the exotic one.
+    """
+
+    async def _card(self, bout_status):
+        token = event_combat.event_commence_token(_BOUT_AT)
+        pulled_id = next(_IDS)
+        pulled = _ticker_fight(
+            "PULL",
+            "331: Tsarukyan vs Ruffy",
+            [_outcome("Arman Tsarukyan", 0.735), _outcome("Mauricio Ruffy", 0.275)],
+            close=_BOUT_AT,
+            event_id=pulled_id,
+        )
+        # A sibling on the SAME card that is going ahead and is not linked at all.
+        sibling = _ticker_fight(
+            "SIBL",
+            "331: Van vs Pantoja",
+            [_outcome("Joshua van", 0.565), _outcome("Alexandre Pantoja", 0.435)],
+            close=_BOUT_AT,
+        )
+        for market, code in ((pulled, "PULL"), (sibling, "SIBL")):
+            market.external_id = f"kalshi:KXUFCFIGHT-{token}{code}"
+        envelope, db = await _page(
+            [pulled, sibling],
+            events=[_linked_bout(pulled_id, status=bout_status)],
+            token=token.lower(),
+        )
+        return envelope
+
+    async def test_a_cancelled_bout_falls_back_to_independent_display(self):
+        envelope = await self._card("cancelled")
+        rows = _child(envelope, "331: Tsarukyan vs Ruffy")["outcomes"]
+        assert [r[DISPLAY_PERCENT_FIELD] for r in rows] == [None, None], (
+            "a bout that will never be fought has no proven complement — it must "
+            "print exactly what it printed before #6816"
+        )
+        # …which is the old, independent pair. Not tidied, not invented.
+        assert _printed(rows) == [74, 28]
+        assert [r["probability"] for r in rows] == [0.735, 0.275]
+
+    @pytest.mark.parametrize("status", ["suspended", "postponed", "canceled", "abandoned"])
+    async def test_every_called_off_status_refuses(self, status):
+        envelope = await self._card(status)
+        rows = _child(envelope, "331: Tsarukyan vs Ruffy")["outcomes"]
+        assert [r[DISPLAY_PERCENT_FIELD] for r in rows] == [None, None]
+
+    @pytest.mark.parametrize("status", ["scheduled", "live", "completed", "weird_new_value"])
+    async def test_a_bout_that_is_going_ahead_still_pairs(self, status):
+        """Deny-list, not allow-list: an unknown `events.status` is a real bout."""
+        envelope = await self._card(status)
+        rows = _child(envelope, "331: Tsarukyan vs Ruffy")["outcomes"]
+        assert [r[DISPLAY_PERCENT_FIELD] for r in rows] == [73, 27]
+
+    async def test_the_pulled_bout_does_not_take_its_card_down_with_it(self):
+        """The refusal is per-bout. A sibling with no link at all still pairs —
+        no link is 'unknown', and unknown is not 'called off'."""
+        envelope = await self._card("cancelled")
+        sibling = _child(envelope, "331: Van vs Pantoja")["outcomes"]
+        assert [r[DISPLAY_PERCENT_FIELD] for r in sibling] == [57, 43]

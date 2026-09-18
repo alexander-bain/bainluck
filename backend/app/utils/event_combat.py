@@ -705,10 +705,20 @@ _BOUT_MARKET_TYPES = frozenset({None, "duel"})
 #   &status=open — ``rules_secondary`` on all 24 open markets (the 12 bouts of
 #   the 2026-09-19 card, ``KXUFCFIGHT-26SEP19…``), both quoted below. A tie or
 #   no contest settles each fighter's contract at 0.50, so the pair pays
-#   (1, 0), (0, 1) or (0.5, 0.5): the whole, in every result. The cancellation
-#   clause ("a fair price for each fighter in accordance with the rules") is a
-#   called-off bout, not a result, and is not interpreted as one here — a
-#   called-off card is already handled by `card_is_called_off`.
+#   (1, 0), (0, 1) or (0.5, 0.5): the whole, in every result.
+#
+#   WHAT IS PROVED IS THE RESULT STATES, AND ONLY THOSE — a win either way, a
+#   draw, a no contest. Cancellation is NOT one of them and is deliberately
+#   outside this registry (authority/446, reviewing these same bytes). The
+#   market-level wording is broader than the series text: "If the fight is
+#   cancelled OR RESCHEDULED TO OVER TWO WEEKS AWAY, the market will resolve to
+#   a fair price in accordance with the rules." Two independent fair prices are
+#   not a promise that the pair pays the whole, so by this registry's own
+#   standard the evidence for that state is absent and it refuses. An earlier
+#   draft of this comment said `card_is_called_off` covered it; it does not —
+#   that helper is card-scoped and requires EVERY bout to be off, so a single
+#   bout pulled from a card that goes ahead walks past it. The per-bout gate is
+#   `_bout_will_be_fought` in `CombatEventAdapter`.
 #   GET /trade-api/v2/events/KXUFCFIGHT-26SEP19TSARUF confirms the flag and the
 #   rule are different things: the event is ``mutually_exclusive: true`` AND
 #   settles a draw 50/50 — the flag never carried the draw rule.
@@ -2087,6 +2097,33 @@ class CombatEventAdapter:
         # LESS settled — the direction #1803's docstring says is safe.
         card_settled = card_status_value == "settled" and not card_is_called_off(bouts)
 
+        # #6816 / authority/446. The settlement contract on record proves the pair
+        # is exhaustive over the bout's RESULT states — win, draw, no contest.
+        # It proves nothing about a bout that is never fought: Kalshi's own
+        # market-level wording is broader than the series text, and says a
+        # cancelled or >2-week-rescheduled fight "will resolve to a fair price in
+        # accordance with the rules" — two independent fair prices, which is not
+        # a promise that the two contracts pay the whole. By this patch's own
+        # standard that is absent evidence, so it REFUSES rather than normalises.
+        #
+        # `card_is_called_off` cannot carry this: it is card-scoped and demands
+        # that EVERY bout be off (its own docstring), so the ordinary case — one
+        # bout pulled for a missed weight or an injury on a card that goes ahead —
+        # walks straight past it. This is per-bout, off the row already in hand:
+        # a fight market carries `event_id` to its bout (measured on production
+        # 2026-09-18: `KXUFCFIGHT-26APR04BARGAT` -> event 15151124), and `bouts`
+        # is the adapter's own list of those rows.
+        #
+        # An unknown bout is NOT a called-off bout — no link, or a link to a row
+        # outside this card, reads as "going ahead" and prints exactly what it
+        # printed before. That is `_BOUT_CALLED_OFF`'s deny-list stance, kept
+        # here for the same reason: `events.status` is an open vocabulary.
+        bouts_by_id = {b.id: b for b in bouts}
+
+        def _bout_will_be_fought(m) -> bool:
+            bout_row = bouts_by_id.get(getattr(m, "event_id", None))
+            return bout_row is None or _bout_going_ahead(bout_row)
+
         def _fight_outcomes(m, *, bout=False):
             outs = sorted(
                 (m.outcomes or []),
@@ -2113,7 +2150,10 @@ class CombatEventAdapter:
             # support (the percents are taken from `printable`, so a withheld
             # leg stays withheld) and only for a pair proven to be one question.
             return with_bout_display_percents(
-                served, one_question=ticker_bout_is_one_question(cfg, m)
+                served,
+                one_question=(
+                    ticker_bout_is_one_question(cfg, m) and _bout_will_be_fought(m)
+                ),
             )
 
         # primary = the main-event fighters (co-equal, head-to-head).

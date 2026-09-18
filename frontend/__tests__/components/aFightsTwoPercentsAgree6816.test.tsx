@@ -114,8 +114,24 @@ describe("#6816 — the bout rail", () => {
 });
 
 describe("#6816 — the main-event hero", () => {
-  test("SAVED payload: 0.565 / 0.435 sums to one and printed 57 / 44", () => {
-    expect(heroNumbers((saved as Payload).primary.competitors)).toEqual(["57%", "44%"]);
+  /* 🔴 THE HERO'S "BEFORE" MOVED UNDER THIS FILE, AND THE CONTROL FOLLOWS IT.
+     Brief 22A was written against a master where the hero rounded each side on
+     its own — 0.565 / 0.435 printed 57 / 44. ux's #6844 (`6ef991e04`, merged
+     2026-09-18 ~02:5xZ) then gave THIS component a LOCAL pairing
+     (`renderedDuelPercents`), so on current master the hero already prints
+     57 / 43 with no served field at all. Verified on production the same night:
+     `/event/ufc/331-van-vs-pantoja-26sep19` at 390px reads `57%` / `43%` over a
+     payload of 0.565 / 0.435 carrying no `rendered_percent`
+     (`artifacts-discover/6816-look/BEFORE-ufc-331-390.png`).
+
+     So "as before" now MEANS #6844's pair, and these assertions say so. What
+     #6816 must prove here is narrower and still worth pinning: the served value
+     takes precedence when the builder made a claim, and when it did not, #6844's
+     number is still the one on the screen — #6816 removes nothing ux put there.
+     The rail (`MatchupsRail`) never had a local pairing, which is why every
+     assertion in the block above is unaffected. */
+  test("the hero's own baseline is #6844's local pair, not two independent roundings", () => {
+    expect(heroNumbers((saved as Payload).primary.competitors)).toEqual(["57%", "43%"]);
   });
 
   test("🔴 SERVED payload: the hero prints 57 / 43, the same pair as its rail row", () => {
@@ -129,13 +145,22 @@ describe("#6816 — the main-event hero", () => {
     expect(heroNumbers(reversed)).toEqual(["57%", "43%"]);
   });
 
-  test("the top two of a LONGER field are never treated as a pair", () => {
+  test("the top two of a LONGER field are never treated as a SERVED pair", () => {
+    /* #6816's own arity rule: three rows are not a bout, so `servedBoutPercents`
+       makes no claim and the served 73 / 27 is not used. What prints is then
+       whatever #6844 decides, which for this field is its own local pairing —
+       that is ux's rule on ux's surface and #6816 neither adds nor removes it.
+       (Routed to ux as a note, not changed here: `renderedDuelPercents` runs on
+       the top two of a longer field, and 0.735 + 0.275 lands inside its band by
+       coincidence. Unreachable in practice — `TwoSidedTimeline` renders only for
+       a two-sided `co_equal_list` hero.) */
     const field = [
       { name: "A", probability: 0.735, rendered_percent: 73 },
       { name: "B", probability: 0.275, rendered_percent: 27 },
       { name: "C", probability: 0.01, rendered_percent: 1 },
     ] as EventConceptCompetitor[];
-    expect(heroNumbers(field)).toEqual(["74%", "28%"]);
+    expect(servedBoutPercents(field)).toEqual([null, null, null]);
+    expect(heroNumbers(field)).toEqual(["73%", "27%"]);
   });
 });
 
@@ -153,7 +178,9 @@ describe("#6816 — both served or neither", () => {
     ["both null — the server's own 'no claim'", [row(0.735, null), row(0.275, null)]],
   ])("%s: NEITHER served value is used, and the pair prints as before", (_label, rows) => {
     expect(servedBoutPercents(rows)).toEqual([null, null]);
-    expect(heroNumbers(rows)).toEqual(["74%", "28%"]);
+    // "As before" on THIS surface is #6844's local pair (see the block above),
+    // which #6816 falls back to whole rather than replacing.
+    expect(heroNumbers(rows)).toEqual(["73%", "27%"]);
   });
 
   test("arity other than two is no claim, whatever the rows carry", () => {
