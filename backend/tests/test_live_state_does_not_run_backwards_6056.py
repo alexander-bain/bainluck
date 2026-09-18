@@ -801,7 +801,10 @@ class _EspnEvent:
         self.status_type = "STATUS_IN_PROGRESS"
 
 
-async def _drive_espn(spec, ee, *, interloper=None, monkeypatch=None):
+async def _drive_espn(
+    spec, ee, *, interloper=None, monkeypatch=None,
+    sport_key="americanfootball_nfl",
+):
     """Drive the real ESPN writer against a real row, and read the DATABASE back.
 
     ⚠️ THIS RAIL USED TO BE A FAKE SESSION AND A PLAIN OBJECT, and that was a
@@ -839,7 +842,7 @@ async def _drive_espn(spec, ee, *, interloper=None, monkeypatch=None):
             if isinstance(value, datetime) and value.tzinfo is None:
                 instance.__dict__[attr] = value.replace(tzinfo=timezone.utc)
 
-    sport = Sport(key="americanfootball_nfl", name="americanfootball_nfl")
+    sport = Sport(key=sport_key, name=sport_key)
     session.add(sport)
     session.flush()
     event = Event(
@@ -1031,6 +1034,111 @@ async def test_a_lower_score_from_a_later_moment_still_lands_from_espn():
     row, _snaps, _stats = await _drive_espn(row, ee)
 
     assert row.home_score == 27, "a reviewed-away point must still come off"
+
+
+# ---------------------------------------------------------------------------
+# 3b. #6251: the authority's own correction AT A HALF-INNING TIE, end to end
+#
+# WHY THESE EXIST, given `TestTheAuthorityMayCorrectItselfAtATie6251` above.
+#
+# That class proves the PREDICATE returns "do not refuse". These two prove the
+# WRITER then puts the corrected number in the database and in the snapshot
+# table — which is a different claim, and the one the acceptance run was
+# actually asked for. Between the predicate and the reader stand the four
+# `_live_values` gates and `write_live_state_if_unmoved`'s compare-and-write,
+# which re-asserts the observed SCORES in its own WHERE (#6251's own amendment
+# to #6056). A permission the predicate grants and the compare-and-write then
+# declines would be invisible to every test in that class.
+#
+# THE ACCEPTANCE CLAUSE THEY PAY. #6251's post-release acceptance run (live/341,
+# 2026-09-17 00:31Z, floor v4609) cleared its population gate — 53 forward pairs
+# across 12 events, zero violations — but recorded:
+#
+#     PASS  authority correcting itself, promptly reflected : 0
+#
+# Zero downward pairs of ANY kind occurred in that window, so the healthy arm
+# never fired. That is an unobserved control, NOT a failed repair: nothing in
+# the slate asked the exemption to do its job. Waiting for a true downward
+# authority correction to appear on a live slate is waiting on a rare event we
+# do not control; these tests pay the same clause deterministically, on the
+# saved specimen, through the real writer and a real database read-back.
+#
+# The specimen is event 15312655 (Twins v Yankees, 2026-09-16), read out of the
+# append-only `espn_snapshots`: ESPN published `home 2` at 02:00/02:01 inside
+# `Bottom 8th` and corrected to `home 1` at 02:03/02:04, still inside
+# `Bottom 8th`. Ours carried the phantom until 02:09 — nine minutes against
+# ESPN's own three.
+# ---------------------------------------------------------------------------
+
+
+def _twins_yankees_row(*, period, home_score, away_score):
+    """The specimen row. Baseball has no clock, which is the whole difficulty:
+    `Bottom 8th` ties with itself for the length of a half-inning, so the score
+    is the only discriminator the guard has."""
+    row = _Row(
+        period=period, game_clock=None, home_score=home_score, away_score=away_score
+    )
+    row.id = 15312655
+    row.home_team_name = "Minnesota Twins"
+    row.away_team_name = "New York Yankees"
+    return row
+
+
+@pytest.mark.asyncio
+async def test_the_authoritys_own_correction_at_a_half_inning_tie_reaches_the_row():
+    """THE CONTROL THE LIVE SLATE NEVER FIRED, paid deterministically.
+
+    ESPN takes its own phantom run back off the board inside one half-inning.
+    The row must follow it down — this is the exact write that was refused for
+    six extra minutes on 2026-09-16.
+    """
+    row = _twins_yankees_row(period="Bottom 8th", home_score=2, away_score=7)
+    ee = _EspnEvent(
+        clock=None,
+        status_detail="Bottom 8th",
+        home_score=1,
+        away_score=7,
+    )
+    row, snaps, stats = await _drive_espn(row, ee, sport_key="baseball_mlb")
+
+    assert row.home_score == 1, (
+        "the authority's correction of its OWN phantom run did not reach the "
+        "row — the reader is still being served the run ESPN already withdrew"
+    )
+    assert row.away_score == 7
+    assert row.period == "Bottom 8th"
+    assert "live_state_reversions_refused" not in stats
+
+    # "Promptly REFLECTED" is the clause, and the chart is the other half of
+    # what the reader sees. A correction that lands on the row but leaves the
+    # phantom standing as the last snapshot is still a phantom on the page.
+    assert len(snaps) == 1, "an accepted correction must snapshot like any other"
+    assert (snaps[0].home_score, snaps[0].away_score) == (1, 7)
+
+
+@pytest.mark.asyncio
+async def test_the_exemption_does_not_reach_an_earlier_inning_end_to_end():
+    """THE FENCE, on the same rail.
+
+    The exemption is for a tie, where "the lower score is a lagging feed" is
+    false because a feed cannot lag behind itself. An authority observation
+    from a strictly EARLIER inning is provably a reversion whoever sent it, and
+    the flag must not launder it. Without this, the test above is satisfied by
+    "ESPN always wins", which is not the ship.
+    """
+    row = _twins_yankees_row(period="Bottom 8th", home_score=2, away_score=7)
+    ee = _EspnEvent(
+        clock=None,
+        status_detail="Top 8th",
+        home_score=1,
+        away_score=7,
+    )
+    row, snaps, stats = await _drive_espn(row, ee, sport_key="baseball_mlb")
+
+    assert row.home_score == 2, "an earlier inning must not walk the score back"
+    assert row.period == "Bottom 8th", "nor walk the inning back"
+    assert snaps == [], "a refused write must leave no ScoreSnapshot either"
+    assert stats["live_state_reversions_refused"] == 1
 
 
 # ---------------------------------------------------------------------------
