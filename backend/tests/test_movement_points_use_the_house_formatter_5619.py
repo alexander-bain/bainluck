@@ -262,9 +262,16 @@ def test_no_call_site_interpolates_the_raw_float():
         for line in source.splitlines()
         if "_point_change(" in line and not line.strip().startswith("#")
     ]
-    # Exactly two: the definition, and the single call inside `_points`. The
-    # second is matched on shape rather than byte-for-byte, so renaming a local
-    # does not fail this arm — only growing a third caller does.
-    assert len(callers) == 2, callers
+    # Exactly three, each named: the definition, the single call inside
+    # `_points`, and #6952's `_is_printable_move` — the predicate that asks
+    # whether a delta would PRINT as a move, which has to ask the formatter
+    # rather than re-round, or it would be the very drift this guard exists to
+    # stop. Each is matched on shape rather than byte-for-byte, so renaming a
+    # local does not fail an arm; the count stays exact, so a FOURTH caller
+    # still does, and an unnamed third one fails on the shape asserts below.
+    assert len(callers) == 3, callers
     assert callers[0].startswith("def _point_change("), callers[0]
-    assert callers[1].endswith("= _point_change(value)"), callers[1]
+    assert callers[1] == (
+        "return value is not None and _point_change(value) != 0"
+    ), callers[1]
+    assert callers[2].endswith("= _point_change(value)"), callers[2]

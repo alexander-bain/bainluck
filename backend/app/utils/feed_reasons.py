@@ -568,6 +568,43 @@ def _point_change(value: float) -> float:
     return round(abs(value) * 100, 1)
 
 
+def _is_printable_move(value: Optional[float]) -> bool:
+    """#6952 — a delta that prints as `0 points` is not a move, and never leads.
+
+    Every dated-move rung below gated on `is not None`, which is a question
+    about whether we HAVE a number, not about whether anything happened. Two
+    2027 Stanley Cup cards on production 2026-09-18 read
+
+        Down 0 points since Sep 18 — now 41% chance
+
+    and the row behind them has `current_probability == opening_probability`
+    exactly (0.415000 / 0.415000, `opening_captured_at` 11:29Z, 81 minutes
+    before the shot) — not a rounding artifact, a market that opened this
+    morning and has not traded. Three wrong claims came out of one missing
+    guard: a move that did not happen, a direction ("Down" is simply the `else`
+    of `> 0`, so a zero always falls DOWN), and a "since" measured against
+    today.
+
+    Refusing the rung is the whole fix: the rows fall through to #4056's empty
+    caption, which is what a card with nothing to say is supposed to render.
+    The test is what the reader would SEE — `_point_change`'s rounded value, so
+    a real 0.1-point move still prints — not a new interestingness threshold.
+
+    ⚠️ SCOPED TO THE FOUR DATED-`since` RUNGS, DELIBERATELY. The five
+    `*_movement_24h` rungs print the same false sentence from the same shape,
+    but two of them (`generate_futures_reason`'s major/moderate pair) answer a
+    failed inner test with a VAGUER claim — "Big odds movement in X" — so
+    guarding the inner test there would trade a false number for a false
+    sentence with no number in it. Those rungs are also gated by a scorer
+    threshold rather than by presence, and the measurement found no specimen:
+    scanning `reason`, `headline` and `context_summary` across
+    `/api/feed?limit=100` on 2026-09-18, all three `0 points` hits are `since`
+    rungs and none is a `today` rung. Fixing those properly means falling the
+    whole branch through, which is its own ship.
+    """
+    return value is not None and _point_change(value) != 0
+
+
 def _underdog_sentence(winner: str, pct: int) -> str:
     """"{winner} won as a {pct}% underdog", with the article the number takes.
 
@@ -1018,7 +1055,7 @@ def compose_binary_card_copy(
         )
 
     since = format_baseline_date(top_surprise_opened_at, now=now)
-    if since and top_surprise_change is not None:
+    if since and _is_printable_move(top_surprise_change):
         direction = "Up" if top_surprise_change > 0 else "Down"
         move = f"{direction} {_points(top_surprise_change)} since {since}"
         # D1 clause (a), #4066: a move measured from seven months ago is not why
@@ -1946,7 +1983,7 @@ def generate_futures_reason(
     since_opening = format_baseline_date(top_surprise_opened_at, now=now)
     if (
         since_opening
-        and top_surprise_change is not None
+        and _is_printable_move(top_surprise_change)
         and _surprise_sayable
         and ("major_surprise" in reasons or "moderate_surprise" in reasons)
     ):
@@ -2158,7 +2195,7 @@ def generate_futures_headline(
     if (
         since_opening
         and top_surprise_name
-        and top_surprise_change is not None
+        and _is_printable_move(top_surprise_change)
         and _surprise_sayable
         and ("major_surprise" in reasons or "moderate_surprise" in reasons)
     ):
@@ -2401,7 +2438,7 @@ def generate_futures_context_summary(
             since_opening = format_baseline_date(top_surprise_opened_at, now=now)
             if (
                 since_opening
-                and top_surprise_change is not None
+                and _is_printable_move(top_surprise_change)
                 and ("major_surprise" in reasons or "moderate_surprise" in reasons)
             ):
                 return f"Shifted since {since_opening}"
