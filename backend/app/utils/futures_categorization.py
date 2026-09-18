@@ -1106,6 +1106,13 @@ _AMBIGUOUS_EVIDENCE = frozenset({
     "saints", "bears", "titans", "eagles", "cardinals", "browns",
     # NHL team name that is also the upper chamber of the US Congress (#4229).
     "senators",
+    # NHL team name that is also a crypto exchange (#6955). Measured over every
+    # row in the corpus whose title says "kraken": 26 of 27 are Seattle hockey
+    # and every one of them carries a second hockey token ("vs. Canucks", "SEA
+    # Kraken at DAL Stars"), so demoting the noun costs them nothing; the 27th is
+    # "Kraken IPO by ___ ?", which tied 3-3 with `economics` and lost on
+    # SPORT_PATTERNS order alone.
+    "kraken",
 })
 
 # Evidence that genuinely commits to a domain. These run IN ADDITION to
@@ -1136,6 +1143,31 @@ _STRONG_EVIDENCE_PATTERNS = [
         r"|\b(?:vote[sd]?|voting|confirm\w*|re-?election|reelect\w*|impeach\w*|"
         r"convict\w*|nominee|nomination|filibuster|cloture)\b"
         r"(?=.{0,90}?\b(?:senate|senators?)\b)", re.I), "politics"),
+    # "Hurricanes" is the Carolina (NHL) club AND the storm (#6955 — 17 open rows
+    # badged HOCKEY on production, incl. the four "Will there be N hurricanes
+    # during the Atlantic Hurricane Season in 2026?" questions a reader meets on
+    # /search today). Same shape as the `senators` rule above, and for the same
+    # reason: what commits is the meteorological CONSTRUCTION, not the noun.
+    #
+    # Weakening the noun was measured and is NOT enough. The weather entry in
+    # SPORT_PATTERNS is singular-only (`\bhurricane\b` does not match the plural),
+    # so "How many Atlantic hurricanes will there be in 2026?" scores hockey 3
+    # against NOTHING — and a lone ambiguous match still wins unopposed by design.
+    # Demoting the token would have left that row, and the two "make landfall"
+    # rows, exactly where they were while silently weakening every real Hurricanes
+    # fixture.
+    #
+    # So this names storm seasons, named storms, landfall, storm surge, the
+    # Saffir-Simpson scale, and hurricanes qualified by an OCEAN BASIN. Note the
+    # basin list carries no US state: "Carolina Hurricanes" is the club, and
+    # putting `carolina` here — which the first cut of this rule did — hands the
+    # weather shelf a hockey team.
+    (re.compile(
+        r"\b(?:hurricane|tropical\s+storm|typhoon|cyclone|storm)\s+season\b"
+        r"|\bnamed\s+storms?\b"
+        r"|\blandfall\b|\bstorm\s+surge\b|\bsaffir[\s-]?simpson\b"
+        r"|\b(?:atlantic|pacific|caribbean|gulf)\s+(?:hurricanes|storms)\b"
+        r"|\bcategory\s+[1-5]\s+(?:hurricane|storm)\b", re.I), "weather"),
     (re.compile(r"\bchess\b", re.I), "chess"),
     (re.compile(r"\bsnooker\b", re.I), "snooker"),
     # Track and field. Deliberately does NOT match bare "athletics": that word is
