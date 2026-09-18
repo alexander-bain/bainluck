@@ -82,7 +82,7 @@ import {
   tennisSetsWonFor,
 } from "@/lib/otherMarketGroups";
 import { sportVocab, marketMapSectionMounts, totalsMapRenders } from "@/lib/marketMapUtils";
-import { printableAway, sportPricesADraw } from "@/lib/drawPricedWinner";
+import { awayIsTheComplement, printableAway, sportPricesADraw } from "@/lib/drawPricedWinner";
 import {
   actualScoreSeriesDrawn,
   scoreDifferentialHeading,
@@ -1041,15 +1041,56 @@ export default function EventPage({ params }: EventPageProps) {
   // rule, one place.
   //
   // `settledWinnerPregameProb` below reads `openingAwayProb` and is null-guarded,
-  // so on a draw-priced sport whose AWAY side won, the settled hero now withholds
+  // so on a draw-priced sport whose AWAY side won, the settled hero withholds
   // the "was priced at N%" line rather than sourcing it to the complement. That
-  // is deliberate and it is the same rule: the number it would have printed is
-  // the one this ship exists to stop printing.
+  // is the same rule wherever the number it would print IS the complement — and
+  // #6614 is the case where it is not. See below.
+  //
+  // ── #6614 — THE TWO PAIRS ON THIS PAGE ARE NOT THE SAME KIND OF OBJECT ─────
+  //
+  // The blanket sport-keyed withhold above is right for `current_odds`, whose
+  // away leg `routes/feed.py` derives as `1 - home`. It is WRONG for
+  // `opening_odds`, which since #1011 is de-vigged across the whole quoted
+  // board: `home + away ≈ 0.76` and the missing ~0.24 IS the draw. Both legs
+  // are real, independently sourced prices, and this page was deleting one.
+  //
+  // Re-taken on production 2026-09-18 ~08:58Z (the filed 2026-09-16 population
+  // re-measured on a fresh slate), `/api/feed?mode=sports`, 25 soccer cards:
+  //
+  //   | pair            | sums to 1.0000 | sums to 0.72 – 0.84 |
+  //   |-----------------|----------------|---------------------|
+  //   | `current_odds`  | **25 / 25**    | 0                   |
+  //   | `opening_odds`  | 16 / 25        | **9 / 25**          |
+  //
+  // So BOTH arms are live traffic and a blanket flip either way is wrong: 16 of
+  // 25 opening pairs really are complements and must still be withheld. The
+  // question is per-PAIR, which is exactly what `awayIsTheComplement` asks —
+  // the sport prices a draw AND (away is absent OR the pair completes to 1).
+  //
+  // Specimen, photographed at 390×844 before the fix
+  // (`artifacts/ux-1330/BEFORE-6614-15298749-390.png`): `/events/15298749`,
+  // Torreense @ Lillestrom, Europa League, final 1–2. Opening pair
+  // `0.5476 / 0.2103` sums to **0.7579** — not a complement, both legs real.
+  // Torreense WON as a 21% underdog and the settled hero printed no pregame
+  // mark at all, so the one fact that made the result worth reading was the
+  // fact the page deleted.
+  //
+  // `settledWinnerPregameProb` is deliberately NOT touched: its existing
+  // `openingHomeProb !== null && openingAwayProb !== null` gate passes by
+  // itself once the away value survives, because a non-complement pair has two
+  // real legs. Loosening that gate would newly print a mark on the 16/25
+  // complement pages — a population this issue never reasoned about, and one
+  // where the number still IS the complement.
   const awaySlotWithheld = sportPricesADraw(event.sport);
   const awayProb = printableAway(servedAwayProb, event.sport);
   const awayPct = printableAway(servedAwayPct, event.sport);
-  const openingAwayProb = printableAway(servedOpeningAwayProb, event.sport);
-  const openingAwayPct = printableAway(servedOpeningAwayPct, event.sport);
+  const openingAwaySlotWithheld = awayIsTheComplement(
+    servedOpeningAwayProb,
+    openingHomeProb,
+    event.sport,
+  );
+  const openingAwayProb = openingAwaySlotWithheld ? null : servedOpeningAwayProb;
+  const openingAwayPct = openingAwaySlotWithheld ? null : servedOpeningAwayPct;
 
   // #490: hero confidence signal (1-3 bars), computed client-side from the win-
   // prob sources already on the event + whether the line moved off open. Mirrors
@@ -1914,8 +1955,16 @@ export default function EventPage({ params }: EventPageProps) {
                         `formatProbability(null)` is "-", so leaving this pair
                         intact printed `Opened 64% – -`, which reads as a
                         missing number rather than an inapplicable one. */}
+                    {/* #6614 — this pair's OWN answer, not the hero pair's.
+                        `awaySlotWithheld` here deleted a real, independently
+                        sourced opening away price on 9 of 25 live soccer cards:
+                        the opening pair is de-vigged across the board (#1011)
+                        and sums to ~0.76, so its away leg is a price, not a
+                        complement. The hero's current pair above legitimately
+                        answers differently on the same screen — it is 25/25 a
+                        complement — which is why each locus asks separately. */}
                     Opened {formatProbability(openingHomeProb, { rendered: openingHomePct })}
-                    {!awaySlotWithheld && <>{" "}{"–"} {formatProbability(openingAwayProb, { rendered: openingAwayPct })}</>}
+                    {!openingAwaySlotWithheld && <>{" "}{"–"} {formatProbability(openingAwayProb, { rendered: openingAwayPct })}</>}
                   </span>
                 </div>
               )}
