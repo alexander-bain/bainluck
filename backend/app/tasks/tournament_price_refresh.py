@@ -176,6 +176,38 @@ MAX_MARKETS = 2000
 DEFAULT_PRICE_TARGETS: list[tuple[str, str]] = [("us-open", "2026")]
 DEFAULT_RESULT_TARGETS: list[tuple[str, str]] = [("us-open", "US Open")]
 
+#: Hub slug -> the ``majors_calendar.yaml`` entry that carries the tournament's
+#: OWN dates.
+#:
+#: ═══ #7010: THE MORNING AFTER, THE HUB GOES BACK TO DAY ONE ═══
+#:
+#: ``fetch_tournament_results`` defaults to ESPN's CURRENT day, which is what a
+#: live tournament wants and is a bug the day after one ends.  Measured on
+#: production 2026-09-18, five days after the final: ``/tournaments/us-open``
+#: served ``ROUND OF 128 · 47 matches`` dated ``SATURDAY, AUG 29`` as the
+#: current round, and ``FINISHED — No match has finished yet`` on a completed
+#: 128-draw Slam.  Four reads across three ``generated_at`` values, identical
+#: every time: this was the steady state, not a regeneration window.
+#:
+#: ONE CAUSE, BOTH HALVES.  Today's board carries no US Open competition, so
+#: ``order_of_play`` is empty; ``DECIDED`` is the slate's only route out
+#: (``tournament_slate``, "this is the ONLY route to DECIDED"), so all 96
+#: main-draw register fixtures are re-served as the current card — and
+#: ``build_results`` sees no finished match to put under them.
+#:
+#: THE VENUE STILL HAS IT.  Read venue-side before this was written (notice 26):
+#: ``dates=20260913`` returns the event with 625 competitions on BOTH tours;
+#: ``dates=20260918`` returns no US Open at all.  A date INSIDE the window
+#: returns the whole tournament rather than that day's slice, which is why one
+#: extra request recovers the entire board rather than a final's worth of it.
+#:
+#: The dates themselves stay in the calendar — one file owns when a major runs,
+#: and this map holds no date at all.  The mapping is WRITTEN DOWN rather than
+#: derived, for the reason the calendar itself gives beside ``us-open-tennis``:
+#: golf has a US Open too, and a slug match is exactly the inference that file
+#: refuses to make.  A slug with no entry here keeps today's answer and says so.
+RESULT_CALENDAR_SLUGS: dict[str, str] = {"us-open": "us-open-tennis-2026"}
+
 
 def settled_yes_probability(market: Any) -> float | None:
     """``1.0``/``0.0`` when the venue has SETTLED this book, else ``None``.
@@ -953,6 +985,84 @@ RESULTS_LAST_GOOD_TTL_SECONDS = 3600
 RESULTS_LAST_GOOD_PREFIX = "bainluck:tournament-results-last-good:"
 
 
+def _board_is_silent(results: dict[str, Any]) -> bool:
+    """A CLEAN scoreboard read that named no competition of this tournament.
+
+    THREE EMPTIES WEAR THIS SHAPE AND ONLY ONE OF THEM MEANS "ASK FOR OTHER
+    DAYS" (gotcha #53):
+
+    * a tour FAILED — ``errors`` is non-empty, so the half we are missing is
+      UNKNOWN, not absent.  Re-asking a different date answers a question
+      nobody asked and would publish a partial board as if it were a whole one.
+      Every fetch failure appends to ``errors`` in the same ``try``, so this one
+      clause covers both tours.
+    * the read is clean and the parser counted NO competition of ours — the
+      window moved out from under the default ``dates`` (#7010).  This is the
+      one this returns True for.
+    * the parser counted some — nothing to do.
+
+    Counted on ``competitions`` rather than ``events``, for CERT-532's reason: a
+    payload that NAMES the tournament and then carries an empty competitions
+    list satisfies "we saw the event" and speaks for not one match.
+
+    A payload with no ``stats`` census at all returns False, deliberately.
+    ``parse_results`` always writes one, so this is not a reachable production
+    shape; and a missing count is not a count of zero — reading it as "the board
+    was silent" would be inventing the very census whose absence is the problem.
+    """
+    if results.get("errors"):
+        return False
+    stats = results.get("stats")
+    if not isinstance(stats, dict):
+        return False
+    return not stats.get("competitions")
+
+
+def _tournament_window_dates(slug: str, now: datetime) -> str | None:
+    """ESPN ``dates`` covering this tournament's own window, or ``None``.
+
+    ``None`` — and today's answer stands, whatever it says — when the hub slug
+    is not in :data:`RESULT_CALENDAR_SLUGS`, the calendar cannot be read, its
+    dates are unusable, or the tournament has NOT STARTED YET.
+
+    The last of those is the clause that matters.  Before the first ball a
+    silent board is the honest answer, and re-asking for a window that is still
+    in the future would put a draw on the hub days before the tournament earned
+    the right to show one.  ``calendar_window_state`` is the house's one clock
+    for that question and is read rather than restated.
+
+    A RANGE, not the end date.  The entry carries ``date_confidence:
+    approximate``, and a single date is one editing slip away from landing
+    outside the tournament — which reads EXACTLY like the defect it is here to
+    fix, silently and with every counter green.  A range that overlaps the
+    window anywhere returns the whole event, so the slip costs nothing.
+
+    Pure and defensive, like the calendar loader it reads: a bad edit to that
+    file returns ``None`` here and never raises inside a beat.
+    """
+    calendar_slug = RESULT_CALENDAR_SLUGS.get(slug)
+    if not calendar_slug:
+        return None
+    from app.utils.majors_calendar import (
+        _as_utc_date,
+        calendar_window_state,
+        load_calendar,
+    )
+
+    entry = next(
+        (e for e in load_calendar() if str(e.get("slug")) == calendar_slug), None
+    )
+    if entry is None:
+        return None
+    if calendar_window_state(entry, now) == "upcoming":
+        return None
+    start = _as_utc_date(entry.get("start"))
+    end = _as_utc_date(entry.get("end"))
+    if start is None or end is None or end < start:
+        return None
+    return f"{start:%Y%m%d}-{end:%Y%m%d}"
+
+
 def _is_last_good(results: dict[str, Any]) -> bool:
     """Whether this fetch is fit to become the fallback scoreboard.
 
@@ -1014,6 +1124,43 @@ async def _sync_tournament_results(
             continue
 
         stats["tournaments"] += 1
+
+        # ── #7010: the board rolled over, so ask for the tournament's OWN days ─
+        #
+        # Checked BEFORE the error extend below, so whichever read we end up
+        # publishing is the one whose errors travel with it.
+        if _board_is_silent(results):
+            window = _tournament_window_dates(slug, datetime.now(timezone.utc))
+            if window is None:
+                # LOUD, NOT ABSENT (gotcha #53). A clean read that speaks for no
+                # match is how this hub reverts to day one and stays there, and
+                # without this line every counter stays green while it does:
+                # nothing failed, the request succeeded on an empty day.
+                stats["errors"].append(
+                    f"{slug}: scoreboard names no competition and no window to re-ask"
+                )
+            else:
+                stats["window_reads"] = stats.get("window_reads", 0) + 1
+                try:
+                    windowed = await fetch_tournament_results(
+                        event_name, dates=window
+                    )
+                except Exception as exc:  # noqa: BLE001 — reported, never silent
+                    stats["errors"].append(f"{slug} window {window}: {exc}")
+                else:
+                    if _board_is_silent(windowed):
+                        # The venue really has nothing under the tournament's own
+                        # dates. That is a claim about the SOURCE and it gets
+                        # said out loud rather than published as an empty page.
+                        stats["errors"].append(
+                            f"{slug}: scoreboard silent on its own window {window}"
+                        )
+                    else:
+                        results = windowed
+                        stats["window_recovered"] = (
+                            stats.get("window_recovered", 0) + 1
+                        )
+
         if results.get("errors"):
             # A partial fetch is written anyway — half the tours is better than
             # none — but the failure travels in the payload so the section can

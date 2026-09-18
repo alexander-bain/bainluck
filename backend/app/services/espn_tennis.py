@@ -769,9 +769,16 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
       set is the single most interesting row on the page, and it is the one row
       an elapsed-time rule cannot keep (a five-setter outlives any window).
 
-    ``post`` deliberately gets no entry: a decided match belongs to
-    ``build_results``, and its absence from this map is what tells the slate to
-    drop it.
+    - **``post`` gets an entry too, and that is CERT-517's correction.**  This
+      docstring said the opposite for months, and the code below has said
+      ``decided`` since ("EVERY COMPETITION THE SCOREBOARD NAMES IS PUBLISHED").
+      A decided match still belongs to ``build_results``; what changed is that
+      the slate now learns it is decided from ESPN's own word in this map rather
+      than inferring it from an absence — see ``DECIDED_SLATE_STATE`` and the
+      slate's "this is the ONLY route to DECIDED".  The distinction is the whole
+      of #7010: a board that does not mention the tournament produces the same
+      empty map as a tournament with nothing left to play, and one of those two
+      must not read as the other.
     """
     by_draw: dict[str, dict[str, Any]] = {}
     order_of_play: dict[str, dict[str, Any]] = {}
@@ -1090,11 +1097,20 @@ async def fetch_tournament_results(
 ) -> dict[str, Any]:
     """Fetch and parse both tours' scoreboards for one tournament.
 
-    ``dates`` is ESPN's ``YYYYMMDD``; omitted, the scoreboard returns the
-    current day, which is what a live tournament wants.  A tour that fails to
-    fetch contributes nothing and is REPORTED — an empty result set from a
-    timed-out request must never read as "no matches have finished" (gotcha
-    #53).
+    ``dates`` is ESPN's ``YYYYMMDD``, or a ``YYYYMMDD-YYYYMMDD`` range; omitted,
+    the scoreboard returns the current day, which is what a live tournament
+    wants and is a bug the day after one ends (#7010 — the caller decides, and
+    ``tournament_price_refresh`` re-asks under the tournament's own window when
+    a clean board names no competition of ours).  A date INSIDE the window
+    returns the whole tournament, not that day's slice: measured venue-side
+    2026-09-18, ``dates=20260913`` returned the US Open with 625 competitions on
+    both tours, five days after its final.
+
+    A tour that fails to fetch contributes nothing and is REPORTED — an empty
+    result set from a timed-out request must never read as "no matches have
+    finished" (gotcha #53).  That defence covers the FAILED read; the
+    succeeded-but-out-of-window one wears the same empty shape and is the
+    caller's to tell apart, because only the caller knows which days it meant.
     """
     import httpx
 
@@ -1210,10 +1226,11 @@ def scoreboard_competitions(
       rows carry a sport key (``tennis_atp_us_open``) and player names, not
       ESPN's event string, so filtering on a name we would have to guess is how
       a whole tournament silently anchors nothing.
-    * A ``post`` competition gets no ``order_of_play`` entry, deliberately —
-      and the finished matches are most of what needs anchoring, because the
+    * ``parse_results`` publishes only the competitions whose ESPN state it has
+      a word for (CERT-526), and identity does not depend on state — the
       contradictions this rail exists to kill are rows we call ``live`` that
-      ESPN finished hours ago.
+      ESPN finished hours ago, and it must be able to anchor one whose state we
+      cannot read at all.
 
     So this is a flat, unfiltered read: one dict per competition, carrying the
     tournament it belongs to rather than being selected by it.  ``slugs``
