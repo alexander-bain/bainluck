@@ -193,6 +193,11 @@ async def load_rows(session, *, lookback: int, lookahead: int):
             statpal_fixture_id=event.statpal_fixture_id,
             venue_game_starts=frozenset(starts.get(event.id, ())),
             identity_rank=tuple(twin_identity_rank(event)),
+            # #6904. Read for one question the judgement asks of the ELECTED
+            # canonical: does that row's page answer 410? Passed through raw —
+            # the vocabulary lives in `event_completion` and is applied there,
+            # so this layer cannot drift from the gate the route runs.
+            status=event.status,
         )
         for event in event_rows
     }

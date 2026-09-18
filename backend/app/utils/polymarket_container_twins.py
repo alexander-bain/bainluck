@@ -91,12 +91,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable, Mapping
 
+from app.utils.event_completion import is_retired_event_status
 from app.utils.prediction_market_matching import _strip_more_markets
 
 __all__ = [
     "NOT_A_TWIN",
     "REFUSE_AMBIGUOUS",
     "REFUSE_ANCHORED",
+    "REFUSE_DEAD_CANONICAL",
     "REFUSE_MIXED_KICKOFF",
     "REFUSE_NO_ELECTION",
     "TWIN_FOUND",
@@ -124,6 +126,46 @@ REFUSE_AMBIGUOUS = "REFUSE_AMBIGUOUS"
 #: than inverted: an inversion is a different decision with different evidence,
 #: and this module's job is to be sure, not to be complete.
 REFUSE_ANCHORED = "REFUSE_ANCHORED"
+
+#: The fold's election named a canonical whose page a reader cannot open, so
+#: the markets this tag would move there are served to nobody. #6904.
+#:
+#: 🔴 THE TAG'S ENTIRE PAYOFF IS A PAGE. ``folded_event_ids`` serves the
+#: duplicate's markets on the canonical's page; ``GET /api/events/{id}`` answers
+#: **410** for a row whose status is in
+#: :data:`app.utils.event_completion.RETIRED_STATUSES`, and the client turns that
+#: into *"This event is no longer listed"*. So a tag naming a retired canonical
+#: moves markets onto a page that renders no markets, and additionally hands
+#: ``not_a_proven_duplicate`` a reason to stop printing the row that is still
+#: playable. This is the same judgement :func:`fold_is_live` already makes one
+#: layer up — *"the tag is inert without ``folded_event_ids``, so writing it is
+#: not a partial win"* — asked of the destination rather than of the mechanism.
+#:
+#: Measured over every row this sweep has written (2026-09-18 08:55Z, 226 of
+#: them): **74 would have been refused** — 70 where both rows were already
+#: retired, so the tag delivered nothing in either direction, and **4 where the
+#: duplicate's own page still renders**, two of them `scheduled` fixtures that
+#: had not kicked off. Both destinations were confirmed by hand: `GET
+#: /api/events/15304969` and `/api/events/15305781` each answer 410.
+#:
+#: 🔴 AND IT REFILLS. The same cross-tab read 220 rows with ONE live-onto-dead
+#: pair at 08:15Z; the 08:28Z beat banked a second (`15313072` Borussia
+#: Mönchengladbach v 1. FSV Mainz 05, 8 markets onto voided `15305781`). This is
+#: not a historical artifact to tidy — it is a write the sweep is still making.
+#:
+#: Refused rather than INVERTED, for the reason :data:`REFUSE_ANCHORED` gives:
+#: preferring the live row would mean overriding ``twin_identity_rank``, which
+#: is shared with ``fold_twin_events`` and with the COMMITTING caller
+#: ``reconcile_shared_fixture_ids`` — a ranking change with its own blast radius
+#: and its own measurement. Refusing costs the family its tag and nothing else.
+#:
+#: 🔴 The vocabulary is IMPORTED, never re-spelled as ``status == "voided"``.
+#: :data:`~app.utils.event_completion.RETIRED_STATUSES` holds ``merged`` as well,
+#: and its own note says a word is added there when it means "stop showing this"
+#: — so a hand-copied literal would silently go on tagging into whichever word
+#: was added next. We ask the question the 410 gate asks, so we cannot disagree
+#: with the page.
+REFUSE_DEAD_CANONICAL = "REFUSE_DEAD_CANONICAL"
 
 #: The candidate duplicate's own markets name two different venue kickoffs, so
 #: folding them would carry a second fixture's markets onto this page. **Zero
@@ -167,6 +209,16 @@ class ContainerRow:
     #: :data:`REFUSE_MIXED_KICKOFF` asks is whether this row holds a SECOND
     #: fixture, which by construction lives under a different key.
     venue_game_starts: frozenset[str] = frozenset()
+    #: ``events.status``, read for exactly one question: can a reader open this
+    #: row's page at all? See :data:`REFUSE_DEAD_CANONICAL`. Supplied by the
+    #: caller like every other field here so the module stays pure.
+    #:
+    #: A row that never set it defaults to ``None``, which
+    #: :func:`~app.utils.event_completion.is_retired_event_status` reads as NOT
+    #: retired — and that is the correct fall-through rather than a fail-open
+    #: hole, because the 410 gate asks the identical question of the identical
+    #: value: a row whose status is null renders, so it is reachable.
+    status: object = None
     #: ``app.utils.event_twin_fold.twin_identity_rank`` for this row — biggest
     #: wins. Supplied by the caller rather than computed here so this module
     #: stays pure, and IMPORTED from the serving layer rather than re-spelled so
@@ -266,6 +318,19 @@ def _classify_family(
 
     canonical_id = max(members, key=lambda eid: (members[eid].identity_rank, -eid))
     canonical = members[canonical_id]
+
+    # The destination has to be a page. Checked on the ELECTED canonical and
+    # before any tag is built, because this is a property of where the markets
+    # are going, not of any one duplicate: a family cannot be half-refused.
+    #
+    # `twin_identity_rank` cannot catch this itself. It consults `status` at
+    # exactly one rung — `completed` over anything else — and never penalises a
+    # retired row, so a voided row carrying more sources outranks a scheduled
+    # one and wins. `REFUSE_ANCHORED` cannot catch it either: on the measured
+    # specimen neither row is fixture-anchored, so that guard never fires.
+    if is_retired_event_status(canonical.status):
+        return REFUSE_DEAD_CANONICAL, []
+
     canonical_anchored = _is_fixture_anchored(canonical)
 
     tags: list[ContainerTag] = []
