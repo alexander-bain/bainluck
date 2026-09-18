@@ -27,6 +27,26 @@ Heroku one-off (gotcha #48 — `PROJECT_PATH=backend` puts scripts at /app, so N
 
     heroku run:detached -a bainluck "python3 scripts/restore_5821_container_twin_tags.py --apply"
 
+`--only` — UNDO SOME ROWS, NOT ALL OF THEM
+──────────────────────────────────────────
+Bare, this script is all-or-nothing: every banked row loses its tag. That is the
+right shape for rolling the whole repair back, and the wrong shape for the case
+that actually comes up — a handful of rows were tagged WRONGLY and the rest are
+correct. `--only` names the event ids to clear and leaves every other banked row
+exactly as it is:
+
+    python3 scripts/restore_5821_container_twin_tags.py --only 15313072,15313023
+    python3 scripts/restore_5821_container_twin_tags.py --only 15313072 --apply
+
+🔴 **AN ID THAT IS NOT BANKED ABORTS THE RUN** (exit 2). It does not quietly drop
+out of the plan. A typo'd, already-removed or never-tagged id would otherwise
+narrow the scope to nothing, print a cheerful "nothing to undo", and exit 0 — and
+the operator would read that as "the rows I named are clear" when nothing was
+examined. Same reason a failed read is not an absence: the only safe direction
+for an input we cannot account for is loud (gotcha #53). Scoped runs verify
+themselves over the SCOPE, so the banked rows you did not name are neither
+touched nor counted against the result.
+
 SURGICAL REMOVAL, NOT A RESTORE OF THE WHOLE ARRAY
 ──────────────────────────────────────────────────
 The banked `old_tags` are read and counted, but they are NOT written back.
@@ -105,6 +125,54 @@ def is_missing_backup_table(exc: BaseException) -> bool:
     return False
 
 
+def parse_only(values):
+    """Turn repeated/comma-separated `--only` values into an ordered id list.
+
+    Accepts `--only 1,2 --only 3` and `--only "1, 2"` alike. Returns ``None``
+    when the flag was never passed — "no scope" and "an empty scope" are
+    different things and only the first means "every banked row".
+
+    A value that is not an integer raises ``ValueError`` rather than being
+    skipped: an operator who types `--only 15313072,1531302x` must not get a
+    run over one id while believing they named two.
+    """
+    if not values:
+        return None
+    ids, seen = [], set()
+    for chunk in values:
+        for piece in str(chunk).split(","):
+            piece = piece.strip()
+            if not piece:
+                continue
+            try:
+                event_id = int(piece)
+            except ValueError:
+                raise ValueError(
+                    f"--only takes event ids; {piece!r} is not an integer"
+                ) from None
+            if event_id not in seen:
+                seen.add(event_id)
+                ids.append(event_id)
+    if not ids:
+        raise ValueError("--only was given no event ids")
+    return ids
+
+
+def select_requested(plan, requested):
+    """Narrow a banked plan to `requested`, and say what could not be found.
+
+    Returns ``(selected, unknown)``. `unknown` is every requested id with no row
+    in the backup table — the caller ABORTS on it (see the module docstring).
+    `requested is None` means the whole plan, and nothing is unknown.
+    """
+    if requested is None:
+        return list(plan), []
+    banked = {row.event_id for row in plan}
+    unknown = [event_id for event_id in requested if event_id not in banked]
+    wanted = set(requested)
+    return [row for row in plan if row.event_id in wanted], unknown
+
+
 async def remove_tags(session, plan, *, progress_every: int = 25):
     """Strip the sweep's tag from each row, ONE ROW PER TRANSACTION.
 
@@ -150,7 +218,7 @@ async def remove_tags(session, plan, *, progress_every: int = 25):
     return written, failed
 
 
-async def run(*, apply: bool) -> None:
+async def run(*, apply: bool, only=None) -> None:
     from app.tasks.base import get_task_session
     from sqlalchemy import text
 
@@ -159,6 +227,17 @@ async def run(*, apply: bool) -> None:
             plan = (await session.execute(text(_PLAN_SQL))).all()
         except Exception as exc:  # noqa: BLE001 — classified immediately below
             await session.rollback()
+            if is_missing_backup_table(exc) and only is not None:
+                # A real absence, but the operator NAMED ids. They are not
+                # banked, so this is the unknown-id abort, not "nothing to do".
+                print(f"\n❌ #5821 undo ABORTED — {BAK_TABLE} does not exist.")
+                print(f"   You named {len(only)} event id(s): {only[:20]}")
+                print(
+                    "   None of them are banked, so there is nothing this "
+                    "script can undo for them. Their tags — if they carry any — "
+                    "were written by something else."
+                )
+                sys.exit(2)
             if not is_missing_backup_table(exc):
                 # NOT an absence. Exit 2 rather than 1, so an operator can tell
                 # "I could not read the backup" from "the undo ran and left rows
@@ -177,20 +256,45 @@ async def run(*, apply: bool) -> None:
             )
             return
 
+        selected, unknown = select_requested(plan, only)
+        if unknown:
+            # 🔴 NOT a narrower scope — an unaccountable input. Dropping these
+            # silently would leave the run reporting success over the ids it
+            # could find while the operator believes all of them were cleared.
+            print(
+                f"\n❌ #5821 undo ABORTED — {len(unknown)} --only id(s) are "
+                f"not in {BAK_TABLE}: {unknown[:20]}"
+            )
+            print(
+                "   Nothing was written. An id with no banked row was never "
+                "tagged by this sweep (or has already been cleared), so this "
+                "script cannot vouch for it. Re-run with ids it holds."
+            )
+            sys.exit(2)
+
         carrying = [
-            r for r in plan if duplicate_tag(r.canonical_id) in (r.current_tags or "")
+            r
+            for r in selected
+            if duplicate_tag(r.canonical_id) in (r.current_tags or "")
         ]
         print("\n=== #5821 undo ===")
-        print(
-            json.dumps(
-                {
-                    "banked": len(plan),
-                    "still_carrying_the_tag": len(carrying),
-                    "already_clear": len(plan) - len(carrying),
-                },
-                indent=2,
-            )
-        )
+        summary = {
+            "banked": len(plan),
+            "still_carrying_the_tag": len(carrying),
+            "already_clear": len(selected) - len(carrying),
+        }
+        if only is not None:
+            # Say the scope out loud: "3 banked" under a --only run means
+            # something very different from "3 banked" under a full one.
+            summary = {
+                "banked": len(plan),
+                "requested_by_only": len(only),
+                "in_scope": len(selected),
+                "still_carrying_the_tag": len(carrying),
+                "already_clear": len(selected) - len(carrying),
+                "left_alone_outside_scope": len(plan) - len(selected),
+            }
+        print(json.dumps(summary, indent=2))
         for row in carrying[:20]:
             print(f"  event {row.event_id}: drop duplicate-of:{row.canonical_id}")
         if len(carrying) > 20:
@@ -207,7 +311,13 @@ async def run(*, apply: bool) -> None:
             return
 
         written, failed = await remove_tags(session, carrying)
-        after = (await session.execute(text(_PLAN_SQL))).all()
+        after, _ = select_requested(
+            (await session.execute(text(_PLAN_SQL))).all(), only
+        )
+        # 🔴 VERIFY OVER THE SCOPE, NOT THE TABLE. Read unscoped, every banked
+        # row the operator deliberately did NOT name still carries its tag —
+        # correctly — and a successful `--only` run would report itself
+        # INCOMPLETE and exit 1.
         remaining = [
             r.event_id
             for r in after
@@ -222,14 +332,48 @@ async def run(*, apply: bool) -> None:
             if remaining:
                 print(f"  - {len(remaining)} still carry the tag: {remaining[:20]}")
             sys.exit(1)
-        print(f"\n✅ #5821 undone — {written} row(s) hold their own markets again.")
+        scope = (
+            f" ({len(plan) - len(selected)} banked row(s) outside --only left "
+            f"folded, as asked)"
+            if only is not None
+            else ""
+        )
+        print(
+            f"\n✅ #5821 undone — {written} row(s) hold their own markets "
+            f"again{scope}."
+        )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--apply", action="store_true", help="write the undo")
+    parser.add_argument(
+        "--only",
+        action="append",
+        metavar="IDS",
+        help=(
+            "comma-separated event ids to clear, instead of every banked row; "
+            "repeatable. An id with no banked row aborts the run (exit 2)."
+        ),
+    )
     args = parser.parse_args()
-    asyncio.run(run(apply=args.apply))
+    try:
+        only = parse_only(args.only)
+    except ValueError as bad_only:
+        # NB to the next author: this handler is deliberately NOT spelled
+        # `except ValueError as exc:`. That exact line is the replacement text
+        # of `futures_categories_warm_mutations:M9`, so the mutation-residue
+        # scan reads it as a mutant left on disk and reds CI — which it did.
+        parser.error(str(bad_only))
+        # `parser.error` exits 2, but nothing in the signature says so, so
+        # `only` is only CONTINGENTLY bound below (CodeQL
+        # py/uninitialized-local-variable). Terminating here explicitly is the
+        # fail-closed direction: were the line above ever swapped for a warn,
+        # the alternative is falling through to `run()` with an unbound or
+        # None scope — and a `None` scope means EVERY banked row, which is the
+        # one outcome an operator naming four ids must never get.
+        raise SystemExit(2) from None
+    asyncio.run(run(apply=args.apply, only=only))
 
 
 if __name__ == "__main__":
