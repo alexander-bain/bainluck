@@ -37,12 +37,23 @@ class TestQuestionGrammarNeverEatsASlot:
 
     @pytest.mark.parametrize(
         "leader",
-        ["Will", "Who", "What", "Which", "When", "Does", "Did"],
+        ["Will", "Who", "What", "Which", "When", "How", "Does", "Did"],
     )
     def test_no_question_leader_survives_into_the_query(self, leader):
         query = _extract_image_keywords(f"{leader} Apple release a foldable iPhone?", "tech")
         assert leader not in query.split()
         assert "iPhone" in query, f"{leader!r} displaced the subject: {query!r}"
+
+    def test_a_leading_name_that_is_also_a_question_word_costs_only_a_first_name(self):
+        # "Will Mackinnon" is a real pickleball player. Stripping "Will" is still
+        # right here: the surname is the distinctive half, and the old query
+        # ("PPA Men's Doubles Will") ended on the dangling first name anyway.
+        query = _extract_image_keywords(
+            "PPA - Men's Doubles: Will Mackinnon / Brandon French vs Gabriel Joseph",
+            "pickleball",
+        )
+        assert "Mackinnon" in query
+        assert "Will" not in query.split()
 
     def test_the_freed_slot_goes_to_a_subject_word(self):
         # Before #4962 this was "Will Apple release foldable" — the device was cut.

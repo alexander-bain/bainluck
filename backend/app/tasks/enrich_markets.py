@@ -434,7 +434,7 @@ def _metadata_needs_discover_llm_refresh(
 #: The words below carry no picture: they are grammar, dates, or betting lines.
 _IMAGE_NOISE_WORDS = (
     r"\b(on|at|in|the|a|an|of|for|to|vs\.?|by"
-    r"|will|who|what|which|when|does|do|did|with|before|after|from|and|not)\b"
+    r"|will|who|what|which|when|how|does|do|did|with|before|after|from|and|not)\b"
 )
 _IMAGE_MONTHS = (
     r"\b(January|February|March|April|May|June|July|August"
