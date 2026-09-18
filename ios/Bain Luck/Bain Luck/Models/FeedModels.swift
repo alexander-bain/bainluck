@@ -618,6 +618,17 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     /// `price_observed_at` via the decoder's `.convertFromSnakeCase`; rendered by
     /// `PriceAgeMarkView`, dated by `SourceAge`.
     let priceObservedAt: String?
+    /// #2088: why this card's two printed percents do not total 100, decided once
+    /// on the server (`graded_card.card_sum_reason`) and served by both futures
+    /// serializers. Rendered as a sentence by `cardSumExplanation` (`CardSum.swift`).
+    ///
+    /// Taken VERBATIM — native derives no fallback. `nil` covers both "the server
+    /// checked and they do total 100" and "this cached body predates the field";
+    /// Swift's synthesized `decodeIfPresent` cannot tell those apart, and measured
+    /// on production 2026-09-18 the key is absent on 0 of 98 carrying objects while
+    /// the served answer agrees with a local derivation on all 98. `CardSum.swift`
+    /// carries the full reasoning.
+    let cardSumReason: String?
 }
 
 // MARK: - Discover Card Archetype

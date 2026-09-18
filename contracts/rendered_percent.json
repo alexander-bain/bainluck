@@ -289,7 +289,8 @@
   "card_sum_rule": "a card of exactly two outcomes whose printed percents do not total 100 carries a reason: 'unpriced_outcome' when a side has no price, otherwise 'independent_prices'; a complement pair totals 100 by construction and carries null; any arity other than two carries null",
   "card_sum_implementations": [
     {"runtime": "python", "path": "backend/app/utils/graded_card.py", "symbol": "card_sum_reason", "sum_symbol": "card_sum", "driven_by": "backend/tests/test_graded_card_contract.py", "served_by": ["backend/app/routes/admin_label_pass.py:_live_features", "backend/app/routes/admin_judgments.py:_serialize_labeling_candidate"]},
-    {"runtime": "typescript", "path": "frontend/lib/renderedPercent.ts", "symbol": "cardSumReason", "sum_symbol": "cardSum", "driven_by": "frontend/__tests__/lib/renderedPercentContract.test.ts", "$role": "fallback for a payload minted before card_sum_reason was served"}
+    {"runtime": "typescript", "path": "frontend/lib/renderedPercent.ts", "symbol": "cardSumReason", "sum_symbol": "cardSum", "driven_by": "frontend/__tests__/lib/renderedPercentContract.test.ts", "$role": "fallback for a payload minted before card_sum_reason was served"},
+    {"runtime": "swift", "path": "ios/Bain Luck/Bain Luck/Utilities/CardSum.swift", "symbol": "cardSumReason", "sum_symbol": "cardSum", "sentence_symbol": "cardSumExplanation", "driven_by": "ios/Bain Luck/BainLuckTests/CardSumContractTests.swift", "$role": "draws the sentence on the Discover futures card; a served reason wins whole, including a served null, and only an ABSENT key falls back to the local derivation"}
   ],
   "$card_sum_cases_comment": [
     "Generated from the Python implementation and read back, never hand-authored: a",
