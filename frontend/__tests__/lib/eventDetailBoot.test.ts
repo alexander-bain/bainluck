@@ -36,6 +36,7 @@ import {
   EVENT_BOOT_CLAIM_TIMEOUT_MS,
   EVENT_BOOT_GLOBAL,
   EVENT_BOOT_HISTORY_HOURS,
+  EVENT_BOOT_HISTORY_RANGE,
   claimEventBoot,
   eventBootEligibleFromKeys,
   eventBootPaths,
@@ -137,7 +138,10 @@ describe("LAT-P219 · the four boot URLs are the URLs that reach the wire", () =
       await fetchEvent(EVENT_ID);
       await fetchGameMarkets(EVENT_ID);
       await fetchTeamProgression(EVENT_ID);
-      await fetchEventHistory(EVENT_ID, EVENT_BOOT_HISTORY_HOURS);
+      // #6948: the page's FIRST-PAINT call, which is the one the boot has to match. The "All"
+      // re-fetch deliberately omits the range and therefore deliberately misses the boot — it asks
+      // for a body the boot never parked.
+      await fetchEventHistory(EVENT_ID, EVENT_BOOT_HISTORY_HOURS, EVENT_BOOT_HISTORY_RANGE);
     });
     // The assertion that matters. Not "one builder equals another builder I also wrote".
     expect(wire).toEqual(eventBootUrls(API_URL, EVENT_ID));
@@ -156,8 +160,15 @@ describe("LAT-P219 · the four boot URLs are the URLs that reach the wire", () =
 
   it("carries the shared history window, not a second copy of the number", () => {
     expect(eventBootPaths(EVENT_ID)).toContain(
-      `/api/events/${EVENT_ID}/history?hours=${EVENT_BOOT_HISTORY_HOURS}`
+      `/api/events/${EVENT_ID}/history?hours=${EVENT_BOOT_HISTORY_HOURS}&range=${EVENT_BOOT_HISTORY_RANGE}`
     );
+  });
+
+  it("boots the TRIMMED history, because that is the body the first paint draws (#6948)", () => {
+    // The point of the parameter. A boot that parked the full journey would hand the reader's own
+    // request a 2.3 MB body to parse for a chart that opens on "Since Start" and draws none of it.
+    const historyPath = eventBootPaths(EVENT_ID).find((p) => p.includes("/history"));
+    expect(historyPath).toContain("range=since_start");
   });
 
   it("pins the window at 48 h — the value the page has always asked for", () => {
@@ -188,8 +199,21 @@ describe("LAT-P219 · the page consumes the shared history window", () => {
 
   it("passes EVENT_BOOT_HISTORY_HOURS to fetchEventHistory, never a literal", () => {
     const src = readPageSource();
-    expect(src).toContain("fetchEventHistory(eventId, EVENT_BOOT_HISTORY_HOURS)");
-    expect(src).not.toContain("fetchEventHistory(eventId, 48)");
+    // Whitespace-collapsed: the call is multi-line since #6948 and a formatter must not be able to
+    // turn this guard red (or, worse, green on the wrong thing).
+    const src1 = src.replace(/\s+/g, " ");
+    expect(src1).toContain("fetchEventHistory( eventId, EVENT_BOOT_HISTORY_HOURS,");
+    expect(src1).not.toContain("fetchEventHistory( eventId, 48");
+  });
+
+  it("derives the range from the shared helper, never a literal token (#6948)", () => {
+    // Same drift hazard as the hours, and the same remedy. `historyRangeParam` returns the boot's
+    // own `EVENT_BOOT_HISTORY_RANGE`, so the parked URL and the first-paint URL are one expression;
+    // a literal here would be the second builder. `?hours=48` was exactly this shape and it cost a
+    // silent duplicate request.
+    const src = readPageSource();
+    expect(src.replace(/\s+/g, " ")).toContain("historyRangeParam(fullHistoryRequested)");
+    expect(src).not.toContain('"since_start"');
   });
 });
 

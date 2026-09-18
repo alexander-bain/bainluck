@@ -468,9 +468,16 @@ export async function fetchEventsByIds(ids: number[]): Promise<EventDetailRespon
  */
 export async function fetchEventHistory(
   id: number,
-  hours = 24
+  hours = 24,
+  /**
+   * #6948: `"since_start"` omits points captured before kick-off. Optional, and OMITTED means
+   * today's payload byte for byte — an unrecognised or absent value serves the whole journey, so a
+   * parameter whose job is to drop data fails open. Callers that need the pre-kickoff half (the
+   * chart's "All" range) pass nothing.
+   */
+  range?: "since_start"
 ): Promise<EventHistoryResponse> {
-  const endpoint = `/api/events/${id}/history?hours=${hours}`;
+  const endpoint = `/api/events/${id}/history?hours=${hours}${range ? `&range=${range}` : ""}`;
   // LAT-P219: only the event page's own window (`EVENT_BOOT_HISTORY_HOURS`) is ever parked, so a
   // caller asking for a different `hours` simply finds no matching entry and falls through.
   const booted = await claimEventBooted<EventHistoryResponse>(endpoint);

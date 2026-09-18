@@ -516,6 +516,17 @@ export interface EventHistoryResponse {
    * two disagreeing owners for "settled". See `lib/chartEdgePin.ts`.
    */
   blend_edge_pinned?: boolean;
+  /**
+   * #6948: true iff the backend ACTUALLY removed points before kick-off, i.e. iff a second request
+   * without `range=since_start` would answer with more. `false` on every payload served without the
+   * parameter, and optional because a client may be reading an older payload.
+   *
+   * This is the server's answer to "is what I am holding the whole journey?", and the client must
+   * not re-derive it by looking for points older than `commence_time`: a series can legitimately
+   * have none, which is indistinguishable from a trim. The event page latches on this to decide
+   * whether the chart's "All" range still owes a re-fetch.
+   */
+  pre_window_omitted?: boolean;
   points: number;
   espn_snapshot_count?: number;
   pm_spread_data?: {
