@@ -637,15 +637,25 @@ def test_two_rows_sharing_a_before_but_earning_different_answers_do_not_collide(
     would write one answer over both.
     """
     # A member row of the same event, storing the same value as the container.
-    # Its name reads as basketball through `_STAT_TO_SPORT` ("Points", #4365) —
-    # the point is not that this answer is good, it is that it DIFFERS, and the
+    # The point is not that its answer is good, it is that it DIFFERS, and the
     # write must carry each row's own verdict rather than the group's first.
     #
     # Note which ticker the cascade is handed: the EVENT's, for every row under
     # it, because that is what the poller hands it. A member row is not
     # classified on its own leg ticker.
+    #
+    # ⭐ THIS FIXTURE WAS "…: Points" UNTIL #7012, and the swap is worth the two
+    # lines. That name read as basketball through `_STAT_TO_SPORT` (#4365) — a
+    # name-rule sport guess with no venue signal behind it, which is precisely
+    # the shape #7012 now demotes to the venue's topic. So the cascade started
+    # answering `weather` for it, the same as the container, and this test began
+    # failing for the best possible reason: the old specimen stopped being a
+    # disagreement because the classifier got it right. The property under test
+    # is the UPDATE's grouping, not that specimen, so it needs a row that still
+    # earns a different answer — and step 0's `\bIPO\b` rule is the sturdiest
+    # one available, sitting ABOVE the ticker and the venue alike.
     member = _Row(
-        555001, "TB Lightning at CAR Hurricanes: Points",
+        555001, "CAR Hurricanes arena operator IPO before 2027",
         "open", "KXHURCTOT-26DEC01-T4", "hockey",
     )
     session = _StubSession(
@@ -653,7 +663,7 @@ def test_two_rows_sharing_a_before_but_earning_different_answers_do_not_collide(
     )
     out = _run(session, monkeypatch, bound=["KXHURCTOT-26DEC01"], apply=True)
     written = {tuple(p["ids"]): p["llm"] for p in session.updates}
-    assert written == {(8431183,): "weather", (555001,): "basketball"}, (
+    assert written == {(8431183,): "weather", (555001,): "economics"}, (
         "both rows stored `hockey`; grouping the UPDATE on `before` alone would "
         "have written one verdict over both"
     )
