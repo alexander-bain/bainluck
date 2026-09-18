@@ -148,6 +148,8 @@ __all__ = [
     "note_unit_cancelled",
     "parse_slot_ref",
     "prune_unit_cancels",
+    "carry_refinement",
+    "refinement_from_raw",
     "refine_unit",
     "resolve_slot",
     "sanitize_refinements",
@@ -1854,6 +1856,108 @@ def classify_field_mismatch(
     return changed
 
 
+def refinement_from_raw(raw: Any) -> tuple[dict[str, int], dict[str, int]]:
+    """``(unit_cancels, unit_splits)`` off a stored payload. Pure.
+
+    CAL-P1301 wrote these two comprehensions inline in
+    :func:`decode_staged_cursor_detailed`; CAL-P1304 (#6599, repairing
+    CERT-3051) needs the same rules at a SECOND site — the invalidation returns,
+    which carry the refinement forward — and this module's own C14 rule refuses
+    a second copy of a predicate. So the rules live here once.
+
+    Per-entry refusals, no whole-cursor consequence: an unreadable cancellation
+    count costs the memory of that slot's cancellations (re-earned on the next
+    one), and an unreadable refinement is dropped by :func:`sanitize_refinements`
+    at plan time rather than here, so the plan and the payload cannot disagree
+    about which entries are in force.
+    """
+    if not isinstance(raw, dict):
+        return {}, {}
+    raw_cancels = raw.get("unit_cancels")
+    unit_cancels = (
+        {
+            str(ref): int(count)
+            for ref, count in raw_cancels.items()
+            if parse_slot_ref(ref) is not None
+            and isinstance(count, int)
+            and not isinstance(count, bool)
+            and count > 0
+        }
+        if isinstance(raw_cancels, dict)
+        else {}
+    )
+    raw_splits = raw.get("unit_splits")
+    unit_splits = (
+        {
+            str(ref): int(factor)
+            for ref, factor in raw_splits.items()
+            if parse_slot_ref(ref) is not None
+            and isinstance(factor, int)
+            and not isinstance(factor, bool)
+            and factor >= 2
+        }
+        if isinstance(raw_splits, dict)
+        else {}
+    )
+    return unit_cancels, unit_splits
+
+
+def carry_refinement(
+    blank: StagedFuturesCursor, raw: Any
+) -> StagedFuturesCursor:
+    """A fresh cursor that keeps what the discarded one learned about COST.
+
+    CAL-P1304 (#6599, repairing CERT-3051). **The one thing an invalidation may
+    keep, and the reason the build can finish.**
+
+    An invalidation throws away the bank, and it must: every committed unit is
+    rows computed by code or against a population we can no longer vouch for,
+    and mixing those into one payload is what the digest exists to prevent.
+    ``unit_splits`` is not that. It is one sentence — *slot 37 of 128 is too
+    expensive to compute in a single statement* — and it is a statement about
+    the SHAPE OF THE WORK, not about any row's value. A deploy that rewrites the
+    population SQL does not make a hash bucket small.
+
+    Discarding it anyway is what made the build unable to finish. Under the
+    #6599 regime a slot is refined on its first conclusive cancellation, so
+    earning a refinement costs a beat per slot; production invalidates roughly
+    every fifteen beats; and every invalidation put the partition back to 128
+    coarse slots with every refinement un-earned. The build therefore re-learned
+    the same thing forever and published nothing, which
+    ``TestTheLimitThisCandidateDoesNotReach`` measured and named as the wall.
+    Carried, era N+1 starts from era N's partition, the refinement ratchets, and
+    a pass fits inside an era.
+
+    Three things make this safe to keep across a boundary that keeps nothing
+    else:
+
+    * **It cannot change a published number.** The census is partition-invariant
+      — ``test_a_census_reached_through_splits_equals_one_computed_in_one_pass``
+      asserts a build that reached its answer through splits equals one computed
+      in a single pass — so the refinement decides only how the work is chopped,
+      never what it sums to.
+    * **A stale refinement costs one extra partition.** If the invalidated code
+      made a slot CHEAPER, the retained cut over-refines it: more, smaller units
+      that each complete sooner. That is the same bounded cost
+      ``cancellation_is_conclusive`` is justified by, and it is not a
+      correctness risk.
+    * **It cannot run away.** ``apply_unit_split`` refuses past
+      :data:`STAGED_UNIT_MAX_REFINEMENT_BUCKETS` (``SPLIT_TOO_DEEP``), so the
+      partition is bounded by an existing, tested ceiling however many eras
+      contribute to it, and ``prune_unit_cancels`` bounds the cancel map to the
+      live plan on every beat.
+
+    NOT called for the refusals above the unit-key check. A payload whose
+    schema, task or unit key we do not recognise is one whose slot references
+    mean something else entirely, and a refinement is only meaningful against
+    the partition it was cut from.
+    """
+    unit_cancels, unit_splits = refinement_from_raw(raw)
+    if not unit_cancels and not unit_splits:
+        return blank
+    return replace(blank, unit_cancels=unit_cancels, unit_splits=unit_splits)
+
+
 def decode_staged_cursor(
     raw: Any,
     *,
@@ -1975,6 +2079,13 @@ def decode_staged_cursor_detailed(
         # A cursor cut on a different partition key is not a cursor for this
         # plan; its unit keys mean something else entirely.
         return blank, INVALIDATE, REASON_UNIT_KEY
+    # CAL-P1304 (#6599, repairing CERT-3051). Below this line the payload's
+    # PARTITION is one we recognise — same schema, same task, same unit key — so
+    # every invalidation from here on discards the bank and keeps the refinement
+    # that was earned against that partition. See :func:`carry_refinement` for
+    # why that is the one thing that may cross this boundary, and for the three
+    # properties that bound it.
+    blank = carry_refinement(blank, raw)
     if raw.get("population_version") != expected_population_version:
         # CAL-P1032 (#3522). Which of the three it is decides who the operator
         # goes looking at, and the fold made every one of them read as the only
@@ -2117,37 +2228,10 @@ def decode_staged_cursor_detailed(
         else 0
     )
     # CAL-P1301. Both maps are carried across the read whole, with per-entry
-    # refusals and no whole-cursor consequence: an unreadable cancellation count
-    # costs the memory of that slot's cancellations (it is re-earned on the next
-    # one), and an unreadable refinement is dropped by
-    # :func:`sanitize_refinements` at plan time rather than here, so the plan and
-    # the payload cannot disagree about which entries are in force.
-    raw_cancels = raw.get("unit_cancels")
-    unit_cancels = (
-        {
-            str(ref): int(count)
-            for ref, count in raw_cancels.items()
-            if parse_slot_ref(ref) is not None
-            and isinstance(count, int)
-            and not isinstance(count, bool)
-            and count > 0
-        }
-        if isinstance(raw_cancels, dict)
-        else {}
-    )
-    raw_splits = raw.get("unit_splits")
-    unit_splits = (
-        {
-            str(ref): int(factor)
-            for ref, factor in raw_splits.items()
-            if parse_slot_ref(ref) is not None
-            and isinstance(factor, int)
-            and not isinstance(factor, bool)
-            and factor >= 2
-        }
-        if isinstance(raw_splits, dict)
-        else {}
-    )
+    # refusals and no whole-cursor consequence. CAL-P1304 moved the rules into
+    # :func:`refinement_from_raw` so the invalidation returns above can apply the
+    # same ones; the behaviour on this path is unchanged.
+    unit_cancels, unit_splits = refinement_from_raw(raw)
     # Not carried across the read. The plan is re-derived and re-stamped by
     # retain_planned_units at the top of every beat, and a stale plan is the one
     # input that could make promote_if_complete promote a bank against a

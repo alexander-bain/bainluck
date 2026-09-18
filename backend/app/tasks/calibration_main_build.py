@@ -1611,6 +1611,16 @@ async def load_phase_measurements() -> tuple[
         # thing that was ever on offer. It extinguishes itself the moment a unit
         # completes, because `_unit_costs_from` then builds a fresh dict with no
         # marker in it and the ring resumes.
+        #
+        # CAL-P1304 (#6599, repairing CERT-3051): the skip is a skip of the
+        # BASIS, and it was reading as a skip of the FACT. Both keys are written
+        # here, above the branch, because the ring is the same ring either way —
+        # what the withdrawal decides is only whether an admission bound may be
+        # built from it. See `PhaseBudget.unit_ms_worst_observed`: production
+        # ran fourteen hours with 24 completions in this ring that no beat could
+        # read, and the #6599 cut declined every time for want of a maximum it
+        # already had.
+        merged.setdefault(name, {})["unit_ms_worst_observed"] = max(ring)
         if merged.get(name, {}).get(LEVEL_REFUTED_KEY):
             continue
         merged.setdefault(name, {})["unit_ms_worst"] = max(ring)
@@ -2546,6 +2556,34 @@ def _carry_unit_costs(runner: PhaseRunner, prior: dict[str, Any]) -> dict[str, A
     futures = carried.get(PHASE_FUTURES)
     if not futures:
         return carried
+    if futures.pop(LEVEL_REFUTED_KEY, None):
+        # CAL-P1304 (#6599, repairing CERT-3051). THE WITHDRAWAL IS A VERDICT ON
+        # ONE BEAT'S EVIDENCE, AND IT WAS OUTLIVING IT.
+        #
+        # The marker was written to extinguish itself: `_unit_costs_from` builds
+        # a fresh dict the moment a unit completes, and that dict has no marker
+        # in it. That is the only exit the design had, and it assumes the honest
+        # wide attempt the withdrawal buys either completes or refutes the level
+        # again. It does neither when the attempt is cancelled by the WINDOW —
+        # which, since #6599 corrected `_level_refuted_by_cancellation`'s third
+        # condition, is no longer a refutation. So this branch found a truthy
+        # `{units_total, units_done, level_refuted}`, re-stamped `units_done`,
+        # and carried the marker forward unexamined, for as many beats as the
+        # build had left. Production: `{'units_done': 1, 'units_total': 128,
+        # 'level_refuted': True}`, fourteen hours, 1 of 128 units banked.
+        #
+        # Reaching here IS the re-evaluation: `_level_refuted_by_cancellation`
+        # was consulted at the top of this function and said no. The claim the
+        # marker makes is therefore unsupported by this beat, and an unsupported
+        # claim is dropped rather than inherited. The level itself does not come
+        # back — `unit_ms` was withdrawn and only a COMPLETION restores it — so
+        # what this clears is the suppression of the worst-unit ring, not the
+        # mean, and the fence it hands the next beat is `1.5 x worst`: wider
+        # than the window on the specimen, so nothing is tightened there.
+        #
+        # Recorded, because a withdrawal and its expiry are two different events
+        # and neither may be silent (ruling 075).
+        runner.ledger.record_gauge(f"{UNIT_COST_REASON_PREFIX}refutation_expired", 1)
     if _level_self_blocked(runner):
         carried.pop(PHASE_FUTURES)
         runner.ledger.record_gauge(f"{UNIT_COST_REASON_PREFIX}withdrawn_self_blocked", 1)

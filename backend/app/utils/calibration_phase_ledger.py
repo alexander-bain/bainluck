@@ -521,6 +521,29 @@ class PhaseBudget:
     #: nothing here either. What changes is that the evidence is no longer
     #: collapsed to a mean before the bound reads it.
     unit_ms_worst: Optional[int] = None
+    #: The same worst COMPLETED unit duration, as EVIDENCE rather than as an
+    #: admission basis — CAL-P1304 (#6599, repairing CERT-3051).
+    #:
+    #: The two are the same number in the ordinary case and the field would be
+    #: redundant if that were the only case. It is not: when a level is
+    #: WITHDRAWN (``level_refuted``, CAL-P1300) the ring is deliberately kept
+    #: out of ``unit_ms_worst``, because a fence of ``1.5 x worst`` would be
+    #: TIGHTER than the bound that had just been proven too small, and handing
+    #: the next unit that fence is how the door stays shut.
+    #:
+    #: That is a correct thing to do to a BASIS and a wrong thing to do to a
+    #: FACT. Production ran fourteen hours with a ring holding 24 genuine
+    #: completions, worst 1,181,085 ms, that no beat could read — so
+    #: ``cancellation_is_conclusive``'s "did this unit outrun every unit that
+    #: ever completed?" resolved against an empty maximum and declined on the
+    #: very rows the defect was worst on. Withdrawing a bound may never
+    #: un-observe a completion.
+    #:
+    #: So: nothing may derive an admission bound from this field, and
+    #: :meth:`PhaseLedger.statement_timeout_for_unit` does not read it. It
+    #: answers one question only — what is the longest a unit of this phase has
+    #: ever been observed to COMPLETE in.
+    unit_ms_worst_observed: Optional[int] = None
     #: WHICH RULE produced ``budget_ms`` — one of the ``BUDGET_BASIS_*``
     #: constants. A number in a plan is not self-describing: 1,172,893 ms could
     #: be a measured cost or a reallocation, and only one of those is evidence
@@ -543,6 +566,7 @@ class PhaseBudget:
             "floor_observations": self.floor_observations,
             "unit_ms": self.unit_ms,
             "unit_ms_worst": self.unit_ms_worst,
+            "unit_ms_worst_observed": self.unit_ms_worst_observed,
             "units_total": self.units_total,
             "units_done": self.units_done,
             "budget_basis": self.budget_basis,
@@ -1164,6 +1188,28 @@ def _decode_unit_worst(raw: Any) -> Optional[int]:
     return int(value) if value > 0 else None
 
 
+def _decode_unit_worst_observed(raw: Any) -> Optional[int]:
+    """The worst COMPLETED unit as EVIDENCE — CAL-P1304 (#6599).
+
+    :data:`PhaseBudget.unit_ms_worst_observed` carries the reasoning. Decoded by
+    the same rules as :func:`_decode_unit_worst` and deliberately NOT sharing a
+    body with it: the two keys are written by different rules (one is skipped
+    for a withdrawn level, the other never is), and a single decoder taking a
+    key name would invite exactly the caller that passes the wrong one.
+
+    Falls back to ``unit_ms_worst`` when the observed key is absent, which is
+    every ledger written before this field existed and every non-withdrawn level
+    written by a deploy that straddles it. The fallback is safe in the direction
+    that matters: it can only ever produce the number the basis already carried.
+    """
+    if not isinstance(raw, dict):
+        return None
+    value = raw.get("unit_ms_worst_observed")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return _decode_unit_worst(raw)
+    return int(value) if value > 0 else None
+
+
 def derive_plan(
     history: Optional[dict[str, Any]] = None,
     *,
@@ -1281,6 +1327,7 @@ def derive_plan(
                 floor_observations=floor_count,
                 unit_ms=unit_ms,
                 unit_ms_worst=_decode_unit_worst(unit_costs.get(name)),
+                unit_ms_worst_observed=_decode_unit_worst_observed(unit_costs.get(name)),
                 units_total=units_total,
                 units_done=units_done,
                 budget_basis=basis,
@@ -1747,6 +1794,34 @@ class PhaseLedger:
         if budget is None or not budget.unit_ms_worst:
             return None
         return int(budget.unit_ms_worst)
+
+    def observed_unit_worst_ms(self, name: str) -> Optional[int]:
+        """The longest a unit of ``name`` has ever been observed to COMPLETE in.
+
+        CAL-P1304 (#6599, repairing CERT-3051). The sibling of
+        :meth:`measured_unit_worst_ms`, and the difference is the whole point:
+        that one is a BASIS an admission bound may be built from, and a
+        withdrawn level is deliberately absent from it. This one is the FACT,
+        and a withdrawal does not un-observe a completion.
+
+        Read by ``cancellation_is_conclusive``'s caller and by nothing that
+        widens a bound. ``None`` still means "no completed unit has ever been
+        recorded" — never zero (gotcha #53).
+
+        Falls back to :attr:`PhaseBudget.unit_ms_worst` when the observed field
+        is unset, and the fallback is not a convenience: the basis field is
+        ITSELF a worst completed duration, so on every plan but a withdrawn
+        one the two are the same observation and the only question is which key
+        happened to carry it. Without this, a plan built by a caller that
+        predates the field — or by any code path that fills the basis
+        directly — would report "nothing has ever completed" while holding the
+        number, which is the exact confusion this pair exists to end.
+        """
+        budget = self.plan.by_name(name)
+        if budget is None:
+            return None
+        value = budget.unit_ms_worst_observed or budget.unit_ms_worst
+        return int(value) if value else None
 
     def statement_timeout_for_unit(
         self,

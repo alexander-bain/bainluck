@@ -137,6 +137,7 @@ def _ledger(
     unit_ms_worst: int | None,
     units_done: int,
     buckets: int,
+    unit_ms_worst_observed: int | None = None,
 ) -> PhaseLedger:
     plan = PhasePlan(
         budgets=(
@@ -148,6 +149,12 @@ def _ledger(
                 measured_input=True,
                 unit_ms=unit_ms,
                 unit_ms_worst=unit_ms_worst,
+                # CAL-P1304: the ring as EVIDENCE, which a withdrawn level keeps
+                # and a withdrawn BASIS does not. Defaults to the basis so every
+                # arm written before this parameter existed is unchanged.
+                unit_ms_worst_observed=(
+                    unit_ms_worst if unit_ms_worst_observed is None else unit_ms_worst_observed
+                ),
                 units_total=buckets,
                 # ``measured_unit_ms`` returns None on zero completions — a mean
                 # over nothing is not a measurement — so a rig that wants the
@@ -171,11 +178,28 @@ def _ledger(
 class _Runner:
     """One beat. The clock is advanced by the database (gotcha #44)."""
 
-    def __init__(self, *, window_ms: int, generation: int, buckets: int, carried: bool):
+    def __init__(
+        self,
+        *,
+        window_ms: int,
+        generation: int,
+        buckets: int,
+        carried: bool,
+        withdrawn: bool = False,
+        ring_readable: bool = True,
+    ):
+        # CAL-P1304. ``withdrawn`` is the state production has actually been in
+        # since #6275: ``unit_costs.futures`` carries the withdrawal marker, so
+        # there is no mean and no admission basis — and ``ring_readable`` is the
+        # repair, i.e. whether the worst-unit ring is still legible as evidence
+        # beside that withdrawal. ``withdrawn and not ring_readable`` is the
+        # tree CERT-3051 graded.
+        base_worst = PROD_UNIT_WORST_MS if carried else None
         self.ledger = _ledger(
             window_ms=window_ms,
-            unit_ms=PROD_UNIT_MEAN_MS if carried else None,
-            unit_ms_worst=PROD_UNIT_WORST_MS if carried else None,
+            unit_ms=None if withdrawn else (PROD_UNIT_MEAN_MS if carried else None),
+            unit_ms_worst=None if withdrawn else base_worst,
+            unit_ms_worst_observed=base_worst if ring_readable else None,
             units_done=1 if carried else 0,
             buckets=buckets,
         )
@@ -366,6 +390,8 @@ def drive(monkeypatch):
         carried=True,
         conclusive_splits=True,
         transient=None,
+        withdrawn=False,
+        ring_readable=True,
     ):
         roster = _roster(buckets * VMS_PER_SLOT)
         population = _values(buckets * VMS_PER_SLOT)
@@ -417,6 +443,8 @@ def drive(monkeypatch):
                 generation=beat_no,
                 buckets=buckets,
                 carried=carried,
+                withdrawn=withdrawn,
+                ring_readable=ring_readable,
             )
             if reset_every and beat_no > 1 and (beat_no - 1) % reset_every == 0:
                 era = (beat_no - 1) // reset_every
@@ -694,15 +722,25 @@ class TestAConclusiveCancellationCutsOnBeatOne:
         assert cand.max_banked >= base.max_banked or cand.completed_at < base.completed_at
 
     @pytest.mark.asyncio
-    async def test_it_publishes_inside_an_era_the_control_cannot_finish_in(self, drive):
-        """The only shape in which this candidate is the difference, not a discount.
+    async def test_it_publishes_inside_an_era_the_control_needs_18_more_beats_for(
+        self, drive
+    ):
+        """The shape in which this candidate is the difference, not a discount.
 
-        An invalidation period BETWEEN the two completion costs: the candidate
-        publishes, the control loses its bank one beat before it would have. The
-        band exists because one pass was removed; outside the band the two arms
-        agree, and the band at 128 slots sits at eras nobody has measured.
+        **AMENDED by CAL-P1304, and the amendment is the repair's own doing.**
+        This read ``base.completed_at is None`` — inside this band the control
+        did not merely finish later, it never finished, because every era took
+        its refinements away with its bank. Now that
+        :func:`~app.utils.calibration_staged_futures.carry_refinement` keeps the
+        refinement across the boundary, the control's refinements ratchet too
+        and it lands on beat 40. The band is not empty: it is 18 beats wide,
+        which is a difference an operator sees as most of a day.
+
+        Both numbers are asserted exactly, in the house idiom of the tests
+        above, so a change in either arm is a test failure rather than a quietly
+        different story.
         """
-        era = 26  # 8 oversized slots: candidate 22 beats, control 30.
+        era = 26
         cand = await drive(
             buckets=8, oversized_slots=8, max_beats=120, reset_every=era
         )
@@ -714,12 +752,8 @@ class TestAConclusiveCancellationCutsOnBeatOne:
             conclusive_splits=False,
         )
 
-        assert cand.completed_at is not None, (
-            "inside the band the candidate must publish"
-        )
-        assert base.completed_at is None, (
-            "and the control must not — otherwise the band is empty and this "
-            "candidate buys nothing an operator can see"
+        assert (cand.completed_at, base.completed_at) == (22, 40), (
+            f"candidate {cand.completed_at} vs control {base.completed_at}"
         )
 
     @pytest.mark.asyncio
@@ -751,6 +785,70 @@ class TestAConclusiveCancellationCutsOnBeatOne:
 # =============================================================================
 # 1b. THE EVIDENCE IS RECORDED AS EVIDENCE — gotcha #53
 # =============================================================================
+
+
+class TestTheCutFiresOnTheWITHDRAWNLevelProductionIsActuallyIn:
+    """CAL-P1304 (#6599, repairing CERT-3051) — the state this policy is FOR.
+
+    Every arm above drives a level whose admission basis is intact, and on such
+    a level ``measured_unit_worst_ms`` and ``observed_unit_worst_ms`` return the
+    same number, so which one the loop reads makes no difference and no test
+    could see the difference. Production is not on such a level. It carries
+    CAL-P1300's withdrawal — ``{'units_done': 1, 'units_total': 128,
+    'level_refuted': True}`` — where the basis is deliberately absent and only
+    the ring knows what a unit has completed in.
+
+    That is why CERT-3051 could say the policy was coherent, its tests green,
+    and its population empty in production, all at once. These two arms are that
+    population: the first is the withdrawn level with the ring legible (the
+    repair), the second is the withdrawn level with the ring erased along with
+    the basis (the tree that was graded). Nothing else differs between them.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_cut_lands_although_the_admission_basis_is_withdrawn(
+        self, drive
+    ):
+        """The headline: the policy fires on the row the defect is worst on."""
+        run = await drive(
+            buckets=8, oversized_slots=8, max_beats=4, withdrawn=True
+        )
+
+        assert run.first_split_beat == 1, (
+            "with the ring legible as evidence the first window-bounded "
+            f"cancellation is conclusive and cuts; got beat {run.first_split_beat}"
+        )
+        assert run.per_beat_conclusive[0], (
+            "and the beat records WHY it cut, which is the gauge the mutation "
+            "run at f7f0e6bc1 added"
+        )
+
+    @pytest.mark.asyncio
+    async def test_with_the_ring_erased_as_well_nothing_is_ever_cut(self, drive):
+        """CERT-3051's finding, reproduced as a control.
+
+        Same withdrawal, same population, same predicate — the ring is simply
+        unreadable, as ``load_phase_measurements`` used to leave it. The
+        cancellation has no completed maximum to be measured against, ruling 075
+        says absent evidence is not evidence, and the cut correctly declines.
+        Fourteen hours of production ran exactly here.
+        """
+        run = await drive(
+            buckets=8,
+            oversized_slots=8,
+            max_beats=4,
+            withdrawn=True,
+            ring_readable=False,
+        )
+
+        assert run.first_split_beat is None, (
+            "with nothing known to have completed the policy must decline — "
+            f"got a cut on beat {run.first_split_beat}"
+        )
+        assert not any(run.per_beat_conclusive), (
+            "and it must record no conclusive read either: 'the evidence never "
+            "arrived' is a different fact from 'the cut was refused'"
+        )
 
 
 class TestTheConclusiveReadIsLegibleOnItsOwn:
@@ -1146,32 +1244,98 @@ class TestATransientDelayIsNotExcludedAndIsBoundedWhenItHappens:
 
 
 class TestTheLimitThisCandidateDoesNotReach:
-    @pytest.mark.asyncio
-    async def test_an_invalidation_shorter_than_the_build_still_never_publishes(
-        self, drive
-    ):
-        """Cutting earlier does not make a build survive an era shorter than it.
+    """Where the wall stands AFTER CAL-P1304, measured rather than asserted.
 
-        Every era the cursor is refused wholesale, and with it go the banked
-        units AND the refinements that were earned. The candidate shortens the
-        build; it cannot shorten it below one beat per unit, so an invalidation
-        period under that is still fatal. This is the wall, and the smallest
-        change that moves it is per-unit retention across a population change
-        (1336 §6) — a reviewed class, not this one.
+    CERT-3051 blocked on this class. It read, correctly for its tree, that an
+    era shorter than the build never publishes however early the cut lands —
+    every era took the banked units AND the earned refinements, so each one
+    started from 128 coarse slots and re-learned what the last one knew. The
+    named repair was per-unit retention across a population change, and
+    :func:`~app.utils.calibration_staged_futures.carry_refinement` is it: the
+    refinement crosses the boundary, the bank does not.
+
+    What that buys, on this shape, is stated as a THRESHOLD rather than a
+    verdict, because the honest claim is a number and not a yes:
+
+    ========  ==================  =================
+    era       before CAL-P1304    after CAL-P1304
+    ========  ==================  =================
+    12        never               never
+    16        never               **beat 30**
+    20        never               beat 33
+    24        beat 22             beat 22
+    ========  ==================  =================
+
+    The shortest era this build survives falls from 24 beats to 16 — a third
+    off — and the reason is exactly the re-learning that retention removes. It
+    is not monotonic in the era (16 publishes on beat 30, 24 on beat 22),
+    because where an era boundary falls decides which beat's bank is lost, and
+    nothing here pretends otherwise.
+
+    **The wall is not gone and this class still says so.** Retention removes the
+    cost of re-LEARNING; it cannot remove the work itself. A build needs some
+    number of beats of banking no matter how well partitioned it is — 22 here,
+    with an era long enough to never interrupt — so an era below that floor is
+    still fatal, and the only thing that moves THAT is retaining banked units
+    across an invalidation, which the input digest exists to forbid.
+    """
+
+    @pytest.mark.asyncio
+    async def test_an_era_of_four_beats_is_still_shorter_than_the_work(self, drive):
+        """The floor retention cannot reach: an era below the banking cost.
+
+        Four beats against a build that needs 22 of them even uninterrupted.
+        No partition makes 22 beats of work fit in 4, so this publishes nothing
+        and is expected to — the claim being protected is that CAL-P1304 is a
+        saving on re-learning and was never sold as one on the work.
         """
         run = await drive(buckets=8, oversized_slots=8, max_beats=60, reset_every=4)
 
         assert run.completed_at is None, (
-            "with the era shorter than the build nothing publishes, candidate "
-            "or not — this is measured so the ship is not over-claimed"
+            "an era below the banking floor publishes nothing, retention or "
+            "not — measured so the ship is not over-claimed"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_era_that_used_to_be_fatal_now_publishes(self, drive):
+        """THE SHIP of CAL-P1304, as the smallest era that changed answer.
+
+        Sixteen beats: ``None`` before the repair, beat 30 after. The control
+        arm below proves the difference is the RETENTION and not the rig, by
+        running this very era with the carry stubbed back out.
+        """
+        run = await drive(buckets=8, oversized_slots=8, max_beats=200, reset_every=16)
+
+        assert run.completed_at == 30, (
+            f"era 16 must publish on beat 30; got {run.completed_at}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_without_the_carry_the_same_era_publishes_nothing(
+        self, drive, monkeypatch
+    ):
+        """THE CONTROL: the identical era with CAL-P1304's carry stubbed out.
+
+        ``carry_refinement`` returns the blank it was handed, which is
+        byte-for-byte the pre-repair decoder. Same population, same era, same
+        predicate — only the retention differs, so a reader cannot attribute
+        the test above to anything else.
+        """
+        monkeypatch.setattr(sf, "carry_refinement", lambda blank, raw: blank)
+
+        run = await drive(buckets=8, oversized_slots=8, max_beats=200, reset_every=16)
+
+        assert run.completed_at is None, (
+            "with the refinement discarded every era, era 16 re-learns forever "
+            "and publishes nothing — which is the state CERT-3051 blocked on"
         )
 
     @pytest.mark.asyncio
     async def test_the_same_build_completes_when_the_cursor_outlives_it(self, drive):
-        """THE CONTROL for the test above: the difference is the PERIOD."""
+        """THE CONTROL for the era tests: the difference is the PERIOD."""
         run = await drive(buckets=8, oversized_slots=8, max_beats=60, reset_every=50)
 
         assert run.completed_at is not None, (
             "with an era longer than the build the very same population "
-            "publishes, so the test above is about the period and not the rig"
+            "publishes, so the tests above are about the period and not the rig"
         )

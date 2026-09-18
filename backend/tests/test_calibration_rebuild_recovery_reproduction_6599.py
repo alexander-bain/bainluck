@@ -448,28 +448,61 @@ class TestTheProductionRegimeBeatLevelSlowness:
             )
 
     @pytest.mark.asyncio
-    async def test_an_invalidation_before_that_beat_means_no_slot_is_ever_cut(
+    async def test_an_invalidation_before_that_beat_no_longer_costs_the_cut(
         self, drive
     ):
-        """The permanent livelock, and why #6599 cannot end it on its own.
+        """The permanent livelock — **ENDED by CAL-P1304, and this measures it.**
 
-        16 units need 9 beats to reach the first cut. Invalidate the cursor every
-        5 and ``unit_cancels`` is wiped back to empty each era, so no slot ever
-        reaches two — not late, NEVER. Production's ring is the same inequality:
-        first cut possible at beat 65, resets observed every ~15–16 beats.
+        As written for CERT-3051's tree this asserted the opposite, and it was
+        right then: 16 units need 9 beats to reach the first cut, an era of 5
+        wiped ``unit_cancels`` back to empty, and no slot ever reached two — not
+        late, NEVER. Production's ring was the same inequality, first cut
+        possible at beat 65 against resets every ~15–16 beats.
+
+        :func:`~app.utils.calibration_staged_futures.carry_refinement` carries
+        the cancellation evidence across the boundary the bank cannot cross, and
+        the livelock closes completely on this shape: the cut lands on **beat
+        9** — the same beat the unbroken-cursor control below reaches — so an
+        invalidation now costs the refinement NOTHING. It still costs the bank,
+        which is a different and unavoidable price.
+
+        The control that follows this one stubs the carry back out and shows the
+        old ``None``, so the difference cannot be read as anything else.
         """
         run = await drive(
             buckets=16, slow_slots=0, max_beats=60, reset_every=5, beat_is_slow=True
         )
 
+        assert run.first_split_beat == 9, (
+            "the era no longer delays the cut at all; got "
+            f"{run.first_split_beat}"
+        )
+        assert run.max_cancel_count >= STAGED_UNIT_SPLIT_AFTER, (
+            "a slot reaching two cancellations at once is the precondition the "
+            "whole refinement hangs off, and it was unreachable across eras"
+        )
+
+    @pytest.mark.asyncio
+    async def test_without_the_carry_that_same_era_never_cuts_a_slot(
+        self, drive, monkeypatch
+    ):
+        """THE CONTROL for the repair: the pre-CAL-P1304 decoder, same era.
+
+        ``carry_refinement`` handing back the blank it was given is byte-for-byte
+        what the decoder did before, so this is the livelock exactly as
+        CERT-3051 read it — and the only difference between the two tests is
+        that one line.
+        """
+        monkeypatch.setattr(sf, "carry_refinement", lambda blank, raw: blank)
+
+        run = await drive(
+            buckets=16, slow_slots=0, max_beats=60, reset_every=5, beat_is_slow=True
+        )
+
         assert run.first_split_beat is None and run.max_split_count == 0, (
-            "not one slot is cut in 60 beats — the recovery half is not slow "
-            "here, it is unreachable"
+            "not one slot is cut in 60 beats — the state the repair ends"
         )
-        assert run.max_cancel_count < STAGED_UNIT_SPLIT_AFTER, (
-            "and no slot ever holds two cancellations at once, which is the "
-            "precondition the whole refinement hangs off"
-        )
+        assert run.max_cancel_count < STAGED_UNIT_SPLIT_AFTER
 
     @pytest.mark.asyncio
     async def test_the_cut_does_arrive_when_the_cursor_outlives_the_pass(self, drive):

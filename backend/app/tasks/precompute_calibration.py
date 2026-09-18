@@ -6051,9 +6051,16 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
             # wrong: one extra partition, nothing unbanked, the same published
             # census, no cascade. ``cancellation_is_conclusive`` carries the
             # reasoning and the transient control that measures that cost.
+            # CAL-P1304 (#6599, repairing CERT-3051): `observed_` and not
+            # `measured_`. The two differ on exactly one state — a WITHDRAWN
+            # level, where the ring is kept out of the admission basis on
+            # purpose — and that state is the one production has been in since
+            # #6275, so reading the basis here made this whole policy decline on
+            # the rows it was written for. Evidence about what has completed is
+            # not a bound and is not withdrawn with one.
             worst_completed_ms = max(
                 int(worst_unit_ms or 0),
-                int(runner.ledger.measured_unit_worst_ms(PHASE_FUTURES) or 0),
+                int(runner.ledger.observed_unit_worst_ms(PHASE_FUTURES) or 0),
             )
             conclusive = cancellation_is_conclusive(
                 remaining_ms=remaining_ms,

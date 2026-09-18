@@ -123,6 +123,16 @@ class _FakeLedger:
         """
         return None
 
+    def observed_unit_worst_ms(self, _name: str):
+        """The same honest ``None``, for CAL-P1304's second reading.
+
+        The repair split the worst completed duration into a withheld admission
+        BASIS and an observation that a withdrawal may not erase, and the loop
+        now asks for the second. This fake carries neither, so both answer
+        ``None`` and every assertion in this file keeps its subject.
+        """
+        return None
+
 
 class _FakeRunner:
     """Only the surface ``_run_staged_futures`` actually touches.
