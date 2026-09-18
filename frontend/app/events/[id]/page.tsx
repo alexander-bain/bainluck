@@ -8,6 +8,11 @@ import useSWR from "swr";
 import { fetchEvent, fetchEventHistory, fetchGameMarkets, fetchTeamProgression, fetchEventTournament, formatProbability } from "@/lib/api";
 import type { EventTournamentResponse, TeamProgressionResponse } from "@/lib/types";
 import { EVENT_BOOT_HISTORY_HOURS } from "@/lib/event/detailBoot";
+import {
+  effectiveChartRange,
+  historyRangeParam,
+  nextFullHistoryLatch,
+} from "@/lib/event/historyRange";
 import { canonicalEventHref } from "@/lib/canonicalEventUrl";
 import { teamTextColor } from "@/lib/teamColors";
 import { useLiveEventStream } from "@/hooks/useLiveEventStream";
@@ -556,19 +561,63 @@ export default function EventPage({ params }: EventPageProps) {
     return () => clearInterval(interval);
   }, [event?.commence_time, isLive, isFinished, isSuspended, hideStartClock]);
 
+  /* ── #6948: THE DEFERRAL IS LOSSLESS ONLY IF THE HEAD CAN STILL BE ASKED FOR ──
+     First paint asks for `range=since_start`, which drops the pre-kickoff half
+     of the payload — 89.3% of it on KC-DEN, and none of it drawn by the range a
+     finished game opens on. The chart's "All" range DOES draw it
+     (`filteredHistory` returns `history` untouched on "all"), so a client that
+     trims and never re-fetches would silently show a shortened "All".
+
+     THE LATCH IS ONE-WAY, AND THAT IS THE WHOLE DESIGN. The obvious spelling —
+     key the request on `chartTimeRange` — oscillates: the full payload comes
+     back with `pre_window_omitted: false`, which is also the condition for not
+     needing it, so the key flips back, SWR serves the cached trimmed body, and
+     the condition re-fires. Latching means the page asks for the whole journey
+     at most once and never returns to the trimmed body it has outgrown.
+
+     IT ASKS `pre_window_omitted`, NOT `chartTimeRange === "all"`, so a SCHEDULED
+     game costs nothing: the route already served it everything (no post-kickoff
+     point to trim to), the flag is false, and the chart's "all" default cannot
+     provoke a duplicate request. That cohort is the majority of "all" charts,
+     and a duplicate fetch for every one of them is LAT-P171/P172's defect.
+
+     Reading the SERVER's flag rather than re-deriving it is deliberate: a series
+     with no pre-kickoff points is indistinguishable from a trimmed one by
+     looking at the points. See `lib/types.ts`.
+
+     `chartTimeRange` covers the reader's tap AND the two paths that reach "all"
+     without one — the evidence sync below, and OddsChart's own
+     `nothingToDrawInLiveWindow` self-reset (#6349), which routes through this
+     page's setter. Keying on the resulting RANGE rather than on the tap is what
+     makes all three one code path. */
+  const [fullHistoryRequested, setFullHistoryRequested] = useState(false);
+
   const {
     data: servedHistory,
     error: historyError,
     isLoading: historyLoading,
     mutate: refreshHistory,
   } = useSWR(
-    ["history", eventId],
+    ["history", eventId, fullHistoryRequested],
     // LAT-P219: the window is a shared constant, not a literal, so the URL this issues and the URL
     // the document parks at parse time are one expression. Two builders that must stay equal is the
-    // exact shape of the LAT-P171/P172 duplicate-fetch defect.
-    () => fetchEventHistory(eventId, EVENT_BOOT_HISTORY_HOURS),
-    { refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL }
+    // exact shape of the LAT-P171/P172 duplicate-fetch defect. #6948 puts the range on the same
+    // footing — the boot parks `&range=since_start` from this same constant.
+    () =>
+      fetchEventHistory(
+        eventId,
+        EVENT_BOOT_HISTORY_HOURS,
+        historyRangeParam(fullHistoryRequested)
+      ),
+    {
+      refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL,
+      // The key changes when the latch flips, and without this the chart would blank to its
+      // skeleton while the whole journey loads — a visible regression on a tap that is supposed to
+      // ADD points. The trimmed body stays drawn until the wider one replaces it.
+      keepPreviousData: true,
+    }
   );
+
 
   // #3911: ONE number on the page, even when two workers answered it.
   //
@@ -755,6 +804,29 @@ export default function EventPage({ params }: EventPageProps) {
     if (chartRangeUserSet) return;
     setChartTimeRange(evidenceChartTimeRange);
   }, [evidenceChartTimeRange, chartRangeUserSet]);
+
+  /* #6948 — ask for the pre-kickoff half back once the range that is actually
+     settling needs it. Placed HERE, below the evidence range, because it reads
+     that memo rather than the `chartTimeRange` state: before the payload lands
+     `defaultChartTimeRange` sees zero post-kickoff points and answers "all",
+     and that transient survives one commit past the payload's arrival. Latching
+     on it made KC-DEN fetch the trimmed body AND the full body on every load —
+     found by driving a real browser, invisible to every unit assertion.
+     See `lib/event/historyRange.ts`. */
+  useEffect(() => {
+    setFullHistoryRequested((prev) =>
+      nextFullHistoryLatch(
+        prev,
+        effectiveChartRange(chartRangeUserSet, chartTimeRange, evidenceChartTimeRange),
+        servedHistory?.pre_window_omitted
+      )
+    );
+  }, [
+    chartRangeUserSet,
+    chartTimeRange,
+    evidenceChartTimeRange,
+    servedHistory?.pre_window_omitted,
+  ]);
 
   // Compute real game start time from livescores data (see eventKeyStats.ts)
   const realStartTime = useMemo(

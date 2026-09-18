@@ -81,6 +81,27 @@ export const EVENT_BOOT_GLOBAL = "__blEventBoot";
 export const EVENT_BOOT_HISTORY_HOURS = 48;
 
 /**
+ * The `range` the event page's history call asks for on FIRST paint (#6948).
+ *
+ * A finished game's chart opens on "Since Start", not "All" — so the first paint draws none of the
+ * pre-kickoff half, while the payload carried it anyway. Measured on production 2026-09-18:
+ * 14638896 KC-DEN 2,299,202 B -> 588,254 B (89.3% of it pre-kickoff), 15297681 LEE-NEW 14.1x. The
+ * default view's render inputs are byte-identical either way, so what this removes is serialize +
+ * `JSON.parse` on a phone's main thread, not transfer.
+ *
+ * SAFE TO SEND UNCONDITIONALLY, which is why it is a constant here and not a decision at the call
+ * site: when no series has a post-kick-off point — a scheduled game, a game with no in-play
+ * readings, a row with no `commence_time` — the route ignores it and serves the whole journey. That
+ * is deliberately the route computing the client's own `hasPostStartData` condition, so the cohort
+ * whose chart defaults to "All" is not handed a chart it must immediately re-fetch.
+ *
+ * Exported for the same reason as `EVENT_BOOT_HISTORY_HOURS`: the page passes this constant to
+ * `fetchEventHistory` rather than repeating the string, so the `&range=` in the parked URL and the
+ * one on the wire are one expression. See the URL note in the header.
+ */
+export const EVENT_BOOT_HISTORY_RANGE = "since_start";
+
+/**
  * The four paths the Event page puts on the wire before its hero can print an answer.
  *
  * Order is the waterfall's order and carries no meaning — all four are issued together. Kept as one
@@ -92,7 +113,7 @@ export function eventBootPaths(eventId: number): string[] {
     `/api/events/${eventId}`,
     `/api/events/${eventId}/game-markets`,
     `/api/events/${eventId}/team-progression`,
-    `/api/events/${eventId}/history?hours=${EVENT_BOOT_HISTORY_HOURS}`,
+    `/api/events/${eventId}/history?hours=${EVENT_BOOT_HISTORY_HOURS}&range=${EVENT_BOOT_HISTORY_RANGE}`,
   ];
 }
 
