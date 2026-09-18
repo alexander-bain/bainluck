@@ -1271,12 +1271,23 @@ async def get_shared_build_stats(
     * **`by_namespace` is the half that names the artifact.** The aggregate
       cannot distinguish "the big artifact never publishes" from healthy churn
       across the small ones, which is exactly how LAT-P221 stayed invisible.
+
+    LAT-P225 adds the third view, `failure_reasons`, for the same reason: a
+    nonzero `cross_worker_failures` stood for ten different events with opposite
+    remedies (a stall, a connection error, four malformed-envelope branches, an
+    undecodable payload, and the publish half of the first three). Measured on
+    production 2026-09-18 02:50-03:01Z, the quiet web worker failed ~1 in 6 of
+    its cross-worker reads while the busy one failed none of 51 — an asymmetry
+    nobody could act on, because the number could not say which of the ten it
+    was. `failure_reasons_total` sums them so the fused counter and the named
+    causes can be checked against each other from one read.
     """
     _check_admin_secret(secret, request=request)
 
     import os as _os
 
     from app.utils.principal_independent_cache import (
+        CROSS_WORKER_FAILURE_REASONS,
         SHARED_ARTIFACT_NAMES,
         shared_build_stats,
     )
@@ -1290,6 +1301,13 @@ async def get_shared_build_stats(
     refused = sorted(
         ns for ns, c in by_ns.items() if c.get("cross_worker_publish_refused", 0) > 0
     )
+
+    # Summed across namespaces so the operator's first read is "which cause",
+    # and computed here rather than left to a human adding up a nested dict.
+    reasons_total: dict[str, int] = {}
+    for _ns_reasons in (stats.get("failure_reasons") or {}).values():
+        for _reason, _count in _ns_reasons.items():
+            reasons_total[_reason] = reasons_total.get(_reason, 0) + _count
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "worker_pid": _os.getpid(),
@@ -1301,7 +1319,9 @@ async def get_shared_build_stats(
         ),
         "stats": stats,
         "publish_refused_namespaces": refused,
+        "failure_reasons_total": dict(sorted(reasons_total.items())),
         "shared_artifact_names": sorted(SHARED_ARTIFACT_NAMES),
+        "known_failure_reasons": sorted(CROSS_WORKER_FAILURE_REASONS),
     }
 
 

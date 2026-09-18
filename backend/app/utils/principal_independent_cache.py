@@ -908,6 +908,95 @@ def _bump(namespace: str, counter: str) -> None:
     bucket[counter] = bucket.get(counter, 0) + 1
 
 
+# --- LAT-P225 (#2143 residual): A FAILURE COUNTER THAT NAMES ITS CAUSE -------
+#
+# `cross_worker_failures` is ONE counter standing for ten distinct events, on
+# both sides of the tier: no client, a read that stalled past
+# `REDIS_READ_DEADLINE_MS`, a read that raised, four separate ways an envelope
+# can fail to be one of ours, an undecodable payload, and the publish half of
+# the first three. They have nothing in common except that the caller then
+# builds — which is the one thing an operator already knows.
+#
+# MEASURED ON PRODUCTION, 2026-09-18 02:50-03:01Z, through
+# `/api/admin/shared-build-stats` (54 samples, 12 minutes, two web workers):
+#
+#     pid 11 (busy)  cross_worker_hits 25->31  misses 16->20  FAILURES 0 -> 0
+#     pid 10 (quiet) cross_worker_hits 12->14  misses  8->10  FAILURES 4 -> 5
+#
+# So it is real, it is still accruing, and it is worker-asymmetric: ~1 in 6 of
+# the quiet worker's cross-worker reads failed while the busy worker's 51 reads
+# failed none. Every one of those costs its reader the rebuild the tier exists
+# to avoid, and on `market_load` that rebuild is 692-775 ms of a cold Discover
+# build. What the operator CANNOT do with today's number is say which of the ten
+# it is, and the remedies are opposite: a stall says widen the deadline or shrink
+# the artifact, a connection error on an idle worker says retry once, a bad
+# envelope says a writer and a reader disagree about the wire.
+#
+# 🔴 THE INFORMATION ALREADY EXISTS AND IS THROWN AWAY. `RedisResult` carries
+# `TIMEOUT` and `ERROR` as separate states and `is_failure` folds them; the four
+# envelope branches are four distinct `if`s. This adds no new detection — it
+# stops discarding what the call sites already knew.
+#
+# The aggregate is written byte-for-byte as before (its tests assert it
+# directly), on the same discipline as `_ns_stats`: a finer view of identical
+# events, never a replacement.
+#: Read side.
+FAIL_NO_CLIENT = "no_client"
+FAIL_READ_TIMEOUT = "read_timeout"
+FAIL_READ_ERROR = "read_error"
+FAIL_UNDECODABLE_WIRE = "undecodable_wire"
+FAIL_BAD_JSON = "bad_json"
+FAIL_BAD_ENVELOPE = "bad_envelope"
+FAIL_BAD_STORED_WALL = "bad_stored_wall"
+FAIL_UNDECODABLE_PAYLOAD = "undecodable_payload"
+#: Publish side. Kept distinct from the read side with the same causes, because
+#: a worker that cannot PUBLISH starves every OTHER worker while reading fine
+#: itself — the two are one number today and they are not one defect.
+FAIL_PUBLISH_NO_CLIENT = "publish_no_client"
+FAIL_PUBLISH_TIMEOUT = "publish_timeout"
+FAIL_PUBLISH_ERROR = "publish_error"
+
+CROSS_WORKER_FAILURE_REASONS: frozenset[str] = frozenset(
+    {
+        FAIL_NO_CLIENT,
+        FAIL_READ_TIMEOUT,
+        FAIL_READ_ERROR,
+        FAIL_UNDECODABLE_WIRE,
+        FAIL_BAD_JSON,
+        FAIL_BAD_ENVELOPE,
+        FAIL_BAD_STORED_WALL,
+        FAIL_UNDECODABLE_PAYLOAD,
+        FAIL_PUBLISH_NO_CLIENT,
+        FAIL_PUBLISH_TIMEOUT,
+        FAIL_PUBLISH_ERROR,
+    }
+)
+
+# namespace -> {reason: count}. Same buckets, same cap, same overflow name as
+# `_ns_stats` — a namespace that folds into `_other` there must fold into
+# `_other` here, or the two views name different artifacts.
+_ns_failure_reasons: dict[str, dict[str, int]] = {}
+
+
+def _bump_failure(namespace: str, reason: str) -> None:
+    """Record one cross-worker failure, by namespace AND by cause.
+
+    The ONLY way to record one: `cross_worker_failures` is no longer reachable
+    through `_bump`, so a cause added later cannot be counted without being
+    named (`test_shared_cache_failure_reasons.py` holds that line by reading
+    this module's own source — the eleventh cause is the one this exists for).
+    """
+    if reason not in CROSS_WORKER_FAILURE_REASONS:  # pragma: no cover - guarded by test
+        raise ValueError(f"unknown cross-worker failure reason: {reason!r}")
+    _bump(namespace, "cross_worker_failures")
+    # `_bump` may have folded an over-cap namespace into the overflow bucket;
+    # follow it rather than re-deciding, so one event is never filed under two
+    # names.
+    bucket_name = namespace if namespace in _ns_stats else _NS_OVERFLOW_BUCKET
+    bucket = _ns_failure_reasons.setdefault(bucket_name, {})
+    bucket[reason] = bucket.get(reason, 0) + 1
+
+
 def clear_shared_builds(namespace: Optional[str] = None) -> None:
     """Drop shared artifacts. Test hygiene and an operational escape hatch.
 
@@ -924,6 +1013,7 @@ def clear_shared_builds(namespace: Optional[str] = None) -> None:
         # resets with them — a cold worker starts with cold counters on BOTH
         # or the two views disagree about the same worker boundary.
         _ns_stats.clear()
+        _ns_failure_reasons.clear()
         return
     _store.pop(namespace, None)
     _locks.pop(namespace, None)
@@ -1070,12 +1160,20 @@ def shared_build_stats() -> dict[str, Any]:
     *which* artifact stopped being shared (see `_ns_stats`). Namespaces with no
     cross-worker event yet are simply absent; an absent namespace and a
     zero-valued one both mean "nothing happened here in this process".
+
+    `failure_reasons` is the third view and answers the question the other two
+    raise but cannot settle: a nonzero `cross_worker_failures` says sharing
+    broke, not WHY, and the ten causes have opposite remedies (see
+    `_bump_failure`). It is a separate top-level key rather than a nested entry
+    inside `by_namespace`, whose values are integers and have integer-shaped
+    readers.
     """
     out: dict[str, Any] = dict(_stats)
     out["entries"] = sum(len(v) for v in _store.values())
     out["namespaces"] = len(_store)
     out["cross_worker_enabled"] = int(cross_worker_enabled())
     out["by_namespace"] = {ns: dict(c) for ns, c in _ns_stats.items()}
+    out["failure_reasons"] = {ns: dict(c) for ns, c in _ns_failure_reasons.items() if c}
     return out
 
 
@@ -1347,7 +1445,7 @@ async def _read_cross_worker(
         raise
     except Exception:
         logger.debug("shared build: no redis client", exc_info=True)
-        _bump(namespace, "cross_worker_failures")
+        _bump_failure(namespace, FAIL_NO_CLIENT)
         return False, None, 0.0
 
     redis_key = redis_key_for(namespace, key)
@@ -1355,7 +1453,12 @@ async def _read_cross_worker(
         lambda: client.get(redis_key), deadline_ms=REDIS_READ_DEADLINE_MS
     )
     if result.is_failure:
-        _bump(namespace, "cross_worker_failures")
+        # The two states `is_failure` folds are the two remedies: a stall is the
+        # deadline against the artifact's size, an error is the connection.
+        _bump_failure(
+            namespace,
+            FAIL_READ_TIMEOUT if result.status == _rc.TIMEOUT else FAIL_READ_ERROR,
+        )
         return False, None, 0.0
     if not result.is_ok:
         _bump(namespace, "cross_worker_misses")
@@ -1363,16 +1466,16 @@ async def _read_cross_worker(
 
     raw = wire_decode(result.value)
     if raw is None:
-        _bump(namespace, "cross_worker_failures")
+        _bump_failure(namespace, FAIL_UNDECODABLE_WIRE)
         return False, None, 0.0
 
     try:
         envelope = json.loads(raw)
     except (ValueError, TypeError):
-        _bump(namespace, "cross_worker_failures")
+        _bump_failure(namespace, FAIL_BAD_JSON)
         return False, None, 0.0
     if not isinstance(envelope, dict) or envelope.get("v") != 1:
-        _bump(namespace, "cross_worker_failures")
+        _bump_failure(namespace, FAIL_BAD_ENVELOPE)
         return False, None, 0.0
 
     # A digest is a hash. Identity is the stored key repr, checked here, so a
@@ -1383,7 +1486,7 @@ async def _read_cross_worker(
 
     stored_wall = envelope.get("stored_wall")
     if not isinstance(stored_wall, (int, float)) or isinstance(stored_wall, bool):
-        _bump(namespace, "cross_worker_failures")
+        _bump_failure(namespace, FAIL_BAD_STORED_WALL)
         return False, None, 0.0
     # Wall clock, because L1's monotonic clock means nothing in the process that
     # wrote this. A negative age is a writer whose clock runs ahead: the entry is
@@ -1399,7 +1502,7 @@ async def _read_cross_worker(
         logger.warning(
             "shared build: undecodable payload for namespace=%s — building", namespace
         )
-        _bump(namespace, "cross_worker_failures")
+        _bump_failure(namespace, FAIL_UNDECODABLE_PAYLOAD)
         return False, None, 0.0
 
     _bump(namespace, "cross_worker_hits")
@@ -1476,7 +1579,7 @@ async def _publish_cross_worker(
         raise
     except Exception:
         logger.debug("shared build: no redis client for publish", exc_info=True)
-        _bump(namespace, "cross_worker_failures")
+        _bump_failure(namespace, FAIL_PUBLISH_NO_CLIENT)
         return
 
     redis_key = redis_key_for(namespace, key)
@@ -1489,7 +1592,14 @@ async def _publish_cross_worker(
         treat_none_as_miss=False,
     )
     if result.is_failure:
-        _bump(namespace, "cross_worker_failures")
+        _bump_failure(
+            namespace,
+            (
+                FAIL_PUBLISH_TIMEOUT
+                if result.status == _rc.TIMEOUT
+                else FAIL_PUBLISH_ERROR
+            ),
+        )
         return
     _bump(namespace, "cross_worker_publishes")
 
