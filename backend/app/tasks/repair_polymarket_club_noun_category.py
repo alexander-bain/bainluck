@@ -145,13 +145,45 @@ introducing a reader-visible lie about freshness in the same statement. **A
 column a surface RENDERS is not bookkeeping, and a repair touches only the
 column it is repairing.**
 
-🔴 **NOT ``status``.** The four cards' event is ``closed``/``archived`` at the
-venue while our rows read ``open``, and CERT-3072's required repair mentions
-closed status. This rail does not write it, deliberately and disclosed: a status
-write is settlement-adjacent, it is a different column with a different truth
-source, and the rule above forbids a category repair from reaching for it. The
-stale-open family beside the live one is filed as its own defect. What the
-grader's clause DOES bind, and what this rail honours, is that closed and
+🔴 **NOT ``status`` — and this one is MEASURED, not a matter of taste.**
+CERT-3072's required repair says the rail must not "preserve the venue-closed
+legacy event as falsely open". The four cards' event IS falsely open: ``744619``
+reads ``active False / closed True / archived True`` at the venue while our rows
+read ``open``, and they reach a reader precisely because of it — ``/api/events/
+search`` filters futures on ``FuturesMarket.status == "open"``. So the clause
+names something real. This rail still does not write it, for a reason that was
+priced against production rather than asserted:
+
+  1. ``status`` has exactly two values in production — ``open`` (44,245) and
+     ``resolved`` (1,021,738). There is no ``closed``. "Not falsely open" can
+     therefore only be spelled ``resolved``.
+  2. ``resolved`` is **not an inert flag**. It is the calibration population's
+     own gate: 13 ``fm.status = 'resolved'`` predicates in
+     ``app/routes/calibration.py`` and 5+ in ``app/tasks/precompute_calibration``.
+     Writing it here is a write to the accuracy curve, taken from a taxonomy rail.
+  3. Polymarket retired ``744619`` and re-listed it as ``765230`` (same title,
+     live). It closed the old one by resolving **all four mutually-exclusive
+     buckets to "No"** — venue-confirmed, ``umaResolutionStatus resolved`` and
+     ``outcomePrices ["0","1"]`` on each. Exactly one bucket must be true, so the
+     family's grading is internally contradictory, and our mirror carries the
+     contradiction faithfully (``No`` is ``is_winner=true`` on all four).
+  4. #762's void fence — built for exactly this shape, "graded ``is_winner=False``
+     by the resolver but no real outcome to score" — keys on
+     ``resolution_source IN ('did_not_play','withdrew')``. These legs carry
+     ``api_settlement``, so they pass straight through it.
+  5. Net: flipping ``status`` admits 8 legs to the published curve of which **2
+     are inverted** — a false loss and a false win on whichever bucket actually
+     occurred (opening prices 0.2400–0.7600). D137 reserves ``/calibration`` as
+     the one surface where accuracy is shown.
+
+So the clause, executed literally, trades a taxonomy defect for knowingly-false
+accuracy data. The stale-open family and the void-fence gap are filed together as
+**#6986**, which is where the mechanism (not ``status``) belongs; ``test_the_rail
+_never_writes_status_because_that_is_a_calibration_write`` pins this refusal and
+its premise, so if calibration ever stops gating on ``status`` the decision is
+re-opened loudly instead of inherited silently.
+
+What the grader's clause DOES bind, and what this rail honours, is that closed and
 resolved rows are **inside** the population rather than filtered out of it —
 the four ``resolved`` Kraken rows are repaired like any other. Moving a resolved
 row's ``llm_sport_category`` is safe in the way a suppression rule would not be:

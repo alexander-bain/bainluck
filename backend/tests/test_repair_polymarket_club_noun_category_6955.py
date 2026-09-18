@@ -41,6 +41,8 @@ from __future__ import annotations
 import ast
 import asyncio
 import inspect
+import re
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -686,6 +688,49 @@ def test_the_update_never_touches_the_observation_clock():
     assert "updated_at" not in _executable_source(rail), (
         "a column a surface RENDERS is not bookkeeping; a repair touches only "
         "the column it is repairing"
+    )
+
+
+def test_the_rail_never_writes_status_because_that_is_a_calibration_write():
+    """🔴 CERT-3072 asked for this write by name. It is refused, and MEASURED.
+
+    The clause — do not "preserve the venue-closed legacy event as falsely
+    open" — names something real: `744619` is `closed`/`archived` at the venue
+    while our rows read `open`, and they reach a reader precisely because
+    `/api/events/search` filters on `status == "open"`.
+
+    It is still refused, because `status` has only two values in production
+    (`open` / `resolved`) so the clause can only be spelled `resolved`, and
+    `resolved` is the calibration population's own gate. Polymarket voided the
+    family by resolving all four mutually-exclusive buckets to "No", and #762's
+    void fence misses them (`resolution_source='api_settlement'`, not
+    `did_not_play`/`withdrew`), so flipping it would invert 2 legs into the
+    published accuracy curve. Mechanism belongs to #6986, not to a taxonomy rail.
+
+    This test pins BOTH halves — the refusal and the premise it rests on — so
+    that if calibration ever stops gating on `status`, the decision re-opens
+    loudly here instead of being inherited as a stored opinion.
+    """
+    statements = _update_statements()
+    assert statements, "no UPDATE found — this guard would pass vacuously"
+    for stmt in statements:
+        assert "status" not in _assigned_columns(stmt), (
+            "the rail assigns `status`; writing `resolved` here is a write to "
+            "the calibration curve taken from a taxonomy rail — see #6986"
+        )
+
+    # The premise. Read as text: importing precompute_calibration is heavy, and
+    # editing its CTEs discards every banked unit, so this never touches it.
+    calibration = (
+        Path(inspect.getfile(rail)).resolve().parents[1] / "routes" / "calibration.py"
+    )
+    assert calibration.is_file(), f"premise unreadable: {calibration} is missing"
+    gate = re.compile(r"status\s*=\s*'resolved'")
+    hits = len(gate.findall(calibration.read_text()))
+    assert hits > 0, (
+        "calibration no longer gates its population on `status = 'resolved'`. "
+        "The refusal above was priced on that coupling — re-read the rail's "
+        "docstring and #6986 and decide again; do not simply delete this test."
     )
 
 
