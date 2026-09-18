@@ -78,6 +78,33 @@ UNKNOWN_TOUR_KEY = "golf:brief24a-unknown"
 # ---------------------------------------------------------------------------
 
 
+async def _drop_tables_the_models_do_not_declare(conn):
+    """`bl_searchtest` is shared by every step of the CI postgres job, and a
+    step that ran before this one can leave a table behind that our metadata
+    knows nothing about — so `drop_all` cannot drop OUR tables either.
+
+    Measured, not hypothetical: #4586's restore step leaves
+    `bak_4586_futures_markets`, whose `id` column keeps a DEFAULT on
+    `futures_markets_id_seq`, and `drop_all`'s `DROP TABLE futures_markets`
+    then fails with `DependentObjectsStillExistError` — 15 errors, all setup.
+    Dropping by NAME would pin this file to another test's internals, so drop
+    whatever `public` holds that the models do not declare. This fixture
+    already drops every table it does know about; this is the same scope.
+    """
+    from sqlalchemy import text
+
+    import app.models.models  # noqa: F401 — registers every table on Base
+    from app.services.database import Base
+
+    known = set(Base.metadata.tables)
+    rows = await conn.execute(
+        text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
+    )
+    for (name,) in rows.fetchall():
+        if name not in known:
+            await conn.execute(text(f'DROP TABLE IF EXISTS "{name}" CASCADE'))
+
+
 @pytest.fixture
 async def pg():
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -87,6 +114,7 @@ async def pg():
 
     engine = create_async_engine(DB_URL)
     async with engine.begin() as conn:
+        await _drop_tables_the_models_do_not_declare(conn)
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     maker = async_sessionmaker(engine, expire_on_commit=False)
