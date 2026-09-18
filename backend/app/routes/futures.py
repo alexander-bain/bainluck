@@ -915,9 +915,28 @@ async def browse_futures(
             o for o in deduped
             if not is_placeholder_outcome_name(o.name)
         ] or list(deduped)
+        # #6993, THE THIRD AND WORST SITE OF THE SAME BYPASS. `/api/futures/109485`
+        # served `24,800 or below 1.0` as `top_outcomes[0]` here while
+        # `/api/futures/109485` (detail) served `probability: null` for that exact
+        # outcome id in the same minute. `CompactMarketCard` renders
+        # `top_outcomes[0]` AND NOTHING ELSE — the comment at the top of this block
+        # says so — so on this route the refused number was not one row in a table
+        # and not one rung in a ladder: it was the market's entire one-line
+        # description on the /search category browser, printed as 100%.
+        #
+        # Cost, measured on production 2026-09-18 over the first 200-market browse
+        # page with the filters and ordering above: 16 of 200 markets hold a leg
+        # that reaches a candidate screen at all (an upper bound — the real screens
+        # are narrower than the bid/ask shape counted), so 184 pay no query. The
+        # reader's own page size is 20.
+        withheld = await _withheld_price_outcome_ids(db, market)
+        # Sort on the SERVED value, matching `get_group`. Ordering by the raw
+        # column is what put a withheld stored 1.0 at rank 1 in the first place,
+        # and rank 1 is the only rank this payload's consumer renders.
         sorted_outcomes = sorted(
             real_outcomes,
-            key=lambda o: float(o.current_probability) if o.current_probability else 0,
+            key=lambda o: 0 if o.id in withheld
+            else (float(o.current_probability) if o.current_probability else 0),
             reverse=True,
         )
         # #4253: same drop as detail and search, and browse needs it for the same
@@ -945,15 +964,31 @@ async def browse_futures(
             market_is_open=getattr(market, "status", None) == "open",
             is_winner_of=lambda o: bool(o.is_winner),
         )
-        display_outcomes = [
-            {
+        # `drop_incoherent_near_certain` above is deliberately NOT told about the
+        # withhold: its docstring states that judging the RAW price is the whole
+        # point of it (the frozen 1.0s are why the rendered number is wrong), so
+        # feeding it a refused-to-None leg would blind it to exactly the shape it
+        # exists to find. The refusal applies from here down, where the number is
+        # serialized — which is also where `_FIELD_DOMINANT_MIN`'s documented
+        # "judge the number RENDERED" rule needs it, since the raw price is no
+        # longer the rendered number once a leg is withheld.
+        display_outcomes = []
+        for o in sorted_outcomes:
+            od = {
                 "id": o.id,
                 "name": o.name,
                 "probability": float(o.current_probability) if o.current_probability is not None else None,
                 "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
             }
-            for o in sorted_outcomes
-        ]
+            if o.id in withheld:
+                # Keyed on presence, as the detail and group arms are. `movement`
+                # is in `WITHHELD_PRICE_FIELDS` because it is this payload's
+                # spelling of `probability_change_24h` — a delta measured from the
+                # number being refused.
+                for field in WITHHELD_PRICE_FIELDS:
+                    if field in od:
+                        od[field] = None
+            display_outcomes.append(od)
         # Drop BEFORE the `[:3]` slice, then leader-pick: demotion alone only keeps
         # a row out of a top-N slot while the list is LONGER than N (UX-P163), and
         # the mean browse market has 6.3 outcomes.
@@ -1262,20 +1297,33 @@ async def faceted_futures_search(
             o for o in market.outcomes
             if not _GARBAGE_OUTCOME_RE.match(o.name or "")
         ]
+        # #6993, the same bypass as `/browse` above and the reason this arm is not
+        # a lesser copy of it: `/api/futures/faceted` is what the iOS client reads
+        # (`APIClient.swift`), so the refused price reaches a surface the web fix
+        # does not cover. Verified on production 2026-09-18 — market `109485`
+        # served outcome `1597367` at `1.0` here and `null` on its own detail
+        # route. Slicing `[:3]` after the sort means the sort key has to know about
+        # the withhold or a refused leg takes a slot it then renders empty.
+        withheld = await _withheld_price_outcome_ids(db, market)
         sorted_outcomes = sorted(
             real_outcomes,
-            key=lambda o: float(o.current_probability) if o.current_probability else 0,
+            key=lambda o: 0 if o.id in withheld
+            else (float(o.current_probability) if o.current_probability else 0),
             reverse=True,
         )
-        top3 = [
-            {
+        top3 = []
+        for o in sorted_outcomes[:3]:
+            od = {
                 "id": o.id,
                 "name": o.name,
                 "probability": float(o.current_probability) if o.current_probability is not None else None,
                 "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
             }
-            for o in sorted_outcomes[:3]
-        ]
+            if o.id in withheld:
+                for field in WITHHELD_PRICE_FIELDS:
+                    if field in od:
+                        od[field] = None
+            top3.append(od)
         formatted.append({
             "id": market.id,
             "name": market.name,

@@ -72,6 +72,17 @@ def _outcome(
         # leg duplicating a bare rung. None = not a leg (pass-through).
         external_id=None,
         probability_change_24h=probability_change_24h,
+        # #6993: browse asks `_withheld_price_outcome_ids` before it sorts, and
+        # the price arms read these off the outcome row. A `FuturesOutcome` the
+        # route loads always carries them — the arms read `resolution_source`
+        # BARE, deliberately, so a partially-loaded row fails loudly instead of
+        # reading as "ungraded" and over-withholding. An ungraded leg with no
+        # book screens out of every arm before any query, so these specimens
+        # exercise the projection exactly as they did before.
+        resolution_source=None,
+        current_yes_bid=None,
+        current_yes_ask=None,
+        is_winner=False,
     )
 
 

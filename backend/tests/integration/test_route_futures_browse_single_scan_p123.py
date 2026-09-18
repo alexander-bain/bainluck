@@ -252,6 +252,12 @@ class TestTheOtherRoutesInThisFileAreUntouched:
             SimpleNamespace(
                 id=1, name="Alpha", current_probability=0.6, probability_change_24h=0.01,
                 external_id=None,
+                # #6993 — see `_outcome` in test_route_futures_browse.py. Browse
+                # asks the withhold union before it sorts; an ungraded leg with
+                # no book screens out of every arm before any query, so the
+                # projection asserted below is unchanged.
+                resolution_source=None, current_yes_bid=None, current_yes_ask=None,
+                is_winner=False,
             )
         ]
         mock_db.execute.side_effect = [_page_result([market], 1)]
