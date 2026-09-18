@@ -381,6 +381,62 @@ async def test_a_disabled_tier_says_so_rather_than_reporting_zeros(
 
 
 @pytest.mark.asyncio
+async def test_the_rail_reads_a_bytes_returning_client(fake_redis, monkeypatch):
+    """PRODUCTION RETURNS BYTES AND THIS FAKE DOES NOT.
+
+    `get_async_redis_client()` sets no `decode_responses`, so redis-py hands
+    back `bytes` for both the field NAME and the field VALUE — while every other
+    test in this file feeds `str`, because that is what a dict-backed fake
+    naturally holds. A rail that parsed only `str` would pass this whole file
+    and then report an empty fleet on every real dyno: `available: true`,
+    `worker_count: 0`, indistinguishable from a healthy quiet fleet, which is
+    the exact reading this rail exists to make impossible.
+
+    So one test drives the bytes shape end to end, through both the reader and
+    the reaper — the reaper decodes field NAMES to decide what to delete, and an
+    undecoded name is an `HDEL` of the wrong thing.
+    """
+    import time as _t
+
+    now = _t.time()
+    mine = pic.worker_identity()
+    fresh = json.dumps(
+        _snapshot(
+            at=now, hits=9, misses=3, failures=2, reasons={pic.FAIL_READ_TIMEOUT: 2}
+        )
+    ).encode("utf-8")
+    dead = json.dumps(
+        _snapshot(
+            at=now - pic.FAILURE_RAIL_STALE_S - 1,
+            hits=1,
+            misses=1,
+            failures=50,
+            reasons={pic.FAIL_READ_ERROR: 50},
+        )
+    ).encode("utf-8")
+    fake_redis.hashes[pic.FAILURE_RAIL_KEY] = {
+        b"web.3:41": fresh,
+        b"web.3:42": dead,
+        mine.encode("utf-8"): fresh,
+    }
+
+    fleet = await pic.read_failure_rail(now=now)
+
+    assert fleet["available"] is True
+    assert fleet["worker_count"] == 2, "a bytes field name was not decoded"
+    assert fleet["stale_worker_count"] == 1
+    assert fleet["failure_reasons_total"] == {pic.FAIL_READ_TIMEOUT: 4}
+    assert {w["worker"] for w in fleet["workers"]} == {"web.3:41", mine}
+
+    # ...and the reap must drop exactly the dead field, naming it as decoded
+    # text, even though it arrived as bytes. An undecoded name here is an HDEL
+    # of a field that does not exist while the real dead one accumulates.
+    await pic.flush_failure_rail(force=True)
+    assert fake_redis.hdel_calls == [("web.3:42",)]
+    assert mine in _rail(fake_redis), "this process's own fresh field was lost"
+
+
+@pytest.mark.asyncio
 async def test_a_dead_workers_field_is_excluded_from_the_fleet_total(fake_redis):
     """A restarted dyno's field carries failures that really happened. Counting
     them into the CURRENT fleet would make every restart look like a regression

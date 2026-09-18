@@ -1325,6 +1325,15 @@ async def _reap_stale_rail_fields(client, now: float) -> int:
     function of the LIVE fleet rather than of how many times it has restarted.
     Never raises; a reap that cannot run costs a few stale bytes, which the
     reader ignores anyway.
+
+    IT DOES NOT EXCLUDE THIS PROCESS'S OWN FIELD, and the omission is
+    deliberate. Heroku reuses both dyno names and pids, so after a restart
+    `web.1:10` can legitimately find a field under its own identity — left by
+    the process it replaced. Reaping that is correct, and it is also harmless
+    when it is not stale-by-accident, because the caller writes a fresh snapshot
+    under the same name microseconds later, in the same function, on the same
+    connection. A self-exclusion check here would be code no test could ever
+    fail, which is worse than no check: it reads as a guard and guards nothing.
     """
     from app.utils import request_cache as _rc
 
@@ -1337,7 +1346,7 @@ async def _reap_stale_rail_fields(client, now: float) -> int:
     dead: list[str] = []
     for raw_field, raw_value in list(result.value.items())[:FAILURE_RAIL_MAX_FIELDS]:
         field = _as_text(raw_field)
-        if field is None or field == worker_identity():
+        if field is None:
             continue
         parsed = _parse_rail_field(raw_value)
         # An unparseable field is dead by definition — nothing can read it, and
