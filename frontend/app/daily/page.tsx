@@ -26,6 +26,7 @@ import { trackEvent } from "@/lib/analytics";
 import { shareContent } from "@/lib/share";
 import { useEngagementTime, usePageTracking, useScrollDepth } from "@/hooks";
 import { Button } from "@/components/ui/button";
+import { DailyThresholdBox } from "@/components/daily/DailyThresholdBox";
 
 const DAILY_GOAL = 5;
 const DAILY_STATE_KEY = "bainluck_daily_state_v1";
@@ -656,16 +657,12 @@ function QuestionCard({
           <p className="mt-3 max-w-2xl text-sm leading-6 text-text-secondary">{question.context}</p>
         )}
 
-        <div className="mt-6 rounded-lg border border-surface-border bg-surface-deep p-4">
-          <p className="text-sm text-text-secondary">Market line</p>
-          <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <p className="text-lg font-semibold">{question.subject}</p>
-              <p className="text-sm text-text-muted">Is the probability higher or lower than this?</p>
-            </div>
-            <div className="font-mono text-5xl font-black tabular-nums">{threshold}%</div>
-          </div>
-        </div>
+        {/* #7004 — this box used to be headed "Market line" over a number that
+            provably never is one. The whole of the reasoning, the 1,092,000-input
+            sweep that proves it, and why NOTHING replaces the label lives in
+            `DailyThresholdBox`'s own docstring — which is also why the box moved
+            into a file of its own: the absence could not be guarded here. */}
+        <DailyThresholdBox subject={question.subject} threshold={threshold} />
 
         <div className="mt-5 grid gap-3 sm:grid-cols-2">
           <button
