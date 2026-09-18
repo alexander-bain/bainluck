@@ -680,6 +680,39 @@ def _match_sport_affinity(
             if best_match is None or affinity > best_match:
                 best_match = affinity
 
+    if best_match is None:
+        # ADDITIVE RETRY, never a re-interpretation. It is reached only when the
+        # scan above matched NOTHING, so it can turn a miss into a match and can
+        # never change a match the direct pass already made.
+        #
+        # The six clauses above are a hand-maintained approximation of one fact
+        # `sport_keys.py` already holds canonically: the feed/LLM category
+        # vocabulary and the sport-key vocabulary are different vocabularies.
+        # `LLM_CATEGORY_TO_SPORT_PREFIX` is the map between them and is the
+        # single source of truth, so read it rather than adding a seventh clause.
+        #
+        # CERT-3059's finding, and the reason this is not a guard-gap tidy: a
+        # concept card declares `motorsports` (plural) while onboarding stores
+        # `motorsport_formula1`, and `"motorsports" in "motorsport_formula1"` is
+        # False on the trailing `s` alone. A reader who had explicitly LOVED F1
+        # read as an implicit Nah — a score-60 F1 card served at 24 carrying
+        # `sport_nah:-0.60`, a positive signal inverted into a penalty.
+        #
+        # Who NEWLY matches: of the sixteen entries in the map, only
+        # `motorsports` can reach this line. `football`→`americanfootball` and
+        # `hockey`→`icehockey` differ from their category but already match
+        # directly (substring), and the other thirteen map a category to itself.
+        # So this repairs F1 and moves nothing else — asserted in
+        # `test_the_retry_moves_only_motorsports`.
+        from app.utils.sport_keys import LLM_CATEGORY_TO_SPORT_PREFIX
+
+        prefix = LLM_CATEGORY_TO_SPORT_PREFIX.get(category_lower)
+        if prefix and prefix != category_lower:
+            for sport_key, affinity in sport_affinities.items():
+                if prefix in sport_key.lower():
+                    if best_match is None or affinity > best_match:
+                        best_match = affinity
+
     return best_match
 
 
