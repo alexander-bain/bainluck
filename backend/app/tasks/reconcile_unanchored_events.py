@@ -245,8 +245,8 @@ _CENSUS_SQL = text(
               WHERE s.id <> e.id
                 AND s.sport_id = e.sport_id
                 AND s.commence_time
-                    BETWEEN e.commence_time - CAST(:sep AS interval)
-                        AND e.commence_time + CAST(:sep AS interval)
+                    BETWEEN e.commence_time - make_interval(secs => :sep)
+                        AND e.commence_time + make_interval(secs => :sep)
                 AND (
                      (lower(COALESCE(s.home_team_normalized, s.home_team_name))
                         = lower(COALESCE(e.home_team_normalized, e.home_team_name))
@@ -346,7 +346,20 @@ async def reconcile(
                 "lim": int(limit),
                 # Shared with the invariant so the meter and the merge gate can
                 # never drift into disagreeing about what "the same game" means.
-                "sep": f"{MAX_ABSORPTION_SEPARATION_SECONDS} seconds",
+                #
+                # A NUMBER, into `make_interval(secs => ...)`. It was the string
+                # "21600 seconds" into a bind cast to interval, which asyncpg
+                # types client-side and then hands to a `timedelta` codec — so
+                # the census raised DataError on every run and this task logged
+                # `census_failed:DBAPIError` 383 consecutive times, 0 successes
+                # in 24h, before anything else in it could execute (found
+                # 2026-09-18 by the class guard in
+                # `tests/test_untyped_bind_in_is_null_guard.py`).
+                #
+                # `float`, not `int`: `make_interval`'s `secs` is `double
+                # precision` (the other six parameters are `integer`), so this
+                # is the one argument asyncpg types as float8.
+                "sep": float(MAX_ABSORPTION_SEPARATION_SECONDS),
             },
         )).mappings().all()
     except Exception as exc:  # noqa: BLE001 — reported, never swallowed

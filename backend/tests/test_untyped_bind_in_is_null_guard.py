@@ -193,3 +193,80 @@ def test_the_guard_catches_the_specimen_it_was_written_for():
         "AND (:after_id::bigint IS NOT NULL OR fo.id > :after_id::bigint)",
     ):
         assert not UNTYPED_IS_NULL.findall(fixed), fixed
+
+
+#: A bind whose type is fixed to `interval` by a cast, in either spelling.
+#: asyncpg then demands a `timedelta` for it and calls `.days` on whatever
+#: arrives, so the natural-looking `{"lookback": f"{n} days"}` raises DataError
+#: on the FIRST execution — not at PREPARE like the class above, but equally
+#: before any row is read, and equally invisible to psycopg2.
+BIND_CAST_TO_INTERVAL = re.compile(
+    r"(?:CAST\s*\(\s*:(\w+)\s+AS\s+interval\s*\)|:(\w+)::interval)",
+    re.IGNORECASE,
+)
+
+
+def test_no_raw_sql_casts_a_bind_to_interval():
+    """The specimen: `polymarket_container_twin_sweep`, live 2026-09-18.
+
+    The #5821 container-split sweep shipped, released to `bainluck-heavy`, and
+    its first scheduled beat at 05:27:00Z died in 251ms with::
+
+        invalid input for query argument $1: '45 days'
+        ('str' object has no attribute 'days')
+
+    It had bound `f"{lookback} days"` into `CAST(:lookback AS interval)` — the
+    psycopg2 idiom, where the string is interpolated and Postgres parses it.
+    Under asyncpg the cast fixes the parameter's type client-side and the driver
+    tries to read `.days` off a `str`. The task then failed on every hour's beat
+    while `last_success_at` never moved and the page it was built to repair went
+    on showing the defect.
+
+    `make_interval(days => :n)` with an integer is what the other ~20 interval
+    call sites in this app already write, `polymarket.py` among them, so the
+    fix is the house idiom rather than a new rule.
+    """
+    offenders: list[str] = []
+    for path in sorted(APP.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        for lineno, line in enumerate(text.splitlines(), 1):
+            if line.lstrip().startswith("#") or _NOT_SQL.search(line):
+                continue
+            for match in BIND_CAST_TO_INTERVAL.finditer(line):
+                bind = match.group(1) or match.group(2)
+                offenders.append(
+                    f"{path.relative_to(APP.parent)}:{lineno}  "
+                    f":{bind} AS interval  ->  {line.strip()[:100]}"
+                )
+
+    assert not offenders, (
+        "a bind cast to `interval` makes asyncpg demand a `timedelta`, and the "
+        "obvious f-string ('45 days') raises DataError before a row is read. "
+        "Write `make_interval(days => :n)` with an integer instead:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_the_interval_guard_catches_its_own_specimen():
+    """Over-reach control: the exact broken text, and the fix beside it.
+
+    A guard that matches nothing proves nothing, and one that matches its own
+    fix gets deleted the first time it fires.
+    """
+    broken_cast = '            "        now() - CAST(:lookback AS interval) "'
+    broken_shorthand = "AND ts < now() + :horizon::interval"
+    for broken in (broken_cast, broken_shorthand):
+        found = [m.group(1) or m.group(2) for m in BIND_CAST_TO_INTERVAL.finditer(broken)]
+        assert found, broken
+        assert found[0] in ("lookback", "horizon"), found
+
+    for fixed in (
+        '"        now() - make_interval(days => :lookback) "',
+        "AND ts < now() + make_interval(hours => :horizon)",
+        # A literal interval is not a bind, and an `interval` COLUMN cast is not
+        # this defect either — neither can hand asyncpg the wrong Python type.
+        "AND ts < now() + INTERVAL '1 day'",
+        "AND (:n * INTERVAL '1 day')",
+        "SELECT CAST(col AS interval) FROM t",
+    ):
+        assert not BIND_CAST_TO_INTERVAL.findall(fixed), fixed

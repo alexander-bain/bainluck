@@ -136,11 +136,24 @@ async def load_rows(session, *, lookback: int, lookahead: int):
             "JOIN events e ON e.id = fm.event_id "
             "WHERE fm.source = 'polymarket' "
             "  AND fm.market_metadata->>'venue_game_start' IS NOT NULL "
+            # `make_interval(days => <int>)`, never a bind cast to interval
+            # carrying the string "45 days". The runtime driver is asyncpg: it
+            # infers the parameter's type from the cast, then expects a
+            # `timedelta` and calls `.days` on whatever it got. This task died
+            # in 251ms on its population read, hourly, writing nothing —
+            # measured 2026-09-18 05:27:00Z, `invalid input for query argument
+            # $1`. psycopg2 would have interpolated it and never noticed, which
+            # is why no gate caught it. `make_interval` is the house idiom (~20
+            # call sites, `polymarket.py` among them). The class guard written
+            # for this fix immediately found a SECOND live instance —
+            # `reconcile_unanchored_events`, whose census had raised the same
+            # DataError 383 consecutive times — so the guard is the deliverable
+            # here at least as much as the one-line binding change.
             "  AND e.commence_time BETWEEN "
-            "        now() - CAST(:lookback AS interval) "
-            "    AND now() + CAST(:lookahead AS interval)"
+            "        now() - make_interval(days => :lookback) "
+            "    AND now() + make_interval(days => :lookahead)"
         ),
-        {"lookback": f"{lookback} days", "lookahead": f"{lookahead} days"},
+        {"lookback": int(lookback), "lookahead": int(lookahead)},
     )
 
     markets: list[ContainerMarket] = []
