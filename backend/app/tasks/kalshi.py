@@ -4201,51 +4201,104 @@ async def _refresh_dated_fixture_starts(
     return stats
 
 
+#: Leagues whose Kalshi prop tickers share a game key with a ``KX<LEAGUE>GAME``
+#: market. That game ticker is the provider's own event id, so a prop linked
+#: through it rests on an id-anchored correspondence (ruling 048 / gotcha #32),
+#: never on a name-and-time guess.
+_KALSHI_GAME_LEAGUES = ("NHL", "NBA", "MLB", "NFL")
+
+#: Log/stat label per game family. Only used for reporting.
+_KALSHI_SPORT_BY_GAME_PREFIX = {
+    "KXNHLGAME": "hockey",
+    "KXNBAGAME": "basketball",
+    "KXMLBGAME": "baseball",
+    "KXNFLGAME": "football",
+}
+
+
+def _kalshi_game_ticker_prefix(prop_prefix: str) -> Optional[str]:
+    """``KXMLBINNINGWIN`` -> ``KXMLBGAME``, or None when there is no parent.
+
+    #6898. Derived from the league token rather than an enumerated family map.
+    The map this replaced named 21 families and was wrong in both directions:
+    its five ``KXMLB*`` entries were unreachable behind a ``^KX(NHL|NBA)``
+    scan — in the map, and a silent no-op — while the live NFL/MLB prop
+    universe is 80+ families, so an enumeration is stale the week it is
+    written.
+
+    Eligibility is deliberately NOT decided here. The caller links only where a
+    game market carrying the SAME game key already holds an ``event_id``, and
+    that id-anchor is what refuses the season-long families: measured on
+    production, every draft, HR-derby, All-Star, attendance, trade and
+    season-wins family finds no sibling and is skipped. Widening the scan
+    cannot therefore reach a market that has no game to belong to.
+    """
+    for league in _KALSHI_GAME_LEAGUES:
+        if prop_prefix.startswith(f"KX{league}"):
+            game_prefix = f"KX{league}GAME"
+            # The game family itself has no parent to borrow an event from.
+            return None if prop_prefix == game_prefix else game_prefix
+    return None
+
+
+def _kalshi_game_key(external_id: str) -> Optional[str]:
+    """The date+teams segment a prop shares with its game market.
+
+    ``KXNHLPTS-26MAR31CARCBJ``             -> ``26MAR31CARCBJ``
+    ``KXMLBINNINGWIN-26AUG231335STLPHI-1`` -> ``26AUG231335STLPHI``
+
+    #6898: the second form is why this reads ONE segment rather than
+    "everything after the first dash". MLB inning and period props carry a
+    third segment, so the whole-tail reading looked for
+    ``KXMLBGAME-26AUG231335STLPHI-1`` and could never match anything.
+
+    Inert on the population that already links: for a two-segment ticker the
+    two readings are the same string, no linked game ticker in the four
+    leagues carries a third segment (0 of 3,312 measured), and of the 64
+    three-segment NHL/NBA props this newly parses, 0 gain a sibling — they are
+    all season-long families.
+    """
+    _, _, tail = external_id.partition("-")
+    if not tail:
+        return None
+    return tail.split("-", 1)[0] or None
+
+
 async def _link_sports_props_to_events() -> dict:
     """Link Kalshi sports prop markets to their parent game events.
 
-    Hockey props (KXNHLPTS, KXNHLAST, KXNHLFIRSTGOAL, etc.) and basketball
-    props (KXNBAPTS, KXNBAREB, KXNBAAST, etc.) share the same date+teams
-    suffix as the corresponding game market (KXNHLGAME, KXNBAGAME). For
+    Props share the date+teams game key of the corresponding game market. For
     example:
-        KXNHLPTS-26MAR31CARCBJ  →  KXNHLGAME-26MAR31CARCBJ
-        KXNBAPTS-26FEB19BOSGSW  →  KXNBAGAME-26FEB19BOSGSW
+        KXNHLPTS-26MAR31CARCBJ             →  KXNHLGAME-26MAR31CARCBJ
+        KXMLBINNINGWIN-26AUG231335STLPHI-1 →  KXMLBGAME-26AUG231335STLPHI
 
     Linking props to events enables Part A calibration (uses authoritative
     Event commence_time instead of ticker-derived timestamps) and is the
     primary fix for hockey's 19.6pp MCE.
 
+    #6898: it is also the only LIVE path that links a market after it has
+    settled. Every pass in ``prediction_market_matching`` filters
+    ``status == 'open'``, and the one settled-market linker that had no status
+    gate — ``_resolve_winners_only``'s Phase 0c — has not been dispatched since
+    its beat was retired on 2026-07-06 (#991), the same class as #5111. So a
+    Kalshi market graded before it was linked is stranded, and its results are
+    invisible on the game page they belong to, until this rail reaches it.
+
     Returns dict with linking stats per sport.
     """
-    # Map prop ticker prefixes to their game ticker prefix
-    _PROP_TO_GAME = {
-        # Hockey
-        "KXNHLPTS": "KXNHLGAME",
-        "KXNHLAST": "KXNHLGAME",
-        "KXNHLFIRSTGOAL": "KXNHLGAME",
-        "KXNHLGOAL": "KXNHLGAME",
-        "KXNHLANYGOAL": "KXNHLGAME",
-        "KXNHLSAVES": "KXNHLGAME",
-        # Basketball
-        "KXNBAPTS": "KXNBAGAME",
-        "KXNBAREB": "KXNBAGAME",
-        "KXNBAAST": "KXNBAGAME",
-        "KXNBA3PT": "KXNBAGAME",
-        "KXNBABLK": "KXNBAGAME",
-        "KXNBASTL": "KXNBAGAME",
-        "KXNBAPA": "KXNBAGAME",
-        "KXNBAPR": "KXNBAGAME",
-        "KXNBAPRA": "KXNBAGAME",
-        "KXNBARA": "KXNBAGAME",
-        # Baseball
-        "KXMLBHIT": "KXMLBGAME",
-        "KXMLBHR": "KXMLBGAME",
-        "KXMLBKS": "KXMLBGAME",
-        "KXMLBHRR": "KXMLBGAME",
-        "KXMLBRFI": "KXMLBGAME",
+    stats: dict = {
+        "total_linked": 0,
+        "cal_prob_reset": 0,
+        # #6898: a phase that runs and reports nothing is indistinguishable
+        # from a phase that never ran (#4658), which is how five unreachable
+        # map entries went unnoticed. These say how much of the population the
+        # rail saw and WHY it declined the rest, so the next family Kalshi
+        # mints surfaces as a number rather than as silence.
+        "candidates": 0,
+        "no_game_sibling": 0,
+        "no_parent_family": 0,
+        "errors": [],
     }
-
-    stats: dict = {"total_linked": 0, "cal_prob_reset": 0, "errors": []}
     sport_stats: dict[str, int] = {}
 
     try:
@@ -4257,65 +4310,85 @@ async def _link_sports_props_to_events() -> dict:
                     WHERE source = 'kalshi'
                       AND event_id IS NULL
                       AND status = 'resolved'
-                      AND external_id ~ '^KX(NHL|NBA)'
+                      AND external_id ~ '^KX(NHL|NBA|MLB|NFL)'
                 """))
             unlinked = result.fetchall()
+            stats["candidates"] = len(unlinked)
 
             if not unlinked:
                 logger.info("Link sports props: nothing to do (0 unlinked)")
                 return stats
 
+            # #6898: one read of the game families instead of one query per
+            # candidate. The old per-row lookup was `LIKE '<prefix>-<key>%'`,
+            # and the trailing wildcard is inert — 0 of 3,312 linked game
+            # tickers across these four leagues carry a third segment — so an
+            # exact-ticker dict is the same answer in one round trip rather
+            # than ~15,000.
+            game_rows = await session.execute(text("""
+                    SELECT external_id, event_id
+                    FROM futures_markets
+                    WHERE source = 'kalshi'
+                      AND event_id IS NOT NULL
+                      AND external_id ~ '^KX(NHL|NBA|MLB|NFL)GAME-'
+                """))
+            event_by_game_ticker = {
+                r.external_id: r.event_id for r in game_rows.fetchall()
+            }
+
             linked_ids: list[int] = []
+            pending: list[tuple[int, int]] = []
 
             for row in unlinked:
-                ext_id: str = row.external_id
-                # Extract prefix and suffix: KXNHLPTS-26MAR31CARCBJ
-                dash_idx = ext_id.find("-")
-                if dash_idx < 0:
+                ext_id: str = row.external_id or ""
+                prefix, _, _ = ext_id.partition("-")
+                game_key = _kalshi_game_key(ext_id)
+                if not prefix or not game_key:
                     continue  # Non-standard format, skip
 
-                prefix = ext_id[:dash_idx]
-                suffix = ext_id[dash_idx + 1 :]  # e.g., "26MAR31CARCBJ"
-
-                if not suffix:
-                    continue
-
-                # Look up the game ticker prefix for this prop prefix
-                game_prefix = _PROP_TO_GAME.get(prefix)
+                game_prefix = _kalshi_game_ticker_prefix(prefix)
                 if not game_prefix:
+                    stats["no_parent_family"] += 1
                     continue
 
-                # Find the game market with the same suffix that HAS event_id
-                game_result = await session.execute(
-                    text("""
-                        SELECT event_id
-                        FROM futures_markets
-                        WHERE source = 'kalshi'
-                          AND external_id LIKE :game_ticker_pattern
-                          AND event_id IS NOT NULL
-                        LIMIT 1
-                    """),
-                    {"game_ticker_pattern": f"{game_prefix}-{suffix}%"},
-                )
-                game_row = game_result.first()
-                if not game_row:
+                # The parent is the game market carrying the SAME game key.
+                # No sibling means no id-anchored correspondence, so the row is
+                # left alone rather than matched on its name.
+                event_id = event_by_game_ticker.get(f"{game_prefix}-{game_key}")
+                if event_id is None:
+                    stats["no_game_sibling"] += 1
                     continue
 
-                # Link the prop market to the same event
-                await session.execute(
-                    text("""
-                        UPDATE futures_markets
-                        SET event_id = :eid
-                        WHERE id = :mid AND event_id IS NULL
-                    """),
-                    {"eid": game_row.event_id, "mid": row.id},
-                )
-                linked_ids.append(row.id)
-                stats["total_linked"] += 1
+                pending.append((int(row.id), int(event_id)))
+                linked_ids.append(int(row.id))
 
                 # Track per-sport stats
-                sport = "hockey" if "NHL" in prefix else "basketball"
+                sport = _KALSHI_SPORT_BY_GAME_PREFIX.get(game_prefix, "other")
                 sport_stats[sport] = sport_stats.get(sport, 0) + 1
+
+            # #6898: write in batches. The first pass over the widened scan has
+            # ~11K rows to link, and one UPDATE per row is that many round
+            # trips inside a phase that other phases' budget gates sit below.
+            # The `event_id IS NULL` guard is preserved per row, so a market
+            # another writer linked in the meantime is never repointed.
+            for start in range(0, len(pending), 1000):
+                chunk = pending[start : start + 1000]
+                written = await session.execute(
+                    text("""
+                        UPDATE futures_markets fm
+                        SET event_id = v.eid
+                        FROM (
+                            SELECT UNNEST(CAST(:mids AS bigint[])) AS mid,
+                                   UNNEST(CAST(:eids AS bigint[])) AS eid
+                        ) v
+                        WHERE fm.id = v.mid AND fm.event_id IS NULL
+                    """),
+                    {
+                        "mids": [mid for mid, _ in chunk],
+                        "eids": [eid for _, eid in chunk],
+                    },
+                )
+                stats["total_linked"] += written.rowcount
 
             # Reset calibration_probability on affected outcomes so Part A
             # recomputes with the correct Event commence_time
@@ -4333,10 +4406,21 @@ async def _link_sports_props_to_events() -> dict:
                 await session.commit()
 
             stats["by_sport"] = sport_stats
+            # `planned` counts the pairs this pass resolved to an event;
+            # `total_linked` counts the rows the write actually changed. They
+            # differ only when another writer linked a row between the scan and
+            # the UPDATE — i.e. when the `event_id IS NULL` guard held — so
+            # `by_sport`, which counts planned pairs, is read against `planned`.
+            stats["planned"] = len(pending)
             logger.info(
-                "Link sports props: %d markets linked (%s), %d cal_probs reset",
+                "Link sports props: %d/%d markets linked (%s) from %d candidates; "
+                "%d no game sibling, %d no parent family, %d cal_probs reset",
                 stats["total_linked"],
+                stats["planned"],
                 sport_stats,
+                stats["candidates"],
+                stats["no_game_sibling"],
+                stats["no_parent_family"],
                 stats["cal_prob_reset"],
             )
 
