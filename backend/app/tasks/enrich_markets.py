@@ -426,15 +426,95 @@ def _metadata_needs_discover_llm_refresh(
     return generated < now - timedelta(days=max_age_days)
 
 
+#: #4962. Only four words reach Pexels, so every slot one of these eats is an entity
+#: that never gets searched for. Kalshi phrases nearly every market as a question
+#: ("Will X …?"), so "will" alone was consuming a slot on 2,839 open imaged rows;
+#: "Will Taylor Swift meet with Pope Leo XIV before 2027?" reached Pexels as
+#: "Will Taylor Swift meet" — no Pope — and came back a competitive swimmer.
+#: The words below carry no picture: they are grammar, dates, or betting lines.
+_IMAGE_NOISE_WORDS = (
+    r"\b(on|at|in|the|a|an|of|for|to|vs\.?|by"
+    r"|will|who|what|which|when|how|does|do|did|with|before|after|from|and|not)\b"
+)
+_IMAGE_MONTHS = (
+    r"\b(January|February|March|April|May|June|July|August"
+    r"|September|October|November|December)\b"
+)
+
+
 def _extract_image_keywords(name: str, category: str | None) -> str:
     name = re.sub(r"\b(Winner|Over/Under|O/U|Spread|Total|Moneyline)\b", "", name, flags=re.IGNORECASE)
-    name = re.sub(r"\b(on|at|in|the|a|an|of|for|to|vs\.?|by)\b", " ", name, flags=re.IGNORECASE)
+    name = re.sub(_IMAGE_NOISE_WORDS, " ", name, flags=re.IGNORECASE)
     name = re.sub(r"\d{4}[-/]\d{2,4}", "", name)
+    name = re.sub(_IMAGE_MONTHS, " ", name, flags=re.IGNORECASE)
+    # Bare numerals — a handicap (-3.5), a strike ($3,500), a day (31) — picture nothing.
+    name = re.sub(r"\b\d[\d,.$]*\b", " ", name)
     name = re.sub(r"[:\-–—|()#]", " ", name)
     words = [w for w in name.split() if len(w) > 2][:4]
     if not words and category:
         words = [category]
     return " ".join(words)
+
+
+#: A category that says nothing about what the picture should be. `other` is the
+#: honest-empty tag (#1888) and is a word Pexels will happily search for.
+_UNINFORMATIVE_CATEGORIES = frozenset({"other", "sports", "sport"})
+
+
+def _category_words(category: str | None) -> str:
+    """The category as SEARCH WORDS, or "" when it carries no picture.
+
+    `llm_sport_category` is a machine token: `table_tennis`, `real_estate`. The
+    underscore is ours, not a word anybody photographs, so it becomes a space.
+    """
+    token = (category or "").strip().lower()
+    if not token or token in _UNINFORMATIVE_CATEGORIES:
+        return ""
+    return token.replace("_", " ")
+
+
+def _image_query_candidates(name: str, category: str | None) -> list[str]:
+    """The Pexels queries to try for this market, best first (#4962).
+
+    THE DEFECT THIS EXISTS FOR — futures_markets "Presidents Cup Winner",
+    `llm_sport_category='golf'`. `_extract_image_keywords` correctly reduces the
+    name to "Presidents Cup", and Pexels correctly answers a question nobody
+    asked: measured 2026-09-18 03:4xZ, the top five for "Presidents Cup" are the
+    White House, the White House again, Mount Rushmore, Mount Rushmore again,
+    and one golf course. The words in the NAME are not enough to say which
+    Presidents Cup this is, and we knew which one all along — the category said
+    golf and nothing read it. For the same read, "Presidents Cup golf" returns
+    five golf photographs.
+
+    So the category is carried as an INDEPENDENT RELEVANCE SIGNAL, not as a
+    fallback. It only ever appeared when the name had been reduced to nothing
+    (`_extract_image_keywords`'s last two lines), which is the one case where it
+    can no longer disambiguate anything.
+
+    TWO CANDIDATES, AND THE SECOND IS THE OLD BEHAVIOUR EXACTLY. Narrowing a
+    stock-photo query can narrow it to zero, and a market with no picture is
+    worse than a market with a loose one. So the qualified query is TRIED first
+    and the bare name query is the fallback — a row can only gain a picture it
+    would not have had, never lose one. The cost is at most ONE extra Pexels
+    request per row that the qualified query found nothing for, bounded by the
+    task's own `limit` (200 per fire, 6 fires a day) against a 200 req/hr quota.
+
+    The two are de-duplicated rather than assumed distinct: a name that reduces
+    to its own category ("Will the A?" + politics) must not search "politics
+    politics", and a name that already says "golf" gains nothing from repeating
+    it.
+    """
+    base = _extract_image_keywords(name, category)
+    if not base.strip():
+        return []
+    words = _category_words(category)
+    if not words:
+        return [base]
+    have = {w.lower() for w in base.split()}
+    missing = [w for w in words.split() if w not in have]
+    if not missing:
+        return [base]
+    return [f"{base} {' '.join(missing)}", base]
 
 
 async def _fetch_pexels_image(query: str) -> tuple[str, int, int] | None:
@@ -506,7 +586,15 @@ async def enrich_market_images(limit: int = 50):
         logger.info("PEXELS_API_KEY not set — skipping image enrichment")
         return {"skipped": True}
 
-    stats = {"fetched": 0, "found": 0, "errors": 0, "sized": 0}
+    stats = {"fetched": 0, "found": 0, "errors": 0, "sized": 0, "requests": 0}
+    # #4962: a row may now cost TWO Pexels requests (the category-qualified query
+    # then the bare one), and this task's own beat asks for `limit=200` against a
+    # 200 req/hr provider quota — so the PASS spends a request budget, not a row
+    # budget, and the budget is exactly the number of requests this loop could
+    # make before the fallback existed. A market the budget runs out on keeps
+    # `image_url IS NULL` and is simply the next pass's first row (the select is
+    # ordered by `volume_24h`), so nothing is skipped, only deferred.
+    request_budget = limit
 
     async with get_task_session() as session:
         result = await session.execute(
@@ -521,11 +609,23 @@ async def enrich_market_images(limit: int = 50):
         markets = result.all()
 
         for market_id, name, category in markets:
-            query = _extract_image_keywords(name, category)
-            if not query.strip():
+            candidates = _image_query_candidates(name, category)
+            if not candidates:
                 continue
 
-            picked = await _fetch_pexels_image(query)
+            # #4962: the category-qualified query first, the bare name query as
+            # the fallback. Stopping on the first hit means a row can only gain
+            # a picture it would not have had — the second candidate IS what
+            # this loop asked for before the qualifier existed.
+            picked = None
+            for query in candidates:
+                if request_budget <= 0:
+                    break
+                picked = await _fetch_pexels_image(query)
+                request_budget -= 1
+                stats["requests"] += 1
+                if picked:
+                    break
             stats["fetched"] += 1
 
             if picked:
