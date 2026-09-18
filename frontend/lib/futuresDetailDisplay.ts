@@ -712,3 +712,48 @@ export function partitionOutcomesByPrice<T extends { probability: number | null 
   }
   return { listed, folded };
 }
+
+/**
+ * #6989 — the sentence the "All Outcomes" table prints when the partition above
+ * listed NOTHING, and `null` when it listed anything at all.
+ *
+ * `/futures/109681` ("CPI year-over-year in Oct 2026?") is the filed specimen:
+ * 16 Kalshi legs on empty books (`bid 0.0000 / ask 0.9800`), all withheld by the
+ * backend's empty-book guard, so all 16 arrive `probability: null` and
+ * `partitionOutcomesByPrice` folds every one. The withholding is CORRECT — those
+ * midpoints are the artifact #6757/#6727 exist to remove — and this function
+ * changes nothing about it. What was wrong is what the reader was left with:
+ *
+ *     📊 All Outcomes   as of Feb 27
+ *     [ Probability ↓ ] [ Last move ] [ Name ]
+ *     ▶ More outcomes (16)
+ *
+ * A section named for outcomes showing none, three chips that sort an empty
+ * list, and a seven-month-old date attached to prices nobody can see. Not a
+ * blank card — a working control panel with nothing behind it, which is worse,
+ * and diagnostic furniture of exactly the kind notice 34 / D102 forbid.
+ *
+ * WHY THE PREDICATE IS THE LISTED COUNT AND NOT `prices_withheld`.
+ * Withholding is one way to get here and the page should not care which way it
+ * did. The claim a sort chip makes is "there is an order you can put these rows
+ * in"; the claim an as-of makes is "the numbers below were read on this date".
+ * Both are false exactly when no row prints a number, whatever emptied it — a
+ * withheld book, a market with no outcomes, a payload that arrived thin. One
+ * count answers all three questions, so one count is the input.
+ *
+ * ONE STRING FOR BOTH STATES, deliberately. A settled field whose rows are all
+ * numberless would print this under "Final Results", where it reads oddly but
+ * stays TRUE: there are no current prices, and the rows are in the fold. The
+ * resolved-specific alternative would have to say something about what was
+ * recorded, and nothing on this payload supports such a claim (#6301's lesson:
+ * no verdict beats a wrong one). Measured: settled markets carry `0.0`, not
+ * `null`, so the reachable population here is open markets.
+ *
+ * The folded rows are NOT dropped (gotcha #43) — the caller keeps them behind
+ * `More outcomes (N)`, which is D102's shape for present-but-priceless rows.
+ */
+export const NO_PRICED_OUTCOMES_NOTE = "No current prices for this market.";
+
+export function noPricedOutcomesNote(listedCount: number): string | null {
+  return listedCount === 0 ? NO_PRICED_OUTCOMES_NOTE : null;
+}

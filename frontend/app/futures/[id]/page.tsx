@@ -46,6 +46,7 @@ import {
   movementExplanation as movementExplanationHelper,
   heroOutcomeLabel,
   movementWindowLabel,
+  noPricedOutcomesNote,
   partitionOutcomesByPrice,
   pickHeroOutcome,
   sortFuturesOutcomes,
@@ -622,6 +623,13 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     market.source
   );
 
+  // #6989 — every row in the ranked table below is numberless, so the table's
+  // furniture is making claims about numbers that are not on screen. ONE call
+  // decides all three suppressions and the sentence, so a future edit cannot
+  // teach the chips and the caption two different answers to the same question.
+  // The rows themselves stay, folded, in `More outcomes (N)`.
+  const noPricesNote = noPricedOutcomesNote(pricedOutcomes.length);
+
   // L2-65 Item 1b / B7 L2-91: link UP to the richer event-concept surface. Prefer
   // the server-derived key (covers UFC/boxing/F1/golf-majors/tennis/awards and never
   // dead-links); fall back to the client resolver for older payloads. When there's
@@ -1081,7 +1089,10 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
                 eight rows. Absent entirely when the prices are genuinely fresh —
                 a label on a current price is noise, not honesty. Read from the
                 leader, whose `last_updated` every row on 109441 shares. */}
-            {!isResolved && marketAsOf && (
+            {/* #6989: and absent when NO row prints a number. The date is read
+                from the leader, and on an all-withheld market the leader is a
+                withheld leg — so this was dating prices the reader cannot see. */}
+            {!isResolved && marketAsOf && !noPricesNote && (
               <span
                 data-testid="market-as-of"
                 className="text-xs font-normal text-text-muted"
@@ -1124,8 +1135,24 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           </p>
         )}
 
-        {/* Sort controls */}
-        <div className="flex gap-2 mb-4 flex-wrap">
+        {/* #6989 — the honest line, printed once, in place of the sort chips.
+            "No outcomes" is not what this says and not what is true: the rows
+            exist and are one tap away below; it is their PRICES that are not
+            here. */}
+        {noPricesNote && (
+          <p
+            data-testid="futures-no-priced-outcomes"
+            className="text-sm text-text-secondary"
+          >
+            {noPricesNote}
+          </p>
+        )}
+
+        {/* Sort controls — #6989: three chips that reorder an empty list are a
+            control panel with nothing behind it. Suppressed, not disabled: a
+            greyed chip still invites the tap. */}
+        {!noPricesNote && (
+        <div data-testid="futures-sort-controls" className="flex gap-2 mb-4 flex-wrap">
           <SortButton
             label="Probability"
             field="probability"
@@ -1152,6 +1179,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             onClick={() => toggleSort("name")}
           />
         </div>
+        )}
 
         {/* Outcomes list */}
         <div className="space-y-2">
