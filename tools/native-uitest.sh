@@ -115,6 +115,7 @@
 # resolved and the run never happened.
 
 set -u
+. "$(dirname "$0")/reserved-sim-guard.sh"
 
 BUNDLE="com.bainluck.Bain-Luck"
 SCHEME="BainLuckUITests"
@@ -162,7 +163,13 @@ fi
 # not installed, and 70 reads like a test failure while meaning the run never
 # started (gotcha #124). Names churn between Xcode releases and between laptops.
 if [ -z "$DEVICE" ]; then
-  SIMLINE=$(xcrun simctl list devices available | /usr/bin/grep -E '^[[:space:]]+iPhone ' | head -1)
+  # `head -1` over every available iPhone MEASURED to 76D961F0 — the RESERVED
+  # device — so this runner installed and ran UITests on Alex's signed-in
+  # launch candidate by DEFAULT. Same `head -1` hazard the gate's preflight was
+  # built for (#6910); the reserved UDID is excluded before the pick.
+  SIMLINE=$(xcrun simctl list devices available \
+    | /usr/bin/grep -E '^[[:space:]]+iPhone ' \
+    | /usr/bin/grep -v "$BL_RESERVED_SIM" | head -1)
   DEVICE=$(printf '%s' "$SIMLINE" | sed -E 's/.*\(([0-9A-Fa-f-]{36})\).*/\1/')
   SIMNAME=$(printf '%s' "$SIMLINE" | sed -E 's/^[[:space:]]+//; s/ \(.*//')
 else
@@ -173,6 +180,10 @@ if [ -z "$DEVICE" ]; then
   echo "(xcrun simctl list devices available showed no iPhone.)" >&2
   exit 1
 fi
+
+# Also covers an explicit `--device <reserved udid>`: this runner installs and
+# can reset state, so the refusal is on the RESOLVED device, not just the pick.
+bl_refuse_reserved_sim "$DEVICE" native-uitest.sh
 
 # iPhone only — see the header. Refuse early and by NAME, so the operator reads
 # one sentence about the device instead of eight assertion failures about the app.

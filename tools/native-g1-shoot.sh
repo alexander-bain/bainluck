@@ -13,7 +13,12 @@
 # dialog the app is no longer raising. Erase once and it never returns:
 #   xcrun simctl shutdown $SIM; xcrun simctl erase $SIM; xcrun simctl boot $SIM
 set -u
-SIM=76D961F0-8575-479F-ABCE-652D8A79DBF9    # iPhone 17 — PIN IT, `booted` picks the iPad
+. "$(dirname "$0")/reserved-sim-guard.sh"
+# PIN IT — `booted` picks the iPad. Was the reserved UDID, beside an "erase once"
+# instruction pointing at it; now a disposable device of the same model.
+SIM="${NATIVE_SHOOT_SIM:-$(bl_default_shoot_sim)}"
+: "${SIM:?no disposable iPhone simulator available — set NATIVE_SHOOT_SIM}"
+bl_refuse_reserved_sim "$SIM" native-g1-shoot.sh
 BUNDLE=com.bainluck.Bain-Luck
 APP="/Users/bain/Library/Developer/Xcode/DerivedData/Bain_Luck-bkmrwhmxuqqsseeuqlyqvcavesmz/Build/Products/Debug-iphonesimulator/Bain Luck.app"
 OUT=/Users/bain/bainluck-dev/native/artifacts-native-012

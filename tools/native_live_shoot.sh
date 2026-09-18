@@ -24,7 +24,11 @@
 # after this fix still catches a dialog the app no longer raises. Erase once:
 #   xcrun simctl shutdown $SIM; xcrun simctl erase $SIM; xcrun simctl boot $SIM
 set -u
-SIM=76D961F0-8575-479F-ABCE-652D8A79DBF9
+. "$(dirname "$0")/reserved-sim-guard.sh"
+# Was the reserved UDID, beside an "erase once" instruction pointing at it.
+SIM="${NATIVE_SHOOT_SIM:-$(bl_default_shoot_sim)}"
+: "${SIM:?no disposable iPhone simulator available — set NATIVE_SHOOT_SIM}"
+bl_refuse_reserved_sim "$SIM" native_live_shoot.sh
 BUNDLE=com.bainluck.Bain-Luck
 A=/Users/bain/bainluck-dev/native/artifacts-native-011
 PASS="${1:?pass label required, e.g. P1}"
