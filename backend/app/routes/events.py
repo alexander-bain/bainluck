@@ -20326,6 +20326,15 @@ async def get_team_progression(
                 _rc.setex(_cache_key, _TEAM_PROGRESSION_CACHE_TTL, _cached)
                 return _json.loads(_cached)
         except Exception:
+            # Deliberate: this whole block is an OPTIMISATION — reusing the
+            # canonical's warm slot so a twin url does not recompose what we
+            # already have. Redis being down, slow, or holding bytes that no
+            # longer parse must cost a reader nothing but the compose below,
+            # which is the same path an untagged event always takes. Swallowed
+            # rather than logged for the same reason the two sibling blocks in
+            # this route swallow: a cache miss is not an error, and this one
+            # cannot even be a stale-data risk (the slot we skip reading is the
+            # one we are about to rewrite).
             pass
 
     sport_key = event.sport.key if event.sport else None
