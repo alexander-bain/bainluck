@@ -6187,7 +6187,19 @@ async def list_groups(
         )
         .where(and_(*filters))
         .group_by(FuturesMarket.group_id, FuturesMarket.group_type)
-        .order_by(func.max(FuturesMarket.updated_at).desc())
+        # Total order, same rule as `/browse` — but note this query is GROUPED,
+        # so `FuturesMarket.id` is not available to break the tie (it is not in
+        # the GROUP BY). The unique key of a grouped row is its grouping key,
+        # which is why the tiebreak is the pair and not the PK.
+        # No reader reaches this endpoint today — `fetchFuturesGroups` in
+        # `frontend/lib/api.ts` has no callers — so it is fixed for the class,
+        # not for a measured symptom, and it is the reason the recurrence guard
+        # below can speak for the whole module instead of two routes.
+        .order_by(
+            func.max(FuturesMarket.updated_at).desc(),
+            FuturesMarket.group_id,
+            FuturesMarket.group_type,
+        )
         .offset(offset)
         .limit(limit)
     )
