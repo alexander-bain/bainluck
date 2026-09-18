@@ -264,6 +264,12 @@ struct FuturesDetailView: View {
         FuturesHeroBackground(imageURL: market.imageUrl, category: market.llmSportCategory)
     }
 
+    /// #6923: the arrow carries the direction, so the number is a magnitude — and
+    /// it is the SHARED magnitude. This badge used to round to an integer while the
+    /// chart's participant table three inches below drew the same field to one
+    /// decimal: `0.005` printed `↑1%` up here and `+0.5%` down there, in one frame.
+    /// The gate is `abs >= 0.005`, so the doubling landed on the smallest move the
+    /// badge is ever allowed to show. See `deltaPointsNumber`.
     @ViewBuilder
     private func detailMovementBadge(_ change: Double?) -> some View {
         if let m = change, abs(m) >= 0.005 {
@@ -271,7 +277,7 @@ struct FuturesDetailView: View {
             HStack(spacing: 2) {
                 Image(systemName: up ? "arrow.up" : "arrow.down")
                     .font(.system(size: 7, weight: .black))
-                Text("\(abs(Int((m * 100).rounded())))%")
+                Text("\(deltaPointsNumber(m * 100))%")
                     .font(.system(size: 10, weight: .bold).monospacedDigit())
             }
             .foregroundStyle(.white)
