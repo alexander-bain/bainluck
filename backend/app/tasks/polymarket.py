@@ -4971,13 +4971,69 @@ async def _sync_polymarket_resolved_status():
             ]
         stats["population_events"] = len(all_ids)
 
-        pending = [eid for eid in all_ids if int(eid) > cursor]
-        if not pending and cursor:
+        # --- the recency head (#6734, measured 2026-09-18) -------------------
+        #
+        # The ascending cursor above is fair, and on its own it does not finish.
+        # Measured on production across the four runs of 2026-09-17: the sweep
+        # covers ~57% of the population inside its 600s and stops around event
+        # id 1.01M, while the population runs to 1.04M — 7,486 of 17,560 events
+        # above the 23:30Z stopping point. Three of those four runs started from
+        # the BOTTOM of the range (a run that reaches the tail wraps the cursor
+        # to 0, so the next one begins again at the oldest id) and none of the
+        # three climbed back to the top before the budget ran out.
+        #
+        # Event ids ascend with creation, so the unreached band is exactly where
+        # events that closed TODAY live. That is gotcha #41's second clause: an
+        # oldest-first walk over a population whose interesting rows are the
+        # newest needs BOTH bounds. The cost was measurable on the page — a
+        # sub-market the venue closed and resolved 7.5h earlier still served
+        # `probability 1.0, is_winner null` beneath its own graded mirror
+        # (market 61262638, #6734) — and it compounds, because `clob_resolve`
+        # selects `status = 'resolved'`, so a row stranded at `open` can never
+        # acquire the verdict that would make it render correctly.
+        #
+        # So the newest slice gets a guaranteed share of the wall clock FIRST,
+        # and the backlog keeps the rest of it. Both bounds, neither starved.
+        #
+        # This changes only WHICH ids reach the resolver first. `settled_legs`,
+        # the UPDATE and the CERT-751 mixed-children guard are untouched, so the
+        # head cannot resolve anything the cursor would not have resolved on
+        # reaching it — it only reaches it sooner. Head batches are also the
+        # cheap ones: recent events are mostly still trading, so they return
+        # `events_fully_open` and write nothing.
+        #
+        # Sized from the same measurement, not from taste: ~5.4s per 100-event
+        # batch observed, so 4,000 events is ~40 batches ~ 216s, inside the
+        # head's 240s. The head never advances the cursor — the backlog's
+        # progress is the cursor's own, and letting the head jump it would skip
+        # the very rows the cursor is walking towards.
+        _HEAD_EVENTS = 4000
+        _HEAD_BUDGET_S = 240.0
+
+        # Newest FIRST inside the head, which is the opposite of the walk below
+        # and is the point of it. If the head budget truncates, what it drops
+        # has to be the head's OLDER end — those ids are the ones the ascending
+        # cursor is closest to reaching on its own. Dropping the fresh end would
+        # re-create the defect inside the arm built to fix it.
+        head = list(reversed(all_ids[-_HEAD_EVENTS:]))
+        head_set = set(head)
+        tail = [eid for eid in all_ids if int(eid) > cursor and eid not in head_set]
+        if not tail and cursor:
             # Resuming past the tail — the population shrank under the cursor.
             # Wrap immediately rather than reporting an empty sweep.
             _rc.delete(_cursor_key)
             cursor = 0
-            pending = all_ids
+            tail = [eid for eid in all_ids if eid not in head_set]
+
+        pending = head + tail
+        _head_remaining = len(head)
+        _head_deadline = _time.monotonic() + _HEAD_BUDGET_S
+        stats["head_events"] = len(head)
+        stats["head_events_swept"] = 0
+        # Head ids the head budget did not reach. Distinct from `head_events` -
+        # "the head swept clean" and "the head ran out of time" are different
+        # runs and must not return the same shape (gotcha #53).
+        stats["head_events_skipped"] = 0
 
         while True:
             if _time.monotonic() >= _deadline:
@@ -4987,8 +5043,27 @@ async def _sync_polymarket_resolved_status():
                 )
                 break
 
-            batch_ids = pending[:GAMMA_MAX_IDS_PER_REQUEST]
-            pending = pending[GAMMA_MAX_IDS_PER_REQUEST:]
+            in_head = _head_remaining > 0
+            if in_head and _time.monotonic() >= _head_deadline:
+                # Head budget spent. Drop what is left of it and hand the rest
+                # of the wall clock to the cursor, which is the half that must
+                # not be starved by this arm.
+                stats["head_events_skipped"] = _head_remaining
+                pending = pending[_head_remaining:]
+                _head_remaining = 0
+                in_head = False
+
+            # A batch never straddles the two arms: while the head is draining,
+            # the take is clamped to what is left of it. That is what keeps
+            # "did this batch advance the cursor" a property of the batch rather
+            # than of the ids inside it.
+            take = min(GAMMA_MAX_IDS_PER_REQUEST, _head_remaining) if in_head \
+                else GAMMA_MAX_IDS_PER_REQUEST
+            batch_ids = pending[:take]
+            pending = pending[take:]
+            if in_head:
+                _head_remaining -= len(batch_ids)
+                stats["head_events_swept"] += len(batch_ids)
 
             if not batch_ids:
                 # The tail. Wrap so the next run starts from the oldest id
@@ -5019,10 +5094,13 @@ async def _sync_polymarket_resolved_status():
                 break
             except Exception as e:
                 # One bad batch must not wipe the run (gotcha #42) — advance
-                # past it and keep going.
+                # past it and keep going. A HEAD batch is already consumed from
+                # `pending`, so it is skipped either way; what it must not do is
+                # move the cursor, which belongs to the ascending walk alone.
                 stats["errors"].append(f"batch at cursor {cursor}: {e}")
-                cursor = int(batch_ids[-1])
-                _rc.setex(_cursor_key, 86400 * 7, str(cursor))
+                if not in_head:
+                    cursor = int(batch_ids[-1])
+                    _rc.setex(_cursor_key, 86400 * 7, str(cursor))
                 await asyncio.sleep(0.3)
                 continue
 
@@ -5289,8 +5367,14 @@ async def _sync_polymarket_resolved_status():
             # resolved nothing is still swept — the old `zero_update_pages`
             # counter existed to escape an offset walk that could not move, and
             # a keyset cursor over our own rows has no such trap.
-            cursor = int(batch_ids[-1])
-            _rc.setex(_cursor_key, 86400 * 7, str(cursor))
+            #
+            # The head arm is deliberately outside this. Its ids are the highest
+            # in the population, so writing one into the cursor would jump the
+            # ascending walk past every id it has not visited yet — the backlog
+            # would be declared swept without being read.
+            if not in_head:
+                cursor = int(batch_ids[-1])
+                _rc.setex(_cursor_key, 86400 * 7, str(cursor))
             await asyncio.sleep(0.1)
 
             if stats["events_requested"] % 5000 == 0:
