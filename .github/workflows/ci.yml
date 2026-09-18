@@ -2605,6 +2605,40 @@ jobs:
             exit 1
           fi
 
+      - name: "#6919 a settled book closes the market row, both key spaces (real Postgres)"
+        # CERT-3075's named nonblocking follow-up. The unit suite for this ship
+        # drives the rail through a recording session and asserts on the
+        # statement it ISSUES; every load-bearing part of that statement is
+        # server-side and invisible to it:
+        #
+        #   * `fo.external_id = ANY(:leg_keys)` binds a Python list into a
+        #     `text()` through asyncpg. A degraded bind matches zero rows and
+        #     raises nothing — green tests, silent no-op, which is the exact
+        #     failure this ship exists to end;
+        #   * `NOT EXISTS (a leg with resolution_source IS NULL)` is the whole
+        #     safety of the widening. Without it the statement closed 389 open
+        #     markets on production, 322 of them tier 1-3 — every live
+        #     tournament ladder retired mid-event;
+        #   * `markets_settled` is now the UPDATE's `rowcount`, and this ship's
+        #     after-check reads that counter as its proof the fix is live.
+        #
+        # It runs the SHIPPED rail, never a retyped copy of the SQL, so it goes
+        # red if the statement changes meaning. Two arms prove necessity rather
+        # than mere non-objection: the superseded market-keyed predicate is
+        # executed over the same corpus and must MISS the parent ladder, and the
+        # guard-less form must retire the live ladder. Measured against
+        # origin/master before wiring: 4 of 11 red.
+        #
+        # Same skip detection as every gate in this job, for the same reason.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_settled_book_closes_the_market_row_6919_real_postgres.py \
+            -v -rs 2>&1 | tee /tmp/settledclose6919.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/settledclose6919.txt; then
+            echo "::error::#6919 settlement-close gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
