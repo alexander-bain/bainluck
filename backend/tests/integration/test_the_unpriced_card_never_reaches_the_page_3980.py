@@ -36,9 +36,11 @@ and Part 3 goes red to say so before the page does.
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -51,7 +53,27 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.models import FuturesMarket  # noqa: E402
 from app.routes import league_futures as lf  # noqa: E402
 
-NOW = datetime(2026, 9, 8, 19, 0, tzinfo=timezone.utc)
+#: gotcha #44 / #3895 (`EXPIRING-TEST-ANCHORS`) — anchored to the REAL clock,
+#: offset FIRST and then truncated.
+#:
+#: A calendar literal here was a fuse. Parts 1 and 2 drive the real route, which
+#: reads `datetime.now(timezone.utc)` itself and has no `now` to inject, so the
+#: fixtures were dated against a frozen instant while the code judged them
+#: against a moving one. `_market()` future-dates its specimen at `NOW + 115d`
+#: and `_league_scope_filters` admits a row only while
+#: `resolution_date IS NULL OR >= now` — so from the day the real clock passed
+#: the frozen anchor + 115d, the pool query excluded the Flyweight specimen, it
+#: could no longer reach the drop this file exists to prove, and four tests went
+#: red on untouched code. That is #3836's mechanism exactly.
+#:
+#: Found by `scripts/clock_sweep.py` (#2396), which is the instrument for this:
+#: PASS at the real clock, PASS at +90d, **4 failed at +400d**.
+#:
+#: A module-level `datetime.now()` is frozen at COLLECTION rather than at run,
+#: which `test_blend_fold_chart_pin_parity_3911` correctly refuses — but that
+#: file's bound is two minutes and this one's is 115 days, so collection-to-run
+#: drift cannot reach it. `TestTheAnchorCannotExpireAgain` pins both halves.
+NOW = (datetime.now(timezone.utc) - timedelta(minutes=1)).replace(microsecond=0)
 
 #: `/sport/boxing/boxing` is the page in the issue; `boxing_boxing` is its key.
 SPORT_KEY = "boxing_boxing"
@@ -383,4 +405,54 @@ class TestWhySettledNeverMeetsTheDrop:
         """
         assert "WBC Bantamweight Title, live but already past its date" not in (
             _selected(table)
+        )
+
+
+# ---------------------------------------------------------------------------
+# Part 4 — the anchor itself
+# ---------------------------------------------------------------------------
+
+
+class TestTheAnchorCannotExpireAgain:
+    """#3895 (`EXPIRING-TEST-ANCHORS`) — and here the failure is LOUD but late.
+
+    This file's anchor was a calendar literal, and Parts 1 and 2 go through the
+    real route, which reads the wall clock itself and takes no `now`. So the
+    specimen aged against a bound that kept moving, and once it crossed, the
+    pool query dropped the Flyweight card before it could reach the predicate
+    under test. Four tests then failed on untouched code — the #3836 shape, and
+    the third time this class has reddened master.
+
+    Two guards, because the two ways to get it wrong are different:
+
+      1. the BOUND that actually decides it — the specimen must still be
+         future-dated at the real clock, which is the only thing the pool query
+         asks. This is not a drift bound: #3895 ruled that bounding an
+         import-time anchor by elapsed time has no correct value (too tight
+         reddens a slow shard, too loose cannot tell frozen from live), so what
+         is pinned here is the route's own predicate, with 115 days of margin.
+      2. the ANCHOR's grammar, read off the source, which is the guard #3895
+         shipped. (This docstring deliberately does not spell the construction
+         it forbids: the scan below would flag its own remedy text.)
+    """
+
+    def test_the_specimen_is_still_future_dated_at_the_real_clock(self):
+        """`_league_scope_filters` admits a row only while it has not resolved."""
+        real_now = datetime.now(timezone.utc)
+
+        assert FLYWEIGHT.resolution_date > real_now, (
+            "the Flyweight specimen has resolved against the real clock, so "
+            "`_league_scope_filters` now excludes it before it can reach the "
+            "unpriced drop this file exists to prove. The anchor is frozen "
+            f"again. resolution_date={FLYWEIGHT.resolution_date}, now={real_now}"
+        )
+
+    def test_the_anchor_is_not_a_calendar_literal(self):
+        """Read the file: a written-out year here is a fuse, not a fixture."""
+        source = Path(__file__).read_text()
+
+        assert not re.search(r"datetime\(\s*\d{4}\s*,", source), (
+            "a calendar literal anchors this file to a date it will outlive; "
+            "derive the anchor from the clock instead (gotcha #44 — offset "
+            "first, then truncate)"
         )
