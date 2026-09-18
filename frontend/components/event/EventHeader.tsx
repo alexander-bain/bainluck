@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { statusLabel, eventDateRange, countdownLabel } from "@/lib/eventConceptDisplay";
+import { conceptDomainLabel } from "@/components/discover/utils";
 import type { EventConceptResponse } from "@/lib/types";
 
 interface SectionNavItem {
@@ -46,7 +47,21 @@ export default function EventHeader({
   return (
     <header className="border-b border-surface-border pb-4">
       <div className="flex items-center gap-2 mb-2 text-[11px] uppercase tracking-widest text-text-muted">
-        <span>{event.domain}</span>
+        {/* #5603 (Brief18), event-page half. This chip printed `event.domain`,
+            which is the event-key NAMESPACE this codebase routes on
+            (`event:ufc:<token>`), not a sport: `UFC_CONFIG` declares that
+            namespace to cover all of MMA plus every `KXUFC*` Kalshi ticker, and
+            production put **"Power Slap 23"** — slap fighting — under a `UFC`
+            chip on its own page, photographed at 390px on 2026-09-18 02:47Z.
+            The Discover card was fixed at `8c40442e0`; this is the same lie in
+            the other component, and `conceptDomainLabel` is deliberately the
+            SAME function rather than a second rule — one card family, one label
+            (notice 35).
+            The fallback is the fix, not a defensive branch: `sport_label` is
+            absent from every envelope cached before PR #6801 released, and
+            `/api/event` carries an 86400s positive mirror, so for up to a day
+            the unevidenced arm is what a reader actually gets. */}
+        <span>{conceptDomainLabel(event.sport_label, event.domain)}</span>
         {phase && (
           <span
             className={`px-1.5 py-0.5 rounded font-semibold ${
