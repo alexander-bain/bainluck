@@ -27,7 +27,14 @@ fail() { echo "  FAIL — $1" >&2; FAILED=$((FAILED+1)); }
 
 # The entrypoints that select or accept a simulator. Adding a rig tool that
 # takes a device means adding it here.
-ENTRYPOINTS="tools/native-shoot.sh tools/native_live_shoot.sh tools/native-g1-shoot.sh tools/native-uitest.sh tools/native-walk.sh"
+#
+# 🔴 `tools/native-gates.sh` JOINED THIS LIST ON 2026-09-18 (native/233c) and it
+# is the reason assertion 10 exists. It was missing while the guard shipped, and
+# it is the one entrypoint that INSTALLS A TEST BUNDLE — so the list that decides
+# what is guarded omitted the caller with the most to lose. Adding a rig tool
+# that takes or resolves a device means adding it here, and the omission is
+# exactly what nothing else can see.
+ENTRYPOINTS="tools/native-shoot.sh tools/native_live_shoot.sh tools/native-g1-shoot.sh tools/native-uitest.sh tools/native-walk.sh tools/native-gates.sh"
 
 echo "1. the guard refuses the reserved device with exit 7"
 ( . tools/reserved-sim-guard.sh; bl_refuse_reserved_sim "$RESERVED" selftest ) >/dev/null 2>&1
@@ -167,6 +174,50 @@ GATE_DEST=$(bash scripts/ios_native_gate.sh preflight 2>/dev/null | sed -n "s/.*
 [ "$GATE_DEST" = "$(. tools/reserved-sim-guard.sh; bl_default_shoot_sim)" ] \
   && ok "the bare default IS the shared picker's udid, not a name" \
   || fail "the bare default is '$GATE_DEST', not the shared picker's udid"
+
+echo "10. no entrypoint resolves a device with a pick of its own"
+# 🔴 THE SHAPE ASSERTIONS 5, 6 AND 7 ALL MISS. `tools/native-gates.sh` held
+#
+#     SIMLINE=$(xcrun simctl list devices available | grep -E '^ +iPhone ' | head -1)
+#
+# which hardcodes no UDID (5 clean), and — before today — sourced no guard and
+# named no scalar (6 and 7 had nothing to read, because the file was not in the
+# list). It picked the first iPhone `simctl` happened to print, in the one tool
+# that installs. Safe on 2026-09-18 only because the disposable is the oldest
+# device on this machine; one `simctl delete` away from installing onto Alex's.
+#
+# So the rule is not "do not hardcode a UDID" — it is that ONE function resolves
+# a device for the whole rig. A second picker is a second policy, and a second
+# policy is the bug, whatever devices it happens to return today.
+#
+# THE PREDICATE IS `head`, NOT `simctl`, AND THAT IS DELIBERATE. My first form
+# here was "lists devices and then pipes to head/sed/awk", and it fired on
+# `native-uitest.sh` and `ios_native_gate.sh`, both of which are CORRECT: they
+# list devices to turn a UDID the caller already chose into a display name, and
+# to refuse an ambiguous NAME. Taking the FIRST device is what "choosing" looks
+# like; reading a device you were handed is not. A guard that fires on the
+# innocent case gets deleted by the next person, so it has to tell them apart.
+# Line continuations are joined first — the pick can be written across lines.
+PICKERS=0
+for f in $ENTRYPOINTS scripts/ios_native_gate.sh; do
+  if /usr/bin/sed -e :a -e '/\\$/N; s/\\\n//; ta' "$f" \
+     | /usr/bin/grep -qE 'simctl list devices.*\| *head'; then
+    fail "$f takes the FIRST device itself instead of calling bl_default_shoot_sim"
+    PICKERS=$((PICKERS+1))
+  fi
+done
+[ "$PICKERS" -eq 0 ] && ok "$(echo $ENTRYPOINTS | wc -w | tr -d ' ') entrypoints + the gate, 0 bespoke pickers"
+# The control. A scan that cannot fail reads exactly like a clean tree, and this
+# one is scanning for an idiom rather than a constant, so it is the easier of
+# the two to write inert. The strawman is the deleted line, verbatim.
+printf 'SIMLINE=$(xcrun simctl list devices available | grep -E "iPhone " | head -1)\n' \
+  > /tmp/reserved-sim-picker-strawman.sh
+if /usr/bin/grep -qE 'simctl list devices.*\| *head' /tmp/reserved-sim-picker-strawman.sh; then
+  ok "strawman: the picker scan does fire on a reintroduced pick"
+else
+  fail "the picker scan cannot detect a bespoke pick — it proves nothing"
+fi
+rm -f /tmp/reserved-sim-picker-strawman.sh
 
 echo
 if [ "$FAILED" -eq 0 ]; then echo "RESERVED-SIM GUARD SELFTEST: CLEAN"; exit 0; fi
