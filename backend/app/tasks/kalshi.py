@@ -735,8 +735,9 @@ async def _resolve_series_tag_result(
     except Exception as exc:
         logger.warning(
             "#5637: could not resolve the Kalshi series tag for %s (%s) — "
-            "falling back to name-based classification for this series and "
-            "retrying in %.0fs; the miss is NOT recorded as an answer",
+            "creation writers FAIL CLOSED to 'other' for this series rather "
+            "than persisting a name-derived sport (#7012/CERT-3089), and we "
+            "retry in %.0fs; the miss is NOT recorded as an answer",
             series,
             exc,
             _SERIES_TAG_FAILURE_TTL_SECONDS,
@@ -854,6 +855,7 @@ def _categorize_kalshi_market(
     event_ticker: Optional[str] = None,
     series_tag: Optional[str] = None,
     series_category: Optional[str] = None,
+    series_evidence_unresolved: bool = False,
 ) -> str:
     """
     Determine llm_sport_category for a Kalshi market using pattern matching.
@@ -953,6 +955,29 @@ def _categorize_kalshi_market(
             topic = _venue_topic(kalshi_category, series_category)
             if topic:
                 return topic
+            # 🔴 #7012 / CERT-3089 — FAIL CLOSED ON UNRESOLVED EVIDENCE.
+            #
+            # Reaching here with `series_evidence_unresolved` means the venue
+            # did not answer (429/5xx/timeout) and we are about to persist a
+            # SPORT derived from the market's NAME alone — the exact guess this
+            # whole issue exists to stop. `SeriesTagResult`'s own docstring
+            # already says `resolved=False` is "never written"; both writers
+            # read `.tag`/`.category` and ignored `.resolved`, so a single
+            # transient failure minted a name-guessed sport.
+            #
+            # It is not self-correcting, and that is what makes it a defect
+            # rather than a blip: #1888's upsert is
+            # `coalesce(nullif(existing,'other'), new)`, so the wrong label is
+            # protected from every future poll the moment it lands. One rate
+            # limit buys a permanently mis-badged row — CERT-2737's shape, one
+            # layer along.
+            #
+            # `other` is the correct fallback precisely BECAUSE #1888 exempts
+            # it: it is the one value a later poll is allowed to upgrade. So
+            # this trades a confident wrong answer for an honest blank that
+            # repairs itself on the next pass with evidence.
+            if series_evidence_unresolved:
+                return "other"
         return result
 
     # 3. League detection → sport inference
@@ -960,6 +985,14 @@ def _categorize_kalshi_market(
     if league:
         sport = infer_sport_from_league(league)
         if sport:
+            # Same fail-closed rule as step 2, and for the same reason: a
+            # league detected from the NAME is a guess, and without the venue's
+            # answer there is no second signal to confirm it. Guarded here too
+            # rather than only at step 2, because a rule that fails closed on
+            # one name-derived path and open on the next one down is not a
+            # rule — it is a gap with a comment.
+            if series_evidence_unresolved:
+                return "other"
             return sport
 
     # 4. Fall back to Kalshi's own category as a hint
@@ -1502,6 +1535,11 @@ async def _poll_kalshi_markets():
                         event.event_ticker,
                         series_tag=series_meta.tag,
                         series_category=series_meta.category,
+                        # CERT-3089: `resolved=False` means the venue did not
+                        # answer. Passing it is what stops one rate limit from
+                        # minting a name-guessed sport that #1888 then protects
+                        # forever.
+                        series_evidence_unresolved=not series_meta.resolved,
                     )
 
                     # Skip crypto markets entirely — they consume DB space
@@ -6484,6 +6522,10 @@ async def _create_settled_market(
         event.event_ticker,
         series_tag=series_meta.tag,
         series_category=series_meta.category,
+        # CERT-3089: the SECOND writer. Wired here as well as at the poll site
+        # because this one INSERTS too — a fail-closed rule applied at one of
+        # two creation paths is not a fail-closed rule.
+        series_evidence_unresolved=not series_meta.resolved,
     )
     if sport_category == "crypto" or category == "crypto":
         return "skip"

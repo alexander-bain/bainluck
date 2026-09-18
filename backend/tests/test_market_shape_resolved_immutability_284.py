@@ -127,10 +127,15 @@ async def test_census_reports_transitions_membership_and_bump(monkeypatch):
     )
 
     # (id, source, external_id, event_id, group_id, group_type,
-    #  mutually_exclusive, market_type, market_metadata)
+    #  mutually_exclusive, market_type, market_metadata, name)
+    #
+    # ``name`` joined the census SELECT with #3721's slice guard: the guard needs
+    # to know whether a row IS the venue event's own ladder before it will trust
+    # that row's ``market_count``. Both rows here carry an empty metadata dict, so
+    # ``_venue_leg_count`` refuses and every classification below is unchanged.
     market_rows = [
-        (1, "polymarket", "0xabc_yes", None, None, None, None, "duel", {}),
-        (2, "kalshi", "KX-TEST", None, None, None, None, "field", {}),
+        (1, "polymarket", "0xabc_yes", None, None, None, None, "duel", {}, "A vs B"),
+        (2, "kalshi", "KX-TEST", None, None, None, None, "field", {}, "Who wins?"),
     ]
     session = _CensusSession(market_rows)
 

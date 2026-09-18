@@ -68,11 +68,26 @@ INSERT = """
             :resolution_date, NULL, :updated_at)
 """
 
+#: #7000 added a second ORDER BY term that reads the legs, so the rig has to
+#: carry the table it reads. Seeded EMPTY here on purpose: a market with no legs
+#: is not in the fully-retracted cohort, so every rank in this file stays the
+#: constant it was and #3284's expected orderings are untouched — which is the
+#: point of leaving them unedited. The cohort's own guards live in
+#: `test_kalshi_resolution_sweep_retracted_cohort_7000.py`.
+CREATE_OUTCOMES = """
+    CREATE TABLE futures_outcomes (
+        id INTEGER PRIMARY KEY,
+        market_id INTEGER,
+        resolution_source TEXT
+    )
+"""
+
 
 def _seed(rows):
     engine = create_engine("sqlite://")
     with engine.begin() as conn:
         conn.execute(text(CREATE_TABLE))
+        conn.execute(text(CREATE_OUTCOMES))
         for r in rows:
             conn.execute(text(INSERT), r)
     return engine
@@ -601,7 +616,12 @@ class TestTheCursorDoesNotSurviveTheReorder:
         the population on the first run after deploy, and nothing in the summary
         would say so.
         """
-        assert sweep.SWEEP_CURSOR_KEY.endswith(":v2")
+        # Pinned to the CURRENT version, not merely "is versioned": the pin is
+        # the mechanism that makes a bump deliberate. #7000 added a second ORDER
+        # BY term and moved this to `:v3`; whoever changes the order next has to
+        # come here and say so, which is exactly the intent of the module note
+        # ("Any future change to the ORDER BY must bump this again").
+        assert sweep.SWEEP_CURSOR_KEY.endswith(":v3")
         assert sweep.SWEEP_CURSOR_KEY != "bainluck:kalshi_resolution_sweep:offset"
 
 
@@ -660,7 +680,12 @@ async def _run_against(tickers, *, limit=100, now=NOW):
     """
     recorder: list = []
     rows = [(i + 1, t, None, None, 5) for i, t in enumerate(tickers)]
-    totals = (len(tickers), 0, len(tickers), 0)
+    # Five columns because `COUNT_SQL` selects five (#7000 appended
+    # `fully_retracted_total`). The stub models that statement, so it tracks its
+    # shape: `run_backfill` reads `totals` POSITIONALLY and a short tuple raises
+    # rather than degrading, which is the behaviour we want — a reader and a
+    # COUNT that have drifted apart should be loud, not quietly `-1`.
+    totals = (len(tickers), 0, len(tickers), 0, 0)
 
     class _Venue:
         async def get_event(self, ticker, with_nested_markets=True):

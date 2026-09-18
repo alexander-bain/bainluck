@@ -97,6 +97,18 @@ CREATE_TABLE = """
     )
 """
 
+#: #7000: the sweep's ORDER BY and `COUNT_SQL` now read the legs, so the fixture
+#: carries the table they read — same reasoning as `settled_at` above. Left
+#: EMPTY: no market here is in the fully-retracted cohort, so every rank in this
+#: file is the constant it was and the CERT-766 orderings are unchanged.
+CREATE_OUTCOMES = """
+    CREATE TABLE futures_outcomes (
+        id INTEGER PRIMARY KEY,
+        market_id INTEGER,
+        resolution_source TEXT
+    )
+"""
+
 INSERT = """
     INSERT INTO futures_markets
         (id, external_id, source, status, market_tier, commence_time,
@@ -123,6 +135,7 @@ def seeded_starvation_db():
     engine = create_engine("sqlite://")
     with engine.begin() as conn:
         conn.execute(text(CREATE_TABLE))
+        conn.execute(text(CREATE_OUTCOMES))
         for i in range(BATCH):
             # Well past the purge horizon: Kalshi no longer holds these at all.
             commence = PURGE_FLOOR - timedelta(days=10 + i)
@@ -376,6 +389,7 @@ def seeded_sealed_db():
     engine = create_engine("sqlite://")
     with engine.begin() as conn:
         conn.execute(text(CREATE_TABLE))
+        conn.execute(text(CREATE_OUTCOMES))
         for i in range(600):
             conn.execute(
                 text(INSERT_SWEPT),
@@ -511,7 +525,7 @@ class TestASweptRowIsNotFinishedUntilItsDateIs:
                 text(_mod().COUNT_SQL), {"purge_floor": PURGE_FLOOR.isoformat()}
             ).first()
 
-        eligible_total, _excluded, never_swept, provisional = totals
+        eligible_total, _excluded, never_swept, provisional, _retracted = totals
         assert never_swept == 1, "the legacy tail: rows the sweep has never touched"
         assert provisional == 601, (
             "600 sealed tier-1 rows plus the finalized tier-5 leg. KXCONVERGED-01 "
@@ -609,10 +623,12 @@ def _drive(apply: bool, rows=(STALE_ROW,)):
 
     def maker():
         # The totals tuple must have the same arity as `COUNT_SQL` returns
-        # (eligible_total, excluded_purged, never_swept, provisional_recheck). A
-        # fake that is narrower than the real result set would let a widened
-        # COUNT_SQL ship with an IndexError nobody executed.
-        s = _FakeSession(recorder, list(rows), (len(rows), 0, len(rows), 0))
+        # (eligible_total, excluded_purged, never_swept, provisional_recheck,
+        # fully_retracted_total). A fake that is narrower than the real result
+        # set would let a widened COUNT_SQL ship with an IndexError nobody
+        # executed — which is exactly what this caught when #7000 appended the
+        # fifth column, so the comment is load-bearing and stays.
+        s = _FakeSession(recorder, list(rows), (len(rows), 0, len(rows), 0, 0))
         sessions.append(s)
         return s
 

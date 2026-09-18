@@ -854,6 +854,35 @@ CHAMPIONS_LEAGUE_CONFIG = LeagueConfig(
     # construction and survive the season roll to KXUCLLEAGUE-28.
     # The market is not deleted or hidden: /futures/59164808 stays reachable.
     external_id_exclude_prefixes=["KXUCLLEAGUE"],
+    # #6905: the ASIAN confederation's competition, in the UEFA grid. Polymarket
+    # 60607650 "AFC Champions League Elite 2026-27 Winner" satisfies this
+    # config's `\bChampions\s+League\b` league gate, and then the Champion
+    # column's `Champions\s+League.*(?:Winner|Champion)` NAME rule — it is tier
+    # 2, so the tier path never fired and raising the tier bar would not have
+    # stopped it. Admitted, it merged its clubs into this table: read from
+    # production 2026-09-18,
+    # FIFTEEN of the 36 rows were AFC — Shanghai Port ranked SIXTH to win the
+    # UEFA Champions League, above Manchester City, with Pakhtakor, Al-Hilal,
+    # Kashima Antlers and eleven more beside them. The grid caps at 36, so
+    # fifteen genuine UEFA clubs were pushed off the table to make room.
+    #
+    # Excluded on the CONFEDERATION QUALIFIER, which is the token that makes it a
+    # different competition. This is a name gate and #6250 argued against those
+    # — but #6250's objection was to a name gate narrow enough to refuse the real
+    # market by one typo ("League of Champion" vs "Champions League Winner").
+    # That risk is absent here: "AFC" is a prefix no UEFA market carries, the two
+    # strings are disjoint rather than one-character apart, and the season roll
+    # to 2027-28 does not touch it. The Kalshi ticker mechanism is unavailable —
+    # this row is Polymarket and its external_id is the numeric event id 994393,
+    # which changes next season, so a prefix rule would silently lapse.
+    #
+    # `AFC` is also the NFL's American Football Conference. It cannot collide:
+    # the pattern requires "Champions League" immediately after, and this
+    # exclusion is scoped to this config, which the NFL grid never reads.
+    # The market is not deleted or hidden: /futures/60607650 stays reachable.
+    league_exclude_patterns=[
+        r"\bAFC\s+Champions\s+League\b",
+    ],
     columns=[
         GridColumn(key="quarterfinal", label="QF", order=1),
         GridColumn(key="semifinal", label="SF", order=2),
@@ -910,6 +939,39 @@ BUNDESLIGA_CONFIG = LeagueConfig(
     league_name_patterns=[
         r"\bBundesliga\b",
         r"\bGerman\s+(?:League|Football)\b",
+    ],
+    # #6905 (Alex, p1). "Bundesliga" is not one competition's name — it is the
+    # German word for "federal league", and at least two OTHER competitions
+    # carry it. `\bBundesliga\b` admitted both, and because the child's title
+    # CONTAINS the parent's string no positive gate can separate them; the
+    # discriminator has to be the qualifier that names the other competition.
+    #
+    #   1. polymarket 58867088 "2. Bundesliga: 2026-27 Winner" — the division
+    #      BELOW this one. Read from production 2026-09-18: seven of the top ten
+    #      rows of the Champion column were 2. Bundesliga clubs, Eintracht
+    #      Braunschweig ranked SECOND to win the Bundesliga, above Dortmund.
+    #      They carry no crest and no Relegated or Top 4 value because they are
+    #      not in this competition. The grid caps at 18, so the seven intruders
+    #      pushed Augsburg and M'gladbach off the table — and M'gladbach's 84%
+    #      Relegated is the highest in the division, so the single most
+    #      significant number on the page was the one not served.
+    #
+    #   2. polymarket 59516500 "Austrian Bundesliga: Teams relegated (2026-27)"
+    #      — a DIFFERENT COUNTRY's top flight, reaching the Relegated column.
+    #      Not named in #6905; found by enumerating this grid's admitted set
+    #      rather than the one market the issue reported.
+    #
+    # Both are Polymarket with numeric event ids (836242, 904914) that change on
+    # the season roll, so #6250's ticker-prefix mechanism cannot express this.
+    # These patterns are anchored on the qualifier, not on the season, so they
+    # survive the roll and also cover the sibling rows the same two competitions
+    # publish (Runner-Up, 3rd Place, promotion, clean sheets — twenty-one rows
+    # measured today), none of which should ever enter this grid either.
+    # Nothing is deleted or hidden: /futures/58867088 and /futures/59516500 stay
+    # reachable, and the German second division is a real competition we serve.
+    league_exclude_patterns=[
+        r"\b2\.\s*Bundesliga\b",
+        r"\bAustrian\s+Bundesliga\b",
     ],
     columns=[
         GridColumn(key="relegation", label="Relegated", order=1, sequential=False),
