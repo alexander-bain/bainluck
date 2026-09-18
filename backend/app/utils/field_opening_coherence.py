@@ -64,6 +64,66 @@ from one that was. ``calibration_probability`` falls back to
 exclusion), so an invented opening becomes a published forecast we are then
 graded on. A withheld opening is simply a column the page does not print.
 
+TWO LEGS CANNOT BOTH BE CERTAIN (#6996). The arithmetic rule above is a pair of
+CEILINGS, and a ceiling can be walked up to. ``/futures/113129`` — *Nobel Peace
+Prize Winner 2026* — printed **OPEN 100%** against *Save the Children*, *Sudan's
+Emergency Response Rooms* and *Chow Hang-tung*, the top three rows of one
+one-winner prize, under a caption reading *"Save the Children down 91.4 pts from
+opening"* on a chart whose y-axis tops out at 15%. The served field is 32 legs,
+12 of them at exactly 1.0:
+
+    SUM  = 12.7120   ceiling 3.0   ->  over by 4.24x
+    MEAN =  0.397250 ceiling 0.4   ->  UNDER by 0.002750  -> published
+
+Two properties make that a hole and not a number to re-tune:
+
+* **The honest legs are what spare it.** The twelve fabricated 1.0s push the
+  mean up; the twenty real prices (0.075, 0.0865, 0.0055 …) dilute it back under
+  the ceiling. Removing any single honest leg flips the verdict to refused. A
+  field protected in proportion to how much of it is real is backwards, and no
+  value of :data:`FIELD_MEAN_CEILING` fixes that — lowering it to ``1/3``, the
+  bound this module derives, re-refuses the large honest fields the mean
+  condition exists to spare.
+* **It needs no ceiling at all.** Exactly one outcome wins, so two legs at
+  certainty is not improbable, it is impossible. That is the same arithmetic the
+  rest of this module appeals to, applied to a pair rather than to a total.
+
+So the clause is a COUNT, not a threshold move: more than
+:data:`MAX_CERTAIN_LEGS` legs at or above :data:`CERTAIN_LEG_PROBABILITY` is
+refused whatever the field sums to. The house already runs exactly this
+predicate for the two-leg case — ``app/tasks/repair_winner_field.py:299``
+(``COUNT(*) = 2 AND SUM(opening_probability >= 0.999) = 2``) — so this is the
+missing generalisation to ``n``, not a new idea about prices.
+
+It is deliberately NOT the value rule this module rejected above: that one keyed
+on legs SHARING an opening and took ~19,000 honest longshots; this one keys on a
+pair of impossibilities and cannot fire on a longshot at any multiplicity.
+
+Measured against every served payload of the open mutually-exclusive population
+carrying two or more stored legs at >= 0.999 (2026-09-18, 634 markets fetched
+through the real route because a stored-row census cannot see a serve-time rule
+judging the DISPLAYED subset):
+
+    already refused by the ceilings          123 markets
+    currently published                      511 markets
+      of which NEWLY refused by this clause   21 markets   (452 openings,
+                                                            99 of them >= 0.999)
+      of which untouched                     490 markets
+
+All 21 are Polymarket, and all of them are the same artifact: each carries two
+to five DISTINCT ``opening_captured_at`` values across 13 to 128 legs — two bulk
+events, 2026-02-19 01:41:04 and 2026-04-20 23:15 — with ``opening_source`` NULL
+throughout. That is what settles WHOLE-FIELD refusal here rather than sparing
+the legs that look honest: on 112897 (*Presidential Election Winner 2028*) the
+plausible ``JD Vance 0.24`` was written by the same bulk stamp as the 92 legs at
+1.0, so sparing it would keep precisely the subset whose falsity does not
+announce itself. A per-leg variant is a different ruling, not a refinement.
+
+WHY THE CEILING RULE IS EVALUATED FIRST, and do not "tidy" it: every field that
+trips both must keep reporting ``refused_field_not_a_distribution``, so the
+verdict string of a row already refused on 2026-09-18 does not move under this
+change. The new verdict appears only on fields the ceilings published.
+
 THIS IS A SERVE-TIME RULE AND THAT IS DELIBERATE. The rows were stamped months
 ago (the specimen's in February 2026), so a write guard cannot reach them —
 CERT-2508's finding on the sibling rail, that a guard keyed on ``IS NULL`` cannot
@@ -94,13 +154,33 @@ FIELD_SUM_CEILING = 3.0
 #: out of reach of the rule.
 FIELD_MEAN_CEILING = 0.4
 
+#: At or above this, a leg is claiming the outcome is settled. Not 1.0 exactly:
+#: the fabrications this catches are seeded midpoints, and a venue that quotes a
+#: 0.998/1.00 book mints 0.999 as readily as 1.0 — production carries 7,812 legs
+#: at >= 0.999 on open markets. It sits far above any honest price in a field of
+#: three or more, where the largest coherent leg is bounded by 1 minus the other
+#: two, so no real favourite can reach it.
+CERTAIN_LEG_PROBABILITY = 0.999
+
+#: How many legs of a one-winner field may claim certainty. ONE is not a tuning
+#: choice and must not be raised: exactly one outcome wins, so a second certain
+#: leg is an impossibility rather than an improbability. A lone certain leg is
+#: left alone deliberately — a real market can price a done deal at 0.999, and
+#: that single-leg case is `drop_incoherent_near_certain`'s (#6524), not this
+#: module's.
+MAX_CERTAIN_LEGS = 1
+
 OK = "ok"
 NOT_APPLICABLE_NOT_EXCLUSIVE = "not_applicable_not_exclusive"
 NOT_APPLICABLE_FIELD_TOO_SMALL = "not_applicable_field_too_small"
 REFUSED_FIELD_NOT_A_DISTRIBUTION = "refused_field_not_a_distribution"
+REFUSED_MULTIPLE_CERTAIN_LEGS = "refused_multiple_certain_legs"
 
 #: Verdicts that mean "do not publish any opening in this field".
-REFUSAL_VERDICTS = (REFUSED_FIELD_NOT_A_DISTRIBUTION,)
+REFUSAL_VERDICTS = (
+    REFUSED_FIELD_NOT_A_DISTRIBUTION,
+    REFUSED_MULTIPLE_CERTAIN_LEGS,
+)
 
 
 def classify_field_openings(
@@ -124,8 +204,17 @@ def classify_field_openings(
         return NOT_APPLICABLE_FIELD_TOO_SMALL
 
     total = sum(priced)
+    # FIRST, and not for style: a field that trips both rules keeps reporting the
+    # verdict it reported before #6996, so no already-refused row's verdict moves.
     if total > FIELD_SUM_CEILING and (total / len(priced)) >= FIELD_MEAN_CEILING:
         return REFUSED_FIELD_NOT_A_DISTRIBUTION
+
+    # #6996: exactly one leg wins, so a second certain leg is impossible however
+    # small the field's total. This is what catches the fields that walk up to a
+    # ceiling — 113129 sums to 12.71 and publishes because its mean lands 0.00275
+    # under, and the legs that pull it under are the honest ones.
+    if sum(1 for p in priced if p >= CERTAIN_LEG_PROBABILITY) > MAX_CERTAIN_LEGS:
+        return REFUSED_MULTIPLE_CERTAIN_LEGS
     return OK
 
 
