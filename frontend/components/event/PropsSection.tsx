@@ -871,7 +871,28 @@ function PropRow({
   const rowState: PropsState = item.settled ? "graded" : state;
   return (
     <div className="flex items-center gap-3 py-2 border-b border-surface-elevated last:border-0">
-      <span className="flex-1 min-w-0 text-sm text-text-primary truncate">
+      {/* #6798 — THE ROW'S OWN QUESTION IS THE CONTENT, so it is not the thing that yields.
+          `line-clamp-2`, NEVER `truncate`: #6496/#4342's precedent on exactly this shape — a
+          `min-w-0` text column squeezed by `shrink-0` siblings — and the two cannot be
+          combined, because `truncate` sets `white-space: nowrap` and silently defeats the
+          clamp. See `GamePlayCard.tsx`, where that is written out.
+
+          MEASURED on `/events/14638444` (Bills 41 — Lions 31) at 390px, live bundle
+          `06d4ceb5`, 2026-09-18: 379 rows, 324 graded, 55 withheld. The withheld rows carry
+          `SETTLED_NO_GRADE_LABEL` at a `shrink-0` **198px**, which leaves this span **108px**
+          against the 268px every graded row gets — so on that page the ONLY clipped labels
+          were withheld ones, 8 of them, and the clip landed on the digits that tell them
+          apart: `Jameson Williams: 3+ / 4+ / 9+` all read `Jameson Willia`. 13 distinct
+          labels reached the reader as 9.
+
+          WHY NOT DROP THE CHIP, which is what #6129 did. #6129's narrowing is right and is
+          untouched: it fires only when the blurb already states it (`graded && !anyGraded`).
+          Here the list is MIXED — the header claims grades — so the chip is the only place a
+          reader learns this row was not graded, and #1650 forbids inventing a shorter second
+          phrase for one backend state. Neither the chip nor the question may go, so the
+          label wraps instead. The clamp bounds it at two lines, which every measured label
+          fits with room; nothing on the page reaches the clamp. */}
+      <span className="flex-1 min-w-0 text-sm text-text-primary line-clamp-2">
         {displayLabel ?? item.label}
       </span>
       {pending ? (
@@ -1135,7 +1156,11 @@ function BinaryBarRow({
   return (
     <div className="py-2 border-b border-surface-elevated last:border-0">
       <div className="flex items-center gap-3">
-        <span className="flex-1 min-w-0 text-sm text-text-primary truncate">
+        {/* #6798, as `PropRow` — this row renders the same `GradedValue`, so it carries the
+            same 198px chip and the same 108px label, and it is the same defect by
+            construction. The card-outcome name further down is deliberately NOT changed:
+            it sits beside a shrinkable badge, not the chip, and no measured row clips. */}
+        <span className="flex-1 min-w-0 text-sm text-text-primary line-clamp-2">
           {item.question ?? displayLabel ?? item.label}
         </span>
         {state === "graded" ? (
