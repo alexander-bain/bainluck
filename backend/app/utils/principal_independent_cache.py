@@ -530,7 +530,56 @@ WIRE_COMPRESS_LEVEL = 1
 
 _PLAIN_SCALARS = (bool, int, float, str, datetime, date, Decimal)
 _MAX_DEPTH = 16
-_MAX_NODES = 200_000
+
+# --- LAT-P273 (#2143 residual): THE SAFETY CAP MUST NOT BITE BEFORE THE WIRE --
+#
+# This was 200,000, and at 200,000 it was the FIRST of the three caps to fire on
+# `market_load` — the one artifact any of them actually governs in production.
+# Measured 2026-09-18 on `test_feed_market_load_fits_the_shared_wire_lat_p221`'s
+# fixture, against a live population of 9,326 candidate-base outcomes:
+#
+#     outcomes    nodes     envelope       cap reached
+#      9,326    156,690     3.77 MB        (today)
+#     12,421    200,000     4.70 MB        node cap
+#     17,631    272,886     6.29 MB        MAX_ENVELOPE_BYTES
+#
+# Those two failures are not interchangeable. A BYTE breach stops the Redis
+# publish: the artifact still lands in L1, a warm worker still reuses it, and
+# `cross_worker_publish_refused` counts it PER NAMESPACE, which
+# `/api/admin/shared-build-stats` computes into `publish_refused_namespaces`. A
+# NODE breach raises inside `get_or_build` before the `entries[key] = ...` store,
+# so the artifact is not cached at all, local tier included, on every single
+# build — and the only trace is a `logger.warning` plus a namespace-less
+# top-level `refused` counter. The failure with no instrument was arriving 5,210
+# outcomes first, and the population moved 6,904 -> 9,326 in the fortnight to
+# 2026-09-18.
+#
+# "Narrow the row form", which is this module's answer to a byte breach, is not
+# available for a node count: nodes are scalars, `market_load` is a table of
+# (rows x columns) scalars with every column load-bearing, and column-major,
+# compaction and a tighter text form all leave the cell count identical.
+#
+# So the number is re-derived from what it actually bounds — the cost of
+# `assert_plain_data`'s walk — rather than left where it happened to be.
+# Measured on the same fixture, ~0.13 us/node: 15.7 ms at 122,749 nodes, 32.0 ms
+# at 250,045. The `json.dumps` of the SAME value, which `MAX_ENVELOPE_BYTES`
+# already permits, costs 45.3 ms and 59.9 ms on those two shapes — the walk is
+# 2-3x cheaper than the dump it was capping tighter than. Weighed as LAT-P103
+# requires, not against a hit but against the rebuild it protects: unshared
+# `futures.market_load` measured 1,037 ms against 105 ms reused (#2143, lat520).
+#
+# 300,000: above the 272,886 that `MAX_ENVELOPE_BYTES` admits, so the loud,
+# partial, per-namespace failure always fires first; ~39 ms of walk here, ~100 ms
+# on a Standard-2X dyno, against the ~930 ms that breaching it silently forfeits
+# on every cold `/api/feed`. Recursion is safe at any node count — the walk's
+# depth is bounded by `_MAX_DEPTH`, not by the number of cells.
+#
+# 🔴 THIS IS THE SAFETY BOUND, NOT THE GROWTH ALARM. "The artifact is getting
+# big" is a different question with a different answer, and the guard file keeps
+# the old 200,000 under its own name (`NODE_GROWTH_ALARM`) to ask it — written
+# as a constant rather than a fraction of this one, precisely so that raising
+# this number can never be a way of quieting that one.
+_MAX_NODES = 300_000
 
 _KEY_SCALARS = (bool, int, float, str)
 
