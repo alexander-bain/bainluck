@@ -505,11 +505,34 @@ class TestItIsLinearAndTheBudgetIsNotVacuous:
         )
 
     def test_quadrupling_the_input_does_not_sixteen_times_the_work(self):
-        """Machine-independent, which the budget above is not.
+        """Machine-independent — counted, not timed. Converted 2026-09-17.
 
         Linear work grows ~4x when the series and its buckets grow 4x; the scan
         this replaced grew ~16x. The bar sits between them rather than at either
         end, so ordinary noise cannot decide it.
+
+        IT USED TO DIVIDE TWO WALL-CLOCK READINGS, and the docstring's first
+        line claimed that was machine-independent. It was not, and the arm
+        directly above it had already been converted for the same reason
+        (`26927ff18`, #6546) while this one was left on the clock. On CI it went
+        red at **134.2x / 86.3x / 142.8x** (calibration/1352, sha `9cd1ef1b3`,
+        run 35286098562) and **90.2x / 93.6x** (live/362, sha `147f036c0`, run
+        35288974082) against this same bar of 8 — two lanes, two diffs disjoint
+        from each other AND from `aggregation.py`, both green on master in the
+        same minutes, both green 19/19 locally.
+
+        The arithmetic of why: the SMALL arm runs ~2 ms on a laptop and ~3.5 ms
+        on CI, and `large / small` puts that on the bottom of a fraction. A few
+        milliseconds of noise from whatever else shares the process — and both
+        red branches added a test file, which reshuffles who a shard's
+        neighbours are — moves the ratio by an order of magnitude without any
+        code changing. A denominator that small cannot carry a proof.
+
+        Measured on the counts, same two arms, 2026-09-17: points 900 -> 3,600
+        (4.00x); shipped reads 2,701 -> 10,801, growth **4.00x**, a flat 3.0
+        reads per point on BOTH arms; oracle reads 231,544 -> 3,626,194, growth
+        **15.66x**. Linear and quadratic land where the names say, the bar of 8
+        sits halfway between them, and no machine enters the number.
         """
         small = {
             "kalshi": _series(500, step_min=1, seed=31),
@@ -519,10 +542,42 @@ class TestItIsLinearAndTheBudgetIsNotVacuous:
             "kalshi": _series(2000, step_min=1, seed=31),
             "polymarket": _series(1600, step_min=1.25, seed=32),
         }
-        small_s, _ = _time_it(compute_aggregated_probability, small)
-        large_s, _ = _time_it(compute_aggregated_probability, large)
-        growth = large_s / max(small_s, 1e-6)
+
+        small_reads, small_out = _point_reads(compute_aggregated_probability, small)
+        large_reads, large_out = _point_reads(compute_aggregated_probability, large)
+
+        # ANTI-VACUITY, FIRST — the same clause the arm above carries. A probe
+        # that broke the implementation would report small counts and this test
+        # would "pass" by measuring nothing.
+        assert (
+            small_out and large_out
+        ), "a probed run produced no line — the probe is broken"
+        assert _as_tuples(large_out) == _as_tuples(
+            compute_aggregated_probability(large, bucket_seconds=60)
+        ), "the counting probe changed the shipped result — the counts are meaningless"
+        assert len(large_out) == 4 * len(small_out), (
+            f"the two arms built {len(small_out)} and {len(large_out)} buckets — "
+            "quadrupling the input did not quadruple the work being measured, so "
+            "this arm is no longer comparing what it says it compares"
+        )
+
+        growth = large_reads / max(small_reads, 1)
         assert growth < 8, (
-            f"4x the points cost {growth:.1f}x the time — the carry-forward is "
-            "scanning from the start of each source again"
+            f"4x the points cost {growth:.1f}x the reads ({small_reads:,} -> "
+            f"{large_reads:,}) — the carry-forward is scanning from the start of "
+            "each source again"
+        )
+
+        # THE CONTROL, which the wall-clock version never had: the scan this
+        # replaced must FAIL the bar this one passes, on the same two arms in
+        # the same run. Without it a green row here is consistent with the
+        # measurement having quietly stopped measuring.
+        oracle_small, _ = _point_reads(_oracle_aggregated_probability, small)
+        oracle_large, _ = _point_reads(_oracle_aggregated_probability, large)
+        oracle_growth = oracle_large / max(oracle_small, 1)
+        assert oracle_growth >= 8, (
+            f"the pre-#6546 scan grew only {oracle_growth:.1f}x ({oracle_small:,} "
+            f"-> {oracle_large:,}) across the same 4x — it would pass the bar it "
+            "exists to fail, so this arm is vacuous and the shapes above need "
+            "resizing, not the bar"
         )
