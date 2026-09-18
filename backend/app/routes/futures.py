@@ -2045,10 +2045,18 @@ def _leg_prices_an_empty_book(outcome) -> bool:
     label through to here. So the honest sentence for this surface is "no current
     quote supports this number", never "this number was never real".
     """
+    # `getattr` RATHER THAN ATTRIBUTE ACCESS, matching `_book_refuted_outcome_ids`
+    # below, and #6757 is why it changed. Until then this ran on exactly one call
+    # site holding ORM rows, where the three columns always exist. It now also runs
+    # on every `/api/futures/{id}` request, and a serve path must not 500 because a
+    # caller handed it an object without a book — the absent case is "no book to
+    # call empty", which falls through to the honest answer of leaving the price
+    # alone. `is_empty_book_midpoint` already returns False for a null book, so this
+    # is the same fail-open the predicate documents and not a second rule.
     return is_empty_book_midpoint(
-        outcome.current_probability,
-        outcome.current_yes_bid,
-        outcome.current_yes_ask,
+        getattr(outcome, "current_probability", None),
+        getattr(outcome, "current_yes_bid", None),
+        getattr(outcome, "current_yes_ask", None),
     )
 
 
@@ -2977,8 +2985,9 @@ def _drop_unsupported_snapshot_points(snapshots: list, outcomes) -> list:
     """Remove the chart points whose own row says nothing supported that price (#5898).
 
     THE LADDER AND THE CHART MUST NOT DISAGREE. ``/api/futures/{id}`` withholds an
-    outcome's price when no book and no trade supports it (#5611) or when the
-    venue's newest trade refutes the midpoint (#5876). Until this filter existed
+    outcome's price when no book and no trade supports it (#5611), when the
+    venue's newest trade refutes the midpoint (#5876), or when the price is the
+    midpoint of a book with nothing in it (#6757). Until this filter existed
     the chart above that ladder still plotted the refused value as the series'
     last point, so a reader who ticked a row displaying ``—`` was shown the number
     the table had just declined to state.
@@ -3011,6 +3020,29 @@ def _drop_unsupported_snapshot_points(snapshots: list, outcomes) -> list:
     for snapshot in snapshots:
         if snapshot.outcome_id in grades:
             resolution_source, is_winner = grades[snapshot.outcome_id]
+            # #6757. THE LADDER AND THE CHART MUST NOT DISAGREE, which is this
+            # function's whole premise, so the arm lands here in the same change
+            # that adds `_empty_book_outcome_ids` to the detail payload. Without it
+            # that fix would rebuild #5898's defect with its own repair:
+            # `/futures/57777176` would print "—" against Chicago Bulls in the
+            # table while the graph above drew that row's five stored points at
+            # 0.485 on a 0.0100/0.9600 book.
+            #
+            # INSIDE THIS BRANCH AND GATED ON THE GRADE, both deliberately, and an
+            # earlier revision of this arm sat above it and was wrong twice over.
+            # Outside the branch it withheld points from an outcome the caller did
+            # not load, which the docstring above refuses on purpose; ungated it
+            # took the tail off a settled series, and `_REFUSED_TAIL` in #5898's
+            # own tests is exactly that shape — a champion whose journey ran
+            # through midpoints of a 0.002/0.938 book before it was decided.
+            # Settled means settled: the completed journey is shown whole, and the
+            # ladder's arm exempts the grade for the same reason.
+            if resolution_source is None and is_empty_book_midpoint(
+                _as_float(snapshot.probability),
+                _as_float(getattr(snapshot, "yes_bid", None)),
+                _as_float(getattr(snapshot, "yes_ask", None)),
+            ):
+                continue
             if snapshot_price_is_unsupported(
                 snapshot.bookmaker,
                 resolution_source,
@@ -3226,6 +3258,62 @@ def _book_refuted_outcome_ids(market: FuturesMarket) -> set[int]:
     }
 
 
+def _empty_book_outcome_ids(market: FuturesMarket) -> set[int]:
+    """Which of this market's outcomes price a book with nothing in it (#6757).
+
+    WHAT A READER SAW. ``/futures/57777176`` — "NBA: Steph Curry Next Team" —
+    printed a confident percentage against all 30 teams and not one of them was
+    a traded price: sixteen clubs read **48%**, the ladder summed to **1112.5%**,
+    and every row had been written in one batch six weeks earlier
+    (``2026-08-01 00:19:45.171081``, identical microsecond ⇒ one batch writer).
+    The same shape answers a real election on ``/futures/110297`` — "Who will win
+    the 2026 Colombia Senate election? Opposition 49.7% / Government Alliance
+    49.1%" — and prices five mutually exclusive CPI rungs at 50% EACH on
+    ``/futures/109681``.
+
+    THE RULE IS NOT NEW AND IS NOT RE-DERIVED HERE. This is
+    :func:`_leg_prices_an_empty_book`, the same object the grouped feed already
+    calls at its one shipped call site, which is in turn #5247's measured
+    predicate wearing #6727's spread form. The defect was never the rule; it was
+    that this route never asked it. Three read surfaces refuse these rows today
+    — ``game-markets``, the search slice and the grouped feed — so the strip and
+    the page a reader opens FROM the strip disagreed about the same row in the
+    same hour, which is the whole of #6757.
+
+    WITHHELD, NOT SKIPPED, and that is the difference from the grouped-feed call
+    site rather than an inconsistency with it. The strip drops the leg from a
+    five-row card; this page IS the full field, and dropping sixteen clubs out of
+    "Steph Curry Next Team" would answer a question nobody asked. The price is
+    nulled and the row stays — the contract the three arms above already keep.
+
+    A GRADED ROW IS EXEMPT, and that exemption is this function's and NOT the
+    shared predicate's. ``_leg_prices_an_empty_book`` reads three price columns
+    and knows nothing about settlement, which is right for the strip; here it
+    would mean withholding the price of a row the venue has already decided, and
+    #6532 states the cost of that plainly — withholding a settled row deletes a
+    result. Settled means settled, so the grade is checked HERE, at the call
+    site, rather than by teaching the shared rule a fourth condition its three
+    other consumers never asked for. Measured on production 2026-09-17: 58 of the
+    4,192 legs this arm reaches are graded, so the exemption costs the ship
+    nothing and buys back the one class where withholding does harm.
+
+    NO QUERY, like :func:`_book_refuted_outcome_ids` directly above and for the
+    same reason — the columns it reads are on rows already in memory.
+
+    MEASURED BEFORE SHIPPING (production, 2026-09-17): 4,192 legs across 2,402
+    open markets. 1,973 of those markets are left with no priced leg at all, and
+    1,910 of THOSE carry one or two legs — an untraded binary whose only book is
+    empty, which is exactly the row that should print nothing rather than a
+    manufactured coin flip. Eleven markets with six or more legs blank entirely.
+    """
+    return {
+        o.id
+        for o in market.outcomes
+        if getattr(o, "resolution_source", None) is None
+        and _leg_prices_an_empty_book(o)
+    }
+
+
 @router.get("/{market_id}")
 async def get_futures_market(
     market_id: int,
@@ -3260,15 +3348,26 @@ async def get_futures_market(
             db, market_id, outcome_ids
         )
 
-    # Two venues, two price rules, ONE set of withheld ids. The arms are
-    # mutually exclusive by construction — each screens on `market.source` — so
-    # the union is a union of disjoint sets and never a precedence question.
-    # They stay separate functions because the rules are genuinely different
-    # (gotcha #19): Kalshi's asks whether anything supports the price at all,
-    # Polymarket's asks whether the newest trade refutes it.
+    # Two venues, two price rules, plus one that belongs to neither — ONE set of
+    # withheld ids. The first three arms are mutually exclusive by construction,
+    # each screening on `market.source`, so their union was a union of disjoint
+    # sets and never a precedence question. They stay separate functions because
+    # the rules are genuinely different (gotcha #19): Kalshi's asks whether
+    # anything supports the price at all, Polymarket's asks whether the newest
+    # trade refutes it.
+    #
+    # #6757's arm BREAKS THAT DISJOINTNESS, DELIBERATELY, so the sentence above is
+    # corrected here rather than left to rot. An empty book is an empty book at
+    # either venue, so this one screens on no source at all and can name a row one
+    # of the others has already named. Nothing downstream has to care: this is a
+    # union of ids, an overlap is absorbed by definition, and `prices_withheld`
+    # counts ROWS rather than reasons. What it is not is a fourth spelling of the
+    # same rule — it is the single predicate three other read surfaces already
+    # call, asked on this route for the first time.
     unsupported_price_ids = await _unsupported_price_outcome_ids(db, market)
     unsupported_price_ids |= await _refuted_midpoint_outcome_ids(db, market)
     unsupported_price_ids |= _book_refuted_outcome_ids(market)
+    unsupported_price_ids |= _empty_book_outcome_ids(market)
 
     detail = _format_market_detail(market, bookmakers, unsupported_price_ids)
     if len(bookmakers) > 1 and source_breakdown:
