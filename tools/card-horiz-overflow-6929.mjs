@@ -42,8 +42,19 @@ if (proxy) args.push(`--proxy-server=${proxy}`, '--proxy-bypass-list=<-loopback>
 
 const browser = await chromium.launch({ headless: true, args });
 const page = await browser.newPage({ viewport: { width, height: 844 }, deviceScaleFactor: 2 });
-await page.goto(url, { waitUntil: 'networkidle', timeout: 90000 });
-await page.waitForTimeout(1500);
+// A LIVE page never goes network-idle -- it polls -- and `waitUntil: 'networkidle'` then throws a
+// TimeoutError on exactly the surfaces an overflow guard matters most on (an in-play event page
+// died here at 90s). The DOM is long since laid out by then, so idle is a nicety, not a
+// precondition: get the document, ask for idle as a BEST EFFORT, and measure either way. The mode
+// is printed so a reader can tell a settled measurement from a best-effort one.
+let loadMode = 'networkidle';
+await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
+try {
+  await page.waitForLoadState('networkidle', { timeout: 20000 });
+} catch {
+  loadMode = 'domcontentloaded+settle (page never went idle -- live polling)';
+}
+await page.waitForTimeout(2500);
 
 const out = await page.evaluate(() => {
   const r1 = (n) => Math.round(n * 10) / 10;
@@ -123,7 +134,7 @@ const out = await page.evaluate(() => {
 
 await browser.close();
 
-console.log(`cards=${out.cardCount} viewport=${out.viewport}px`);
+console.log(`cards=${out.cardCount} viewport=${out.viewport}px load=${loadMode}`);
 const escapes = out.findings.filter((f) => f.kind === 'CARD-ESCAPE');
 const clips = out.findings.filter((f) => f.kind === 'SELF-CLIP' && !f.ellipsis);
 for (const f of out.findings) {
