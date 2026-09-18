@@ -9,9 +9,18 @@
 # caught it, so they are the reason this file exists.
 #
 #   bash tools/reserved-sim-guard-selftest.sh     # exit 0 = clean
+#
+# 🔴 WHY ASSERTION 4 IS OVER A SET (native/233, 2026-09-18). It read "the
+# resolved default is never THE reserved device" — singular, because the
+# variable was — and it was GREEN on 2026-09-18 while `bl_default_shoot_sim`
+# handed out Alex's newly signed-in `iPhone 17`. One device was protected; two
+# needed to be; the assertion could not see the difference because it was shaped
+# like the bug. Assertions 4, 7 and 8 are over the whole set, and 8 is the one
+# that fails if the override is ever made subtractive again.
 set -u
 cd "$(dirname "$0")/.."
 RESERVED=76D961F0-8575-479F-ABCE-652D8A79DBF9
+RESERVED2=DD0DC456-E7C7-4740-8F5A-6BE6F61B606C
 FAILED=0
 ok()   { echo "  ok   — $1"; }
 fail() { echo "  FAIL — $1" >&2; FAILED=$((FAILED+1)); }
@@ -28,23 +37,39 @@ echo "2. the guard passes a disposable device"
 ( . tools/reserved-sim-guard.sh; bl_refuse_reserved_sim 00000000-0000-0000-0000-000000000000 selftest ) >/dev/null 2>&1
 [ $? -eq 0 ] && ok "exit 0" || fail "a non-reserved udid must not be refused"
 
-echo "3. BAINLUCK_RESERVED_SIMULATOR moves what is protected"
-( BAINLUCK_RESERVED_SIMULATOR=DEADBEEF . tools/reserved-sim-guard.sh
-  bl_refuse_reserved_sim "$RESERVED" selftest ) >/dev/null 2>&1
-[ $? -eq 0 ] && ok "override honoured" || fail "override not honoured"
+echo "2b. BOTH of Alex's devices are refused, not just the first"
+( . tools/reserved-sim-guard.sh; bl_refuse_reserved_sim "$RESERVED2" selftest ) >/dev/null 2>&1
+[ $? -eq 7 ] && ok "exit 7 on $RESERVED2" || fail "the second signed-in device is NOT protected"
+
+echo "3. BAINLUCK_RESERVED_SIMULATOR ADDS to what is protected"
 ( BAINLUCK_RESERVED_SIMULATOR=DEADBEEF . tools/reserved-sim-guard.sh
   bl_refuse_reserved_sim DEADBEEF selftest ) >/dev/null 2>&1
-[ $? -eq 7 ] && ok "override still protects" || fail "override protected nothing"
+[ $? -eq 7 ] && ok "override protects the device it names" || fail "override protected nothing"
+( BAINLUCK_RESERVED_SIMULATOR="$RESERVED2 DEADBEEF" . tools/reserved-sim-guard.sh
+  bl_refuse_reserved_sim DEADBEEF selftest ) >/dev/null 2>&1
+[ $? -eq 7 ] && ok "override takes a list" || fail "override does not accept several udids"
 
-echo "4. the resolved default is never the reserved device"
+echo "4. the resolved default is never ANY reserved device"
 . tools/reserved-sim-guard.sh
+# The set must be NON-EMPTY before "is the pick in it" means anything. Measured
+# while proving this file red against the old scalar guard: `bl_is_reserved_sim`
+# answers "no" to everything when the set is unset, so this assertion printed
+# `ok` for a pick that WAS Alex's device. An emptied set is the one input that
+# makes the rest of this file agree with a broken guard.
+RESERVED_COUNT=$(printf '%s' "${BL_RESERVED_SIMS:-}" | /usr/bin/grep -c .)
+[ "$RESERVED_COUNT" -ge 2 ] \
+  && ok "the reserved set holds $RESERVED_COUNT udids, so the checks below can fail" \
+  || fail "the reserved set holds $RESERVED_COUNT udids — every check below is vacuous"
+for u in "$RESERVED" "$RESERVED2"; do
+  bl_is_reserved_sim "$u" || fail "$u is not in the reserved set"
+done
 PICK=$(bl_default_shoot_sim)
 if [ -z "$PICK" ]; then
   ok "no iPhone on this machine — vacuously clean, and the callers :? on it"
-elif [ "$PICK" = "$RESERVED" ]; then
-  fail "bl_default_shoot_sim returned the RESERVED device"
+elif bl_is_reserved_sim "$PICK"; then
+  fail "bl_default_shoot_sim returned a RESERVED device: $PICK"
 else
-  ok "picked $PICK"
+  ok "picked $PICK, and it is in none of $(printf '%s' "$BL_RESERVED_SIMS" | /usr/bin/grep -c .) reserved udids"
 fi
 
 echo "5. no entrypoint hardcodes the reserved UDID as its device"
@@ -74,6 +99,74 @@ for f in $ENTRYPOINTS; do
     && ok "$(basename "$f")" \
     || fail "$f does not source reserved-sim-guard.sh"
 done
+
+echo "7. no entrypoint filters the reserved set with a SCALAR"
+# The shape that let this break: `grep -v "$BL_RESERVED_SIM"` excludes exactly
+# one UDID, so a second protected device walks straight through it. The variable
+# no longer exists; naming it is now the defect, and so is any bespoke pick that
+# reimplements the filter instead of calling bl_default_shoot_sim.
+SCALARS=0
+for f in $ENTRYPOINTS scripts/ios_native_gate.sh tools/reserved-sim-guard.sh; do
+  if /usr/bin/grep -n 'BL_RESERVED_SIM[^S]' "$f" >/dev/null 2>&1; then
+    fail "$f filters on the retired SCALAR BL_RESERVED_SIM"
+    SCALARS=$((SCALARS+1))
+  fi
+done
+[ "$SCALARS" -eq 0 ] && ok "0 scalar filters across $(echo $ENTRYPOINTS | wc -w | tr -d ' ') entrypoints + the gate + the guard"
+printf 'grep -v "$BL_RESERVED_SIM"\n' > /tmp/reserved-sim-scalar-strawman.sh
+if /usr/bin/grep -n 'BL_RESERVED_SIM[^S]' /tmp/reserved-sim-scalar-strawman.sh >/dev/null 2>&1; then
+  ok "strawman: the scalar scan does fire"
+else
+  fail "the scalar scan cannot detect a scalar filter — it proves nothing"
+fi
+rm -f /tmp/reserved-sim-scalar-strawman.sh
+
+echo "8. the override cannot UN-PROTECT a built-in reserved device"
+# This is the whole of the 2026-09-18 incident in one assertion. Under the old
+# replacing override, naming one of Alex's devices unprotected the other, so the
+# picker handed it out — "protect this too" and "stop protecting that" were the
+# same export. Additive means there is no spelling of the second.
+for pair in "$RESERVED2:$RESERVED" "$RESERVED:$RESERVED2"; do
+  NAMED=${pair%%:*}; OTHER=${pair##*:}
+  ( BAINLUCK_RESERVED_SIMULATOR="$NAMED" . tools/reserved-sim-guard.sh
+    bl_refuse_reserved_sim "$OTHER" selftest ) >/dev/null 2>&1
+  [ $? -eq 7 ] \
+    && ok "naming ${NAMED%%-*} leaves ${OTHER%%-*} protected" \
+    || fail "naming ${NAMED%%-*} UN-PROTECTED ${OTHER%%-*} — the override is subtractive again"
+done
+# And the picker, which is where an un-protect actually does the damage.
+for u in "$RESERVED" "$RESERVED2"; do
+  P=$(BAINLUCK_RESERVED_SIMULATOR="$u" sh -c '. tools/reserved-sim-guard.sh; bl_default_shoot_sim')
+  if [ -n "$P" ] && ( . tools/reserved-sim-guard.sh; bl_is_reserved_sim "$P" ); then
+    fail "with $u named, the picker handed out reserved $P"
+  else
+    ok "with ${u%%-*} named, the picker returned ${P:-nothing}"
+  fi
+done
+
+echo "9. the gate's preflight resolves a device and refuses both reserved ones"
+# `scripts/ios_native_gate.sh` is the entrypoint that INSTALLS, so it is the one
+# whose device resolution matters most — and it was the last place still holding
+# its own copy of the constant. Its default was the literal name `iPhone 17`,
+# which on 2026-09-18 matched both of Alex's devices and nothing else: exit 6 on
+# every bare invocation, with the reserved pair offered as the disambiguation.
+# These five outcomes are the contract; the preflight runs no xcodebuild.
+gate() { bash scripts/ios_native_gate.sh preflight ${1:+"$1"} >/dev/null 2>&1; echo $?; }
+gate_is() {  # gate_is <want> <arg-or-empty> <what>
+  _got=$(gate "$2")
+  [ "$_got" = "$1" ] && ok "$3 (exit $_got)" || fail "$3 — got exit $_got, want $1"
+}
+gate_is 0 ""                 "bare invocation resolves a device"
+gate_is 0 "iPhone 17 Pro"    "a disposable name passes"
+gate_is 6 "iPhone 17"        "an ambiguous name refuses"
+gate_is 7 "$RESERVED"        "the first reserved udid is refused BY UDID"
+gate_is 7 "$RESERVED2"       "the second reserved udid is refused BY UDID"
+# The bare case must not be passing because it silently fell back to a NAME that
+# happens to work; it must be the picker's udid, which is the unambiguous form.
+GATE_DEST=$(bash scripts/ios_native_gate.sh preflight 2>/dev/null | sed -n "s/.*destination '\([^']*\)'.*/\1/p")
+[ "$GATE_DEST" = "$(. tools/reserved-sim-guard.sh; bl_default_shoot_sim)" ] \
+  && ok "the bare default IS the shared picker's udid, not a name" \
+  || fail "the bare default is '$GATE_DEST', not the shared picker's udid"
 
 echo
 if [ "$FAILED" -eq 0 ]; then echo "RESERVED-SIM GUARD SELFTEST: CLEAN"; exit 0; fi
