@@ -2378,6 +2378,34 @@ jobs:
             exit 1
           fi
 
+      - name: "#6975 twin id sub-resources resolve like the detail route (real Postgres)"
+        # The detail route canonicalised a twin id and its three sub-resources
+        # did not, so `bainluck://events/15310639` (Liverpool 0-0 Fulham) drew a
+        # correct FINAL hero over "No win probability readings", "No prediction
+        # markets" and two Championship Path cards both titled `FC`. The fix is
+        # one identity decision (`resolve_served_event`) applied to
+        # `/game-markets`, `/history` and `/team-progression`.
+        #
+        # Only a real Postgres can grade it: the proof is that the ROW the
+        # queries filter, the fold, the cache keys and the returned identity all
+        # follow the resolved id, and a mocked session hands every query the
+        # same stub row. The gate seeds the twin and the canonical with distinct
+        # values, drives the real handlers over a real session, and exercises
+        # both caches cold and warm — including a stale slot written under the
+        # twin id by the previous release.
+        #
+        # Same skip detection as every gate in this job: pytest exits 0 when
+        # each test skips, and a gate that silently did not run reads exactly
+        # like one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_event_subresources_resolve_twin_id_6975_pg.py \
+            -v -rs 2>&1 | tee /tmp/subresources6975.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/subresources6975.txt; then
+            echo "::error::#6975 twin id sub-resource gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#5896 pre-kick-off LEG withdrawal grain (real Postgres)"
         # `5896-CLEAR-ANSWERED-LEGS-IN-MIXED-BOOKS-WITHOUT-HARMING-LIVE-SIBLINGS`
         # promises one thing: on a mixed book the answered leg's stored artifact

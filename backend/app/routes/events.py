@@ -12592,6 +12592,150 @@ async def _venue_settlement(db: AsyncSession, event) -> dict | None:
     }
 
 
+# ═══ #6975: WHICH ROW A READER WHO ASKED FOR AN ID IS SERVED ══════════════════
+#
+# One decision, four callers. ``GET /api/events/{id}`` has resolved a twin id to
+# the row it duplicates since #2263 (the ``provenance:duplicate-of`` tag) and
+# Q050 (the market-born drain verdict). Its three sub-resources — ``/game-markets``,
+# ``/history`` and ``/team-progression`` — never did, so a page could be handed
+# the canonical row's hero and then, asking the same id three more times, the
+# twin row's emptiness. Measured on production 2026-09-18 (issue #6975):
+#
+#     GET /api/events/15310639                  -> id 15297677, Liverpool v Fulham,
+#                                                  completed 0-0            (resolved)
+#     GET /api/events/15310639/game-markets     -> event_id 15310639, teams null,
+#                                                  0 markets                (NOT resolved)
+#     GET /api/events/15310639/team-progression -> "Liverpool FC" / short_name "FC"
+#
+# The reader saw a correct ``FINAL 0-0`` hero over "No win probability readings",
+# "No prediction markets" and two progression cards both titled ``FC``. Every
+# empty state was the honest rendering of an empty payload, which is exactly why
+# the page read as truthful and was not.
+#
+# `resolve_served_event` is the detail route's identity decision LIFTED OUT so
+# that the sub-resources call the same one, rather than each growing a copy
+# that drifts. It decides nothing new:
+#
+# * **Arm 1 — the written proof.** ``canonical_id_from_tags`` reads the
+#   ``provenance:duplicate-of:<id>`` element ``reconcile_shared_fixture_ids``
+#   wrote on an id-anchored correspondence (ruling 048 arm B). One hop, never
+#   chased (a duplicate of a duplicate is a matching defect, and a chase is an
+#   unbounded walk with a cycle at the end of it).
+# * **Arm 2 — the market-born drain verdict.** ``is_drain_candidate_row`` answers
+#   in Python for every fixture with a schedule or a score, so the verdict query
+#   only ever runs for a scoreless market-born row; ``resolve_market_born_duplicate``
+#   then applies the six refusals unchanged. Recomputed from live state on every
+#   miss, exactly as the detail route recomputes it.
+# * **Missing target is a refusal, not a 404.** A tag or verdict naming a row that
+#   has since vanished serves the row the caller asked for — the row they can see
+#   still exists.
+#
+# Nothing is merged, written, repointed or unvoided. The order of the two arms and
+# the reads each one makes are the detail route's, byte for byte in effect: arm 2
+# is evaluated on whatever row arm 1 left in hand, which is what makes a chain
+# impossible (see ``resolve_market_born_duplicates`` refusal 5).
+#
+# What this deliberately does NOT do: it does not decide retirement. The detail
+# route's 410 for a ``merged``/``voided`` row that cannot name its successor is
+# that route's own contract (``lib/loadFailure.ts`` reads the status code), and the
+# sub-resources have never refused a retired row. Each caller keeps its own
+# behaviour after this returns.
+#
+# Kept in this module rather than in a utility so the resolver names it reads —
+# `resolve_market_born_duplicate`, `canonical_id_from_tags`,
+# `is_drain_candidate_row` — are the ones this module imports, which is what
+# every existing rig that monkeypatches `events_route.resolve_market_born_duplicate`
+# relies on.
+
+
+@dataclass(frozen=True)
+class ServedEvent:
+    """The row to serve, and the id the caller asked for.
+
+    ``requested_id`` is kept beside the row so a caller that caches can key the
+    result under BOTH ids — the detail route's Q050 rule: "cache under the id
+    the caller ASKED FOR as well as the one we served", because a ghost url is
+    the one population that always needs the verdict query and would otherwise
+    pay it on every request.
+    """
+
+    requested_id: int
+    #: The id of ``event`` — the path parameter when nothing resolved, else the
+    #: canonical id the proof named. Carried explicitly rather than read back
+    #: off the row so a caller's own id is what it keys on.
+    event_id: int
+    event: Event
+
+    @property
+    def resolved_elsewhere(self) -> bool:
+        """True when the row served is not the row asked for."""
+        return self.event_id != self.requested_id
+
+    @property
+    def cache_ids(self) -> tuple[int, ...]:
+        """Every id a payload built from this row may be cached under."""
+        if self.resolved_elsewhere:
+            return (self.requested_id, self.event_id)
+        return (self.requested_id,)
+
+
+async def _load_with_sport(db: AsyncSession, event_id: int):
+    return (
+        await db.execute(
+            select(Event).options(selectinload(Event.sport)).where(Event.id == event_id)
+        )
+    ).scalar_one_or_none()
+
+
+async def resolve_served_event(
+    db: AsyncSession, event: Event, *, requested_id: int
+) -> ServedEvent:
+    """The row ``event``'s reader should be served — ``event`` itself, or the
+    row it has been proven to duplicate.
+
+    ``event`` is the row the caller already loaded by primary key
+    ``requested_id`` (with ``Event.sport`` eagerly loaded, as every caller
+    does). A clean row costs no query: arm 1 is a scan of the tag list already
+    in hand and arm 2's gate is pure. Only a tagged row, or a scoreless
+    market-born row, reads again — one primary-key load for the target, plus
+    the verdict statement for arm 2.
+    """
+    requested_id = int(requested_id)
+    event_id = requested_id
+
+    # ── Arm 1 (#2263): a PROVEN duplicate reads as the row it duplicates ─────
+    canonical_id = canonical_id_from_tags(getattr(event, "event_tags", None))
+    if canonical_id is not None and canonical_id != event_id:
+        canonical = await _load_with_sport(db, canonical_id)
+        # A tag naming a row that has since been deleted must not 404 a row the
+        # caller can see: refuse the swap, keep the row in hand.
+        if canonical is not None:
+            event = canonical
+            event_id = canonical_id
+
+    # ── Arm 2 (Q050): a market-born duplicate reads as the row it duplicates ─
+    #
+    # Evaluated on whatever arm 1 left in hand, as the detail route does. The
+    # gate is what keeps this off the hot path: a fixture from a real schedule,
+    # or any row carrying a score, answers in Python and never issues the query.
+    if is_drain_candidate_row(
+        commence_time_source=getattr(event, "commence_time_source", None),
+        home_score=event.home_score,
+        away_score=event.away_score,
+        completed_at=event.completed_at,
+    ):
+        canonical_id = await resolve_market_born_duplicate(db, event_id)
+        if canonical_id is not None and canonical_id != event_id:
+            canonical = await _load_with_sport(db, canonical_id)
+            # A resolution whose target vanished between the two reads is a
+            # refusal, not a 404: the row the caller asked for still exists.
+            if canonical is not None:
+                event = canonical
+                event_id = canonical_id
+
+    return ServedEvent(requested_id=requested_id, event_id=event_id, event=event)
+
+
 @router.get("/{event_id}")
 async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     """Get event details with aggregated odds from all bookmakers."""
@@ -12612,98 +12756,37 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    # ── #2263: a PROVEN duplicate reads as the row it duplicates ─────────────
+    # ── #2263 + Q050: a PROVEN duplicate reads as the row it duplicates ──────
     #
-    # The arm below infers the correspondence; this one is simply TOLD. When
-    # `reconcile_shared_fixture_ids` proves two rows are one contest — both
-    # already carrying the same StatPal fixture id, ruling 048 arm B — it writes
-    # `provenance:duplicate-of:<canonical>` on the row it did not elect, and
-    # every LIST surface has consumed that tag since #2263. This route never
-    # did, for a structural reason rather than an oversight: `where()` needs a
-    # list to filter, and a detail page has exactly one row, so the predicate
-    # the rails use would answer "do not print this" and leave a 404 for a game
-    # that exists.
+    # Two arms, one decision, and since #6975 it lives in
+    # `resolve_served_event` above so that `/game-markets`, `/history` and
+    # `/team-progression` make the SAME decision this route makes — the
+    # measured defect was a page handed this route's canonical hero and then,
+    # asking the same id three more times, the twin row's emptiness.
     #
-    # What the reader got instead, measured on production 2026-09-16 05:33Z:
+    # Arm 1 is the written proof: `reconcile_shared_fixture_ids` writes
+    # `provenance:duplicate-of:<canonical>` on an id-anchored correspondence
+    # (ruling 048 arm B). It is asked FIRST and not merely for speed — it rests
+    # on a proof rather than on a contradiction reconstructed from anchors, and
+    # it costs no query on the miss (the tag is already on the row in hand).
+    # Measured on production 2026-09-16 05:33Z before it was read here:
     # `/api/events/15308290` served `suspended`, no score, for a Cardinals-Giants
     # game that had finished 3-10 three hours earlier on 15312656 — the id its
-    # own tag names. The ghost is not a transient. It was minted 2026-09-09,
-    # five days BEFORE its canonical twin, and its state has been a lie ever
-    # since; 255 of the 258 tagged rows sitewide are past-dated the same way.
-    # The hourly reconciler is doing its job and cannot fix this, because the
-    # row is correctly tagged — it is only the reading of the tag that is
-    # missing here.
+    # own tag names.
     #
-    # Two reader paths reach it and both end at this route: a shared or
-    # bookmarked link, and a market card — 1,766 markets hang off 188 tagged
-    # ghosts. (Not a search engine: `frontend/app/sitemap.ts` excludes per-event
-    # URLs.) So one swap here closes both.
+    # Arm 2 is the market-born drain verdict (`resolve_market_born_duplicate`):
+    # ruling 048's "id-keyed reconciliation drains the duplicate when an id
+    # arrives", read as the contradiction between an anchor row and the market
+    # that moved. Nothing is merged and nothing is written — the ghost stays
+    # addressable and the verdict is recomputed from live state on every miss.
+    # `is_drain_candidate_row` keeps it off the hot path: a fixture from a real
+    # schedule, or any row carrying a score, answers in Python.
     #
-    # FIRST, and not merely for speed: this arm is the stronger evidence. It
-    # rests on a written proof rather than on a contradiction reconstructed from
-    # anchors, and it costs no query on the miss — the tag is already on the row
-    # in hand, so a clean event pays one `startswith` scan of its own tag list.
-    # The arm below is left exactly as it is: its gate excludes `statpal`,
-    # `odds_api` and `espn` rows (39 of the 258) from even being asked about,
-    # which is why the specimen above fell through it untouched.
-    canonical_id = canonical_id_from_tags(getattr(event, "event_tags", None))
-    if canonical_id is not None and canonical_id != event_id:
-        canonical = (
-            await db.execute(
-                select(Event)
-                .options(selectinload(Event.sport))
-                .where(Event.id == canonical_id)
-            )
-        ).scalar_one_or_none()
-        # Same refusal as the arm below, for the same reason: a tag naming a row
-        # that has since been deleted must not 404 a row the caller can see.
-        # 258 of 258 targets resolved on production, so this is a guard against
-        # a future race, not against today's data.
-        if canonical is not None:
-            event = canonical
-            event_id = canonical_id
-
-    # ── Q050: a market-born duplicate reads as the row it duplicates ──────────
-    #
-    # Ruling 048 accepts duplicate rows as a bounded, declared cost on the
-    # promise that "id-keyed reconciliation drains the duplicate when an id
-    # arrives". `_reconcile_kalshi_match_segments` builds the first half — it
-    # moves the markets onto the schedule-derived row — and stops there, which
-    # ORPHANS the duplicate rather than draining it. Measured on production
-    # 2026-09-02, after Q048 deployed: event 15300759 holds zero markets and
-    # still answers this route with `scheduled, 2026-08-30 00:00Z` for a match
-    # ESPN had final at 2026-09-01 23:05Z, on event 15293804.
-    #
-    # `resolve_market_born_duplicate` reads that as the id-keyed contradiction
-    # it is: the anchor row says market `KXATPMATCH-26AUG30VALMON` created
-    # 15300759, the market says its event is 15293804. Nothing is merged and
-    # nothing is written — the ghost stays addressable, and the verdict is
-    # recomputed from live state on every miss, so a market that moves back
-    # un-drains its row on the next request.
-    #
-    # The gate is what keeps this off the hot path: a fixture from a real
-    # schedule, or any row carrying a score, answers in Python and never issues
-    # the query.
-    if is_drain_candidate_row(
-        commence_time_source=getattr(event, "commence_time_source", None),
-        home_score=event.home_score,
-        away_score=event.away_score,
-        completed_at=event.completed_at,
-    ):
-        canonical_id = await resolve_market_born_duplicate(db, event_id)
-        if canonical_id is not None and canonical_id != event_id:
-            canonical = (
-                await db.execute(
-                    select(Event)
-                    .options(selectinload(Event.sport))
-                    .where(Event.id == canonical_id)
-                )
-            ).scalar_one_or_none()
-            # A resolution whose target vanished between the two reads is a
-            # refusal, not a 404: the row the caller asked for still exists.
-            if canonical is not None:
-                event = canonical
-                event_id = canonical_id
+    # A target that has vanished is a refusal, not a 404, in both arms: the row
+    # the caller asked for still exists.
+    _served = await resolve_served_event(db, event, requested_id=event_id)
+    event = _served.event
+    event_id = _served.event_id
 
     # ── lane1/132: a row marked retired stops rendering ──────────────────────
     #
@@ -16569,6 +16652,14 @@ async def get_game_markets(
       L2s Redis mirror    — served while young enough for the status, with ONE
                             rebuild scheduled behind it.
       build               — what every reader used to do.
+
+    #6975: every tier is keyed under the id the caller ASKED FOR. The build
+    resolves a twin id to the row the detail route serves and publishes under
+    both ids (`_publish_game_markets`), so a ghost url's second reader hits and
+    the canonical's slot is warm from the same build. A slot written under a
+    twin id BEFORE this shipped holds the twin row's empty book; it carries the
+    release that built it, and `gmc.read` refuses a slot from another build
+    (#6355), so the first reader after the release rebuilds it.
     """
     from app.utils import game_markets_cache as gmc
 
@@ -16743,10 +16834,34 @@ async def _publish_game_markets(
             response, source_status=source_status, lifecycle_watermark=watermark
         )
     )
-    gmc.write(event_id, enveloped)
     served = gmc.with_availability(enveloped, gmc.AVAILABILITY_LIVE)
-    _write_game_markets_memo(event_id, source_status, served)
+    # #6975: publish under the id the caller ASKED FOR as well as the row the
+    # payload was built from — the detail route's Q050 rule, applied to this
+    # tier. A twin id is the one population that always pays the identity
+    # reads, so keying only under the canonical would make every reader of a
+    # ghost url rebuild; keying only under the requested id would leave the
+    # canonical's own slot cold after a build that already has its bytes.
+    # `_game_markets_cache_ids` is one id for every untagged event, so the
+    # writes below compile to exactly what they were before.
+    for cache_id in _game_markets_cache_ids(event_id, response):
+        gmc.write(cache_id, enveloped)
+        _write_game_markets_memo(cache_id, source_status, served)
     return served
+
+
+def _game_markets_cache_ids(requested_id: int, response) -> tuple[int, ...]:
+    """The ids one built payload is published under: the requested id, plus the
+    served row's id when the build resolved elsewhere (#6975).
+
+    Read back off the payload rather than threaded through a new return value
+    so every existing caller of `_build_game_markets` — and every rig that
+    fakes it with a body naming the requested id — keeps its shape.
+    """
+    ids = [int(requested_id)]
+    served_id = response.get("event_id") if isinstance(response, dict) else None
+    if isinstance(served_id, int) and served_id != ids[0]:
+        ids.append(served_id)
+    return tuple(ids)
 
 
 async def _rebuild_game_markets(event_id: int) -> None:
@@ -16896,6 +17011,25 @@ async def _build_game_markets(
     event = result.scalar_one_or_none()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+
+    # ── #6975: the markets are the row the DETAIL route serves, not the id ───
+    #
+    # `GET /api/events/15310639` answered with canonical 15297677 (Liverpool v
+    # Fulham, completed 0-0) while this build, asked the same id, read the twin
+    # row: `event_id 15310639, home_team null, away_team null, 0 markets`. The
+    # fold below (`folded_event_ids`) could never reach the canonical from the
+    # ghost — it collects rows tagged as duplicates OF the id it is handed, and
+    # the ghost is the tagged side. Resolving first is what makes the fold, the
+    # sport net, the foreign-game filter and the unlinked window all run over
+    # the row the page is actually about. Same two arms, same refusals, same
+    # order as the detail route (`resolve_served_event`); nothing is written.
+    #
+    # The response's `event_id` is therefore the row the markets belong to, as
+    # the detail route's `id` already is. `_publish_game_markets` reads it back
+    # to key the cache under the id the caller asked for AS WELL AS this one.
+    _served = await resolve_served_event(db, event, requested_id=event_id)
+    event = _served.event
+    event_id = _served.event_id
 
     sport_key = event.sport.key if event.sport else None
 
@@ -20141,7 +20275,13 @@ async def get_team_progression(
     """
     import json as _json
     from app.tasks.redis_state import get_redis_client
-    _cache_key = f"bainluck:team_progression:{event_id}"
+
+    # #6975: the slot is keyed under the id the caller asked for, and since
+    # this route resolves a twin id the way the detail route does, a slot
+    # written under a twin id now holds the CANONICAL row's progression. The
+    # namespace carries a version for exactly that reason — see
+    # `_team_progression_cache_key`.
+    _cache_key = _team_progression_cache_key(event_id)
     try:
         _rc = get_redis_client()
         _cached = _rc.get(_cache_key)
@@ -20162,6 +20302,31 @@ async def get_team_progression(
     event = result.scalar_one_or_none()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+
+    # ── #6975: the progression is the row the DETAIL route serves ────────────
+    #
+    # `/api/events/15310639/team-progression` served `"Liverpool FC"` with
+    # `short_name "FC"` off the twin row, under a hero the detail route had
+    # already resolved to canonical 15297677 (`"Liverpool"` / `"Liverpool"`).
+    # `short_name` is the last word of the served row's name, so the client's
+    # two cards both read `FC` — the backend's, not a client abbreviation bug
+    # (#5651 is closed and did not regress). Same decision, same arms, same
+    # refusals as the detail route; nothing is written.
+    _served = await resolve_served_event(db, event, requested_id=event_id)
+    event = _served.event
+    event_id = _served.event_id
+    # A twin id that resolved: the canonical's own slot may already be warm,
+    # and its bytes are exactly this answer. One Redis read, then the requested
+    # id's slot is filled from it so the next reader of the twin url hits.
+    if _served.resolved_elsewhere:
+        try:
+            _rc = get_redis_client()
+            _cached = _rc.get(_team_progression_cache_key(event_id))
+            if _cached:
+                _rc.setex(_cache_key, _TEAM_PROGRESSION_CACHE_TTL, _cached)
+                return _json.loads(_cached)
+        except Exception:
+            pass
 
     sport_key = event.sport.key if event.sport else None
     if not sport_key:
@@ -20220,10 +20385,41 @@ async def get_team_progression(
     }
     try:
         _rc = get_redis_client()
-        _rc.setex(_cache_key, 300, _json.dumps(_response, default=str))
+        _encoded = _json.dumps(_response, default=str)
+        # Under the id the caller asked for AND the row served (#6975) — one
+        # key for every untagged event, which is what this write always was.
+        for cache_id in _served.cache_ids:
+            _rc.setex(
+                _team_progression_cache_key(cache_id),
+                _TEAM_PROGRESSION_CACHE_TTL,
+                _encoded,
+            )
     except Exception:
         pass
     return _response
+
+
+#: Five minutes, unchanged from the inline literal this replaced.
+_TEAM_PROGRESSION_CACHE_TTL = 300
+
+#: `v2` — the FIRST versioned namespace this slot has carried, and it exists
+#: because of #6975. Every `bainluck:team_progression:{id}` entry was keyed by
+#: the id the caller asked for and built from THAT row; for a twin id that is
+#: the ghost's progression (`"Liverpool FC"` / `"FC"`), and this cache carries
+#: no build stamp that would let `read` refuse it (unlike `game_markets_cache`).
+#: A new namespace makes every pre-#6975 entry unreachable BY KEY rather than
+#: by hope, at the cost of one cold build per event on the first read after
+#: release — cheap here: the league context behind it is itself Redis-cached.
+#: The old keys expire on their own five-minute TTL.
+#:
+#: Adjacent, reported not fixed: `routes/playoffs.get_team_progression_for_event`
+#: writes a DIFFERENT shape under the unversioned key with a 900 s TTL. It has
+#: no callers today; if one arrives it must not share this namespace.
+_TEAM_PROGRESSION_CACHE_PREFIX = "bainluck:team_progression:v2:"
+
+
+def _team_progression_cache_key(event_id: int) -> str:
+    return f"{_TEAM_PROGRESSION_CACHE_PREFIX}{event_id}"
 
 
 def _completed_at_is_authoritative(completed_at, commence_time) -> bool:
@@ -21040,6 +21236,29 @@ async def get_event_odds_history(
 
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+
+    # ── #6975: the chart is the row the DETAIL route serves, not the id ──────
+    #
+    # `/events/15310639` drew a resolved FINAL 0-0 hero over "No win probability
+    # readings for this game": the detail route had swapped to canonical
+    # 15297677 and this route, asked the same id, read the twin. The fold below
+    # (`folded_series_event_ids`) cannot repair that from the ghost's side — it
+    # gathers rows tagged as duplicates OF the id it is given, and the ghost IS
+    # the tagged row, so from 15310639 it returns `[15310639]` and every series
+    # query reads nothing.
+    #
+    # FIRST, above the kick-off corrections and every state reader: the row we
+    # are about to chart is the row whose kick-off, finish and window have to
+    # be right — the same placement argument #6568 makes two blocks down, one
+    # step earlier. Same two arms, same refusals, same order as the detail
+    # route (`resolve_served_event`); nothing is written. `event_id` is rebound
+    # so the series fold, the score/ESPN/scoring-play reads, the moments read,
+    # the pinned-hero lookup (`_cached_detail_payload`, which the detail route
+    # fills under both ids) and the payload's own `event_id` all follow the
+    # served row, exactly as the detail route's `event_id` does.
+    _served = await resolve_served_event(db, event, requested_id=event_id)
+    event = _served.event
+    event_id = _served.event_id
 
     # ── The chart reads the same kick-off the page does (#6568) ───────────────
     #

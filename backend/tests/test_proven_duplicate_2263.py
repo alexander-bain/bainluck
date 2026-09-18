@@ -1228,50 +1228,80 @@ class TestTheDetailRouteSwapsTheRow:
 
 
 class TestTheRouteIsActuallyWired:
-    """Part H(iii) — the arm is in `get_event`'s body, and it is FIRST.
+    """Part H(iii) — the arm is in the decision the route runs, and it is FIRST.
 
     🔴 AN ORDERING CLAIM IS ONLY MEANINGFUL INSIDE ONE FUNCTION BODY. Comparing
     two line numbers across a module measures text, not execution — a helper
     DEFINED below a boundary may be CALLED from far above it. So the precondition
-    is asserted first and loudly: both calls must live in `get_event` itself.
-    Without that line this test could pass on code where neither call is reached.
+    is asserted first and loudly: both calls must live in ONE body.
+
+    #6975 moved that body. The two arms were `get_event`'s own statements; they
+    are now `resolve_served_event`, which `get_event` and its three
+    sub-resources all run so that a page cannot serve one row's hero beside
+    another row's emptiness. The guards therefore read the arms out of the
+    helper and, separately, assert that every one of the four routes actually
+    CALLS it and rebinds both names from what it returns — the extraction must
+    not become the way a route quietly stops resolving.
     """
 
-    def _get_event_body(self):
+    #: The four readers a ghost url reaches. All four must make the one decision.
+    ROUTES = (
+        "get_event",
+        "get_game_markets_build",
+        "get_event_odds_history",
+        "get_team_progression",
+    )
+
+    @staticmethod
+    def _route_source(name):
+        import inspect
+
+        from app.routes import events as events_route
+
+        # The game-markets ROUTE is the tier's cache policy; the row is loaded
+        # and resolved in its build, which every path through the tier runs.
+        target = (
+            events_route._build_game_markets
+            if name == "get_game_markets_build"
+            else getattr(events_route, name)
+        )
+        return inspect.getsource(target)
+
+    def _decision_body(self):
         import ast
         import inspect
 
-        from app.routes.events import get_event
+        from app.routes.events import resolve_served_event
 
-        tree = ast.parse(inspect.getsource(get_event))
+        tree = ast.parse(inspect.getsource(resolve_served_event))
         called = {}
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                 called.setdefault(node.func.id, node.lineno)
         return called
 
-    def test_both_arms_are_called_from_get_event_itself(self):
-        called = self._get_event_body()
+    def test_both_arms_are_called_from_the_one_decision(self):
+        called = self._decision_body()
         assert "canonical_id_from_tags" in called, (
-            "the #2263 tag arm is not called from get_event — the ghost URL is "
-            "serving a wrong-state page again"
+            "the #2263 tag arm is not called from resolve_served_event — the "
+            "ghost URL is serving a wrong-state page again"
         )
         assert "is_drain_candidate_row" in called, (
-            "the Q050 arm left get_event; this test's ordering claim below is "
-            "no longer about two things that both run here"
+            "the Q050 arm left resolve_served_event; this test's ordering claim "
+            "below is no longer about two things that both run here"
         )
 
     def test_the_tag_arm_runs_before_the_inferred_one(self):
         """The tag is a written proof; the other arm reconstructs one. Cheaper
         too: the tag is on the row already in hand and costs no query on a miss.
         """
-        called = self._get_event_body()
+        called = self._decision_body()
         assert called["canonical_id_from_tags"] < called["is_drain_candidate_row"]
 
     def test_both_arms_swap_the_SAME_names(self):
         """🔴 WRITTEN BECAUSE A MUTANT SURVIVED. Part H(ii) executes the swap's
         LOGIC — read the tag, read that id back — so it cannot see a defect in
-        the route's own swap statement. Deleting `event = canonical` while
+        the decision's own swap statement. Deleting `event = canonical` while
         leaving `event_id = canonical_id` kept all 59 tests green: the route
         would then renumber the page and still render the ghost's `suspended`
         and its missing score, which is the original bug wearing the right id.
@@ -1283,9 +1313,9 @@ class TestTheRouteIsActuallyWired:
         import ast
         import inspect
 
-        from app.routes.events import get_event
+        from app.routes.events import resolve_served_event
 
-        tree = ast.parse(inspect.getsource(get_event))
+        tree = ast.parse(inspect.getsource(resolve_served_event))
         arms = [
             node
             for node in ast.walk(tree)
@@ -1296,8 +1326,8 @@ class TestTheRouteIsActuallyWired:
         ]
         assert len(arms) == 2, (
             "expected exactly two `if canonical is not None:` swap arms in "
-            f"get_event, found {len(arms)} — this test no longer compares the "
-            "two things it was written to compare"
+            f"resolve_served_event, found {len(arms)} — this test no longer "
+            "compares the two things it was written to compare"
         )
         assigned = [
             {
@@ -1315,6 +1345,40 @@ class TestTheRouteIsActuallyWired:
             "the row it renders"
         )
         assert assigned[0] == {"event", "event_id"}
+
+    @pytest.mark.parametrize("route", ROUTES)
+    def test_every_reader_of_a_ghost_url_runs_the_one_decision(self, route):
+        """#6975 — the extraction is only a fix if all four readers CALL it.
+
+        The same mutant as above, one level up: a route that calls the decision
+        and rebinds only `event_id` renumbers its payload and still reads the
+        ghost. So each route must assign BOTH names from the result.
+        """
+        import ast
+
+        tree = ast.parse(self._route_source(route))
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "resolve_served_event"
+        ]
+        assert calls, f"{route} never calls resolve_served_event — it reads the twin"
+        rebound = {
+            node.targets[0].id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Attribute)
+            and isinstance(node.value.value, ast.Name)
+            and node.value.value.id == "_served"
+        }
+        assert {"event", "event_id"} <= rebound, (
+            f"{route} calls the decision but rebinds only {rebound or '{}'} from "
+            "it — a renumbered payload over the wrong row"
+        )
 
     def test_the_gate_below_cannot_reach_the_specimens_own_source(self):
         """WHY a second arm was needed at all, pinned so it cannot be forgotten.
