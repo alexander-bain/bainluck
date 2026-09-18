@@ -262,10 +262,47 @@ describe("#6238 the event page is actually wired to the rule", () => {
     "utf8",
   );
 
-  it("all four away values are taken through printableAway", () => {
-    for (const name of ["servedAwayProb", "servedAwayPct", "servedOpeningAwayProb", "servedOpeningAwayPct"]) {
+  /**
+   * ═══ #6614 NARROWED THIS FROM FOUR TO TWO, BY MEASUREMENT ═══
+   *
+   * This read "all four away values", and that was right for as long as both
+   * pairs on the page were believed to be the same kind of object. They are
+   * not. `current_odds.away_probability` is derived as `1 - home`;
+   * `opening_odds` is de-vigged across the whole quoted board (#1011), so its
+   * two legs are real independently sourced prices summing to ~0.76.
+   *
+   * Measured on production 2026-09-18, `/api/feed?mode=sports`, 25 soccer
+   * cards: `current_odds` is a complement on 25/25, `opening_odds` on only
+   * 16/25. The blanket rule was deleting a real away price on the other 9 —
+   * `/events/15298749`, a 21% underdog that WON, printed no pregame mark at all.
+   *
+   * So the CURRENT pair keeps `printableAway` verbatim (that is still the whole
+   * protection, and the arm below is unchanged), and the OPENING pair moves to
+   * the per-pair `awayIsTheComplement`. This is a narrowing of the rule's
+   * DOMAIN, not a relaxation of it: #6238's defect — a served away value
+   * reaching a render unguarded — is still caught on both pairs.
+   */
+  it("the CURRENT away values are taken through printableAway", () => {
+    for (const name of ["servedAwayProb", "servedAwayPct"]) {
       expect(PAGE).toMatch(new RegExp(`printableAway\\(${name},\\s*event\\.sport\\)`));
     }
+  });
+
+  it("#6614 — the OPENING away values are taken through the per-PAIR rule", () => {
+    // The predicate is asked about this pair's own two legs...
+    expect(PAGE).toMatch(
+      /const openingAwaySlotWithheld = awayIsTheComplement\(\s*servedOpeningAwayProb,\s*openingHomeProb,\s*event\.sport,?\s*\)/,
+    );
+    // ...and both values are gated on its answer.
+    for (const name of ["servedOpeningAwayProb", "servedOpeningAwayPct"]) {
+      expect(PAGE).toMatch(
+        new RegExp(`openingAwaySlotWithheld \\? null : ${name}`),
+      );
+    }
+    // #6238's defect, still refused: neither opening value may reach a render
+    // as the raw served figure.
+    expect(PAGE).not.toMatch(/openingAwayProb=\{servedOpeningAwayProb\}/);
+    expect(PAGE).not.toMatch(/rendered: servedOpeningAwayPct/);
   });
 
   it("the served away values are renamed at the destructure, so none can reach a render", () => {
@@ -290,7 +327,13 @@ describe("#6238 the event page is actually wired to the rule", () => {
     // does not has moved the false number three rows down, not deleted it.
     expect(PAGE).toMatch(/Opened \{formatProbability\(openingHomeProb/);
     // …and its separator is gated with it, or the line reads `Opened 64% – -`.
-    expect(PAGE).toMatch(/!awaySlotWithheld && <>[\s\S]{0,80}openingAwayProb/);
+    //
+    // #6614: gated on the OPENING pair's own answer. Gating it on
+    // `awaySlotWithheld` — the hero pair's — is what deleted `Opened 32% – 40%`
+    // down to `Opened 32%` on 9 of 25 live soccer cards. The two loci on one
+    // screen legitimately answer differently, because they are two different
+    // pairs from two different producers.
+    expect(PAGE).toMatch(/!openingAwaySlotWithheld && <>[\s\S]{0,80}openingAwayProb/);
   });
 });
 
