@@ -163,13 +163,27 @@ class TestTheSpecimenInTheDirectionItFailed:
             "kalshi", RETRACTION, 0.26, 0.33, in_exclusive_field=True
         )
 
-    def test_before_the_fix_every_one_of_them_was_exempt(self):
-        # The defect, stated as the old clause. This is what made the page lie.
-        for name, prob, bid, ask, last in CUP_ASK_ONLY_LEGS:
-            assert RETRACTION is not None  # the old test, verbatim
-            assert not needs_trade_evidence(
-                "kalshi", "api_settlement", bid, ask, in_exclusive_field=True
-            ), f"{name}: a REAL grade is still exempt, which is the control"
+    def test_the_old_clause_exempted_all_fourteen_and_the_new_one_does_not(self):
+        # The defect, stated as the two clauses side by side on the same rows.
+        # The old one is spelled out rather than named so this stays readable
+        # after the code it describes is gone.
+        def old_clause_exempts(resolution_source):
+            return resolution_source is not None
+
+        exempt_before = [
+            name
+            for name, prob, bid, ask, last in CUP_ASK_ONLY_LEGS
+            if old_clause_exempts(RETRACTION)
+        ]
+        exempt_now = [
+            name
+            for name, prob, bid, ask, last in CUP_ASK_ONLY_LEGS
+            if not needs_trade_evidence(
+                "kalshi", RETRACTION, bid, ask, in_exclusive_field=True
+            )
+        ]
+        assert len(exempt_before) == 14, "every leg was screened out before"
+        assert exempt_now == [], "and none of them is screened out now"
 
 
 class TestWhatTheChangeMustNotSpend:
