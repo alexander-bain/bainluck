@@ -426,10 +426,29 @@ def _metadata_needs_discover_llm_refresh(
     return generated < now - timedelta(days=max_age_days)
 
 
+#: #4962. Only four words reach Pexels, so every slot one of these eats is an entity
+#: that never gets searched for. Kalshi phrases nearly every market as a question
+#: ("Will X …?"), so "will" alone was consuming a slot on 2,839 open imaged rows;
+#: "Will Taylor Swift meet with Pope Leo XIV before 2027?" reached Pexels as
+#: "Will Taylor Swift meet" — no Pope — and came back a competitive swimmer.
+#: The words below carry no picture: they are grammar, dates, or betting lines.
+_IMAGE_NOISE_WORDS = (
+    r"\b(on|at|in|the|a|an|of|for|to|vs\.?|by"
+    r"|will|who|what|which|when|does|do|did|with|before|after|from|and|not)\b"
+)
+_IMAGE_MONTHS = (
+    r"\b(January|February|March|April|May|June|July|August"
+    r"|September|October|November|December)\b"
+)
+
+
 def _extract_image_keywords(name: str, category: str | None) -> str:
     name = re.sub(r"\b(Winner|Over/Under|O/U|Spread|Total|Moneyline)\b", "", name, flags=re.IGNORECASE)
-    name = re.sub(r"\b(on|at|in|the|a|an|of|for|to|vs\.?|by)\b", " ", name, flags=re.IGNORECASE)
+    name = re.sub(_IMAGE_NOISE_WORDS, " ", name, flags=re.IGNORECASE)
     name = re.sub(r"\d{4}[-/]\d{2,4}", "", name)
+    name = re.sub(_IMAGE_MONTHS, " ", name, flags=re.IGNORECASE)
+    # Bare numerals — a handicap (-3.5), a strike ($3,500), a day (31) — picture nothing.
+    name = re.sub(r"\b\d[\d,.$]*\b", " ", name)
     name = re.sub(r"[:\-–—|()#]", " ", name)
     words = [w for w in name.split() if len(w) > 2][:4]
     if not words and category:
