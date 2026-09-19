@@ -1040,6 +1040,54 @@ async def placeable_league_for_matchup(
 #: so shrinking the margin fails rather than silently re-tuning the constant.
 _PLACEMENT_SEASON_WINDOW_DAYS = 30
 
+#: #7086 — the same question for a competition that is a TOURNAMENT rather than
+#: a season, where 30 days is wider than the whole event.
+#:
+#: WHY A SECOND WINDOW AND NOT A SMALLER FIRST ONE. The window above cannot be
+#: tightened to cover this: its own control is ``baseball_npb``, whose kickoff
+#: sits 7.0 days past the last loaded fixture because our schedule horizon ends
+#: there, and the four Davis Cup ties filed onto a finished US Open sit 5.3–6.2
+#: days past ITS last fixture. Measured 2026-09-19, the two gaps overlap, so no
+#: threshold in days separates them and a second DIMENSION is required — how
+#: long the competition runs, not how long ago it last played.
+#:
+#: 3 is measured on the tournaments themselves. The largest gap BETWEEN two
+#: consecutive fixtures inside one is 1.80 days (ATP US Open, after 09-09; the
+#: WTA draw is also 1.80 and the French Open 2.02), and the smallest gap of the
+#: four wrong placements is 5.29 days. Every value in 2.1..5.2 returns the same
+#: verdict on that population and 3 sits inside it with the margin asserted by
+#: ``test_the_tournament_window_separates_the_measured_population`` rather than
+#: left to be re-tuned silently. Keeping it above the in-draw gap is what lets a
+#: Slam still place its OWN later rounds while the schedule lags behind them.
+_PLACEMENT_TOURNAMENT_WINDOW_DAYS = 3
+
+#: #7086 — what tells a season from a tournament, asked of the league's own
+#: fixtures rather than of a name, a list or a sport.
+#:
+#: A season league was already playing a month or two before any kickoff inside
+#: it; a tournament's entire draw is one short burst. Measured 2026-09-19
+#: against production for a 09-19 kickoff: ``tennis_atp_us_open`` has **0**
+#: schedule-born fixtures in the 30-to-60-days-before shoulder (its draw is
+#: 08-30 → 09-13, 14 days end to end) and ``baseball_npb`` plays right through
+#: it (03-27 → 09-19, 176 days). The spans are 13/14/19/20 days for the four
+#: Slams in our data and 176/187/197/224/226/235 for the six season
+#: competitions — an order of magnitude of margin, asserted by
+#: ``test_the_spread_separates_seasons_from_tournaments``.
+#:
+#: This is the OUTER edge of a shoulder whose inner edge is the season window
+#: above, not a distance from the kickoff. Two forms were tried and rejected
+#: against the same rows: a SPAN (``max - min``) reads ~365 days the moment a
+#: previous edition falls in the window, and so does "a fixture exists more than
+#: 60 days away" — an annual tournament's previous draw is 365 days back and
+#: satisfies both. Only a bounded shoulder excludes the draw itself AND the
+#: edition before it. ``test_last_years_draw_does_not_vouch_for_this_year`` is
+#: that rejection kept as a guard; it caught this exact mistake in the shipped
+#: predicate rather than in review.
+#:
+#: Fails to TODAY'S behaviour, never to something worse: a league this reads as
+#: season-shaped keeps the 30-day window exactly as #6392 shipped it.
+_PLACEMENT_SEASON_SPREAD_DAYS = 60
+
 #: The ``commence_time_source`` values that mean "a market told us when this is",
 #: as opposed to a schedule source. :func:`league_is_running_at` must not let a
 #: row from this set vouch for a league, or the phantoms would license each
@@ -1090,12 +1138,41 @@ async def league_is_running_at(session, league: str | None, commence_time) -> bo
     branch on when it runs), and it is why the answer does not drift between the
     create and a later re-read.
 
+    A TOURNAMENT IS OVER THE MOMENT ITS LAST FIXTURE IS PLAYED (#7086). The
+    window above was calibrated on SEASONS, and 30 days is wider than a Slam.
+    Four Davis Cup ties on 2026-09-19 were filed onto a US Open whose final was
+    2026-09-13 and headed their pages "US Open 2026": the guard passed, because
+    130 schedule-born fixtures sit after the floor — all of them before the
+    tournament ended. Tightening the window cannot fix it. NPB's kickoff is 7.0
+    days past its last loaded fixture and the Davis Cup ties are 5.3–6.2 days
+    past theirs, so the correct case and the wrong one overlap in days; what
+    separates them is that NPB runs for 176 days and the draw runs for 14.
+
+    So the question is asked in two steps. Is anything scheduled at all within
+    the season window (unchanged — every #6392 refusal is still refused here,
+    first and on the same evidence). Then: is this competition season-shaped,
+    meaning it has a schedule-born fixture OUTSIDE a ±60-day band around the
+    kickoff? If it is, the answer is #6392's answer and nothing moves. If it is
+    not — the whole competition lives in one burst near this kickoff — then it
+    is a tournament and it only vouches for a fixture within 3 days of one of
+    its own, which is wider than the largest gap inside a real draw (1.80 days)
+    and narrower than the smallest gap of the four wrong placements (5.29).
+
+    This can only ever REFUSE more than #6392 did, never place more: it is
+    #6392's predicate AND a second one. A league that reads season-shaped, or
+    that this cannot classify, keeps exactly the behaviour that shipped.
+
+    ``commence_time`` is the fixture's OWN kickoff, not the clock. That is what
+    makes this decidable from the row (gotcha #44: a test anchored here cannot
+    branch on when it runs), and it is why the answer does not drift between the
+    create and a later re-read. All three reads are anchored on it.
+
     Fails CLOSED, like every refusal in :func:`placeable_league_for_matchup`: no
     league, no kickoff, or no session all return False and the row keeps its
     catch-all key, which #5576's own docstring calls the honest answer when
     nothing can prove otherwise.
     """
-    from app.models.models import Event, Sport
+    from app.models.models import Event
 
     if session is None or not league or commence_time is None:
         # The same no-signal reading the two resolvers above take, and the same
@@ -1103,12 +1180,65 @@ async def league_is_running_at(session, league: str | None, commence_time) -> bo
         # #2020's and #4242's call-site tests.
         return False
 
+    # Step 1 — #6392, unchanged. Nothing scheduled since the floor, no season.
     floor = commence_time - timedelta(days=_PLACEMENT_SEASON_WINDOW_DAYS)
-    anchor = await session.execute(
+    if not await _schedule_born_fixture_exists(
+        session, league, Event.commence_time >= floor
+    ):
+        return False
+
+    # Step 2 — #7086. A season was already playing a month or two before this
+    # kickoff, or will be a month or two after it. A tournament was not: its
+    # whole draw sits inside the 30 days this band starts outside of.
+    #
+    # A BAND AND NOT A HALF-LINE, which is the part that is easy to get wrong.
+    # "Is there a fixture more than 60 days away" reads an annual tournament's
+    # PREVIOUS EDITION — 365 days back, comfortably outside any such band — as
+    # proof of a season, and this ship would be inert the day `events` holds two
+    # editions. The shoulder excludes that distance as well as the draw itself.
+    shoulder_inner = timedelta(days=_PLACEMENT_SEASON_WINDOW_DAYS)
+    shoulder_outer = timedelta(days=_PLACEMENT_SEASON_SPREAD_DAYS)
+    if await _schedule_born_fixture_exists(
+        session,
+        league,
+        or_(
+            and_(
+                Event.commence_time >= commence_time - shoulder_outer,
+                Event.commence_time <= commence_time - shoulder_inner,
+            ),
+            and_(
+                Event.commence_time >= commence_time + shoulder_inner,
+                Event.commence_time <= commence_time + shoulder_outer,
+            ),
+        ),
+    ):
+        return True
+
+    # Step 3 — a tournament vouches only for fixtures beside its own.
+    near = timedelta(days=_PLACEMENT_TOURNAMENT_WINDOW_DAYS)
+    return await _schedule_born_fixture_exists(
+        session,
+        league,
+        Event.commence_time >= commence_time - near,
+        Event.commence_time <= commence_time + near,
+    )
+
+
+async def _schedule_born_fixture_exists(session, league: str, *criteria) -> bool:
+    """Does ``league`` carry a SCHEDULE-born fixture satisfying ``criteria``?
+
+    One shape for all three of :func:`league_is_running_at`'s questions, so the
+    league predicate and the source exclusion cannot be spelled two ways and
+    drift apart — the exclusion in particular is load-bearing (a market-born row
+    would let one bad placement become the evidence admitting the next) and it
+    now has to hold on the tournament read as well.
+    """
+    from app.models.models import Event, Sport
+
+    statement = (
         select(Event.id)
         .join(Sport, Sport.id == Event.sport_id)
         .where(Sport.key == league)
-        .where(Event.commence_time >= floor)
         .where(
             or_(
                 Event.commence_time_source.is_(None),
@@ -1117,7 +1247,10 @@ async def league_is_running_at(session, league: str | None, commence_time) -> bo
         )
         .limit(1)
     )
-    return anchor.first() is not None
+    for criterion in criteria:
+        statement = statement.where(criterion)
+    found = await session.execute(statement)
+    return found.first() is not None
 
 
 #: Which funnel counter a refusal increments. A mapping rather than the
@@ -7455,12 +7588,15 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
         session, placed_league, commence_time,
     ):
         logger.info(
-            "Refusing placement of '%s' (#6392) — %s v %s resolves to %s, but "
-            "that competition has no schedule-born fixture within %dd of %s; "
-            "leaving the row on %s",
+            "Refusing placement of '%s' (#6392/#7086) — %s v %s resolves to %s, "
+            "but that competition has no schedule-born fixture within %dd of %s "
+            "(%dd if its whole draw sits inside a %dd band, i.e. a tournament "
+            "rather than a season); leaving the row on %s",
             market.name, team_a, team_b, placed_league,
             _PLACEMENT_SEASON_WINDOW_DAYS,
             commence_time.isoformat() if commence_time else None,
+            _PLACEMENT_TOURNAMENT_WINDOW_DAYS,
+            _PLACEMENT_SEASON_SPREAD_DAYS * 2,
             sport_key,
         )
         placed_league = None
