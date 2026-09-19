@@ -25784,6 +25784,36 @@ def _futures_board_is_mostly_unserved(market: "FuturesMarket") -> bool:
     1. **Exclusive.** A sum under 1.0 is only incoherent where exactly one
        outcome can win. #199's golf make-cut/top-N families sum to several
        multiples of 100% and are `mutually_exclusive = False`.
+
+       ⚠️ THAT SENTENCE IS TRUE AND IS NOT THE REASON THIS ARM EXISTS — a board
+       summing past 100% is already excluded by precondition 5, so read alone it
+       invites a later reader to delete precondition 1 as redundant. The arm is
+       load-bearing for the boards that are honestly non-exclusive AND sum LOW,
+       which precondition 5 cannot reach. #7144 enumerated them: all 273 open
+       markets carrying `mutually_exclusive = False` with 2-5 priced legs
+       summing under half, of four shapes — 8 independent `- Player Props`
+       bundles (4 legs, 32.5%), 104 cumulative `When will X...?` date ladders,
+       multi-select boards (`Which agencies will Trump eliminate?`, `Chelsea:
+       Trophies 2026-27`, league qualification and relegation), and nested
+       boards whose top leg is the union of the rest (`American man or woman to
+       win US Open` over `American man` / `American woman`). Every one is an
+       honest card this predicate would withdraw without this line, and NONE of
+       them is distinguishable from a real fragment by anything else available
+       at serve time — not `market_type` (`duel` here means a two-outcome
+       question, not a two-sided contest), not leg count, not the sum.
+
+       That is also why #7144 parked rather than shipped, and why the stored
+       flag must not be "repaired" toward `True`: `Green Bay vs New York J: 1st
+       Touchdown` is exclusive in fact and flagged `False`, but it is a
+       TRUNCATED first-scorer field storing 4 of ~40 scorers, so flipping it
+       makes this guard withdraw an honest card while precondition 4 stays
+       blind (4 rows is not `> _SEARCH_LADDER_LIMIT`).
+
+       🔴 Guarded since 2026-09-19 by
+       `TestPrecondition1HoldsTheHonestNonExclusiveBoards`, and it was NOT
+       guarded before: severing this arm left 147 tests across 7 files green,
+       because the only test naming the precondition hands it a one-leg fixture
+       that precondition 2 answers first.
     2. **Two or more served legs.** A LONE NUMBER IS A PROPOSITION, NOT A BOARD.
        "Dodgers 100+ wins 41%" and "Will the Fed do a rate cut greater than
        25bps? 4%" are complete, honest cards whose complement is the reader's own
