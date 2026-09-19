@@ -33,6 +33,8 @@ is the control that keeps that decision visible.
 
 from __future__ import annotations
 
+import inspect
+import textwrap
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -41,6 +43,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import app.routes.futures as futures_routes
+from app.models.models import FuturesMarket
 from app.routes.futures import _format_market_detail, get_probability_timeline
 
 #: The minute the Danube board was read off production.
@@ -416,3 +419,133 @@ class TestWhatMustNotMove:
         assert alpha["id"] == 1
         assert alpha["rank"] == 3
         assert alpha["team_id"] == 77
+
+
+class TestTheRouteLoadsWhatTheFormatterDereferences:
+    """The class of defect that #7284 introduced and every green gate missed.
+
+    Delegating to `_format_market_detail` (the ship) also inherits its *loading*
+    requirements, and those are invisible to every test in this file. Each
+    fixture market here is a `SimpleNamespace`, so `market.sport` is an ordinary
+    attribute that answers instantly; on a real async session it is a plain lazy
+    `relationship()` and an un-eager-loaded read raises `MissingGreenlet` — a
+    500. Worse, the common case hides it: `if market.sport` short-circuits on a
+    NULL FK with no IO, so only markets carrying a `sport_id` blow up. 18,179 of
+    51,088 open futures markets did, and the mock-backed tests, CI, the band and
+    a mutation check all passed on the one input shape that cannot show it.
+
+    A behavioural guard cannot catch this. The mock session never lazy-loads, so
+    a fixture whose `sport` raises would fail with OR without the eager load —
+    the two arms are indistinguishable downstream of the query. The query IS the
+    behaviour, so that is what this pins, and it pins the RULE rather than the
+    single relationship: whatever `_format_market_detail` dereferences off
+    `market`, the routes that call it must eager-load.
+    """
+
+    @staticmethod
+    def _relationships_dereferenced_by_the_formatter():
+        """`market.<rel>.<field>` in `_format_market_detail` ⇒ `<rel>` is loaded.
+
+        AST, not a substring scan: `market.sport.key` is an Attribute whose own
+        `.value` is the Attribute `market.sport`, and only that nesting means a
+        two-step walk. A flat `market.sport_id` is a column and is not collected.
+
+        The nesting alone is NOT enough, and the first draft of this guard is why:
+        `market.updated_at.isoformat()` has exactly the same shape, so it reported
+        `updated_at`, `commence_time`, `created_at` and `resolution_date` as
+        un-eager-loaded relationships. They are datetime COLUMNS, already resident
+        on the row — asking the route to `selectinload` them would be nonsense.
+        So the AST supplies the candidates and the MAPPER decides which are real
+        relationships; only those can trigger lazy IO.
+        """
+        import ast
+
+        from sqlalchemy import inspect as sa_inspect
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(_format_market_detail)))
+        walked = set()
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Attribute)
+                and isinstance(node.value.value, ast.Name)
+                and node.value.value.id == "market"
+            ):
+                walked.add(node.value.attr)
+        return walked & set(sa_inspect(FuturesMarket).relationships.keys())
+
+    def test_the_formatter_still_walks_a_relationship(self):
+        """Guard the guard: if this empties, the test below passes vacuously."""
+        rels = self._relationships_dereferenced_by_self = (
+            self._relationships_dereferenced_by_the_formatter()
+        )
+        assert "sport" in rels, (
+            "`_format_market_detail` no longer dereferences `market.sport`. If "
+            "that is deliberate, this whole class can go; until then an empty "
+            "set would make the eager-load assertion below prove nothing."
+        )
+
+    @staticmethod
+    def _relationships_eager_loaded_by(func):
+        """`selectinload(FuturesMarket.x)` CALLS in `func`, read from the AST.
+
+        A substring scan of the source is not good enough and the first draft of
+        this test proved it by SURVIVING its own mutation: the comment I wrote
+        above the query explains the fix and names `FuturesMarket.sport` in
+        prose, so deleting the actual option left the string behind and the
+        guard still passed. The sibling guard in
+        `test_futures_zero_is_a_price_6081.py` carries the same warning for the
+        same reason. Only a real call node counts.
+        """
+        import ast
+
+        loaders = {"selectinload", "joinedload", "subqueryload", "immediateload"}
+        tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+        loaded = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)
+            if name not in loaders:
+                continue
+            for arg in node.args:
+                if (
+                    isinstance(arg, ast.Attribute)
+                    and isinstance(arg.value, ast.Name)
+                    and arg.value.id == "FuturesMarket"
+                ):
+                    loaded.add(arg.attr)
+        return loaded
+
+    def test_the_timeline_route_eager_loads_each_of_them(self):
+        loaded = self._relationships_eager_loaded_by(
+            futures_routes.get_probability_timeline
+        )
+        missing = sorted(self._relationships_dereferenced_by_the_formatter() - loaded)
+        assert not missing, (
+            f"`get_probability_timeline` asks `_format_market_detail` for its "
+            f"numbers but does not eager-load {missing} — each is a lazy "
+            "relationship the formatter walks, so this is a MissingGreenlet 500 "
+            "on every market whose FK is non-NULL, and a silent pass on every "
+            "market whose FK is NULL. Add `selectinload(FuturesMarket.<rel>)` to "
+            "the query."
+        )
+
+    def test_the_detail_route_eager_loads_them_too(self):
+        """The symmetric defect, pinned before it exists.
+
+        The detail route has always loaded `sport` — that is how the gap showed
+        up as a timeline-only 500 rather than a site-wide one. But the rule is
+        the formatter's, not the timeline's: any route that asks
+        `_format_market_detail` for a payload must load what it walks. Pinning
+        only the route that broke would leave the next caller to rediscover it.
+        """
+        loaded = self._relationships_eager_loaded_by(
+            futures_routes.get_futures_market
+        )
+        missing = sorted(self._relationships_dereferenced_by_the_formatter() - loaded)
+        assert not missing, (
+            f"`get_futures_market` does not eager-load {missing}, which "
+            "`_format_market_detail` dereferences."
+        )

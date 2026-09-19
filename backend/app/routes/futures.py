@@ -4483,12 +4483,23 @@ async def get_probability_timeline(
     markets with many contestants). Auto-extends the time window for sparse
     markets (common for non-sports futures).
     """
-    # Verify market exists and load outcomes + team enrichment
+    # Verify market exists and load outcomes + team enrichment.
+    #
+    # `FuturesMarket.sport` is loaded because this route asks `_format_market_detail`
+    # for its numbers (#7284), and that helper dereferences `market.sport.key`.
+    # `sport` is a plain lazy `relationship()` (models.py), so on the async session
+    # an un-eager-loaded access raises `MissingGreenlet` — a 500, not a fallback.
+    # The detail route has always loaded it; delegating to its formatter without
+    # matching its loads is what made that a defect here. Measured when it was
+    # caught: 18,179 of 51,088 open futures markets carry a non-NULL `sport_id`,
+    # and the rest short-circuit on `if market.sport` with no IO at all, which is
+    # exactly why no fixture showed it.
     result = await db.execute(
         select(FuturesMarket)
         .options(
             selectinload(FuturesMarket.outcomes)
-            .selectinload(FuturesOutcome.team)
+            .selectinload(FuturesOutcome.team),
+            selectinload(FuturesMarket.sport),
         )
         .where(FuturesMarket.id == market_id)
     )
