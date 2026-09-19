@@ -40,5 +40,38 @@ enum ReleaseSurfaces {
     /// unconverted call sites ARE the bug it says cannot exist. It is true now
     /// only because `PredictionsExperienceIsGatedEverywhere6501Tests` scans for
     /// a sixth — an ungated `Route.predictionStats` fails that scan.
+    ///
+    /// 🔴 AND A SEVENTH AND AN EIGHTH ARRIVED ANYWAY (#7075, build 15). The scan
+    /// above is keyed on `Route.predictionStats`, which the docstring calls "the
+    /// one token every entry point must contain" — and the two entry points
+    /// below contain no route at all. Discover CONVERTS every fifth card into a
+    /// guess in place, so the reader reaches the experience without navigating
+    /// anywhere. Alex, on the phone build: "I thought we were going to pull
+    /// these out altogether until we had figured out how to do them well" — he
+    /// met two of them in one pass down the feed, which is what a 1-in-5 cadence
+    /// produces. `insertsInlineGuessSlot(at:)` is now the token for those two,
+    /// and `InlineGuessSlotsAreGated7075Tests` scans for a ninth.
     static let predictionsExperienceEnabled = false
+
+    /// Whether Discover converts the card at `index` into an inline
+    /// "What's the probability?" guess instead of drawing the market itself.
+    ///
+    /// The cadence — every fifth card — is the part that must survive being
+    /// switched off, so it lives here beside the switch rather than inline in a
+    /// `@ViewBuilder` where only a screenshot could check it. `enabled` is a
+    /// parameter so the ON behaviour is testable in a build that ships it OFF:
+    /// a guard that can only observe `false` cannot tell a flag that hides the
+    /// surface from arithmetic that never selected a card in the first place.
+    ///
+    /// Note what this does NOT do: the card at a guess slot is not removed. The
+    /// two branches it guards fall through to the ordinary futures/event card,
+    /// so the market, its rank, its swipe handling and its history are all
+    /// exactly what they would have been. Saved guesses and accounts are
+    /// untouched — #6445's standing constraint.
+    static func insertsInlineGuessSlot(
+        at index: Int,
+        enabled: Bool = ReleaseSurfaces.predictionsExperienceEnabled
+    ) -> Bool {
+        enabled && (index + 1) % 5 == 0
+    }
 }
