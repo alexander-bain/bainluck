@@ -193,6 +193,42 @@ class TestTheTableEqualsTheBoard:
             assert row["opening_probability"] == served["opening_probability"]
             assert row["name"] == served["name"]
 
+    async def test_a_genuine_zero_reaches_the_table_as_zero_not_as_no_price(self):
+        """#6081's class, on the site #7284 deleted.
+
+        The table used to carry its own copy of the strict idiom
+        (`float(o.current_probability) if o.current_probability is not None`).
+        Delegating to `_format_market_detail` removed that copy — which lowered
+        `test_every_served_site_uses_the_strict_form`'s count from 9 to 8 — so
+        the behaviour is now INHERITED rather than restated, and inherited
+        behaviour is exactly the kind that goes unnoticed when it breaks.
+
+        `0.0` is falsy, so the whole defect is one token wide: the falsy form
+        serves a real 0% as "no price". Asserted on BOTH sides, because equality
+        with the board alone would be satisfied if both served `None`.
+        """
+        # The zeroed rung must be one the board KEEPS. Zeroing an expired window
+        # (the Danube fixture has two) proves nothing: #7274 drops it before the
+        # price is ever read, and the test fails with the row simply absent.
+        zeroed = "Does not return by November 1, 2026"
+        rows = [(i, n, 0.0 if n == zeroed else p) for i, n, p in DANUBE_ROWS]
+        resp = await _timeline(_danube(rows))
+        board = _board(_danube(rows))
+
+        row = _row(resp, zeroed)
+        assert row is not None, "the zero rung was dropped from the table entirely"
+        served = board[row["id"]]
+
+        assert served["probability"] == 0.0, (
+            "the board itself served the zero rung as "
+            f"{served['probability']!r} — this test's premise is gone and the "
+            "inheritance claim below proves nothing"
+        )
+        assert row["current_probability"] == 0.0, (
+            f"a genuine 0% reached the table as {row['current_probability']!r}; "
+            "the falsy form is back on the timeline's side of the delegation"
+        )
+
     async def test_the_table_does_not_list_a_row_the_board_dropped(self):
         """The Danube specimen: two rungs whose own deadline has passed."""
         resp = await _timeline(_danube())
