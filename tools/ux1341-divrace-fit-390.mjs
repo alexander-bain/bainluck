@@ -41,7 +41,13 @@ if (urls.length === 0) {
 // page is reused for every url rather than a newPage-per-url loop.
 const args = ["--single-process", "--no-sandbox"];
 const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
-if (proxy) args.push(`--proxy-server=${proxy}`, "--proxy-bypass-list=<-loopback>");
+// 🪤 `<-loopback>` REMOVES chromium's implicit loopback bypass, i.e. it sends
+// localhost through the session proxy — right for production, fatal for a local
+// build, where every request dies and the probe reports "NO SECTION" (exit 4) on
+// a page that simply never loaded (ux/1350's third lesson). Checking a local
+// build: BYPASS="localhost,127.0.0.1".
+if (proxy)
+  args.push(`--proxy-server=${proxy}`, `--proxy-bypass-list=${process.env.BYPASS || "<-loopback>"}`);
 
 const browser = await chromium.launch({ args });
 const page = await browser.newPage({
@@ -68,7 +74,13 @@ for (const url of urls) {
     );
     if (!h2) return { found: false };
     const section = h2.closest("section");
-    const inner = section?.querySelector(".min-w-\\[360px\\]");
+    // 🪤 This used to anchor ONLY on `.min-w-[360px]`, the magic number the fix for
+    // #7023 had to change. A probe keyed on the thing under repair reports
+    // "NO SECTION"/exit 4 on the fixed page — nothing checked, read as nothing
+    // wrong. `[data-divrace-table]` is the stable hook; the class is kept as the
+    // fallback so this still measures production's pre-fix markup.
+    const inner =
+      section?.querySelector("[data-divrace-table]") ?? section?.querySelector(".min-w-\\[360px\\]");
     if (!inner) return { found: false };
     const scroller = inner.parentElement; // the overflow-x-auto card
 

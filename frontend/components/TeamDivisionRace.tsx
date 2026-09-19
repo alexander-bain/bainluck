@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import type { DivisionRace, DivisionRaceSortKey } from "@/lib/teamDivisionRace";
 import { sortDivisionRows } from "@/lib/teamDivisionRace";
 
@@ -15,6 +15,12 @@ function pct(v: number | null): string {
   return v === null ? "—" : `${Math.round(v * 100)}%`;
 }
 
+// #7023: the sort marker used to be a trailing "↓" INSIDE the label. It only ever
+// points down (`sortDivisionRows` has no direction toggle), so it said nothing the
+// colour did not — and it cost 15px in a 56px column, which wrapped "CHAMPION ↓"
+// onto two lines and made the header row change height whenever a reader sorted by
+// a different column. The active column is now marked by colour + an underline,
+// neither of which takes horizontal space, and the label never wraps.
 function SortHeader({
   label,
   active,
@@ -27,11 +33,14 @@ function SortHeader({
   return (
     <button
       onClick={onClick}
-      className={`text-right text-[10px] font-semibold uppercase tracking-wide transition-colors ${
-        active ? "text-text-primary" : "text-text-muted hover:text-text-secondary"
+      aria-pressed={active}
+      className={`text-right text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap transition-colors ${
+        active
+          ? "text-text-primary underline decoration-2 underline-offset-4"
+          : "text-text-muted hover:text-text-secondary"
       }`}
     >
-      {label} {active ? "↓" : ""}
+      {label}
     </button>
   );
 }
@@ -65,7 +74,17 @@ export function TeamDivisionRace({
   // right and opening the dead space Alex flagged. Now the name column hugs its
   // content and a trailing `1fr` spacer soaks up the extra width AFTER the numbers,
   // so team names and their numbers sit together on the left.
-  const gridCols = `minmax(110px,max-content) ${shown.map(() => "3.5rem").join(" ")} minmax(0,1fr)`;
+  //
+  // #7023: this template is declared ONCE, on the table, and every line subgrids
+  // onto it. It used to be set on each line separately, and `max-content` is
+  // resolved per grid container — so a row whose team name was long resolved a
+  // wider name track than a row whose name was short, and every number after it
+  // slid right. Measured on production 2026-09-18: the AFC East table put its four
+  // `%` columns at four different x positions (18px apart at 390px, 50px at
+  // 1280px), and the header labels sat 18px left of the numbers they label.
+  const gridCols = `minmax(0,max-content) ${shown.map(() => "3.5rem").join(" ")} minmax(0,1fr)`;
+  // Shared by the header line and every row via `--divrace-cols` (globals.css).
+  const lineStyle = { "--divrace-cols": gridCols } as CSSProperties;
 
   return (
     <section className="mb-8">
@@ -82,12 +101,16 @@ export function TeamDivisionRace({
           </span>
         )}
       </h2>
-      <div className="bg-surface-card border border-surface-border rounded-card overflow-x-auto">
-        <div className="min-w-[360px]">
+      <div className="bg-surface-card border border-surface-border rounded-card overflow-x-auto scroll-shadow-x">
+        <div
+          data-divrace-table
+          className="min-w-[280px] grid gap-x-1.5 sm:gap-x-2"
+          style={{ gridTemplateColumns: gridCols }}
+        >
           {/* Header row */}
           <div
-            className="grid items-center px-4 py-2.5 border-b border-surface-border gap-2"
-            style={{ gridTemplateColumns: gridCols }}
+            className="divrace-line items-center px-3 sm:px-4 py-2.5 border-b border-surface-border"
+            style={lineStyle}
           >
             <span className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">
               Team
@@ -105,13 +128,18 @@ export function TeamDivisionRace({
           {rows.map((row) => (
             <div
               key={`${row.teamId ?? row.name}`}
-              className="grid items-center px-4 py-2.5 border-b border-surface-border/60 gap-2 last:border-b-0"
+              className="divrace-line items-center px-3 sm:px-4 py-2.5 border-b border-surface-border/60 last:border-b-0"
               style={{
-                gridTemplateColumns: gridCols,
+                ...lineStyle,
                 ...(row.isTeam && teamColor
                   ? {
                       backgroundColor: `${teamColor}0D`,
-                      borderLeft: `3px solid ${teamColor}`,
+                      // #7023: an inset shadow, not `border-left`. A border on a
+                      // subgrid line insets that line's tracks by its width, so a
+                      // 3px accent would shift this one row's numbers 3px left of
+                      // every other row's. The shadow paints the same 3px bar and
+                      // takes no layout.
+                      boxShadow: `inset 3px 0 0 0 ${teamColor}`,
                     }
                   : {}),
               }}
