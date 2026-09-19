@@ -23,10 +23,12 @@ from app.utils.kalshi_empty_book import KALSHI_BOOKMAKER
 from app.utils.futures_unsupported_price import (
     POLYMARKET_BOOKMAKER,
     WITHHELD_PRICE_FIELDS,
+    field_names_two_favourites,
     market_is_proved_exclusive_field,
     midpoint_refuted_by_last_trade,
     needs_trade_disconfirmation,
     needs_trade_evidence,
+    price_is_unlocated_in_broken_field,
     price_is_unsupported,
     price_refuted_by_live_book,
     row_carries_a_verdict,
@@ -3485,10 +3487,70 @@ def _empty_book_outcome_ids(market: FuturesMarket) -> set[int]:
     }
 
 
+def _unlocated_in_broken_field_outcome_ids(
+    market: FuturesMarket, already_withheld: set[int]
+) -> set[int]:
+    """Which outcomes price a book that bounds nothing, inside a field that cannot be one (#7059).
+
+    The fifth arm, and the second one to cost no query: like
+    :func:`_book_refuted_outcome_ids` it reads columns already on rows in memory.
+
+    The rule, the specimen and every number behind it are in
+    :func:`app.utils.futures_unsupported_price.price_is_unlocated_in_broken_field`
+    and its field-level half :func:`field_names_two_favourites` — including why the
+    recency question is never asked and why both halves are load-bearing.
+
+    ``already_withheld`` IS THE WHOLE REASON THIS ARM TAKES AN ARGUMENT AND THE
+    OTHERS DO NOT. Its gate is a fact about the COLUMN A READER SEES, so it has to
+    be computed over the legs that survive the four arms above rather than over
+    every stored row — "the caller passes the list it will actually print, because
+    that is the set whose coherence the page is claiming"
+    (``classify_field_openings``). On the specimen this is not academic: Tyson Fury
+    stores 0.97 and is ALREADY refused by :func:`_book_refuted_outcome_ids` (he
+    serves above his own ask), so counting stored rows would credit the field with a
+    favourite no reader is shown. It still names two — Usyk 0.93 and Kabayel 0.87 —
+    so the gate holds either way here, but a rule about what a page claims may not
+    be measured on rows the page withholds.
+
+    THE ORDER IS THEREFORE FIXED AND ONE-PASS. This arm runs last, over the survivors
+    of the other four, and its own refusals do NOT re-open the gate. Iterating to a
+    coherent column would be chasing a sum, which this module does not do
+    (gotcha #21, withholding never rewriting); one pass also makes the result
+    independent of the order ids happen to arrive in.
+
+    A MARKET WHOSE SHAPE IS NOT PROVED EXCLUSIVE NEVER REACHES THE GATE, and the
+    check fails closed on absent metadata exactly as it does at the #6846 call site
+    above — ``market_is_proved_exclusive_field`` reads the persisted classifier, not
+    ``futures_markets.mutually_exclusive``, which defaults to true and is evidence of
+    nothing.
+    """
+    if not market_is_proved_exclusive_field(
+        getattr(market, "market_type", None),
+        getattr(market, "market_metadata", None),
+    ):
+        return set()
+    served = [o for o in market.outcomes if o.id not in already_withheld]
+    if not field_names_two_favourites(
+        [_as_float(getattr(o, "current_probability", None)) for o in served]
+    ):
+        return set()
+    return {
+        o.id
+        for o in served
+        if _as_float(getattr(o, "current_probability", None)) is not None
+        and price_is_unlocated_in_broken_field(
+            market.source,
+            o.resolution_source,
+            _as_float(getattr(o, "current_yes_bid", None)),
+            _as_float(getattr(o, "current_yes_ask", None)),
+        )
+    }
+
+
 async def _withheld_price_outcome_ids(
     db: AsyncSession, market: FuturesMarket
 ) -> set[int]:
-    """Every outcome of this market whose served price is refused, all four arms.
+    """Every outcome of this market whose served price is refused, all five arms.
 
     #6993. THE ARMS WERE ALREADY COMPOSED — in the body of
     :func:`get_futures_market`, where only that route could reach them. The group
@@ -3515,6 +3577,9 @@ async def _withheld_price_outcome_ids(
     ids |= await _refuted_midpoint_outcome_ids(db, market)
     ids |= _book_refuted_outcome_ids(market)
     ids |= _empty_book_outcome_ids(market)
+    # Last, and reading the four above rather than the stored rows: its gate is a
+    # fact about the column a reader is actually shown. See the arm's docstring.
+    ids |= _unlocated_in_broken_field_outcome_ids(market, ids)
     return ids
 
 

@@ -98,9 +98,10 @@ between 664 and 585 is legs no reader can reach; it is not claimed as a fix.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Iterable, Optional
 
-from app.utils.feed_market_quality import is_fabricated_midpoint
+from app.utils.feed_market_quality import book_bounds_nothing, is_fabricated_midpoint
+from app.utils.field_opening_coherence import MIN_FIELD_LEGS
 from app.utils.kalshi_empty_book import (
     KALSHI_BOOKMAKER,
     book_refutes_price,
@@ -143,6 +144,21 @@ EXCLUSIVITY_PROVED_RELATIONS = frozenset({"competitors", "exclusive_ranges"})
 #: question here is "is there a grade at all".
 RETRACTED_GRADE_SOURCES = frozenset({RETRACTION_SOURCE})
 
+#: The highest probability that TWO legs of a one-winner field can share (#7059).
+#:
+#: DERIVED, NOT TUNED, in the same style as
+#: ``field_opening_coherence.FIELD_MEAN_CEILING`` (``1/3`` — "the largest mean any
+#: honest field of three or more can carry"). Exactly one leg of a single-winner
+#: partition wins, so the true probabilities sum to 1 and at most one of them can
+#: exceed ``1/2``. Two legs each strictly above this value is not an overstatement
+#: to be judged against a measured band — it is an arithmetic impossibility, and
+#: no overround story reaches it: vig inflates a column proportionally, so seating
+#: a SECOND leg above 0.5 takes roughly a doubling, not a margin.
+#:
+#: The comparison is STRICT. Two legs at exactly 0.50 sum to exactly 1, which is a
+#: coin flip and not a contradiction; only ``> 0.50`` on two legs is impossible.
+SECOND_FAVOURITE_CEILING = 0.5
+
 #: The bookmaker string the Polymarket futures writers stamp on every snapshot
 #: (``app/tasks/polymarket.py``, four call sites) and the ``source`` a Polymarket
 #: futures market carries. One spelling, named once.
@@ -152,12 +168,15 @@ __all__ = [
     "EXCLUSIVITY_PROVED_RELATIONS",
     "POLYMARKET_BOOKMAKER",
     "RETRACTED_GRADE_SOURCES",
+    "SECOND_FAVOURITE_CEILING",
     "WITHHELD_PRICE_FIELDS",
+    "field_names_two_favourites",
     "market_is_proved_exclusive_field",
     "row_carries_a_verdict",
     "midpoint_refuted_by_last_trade",
     "needs_trade_disconfirmation",
     "needs_trade_evidence",
+    "price_is_unlocated_in_broken_field",
     "price_is_unsupported",
     "price_refuted_by_live_book",
     "snapshot_price_is_unsupported",
@@ -407,6 +426,194 @@ def price_is_unsupported(
     if in_exclusive_field:
         return is_lone_ask_in_exclusive_field(yes_bid, yes_ask, last_price)
     return is_lone_ask_on_empty_book(yes_bid, yes_ask, last_price)
+
+
+def field_names_two_favourites(
+    probabilities: "Iterable[Optional[float]]",
+) -> bool:
+    """True when this column names two favourites, which a one-winner field cannot (#7059).
+
+    ``probabilities`` is one entry per leg the surface intends to SHOW, in any
+    order. ``None`` entries are legs carrying no price — already withheld, or
+    never priced — and are ignored rather than counted as zero, for
+    ``classify_field_openings``' reason and gotcha #53's: "nobody is publishing a
+    price" is not "the price is 0". The caller passes the list it will actually
+    print, because that is the set whose coherence the page is claiming.
+
+    WHY A COUNT AND NOT A SUM. The sum is the obvious test and it cannot see this
+    defect. ``/api/futures/2951423`` serves sixteen legs summing to **2.995** with
+    a mean of **0.187**, so ``field_opening_coherence``'s measured pair — sum above
+    3.0 AND mean at or above 0.4 — spares it on the mean, and would spare it more
+    comfortably the more honest longshots the field carries. Twelve of those legs
+    are real 1% prices, and they are what dilutes the mean below the ceiling. That
+    is not a ceiling set too high; it is a ceiling doing its job, protecting large
+    fields whose sums drift for honest reasons (staggered per-leg capture, a
+    100-leg board). latency/578 hit the identical dilution on #6996 and reached the
+    identical conclusion from the other side: the answer is a COUNT, because adding
+    honest longshots cannot change how many legs sit above a half.
+
+    THAT SIBLING COUNT NOW SHIPS AND IS DELIBERATELY NOT REUSED. #6996 landed
+    ``MAX_CERTAIN_LEGS = 1`` at ``CERTAIN_LEG_PROBABILITY = 0.999`` in
+    ``field_opening_coherence`` — the same arithmetic in the same shape, and the
+    reason this rule is phrased as a count rather than argued from first principles.
+    It cannot answer here for two independent reasons: it reads
+    ``opening_probability`` where this reads the current price, and its bound is
+    CERTAINTY, which the specimen never reaches — 0.93 is the highest leg on the
+    belt. Two legs at 0.93 and 0.87 are exactly as impossible as two at 1.0 and
+    neither is certain, so the bound forced here is the one two legs can SHARE, a
+    half, not the one a single leg cannot exceed.
+
+    WHY IT IS NOT A JUDGEMENT ABOUT ANY SINGLE PRICE. Ninety-three per cent is a
+    perfectly good number for a heavyweight champion and this function never says
+    otherwise. It speaks only about the column: Usyk at 0.93 AND Kabayel at 0.87
+    cannot both be true of one belt. Which of them is wrong is a question this
+    predicate deliberately does not answer — see
+    :func:`price_is_unlocated_in_broken_field` for the half that does, and note
+    that it answers it from each leg's own book rather than by ranking them.
+
+    :data:`MIN_FIELD_LEGS` IS IMPORTED, NOT RESTATED, AND IT IS LOAD-BEARING HERE
+    FOR ITS OWN REASON. #5539 set the floor at three because a two-leg binary has
+    no impossible arithmetic to appeal to; this rule needs it because on a two-leg
+    field "both legs above 0.5" is ORDINARY OVERROUND — 0.55/0.52 sums to 1.07 and
+    is a vig story. Production agreed before the floor went in: the only markets
+    the gate caught that I could not defend were ``CONCACAF Nations League B`` and
+    ``C``, two-leg fields summing 1.24 and 1.33.
+    """
+    priced = [float(p) for p in probabilities if p is not None]
+    if len(priced) < MIN_FIELD_LEGS:
+        return False
+    return sum(1 for p in priced if p > SECOND_FAVOURITE_CEILING) >= 2
+
+
+def price_is_unlocated_in_broken_field(
+    source: Optional[str],
+    resolution_source: Optional[str],
+    yes_bid: Optional[float],
+    yes_ask: Optional[float],
+) -> bool:
+    """True when a leg's own book locates nothing and its field is not a distribution (#7059).
+
+    WHAT A READER SAW. ``/hub/boxing`` named three different men near-certain to
+    hold one belt — **Usyk 93% · Kabayel 87% · Itauma 79%**, with *Title is vacant*
+    at 23% underneath — on the *WBC Heavyweight Title on January 1, 2027* card. The
+    detail door agreed: sixteen priced legs summing to **299.5%** under a payload
+    whose own ``mutually_exclusive`` flag reads true. Read from Kalshi directly
+    (notice 26/27, ``event_ticker=KXWBCHEAVYWEIGHTTITLE-27``): ``volume_24h`` 0 and
+    ``liquidity`` 0 on all seventeen legs, no bid at all on fourteen of them, and
+    not one trade since **2026-07-13**. Itauma's book is ``bid 0.00 / ask 0.97`` —
+    the venue's position is "worth somewhere between nothing and 97c, and nobody
+    has touched it in 67 days". We printed 79%.
+
+    THIS IS #6846'S MOVE, MADE AGAINST THE OTHER CONDITION. :func:`is_empty_book_midpoint`
+    already refuses a price on a book this wide, but only when the price sits ON the
+    book's midpoint, and condition 3 is not decoration — its docstring defends the
+    exclusion explicitly: "a both-extremes book whose price is far from its midpoint
+    got that price from a real trade (Kalshi falls back to ``last_price`` on a wide
+    book), and those are honest lines". That defence is sound for a standalone leg
+    and it is what spares these: ``current_probability`` EQUALS the newest snapshot's
+    ``last_price`` on every one of the seventeen, to the cent. The trade is real. It
+    is simply old, and a real trade on a book that is now empty is a PRINT, not a
+    quote.
+
+    Inside a proved single-winner field whose column has already been shown
+    impossible, a print is not enough, and the reason is the one
+    :func:`is_lone_ask_in_exclusive_field` gives for dropping ``ASK_ONLY_TRUSTED_MAX``:
+    the frame changed, so the defence answers a question this caller is not asking.
+    A field's numbers are read against each other and summed. When two of them
+    cannot both be true (:func:`field_names_two_favourites`), the legs still entitled
+    to a number are the ones whose own book pins one — and a book bounding nothing
+    pins nothing, whatever it printed in July.
+
+    THE RECENCY QUESTION IS NEVER ASKED, WHICH IS THE POINT. The obvious fix is a
+    staleness predicate, and this module says not to pick one on a hunch (see
+    :func:`price_is_unsupported`, which defers exactly that to #5314/#5781 — a
+    pointer that has since gone dead: #5781 is CLOSED and Polymarket-specific, and
+    #5314 is a p3 about three future-stamped rows). It is still not picked here.
+    Nothing below reads a timestamp. Two independent reasons it must not:
+
+      * OUR CAPTURE IS FRESH. ``snap_age_d`` is 0 on these legs — we re-record the
+        same unchanging dead price faithfully every day — so anything keyed on
+        ``captured_at`` passes them all.
+      * THE VENUE'S OWN VOLUME IS THE SIGNAL AND WE DO NOT HAVE IT. ``futures_outcomes.volume``
+        is populated on 3.2% of this class. The market-level column is worse than
+        absent: ``futures_markets.volume_24h`` reads **373** on the specimen against
+        the venue's 0, because ``volume_updated_at`` is a week old. A rule keyed on
+        stored volume would have read this market as liquid. (Same trap on the F1
+        card below, at 26,254.)
+
+    MEASURED THROUGH THE ROUTE, NOT OFF THE STORED ROWS, AND THE TWO DISAGREE BY A
+    FACTOR OF THIRTY-FIVE. Every number below is the served column: each candidate
+    market's ``/api/futures/{id}`` payload fetched from production 2026-09-19, its
+    published legs joined to their book columns by outcome id, **0 payload errors on
+    135 + 35 fetches** (a rate-limited census understates without ever erroring — the
+    first pass lost 103 of 135 and only the error count revealed it). A stored-row
+    proxy is not available to this rule for a structural reason: 24 of the 35 markets
+    whose STORED rows trip the gate already serve **no price at all**, having been
+    withheld entirely by the four shipped arms. Counting them would have claimed 429
+    legs and 28 emptied cards that no reader can see.
+
+    THE SHIP, on the column a reader is actually shown: **12 legs across 2 markets,
+    and NOT ONE market loses its last priced leg.**
+
+      * *WBC Heavyweight Title on January 1, 2027* — 16 priced legs to 6, the served
+        field from **2.995 to 1.14**. Usyk, Itauma, Joshua, Dubois and six more lose
+        a number; Kabayel, *Title is vacant* and the four penny longshots keep theirs.
+      * *WBC Lightweight Title on January 1, 2027* — 17 legs to 15, **1.66 to 0.69**,
+        losing Lamont Roach at 96% and Bakhodur Usmanov.
+
+    WHY BOTH HALVES ARE LOAD-BEARING, each measured the same way:
+
+      * THE BOOK TEST ALONE takes **199 legs across 52 markets and empties 21 of
+        them**, because it cannot tell a broken column from a sound one. Fifty of the
+        markets it reaches serve a column the gate spares, and the damage is not
+        marginal: *WBC Middleweight Title* (17 legs, served sum **exactly 1.00**),
+        *Venice Film Festival: Coppa Volpi* (11 legs, **1.00**),
+        *Spanish Grand Prix Qualifying (Q3): Pole Position* (22 legs, **1.00**) and
+        *2027 Men's Rugby World Cup Winner* (3 legs, **1.00**) each lose EVERY price.
+        A column that already sums to one is a distribution; a wide book inside it is
+        corroborated by the arithmetic around it and needs no refusing.
+      * THE FIELD TEST ALONE says the column is wrong, never which legs are. Acting on
+        it whole-field would take the honest prices with the dead — the cost
+        latency/578 accepted deliberately on #6996, and which this defect does not
+        require, because here the bad legs announce themselves in their own books.
+
+    THE GATE READS STORED PROBABILITIES AND THE PAGE SHOWS NORMALISED ONES, WHICH IS
+    A REAL GAP AND IS EMPIRICALLY EMPTY TODAY. This arm runs inside
+    ``_withheld_price_outcome_ids``, above ``normalize_display_probs`` (#1200), so it
+    sees ``current_probability`` while a reader may see a squeezed value — and the
+    squeeze bails out above ``_FIELD_SUM_MAX``, which is exactly why the specimen's
+    93/87/79 reaches the page raw. Checked rather than assumed: over the 11 candidate
+    markets that publish any price, the gate returns the SAME verdict on stored and on
+    served values, **0 disagreements**. If a future field is squeezed below the bail-out
+    while its stored column names two favourites, this rule would refuse a leg on a
+    page that looks coherent; that market does not exist today and the check above is
+    how the next session finds out it has started to.
+
+    TWO MARKETS STILL NAME TWO FAVOURITES AFTERWARDS, and they are meant to. Their
+    remaining legs are ones whose books DO bound them; refusing further would be
+    chasing a sum, and this module withholds rather than rewrites (gotcha #21). An
+    under-summing field is the honest residue of a refusal — renormalising would
+    invent a price we are then graded on (``calibration_probability`` coalesces to
+    stored values, gotcha #144 / ruling 103).
+
+    NOTHING EMPTIES TODAY, BUT THE RULE PERMITS IT AND THAT IS DELIBERATE. Should a
+    field's only priced legs all turn out to be prints on empty books, it goes blank
+    and keeps its names — #6846 accepted the identical outcome ("a field whose only
+    priced legs are all untaken offers has no price discovery to show"), and on a list
+    surface an all-null card is DELETED rather than dashed (#7016), which is the cost
+    that would then be paid.
+
+    SCOPE AND FAIL-OPEN ARE :func:`needs_trade_evidence`'S, RESTATED IN NO NEW TERMS.
+    Kalshi only (Polymarket's rule for these columns is a different one, gotcha #19),
+    never a row carrying a verdict (settled means settled — withholding there deletes
+    a result), and an absent bid or ask returns False so the leg is served exactly as
+    it is today. Read-side only: nothing here mutates a stored price.
+    """
+    if (source or "").strip().lower() != KALSHI_BOOKMAKER:
+        return False
+    if row_carries_a_verdict(resolution_source):
+        return False
+    return book_bounds_nothing(yes_bid, yes_ask)
 
 
 def price_refuted_by_live_book(
