@@ -83,6 +83,17 @@ def _matches(clause, row: dict) -> bool:
     if isinstance(clause, BinaryExpression):
         column = clause.left.key
         value = row.get(column)
+        # LAT-P332 bounded the ticker arm's `resolved` half by market_tier and
+        # kept `market_tier IS NULL` in the set, so the clause now contains an
+        # `IS NULL` node. It has to be read BEFORE `clause.right.value` — the
+        # right-hand side of `IS NULL` is a `Null` element with no `.value`, so
+        # an unhandled `is_` does not fail as "unhandled operator", it raises
+        # AttributeError from inside the evaluator and reads as a broken test
+        # rather than a missing case.
+        if clause.operator is operators.is_:
+            return value is None
+        if clause.operator is operators.is_not:
+            return value is not None
         bound = clause.right.value
         if clause.operator is operators.eq:
             return value == bound
