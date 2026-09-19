@@ -248,7 +248,7 @@ POPULATION_FROM = """
           FROM futures_markets fm
           JOIN events e
             ON e.id = fm.event_id
-           AND e.commence_time > now() - make_interval(days => :days::int)
+           AND e.commence_time > now() - make_interval(days => CAST(:days AS int))
           JOIN futures_outcomes fo
             ON fo.market_id = fm.id
          WHERE fm.source = 'polymarket'
@@ -492,12 +492,12 @@ async def repair(
                min(fm.name)                AS market_name,
                min(fm.llm_sport_category)  AS category
         {POPULATION_FROM}
-           AND (:sport::text IS NULL OR fm.llm_sport_category = :sport::text)
+           AND (CAST(:sport AS text) IS NULL OR fm.llm_sport_category = CAST(:sport AS text))
          GROUP BY fm.id
         HAVING {POPULATION_HAVING}
-           AND (:after_id::bigint IS NULL OR min(fo.id) > :after_id::bigint)
+           AND (CAST(:after_id AS bigint) IS NULL OR min(fo.id) > CAST(:after_id AS bigint))
          ORDER BY 1
-         LIMIT :cap::int
+         LIMIT CAST(:cap AS int)
     """
     try:
         result = await _bounded_statement(
@@ -690,7 +690,7 @@ async def repair(
         # `app/routes/playoffs.py` reads as liveness (#2024); a repair that
         # bumped it would forge a venue observation that never happened.
         values = ", ".join(
-            f"(:id{i}::bigint, :old{i}::text, :new{i}::text)"
+            f"(CAST(:id{i} AS bigint), CAST(:old{i} AS text), CAST(:new{i} AS text))"
             for i in range(len(writable))
         )
         params: dict[str, Any] = {}
@@ -822,8 +822,8 @@ async def repair(
               FROM (
                     SELECT fm.id
                     {POPULATION_FROM}
-                       AND (:sport::text IS NULL
-                            OR fm.llm_sport_category = :sport::text)
+                       AND (CAST(:sport AS text) IS NULL
+                            OR fm.llm_sport_category = CAST(:sport AS text))
                      GROUP BY fm.id
                     HAVING {POPULATION_HAVING}
                    ) t

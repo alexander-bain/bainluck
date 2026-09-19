@@ -76,7 +76,7 @@ class _Session:
     @property
     def page_sql(self) -> str:
         for sql, _p in self.statements:
-            if "LIMIT :cap::int" in sql:
+            if "LIMIT CAST(:cap AS int)" in sql:
                 return sql
         raise AssertionError(
             "the rail never issued its page query — every pager assertion in "
@@ -86,7 +86,7 @@ class _Session:
     @property
     def page_params(self) -> dict:
         for sql, params in self.statements:
-            if "LIMIT :cap::int" in sql:
+            if "LIMIT CAST(:cap AS int)" in sql:
                 return params
         raise AssertionError("the rail never issued its page query")
 
@@ -111,7 +111,7 @@ class _Session:
             if self.landed is not None:
                 ids = [i for i in ids if i in self.landed]
             return _Result(rows=[(i,) for i in ids])
-        if "LIMIT :cap::int" in sql:
+        if "LIMIT CAST(:cap AS int)" in sql:
             return _Result(rows=self.page)
         if upper.startswith("SELECT COUNT("):
             return _Result(scalar=self.remaining)
@@ -552,7 +552,7 @@ async def test_the_cursor_is_exclusive_and_the_next_call_asks_past_it(
     out = await rail.repair(session, apply=True)
 
     assert out["next_cursor"] == {"after_id": 41}
-    assert "min(fo.id) > :after_id::bigint" in " ".join(session.page_sql.split())
+    assert "min(fo.id) > CAST(:after_id AS bigint)" in " ".join(session.page_sql.split())
 
 
 @pytest.mark.asyncio
@@ -613,7 +613,9 @@ async def test_the_window_reaches_the_statement_as_a_bound_parameter(
 
     out = await rail.repair(session, apply=False)
 
-    assert "make_interval(days => :days::int)" in " ".join(session.page_sql.split())
+    assert "make_interval(days => CAST(:days AS int))" in " ".join(
+        session.page_sql.split()
+    )
     assert session.page_params["days"] == 7
     assert out["window_days"] == 7
 
@@ -809,3 +811,43 @@ def test_the_rail_is_attended_only_and_not_wired_to_a_beat():
         assert "single_leg_label" not in str(entry.get("task", "")), (
             f"beat entry {name!r} runs the drain on a schedule"
         )
+
+
+def test_every_bind_in_the_rails_sql_actually_parses_as_a_bind():
+    """A `:name::type` bind is silently mis-parsed and never reaches Postgres bound.
+
+    Shipped in `d1b1bb8b9` and INERT on production the moment it released: both
+    halves of the rail answered
+    `syntax error at or near ":"` and relabelled nothing. SQLAlchemy's `text()`
+    bindparam scanner refuses a name followed by a colon — that lookahead exists so
+    `::` casts are not eaten — so `:days::int` does not yield `days`. It yields
+    `day`, a name the caller never supplies, and the unconsumed remainder is sent to
+    the server as literal SQL.
+
+    Nothing in the 33 guards above could see it: every one of them drives the rail
+    against a fake session, so the SQL is built, passed as a string, and never
+    parsed by SQLAlchemy or by Postgres. The class is "SQL that is only ever
+    constructed in a test, never compiled", and the fix is to compile it here.
+
+    Asserts the POSITIVE form — the exact bind names the callers pass — rather than
+    grepping for `::`, because `CAST(x AS int)` is not the only safe spelling and a
+    grep would forbid legitimate casts on non-bind expressions.
+    """
+    import re
+
+    from sqlalchemy import text
+
+    # The window bind lives in the shared FROM both halves interpolate.
+    assert set(text(rail.POPULATION_FROM)._bindparams) == {"days"}, (
+        f"POPULATION_FROM binds {sorted(text(rail.POPULATION_FROM)._bindparams)}, "
+        f"expected exactly ['days'] — a `:days::int` spelling yields 'day'"
+    )
+
+    # Every `:name` written anywhere in the module's source must survive parsing
+    # under its own name. This is what catches the next one.
+    src = inspect.getsource(rail)
+    written = set(re.findall(r"(?<![:\w]):([a-z_][a-z_0-9]*)(?=::)", src))
+    assert not written, (
+        f"these binds are written as `:name::type` and will be mis-parsed by "
+        f"SQLAlchemy: {sorted(written)} — use CAST(:name AS type)"
+    )
