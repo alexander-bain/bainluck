@@ -35,6 +35,11 @@ from app.utils.static_divisions import grid_conference_key as _grid_conference_k
 from app.utils.static_divisions import lookup_division as _static_lookup_division
 from app.utils.grid_register import GridRegister, load_register
 from app.utils.odds_math import devig_consensus
+# #7076: the one implementation of the stage bound. `playoff_grid` imports
+# nothing but logging/re, so this is import-safe at module level, and a
+# module-level name is what stops the per-team pass and the post-normalization
+# pass from ever again being two different rules.
+from app.utils.playoff_grid import enforce_monotonicity as _grid_enforce_monotonicity
 from app.utils.regex_to_ilike import regex_to_ilike
 
 logger = logging.getLogger(__name__)
@@ -4435,23 +4440,16 @@ async def get_playoff_grid(
                 if not has_later_data:
                     del cells[col_key]
 
-        # Monotonicity: in sequential columns, P(round N) >= P(round N+1).
-        # Cap later rounds to the min of earlier rounds.
-        if len(seq_keys) >= 2:
-            for i in range(1, len(seq_keys)):
-                prev_key = seq_keys[i - 1]
-                curr_key = seq_keys[i]
-                prev_cell = cells.get(prev_key)
-                curr_cell = cells.get(curr_key)
-                if prev_cell and curr_cell:
-                    prev_p = prev_cell["merged_probability"]
-                    curr_p = curr_cell["merged_probability"]
-                    if curr_p > prev_p:
-                        curr_cell["merged_probability"] = prev_p
-                        # Also cap individual source probabilities
-                        for src in curr_cell.get("sources", []):
-                            if src["probability"] > prev_p:
-                                src["probability"] = round(prev_p, 4)
+        # Monotonicity: a round is capped at the round a team must already have
+        # come through to reach it — `depends_on` where a league declares one,
+        # the previous sequential column otherwise.
+        #
+        # #7076: this was a second, hand-inlined copy of `enforce_monotonicity`
+        # (which runs again after normalization, further down). The two read the
+        # prerequisite differently the moment one of them learned about
+        # `depends_on`, and the copy that ran FIRST is the one that flattened
+        # Boston's pennant onto their division cell. One implementation now.
+        _grid_enforce_monotonicity([{"cells": cells}], config.columns)
 
         if not cells:
             continue

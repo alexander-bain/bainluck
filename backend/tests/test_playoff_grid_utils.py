@@ -198,9 +198,18 @@ class TestIsValidGridOutcome:
 
 
 class TestEnforceMonotonicity:
-    """Tests for enforce_monotonicity — ensures P(later stage) <= P(earlier stage)."""
+    """enforce_monotonicity caps a stage at the stage that BOUNDS it.
 
-    def _nhl_columns(self):
+    Every column below is an undeclared one — no `depends_on` — so the bound is
+    the column before it, which is the default and the whole of what this class
+    exercises. The four real leagues that carry a `division` column no longer
+    look like this: they declare conference/pennant bounded by `make_playoffs`,
+    because a wild card does not win its division. The names here say
+    "division"/"conference" for readability only; for the real configs' rule
+    see `test_playoff_grid_division_is_not_a_prerequisite_7076.py` (#7076).
+    """
+
+    def _chained_columns(self):
         return [
             SimpleNamespace(key="make_playoffs", order=1, sequential=True),
             SimpleNamespace(key="division", order=2, sequential=True),
@@ -209,7 +218,11 @@ class TestEnforceMonotonicity:
         ]
 
     def test_caps_conference_at_division(self):
-        """Conference probability > Division is capped (NHL issue #728)."""
+        """An undeclared column is capped at the column before it.
+
+        Named for NHL issue #728, whose real configs no longer chain this way
+        (#7076); the rule under test is the default bound, not NHL's.
+        """
         team = {
             "name": "Colorado Avalanche",
             "cells": {
@@ -219,7 +232,7 @@ class TestEnforceMonotonicity:
                 "championship": {"merged_probability": 0.10, "sources": [{"probability": 0.10, "source": "odds_api"}]},
             },
         }
-        fixes = enforce_monotonicity([team], self._nhl_columns())
+        fixes = enforce_monotonicity([team], self._chained_columns())
         assert fixes == 1
         assert team["cells"]["conference"]["merged_probability"] == 0.20
 
@@ -234,7 +247,7 @@ class TestEnforceMonotonicity:
                 "championship": {"merged_probability": 0.25, "sources": []},
             },
         }
-        fixes = enforce_monotonicity([team], self._nhl_columns())
+        fixes = enforce_monotonicity([team], self._chained_columns())
         assert fixes == 2  # division and conference
         assert team["cells"]["division"]["merged_probability"] == 0.30
         assert team["cells"]["conference"]["merged_probability"] == 0.30
@@ -250,7 +263,7 @@ class TestEnforceMonotonicity:
                 "championship": {"merged_probability": 0.15, "sources": []},
             },
         }
-        fixes = enforce_monotonicity([team], self._nhl_columns())
+        fixes = enforce_monotonicity([team], self._chained_columns())
         assert fixes == 0
 
     def test_missing_intermediate_column_skipped(self):
@@ -265,7 +278,7 @@ class TestEnforceMonotonicity:
         }
         # Conference should still be capped because it's compared to division (missing)
         # and then make_playoffs (the guard is: both prev_cell and curr_cell must exist)
-        fixes = enforce_monotonicity([team], self._nhl_columns())
+        fixes = enforce_monotonicity([team], self._chained_columns())
         # Division missing -> no fix for division->conference pair, but
         # make_playoffs->division is skipped too. So no fix unless conference
         # is compared to make_playoffs (it isn't — the check is sequential pairs only)
@@ -287,7 +300,7 @@ class TestEnforceMonotonicity:
                 "championship": {"merged_probability": 0.05, "sources": []},
             },
         }
-        enforce_monotonicity([team], self._nhl_columns())
+        enforce_monotonicity([team], self._chained_columns())
         for src in team["cells"]["conference"]["sources"]:
             assert src["probability"] <= 0.15
 
@@ -299,7 +312,7 @@ class TestEnforceMonotonicity:
         - After scaling, some teams have conference > division
         - enforce_monotonicity must fix this
         """
-        cols = self._nhl_columns()
+        cols = self._chained_columns()
         teams = [
             {
                 "name": "Team A",

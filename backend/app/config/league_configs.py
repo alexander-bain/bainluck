@@ -22,6 +22,17 @@ class GridColumn:
     label: str
     order: int
     sequential: bool = True  # True = must survive prior round to reach this one
+    #: The column whose probability BOUNDS this one, when that is not simply the
+    #: column before it. Monotonicity (`utils/playoff_grid.monotonic_pairs`)
+    #: otherwise reads "the previous sequential column" as the prerequisite,
+    #: which is false wherever a stage sits beside the ladder rather than on it:
+    #: in all four leagues with a `division` column a wild card reaches — and
+    #: wins — the conference final without winning its division (#7076). Must
+    #: name an EARLIER sequential column of the same league; the guard test
+    #: `test_playoff_grid_division_is_not_a_prerequisite_7076` asserts that for
+    #: every config, because a typo here falls back to the previous column and
+    #: would restore the bug silently.
+    depends_on: str | None = None
 
 
 @dataclass(frozen=True)
@@ -122,7 +133,9 @@ NBA_CONFIG = LeagueConfig(
     columns=[
         GridColumn(key="make_playoffs", label="Make Playoffs", order=1),
         GridColumn(key="division", label="Division", order=2),
-        GridColumn(key="conference", label="Conference", order=3),
+        # #7076: bounded by making the playoffs, NOT by winning the division —
+        # a wild card wins the conference without ever leading its division.
+        GridColumn(key="conference", label="Conference", order=3, depends_on="make_playoffs"),
         GridColumn(key="championship", label="Champion", order=4),
     ],
     matching_rules=[
@@ -188,7 +201,8 @@ NHL_CONFIG = LeagueConfig(
     columns=[
         GridColumn(key="make_playoffs", label="Make Playoffs", order=1),
         GridColumn(key="division", label="Division", order=2),
-        GridColumn(key="conference", label="Conference", order=3),
+        # #7076: see the NBA block — the division is beside the ladder, not on it.
+        GridColumn(key="conference", label="Conference", order=3, depends_on="make_playoffs"),
         GridColumn(key="championship", label="Stanley Cup", order=4),
     ],
     matching_rules=[
@@ -415,7 +429,9 @@ NFL_CONFIG = LeagueConfig(
     columns=[
         GridColumn(key="make_playoffs", label="Make Playoffs", order=1),
         GridColumn(key="division", label="Division", order=2),
-        GridColumn(key="conference", label="Conference", order=3),
+        # #7076: a wild card plays — and has won — the Super Bowl, so the
+        # division title cannot bound the conference cell.
+        GridColumn(key="conference", label="Conference", order=3, depends_on="make_playoffs"),
         GridColumn(key="championship", label="Super Bowl", order=4),
     ],
     matching_rules=[
@@ -495,7 +511,12 @@ MLB_CONFIG = LeagueConfig(
     columns=[
         GridColumn(key="make_playoffs", label="Make Playoffs", order=1),
         GridColumn(key="division", label="Division", order=2),
-        GridColumn(key="pennant", label="AL / NL Champ", order=3),
+        # #7076 — the reported specimen. Boston's real pennant rows (0.115 /
+        # 0.122) sat far above their division rows (0.010 / 0.003) because a
+        # wild card wins the pennant; the old previous-column bound rewrote
+        # pennant AND World Series to the division blend, 0.0065, for 10 of 30
+        # teams including the Yankees.
+        GridColumn(key="pennant", label="AL / NL Champ", order=3, depends_on="make_playoffs"),
         GridColumn(key="championship", label="World Series", order=4),
     ],
     matching_rules=[

@@ -772,8 +772,15 @@ class TestProbabilityConsistency:
             if probs[i] > 0 and probs[i - 1] > 0:
                 assert probs[i] <= probs[i - 1]
 
-    def test_monotonicity_enforced_conference_gt_division(self):
-        """Conference > Division is capped at Division (NHL issue #728)."""
+    def test_conference_above_division_is_left_alone(self):
+        """Conference > Division is a WILD CARD, not a violation (#7076).
+
+        This test asserted the opposite until 2026-09-19, on the strength of
+        NHL issue #728 — and that reading is what flattened Boston's pennant
+        and World Series cells onto their division blend on the MLB grid. NHL
+        declares `conference` bounded by `make_playoffs`, so 0.40 under a 0.80
+        make-playoffs cell stands however small the division cell is.
+        """
         from app.utils.playoff_grid import enforce_monotonicity
 
         team = {
@@ -786,14 +793,32 @@ class TestProbabilityConsistency:
             },
         }
         fixes = enforce_monotonicity([team], NHL_CONFIG.columns)
+        assert fixes == 0
+        cells = team["cells"]
+        assert cells["conference"]["merged_probability"] == 0.40
+        # The bounds that survive: conference <= make_playoffs, championship <=
+        # conference, division <= make_playoffs.
+        assert cells["conference"]["merged_probability"] <= cells["make_playoffs"]["merged_probability"]
+        assert cells["championship"]["merged_probability"] <= cells["conference"]["merged_probability"]
+        assert cells["make_playoffs"]["merged_probability"] >= cells["division"]["merged_probability"]
+
+    def test_monotonicity_enforced_conference_gt_make_playoffs(self):
+        """Conference > Make Playoffs is still impossible, and still capped."""
+        from app.utils.playoff_grid import enforce_monotonicity
+
+        team = {
+            "name": "Test Team",
+            "cells": {
+                "make_playoffs": {"merged_probability": 0.30, "sources": [{"probability": 0.30, "source": "odds_api"}]},
+                "division": {"merged_probability": 0.25, "sources": [{"probability": 0.25, "source": "odds_api"}]},
+                "conference": {"merged_probability": 0.40, "sources": [{"probability": 0.40, "source": "kalshi"}]},
+                "championship": {"merged_probability": 0.10, "sources": [{"probability": 0.10, "source": "odds_api"}]},
+            },
+        }
+        fixes = enforce_monotonicity([team], NHL_CONFIG.columns)
         assert fixes >= 1
         cells = team["cells"]
-        # Conference must be capped at Division
-        assert cells["conference"]["merged_probability"] <= cells["division"]["merged_probability"]
-        # Championship must be <= Conference
-        assert cells["championship"]["merged_probability"] <= cells["conference"]["merged_probability"]
-        # Make Playoffs >= Division
-        assert cells["make_playoffs"]["merged_probability"] >= cells["division"]["merged_probability"]
+        assert cells["conference"]["merged_probability"] == 0.30
 
     def test_monotonicity_enforced_cascading(self):
         """Monotonicity cascades: if Division > Make Playoffs, cap Division, then cap Conference at Division."""
@@ -833,12 +858,17 @@ class TestProbabilityConsistency:
         assert fixes == 0
 
     def test_monotonicity_source_probs_also_capped(self):
-        """Source probabilities within the cell are also capped."""
+        """Source probabilities within the cell are also capped.
+
+        Capped at the column that BOUNDS conference, which for NHL is
+        make_playoffs (#7076) — the cell used to be capped at division here.
+        """
         from app.utils.playoff_grid import enforce_monotonicity
 
         team = {
             "name": "Source Test",
             "cells": {
+                "make_playoffs": {"merged_probability": 0.20, "sources": [{"probability": 0.20, "source": "odds_api"}]},
                 "division": {"merged_probability": 0.20, "sources": [{"probability": 0.20, "source": "odds_api"}]},
                 "conference": {"merged_probability": 0.35, "sources": [
                     {"probability": 0.35, "source": "kalshi"},
@@ -848,7 +878,7 @@ class TestProbabilityConsistency:
             },
         }
         enforce_monotonicity([team], NHL_CONFIG.columns)
-        # Conference sources should all be capped at Division probability (0.20)
+        # Conference sources should all be capped at Make Playoffs (0.20)
         for src in team["cells"]["conference"]["sources"]:
             assert src["probability"] <= 0.20
 
