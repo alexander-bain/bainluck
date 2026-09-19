@@ -392,6 +392,78 @@ _ESPN_CLUB_NAME_FIELDS = (
 _ESPN_IDENTITY_LOCATION_FIELD = "location"
 
 
+def _sole_candidate_the_payload_names(team_name, candidates, espn_team):
+    """The one candidate this ESPN payload actually names, or nothing.
+
+    `upsert_team`'s pre-mint scans took the FIRST row that satisfied
+    `_canonical_names_match`, and that predicate is a RECALL instrument —
+    `espn_identity_corresponds` documents that it "admits every cross-town
+    rival" (CERT-2881). So in a league holding both `Los Angeles FC` and
+    `LA Galaxy`, an incoming `Los Angeles G` matches BOTH, and which club it
+    binds to is decided by the order the scan happened to return rows in.
+    Measured on the parent, before the probe below existed: `Los Angeles G`
+    carrying the Galaxy payload resolves to `Los Angeles FC` under BOTH row
+    orders (CERT-3134).
+
+    Binding to the wrong club is worse than the duplicate this file exists to
+    stop: a duplicate is a second card, a wrong bind is another club's schedule
+    on this club's page. So the payload breaks the tie — it names exactly one
+    club, and it is the same evidence the mint refusal below already trusts.
+
+    Returns None when nothing corresponds AND when more than one does; an
+    ambiguous answer is refused rather than guessed (the tie doctrine this lane
+    shipped for `resolve_team` in #7230).
+    """
+    accepted = [
+        c for c in candidates if c is not None and _canonical_names_match(team_name, c.name)
+    ]
+    if not accepted:
+        return None
+
+    city, initial = _city_plus_initial(team_name)
+    if initial:
+        # THE FRAGMENT NAMES ITS CLUB BY ONE LETTER, SO HONOUR THE LETTER.
+        # Neither `names_match` nor `espn_identity_corresponds` can separate
+        # these: `names_match('Los Angeles FC', 'LA Galaxy')` is True, the rival
+        # veto reads False, and the payload therefore "corresponds" to both. The
+        # only thing that distinguishes them is the initial the fragment
+        # actually carries — `G` is Galaxy, not FC. Same rule this lane shipped
+        # for `resolve_team` in #7230: a city-plus-initial fragment resolves to
+        # one club or to none.
+        city_tokens = set(_normalize_name(city).split())
+        accepted = [
+            c
+            for c in accepted
+            if any(
+                token.startswith(initial)
+                for token in _normalize_name(c.name or "").split()
+                if token not in city_tokens
+            )
+        ]
+
+    if len(accepted) == 1:
+        return accepted[0]
+    if not accepted:
+        return None
+
+    # Still ambiguous: `names_match` is a RECALL instrument, so the first row the
+    # scan happened to return would decide identity by heap order. Refuse.
+    named = [
+        c
+        for c in accepted
+        if espn_identity_corresponds(c.name, getattr(c, "alternate_names", None), espn_team)
+    ]
+    return named[0] if len(named) == 1 else None
+
+
+def _city_plus_initial(team_name):
+    """``'Los Angeles G'`` -> ``('Los Angeles', 'g')``; anything else -> (None, None)."""
+    parts = (team_name or "").split()
+    if len(parts) >= 2 and len(parts[-1]) == 1 and parts[-1].isalpha():
+        return " ".join(parts[:-1]), parts[-1].lower()
+    return None, None
+
+
 def _espn_name_probes(espn_team, exclude_word: str = "") -> list[str]:
     """Significant words from the ESPN payload's club-name fields.
 
@@ -531,10 +603,9 @@ async def upsert_team(session, team_name, espn_team, sport_id, team_cache=None, 
                     Team.name.ilike(f"%{_first_word}%"),
                 )
             )
-            for candidate in fuzzy_result.scalars():
-                if _canonical_names_match(team_name, candidate.name):
-                    team = candidate
-                    break
+            team = _sole_candidate_the_payload_names(
+                team_name, list(fuzzy_result.scalars()), espn_team
+            )
 
     if not team:
         # The probe above is the CALLER's spelling of the city, so it cannot
@@ -550,10 +621,9 @@ async def upsert_team(session, team_name, espn_team, sport_id, team_cache=None, 
                     or_(*[Team.name.ilike(f"%{p}%") for p in _probes]),
                 )
             )
-            for candidate in probe_result.scalars():
-                if _canonical_names_match(team_name, candidate.name):
-                    team = candidate
-                    break
+            team = _sole_candidate_the_payload_names(
+                team_name, list(probe_result.scalars()), espn_team
+            )
 
     if not team:
         # REFUSE THE MINT, not just the enrichment (#6215, CERT-2877). The

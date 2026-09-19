@@ -268,6 +268,88 @@ class TestTheProbeDoesNotDependOnTheCallersSpelling:
         assert team is not galaxy, "an MLS row answered a lookup under the NBA"
 
 
+class TestACrossTownRivalDoesNotAnswerForTheFragment:
+    """CERT-3134's repair: `6974-ESPN-PROBE-REFUSES-CROSS-TOWN-RIVALS`.
+
+    Widening the candidate set is only safe if the acceptance test can tell two
+    clubs in one city apart, and NEITHER house predicate can:
+
+        names_match('Los Angeles FC', 'LA Galaxy')            -> True
+        shared_token_rivals('Los Angeles FC', 'LA Galaxy')    -> False
+        espn_identity_corresponds('Los Angeles FC', …Galaxy)  -> True
+
+    So the first row the scan happens to return decides identity by heap order.
+    Measured on the PARENT, before any of this file existed, `Los Angeles G`
+    carrying the Galaxy payload resolved to `Los Angeles FC` under BOTH row
+    orders — this is not a regression the widening introduced, it is a hole the
+    widening would have inherited and made louder.
+
+    The fragment names its club by one letter, so the letter is honoured: `G` is
+    Galaxy, not FC. Same rule this lane shipped for `resolve_team` in #7230.
+
+    BOTH ORDERS are pinned on every case, because one order passing is exactly
+    what a heap-order bug looks like.
+    """
+
+    ORDERS = [
+        ["Los Angeles FC", "LA Galaxy"],
+        ["LA Galaxy", "Los Angeles FC"],
+    ]
+
+    @pytest.mark.parametrize("order", ORDERS)
+    @pytest.mark.asyncio
+    async def test_the_initial_picks_the_club_not_the_row_order(self, order):
+        from app.utils.espn_helpers import upsert_team
+
+        rows = [_Row(100 + i, name, MLS) for i, name in enumerate(order)]
+        session = _QueryingSession(rows)
+
+        team = await upsert_team(session, "Los Angeles G", GALAXY, sport_id=MLS)
+
+        assert team is not None, "the Galaxy row was present and was refused"
+        assert team.name == "LA Galaxy", (
+            f"bound to {team.name!r} — a cross-town rival answered for the fragment"
+        )
+        assert session.added == []
+
+    NBA_ORDERS = [
+        ["Los Angeles Lakers", "Los Angeles Clippers"],
+        ["Los Angeles Clippers", "Los Angeles Lakers"],
+    ]
+
+    @pytest.mark.parametrize("order", NBA_ORDERS)
+    @pytest.mark.asyncio
+    async def test_the_same_holds_where_both_rivals_share_the_city_spelling(self, order):
+        """`Los Angeles C` must not be answered by the Lakers.
+
+        Here both clubs spell the city the same way, so the ORIGINAL first-word
+        probe returns both and `names_match` accepts both — the heap decides.
+        """
+        from app.utils.espn_helpers import upsert_team
+
+        rows = [_Row(200 + i, name, NBA) for i, name in enumerate(order)]
+        session = _QueryingSession(rows)
+
+        team = await upsert_team(session, "Los Angeles C", CLIPPERS, sport_id=NBA)
+
+        assert team is not None
+        assert team.name == "Los Angeles Clippers", (
+            f"bound to {team.name!r} — the Lakers answered for a Clippers fragment"
+        )
+        assert session.added == []
+
+    def test_the_fragment_split_only_fires_on_a_trailing_single_letter(self):
+        from app.utils.espn_helpers import _city_plus_initial
+
+        assert _city_plus_initial("Los Angeles G") == ("Los Angeles", "g")
+        assert _city_plus_initial("New York I") == ("New York", "i")
+        # A whole name is not a fragment, and neither is a bare city.
+        assert _city_plus_initial("Los Angeles Clippers") == (None, None)
+        assert _city_plus_initial("Galaxy") == (None, None)
+        assert _city_plus_initial("") == (None, None)
+        assert _city_plus_initial(None) == (None, None)
+
+
 class TestTheProbes:
     """`_espn_name_probes` — the unit, kept honest about what it may probe."""
 
