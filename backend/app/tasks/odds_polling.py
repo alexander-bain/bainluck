@@ -22,7 +22,11 @@ from app.utils.game_pairing import (
     clockless_write_defers_to_authority,
     external_id_currency,
 )
-from app.utils.odds_math import h2h_pair_on_the_full_board, project_scores
+from app.utils.odds_math import (
+    favorite_from_pair,
+    h2h_pair_on_the_full_board,
+    project_scores,
+)
 from app.utils.polling_config import compute_effective_interval
 from app.tasks.base import get_task_session, run_async
 from app.tasks.config import (
@@ -621,13 +625,12 @@ async def _maybe_set_opening_odds(
     if status and status != "scheduled":
         return
 
-    # Determine opening favorite
-    if home_prob > 0.52:
-        opening_favorite = "home"
-    elif home_prob < 0.48:
-        opening_favorite = "away"
-    else:
-        opening_favorite = "even"
+    # Determine opening favorite from BOTH legs (#7055). The old form banded
+    # `home_prob` alone against 0.48/0.52, which assumes the away leg is
+    # `1 - home` — true on a two-way board and false on the draw-priced boards
+    # `h2h_pair_on_the_full_board` deliberately leaves summing to ~0.74. It is
+    # the same answer wherever the pair sums to 1, so no two-way sport moves.
+    opening_favorite = favorite_from_pair(home_prob, away_prob)
 
     # Update opening odds (keeps updating until game starts)
     await session.execute(
