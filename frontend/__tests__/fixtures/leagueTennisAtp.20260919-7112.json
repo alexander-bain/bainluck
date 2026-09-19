@@ -1,0 +1,1107 @@
+{
+ "_captured": "production GET /api/events?sport=tennis_atp&limit=50 at 2026-09-19T04:1xZ (#7112)",
+ "events": [
+  {
+   "id": 15314534,
+   "external_id": null,
+   "sport": "tennis_atp",
+   "sport_name": "Tennis Atp",
+   "home_team": "Blanch",
+   "away_team": "Nakashima",
+   "commence_time": "2026-09-18T22:00:00+00:00",
+   "completed_at": null,
+   "status": "suspended",
+   "started_without_result": false,
+   "home_score": null,
+   "away_score": null,
+   "home_image_url": null,
+   "away_image_url": null,
+   "home_flag_url": null,
+   "away_flag_url": null,
+   "metadata": {
+    "gender": "men",
+    "level": "professional",
+    "league": "ATP",
+    "importance": "unknown"
+   },
+   "highlight": {
+    "score": 0,
+    "reasons": [
+     "tier_4"
+    ],
+    "label": null,
+    "should_feature": false,
+    "flags": {
+     "is_live": false,
+     "is_close_matchup": false,
+     "is_blowout": false,
+     "favorite_switched": false,
+     "probability_swing": "stable",
+     "score_swing": "stable",
+     "is_starting_soon": false,
+     "is_recently_finished": false,
+     "is_upset": false,
+     "league_tier": 4,
+     "is_volatile": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false
+    }
+   },
+   "venue_settled": true,
+   "venue_settled_result": "Blanch wins"
+  },
+  {
+   "id": 15314519,
+   "external_id": null,
+   "sport": "tennis_atp",
+   "sport_name": "Tennis Atp",
+   "home_team": "Lammons / Withrow",
+   "away_team": "Cash / Seggerman",
+   "commence_time": "2026-09-18T23:00:00+00:00",
+   "completed_at": null,
+   "status": "suspended",
+   "started_without_result": false,
+   "home_score": null,
+   "away_score": null,
+   "home_image_url": null,
+   "away_image_url": null,
+   "home_flag_url": null,
+   "away_flag_url": null,
+   "metadata": {
+    "gender": "mixed",
+    "level": "professional",
+    "league": "ATP",
+    "importance": "unknown"
+   },
+   "highlight": {
+    "score": 0,
+    "reasons": [
+     "tier_4"
+    ],
+    "label": null,
+    "should_feature": false,
+    "flags": {
+     "is_live": false,
+     "is_close_matchup": false,
+     "is_blowout": false,
+     "favorite_switched": false,
+     "probability_swing": "stable",
+     "score_swing": "stable",
+     "is_starting_soon": false,
+     "is_recently_finished": false,
+     "is_upset": false,
+     "league_tier": 4,
+     "is_volatile": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false
+    }
+   },
+   "venue_settled": true,
+   "venue_settled_result": "Lammons / Withrow wins"
+  },
+  {
+   "id": 15314535,
+   "external_id": null,
+   "sport": "tennis_atp",
+   "sport_name": "Tennis Atp",
+   "home_team": "Zheng",
+   "away_team": "Krueger",
+   "commence_time": "2026-09-18T23:10:00+00:00",
+   "completed_at": null,
+   "status": "suspended",
+   "started_without_result": false,
+   "home_score": null,
+   "away_score": null,
+   "home_image_url": null,
+   "away_image_url": null,
+   "home_flag_url": null,
+   "away_flag_url": null,
+   "metadata": {
+    "gender": "mixed",
+    "level": "professional",
+    "league": "ATP",
+    "importance": "unknown"
+   },
+   "highlight": {
+    "score": 0,
+    "reasons": [
+     "tier_4"
+    ],
+    "label": null,
+    "should_feature": false,
+    "flags": {
+     "is_live": false,
+     "is_close_matchup": false,
+     "is_blowout": false,
+     "favorite_switched": false,
+     "probability_swing": "stable",
+     "score_swing": "stable",
+     "is_starting_soon": false,
+     "is_recently_finished": false,
+     "is_upset": false,
+     "league_tier": 4,
+     "is_volatile": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false
+    }
+   },
+   "venue_settled": true,
+   "venue_settled_result": "Zheng wins"
+  },
+  {
+   "id": 15314536,
+   "external_id": null,
+   "sport": "tennis_atp",
+   "sport_name": "Tennis Atp",
+   "home_team": "Shelbayh",
+   "away_team": "Mmoh",
+   "commence_time": "2026-09-19T01:00:00+00:00",
+   "completed_at": null,
+   "status": "live",
+   "started_without_result": false,
+   "home_score": null,
+   "away_score": null,
+   "home_image_url": null,
+   "away_image_url": null,
+   "home_flag_url": null,
+   "away_flag_url": null,
+   "metadata": {
+    "gender": "men",
+    "level": "professional",
+    "league": "ATP",
+    "importance": "unknown"
+   },
+   "highlight": {
+    "score": 0,
+    "reasons": [
+     "live",
+     "tier_4"
+    ],
+    "label": "Live",
+    "should_feature": false,
+    "flags": {
+     "is_live": true,
+     "is_close_matchup": false,
+     "is_blowout": false,
+     "favorite_switched": false,
+     "probability_swing": "stable",
+     "score_swing": "stable",
+     "is_starting_soon": false,
+     "is_recently_finished": false,
+     "is_upset": false,
+     "league_tier": 4,
+     "is_volatile": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false
+    }
+   }
+  },
+  {
+   "id": 15314582,
+   "external_id": null,
+   "sport": "tennis_atp",
+   "sport_name": "Tennis Atp",
+   "home_team": "Wolf",
+   "away_team": "Gorzny",
+   "commence_time": "2026-09-19T02:00:00+00:00",
+   "completed_at": null,
+   "status": "live",
+   "started_without_result": false,
+   "home_score": null,
+   "away_score": null,
+   "home_image_url": null,
+   "away_image_url": null,
+   "home_flag_url": null,
+   "away_flag_url": null,
+   "metadata": {
+    "gender": "unknown",
+    "level": "professional",
+    "league": "ATP",
+    "importance": "unknown"
+   },
+   "highlight": {
+    "score": 0,
+    "reasons": [
+     "live",
+     "tier_4"
+    ],
+    "label": "Live",
+    "should_feature": false,
+    "flags": {
+     "is_live": true,
+     "is_close_matchup": false,
+     "is_blowout": false,
+     "favorite_switched": false,
+     "probability_swing": "stable",
+     "score_swing": "stable",
+     "is_starting_soon": false,
+     "is_recently_finished": false,
+     "is_upset": false,
+     "league_tier": 4,
+     "is_volatile": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false
+    }
+   }
+  },
+  {
+   "id": 15314612,
+   "external_id": null,
+   "sport": "tennis_atp",
+   "sport_name": "Tennis Atp",
+   "home_team": "Simakin",
+   "away_team": "Heck",
+   "commence_time": "2026-09-19T06:00:00+00:00",
+   "completed_at": null,
+   "status": "scheduled",
+   "started_without_result": false,
+   "home_score": null,
+   "away_score": null,
+   "home_image_url": null,
+   "away_image_url": null,
+   "home_flag_url": null,
+   "away_flag_url": null,
+   "metadata": {
+    "gender": "unknown",
+    "level": "professional",
+    "league": "ATP",
+    "importance": "unknown"
+   },
+   "espn": {
+    "probability_sources": {
+     "kalshi": 0.795
+    }
+   },
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.795,
+     "display_name": "Kalshi",
+     "type": "market",
+     "color": "#22c55e",
+     "updated_at": "2026-09-19T03:46:47.473908+00:00",
+     "evidence_status": "verified",
+     "verified_scope": "full_event_winner",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031"
+    }
+   },
+   "hero_probability": 0.795,
+   "hero_probability_away": 0.205,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "score": 0,
+    "reasons": [
+     "starting_soon",
+     "tier_4"
+    ],
+    "label": null,
+    "should_feature": false,
+    "flags": {
+     "is_live": false,
+     "is_close_matchup": false,
+     "is_blowout": false,
+     "favorite_switched": false,
+     "probability_swing": "stable",
+     "score_swing": "stable",
+     "is_starting_soon": true,
+     "is_recently_finished": false,
+     "is_upset": false,
+     "league_tier": 4,
+     "is_volatile": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false
+    }
+   }
+  },
+  {
+   "id": 15314611,
+   "external_id": null,
+   "sport": "tennis_atp",
+   "sport_name": "Tennis Atp",
+   "home_team": "Kouame",
+   "away_team": "Pacheco Mendez",
+   "commence_time": "2026-09-19T07:10:00+00:00",
+   "completed_at": null,
+   "status": "scheduled",
+   "started_without_result": false,
+   "home_score": null,
+   "away_score": null,
+   "home_image_url": null,
+   "away_image_url": null,
+   "home_flag_url": null,
+   "away_flag_url": null,
+   "metadata": {
+    "gender": "mixed",
+    "level": "professional",
+    "league": "ATP",
+    "importance": "unknown"
+   },
+   "espn": {
+    "probability_sources": {
+     "kalshi": 0.58
+    }
+   },
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.58,
+     "display_name": "Kalshi",
+     "type": "market",
+     "color": "#22c55e",
+     "updated_at": "2026-09-19T03:47:19.307520+00:00",
+     "evidence_status": "verified",
+     "verified_scope": "full_event_winner",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031"
+    }
+   },
+   "hero_probability": 0.58,
+   "hero_probability_away": 0.42,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "score": 0,
+    "reasons": [
+     "tier_4"
+    ],
+    "label": null,
+    "should_feature": false,
+    "flags": {
+     "is_live": false,
+     "is_close_matchup": false,
+     "is_blowout": false,
+     "favorite_switched": false,
+     "probability_swing": "stable",
+     "score_swing": "stable",
+     "is_starting_soon": false,
+     "is_recently_finished": false,
+     "is_upset": false,
+     "league_tier": 4,
+     "is_volatile": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false
+    }
+   }
+  },
+  {
+   "id": 15314645,
+   "external_id": null,
+   "sport": "tennis_atp",
+   "sport_name": "Tennis Atp",
+   "home_team": "Charlton / Shimizu",
+   "away_team": "Bittoun Kouzmine / Dev S D",
+   "commence_time": "2026-09-19T08:20:00+00:00",
+   "completed_at": null,
+   "status": "scheduled",
+   "started_without_result": false,
+   "home_score": null,
+   "away_score": null,
+   "home_image_url": null,
+   "away_image_url": null,
+   "home_flag_url": null,
+   "away_flag_url": null,
+   "metadata": {
+    "gender": "mixed",
+    "level": "professional",
+    "league": "ATP",
+    "importance": "unknown"
+   },
+   "highlight": {
+    "score": 0,
+    "reasons": [
+     "tier_4"
+    ],
+    "label": null,
+    "should_feature": false,
+    "flags": {
+     "is_live": false,
+     "is_close_matchup": false,
+     "is_blowout": false,
+     "favorite_switched": false,
+     "probability_swing": "stable",
+     "score_swing": "stable",
+     "is_starting_soon": false,
+     "is_recently_finished": false,
+     "is_upset": false,
+     "league_tier": 4,
+     "is_volatile": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false
+    }
+   }
+  },
+  {
+   "id": 15314718,
+   "external_id": null,
+   "sport": "tennis_atp",
+   "sport_name": "Tennis Atp",
+   "home_team": "Reyes-Varela M / Stalder",
+   "away_team": "Bayldon / Kadhe",
+   "commence_time": "2026-09-19T11:00:00+00:00",
+   "completed_at": null,
+   "status": "scheduled",
+   "started_without_result": false,
+   "home_score": null,
+   "away_score": null,
+   "home_image_url": null,
+   "away_image_url": null,
+   "home_flag_url": null,
+   "away_flag_url": null,
+   "metadata": {
+    "gender": "mixed",
+    "level": "professional",
+    "league": "ATP",
+    "importance": "unknown"
+   },
+   "highlight": {
+    "score": 0,
+    "reasons": [
+     "tier_4"
+    ],
+    "label": null,
+    "should_feature": false,
+    "flags": {
+     "is_live": false,
+     "is_close_matchup": false,
+     "is_blowout": false,
+     "favorite_switched": false,
+     "probability_swing": "stable",
+     "score_swing": "stable",
+     "is_starting_soon": false,
+     "is_recently_finished": false,
+     "is_upset": false,
+     "league_tier": 4,
+     "is_volatile": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false
+    }
+   }
+  },
+  {
+   "id": 15314781,
+   "external_id": null,
+   "sport": "tennis_atp",
+   "sport_name": "Tennis Atp",
+   "home_team": "Forti / Romano",
+   "away_team": "Agamenone / Zeitune",
+   "commence_time": "2026-09-19T12:00:00+00:00",
+   "completed_at": null,
+   "status": "scheduled",
+   "started_without_result": false,
+   "home_score": null,
+   "away_score": null,
+   "home_image_url": null,
+   "away_image_url": null,
+   "home_flag_url": null,
+   "away_flag_url": null,
+   "metadata": {
+    "gender": "mixed",
+    "level": "professional",
+    "league": "ATP",
+    "importance": "unknown"
+   },
+   "highlight": {
+    "score": 0,
+    "reasons": [
+     "tier_4"
+    ],
+    "label": null,
+    "should_feature": false,
+    "flags": {
+     "is_live": false,
+     "is_close_matchup": false,
+     "is_blowout": false,
+     "favorite_switched": false,
+     "probability_swing": "stable",
+     "score_swing": "stable",
+     "is_starting_soon": false,
+     "is_recently_finished": false,
+     "is_upset": false,
+     "league_tier": 4,
+     "is_volatile": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false
+    }
+   }
+  },
+  {
+   "id": 15314780,
+   "external_id": null,
+   "sport": "tennis_atp",
+   "sport_name": "Tennis Atp",
+   "home_team": "Arends / Stevens",
+   "away_team": "Liutarevich / Paris",
+   "commence_time": "2026-09-19T12:00:00+00:00",
+   "completed_at": null,
+   "status": "scheduled",
+   "started_without_result": false,
+   "home_score": null,
+   "away_score": null,
+   "home_image_url": null,
+   "away_image_url": null,
+   "home_flag_url": null,
+   "away_flag_url": null,
+   "metadata": {
+    "gender": "mixed",
+    "level": "professional",
+    "league": "ATP",
+    "importance": "unknown"
+   },
+   "highlight": {
+    "score": 0,
+    "reasons": [
+     "tier_4"
+    ],
+    "label": null,
+    "should_feature": false,
+    "flags": {
+     "is_live": false,
+     "is_close_matchup": false,
+     "is_blowout": false,
+     "favorite_switched": false,
+     "probability_swing": "stable",
+     "score_swing": "stable",
+     "is_starting_soon": false,
+     "is_recently_finished": false,
+     "is_upset": false,
+     "league_tier": 4,
+     "is_volatile": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false
+    }
+   }
+  },
+  {
+   "id": 15314775,
+   "external_id": null,
+   "sport": "tennis_atp",
+   "sport_name": "Tennis Atp",
+   "home_team": "Sharipov",
+   "away_team": "Bar Biryukov",
+   "commence_time": "2026-09-19T12:30:00+00:00",
+   "completed_at": null,
+   "status": "scheduled",
+   "started_without_result": false,
+   "home_score": null,
+   "away_score": null,
+   "home_image_url": null,
+   "away_image_url": null,
+   "home_flag_url": null,
+   "away_flag_url": null,
+   "metadata": {
+    "gender": "unknown",
+    "level": "professional",
+    "league": "ATP",
+    "importance": "unknown"
+   },
+   "espn": {
+    "probability_sources": {
+     "kalshi": 0.805
+    }
+   },
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.805,
+     "display_name": "Kalshi",
+     "type": "market",
+     "color": "#22c55e",
+     "updated_at": "2026-09-19T03:21:15.377621+00:00",
+     "evidence_status": "verified",
+     "verified_scope": "full_event_winner",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031"
+    }
+   },
+   "hero_probability": 0.805,
+   "hero_probability_away": 0.195,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "score": 0,
+    "reasons": [
+     "tier_4"
+    ],
+    "label": null,
+    "should_feature": false,
+    "flags": {
+     "is_live": false,
+     "is_close_matchup": false,
+     "is_blowout": false,
+     "favorite_switched": false,
+     "probability_swing": "stable",
+     "score_swing": "stable",
+     "is_starting_soon": false,
+     "is_recently_finished": false,
+     "is_upset": false,
+     "league_tier": 4,
+     "is_volatile": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false
+    }
+   }
+  },
+  {
+   "id": 15314776,
+   "external_id": null,
+   "sport": "tennis_atp",
+   "sport_name": "Tennis Atp",
+   "home_team": "Kotov",
+   "away_team": "Tomic",
+   "commence_time": "2026-09-19T13:40:00+00:00",
+   "completed_at": null,
+   "status": "scheduled",
+   "started_without_result": false,
+   "home_score": null,
+   "away_score": null,
+   "home_image_url": null,
+   "away_image_url": null,
+   "home_flag_url": null,
+   "away_flag_url": null,
+   "metadata": {
+    "gender": "men",
+    "level": "professional",
+    "league": "ATP",
+    "importance": "unknown"
+   },
+   "espn": {
+    "probability_sources": {
+     "kalshi": 0.555
+    }
+   },
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.555,
+     "display_name": "Kalshi",
+     "type": "market",
+     "color": "#22c55e",
+     "updated_at": "2026-09-19T03:21:15.396249+00:00",
+     "evidence_status": "verified",
+     "verified_scope": "full_event_winner",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031"
+    }
+   },
+   "hero_probability": 0.555,
+   "hero_probability_away": 0.445,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "score": 0,
+    "reasons": [
+     "tier_4"
+    ],
+    "label": null,
+    "should_feature": false,
+    "flags": {
+     "is_live": false,
+     "is_close_matchup": false,
+     "is_blowout": false,
+     "favorite_switched": false,
+     "probability_swing": "stable",
+     "score_swing": "stable",
+     "is_starting_soon": false,
+     "is_recently_finished": false,
+     "is_upset": false,
+     "league_tier": 4,
+     "is_volatile": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false
+    }
+   }
+  },
+  {
+   "id": 15314778,
+   "external_id": null,
+   "sport": "tennis_atp",
+   "sport_name": "Tennis Atp",
+   "home_team": "Schoolkate",
+   "away_team": "Mayot",
+   "commence_time": "2026-09-19T14:30:00+00:00",
+   "completed_at": null,
+   "status": "scheduled",
+   "started_without_result": false,
+   "home_score": null,
+   "away_score": null,
+   "home_image_url": null,
+   "away_image_url": null,
+   "home_flag_url": null,
+   "away_flag_url": null,
+   "metadata": {
+    "gender": "unknown",
+    "level": "professional",
+    "league": "ATP",
+    "importance": "unknown"
+   },
+   "espn": {
+    "probability_sources": {
+     "kalshi": 0.465
+    }
+   },
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.465,
+     "display_name": "Kalshi",
+     "type": "market",
+     "color": "#22c55e",
+     "updated_at": "2026-09-19T03:21:15.432633+00:00",
+     "evidence_status": "verified",
+     "verified_scope": "full_event_winner",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031"
+    }
+   },
+   "hero_probability": 0.465,
+   "hero_probability_away": 0.535,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "score": 0,
+    "reasons": [
+     "tier_4"
+    ],
+    "label": null,
+    "should_feature": false,
+    "flags": {
+     "is_live": false,
+     "is_close_matchup": false,
+     "is_blowout": false,
+     "favorite_switched": false,
+     "probability_swing": "stable",
+     "score_swing": "stable",
+     "is_starting_soon": false,
+     "is_recently_finished": false,
+     "is_upset": false,
+     "league_tier": 4,
+     "is_volatile": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false
+    }
+   }
+  },
+  {
+   "id": 15314777,
+   "external_id": null,
+   "sport": "tennis_atp",
+   "sport_name": "Tennis Atp",
+   "home_team": "Caniato",
+   "away_team": "Barrena",
+   "commence_time": "2026-09-19T14:30:00+00:00",
+   "completed_at": null,
+   "status": "scheduled",
+   "started_without_result": false,
+   "home_score": null,
+   "away_score": null,
+   "home_image_url": null,
+   "away_image_url": null,
+   "home_flag_url": null,
+   "away_flag_url": null,
+   "metadata": {
+    "gender": "unknown",
+    "level": "professional",
+    "league": "ATP",
+    "importance": "unknown"
+   },
+   "espn": {
+    "probability_sources": {
+     "kalshi": 0.535
+    }
+   },
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.535,
+     "display_name": "Kalshi",
+     "type": "market",
+     "color": "#22c55e",
+     "updated_at": "2026-09-19T03:21:15.415014+00:00",
+     "evidence_status": "verified",
+     "verified_scope": "full_event_winner",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031"
+    }
+   },
+   "hero_probability": 0.535,
+   "hero_probability_away": 0.465,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "score": 0,
+    "reasons": [
+     "tier_4"
+    ],
+    "label": null,
+    "should_feature": false,
+    "flags": {
+     "is_live": false,
+     "is_close_matchup": false,
+     "is_blowout": false,
+     "favorite_switched": false,
+     "probability_swing": "stable",
+     "score_swing": "stable",
+     "is_starting_soon": false,
+     "is_recently_finished": false,
+     "is_upset": false,
+     "league_tier": 4,
+     "is_volatile": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false
+    }
+   }
+  },
+  {
+   "id": 15314779,
+   "external_id": null,
+   "sport": "tennis_atp",
+   "sport_name": "Tennis Atp",
+   "home_team": "Monteiro",
+   "away_team": "Trungelliti",
+   "commence_time": "2026-09-19T15:00:00+00:00",
+   "completed_at": null,
+   "status": "scheduled",
+   "started_without_result": false,
+   "home_score": null,
+   "away_score": null,
+   "home_image_url": null,
+   "away_image_url": null,
+   "home_flag_url": null,
+   "away_flag_url": null,
+   "metadata": {
+    "gender": "men",
+    "level": "professional",
+    "league": "ATP",
+    "importance": "unknown"
+   },
+   "espn": {
+    "probability_sources": {
+     "kalshi": 0.425
+    }
+   },
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.425,
+     "display_name": "Kalshi",
+     "type": "market",
+     "color": "#22c55e",
+     "updated_at": "2026-09-19T03:21:15.463161+00:00",
+     "evidence_status": "verified",
+     "verified_scope": "full_event_winner",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031"
+    }
+   },
+   "hero_probability": 0.425,
+   "hero_probability_away": 0.575,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "score": 0,
+    "reasons": [
+     "tier_4"
+    ],
+    "label": null,
+    "should_feature": false,
+    "flags": {
+     "is_live": false,
+     "is_close_matchup": false,
+     "is_blowout": false,
+     "favorite_switched": false,
+     "probability_swing": "stable",
+     "score_swing": "stable",
+     "is_starting_soon": false,
+     "is_recently_finished": false,
+     "is_upset": false,
+     "league_tier": 4,
+     "is_volatile": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false
+    }
+   }
+  },
+  {
+   "id": 15314803,
+   "external_id": null,
+   "sport": "tennis_atp",
+   "sport_name": "Tennis Atp",
+   "home_team": "Gueymard Wayenburg",
+   "away_team": "Droguet",
+   "commence_time": "2026-09-19T15:40:00+00:00",
+   "completed_at": null,
+   "status": "scheduled",
+   "started_without_result": false,
+   "home_score": null,
+   "away_score": null,
+   "home_image_url": null,
+   "away_image_url": null,
+   "home_flag_url": null,
+   "away_flag_url": null,
+   "metadata": {
+    "gender": "mixed",
+    "level": "professional",
+    "league": "ATP",
+    "importance": "unknown"
+   },
+   "espn": {
+    "probability_sources": {
+     "kalshi": 0.315
+    }
+   },
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.315,
+     "display_name": "Kalshi",
+     "type": "market",
+     "color": "#22c55e",
+     "updated_at": "2026-09-19T03:21:15.317381+00:00",
+     "evidence_status": "verified",
+     "verified_scope": "full_event_winner",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031"
+    }
+   },
+   "hero_probability": 0.315,
+   "hero_probability_away": 0.685,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "score": 0,
+    "reasons": [
+     "tier_4"
+    ],
+    "label": null,
+    "should_feature": false,
+    "flags": {
+     "is_live": false,
+     "is_close_matchup": false,
+     "is_blowout": false,
+     "favorite_switched": false,
+     "probability_swing": "stable",
+     "score_swing": "stable",
+     "is_starting_soon": false,
+     "is_recently_finished": false,
+     "is_upset": false,
+     "league_tier": 4,
+     "is_volatile": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false
+    }
+   }
+  },
+  {
+   "id": 15314800,
+   "external_id": null,
+   "sport": "tennis_atp",
+   "sport_name": "Tennis Atp",
+   "home_team": "Moro Canas",
+   "away_team": "Clarke",
+   "commence_time": "2026-09-19T15:40:00+00:00",
+   "completed_at": null,
+   "status": "scheduled",
+   "started_without_result": false,
+   "home_score": null,
+   "away_score": null,
+   "home_image_url": null,
+   "away_image_url": null,
+   "home_flag_url": null,
+   "away_flag_url": null,
+   "metadata": {
+    "gender": "unknown",
+    "level": "professional",
+    "league": "ATP",
+    "importance": "unknown"
+   },
+   "espn": {
+    "probability_sources": {
+     "kalshi": 0.555
+    }
+   },
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.555,
+     "display_name": "Kalshi",
+     "type": "market",
+     "color": "#22c55e",
+     "updated_at": "2026-09-19T03:21:15.340958+00:00",
+     "evidence_status": "verified",
+     "verified_scope": "full_event_winner",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031"
+    }
+   },
+   "hero_probability": 0.555,
+   "hero_probability_away": 0.445,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "score": 0,
+    "reasons": [
+     "tier_4"
+    ],
+    "label": null,
+    "should_feature": false,
+    "flags": {
+     "is_live": false,
+     "is_close_matchup": false,
+     "is_blowout": false,
+     "favorite_switched": false,
+     "probability_swing": "stable",
+     "score_swing": "stable",
+     "is_starting_soon": false,
+     "is_recently_finished": false,
+     "is_upset": false,
+     "league_tier": 4,
+     "is_volatile": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false
+    }
+   }
+  },
+  {
+   "id": 15314799,
+   "external_id": null,
+   "sport": "tennis_atp",
+   "sport_name": "Tennis Atp",
+   "home_team": "Sanchez Izquierdo",
+   "away_team": "Mikrut",
+   "commence_time": "2026-09-19T16:10:00+00:00",
+   "completed_at": null,
+   "status": "scheduled",
+   "started_without_result": false,
+   "home_score": null,
+   "away_score": null,
+   "home_image_url": null,
+   "away_image_url": null,
+   "home_flag_url": null,
+   "away_flag_url": null,
+   "metadata": {
+    "gender": "mixed",
+    "level": "professional",
+    "league": "ATP",
+    "importance": "unknown"
+   },
+   "espn": {
+    "probability_sources": {
+     "kalshi": 0.475
+    }
+   },
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.475,
+     "display_name": "Kalshi",
+     "type": "market",
+     "color": "#22c55e",
+     "updated_at": "2026-09-19T03:21:15.359337+00:00",
+     "evidence_status": "verified",
+     "verified_scope": "full_event_winner",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031"
+    }
+   },
+   "hero_probability": 0.475,
+   "hero_probability_away": 0.525,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "score": 0,
+    "reasons": [
+     "tier_4"
+    ],
+    "label": null,
+    "should_feature": false,
+    "flags": {
+     "is_live": false,
+     "is_close_matchup": false,
+     "is_blowout": false,
+     "favorite_switched": false,
+     "probability_swing": "stable",
+     "score_swing": "stable",
+     "is_starting_soon": false,
+     "is_recently_finished": false,
+     "is_upset": false,
+     "league_tier": 4,
+     "is_volatile": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false
+    }
+   }
+  }
+ ]
+}

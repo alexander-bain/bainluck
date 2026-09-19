@@ -396,12 +396,73 @@ export function blendCaptionIsStale(
  * `eventSectionKey` call is the second half of that change.
  * `__tests__/lib/startedWithoutResultIsNotUpcoming3211.test.ts` pins BOTH arms
  * so neither can be altered by accident.
+ *
+ * ── #7112: THE PREMISE ABOVE EXPIRED FOR ONE ROW, AND ONLY THAT ONE ──
+ *
+ * "Filing it under finished claims a result" is the sentence this function
+ * opens with, and it was true of every row it could see. It stopped being true
+ * of the rows #6381/#6739/#7070 taught the CARD to speak for: the venue graded
+ * the full contest, and the card is already printing `Settled · Blanch wins`
+ * over the reader's head. Filing THAT row under "finished" claims nothing the
+ * page is not already saying out loud.
+ *
+ * Measured on production 2026-09-19 03:03Z, `/sports/tennis_atp` at 390px:
+ * four such rows sat under a heading reading `Live & Paused 6`, ABOVE the two
+ * matches actually being played, and the page rendered no Finished section at
+ * all. The card read `venue_settled`; the bucket read `status`. Two predicates
+ * for one question, which is how they came to disagree (#7112).
+ *
+ * 🔴 THE ARM IS `EventCard`'s OWN CONJUNCTION, NOT A SECOND READING OF IT:
+ * `hasNoReportedResult(...) && venueSettledSummary(...) !== null`, the pair
+ * `EventCard.tsx` computes to decide whether to print the sentence. It is
+ * evaluated HERE — from the two raw fields — rather than taking a caller's
+ * boolean, so a surface cannot pass its own idea of "settled" and reintroduce
+ * the drift this fixes.
+ *
+ * ⚠️ `venueSettledSummary(…) !== null` is, TODAY, exactly `!!venue_settled` —
+ * the result string only decides whether the sentence carries a winner, never
+ * whether there is one. So a mutant that collapses it to the boolean survives,
+ * and that is an equivalence rather than a hole in the suite. It is written the
+ * long way on purpose: the claim this rung makes is "the bucket is whatever the
+ * CARD's sentence says", and that stays true for free if
+ * `venueSettledSummary` ever gains a rung (a contradicted grade returning null
+ * is the obvious one). Do not "simplify" it to the flag — that is the second
+ * predicate coming back.
+ *
+ * The `hasNoReportedResult` half is what keeps the arm off every other row:
+ * a `status === "live"` row is false there and cannot be moved by a stray flag,
+ * and a `scheduled` row inside the grace window is false there too. The bare
+ * ladder is therefore UNCHANGED for every caller that passes no settlement —
+ * `suspendedIsFirstClassCert786.test.ts` and
+ * `startedWithoutResultIsNotUpcoming3211.test.ts` pin that, and neither moved.
+ *
+ * Passed by the two LEAGUE-PAGE callers, which read `Event` and so can carry
+ * the keys: `lib/sports/leagueSections` (the bucket a reader sees) and
+ * `lib/sports/leagueHorizon` (whose docblock states it must agree with that
+ * bucket — a settled match is not "the league is playing right now"). The feed
+ * and My Stuff read `FeedEventData`, which carries neither key, so they pass
+ * nothing and are byte-for-byte unaffected; when that envelope gains them, the
+ * call sites are the second half of that change, exactly as for `#3211`'s time.
  */
 export function eventSectionKey(
   status: string | null | undefined,
   commenceTime?: string | null,
   now: number = Date.now(),
+  settlement?: {
+    venue_settled?: boolean | null;
+    venue_settled_result?: string | null;
+  } | null,
 ): "live" | "finished" | "upcoming" {
+  if (
+    settlement &&
+    hasNoReportedResult(status, commenceTime, now) &&
+    venueSettledSummary(
+      settlement.venue_settled,
+      settlement.venue_settled_result,
+    ) !== null
+  ) {
+    return "finished";
+  }
   if (status === "live" || isSuspendedStatus(status)) return "live";
   if (isFinishedStatus(status)) return "finished";
   if (startedWithoutResult(status, commenceTime, now)) return "live";

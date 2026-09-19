@@ -155,7 +155,18 @@ export function buildLeagueSections(
     // The shared ladder (live/048 + CERT-786 + #3211), not a third copy of it.
     // The TIME is passed because the ladder's newest rung needs it: a row that
     // still says `scheduled` hours after its own kickoff is not upcoming.
-    const section = eventSectionKey(event.status, event.commence_time, now);
+    //
+    // #7112 — and the EVENT is passed for the rung after that: a row the venue
+    // graded belongs under Finished, because the card above the heading is
+    // already printing `Settled · Blanch wins`. The row is handed over whole so
+    // the ladder reads the two raw keys itself; a boolean computed here would
+    // be the second predicate whose drift from the card's is this issue.
+    const section = eventSectionKey(
+      event.status,
+      event.commence_time,
+      now,
+      event,
+    );
     if (section === "live") live.push(event);
     else if (section === "finished") finished.push(event);
     else upcoming.push(event);

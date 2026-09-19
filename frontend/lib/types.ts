@@ -297,12 +297,27 @@ export interface Event {
    *
    * On `Event` and not on `EventDetailResponse` since #6739's second half: the
    * LEAGUE rails (`/api/leagues/{sport_key}` — upcoming, recent AND unreported)
-   * now serve the two keys under these same names, so the shared card renders
-   * them wherever that envelope reaches it. `/api/events` — the LIST route
-   * `/sports/[key]` reads — does NOT: measured 2026-09-19 00:5xZ, 11 of 11
-   * `tennis_atp` rows carried neither key while two of those rows' own detail
-   * payloads named a winner. So a card on `/sports/[key]` still prints the
-   * denial, and that is a missing producer rather than a consumer bug.
+   * serve the two keys under these same names, so the shared card renders them
+   * wherever that envelope reaches it.
+   *
+   * ⚠️ AMENDED 2026-09-19 04:1xZ (#7112). The paragraph here used to say
+   * `/api/events` — the LIST route `/sports/[key]` reads — does NOT carry them,
+   * off an 00:5xZ reading of 11 of 11 `tennis_atp` rows. #7092 shipped that
+   * producer at 02:29Z and the sentence expired the same night. Re-measured on
+   * `/api/events?sport=tennis_atp&limit=50`: 19 rows, and the keys are served
+   * exactly where the producer scopes them —
+   *
+   *     3 `suspended`   key PRESENT, `venue_settled: true`, each with a result
+   *     2 `live`        key absent
+   *    14 `scheduled`   key absent
+   *
+   * The ABSENCE on the other 16 is the contract, not a gap: the keys are served
+   * only on rows about to print `SUSPENDED_LABEL`, which is the three-state
+   * shape the top of this comment describes. One truthiness test still covers
+   * all three, so nothing downstream distinguishes absent from `false`.
+   *
+   * 🔴 A reading of this field's REACH ages out in hours, not weeks — twice
+   * now. Re-measure before quoting the counts above; do not inherit them.
    *
    * Produced by `backend/app/utils/venue_settlement.py` (live lane, PR #6410
    * then #6756); read through `venueSettledSummary` and nowhere else. It
