@@ -47,9 +47,11 @@ import pytest
 
 from app.tasks import (
     GRADED_DELTA_BATCH,
+    GRADED_RANK_BATCH,
     IMPOSSIBLE_PRIOR_BATCH,
     MOVEMENT_WINDOW_HOURS,
     STALE_DELTA_BATCH,
+    STALE_RANK_BATCH,
     UNOBSERVED_PRIOR_BATCH,
     UNOBSERVED_PRIOR_TOLERANCE,
     update_max_movement,
@@ -371,13 +373,14 @@ def test_a_short_batch_reports_the_backlog_as_drained(run_task) -> None:
     """And the day it comes up short, the sweep has caught up.
 
     Six rowcounts because A4 (#4079) is the FOURTH statement to touch
-    `futures_outcomes`; the list is consumed in execution order, so the two
-    market statements are now positions 5 and 6. Each retirement counter is
+    `futures_outcomes`; the list is consumed in execution order, and #4079's
+    two RANK sweeps (A5/A6) make the outcome statements six, so the two market
+    statements are now positions 7 and 8. Each retirement counter is
     asserted against a DISTINCT value so a statement that read its sibling's
     rowcount could not pass — which is the whole reason this fixture is a
     sequence rather than a repeated number.
     """
-    result, _ = run_task([12, 6, 9, 8, 4, 2])
+    result, _ = run_task([12, 6, 9, 8, 1, 1, 4, 2])
 
     assert result["expired"] == 12
     assert result["graded_retired"] == 6
@@ -390,8 +393,11 @@ def test_a_short_batch_reports_the_backlog_as_drained(run_task) -> None:
 
 
 def test_the_result_still_carries_the_original_contract(run_task) -> None:
-    """LAT-P115's keys survive: the warm is still reported, never swallowed."""
-    result, _ = run_task([5, 3, 7, 2, 9, 1])
+    """LAT-P115's keys survive: the warm is still reported, never swallowed.
+
+    Positions 5 and 6 are #4079's rank sweeps A5/A6, so the recompute is 7th.
+    """
+    result, _ = run_task([5, 3, 7, 2, 0, 0, 9, 1])
 
     assert result["updated"] == 9, f"the recompute's rowcount moved key: {result}"
     assert result["movers_warm"] == {"terminal": "ok", "completed": 1}
@@ -605,15 +611,19 @@ def test_both_sweeps_run_before_either_market_statement(run_task) -> None:
 
     If A2 landed after them the recompute would read rows A2 was about to
     retire, and the market maximum would be a full run stale. #6536 adds a
-    THIRD outcome sweep (A3) and #4079 a FOURTH (A4) under the same obligation,
-    so the count is the number of sweeps and the ordering claim is unchanged.
+    THIRD outcome sweep (A3) and #4079 a FOURTH (A4) and then two RANK sweeps
+    (A5/A6) under the same obligation, so the count is the number of sweeps and
+    the ordering claim is unchanged.
+
+    The count is the half that catches a DROPPED sweep, which is why it is
+    pinned here rather than left to the per-statement `_phase_*` helpers.
     """
     events = _statements(run_task()[1])
     outcome_idx = [i for i, s in enumerate(events) if "UPDATE futures_outcomes" in s]
     market_idx = [i for i, s in enumerate(events) if "UPDATE futures_markets" in s]
 
-    assert len(outcome_idx) == 4, (
-        f"expected all four outcome sweeps, saw {len(outcome_idx)}: {events}"
+    assert len(outcome_idx) == 6, (
+        f"expected all six outcome sweeps, saw {len(outcome_idx)}: {events}"
     )
     assert max(outcome_idx) < min(market_idx), (
         "a market statement ran before an outcome sweep, so it recomputed over "
@@ -984,3 +994,236 @@ def test_the_unobserved_count_is_reported_under_its_own_key(run_task) -> None:
     assert result["impossible_retired"] == 3, (
         f"A3's counter moved when A4 was added: {result}"
     )
+
+
+# ---------------------------------------------------------------------------
+# A5 / A6 — the RANK claim, which A/A2/A3/A4 swept the delta out from under
+# ---------------------------------------------------------------------------
+# #4079 finding 2. `rank_change_24h` is the delta's twin: same three writers,
+# same statement, same per-poll semantics under a 24-hour name. Nothing ever
+# swept it, so every row A through A4 cleared kept a rank claim that outlived
+# the delta it was written beside. The reader meets that as a "New favorite"
+# card reporting no movement for the leader whose lead supposedly just changed —
+# `futures_highlights` reads `leader_was_different` off the rank-1 outcome's
+# `rank_change_24h` ALONE and pays it `FUTURES_WEIGHTS["leader_change"] = +15`,
+# while `feed.py`'s `movement` comes from `probability_change_24h`.
+#
+# Measured on production 2026-09-19: 394,345 outcomes carry a non-zero rank
+# change; 373,272 (94.7%) are already dead by A's or A2's own predicate. Of 11
+# served "New favorite" cards, the 4 whose leader served no movement were all
+# graded rows with a live rank claim; the other 7 had real movement.
+#
+# These pin the WIRING, as everything above them does. The row-level semantics —
+# that a stale rank claim is cleared, a LIVE one survives, and the two sweeps
+# reach rows whose delta is already NULL — need real Postgres and live in
+# `tests/integration/test_movement_window_pg.py`. The two files are a pair.
+
+
+def _phase_a5(session: _RecordingSession) -> tuple[str, dict]:
+    """The STALE RANK sweep: the fifth statement to touch futures_outcomes."""
+    hits = [(sql, params) for sql, params in session.calls
+            if "UPDATE futures_outcomes" in sql]
+    if len(hits) < 5:
+        raise AssertionError(
+            "only four statements update futures_outcomes, so the STALE RANK "
+            "sweep is GONE. Without it a row nothing has written in 24 hours "
+            "keeps a frozen `rank_change_24h` after A retired its delta, and "
+            "the card says 'New favorite' with no movement behind it. "
+            "Statements seen: " + repr(_statements(session))
+        )
+    return hits[4]
+
+
+def _phase_a6(session: _RecordingSession) -> tuple[str, dict]:
+    """The GRADED RANK sweep: the sixth statement to touch futures_outcomes."""
+    hits = [(sql, params) for sql, params in session.calls
+            if "UPDATE futures_outcomes" in sql]
+    if len(hits) < 6:
+        raise AssertionError(
+            "only five statements update futures_outcomes, so the GRADED RANK "
+            "sweep is GONE. A5 cannot reach its rows: `backfill_winners` "
+            "re-stamps `last_updated` at ~25 sites every six hours, so a "
+            "settled board's rank arrows look fresh to any age test and are "
+            "RE-ARMED twice a day — and all four repaired cards in this ship's "
+            "own before/after were A6's. "
+            "Statements seen: " + repr(_statements(session))
+        )
+    return hits[5]
+
+
+def test_the_rank_claim_is_retired_and_not_only_the_delta() -> None:
+    """The column is swept at all — the whole of #4079 finding 2.
+
+    Read off the source rather than the recording double on purpose: the
+    assertion is that `rank_change_24h = NULL` appears in this task's SQL, and a
+    double that was handed the statements cannot fail that independently.
+    """
+    import inspect
+
+    from app.tasks import update_max_movement
+
+    src = inspect.getsource(update_max_movement)
+
+    assert "rank_change_24h = NULL" in src, (
+        "no statement in `update_max_movement` retires `rank_change_24h`. That "
+        "is the state this ship ended: A through A4 retire the delta and leave "
+        "the rank claim standing, so a card keeps asserting a leadership change "
+        "with no movement to support it (#4079 finding 2)."
+    )
+
+
+def test_the_stale_rank_sweep_does_not_gate_on_the_delta(run_task) -> None:
+    """A5's predicate must NOT require a surviving `probability_change_24h`.
+
+    THIS IS THE TEST THAT MAKES THE SHIP NON-INERT, and it is the one the
+    measurement bought. The obvious fix — adding `rank_change_24h = NULL` to
+    A's own `SET` — is inert on every specimen that produced this ship, because
+    A selects on `probability_change_24h IS NOT NULL` and those rows had their
+    delta retired on an EARLIER run. Of the served "New favorite" leaders,
+    `Flávio Bolsonaro` and `Scott Jennings` both carry a NULL delta beside a
+    live rank claim; neither is selectable by A.
+    """
+    sql, params = _phase_a5(run_task()[1])
+
+    select = sql.split("SELECT", 1)[1]
+    assert "probability_change_24h" not in select, (
+        "the stale RANK sweep gates on the delta, so it can only reach rows "
+        "whose delta is still standing — which is precisely the set that does "
+        "NOT need it. The rows serving the defect had their delta retired by A "
+        "on an earlier run. Statement:\n" + sql
+    )
+    assert "rank_change_24h IS NOT NULL" in sql, sql
+    assert params["window_hours"] == MOVEMENT_WINDOW_HOURS, params
+
+
+def test_the_stale_rank_sweep_reads_last_updated(run_task) -> None:
+    """A's stamp, for A's reason: "has any writer touched this row"."""
+    sql, _ = _phase_a5(run_task()[1])
+
+    assert "last_updated" in sql, sql
+    assert "price_changed_at" not in sql, (
+        "the rank sweep reads the price-move stamp instead of the write stamp. "
+        "A row polled every hour and parked at one rank is being written and "
+        "its rank change is honest; the rows here are ones NOTHING has "
+        "written (#2024 records that reading as POLLER ALIVE). Statement:\n"
+        + sql
+    )
+
+
+def test_the_graded_rank_sweep_does_not_gate_on_a_timestamp(run_task) -> None:
+    """A6 is immune to A5 for exactly A2's reason, so it must not re-import it."""
+    sql, _ = _phase_a6(run_task()[1])
+
+    assert "resolution_source IS NOT NULL" in sql, sql
+    assert "last_updated" not in sql, (
+        "the graded RANK sweep gates on a timestamp, which makes it a copy of "
+        "A5 that cannot reach the rows it exists for: `backfill_winners` "
+        "re-stamps `last_updated` at ~25 sites every six hours, so the deadest "
+        "boards in the table look fresh. Statement:\n" + sql
+    )
+    assert "is_winner" not in sql, (
+        "the graded RANK sweep reads `is_winner`, which carries a server "
+        "DEFAULT false and holds next to no grading information — 2,536 NULLs "
+        "in 3,893,126 rows on production. `resolution_source` is the "
+        "predicate, and A2 says so at length. Statement:\n" + sql
+    )
+
+
+def test_both_rank_sweeps_are_bounded_by_their_own_constants(run_task) -> None:
+    """Separate constants, so neither can be tuned by moving the other."""
+    a5_sql, a5_params = _phase_a5(run_task()[1])
+    a6_sql, a6_params = _phase_a6(run_task()[1])
+
+    for sql in (a5_sql, a6_sql):
+        assert "LIMIT" in sql, (
+            "an unbounded rank sweep: 373,272 rows were retirable when this "
+            "shipped, and one UPDATE over them blows the task's 120 s "
+            f"soft_time_limit and holds locks against four live pollers:\n{sql}"
+        )
+    assert a5_params["batch"] == STALE_RANK_BATCH, a5_params
+    assert a6_params["batch"] == GRADED_RANK_BATCH, a6_params
+
+
+def test_the_rank_sweeps_skip_a_stored_zero(run_task) -> None:
+    """`!= 0` is load-bearing, and it is where A5/A6 part company with A.
+
+    A clears a stored `0.0` because statement B aggregates `MAX(ABS(delta))`, so
+    a surviving zero keeps a market inside that GROUP BY and blocks C from
+    lowering it. `rank_change_24h` feeds no aggregate, and every consumer
+    already reads 0 and NULL identically — `futures_highlights`
+    (`rank_change and rank_change != 0`), `snippet_angles`, and iOS
+    `FuturesDetailView` (`rankChange != 0`). Sweeping zeros would rewrite
+    millions of rows and change nothing a reader can see.
+    """
+    for phase in (_phase_a5, _phase_a6):
+        sql, _ = phase(run_task()[1])
+        assert "rank_change_24h != 0" in sql, (
+            "the rank sweep retires stored zeros, which costs a multi-million "
+            f"row rewrite for no reader-visible change:\n{sql}"
+        )
+
+
+def test_the_fresh_row_sweeps_retire_the_rank_claim_too(run_task) -> None:
+    """A3 and A4 are the ONLY places the pair can be retired together.
+
+    A5 and A6 structurally cannot reach their rows — open, ungraded and freshly
+    stamped by a delta-blind price writer, which is the entire reason A3 and A4
+    exist — so if they do not take the rank claim with the delta, nothing does.
+    """
+    for label, phase in (("A3 (self-refuting)", _phase_a3),
+                         ("A4 (unobserved prior)", _phase_a4)):
+        sql, _ = phase(run_task()[1])
+        assert "rank_change_24h = NULL" in sql, (
+            f"{label} retires the delta and leaves the rank claim written "
+            "beside it by the same writer at the same instant. A5 gates on "
+            "`last_updated` and A6 on `resolution_source`; these rows are fresh "
+            f"and ungraded, so neither can ever reach them:\n{sql}"
+        )
+
+
+def test_all_eight_statements_share_one_transaction(run_task) -> None:
+    """A5/A6 join the existing transaction; they do not open a second one.
+
+    Not for the superset bound — they touch no aggregate — but for the card: a
+    commit landing between the delta sweeps and the rank sweeps would serve, for
+    that window, exactly the "New favorite with no movement" this ship ends.
+    """
+    events = run_task()[1].events
+
+    assert events.count("COMMIT") == 1, (
+        f"a rank sweep added a commit; got {events.count('COMMIT')}: {events}"
+    )
+    assert events[-1] == "COMMIT", f"a statement ran after the commit: {events}"
+
+
+def test_the_rank_counters_are_reported_separately(run_task) -> None:
+    """A rank row must never be counted into the DELTA drain's counters.
+
+    `expired`/`graded_retired`/`backlog_drained` are how the delta backlog is
+    read. Folding rank rows in would make a finished delta drain look like a
+    running one forever, since the rank backlog is a different population on a
+    different schedule.
+    """
+    result, _ = run_task([3, 5, 9, 2, STALE_RANK_BATCH, 7, 11, 1])
+
+    assert result["expired"] == 3, result
+    assert result["graded_retired"] == 5, result
+    assert result["impossible_retired"] == 9, result
+    assert result["unobserved_retired"] == 2, result
+    assert result["rank_expired"] == STALE_RANK_BATCH, result
+    assert result["rank_graded_retired"] == 7, result
+
+    assert result["backlog_drained"] is True, (
+        "a full RANK batch reported the DELTA backlog as undrained — the two "
+        f"populations drain on different schedules: {result}"
+    )
+    assert result["rank_backlog_drained"] is False, (
+        f"a full rank batch reported the rank backlog drained: {result}"
+    )
+
+
+def test_a_short_rank_batch_reports_the_rank_backlog_drained(run_task) -> None:
+    """And the day both rank sweeps come up short, the drain is over."""
+    result, _ = run_task([2, 3, 4, 5, 6, 7, 8, 1])
+
+    assert result["rank_backlog_drained"] is True, result

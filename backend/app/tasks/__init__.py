@@ -3272,6 +3272,54 @@ UNOBSERVED_PRIOR_TOLERANCE = 0.01
 #: aggregate is cheaper than two correlated `EXISTS` over the same rows.)
 UNOBSERVED_PRIOR_BATCH = 10_000
 
+#: Rows retired per run by statements A5 and A6, the RANK-CLAIM sweeps.
+#:
+#: `rank_change_24h` is the delta's twin and has exactly its disease. All three
+#: delta writers set the pair in ONE statement — `kalshi.py:2004`,
+#: `polymarket.py:3116` (`FuturesOutcome.rank - rank`) and `futures.py:308`
+#: (`old_rank - rank`) — so it is a PER-POLL rank change wearing a 24-hour name,
+#: and it freezes on a row nothing writes exactly as the delta does.
+#:
+#: A through A4 never touched it, so every row they swept kept its rank claim.
+#: Measured on production 2026-09-19: **394,345** outcomes carry a non-zero
+#: `rank_change_24h`, and **373,272 of them (94.7%) are already dead by A's or
+#: A2's own predicate** — the delta was retired out from under a rank claim that
+#: outlived it.
+#:
+#: THE READER SEES THIS AS "New favorite" WITH NO MOVEMENT. `futures_highlights`
+#: derives `leader_was_different` from the rank-1 outcome's `rank_change_24h`
+#: ALONE (~line 842), which prints the "New favorite" copy and adds
+#: `FUTURES_WEIGHTS["leader_change"] = +15`, while `feed.py`'s `movement` comes
+#: from `probability_change_24h`. Of 11 served "New favorite" cards at 0555Z,
+#: the **4 whose leader served no movement were all graded rows carrying a live
+#: rank claim**; the other 7 had real movement and are the control.
+#:
+#: SMALLER THAN THE DELTA BATCHES AND UNORDERED, both derived rather than chosen:
+#:   * 50,000 because the selection is a seq scan (no partial index on this
+#:     column, and this ship adds no migration) measured at **1.70 s** per 50 k
+#:     against A's 0.51 s and A2's 0.92 s — two of these keep the run's added
+#:     cost near 3.5 s inside the 120 s `soft_time_limit`. The 373 k backlog
+#:     drains in ~8 runs, about 80 minutes on the ten-minute beat.
+#:   * UNORDERED, unlike A/A2, and that is the deliberate part. Ordering by
+#:     `abs(rank_change_24h)` would rank a 12-place move deep in a board above a
+#:     one-place move into position 1 — but position 1 is the only rung that
+#:     prints "New favorite", so magnitude is the wrong priority here. The
+#:     honest alternative, `ORDER BY rank`, measured **9.25 s** per 100 k (an
+#:     index walk over the whole ordered index) — 5x the scan — to reorder a
+#:     backlog that fully drains inside 80 minutes either way. Gotcha #41 asks
+#:     what the ordering starts on; here it buys nothing a reader can see.
+#:
+#: NON-ZERO ONLY, which is where these part company with A and A2. A clears a
+#: stored `0.0` because statement B aggregates `MAX(ABS(delta))` and a surviving
+#: zero keeps a market inside that GROUP BY, blocking C from lowering it.
+#: `rank_change_24h` feeds no aggregate, and every consumer already reads 0 and
+#: NULL identically — `futures_highlights.py:838,844` (`rank_change and
+#: rank_change != 0`), `snippet_angles.py:138`, and iOS
+#: `FuturesDetailView.swift:641` (`rankChange != 0`). Sweeping zeros would
+#: rewrite millions of rows and change nothing any reader can see.
+STALE_RANK_BATCH = 50_000
+GRADED_RANK_BATCH = 50_000
+
 
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=150, name="app.tasks.update_max_movement")
 def update_max_movement(self):
@@ -3333,6 +3381,25 @@ def update_max_movement(self):
     anything their own snapshot series recorded in 24 hours. One of them was on
     Discover page one telling a reader that a market trading at 7% had fallen 74
     points that day, on an outcome whose whole day ran between 5% and 10%.
+
+    Statements A5 and A6 exist because `probability_change_24h` has a TWIN that
+    the first four forgot. `rank_change_24h` is written by the same three
+    writers in the same statement (`kalshi.py:2004`, `polymarket.py:3116`,
+    `futures.py:308`), is a PER-POLL rank change under a 24-hour name, and
+    freezes the same way — but nothing ever swept it, so A/A2/A3/A4 retired
+    deltas out from under rank claims that outlived them. Measured 2026-09-19:
+    394,345 outcomes carry a non-zero rank change and 373,272 (94.7%) are
+    already dead by A's or A2's predicate. The reader meets it as a
+    "New favorite" card with no movement: `futures_highlights` reads
+    `leader_was_different` off the rank-1 outcome's `rank_change_24h` alone, and
+    of 11 served "New favorite" cards the 4 whose leader showed no movement were
+    all graded rows carrying a live rank claim.
+    A5 and A6 are separate statements rather than a `SET` added to A and A2 for
+    a reason that is measured: A and A2 select on `probability_change_24h IS NOT
+    NULL`, so on the rows that matter — the ones whose delta they already
+    retired — that widening would have been INERT. A3 and A4 instead take the
+    rank claim in their own `SET`, because their rows are open, ungraded and
+    freshly stamped, so A5 and A6 can never reach them.
 
     Statement C exists because statement B structurally cannot lower a market.
     B drives off `GROUP BY market_id` over non-null deltas, so a market whose
@@ -3510,10 +3577,19 @@ def update_max_movement(self):
             #     which is not > 1 and not < 0 — so without it the comparison is
             #     NULL for those rows and they are silently never considered. It
             #     is stated so the predicate says what it does.
+            #     THE RANK CLAIM GOES WITH IT, as it does in A4 and for the same
+            #     reason. `rank_change_24h` was written by the same writer in the
+            #     same statement as the delta this row's own arithmetic just
+            #     refuted, so it describes the same instant that is provably not
+            #     now. A5 and A6 below cannot reach these rows — they are open,
+            #     ungraded and freshly stamped, which is the entire reason A3
+            #     exists — so if the pair is not retired together it is not
+            #     retired at all.
             impossible = await session.execute(
                 text("""
                     UPDATE futures_outcomes
-                    SET probability_change_24h = NULL
+                    SET probability_change_24h = NULL,
+                        rank_change_24h = NULL
                     WHERE id IN (
                         SELECT id
                         FROM futures_outcomes
@@ -3627,10 +3703,17 @@ def update_max_movement(self):
             #     served book and rewrite `/api/futures/movers`' ranking input —
             #     the change `futures_price_refresh` considered and refused at its
             #     own write. Every reader already treats NULL as "no movement".
+            #     THE RANK CLAIM GOES WITH IT, exactly as in A3: the same writer
+            #     wrote both columns in one statement, so a delta the series
+            #     refutes carries a rank change from the same unobserved instant.
+            #     A5 and A6 are blind to these rows by construction — `fm.status
+            #     = 'open'`, freshly stamped, ungraded — so this is the only
+            #     statement that can retire the pair.
             unobserved = await session.execute(
                 text("""
                     UPDATE futures_outcomes
-                    SET probability_change_24h = NULL
+                    SET probability_change_24h = NULL,
+                        rank_change_24h = NULL
                     WHERE id IN (
                         SELECT fo.id
                         FROM futures_outcomes fo
@@ -3687,6 +3770,77 @@ def update_max_movement(self):
                 },
             )
 
+            # A5. Retire the RANK claim on rows nothing has written inside the
+            #     window — A's predicate, applied to A's forgotten twin.
+            #
+            #     WHY THIS IS A FIFTH STATEMENT AND NOT A WIDENING OF A, which
+            #     is the whole finding. A gates on `probability_change_24h IS
+            #     NOT NULL`, so the rows that most need this are the ones A can
+            #     never select: it ALREADY retired their delta on an earlier
+            #     run, and the `WHERE` that found them then excludes them now.
+            #     Adding `rank_change_24h = NULL` to A's own `SET` would have
+            #     been inert on every specimen that produced this ship —
+            #     measured, not reasoned: of the served "New favorite" leaders,
+            #     `Flávio Bolsonaro` and `Scott Jennings` both carry a NULL delta
+            #     beside a live rank claim. The claim outlives the sweep, so the
+            #     sweep has to be able to see a row whose only surviving claim
+            #     is the rank one.
+            #
+            #     Self-healing exactly as A is: the next poll writes a fresh
+            #     pair, and a NULL rank change is what every consumer already
+            #     treats as "no change" (no arrow, no "New favorite", no +15).
+            rank_expired = await session.execute(
+                text("""
+                    UPDATE futures_outcomes
+                    SET rank_change_24h = NULL
+                    WHERE id IN (
+                        SELECT id
+                        FROM futures_outcomes
+                        WHERE rank_change_24h IS NOT NULL
+                          AND rank_change_24h != 0
+                          AND last_updated < now() - (:window_hours * interval '1 hour')
+                        LIMIT :batch
+                    )
+                """),
+                {"window_hours": MOVEMENT_WINDOW_HOURS, "batch": STALE_RANK_BATCH},
+            )
+
+            # A6. Retire the RANK claim on GRADED outcomes — A2's predicate,
+            #     applied to the same forgotten twin, and immune to A5 for
+            #     precisely A2's reason: `backfill_winners` re-stamps
+            #     `last_updated` at ~25 sites every six hours, so the deadest
+            #     boards in the table look fresh to any age test and their rank
+            #     arrows are RE-ARMED twice a day. All four repaired cards in
+            #     this ship's own before/after are A6's, not A5's.
+            #
+            #     `resolution_source IS NOT NULL`, never `is_winner` — that
+            #     column carries a server DEFAULT false and holds next to no
+            #     grading information (A2's comment measures it: 2,536 NULLs in
+            #     3,893,126 rows). Copied deliberately so the two statements
+            #     cannot drift apart on what "dead" means.
+            #
+            #     A settled board draws no rank badge at all
+            #     (`OutcomeRow.printsRank = !isResolved`, #6325), so this is not
+            #     about the badge. It is about the four surfaces that read the
+            #     column without asking whether the market is over:
+            #     `futures_highlights`' leader_change and top-5 churn signals,
+            #     `snippet_angles`, and the two feed payload sites.
+            rank_graded = await session.execute(
+                text("""
+                    UPDATE futures_outcomes
+                    SET rank_change_24h = NULL
+                    WHERE id IN (
+                        SELECT id
+                        FROM futures_outcomes
+                        WHERE rank_change_24h IS NOT NULL
+                          AND rank_change_24h != 0
+                          AND resolution_source IS NOT NULL
+                        LIMIT :batch
+                    )
+                """),
+                {"batch": GRADED_RANK_BATCH},
+            )
+
             # B. Recompute the per-market maximum over what survived A, A2, A3
             #    and A4.
             result = await session.execute(text("""
@@ -3723,13 +3877,19 @@ def update_max_movement(self):
 
             # One commit for all of them: a reader must never see A/A2/A3/A4's
             # cleared outcomes against B and C's un-recomputed markets, because
-            # between those two states the superset bound is false.
+            # between those two states the superset bound is false. A5 and A6
+            # join the same transaction for the card's sake rather than the
+            # bound's: a commit landing between the delta sweeps and the rank
+            # sweeps would serve, for that window, exactly the card this ship
+            # exists to end — "New favorite" with no movement behind it.
             await session.commit()
             updated = result.rowcount
             expired_rows = expired.rowcount
             graded_rows = graded.rowcount
             impossible_rows = impossible.rowcount
             unobserved_rows = unobserved.rowcount
+            rank_expired_rows = rank_expired.rowcount
+            rank_graded_rows = rank_graded.rowcount
             cleared_markets = cleared.rowcount
 
             # Reported, not swallowed: a warm that never ran must be visible in
@@ -3779,6 +3939,20 @@ def update_max_movement(self):
                     and graded_rows < GRADED_DELTA_BATCH
                 ),
                 "graded_backlog_drained": graded_rows < GRADED_DELTA_BATCH,
+                # A5/A6. Reported on their own counters and NEVER folded into
+                # `expired`/`graded_retired`: those two are how the delta drain
+                # is read, and a rank row added to them would make a finished
+                # delta backlog look like a running one. Their own
+                # `rank_backlog_drained` is likewise separate from
+                # `backlog_drained` — that flag is the documented AND of the two
+                # DELTA backlogs and something may already be reading it, so it
+                # keeps its meaning and this one is added beside it.
+                "rank_expired": rank_expired_rows,
+                "rank_graded_retired": rank_graded_rows,
+                "rank_backlog_drained": (
+                    rank_expired_rows < STALE_RANK_BATCH
+                    and rank_graded_rows < GRADED_RANK_BATCH
+                ),
                 "window_hours": MOVEMENT_WINDOW_HOURS,
                 "movers_warm": warm,
             }

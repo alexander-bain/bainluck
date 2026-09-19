@@ -13,7 +13,11 @@ anywhere else:
   * `ORDER BY abs(...) DESC ... LIMIT` inside an `IN (SELECT ...)` — the whole
     reason the first run clears the visible lie rather than a random slice;
   * the `NOT EXISTS` in statement C, correlated against a table statement A just
-    wrote in the same transaction.
+    wrote in the same transaction;
+  * WHICH ROWS A `WHERE` CAN SEE — #4079's rank sweeps exist because A/A2 gate
+    on `probability_change_24h IS NOT NULL` and so cannot select the rows whose
+    delta they already retired. That claim is about set membership in a real
+    table and there is no way to fake it.
 
 And one property that is the point of the entire change and is invisible to any
 instrument that does not hold rows:
@@ -88,6 +92,14 @@ async def _reset_and_seed(rows):
     its scope by construction and is left to A's age sweep. A case only enters
     A4's population by deliberately saying what this outcome was seen at.
 
+    A ninth element, `rank_change_24h`, and a tenth, `rank`, both default to
+    None — the columns the RANK sweeps A5/A6 read (#4079 finding 2). They are
+    row parameters for the same reason `current_probability` is: `rank_change_24h`
+    is written by the same three writers in the same statement as the delta and
+    was then never swept, so the cases that matter are ones where the two columns
+    DISAGREE — a NULL delta beside a live rank claim — which no fixture that
+    derives one from the other can express.
+
     A market is created per label so each case is independent.
     """
     from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -113,6 +125,8 @@ async def _reset_and_seed(rows):
             resolution_source = row[5] if len(row) > 5 else None
             current_probability = row[6] if len(row) > 6 else 0.5
             observations = row[7] if len(row) > 7 else ()
+            rank_change_24h = row[8] if len(row) > 8 else None
+            rank = row[9] if len(row) > 9 else None
             market = FuturesMarket(
                 source="kalshi",
                 external_id=f"KXWINDOW-{label}",
@@ -163,6 +177,8 @@ async def _reset_and_seed(rows):
                 probability_change_24h=delta,
                 last_updated=now - timedelta(hours=hours),
                 resolution_source=resolution_source,
+                rank_change_24h=rank_change_24h,
+                rank=rank,
             )
             session.add(outcome)
             await session.flush()
@@ -194,6 +210,8 @@ def _run_task(
     graded_batch: int | None = None,
     impossible_batch: int | None = None,
     unobserved_batch: int | None = None,
+    stale_rank_batch: int | None = None,
+    graded_rank_batch: int | None = None,
 ):
     """Drive the REAL `update_max_movement` against this database."""
     import app.tasks.base as base_mod
@@ -223,6 +241,8 @@ def _run_task(
     real_graded_batch = tasks_mod.GRADED_DELTA_BATCH
     real_impossible_batch = tasks_mod.IMPOSSIBLE_PRIOR_BATCH
     real_unobserved_batch = tasks_mod.UNOBSERVED_PRIOR_BATCH
+    real_stale_rank_batch = tasks_mod.STALE_RANK_BATCH
+    real_graded_rank_batch = tasks_mod.GRADED_RANK_BATCH
     base_mod.get_task_session = lambda: _Ctx()
     warm_mod.warm_futures_movers = _no_warm
     if batch is not None:
@@ -233,6 +253,10 @@ def _run_task(
         tasks_mod.IMPOSSIBLE_PRIOR_BATCH = impossible_batch
     if unobserved_batch is not None:
         tasks_mod.UNOBSERVED_PRIOR_BATCH = unobserved_batch
+    if stale_rank_batch is not None:
+        tasks_mod.STALE_RANK_BATCH = stale_rank_batch
+    if graded_rank_batch is not None:
+        tasks_mod.GRADED_RANK_BATCH = graded_rank_batch
     try:
         return update_max_movement.run()
     finally:
@@ -242,6 +266,8 @@ def _run_task(
         tasks_mod.GRADED_DELTA_BATCH = real_graded_batch
         tasks_mod.IMPOSSIBLE_PRIOR_BATCH = real_impossible_batch
         tasks_mod.UNOBSERVED_PRIOR_BATCH = real_unobserved_batch
+        tasks_mod.STALE_RANK_BATCH = real_stale_rank_batch
+        tasks_mod.GRADED_RANK_BATCH = real_graded_rank_batch
 
 
 async def _read(ids):
@@ -1377,4 +1403,276 @@ def test_the_overstated_sweep_is_bounded_and_takes_the_biggest_first() -> None:
     assert after["quieter"][0] == pytest.approx(-0.300), (
         "the smaller lie should still be waiting for the next run. got "
         f"{after['quieter'][0]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# A5 / A6 — the RANK claim, proved on rows (#4079 finding 2)
+# ---------------------------------------------------------------------------
+# `rank_change_24h` is the delta's twin — same three writers, same statement,
+# same per-poll semantics under a 24-hour name — and until this shipped nothing
+# swept it. So A through A4 retired deltas out from under rank claims that
+# outlived them, and `futures_highlights` went on reading `leader_was_different`
+# off the rank-1 outcome's `rank_change_24h` ALONE, printing "New favorite" and
+# paying it +15 while `feed.py` served no movement for that leader.
+#
+# EVERY STALE/GRADED CASE HERE SEEDS A NULL DELTA BESIDE A LIVE RANK CLAIM,
+# because that is the state the served specimens are actually in and it is the
+# state the obvious fix cannot reach. Adding `rank_change_24h = NULL` to A's own
+# `SET` is inert here: A selects on `probability_change_24h IS NOT NULL`, and
+# these rows had their delta retired on an earlier run. Nothing short of a real
+# database proves that, because the whole claim is about which rows a `WHERE`
+# can see.
+#
+# Row shape: (label, status, hours, delta, seed_max, resolution_source,
+#             current_probability, observations, rank_change_24h, rank)
+
+
+async def _read_rank(ids):
+    """`rank_change_24h` per label. Separate from `_read` so the tuple shape
+    every earlier case destructures is untouched."""
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    engine = _engine()
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    out = {}
+    async with maker() as session:
+        for label, (_market_id, outcome_id) in ids.items():
+            out[label] = (
+                await session.execute(
+                    text(
+                        "SELECT rank_change_24h FROM futures_outcomes WHERE id = :i"
+                    ),
+                    {"i": outcome_id},
+                )
+            ).scalar()
+    await engine.dispose()
+    return out
+
+
+def test_a_stale_rank_claim_is_retired_even_though_its_delta_is_already_gone() -> None:
+    """THE SHIP. A row A already swept keeps no rank claim.
+
+    `stale_leader` is the shape of the served specimens: delta already NULL,
+    rank 1, rank change live. It is UNREACHABLE by statement A — the
+    `WHERE probability_change_24h IS NOT NULL` that found it on some earlier run
+    excludes it now — so if this row still carries its rank claim after a run,
+    the card goes on saying "New favorite" with no movement behind it, which is
+    the entire defect.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("stale_leader", "open", 48, None, None, None, 0.40, (), 3, 1),
+                ("fresh_leader", "open", 1, 0.10, 0.10, None, 0.40, (), 2, 1),
+            ]
+        )
+    )
+    result = _run_task()
+    ranks = asyncio.run(_read_rank(ids))
+
+    assert ranks["stale_leader"] is None, (
+        "a row nothing has written in 48 hours kept its `rank_change_24h` after "
+        "the run. Its delta was already NULL, so statement A cannot select it — "
+        "which is exactly why A5 is a separate statement and not a wider `SET` "
+        f"on A. Retired {result['rank_expired']} stale rank claims."
+    )
+    assert result["rank_expired"] == 1, result
+
+    assert ranks["fresh_leader"] == 2, (
+        "THE CONTROL FAILED: a fresh, ungraded row with a live delta lost its "
+        "rank claim. A genuine overtake KEEPS 'New favorite' — a run in which "
+        "no rank claim survives is this ship overshooting, not working. "
+        f"got {ranks['fresh_leader']!r}"
+    )
+
+
+def test_a_graded_rank_claim_is_retired_even_with_a_brand_new_stamp() -> None:
+    """A6's reason, on rows: `backfill_winners` re-stamps `last_updated` at ~25
+    sites every six hours, so a settled board looks fresh to A5 forever and its
+    rank arrows are RE-ARMED twice a day. All four repairs in this ship's own
+    before/after were this statement's."""
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("graded_fresh", "open", 0, None, None, "kalshi", 0.55, (), 1, 1),
+                ("open_fresh", "open", 0, None, None, None, 0.55, (), 1, 1),
+            ]
+        )
+    )
+    result = _run_task()
+    ranks = asyncio.run(_read_rank(ids))
+
+    assert ranks["graded_fresh"] is None, (
+        "a GRADED outcome stamped this second kept its rank claim. A5 gates on "
+        "`last_updated` and grading writers bump it, so no age test can ever "
+        f"reach this row: {ranks}"
+    )
+    assert result["rank_graded_retired"] == 1, result
+
+    assert ranks["open_fresh"] == 1, (
+        "an OPEN, ungraded, freshly-written row lost its rank claim, so the "
+        "graded sweep is not reading `resolution_source` — it is clearing "
+        f"everything: {ranks}"
+    )
+
+
+def test_a_self_refuting_row_loses_the_rank_claim_with_the_delta() -> None:
+    """A3 must retire the pair together.
+
+    `liar` is open, ungraded and freshly stamped — A5 and A6 structurally cannot
+    reach it, which is the whole reason A3 exists — so if A3 does not take the
+    rank claim alongside the delta its own arithmetic just refuted, nothing
+    does. Price 0.08 against a delta of 0.80 implies a previous price of -0.72,
+    which no venue ever quoted (#6536).
+    """
+    ids = asyncio.run(
+        _reset_and_seed([("liar", "open", 0, 0.80, 0.80, None, 0.08, (), 4, 1)])
+    )
+    result = _run_task()
+    read = asyncio.run(_read(ids))
+    ranks = asyncio.run(_read_rank(ids))
+
+    assert read["liar"][0] is None, f"A3 did not retire the delta: {read}"
+    assert result["impossible_retired"] == 1, result
+    assert ranks["liar"] is None, (
+        "the self-refuting sweep retired the delta and left the rank claim that "
+        "the same writer wrote beside it at the same instant. The row is fresh "
+        f"and ungraded, so neither A5 nor A6 will ever reach it: {ranks}"
+    )
+    assert result["rank_expired"] == 0 and result["rank_graded_retired"] == 0, (
+        "A5 or A6 claimed this row, so the case is not proving what it says — "
+        f"it must be unreachable by both: {result}"
+    )
+
+
+def test_an_unobserved_move_loses_the_rank_claim_with_the_delta() -> None:
+    """A4 must retire the pair together, for A3's reason.
+
+    `overstated` is open, ungraded and freshly stamped, and its implied prior
+    (0.60 - 0.40 = 0.20) is a perfectly legal probability — so A3 misses it and
+    only the observed series refutes it. A5/A6 cannot reach it either, so A4 is
+    the only statement that can take its rank claim.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                (
+                    "overstated", "open", 0, 0.40, 0.40, None, 0.60,
+                    ((2, 0.55), (6, 0.58)), 5, 1,
+                )
+            ]
+        )
+    )
+    result = _run_task()
+    read = asyncio.run(_read(ids))
+    ranks = asyncio.run(_read_rank(ids))
+
+    assert result["unobserved_retired"] == 1, (
+        "A4 did not select the overstated row, so this case proves nothing "
+        f"about it: {result}"
+    )
+    assert read["overstated"][0] is None, f"A4 did not retire the delta: {read}"
+    assert ranks["overstated"] is None, (
+        "the overstated-move sweep retired a delta the observed series refutes "
+        "and left the rank claim written beside it at the same unobserved "
+        f"instant: {ranks}"
+    )
+    assert result["rank_expired"] == 0 and result["rank_graded_retired"] == 0, (
+        f"A5 or A6 claimed this row, so it is not A4-only as the case says: {result}"
+    )
+
+
+def test_a_stored_zero_rank_change_is_left_alone() -> None:
+    """`!= 0` is load-bearing, and it is where A5/A6 part company with A.
+
+    A clears a stored `0.0` because statement B aggregates `MAX(ABS(delta))`, so
+    a surviving zero keeps a market inside that GROUP BY and blocks C from
+    lowering it. `rank_change_24h` feeds no aggregate, and every consumer reads
+    0 and NULL identically — `futures_highlights` (`rank_change and
+    rank_change != 0`), `snippet_angles`, iOS `FuturesDetailView`
+    (`rankChange != 0`). Sweeping zeros would rewrite millions of rows on
+    production and change nothing a reader can see.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("dead_zero", "open", 72, None, None, "kalshi", 0.30, (), 0, 2),
+                ("dead_live", "open", 72, None, None, "kalshi", 0.30, (), 5, 1),
+            ]
+        )
+    )
+    _run_task()
+    ranks = asyncio.run(_read_rank(ids))
+
+    assert ranks["dead_zero"] == 0, (
+        "a stored zero was rewritten to NULL. No reader can tell the two apart, "
+        "so this costs a multi-million-row rewrite on production for no visible "
+        f"change: {ranks}"
+    )
+    assert ranks["dead_live"] is None, (
+        "the non-zero claim on an equally dead row survived, so the sweep is "
+        f"not running at all: {ranks}"
+    )
+
+
+def test_the_rank_sweeps_are_bounded_by_their_own_batches() -> None:
+    """Bounded for A's reason: 373,272 rows were retirable when this shipped,
+    and one unbounded UPDATE over them blows the task's 120 s soft limit and
+    holds locks against four live pollers."""
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("s1", "open", 48, None, None, None, 0.40, (), 3, 1),
+                ("s2", "open", 48, None, None, None, 0.40, (), 2, 1),
+                ("g1", "open", 0, None, None, "kalshi", 0.40, (), 4, 1),
+                ("g2", "open", 0, None, None, "kalshi", 0.40, (), 1, 1),
+            ]
+        )
+    )
+    result = _run_task(stale_rank_batch=1, graded_rank_batch=1)
+    ranks = asyncio.run(_read_rank(ids))
+
+    assert result["rank_expired"] == 1, (
+        f"the stale rank sweep ignored its batch: {result}"
+    )
+    assert result["rank_graded_retired"] == 1, (
+        f"the graded rank sweep ignored its batch: {result}"
+    )
+    assert result["rank_backlog_drained"] is False, (
+        f"both sweeps filled their batch but the backlog read drained: {result}"
+    )
+
+    assert len([lbl for lbl in ("s1", "s2") if ranks[lbl] is not None]) == 1, (
+        f"the stale batch of 1 retired {ranks}"
+    )
+    assert len([lbl for lbl in ("g1", "g2") if ranks[lbl] is not None]) == 1, (
+        f"the graded batch of 1 retired {ranks}"
+    )
+
+
+def test_the_superset_identity_survives_the_rank_sweeps() -> None:
+    """A5/A6 touch no aggregate, so B and C's bound must be untouched.
+
+    `/api/futures/movers` ranks a pool by `max_movement_24h` and LAT-P108 proved
+    that pool is a superset of the answer only while
+    `max_movement_24h == MAX(ABS(probability_change_24h))` holds. A rank sweep
+    has no business moving it; this is the assertion that says so on rows.
+    """
+    asyncio.run(
+        _reset_and_seed(
+            [
+                ("mover", "open", 1, 0.30, 0.30, None, 0.60, (), 7, 1),
+                ("dead_rank", "open", 90, None, 0.30, None, 0.60, (), 7, 1),
+                ("graded_rank", "open", 0, None, None, "kalshi", 0.20, (), 3, 2),
+            ]
+        )
+    )
+    _run_task()
+    violations = asyncio.run(_identity_holds())
+
+    assert violations == [], (
+        "the rank sweeps moved the market maximum, which breaks the bound "
+        f"`/api/futures/movers` rests on: {violations}"
     )
