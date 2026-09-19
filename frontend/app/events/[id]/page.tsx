@@ -14,6 +14,7 @@ import {
   nextFullHistoryLatch,
 } from "@/lib/event/historyRange";
 import { canonicalEventHref } from "@/lib/canonicalEventUrl";
+import { withoutEventOwnMoneyline } from "@/lib/eventOwnMoneyline";
 import { teamTextColor } from "@/lib/teamColors";
 import { useLiveEventStream } from "@/hooks/useLiveEventStream";
 import FreshnessChip from "@/components/event/FreshnessChip";
@@ -761,10 +762,24 @@ export default function EventPage({ params }: EventPageProps) {
   };
 
   // Game-level markets (totals spectrum, player props)
-  const { data: gameMarkets } = useSWR(
+  const { data: servedGameMarkets } = useSWR(
     ["game-markets", eventId],
     () => fetchGameMarkets(eventId),
     { refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL }
+  );
+
+  // #7064: the hero already answers the game's own moneyline, so the props body must not answer it
+  // again — it was arriving once PER VENUE, so the page showed the same question two more times,
+  // under two spellings, disagreeing with the hero and with each other (56 + 46 = 102%).
+  //
+  // Filtered HERE, at the single point the payload enters the page, rather than in each renderer:
+  // `player_props` feeds THE DIVERGENCE, the "All N props" count, the dashboard and the section's
+  // own mount condition, and a filter applied to some of those would make the count disagree with
+  // the list. `withoutEventOwnMoneyline` returns the payload by reference when it drops nothing,
+  // which keeps `resetKey={gameMarkets}` stable on the section error boundaries below.
+  const gameMarkets = useMemo(
+    () => (servedGameMarkets ? withoutEventOwnMoneyline(servedGameMarkets) : servedGameMarkets),
+    [servedGameMarkets]
   );
 
   // The sparkline's series: the served blend line, plus any frames that have
