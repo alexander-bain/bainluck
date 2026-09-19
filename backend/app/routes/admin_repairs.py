@@ -29,6 +29,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | polymarket-sport-category-census | polymarket-sport-category
              | polymarket-senate-category | kalshi-nhl-prop-category
              | polymarket-leg-label-census | polymarket-leg-label
+             | polymarket-single-leg-label-census
+             | polymarket-single-leg-label
              | authority-id-collisions | weather-shelf-disease
              | futures-person-seed-purge | golf-round-closing-line
              | kalshi-empty-book-openings
@@ -73,7 +75,9 @@ transactional session and RETURNS its own before/after census in the response bo
      because its backup is a table, not a dated receipt, so one call puts the
      whole population back however many pages wrote it. Re-synced again
      2026-09-10, CAL-P1088, adding the two pm-ungraded-loss entries in the
-     commit that registered them.)
+     commit that registered them. Re-synced again 2026-09-19, live/409, adding
+     the two polymarket-single-leg-label entries in the commit that registered
+     them.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
@@ -900,6 +904,66 @@ _REPAIRS = {
     # state, not a standing job.
     "polymarket-leg-label": (
         "app.tasks.repair_polymarket_leg_label",
+        "repair",
+    ),
+    # #6739 (live/409): read-only census of the SETTLED Polymarket game legs
+    # still named "Yes", split by `llm_sport_category`. These are the rows the
+    # writer fix (`301a2174a`) cannot reach: the poll fetches `closed=False`, so
+    # a settled market is permanently out of its rotation and the upsert's
+    # `on_conflict_do_update` never fires on it again. A census timeout returns
+    # `measured: false` with a reason, NEVER a zero (gotcha #54). Never writes:
+    # `apply` is accepted and ignored.
+    "polymarket-single-leg-label-census": (
+        "app.tasks.repair_polymarket_single_leg_label",
+        "census",
+    ),
+    # #6739: the WRITE half. Re-asks Gamma for each settled side-less leg BY
+    # CONDITION ID and stores the answer of the SHIPPED `_sub_market_side_label`,
+    # imported from the poller. This rail has no label rule of its own and a
+    # guard fails the build if it grows one.
+    # 🔴 IT IS NOT THE SIBLING'S LABELLER. `polymarket-leg-label` calls
+    # `_leg_label`; copying that here would rename every genuine binary question
+    # to a fragment of itself, which is what
+    # `test_leg_label_would_have_renamed_a_genuine_binary_question` pins. The
+    # writer commit chose `_sub_market_side_label` deliberately and so does this.
+    # 🔴 The venue read is TWO requests per batch and passes a page size, both
+    # load-bearing: the by-condition read on `/markets` silently applies a
+    # `closed=false` filter (so the default read alone returns approximately
+    # nothing for a cohort that is entirely settled), and Gamma's default page
+    # size is 20, so a 40-id batch that does not set one loses half of itself and
+    # reads as delisted. The first ad-hoc read of this cohort reported 77 of 183
+    # missing and every one of them was that truncation.
+    # (Written without the `param=` form on purpose — the Q496 guard scans this
+    # file for documented params the dispatcher cannot forward, and it caught
+    # this comment on the first run, exactly as the sibling's entry warned.)
+    # The reader harm: `venue_settlement._names_a_participant` orients a settled
+    # page from the graded leg's NAME, so a leg called "Yes" leaves a bare
+    # "Settled" chip over a win-probability hero and the page never says who won.
+    # Measured 2026-09-19: 183 markets / 181 events inside a 30-day window, all
+    # 183 re-read at the venue, all 183 carrying a real side name and 0 genuine
+    # Yes/No. Orientation is checked, not assumed — index 0 is this leg's side
+    # only for a single-market-branch row, so a venue market carrying a
+    # `group_item_title` is REFUSED (`refused_grouped`).
+    # Writes `futures_outcomes.name` and NOTHING else — `last_updated` is a
+    # poller touch-stamp another surface reads as liveness (#2024). Compare-and-
+    # set on the exact name the page selected, so a concurrent re-ingest is
+    # counted `raced`, never clobbered.
+    # Every leg reaches a NAMED verdict and each is counted (ruling 054):
+    # relabelled / unchanged / not_at_venue / no_condition_id / refused_grouped /
+    # refused_collision / raced. Nothing is written when the venue does not
+    # answer.
+    # Terminals mean PAUSED, not finished, and all hand back a cursor that
+    # RETRIES rather than steps over. Paging is a keyset on the leg's own id:
+    # `?after_id=` from `next_cursor`. Read `scan_exhausted`, not
+    # `remaining_legs` — and note both halves are scoped to a 30-day event
+    # window (a module constant, not a query param) that they report back as
+    # `window_days`, so `scan_exhausted` means "none left INSIDE THE WINDOW".
+    # Capped at APPLY_LEG_CAP=120 legs per call; the measured cohort is two
+    # calls. Accepts ?limit=&sport=&after_id=.
+    # ATTENDED ONLY: never wire this to a beat — it is a drain with an end
+    # state, not a standing job.
+    "polymarket-single-leg-label": (
+        "app.tasks.repair_polymarket_single_leg_label",
         "repair",
     ),
     # #4578 (lane1b/116): the BACKWARD half of #4458. Deletes the market legs
