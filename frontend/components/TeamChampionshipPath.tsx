@@ -16,6 +16,15 @@ import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 // Progression order runs easiest → hardest. Backend tiers: 4 = Division,
 // 2 = Conference/Pennant, 1 = Championship. We render in that ascending
 // difficulty order regardless of the payload's tier ordering.
+//
+// #1752: this card carried the caption "Each step conditions on the one before
+// it." It is false — a wild card reaches a conference final without winning its
+// division — and the payload proves it: of the 47 teams that serve BOTH a
+// division and a conference step, 14 (30%) are INVERTED, the division number
+// below the conference one (measured on production 2026-09-19). The caption was
+// invisible while `championship_path` was empty for every team; the moment that
+// was repaired it would have appeared, false, on 332 pages. Removed rather than
+// reworded — D34: the reader gets the labels and the numbers, not method prose.
 const PROGRESSION_ORDER = [4, 2, 1];
 
 function orderForProgression(
@@ -109,9 +118,6 @@ export function TeamChampionshipPath({
           </div>
         ))}
       </div>
-      <span className="text-xs text-text-muted">
-        Each step conditions on the one before it.
-      </span>
     </div>
   );
 }
