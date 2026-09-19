@@ -397,6 +397,83 @@ def test_the_bank_never_promotes_an_outcome_the_highlight_did_not_pick():
     assert _dated_movement_change(market, outcomes, None, now=NOW) is None
 
 
+def test_refusing_the_today_claim_does_not_take_the_DATED_LIFETIME_one_with_it():
+    """The `Meta training pause` specimen (market 61122553), read on production.
+
+    🔴 SILENCING THE DAY IS NOT SILENCING THE CARD, AND NOTHING PINNED THAT.
+    Both legs of 61122553 carry a NULL `probability_change_24h`, so
+    `compute_futures_highlight` names no mover, `_dated_movement_change` refuses
+    at its FIRST gate — before the bank is ever consulted — and there is no
+    "today" sentence to be had. What the card actually prints is the DATED
+    LIFETIME branch, off `_biggest_move_from_opening`: 0.835 on 2026-09-15 to
+    0.050 now. That branch is this ship's control, the prose said so, and no
+    case held it — so a later change that made the today-refusal return early,
+    or dropped the surprise arm at a call site, would take a true dated sentence
+    off a reader's card and every test here would still pass.
+
+    That is not hypothetical. The production replay written to answer codex's
+    1155Z note (`artifacts-discover/7176-addendum/replay.py`) omitted exactly
+    this arm on its first run and reported this specimen as an EMPTY card, which
+    is the wrong answer about the live page in the direction that looks like
+    over-silencing.
+
+    Values are the production rows read 2026-09-19 12:05Z via `db-query`.
+    """
+    market = _Market(None)
+    outcomes = [
+        _outcome(229745131, "Yes", 0.05, None),
+        _outcome(229745132, "No", 0.95, None),
+    ]
+    opened_at = datetime(2026, 9, 15, 9, 15, 49, tzinfo=timezone.utc)
+
+    # No mover, therefore no dated "today" number — at the first gate.
+    assert _dated_movement_change(market, outcomes, None, now=NOW) is None
+    assert _dated_movement_change(market, outcomes, "Yes", now=NOW) is None
+
+    copy = compose_binary_card_copy(
+        market_name="Meta announces a training pause by October 31?",
+        highlight_reasons=["major_surprise"],
+        affirmative_probability=0.05,
+        top_mover_change=None,
+        # `_biggest_move_from_opening` states a yes/no market's lifetime move
+        # against the AFFIRMATIVE, and only when the opening carries a date.
+        top_surprise_change=0.05 - 0.835,
+        top_surprise_opened_at=opened_at,
+        now=NOW,
+    )
+
+    assert copy.headline == "Down 78.5 points since Sep 15"
+    assert copy.context_summary == "Down 78.5 points since Sep 15 — now 5% chance"
+    assert "today" not in copy.reason
+
+
+def test_an_undated_opening_still_buys_no_sentence_on_that_same_card():
+    """The other half of the case above, so it cannot pass by always composing.
+
+    Same specimen, same refused "today", but with the opening's date removed:
+    an undated lifetime move is not a fact about any day either, and the card
+    goes to its designed empty state rather than to a dateless number.
+    """
+    market = _Market(None)
+    outcomes = [_outcome(229745131, "Yes", 0.05, None)]
+
+    assert _dated_movement_change(market, outcomes, "Yes", now=NOW) is None
+
+    copy = compose_binary_card_copy(
+        market_name="Meta announces a training pause by October 31?",
+        highlight_reasons=["major_surprise"],
+        affirmative_probability=0.05,
+        top_mover_change=None,
+        top_surprise_change=0.05 - 0.835,
+        top_surprise_opened_at=None,
+        now=NOW,
+    )
+
+    assert copy.headline == ""
+    assert copy.context_summary == ""
+    assert copy.reason == ""
+
+
 def test_a_stored_zero_delta_is_still_a_non_mover():
     """Truthiness, not `is not None` — verbatim from the three loops replaced.
 
