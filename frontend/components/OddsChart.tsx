@@ -121,6 +121,12 @@ const CALLOUT_GAP_PX = 12;
  * of drop while an under-estimate re-opens the collision. The same reasoning
  * `CALLOUT_MONO_ADVANCE_EM` is rounded up for — and the reason this is 15 and
  * not the 14 a line-box estimate suggests.
+ *
+ * #7134 — IT IS ONE ROW, AND THE STRIP IS NOT ALWAYS ONE ROW. `/events/15308045`
+ * drew every chip on row 0, so this measured the whole strip there. #6882 then
+ * taught the chips to stagger onto a second row, and the callout was never told:
+ * on `/events/15314181` it cleared row 0 exactly and landed on `T9` on row 1.
+ * So this is the depth of ONE row and `calloutLabelCenterY` adds the rest.
  */
 const PERIOD_CHIP_BAND_PX = 15;
 /**
@@ -169,6 +175,30 @@ const CALLOUT_PLATE_HALF_PX =
  * never be the neighbour, and counting it would spend ~15px of drop on every
  * chipless chart for nothing.
  *
+ * ═══ #7134 — AND THE STRIP IS AS DEEP AS THE CHART DREW IT ═══
+ *
+ * #5581 asked "are there chips?" and answered with one row, because the page it
+ * was measured on had one row. #6882 gave the chips a second row for pairs too
+ * close to read side by side, and the callout kept clearing one: measured on
+ * `/events/15314181` at 390px on 2026-09-19, the callout's box and `T9`'s
+ * overlapped by 4×11px, eleven of the callout's thirteen rows of pixels, and the
+ * callout's centre sat on `plotTop + PLATE_HALF + PERIOD_CHIP_BAND_PX` to the
+ * pixel — cleared row 0 exactly, landed on row 1.
+ *
+ * So the question is no longer "are there chips" but "how many rows of them",
+ * and the band is `PERIOD_CHIP_BAND_PX + (rows - 1) * PERIOD_LABEL_ROW_HEIGHT_PX`
+ * — the two constants that already describe the strip, not a third number.
+ *
+ * The count is the whole chart's deepest row, not the deepest row NEAR the
+ * callout. A chart whose only staggered pair sits mid-plot spends 13px of drop
+ * it did not need. That is deliberate and it is the direction #5581 already
+ * chose for this band: an over-estimate costs a pixel of drop, an under-estimate
+ * re-opens the collision. Narrowing it to the chips that horizontally overlap
+ * the callout means re-deriving each boundary's x from the renderer's scale
+ * inside the shape, which is exactly the drift this function avoids by taking
+ * the plot rect from `yAxis` — and it would buy a few pixels on a chart that is
+ * already legible.
+ *
  * ═══ WHAT THIS DOES NOT MOVE ═══
  *
  * The dot. It marks the data point, and on these pages the data point really is
@@ -185,15 +215,28 @@ export function calloutLabelCenterY(args: {
   /** Plot rect, read off the renderer's own `yAxis` — never re-derived from the margin. */
   plotTop: number;
   plotHeight: number;
-  /** Is a period-chip strip being drawn? See the `Start` marker note above. */
-  hasPeriodChips: boolean;
+  /**
+   * How many ROWS of period chips the chart is drawing — 0 for none, 1 for the
+   * unstaggered strip #5581 measured, 2 once #6882's stagger fires. See the
+   * `Start` marker note above for what is not counted.
+   *
+   * A count rather than a boolean because the strip's depth is the thing the
+   * label has to clear, and #7134 is what asking the boolean cost.
+   */
+  periodChipRows: number;
 }): number {
-  const { cy, plotTop, plotHeight, hasPeriodChips } = args;
+  const { cy, plotTop, plotHeight, periodChipRows } = args;
   if (!Number.isFinite(plotTop) || !Number.isFinite(plotHeight) || plotHeight <= 0) return cy;
+
+  // A NaN or negative count is a caller bug, and the honest answer to one is the
+  // no-strip case rather than a NaN floor that would silently return the datum
+  // and read exactly like "the label already fitted".
+  const rows = Number.isFinite(periodChipRows) ? Math.max(0, Math.floor(periodChipRows)) : 0;
+  const band = rows > 0 ? PERIOD_CHIP_BAND_PX + (rows - 1) * PERIOD_LABEL_ROW_HEIGHT_PX : 0;
 
   const ceiling = plotTop + plotHeight - CALLOUT_PLATE_HALF_PX;
   const insideFrame = plotTop + CALLOUT_PLATE_HALF_PX;
-  const clearOfChips = insideFrame + (hasPeriodChips ? PERIOD_CHIP_BAND_PX : 0);
+  const clearOfChips = insideFrame + band;
 
   // A plot too short to hold the label at all has no honest answer; leave the
   // label where the data put it rather than invent a position. native/024's
@@ -1302,6 +1345,23 @@ export default function OddsChart({
     }));
   }, [periodBoundaries, chartData, plottedProbKeys, labelFormat, drawnExtent]);
 
+  /**
+   * #7134 — how many ROWS of period chips are painted at the top of the plot.
+   *
+   * Derived from the same rowed list the `<ReferenceLine>` labels are drawn
+   * from, so the depth the callout clears and the depth the chips occupy cannot
+   * drift apart. `assignPeriodLabelRows` documents why two rows are provably
+   * enough; this does not assume it, it counts.
+   */
+  const periodChipRowCount = useMemo(
+    () =>
+      filteredPeriodBoundaries.reduce(
+        (deepest, b) => Math.max(deepest, ((b as { labelRow?: number }).labelRow ?? 0) + 1),
+        0,
+      ),
+    [filteredPeriodBoundaries],
+  );
+
   // "Final" marker (settled games only): a single vertical line at the last
   // chart category — i.e. the final snapshot, which is now the chart's right
   // edge (buffer removed). Exactly one, deduped against period boundaries above.
@@ -2226,7 +2286,10 @@ export default function OddsChart({
                           cy,
                           plotTop: props.yAxis.y,
                           plotHeight: props.yAxis.height,
-                          hasPeriodChips: filteredPeriodBoundaries.length > 0,
+                          // #7134 — the strip's DEPTH, read off the same rowed
+                          // list the `<ReferenceLine>` labels below are drawn
+                          // from, so the band can never disagree with the ink.
+                          periodChipRows: periodChipRowCount,
                         })
                       : cy;
                   return (

@@ -289,24 +289,24 @@ describe("#5581 — the degenerate plots a renderer will not produce on demand",
   const PLOT = { plotTop: 15, plotHeight: 270 };
 
   test("a value mid-plot is returned unchanged", () => {
-    expect(calloutLabelCenterY({ cy: 140, ...PLOT, hasPeriodChips: true })).toBe(140);
+    expect(calloutLabelCenterY({ cy: 140, ...PLOT, periodChipRows: 1 })).toBe(140);
   });
 
   test("a plot with room for the label but not the strip still gets inside the frame", () => {
     // 22px of plot: the label's own box fits, the box plus the 15px strip cannot.
-    const y = calloutLabelCenterY({ cy: 15, plotTop: 15, plotHeight: 22, hasPeriodChips: true });
+    const y = calloutLabelCenterY({ cy: 15, plotTop: 15, plotHeight: 22, periodChipRows: 1 });
     expect(y).toBeGreaterThanOrEqual(15);
     expect(y).toBeLessThanOrEqual(37);
   });
 
   test("a plot too short for the label at all leaves the label on its datum", () => {
-    expect(calloutLabelCenterY({ cy: 15, plotTop: 15, plotHeight: 4, hasPeriodChips: true })).toBe(15);
+    expect(calloutLabelCenterY({ cy: 15, plotTop: 15, plotHeight: 4, periodChipRows: 1 })).toBe(15);
   });
 
   test("a missing or zero plot rect no-ops rather than emitting NaN", () => {
-    expect(calloutLabelCenterY({ cy: 15, plotTop: 15, plotHeight: 0, hasPeriodChips: true })).toBe(15);
+    expect(calloutLabelCenterY({ cy: 15, plotTop: 15, plotHeight: 0, periodChipRows: 1 })).toBe(15);
     expect(
-      calloutLabelCenterY({ cy: 15, plotTop: NaN, plotHeight: 270, hasPeriodChips: true }),
+      calloutLabelCenterY({ cy: 15, plotTop: NaN, plotHeight: 270, periodChipRows: 1 }),
     ).toBe(15);
   });
 });
