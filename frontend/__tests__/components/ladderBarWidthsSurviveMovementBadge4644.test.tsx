@@ -104,9 +104,18 @@ describe("#4644 the track is the same length on every row", () => {
   });
 
   test("the slot is sized from the longest badge THIS ladder prints", () => {
-    // "▲48.0" is 5 characters; "▲0.5" is 4. A ladder is measured on its own ink,
-    // the same rule the label track uses, so a one-mover ladder does not pay for
-    // a badge width no rung of it will ever print.
+    // "▲48.0 pts" is 9 characters; "▲0.5 pts" is 8. A ladder is measured on its
+    // own ink, the same rule the label track uses, so a one-mover ladder does
+    // not pay for a badge width no rung of it will ever print.
+    //
+    // #5659 (ux/1369) moved these two numbers from 5 and 4. The badge grew the
+    // unit it had always lacked — it printed a bare "▲45.0" in a column between
+    // a label and an "89%" — so the ink this ladder measures itself on is four
+    // characters wider. THE SUBJECT OF #4644 IS UNTOUCHED: the property is that
+    // the slot is sized ONCE, from the longest badge the ladder actually
+    // prints, so every bar starts at the same x. Both arms still assert that,
+    // and still differ from each other, which is the half that catches
+    // per-ladder sizing being replaced by a constant.
     const wide = renderToStaticMarkup(
       <QuantityGroup
         sort={false}
@@ -125,8 +134,8 @@ describe("#4644 the track is the same length on every row", () => {
         ]}
       />,
     );
-    expect(slotWidths(wide)[0]).toBe("calc(5ch + 0.5rem)");
-    expect(slotWidths(narrow)[0]).toBe("calc(4ch + 0.5rem)");
+    expect(slotWidths(wide)[0]).toBe("calc(9ch + 0.5rem)");
+    expect(slotWidths(narrow)[0]).toBe("calc(8ch + 0.5rem)");
   });
 });
 

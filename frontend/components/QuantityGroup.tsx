@@ -175,8 +175,24 @@ export default function QuantityGroup({
   // ink you actually render" approach as the label track), so the bar starts at
   // the same x whether or not the rung moved. A ladder where nothing moved
   // renders no slot at all and is byte-for-byte what it was.
+  // #5659 — POINTS, and the badge now SAYS points. `formatMovementPoints`
+  // returns percentage POINTS and deliberately emits no unit, leaving that to
+  // the caller; every other caller in the family supplies one and this one did
+  // not. So a rung printed a bare "▲45.0" in a column between its label and a
+  // number that IS a percent ("89%"), and the reader had nothing to tell them
+  // what 45.0 was — a 45-POINT move, further than the whole remaining distance
+  // to certainty, sitting inches from a percentage that makes it read as one.
+  //
+  // The `aria-label` two hundred lines down has always read "45.0 points". As
+  // in #4066, the label was the spec sitting next to the bug the whole time.
+  //
+  // ONE DECIMAL IS KEPT, deliberately. `isRenderedMove` decides whether a badge
+  // prints at all by asking whether the movement survives `toFixed(1)`, so
+  // rounding the display to whole points here — matching `MovementBadge`'s
+  // "18 pts" exactly — would print "▲0 pts" for every move under half a point
+  // that the gate admits.
   const movementBadgeText = (movement: number | null | undefined): string =>
-    `${(movement ?? 0) > 0 ? "▲" : "▼"}${formatMovementPoints(movement)}`;
+    `${(movement ?? 0) > 0 ? "▲" : "▼"}${formatMovementPoints(movement)} pts`;
   const movementSlotChars = ordered.reduce(
     (m, r) => (isRenderedMove(r.movement) ? Math.max(m, movementBadgeText(r.movement).length) : m),
     0,

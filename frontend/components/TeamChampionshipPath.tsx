@@ -67,8 +67,13 @@ function Step({
               entry.movement! > 0 ? "text-accent-live" : "text-accent-danger"
             }`}
           >
+            {/* #5659 — the unit, for the same reason as the ladder rungs. This
+                one is the worst-placed of the family: the bare number sits in
+                the SAME flex row as `{pct}%` rendered at text-2xl, so "+9.7"
+                reads as a percentage by direct association with the number
+                beside it rather than merely by column. */}
             {entry.movement! > 0 ? "+" : "-"}
-            {formatMovementPoints(entry.movement)}
+            {formatMovementPoints(entry.movement)} pts
           </span>
         )}
       </div>
