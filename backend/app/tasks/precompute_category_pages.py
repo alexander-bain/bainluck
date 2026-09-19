@@ -449,11 +449,51 @@ GRID_WARM_LEAGUES = [
 ]
 
 # Where the run report lands for the read-only admin rail. One key, overwritten
-# per run, TTL well past the hourly beat so a missed beat reads as STALE rather
-# than vanishing (Redis is allkeys-lru — a cold key is evicted regardless of
-# TTL, and an absent report is itself the signal that the beat is not running).
+# per run, TTL well past the hourly beat so a missed beat still has a report to
+# read (Redis is allkeys-lru — a cold key is evicted regardless of TTL, and an
+# absent report is itself the signal that the beat is not running).
+#
+# 🔴 This TTL is RETENTION — how long the evidence survives — and it is not a
+# freshness threshold. It used to be read as one, which is LAT-P330 below: the
+# generosity that makes the evidence outlast an outage is exactly what makes it
+# useless as the test for whether an outage is happening.
 PRECOMPUTE_STATUS_KEY = "bainluck:precompute:category_pages:last"
 PRECOMPUTE_STATUS_TTL = 6 * 3600
+
+#: The producer's own cadence: `crontab(minute=25)` in `tasks/__init__.py`, one
+#: pass an hour. Named here because the rail's freshness verdict is derived from
+#: it rather than chosen — `test_admin_state_rails` reads the real beat entry and
+#: fails if the schedule and this constant ever drift apart.
+PRECOMPUTE_PERIOD_S = 3600
+
+#: 🔴 LAT-P330 (#7109): freshness is graded against the CADENCE, never against
+#: the key's own retention.
+#:
+#: `/api/admin/category-precompute/last` used to answer
+#: ``stale = age_s > PRECOMPUTE_STATUS_TTL`` — the TTL of the very key it had
+#: just read. That comparison is close to unfalsifiable. The report is SETEX'd
+#: for exactly ``PRECOMPUTE_STATUS_TTL``, so a report old enough to be called
+#: stale has almost always been dropped by Redis already, and the endpoint
+#: returns ``status: unknown`` from the ``missing`` branch instead of ever
+#: reaching the verdict. The only ages at which the field could read true are
+#: the pass's own duration — the report is stamped ``started_at`` but written at
+#: the pass's END — and only then after SIX consecutive hourly misses.
+#:
+#: What that cost: on 2026-09-19 the rail served ``status: ok``, ``stale: false``
+#: over an ``age_seconds`` of 8124.4 while two consecutive passes had been
+#: SIGKILLed at ``time_limit`` without writing a report. The one monitor that
+#: could have seen a two-hour-dark beat reported healthy for the whole outage.
+#:
+#: Two periods and not one: a single missed pass is not a dead rail. The sibling
+#: live-feed rail (`admin._warm_rail_status`) already grades this way, and its
+#: own comment names reusing *this* rail's 6h TTL as the hazard to avoid — LAT-P182
+#: fixed that copy and left this one. Two consecutive misses always read stale.
+#:
+#: The invariant that keeps the field answerable at all is
+#: ``PRECOMPUTE_STATUS_STALE_AFTER_S < PRECOMPUTE_STATUS_TTL``: a threshold at or
+#: past the retention is the original defect in a new costume, because the key
+#: vanishes before the verdict can fire. A test asserts it directly.
+PRECOMPUTE_STATUS_STALE_AFTER_S = 2 * PRECOMPUTE_PERIOD_S
 
 
 # --- Discover/Sports cold-response pre-warm (LAT-P001) -----------------------
