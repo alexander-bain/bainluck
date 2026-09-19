@@ -246,6 +246,51 @@ STAGED_FUTURES_ENABLED = True
 #: how much each surviving beat is worth. Anyone reading a self-blocked beat as
 #: evidence against the partition should check it against this paragraph first.
 #:
+#: 🔴🔴 THE PARAGRAPH ABOVE IS REFUTED ON ITS CENTRAL NUMBER (2026-09-19, #6868).
+#: ITS CONCLUSION — "no partition is comfortable, finer cannot help" — IS THE
+#: OPPOSITE OF WHAT PRODUCTION DID, AND IT IS THE SENTENCE THAT KEPT A STALLED
+#: BUILD STALLED FOR THREE DAYS. Read this before acting on it.
+#:
+#: The 1,066 s figure is a fixed prefix of 1,066 / 1.25 = **852.8 s**. That was
+#: never measured directly; it is the intercept of a fit whose small-B anchor is
+#: a CANCELLATION (see SIZING PART TWO below, which makes exactly this complaint
+#: about exactly this fit and then re-fits it the same way). The first clean
+#: two-point read of one slot at two granularities says it is wrong by ~60x:
+#:
+#: * ``128:119`` cancelled at the fence — cost known only as **>= 1,256,075 ms**
+#: * its child ``256:119`` **COMPLETED in 635,125 ms** (2026-09-19T20:26:31Z)
+#:
+#: With ``cost(B) = prefix + scalable/B``, two points at B and 2B give
+#: ``prefix = 2*cost(2B) - cost(B)`` = 1,270,250 - cost(128) **<= 14,175 ms**.
+#:
+#: **<= 14.2 s, not 852.8 s.** The child cost 50.6% of the parent's floor —
+#: halving the rows halved the time — so the statement is essentially pure
+#: ``scalable/B`` and the admission margin is NOT capped at +7.30%. The
+#: structural reason, verified against the rendered 107,586-char statement:
+#: every CTE reaching ``futures_markets`` / ``futures_outcomes`` /
+#: ``futures_odds_snapshots`` / ``events`` sits behind
+#: ``:vm_roster_market_ids``, the quarantine chain included (it reads
+#: ``FROM market_info``, already roster-cut). There is no unscoped scan left to
+#: BE a prefix — D119/CAL-P1090 removed it, and this paragraph outlived it.
+#:
+#: WHY THE OLD NUMBER LOOKED SO SOLID, because the trap is reusable: five slots
+#: cancelled within 0.15% of each other (1,254,934 / 1,256,224 / 1,256,815 ms)
+#: and that agreement was read as a cost. It is the FENCE. A window-derived
+#: statement bound is near-constant hour to hour, so N slots hitting it N times
+#: says each costs >= the bound and NOTHING about whether they differ. A
+#: cancellation is a floor, never a duration — the same error SIZING PART TWO
+#: names in the ~1,350 s monolith anchor, made again three paragraphs later.
+#:
+#: WHAT ACTUALLY BINDS, measured on the same beat: with a real completion the
+#: gate has its inputs back, and ``remaining >= worst * 1.25`` then admits
+#: exactly ONE unit per beat (1,144,000 - 635,125 = 508,875 left against
+#: 636,158 * 1.25 = 795,198 needed) — 55.5% budget utilisation. That is why
+#: ``staged:beats_to_publish``, which divides by CAPACITY
+#: (1,144,000 / 635,125 = 1.80 units/beat), reads ~1.8x optimistic at this
+#: granularity. Splitting further RAISES utilisation rather than lowering it:
+#: at 512 a unit is ~317.6 s and three fit (83%). Finer is better here, up to
+#: the per-unit overhead this paragraph over-estimated by 60x.
+#:
 #: SIZING PART TWO — THE OPERATIVE ONE.
 #: 17 SHIPPED FOR ONE HOUR AND PRODUCTION REFUTED IT TOO (CAL-P1035, #3536).
 #: THE PARAGRAPH ABOVE ASKED FOR THE THIRD MEASURED POINT. HERE IT IS.
