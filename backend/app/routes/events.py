@@ -7569,6 +7569,54 @@ async def search_events(
                 "search headline-contender lane timed out for %r — shipping the "
                 "page unchanged", q
             )
+            # AND SAY SO, OR THE THIN PAGE IS THE ONE EVERY READER GETS (#7243's
+            # residual tail). LAT-P007's rule is stated at the cache write below:
+            # a degraded answer is never cached, because pinning an incomplete
+            # body for the full `SEARCH_RESPONSE_TTL_SECONDS` — 180 s by ruling
+            # D81 — turns one slow moment into a sticky wrong answer. This lane
+            # was the only shed path in the handler that never joined `degraded`,
+            # so a single 2,000 ms excursion published a `red sox` page with no
+            # `MLB World Series Champion 2026` card to everyone asking that
+            # question for the next three minutes.
+            #
+            # 🔴 THIS IS NOT LAT-P241's CONFLATION COMING BACK, and what
+            # separates them is a measurement rather than an argument. #3399 let
+            # the TYPEAHEAD outcome-name arm out from under this rule because its
+            # shed is DETERMINISTIC — 5/5 or 0/5, never in between, over 35
+            # trials — so no fuller answer existed to displace and suppressing
+            # the write only made four head terms permanently uncacheable, ~88
+            # no_writes an hour. THIS lane on THIS endpoint is the opposite.
+            # Measured on production 2026-09-19 (after `bfd08691`) with
+            # `?debug_timing=1`, so every probe is a real miss-path build:
+            #
+            #     term          shed    headline_contenders ms
+            #     red           1/5     2027 · 409 1401 421 576
+            #     red sox       1/45    one 2011, card ABSENT · else 19-167
+            #     winner        0/5     146 98 238 491 282
+            #     sox           0/5     25 51 35 29 39
+            #     world series  0/5     154 31 31 52 18
+            #     dodgers       0/5     23 25 26 23 21
+            #
+            # NO TERM SHEDS EVERY TIME, so #3399's closed loop cannot form here:
+            # this suppresses roughly one build in forty-five, and what it buys
+            # is that one of the other forty-four is what a reader is served.
+            # LAT-P007's premise — a fuller answer exists and a transient is
+            # displacing it — is exactly true on this lane and was exactly false
+            # on that one.
+            #
+            # READER-INVISIBLE APART FROM THAT. `searchAnswerState` returns
+            # "present" whenever any section has content (CONTENT WINS OVER
+            # `degraded`), and a shed page still carries its teams, games and
+            # futures — so this adds a wire key and a cache decision, not a
+            # banner over a page that is visibly working.
+            #
+            # THE TYPEAHEAD TWIN WAS CHECKED, NOT ASSUMED — #3394's standing
+            # lesson in this file is a fix landing on one endpoint while its copy
+            # keeps the defect. Its headline lane shed 0/25 across five terms the
+            # same minute and `red` does not even arm it, so there is nothing to
+            # repair there and `_ta_degraded`, which LAT-P241 narrowed on
+            # purpose, is deliberately left alone.
+            degraded.append("headline_contenders")
             # NO `_recover_search_session` HERE — that is the 500 (see the block
             # comment above). The savepoint's own rollback has already restored
             # the transaction, so the session needs no rollback and the futures
