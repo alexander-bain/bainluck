@@ -10,6 +10,7 @@ import { disambiguateLabels } from "@/lib/labelDisambiguation";
 import { teamShortName, teamShortNames } from "@/lib/teamShortName";
 import { teamTextColor } from "@/lib/teamColors";
 import { awardPriceIsStale } from "@/lib/awardPriceAge";
+import { isEventOwnMoneylineMarket } from "@/lib/eventOwnMoneyline";
 import EntityImage from "./EntityImage";
 import AdvancementPath from "@/components/event/AdvancementPath";
 
@@ -2336,9 +2337,49 @@ function GameMarketsPair({
   );
 }
 
-/** Check if a game_prop market actually belongs to this event (filter out mismatches). */
+/**
+ * Check if a game_prop market actually belongs to this event (filter out mismatches).
+ *
+ * #4646: it also drops the market that belongs to this event *too much* — the event's own
+ * headline question. On `/events/15314525` (Zhao–Ma, WTA qualifying) the hero read
+ * `Zhao 30% – Ma 70%` and "Bigger Picture" then printed two cards from the same Kalshi
+ * market, `Carol Zhao 30%` and `Yexin Ma 74%`. 30 + 74 = 104%, and the rail's whole content
+ * was the question the hero had already answered. This filter's original rule drops a
+ * game_prop whose name names NEITHER side; it had no rule for the opposite case, a name that
+ * is EXACTLY this fixture, and that is the hole the reader was looking at.
+ *
+ * The test is `isEventOwnMoneylineMarket`, shipped for #7064's half of the same disease on
+ * THE DIVERGENCE and exported for this call site. Keying on the matchup rather than on a
+ * venue's wording is what makes it hold across sports and across venues — see
+ * `lib/eventOwnMoneyline.ts` for why, and for why a QUALIFIED name
+ * ("Radisic vs. Morvayova: Match O/U 22.5") is deliberately kept: it is a real market about
+ * the game, not the game's own question.
+ *
+ * Three things worth knowing before editing:
+ *
+ * - The decision is per MARKET, so every leg goes together. Soccer's "Draw" leg is not
+ *   orphaned behind its two vanished siblings, which is what a per-row rule would do.
+ *   (Measured: `Brighton vs Arsenal` arrives as Brighton / Arsenal / **Tie**.)
+ * - It reads `market_name`, NOT `clean_label`. `clean_label` is the display string and is
+ *   ellipsised at 55 characters — `Singapore Open, Qualification: Nika Radisic vs Viktoria
+ *   Morvayova` is served as `…vs Viktoria…`. A truncated second side names no club, so a
+ *   rung keyed on it would quietly stop firing on the longest fixture names. No venue
+ *   serves a matchup name near that length today, so no test can tell the two apart; this
+ *   sentence is the guard.
+ * - On an event whose rail holds NOTHING BUT its own moneyline, `gameMarketCount` falls to 0
+ *   and the section gate below returns null — no "Bigger Picture" header over an empty body.
+ *   That is #3775's rule doing its job, not a regression.
+ *
+ * A VENUE-PREFIXED spelling of the same question
+ * ("Singapore Open, Qualification: Nika Radisic vs Viktoria Morvayova") is NOT caught here,
+ * and must not be "fixed" by stripping a leading qualifier: "Set 1 Winner: Nika Radisic vs
+ * Viktoria Morvayova" is structurally identical and is a different question. That case is
+ * ux/1170's backend arm — `_build_related_futures` excluding rows whose `event_id` IS this
+ * event — which is still open on #4646 and reaches it for free.
+ */
 function isRelevantGameProp(f: RelatedFuture, homeTeam: string, awayTeam: string): boolean {
   if (f.display_category !== "game_prop") return true;
+  if (isEventOwnMoneylineMarket(f.market_name, homeTeam, awayTeam)) return false;
   const name = f.market_name.toLowerCase();
   // Extract city/team tokens from both teams
   const homeTokens = homeTeam.toLowerCase().split(/\s+/);

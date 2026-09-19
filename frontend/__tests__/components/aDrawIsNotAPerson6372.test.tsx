@@ -56,6 +56,26 @@ import RelatedFutures from "@/components/RelatedFutures";
 const FIXTURE = "Club Necaxa vs. CF América";
 const DRAW = `Draw (${FIXTURE})`;
 
+/**
+ * The market these rows arrive on.
+ *
+ * It used to be `FIXTURE` itself — and the note further down says why that mattered: the
+ * section only reaches markets that name the event's own teams, so an outcome has to be
+ * carried onto one of this event's markets or it renders nothing and the arm asserts over
+ * an empty page.
+ *
+ * #4646 (ux/1349) took the BARE matchup away as a carrier. A market whose name is exactly
+ * this event's two sides IS the event's own moneyline, the hero has already answered it,
+ * and the rail now drops it — so every case below would have rendered zero tiles and this
+ * file would have gone red for a reason that has nothing to do with #6372.
+ *
+ * The carrier is therefore the qualified spelling this file already uses one arm down, and
+ * which #4646 deliberately keeps. NOTHING about what is being read changed: the outcome
+ * strings, the grouping (no colon, so one `other` group, exactly as before) and every
+ * assertion are untouched.
+ */
+const CARRIER = `${FIXTURE} - Halftime Result`;
+
 function prop(
   marketName: string,
   outcomeName: string,
@@ -128,7 +148,7 @@ function headshotCount(html: string): number {
 
 describe("#6372 — the draw tile keeps its name and loses its face", () => {
   it("draws no headshot for an outcome that is a question, not a person", () => {
-    setPayload([prop(FIXTURE, DRAW, 0.27, 1)]);
+    setPayload([prop(CARRIER, DRAW, 0.27, 1)]);
     const html = render();
 
     // Not vacuous: the tile has to exist for its missing face to mean anything.
@@ -140,7 +160,7 @@ describe("#6372 — the draw tile keeps its name and loses its face", () => {
   });
 
   it("and still says what it is — the face goes, the name stays", () => {
-    setPayload([prop(FIXTURE, DRAW, 0.27, 1)]);
+    setPayload([prop(CARRIER, DRAW, 0.27, 1)]);
     const html = render();
 
     // THE half a face-only assertion misses: `tileLabels` fell through to an
@@ -197,13 +217,13 @@ describe("#6372 — the draw tile keeps its name and loses its face", () => {
     //
     // One render each, because two markets fall into two stat groups and only
     // the first draws — an accident of grouping that reads as this rule failing.
-    setPayload([prop(`${FIXTURE} - Halftime Result`, "Draw", 0.22, 6)]);
+    setPayload([prop(CARRIER, "Draw", 0.22, 6)]);
     const bare = render();
     expect(tileLabels(bare)).toHaveLength(1);
     expect(headshotCount(bare)).toBe(0);
     expect(bare).toContain('title="Draw"');
 
-    setPayload([prop(FIXTURE, FIXTURE, 0.5, 7)]);
+    setPayload([prop(CARRIER, FIXTURE, 0.5, 7)]);
     const fixture = render();
     expect(tileLabels(fixture)).toHaveLength(1);
     expect(headshotCount(fixture)).toBe(0);
@@ -228,8 +248,8 @@ describe("#6372 — the draw tile keeps its name and loses its face", () => {
     // The two populations in one render, which is the only arm that catches a
     // fix keyed on "how many rows are in this group" rather than on the row.
     setPayload([
-      prop(FIXTURE, DRAW, 0.27, 1),
-      prop(FIXTURE, "Erling Haaland", 0.42, 2),
+      prop(CARRIER, DRAW, 0.27, 1),
+      prop(CARRIER, "Erling Haaland", 0.42, 2),
     ]);
     const html = render();
 
