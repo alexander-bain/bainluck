@@ -69,6 +69,12 @@ def _team(**over) -> Team:
         # needs *a* top-3 rank so the stakes line fires — the subject of these
         # tests is rollback survival, not which rank field is read.
         "standings_data": {"wins": 9, "losses": 8, "league_rank": 3, "conference": "NFC"},
+        # `_enriched_teams_stmt` selects the whole `Team`, so every column this
+        # fixture omits is UNLOADED on a persistent row and raises the moment
+        # `_snapshot_team` reads it — indistinguishable here from the
+        # detachment these tests are about. Present because #7132 made
+        # `_snapshot_team` read the write stamp of the standings board.
+        "standings_updated_at": None,
         "season_stats": {"ppg": 21.4},
     }
     fields.update(over)

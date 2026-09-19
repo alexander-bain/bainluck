@@ -24193,6 +24193,11 @@ class TeamSnapshot:
     current_record: str | None = None
     alternate_names: tuple = ()
     standings_data: dict | None = None
+    #: When `standings_data` was last WRITTEN. Carried because two rows for one
+    #: club disagree about which season their board describes, and the write
+    #: stamp is the only column that separates them — see
+    #: `_same_league_row_preference` and #7132.
+    standings_updated_at: object | None = None
     season_stats: dict | None = None
 
 
@@ -24223,6 +24228,7 @@ def _snapshot_team(team, sport_key: str | None = None) -> TeamSnapshot:
         current_record=team.current_record,
         alternate_names=tuple(alt),
         standings_data=deepcopy(getattr(team, "standings_data", None)),
+        standings_updated_at=getattr(team, "standings_updated_at", None),
         season_stats=deepcopy(getattr(team, "season_stats", None)),
     )
 
@@ -24289,6 +24295,69 @@ def _crest_row_preference(team):
     )
 
 
+def _standings_vintage(team):
+    """Sort key for WHEN this row's standings board was last written.
+
+    A missing stamp sorts below every real one, so a row nobody has written
+    never outranks one somebody has. Returned as a tuple rather than a bare
+    float so the two cases cannot accidentally compare equal.
+    """
+    stamp = getattr(team, "standings_updated_at", None)
+    if stamp is None:
+        return (0, 0.0)
+    try:
+        return (1, stamp.timestamp())
+    except (AttributeError, TypeError, ValueError, OSError):
+        # A stamp we cannot read is not evidence of freshness (#53: an
+        # unreadable value is not an absence, but it is not a claim either).
+        return (0, 0.0)
+
+
+def _same_league_row_preference(team):
+    """Rank two rows of the SAME league that both claim one name key.
+
+    #7132. Where two rows for one club collide the old code kept whichever
+    arrived first, and `_enriched_teams_stmt()` is UNORDERED — so the winner was
+    Postgres heap order. Measured over production's 1,630 enriched rows on
+    2026-09-19, **176 of 1,070 name keys** resolved to a different row in
+    ascending than in descending id order: a sixth of the team lookup decided by
+    a coin flip, and `/events/15314262` was on the losing side of it, printing
+    "Columbus 38-24-11, 92 pts" — a finished 83-game season — beside
+    "Pittsburgh 0-0, 0 pts", five days before puck drop on a season neither had
+    started.
+
+    The terms, most significant first:
+
+    1. **Parent league over season variant.** #4945's rule, unchanged and first
+       so nothing below can overturn it: every MLB club has a
+       `baseball_mlb_preseason` twin that carries a crest but no
+       `standings_data`, and preferring it silently coin-flipped the standings
+       away.
+    2. **The more recently WRITTEN board.** This is the term that settles the
+       duplicate-club case, and it is the only column that can: the two rows
+       disagree about which SEASON their board describes, and neither the name,
+       the id, nor the record's own contents say which is current. Of the six
+       NHL clubs carrying a duplicate row on 2026-09-19, the fresher stamp was
+       the rolled-over board in six of six — and it is not the longer name, nor
+       the lower id: Columbus's live board is on row 572 while Toronto's,
+       Ottawa's and the Rangers' are on 12715, 13381 and 8293. Preferring the
+       row's own `.name` over another row's alias, or the lower id, picks the
+       stale board for three of those six.
+    3. **`_crest_row_preference`**, which is already a TOTAL order (it ends on
+       the id). A preference that can tie is still order-dependent on precisely
+       the rows it failed to separate.
+
+    This does NOT make a duplicate club one club — that is #2693's, and the
+    second row keeps its own short name key. It makes the answer the same on
+    every request, and makes it the row whose board somebody is still writing.
+    """
+    return (
+        0 if is_season_variant(getattr(team, "sport_key", None)) else 1,
+        _standings_vintage(team),
+        _crest_row_preference(team),
+    )
+
+
 def _dedupe_team_name_lookup(teams) -> dict:
     """Map team names → team record with a cross-league ambiguity guard.
 
@@ -24322,6 +24391,13 @@ def _dedupe_team_name_lookup(teams) -> dict:
     crest AGREES the key is kept and the row picked deterministically; see
     `_crest_is_shared` and `_crest_row_preference`. Where it differs, nothing
     changes.
+
+    **Two rows of the SAME league are picked deterministically too (#7132).**
+    Until then only the season-variant case was handled and every other
+    same-league collision kept whichever row arrived first — 176 of 1,070 name
+    keys, measured on production, answered differently in ascending than in
+    descending id order. `_same_league_row_preference` decides all of them,
+    with #4945's rule as its first term.
     """
     lookup: dict = {}
     key_sport: dict = {}
@@ -24347,15 +24423,13 @@ def _dedupe_team_name_lookup(teams) -> dict:
                 ambiguous.add(key)
                 lookup.pop(key, None)
                 key_sport.pop(key, None)
-        elif is_season_variant(
-            getattr(lookup[key], "sport_key", None)
-        ) and not is_season_variant(getattr(team, "sport_key", None)):
-            # Same league, two rows: keep the PARENT league's. Which row an
-            # unordered query yields first is arbitrary, and the variant row is
-            # the poorer one — every `baseball_mlb_preseason` club has a logo
-            # but no `standings_data`, which `_format_team_data` ships as the
-            # card's `standings`. Without this the crest comes back and the
-            # standings silently coin-flip away.
+        elif _same_league_row_preference(team) > _same_league_row_preference(lookup[key]):
+            # Same league, two rows: pick one, deterministically. Which row an
+            # unordered query yields first is arbitrary, so #4945's
+            # parent-league-over-season-variant rule is now the first term of a
+            # TOTAL preference rather than the only case handled — see
+            # `_same_league_row_preference`. The other 176 collisions this
+            # branch used to settle by arrival order are the #7132 defect.
             lookup[key] = team
 
     for team in teams:
