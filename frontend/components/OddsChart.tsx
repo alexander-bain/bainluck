@@ -2033,76 +2033,6 @@ export default function OddsChart({
               strokeWidth={1.5}
               strokeDasharray="4 4"
             />
-            {/* Game Start marker — solid line at commence_time */}
-            {gameStartTime && filteredPeriodBoundaries.length === 0 && (
-              <ReferenceLine
-                x={gameStartTime}
-                stroke="rgba(0,0,0,0.25)"
-                strokeWidth={1.5}
-                isFront
-                label={{
-                  value: "Start",
-                  position: "insideTopLeft",
-                  style: { fontSize: 11, fill: "rgba(0,0,0,0.6)", fontWeight: 700 },
-                }}
-              />
-            )}
-            {/* Period boundary markers — rendered in front of data area */}
-            {filteredPeriodBoundaries.map((b) => (
-              <ReferenceLine
-                key={`period-${b.label}-${b.timestamp}`}
-                x={b.time}
-                stroke="rgba(0,0,0,0.25)"
-                strokeWidth={1.5}
-                strokeDasharray="6 4"
-                isFront
-                label={{
-                  value: b.label,
-                  position: ((b as { labelPosition?: string }).labelPosition || "insideTopLeft") as "insideTopLeft" | "insideTopRight",
-                  // #6882: `dy` shifts the whole text block down from whatever
-                  // `position` computed — recharts keeps `dy` through
-                  // `filterProps` (it is an SVG text attribute) and `Text` adds it
-                  // to y. Row 0 passes 0, so an unstaggered label is byte-identical
-                  // to what it rendered before.
-                  dy: ((b as { labelRow?: number }).labelRow || 0) * PERIOD_LABEL_ROW_HEIGHT_PX,
-                  style: { fontSize: 11, fill: "rgba(0,0,0,0.65)", fontWeight: 700 },
-                }}
-              />
-            ))}
-            {/* Final marker — exactly one, at the game-end snapshot (settled only).
-                THE LINE, AND DELIBERATELY NO LABEL (#3541).
-
-                It used to carry `value: "Final"` at `insideTopLeft`, and what
-                reached every settled event page was a bare `F`. `finalMarkerTime`
-                is the LAST chart category, which since the right-hand buffer was
-                removed is the plot's right rule — and `insideTopLeft` anchors the
-                text `start` there, so it grows out of the svg and is clipped to
-                its first glyph. That is structural, not a breakpoint: the same
-                orphan `F` is on the 1280px shot as on the 390px one, because the
-                svg ends 10px past the rule at every width.
-
-                Anchoring it inside instead is the expensive answer and buys
-                nothing. `insideTopRight` grows the text LEFT out of the right
-                rule, into the space UX-P022 above reserves for the last period
-                boundary — and `minSpacing` (7% of the chart) is sized for labels
-                that all grow the same way, while the Final marker is deduped only
-                against final-LIKE boundaries, so a `Q4` or `T9` can sit right
-                beside it. Making the spacing rule bidirectional would be real
-                work to restore a word the page already says twice: the hero
-                carries a FINAL chip, and the line's own position at the end of
-                the timeline is the part that carries information. So the marker
-                keeps its full stop and loses its caption.
-
-                Guarded by `chartTextStaysInsideThePlot.test.tsx`, which pins BOTH
-                halves — no text off the right edge, and this line still drawn. */}
-            {finalMarkerTime && (
-              <ReferenceLine
-                x={finalMarkerTime}
-                stroke="rgba(0,0,0,0.35)"
-                strokeWidth={1.5}
-                isFront
-              />
-            )}
             <Tooltip content={<CustomTooltip />} />
 
             {/* ── MODE B: Sportsbooks-only — individual bookmaker lines (thin grey) ── */}
@@ -2390,6 +2320,103 @@ export default function OddsChart({
                   );
                 }}
                 legendType="none"
+              />
+            )}
+
+            {/* ── EVENT MARKERS: LAST CHILDREN ON PURPOSE (#6964) ──────────────
+
+                A reader on `/events/14638444` (Bills–Lions, 390px) saw the `Q3`
+                marker on the score-differential chart render as a bare `3`. The
+                label text was never wrong: the orange step line ran through the
+                same pixels and painted the `Q` out.
+
+                These three blocks used to sit above the series and pass
+                `isFront`, with a comment claiming they were "rendered in front of
+                data area". `isFront` IS A DEAD PROP. In recharts 2.15.4 it appears
+                exactly once per reference component — `isFront: false` in
+                defaultProps — and is read nowhere in the library; it is also in
+                the `.d.ts`, so it type-checks and nothing ever warned. It is a
+                recharts v1 survival.
+
+                SVG has no z-index, so paint order is document order, and
+                `renderByOrder` (util/ReactUtils) pushes children in JSX order.
+                Measured on production before the move: every reference-line group
+                sat at document index 51–69 and every series at 73–127 — markers
+                under data on BOTH charts, on every event page, not just this one.
+
+                So the only thing that puts an annotation above the plot is being
+                later in this list. Moving these costs nothing and there is no
+                prop that substitutes for it.
+
+                The horizontal guide rules (`y=50` here, `y=0` on the score chart)
+                deliberately stay above the series: they are background rules a
+                reader reads the data AGAINST, not annotations that sit on top.
+                `artifacts/ux-1366/paint-order-6964.mjs` re-measures any page. */}
+            {/* Game Start marker — solid line at commence_time */}
+            {gameStartTime && filteredPeriodBoundaries.length === 0 && (
+              <ReferenceLine
+                x={gameStartTime}
+                stroke="rgba(0,0,0,0.25)"
+                strokeWidth={1.5}
+                label={{
+                  value: "Start",
+                  position: "insideTopLeft",
+                  style: { fontSize: 11, fill: "rgba(0,0,0,0.6)", fontWeight: 700 },
+                }}
+              />
+            )}
+            {/* Period boundary markers (#6882 stagger; #6964 paint order) */}
+            {filteredPeriodBoundaries.map((b) => (
+              <ReferenceLine
+                key={`period-${b.label}-${b.timestamp}`}
+                x={b.time}
+                stroke="rgba(0,0,0,0.25)"
+                strokeWidth={1.5}
+                strokeDasharray="6 4"
+                label={{
+                  value: b.label,
+                  position: ((b as { labelPosition?: string }).labelPosition || "insideTopLeft") as "insideTopLeft" | "insideTopRight",
+                  // #6882: `dy` shifts the whole text block down from whatever
+                  // `position` computed — recharts keeps `dy` through
+                  // `filterProps` (it is an SVG text attribute) and `Text` adds it
+                  // to y. Row 0 passes 0, so an unstaggered label is byte-identical
+                  // to what it rendered before.
+                  dy: ((b as { labelRow?: number }).labelRow || 0) * PERIOD_LABEL_ROW_HEIGHT_PX,
+                  style: { fontSize: 11, fill: "rgba(0,0,0,0.65)", fontWeight: 700 },
+                }}
+              />
+            ))}
+            {/* Final marker — exactly one, at the game-end snapshot (settled only).
+                THE LINE, AND DELIBERATELY NO LABEL (#3541).
+
+                It used to carry `value: "Final"` at `insideTopLeft`, and what
+                reached every settled event page was a bare `F`. `finalMarkerTime`
+                is the LAST chart category, which since the right-hand buffer was
+                removed is the plot's right rule — and `insideTopLeft` anchors the
+                text `start` there, so it grows out of the svg and is clipped to
+                its first glyph. That is structural, not a breakpoint: the same
+                orphan `F` is on the 1280px shot as on the 390px one, because the
+                svg ends 10px past the rule at every width.
+
+                Anchoring it inside instead is the expensive answer and buys
+                nothing. `insideTopRight` grows the text LEFT out of the right
+                rule, into the space UX-P022 above reserves for the last period
+                boundary — and `minSpacing` (7% of the chart) is sized for labels
+                that all grow the same way, while the Final marker is deduped only
+                against final-LIKE boundaries, so a `Q4` or `T9` can sit right
+                beside it. Making the spacing rule bidirectional would be real
+                work to restore a word the page already says twice: the hero
+                carries a FINAL chip, and the line's own position at the end of
+                the timeline is the part that carries information. So the marker
+                keeps its full stop and loses its caption.
+
+                Guarded by `chartTextStaysInsideThePlot.test.tsx`, which pins BOTH
+                halves — no text off the right edge, and this line still drawn. */}
+            {finalMarkerTime && (
+              <ReferenceLine
+                x={finalMarkerTime}
+                stroke="rgba(0,0,0,0.35)"
+                strokeWidth={1.5}
               />
             )}
           </ComposedChart>
