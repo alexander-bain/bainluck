@@ -168,6 +168,59 @@ final class DiscoverViewModel: ObservableObject {
     /// with `items`, whose publish already re-runs any dependent view body.
     private(set) var itemsVersion = 0
 
+    /// #7074 — has a NETWORK publication already completed this app session?
+    ///
+    /// Read by ONE caller: the `#if DEBUG` changed-response rig, to decide whether
+    /// the payload in hand is the one the experiment measures against (the first)
+    /// or the one it stages a change into (every later one). It is deliberately
+    /// NOT `!items.isEmpty`: **the last-good cache seed is a paint**, so that read
+    /// made the first network load of a warm container the "second" one, staged
+    /// both sides of the experiment identically, and produced the sentence *the
+    /// feed did not change* from an instrument that had not run the experiment.
+    /// See `LaunchRig.changedRefreshKey`.
+    ///
+    /// Set at the publication terminal only — not by the cache seed, not by a
+    /// pagination splice, and not by any terminal that keeps last-good behind a
+    /// banner. Session-scoped by construction: a fresh launch has published
+    /// nothing, which is what a cold container means.
+    private(set) var hasPublishedNetworkFeed = false
+
+    /// #7074 — how many cards the changed-response rig will withhold from the NEXT
+    /// network publication. `0` means the experiment is NOT armed.
+    ///
+    /// 🔴 THE ARMED WITNESS, AND THE JOURNEY IS UNSOUND WITHOUT IT. An unarmed rig
+    /// and a rig whose change never reached the screen produce the SAME
+    /// observation — *the feed did not change* — and that sentence is the product
+    /// verdict the arm exists to reach. It has now been produced twice by
+    /// instruments that had not run the experiment: native/244's type-coercing
+    /// argument read, and a run where the container's cache seeded the page, the
+    /// first network load FAILED, and the reader's pull therefore became the first
+    /// publication — correctly unstaged, and indistinguishable from a defect
+    /// without this field.
+    ///
+    /// It carries BOTH halves of "armed", which is why one number is enough: it is
+    /// written only at the publication terminal (so a non-zero value proves payload
+    /// A exists) and its value is the drop the call site actually read (so a
+    /// non-zero value proves the launch argument arrived).
+    ///
+    /// Always `0` in Release: the call site that computes the drop is compiled out.
+    private(set) var rigChangedRefreshDropArmed = 0
+
+    #if DEBUG
+    /// #7074 — the changed-response drop, when a UNIT TEST supplies it instead of
+    /// the launch argument. `nil` (the shipping-shaped default) falls through to
+    /// `LaunchRig.changedRefreshDrop()`, so the simulator journey exercises the
+    /// real argument read and this property changes nothing for it.
+    ///
+    /// It exists so the warm-container regression above is provable in the pure
+    /// suite: the alternative is writing the key into `UserDefaults.standard`,
+    /// which is shared process state that would leak a shortened feed into every
+    /// test running beside it — the same class of confound as the cache seed, and
+    /// codex's instruction on this repair is to keep unrelated tests' state out of
+    /// the rig's decision. Compiled out of Release with the call site that reads it.
+    var rigChangedRefreshDropOverride: Int?
+    #endif
+
     /// #4110: the `edition` of the list currently on screen — which ordered list
     /// the reader is looking at, not how fresh it is. Set by every writer that
     /// paints, alongside `items`, so the next response can be compared against
@@ -592,14 +645,19 @@ final class DiscoverViewModel: ObservableObject {
                 // so the gesture, the network, the reconcile decision and the
                 // screen downstream of it are all the real ones.
                 #if DEBUG
-                let rigDrop = LaunchRig.changedRefreshDrop()
+                let rigDrop = rigChangedRefreshDropOverride ?? LaunchRig.changedRefreshDrop()
                 #else
                 let rigDrop: Int? = nil
                 #endif
+                // The witness is a completed NETWORK publication, never
+                // `!items.isEmpty`. A warm container's cache seed paints before
+                // this line has ever run, so the paint read staged the FIRST
+                // network load and the journey compared two staged lists —
+                // see `hasPublishedNetworkFeed`.
                 let staged = Self.rigStagedRefresh(
                     items: Self.renderable(response.items),
                     edition: response.edition,
-                    hasPaintedFeed: !items.isEmpty,
+                    hasPublishedNetworkFeed: hasPublishedNetworkFeed,
                     drop: rigDrop
                 )
                 let renderable = staged.items
@@ -658,6 +716,16 @@ final class DiscoverViewModel: ObservableObject {
                 isShowingCachedContent = false
                 refreshFailedShowingCache = false
                 lastGoodStoredAt = nil
+                // #7074: the rig's witness, set at the ONE terminal that published
+                // a list the server actually sent. Every other exit from this
+                // function leaves it alone — a cache seed, a kept-last-good banner
+                // and a cancellation have all painted or preserved something, and
+                // none of them is a payload the experiment can measure against.
+                hasPublishedNetworkFeed = true
+                // Written HERE, after the flag, so a non-zero value proves both
+                // halves of "armed": payload A exists, and the launch argument
+                // reached the call site. See `rigChangedRefreshDropArmed`.
+                rigChangedRefreshDropArmed = rigDrop ?? 0
                 telemetry?(DiscoverFeedTelemetry(
                     outcome: .revalidateSuccess,
                     networkMs: Self.elapsedMs(since: netStart), itemCount: items.count,
@@ -985,10 +1053,16 @@ final class DiscoverViewModel: ObservableObject {
     ///
     /// - **no drop asked for** ⇒ unchanged. This is every reader, and it is the
     ///   assertion that makes the affordance an affordance rather than a defect.
-    /// - **nothing painted yet** ⇒ unchanged. The first paint is payload A, the
-    ///   thing the change will be measured *against*. Shortening it too would
-    ///   leave the journey comparing two shortened lists and calling the
+    /// - **nothing PUBLISHED yet** ⇒ unchanged. The first network publication is
+    ///   payload A, the thing the change will be measured *against*. Shortening it
+    ///   too would leave the journey comparing two shortened lists and calling the
     ///   difference between them evidence.
+    ///   🪤 The witness is a publication and not a PAINT, and the distinction is
+    ///   not pedantry — it is the defect native/247 repaired. A warm container's
+    ///   last-good cache seed paints, so `!items.isEmpty` was already true when the
+    ///   first network response arrived; both sides of the experiment were staged
+    ///   and the journey reported `SERVED 20 → 20`, i.e. *the feed did not change*,
+    ///   about a refresh that published perfectly well.
     /// - **the drop would empty the feed** ⇒ keep one card. An empty payload is
     ///   not a smaller payload: it is `mayReplaceRendered`'s refusal terminal and
     ///   Discover's empty state, so the rig would manufacture a different defect
@@ -1002,9 +1076,9 @@ final class DiscoverViewModel: ObservableObject {
     /// does NOT take. Restamping keeps the rig honest with the contract instead
     /// of quietly testing the wrong branch.
     static func rigStagedRefresh<Item>(
-        items: [Item], edition: String?, hasPaintedFeed: Bool, drop: Int?
+        items: [Item], edition: String?, hasPublishedNetworkFeed: Bool, drop: Int?
     ) -> (items: [Item], edition: String?) {
-        guard let drop, drop > 0, hasPaintedFeed, !items.isEmpty else {
+        guard let drop, drop > 0, hasPublishedNetworkFeed, !items.isEmpty else {
             return (items, edition)
         }
         let withheld = Swift.min(drop, items.count - 1)

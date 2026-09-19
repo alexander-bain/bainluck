@@ -36,7 +36,7 @@ final class AControlledChangedRefresh7074Tests: XCTestCase {
     /// else in this file describes behaviour nobody shipping ever reaches.
     func testNoDropAskedForLeavesThePayloadExactlyAsTheServerSentIt() {
         let staged = VM.rigStagedRefresh(
-            items: painted, edition: "ed-1", hasPaintedFeed: true, drop: nil)
+            items: painted, edition: "ed-1", hasPublishedNetworkFeed: true, drop: nil)
 
         XCTAssertEqual(staged.items, painted)
         XCTAssertEqual(
@@ -51,7 +51,7 @@ final class AControlledChangedRefresh7074Tests: XCTestCase {
     /// function must do if it is ever reached with a nil drop.
     func testNoDropIsInertEvenOnAnEmptyOrEditionlessPayload() {
         let empty = VM.rigStagedRefresh(
-            items: [String](), edition: nil, hasPaintedFeed: true, drop: nil)
+            items: [String](), edition: nil, hasPublishedNetworkFeed: true, drop: nil)
         XCTAssertTrue(empty.items.isEmpty)
         XCTAssertNil(empty.edition)
     }
@@ -60,7 +60,7 @@ final class AControlledChangedRefresh7074Tests: XCTestCase {
 
     func testAStagedRefreshWithholdsTheFirstCardsSoTheTopOfTheFEEDCHANGES() {
         let staged = VM.rigStagedRefresh(
-            items: painted, edition: "ed-1", hasPaintedFeed: true, drop: 2)
+            items: painted, edition: "ed-1", hasPublishedNetworkFeed: true, drop: 2)
 
         XCTAssertEqual(staged.items, ["c", "d", "e"])
         XCTAssertNotEqual(
@@ -78,7 +78,7 @@ final class AControlledChangedRefresh7074Tests: XCTestCase {
     /// wrong branch while looking green.
     func testWithholdingCardsRestampsTheEditionSoTheCHANGEDBranchIsTheOneTaken() {
         let staged = VM.rigStagedRefresh(
-            items: painted, edition: "ed-1", hasPaintedFeed: true, drop: 2)
+            items: painted, edition: "ed-1", hasPublishedNetworkFeed: true, drop: 2)
 
         XCTAssertNotEqual(staged.edition, "ed-1")
         XCTAssertEqual(
@@ -102,7 +102,7 @@ final class AControlledChangedRefresh7074Tests: XCTestCase {
     /// can mean UNREACHABLE rather than weak, and the same trap is live here.
     func testAnEditionlessPayloadIsStillRestampedIntoTheCHANGEDBranch() {
         let staged = VM.rigStagedRefresh(
-            items: painted, edition: nil, hasPaintedFeed: true, drop: 2)
+            items: painted, edition: nil, hasPublishedNetworkFeed: true, drop: 2)
 
         XCTAssertNotNil(
             staged.edition,
@@ -118,12 +118,18 @@ final class AControlledChangedRefresh7074Tests: XCTestCase {
 
     // MARK: - The three refusals, each a state the journey must not misread
 
-    /// The first paint is payload A — the thing the change is measured AGAINST.
-    /// Shortening it too would leave the journey comparing two shortened lists
-    /// and reporting the difference between them as the experiment's result.
-    func testTheFirstPaintIsNeverShortened() {
+    /// The first network publication is payload A — the thing the change is
+    /// measured AGAINST. Shortening it too would leave the journey comparing two
+    /// shortened lists and reporting the difference between them as the
+    /// experiment's result.
+    ///
+    /// This rule was always right; what was wrong was the witness the CALL SITE
+    /// handed it (`!items.isEmpty`, which a cache seed satisfies). The container
+    /// tests below are the ones that can see that, and they are why this file now
+    /// builds view models instead of only calling a pure function.
+    func testTheFirstNetworkPublicationIsNeverShortened() {
         let staged = VM.rigStagedRefresh(
-            items: painted, edition: "ed-1", hasPaintedFeed: false, drop: 2)
+            items: painted, edition: "ed-1", hasPublishedNetworkFeed: false, drop: 2)
 
         XCTAssertEqual(staged.items, painted)
         XCTAssertEqual(staged.edition, "ed-1")
@@ -136,7 +142,7 @@ final class AControlledChangedRefresh7074Tests: XCTestCase {
     func testADropThatWouldEmptyTheFeedKeepsACardOnScreen() {
         for oversized in [painted.count, painted.count + 1, 500] {
             let staged = VM.rigStagedRefresh(
-                items: painted, edition: "ed-1", hasPaintedFeed: true, drop: oversized)
+                items: painted, edition: "ed-1", hasPublishedNetworkFeed: true, drop: oversized)
 
             XCTAssertFalse(
                 staged.items.isEmpty,
@@ -152,7 +158,7 @@ final class AControlledChangedRefresh7074Tests: XCTestCase {
     /// changed nothing, which the journey would read as a completed experiment.
     func testASingleCardFeedIsLeftAloneRatherThanStagedIntoANonChange() {
         let staged = VM.rigStagedRefresh(
-            items: ["only"], edition: "ed-1", hasPaintedFeed: true, drop: 3)
+            items: ["only"], edition: "ed-1", hasPublishedNetworkFeed: true, drop: 3)
 
         XCTAssertEqual(staged.items, ["only"])
         XCTAssertEqual(
@@ -164,7 +170,7 @@ final class AControlledChangedRefresh7074Tests: XCTestCase {
 
     func testAnEmptyPayloadIsLeftAloneRatherThanRestamped() {
         let staged = VM.rigStagedRefresh(
-            items: [String](), edition: "ed-1", hasPaintedFeed: true, drop: 2)
+            items: [String](), edition: "ed-1", hasPublishedNetworkFeed: true, drop: 2)
 
         XCTAssertTrue(staged.items.isEmpty)
         XCTAssertEqual(staged.edition, "ed-1")
@@ -179,9 +185,234 @@ final class AControlledChangedRefresh7074Tests: XCTestCase {
     /// that happened.
     func testTheSurvivorsKeepTheServersOwnOrder() {
         let staged = VM.rigStagedRefresh(
-            items: painted, edition: "ed-1", hasPaintedFeed: true, drop: 1)
+            items: painted, edition: "ed-1", hasPublishedNetworkFeed: true, drop: 1)
 
         XCTAssertEqual(staged.items, ["b", "c", "d", "e"])
+    }
+
+    // MARK: - The CONTAINER, warm and cold, which is where the rule was wrong
+
+    /// 🔴 **THE REGRESSION THIS SECTION EXISTS FOR.** Every assertion above passes
+    /// with the call site handing `rigStagedRefresh` the wrong witness, because a
+    /// pure function cannot see which `Bool` its caller computed. The witness was
+    /// `!items.isEmpty` — and **the last-good cache seed is a paint** — so in a
+    /// warm container the FIRST network load was already staged. The journey's
+    /// BEFORE and its AFTER were then both shortened by the same amount, it
+    /// measured `SERVED 20 → 20`, and it reported *the feed did not change* about
+    /// a refresh that had published correctly.
+    ///
+    /// It passed in isolation and failed inside the class run, on one build:
+    /// `native-uitest.sh` uninstalls once per INVOCATION, so every test after the
+    /// first inherits a warm cache. That is a broken gate, not a finding, and the
+    /// withdrawn journey of `928a40736` is what it cost.
+    ///
+    /// So this asserts the experiment's precondition from the container's side,
+    /// which no assertion in this file previously could.
+    @MainActor
+    func testTheFirstNetworkPublicationOfAWarmContainerIsNotStaged() async throws {
+        let vm = Self.viewModel(
+            cacheSeed: try Self.cached(ids: [901, 902, 903]),
+            network: [try Self.response(ids: Array(1...12)), try Self.response(ids: Array(1...12))],
+            drop: 4)
+
+        let seeded = await vm.load()
+
+        XCTAssertEqual(seeded, .published)
+        XCTAssertEqual(
+            vm.items.count, 12,
+            "THE WARM-CONTAINER CONFOUND. The cache seed painted 3 cards before the network answered, "
+            + "so a witness of `!items.isEmpty` reads TRUE here and stages the very payload the "
+            + "experiment measures against — leaving BEFORE and AFTER identically shortened and the "
+            + "journey reporting that the feed did not change."
+        )
+
+        let refreshed = await vm.load()
+
+        XCTAssertEqual(refreshed, .published)
+        XCTAssertEqual(
+            vm.items.count, 8,
+            "the refresh AFTER the first publication is the one the rig stages, and withholding 4 of "
+            + "12 is the controlled difference the journey reads"
+        )
+    }
+
+    /// The control, and it is the reason the assertion above is about the
+    /// CONTAINER rather than about the rig. Same view model, same drop, same
+    /// responses, no cache — the arm that was already green. Both containers must
+    /// now produce one unstaged payload followed by one staged one, so the
+    /// experiment no longer depends on which test ran before it.
+    @MainActor
+    func testTheFirstNetworkPublicationOfAColdContainerIsNotStagedEither() async throws {
+        let vm = Self.viewModel(
+            cacheSeed: nil,
+            network: [try Self.response(ids: Array(1...12)), try Self.response(ids: Array(1...12))],
+            drop: 4)
+
+        await vm.load()
+        XCTAssertEqual(vm.items.count, 12)
+
+        await vm.load()
+        XCTAssertEqual(
+            vm.items.count, 8,
+            "a cold container must reach the same staged state as a warm one, or the journey's result "
+            + "still depends on the container it inherited"
+        )
+    }
+
+    /// The witness itself, asserted where it is written rather than through the
+    /// feed it changes: a paint is not a publication. A cache seed followed by a
+    /// FAILED network attempt leaves cards on screen behind the "couldn't refresh"
+    /// banner — items non-empty, nothing the server sent this session — and that
+    /// is precisely the state the old read scored as "already published".
+    @MainActor
+    func testACachePaintWithNoNetworkPublicationNeverSatisfiesTheWitness() async throws {
+        let vm = Self.viewModel(
+            cacheSeed: try Self.cached(ids: [901, 902, 903]),
+            network: [],
+            drop: 4)
+
+        XCTAssertFalse(vm.hasPublishedNetworkFeed, "a fresh view model has published nothing")
+
+        await vm.load()
+
+        XCTAssertFalse(
+            vm.items.isEmpty,
+            "precondition: the seed painted and the failed refresh kept it, so `!items.isEmpty` is "
+            + "TRUE — this is the state the two reads disagree about"
+        )
+        XCTAssertFalse(
+            vm.hasPublishedNetworkFeed,
+            "A CACHE SEED IS NOT A PUBLICATION. Scoring it as one is what staged the first network "
+            + "load of every warm container."
+        )
+    }
+
+    /// And the positive half of that control: the flag must actually move, or the
+    /// rig is inert in both containers and every assertion above is vacuous.
+    @MainActor
+    func testAPublishingLoadIsWhatSetsTheWitness() async throws {
+        let vm = Self.viewModel(
+            cacheSeed: nil, network: [try Self.response(ids: Array(1...12))], drop: nil)
+
+        XCTAssertFalse(vm.hasPublishedNetworkFeed)
+
+        let outcome = await vm.load()
+
+        XCTAssertEqual(outcome, .published)
+        XCTAssertTrue(vm.hasPublishedNetworkFeed)
+    }
+
+    /// The ARMED witness the journey skips on, and it carries both halves of
+    /// "armed" in one number — which is the only reason one number is enough.
+    ///
+    /// 🔴 Measured, not imagined: a run reported `SERVED 50 → 50` after this
+    /// repair and looked exactly like the defect. It was the fix working. The
+    /// container's cache seeded the page, the first NETWORK load failed, so the
+    /// reader's pull became the first publication and was correctly left unstaged.
+    /// Without a witness that says "no payload A yet", a journey reads that as
+    /// *the refresh published and the reader saw nothing* — the product verdict,
+    /// from an experiment that never ran.
+    @MainActor
+    func testTheArmedWitnessIsZeroUntilThereIsSomethingToMeasureAgainst() async throws {
+        let vm = Self.viewModel(
+            cacheSeed: try Self.cached(ids: [901, 902, 903]),
+            network: [try Self.response(ids: Array(1...12)), try Self.response(ids: Array(1...12))],
+            drop: 4)
+
+        XCTAssertEqual(vm.rigChangedRefreshDropArmed, 0, "nothing is armed before any load")
+
+        await vm.load()
+
+        XCTAssertEqual(
+            vm.rigChangedRefreshDropArmed, 4,
+            "after the first publication the experiment IS armed: payload A exists and the drop was "
+            + "read. A journey may pull now."
+        )
+    }
+
+    /// The other half, and the one that stops the witness from being a constant: a
+    /// load that never published must leave it at zero even though the argument
+    /// arrived and the page is full of cards.
+    @MainActor
+    func testTheArmedWitnessStaysZeroWhenTheFirstNetworkLoadFails() async throws {
+        let vm = Self.viewModel(
+            cacheSeed: try Self.cached(ids: [901, 902, 903]), network: [], drop: 4)
+
+        await vm.load()
+
+        XCTAssertFalse(vm.items.isEmpty, "precondition: the cache seed is on screen")
+        XCTAssertEqual(
+            vm.rigChangedRefreshDropArmed, 0,
+            "THE RUN THAT LOOKED LIKE THE DEFECT. A full page and an armed launch argument, and "
+            + "still nothing to measure against — the next pull would be the first publication and "
+            + "correctly unstaged. The journey must skip here, not report a finding."
+        )
+    }
+
+    // MARK: - Fixtures for the container tests
+
+    private nonisolated final class ScriptedClient: DiscoverFeedProviding, @unchecked Sendable {
+        private let lock = NSLock()
+        private var script: [FeedResponse]
+
+        init(_ script: [FeedResponse]) { self.script = script }
+
+        nonisolated func fetchDiscoverFeed(
+            limit: Int, offset: Int, eventPct: Double?, cacheTTL: TimeInterval?
+        ) async throws -> FeedResponse {
+            await Task.yield()
+            return try lock.withLock {
+                guard !script.isEmpty else { throw URLError(.notConnectedToInternet) }
+                return script.removeFirst()
+            }
+        }
+    }
+
+    private nonisolated final class FakeLastGood: DiscoverLastGoodReading, @unchecked Sendable {
+        private let payload: CachedDiscoverFeed?
+        init(_ payload: CachedDiscoverFeed?) { self.payload = payload }
+        func loadLastGoodFeed() async -> CachedDiscoverFeed? { payload }
+    }
+
+    /// Retry budgets are zeroed so a scripted failure reaches its terminal in the
+    /// test's own time rather than sleeping through the real backoff.
+    @MainActor
+    private static func viewModel(
+        cacheSeed: CachedDiscoverFeed?, network: [FeedResponse], drop: Int?
+    ) -> DiscoverViewModel {
+        let vm = DiscoverViewModel(
+            client: ScriptedClient(network),
+            lastGood: cacheSeed.map { FakeLastGood($0) },
+            telemetry: nil,
+            retryBudget: 0,
+            seededRetryBudget: 0,
+            retryBackoff: 0,
+            autoRecoveryDelays: [])
+        vm.rigChangedRefreshDropOverride = drop
+        return vm
+    }
+
+    private static func futuresJSON(_ id: Int) -> String {
+        """
+        {"type":"futures","score":90,"data":{"id":\(id),"name":"Market \(id)?","llm_sport_category":"economics","source":"kalshi","status":"open","top_outcomes":[{"id":\(id * 10),"name":"A","probability":0.55,"rank":1,"movement":0.02}],"outcome_count":1}}
+        """
+    }
+
+    private static func response(ids: [Int], limit: Int = 50) throws -> FeedResponse {
+        let json = """
+        {"items":[\(ids.map(futuresJSON).joined(separator: ","))],"total":9999,"limit":\(limit),"offset":0,"has_more":true}
+        """
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(FeedResponse.self, from: Data(json.utf8))
+    }
+
+    private static func cached(ids: [Int]) throws -> CachedDiscoverFeed {
+        CachedDiscoverFeed(
+            response: try response(ids: ids, limit: 200),
+            storedAt: Date(),
+            ttlSeconds: 5,
+            identity: "anon:s1")
     }
 
     // MARK: - The CALL SITE, which no assertion above can reach
@@ -220,6 +451,19 @@ final class AControlledChangedRefresh7074Tests: XCTestCase {
             "The token recorded as painted describes a list that was never painted, so the NEXT refresh "
             + "compares against a token no list ever had."
         )
+        XCTAssertTrue(
+            source.contains("hasPublishedNetworkFeed: hasPublishedNetworkFeed"),
+            "The rig's witness is no longer the publication flag. If it has gone back to `!items.isEmpty` "
+            + "or any other paint-shaped read, a warm container stages the payload the experiment measures "
+            + "AGAINST and the journey reports that the feed did not change — green in isolation, red in "
+            + "its class, on one build."
+        )
+        XCTAssertEqual(
+            source.components(separatedBy: "hasPublishedNetworkFeed = true").count - 1, 1,
+            "The witness must have exactly ONE writer. A second one — a cache seed, a kept-last-good "
+            + "banner, a pagination splice — reopens the confound this section repaired; zero makes the "
+            + "rig inert in every container."
+        )
     }
 
     /// The affordance withholds CARDS, which no other rig flag does — a shipping
@@ -230,10 +474,13 @@ final class AControlledChangedRefresh7074Tests: XCTestCase {
         let source = Self.codeText(of: "Bain Luck/ViewModels/DiscoverViewModel.swift")
 
         XCTAssertTrue(
-            source.contains("#if DEBUG\n                let rigDrop = LaunchRig.changedRefreshDrop()"),
+            source.contains(
+                "#if DEBUG\n                let rigDrop = rigChangedRefreshDropOverride "
+                + "?? LaunchRig.changedRefreshDrop()"),
             "The only read of the changed-refresh flag is no longer behind #if DEBUG. A TestFlight "
             + "reader could then shorten their own feed with a launch argument, and the failure would "
-            + "look like a backend defect."
+            + "look like a backend defect. (The unit-test override sits inside the same #if and falls "
+            + "through to the real argument read when nil, so the simulator journey is unaffected.)"
         )
         XCTAssertTrue(
             source.contains("#else\n                let rigDrop: Int? = nil"),

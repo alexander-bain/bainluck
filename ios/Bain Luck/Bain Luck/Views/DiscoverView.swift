@@ -1215,7 +1215,12 @@ struct DiscoverView: View {
             // that turns "FEED did not move" from a symptom into a named terminal.
             // Read by its own token like every other field, so its position here
             // is not load-bearing.
-            Text("SERVED \(vm.items.count) · DRAWN \(groupedItems.count) · FEED \(vm.itemsVersion) · PULLS \(rigRefreshCount) · OUTCOME \(Self.rigOutcomeWord(rigLastLoadOutcome))")
+            // RIG is how many cards the changed-response affordance will withhold
+            // from the NEXT publication (#7074), and it is what stops a journey
+            // reading an UNARMED rig as "the feed did not change" — the product
+            // verdict, produced by an instrument that never ran the experiment.
+            // 0 in every shipping build and for every reader.
+            Text("SERVED \(vm.items.count) · DRAWN \(groupedItems.count) · FEED \(vm.itemsVersion) · PULLS \(rigRefreshCount) · OUTCOME \(Self.rigOutcomeWord(rigLastLoadOutcome)) · RIG \(vm.rigChangedRefreshDropArmed)")
                 .font(.system(size: 13, weight: .bold).monospacedDigit())
                 .foregroundStyle(.white)
                 .padding(.horizontal, 12)
