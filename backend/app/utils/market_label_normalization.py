@@ -777,6 +777,37 @@ _NON_SPORT_CATEGORIES = {
 }
 
 
+def game_prop_category(
+    market_name: str,
+    category: Optional[str] = None,
+    sport_category: Optional[str] = None,
+) -> Optional[str]:
+    """``"game_prop"`` when this market's own NAME describes one contest, else ``None``.
+
+    This is the exact question :func:`compute_market_tier` asks immediately below
+    before it returns 5 — lifted out so the `category` column can ask it too and
+    the two answers cannot drift. #6471 fixed the tier for this population and
+    #5516 is the half it could not reach: the search card's chip is
+    ``marketCategoryLabel(market.category)`` (`components/FuturesCard.tsx`), which
+    names neither `market_tier` nor `market_type_label`, so 120 open Polymarket
+    inning props kept printing **Championship** in the same purple pill as
+    "MLB World Series Champion 2026" while their tier already read 5.
+
+    Returning the VALUE rather than a bool, and ``None`` rather than ``False``, so
+    a caller can write ``category = game_prop_category(...) or category`` and
+    never has to restate the target string. One literal, one place.
+
+    The non-sport exemption is the same one and for the same reason: "OpenAI vs.
+    Anthropic: First to another Millennium Prize?" is an "A vs B: C" string but a
+    top-level question, and those carry no tier hierarchy.
+    """
+    if (sport_category or category or "").lower() in _NON_SPORT_CATEGORIES:
+        return None
+    if is_game_prop(market_name or ""):
+        return "game_prop"
+    return None
+
+
 def compute_market_tier(market_name: str, category: Optional[str] = None,
                         sport_category: Optional[str] = None) -> int:
     """
@@ -816,9 +847,11 @@ def compute_market_tier(market_name: str, category: Optional[str] = None,
     # Millennium Prize?" is an "A vs B: C" string but it is a top-level
     # question, and those carry no tier hierarchy (see _NON_SPORT_CATEGORIES
     # at the foot of this function).
-    if (sport_category or category or "").lower() not in _NON_SPORT_CATEGORIES:
-        if is_game_prop(market_name or ""):
-            return 5
+    #
+    # Asked through `game_prop_category` rather than restated here, so the tier
+    # and the `category` column are the SAME sentence evaluated once (#5516).
+    if game_prop_category(market_name, category, sport_category) is not None:
+        return 5
 
     # Tier 5 first — game-level and series-level markets are never championships
     for pattern in _TIER_5_PATTERNS:

@@ -2204,6 +2204,7 @@ async def _process_event_batch(
         generate_category_tags,
     )
     from app.utils.editorial_patterns import matches_editorial_recall as _matches_editorial_recall
+    from app.utils.market_label_normalization import game_prop_category
 
     async with get_task_session() as session:
         now = datetime.now(timezone.utc)
@@ -2234,6 +2235,47 @@ async def _process_event_batch(
                 if _arm == "fallback":
                     stats["by_category"][llm_sport_category or "unknown"] = (
                         stats["by_category"].get(llm_sport_category or "unknown", 0) + 1
+                    )
+
+                # #5516 — THE CASCADE ABOVE NEVER READS THE MARKET'S OWN NAME.
+                #
+                # `resolve_event_category` answers from the EVENT's Polymarket
+                # tags, and every arm of it that lands on a sport returns the
+                # single value `championship` — that column is really "this is
+                # sport", spelled with the wrong word. So "Miami Marlins vs. San
+                # Diego Padres - 4th Inning Winner" is stored `championship` and
+                # the search card prints **Championship** in the same purple pill
+                # as "MLB World Series Champion 2026".
+                #
+                # #6471 fixed `market_tier` for exactly this population and could
+                # not reach the reader, because `components/FuturesCard.tsx`'s chip
+                # is `marketCategoryLabel(market.category)` and names neither
+                # `market_tier` nor `market_type_label`. `category` is the column a
+                # reader actually sees, and it is the one left saying it.
+                #
+                # THE PREDICATE IS NOT A NEW ONE. `game_prop_category` IS the
+                # condition `compute_market_tier` evaluates one line below before
+                # it returns 5, so the two columns are one sentence asked twice
+                # rather than two classifiers that can disagree — which is the
+                # whole defect, not an incidental tidiness.
+                #
+                # THE DECOMPOSED-CHILD WRITER ALREADY HARDCODES THIS ANSWER
+                # (`category="game_prop"`, the sub-market insert below), which is
+                # why 86 structurally identical esports "- Map 2 Winner" rows badge
+                # "Game Props" today while their baseball twins badge Championship:
+                # the two doors disagreed, not the data. Kalshi's door agrees too —
+                # all 1,025 open Kalshi rows matching this predicate are already
+                # `game_prop`, none `championship` (production, 2026-09-19).
+                _game_prop_category = game_prop_category(
+                    event.title, category, sport_category=llm_sport_category,
+                )
+                _category_corrected = bool(
+                    _game_prop_category and category != _game_prop_category
+                )
+                if _category_corrected:
+                    category = _game_prop_category
+                    stats["category_game_prop_corrected"] = (
+                        stats.get("category_game_prop_corrected", 0) + 1
                     )
 
                 # Compute market tier
@@ -2444,6 +2486,27 @@ async def _process_event_batch(
                 # Only update llm_sport_category if we have a non-"other" value
                 if llm_sport_category and llm_sport_category != "other":
                     update_set["llm_sport_category"] = llm_sport_category
+
+                # #5516 — `category` IS OTHERWISE INSERT-ONLY ON THIS ROW, which
+                # is the entire reason 120 open inning props still badge
+                # Championship: they were born before the fix and this writer has
+                # never had a way to say otherwise. `market_tier` sits in
+                # `update_set` above, which is how #6471 propagated within one
+                # poll; `category` does not, so without this line the fix reaches
+                # only rows minted from here on and the reader sees nothing for
+                # the life of every row already open.
+                #
+                # WRITTEN ONLY WHEN THE OVERRIDE ACTUALLY FIRED — never as an
+                # unconditional `"category": category`. That version would hand
+                # every future re-poll authority over a column with a repair task
+                # and an LLM behind it (`repair_polymarket_sport_category`,
+                # `repair_polymarket_senate_category`), quietly reverting their
+                # work on 32,554 open rows every hour. This one writes
+                # `game_prop`, on rows whose own name says so, and nothing else:
+                # the blast radius is the predicate's, measured at 201 open rows
+                # (120 baseball, 48 football, 33 cricket; production 2026-09-19).
+                if _category_corrected:
+                    update_set["category"] = category
 
                 # Upsert FuturesMarket
                 market_stmt = pg_insert(FuturesMarket).values(
