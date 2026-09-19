@@ -2238,7 +2238,9 @@ export interface PoliticsMarketRow {
 
 export interface PoliticsCandidate {
   name: string;
-  party: "R" | "D" | "I";
+  // "" = the party is not evidenced (#7228). The server stopped asserting "I"
+  // on an unrecognised name, so the badge is omitted rather than made up.
+  party: "R" | "D" | "I" | "";
   kalshi: number | null;
   poly: number | null;
   merged: number;

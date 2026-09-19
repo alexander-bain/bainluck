@@ -124,19 +124,36 @@ _D_NAMES = {
 }
 
 
-def _detect_party(name: str) -> str:
+# A party-specific contest answers the party question for every name in its
+# field: a candidate in the Democratic nomination race is a Democrat because
+# that is what the race IS, whether or not `_D_NAMES` has heard of them.
+_CONTEST_PARTY = {"dem_primary": "D", "gop_primary": "R"}
+
+
+def _detect_party(name: str, fallback: str = "") -> str:
+    """The party this name is EVIDENCED to belong to, else `fallback`.
+
+    #7228: the fall-through used to `return "I"`, so every name the two
+    allowlists had not heard of was *asserted* to be an Independent — four
+    sitting Democrats were badged `I` inside the Democratic-nominee ladder.
+    A miss now costs a missing badge (`""`) or whatever the caller knows from
+    the contest, never a false claim about a real person. `I` is a positive
+    verdict again: it needs the name to say so.
+    """
     name_lower = name.lower().strip()
     if "republican" in name_lower or "(r)" in name_lower:
         return "R"
     if "democrat" in name_lower or "(d)" in name_lower:
         return "D"
+    if "independent" in name_lower or "(i)" in name_lower:
+        return "I"
     for r in _R_NAMES:
         if r in name_lower:
             return "R"
     for d in _D_NAMES:
         if d in name_lower:
             return "D"
-    return "I"
+    return fallback
 
 
 # ---------------------------------------------------------------------------
@@ -546,6 +563,17 @@ def _build_presidential(
 
     side_markets.sort(key=lambda r: -abs(r["prob"] - 50))
 
+    # #7228: the contest is the party evidence for every name in its field. Both
+    # chosen headlines settle the same race by construction (`best_poly` is
+    # filtered by `best_kalshi`'s contest), so a single disagreeing key can only
+    # mean the pairing changed shape — in which case claim nothing.
+    chosen_contests = {c["contest"] for c in chosen}
+    contest_party = (
+        _CONTEST_PARTY.get(next(iter(chosen_contests)), "")
+        if len(chosen_contests) == 1
+        else ""
+    )
+
     # Merge candidates by normalized name + build outcome_id → candidate map
     candidates_by_key: dict[str, dict] = {}
     outcome_id_map: dict[int, str] = {}
@@ -566,7 +594,7 @@ def _build_presidential(
             if name_key not in candidates_by_key:
                 candidates_by_key[name_key] = {
                     "name": name,
-                    "party": _detect_party(name),
+                    "party": _detect_party(name, contest_party),
                     "kalshi": None,
                     "poly": None,
                 }

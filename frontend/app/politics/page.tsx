@@ -353,12 +353,16 @@ function PresBarRace({ sorted, sourceMode, data }: {
       {/* Candidate rows */}
       {sorted.map((c, i) => {
         const prob = getCandidateProb(c, sourceMode);
+        // #7228: an unevidenced party arrives as "" and is drawn as NOTHING —
+        // an empty coloured pill is the same false claim in a quieter voice.
+        // The cell itself stays (it is one of the seven tracks #3704 pins), it
+        // just carries no badge class and no party colour.
         const partyBg = PARTY_COLOR[c.party] || PARTY_COLOR.I;
 
         return (
           <div key={c.name} className={s.barRaceRow}>
             <span className={s.rank}>{i + 1}</span>
-            <span className={s.partyBadge} style={{ background: partyBg }}>{c.party}</span>
+            <span className={c.party ? s.partyBadge : undefined} style={c.party ? { background: partyBg } : undefined}>{c.party}</span>
             <span className={s.candidateName}>{c.name}</span>
             <div className={s.barWrap}>
               {showDualBars && c.kalshi != null && c.poly != null ? (
