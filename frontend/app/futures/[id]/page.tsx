@@ -61,6 +61,7 @@ import {
 } from "@/lib/futuresLadder";
 import { buildAmbientPoints } from "@/lib/futuresAmbient";
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
+import { settlementBannerText } from "@/lib/settlementBanner";
 import { independentOutcomesNote } from "@/lib/outcomeExclusivity";
 
 interface FuturesDetailPageProps {
@@ -528,6 +529,9 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   }
 
   const isResolved = market.status === "resolved";
+  // #7060 — the banner is gated on settlement EVIDENCE (`status`), never on a
+  // scheduled date having gone by. See `lib/settlementBanner.ts`.
+  const settlementBanner = settlementBannerText(market);
   // #3358: whether the "Last move" column is worth any width is a decision about the
   // WHOLE table, so it is made here and passed down, never re-derived per row. On
   // this issue's own market and on `/futures/202` every row prints `–`, and that dead
@@ -677,12 +681,13 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         </div>
       )}
 
-      {/* Expired market banner */}
-      {(isResolved || (market.resolution_date && new Date(market.resolution_date) < new Date())) && (
+      {/* Settled market banner — #7060/#7058. The decision and the words live in
+          `lib/settlementBanner.ts`: this page is a client component, so that is
+          the only place a guard test can reach them. A `resolution_date` is a
+          SCHEDULE and never reaches this render. */}
+      {settlementBanner && (
         <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-3 text-sm text-amber-400">
-          {isResolved
-            ? `This market has been settled.${market.resolution_date ? ` Resolved ${new Date(market.resolution_date).toLocaleDateString()}.` : ""}`
-            : `This market resolved on ${new Date(market.resolution_date!).toLocaleDateString()}. Showing final probabilities.`}
+          {settlementBanner}
         </div>
       )}
 
