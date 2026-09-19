@@ -2793,6 +2793,120 @@ jobs:
             exit 1
           fi
 
+      - name: "#4079 numeric movement acceptance — provision the disposable database"
+        # The acceptance suite DROPS AND RECREATES THE WHOLE SCHEMA, so it refuses
+        # to touch any database that does not carry a sentinel row holding a nonce
+        # minted in the same run. Locally that nonce comes from the artifact's
+        # `APPLY-AND-TEST.sh`, which `initdb`s its own cluster; this Mac cannot run
+        # one (SysV `shmget` is denied machine-wide), so CI's `postgres:15` service
+        # is the only route and this step is the equivalent protection:
+        #
+        #   * a database of its own (`bl_movement_accept_4079`), created here and
+        #     thrown away with the runner — never `bl_searchtest`, which the other
+        #     gates in this job populate and read;
+        #   * a fresh 48-hex-character nonce per run, so a suite pointed at any
+        #     other database refuses before it issues a single DDL statement;
+        #   * `MOVEMENT_ACCEPTANCE_DATABASE_URL` is what the suite reads — it
+        #     deliberately does NOT fall back to `$DATABASE_URL`.
+        #
+        # The nonce is not a credential: it authorises destruction of a scratch
+        # database, so it is printed nowhere and is regenerated every run.
+        run: |
+          set -o pipefail
+          python - <<'PY' > /tmp/mvacc.env
+          import asyncio, secrets, asyncpg
+
+          NONCE = secrets.token_hex(24)
+          DB = "bl_movement_accept_4079"
+
+          async def go():
+              c = await asyncpg.connect(
+                  user="postgres", password="postgres", database="postgres",
+                  host="localhost", port=5432)
+              await c.execute(f'DROP DATABASE IF EXISTS {DB}')
+              await c.execute(f'CREATE DATABASE {DB}')
+              await c.close()
+              c = await asyncpg.connect(
+                  user="postgres", password="postgres", database=DB,
+                  host="localhost", port=5432)
+              await c.execute(
+                  "CREATE TABLE movement_acceptance_disposable (nonce text NOT NULL)")
+              await c.execute(
+                  "INSERT INTO movement_acceptance_disposable VALUES ($1)", NONCE)
+              print("server_version:", await c.fetchval("SHOW server_version"),
+                    file=__import__("sys").stderr)
+              await c.close()
+
+          asyncio.run(go())
+          url = f"postgresql+asyncpg://postgres:postgres@localhost:5432/{DB}"
+          print(f"MOVEMENT_ACCEPTANCE_DATABASE_URL={url}")
+          print(f"MOVEMENT_ACCEPTANCE_NONCE={NONCE}")
+          PY
+          cat /tmp/mvacc.env >> "$GITHUB_ENV"
+          # `$DATABASE_URL` is set at job level to bl_searchtest. The suite's guard
+          # requires it to be the same HOST (it is, localhost) and the routes under
+          # test are driven through dependency overrides onto the acceptance URL,
+          # so nothing in this step can reach the other gates' database.
+          echo "provisioned bl_movement_accept_4079 with a fresh sentinel nonce"
+
+      - name: "#4079 the served movement NUMBERS are dated or unavailable (real Postgres)"
+        # PILLAR: TRUTH. SHIP: the phone's movement arrows and the detail "24h"
+        # values stop reporting a per-write delta as a dated change.
+        #
+        # #7176 repaired the CAPTION; the NUMBERS the client draws
+        # (`top_outcomes[].movement`, `discover_card.distribution_outcomes[].movement`,
+        # `outcomes[].probability_change_24h`) were still `new - previous write`.
+        # On the artifact's pinned base 22 of its 24 tests were red.
+        #
+        # This is latency's AMENDED copy of the delivered acceptance suite. The
+        # artifact under `artifacts/other-model-movement-numeric-acceptance/` is
+        # immutable; the two amendments (the 16:00Z scale ruling, and the new
+        # normalized `mode=sports` arm) are stated in the file's docstring. The
+        # suite drives the REAL routes over a REAL PostgreSQL with the REAL A8
+        # sweep writing the bank, with Redis failed on purpose so every response
+        # is a cold build.
+        #
+        # Three refusals, because this gate exists to be un-fakeable:
+        #   * a SKIP is what the suite does when it cannot see its database, and
+        #     a skipped acceptance reads exactly like a passing one;
+        #   * ZERO tests collected is a collection error wearing a green hat;
+        #   * fewer tests than the amended file defines means something was
+        #     deselected — the count is asserted, not eyeballed.
+        # pytest's exit code is read for its VALUE (gotcha #54): 1 is a result,
+        # anything else is a story about the harness.
+        run: |
+          set -o pipefail
+          python -m pytest \
+            tests/integration/test_numeric_movement_fields_4079_amended_real_postgres.py \
+            -p no:cacheprovider -rA --tb=short \
+            --junitxml=/tmp/mvacc-junit.xml 2>&1 | tee /tmp/mvacc.txt
+          RC=${PIPESTATUS[0]}
+          echo "PYTEST EXIT CODE: $RC"
+          python - "$RC" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+
+          EXPECTED = 25  # artifact's 24 + the new normalized mode=sports arm
+          rc = int(sys.argv[1])
+          try:
+              root = ET.parse("/tmp/mvacc-junit.xml").getroot()
+          except Exception as exc:
+              sys.exit(f"::error::#4079 acceptance produced no junit report ({exc}) — NOT a pass")
+          s = root if root.tag == "testsuite" else root.find("testsuite")
+          t, f, e, k = (int(s.get(a, 0)) for a in ("tests", "failures", "errors", "skipped"))
+          print(f"tests={t} passed={t - f - e - k} failed={f} errors={e} skipped={k}")
+          if t == 0:
+              sys.exit("::error::#4079 acceptance collected ZERO tests — NOT a pass")
+          if k:
+              sys.exit(f"::error::#4079 acceptance SKIPPED {k} test(s) — a skip is never green evidence")
+          if t != EXPECTED:
+              sys.exit(f"::error::#4079 acceptance ran {t} tests, expected {EXPECTED} — tests were deselected or removed")
+          if rc not in (0, 1):
+              sys.exit(f"::error::pytest exit {rc} is a harness story, not a result")
+          if f or e or rc:
+              sys.exit(f"::error::#4079 acceptance RED: {f} failed, {e} errors")
+          print("#4079 acceptance GREEN on all", t, "tests")
+          PY
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
