@@ -490,7 +490,7 @@ export default function OutcomeRow({
           ? "bg-slate-50/50"
           : isLeader
           ? "bg-amber-50 border border-amber-200"
-          : "bg-slate/5 hover:bg-slate/10"
+          : "bg-charcoal/5 hover:bg-charcoal/10"
       }`}
     >
       {/* Selection checkbox (for chart) */}
@@ -503,7 +503,7 @@ export default function OutcomeRow({
           className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
             isSelected
               ? "bg-blue-500 border-blue-500 text-white"
-              : "border-slate/30 hover:border-text-secondary"
+              : "border-charcoal/30 hover:border-text-secondary"
           }`}
         >
           {isSelected && (

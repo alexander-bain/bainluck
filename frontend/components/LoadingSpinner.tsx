@@ -23,7 +23,7 @@ export default function LoadingSpinner({
       <div
         className={`${sizeClasses[size]} border-mist border-t-charcoal rounded-full animate-spin`}
       />
-      {text && <span className="text-caption text-slate">{text}</span>}
+      {text && <span className="text-caption text-charcoal">{text}</span>}
     </div>
   );
 }

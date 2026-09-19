@@ -1214,7 +1214,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         {!showAllOutcomes && pricedOutcomes.length > 25 && (
           <button
             onClick={() => setShowAllOutcomes(true)}
-            className="w-full mt-4 py-2 text-sm text-text-secondary hover:text-text-primary border border-surface-border rounded-lg hover:bg-slate/5 transition-colors"
+            className="w-full mt-4 py-2 text-sm text-text-secondary hover:text-text-primary border border-surface-border rounded-lg hover:bg-charcoal/5 transition-colors"
           >
             Show {pricedOutcomes.length - 25} more outcomes
           </button>
@@ -1332,7 +1332,7 @@ function RelatedEventRow({ event }: { event: RelatedEvent }) {
   return (
     <Link
       href={`/events/${event.event_id}`}
-      className="flex items-center gap-3 p-3 rounded-lg bg-slate/5 hover:bg-slate/10 transition-colors"
+      className="flex items-center gap-3 p-3 rounded-lg bg-charcoal/5 hover:bg-charcoal/10 transition-colors"
     >
       {/* Status indicator */}
       <div className="w-16 flex-shrink-0">

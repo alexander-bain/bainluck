@@ -536,7 +536,7 @@ export default function SearchBar({
                   if (sub.kind === "futures-label") {
                     return <div className="text-xs text-accent-brand">{sub.text}</div>;
                   }
-                  return <div className="text-xs text-slate">{sub.text}</div>;
+                  return <div className="text-xs text-charcoal">{sub.text}</div>;
                 })()}
               </div>
 
