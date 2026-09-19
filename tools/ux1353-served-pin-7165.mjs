@@ -48,8 +48,16 @@ const GOBLET_MARKS = ['M12 11v6', 'M9 17h6'];
 const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
 // 🔴 A BARE chromium.launch() DIES IN A LANE SHELL with `bootstrap_check_in …
 // Permission denied (1100)`. These args are not optional here.
+//
+// ⚠️ THE BYPASS LIST IS `localhost;127.0.0.1`, NOT the `<-loopback>` every other
+// probe here copies. `<-loopback>` REMOVES Chrome's implicit loopback bypass and sends
+// localhost through the session proxy, so pointing this at a local `next start` gets a
+// TLS error page with no pin on it — an exit 2 UNPAID that reads like "this page has no
+// pin button" rather than "the camera never reached the page". Naming the loopback hosts
+// keeps api.bainluck.com on the proxy while letting a local build answer, which is what
+// makes the green arm of this check provable before the fix is on production.
 const args = ['--no-sandbox', '--single-process', '--disable-gpu', '--disable-crashpad', '--disable-dev-shm-usage'];
-if (proxy) args.push(`--proxy-server=${proxy}`, '--proxy-bypass-list=<-loopback>');
+if (proxy) args.push(`--proxy-server=${proxy}`, '--proxy-bypass-list=localhost;127.0.0.1');
 
 const browser = await chromium.launch({ headless: true, args });
 const page = await browser.newPage({ viewport: { width, height: 844 }, deviceScaleFactor: 2 });
