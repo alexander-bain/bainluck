@@ -210,6 +210,7 @@ def _run_task(
     graded_batch: int | None = None,
     impossible_batch: int | None = None,
     unobserved_batch: int | None = None,
+    contradicted_batch: int | None = None,
     stale_rank_batch: int | None = None,
     graded_rank_batch: int | None = None,
 ):
@@ -241,6 +242,7 @@ def _run_task(
     real_graded_batch = tasks_mod.GRADED_DELTA_BATCH
     real_impossible_batch = tasks_mod.IMPOSSIBLE_PRIOR_BATCH
     real_unobserved_batch = tasks_mod.UNOBSERVED_PRIOR_BATCH
+    real_contradicted_batch = tasks_mod.CONTRADICTED_DIRECTION_BATCH
     real_stale_rank_batch = tasks_mod.STALE_RANK_BATCH
     real_graded_rank_batch = tasks_mod.GRADED_RANK_BATCH
     base_mod.get_task_session = lambda: _Ctx()
@@ -253,6 +255,8 @@ def _run_task(
         tasks_mod.IMPOSSIBLE_PRIOR_BATCH = impossible_batch
     if unobserved_batch is not None:
         tasks_mod.UNOBSERVED_PRIOR_BATCH = unobserved_batch
+    if contradicted_batch is not None:
+        tasks_mod.CONTRADICTED_DIRECTION_BATCH = contradicted_batch
     if stale_rank_batch is not None:
         tasks_mod.STALE_RANK_BATCH = stale_rank_batch
     if graded_rank_batch is not None:
@@ -266,6 +270,7 @@ def _run_task(
         tasks_mod.GRADED_DELTA_BATCH = real_graded_batch
         tasks_mod.IMPOSSIBLE_PRIOR_BATCH = real_impossible_batch
         tasks_mod.UNOBSERVED_PRIOR_BATCH = real_unobserved_batch
+        tasks_mod.CONTRADICTED_DIRECTION_BATCH = real_contradicted_batch
         tasks_mod.STALE_RANK_BATCH = real_stale_rank_batch
         tasks_mod.GRADED_RANK_BATCH = real_graded_rank_batch
 
@@ -1675,4 +1680,448 @@ def test_the_superset_identity_survives_the_rank_sweeps() -> None:
     assert violations == [], (
         "the rank sweeps moved the market maximum, which breaks the bound "
         f"`/api/futures/movers` rests on: {violations}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# A7 — the CONTRADICTED-DIRECTION sweep (#4079).
+#
+# A4's cases isolate on DISTANCE: every liar there claims to have travelled
+# further than its series allows. This section isolates on DIRECTION, and the
+# isolation it needs is the mirror one — every row below claims a move the
+# window's extrema can comfortably support, so A4 structurally declines it, and
+# what is wrong is which WAY the claim points. A case A4 also retires proves
+# nothing about A7, so each one asserts `unobserved_retired == 0` beside its own
+# counter rather than trusting the seed.
+#
+# Every row is fresh (1 hour), ungraded and price-possible for A/A2/A3's sake,
+# exactly as A4's are.
+# ---------------------------------------------------------------------------
+
+
+def test_a_claim_the_dated_comparison_contradicts_is_retired() -> None:
+    """THE ship, on rows — and its own sibling is the control.
+
+    The production specimen, off `/api/feed?limit=100` at 07:48Z on 2026-09-19:
+    "S&P 500 (SPY) closes above ___ on September 21?". The `$745` leg served a
+    chip reading DOWN 7.5 points while the outcome had been observed at 0.49
+    eighteen hours earlier and was trading at 0.895 — it had RISEN forty points.
+
+    `sibling` is the `$740` leg of the same market, written by the same poll
+    against a basis of the same age, whose +39.5 claim matches its +39.5 dated
+    move exactly. It is in this seed deliberately and it is the assertion that
+    matters most: a predicate that takes `$740` with `$745` is indiscriminate
+    rather than working, and no single-row fixture can tell those apart.
+
+    Both legs claim a move the window's extrema support, so A4 declines both.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                (
+                    "liar",
+                    "open",
+                    1,
+                    -0.075,
+                    0.075,
+                    None,
+                    0.895,
+                    [(18, 0.49), (12, 0.60), (1, 0.97)],
+                ),
+                (
+                    "sibling",
+                    "open",
+                    1,
+                    0.395,
+                    0.395,
+                    None,
+                    0.895,
+                    [(18, 0.50), (12, 0.60), (1, 0.97)],
+                ),
+            ]
+        )
+    )
+    result = _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert after["liar"][0] is None, (
+        "a chip claiming a 7.5-point FALL survived on an outcome observed at "
+        "0.49 eighteen hours ago and trading at 0.895 now — a forty-point "
+        f"RISE. This is #4079's dated half verbatim. got {after['liar'][0]}"
+    )
+    assert after["sibling"][0] == pytest.approx(0.395), (
+        "A7 retired the honest leg of the same market. Its +39.5 claim IS its "
+        "dated move; sweeping it means the predicate keys on something these "
+        f"two legs share rather than on the contradiction. got {after['sibling'][0]}"
+    )
+    assert result["contradicted_retired"] == 1, (
+        "the run must report what it retired under its own counter — folded "
+        "into `unobserved_retired`, a direction failure would read as an "
+        f"overstatement and point at the wrong writer. got {result}"
+    )
+    assert result["unobserved_retired"] == 0, (
+        "A4 retired this row, so the case proves nothing about A7. Both legs "
+        f"claim a move their extrema support. got {result}"
+    )
+
+
+def test_a4_keeps_the_row_a7_retires() -> None:
+    """Codex's counterexample (0735Z), which is why A7 is a seventh statement.
+
+    23 h ago 0.40, 1 h ago 0.60, now 0.50. The stored per-write delta is -0.10 —
+    a true description of the last write, and one that sits comfortably inside
+    the window's extrema, so A4 KEEPS it. Over the day the outcome rose ten
+    points. The card reads "down 10 points today" about an outcome that went up.
+
+    Measured on production the same morning: of 149 rows whose sign a dated
+    comparison materially contradicts, A4 keeps 143. This is that 96% as a row.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                (
+                    "counterexample",
+                    "open",
+                    1,
+                    -0.10,
+                    0.10,
+                    None,
+                    0.50,
+                    [(23, 0.40), (1, 0.60)],
+                ),
+            ]
+        )
+    )
+    result = _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert result["unobserved_retired"] == 0, (
+        "A4 retired the counterexample, which would make A7 redundant on the "
+        "one case it was written for. The claimed -0.10 is inside "
+        f"[current - hi, current - lo] = [-0.10, 0.10]. got {result}"
+    )
+    assert after["counterexample"][0] is None, (
+        "the row A4 provably cannot see survived the run. A7 is the only "
+        f"statement in the task that can reach it. got {after['counterexample'][0]}"
+    )
+    assert result["contradicted_retired"] == 1, f"got {result}"
+
+
+def test_a_basis_too_fresh_to_date_a_day_is_refused() -> None:
+    """"We never looked that far back" is not "it went the other way".
+
+    A7 refutes a claim about TODAY by comparing against the oldest price it
+    observed in the window. If that price is two hours old the comparison is a
+    statement about two hours, and using it to delete a claim about the day
+    would be A7's own error pointed the other way — so the statement declines,
+    exactly as A4 declines a row it never observed (gotcha #53).
+
+    `fresh_basis` contradicts hard — claims -0.20, rose 0.30 — and must survive
+    anyway. It is the row that proves `DATED_BASIS_MIN_AGE_HOURS` is load-bearing
+    rather than decorative: delete that bound and this test reddens.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                (
+                    "fresh_basis",
+                    "open",
+                    1,
+                    -0.20,
+                    0.20,
+                    None,
+                    0.60,
+                    [(2, 0.30), (1, 0.80)],
+                ),
+            ]
+        )
+    )
+    result = _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert after["fresh_basis"][0] == pytest.approx(-0.20), (
+        "A7 deleted a claim about the day using a two-hour-old baseline. The "
+        "whole point of the statement is that a comparison must be dated "
+        f"before it can refute a dated claim. got {after['fresh_basis'][0]}"
+    )
+    assert result["contradicted_retired"] == 0, f"got {result}"
+
+
+def test_a_multi_source_outcome_is_refused() -> None:
+    """A7 subtracts a blend from ONE row, so it may not run on a blend.
+
+    A4 compares `current_probability` against the EXTREMA of its constituents
+    and argues a blend lies between them. A7 compares it against a single
+    constituent's row, and that argument is not available to it: a systematic
+    offset between two same-scale sources could manufacture a sign on its own.
+
+    `two_books` is that hazard with honest inputs — kalshi and polymarket
+    disagreeing by five points across the window while the outcome genuinely
+    fell. Measured 2026-09-19, every one of the 2,794 rows in scope was
+    single-source, so this guard costs zero coverage today and exists for the
+    day one appears.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                (
+                    "two_books",
+                    "open",
+                    1,
+                    -0.10,
+                    0.10,
+                    None,
+                    0.50,
+                    [
+                        (21, 0.45, "kalshi"),
+                        (20, 0.40, "polymarket"),
+                        # 0.60 rather than the 0.55 a first draft used: at 0.55
+                        # the window's high makes the -0.10 claim an
+                        # OVERSTATEMENT and A4 retires the row, which would have
+                        # left this case green with `obs.sources = 1` deleted.
+                        (1, 0.60, "kalshi"),
+                    ],
+                ),
+            ]
+        )
+    )
+    result = _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert after["two_books"][0] == pytest.approx(-0.10), (
+        "A7 condemned a delta using one source's row as the baseline for a "
+        "price built from two. Drop `obs.sources = 1` and this reddens. "
+        f"got {after['two_books'][0]}"
+    )
+    assert result["contradicted_retired"] == 0, f"got {result}"
+
+
+def test_a_vigged_series_can_never_condemn_a_direction_either() -> None:
+    """A4's scale guard, restated for A7 so the two cannot drift apart.
+
+    `FuturesOddsSnapshot.probability` is one book's RAW vig-inclusive number and
+    #1844 shipped an all-red movers row for months by subtracting it from a
+    blend. A de-vigged consensus sits BELOW every raw row it came from, so a
+    sportsbook baseline biases `current - basis` downward — which on A7 is not a
+    magnitude error but a manufactured DIRECTION.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                (
+                    "vigged",
+                    "open",
+                    1,
+                    0.10,
+                    0.10,
+                    None,
+                    0.50,
+                    [(20, 0.58, "draftkings"), (1, 0.60, "draftkings")],
+                ),
+            ]
+        )
+    )
+    result = _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert after["vigged"][0] == pytest.approx(0.10), (
+        "A7 read a vigged sportsbook row as a baseline for a de-vigged price "
+        f"and invented a contradiction out of the vig. got {after['vigged'][0]}"
+    )
+    assert result["contradicted_retired"] == 0, f"got {result}"
+
+
+def test_a_sub_floor_dated_move_is_not_a_contradiction() -> None:
+    """The materiality bar is the CARD FLOOR, and it is the same floor.
+
+    A dated move of half a point in the other direction is noise, not a
+    refutation: below `MODERATE_MOVEMENT_THRESHOLD` no chip is drawn at all, so
+    A7 will not delete a claim on the strength of a move too small to have been
+    worth showing. Anything left standing that is genuinely overstated is A4's.
+
+    `noise` drifted down half a point against an up-claim; `material` fell the
+    full floor against the same claim. One survives, one does not, and the only
+    difference between them is the size of the dated move.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                (
+                    "noise",
+                    "open",
+                    1,
+                    0.08,
+                    0.08,
+                    None,
+                    0.500,
+                    # The 0.42 leg is not decoration: without a low that far
+                    # down, a +0.08 claim OVERSTATES what the window supports
+                    # and A4 sweeps both rows, so the pair would prove nothing
+                    # about where A7's materiality bar sits.
+                    [(20, 0.505), (10, 0.42), (1, 0.52)],
+                ),
+                (
+                    "material",
+                    "open",
+                    1,
+                    0.08,
+                    0.08,
+                    None,
+                    0.500,
+                    # 0.520 puts the dated fall EXACTLY on the floor, which is
+                    # also the boundary A4's comment warns about: bound as a
+                    # float the floor is 0.0200000000000000004 and this row
+                    # fails its own test.
+                    [(20, 0.520), (10, 0.42), (1, 0.53)],
+                ),
+            ]
+        )
+    )
+    result = _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert after["noise"][0] == pytest.approx(0.08), (
+        "a half-point drift deleted a movement claim. Below the card floor "
+        f"there is no chip to be wrong. got {after['noise'][0]}"
+    )
+    assert after["material"][0] is None, (
+        "a full-floor fall against an up-claim survived, so the materiality "
+        f"bar is not the floor it is documented as. got {after['material'][0]}"
+    )
+    assert result["contradicted_retired"] == 1, f"got {result}"
+
+
+def test_a_claim_below_the_card_floor_is_out_of_scope() -> None:
+    """The `abs(delta) >= floor` bound is a COST bound, and it is load-bearing.
+
+    Below `MODERATE_MOVEMENT_THRESHOLD` no card names a mover and no chip is
+    drawn, so a sub-floor delta cannot reach a reader to lie to them. Bounding
+    the statement there is what keeps a snapshot join affordable on a ten-minute
+    beat — it is A4's reasoning, inherited deliberately so the two statements
+    sweep the same population.
+
+    `tiny` is contradicted exactly as hard as the specimens above — it claims a
+    fall on an outcome that rose ten points — and survives only because the
+    claim itself is one point. Drop the bound and the statement starts scanning
+    the millions of sub-floor rows that no reader can see; this is the row that
+    says so.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                (
+                    "tiny",
+                    "open",
+                    1,
+                    -0.01,
+                    0.01,
+                    None,
+                    0.50,
+                    [(20, 0.40), (1, 0.55)],
+                ),
+            ]
+        )
+    )
+    result = _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert after["tiny"][0] == pytest.approx(-0.01), (
+        "A7 swept a claim below the floor that decides whether a chip is drawn "
+        f"at all. got {after['tiny'][0]}"
+    )
+    assert result["contradicted_retired"] == 0, f"got {result}"
+
+
+def test_an_understated_claim_pointing_the_right_way_survives() -> None:
+    """One-directional, in A4's sense: A7 fires on sign, never on magnitude.
+
+    `shy` claims +10 points on an outcome that actually rose 40. The claim is
+    wrong about the size and RIGHT about the direction, and A7 leaves it alone —
+    the asymmetry is the safety property. A delta-blind writer nudging the price
+    further the way the claim already points moves the dated change further onto
+    the claim's own side, so drift can never turn an honest caption into a swept
+    one.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                (
+                    "shy",
+                    "open",
+                    1,
+                    0.10,
+                    0.10,
+                    None,
+                    0.90,
+                    [(20, 0.50), (1, 0.88)],
+                ),
+            ]
+        )
+    )
+    result = _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert after["shy"][0] == pytest.approx(0.10), (
+        "A7 retired a claim that understates a move it got the direction of. "
+        "That is a magnitude disagreement, which this statement does not "
+        f"judge. got {after['shy'][0]}"
+    )
+    assert result["contradicted_retired"] == 0, f"got {result}"
+
+
+def test_the_contradicted_sweep_is_bounded_and_takes_the_biggest_first() -> None:
+    """A bounded run retires the loudest liar, like A, A2 and A4 before it.
+
+    The batch exists to keep a regressing writer from blowing the task's 120 s
+    `soft_time_limit`, and when it binds the run must spend it on the claim a
+    reader is most likely to have seen — `ORDER BY abs(delta) DESC`.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                # Both highs are set so the claim is not ALSO an overstatement:
+                # at 0.75 and 0.62 A4 retires both rows and the batch bound
+                # under test never runs.
+                ("loud", "open", 1, -0.30, 0.30, None, 0.60, [(20, 0.40), (1, 0.90)]),
+                ("quiet", "open", 1, -0.05, 0.05, None, 0.60, [(20, 0.40), (1, 0.65)]),
+            ]
+        )
+    )
+    result = _run_task(contradicted_batch=1)
+    after = asyncio.run(_read(ids))
+
+    assert result["contradicted_retired"] == 1, (
+        f"the batch bound was not honoured. got {result['contradicted_retired']}"
+    )
+    assert after["loud"][0] is None, (
+        "the bounded run spent its one slot on the smaller claim. "
+        f"got loud={after['loud'][0]} quiet={after['quiet'][0]}"
+    )
+    assert after["quiet"][0] == pytest.approx(-0.05), (
+        f"got quiet={after['quiet'][0]}"
+    )
+
+
+def test_the_superset_identity_survives_the_contradicted_sweep() -> None:
+    """A7 clears a delta, so B and C must re-derive the bound over what is left.
+
+    `/api/futures/movers` ranks a pool by `max_movement_24h`, and LAT-P108
+    proved that pool is a superset of the answer only while
+    `max_movement_24h == MAX(ABS(probability_change_24h))` holds. A7 is the
+    fifth statement able to falsify it between the sweep and B.
+    """
+    asyncio.run(
+        _reset_and_seed(
+            [
+                ("liar", "open", 1, -0.30, 0.30, None, 0.60, [(20, 0.40), (1, 0.90)]),
+                ("honest", "open", 1, 0.11, 0.30, None, 0.60, [(20, 0.49), (1, 0.58)]),
+            ]
+        )
+    )
+    _run_task()
+    violations = asyncio.run(_identity_holds())
+
+    assert violations == [], (
+        "the dated-direction sweep left a market maximum describing a delta it "
+        f"had just cleared: {violations}"
     )
