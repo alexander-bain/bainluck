@@ -127,3 +127,50 @@ export function fillMinuteGaps(
     cursor.setMinutes(cursor.getMinutes() + 1);
   }
 }
+
+/**
+ * Carry the last reading of `key` forward across later points that have none,
+ * and report how many points that filled.
+ *
+ * #7211 — THE SCORE DOES NOT STOP BEING TRUE WHEN IT STOPS CHANGING.
+ *
+ * A score series is a CHANGE LOG: a 0-1 game is two readings, the second
+ * stamped at the goal. Drawn `stepAfter`, those two give flat-then-step, which
+ * is right — but the series ends at the last CHANGE while the chart's domain
+ * runs to now, so the line describing the score disappears at exactly the
+ * moment the goal was scored. Measured on production 2026-09-19 12:26Z
+ * (Tottenham 0-1 Aston Villa, live): the actual line was painted over plot
+ * columns 224-2222 against a projection running to 2459 — the last 10.6% of
+ * the chart had no score line on a 0-1 game. On a finished game the hole is
+ * every minute between the last goal and the whistle.
+ *
+ * FORWARD ONLY, and that asymmetry is the whole rule. A point BEFORE the first
+ * reading has no score to state; back-filling would paint 0-0 across a pre-game
+ * domain the chart knows nothing about, which is a fabricated number rather
+ * than a carried one. So `null` before the first reading stays `null` forever.
+ *
+ * Carrying states a fact and does not invent one: between two readings the
+ * score genuinely was the earlier of them, which is the same claim `stepAfter`
+ * already makes visually for the minutes it happens to have categories for.
+ *
+ * Returns the fill count so a caller can expose it — the defect this repairs
+ * was found by measuring the drawn line in PIXELS, and a number a probe can
+ * read is how the next reader checks it without a screenshot.
+ */
+export function carryForward<T extends Record<string, unknown>>(
+  points: readonly T[],
+  key: keyof T & string,
+): number {
+  let last: number | null = null;
+  let carried = 0;
+  for (const point of points) {
+    const value = point[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      last = value;
+    } else if (last !== null) {
+      (point as Record<string, unknown>)[key] = last;
+      carried += 1;
+    }
+  }
+  return carried;
+}

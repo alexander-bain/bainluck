@@ -17,6 +17,7 @@ import { format, parseISO } from "date-fns";
 import {
   makeEnsurePoint,
   fillMinuteGaps,
+  carryForward,
   CATEGORY_LABEL_FORMAT,
 } from "@/lib/chartTimeline";
 import { sourceLabel } from "@/lib/sourceColors";
@@ -578,6 +579,69 @@ export default function ScoreDifferentialChart({
         parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
     );
 
+    // ── #7211: THE SCORE DOES NOT STOP BEING TRUE WHEN IT STOPS CHANGING ──
+    //
+    // `score_history` is a CHANGE LOG, and that is the right shape for it: a
+    // 0-1 game is two points, the second stamped at the goal. The line is
+    // `stepAfter`, so those two draw flat-0-then-step correctly. What they
+    // cannot draw is the stretch from the goal to the right edge, because the
+    // series simply has no point there — and the comment a hundred lines up
+    // says so outright ("this chart has no forward-fill").
+    //
+    // Measured on production 2026-09-19 12:26Z, Tottenham 0-1 Aston Villa,
+    // live at halftime: the orange actual line was painted over plot columns
+    // 224-2222 while the green projection beside it ran to 2459 — the line
+    // describing the score vanished for the last 237 columns (10.6% of the
+    // chart, six minutes) at exactly the moment the only goal of the match was
+    // scored. On a FINISHED game the hole is every minute between the last
+    // goal and the whistle, which is most of the panel.
+    //
+    // Carrying the last reading forward states a fact; it does not invent one.
+    // FORWARD ONLY, never backward: a minute before the first reading has no
+    // score to state, and back-filling would paint 0-0 across a pre-game
+    // domain this chart knows nothing about. That asymmetry is the whole rule.
+    //
+    // This runs AFTER the shared-domain prune and before the ink span below,
+    // deliberately: the carried minutes are real drawn ink, so `scoreSpan` must
+    // count them or the heading chip goes back to being bounded by a point that
+    // is no longer the last one drawn — CERT-1995's finding, one level on.
+    //
+    // Tennis is untouched: `actualDiff` is written there and deliberately never
+    // drawn (SETS against a projection quoted in GAMES), and both the `<Line>`
+    // and `drawnScoreKeys` gate on `hasActualScoreData`, so filling more of a
+    // series nobody renders changes nothing on that sport.
+    // How far short of the right edge the actual line STOPPED before the carry
+    // — measured here, while the readings are still distinguishable from the
+    // minutes about to be filled. This is the defect's own size: 6 on the
+    // specimen (goal at 12:20:30Z, edge at 12:26Z), 0 on a chart whose last
+    // reading is its last minute.
+    //
+    // It has to be the TAIL and not the total carry. The total is dominated by
+    // the minutes BETWEEN readings that `fillMinuteGaps` seeds — 55 of 57
+    // categories on both of the guard's fixtures — so it reads the same number
+    // whether the line reaches the edge or not, and a guard built on it cannot
+    // tell the ship from the defect. The battery is what said so.
+    let lastReading = -1;
+    for (let i = 0; i < points.length; i += 1) {
+      if (typeof points[i].actualDiff === "number") lastReading = i;
+    }
+    const actualTailCarried =
+      lastReading < 0 ? 0 : points.length - 1 - lastReading;
+
+    carryForward(points, "actualDiff");
+
+    // Whether the actual line now reaches the last category. Post-carry this is
+    // always true, so it is USELESS against a hardcoded answer — that is what
+    // `actualTailCarried` above is for. It earns its place the other way round:
+    // the tail number is measured BEFORE the carry, so deleting the carry
+    // entirely leaves it reading 6 and every assertion on it still green. This
+    // is the only thing in the render that witnesses the mechanism actually
+    // running. The two are a pair; neither is sufficient.
+    const actualReachesEdge =
+      lastReading < 0
+        ? null
+        : typeof points[points.length - 1]?.actualDiff === "number";
+
     // ── WHERE THIS CHART ACTUALLY HAS INK (CERT-1989, corrected by CERT-1995) ──
     //
     // Computed HERE — last, after the shared-domain prune above — because a
@@ -615,12 +679,36 @@ export default function ScoreDifferentialChart({
     const scoreSpan =
       scoreFrom === null ? null : { from: scoreFrom, to: scoreTo as number };
 
-    return { points, scoreSpan };
+    return { points, scoreSpan, actualTailCarried, actualReachesEdge };
   }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory, filteredEspnHistory, chartStartTime, chartEndTime, pmSpreadData, impliedSpreadSources, periodBoundaries, hasProjectedScoreData, hasActualScoreData, labelFormat]);
 
   const chartData = chartBuild.points;
   /** Where this chart's score lines actually start and end — see the build. */
   const scoreSpan = chartBuild.scoreSpan;
+
+  /**
+   * How many minutes of the actual score line are CARRIED from an earlier
+   * reading rather than observed at that minute (#7211).
+   *
+   * This defect was found by measuring painted pixels — orange stopped at plot
+   * column 2222 against a projection running to 2459 — because nothing said how
+   * far the score series reached. That is the wrong instrument for a thing the
+   * component already knows, so it says it here, for the same reason as the
+   * attributes below: recharts draws no `<Line>` inside `ResponsiveContainer`
+   * without a viewport, so neither a guard nor the capture rig can measure the
+   * series from a server render.
+   *
+   * Deliberately the size of the TAIL the carry covers, and neither of the two
+   * neighbouring numbers that look like it. "Does the line reach the edge" is 0
+   * on every chart once this ships, and the TOTAL carry is 55 of 57 categories
+   * on both guard fixtures because `fillMinuteGaps` seeds every minute — both
+   * are constants, and a constant cannot witness its own mechanism. A mutant
+   * hardcoding one of them passed the whole band. This number moves with the
+   * data (6 on the specimen, 0 when the last reading is the last minute), so
+   * two pinned values leave a hardcoded answer nowhere to stand.
+   */
+  const actualTailCarried = chartBuild.actualTailCarried;
+  const actualReachesEdge = chartBuild.actualReachesEdge;
 
   // Filter period boundaries, deduplicate close markers, alternate label positions
   const filteredPeriodBoundaries = useMemo(() => {
@@ -796,6 +884,20 @@ export default function ScoreDifferentialChart({
          plotted on a games axis. It is also true in a browser, which is where
          somebody debugging this will look first. */
       data-actual-series={hasActualScoreData ? "true" : "false"}
+      /* #7211: how many minutes at the END of the chart are carried from the
+         last reading rather than observed. The score does not stop being true
+         when it stops changing; before this shipped, those minutes had no line
+         at all. Absent when no actual series is drawn. */
+      data-actual-tail-carried={
+        hasActualScoreData ? String(actualTailCarried) : undefined
+      }
+      /* #7211, the other half: the tail number above is measured BEFORE the
+         carry, so it cannot notice the carry being deleted. This can. */
+      data-actual-reaches-edge={
+        hasActualScoreData && actualReachesEdge !== null
+          ? String(actualReachesEdge)
+          : undefined
+      }
       data-projected-series={hasProjectedScoreData ? "true" : "false"}
       /* #6142, and the same reason verbatim: the implied-spread snapshot is a
          `<Line>` inside `ResponsiveContainer`, so its absence on a finished
