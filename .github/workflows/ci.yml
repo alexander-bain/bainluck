@@ -1094,6 +1094,30 @@ jobs:
             exit 1
           fi
 
+      - name: "#7021 twin drain candidate SQL folds punctuation (real Postgres)"
+        # The change is a SQL predicate — three name arms now compare
+        # REGEXP_REPLACE(LOWER(x),'[^a-z0-9]','','g') instead of LOWER(x) — and
+        # every property worth asserting about it is PostgreSQL's: whether the
+        # string-composed statement is legal at all, which rows the regex joins,
+        # and whether the SQL fold agrees with its Python twin. That last one is
+        # the reason this gate exists rather than a unit test: `str.isalnum()`
+        # is Unicode-aware and `[^a-z0-9]` is not, so the two forms disagree on
+        # every accented name unless something compares them against a server.
+        #
+        # The gate runs the SHIPPED `duplicate_pairs_sql()`, never a retyped
+        # copy — `test_polymarket_resolved_candidate_sql_pg.py` is here because
+        # that shape once shipped a syntax error past 23 unit guards.
+        #
+        # Same skip-detection as every gate in this job.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_twin_fold_candidate_sql_7021_pg.py \
+            -v -rs 2>&1 | tee /tmp/twin_fold_7021.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/twin_fold_7021.txt; then
+            echo "::error::#7021 twin-fold candidate SQL contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#5789 the #5621 repair cannot select a real game (real Postgres)"
         # The repair retires phantom NFL fantasy-points events. Its population
         # was "every event carrying a kxnflffpts market", which was the right

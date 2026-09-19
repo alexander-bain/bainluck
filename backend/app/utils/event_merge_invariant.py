@@ -181,8 +181,77 @@ def may_merge(a: Any, b: Any) -> bool:
 MAX_ABSORPTION_SEPARATION_SECONDS = 21600  # 6h
 
 
+# ── #7021: punctuation is not a participant ───────────────────────────────────
+#
+# The matchup arm compared participants with ``strip().lower()``, so a provider
+# typo in the PUNCTUATION of a club name read as "these rows name DIFFERENT
+# participants" — the #1947 collision class — and refused the merge. Measured on
+# production: of 95 pairs sharing a provider id, 18 are inside the drain's own
+# sport + 6h + 30-day window and **11 of those differ only in punctuation**.
+#
+#     St.Louis Cardinals   /   St. Louis Cardinals      (StatPal's feed, 10 pairs)
+#     Paris Saint Germain  /   Paris Saint-Germain      (1 pair)
+#
+# Every one is one game held twice, and two of them had drifted to contradictory
+# states — one row ``suspended`` while its twin read ``completed``.
+#
+# This widens the matchup arm and NOTHING else. Arm A (a shared provider id) and
+# bounded separation are untouched, so the three specimens #1947 was built from
+# are still refused, on the participants and not on the punctuation:
+#
+#     Dodgers @ Yankees / Dodgers @ Mets      -> newyorkyankees != newyorkmets
+#     R. Sociedad @ R. Madrid / R. Betis @ R. Sociedad -> realmadrid != realbetis
+#     Ohio State @ Texas / Texas State @ Texas -> ohiostate != texasstate
+#
+# What it must NOT become is a fuzzy name matcher. Folding punctuation is a
+# statement that ``.`` and ``-`` are not participants; it is not a licence to
+# fold WORDS. ``Getafe`` / ``Getafe CF`` and ``Málaga`` / ``Malaga CF`` are six
+# further production pairs that share an id, and they stay refused here
+# deliberately — an alias rail decides those, not a looser string test.
+def fold_participant_name(value: Any) -> str:
+    """A participant name reduced to what actually names the participant.
+
+    Lowercased with every non-alphanumeric character removed, so spacing,
+    periods, hyphens and accents cannot make one club look like two. Digits are
+    KEPT — ``Mainz 05`` and ``Mainz`` are not the same label, and deciding that
+    they are the same club is an alias question.
+
+    :func:`folded_name_sql` is the SQL form of exactly this. The two are
+    asserted equal on a corpus in
+    ``tests/integration/test_twin_fold_candidate_sql_7021_pg.py``; they are a
+    pair for the same reason ``shared_provider_id_sql`` and
+    :func:`assert_mergeable` are, and they drift the same way if nobody checks.
+
+    **ASCII-only, and that is not an oversight.** ``str.isalnum()`` is
+    Unicode-aware — ``'á'.isalnum()`` is ``True`` — while Postgres ``[^a-z0-9]``
+    is not, so the obvious one-liner makes the two forms disagree on every
+    accented name in the table. The SQL side is the one that cannot be changed
+    without a collation argument, so the Python side matches it.
+
+    A name with no ASCII alphanumerics at all therefore folds to ``""``. That is
+    a real shape, not a theoretical one, and it is why callers must treat an
+    empty fold as UNKNOWABLE rather than as a value: two different clubs written
+    in a non-Latin script both fold to ``""`` and would otherwise compare equal,
+    which is a false merge. :func:`_matchup_of` refuses it; ``folded_name_sql``
+    callers add ``<> ''``.
+    """
+    lowered = str(value).lower()
+    return "".join(ch for ch in lowered if ch.isascii() and ch.isalnum())
+
+
+def folded_name_sql(expr: str) -> str:
+    """SQL for :func:`fold_participant_name` over ``expr``.
+
+    ``[^a-z0-9]`` is applied AFTER ``LOWER`` and removes every accented and
+    multi-byte character too, which is what makes it agree with
+    ``str.isalnum()``'s ASCII-only survivors in the Python form. Returns a
+    parenthesised expression safe to compare or ``AND`` into any clause.
+    """
+    return f"REGEXP_REPLACE(LOWER({expr}), '[^a-z0-9]', '', 'g')"
+
+
 def _matchup_of(row: Any) -> tuple[str, str] | None:
-    """``(home, away)`` lowercased, preferring the normalized names."""
+    """``(home, away)`` folded, preferring the normalized names."""
     def _field(name: str):
         if isinstance(row, Mapping):
             return row.get(name)
@@ -192,7 +261,15 @@ def _matchup_of(row: Any) -> tuple[str, str] | None:
     away = _field("away_team_normalized") or _field("away_team_name")
     if home is None or away is None:
         return None
-    return (str(home).strip().lower(), str(away).strip().lower())
+    folded_home = fold_participant_name(home)
+    folded_away = fold_participant_name(away)
+    if not folded_home or not folded_away:
+        # A name with no ASCII alphanumerics folds to "", and "" == "" would
+        # make two unrelated clubs agree. That is the `NULL == NULL` merge this
+        # module exists to refuse, wearing a different costume: report it as
+        # unknowable so the caller reads "no corroboration", never "fine".
+        return None
+    return (folded_home, folded_away)
 
 
 def matchup_agrees(a: Any, b: Any) -> bool | None:

@@ -712,14 +712,38 @@ class TestTheCensusSeesBothSpellings:
 class TestTheDrainsSqlNoLongerCarriesTheDefeatedArm:
     """R5's clause is gone, not merely bypassed."""
 
+    #: Every function the drain is spread across. #7191 moved the candidate
+    #: SELECT out of ``_merge_duplicate_events_impl`` and into
+    #: ``duplicate_pairs_sql`` so the real-Postgres gate could execute the
+    #: shipped statement. Reading one function would leave
+    #: ``test_the_no_third_row_surrogate_is_deleted`` asserting that a string is
+    #: absent from a function that no longer contains ANY sql — green forever,
+    #: guarding nothing. The fixture follows the rail instead of the function.
+    _DRAIN_FUNCTIONS = (
+        "_merge_duplicate_events_impl",
+        "duplicate_pairs_sql",
+        "_duplicate_name_match_sql",
+    )
+
     @pytest.fixture(scope="class")
     def drain(self):
         source = (APP / "tasks" / "sports.py").read_text()
         tree = ast.parse(source)
-        fn = next(n for n in ast.walk(tree)
-                  if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-                  and n.name == "_merge_duplicate_events_impl")
-        return ast.get_source_segment(source, fn) or ""
+        found = {
+            n.name: ast.get_source_segment(source, n) or ""
+            for n in ast.walk(tree)
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and n.name in self._DRAIN_FUNCTIONS
+        }
+        missing = sorted(set(self._DRAIN_FUNCTIONS) - set(found))
+        # A renamed function must fail here and not by quietly shrinking the
+        # text every assertion below is searching.
+        assert not missing, (
+            f"the drain moved: {missing} no longer exist in app/tasks/sports.py. "
+            "Point _DRAIN_FUNCTIONS at the rail's new shape — do not delete the "
+            "name, or these guards go vacuous."
+        )
+        return "\n".join(found[name] for name in self._DRAIN_FUNCTIONS)
 
     def test_the_no_third_row_surrogate_is_deleted(self, drain):
         assert "c.id <> a.id" not in drain, (
