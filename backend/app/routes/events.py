@@ -95,7 +95,7 @@ from app.utils.settled_hero import resolve_settled_hero
 from app.utils.settledness import market_assigned_settled
 from app.utils.venue_settlement import venue_settlement_is_askable
 from app.utils.venue_settlement_reader import attach_venue_settlement
-from app.utils.standings_shape import public_standings
+from app.utils.standings_shape import public_standings, record_text
 from app.utils import (
     moneyline_to_probability,
     project_scores,
@@ -24296,11 +24296,16 @@ def _compute_standings_context(home_team, away_team, home_name: str, away_name: 
         # inherit ONE rule from one place instead of agreeing by hand.
         s = public_standings(team.standings_data)
         parts = []
-        # Win-loss record
-        if "wins" in s and "losses" in s:
-            record = f"{s['wins']}-{s['losses']}"
-            if s.get("draws") or s.get("ties"):
-                record += f"-{s.get('draws') or s.get('ties')}"
+        # Win-loss record. THE RECORD AND THE RANK COME FROM DIFFERENT COLUMNS
+        # ON PURPOSE (#5520). `record_text` prefers `teams.current_record`,
+        # which is stamped at game completion, over `standings_data`'s
+        # once-daily snapshot; the rank below still reads `s`, so its vintage
+        # and its #5377 guard are unchanged. On 2026-09-19 this hero served
+        # "Dodgers 92-60, #1 West" off a row whose `current_record` said 93-60,
+        # and 25 of 30 MLB teams were a game or two behind the same way.
+        # `getattr` because a team row is not required to carry the column.
+        record = record_text(getattr(team, "current_record", None), s)
+        if record:
             parts.append(record)
         # Division/league rank. `conf_rank` is NOT consulted: no writer has
         # produced it since #4732, so every surviving value is a division place
