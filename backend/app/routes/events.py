@@ -25462,6 +25462,28 @@ from app.utils.duplicate_condition_outcomes import (  # noqa: E402
     drop_duplicate_legs as _drop_duplicate_legs,
 )
 
+# #5516. The search card's ladder depth, named ONCE so the withdrawal predicate
+# and the call site cannot drift: `_futures_board_is_mostly_unserved` reads it to
+# decide whether a ladder is truncated, and a truncated ladder is exempt. If the
+# two ever disagree the guard silently changes population, so
+# `test_ladder_limit_is_the_one_the_search_call_site_passes` pins them together.
+_SEARCH_LADDER_LIMIT = 5
+
+# Below this, a mutually-exclusive board is serving less than half of itself and
+# cannot be read as a board. Measured, not chosen: 93.2% of the 19,622 open
+# exclusive boards that fit on a card sum to >= 0.97, and the defective tail sits
+# far below them — see `_futures_board_is_mostly_unserved` for the full table and
+# why 0.50 is the conservative end of the gap rather than its middle.
+_BOARD_MIN_SERVED_SUM = 0.50
+
+# Fewer served rungs than this and there is no BOARD to be incoherent about: one
+# mutually-exclusive number is a proposition ("Dodgers 100+ wins 41%") whose
+# complement the reader supplies, and nothing at serve time tells it apart from a
+# one-leg fragment. Two is the smallest ladder that asserts a distribution. See
+# precondition 2 — this constant is the reason #6676's coin-flip-band controls
+# and #6327's stored-zero card are untouched by this guard.
+_BOARD_MIN_SERVED_LEGS = 2
+
 
 def _futures_market_is_wholly_unpriced(market: "FuturesMarket") -> bool:
     """No outcome on this market carries a price at all (#6327).
@@ -25634,57 +25656,23 @@ def _futures_market_prices_only_empty_books(market: "FuturesMarket") -> bool:
     return bool(priced) and all(_leg_prices_an_empty_book(o) for o in priced)
 
 
-def _futures_card_has_no_answer(market: "FuturesMarket") -> bool:
-    """The card this market would draw can state no number at all.
+def _search_surviving_legs(market: "FuturesMarket") -> list:
+    """The legs the search ladder will actually draw, before its sort and slice.
 
-    The union the search surfaces actually want, and the ONLY thing the call
-    sites should ask. Three independently measured populations, three predicates,
-    one question:
+    Lifted out of :func:`_build_search_top_outcomes` unchanged for #5516, so the
+    market-level withdrawal predicate and the builder judge the SAME legs. The
+    existing siblings can afford to be "conservative relative to the builder"
+    (they read every outcome row and are merely certain to be a superset);
+    `_futures_board_is_mostly_unserved` cannot, and the reason is
+    :func:`_leg_prices_an_empty_book`. Market 57574860 ("Which company has the
+    best AI model on LiveBench (Coding)?") owns 22 priced legs summing to 11.0
+    — 21 of them the identical ~0.50 phantom on an empty book. Every one is
+    refused here, the card draws `Anthropic 45%` alone, and a predicate reading
+    raw rows would have computed 11.0 and seen nothing wrong with it.
 
-        no outcome rows whatsoever   -> #3412, `_..._has_no_outcome_rows`
-        rows, none of them priced    -> #6327, `_..._is_wholly_unpriced`
-        priced only by empty books   -> #6676, `_..._prices_only_empty_books`
-
-    They are kept apart on purpose so any one can be re-measured or reverted
-    without disturbing the others; composing them here is what keeps the two
-    call sites from drifting into three different rules.
-    """
-    return (
-        _futures_market_has_no_outcome_rows(market)
-        or _futures_market_is_wholly_unpriced(market)
-        or _futures_market_prices_only_empty_books(market)
-    )
-
-
-def _build_search_top_outcomes(
-    market: "FuturesMarket",
-    limit: int = 5,
-    lean: bool = False,
-    withheld: Optional[set[int]] = None,
-) -> list[dict]:
-    """Top-N real outcomes for search surfaces, normalized (#23). Shared by the
-    full search formatter and the typeahead futures branch.
-
-    ``lean=True`` returns the minimal typeahead payload (name / probability /
-    movement only — no id/odds/rank) to keep the dropdown response small.
-    Placeholder outcomes are filtered; probabilities are #23-normalized so the
-    displayed distribution reads sensibly (e.g. "Lakers 62% · Cavs 18%").
-
-    ``withheld`` is #6993's fourth and last surface. The four-arm refusal union
-    lives in ``routes/futures.py::_withheld_price_outcome_ids`` and reaches the
-    detail, group, browse and faceted routes; THIS builder never asked it, so
-    ``/api/events/search?q=Nasdaq-100`` served outcome ``1597367`` at
-    ``probability: 1.0`` — rank 1, the card's whole headline — while
-    ``/futures/109485`` served the same leg as ``None`` in the same minute, and
-    the search card is one tap above the page that contradicts it.
-
-    IT IS PASSED IN, NOT COMPUTED HERE, and that is forced rather than chosen:
-    the union is ``async(db, market)`` because two of its arms read the snapshot
-    table, while this builder is synchronous and is called from a dict
-    comprehension that formats each market exactly once (the L2-38 latency
-    shape). Both callers are ``async`` route handlers holding a session, so they
-    build the map and hand each market its own set. ``None`` means "nobody
-    asked" and is a pass-through — every existing caller keeps its behaviour.
+    So this is a pure extraction and must stay one: no filtering rule may be
+    added here that the builder does not apply, or the two surfaces begin
+    disagreeing about which legs exist — the exact drift #993 exists to prevent.
     """
     # Q480: one condition, one outcome. A Polymarket parent can hold both the bare
     # rung (`0x…`, named "90+") and that same condition's `_yes`/`_no` legs (named
@@ -25763,7 +25751,228 @@ def _build_search_top_outcomes(
     # now asks whether the quote bounds anything at all (spread >= 0.90) instead of
     # testing each side against its own bound. This line did not change for that
     # either.
-    real = [o for o in real if not _leg_prices_an_empty_book(o)]
+    return [o for o in real if not _leg_prices_an_empty_book(o)]
+
+
+def _futures_board_is_mostly_unserved(market: "FuturesMarket") -> bool:
+    """An exclusive board whose WHOLE served ladder sums far under 100% (#5516).
+
+    Alex filed the card: *"Chicago Cubs vs. Cincinnati Reds - 2nd Inning
+    Winner"* drawn as `Cubs 24% · Reds 18%`. Both numbers are honest. What is
+    dishonest is the set — a mutually exclusive board presented complete while
+    58% of its probability mass is missing, so a reader reads a three-way market
+    as a two-horse race and never learns the likeliest outcome is a tie.
+
+    THE MISSING LEGS ARE NOT DROPPED HERE; THEY WERE NEVER STORED. Gamma event
+    1046284 (*Red Sox v Rays 9th*) lists three `active` sub-markets and we hold
+    one: the other two are exactly the two whose spread clears #1578's
+    untradeable-book bar, with `lastTradePrice` null so there is no fallback
+    price. That writer is CORRECT — its cohort's stored midpoints mean 0.5003
+    against an actual win rate of 0.0013 over 1,580 outcomes, and its header says
+    in terms "do not turn it into a knob".
+
+    ⛔ SO THE REPAIR IS NOT TO WIDEN THAT THRESHOLD. Doing so re-admits the
+    phantom cohort and un-ships #1578, #5247 and #6676 in one line. The defect is
+    one layer up, and it generalises past its own cause: *a refusal that is
+    correct for its own question is still wrong when the caller renders the
+    survivors as a complete ladder.*
+
+    FOUR PRECONDITIONS, each of which deletes honest cards if dropped. Two came
+    from measuring the population; two were forced by OTHER SHIPS' CONTROLS going
+    red, which is the part worth reading:
+
+    1. **Exclusive.** A sum under 1.0 is only incoherent where exactly one
+       outcome can win. #199's golf make-cut/top-N families sum to several
+       multiples of 100% and are `mutually_exclusive = False`.
+    2. **Two or more served legs.** A LONE NUMBER IS A PROPOSITION, NOT A BOARD.
+       "Dodgers 100+ wins 41%" and "Will the Fed do a rate cut greater than
+       25bps? 4%" are complete, honest cards whose complement is the reader's own
+       subtraction, and NOTHING AVAILABLE AT SERVE TIME distinguishes them from a
+       one-leg fragment of a three-way inning market — not the name, not
+       `market_type` (both spell `unshaped`), not `mutually_exclusive`. Two
+       mutually exclusive rungs printed together are an assertion about a board;
+       one is not. #6676's coin-flip-band controls are exactly this class and
+       they are right: this guard has no business near them. The one-leg
+       population — 243 markets, including the vivid `9th Inning Winner` rows at
+       8% — is REAL and is NOT fixed here; judging it needs the venue's own board
+       size, which is an ingest-side signal this surface does not have.
+    3. **It states some mass.** A board whose every served rung is `0` is #6327's
+       population, not this one: that ship measured the stored zeros (91% carry a
+       live ask), ruled the card survives, and owns the `0`-renders-as-a-dash
+       defect. `0 < sum` defers to it rather than quietly overriding it.
+    4. **Untruncated.** A top-5 cut of a 32-team field sums far under 1.0 and is
+       perfectly honest — the reader knows a ladder is a ladder. Only a market
+       whose ENTIRE surviving board fits on the card can be read as complete, so
+       `> _SEARCH_LADDER_LIMIT` survivors is not this population. This is the
+       precondition the issue's own diagnosis did not have, and without it the
+       guard would have swallowed most of the futures catalogue.
+
+    MEASURED BEFORE IT WAS BUILT, because #6327's note stands: an unmeasured
+    suppression must never ride a measured one. Production, 2026-09-19, all
+    19,622 open exclusive markets whose whole surviving board fits on a card:
+
+        sum >= 0.97   -> 18,289   (93.2% — the healthy mass, tightly clustered)
+        0.90 - 0.97   ->    420
+        0.70 - 0.90   ->    172
+        0.50 - 0.70   ->    155
+        0.30 - 0.50   ->    186
+        sum <  0.30   ->    400
+
+    The distribution is bimodal, which is what makes a threshold honest rather
+    than arbitrary: 93% of boards sum to ~1.0 and the defective tail sits far
+    away from them. **0.50 — less than half the board — is deliberately the
+    conservative end of that gap**, leaving the ambiguous 0.50–0.97 band (747
+    markets, where a stale leg or a real wide book is a live explanation) served
+    and re-measurable on its own account.
+
+    **Withdrawn, with all five preconditions applied: 326 markets** — 238 tier 5,
+    56 tier 2, 29 tier 1; 209 `championship`, 75 `game_prop`, 19 politics. (The
+    same measurement before precondition 2 was 569; the 243-market difference is
+    the one-leg population named above, deliberately left served.)
+
+    THERE IS NO "IS IT A YES/NO QUESTION" ARM, and its absence is deliberate.
+    An earlier cut carried one, because the first version of this guard withdrew
+    "Will the Fed do a rate cut greater than 25bps this year? 4%" and "Mike
+    Vrabel out as Patriots Head Coach? 3.6%" — honest propositions. Precondition
+    2 then subsumed it completely: every binary question serves ONE rung. Mutation
+    testing proved the leftover arm unreachable (severing it changed no test), and
+    the only board it could still have exempted is a served `Yes` + `No` pair
+    summing under half — which is not an honest card to protect but a broken one
+    to withdraw. Deleted rather than kept as defence in depth: it protected
+    nothing, and #6676's controls are not Yes-named ("Dodgers 100+ wins"), so it
+    would not have caught them if precondition 2 were ever relaxed either.
+
+    READER REACH, replayed against production search over the 30 most-frequent
+    real queries of the last 14 days (`search_query_logs`, robot-tagged rows
+    excluded per notice 39): of 271 served futures cards, 17 carried an
+    under-half ladder, and **6 are this guard's** once exclusivity and the
+    binary test are applied — the other 11 are the honest propositions above.
+    Precondition 2 then parks 3 more, leaving **3 cards on the queries `chicago`,
+    `yankees`/`yank` and `galatasaray`**:
+
+        Chicago Cubs vs. Cincinnati Reds - 7th Inning Winner    0.395, 2 rungs
+        New York Yankees vs. Arizona Diamondbacks - 7th Inning  0.355, 2 rungs
+        Trabzonspor vs. Galatasaray SK - Exact Score            0.165, 2 rungs
+
+    Specimens from the wider 326 that the replay did not happen to surface:
+
+        OBOS-ligaen (Norway) 2026 Winner      five teams summing 0.5%
+        LA-06 Republican nominee?             four candidates summing 13.9%
+        AFC Asian Cup 2027: Group B Winner    two teams, 32.5%
+
+    COST, MEASURED RATHER THAN ASSUMED, because this arm is the first one that
+    is not a plain scan of `market.outcomes`: it runs the whole refusal chain, so
+    the union goes from 0.079 ms to 1.11 ms per 100-market page, and
+    `search_events` asks it twice (the flat list and the set the families compose
+    from). ~2 ms on a request that is otherwise database-bound — not a
+    regression worth restructuring a route for at launch, and NOT a thing to
+    "fix" by making the predicate read raw rows again, which is the whole defect
+    (see `_search_surviving_legs`). The cheap win, if the hot path ever wants it,
+    is to compute the filtered list ONCE in `search_events` and hand the same
+    list to both call sites; that is latency's file and latency's call under
+    notice 41, and `test_the_predicate_filters_both_the_flat_list_and_the_families`
+    is the test that would need rewording for it.
+
+    🪤 WITHHOLDING ON A LIST SURFACE DELETES THE CARD, IT DOES NOT BLANK IT —
+    the count side moves with it, which is correct here and is asserted by
+    `test_the_count_moves_with_the_card_it_withdraws`. No marquee
+    fixture's own market is in the cohort (notice 27): the 45 tier-1 rows are
+    inning PROPS of marquee games, and each game's own market is a separate row
+    that this predicate never sees.
+    """
+    if not getattr(market, "mutually_exclusive", True):
+        return False
+    legs = _search_surviving_legs(market)
+    if len(legs) > _SEARCH_LADDER_LIMIT:
+        return False  # a truncated ladder sums under 1.0 honestly
+    priced = [o for o in legs if o.current_probability is not None]
+    if len(priced) < _BOARD_MIN_SERVED_LEGS:
+        return False  # a lone number is a proposition; #6327/#6676 own the rest
+    served = sum(float(o.current_probability) for o in priced)
+    return 0 < served < _BOARD_MIN_SERVED_SUM  # all-zero rungs are #6327's
+
+
+def _futures_card_has_no_answer(market: "FuturesMarket") -> bool:
+    """The card this market would draw can state no answer a reader can trust.
+
+    The union the search surfaces actually want, and the ONLY thing the call
+    sites should ask. Four independently measured populations, four predicates,
+    one question:
+
+        no outcome rows whatsoever   -> #3412, `_..._has_no_outcome_rows`
+        rows, none of them priced    -> #6327, `_..._is_wholly_unpriced`
+        priced only by empty books   -> #6676, `_..._prices_only_empty_books`
+        an exclusive board half gone -> #5516, `_..._board_is_mostly_unserved`
+
+    They are kept apart on purpose so any one can be re-measured or reverted
+    without disturbing the others; composing them here is what keeps the two
+    call sites from drifting into three different rules.
+
+    #5516 WIDENED WHAT THIS ASKS, and the docstring's first line moved with it:
+    the first three arms all mean "no number at all", while the fourth withdraws
+    a card carrying real numbers because the SET they form cannot be read. That
+    is a genuine widening of the question and is recorded here rather than
+    smuggled in under the old sentence — the arms stay four, not three-and-a-
+    footnote, precisely so the next reader can revert it alone.
+    """
+    return (
+        _futures_market_has_no_outcome_rows(market)
+        or _futures_market_is_wholly_unpriced(market)
+        or _futures_market_prices_only_empty_books(market)
+        or _futures_board_is_mostly_unserved(market)
+    )
+
+
+def _build_search_top_outcomes(
+    market: "FuturesMarket",
+    limit: int = 5,
+    lean: bool = False,
+    withheld: Optional[set[int]] = None,
+) -> list[dict]:
+    """Top-N real outcomes for search surfaces, normalized (#23). Shared by the
+    full search formatter and the typeahead futures branch.
+
+    ``lean=True`` returns the minimal typeahead payload (name / probability /
+    movement only — no id/odds/rank) to keep the dropdown response small.
+    Placeholder outcomes are filtered; probabilities are #23-normalized so the
+    displayed distribution reads sensibly (e.g. "Lakers 62% · Cavs 18%").
+
+    ``withheld`` is #6993's fourth and last surface. The four-arm refusal union
+    lives in ``routes/futures.py::_withheld_price_outcome_ids`` and reaches the
+    detail, group, browse and faceted routes; THIS builder never asked it, so
+    ``/api/events/search?q=Nasdaq-100`` served outcome ``1597367`` at
+    ``probability: 1.0`` — rank 1, the card's whole headline — while
+    ``/futures/109485`` served the same leg as ``None`` in the same minute, and
+    the search card is one tap above the page that contradicts it.
+
+    IT IS PASSED IN, NOT COMPUTED HERE, and that is forced rather than chosen:
+    the union is ``async(db, market)`` because two of its arms read the snapshot
+    table, while this builder is synchronous and is called from a dict
+    comprehension that formats each market exactly once (the L2-38 latency
+    shape). Both callers are ``async`` route handlers holding a session, so they
+    build the map and hand each market its own set. ``None`` means "nobody
+    asked" and is a pass-through — every existing caller keeps its behaviour.
+    """
+    # Q480 / #6524 / #4253 / #6676 — the four pre-sort refusals, and the reason
+    # every one of them is applied BEFORE the sort and the `[:limit]` slice, now
+    # live in `_search_surviving_legs`. They were lifted there by #5516 so that
+    # the withdrawal predicate judges the same legs this builder draws; nothing
+    # about the chain itself changed.
+    real = _search_surviving_legs(market)
+    # #5516: an exclusive board whose whole served ladder sums far under 100% is
+    # incoherent as a SET even when every rung in it is honest — `Cubs 24% ·
+    # Reds 18%` on a three-way inning market whose tie leg was never stored.
+    #
+    # Emptied HERE, in the shared builder, rather than only at the card: this is
+    # the same line `_leg_prices_an_empty_book` sits on and for the same stated
+    # reason — the typeahead dropdown is where a reader meets the ladder FIRST,
+    # one tap above the card, and #993 exists because two search surfaces
+    # disagreeing about whether a row has a price is how that pair went wrong.
+    # The search card is then WITHDRAWN by `_futures_card_has_no_answer`; the
+    # dropdown keeps its row and its name-reachability (#4723's control) and
+    # simply stops printing a set that does not add up.
+    if _futures_board_is_mostly_unserved(market):
+        return []
     # #6327: a market where NOTHING is priced draws a ranked ladder of dashes —
     # sixteen rungs, an order implying a favourite, and not one number. Measured
     # live 2026-09-15: `?q=Sonmez` served market 61106176 "WTA Guadalajara
@@ -26602,7 +26811,7 @@ def _format_futures_for_search(
     # top_outcomes: top 5 real outcomes, placeholder-filtered + #23-normalized
     # (shared with typeahead via _build_search_top_outcomes).
     top_outcomes = _build_search_top_outcomes(
-        market, limit=5, lean=False, withheld=withheld
+        market, limit=_SEARCH_LADDER_LIMIT, lean=False, withheld=withheld
     )
     real_count = len(
         [o for o in market.outcomes if not _is_placeholder_outcome_name(o.name)]
