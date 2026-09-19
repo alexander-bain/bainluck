@@ -64,6 +64,16 @@ NOT DECIDED HERE (raised in #2072, out of scope): whether the public endpoint
 should be counting `/typeahead` keystrokes at all, given that every prefix of
 every query lands in the same zset as the completed phrases. Changing that
 changes what the warmer heads from too, so it is one decision, not two.
+
+STILL NOT DECIDED HERE, and #3123 is why the paragraph above needed a sequel.
+Every prefix landing in the zset is not only a counting question — it is
+something a reader SEES. `collapse_typing_fragments` below removes the ladder
+from what the public endpoint publishes, and does it at the READ, leaving the
+counting exactly as it is. That is the narrow half on purpose: `read_window`'s
+other consumer is `typeahead_warmer.resolve_head`, so a fix inside `read_window`
+would have decided the warmer's head as a side effect — the very "one decision,
+not two" this header warns about. The endpoint composes the collapse itself; the
+warmer's head is untouched and stays a separate, later call.
 """
 
 from __future__ import annotations
@@ -108,7 +118,24 @@ AGGREGATE_TTL_SECONDS = 300
 
 #: Carried over unchanged from the route. Two-character prefixes are typed on
 #: the way to every query and would dominate any count that admitted them.
+#: Deliberately NOT raised by #3123 to chase longer fragments: `nba`, `ufc` and
+#: `mlb` are three characters and are real queries, so a higher floor would
+#: delete trends to hide typing.
 MIN_QUERY_CHARS = 3
+
+#: How many rows the public endpoint reads before `collapse_typing_fragments`
+#: runs, as a multiple of the number it serves.
+#:
+#: Strictly, one would do. A fragment only ever drops against a row that scored
+#: at least as high, and such a row therefore ranks at or above it — including
+#: on a tie, because `ZREVRANGE` breaks equal scores in reverse lexicographic
+#: order and a prefix always sorts BELOW the phrase that extends it, so the
+#: completion comes first. The over-read is insurance against that last step: it
+#: is a Redis ordering guarantee this module would otherwise silently depend on,
+#: and a test double reproducing the scores but not the tie-break would hide the
+#: dependency rather than fail on it. Reading forty rows to serve five costs one
+#: `ZREVRANGE` bound that nobody will measure.
+FRAGMENT_SCAN_MULTIPLIER = 8
 
 
 def _now() -> float:
@@ -213,3 +240,50 @@ def read_window(
         q = member.decode() if isinstance(member, (bytes, bytearray)) else str(member)
         out.append((q, float(score)))
     return out
+
+
+def collapse_typing_fragments(
+    rows: list[tuple[str, float]],
+) -> list[tuple[str, float]]:
+    """Drop the keystroke ladder, keep the phrase it was typed toward (#3123).
+
+    `/typeahead` fires as a reader types and every prefix at or above
+    `MIN_QUERY_CHARS` votes, so one person typing "stanford" puts `sta`, `stan`,
+    `stanf`, `stanfo` and `stanford` into the window at one vote each. Trending
+    has five slots. A reader opening a cold Search tab was shown one stranger's
+    typing, five times, under a heading that claims to be about other people.
+
+    THE RULE, and why it is the conservative one. A row is a fragment when some
+    strictly longer row it prefixes scored AT LEAST AS HIGH. Under per-keystroke
+    counting a prefix's score is the number of people who typed THROUGH it, so it
+    can only be >= the score of anything it prefixes; equality therefore means
+    nobody stopped there, which is exactly what a typing waypoint is. The
+    strictly-greater case is a real query in its own right and is KEPT — "red
+    sox" at 8 survives "red sox yankees" at 1, because seven of those eight
+    readers stopped at the two words they meant.
+
+    Stated plainly, because the direction of the inequality is the whole design:
+    this removes FEWER rows than an eye would. A ladder walked once is caught
+    (all rungs tie); "stanford" at 2 above "stanford cardinal at duke blue
+    devils" at 1 is NOT, and should not be — someone did stop at the school.
+    Over-collapsing costs a real trend, under-collapsing costs a slot, and only
+    one of those is a lie.
+
+    Scores are never merged and order is never changed. Folding a fragment's
+    count into its completion would double-count the completion's own typers,
+    which is the same arithmetic error in the other direction.
+
+    Pure, and applied at the READ by one caller (the public endpoint). Nothing
+    here touches what `record_query` counts, so `resolve_head` still heads from
+    the uncollapsed window — see this module's header for why that separation is
+    deliberate.
+    """
+    kept: list[tuple[str, float]] = []
+    for query, score in rows:
+        typed_through = any(
+            other != query and other.startswith(query) and score <= other_score
+            for other, other_score in rows
+        )
+        if not typed_through:
+            kept.append((query, score))
+    return kept
