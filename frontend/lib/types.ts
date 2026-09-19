@@ -254,6 +254,68 @@ export interface Event {
     away?: string;   // e.g. "28-24, 7th West"
     stakes?: string; // e.g. "Division rivals — 2 games apart"
   } | null;
+  /**
+   * #6381 — THE VENUE ALREADY GRADED THIS MATCH, WHILE THE HERO DENIED IT.
+   *
+   * `venue_settled` is true when the event holds at least one outcome with
+   * `is_winner IS TRUE AND resolution_source = 'api_settlement'` — a source
+   * that priced the match saying how it went. Served ONLY on rows that are
+   * about to print `SUSPENDED_LABEL` and hold no score of their own, so the
+   * three states are:
+   *
+   *   - ABSENT — out of scope; we never asked (a Final, a live game with a
+   *     score, anything the page has a better answer for).
+   *   - `false` — we asked and nothing has graded it.
+   *   - `true` — a source settled its markets.
+   *
+   * One truthiness test covers all three, which is why it is a plain boolean
+   * rather than #5077's present-only shape.
+   *
+   * `venue_settled_result` is what the venue said about the FULL CONTEST, as
+   * a finished sentence, verbatim and unparsed. Two shapes, in precedence
+   * order:
+   *
+   *   1. A graded full-scope SCORE market's outcome NAME — `"Draw 0-0"`
+   *      (soccer, `Correct Score`), `"Aryna Sabalenka wins 2-0"` (tennis
+   *      sets, `Exact Match Score`).
+   *   2. #6739 — when no score market graded, a graded full-scope MONEYLINE
+   *      naming one of the two sides, rendered as `"Fiona Crawley wins"`.
+   *      This is the same sentence with the score removed, not a new
+   *      register, and it is the common case: of the 1,121 `suspended` events
+   *      holding a positive grade, 56 carry a score and 265 carry only a
+   *      winner. Before #6739 those 265 printed the badge alone under an
+   *      89%–11% chart.
+   *
+   * Null whenever neither graded — 16 graded props still do not add up to a
+   * result — and null when two of them disagree, because picking one by sort
+   * order would publish a guess. 🔴 Render it as given: the producer refuses
+   * `1st Half Correct Score` and `Set 1 Winner` by market CLASS and
+   * segment-exact name precisely so no consumer has to know the vocabulary,
+   * and a client that parsed it would be the second place that rule lives.
+   *
+   * ── WHICH PAYLOADS CARRY THEM, MEASURED (#7070) ──
+   *
+   * On `Event` and not on `EventDetailResponse` since #6739's second half: the
+   * LEAGUE rails (`/api/leagues/{sport_key}` — upcoming, recent AND unreported)
+   * now serve the two keys under these same names, so the shared card renders
+   * them wherever that envelope reaches it. `/api/events` — the LIST route
+   * `/sports/[key]` reads — does NOT: measured 2026-09-19 00:5xZ, 11 of 11
+   * `tennis_atp` rows carried neither key while two of those rows' own detail
+   * payloads named a winner. So a card on `/sports/[key]` still prints the
+   * denial, and that is a missing producer rather than a consumer bug.
+   *
+   * Produced by `backend/app/utils/venue_settlement.py` (live lane, PR #6410
+   * then #6756); read through `venueSettledSummary` and nowhere else. It
+   * decides a winner only where the venue settled one outright: only positive
+   * grades are read, so a
+   * voided market — where every leg reads as a loss — cannot print a
+   * fabricated verdict; a derivative book (set, half, handicap) is refused by
+   * class; and an outcome name that reaches BOTH sides, or neither, names
+   * nobody rather than guessing.
+   */
+  venue_settled?: boolean;
+  /** @see Event.venue_settled */
+  venue_settled_result?: string | null;
 }
 
 export interface EventsResponse {
@@ -367,57 +429,8 @@ export interface EventDetailResponse extends Event {
    * removing a promise, not printing the reason it was removed.
    */
   live_probability_pinned?: LiveProbabilityPinned;
-  /**
-   * #6381 — THE VENUE ALREADY GRADED THIS MATCH, WHILE THE HERO DENIED IT.
-   *
-   * `venue_settled` is true when the event holds at least one outcome with
-   * `is_winner IS TRUE AND resolution_source = 'api_settlement'` — a source
-   * that priced the match saying how it went. Served ONLY on rows that are
-   * about to print `SUSPENDED_LABEL` and hold no score of their own, so the
-   * three states are:
-   *
-   *   - ABSENT — out of scope; we never asked (a Final, a live game with a
-   *     score, anything the page has a better answer for).
-   *   - `false` — we asked and nothing has graded it.
-   *   - `true` — a source settled its markets.
-   *
-   * One truthiness test covers all three, which is why it is a plain boolean
-   * rather than #5077's present-only shape.
-   *
-   * `venue_settled_result` is what the venue said about the FULL CONTEST, as
-   * a finished sentence, verbatim and unparsed. Two shapes, in precedence
-   * order:
-   *
-   *   1. A graded full-scope SCORE market's outcome NAME — `"Draw 0-0"`
-   *      (soccer, `Correct Score`), `"Aryna Sabalenka wins 2-0"` (tennis
-   *      sets, `Exact Match Score`).
-   *   2. #6739 — when no score market graded, a graded full-scope MONEYLINE
-   *      naming one of the two sides, rendered as `"Fiona Crawley wins"`.
-   *      This is the same sentence with the score removed, not a new
-   *      register, and it is the common case: of the 1,121 `suspended` events
-   *      holding a positive grade, 56 carry a score and 265 carry only a
-   *      winner. Before #6739 those 265 printed the badge alone under an
-   *      89%–11% chart.
-   *
-   * Null whenever neither graded — 16 graded props still do not add up to a
-   * result — and null when two of them disagree, because picking one by sort
-   * order would publish a guess. 🔴 Render it as given: the producer refuses
-   * `1st Half Correct Score` and `Set 1 Winner` by market CLASS and
-   * segment-exact name precisely so no consumer has to know the vocabulary,
-   * and a client that parsed it would be the second place that rule lives.
-   *
-   * Produced by `backend/app/utils/venue_settlement.py` (live lane, PR #6410
-   * then #6756); read here and nowhere else. It decides a winner only where
-   * the venue settled one outright: only positive grades are read, so a
-   * voided market — where every leg reads as a loss — cannot print a
-   * fabricated verdict; a derivative book (set, half, handicap) is refused by
-   * class; and an outcome name that reaches BOTH sides, or neither, names
-   * nobody rather than guessing.
-   */
-  venue_settled?: boolean;
-  /** @see EventDetailResponse.venue_settled */
-  venue_settled_result?: string | null;
 }
+
 
 /** @see Event.live_probability_pinned */
 export interface LiveProbabilityPinned {

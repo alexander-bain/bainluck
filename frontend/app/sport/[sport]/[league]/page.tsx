@@ -34,7 +34,7 @@ import {
 } from "@/lib/hierarchyLoadFailure";
 import PageLoadFailureScreen from "@/components/PageLoadFailureScreen";
 import { gridCellsToProgression } from "@/lib/gridCellState";
-import { partitionLeagueMarkets } from "@/lib/leagueCards";
+import { partitionLeagueMarkets, unreportedRailTitle } from "@/lib/leagueCards";
 import TournamentCard from "@/components/TournamentCard";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import LeagueMarketSection from "@/components/LeagueMarketSection";
@@ -565,9 +565,15 @@ export default function LeagueShowcasePage() {
             is not a description of the state, and this state's whole job is to
             say exactly what is and is not known right now. It renders BELOW the
             results because it is the page's least informative content — every
-            card says the same thing, which is that we do not know. */}
+            card says the same thing, which is that we do not know.
+
+            #7070 — "every card says the same thing" stopped being true when the
+            venue's grade reached the cards, so the heading is now read off the
+            rail's contents (`unreportedRailTitle`, which carries the whole
+            argument). It is still this sentence on every rail where it is still
+            true of every row. */}
         <LeagueGameRail
-          title="No result reported"
+          title={unreportedRailTitle(unreportedGames)}
           games={unreportedGames}
           hasMore={leagueMarkets?.unreported_games_has_more}
           settled
