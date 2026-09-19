@@ -348,7 +348,11 @@ class TestTheRouteIsWiredToThem:
         source = pathlib.Path(_event_name_match.__code__.co_filename).read_text()
         block = source[source.index("_rescue_conditions = ["):]
         block = block[:block.index("logger.info(")]
-        assert block.index("_rescue_count = _rescue_count_r.scalar()") < block.index(
+        # #5514 moved the count itself into `_search_sport_facets` (one builder
+        # for all four count sites in the route). The ORDERING this test is
+        # about is untouched: still counted, still only then allowed to replace
+        # the statement.
+        assert block.index("_rescue_count, _rescue_facets = await _search_sport_facets(") < block.index(
             "if _rescue_count:"
         )
         assert block.index("if _rescue_count:") < block.index("query = (")

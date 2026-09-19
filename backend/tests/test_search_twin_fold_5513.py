@@ -121,23 +121,51 @@ def _mock_db(events, *, total=None):
     db = AsyncMock()
     count = len(events) if total is None else total
 
-    def make_result(rows):
+    def make_result(rows, *, grouped=None):
         r = MagicMock()
         r.scalars.return_value.all.return_value = rows
         r.fetchall.return_value = []
-        r.all.return_value = []
+        r.all.return_value = grouped or []
         r.scalar.return_value = count
         r.scalar_one_or_none.return_value = None
         return r
 
+    def _grouped_count_rows():
+        """`(sport.key, sport.name, n)` per sport, summing to `count`.
+
+        #5514 made the count a `GROUP BY sport` so the pills and
+        `total_results` come out of one statement; `.all()` is what the route
+        reads now, and a stub that answers only `.scalar()` makes every
+        paginated assertion here read `total_results == 0`. The surplus
+        (`count` beyond the rows this page holds) lands on the first sport,
+        which is what a real paginated set looks like: the extra pages are
+        mostly more of the dominant sport.
+        """
+        by_key: dict[str, list] = {}
+        for e in events:
+            sport = getattr(e, "sport", None)
+            key = getattr(sport, "key", None) or "unknown"
+            name = getattr(sport, "name", None) or "Unknown"
+            if key not in by_key:
+                by_key[key] = [key, name, 0]
+            by_key[key][2] += 1
+        if not by_key:
+            return []
+        rows = [tuple(v) for v in by_key.values()]
+        surplus = count - len(events)
+        if surplus:
+            head = rows[0]
+            rows[0] = (head[0], head[1], head[2] + surplus)
+        return rows
+
     async def execute(stmt, *a, **k):
         s = str(stmt).lower()
         # Only the event page query yields rows. The count is read off
-        # `.scalar()`, which every result carries, and every other stage
-        # (futures, outcomes, teams, snapshots) returns nothing — the shape of
-        # an unenriched page.
+        # `.all()` since #5514 (grouped by sport) and off `.scalar()` before
+        # that; every other stage (futures, outcomes, teams, snapshots)
+        # returns nothing — the shape of an unenriched page.
         if "count(" in s:
-            return make_result([])
+            return make_result([], grouped=_grouped_count_rows())
         if "futures_markets" in s or "odds_snapshots" in s or "teams" in s:
             return make_result([])
         if "from events" in s:

@@ -102,10 +102,32 @@ def test_count_query_shape_has_no_ordering_and_no_entity_projection():
     assert count_sql.upper().count("SELECT") == 1, "no subquery wrapper"
 
 
-def test_both_count_sites_use_the_predicate_list():
-    """Primary AND fuzzy-fallback counts. The fallback was the second instance."""
-    assert SEARCH_SRC.count("select_from(Event)") >= 2, (
-        "expected an identity count at BOTH the primary and fuzzy-fallback sites"
+def test_every_count_site_uses_the_predicate_list():
+    """Primary AND fuzzy-fallback counts. The fallback was the second instance.
+
+    #5514 turned the four hand-rolled counts in `search_events` into one call
+    each to `_search_sport_facets`, so counting `select_from(Event)` in the
+    route no longer measures anything — the old assertion read 0 and would
+    have kept reading 0 while a fifth arm built its count any way it liked.
+
+    The property it was defending is unchanged and is now structural, so it is
+    asserted that way: no count is built inside the route at all, and the one
+    builder they all share takes a predicate LIST.
+    """
+    assert "func.count()" not in SEARCH_CODE, (
+        "a count is being built inside `search_events` again. Every count in "
+        "this route goes through `_search_sport_facets`, which is what keeps "
+        "the identity-only shape (and the sport pills) in ONE place"
+    )
+    assert SEARCH_CODE.count("_search_sport_facets(") >= 4, (
+        "expected the primary, bridge, resolved-team rescue and fuzzy-fallback "
+        "counts to all route through the shared builder"
+    )
+
+    facets_src = _source_of(events_route._search_sport_facets)
+    assert "select_from(Event)" in facets_src and ".where(*conditions)" in facets_src, (
+        "COUNT_SHAPE_WIDE: the shared count builder stopped being built from "
+        "the predicate list"
     )
 
 

@@ -131,19 +131,45 @@ def _page_two():
 def _mock_db(events, *, total):
     db = AsyncMock()
 
-    def make_result(rows):
+    def make_result(rows, *, grouped=None):
         r = MagicMock()
         r.scalars.return_value.all.return_value = rows
         r.fetchall.return_value = []
-        r.all.return_value = []
+        r.all.return_value = grouped or []
         r.scalar.return_value = total
         r.scalar_one_or_none.return_value = None
         return r
 
+    def _grouped_count_rows():
+        """`(sport.key, sport.name, n)` per sport, summing to `total`.
+
+        #5514 made the search count a `GROUP BY sport`, so `total_results` is
+        now the sum of the grouped rows and is read off `.all()`. A stub that
+        answers only `.scalar()` leaves every assertion in this file reading
+        `total_results == 0` — which looks like the regression the file is
+        here to catch, and is not one.
+        """
+        by_key: dict[str, list] = {}
+        for e in events:
+            sport = getattr(e, "sport", None)
+            key = getattr(sport, "key", None) or "unknown"
+            name = getattr(sport, "name", None) or "Unknown"
+            if key not in by_key:
+                by_key[key] = [key, name, 0]
+            by_key[key][2] += 1
+        if not by_key:
+            return []
+        rows = [tuple(v) for v in by_key.values()]
+        surplus = total - len(events)
+        if surplus:
+            head = rows[0]
+            rows[0] = (head[0], head[1], head[2] + surplus)
+        return rows
+
     async def execute(stmt, *a, **k):
         s = str(stmt).lower()
         if "count(" in s:
-            return make_result([])
+            return make_result([], grouped=_grouped_count_rows())
         if "futures_markets" in s or "odds_snapshots" in s or "teams" in s:
             return make_result([])
         if "from events" in s:
