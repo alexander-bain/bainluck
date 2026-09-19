@@ -1918,15 +1918,28 @@ def carry_refinement(
     the SHAPE OF THE WORK, not about any row's value. A deploy that rewrites the
     population SQL does not make a hash bucket small.
 
-    Discarding it anyway is what made the build unable to finish. Under the
-    #6599 regime a slot is refined on its first conclusive cancellation, so
-    earning a refinement costs a beat per slot; production invalidates roughly
-    every fifteen beats; and every invalidation put the partition back to 128
-    coarse slots with every refinement un-earned. The build therefore re-learned
-    the same thing forever and published nothing, which
-    ``TestTheLimitThisCandidateDoesNotReach`` measured and named as the wall.
-    Carried, era N+1 starts from era N's partition, the refinement ratchets, and
-    a pass fits inside an era.
+    Discarding it anyway costs the build every refinement it has earned. Under
+    the #6599 regime a slot is refined on its first conclusive cancellation, so
+    earning a refinement costs a beat per slot, and an invalidation put the
+    partition back to 128 coarse slots with every one of them un-earned. Carried,
+    era N+1 starts from era N's partition, the refinement ratchets, and a pass
+    fits inside an era — measured in
+    ``TestTheLimitThisCandidateDoesNotReach``, which puts the shortest survivable
+    era at 16 beats against 24 before this.
+
+    🔴 **HOW OFTEN PRODUCTION ACTUALLY INVALIDATES: it does not.** An earlier
+    draft of this docstring said "roughly every fifteen beats" and reasoned from
+    it; CERT-3053 then reasoned from that same figure. Neither measured it. The
+    beat-gauge ring over the forty consecutive hourly beats
+    ``2026-09-17T14:37:53Z`` → ``2026-09-19T05:37:55Z`` reads ``cursor_action:
+    resume`` / ``cursor_reason: resumable`` on **every** row, with
+    ``units_dropped: 0`` measured on every row, a constant
+    ``input_fingerprint: 8ddaa1ea…`` and a constant ``population_version: q271``.
+    So this carry is insurance against a boundary production is not currently
+    crossing, and the thing actually holding the build at 1/128 is the latched
+    withdrawal that ``_carry_unit_costs`` now re-evaluates. Both facts are pinned
+    in ``TestTheProductionRegimeIsNotAnEraAndTheBuildPublishesInIt``. Keep the
+    carry — it is cheap, bounded and correct — but do not sell it as the cure.
 
     Three things make this safe to keep across a boundary that keeps nothing
     else:

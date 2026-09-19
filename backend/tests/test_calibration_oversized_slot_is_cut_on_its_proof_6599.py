@@ -1278,6 +1278,14 @@ class TestTheLimitThisCandidateDoesNotReach:
     with an era long enough to never interrupt — so an era below that floor is
     still fatal, and the only thing that moves THAT is retaining banked units
     across an invalidation, which the input digest exists to forbid.
+
+    🔴 **EVERY ROW HERE IS CONDITIONAL ON AN ERA, AND PRODUCTION HAS NONE.** This
+    class measures what happens when the cursor is invalidated every N beats. It
+    does not assert that production is invalidated at all, and the ring says it
+    is not: forty consecutive resumable beats, ``units_dropped: 0`` on each. The
+    measured regime, and the 128-slot build that publishes inside it, are
+    :class:`TestTheProductionRegimeIsNotAnEraAndTheBuildPublishesInIt`. Read that
+    class for what production does; read this one for what an era would cost.
     """
 
     @pytest.mark.asyncio
@@ -1338,4 +1346,203 @@ class TestTheLimitThisCandidateDoesNotReach:
         assert run.completed_at is not None, (
             "with an era longer than the build the very same population "
             "publishes, so the tests above are about the period and not the rig"
+        )
+
+
+# =============================================================================
+# 8. THE REGIME PRODUCTION IS ACTUALLY IN, AT THE REAL PLAN SIZE
+# =============================================================================
+
+
+class TestTheProductionRegimeIsNotAnEraAndTheBuildPublishesInIt:
+    """CERT-3053's required repair — and the measurement that reframes it.
+
+    CERT-3053 asked for "the real 128-slot build reaching 128/128 and publishing
+    within the measured production invalidation regime". Both halves are here,
+    and the second half is not the number the block assumed.
+
+    ## The invalidation regime, MEASURED rather than inherited
+
+    ``/api/admin/calibration-beat-gauges`` on 2026-09-19T06:2xZ, forty
+    consecutive hourly beats, ``2026-09-17T14:37:53Z`` through
+    ``2026-09-19T05:37:55Z`` — every one of them:
+
+    * ``cursor_action: resume`` and ``cursor_reason: resumable``. **Not one
+      invalidation in thirty-nine hours.**
+    * ``units_dropped: 0``, ``units_dropped_measured: true`` — the bank is never
+      wiped (gotcha #53: a measured zero, not an absent one).
+    * ``units_banked`` pinned at **1** on all forty rows.
+    * ``rebuild_units_ran_this_beat: 2`` and
+      ``rebuild_units_ran_not_banked_this_beat: 2`` on all forty — two attempted,
+      two cancelled, nothing completed, every beat.
+
+    Cross-read on the beat's OWN durable row (``durable_state_snapshots``,
+    identity ``calibration:main:phase_ledger``, generated 05:37:55.774573Z),
+    which is a different writer from the sampler ring above:
+    ``input_fingerprint: 8ddaa1ea408615b81599c385593d83a1`` and
+    ``population_version: q271`` — both constant, which is WHY the cursor
+    resumes.
+
+    **So ``reset_every`` is not production's regime; ``None`` is.** The
+    "invalidates roughly every fifteen beats" figure that CERT-3053 reasoned
+    from — and that this lane's own :func:`carry_refinement` docstring asserted
+    — is refuted by the ring. It is corrected at both sites rather than left
+    standing, because an inherited number that no longer measures anything is
+    how the last two candidates on this defect were justified.
+
+    ## What is actually wrong, on the same row
+
+    ``unit_costs.futures`` reads ``{'units_done': 1, 'units_total': 128,
+    'level_refuted': True}`` — byte-identical to :data:`PROD_LATCHED_COST`,
+    captured two days earlier and still live. Beside it,
+    ``staged:unit_cost_reason:no_unit_completed``,
+    ``staged:unit_worst_reason:unmeasured:futures`` and
+    ``staged:prior_unit_reason:unmeasured`` — while ``unit_worst_history``
+    carries twenty-four real completions ending at 1,181,085 ms. The evidence is
+    present and unreadable, which is the defect CAL-P1304 removes.
+
+    ## The 128-slot build, in that regime, from that state
+
+    ``withdrawn=True`` (production's latched cost dict), ``reset_every=None``
+    (production's measured regime), ``buckets=128`` (production's plan), 200
+    beats of headroom. ``ring_readable`` is the repair.
+
+    ========  =====================  ==================
+    oversized  graded tree (CERT-3053)  with CAL-P1304
+    ========  =====================  ==================
+    16        beat 46                **beat 43**
+    32        beat 90                **beat 83**
+    64        beat 175               **beat 160**
+    128       never (banks 129)      never (banks 151)
+    ========  =====================  ==================
+
+    The build reaches 128/128 and publishes, sooner than the graded tree at
+    every shape that publishes at all, and the first refinement moves from beat
+    14/21/36/65 to **beat 1** in all four.
+
+    **The saturated row is stated, not hidden.** Where every slot costs more
+    than a whole window, neither arm publishes inside 200 beats; the repair banks
+    151 units against 129 and earns 91 refinements against 73, which is progress
+    and is not publication. :class:`TestTheLimitThisCandidateDoesNotReach` keeps
+    saying so.
+    """
+
+    #: Production's measured regime: the cursor resumed on all forty observed
+    #: beats, so there is no era boundary to model.
+    NO_INVALIDATION = None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "oversized,graded,repaired",
+        [(16, 46, 43), (32, 90, 83), (64, 175, 160)],
+    )
+    async def test_the_128_slot_build_publishes_and_does_so_sooner(
+        self, drive, oversized, graded, repaired
+    ):
+        """THE SHIP CERT-3053 ASKED TO SEE: 128/128, published, in the real regime.
+
+        Both arms run the same population, the same latched state and the same
+        (absent) era — only the ring's legibility differs, so the difference is
+        attributable to CAL-P1304 and to nothing else about the rig.
+        """
+        cand = await drive(
+            buckets=128,
+            oversized_slots=oversized,
+            max_beats=200,
+            withdrawn=True,
+            ring_readable=True,
+            reset_every=self.NO_INVALIDATION,
+        )
+        base = await drive(
+            buckets=128,
+            oversized_slots=oversized,
+            max_beats=200,
+            withdrawn=True,
+            ring_readable=False,
+            reset_every=self.NO_INVALIDATION,
+        )
+
+        assert (base.completed_at, cand.completed_at) == (graded, repaired), (
+            f"{oversized}/128 oversized: graded tree {base.completed_at} / "
+            f"repaired {cand.completed_at}, expected {graded} / {repaired}"
+        )
+        assert cand.completed_at < base.completed_at
+        assert cand.max_banked >= 128 and base.max_banked >= 128, (
+            "both arms must actually reach the whole plan — a publication that "
+            "banked fewer than 128 units would be the wrong ship"
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("oversized,graded_first", [(16, 14), (32, 21), (64, 36)])
+    async def test_the_first_refinement_lands_on_beat_one_at_the_real_plan_size(
+        self, drive, oversized, graded_first
+    ):
+        """The saving's mechanism, at 128 slots rather than 8.
+
+        The graded tree must wait for a slot to earn a SECOND cancellation, and
+        at the real plan size that wait is measured in tens of beats.
+        """
+        cand = await drive(
+            buckets=128,
+            oversized_slots=oversized,
+            max_beats=200,
+            withdrawn=True,
+            ring_readable=True,
+            reset_every=self.NO_INVALIDATION,
+        )
+        base = await drive(
+            buckets=128,
+            oversized_slots=oversized,
+            max_beats=200,
+            withdrawn=True,
+            ring_readable=False,
+            reset_every=self.NO_INVALIDATION,
+        )
+
+        assert cand.first_split_beat == 1, (
+            f"the repair must cut on beat 1 at 128 slots; got {cand.first_split_beat}"
+        )
+        assert base.first_split_beat == graded_first, (
+            f"graded tree first split expected {graded_first}; "
+            f"got {base.first_split_beat}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_wholly_oversized_plan_still_publishes_nothing_in_either_arm(
+        self, drive
+    ):
+        """THE HONEST ROW: where every slot outruns a window, this is not enough.
+
+        Stated as its own test so the table above cannot be read as a claim that
+        CAL-P1304 publishes any population. It buys 22 more banked units and 18
+        more refinements here; it does not buy a publication.
+        """
+        cand = await drive(
+            buckets=128,
+            oversized_slots=128,
+            max_beats=200,
+            withdrawn=True,
+            ring_readable=True,
+            reset_every=self.NO_INVALIDATION,
+        )
+        base = await drive(
+            buckets=128,
+            oversized_slots=128,
+            max_beats=200,
+            withdrawn=True,
+            ring_readable=False,
+            reset_every=self.NO_INVALIDATION,
+        )
+
+        assert cand.completed_at is None and base.completed_at is None, (
+            "neither arm publishes a wholly oversized plan inside 200 beats, "
+            "and the ship is not sold as if it did"
+        )
+        assert (base.max_banked, cand.max_banked) == (129, 151), (
+            f"banked: graded {base.max_banked} / repaired {cand.max_banked}, "
+            "expected 129 / 151"
+        )
+        assert (base.splits, cand.splits) == (73, 91), (
+            f"refinements: graded {base.splits} / repaired {cand.splits}, "
+            "expected 73 / 91"
         )

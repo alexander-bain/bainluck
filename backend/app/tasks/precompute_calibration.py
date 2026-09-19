@@ -6041,7 +6041,12 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
             # holds one — and once the worst-unit ring is readable again
             # (#6775) the first unit of a beat is handed the whole window, so a
             # beat records ONE cancellation, and one full pass of 128 slots is
-            # 128 beats. Measured against invalidations every ~15 beats: never.
+            # 128 beats — hourly, so five days before the first refinement. (An
+            # earlier draft here compared that to "invalidations every ~15
+            # beats"; the ring says production invalidates never — forty
+            # consecutive resumable beats — so the wait is not raced by an era,
+            # it is simply longer than anyone will wait. See
+            # ``TestTheProductionRegimeIsNotAnEraAndTheBuildPublishesInIt``.)
             #
             # So for one narrow shape — window-bounded AND past every completed
             # unit — the slot is refined on the first cancellation instead. This
