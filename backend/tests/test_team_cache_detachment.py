@@ -209,6 +209,12 @@ async def test_standings_context_also_survives_the_rollback():
             slug="atlanta-falcons",
             abbreviation="ATL",
             alternate_names=["Falcons"],
+            # Set explicitly: without it this row inherits the Panthers'
+            # "9-8" from `_team()`'s defaults, and since #5520 the rendered
+            # record comes from `current_record`, so the away assertion below
+            # would be reading the home team's fixture. The subject here is
+            # rollback survival, not which column wins.
+            current_record="8-9",
             standings_data={"wins": 8, "losses": 9, "league_rank": 2, "conference": "NFC"},
         ),
     ]
