@@ -89,6 +89,19 @@ def dedup_by_merge_group(
             )
             winner = entries[0]
             winner["all_sources"] = list({e["source"] for e in entries if e.get("source")})
+            # #7068 — WHICH MARKETS STOOD BEHIND THIS ROW, not just which
+            # sources. The winner carries its OWN `market_id`, so a field
+            # carried by two sources has its legs re-attributed here: Germany's
+            # winner can come from market A and Greece's and Draw's from market
+            # B, leaving two COMPLETE three-leg fields looking like 1-of-3 and
+            # 2-of-3. Any consumer asking "how many legs of this market
+            # reached the reader?" is wrong without this, and the partial-field
+            # withholding erased the whole field on exactly that mistake
+            # (CERT-3099). Additive: no existing reader of these rows looks at
+            # this key.
+            winner["contributor_market_ids"] = sorted(
+                {e["market_id"] for e in entries if e.get("market_id") is not None}
+            )
             result.append(winner)
     return result
 

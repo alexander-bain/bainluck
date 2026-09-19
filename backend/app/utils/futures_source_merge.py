@@ -259,6 +259,18 @@ def merge_relabel_collisions(
                 new["divergence"] = divergence.as_evidence()
             srcs = sorted({(c.get("source") or "unknown") for c in contributors})
             new["all_sources"] = srcs
+            # #7068 — the market ids behind the blend, for the same reason the
+            # sources are recorded: a consumer counting how many legs of a
+            # market reached the reader cannot see a contributor that was
+            # merged away, and would read a complete field as short. Unions
+            # with anything an earlier pass already recorded, so a row that has
+            # been through both merge passes keeps every contributor.
+            contributor_ids: set = set()
+            for c in contributors:
+                contributor_ids.update(c.get("contributor_market_ids") or [])
+                if c.get("market_id") is not None:
+                    contributor_ids.add(c["market_id"])
+            new["contributor_market_ids"] = sorted(contributor_ids)
             new["source_count"] = len(srcs)
             new["merged_source_count"] = len(contributors)
             out.append(new)
