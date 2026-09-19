@@ -61,6 +61,13 @@
  * here for the same reason it renders in the live bucket there, and cannot
  * silently make an in-season league look dormant.
  *
+ * #7112 — which is why the EVENT is handed over too, and not just its status
+ * and its time. The ladder gained a rung that files a VENUE-GRADED row under
+ * Finished; a caller withholding those two keys would go on counting a match
+ * that has already been played as a league playing right now, and would be
+ * asserting the opposite of the section the same page renders one module over.
+ * "The same partition" is a claim about the ARGUMENTS as much as the function.
+ *
  * ═══ NO CLOCK READ INSIDE A LOOP ═══
  *
  * `now` is a PARAMETER with a `Date.now()` default (gotcha #44: offset from a
@@ -125,7 +132,17 @@ export function needsWiderHorizon(
   const nearTermCutoff = now + LEAGUE_NEAR_TERM_DAYS * MS_PER_DAY;
 
   for (const event of events) {
-    const section = eventSectionKey(event.status, event.commence_time, now);
+    // #7112 — the EVENT is passed for the same reason the paragraph above says
+    // this module imports the shared ladder at all: the partition here must be
+    // the partition the page renders. A venue-graded row is Finished there, so
+    // it is skipped here, and a league whose only "live" rows are matches that
+    // have already been played can no longer look like it is playing.
+    const section = eventSectionKey(
+      event.status,
+      event.commence_time,
+      now,
+      event,
+    );
     if (section === "finished") continue;
 
     // Live (and suspended, which the shared ladder files as live) means the
