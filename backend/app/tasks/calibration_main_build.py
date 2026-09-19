@@ -1051,12 +1051,22 @@ class PhaseRunner:
         rather than two, because there is one underlying fact: this loop is
         running somewhere else, later.
         """
-        timeout_ms = self.ledger.statement_timeout_for_unit(
+        # CAL-P1305 (#6599): the winning TERM is captured here because it cannot
+        # be recovered later. ``cancellation_is_conclusive`` needs to know which
+        # of the three set this fence, and by the time the unit cancels
+        # ``remaining_ms`` has moved on, so recomputing answers about a
+        # different moment.
+        bound = self.ledger.note_unit_bound(
             phase,
-            elapsed_ms=self.elapsed_ms(),
-            unit_ms=unit_ms,
-            ignore_phase_budget=deferred_rebuild,
+            self.ledger.statement_timeout_for_unit_detail(
+                phase,
+                elapsed_ms=self.elapsed_ms(),
+                unit_ms=unit_ms,
+                ignore_phase_budget=deferred_rebuild,
+            ),
         )
+        timeout_ms = bound.ms
+        self.ledger.record_gauge(f"staged:unit_bound_source:{bound.source}:{phase}", 1)
         # CAL-P163 (#1978): say WHICH evidence bounded this unit, and how far the
         # bound sits from the window that was actually available. Without this
         # pair, a cancelled unit records only that it was cancelled — the same

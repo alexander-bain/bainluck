@@ -48,7 +48,7 @@ from __future__ import annotations
 import hashlib
 import math
 from dataclasses import dataclass, field, replace
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, NamedTuple, Optional
 
 PHASE_LEDGER_SCHEMA = "calibration-main-phase-ledger/v1"
 MAIN_CHECKPOINT_SCHEMA = "calibration-main-checkpoint/v1"
@@ -838,6 +838,34 @@ def _statement_timeout_for(budget_ms: int) -> int:
     return max(1, budget_ms - gap)
 
 
+#: The unit bound came from what is LEFT OF THE BEAT. Nothing tighter was
+#: available and no larger bound exists to give — the original condition 1.
+UNIT_BOUND_WINDOW = "window"
+
+#: The unit bound came from the PHASE's own measured budget. Also not a
+#: statement about this unit, and — unlike the window — it does not grow on a
+#: quieter beat: ``history`` only appends when the phase COMPLETES.
+UNIT_BOUND_PHASE_BUDGET = "phase_budget"
+
+#: The unit bound came from a MEASURED per-unit basis (the carried mean, or the
+#: worst completed unit scaled by :data:`BUDGET_SAFETY`). This is the one source
+#: that can widen for this slot without the beat changing: it widens the moment
+#: a larger unit COMPLETES.
+UNIT_BOUND_UNIT_BASIS = "unit_basis"
+
+
+class UnitBound(NamedTuple):
+    """One unit's DB backstop, and which of the three terms produced it.
+
+    CAL-P1305 (#6599 defect 1, second fence). ``ms`` is exactly what
+    :meth:`PhaseLedger.statement_timeout_for_unit` has always returned; ``source``
+    is the fact the caller already knew and used to throw away.
+    """
+
+    ms: int
+    source: str
+
+
 def deadline_bound_headroom_ceiling_ms(remaining_ms: int) -> int:
     """The MOST headroom a bound taken from the WINDOW can leave — #6599.
 
@@ -874,6 +902,7 @@ def cancellation_is_conclusive(
     bound_ms: int,
     cancelled_after_ms: int,
     worst_completed_ms: Optional[int],
+    bound_source: Optional[str] = None,
 ) -> bool:
     """Should this cancellation refine its slot NOW — #6599 defect 1.
 
@@ -926,6 +955,27 @@ def cancellation_is_conclusive(
     rather than caution: with no completed unit anywhere in the history there is
     no measurement to outrun, so there is no basis for the policy at all and the
     ordinary two-cancellation rule stands.
+
+    **CAL-P1305 (#6599, the second fence): ``bound_source`` — the caller says
+    which term won, because headroom cannot.** Condition 1 above is a proxy for
+    the real question, *is a larger bound for this slot still obtainable?*, and
+    the proxy reads THREE sources as two. Its justification — "the build can
+    still hand this slot a bigger bound on a beat with more room" — is right for
+    :data:`UNIT_BOUND_UNIT_BASIS` and false for :data:`UNIT_BOUND_PHASE_BUDGET`:
+    the phase budget is not a per-unit basis, does not grow with room, and
+    ``history`` only appends when the phase COMPLETES — which, on the beats this
+    policy exists for, it never does. Production's 2026-09-19T06:37:54Z beat is
+    the specimen: unit 1 outran every completion in the ring (1,255,944 ms
+    against 1,181,085 ms — condition 2 held, so the CAL-P1304 ring repair was
+    working) and was declined anyway, on 98,734 ms of headroom left by a
+    1,253,522 ms PHASE budget. Forty beats, no cut, 1 unit banked.
+
+    So when the caller supplies the source — it computed both terms; see
+    :meth:`PhaseLedger.statement_timeout_for_unit_detail` — it is used instead of
+    the inference, and only a per-unit measured basis defers. ``None`` keeps the
+    headroom rule exactly as it was, which is what every caller that has not been
+    taught to carry the source gets, and it is the safe direction: the inference
+    only ever declines more often than the fact does.
     """
     if worst_completed_ms is None or int(worst_completed_ms) <= 0:
         return False
@@ -933,11 +983,16 @@ def cancellation_is_conclusive(
     bound = int(bound_ms)
     if remaining <= 0 or bound <= 0:
         return False
-    headroom = remaining - bound
-    if headroom > deadline_bound_headroom_ceiling_ms(remaining):
-        # A measured basis set this fence, not the window. The build can still
-        # hand this slot a bigger bound on a beat with more room, so nothing is
-        # proved about the slot yet.
+    if bound_source is None:
+        headroom = remaining - bound
+        if headroom > deadline_bound_headroom_ceiling_ms(remaining):
+            # No source supplied, so the fence is inferred: anything leaving more
+            # headroom than a window bound can came from SOME measured term, and
+            # this rule cannot tell which. Declining is the conservative read.
+            return False
+    elif bound_source == UNIT_BOUND_UNIT_BASIS:
+        # The one source that widens for this slot on its own: a completion at
+        # the larger size admits the larger bound. Nothing is proved yet.
         return False
     return int(cancelled_after_ms) >= int(worst_completed_ms)
 
@@ -1457,6 +1512,14 @@ class PhaseLedger:
                 statement_timeout_ms=budget.statement_timeout_ms if budget else None,
             )
             self.order.append(name)
+        #: CAL-P1305 (#6599). Per phase, the bound the last unit was ARMED with
+        #: and which of the three terms set it. Written by whoever arms the unit
+        #: (:meth:`~app.tasks.calibration_main_build.PhaseRunner.apply_unit_statement_timeout`)
+        #: rather than by the computation, so a caller that only asks what the
+        #: bound WOULD be does not overwrite what a unit is actually running
+        #: under. A phase absent from here has armed nothing, and its readers
+        #: must treat that as unknown, never as a source (gotcha #53).
+        self._unit_bound: dict[str, UnitBound] = {}
         self._open: Optional[str] = None
         self._open_at_ms: int = 0
         self.unmeasured_overhead_ms: int = 0
@@ -1889,20 +1952,94 @@ class PhaseLedger:
         outlive the beat, and nothing here is bounded by a number nobody
         measured.
         """
-        phase_bound = (
-            _statement_timeout_for(max(2, self.remaining_ms(elapsed_ms=elapsed_ms)))
-            if ignore_phase_budget
-            else self.statement_timeout_for(name, elapsed_ms=elapsed_ms)
+        return self.statement_timeout_for_unit_detail(
+            name,
+            elapsed_ms=elapsed_ms,
+            unit_ms=unit_ms,
+            ignore_phase_budget=ignore_phase_budget,
+        ).ms
+
+    def statement_timeout_for_unit_detail(
+        self,
+        name: str,
+        *,
+        elapsed_ms: int,
+        unit_ms: Optional[float] = None,
+        ignore_phase_budget: bool = False,
+    ) -> UnitBound:
+        """:meth:`statement_timeout_for_unit`, plus WHICH term won — CAL-P1305.
+
+        Same arithmetic, same number; the only thing added is the name of the
+        term the ``min`` selected. **This method exists because that name cannot
+        be recovered afterwards.** ``cancellation_is_conclusive`` used to infer
+        it from headroom, which can only separate *window* from *not-window*, so
+        it read a phase-budget fence and a per-unit measured fence as the same
+        thing (#6599, measured on the 2026-09-19T06:37:54Z beat: unit 1 armed at
+        1,253,522 ms = ``plan.futures.statement_timeout_ms`` exactly, 98,734 ms
+        of headroom against a 30,000 ms ceiling, and declined). Nor can it be
+        recomputed at cancellation time: ``remaining_ms`` has moved on by then,
+        so a second call answers about a different beat. It is captured when the
+        bound is ARMED or it is lost.
+
+        The three sources are :data:`UNIT_BOUND_WINDOW`,
+        :data:`UNIT_BOUND_PHASE_BUDGET` and :data:`UNIT_BOUND_UNIT_BASIS`, and
+        the distinction that matters to a reader is whether a *larger bound for
+        this slot* is still obtainable — yes for the unit basis (a completion
+        widens it), no for the other two.
+
+        Two tie rules, both deliberate. A phase budget that is not strictly
+        tighter than the deadline bound is reported as the WINDOW, because the
+        window would have set the same fence. A per-unit basis that ties with
+        the phase term is reported as the UNIT BASIS, which is the conservative
+        direction: it is the source that makes the predicate DECLINE, so a tie
+        keeps a measurement rather than withdrawing one — the same way round as
+        every other "absent evidence is not evidence" branch in this module.
+        """
+        deadline_bound = _statement_timeout_for(
+            max(2, self.remaining_ms(elapsed_ms=elapsed_ms))
         )
+        budget = 0 if ignore_phase_budget else int(self.records[name].statement_timeout_ms or 0)
+        phase_budget_binds = bool(budget) and budget < deadline_bound
+        phase_bound = max(1, budget if phase_budget_binds else deadline_bound)
+        phase_source = UNIT_BOUND_PHASE_BUDGET if phase_budget_binds else UNIT_BOUND_WINDOW
+
         measured = unit_ms if unit_ms and unit_ms > 0 else self.measured_unit_ms(name)
         mean_basis = int(measured * STAGED_UNIT_OVERRUN_FACTOR) if measured and measured > 0 else 0
         worst = self.measured_unit_worst_ms(name)
         worst_basis = int(worst * BUDGET_SAFETY) if worst and worst > 0 else 0
         basis = max(mean_basis, worst_basis)
         if basis <= 0:
-            return phase_bound
+            return UnitBound(phase_bound, phase_source)
         unit_bound = _statement_timeout_for(max(2, basis))
-        return max(1, min(phase_bound, unit_bound))
+        if unit_bound <= phase_bound:
+            return UnitBound(max(1, unit_bound), UNIT_BOUND_UNIT_BASIS)
+        return UnitBound(phase_bound, phase_source)
+
+    def note_unit_bound(self, name: str, bound: UnitBound) -> UnitBound:
+        """Remember what the unit just armed for ``name`` is running under.
+
+        CAL-P1305 (#6599). The pairing with :meth:`unit_bound_source` is the
+        whole mechanism: which term set the fence is known only while the fence
+        is being set — by the time the unit cancels, ``remaining_ms`` has moved
+        and recomputing answers about a different moment.
+
+        Recording is the ARMER's job and not
+        :meth:`statement_timeout_for_unit_detail`'s, so that asking what a bound
+        would be cannot overwrite what a unit is actually running under.
+        Returns ``bound`` so the arming path stays one expression.
+        """
+        self._unit_bound[name] = bound
+        return bound
+
+    def unit_bound_source(self, name: str) -> Optional[str]:
+        """Which term set the bound the last unit of ``name`` was armed with.
+
+        ``None`` means no unit of this phase has been armed on this ledger — the
+        input that leaves ``cancellation_is_conclusive`` on its headroom
+        inference, i.e. exactly the behaviour that predates CAL-P1305.
+        """
+        bound = self._unit_bound.get(name)
+        return bound.source if bound else None
 
     def as_payload(self) -> dict[str, Any]:
         return {

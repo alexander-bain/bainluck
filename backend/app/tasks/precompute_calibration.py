@@ -6067,11 +6067,19 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
                 int(worst_unit_ms or 0),
                 int(runner.ledger.observed_unit_worst_ms(PHASE_FUTURES) or 0),
             )
+            # CAL-P1305 (#6599, the second fence): say which term set the fence
+            # instead of leaving the predicate to infer it from headroom. The
+            # inference separates "the window" from "not the window", and there
+            # are THREE sources — production's 06:37:54Z beat cancelled a unit
+            # that had outrun every completion in the ring, and it was declined
+            # because the fence was the PHASE BUDGET, which does not widen on a
+            # quieter beat the way the justification for declining assumes.
             conclusive = cancellation_is_conclusive(
                 remaining_ms=remaining_ms,
                 bound_ms=int(unit_bound_ms or 0),
                 cancelled_after_ms=cancelled_after_ms,
                 worst_completed_ms=worst_completed_ms or None,
+                bound_source=runner.ledger.unit_bound_source(PHASE_FUTURES),
             )
             if conclusive:
                 # Recorded whether or not the split then applies, because the

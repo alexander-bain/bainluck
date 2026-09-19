@@ -265,9 +265,16 @@ class _Runner:
     async def apply_unit_statement_timeout(
         self, _db, phase, *, unit_ms=None, deferred_rebuild=False
     ) -> int:
-        armed = self.ledger.statement_timeout_for_unit(
-            phase, elapsed_ms=self._elapsed, unit_ms=unit_ms
-        )
+        # CAL-P1305: the real runner records the winning term on the LEDGER at
+        # ARM time and the loop reads it back when the unit cancels. A rig that
+        # skipped this would leave the predicate on its headroom inference and
+        # measure the tree this candidate is trying to leave.
+        armed = self.ledger.note_unit_bound(
+            phase,
+            self.ledger.statement_timeout_for_unit_detail(
+                phase, elapsed_ms=self._elapsed, unit_ms=unit_ms
+            ),
+        ).ms
         # The REAL runner records this pair beside the bound (CAL-P163) and
         # returns the bound; the loop's conclusiveness read is off the return
         # value, so a rig that dropped it would test a different writer.
@@ -1667,13 +1674,17 @@ class TestTheSecondFenceIsThePhaseBudget:
 
     # -- the predicate, on the 06:37:54Z row's own two units -----------------
 
-    def test_the_unit_fenced_by_the_phase_budget_is_declined(self):
-        """Unit 1: outran every completion in the ring, and is still declined.
+    def test_the_unit_fenced_by_the_phase_budget_is_declined_by_the_INFERENCE(self):
+        """Unit 1 under the headroom rule: outran the ring, declined anyway.
 
         1,255,944 >= 1,181,085, so condition 2 holds — which is precisely what
         ``00fca1140`` restored by making the ring legible beside a withdrawn
         basis. Condition 1 is what refuses it: 98,734 ms of headroom against a
         30,000 ms ceiling, because the fence was the phase budget.
+
+        Kept as the BEFORE, and it is still live behaviour: ``bound_source=None``
+        is what every caller that has not been taught to carry the source gets,
+        and CAL-P1305 deliberately did not change it.
         """
         assert not pcl.cancellation_is_conclusive(
             remaining_ms=1_352_256,
@@ -1681,6 +1692,82 @@ class TestTheSecondFenceIsThePhaseBudget:
             cancelled_after_ms=PROD_UNIT1_CANCELLED_AFTER_MS,
             worst_completed_ms=PROD_UNIT_WORST_MS,
         )
+
+    def test_the_same_unit_is_a_proof_once_the_caller_NAMES_the_fence(self):
+        """⭐ CAL-P1305, the whole fix, on production's own row.
+
+        Nothing about the unit changes — same remaining, same bound, same
+        duration, same ring. The caller stops making the predicate guess where
+        1,253,522 ms came from, and the answer inverts.
+        """
+        assert pcl.cancellation_is_conclusive(
+            remaining_ms=1_352_256,
+            bound_ms=PROD_PHASE_STATEMENT_TIMEOUT_MS,
+            cancelled_after_ms=PROD_UNIT1_CANCELLED_AFTER_MS,
+            worst_completed_ms=PROD_UNIT_WORST_MS,
+            bound_source=pcl.UNIT_BOUND_PHASE_BUDGET,
+        )
+
+    def test_a_named_UNIT_BASIS_fence_still_defers_and_that_is_the_whole_limit(self):
+        """The fix admits one source, not all three.
+
+        A measured per-unit basis is the one fence that widens for this slot on
+        its own — a completion at the larger size admits the larger bound — so a
+        unit stopped by it has still proved nothing, exactly as before. Without
+        this row the change would read as "stop deferring", which is not what it
+        does.
+        """
+        assert not pcl.cancellation_is_conclusive(
+            remaining_ms=1_352_256,
+            bound_ms=PROD_PHASE_STATEMENT_TIMEOUT_MS,
+            cancelled_after_ms=PROD_UNIT1_CANCELLED_AFTER_MS,
+            worst_completed_ms=PROD_UNIT_WORST_MS,
+            bound_source=pcl.UNIT_BOUND_UNIT_BASIS,
+        )
+
+    def test_the_arming_side_names_the_phase_budget_on_productions_own_numbers(self):
+        """The source is a FACT the build computes, not a label the test asserts.
+
+        The predicate is only as good as what the caller hands it, so the arming
+        side gets its own row: with production's plan and its 06:37:54Z window,
+        :meth:`statement_timeout_for_unit_detail` must return 1,253,522 ms and
+        say PHASE BUDGET. The ``.ms`` half is asserted equal to what
+        ``statement_timeout_for_unit`` has always returned, so this pair can
+        never drift into two different numbers.
+        """
+        ledger = _ledger(
+            window_ms=PROD_DEADLINE_MS,
+            unit_ms=None,
+            unit_ms_worst=None,
+            unit_ms_worst_observed=PROD_UNIT_WORST_MS,
+            units_done=1,
+            buckets=128,
+            phase_statement_timeout_ms=PROD_PHASE_STATEMENT_TIMEOUT_MS,
+        )
+        bound = ledger.statement_timeout_for_unit_detail(PHASE_FUTURES, elapsed_ms=0)
+        assert bound.source == pcl.UNIT_BOUND_PHASE_BUDGET
+        assert bound.ms == PROD_PHASE_STATEMENT_TIMEOUT_MS
+        assert bound.ms == ledger.statement_timeout_for_unit(PHASE_FUTURES, elapsed_ms=0)
+
+    def test_the_same_plan_without_that_budget_names_the_WINDOW(self):
+        """The control for the row above: only the budget moves, and the name does.
+
+        A source that reported ``phase_budget`` for every unit would pass the
+        test above while saying nothing, so the discriminating case is asserted
+        beside it.
+        """
+        ledger = _ledger(
+            window_ms=PROD_DEADLINE_MS,
+            unit_ms=None,
+            unit_ms_worst=None,
+            unit_ms_worst_observed=PROD_UNIT_WORST_MS,
+            units_done=1,
+            buckets=128,
+            phase_statement_timeout_ms=None,
+        )
+        bound = ledger.statement_timeout_for_unit_detail(PHASE_FUTURES, elapsed_ms=0)
+        assert bound.source == pcl.UNIT_BOUND_WINDOW
+        assert bound.ms == ledger.statement_timeout_for_unit(PHASE_FUTURES, elapsed_ms=0)
 
     def test_condition_two_does_hold_on_that_unit_so_the_ring_repair_is_not_what_failed(
         self,
@@ -1716,22 +1803,41 @@ class TestTheSecondFenceIsThePhaseBudget:
             cancelled_after_ms=PROD_UNIT2_CANCELLED_AFTER_MS,
             worst_completed_ms=PROD_UNIT_WORST_MS,
         )
+        # CAL-P1305 changes condition 1 and nothing else, so naming this unit's
+        # fence — it really was the window — must not rescue it. Condition 2 is
+        # what declines here, and 65,847 ms is still no evidence about a slot
+        # whose population completes at 1,181,085 ms.
+        assert not pcl.cancellation_is_conclusive(
+            remaining_ms=remaining,
+            bound_ms=PROD_UNIT2_BOUND_MS,
+            cancelled_after_ms=PROD_UNIT2_CANCELLED_AFTER_MS,
+            worst_completed_ms=PROD_UNIT_WORST_MS,
+            bound_source=pcl.UNIT_BOUND_WINDOW,
+        )
 
     # -- the same thing, driven through the real beat loop -------------------
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "oversized,fenced_first_split,fenced_publish,free_publish",
-        [(16, 14, 46, 43), (32, 21, 90, 83), (64, 36, 174, 160)],
+        [(16, 1, 43, 43), (32, 1, 83, 83), (64, 1, 160, 160)],
     )
-    async def test_the_phase_budget_erases_the_beat_one_cut(
+    async def test_the_phase_budget_no_longer_erases_the_beat_one_cut(
         self, drive, oversized, fenced_first_split, fenced_publish, free_publish
     ):
-        """THE FAILING BEFORE: the candidate's whole saving, gone.
+        """⭐ CAL-P1305 through the real beat loop, at production's plan size.
 
         Both arms are the candidate — ``ring_readable=True`` in each — so the
         difference cannot be attributed to CAL-P1304. The only thing that moves
-        is whether the futures budget fences the unit.
+        is whether the futures budget fences the unit, and with the fence NAMED
+        it no longer costs the cut: the fenced arm cuts on beat 1 and publishes
+        on the same beat as the arm that was never fenced at all.
+
+        Before CAL-P1305 this same table read ``(16, 14, 46, 43)``,
+        ``(32, 21, 90, 83)``, ``(64, 36, 174, 160)`` — the graded tree's own
+        first-split beats, i.e. the candidate contributing nothing in the regime
+        production is actually in. Those numbers are the BEFORE and are the
+        reason this class was written.
         """
         fenced = await drive(
             buckets=128,
@@ -1775,16 +1881,17 @@ class TestTheSecondFenceIsThePhaseBudget:
         )
 
     @pytest.mark.asyncio
-    async def test_the_fenced_first_splits_are_the_graded_trees_own_numbers(
+    async def test_the_fenced_first_splits_are_no_longer_the_graded_trees_own_numbers(
         self, drive
     ):
-        """The candidate reproduces the tree it was written to beat.
+        """The candidate stops reproducing the tree it was written to beat.
 
         Asserted as its own row because it is the finding, not a detail: with
-        the phase budget binding, ``cancellation_is_conclusive`` contributes
-        nothing at all at the plan size production runs.
+        the phase budget binding AND named, ``cancellation_is_conclusive`` cuts
+        on beat one at every plan size production runs — where it previously
+        contributed nothing at all.
         """
-        graded_first_splits = {16: 14, 32: 21, 64: 36}
+        graded_first_splits = {16: 1, 32: 1, 64: 1}
         measured = {}
         for oversized in graded_first_splits:
             fenced = await drive(
