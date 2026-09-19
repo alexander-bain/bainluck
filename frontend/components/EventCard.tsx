@@ -24,6 +24,7 @@ import {
   hasNoReportedResult,
   isFinishedStatus,
   suspendedSummary,
+  venueSettledSummary,
 } from "@/lib/eventState";
 
 type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned' | 'my_stuff';
@@ -308,6 +309,28 @@ export default function EventCard({
   // opens by naming as the quieter lie.
   const isSuspended = hasNoReportedResult(event.status, event.commence_time);
 
+  // #7070 — THE CARD STOPS DENYING A RESULT ITS OWN PAYLOAD CARRIES.
+  //
+  // `/sport/tennis/atp`, phone width: two cards reading "No result reported ·
+  // Sep 18" over matches whose detail payload said "Settled · Sanchez
+  // Izquierdo wins" in the same minute. 17 of 42 rail rows across eight
+  // leagues, measured through the routes; four of those leagues at 0, which is
+  // the shape that proves this is the venue's grade and not a relabelling.
+  //
+  // COMPUTED BESIDE `isSuspended`, NEVER INSTEAD OF IT — the event page's own
+  // #6381 comment says why and this is the same decision on the other surface.
+  // The flag's other consumers on this card (the withheld live chip, the
+  // withheld bar, the pre-match-only reading) are all still right about a
+  // venue-settled match: nothing is reporting on it and there is no forecast
+  // left. Only the SENTENCE was wrong, so only the sentence moves.
+  //
+  // `venueSettledSummary` returns null on every row the venue has not graded —
+  // including every row on a payload that does not carry the keys at all, which
+  // today is every `/api/events` list row — so those cards are untouched.
+  const venueSettledSentence = isSuspended
+    ? venueSettledSummary(event.venue_settled, event.venue_settled_result)
+    : null;
+
   // #2882 — NEITHER side has a number. This is #3459's rule reaching the league
   // and tour rails: `AnimatedProbability` prints `-` per side and has no notion
   // of both sides being absent, so a card with no price rendered as two dashes
@@ -572,9 +595,21 @@ export default function EventCard({
                   settled sibling below prints, so this carries the same gotcha
                   #14 guard: a row whose `commence_time` is really a Kalshi close
                   stamp renders "" — no date — rather than a future one. */}
+              {/* #7070 — the venue's grade outranks our silence here exactly as
+                  it does in the hero one tap away (`page.tsx`, #6381): the card
+                  a reader taps and the page they land on now say the same
+                  sentence about the same match. The date stays and stays LAST
+                  for #6361's reason — it is what tells two meetings of the same
+                  pair apart — and it is as true of a graded row as of a denied
+                  one. `venueSettledSummary` is null on every other row, so the
+                  fall-through below is unchanged for them. */}
               {isSuspended && (
-                <span className="text-micro-xs text-text-muted">
-                  {suspendedSummary(event.away_score, event.home_score, "home-away")}
+                <span
+                  className="text-micro-xs text-text-muted"
+                  data-venue-settled={venueSettledSentence ? "true" : undefined}
+                >
+                  {venueSettledSentence ??
+                    suspendedSummary(event.away_score, event.home_score, "home-away")}
                   {finishedDateStr && <> · {finishedDateStr}</>}
                 </span>
               )}

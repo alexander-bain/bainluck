@@ -1943,6 +1943,16 @@ export interface LeagueGameBrief {
   home_team_data?: TeamData;
   away_team_data?: TeamData;
   espn?: { period?: string; game_clock?: string; broadcast?: string };
+  // ── #6739 second half / #7070 ──
+  // The venue's own verdict on a rail row that has no score of ours, under the
+  // SAME names `/api/events/{id}` has served since #6381 and with the same
+  // three states (absent = never asked · `false` = asked, nothing graded ·
+  // `true` = a source settled its markets). Served on ALL THREE rails, because
+  // a `suspended` row reaches the results rail too and pinning one rail would
+  // leave its sibling saying the opposite thing on the same page.
+  // @see Event.venue_settled for what the result string is and is not.
+  venue_settled?: boolean;
+  venue_settled_result?: string | null;
 }
 
 export interface LeagueFuturesResponse {

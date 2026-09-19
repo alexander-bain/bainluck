@@ -19,6 +19,7 @@
 import type { LeagueGameBrief, LeagueMarket, LeagueMarketOutcome } from "./api";
 import type { QuantityRung } from "@/components/QuantityGroup";
 import type { Event } from "./types";
+import { SUSPENDED_LABEL, venueSettledSummary } from "./eventState";
 
 // ---------------------------------------------------------------------------
 // 1. Events → the standard event card
@@ -87,7 +88,70 @@ export function leagueGameToEvent(game: LeagueGameBrief): Event {
   if (game.away_team_data) event.away_team_data = game.away_team_data;
   if (game.espn) event.espn = game.espn as Event["espn"];
 
+  // #7070 — the venue's verdict travels, and its ABSENCE travels too.
+  //
+  // `in` and not truthiness: the envelope's three states are absent / `false` /
+  // `true`, and the middle one ("we asked and nothing graded it") is a real
+  // answer that `if (game.venue_settled)` would flatten into the first. The
+  // card's own test is a truthiness test, so today the two behave alike — but
+  // this function's job is to hand the card what the envelope said, not to
+  // decide which of the two absences the card will one day care about.
+  //
+  // The result rides along on the SAME condition rather than on its own: it is
+  // the sentence `venue_settled` licenses, and a payload that carried a result
+  // without the flag would be a producer bug, not a row to salvage.
+  if ("venue_settled" in game) {
+    event.venue_settled = game.venue_settled;
+    event.venue_settled_result = game.venue_settled_result ?? null;
+  }
+
   return event;
+}
+
+/**
+ * The heading over the third games rail — #7070.
+ *
+ * ── WHY THE HEADING MOVES AT ALL ──
+ *
+ * The rail's heading was written to be "the same sentence the cards under it
+ * print", and that was exactly true while every card denied having a result.
+ * Once the venue's grade reaches the cards (#6739), the rail holds a mixture:
+ * six `tennis_atp` rows on 2026-09-18 all named a winner, three other leagues
+ * named none. A heading reading NO RESULT REPORTED over a card reading
+ * "Settled · Sanchez Izquierdo wins" is the page contradicting itself inside
+ * one screen — the #7060 defect, in a heading instead of a banner.
+ *
+ * ── WHY "OTHER GAMES" AND NOT A BETTER WORD ──
+ *
+ * Every candidate that carries information is false about half the rail. "No
+ * score reported" is contradicted by a result string that CONTAINS a score
+ * (`"Draw 0-0"`, `"Sabalenka wins 2-0"`) — and the client may not look inside
+ * that string to find out, because parsing it is the one thing #6381 forbids a
+ * consumer to do. "Results" is false about the ungraded rows; "Awaiting
+ * results" is the promise the rail's own comment refuses to make.
+ *
+ * So the mixed heading claims NOTHING and lets each card speak: the reader
+ * learns the state from the card, which is where it is actually known. The
+ * denial stays where it is still true of every row, because it is the more
+ * informative of the two and this rail is often entirely denials.
+ *
+ * Keyed on the SUMMARY and not on the result string: a row graded without a
+ * named side prints the bare "Settled", which contradicts the denial just as
+ * loudly as a named winner does.
+ *
+ * A function and not a ternary in the JSX, for `lib/eventState.ts`'s standing
+ * reason: a Next.js page carries no named exports, so a decision written into
+ * its markup is one no test can hold.
+ */
+export const MIXED_UNREPORTED_RAIL_TITLE = "Other games";
+
+export function unreportedRailTitle(
+  games: Pick<LeagueGameBrief, "venue_settled" | "venue_settled_result">[],
+): string {
+  const namesAResult = games.some(
+    (g) => venueSettledSummary(g.venue_settled, g.venue_settled_result) !== null,
+  );
+  return namesAResult ? MIXED_UNREPORTED_RAIL_TITLE : SUSPENDED_LABEL;
 }
 
 // ---------------------------------------------------------------------------
