@@ -285,7 +285,25 @@ async def test_the_withdrawn_grade_leaves_the_AGGREGATE_line_too():
 
     # The rig can see a difference at all — without this the assertion above
     # would pass against a route that never computed an aggregate.
-    assert unrepaired["aggregate_line"][-1]["home_probability"] == 0.995
+    #
+    # #4976 MOVED THIS CLAUSE, and the move is the finding, not a relaxation.
+    # It used to read `unrepaired[-1] == 0.995`: the stranded grade captured the
+    # whole aggregate because the decay had already removed every other source
+    # from the pool, so one surviving reading WAS the weighted median. Pre-game
+    # buckets no longer decay (#4976, under #1999), so on this pre-kick-off
+    # fixture the stranded 0.995 is now outvoted by polymarket 0.50 (0.8) and
+    # espn 0.50 (1.5) and the unrepaired line reads 0.50 as well. Measured
+    # through the real route, live/353: 0 of 21 shared points differ, and the
+    # only residue is one extra bucket (22 vs 21).
+    #
+    # So the strawman is taken at the INPUT, where the lever still bites
+    # hard, rather than at a served value that now encodes the decay policy
+    # instead of this repair. Deleting the withdrawal makes the kalshi series
+    # reappear in the payload, ending at its 0.995 grade; that is the thing
+    # #6535 exists to stop, and it is what this rig must still be able to see.
+    assert "kalshi" not in (withdrawn.get("win_prob_history") or {})
+    assert "kalshi" in (unrepaired.get("win_prob_history") or {})
+    assert unrepaired["win_prob_history"]["kalshi"][-1]["home_probability"] == 0.995
     assert unrepaired["aggregate_line"] != withdrawn["aggregate_line"]
 
 
