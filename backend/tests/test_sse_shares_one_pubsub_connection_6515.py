@@ -869,7 +869,13 @@ _RECORDED_ASYNC_POOL_SITES = {
     "routes/futures.py": 1,
     "routes/golf.py": 2,
     "routes/oscars.py": 1,
-    "routes/playoffs.py": 8,
+    # 8 -> 9 (#7109). `_rebuild_playoff_grid` republishes both grid cache keys
+    # behind a last-good serve. Third kind: a pool per call, lazy, one op then
+    # dropped. It is the most bounded site in that category — the refresh is
+    # gated by `_serve_stale_and_refresh`'s in-flight set, so it fires at most
+    # once per league per lapse, NOT once per request, and only while the fresh
+    # key is cold. Comment read before the entry moved, as this census asks.
+    "routes/playoffs.py": 9,
     "routes/politics.py": 2,
     "routes/tournaments.py": 3,
     "routes/weather.py": 1,

@@ -3078,6 +3078,157 @@ async def _serve_grid_degraded(
 
 
 # ---------------------------------------------------------------------------
+# Refresh-behind for the last-good serve (#7109)
+# ---------------------------------------------------------------------------
+#
+# 🔴 **A LAPSED GRID KEY USED TO BE SELF-SUSTAINING.** The read path below finds
+# the 3900 s fresh key cold, finds the 24 h ``:stale`` mirror usable, serves it
+# and STOPS — it rebuilds nothing and rewrites neither key. So the only thing in
+# the system that can end the lapse is ``precompute_category_pages``, which owns
+# both writes. For a league that beat cannot warm, "stale" is not a window that
+# closes: every subsequent read is answered by the same mirror until it expires
+# a day later, and the next read after THAT pays a cold build.
+#
+# Measured on production 2026-09-19 (#7109, found paying #7076's after-check):
+# ``/api/playoffs/mlb`` served a payload built at 00:26:33Z for 3 h 24 m, while
+# nhl/nba/nfl warmed inside one 18-second window at 02:25Z. The reader's
+# Championship Path read Division 1% / AL Champ 1% / World Series 1% — the exact
+# defect #7076 had already FIXED and verified (the cache-bypassing door served
+# 1% / 12% / 5%) — plus 22 of 30 MLB team records a game behind. A correct,
+# merged, released fix could not reach the page.
+#
+# The repair is serve-stale-and-REFRESH, and the distinction from a warmer is
+# the whole point (LAT-P116 argues it at length in ``routes/events.py``): a
+# warmer is a second schedule that can silently stop, and this defect IS that
+# schedule silently stopping. A refresh triggered BY the read has no schedule to
+# fail — if it never runs, the only consequence is that the next read tries
+# again.
+#
+# 🔴 This does NOT repair the warm beat, and must not be read as having done so.
+# MLB still times out on the background worker (``duration_s=89.4`` against a
+# ``timeout_s=66.1`` it was offered — a ``wait_for`` overrunning its own deadline
+# by 23.3 s, which is a blocking stretch inside the build, not a slow query), and
+# the pass that overruns far enough dies at ``time_limit=360`` without writing
+# its run report. Those live in ``tasks/precompute_category_pages.py`` and are
+# the latency lane's (notice 41). This layer's claim is narrower and is the
+# reader's: a league the beat failed to warm now heals on the next read instead
+# of waiting a day for the mirror to expire.
+
+#: How long a refresh-behind rebuild may run before it is abandoned. The same
+#: wall the reader's own live build gets below, on purpose: this path does, off
+#: the reader's clock, exactly the build the reader would otherwise have paid
+#: for, so a second and quieter number here would mean a grid that is refusable
+#: in the foreground and unbounded in the background. Measured cost of the
+#: build this actually runs, three consecutive production reads on 2026-09-19:
+#: 5.1 s / 6.4 s / 6.8 s for mlb, the most expensive league in the list.
+GRID_REFRESH_BEHIND_TIMEOUT_S = 25
+
+
+async def _rebuild_playoff_grid(league_slug: str) -> None:
+    """Rebuild one league's grid behind a last-good serve, and publish both keys.
+
+    Opens its OWN session: the request's ``AsyncSession`` is not ours to hold
+    past the response (``_serve_stale_and_refresh``'s contract, and the reason
+    that helper takes a zero-arg coroutine function rather than a coroutine).
+
+    🔴 **Publishes only what the READER would accept as last-good.** This writer
+    owns the 24 h ``:stale`` mirror as well as the fresh key, so a transiently
+    empty build here would not merely fail to help — it would replace a working
+    grid with one the route then refuses as a fallback, turning a healthy page
+    into a live rebuild, which for a league like NFL is the 503. That is the
+    same reasoning, and the same predicate, as the warm task's publish; three
+    leagues build empty out of season today, so it is the ordinary case.
+
+    Never raises into the reader's path: ``_serve_stale_and_refresh`` wraps the
+    call and logs, leaving the existing cached value alone on any failure.
+    """
+    import asyncio
+    import json
+
+    from app.services.database import async_session_maker
+    from app.tasks.redis_state import get_async_redis_client
+
+    cache_key = f"bainluck:category:playoffs:{league_slug}"
+
+    async with async_session_maker() as session:
+        # `hours=None, top=10, debug=False` is not a default — it is the ONE
+        # shape whose cache keys this writer owns (`cache_eligible` below).
+        # Rebuilding any other shape and publishing it here would put a payload
+        # under a key the reader asks a different question of.
+        result = await asyncio.wait_for(
+            get_playoff_grid(league_slug, None, 10, False, session),
+            timeout=GRID_REFRESH_BEHIND_TIMEOUT_S,
+        )
+
+    if not _grid_payload_usable(result):
+        logger.warning(
+            "Playoff grid refresh-behind for %s built an unusable/empty "
+            "payload — keeping last-good (#7109)",
+            league_slug,
+        )
+        return
+
+    rc = get_async_redis_client()
+    try:
+        payload = json.dumps(result, default=str)
+        await rc.set(cache_key, payload, ex=3900)
+        await rc.set(f"{cache_key}:stale", payload, ex=86400)
+    finally:
+        await rc.aclose()
+
+    logger.info(
+        "Playoff grid refresh-behind republished %s (%d teams) — the lapsed "
+        "key is no longer self-sustaining (#7109)",
+        league_slug,
+        len(result.get("teams") or []),
+    )
+
+
+def _schedule_grid_refresh(league_slug: str) -> bool:
+    """Kick a rebuild onto the loop behind a last-good serve. Never raises.
+
+    Returns True when a rebuild is running or already in flight. False means the
+    lapse was NOT repaired this time — an unrecognised league, no running loop,
+    or a dispatch that failed — in which case the caller still serves last-good
+    exactly as it did before #7109, and the next read tries again.
+
+    🔴 **The slug is resolved against the league registry before it is used for
+    anything, and the RESOLVED value is what travels on.** ``league_slug`` is a
+    path parameter, so it is a user-controlled string: interpolating it into a
+    log line is log injection (CodeQL ``py/log-injection``, medium — caught on
+    this change), and dispatching background work keyed on it would let an
+    arbitrary string name a task and a cache key. Resolving through
+    ``get_all_league_slugs()`` answers both at once, and it is the honest guard
+    rather than a sanitiser: a slug we have no config for has no grid to
+    rebuild, so there is nothing here to do for it.
+    """
+    from functools import partial
+
+    # Deliberately the value from OUR registry, not the caller's string — that
+    # is what makes everything downstream (task name, log line) untainted.
+    slug = next((s for s in get_all_league_slugs() if s == league_slug), None)
+    if slug is None:
+        return False
+
+    try:
+        from app.routes.events import _serve_stale_and_refresh
+
+        return _serve_stale_and_refresh(
+            f"playoff_grid:{slug}",
+            partial(_rebuild_playoff_grid, slug),
+        )
+    except Exception:  # noqa: BLE001
+        # A refresh that cannot even be dispatched must not turn a working
+        # last-good serve into a 500. The reader's payload is already in hand.
+        logger.warning(
+            "Playoff grid refresh-behind could not be scheduled for %s (#7109)",
+            slug,
+            exc_info=True,
+        )
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Endpoint
 # ---------------------------------------------------------------------------
 
@@ -3118,6 +3269,13 @@ async def get_playoff_grid_cached(
                 candidate = json.loads(stale)
                 if _grid_payload_usable(candidate):
                     await rc.aclose()
+                    # #7109. Serving last-good and STOPPING is what made a
+                    # lapsed key self-sustaining: neither key is rewritten, so
+                    # only the warm beat could ever end the lapse, and a league
+                    # that beat cannot warm stayed on one payload for the
+                    # mirror's full 24 h. Refresh behind the serve — the reader
+                    # still gets this payload, on this request, at this speed.
+                    _schedule_grid_refresh(league_slug)
                     return _mark_last_good(candidate, "cache_miss", degraded=False)
             await rc.aclose()
         except Exception:
