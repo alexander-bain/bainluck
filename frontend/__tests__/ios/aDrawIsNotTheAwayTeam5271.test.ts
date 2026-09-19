@@ -195,7 +195,12 @@ d("a draw is not the away team on iOS", () => {
     );
     // The withheld arm: a named short pair, then the one number.
     expect(code).toMatch(
-      /if let away = pair\.away \{[\s\S]{0,2400}\} else \{[\s\S]{0,900}TeamShortName\.shortPair\([\s\S]{0,120}\)[\s\S]{0,400}Text\(named\.home\)/
+      // The span inside `shortPair(` was 120 and is now 220: #7163 added a
+      // `sportKey: event.sport` argument (a person's surname keeps its
+      // particles, and the pair rule has to know whether the competitors are
+      // people). Only the call's LENGTH moved — the arm, its order and the
+      // named `Text(named.home)` it ends on are asserted exactly as before.
+      /if let away = pair\.away \{[\s\S]{0,2400}\} else \{[\s\S]{0,900}TeamShortName\.shortPair\([\s\S]{0,220}\)[\s\S]{0,400}Text\(named\.home\)/
     );
   });
 
@@ -540,7 +545,11 @@ d("a draw is not the away team on iOS", () => {
 
     expect(view).toMatch(/sport: event\.sport/);
     expect(view).toMatch(
-      /if firstNamed\.isHome \{[\s\S]{0,400}TeamShortName\.shortPair\([\s\S]{0,140}\)\.home/
+      // 140 → 220 for the same reason as the hero above: #7163's
+      // `sportKey: event.sport` argument lengthened the call. The reading it
+      // guards — the lone number moves to HOME and the row names it — is
+      // untouched, and `.home` is still pinned to the end of the call.
+      /if firstNamed\.isHome \{[\s\S]{0,400}TeamShortName\.shortPair\([\s\S]{0,220}\)\.home/
     );
   });
 

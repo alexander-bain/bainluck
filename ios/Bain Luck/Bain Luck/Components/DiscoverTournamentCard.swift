@@ -176,7 +176,7 @@ struct NativeTournamentDiscoverCard: View {
                                     Text(FeedProbabilityScale.percentLabel(fromFraction: golfer.probability))
                                         .font(.caption.bold())
                                         .foregroundStyle(.white.opacity(0.9))
-                                    Text(TeamShortName.short(golfer.name))
+                                    Text(TeamShortName.short(golfer.name, sportKey: "golf"))
                                         .font(.caption)
                                         .foregroundStyle(.white.opacity(0.7))
                                         .lineLimit(1)

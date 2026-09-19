@@ -156,7 +156,8 @@ struct EventDetailView: View {
             awayScore: as_, homeScore: hs,
             awayServed: event.awayTeamData?.abbreviation,
             homeServed: event.homeTeamData?.abbreviation,
-            state: state
+            state: state,
+            sportKey: event.sport
         )
     }
 
@@ -169,7 +170,8 @@ struct EventDetailView: View {
         return EventNavTitle.scoreless(
             away: event.awayTeam, home: event.homeTeam,
             awayServed: event.awayTeamData?.abbreviation,
-            homeServed: event.homeTeamData?.abbreviation
+            homeServed: event.homeTeamData?.abbreviation,
+            sportKey: event.sport
         )
     }
 
@@ -834,7 +836,8 @@ struct EventDetailView: View {
                             // LOSER could not have been called it too, so the
                             // pair decides even though one side is shown.
                             let duel = TeamShortName.shortPair(
-                                away: event.awayTeam, home: event.homeTeam
+                                away: event.awayTeam, home: event.homeTeam,
+                                sportKey: event.sport
                             )
                             let winnerName = homeWon ? duel.home : duel.away
                             Text("\(winnerName) Win")
@@ -866,7 +869,8 @@ struct EventDetailView: View {
                                     .foregroundStyle(.secondary)
                             } else {
                                 let named = TeamShortName.shortPair(
-                                    away: event.awayTeam, home: event.homeTeam
+                                    away: event.awayTeam, home: event.homeTeam,
+                                    sportKey: event.sport
                                 )
                                 Text("Opened \(named.home) \(formatProbability(opened.home))")
                                     .font(.caption2)
@@ -995,7 +999,8 @@ struct EventDetailView: View {
                             // `100 − other`, which is a number about a
                             // complement this branch is refusing to print.
                             let named = TeamShortName.shortPair(
-                                away: event.awayTeam, home: event.homeTeam
+                                away: event.awayTeam, home: event.homeTeam,
+                                sportKey: event.sport
                             )
                             VStack(spacing: 2) {
                                 Text(named.home)
@@ -1049,7 +1054,8 @@ struct EventDetailView: View {
                             // move belongs to. A label the other side shares
                             // un-names it again, so take the pair.
                             names: TeamShortName.shortPair(
-                                away: event.awayTeam, home: event.homeTeam
+                                away: event.awayTeam, home: event.homeTeam,
+                                sportKey: event.sport
                             )
                         ) {
                             Text(caption.text)
@@ -1157,7 +1163,8 @@ struct EventDetailView: View {
                                     .foregroundStyle(.secondary)
                             } else {
                                 let named = TeamShortName.shortPair(
-                                    away: event.awayTeam, home: event.homeTeam
+                                    away: event.awayTeam, home: event.homeTeam,
+                                    sportKey: event.sport
                                 )
                                 Text("Opened \(named.home) \(formatProbability(opened.home))")
                                     .font(.caption2)

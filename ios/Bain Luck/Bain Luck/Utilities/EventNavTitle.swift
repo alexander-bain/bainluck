@@ -91,13 +91,15 @@ enum EventNavTitle {
         homeScore: Int,
         awayServed: String? = nil,
         homeServed: String? = nil,
-        state: String = ""
+        state: String = "",
+        sportKey: String? = nil
     ) -> Rungs {
         // #3430 — the two sides of ONE matchup, so the pair rule decides. Read
         // alone, "Tigers" names Clemson perfectly well; this title read
         // "Tigers 10 - Tigers 51" because LSU are the Tigers too.
         let labels = TeamShortName.shortPair(
-            away: away, home: home, awayServed: awayServed, homeServed: homeServed
+            away: away, home: home, awayServed: awayServed, homeServed: homeServed,
+            sportKey: sportKey
         )
         let codes = TeamShortName.abbreviationPair(
             away: away, home: home, awayServed: awayServed, homeServed: homeServed
@@ -123,10 +125,12 @@ enum EventNavTitle {
         away: String,
         home: String,
         awayServed: String? = nil,
-        homeServed: String? = nil
+        homeServed: String? = nil,
+        sportKey: String? = nil
     ) -> String {
         let labels = TeamShortName.shortPair(
-            away: away, home: home, awayServed: awayServed, homeServed: homeServed
+            away: away, home: home, awayServed: awayServed, homeServed: homeServed,
+            sportKey: sportKey
         )
         return "\(labels.away) vs \(labels.home)"
     }

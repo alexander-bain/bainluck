@@ -482,7 +482,9 @@ struct NativeEventDiscoverCard: View {
     /// are resolved together and handed in. Deriving each from its own name
     /// inside this function is what let the two sides print the same word.
     private var cardSides: (away: String, home: String) {
-        TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam)
+        TeamShortName.shortPair(
+            away: event.awayTeam, home: event.homeTeam, sportKey: event.sport
+        )
     }
 
     private var cardBadges: (away: String, home: String) {

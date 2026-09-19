@@ -474,7 +474,8 @@ struct EventCardView: View {
                         .foregroundStyle(.tertiary)
                 } else {
                     let named = TeamShortName.shortPair(
-                        away: event.awayTeam, home: event.homeTeam
+                        away: event.awayTeam, home: event.homeTeam,
+                        sportKey: event.sport
                     )
                     Text("Opened \(named.home) \(formatProbability(opened.home))")
                         .font(.caption2)

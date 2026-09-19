@@ -254,7 +254,8 @@ struct Bain_LuckApp: App {
                 if let best = liveEvents.first {
                     // #3430 — one matchup, both sides, one line of text.
                     let (away, home) = TeamShortName.shortPair(
-                        away: best.awayTeam, home: best.homeTeam
+                        away: best.awayTeam, home: best.homeTeam,
+                        sportKey: best.sport
                     )
                     let score = "\(away) \(best.awayScore ?? 0) - \(home) \(best.homeScore ?? 0)"
                     // #5057 — the seventh site. This was a FALLBACK, not a join,

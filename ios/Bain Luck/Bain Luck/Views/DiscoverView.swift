@@ -2885,7 +2885,9 @@ private enum NativeGuessCardContent {
 
     /// #3430 — labels for both competitors of one matchup.
     static func pair(_ event: FeedEventData) -> (away: String, home: String) {
-        TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam)
+        TeamShortName.shortPair(
+            away: event.awayTeam, home: event.homeTeam, sportKey: event.sport
+        )
     }
 }
 
