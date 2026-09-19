@@ -340,7 +340,44 @@ class TestTheRebuildMatchesTheCacheEligibleRequest:
 
 
 # ---------------------------------------------------------------------------
-# 6. The key layout is shared, not re-derived.
+# 6. The slug is a path parameter, so it never reaches a log line raw.
+# ---------------------------------------------------------------------------
+class TestLogInjection:
+    def test_a_known_league_logs_as_itself(self):
+        assert pgc._log_league("mlb") == "mlb"
+        assert pgc._log_league("nba") == "nba"
+
+    @pytest.mark.parametrize(
+        "hostile",
+        [
+            "mlb\nINFO forged log entry",
+            "mlb\r\n2026-01-01 CRITICAL everything is fine",
+            "../../etc/passwd",
+            "",
+        ],
+    )
+    def test_a_hostile_slug_never_reaches_the_log(self, hostile):
+        """CodeQL grades a path parameter reaching a logger `py/log-injection`
+        at MEDIUM — a notice-32 refuse. The value logged is re-sourced from our
+        own config, so a newline cannot forge an entry."""
+        assert pgc._log_league(hostile) == "<unknown-league>"
+
+    def test_the_log_lines_pass_the_sanitised_value_not_the_argument(self):
+        """The guard is only worth having if the call sites use it. Drives the
+        real failure paths and asserts the raw slug is absent from the record."""
+        hostile = "mlb\nINFO forged"
+
+        with patch.object(pgc, "serve_stale_and_refresh", side_effect=RuntimeError):
+            with patch.object(pgc.logger, "warning") as warn:
+                pgc.schedule_grid_refresh(hostile)
+
+        assert warn.call_count == 1
+        assert hostile not in warn.call_args.args
+        assert "<unknown-league>" in warn.call_args.args
+
+
+# ---------------------------------------------------------------------------
+# 7. The key layout is shared, not re-derived.
 # ---------------------------------------------------------------------------
 class TestKeyLayout:
     def test_the_keys_are_the_ones_already_live_in_production(self):

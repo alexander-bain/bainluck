@@ -95,6 +95,30 @@ MIRROR_TTL = 86400
 REFRESH_TIMEOUT_S = 90
 
 
+def _log_league(league_slug: str) -> str:
+    """The league slug, re-sourced from the config, for use in a log line.
+
+    `league_slug` is a PATH PARAMETER, and CodeQL grades one reaching a log
+    statement `py/log-injection` at medium severity (a newline in the value
+    forges log entries) — a notice-32 refuse. It is not reachable today: the
+    route resolves the slug against `get_league_config` before any of this can
+    matter. But that invariant lives two functions away from the log statement,
+    a scanner cannot see it, and neither can the next person to add a caller.
+
+    Returning the KEY out of our own config rather than the argument makes it
+    locally true instead of argued: what gets logged is a literal we sourced
+    ourselves, or nothing. At runtime this is the identity function on every
+    path that exists today. Same shape as `routes/tournaments._log_slug`; the
+    house rule is "log a value we sourced ourselves or nothing at all".
+    """
+    from app.config.league_configs import get_all_league_slugs
+
+    for known in get_all_league_slugs():
+        if known == league_slug:
+            return known
+    return "<unknown-league>"
+
+
 def grid_cache_keys(league_slug: str) -> ConceptCacheKeys:
     """Every Redis key one league's grid owns.
 
@@ -163,7 +187,7 @@ async def rebuild_grid(league_slug: str) -> bool:
         logger.warning(
             "playoff grid: refresh-behind for %s built an unusable payload — "
             "keeping last-good",
-            league_slug,
+            _log_league(league_slug),
         )
     return published
 
@@ -194,7 +218,7 @@ def schedule_grid_refresh(league_slug: str, rc=None) -> bool:
     except Exception:  # noqa: BLE001
         logger.warning(
             "playoff grid: could not schedule refresh-behind for %s",
-            league_slug,
+            _log_league(league_slug),
             exc_info=True,
         )
         return False
