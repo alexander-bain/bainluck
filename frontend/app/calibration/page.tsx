@@ -933,12 +933,12 @@ export default function CalibrationPage() {
               reflects what readers actually saw rather than treating a 12-outcome bucket as the
               equal of a 40,000-outcome one.{" "}
               {priceCohort === "all" && (
-                <>95% confidence interval on the worst-bucket figure:{" "}
+                <>95% confidence interval on the per-bucket figure:{" "}
                 <span className="tabular-nums text-text-secondary">
                   {data.mce_ci_lower.toFixed(1)}&ndash;{data.mce_ci_upper.toFixed(1)}pp
                 </span>.{" "}</>
               )}
-              Worst-bucket error (MCE, equal-weighted){" "}
+              Per-bucket error, the ten buckets averaged with equal weight{" "}
               <span className="tabular-nums text-text-secondary">{cohortMCE.toFixed(1)}pp</span>;
               Brier <span className="tabular-nums text-text-secondary">{cohortBrier.toFixed(4)}</span>.
             </p>
@@ -1094,9 +1094,10 @@ export default function CalibrationPage() {
             Each row is one <strong className="text-text-secondary">data provider</strong>, measured
             by pooling its outcomes and running the same calculation used for every other row.{" "}
             <strong className="text-text-secondary">ECE</strong> (n-weighted error) is the headline
-            metric &mdash; it reflects the outcomes users actually see. MCE (equal-weighted) is a
-            secondary &ldquo;worst-bucket sensitivity&rdquo; stat where a tiny bucket counts as much
-            as a huge one.
+            metric &mdash; it reflects the outcomes users actually see. The{" "}
+            <strong className="text-text-secondary">per-bucket</strong> figure averages the ten
+            probability buckets with equal weight, so a tiny bucket counts as much as a huge one
+            &mdash; which is why it can read below ECE.
             {shapeInline ? null : (
               <>
                 {" "}Sportsbook odds arrive in three shapes (moneylines, spreads, totals); the
@@ -1116,8 +1117,17 @@ export default function CalibrationPage() {
                 <th className="pb-2 pr-1 sm:pr-4">Source</th>
                 <th className="pb-2 pr-1 sm:pr-4 text-right">Outcomes</th>
                 <th className="pb-2 pr-1 sm:pr-4 text-right">ECE</th>
-                <th className="pb-2 pr-1 sm:pr-4 text-right" title="Max/worst-bucket sensitivity (equal-weighted): a small bucket counts as much as a large one, so it over-reacts to thin samples.">
-                  MCE&nbsp;<span className="text-text-muted/60">&#9432;</span>
+                {/* #7174. This column USED to be headed "MCE" over a tooltip
+                    that opened with the word "Max". The number under it is
+                    `mce()` — an equal-weighted MEAN over the ten buckets — so
+                    the header named a statistic the value is not, and the pair
+                    contradicted itself in front of the reader: production on
+                    2026-09-19 printed Polymarket at ECE 2.7pp and "MCE" 2.6pp,
+                    and a maximum cannot sit below a mean of the same errors.
+                    Renamed to what it IS. See `calibration_ece.py`, which has
+                    said so in its own docstring since CAL-P067. */}
+                <th className="pb-2 pr-1 sm:pr-4 text-right" title="Average error across the ten probability buckets, each counted once — so a thin bucket weighs as much as a busy one. A mean, not a maximum, so it can read below ECE.">
+                  Per-bucket&nbsp;<span className="text-text-muted/60">&#9432;</span>
                 </th>
                 <th className="pb-2 text-right">Brier</th>
               </tr>
@@ -1162,7 +1172,7 @@ export default function CalibrationPage() {
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
         <h2 className="text-title-3 text-text-primary mb-1">How We Compare</h2>
         <p className="text-xs text-text-muted mb-4">
-          Our aggregate MCE compared to published calibration benchmarks from academic research and forecasting platforms.
+          Our aggregate per-bucket error compared to published calibration benchmarks from academic research and forecasting platforms.
         </p>
         <div className="space-y-3">
           {/* CAL-P1261 (#6278). Three claims in this list were not supported.
@@ -1844,7 +1854,8 @@ export default function CalibrationPage() {
                 <th className="pb-2 pr-1 sm:pr-4">Category</th>
                 <th className="pb-2 pr-1 sm:pr-4 text-right">Outcomes</th>
                 <th className="pb-2 pr-1 sm:pr-4 text-right">ECE</th>
-                <th className="pb-2 pr-1 sm:pr-4 text-right" title="Worst-bucket sensitivity (equal-weighted).">MCE&nbsp;<span className="text-text-muted/60">&#9432;</span></th>
+                {/* #7174, same rename as the Source Comparison header. */}
+                <th className="pb-2 pr-1 sm:pr-4 text-right" title="Average error across the ten probability buckets, each counted once — so a thin bucket weighs as much as a busy one. A mean, not a maximum, so it can read below ECE.">Per-bucket&nbsp;<span className="text-text-muted/60">&#9432;</span></th>
                 <th className="pb-2 text-right">Brier</th>
               </tr>
             </thead>
