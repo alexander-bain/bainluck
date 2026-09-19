@@ -104,6 +104,7 @@ The controls are half the file. This change may not move:
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -129,6 +130,42 @@ NOW = datetime(2026, 9, 19, 14, 0, tzinfo=UTC)
 BASIS_AT = NOW - timedelta(hours=19, minutes=18)
 
 CANONICAL_KEY = "served-movement-dated-4079"
+
+
+@contextmanager
+def _at_now(instant: datetime = NOW):
+    """Run the DETAIL serializer as of `NOW`, the minute the specimen was read.
+
+    🔴 THIS FILE'S TESTS WENT RED AT 18:42Z ON 2026-09-19, ON MASTER, WITH NO
+    COMMIT BETWEEN GREEN AND RED — the ordinary shape of gotcha #44. The feed
+    tests hand `_score_futures` an explicit `now=NOW` and are immune; the detail
+    route takes no clock, so `dated_movement_points` read the WALL clock while
+    the fixture's basis stayed pinned at an absolute instant. `BASIS_AT` is 19h18
+    before `NOW`, `DATED_BASIS_WINDOW_HOURS` is 24, and 4h42 after the file was
+    written the specimen's basis aged out of its own window: the serializer
+    started returning the refusal it is supposed to return for a stale bank, and
+    two assertions about a LIVE bank failed.
+
+    A relative `BASIS_AT` would have been the other repair and is the wrong one
+    here: every date in this file — the sweep stamp, the bank instant, the issue
+    text — is an absolute production reading, and re-anchoring them to the run
+    clock would make the fixture stop being the specimen it is documented as.
+    Freezing the reader's clock keeps the fixture and its prose in agreement.
+
+    Wrapping is REQUIRED around every `_format_market_detail` call that asserts a
+    dated amount — including one that asserts the REFUSAL, since a refusal is
+    also what an aged-out bank returns, and that test would otherwise pass for a
+    reason it is not about.
+    """
+    import app.utils.futures_market_snapshot as snapshot
+
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return instant if tz is None else instant.astimezone(tz)
+
+    with patch.object(snapshot, "datetime", _Frozen):
+        yield
 
 
 class _Outcome:
@@ -392,7 +429,8 @@ def test_the_detail_ladder_serves_the_dated_move_too():
     it, and a withdrawal of it cannot pass it either.
     """
     market = _game_awards_market()
-    detail = _format_market_detail(market, ["kalshi"], set())
+    with _at_now():
+        detail = _format_market_detail(market, ["kalshi"], set())
     by_name = {o["name"]: o for o in detail["outcomes"]}
     assert by_name["Grand Theft Auto VI"]["probability_change_24h"] == (
         pytest.approx(0.66 - 0.705)
@@ -409,7 +447,8 @@ def test_the_ladder_is_dated_RAW_because_the_ladder_PRINTS_raw():
     that population — and the served price is asserted beside the move, because
     "the amount is raw" is only true while the price beside it is.
     """
-    detail = _format_market_detail(_game_awards_market(), ["kalshi"], set())
+    with _at_now():
+        detail = _format_market_detail(_game_awards_market(), ["kalshi"], set())
     gta = {o["name"]: o for o in detail["outcomes"]}["Grand Theft Auto VI"]
     assert gta["probability"] == pytest.approx(0.66)
     assert gta["probability_change_24h"] == pytest.approx(0.66 - 0.705)
@@ -432,7 +471,8 @@ def test_the_ladder_withholds_the_amount_once_the_SQUEEZE_moves_the_column():
     market = _game_awards_market()
     market.outcomes[1].current_probability = 0.45
     market.outcomes[2].current_probability = 0.30
-    detail = _format_market_detail(market, ["kalshi"], set())
+    with _at_now():
+        detail = _format_market_detail(market, ["kalshi"], set())
     by_name = {o["name"]: o for o in detail["outcomes"]}
     gta = by_name["Grand Theft Auto VI"]
 
@@ -728,7 +768,8 @@ async def test_the_wire_contract_is_unchanged_so_shipped_CLIENTS_still_read_it()
     assert "movement" in _distribution_row(card, "Grand Theft Auto VI")
     for row in card["discover_card"]["distribution_outcomes"]:
         assert "movement_stored" not in row
-    detail = _format_market_detail(_game_awards_market(), ["kalshi"], set())
+    with _at_now():
+        detail = _format_market_detail(_game_awards_market(), ["kalshi"], set())
     assert "probability_change_24h" in detail["outcomes"][0]
 
 
