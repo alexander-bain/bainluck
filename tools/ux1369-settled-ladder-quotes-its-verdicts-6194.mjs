@@ -122,11 +122,12 @@ try {
 }
 await browser.close();
 
-const pct = /(^|\s|\|)(\d{1,3})%\s*$/;
+/** A rung's trailing percentage, when it prints one. A graded rung prints none. */
+const TRAILING_PCT = /(\d{1,3})%\s*$/;
 function rungPercents(rows) {
   const vals = [];
   for (const r of rows) {
-    const m = r.match(/(\d{1,3})%\s*$/);
+    const m = r.match(TRAILING_PCT);
     if (m) vals.push(Number(m[1]));
   }
   return vals;
