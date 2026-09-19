@@ -26843,9 +26843,41 @@ def _format_futures_for_search(
     top_outcomes = _build_search_top_outcomes(
         market, limit=_SEARCH_LADDER_LIMIT, lean=False, withheld=withheld
     )
-    real_count = len(
-        [o for o in market.outcomes if not _is_placeholder_outcome_name(o.name)]
-    )
+    # #6585: COUNT THE LEGS THE LADDER DRAWS FROM, not the rows behind it.
+    #
+    # This line used to read every outcome row with only the placeholder filter
+    # applied, while `top_outcomes` two lines above is built from
+    # `_search_surviving_legs` — the four pre-sort refusals (Q480 duplicate
+    # conditions, #6524 unbacked legs, #4253 frozen near-certains, #6676 empty-book
+    # phantoms). So the badge counted rows the reader is deliberately not being
+    # shown, on the same card whose ladder had already refused them. That is the
+    # #993 drift the extraction of `_search_surviving_legs` exists to prevent,
+    # one function short of where it was applied.
+    #
+    # Alex's card: `New "Stranger Things" episode released by...?` badged **15**
+    # on `/search?q=Stranger Things` while `/futures/114237` served **12** — one
+    # tap apart, in the same minute. Measured across the 30 replayed reader
+    # queries, 2026-09-19: **3 of 236** served futures cards disagreed with their
+    # board, every one of them OVER-counting, worst `Warsh out as Fed Chair by…?`
+    # at badge 4 / board 2.
+    #
+    # It is a strict-improvement line and NOT a full reconciliation, and the
+    # difference is measured rather than hoped: driving this function on the
+    # specimens' real production rows lands it exactly on the board's number for
+    # 114237 (12), 113427 (21) and 56995845 (2), and leaves 112938 (*Who will
+    # Trump nominate as Fed Chair?*) at 27 against the board's 25. That residue
+    # has a named cause and it is NOT this count — `Rick Rieder` and `James
+    # Bullard` are each stored twice under two Polymarket condition ids (a live
+    # leg and a dead twin at 0.000/ask 0.0010). Detail collapses those with
+    # `drop_superseded_name_twins`; this path's dedup keys on `external_id`, so
+    # both survive. Adding that drop here would change the served LADDER on an
+    # unmeasured population, not just a count, so it is #7180 and not this diff.
+    #
+    # The second pass costs +3µs (4 legs) to +27µs (56, the largest board in the
+    # 236) per card — measured, ~0.2 ms on a 20-card response worst case. The
+    # single-pass win (filter once, hand the same list to both call sites) is
+    # latency's under notice 41 and is named in #5516's remainder.
+    real_count = len(_search_surviving_legs(market))
 
     _TIER_LABELS_SEARCH = {1: "Championship", 2: "Conference", 3: "Award", 4: "Division", 5: "Prop"}
     return {
