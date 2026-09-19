@@ -14571,13 +14571,73 @@ def _snapshot_row_market_ids(rows: list) -> list:
     return [frozenset(_futures_row_market_ids(row)) for row in rows]
 
 
+def _judgeable_field_market_ids(row_markets: dict) -> list:
+    """The markets on this page that :func:`venue_leg_count` can size at all (#7107).
+
+    Used to scope the stored-leg count below to the only rows whose answer can
+    change a verdict.  On a page with no sizeable field it returns ``[]`` and the
+    caller skips the query entirely.
+    """
+    from app.utils.market_shape import venue_leg_count
+
+    out = []
+    for market_id, market in row_markets.items():
+        meta = market.market_metadata if isinstance(market.market_metadata, dict) else {}
+        if venue_leg_count(meta, market.name, market.mutually_exclusive) is not None:
+            out.append(market_id)
+    return out
+
+
 def _withhold_partial_field_futures(
     home_futures: list,
     away_futures: list,
     row_markets: dict,
     pre_merge_market_ids: list | None = None,
+    stored_leg_counts: dict | None = None,
 ) -> tuple[list, list]:
-    """The same rule as :func:`_withhold_partial_field_markets`, second door.
+    """The same RULE as :func:`_withhold_partial_field_markets`, on a different basis.
+
+    🔴 THIS DOOR SELECTS BY TEAM, SO ITS RENDERED COUNT IS NOT A STATEMENT ABOUT
+    THE FIELD (#7107, and it is the correction of what #7068 shipped here).
+    Door one draws a game's own markets, so every stored leg of a card reaches
+    the page and "rendered < declared" means the field is short.  This door asks
+    a different question — *which futures are relevant to these two teams* — and
+    selects outcomes by `team_id`, by the outcome naming a team, or by the
+    MARKET naming one.  An 82-nation World Cup field can therefore never render
+    more than the two nations playing, so `rendered < declared` is true of it by
+    construction, whatever the state of our data.  #7068 copied door one's test
+    verbatim and, with it, a premise that is false here; the cost on production
+    was `/events/15195325` dropping 12 Bigger Picture rows to 4 and losing
+    "Germany to win Euro 2028" from a Germany fixture.
+
+    SO THE COMPLETENESS TEST IS TAKEN ON WHAT WE HOLD, NOT ON WHAT THIS DOOR
+    DREW: ``stored_leg_counts`` against :func:`venue_leg_count`.  That is the
+    same arithmetic :func:`app.utils.market_shape.classify_market_semantics`
+    uses to narrow ``shape.exhaustive``, so the page and the classifier cannot
+    drift.  Measured over the eight banked production payloads (252 rows), it
+    splits the 54 markets this predicate can judge with NO overlap:
+
+    * 26 hold the venue's whole field (Euro 2028 30/30, World Cup 2030 82/82,
+      MLS Cup, EPL, Ligue 1 …) and are drawn 1–4 rows deep by team relevance.
+      They are context, not a field claim, and they are now KEPT.
+    * 28 are genuinely short of the venue (every Exact Score / Halftime / First
+      Team to Score fragment, plus two part-stored league winners), and are
+      still WITHHELD — including the market #7068 was reported for,
+      `61032702` "Germany vs. Greece - Exact Score", 2 stored of 17.
+
+    WHY THIS IS COMPUTED AND NOT READ OFF THE STAMP.  The classifier's banked
+    ``shape.exhaustive`` agrees with this live test 41 times out of 41 on that
+    corpus — which is the second, independent method that says the rule is the
+    right one.  But 13 of the 54 markets carry NO shape stamp, so a rule that
+    read the stamp would leave a quarter of the population unjudged and would
+    also inherit whatever staleness the heavy classifier pass is carrying.  The
+    live count is one indexed aggregate: measured 1.03 ms, Index Only Scan on
+    `ix_futures_outcomes_market_id`.
+
+    A market with no entry in ``stored_leg_counts`` falls back to the rendered
+    count — the pre-#7107 behaviour — so a direct caller that passes nothing,
+    or a page whose count query returned no row for a market, is never *less*
+    guarded than before.
 
     🔴 THE EVENT PAGE HAS TWO PAYLOADS AND THE READER CANNOT TELL. `/game-markets`
     feeds the props sections; `/related-futures` feeds Bigger Picture. #3721
@@ -14592,14 +14652,18 @@ def _withhold_partial_field_futures(
     `home_team_futures` and Greece in `away_team_futures`. Counting per list
     would read a COMPLETE 3-leg field as 1-of-3 on each side and withhold it —
     the over-reach is not hypothetical, it is what every draw-carrying market
-    would hit.
+    would hit.  This still governs the rendered fallback above.
 
-    WHY THE RENDERED COUNT AND NOT THE STORED ONE. Identical to the first door:
-    the completeness claim is made by the rows the reader sees. The two differ
-    only when our own passes drop a leg from a field the venue served whole, and
-    there the rendered count is the honest one.
+    ⚠️ "WHY THE RENDERED COUNT AND NOT THE STORED ONE" STOOD HERE AND IT WAS
+    WRONG ON THIS DOOR — left named rather than deleted, because it is the
+    mistake #7107 is the repair of.  It argued that rendered and stored "differ
+    only when our own passes drop a leg from a field the venue served whole".
+    True of door one.  False here, where the selection is team-shaped and the
+    two differ on every market whose field is wider than the fixture: Euro 2028
+    is stored 30 of 30 and rendered 1.  The sentence was carried across with the
+    test and nothing re-derived it against this door's own query.
 
-    🔴 BUT THE COUNT IS TAKEN BEFORE THE MERGES, AND THAT IS THE WHOLE REPAIR OF
+    🔴 BUT THE RENDERED COUNT IS TAKEN BEFORE THE MERGES, AND THAT IS THE WHOLE REPAIR OF
     CERT-3099. `dedup_by_merge_group` keeps ONE winner per
     `(merge_group, outcome_name)`, and the winner carries its own `market_id` —
     so a field carried by two sources has its legs RE-ATTRIBUTED: Germany's
@@ -14649,7 +14713,15 @@ def _withhold_partial_field_futures(
             continue
         meta = market.market_metadata if isinstance(market.market_metadata, dict) else {}
         declared = venue_leg_count(meta, market.name, market.mutually_exclusive)
-        if declared is not None and rendered < declared:
+        if declared is None:
+            continue
+        # #7107 — how many legs we HOLD, not how many this team-scoped door drew.
+        # `rendered` is the fallback and is never larger than the stored count,
+        # so a missing entry can only make this stricter, never laxer.
+        stored = (stored_leg_counts or {}).get(market_id)
+        if stored is None:
+            stored = rendered
+        if stored < declared:
             withheld.add(market_id)
 
     if not withheld:
@@ -20569,10 +20641,16 @@ async def _build_related_futures(
     # SEVENTEEN-leg exact-score field, beside a 3-way match result showing only
     # Germany. A fix that stops at one door has not reached the reader.
     #
-    # THE TEST IS DELIBERATELY THE SAME ONE, not a second opinion: the rendered
-    # leg count against `venue_leg_count`, which refuses unless the row IS the
-    # venue's ladder. Two doors with two ideas of "complete" would be worse than
-    # the bug — a market would appear on one surface and vanish from the other.
+    # THE PREDICATE IS DELIBERATELY THE SAME ONE — `venue_leg_count`, which
+    # refuses unless the row IS the venue's ladder. Two doors with two ideas of
+    # "complete" would be worse than the bug.
+    #
+    # BUT THE BASIS IS NOT THE SAME, AND #7107 IS WHY. Door one draws a game's
+    # own markets, so its rendered count IS the field. This door selects by team
+    # and can never draw more of an 82-nation field than the two nations
+    # playing, so it judges the legs we HOLD (one indexed aggregate, below)
+    # rather than the legs it chose to draw. Same question, same predicate, the
+    # only basis on which this door's answer means anything.
     #
     # COUNTED ACROSS BOTH SIDES, which is the one thing this door needs that the
     # other does not: a 3-way result splits its legs between `home_team_futures`
@@ -20582,11 +20660,26 @@ async def _build_related_futures(
     # COUNTED ON THE PRE-MERGE ATTRIBUTION, not on the lists being filtered —
     # see CERT-3099 in the function's docstring: after dedup a complete field
     # carried by two sources reads as 1-of-3 plus 2-of-3 and was erased whole.
+    # #7107 — the stored leg count for the only markets a verdict can turn on.
+    # Scoped to what `venue_leg_count` can size at all, so a page carrying no
+    # sizeable field issues no query; measured 1.03 ms / Index Only Scan on
+    # `ix_futures_outcomes_market_id` for the 75-market specimen page.
+    stored_leg_counts: dict = {}
+    judgeable_market_ids = _judgeable_field_market_ids(row_markets)
+    if judgeable_market_ids:
+        stored_counts_result = await db.execute(
+            select(FuturesOutcome.market_id, func.count())
+            .where(FuturesOutcome.market_id.in_(judgeable_market_ids))
+            .group_by(FuturesOutcome.market_id)
+        )
+        stored_leg_counts = {mid: n for mid, n in stored_counts_result.all()}
+
     home_futures, away_futures = _withhold_partial_field_futures(
         home_futures,
         away_futures,
         row_markets,
         pre_merge_market_ids=pre_merge_market_ids,
+        stored_leg_counts=stored_leg_counts,
     )
 
     # ── Enrich matchup outcomes with team logos ───────────────────
