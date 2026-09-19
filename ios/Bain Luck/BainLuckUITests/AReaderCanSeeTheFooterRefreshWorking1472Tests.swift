@@ -49,6 +49,36 @@ final class AReaderCanSeeTheFooterRefreshWorking1472Tests: XCTestCase {
         let scrollView = app.scrollViews.firstMatch
         XCTAssertTrue(scrollView.exists, "Discover has no scroll view to walk.")
 
+        // ── THE TOP-OF-FEED WITNESS, captured before the walk ────────────────
+        //
+        // WHY NOT THE NAVIGATION BAR, which is the obvious instrument and the one
+        // this arm was measured with for a whole session (#7074, native/239).
+        // Discover's bar is `.large`, so it reads 108pt at the top and 54pt once
+        // scrolled, and it reads 54pt after the footer refresh — which was taken
+        // as "the reader does not move" and sent three hypotheses to their graves.
+        // It is not that. `scrollTo(feedTopAnchor, anchor: .top)` aligns the
+        // anchor with the top of the VISIBLE area, which is below a collapsed
+        // bar, so the bar cannot re-expand no matter how perfectly the scroll
+        // lands. The witness could never have moved: every reading it gave was
+        // the same reading, for a reason that has nothing to do with the fix.
+        //
+        // The swipe hint is the first element of the feed and nothing else on
+        // Discover says it, so seeing it IS being at the top — and unlike a bar
+        // height it cannot be produced by landing near the top of a short feed,
+        // which is precisely the failure this arm hypothesised.
+        // READ AS A POSITION, NOT AS HITTABILITY. `isHittable` was the first
+        // draft and it is marginal here by construction: at the top of the feed
+        // the hint sits directly under a translucent navigation bar, so whether
+        // it reports hittable turns on a pixel or two of overlap. Measured
+        // 2026-09-18: the same assertion on the same sha passed one run and
+        // timed out the next. The hint's frame is continuous — at the top it is
+        // tens of points below the top edge, at the end of a 150-card feed it is
+        // tens of thousands of points above it — so there is no boundary for a
+        // run to land on.
+        let swipeHint = app.staticTexts["Shape your feed"]
+        let hintWasAtTheTop = swipeHint.waitForExistence(timeout: UITestLaunch.contentTimeout)
+            && swipeHint.frame.maxY > scrollView.frame.minY
+
         // "You're all caught up" is the end card's headline and nothing else on
         // Discover says it. Matched as a static text rather than by identifier
         // because the card has never needed one.
@@ -92,6 +122,20 @@ final class AReaderCanSeeTheFooterRefreshWorking1472Tests: XCTestCase {
         )
 
         add(Self.shot(app, "1-idle"))
+
+        // THE ANTI-VACUITY HALF OF THE TOP-OF-FEED WITNESS. The reader has walked
+        // to the end of the feed, so the hint must be gone from the screen. If it
+        // were still hittable here, the read after the press would prove nothing
+        // — it would be true of a page that never moved at all.
+        let hintAtTheEnd = swipeHint.frame.maxY
+        if hintWasAtTheTop {
+            XCTAssertLessThanOrEqual(
+                hintAtTheEnd, scrollView.frame.minY,
+                "The top-of-feed swipe hint is still on screen at the END of the feed after \(swipes) swipes "
+                + "(its bottom edge reads \(hintAtTheEnd), the scroll view starts at \(scrollView.frame.minY)), "
+                + "so it does not mark the top and the check after the press would be vacuous."
+            )
+        }
 
         // THE RESTING STATE, and the control against the fix being inert: before
         // the press there must be nothing saying a refresh is happening. If this
@@ -167,6 +211,52 @@ final class AReaderCanSeeTheFooterRefreshWorking1472Tests: XCTestCase {
             "The refresh left the reader on a feed with no event cards in it. Moving them is only an "
             + "improvement if there is something where they land."
         )
+
+        // ── 3. And where they land is the TOP of the feed ───────────────────
+        //
+        // Alex's report is not "the refresh did nothing", it is "it put me
+        // somewhere I had never been": *"about halfway up the page"*. Check 2
+        // above is satisfied by ANY position that is not the end card, so the
+        // whole of that report lives in the gap between check 2 and this one.
+        //
+        // Measured on `aa901f83f` before this assertion existed (native/240): the
+        // run's own `3-after` attachment shows the swipe hint and the first card,
+        // with the badge reading `PULLS 1` — the reader is at the top, and the
+        // navigation bar reads 54pt while they are there. So this is a guard over
+        // behaviour that is already right, written because the only witness the
+        // arm had could not see it and would have reported a regression here as
+        // "unchanged, still 54pt".
+        if hintWasAtTheTop {
+            var hintAfter = swipeHint.frame.maxY
+            let topBy = Date().addingTimeInterval(UITestLaunch.contentTimeout)
+            while Date() < topBy, hintAfter <= scrollView.frame.minY {
+                Thread.sleep(forTimeInterval: 0.25)
+                hintAfter = swipeHint.frame.maxY
+            }
+            // Both numbers in the message, always: a bare "it is not at the top"
+            // sends the next session back to the simulator to find out how far
+            // off it was, and "one screen high" and "forty screens high" are
+            // different defects.
+            XCTAssertGreaterThan(
+                hintAfter, scrollView.frame.minY,
+                "The refresh did not return the reader to the top of the feed. The first element of the feed "
+                + "(the swipe hint) has its bottom edge at \(hintAfter), above the top of the scroll view at "
+                + "\(scrollView.frame.minY); it read \(hintAtTheEnd) at the end card before the press. "
+                + "The navigation bar is NOT a witness for this — it reads 54pt at the top of a refreshed "
+                + "feed and at the end card alike (#7074, native/239)."
+            )
+        } else {
+            // A supply fact, not a defect: the hint is shown once per install
+            // (`discover_swipe_hinted`), so on a simulator where a card has ever
+            // been swiped there is no top-of-feed marker to read. Erase the
+            // device to restore it. Said out loud rather than skipped silently —
+            // a guard that quietly stops asserting is worse than no guard.
+            XCTFail(
+                "NO TOP-OF-FEED WITNESS: the swipe hint was not on screen at the start, so this run "
+                + "cannot tell the top of the feed from anywhere else in it. The hint is shown once per "
+                + "install (UserDefaults `discover_swipe_hinted`); erase the simulator and re-run."
+            )
+        }
 
         // The in-flight control, if the network was slow enough for it to have a
         // frame. Recorded, never asserted — see above.
