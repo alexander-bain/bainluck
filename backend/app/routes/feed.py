@@ -6434,6 +6434,65 @@ def _scale_display_probability(prob, scale: float):
     return round(float(prob) / scale, 4)
 
 
+def _dated_movement_on_card_scale(market, outcome, scale: float, now):
+    """The dated 24h move for a printed card row — or `None` when the card's
+    own normalization has put the printed percent on a scale the history
+    cannot be read on (#4079, codex's scale ruling 2026-09-19).
+
+    ═══ WHY THE SCALE DECIDES WHETHER THERE IS AN ANSWER AT ALL ═══
+
+    `dated_movement_points` is raw−raw: the price the sweep OBSERVED subtracted
+    from the price stored now. That is the honest arithmetic and it is the one
+    the detail ladder serves. But on an independent-binary card
+    `_feed_display_scale` divides every VISIBLE percent by the all-outcome sum,
+    and it does not — cannot — divide the bank, because the bank holds a price
+    and not a percentage of a denominator that has itself moved since.
+
+    So on a normalized card the raw move is a true number about a quantity the
+    reader is not being shown. MEASURED on production page one 2026-09-19: of
+    18 movement-carrying cards, 2 were scaled and both drew a badge —
+    `58776433` printed **59%** (raw 0.505) beside **+12.5**, where the percent
+    the reader actually watched moved **+14.6**. Neither number is wrong; the
+    pairing is.
+
+    ═══ AND THE DISPLAY-SCALED SUBTRACTION IS NOT THE REPAIR ═══
+
+    🔴 Dividing the raw delta — or the banked price — by TODAY's denominator
+    does not recover what the card printed yesterday. The denominator is the
+    sum of every leg's current price, so it moves whenever any leg moves; a
+    +14.6 computed that way asserts a historic displayed percent nobody
+    observed and no column stores. Codex ruled that out by name. Recovering it
+    honestly would need a banked DISPLAY basis, which is a wire contract and a
+    writer, not a serving fix.
+
+    What is left is the one thing that is true: on this card, today, there is
+    no supported claim about the change in the number on screen. So there is no
+    number. Every client already draws nothing for a null movement.
+
+    ═══ WHAT THIS DOES NOT TOUCH ═══
+
+    The PRICE, the card, its rank and its score are untouched — `scale` is read
+    here, never written, and the stored column keeps every reader it has
+    (`/api/futures/movers`, `compute_futures_highlight`, the confidence signal,
+    the archetype's `movement_stored`). This narrows a CLAIM, exactly as the
+    dating itself does.
+
+    Nor does it touch the raw-scale readers. `matched_outcomes` serves the raw
+    `current_probability` beside its movement, so raw−raw is like-with-like
+    there and it goes on calling `dated_movement_points` directly — the rule is
+    about the pairing, not about the subtraction.
+    """
+    if scale != 1.0:
+        return None
+    return dated_movement_points(
+        market,
+        outcome.id,
+        outcome.current_probability,
+        outcome.probability_change_24h,
+        now=now,
+    )
+
+
 def _card_outcome_name(outcome) -> Optional[str]:
     """The club a reader sees on a feed card, completed from the rung's ticker.
 
@@ -10379,8 +10438,13 @@ async def _score_sports_mode_futures(
                 # The RAW price, not a display-scaled one — `_normalize_feed_
                 # probabilities` runs below and the banked basis is on the
                 # stored scale, so the subtraction has to happen here.
-                "movement": dated_movement_points(
-                    market, o.id, o.current_probability, o.probability_change_24h, now=now
+                #
+                # AND `_display_scale` IS AN INPUT, because on a normalized card
+                # the printed percent is on a basis the bank cannot be read on.
+                # `_dated_movement_on_card_scale` carries that reasoning and the
+                # production measurement behind it.
+                "movement": _dated_movement_on_card_scale(
+                    market, o, _display_scale, now
                 ),
             }
             for position, o in enumerate(printed_outcomes, start=1)
@@ -10579,10 +10643,12 @@ async def _score_sports_mode_futures(
                 ),
                 # #4079 numeric half — `distribution_outcomes[].movement` is a
                 # SERVED number on the same card as the badge above, so it is
-                # dated by the same subtraction or it is absent. See the
-                # top_outcomes site for why the raw price is the input.
-                "movement": dated_movement_points(
-                    market, o.id, o.current_probability, o.probability_change_24h, now=now
+                # dated by the same subtraction, on the same scale test, or it
+                # is absent. The probability one line up is scaled by exactly
+                # this `_display_scale`, which is why the movement beside it
+                # cannot be raw when that divisor is not 1.0.
+                "movement": _dated_movement_on_card_scale(
+                    market, o, _display_scale, now
                 ),
                 # NOT served — `_distribution_outcomes` copies three named keys.
                 # The archetype's format choice (`probability_timeline`) is a
@@ -11817,19 +11883,14 @@ async def _score_futures(
                         else None
                     ),
                     "rank": position,
-                    # #4079 NUMERIC HALF — dated or absent. The twin of the
-                    # `_score_sports_mode_futures` site, which carries the
-                    # reasoning; `MOVER_MIN_PROBABILITY` stays in front of it so
-                    # a thin nominee ticking a few tenths is still not a mover
-                    # (#235 item 2), and the dating narrows that set further.
+                    # #4079 NUMERIC HALF — dated, on a readable scale, or
+                    # absent. The twin of the `_score_sports_mode_futures`
+                    # site, which carries the reasoning; `MOVER_MIN_PROBABILITY`
+                    # stays in front of it so a thin nominee ticking a few
+                    # tenths is still not a mover (#235 item 2), and the dating
+                    # and the scale test each narrow that set further.
                     "movement": (
-                        dated_movement_points(
-                            market,
-                            o.id,
-                            o.current_probability,
-                            o.probability_change_24h,
-                            now=now,
-                        )
+                        _dated_movement_on_card_scale(market, o, _display_scale, now)
                         if float(o.current_probability or 0) >= MOVER_MIN_PROBABILITY
                         else None
                     ),
@@ -12202,6 +12263,18 @@ async def _score_futures(
                                 # #4079 numeric half — `matched_outcomes` is a
                                 # reader's own team, which is the last row that
                                 # should carry an undatable "today" number.
+                                #
+                                # 🔴 NOT `_dated_movement_on_card_scale`, AND
+                                # THAT IS THE RULE RATHER THAN AN OMISSION. The
+                                # scale test exists because a raw move may not be
+                                # printed beside a normalized percent; the
+                                # `probability` three lines up is the RAW
+                                # `current_probability`, unscaled, on every card
+                                # including a normalized one. Raw beside raw is
+                                # like-with-like, so this row keeps its number on
+                                # exactly the cards the four scaled sites give up.
+                                # A sweep that "finishes the job" here deletes a
+                                # supported claim.
                                 "movement": dated_movement_points(
                                     market,
                                     o.id,
@@ -12325,15 +12398,11 @@ async def _score_futures(
                         _display_scale,
                     ),
                     # #4079 numeric half — the served distribution number is
-                    # dated by the same subtraction as the badge, or absent.
+                    # dated by the same subtraction as the badge, on the same
+                    # `_display_scale` that scaled the probability one line up,
+                    # or it is absent.
                     "movement": (
-                        dated_movement_points(
-                            market,
-                            o.id,
-                            o.current_probability,
-                            o.probability_change_24h,
-                            now=now,
-                        )
+                        _dated_movement_on_card_scale(market, o, _display_scale, now)
                         if float(o.current_probability or 0) >= MOVER_MIN_PROBABILITY
                         else None
                     ),

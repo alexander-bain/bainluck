@@ -107,8 +107,15 @@ def _outcome(outcome_id, name, prob, change, price_changed_at, **overrides):
     return row
 
 
-def _goty_market(outcomes=None):
-    """Market 58321581 as production holds it."""
+def _goty_market(outcomes=None, metadata=None):
+    """Market 58321581 as production holds it.
+
+    `metadata` exists for the #4079 NUMERIC half (N3, landed 2026-09-19): the
+    dated amount is read out of `market_metadata['dated_movement_basis']`, so a
+    test that wants a served number has to supply the bank that supports it.
+    Left `None` by default, which is production's shape for this market and the
+    reason every row below serves an unavailable 24h amount.
+    """
     return SimpleNamespace(
         id=MARKET_ID,
         name="Game of the Year 2026",
@@ -137,7 +144,7 @@ def _goty_market(outcomes=None):
         hook_description=None,
         image_url=None,
         category_tags=[],
-        market_metadata=None,
+        market_metadata=metadata,
         outcomes=(
             outcomes if outcomes is not None else [_outcome(*r) for r in GOTY_ROWS]
         ),
@@ -274,22 +281,48 @@ class TestTheWithholdRailIsUnchanged:
 
 
 class TestNothingElseMoved:
-    """Codex's constraint: preserve the stored deltas and the ranking inputs."""
+    """Codex's constraint: preserve the stored deltas and the ranking inputs.
 
-    def test_the_per_write_delta_is_served_exactly_as_before(self):
-        """This ship adds an instant. It does not reinterpret the number.
+    ═══ AMENDED 2026-09-19, AND SAID SO OUT LOUD ═══
 
-        `probability_change_24h` keeps its meaning and all of its readers —
-        `/api/futures/movers`, `update_max_movement`, `max_movement_24h` and
-        `compute_futures_highlight`'s CHOICE of subject.
+    This class originally opened with `test_the_per_write_delta_is_served_
+    exactly_as_before`, which pinned the SERVED `probability_change_24h` at the
+    stored −0.025. That assertion was correct for the ship it was written for —
+    this file's ship adds an instant and reinterprets nothing — and it is the
+    assertion that made #4079's N3 look like a collision, so the numeric half
+    was withdrawn from `e47d22a0d` rather than argued with.
+
+    Codex ruled on 2026-09-19 16:00Z that the two are complementary and that
+    discover owns the complete numeric ship: the amount is DATED or absent, the
+    instant stays exactly as this file shipped it, and 14.22% bank coverage is
+    not a reason to keep a per-write delta labelled "24h" on the other 85.78%.
+
+    So the pin MOVED, deliberately, from the serialized value to the thing the
+    original test was protecting: **storage and ranking do not move**. The
+    served number is now the dated one, pinned in
+    `test_a_served_movement_number_is_dated_4079.py` beside the three feed
+    paths it shares a subtraction with; the stored column, its writers and
+    every reader that RANKS on it are pinned here, harder than before.
+    """
+
+    def test_serving_the_page_does_not_write_the_stored_column(self):
+        """The rank inputs are the ROW's, not the payload's.
+
+        `/api/futures/movers` ordering, `update_max_movement`,
+        `max_movement_24h` and `compute_futures_highlight`'s CHOICE of subject
+        all read `futures_outcomes.probability_change_24h`. This serializer is
+        read-only over it, and that is what the old assertion was really for —
+        so it is asserted directly on the carrier rather than through the wire
+        value, where a serving decision is now allowed to differ.
         """
-        payload = _detail(_goty_market())
-        assert (
-            _by_name(payload, "Grand Theft Auto VI")["probability_change_24h"] == -0.025
-        )
-        # 0.0 is falsy and has always served as None on this route; pinned so the
-        # new key cannot be read as licence to change the old one.
-        assert _by_name(payload, "Half-Life 3")["probability_change_24h"] is None
+        market = _goty_market()
+        before = [(o.id, o.probability_change_24h) for o in market.outcomes]
+        _detail(market)
+        _detail(market, withheld={216388319})
+        assert [(o.id, o.probability_change_24h) for o in market.outcomes] == before
+        # The specimen's own stored value, named, so a mutant that zeroes the
+        # column on the way past cannot pass on list equality alone.
+        assert dict(before)[216388319] == -0.025
 
     def test_the_prices_and_the_order_are_untouched(self):
         payload = _detail(_goty_market())
