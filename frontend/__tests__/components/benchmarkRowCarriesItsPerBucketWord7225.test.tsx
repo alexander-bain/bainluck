@@ -182,13 +182,41 @@ function benchmarkRows(html: string): { highlighted: boolean; html: string }[] {
   }));
 }
 
-/** Tags out, entities that matter in, whitespace collapsed. */
+/** The entities `renderToStaticMarkup` emits, in ONE table. */
+const ENTITIES: Readonly<Record<string, string>> = {
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&#x27;": "'",
+  "&#39;": "'",
+  "&nbsp;": " ",
+};
+
+/**
+ * Visible text of a markup fragment: tags dropped, entities decoded, whitespace
+ * collapsed.
+ *
+ * Written as a SCAN and a single-pass decode on purpose, and the first draft of
+ * this file was neither — it was `.replace(/<[^>]*>/g, "")` followed by four
+ * more `.replace` calls, which CodeQL correctly failed the PR for with two HIGH
+ * alerts (`js/incomplete-multi-character-sanitization`, `js/double-escaping`).
+ * Both are real, not test-only excuses: a one-pass `<...>` delete is an HTML
+ * sanitizer's exact shape and is wrong on nested angle brackets, and decoding
+ * `&amp;` in its own pass means an earlier pass's output can be re-read by a
+ * later one. The scan cannot mis-handle a nested bracket, and the decode is one
+ * regex over one table, so no replacement's output is ever re-processed.
+ */
 function text(fragment: string): string {
-  return fragment
-    .replace(/<[^>]*>/g, "")
-    .replace(/&#x27;|&#39;/g, "'")
-    .replace(/&amp;/g, "&")
-    .replace(/&nbsp;/g, " ")
+  let out = "";
+  let inTag = false;
+  for (const ch of fragment) {
+    if (ch === "<") inTag = true;
+    else if (ch === ">") inTag = false;
+    else if (!inTag) out += ch;
+  }
+  return out
+    .replace(/&(?:amp|lt|gt|quot|nbsp|#x27|#39);/g, m => ENTITIES[m])
     .replace(/\s+/g, " ")
     .trim();
 }
