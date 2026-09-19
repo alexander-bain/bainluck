@@ -123,21 +123,38 @@ NEUTRAL_STORY_TITLES = {
 _UNKNOWN_STORY_KEYS_LOGGED: set[str] = set()
 
 
+def title_word(word: str) -> str:
+    """One word of a display title, cased the house way.
+
+    Lifted verbatim out of `_derive_story_title`'s loop (#5736) so the search
+    entity-family header can share it rather than mint a fifth casing rule —
+    the same argument as #6941. Three properties, and the third is the one that
+    makes it safe on text a PERSON typed rather than on a slug we minted:
+
+      * a known acronym renders upper (`ufc` -> `UFC`);
+      * a digit-only token is left alone (`331` -> `331`);
+      * everything else has its FIRST letter up-cased and **the rest left
+        exactly as written**.
+
+    So it never lowercases anything: `NFL` stays `NFL`, `McIlroy` stays
+    `McIlroy`, `US Open`'s `US` stays `US`. `str.title()` — which is what the
+    search header used — destroys all three, handing a reader back a worse
+    version of their own query.
+    """
+    if word.lower() in _TITLE_ACRONYMS:
+        return word.upper()
+    if word.isdigit():
+        return word
+    return word[:1].upper() + word[1:]
+
+
 def _derive_story_title(story_key: str) -> str:
     """Human title for an unauthored story_key (``story:macro_rates`` -> ``Macro Rates``)."""
     slug = story_key.split(":", 1)[-1]
     words = [w for w in slug.replace("-", "_").split("_") if w]
     if not words:
         return "Related markets"
-    out: list[str] = []
-    for word in words:
-        if word.lower() in _TITLE_ACRONYMS:
-            out.append(word.upper())
-        elif word.isdigit():
-            out.append(word)
-        else:
-            out.append(word[:1].upper() + word[1:])
-    return " ".join(out)
+    return " ".join(title_word(w) for w in words)
 
 
 def _resolve_story_title(story_key: str) -> tuple[str, str]:
