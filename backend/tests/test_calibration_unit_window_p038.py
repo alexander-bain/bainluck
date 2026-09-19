@@ -110,6 +110,29 @@ class _FakeLedger:
     def record_gauge(self, name: str, value: int) -> None:
         self.stages[name] = value
 
+    def measured_unit_worst_ms(self, _name: str):
+        """No carried worst completion — the state these tests were written in.
+
+        Added for CAL-P1303 (#6599 defect 1), which asks the ledger whether a
+        cancellation outran the longest unit the build has ever completed.
+        ``None`` is the honest answer for this fake (it carries no measurement
+        at all, see ``apply_unit_statement_timeout`` below), and it keeps every
+        assertion in this file about the within-beat window fence: with no
+        completed reference the conclusive-cancellation branch declines and the
+        two-cancellation threshold governs, exactly as before.
+        """
+        return None
+
+    def observed_unit_worst_ms(self, _name: str):
+        """The same honest ``None``, for CAL-P1304's second reading.
+
+        The repair split the worst completed duration into a withheld admission
+        BASIS and an observation that a withdrawal may not erase, and the loop
+        now asks for the second. This fake carries neither, so both answer
+        ``None`` and every assertion in this file keeps its subject.
+        """
+        return None
+
 
 class _FakeRunner:
     """Only the surface ``_run_staged_futures`` actually touches.

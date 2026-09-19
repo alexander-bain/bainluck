@@ -521,6 +521,29 @@ class PhaseBudget:
     #: nothing here either. What changes is that the evidence is no longer
     #: collapsed to a mean before the bound reads it.
     unit_ms_worst: Optional[int] = None
+    #: The same worst COMPLETED unit duration, as EVIDENCE rather than as an
+    #: admission basis — CAL-P1304 (#6599, repairing CERT-3051).
+    #:
+    #: The two are the same number in the ordinary case and the field would be
+    #: redundant if that were the only case. It is not: when a level is
+    #: WITHDRAWN (``level_refuted``, CAL-P1300) the ring is deliberately kept
+    #: out of ``unit_ms_worst``, because a fence of ``1.5 x worst`` would be
+    #: TIGHTER than the bound that had just been proven too small, and handing
+    #: the next unit that fence is how the door stays shut.
+    #:
+    #: That is a correct thing to do to a BASIS and a wrong thing to do to a
+    #: FACT. Production ran fourteen hours with a ring holding 24 genuine
+    #: completions, worst 1,181,085 ms, that no beat could read — so
+    #: ``cancellation_is_conclusive``'s "did this unit outrun every unit that
+    #: ever completed?" resolved against an empty maximum and declined on the
+    #: very rows the defect was worst on. Withdrawing a bound may never
+    #: un-observe a completion.
+    #:
+    #: So: nothing may derive an admission bound from this field, and
+    #: :meth:`PhaseLedger.statement_timeout_for_unit` does not read it. It
+    #: answers one question only — what is the longest a unit of this phase has
+    #: ever been observed to COMPLETE in.
+    unit_ms_worst_observed: Optional[int] = None
     #: WHICH RULE produced ``budget_ms`` — one of the ``BUDGET_BASIS_*``
     #: constants. A number in a plan is not self-describing: 1,172,893 ms could
     #: be a measured cost or a reallocation, and only one of those is evidence
@@ -543,6 +566,7 @@ class PhaseBudget:
             "floor_observations": self.floor_observations,
             "unit_ms": self.unit_ms,
             "unit_ms_worst": self.unit_ms_worst,
+            "unit_ms_worst_observed": self.unit_ms_worst_observed,
             "units_total": self.units_total,
             "units_done": self.units_done,
             "budget_basis": self.budget_basis,
@@ -844,6 +868,80 @@ def deadline_bound_headroom_ceiling_ms(remaining_ms: int) -> int:
     return max(1, min(STATEMENT_INNER_MARGIN_MS, max(2, int(remaining_ms)) // 10))
 
 
+def cancellation_is_conclusive(
+    *,
+    remaining_ms: int,
+    bound_ms: int,
+    cancelled_after_ms: int,
+    worst_completed_ms: Optional[int],
+) -> bool:
+    """Should this cancellation refine its slot NOW — #6599 defect 1.
+
+    **This is a bounded refinement POLICY, not a proof about the slot's
+    intrinsic cost, and the difference is load-bearing.** A cancellation that
+    was window-bounded and outran every completed unit does NOT logically
+    exclude a lock wait, a vacuum or a plan flip: a new slow disturbance can
+    exceed any prior maximum, and the prior maximum is all this module has. What
+    the two conditions below select is the population where refining
+    IMMEDIATELY is cheap if the evidence was a disturbance and worth a whole
+    pass if it was not — so the policy is justified by what a wrong answer
+    COSTS, which is measured, and never by a claim it cannot be wrong.
+
+    :data:`STAGED_UNIT_SPLIT_AFTER` is two so that a refinement follows a
+    REPRODUCTION rather than an event, and re-cutting the partition every time
+    the database has a bad minute would re-plan the population for nothing. That
+    reasoning is unchanged and this does not weaken it: it narrows the wait to
+    the one shape where the wait is not worth its price, and both conditions
+    must hold.
+
+    1. **The bound came from the WINDOW, not from a measured basis.** The unit
+       was handed everything the beat had left, so there is no larger bound the
+       build could have given it and no tighter fence to blame. Decided by
+       :func:`deadline_bound_headroom_ceiling_ms`, exactly as
+       ``_level_refuted_by_cancellation`` decides it — one rule, two readers.
+    2. **It ran longer than the longest unit this build has ever COMPLETED.**
+       A completed duration is the only evidence this module ever admits about
+       what a legitimate unit costs (CAL-P163). It is a floor on what is normal,
+       not a ceiling on what a disturbance can reach — see above.
+
+    The second condition is what keeps this off the 17:37:55Z beat's SECOND
+    unit: it was window-bounded too, at 59,087 ms — the 65,652 ms of scraps left
+    after the first unit ate the beat — and cutting a slot on 59 s of evidence
+    would refine a slot nobody measured. On that beat's FIRST unit (1,254,562 ms
+    against a ring whose worst completion is 1,181,085 ms) both hold.
+
+    **What a disturbance that does satisfy both conditions costs**, measured in
+    the real loop by
+    ``test_calibration_oversized_slot_is_cut_on_its_proof_6599``'s transient
+    control: the slot is partitioned once, into children bounded by
+    :data:`STAGED_UNIT_SPLIT_MAX_FACTOR`; every unit already completed that beat
+    stays banked; the build publishes in the same beat it would have; the
+    published census is identical to a fresh single-pass computation; and the
+    cut does not cascade — a disturbance held for forty consecutive beats still
+    produces exactly ONE split, because the children absorb it and stop
+    cancelling. The wrong answer is a finer partition, which is the same
+    partition the two-cancellation rule reaches a pass later anyway.
+
+    ``worst_completed_ms`` of ``None`` returns False, and that is ruling 075
+    rather than caution: with no completed unit anywhere in the history there is
+    no measurement to outrun, so there is no basis for the policy at all and the
+    ordinary two-cancellation rule stands.
+    """
+    if worst_completed_ms is None or int(worst_completed_ms) <= 0:
+        return False
+    remaining = int(remaining_ms)
+    bound = int(bound_ms)
+    if remaining <= 0 or bound <= 0:
+        return False
+    headroom = remaining - bound
+    if headroom > deadline_bound_headroom_ceiling_ms(remaining):
+        # A measured basis set this fence, not the window. The build can still
+        # hand this slot a bigger bound on a beat with more room, so nothing is
+        # proved about the slot yet.
+        return False
+    return int(cancelled_after_ms) >= int(worst_completed_ms)
+
+
 def bottleneck_phase(budgets: Iterable[PhaseBudget]) -> Optional[str]:
     """The one phase MEASUREMENT says the window is being withheld from.
 
@@ -1090,6 +1188,28 @@ def _decode_unit_worst(raw: Any) -> Optional[int]:
     return int(value) if value > 0 else None
 
 
+def _decode_unit_worst_observed(raw: Any) -> Optional[int]:
+    """The worst COMPLETED unit as EVIDENCE — CAL-P1304 (#6599).
+
+    :data:`PhaseBudget.unit_ms_worst_observed` carries the reasoning. Decoded by
+    the same rules as :func:`_decode_unit_worst` and deliberately NOT sharing a
+    body with it: the two keys are written by different rules (one is skipped
+    for a withdrawn level, the other never is), and a single decoder taking a
+    key name would invite exactly the caller that passes the wrong one.
+
+    Falls back to ``unit_ms_worst`` when the observed key is absent, which is
+    every ledger written before this field existed and every non-withdrawn level
+    written by a deploy that straddles it. The fallback is safe in the direction
+    that matters: it can only ever produce the number the basis already carried.
+    """
+    if not isinstance(raw, dict):
+        return None
+    value = raw.get("unit_ms_worst_observed")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return _decode_unit_worst(raw)
+    return int(value) if value > 0 else None
+
+
 def derive_plan(
     history: Optional[dict[str, Any]] = None,
     *,
@@ -1207,6 +1327,7 @@ def derive_plan(
                 floor_observations=floor_count,
                 unit_ms=unit_ms,
                 unit_ms_worst=_decode_unit_worst(unit_costs.get(name)),
+                unit_ms_worst_observed=_decode_unit_worst_observed(unit_costs.get(name)),
                 units_total=units_total,
                 units_done=units_done,
                 budget_basis=basis,
@@ -1673,6 +1794,34 @@ class PhaseLedger:
         if budget is None or not budget.unit_ms_worst:
             return None
         return int(budget.unit_ms_worst)
+
+    def observed_unit_worst_ms(self, name: str) -> Optional[int]:
+        """The longest a unit of ``name`` has ever been observed to COMPLETE in.
+
+        CAL-P1304 (#6599, repairing CERT-3051). The sibling of
+        :meth:`measured_unit_worst_ms`, and the difference is the whole point:
+        that one is a BASIS an admission bound may be built from, and a
+        withdrawn level is deliberately absent from it. This one is the FACT,
+        and a withdrawal does not un-observe a completion.
+
+        Read by ``cancellation_is_conclusive``'s caller and by nothing that
+        widens a bound. ``None`` still means "no completed unit has ever been
+        recorded" — never zero (gotcha #53).
+
+        Falls back to :attr:`PhaseBudget.unit_ms_worst` when the observed field
+        is unset, and the fallback is not a convenience: the basis field is
+        ITSELF a worst completed duration, so on every plan but a withdrawn
+        one the two are the same observation and the only question is which key
+        happened to carry it. Without this, a plan built by a caller that
+        predates the field — or by any code path that fills the basis
+        directly — would report "nothing has ever completed" while holding the
+        number, which is the exact confusion this pair exists to end.
+        """
+        budget = self.plan.by_name(name)
+        if budget is None:
+            return None
+        value = budget.unit_ms_worst_observed or budget.unit_ms_worst
+        return int(value) if value else None
 
     def statement_timeout_for_unit(
         self,
