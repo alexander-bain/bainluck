@@ -3304,6 +3304,8 @@ def update_max_movement(self):
     would have left them ranked exactly as they are today.
     """
     async def _impl():
+        from decimal import Decimal
+
         from app.tasks.base import get_task_session
         from sqlalchemy import text
 
@@ -3312,6 +3314,24 @@ def update_max_movement(self):
         # restated as a number here, so the sweep and the copy layer cannot
         # drift into disagreeing about which deltas a reader can ever see.
         from app.utils.futures_highlights import MODERATE_MOVEMENT_THRESHOLD
+
+        # 🔴 A4's two thresholds are bound as `Decimal`, and a `float` here is a
+        # REAL BUG, not a style preference. Both columns A4 compares are
+        # `numeric(7, 6)`, so Postgres infers a bare parameter in
+        # `abs(probability_change_24h) >= $1` as NUMERIC — and asyncpg then
+        # converts the Python double to numeric at its full binary value.
+        # `float(0.02)` is 0.0200000000000000004163…, which as a numeric is
+        # strictly GREATER than the stored 0.020000, so a delta sitting exactly
+        # on the floor fails its own floor test. Caught by
+        # `test_a_delta_below_the_card_floor_is_left_alone` in the real-Postgres
+        # gate, which is the only instrument that can see it: the recording
+        # double never evaluates a comparison, and a SQL literal (what the
+        # production EXPLAIN used) is parsed as an exact decimal and behaves.
+        # `Decimal(str(x))` keeps the whole predicate in exact decimal
+        # arithmetic, which is the same stance A3's comment takes for the same
+        # reason.
+        floor = Decimal(str(MODERATE_MOVEMENT_THRESHOLD))
+        tolerance = Decimal(str(UNOBSERVED_PRIOR_TOLERANCE))
 
         async with get_task_session() as session:
             # A. Retire deltas whose row has not been written inside the window.
@@ -3595,13 +3615,14 @@ def update_max_movement(self):
                 """),
                 {
                     "window_hours": MOVEMENT_WINDOW_HOURS,
-                    "tolerance": UNOBSERVED_PRIOR_TOLERANCE,
+                    "tolerance": tolerance,
                     # MODERATE_MOVEMENT_THRESHOLD: below it no card names a mover
                     # and no chip is drawn, so a sub-2-point delta cannot reach a
                     # reader to lie to them. Bounding the statement there is what
                     # keeps a snapshot join affordable on a beat — it is a cost
                     # bound on a sweep, not a claim that smaller deltas are true.
-                    "floor": MODERATE_MOVEMENT_THRESHOLD,
+                    # Decimal, never the float itself — see the note above.
+                    "floor": floor,
                     "batch": UNOBSERVED_PRIOR_BATCH,
                 },
             )

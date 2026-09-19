@@ -41,6 +41,7 @@ written and read three times before anyone ran `ls`. It exists now.
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 
 import pytest
 
@@ -868,13 +869,42 @@ def test_the_unobserved_sweep_is_scoped_to_what_a_reader_can_see(run_task) -> No
         f"the sweep has no magnitude floor, so it pays the join on rows no "
         f"reader can see: {flat}"
     )
-    assert params.get("floor") == MODERATE_MOVEMENT_THRESHOLD, (
+    assert params.get("floor") == Decimal(str(MODERATE_MOVEMENT_THRESHOLD)), (
         "the floor is not the copy layer's own mover threshold — restate it as "
         f"a literal and the two records drift silently apart: {params}"
     )
-    assert params.get("tolerance") == UNOBSERVED_PRIOR_TOLERANCE, (
+    assert params.get("tolerance") == Decimal(str(UNOBSERVED_PRIOR_TOLERANCE)), (
         f"the sweep does not run on its own tolerance constant: {params}"
     )
+
+
+def test_the_unobserved_sweeps_thresholds_are_bound_as_exact_decimals(
+    run_task,
+) -> None:
+    """A `float` bind here silently excludes the rows sitting ON the floor.
+
+    Both columns A4 compares are `numeric(7, 6)`, so Postgres infers a bare
+    parameter in `abs(probability_change_24h) >= $1` as NUMERIC, and asyncpg
+    converts a Python double at its full binary value: `float(0.02)` becomes
+    the numeric 0.0200000000000000004163…, strictly greater than a stored
+    0.020000. A delta exactly at the threshold then fails its own floor.
+
+    This is asserted on the TYPE rather than on the value because the value
+    compares equal either way in Python — `0.02 == Decimal("0.02")` is False,
+    but `float(Decimal("0.02")) == 0.02` is True, and a future refactor that
+    "simplifies" the bind back to a float would keep every value assertion
+    green. Only the real-Postgres gate can see the behaviour, and only this
+    can see the cause.
+    """
+    _, params = _phase_a4(run_task()[1])
+
+    for name in ("floor", "tolerance"):
+        assert isinstance(params.get(name), Decimal), (
+            f"{name!r} is bound as {type(params.get(name)).__name__}, not "
+            "Decimal. asyncpg will send it as a numeric at its full binary "
+            "value and the rows exactly on the threshold will be skipped. "
+            f"params={params}"
+        )
 
 
 def test_the_unobserved_sweep_is_bounded_and_magnitude_ordered(run_task) -> None:
