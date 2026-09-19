@@ -846,7 +846,15 @@ async def _restore(session, apply: bool, undo_identity: str) -> dict[str, Any]:
             server_budget_s=COMMIT_BUDGET_SECONDS,
             sql="SELECT 1",
             commit=True,
-        )
+        )  # the reversal's one commit — see COMMIT_BUDGET_SECONDS
+        # 🔴 THE TRAILING COMMENT ABOVE IS LOAD-BEARING, and not for a reader.
+        # `scan_mutation_residue` Pass B sweeps every changed file for the
+        # REPLACEMENT half of every mutant, and `typeahead_outcome_arm
+        # _mutations:M2-NO-LIMIT` replaces its needle with a bare `        )`
+        # followed by this exact `except` line. A closing paren at this indent
+        # directly above this handler therefore reds CI as residue in a file
+        # that harness has never touched. Deleting the comment restores the
+        # collision; the scan is right to be blunt and the cost is one clause.
     except Exception as exc:  # noqa: BLE001 — a lock on these very rows
         await _safe_rollback(session)
         out["refused"] = f"RESTORE_WRITE_FAILED: {type(exc).__name__}: {exc}"
