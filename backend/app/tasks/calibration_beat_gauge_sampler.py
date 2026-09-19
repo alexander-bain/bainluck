@@ -365,7 +365,7 @@ def is_stop_key(key: Any) -> bool:
 #: So the row says what it could see, and a row that does not say is UNKNOWN. A
 #: version is the only marker that works here: the fields themselves are absent
 #: on a legacy row, and "absent" is precisely the value that must not be read.
-GAUGE_CAPTURE_VERSION = 3
+GAUGE_CAPTURE_VERSION = 4
 
 #: The first capture version whose :func:`select_gauges` retains
 #: ``staged:units_dropped`` and every ``staged:<stem>_stop:<reason>`` key —
@@ -395,6 +395,25 @@ DROP_AND_STOP_CAPTURE_VERSION = 2
 #: measured zero while writing #4314, on the live ring, before finding the
 #: capture gap. Gotcha #53, one layer above the field added to end it.
 UNIT_COST_CAPTURE_VERSION = 3
+
+#: The first capture version whose :func:`select_gauges` retains the refinement
+#: half of CAL-P1306 — every ``staged:unit_cancel*`` key, every
+#: ``staged:unit_split:<outcome>`` key, and the fixed ``staged:units_split``.
+#:
+#: 🔴 THIS FLOOR IS LATE, AND THE WEEK IT IS LATE BY IS THE WHOLE POINT OF #6599.
+#: CAL-P1306 shipped the two prefixes and the fixed name in ``ec030df12`` and did
+#: NOT move the stamp, so for one ring-length every row banked before that deploy
+#: carries a gauge map the refinement keys were discarded from AT CAPTURE TIME,
+#: stamped with the same ``3`` as every row banked after it. On such a row "no
+#: ``staged:unit_split:*``" must read as UNKNOWN, never as "the refinement
+#: declined" — and those are the two readings #6599 exists to separate, so
+#: reading absence as a decline would answer the ship's own question backwards
+#: with the instrument's authority behind it. Gotcha #53, one layer above the
+#: field added to end it, for the third time in this file.
+#:
+#: The stamp moves to 4 WITH this constant rather than in the original ship
+#: because a floor that is not also a stamp bump marks nothing: both rows say 3.
+REFINEMENT_CAPTURE_VERSION = 4
 
 #: A row banked before CAL-P1030 carries no version at all. Zero, so the
 #: comparison against the floor is an ordinary ``<`` and an unparseable or
