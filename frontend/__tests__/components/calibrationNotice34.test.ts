@@ -80,7 +80,12 @@ function isInsideANote(needle: string): boolean {
  */
 const MOVED_BEHIND_A_DISCLOSURE: ReadonlyArray<readonly [string, string]> = [
   ["the provider note (Queue 316 item 2)", 'data-testid="calibration-provider-note"'],
-  ["what ECE and MCE are", "worst-bucket sensitivity"],
+  // #7174 repointed this fragment. It used to read "worst-bucket sensitivity",
+  // which was the note's own wording for the second statistic — and that wording
+  // was the defect: the column it described was headed "MCE" over a value that
+  // is an equal-weighted mean. The claim this row makes is about LOCATION, so
+  // the fix is a new fragment of the same note, not a deleted assertion.
+  ["what ECE and the per-bucket figure are", "probability buckets with equal weight"],
   ["the traded/untraded proxy note", "receive trading volume for most of these markets"],
   ["how to read the matched-bucket table", "Error is actual minus predicted"],
   ["why a thin category is not published", "A calibration curve is only honest with enough"],
@@ -116,7 +121,7 @@ describe("standing notice 34 — the method notes are not in the page body", () 
     // means the parser is not finding them; more than one per moved block means
     // it is finding something that is not a note. It is legitimately not 1:1 —
     // Source Comparison folds two of the five blocks (what a row is, and what
-    // ECE and MCE are) into a single note, because two disclosures stacked on
+    // the two statistics are) into a single note, because two disclosures on
     // one card is the noise this ship exists to remove.
     expect(REGIONS.length).toBeGreaterThan(1);
     expect(REGIONS.length).toBeLessThanOrEqual(MOVED_BEHIND_A_DISCLOSURE.length);
