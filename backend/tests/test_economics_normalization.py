@@ -172,6 +172,112 @@ class TestCumulativeToDiscrete:
         assert total <= 105.0
 
 
+class TestCumulativeSignedThresholds:
+    """#7081 — the threshold sort key must read the minus sign.
+
+    An unsigned `[\\d.]+` key reads "Above -0.4%" as 0.4. Nothing about the
+    output *shape* gives that away: the ladder still comes back as brackets
+    that sum sensibly, so these assert the label a probability is PAIRED WITH,
+    never merely the ordering.
+    """
+
+    # The September CPI print, verbatim from market_id 364212 — the specimen
+    # that was live on /economics.
+    _CPI_SEPTEMBER = [
+        ("Above -0.4%", 0.950), ("Above -0.3%", 0.945), ("Above -0.2%", 0.925),
+        ("Above -0.1%", 0.925), ("Above 0.0%", 0.915), ("Above 0.1%", 0.905),
+        ("Above 0.2%", 0.900), ("Above 0.3%", 0.675), ("Above 0.4%", 0.480),
+        ("Above 0.5%", 0.440), ("Above 0.6%", 0.360),
+    ]
+
+    def test_mixed_sign_ladder_pairs_mass_with_the_right_label(self):
+        """The two biggest non-modal brackets belong to +0.2% and +0.3%.
+
+        Before the fix they were served as -0.3% and -0.4% — 42 points of
+        probability shown against deflation.
+        """
+        outcomes = [_make_outcome(n, p) for n, p in self._CPI_SEPTEMBER]
+        brackets = _cumulative_to_discrete(outcomes, max_buckets=6)
+        by_label = {lbl: prob for prob, lbl in brackets}
+
+        assert by_label.get("0.2%") == 22.5
+        assert by_label.get("0.3%") == 19.5
+        # The mass must not appear on the deflation legs at all.
+        assert by_label.get("-0.3%") != 22.5
+        assert by_label.get("-0.4%") != 19.5
+        # The modal bar was always right; it must stay right.
+        assert by_label.get("0.6%") == 36.0
+
+    def test_mixed_sign_ladder_is_ascending_by_threshold(self):
+        outcomes = [_make_outcome(n, p) for n, p in self._CPI_SEPTEMBER]
+        labels = [lbl for _, lbl in _cumulative_to_discrete(outcomes, max_buckets=6)]
+        vals = [float(lbl.rstrip("%")) for lbl in labels]
+        assert vals == sorted(vals), f"ladder not ascending: {labels}"
+
+    def test_all_negative_ladder_does_not_collapse_to_one_bar(self):
+        """Germany's 2026 budget balance — 7 legs, every threshold negative.
+
+        The unsigned key reversed the ladder, which made the cumulatives
+        ascending, which made the monotonicity clamp flatten every leg to the
+        first one's value; every difference then rounded to zero and was
+        dropped. The card became a single bar.
+        """
+        legs = [
+            ("Above -5.0% of GDP", 0.955), ("Above -4.5% of GDP", 0.895),
+            ("Above -4.0% of GDP", 0.580), ("Above -3.5% of GDP", 0.155),
+            ("Above -3.0% of GDP", 0.070), ("Above -2.5% of GDP", 0.040),
+            ("Above -2.0% of GDP", 0.035),
+        ]
+        brackets = _cumulative_to_discrete(
+            [_make_outcome(n, p) for n, p in legs], max_buckets=6
+        )
+        assert len(brackets) > 1, f"collapsed to {brackets}"
+        by_label = {lbl: prob for prob, lbl in brackets}
+        # The distribution is centred on -4.0%, not on the outermost leg.
+        assert by_label.get("-4.0% of GDP") == 42.5
+        assert by_label.get("-4.5% of GDP") == 31.5
+        modal_idx, _, modal_label = _modal_bracket(brackets)
+        assert modal_label == "-4.0% of GDP"
+
+    def test_all_negative_ladder_survives_the_max_buckets_resort(self):
+        """The post-truncation re-sort must key on threshold, not on label.
+
+        8 legs into max_buckets=6 forces the `len(discrete) > max_buckets`
+        path. Sorting the survivors by label string yields "-3%" before "-4%".
+        """
+        legs = [
+            ("Above -10%", 0.920), ("Above -9%", 0.905), ("Above -8%", 0.860),
+            ("Above -7%", 0.730), ("Above -6%", 0.570), ("Above -5%", 0.410),
+            ("Above -4%", 0.220), ("Above -3%", 0.095),
+        ]
+        brackets = _cumulative_to_discrete(
+            [_make_outcome(n, p) for n, p in legs], max_buckets=6
+        )
+        assert len(brackets) == 6
+        vals = [float(lbl.rstrip("%")) for _, lbl in brackets]
+        assert vals == sorted(vals), f"ladder not ascending: {vals}"
+
+    def test_hyphen_inside_a_word_is_not_read_as_a_sign(self):
+        """`(?<!\\w)` guard: only a leading hyphen is a minus."""
+        legs = [("Above COVID-19 cases 5%", 0.80), ("Above COVID-19 cases 7%", 0.30)]
+        brackets = _cumulative_to_discrete([_make_outcome(n, p) for n, p in legs])
+        # Parsed as 19 for both (unchanged by the fix); the point is that
+        # neither becomes -19, which would silently reorder the pair.
+        assert len(brackets) == 2
+
+    def test_malformed_numeric_token_does_not_raise(self):
+        """`float('1.2.3')` would 500 the whole /economics route."""
+        legs = [("Above 1.2.3", 0.80), ("Above 2.0", 0.30)]
+        brackets = _cumulative_to_discrete([_make_outcome(n, p) for n, p in legs])
+        assert brackets  # returned rather than raised
+
+    def test_returned_rows_are_pairs(self):
+        """The threshold is carried internally but must not reach the payload."""
+        outcomes = [_make_outcome(n, p) for n, p in self._CPI_SEPTEMBER]
+        for row in _cumulative_to_discrete(outcomes, max_buckets=6):
+            assert len(row) == 2, f"row leaked its sort key: {row}"
+
+
 # ---------------------------------------------------------------------------
 # _modal_bracket
 # ---------------------------------------------------------------------------

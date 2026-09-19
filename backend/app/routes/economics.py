@@ -581,6 +581,20 @@ def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
     Kalshi economics markets use cumulative outcomes (P(above 3%), P(above 3.5%)).
     We need P(exactly in bracket) = P(above lower) - P(above upper).
     Returns [[prob, label], ...] sorted by threshold, at most max_buckets entries.
+
+    The threshold is parsed WITH its sign (#7081). An unsigned `[\\d.]+` reads
+    "Above -0.4%" as 0.4, which interleaves a mixed-sign ladder — 0.0, -0.1,
+    0.1, -0.2, ... — and reverses an all-negative one. Neither failure is
+    visible in the output shape: the monotonicity clamp below then overwrites
+    the real cumulatives with a neighbour's, and the differences that follow
+    subtract non-adjacent thresholds, so the bars keep plausible values and
+    wear the wrong labels. On the September CPI card that put 42 points of
+    probability on deflation labels belonging to +0.2% and +0.3%; an
+    all-negative ladder collapses to a single bar, because the clamp flattens
+    every leg to the first one's value and every difference rounds to zero.
+
+    The `(?<!\\w)` guard keeps a hyphen inside a word from reading as a sign,
+    so "COVID-19 above 5%" still parses 19 rather than -19.
     """
     import re as _re
 
@@ -588,8 +602,12 @@ def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
     for o in outcomes:
         p = float(o.current_probability or 0) * 100
         label = (o.name or "").strip()
-        nums = _re.findall(r'[\d.]+', label)
-        sort_val = float(nums[0]) if nums else 0
+        nums = _re.findall(r'(?<!\w)-?\d[\d.]*', label)
+        try:
+            sort_val = float(nums[0]) if nums else 0
+        except ValueError:
+            # A malformed token ("1.2.3") must not 500 the whole page.
+            sort_val = 0
         # Clean label: remove "Above " prefix
         clean = label.replace("Above ", "").strip()
         raw.append((p, clean, sort_val))
@@ -608,19 +626,25 @@ def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
     # Convert cumulative to discrete:
     # P(in bracket i) = P(above threshold_i) - P(above threshold_{i+1})
     # P(above highest) stays as-is (the top bracket)
+    # Rows carry their threshold as a third element so the re-sort below can
+    # order by it; it is projected away before returning, because callers
+    # (`_modal_bracket`) unpack exactly [prob, label].
     discrete = []
     for i in range(len(raw)):
         cum_p = raw[i][0]
         next_p = raw[i + 1][0] if i + 1 < len(raw) else 0
         bracket_p = round(cum_p - next_p, 1)
         if bracket_p >= 0.1:
-            discrete.append([bracket_p, raw[i][1]])
+            discrete.append([bracket_p, raw[i][1], raw[i][2]])
 
-    # If too many, keep top by probability
+    # If too many, keep top by probability, then restore threshold order.
+    # Sorting the survivors by their LABEL instead would reverse an
+    # all-negative ladder ("-3%" < "-4%" as strings) and mis-place any label
+    # whose digits are not zero-padded (#7081).
     if len(discrete) > max_buckets:
         discrete.sort(key=lambda x: x[0], reverse=True)
         discrete = discrete[:max_buckets]
-        discrete.sort(key=lambda x: x[1])
+        discrete.sort(key=lambda x: x[2])
 
     # Normalize: independent binary markets can sum well over 100%.
     # Same threshold as _brackets_from_outcomes / politics _normalize_outcome_probs.
@@ -630,7 +654,7 @@ def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
             for b in discrete:
                 b[0] = round(b[0] * 100 / total, 1)
 
-    return discrete
+    return [[b[0], b[1]] for b in discrete]
 
 
 # ---------------------------------------------------------------------------
