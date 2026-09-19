@@ -240,6 +240,68 @@ export default function EventCard({
     // `current_odds` reads a confident 0.5/0.5 built from nothing. Show no number.
     homeProb = null;
     awayProb = null;
+  } else if (!odds) {
+    // ═══ #4797 — THE CARD STOPS SAYING "NO PRICE YET" OVER A PRICE IT HOLDS ═══
+    //
+    // WHAT A READER SAW. `/search?q=chiefs`, 2026-09-19, one screenshot:
+    // the GAMES card for `15313996` Lamontville Golden Arrows v Kaizer Chiefs
+    // printed `No price yet` while the ANSWERS card ~400px below it printed
+    // `Kaizer Chiefs 47%` for the same fixture. Not a missing number — the page
+    // disagreeing with itself in one scroll.
+    //
+    // THE MECHANISM (lane1/233, measured 2026-09-10; re-measured today). The
+    // blend IS computed and IS served: `hero_probability = 0.225`,
+    // `hero_probability_source = "blend"`, `win_probability_sources` carrying a
+    // verified Polymarket reading. This card read `current_odds` and nothing
+    // else, and no sportsbook ever priced the fixture, so both sides came out
+    // null and the #2882 no-reading chrome fired over a served price. Across ten
+    // search queries on production today: 20 of 146 rows are in this state.
+    //
+    // ⚠️ THE AWAY SIDE IS NULL ON EXACTLY THE ROWS THIS RESCUES, AND THAT IS
+    // CORRECT, NOT A HOLE. `resolve_hero` always builds away as `1 − home`, and
+    // `routes/events.py` then runs it through `printable_away` — so on a
+    // draw-priced sport the server withholds it for #6238's reason before we
+    // ever see it. 19 of 21 rows on the specimen's own payload carry an away
+    // figure; the one row that does not is the one row this arm exists for. The
+    // fallback therefore hands `awayProb` the served `null` and lets
+    // `awayWithheld` below do what it already does: home keeps its number and
+    // its full-size treatment, the away slot prints nothing. Deriving `1 − 0.225`
+    // here would put 78% under Kaizer Chiefs on a 22.5 / 47 / ~30 three-way
+    // market — the exact fabrication #6238 exists to stop.
+    //
+    // WHY THIS ARM AND NOT THE OTHERS:
+    //  * `odds` PRESENT wins, always. This is a last rung, not an override, and
+    //    gating on `!odds` makes "no row that renders today changes" structural:
+    //    the arm is unreachable whenever `current_odds` exists, and when it does
+    //    not, today's answer is null on both sides.
+    //  * `shouldWithholdProbability` is deliberately ABOVE this. An untraded
+    //    Polymarket midpoint produces a `hero_probability` of exactly 0.5 too
+    //    (UX-P042/#1640's specimen is that payload), so reading the hero first
+    //    would re-publish the fabricated coin flip the gate exists to refuse.
+    //  * A FINISHED ROW IS NOT EXCLUDED HERE, AND THAT IS A DELIBERATE
+    //    NON-GUARD. It wants one: on a finished card these two slots hold the
+    //    OPENING line — the #2764 pre-match prior, grey beside each name — and a
+    //    finished hero is either `settled` (1.0/0.0) or `final_unresolved`
+    //    (whatever price was last captured before capture stopped; Q441/#1495
+    //    measured 5 of 44 games publishing the LOSER as favourite). Production
+    //    carries the row: `15291547` is `closed`, `final_unresolved 0.91`, no
+    //    opening line. But an `!isFinishedStatus(...)` clause here SURVIVES its
+    //    mutant, because on a finished card `homeProb`/`awayProb` are read by
+    //    nothing — the chips, the bar and the no-reading sentence are each gated
+    //    `!isFinished`, and `isLive` cannot be true beside it. A guard that
+    //    cannot be killed is a guard that proves nothing, so the protection is
+    //    put where it IS killable: ARM 8 of `searchCardReadsItsHero4797` asserts
+    //    that a closed row with a 0.91 hero prints no percent, and it goes red
+    //    the moment any of those render gates is un-gated. Un-gate one and the
+    //    test names this paragraph.
+    //
+    // A SUSPENDED row gains a reading here and still prints nothing, because
+    // every print site below is already gated `!isSuspended` (CERT-792: a stale
+    // live blend is not a statement a suspended card may make). That is the
+    // intended outcome, pinned by an arm, and it is why the two original
+    // specimens on this issue — both `suspended` — are not what closes it.
+    homeProb = event.hero_probability ?? null;
+    awayProb = event.hero_probability_away ?? null;
   } else {
     homeProb = odds?.home_probability ?? null;
     awayProb = odds?.away_probability ?? null;
