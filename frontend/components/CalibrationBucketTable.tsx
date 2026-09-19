@@ -65,6 +65,22 @@ export function formatBucketCI(b: Pick<AggBucket, "ciLower" | "ciUpper">): strin
   return `${b.ciLower.toFixed(1)}-${b.ciUpper.toFixed(1)}%`;
 }
 
+/** #7183. Every figure in this table is already rounded to exactly one decimal
+ *  by `calibrationParity.aggregateBuckets` (`Math.round(x * 1000) / 10`), so the
+ *  VALUES were never wrong. But a 1dp number that lands on a whole one loses its
+ *  decimal when JS stringifies it — `1.0` becomes `"1"` — and production printed
+ *  the 90-100% bucket as a bare "+1pp" in a `tabular-nums` column of "-0.5pp"
+ *  and "+2.7pp". A column whose job is to line its decimal points up cannot have
+ *  one cell at a coarser precision, least of all on the page about how precise
+ *  our numbers are. `toFixed(1)` is the same thing `formatBucketCI` above has
+ *  always done; these three cells were the ones that skipped it.
+ *
+ *  Note `(-0).toFixed(1)` is "0.0", not "-0.0": a difference that rounds to
+ *  negative zero still prints unsigned, as it did before. */
+function pp1(v: number): string {
+  return v.toFixed(1);
+}
+
 export default function CalibrationBucketTable({ buckets }: { buckets: AggBucket[] }) {
   return (
     <div className="overflow-x-auto scroll-shadow-x">
@@ -89,9 +105,9 @@ export default function CalibrationBucketTable({ buckets }: { buckets: AggBucket
                   sliced-number look. */}
               <td className="py-2 pr-1 sm:pr-4 whitespace-nowrap">{b.bucket}</td>
               <td className="py-2 pr-1 sm:pr-4 text-right tabular-nums">{b.n.toLocaleString()}</td>
-              <td className="py-2 pr-1 sm:pr-4 text-right tabular-nums">{b.avgProb}%</td>
+              <td className="py-2 pr-1 sm:pr-4 text-right tabular-nums">{pp1(b.avgProb)}%</td>
               <td className="py-2 pr-1 sm:pr-4 text-right tabular-nums">
-                {b.actual}%
+                {pp1(b.actual)}%
                 {/* `whitespace-nowrap` is load-bearing, not tidiness: measured
                     at 390px the interval needs 69.3px and auto table layout had
                     given this column a 68.8px content box, so nine of ten rows
@@ -116,7 +132,7 @@ export default function CalibrationBucketTable({ buckets }: { buckets: AggBucket
               <td className={`py-2 text-right tabular-nums ${
                 Math.abs(b.error) < 3 ? "text-text-muted" : b.error > 0 ? "text-green-600" : "text-red-600"
               }`}>
-                {b.error > 0 ? "+" : ""}{b.error}pp
+                {b.error > 0 ? "+" : ""}{pp1(b.error)}pp
               </td>
             </tr>
           ))}
