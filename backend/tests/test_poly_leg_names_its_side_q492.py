@@ -221,40 +221,67 @@ def _parent_leg_names() -> list[ast.expr]:
     return found
 
 
-def test_both_price_writers_name_their_leg_through_the_fix():
-    """The negRisk writer and the game-level parent-anchor writer both take
-    ``outcome_prices[0]``, so both must label it through ``_leg_label``.
+#: The shared labellers a parent leg may be named by, and nothing else.
+#:
+#: ``_leg_label`` is Q492's (the two ``outcome_prices[0]`` writers);
+#: ``_sub_market_side_label`` is #6050's, reused by the single-market branch
+#: under #6739. Both rest on the same warrant — ``outcomes`` is the array
+#: parallel to ``outcome_prices`` — and neither can be replaced by a rule that
+#: splits the market's own name.
+_SHARED_LEG_LABELLERS = {"_leg_label", "_sub_market_side_label"}
 
-    Three leg-name expressions live in ``_parent_outcome_data``: those two, and
-    the single-market shape's literal ``"Yes"`` — which is correct precisely
-    BECAUSE a one-market event has no side to name, and is pinned here so it
-    cannot quietly become a third unlabelled price writer.
+
+def test_every_price_writer_names_its_leg_through_a_shared_labeller():
+    """All three parent-leg writers label their price through a shared helper.
+
+    🔴 THIS TEST ASSERTED THE OPPOSITE UNTIL 2026-09-19, AND THE PREMISE IT
+    RESTED ON WAS MEASURABLY FALSE. It pinned the single-market branch's literal
+    ``"Yes"`` as correct "precisely BECAUSE a one-market event has no side to
+    name". #6739 read 240 such stored legs back against the venue itself: **223
+    of them** sit under a matchup whose Gamma payload names both sides
+    (``outcomes: ["Jukurit Mikkeli", "Vaasan Sport"]``). A Polymarket event
+    carrying one market is not always a Yes/No question — a game whose listing
+    holds only the moneyline lands there too — so "no side to name" described 17
+    of 240 rows and was pinned as though it described all of them.
+
+    The guard is STRONGER now, not looser: previously one of the three writers
+    was permitted a hard-coded name, and that exemption is what let the third
+    price writer go unlabelled for as long as it did. Now none is.
     """
     names = _parent_leg_names()
 
     assert len(names) == 3, (
         f"expected 3 parent leg-name expressions, found {len(names)} — a new "
-        "Polymarket price writer must also name its leg through _leg_label"
+        "Polymarket price writer must also name its leg through a shared "
+        "labeller"
     )
 
     literals = [n for n in names if isinstance(n, ast.Constant)]
-    calls = [n for n in names if not isinstance(n, ast.Constant)]
-
-    assert [n.value for n in literals] == ["Yes"], (
-        "the only leg allowed a hard-coded name is the single-market event's "
-        f"\"Yes\"; found {[getattr(n, 'value', n) for n in literals]}"
+    assert literals == [], (
+        "no parent leg may carry a hard-coded name; found "
+        f"{[getattr(n, 'value', n) for n in literals]} — a literal here is a "
+        "price whose label nobody derived from the venue's own payload"
     )
 
-    assert len(calls) == 2, "the two outcome_prices[0] writers must both remain"
-    for call in calls:
+    for call in names:
         assert isinstance(call, ast.Call), (
-            f"line {call.lineno}: a leg name is neither a call nor \"Yes\""
+            f"line {call.lineno}: a leg name is not a labeller call"
         )
-        assert isinstance(call.func, ast.Name) and call.func.id == "_leg_label", (
+        assert (
+            isinstance(call.func, ast.Name)
+            and call.func.id in _SHARED_LEG_LABELLERS
+        ), (
             f"line {call.lineno}: a leg is named by "
-            f"{ast.dump(call.func)[:80]}, not _leg_label — this is the exact "
-            "shape that shipped a price labelled with its own market's name"
+            f"{ast.dump(call.func)[:80]}, not one of {sorted(_SHARED_LEG_LABELLERS)} "
+            "— this is the exact shape that shipped a price labelled with its "
+            "own market's name"
         )
+
+    # Q492's own two writers are still named by Q492's own helper: widening the
+    # allowlist must not let the game-level anchors drift onto another rule.
+    assert sum(1 for c in names if c.func.id == "_leg_label") == 2, (
+        "the two outcome_prices[0] writers must both remain on _leg_label"
+    )
 
 
 def test_the_wiring_guard_can_fail():
