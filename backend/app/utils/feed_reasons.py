@@ -196,6 +196,71 @@ def _date_outcome_label(name: str | None) -> str | None:
     return label
 
 
+#: The three things a movement sentence may do with its number. Resolved ONCE,
+#: by :func:`movement_subject`, and shared by all four movement templates so a
+#: fifth cannot reintroduce the defect below.
+MOVEMENT_SUBJECT_NAMED = "named"  # name the outcome that moved
+MOVEMENT_SUBJECT_MARKET = "market"  # borrow the market title for context
+MOVEMENT_SUBJECT_SILENT = "silent"  # print no number at all
+
+
+def movement_subject(
+    top_mover_name: str | None,
+    leader_name: str | None,
+) -> str:
+    """Who a movement sentence may hang its number on.
+
+    #6903's residual, photographed on production 2026-09-19 at 390px
+    (`/categories/tech`, `artifacts-discover/shop-0340Z/tech-ailab-30pts-390px.png`).
+    The card reads, in one header:
+
+        badge    Odds up 30 points
+        title    AI lab announces another Millennium Prize solution?
+        caption  51% chance by December 31, 2027
+        rail     51%  ·  December 31, 2027  ·  +13.5 pts
+        rows     December 31, 2027  51%   December 31, 2026  38%   September 30, 2026  11%
+
+    Two movement numbers about one card, three lines apart: the badge's **+30**
+    belongs to the December 31, 2026 rung, the rail's **+13.5** to the rung the
+    card actually leads with. A reader can only read the badge as the news about
+    the 51% it sits above, and that is not what moved 30 points.
+
+    The cause is that `_weak_outcome_label` refuses a bare date as a subject, so
+    the movement templates substitute the market title — turning ONE rung's move
+    into a claim about a board that has no single probability to move.
+
+    So the substitution keeps its licence in exactly the case where it costs the
+    reader nothing, and loses it where it contradicts the card:
+
+    - **NAMED** — the label stands on its own (`Above 102`, a candidate), or it
+      is a bare date on a board whose leader is ALSO a bare date and is a
+      DIFFERENT rung. On such a board every row the reader can see is a date, so
+      "December 31, 2026" is the most legible subject available, not the least.
+    - **MARKET** — the mover IS the rung the card leads with, so the rail already
+      prints this number beside this rung and the market phrasing contradicts
+      nothing. Also the answer whenever the leader is unknown, which keeps every
+      uninformed caller on the sentence it renders today.
+    - **SILENT** — a different rung moved and this board cannot name it. There is
+      no honest sentence here, so the template says nothing and the card falls
+      through to a level or resolution clause it can support.
+
+    Deliberately NOT extended to numeric boards (`0` / `1` / `2`): "odds down 39
+    points" on a count question is loose, but its number is the leader's and the
+    card's own rail carries the `0` chip beside it, so it is one sentence to
+    rewrite rather than a claim to withdraw. Recorded, not fixed here.
+    """
+    if not (top_mover_name or "").strip():
+        return MOVEMENT_SUBJECT_MARKET
+    if not _weak_outcome_label(top_mover_name):
+        return MOVEMENT_SUBJECT_NAMED
+    leader = (leader_name or "").strip()
+    if not leader or leader.lower() == (top_mover_name or "").strip().lower():
+        return MOVEMENT_SUBJECT_MARKET
+    if _date_outcome_label(top_mover_name) and _date_outcome_label(leader):
+        return MOVEMENT_SUBJECT_NAMED
+    return MOVEMENT_SUBJECT_SILENT
+
+
 def deadline_level_label(
     leader_name: str | None,
     *,
@@ -2006,7 +2071,10 @@ def generate_futures_reason(
     # Major movement
     if "major_movement_24h" in reasons:
         if top_mover_name and top_mover_change is not None and _mover_sayable:
-            if _weak_outcome_label(top_mover_name):
+            # #6903's residual: a bare date IS nameable on a board of bare
+            # dates, and naming it is the only way this sentence can carry the
+            # number without hanging it on a board that has no probability.
+            if movement_subject(top_mover_name, leader_name) != MOVEMENT_SUBJECT_NAMED:
                 return f"Big odds movement in {market_name}"
             direction = "up" if top_mover_change > 0 else "down"
             pts = _points(top_mover_change)
@@ -2022,7 +2090,8 @@ def generate_futures_reason(
     # Moderate movement
     if "moderate_movement_24h" in reasons:
         if top_mover_name and top_mover_change is not None and _mover_sayable:
-            if _weak_outcome_label(top_mover_name):
+            # Same resolver as the major rung above — see `movement_subject`.
+            if movement_subject(top_mover_name, leader_name) != MOVEMENT_SUBJECT_NAMED:
                 return f"Odds shifting in {market_name}"
             direction = "up" if top_mover_change > 0 else "down"
             pts = _points(top_mover_change)
@@ -2231,9 +2300,17 @@ def generate_futures_headline(
         and _mover_sayable
     ):
         direction = "up" if top_mover_change > 0 else "down"
-        if _weak_outcome_label(top_mover_name) and market_name:
+        # The badge slot, and the one the reader binds to the number beside it.
+        # `movement_subject` is the whole of #6903's residual: MARKET only where
+        # the moving rung IS the rung the card leads with, SILENT where a rung
+        # the card cannot name moved and the title would take the credit.
+        _subject = movement_subject(top_mover_name, leader_name)
+        if _subject == MOVEMENT_SUBJECT_SILENT:
+            pass
+        elif _subject == MOVEMENT_SUBJECT_MARKET and market_name:
             return f"{_short_market_name(market_name)} odds {direction} {_points(top_mover_change)}"
-        return f"{_side_label(top_mover_name)} {direction} {_points(top_mover_change)} today"
+        else:
+            return f"{_side_label(top_mover_name)} {direction} {_points(top_mover_change)} today"
 
     # (No `rank_shakeup` branch — see `generate_futures_reason`.)
 
@@ -2244,9 +2321,14 @@ def generate_futures_headline(
         and _mover_sayable
     ):
         direction = "up" if top_mover_change > 0 else "down"
-        if _weak_outcome_label(top_mover_name) and market_name:
+        # Same resolver as the major rung above — see `movement_subject`.
+        _subject = movement_subject(top_mover_name, leader_name)
+        if _subject == MOVEMENT_SUBJECT_SILENT:
+            pass
+        elif _subject == MOVEMENT_SUBJECT_MARKET and market_name:
             return f"{_short_market_name(market_name)} odds {direction} {_points(top_mover_change)}"
-        return f"{_side_label(top_mover_name)} {direction} {_points(top_mover_change)} today"
+        else:
+            return f"{_side_label(top_mover_name)} {direction} {_points(top_mover_change)} today"
 
     if "resolving_soon_7d" in reasons:
         if leader_name and leader_probability is not None:
