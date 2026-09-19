@@ -3185,6 +3185,93 @@ GRADED_DELTA_BATCH = 100_000
 #: backlog completely.
 IMPOSSIBLE_PRIOR_BATCH = 10_000
 
+#: The snapshot sources whose `probability` is the SAME QUANTITY as
+#: `futures_outcomes.current_probability`, and therefore the only sources
+#: statement A4 may subtract one from the other for (#4079, CERT-3107).
+#:
+#: 🔴 THIS IS A SCALE GUARD, AND WITHOUT IT A4 IS #1844 AGAIN.
+#: `FuturesOddsSnapshot.probability` carries an explicit column contract —
+#: "RAW implied probability for THIS ONE BOOKMAKER — vig-inclusive … Never
+#: compare a raw row to a blend" — written because #1844 shipped an all-red
+#: movers row for months by subtracting exactly these two things. A sportsbook
+#: row is inflated by that book's vig; a de-vigged consensus
+#: `current_probability` sits BELOW every raw row it was built from. So on a
+#: vigged outcome `current - MIN(observed)` understates the supportable rise by
+#: roughly the vig share, and A4 would retire an HONEST rise — the one failure
+#: direction the statement claims it cannot have. The first draft's defence
+#: ("the extremes are taken across every bookmaker, so a blend cannot sit
+#: outside them") is true for same-scale sources and FALSE for vigged ones: it
+#: was the statement's unstated precondition, and this constant is that
+#: precondition made explicit.
+#:
+#: MEASURED on production 2026-09-19, which is why this lands as a guard and not
+#: as a rewrite: the vigged population A4 could damage is EMPTY. Every one of
+#: the 7,317 outcomes in A4's scope — open market, `|delta| >= 0.02`, any
+#: observation in the window — is backed by a SINGLE prediction-market source
+#: (polymarket 6,509, kalshi 808) and no sportsbook row at all; likewise all
+#: 3,108 rows A4 retires (polymarket 2,752, kalshi 356). Scale identity on that
+#: population is measured, not assumed: 7,255 of 7,317 (99.2%) carry a
+#: `current_probability` equal to their latest snapshot to within 5e-7, and the
+#: mean SIGNED gap is -0.000048 (polymarket) / +0.002952 (kalshi) — a vig offset
+#: would be a large one-sided negative, and it is not there.
+#:
+#: FAIL-CLOSED, per outcome, on the presence of ANY foreign-scale row in the
+#: window rather than by filtering those rows out of the extrema. An outcome
+#: priced from both a sportsbook and a prediction market has a
+#: `current_probability` this statement cannot reason about at all, so the
+#: honest move is to leave its delta alone — A, A2 and A3 still cover it.
+SCALE_IDENTICAL_SNAPSHOT_SOURCES = ("kalshi", "polymarket")
+
+#: How far a delta may OVERSTATE what the outcome's own series supports before
+#: statement A4 retires it (#4079).
+#:
+#: One point, and it is an artifact allowance rather than a policy. Even inside
+#: `SCALE_IDENTICAL_SNAPSHOT_SOURCES` the two quantities are not the same
+#: measurement to the last decimal: `current_probability` on a multi-source
+#: outcome is a BLEND of same-scale sources while each snapshot row is one
+#: source's own read, and the two are written by different passes. This absorbs
+#: that last step. It does NOT absorb a vig — nothing this size could, which is
+#: what the scale guard above is for.
+#:
+#: 🔴 IT IS A PAD ON OVERSTATEMENT, NOT ON PRICE EQUALITY, and the first draft
+#: of this statement got that wrong in a way worth recording. That draft asked
+#: whether the claimed previous price — `current - change` — appeared in the
+#: window at all. It retired the specimen correctly AND retired the control:
+#: "Rain in Denver in Sep 2026?" / "Above 1 inch" was serving a true "up 54
+#: points today", and between two reads the same delta-blind writer nudged its
+#: price 0.83 -> 0.85 without touching the delta, moving the implied prior from
+#: 0.29 (in the series) to 0.31 (not in it). An exact-prior test therefore
+#: punishes an honest caption for two points of drift, and no tolerance small
+#: enough to be a rounding pad survives that. The test below asks the question
+#: the reader is actually owed — did this outcome travel as far as the card
+#: says — which drift in the direction of the claim cannot defeat.
+#:
+#: Widening it only ever retires FEWER rows. MEASURED on production 2026-09-19
+#: over the 7,615 open outcomes carrying a `>= 0.02` delta and any observation in
+#: the window: 0.0 -> 3,337 retired, 0.01 -> 3,242, 0.05 -> 1,771. So a pad of
+#: one point is within 3% of no pad at all — which is what makes it an artifact
+#: allowance — while five points would be a different statement.
+UNOBSERVED_PRIOR_TOLERANCE = 0.01
+
+#: Rows retired per run by statement A4, the OVERSTATED-MOVE sweep, biggest
+#: mover first.
+#:
+#: Its own constant, for the reason A2 and A3 each have one: a separate backlog
+#: against a separate predicate, tunable without moving the others. Sized from
+#: the measurement in A4's comment — 3,242 standing rows at the `>= 0.02`
+#: reader-visible floor on 2026-09-19 — so one run clears the whole backlog
+#: today and the ceiling is there to keep a regressing writer from blowing this
+#: task's 120 s `soft_time_limit`, not to schedule a drain.
+#:
+#: MEASURED rather than assumed, because A4 is the first of these statements
+#: that touches `futures_odds_snapshots` at all and its cost had to be paid for
+#: explicitly: EXPLAIN ANALYZE of the selection at this limit on production
+#: 2026-09-19 ran in **1.77 s** returning 3,242 rows, against A's 3.7 s and A2's
+#: 2.13 s. A run doing all four stays far inside the soft limit. (The
+#: exact-prior draft this replaced cost 3.4 s for the same scan; one lateral
+#: aggregate is cheaper than two correlated `EXISTS` over the same rows.)
+UNOBSERVED_PRIOR_BATCH = 10_000
+
 
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=150, name="app.tasks.update_max_movement")
 def update_max_movement(self):
@@ -3195,7 +3282,7 @@ def update_max_movement(self):
     commit and inside its own guard — the column update is this task's job and a
     cache write must never be able to fail it or roll it back.
 
-    ── WHY THERE ARE THREE STATEMENTS AND NOT ONE (item 12 / CAL-P159) ─────────
+    ── WHY THERE ARE FOUR RETIRING STATEMENTS AND NOT ONE (item 12 / CAL-P159) ─
 
     `probability_change_24h` is not a 24-hour change. All four writers
     (`tasks/kalshi.py`, `tasks/polymarket.py` x2, `tasks/futures.py`) store
@@ -3237,6 +3324,16 @@ def update_max_movement(self):
     47 rows, 36 open markets, the worst of them green on Discover page one
     telling a reader that an outcome sitting at 8% had risen 80 points.
 
+    Statement A4 exists because A3's tell is a PROXY for the thing that is
+    actually wrong, and the proxy only fires on the extreme tail (#4079). A3
+    asks whether the implied previous price is a legal probability; the question
+    a reader is owed is whether this outcome travelled as far as the card says.
+    Measured 2026-09-19: A3's population was 47 rows, while 1,365 of the 2,384
+    reader-visible movers — 57%, across 903 markets — claimed a move larger than
+    anything their own snapshot series recorded in 24 hours. One of them was on
+    Discover page one telling a reader that a market trading at 7% had fallen 74
+    points that day, on an outcome whose whole day ran between 5% and 10%.
+
     Statement C exists because statement B structurally cannot lower a market.
     B drives off `GROUP BY market_id` over non-null deltas, so a market whose
     last delta just expired vanishes from the aggregate and RETAINS its old
@@ -3244,8 +3341,35 @@ def update_max_movement(self):
     would have left them ranked exactly as they are today.
     """
     async def _impl():
+        from decimal import Decimal
+
         from app.tasks.base import get_task_session
         from sqlalchemy import text
+
+        # A4's floor is the threshold that decides whether a card names a mover
+        # at all. Imported from the module that OWNS that decision rather than
+        # restated as a number here, so the sweep and the copy layer cannot
+        # drift into disagreeing about which deltas a reader can ever see.
+        from app.utils.futures_highlights import MODERATE_MOVEMENT_THRESHOLD
+
+        # 🔴 A4's two thresholds are bound as `Decimal`, and a `float` here is a
+        # REAL BUG, not a style preference. Both columns A4 compares are
+        # `numeric(7, 6)`, so Postgres infers a bare parameter in
+        # `abs(probability_change_24h) >= $1` as NUMERIC — and asyncpg then
+        # converts the Python double to numeric at its full binary value.
+        # `float(0.02)` is 0.0200000000000000004163…, which as a numeric is
+        # strictly GREATER than the stored 0.020000, so a delta sitting exactly
+        # on the floor fails its own floor test. Caught by
+        # `test_a_delta_below_the_card_floor_is_left_alone` in the real-Postgres
+        # gate, which is the only instrument that can see it: the recording
+        # double never evaluates a comparison, and a SQL literal (what the
+        # production EXPLAIN used) is parsed as an exact decimal and behaves.
+        # `Decimal(str(x))` keeps the whole predicate in exact decimal
+        # arithmetic, which is the same stance A3's comment takes for the same
+        # reason.
+        floor = Decimal(str(MODERATE_MOVEMENT_THRESHOLD))
+        tolerance = Decimal(str(UNOBSERVED_PRIOR_TOLERANCE))
+
         async with get_task_session() as session:
             # A. Retire deltas whose row has not been written inside the window.
             #    `last_updated` is the right stamp and `price_changed_at` is the
@@ -3404,7 +3528,167 @@ def update_max_movement(self):
                 {"batch": IMPOSSIBLE_PRIOR_BATCH},
             )
 
-            # B. Recompute the per-market maximum over what survived A, A2 and A3.
+            # A4. Retire deltas claiming a move THE OUTCOME'S OWN SERIES CANNOT
+            #     SUPPORT (#4079).
+            #
+            #     A3 asks whether the implied previous price is a legal
+            #     probability. This asks the question A3 is standing in for: did
+            #     this outcome actually travel as far as the card says it did,
+            #     today. `futures_odds_snapshots` is the record of what we
+            #     observed it at, so the largest rise the window can justify is
+            #     `current - MIN(observed)` and the largest fall is
+            #     `current - MAX(observed)`. A delta beyond that describes a
+            #     journey this outcome did not take, whatever the row's stamps
+            #     say.
+            #
+            #     🔴 AN OVERSTATEMENT TEST, AND DELIBERATELY ONE-DIRECTIONAL.
+            #     It fires only when the claim EXCEEDS what was observed; a delta
+            #     smaller than the true move is left alone. That asymmetry is the
+            #     safety property: a delta-blind writer nudging the price further
+            #     in the direction the delta already claims makes the observed
+            #     range WIDER, so drift can never turn an honest caption into a
+            #     swept one. The first draft of this statement tested the implied
+            #     previous price for membership in the series instead, and
+            #     retired a true "up 54 points today" over two points of exactly
+            #     that drift — see `UNOBSERVED_PRIOR_TOLERANCE` for the specimen.
+            #
+            #     WHY A, A2 AND A3 ALL STRUCTURALLY MISS THESE, which is why this
+            #     is a fourth statement and not a widening of any of them. A
+            #     gates on `last_updated`, and the delta-blind price writers bump
+            #     it hourly. A2 needs the row graded; these are open. A3 needs the
+            #     implied prior to fall outside [0, 1], and the overwhelming
+            #     majority of stranded deltas imply a perfectly legal price —
+            #     A3's population was 47 rows for exactly this reason. The
+            #     stranding mechanism is the same one `futures_price_refresh`
+            #     documents at its own UPDATE ("THIS TASK IS A DELTA-BLIND PRICE
+            #     WRITER, and on this population it is the dominant one"); what
+            #     changes here is only the detector.
+            #
+            #     MEASURED on production 2026-09-19, which is what sized the batch
+            #     above and what makes this worth a snapshot join. Of the 2,384
+            #     reader-visible movers — open market, future `resolution_date`,
+            #     `|delta| >= 0.05`, probability >= 0.05, i.e. the rows eligible to
+            #     become a card's headline mover — **1,365 (57%), across 903
+            #     markets, claim a move larger than anything their own series
+            #     recorded in 24 hours.** At the `>= 0.02` floor this statement
+            #     sweeps, 3,242 of 7,615.
+            #
+            #     THE SPECIMENS, read off Discover page one in one pass at 01:50Z
+            #     the same morning, with the control beside them:
+            #
+            #       * card 37, "Kanye West performs in Russia by October 31 —
+            #         Down 74 points today, now 7% chance". That outcome's whole
+            #         observed day ran 0.0525 to 0.1005, so the deepest fall the
+            #         series supports is 3.2 points. RETIRED.
+            #       * card 6, "Flavio Bolsonaro up 45 points today". Its series
+            #         over the window is flat at 0.94 — the rise it names happened
+            #         before the window opened. RETIRED.
+            #       * card 26, "Above 1 inch up 54 points today". Its series holds
+            #         0.28 inside the window, so a 57-point rise is supported and
+            #         the caption is TRUE. KEPT, and it is the control the
+            #         predicate was rewritten to protect.
+            #
+            #     None of the three could be told apart by a freshness gate on
+            #     `price_changed_at`: Kanye's stamp was one hour old and honest.
+            #     The stamp was never the thing that was wrong.
+            #
+            #     🔴 BOTH SIDES OF THE SUBTRACTION MUST BE THE SAME QUANTITY,
+            #     and that is a PRECONDITION, not a property of the arithmetic.
+            #     `FuturesOddsSnapshot.probability` is one book's RAW
+            #     vig-inclusive number and its column comment forbids comparing
+            #     it to a blend in as many words (#1844 shipped an all-red movers
+            #     row for months on exactly this subtraction). On a vigged
+            #     outcome a de-vigged `current_probability` sits below every raw
+            #     row it came from, so `current - MIN(observed)` understates the
+            #     supportable rise and A4 would retire an HONEST caption. So the
+            #     statement is SCOPED to sources whose snapshot rows are the same
+            #     quantity as `current_probability`
+            #     (`SCALE_IDENTICAL_SNAPSHOT_SOURCES` carries the contract and
+            #     the production measurement), and an outcome carrying any
+            #     foreign-scale row in the window is skipped whole. Within that
+            #     scope the original argument holds: a blend lies between the min
+            #     and max of its same-scale constituents, so taking the extremes
+            #     across sources can only ever leave a lying delta standing.
+            #
+            #     A ROW WITH NO OBSERVATIONS IN THE WINDOW IS LEFT ALONE, and that
+            #     is a refusal to guess rather than an oversight. "We never looked"
+            #     and "we looked and it never went there" are different findings,
+            #     and only the second one refutes the delta (gotcha #53). `MIN`
+            #     over an empty set is NULL, so `obs.lo IS NOT NULL` is that
+            #     distinction and is load-bearing, not a null-safety habit. Those
+            #     rows are A's population by construction: nothing observed them,
+            #     so nothing wrote them, so `last_updated` ages out and A retires
+            #     them. This statement does not need to reach behind A.
+            #
+            #     NULL rather than a recomputed value, for the same reason A, A2
+            #     and A3 clear. The series could in principle supply a true
+            #     24-hour change, but making that the stored value would silently
+            #     convert a per-write delta into a windowed one for the whole
+            #     served book and rewrite `/api/futures/movers`' ranking input —
+            #     the change `futures_price_refresh` considered and refused at its
+            #     own write. Every reader already treats NULL as "no movement".
+            unobserved = await session.execute(
+                text("""
+                    UPDATE futures_outcomes
+                    SET probability_change_24h = NULL
+                    WHERE id IN (
+                        SELECT fo.id
+                        FROM futures_outcomes fo
+                        JOIN futures_markets fm ON fm.id = fo.market_id
+                        CROSS JOIN LATERAL (
+                            SELECT min(s.probability) AS lo,
+                                   max(s.probability) AS hi,
+                                   bool_or(
+                                       s.bookmaker <> ALL(:scale_identical)
+                                   ) AS foreign_scale
+                            FROM futures_odds_snapshots s
+                            WHERE s.outcome_id = fo.id
+                              AND s.captured_at
+                                  > now() - (:window_hours * interval '1 hour')
+                        ) obs
+                        WHERE fo.probability_change_24h IS NOT NULL
+                          AND fo.current_probability IS NOT NULL
+                          AND abs(fo.probability_change_24h) >= :floor
+                          AND fm.status = 'open'
+                          AND obs.lo IS NOT NULL
+                          -- `IS FALSE`, never `NOT foreign_scale`: NULL (no
+                          -- rows) and TRUE (a vigged row) must BOTH fail, and
+                          -- `NOT NULL` is NULL, which the planner drops anyway
+                          -- — spelled this way so the fail-closed intent is
+                          -- readable rather than incidental.
+                          AND obs.foreign_scale IS FALSE
+                          AND CASE
+                                WHEN fo.probability_change_24h > 0
+                                THEN fo.probability_change_24h
+                                     > (fo.current_probability - obs.lo)
+                                       + :tolerance
+                                ELSE fo.probability_change_24h
+                                     < (fo.current_probability - obs.hi)
+                                       - :tolerance
+                              END
+                        ORDER BY abs(fo.probability_change_24h) DESC
+                        LIMIT :batch
+                    )
+                """),
+                {
+                    "window_hours": MOVEMENT_WINDOW_HOURS,
+                    "tolerance": tolerance,
+                    # MODERATE_MOVEMENT_THRESHOLD: below it no card names a mover
+                    # and no chip is drawn, so a sub-2-point delta cannot reach a
+                    # reader to lie to them. Bounding the statement there is what
+                    # keeps a snapshot join affordable on a beat — it is a cost
+                    # bound on a sweep, not a claim that smaller deltas are true.
+                    # Decimal, never the float itself — see the note above.
+                    "floor": floor,
+                    "batch": UNOBSERVED_PRIOR_BATCH,
+                    # A list, not the tuple: asyncpg binds a Python list to a
+                    # Postgres array, which is what `<> ALL(...)` needs.
+                    "scale_identical": list(SCALE_IDENTICAL_SNAPSHOT_SOURCES),
+                },
+            )
+
+            # B. Recompute the per-market maximum over what survived A, A2, A3
+            #    and A4.
             result = await session.execute(text("""
                 UPDATE futures_markets fm
                 SET max_movement_24h = sub.max_mv
@@ -3437,7 +3721,7 @@ def update_max_movement(self):
                   )
             """))
 
-            # One commit for all of them: a reader must never see A/A2/A3's
+            # One commit for all of them: a reader must never see A/A2/A3/A4's
             # cleared outcomes against B and C's un-recomputed markets, because
             # between those two states the superset bound is false.
             await session.commit()
@@ -3445,6 +3729,7 @@ def update_max_movement(self):
             expired_rows = expired.rowcount
             graded_rows = graded.rowcount
             impossible_rows = impossible.rowcount
+            unobserved_rows = unobserved.rowcount
             cleared_markets = cleared.rowcount
 
             # Reported, not swallowed: a warm that never ran must be visible in
@@ -3475,6 +3760,15 @@ def update_max_movement(self):
                 # moving prices without its delta, which is a fix at that writer
                 # and not more sweeping.
                 "impossible_retired": impossible_rows,
+                # #4079. Separate from `impossible_retired` for the same reason
+                # that one is separate from `graded_retired`: the two counters
+                # answer different questions about the same writers. A non-zero
+                # `impossible_retired` says a writer produced an arithmetically
+                # impossible pair; a non-zero `unobserved_retired` says a writer
+                # is stranding deltas that LOOK legal, which is the larger and
+                # quieter half. Folding them would hide the first big drain
+                # behind a number that was already moving.
+                "unobserved_retired": unobserved_rows,
                 "cleared_markets": cleared_markets,
                 # Both backlogs have to be empty before the strip is honest, so
                 # `backlog_drained` reports the AND. Reporting only A's would go
