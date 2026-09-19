@@ -20,6 +20,23 @@ struct StatusBadge: View {
     /// would each have to invent a value.
     var venueSettled: Bool = false
 
+    /// #7019 — THE ONLY THING ON THIS VIEW THAT EVER CHANGES BY ITSELF.
+    ///
+    /// The scheduled arm's whole content is a clock, and every other input to it
+    /// (`status`, `commenceTime`) is fixed for the life of the row. Reading the
+    /// current instant implicitly inside `formatCountdown` therefore produced a
+    /// string SwiftUI had no reason to redraw: a My Stuff row on a two-hour-old
+    /// session read `In 1d 3h` beside its own `Tomorrow 1:10 PM`, and a cold
+    /// relaunch of the same build read `In 1d 1h`. Observing the published
+    /// instant is what re-evaluates `body`, and re-evaluating `body` — rather
+    /// than just a timeline closure — is what lets the `if let` below collapse
+    /// the chip to a true `EmptyView` once the kickoff passes. The reasoning for
+    /// both halves is on `MinuteClock`.
+    ///
+    /// Not `private`: a `private` stored property makes Swift's memberwise
+    /// initialiser `private` too, and all five call sites use it.
+    @ObservedObject var clock = MinuteClock.shared
+
     /// Formatted live text: "Q1 5:11", "Bottom 7th", or "LIVE".
     ///
     /// #3273 — this read **"5:11 - 1st Quarter 5:11"** on the live Michigan game
@@ -124,7 +141,12 @@ struct StatusBadge: View {
             .background(.orange.opacity(0.1))
             .clipShape(Capsule())
         } else if status == "scheduled" {
-            if let commence = commenceTime, let date = commence.asDate, let countdown = formatCountdown(from: date) {
+            // #7019 — `clock.now` and not an implicit `Date()`. Passing it is
+            // what makes this arm a reader of something that changes; drop the
+            // argument and the chip compiles, draws correctly once, and then
+            // silently stops ageing on every surface at once.
+            if let commence = commenceTime, let date = commence.asDate,
+               let countdown = formatCountdown(from: date, now: clock.now) {
                 HStack(spacing: 3) {
                     Image(systemName: "clock")
                         .font(.system(size: 8))

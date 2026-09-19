@@ -740,6 +740,18 @@ struct EventDetailView: View {
                 // gated on `scheduled`: a minute is a long interval beside the
                 // half-second refresh ring a live page already runs, and gating
                 // would put the clock back in a branch.
+                //
+                // #7019 AMENDS THE SENTENCE ABOVE: this is no longer the only
+                // thing ageing the chip. Wrapping the badge fixed the hero and
+                // left the four other `StatusBadge` call sites frozen — the My
+                // Stuff / Discover / Sports row, both search rows and the team
+                // schedule — so the tick moved onto the badge itself, which
+                // observes `MinuteClock.shared`. This wrapper is kept rather
+                // than deleted because it re-renders the WHOLE hero chip chain
+                // (live clock, FINAL, settled, suspended), not just the
+                // scheduled arm, and `HeroSaysTheCountdownOnce6544Tests
+                // .testTheChipStillTicks` pins it. Removing it would not freeze
+                // the countdown today; it would quietly narrow what re-renders.
                 TimelineView(.periodic(from: .now, by: 60)) { _ in
                     heroStatusBadge(event)
                 }

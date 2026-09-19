@@ -126,8 +126,17 @@ func formatProbabilityOrDash(_ value: Double?, renderedPercent: Int? = nil) -> S
 }
 
 /// Format a future date as a compact countdown: "2h 15m", "35m", "3d 5h".
-func formatCountdown(from date: Date) -> String? {
-    let interval = date.timeIntervalSinceNow
+///
+/// #7019 — `now` is a parameter, and it defaults so no existing caller moves.
+/// It used to be read implicitly here as `timeIntervalSinceNow`, which made the
+/// result a function of a hidden input: a caller could not pass a clock, a test
+/// could not vary one, and `StatusBadge` could not depend on one changing. That
+/// last one is the defect — a chip whose body reads nothing that ever changes is
+/// a chip SwiftUI never re-renders, so it froze at the minute the row appeared.
+/// `MinuteClock` is the thing that now changes; this signature is what lets the
+/// badge read it.
+func formatCountdown(from date: Date, now: Date = Date()) -> String? {
+    let interval = date.timeIntervalSince(now)
     guard interval > 0 else { return nil }
 
     let totalMinutes = Int(interval / 60)
