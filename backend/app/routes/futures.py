@@ -5775,6 +5775,7 @@ def _format_market_detail(
     from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
     from app.utils.superseded_name_twins import drop_superseded_name_twins
     from app.utils.field_opening_coherence import field_openings_publishable
+    from app.utils.market_staleness import expired_ladder_rungs
     from app.utils.outcome_display import (
         assign_display_ranks,
         is_placeholder_outcome_name,
@@ -6011,6 +6012,62 @@ def _format_market_detail(
         }
         for o in sorted_outcomes
     ]
+
+    # 🔴 #7274 — ONE DIVISOR RULE, OR THE CARD AND THIS PAGE PRINT TWO NUMBERS
+    # FOR ONE LEG.
+    #
+    # WHAT A READER SAW, measured on production 2026-09-19. Discover's card for
+    # market 58776433 (*When will the Danube River return to normal levels?*)
+    # printed `October 1 - 31, 2026` at **59%**; tapping it, `/futures/58776433`
+    # printed the same leg at **49%**. Neither number was a cache artifact — the
+    # card reproduced on two independently rebuilt feed payloads.
+    #
+    # THE CAUSE IS THE DIVISOR'S MEMBERSHIP, NOT A PRICE. Both surfaces divide by
+    # the sum of the legs they show, and only one of them strips rungs whose own
+    # deadline has passed. The feed drops them (`feed.py`, UX-P004 b+e) and
+    # divides by the 0.8845 that survives — under the squeeze band, so it prints
+    # the stored price. This page divided by all 1.1935, including a
+    # `Before September 1, 2026` rung that on the 19th could no longer happen, so
+    # every live rung was squeezed by 16% of probability mass held by dead ones.
+    # `_feed_display_scale`'s own docstring names the contract that breaks: one
+    # divisor, "so one outcome never renders at two different numbers".
+    #
+    # THE MEMBERSHIP RULE IS SHARED, NOT THE DIVISOR — the same
+    # `expired_ladder_rungs` the feed calls, so the two surfaces cannot drift into
+    # two answers about which rungs are real. It also stops this page pricing an
+    # impossible option at 14%, which is a truth win on its own account.
+    #
+    # ABOVE the withheld-price nulling and everything below it, for the reason
+    # that block states in its own comment: a row left in place until after the
+    # squeeze is still in the divisor. Probabilities are passed raw and unnulled,
+    # which is what the helper's `EXPIRED_RUNG_MAX_PROBABILITY` guard needs — a
+    # past-dated rung priced at or above it already resolved YES and is the
+    # ladder's answer, not a ghost, and is never stripped.
+    #
+    # OPEN MARKETS ONLY. A settled or closed board is a RESULT, and a result
+    # shows what ran, including the windows that elapsed without the event
+    # happening. Expiry is a statement about what can still happen, which is a
+    # question only an open market asks. This also bounds the change to #7274's
+    # population.
+    #
+    # AND NEVER THE WHOLE BOARD: if every rung has expired the ladder is dead,
+    # and the feed answers that by dropping the card. This page cannot drop
+    # itself, and an empty All Outcomes table would be a worse answer than a
+    # stale one, so the list stands unchanged.
+    expired_rungs_dropped = 0
+    if getattr(market, "status", None) == "open":
+        expired_rung_names = expired_ladder_rungs(
+            [(o["name"], o.get("probability")) for o in outcomes],
+            datetime.now(timezone.utc),
+        )
+        if expired_rung_names:
+            live_rungs = [o for o in outcomes if o["name"] not in expired_rung_names]
+            # ROWS, not names: the count below feeds the identity answer, and two
+            # rows can carry one name on a board the earlier twin rules spared.
+            if live_rungs:
+                expired_rungs_dropped = len(outcomes) - len(live_rungs)
+                outcomes = live_rungs
+
     # #5611/#5876: a price no book and no trade supports — and a Polymarket
     # midpoint the newest trade refutes — are not published. The rules and
     # everything measured about them are in `app.utils.futures_unsupported_price`;
@@ -6168,7 +6225,14 @@ def _format_market_detail(
     # itself shorten the list (#1201 strips a run of exact-0.5 untraded midpoints
     # in place), so the pre-drop length is the only one that reproduces today's
     # `len(outcomes)` at this call site.
-    concept_outcome_count = len(outcomes)
+    #
+    # #7274's expired rungs are ADDED BACK, and that is this comment's own rule
+    # applied to a drop that now lands above this line rather than below it. A
+    # date ladder is exactly the shape that can fall to two live rungs, and a
+    # two-row count is what the combat adapters read as a fight — so letting the
+    # expiry drop feed this would invent a breadcrumb on a river-level market.
+    # The identity answer stays bit-identical to the one served before #7274.
+    concept_outcome_count = len(outcomes) + expired_rungs_dropped
 
     # #4253: a single-winner field cannot have five different winners. Measured
     # live 2026-09-09, `/api/futures/12764689` (*Dancing with the Stars*) served
@@ -6427,6 +6491,14 @@ def _format_market_detail(
         # and so the 19 markets where this empties every price are findable.
         # Machine-readable only — notice 34 keeps diagnostics off the page.
         "prices_withheld": prices_withheld,
+        # #7274: how many ladder rungs were dropped because their own deadline has
+        # passed — the same rule and the same helper the Discover card applies, so
+        # the two surfaces divide by one set. A COUNT rather than a flag, for
+        # `prices_withheld`'s reason: an after-check can tell a board the rule
+        # fired on from one that simply has no expired rung, without re-deriving
+        # the rule. Machine-readable only — notice 34 keeps diagnostics off the
+        # page. Always present, so its absence means an old build.
+        "expired_rungs_dropped": expired_rungs_dropped,
         "bookmakers": bookmakers or [],
         "category_tags": market.category_tags or [],
         "created_at": market.created_at.isoformat() if market.created_at else None,
