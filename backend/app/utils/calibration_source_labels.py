@@ -18,8 +18,8 @@ WHAT THIS MODULE DELIBERATELY DOES NOT DO — it holds no opinion about *provide
 families*. Grouping ``odds_api``/``odds_api_spreads``/``odds_api_totals`` into
 one "Sportsbooks (Odds API)" row is a presentation decision the calibration page
 makes for its Source Comparison table, and the two genuinely disagree:
-``odds_api`` is "Odds API" as a source while its family is "Sportsbooks (Odds
-API)" as a provider. One key space per module.
+``odds_api`` is "Moneylines (Odds API)" as a source while its family is
+"Sportsbooks (Odds API)" as a provider. One key space per module.
 
 Imports nothing, and must stay that way — the same rule ``sport_keys.py`` keeps,
 for the same reason: a vocabulary that can import is a vocabulary that can
@@ -41,7 +41,16 @@ develop a circular dependency on the thing it names.
 CALIBRATION_SOURCE_LABELS: dict[str, str] = {
     "kalshi": "Kalshi",
     "polymarket": "Polymarket",
-    "odds_api": "Odds API",
+    # #7213, the residual #4214 recorded: this key's siblings are all named for
+    # the market shape they measure, and this one was named for the supplier —
+    # inside a family row that had already said the supplier's name. What it
+    # measures is the moneyline: ``precompute_calibration.py`` Query 2 buckets
+    # ``COALESCE(closing_home_probability, opening_home_probability)`` over
+    # decided games, home side UNION away side. "Moneylines" is also the page's
+    # own word for it — the hero paragraph reads "sportsbook odds (moneylines,
+    # spreads, and totals)" — so this names the shape the reader was already
+    # told about rather than inventing a third vocabulary.
+    "odds_api": "Moneylines (Odds API)",
     "odds_api_spreads": "Spreads (Odds API)",
     "odds_api_totals": "Totals (Odds API)",
     "odds_api_bookmaker": "Per-sportsbook (Odds API)",

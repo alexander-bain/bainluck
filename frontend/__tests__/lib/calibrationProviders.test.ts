@@ -1,3 +1,6 @@
+import { readFileSync } from "fs";
+import { join } from "path";
+
 import {
   providerOf,
   providerLabel,
@@ -260,10 +263,9 @@ describe("makeSourceLabeller — the payload's names, with house style on top", 
   });
 
   it("keeps house style when this page and the server deliberately disagree", () => {
-    // The server calls `odds_api` "Odds API" and so does this page AT SOURCE
-    // level — while the FAMILY row above it reads "Sportsbooks (Odds API)".
-    // A server label must never silently overwrite a deliberate local choice,
-    // or the two rows collapse into the same words.
+    // `odds_api` names one SOURCE row inside a FAMILY row reading "Sportsbooks
+    // (Odds API)", and a server label must never silently overwrite a
+    // deliberate local choice, or the two rows collapse into the same words.
     //
     // 🔴 CERT-2290 — THIS PRECEDENCE IS ALSO HOW #4067 SHIPPED A BANNED WORD.
     // The backend corrected `odds_api_bookmaker` to "Per-sportsbook (Odds API)"
@@ -276,8 +278,95 @@ describe("makeSourceLabeller — the payload's names, with house style on top", 
       odds_api: { label: "Sportsbooks" },
       odds_api_bookmaker: { label: "Something the server made up" },
     });
-    expect(label("odds_api")).toBe("Odds API");
+    expect(label("odds_api")).toBe("Moneylines (Odds API)");
     expect(label("odds_api_bookmaker")).toBe("Per-sportsbook (Odds API)");
+  });
+
+  // -------------------------------------------------------------------------
+  // #7213 — THE COST OF WINNING, PINNED.
+  //
+  // The test above is the mechanism working: house style beats the payload.
+  // Its consequence is that for a key BOTH maps hold an opinion about, the
+  // server's name is dead text on this page — so the two must be renamed in the
+  // same commit or the rename is inert. That is exactly how #4067 shipped a
+  // banned word and how #7213's "Odds API" survived #4214's fix.
+  //
+  // Read from the Python module rather than restated here, for the reason
+  // `sportDirectoryNamesEverySport7015.test.ts` gives for the same rail: a
+  // restatement is a third map, and three maps drift faster than two. Every
+  // failure mode THROWS — a parse that returned `{}` would make this vacuously
+  // green, which is the shape of bug it exists to catch.
+  // -------------------------------------------------------------------------
+  describe("the server vocabulary this page shadows", () => {
+    const VOCABULARY_PATH = join(
+      __dirname,
+      "..",
+      "..",
+      "..",
+      "backend",
+      "app",
+      "utils",
+      "calibration_source_labels.py",
+    );
+
+    function readServerLabels(): Record<string, string> {
+      const src = readFileSync(VOCABULARY_PATH, "utf8");
+      const marker = "CALIBRATION_SOURCE_LABELS: dict[str, str] = {";
+      const start = src.indexOf(marker);
+      if (start === -1) {
+        throw new Error(
+          `Could not find "${marker}" in ${VOCABULARY_PATH}. The vocabulary ` +
+            `moved or was renamed — fix this reader, do not delete the assertion.`,
+        );
+      }
+      const body = src.slice(start + marker.length);
+      const end = body.search(/^\}/m);
+      if (end === -1) {
+        throw new Error(
+          `CALIBRATION_SOURCE_LABELS in ${VOCABULARY_PATH} has no closing brace ` +
+            `at column 0.`,
+        );
+      }
+      const out: Record<string, string> = {};
+      for (const m of body.slice(0, end).matchAll(/^ {4}"([a-z_]+)": "([^"]+)",$/gm)) {
+        out[m[1]] = m[2];
+      }
+      if (Object.keys(out).length === 0) {
+        throw new Error(
+          `Parsed zero entries out of CALIBRATION_SOURCE_LABELS — the literal's ` +
+            `shape changed. Fix this reader, do not let it pass empty.`,
+        );
+      }
+      return out;
+    }
+
+    /**
+     * Keys the two maps are DELIBERATELY allowed to differ on.
+     *
+     * Empty today, and that is the point: rule 1 above says this page MAY
+     * disagree with the server, and nothing was checking whether it actually
+     * did. It does not. So a future disagreement is a decision somebody writes
+     * down here with a reason, not a rename that quietly half-landed.
+     */
+    const DELIBERATE_DISAGREEMENTS: readonly string[] = [];
+
+    it("is parsed, not assumed — the keys this page names really are in it", () => {
+      const server = readServerLabels();
+      expect(Object.keys(server).length).toBeGreaterThanOrEqual(7);
+      for (const key of ["kalshi", "odds_api", "odds_api_bookmaker", "datagolf"]) {
+        expect(server[key]).toBeTruthy();
+      }
+    });
+
+    it("says the same words as this page's map, for every key it names", () => {
+      const server = readServerLabels();
+      for (const [key, serverName] of Object.entries(server)) {
+        if (DELIBERATE_DISAGREEMENTS.includes(key)) continue;
+        // Keyed pairs, not bare strings, so a failure names the source rather
+        // than printing two labels and leaving you to guess which key they are.
+        expect([key, sourceLabel(key)]).toEqual([key, serverName]);
+      }
+    });
   });
 
   it("falls back to the CAL-P1024 prettifier on a payload banked before `label`", () => {

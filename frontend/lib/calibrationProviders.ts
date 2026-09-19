@@ -145,8 +145,9 @@ export function providerLabel(provider: string): string {
  *
  * Kept separate from `PROVIDER_DISPLAY_NAMES` rather than folded into it,
  * because the two genuinely disagree and the disagreement is deliberate:
- * `odds_api` is "Odds API" as a source, while the family it belongs to is
- * "Sportsbooks (Odds API)" as a provider. Only the FALLBACK is shared.
+ * `odds_api` is "Moneylines (Odds API)" as a source, while the family it
+ * belongs to is "Sportsbooks (Odds API)" as a provider. Only the FALLBACK is
+ * shared.
  *
  * Moved here from `app/calibration/page.tsx` by CAL-P1024 under ruling 005
  * (extract-on-touch), for the reason `calibrationCategories.ts` records for its
@@ -157,7 +158,13 @@ export function providerLabel(provider: string): string {
 const SOURCE_DISPLAY_NAMES: Record<string, string> = {
   kalshi: "Kalshi",
   polymarket: "Polymarket",
-  odds_api: "Odds API",
+  // #7213: named for the market shape it measures, like its three siblings,
+  // instead of for the supplier the family heading has already named. This
+  // entry must stay byte-identical to the server's `source_labels` value for
+  // `odds_api` — it SHADOWS it (precedence rule 1 below), so a rename applied
+  // to only one of the two maps is inert on this page. That is #4067's shape,
+  // and `calibrationProviders.test.ts` now asserts the two agree.
+  odds_api: "Moneylines (Odds API)",
   odds_api_spreads: "Spreads (Odds API)",
   odds_api_totals: "Totals (Odds API)",
   // #4067 repair (CERT-2290): this local map SHADOWS the server label. The
@@ -194,10 +201,15 @@ export function sourceLabel(src: string): string {
 // database column and a reader"):
 //
 //   1. this page's curated map — house style, and it genuinely disagrees with
-//      the server on purpose. The server calls `odds_api` "Odds API"; this page
-//      needs that name for the SOURCE row while the FAMILY row above it reads
-//      "Sportsbooks (Odds API)". A server label may not silently overwrite a
-//      deliberate local choice.
+//      the server on purpose: `odds_api` is one SOURCE row inside a FAMILY row
+//      that reads "Sportsbooks (Odds API)", and the two may not collapse into
+//      the same words. A server label may not silently overwrite a deliberate
+//      local choice.
+//      THE COST OF WINNING (#4067, then #7213): every server rename of a key
+//      named here is inert until this map is renamed too. So a key this map
+//      holds an opinion about is one this page has taken RESPONSIBILITY for,
+//      not one it has merely copied — `calibrationProviders.test.ts` pins the
+//      two together for the keys where they are meant to say the same thing.
 //   2. the server's published name — for every source this page has no opinion
 //      about, which is exactly the set that used to leak.
 //   3. the prettifier — for a payload banked before `label` existed, so the
