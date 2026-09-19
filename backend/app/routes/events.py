@@ -4117,6 +4117,65 @@ def _headline_arm_bound_ms(deadline: float | None, budget_ms: int) -> int | None
     return None if bound_ms < _SEARCH_MIN_STAGE_TIMEOUT_MS else bound_ms
 
 
+def _headline_contender_outcome_clause(pattern):
+    """The outcome half of the headline-contender rule, as SQL.
+
+    ONE helper for BOTH call sites (`/search` and `/typeahead`) on purpose. The
+    two lanes are textual copies of each other, and #3394 is the standing
+    evidence of what that costs: a fix landed on the dropdown, the identical
+    arm in the results endpoint was left alone, and the same query broke the
+    same way the day after it was declared fixed.
+
+    Mirrors `is_contender_outcome` exactly — see #6430 / CERT-3125 in
+    `search_headline_contender` for why an outcome whose anchor CORRESPONDS
+    faces no price floor at all. The `or_` is strictly additive: the left arm is
+    the previous predicate unchanged, so no market that qualified before can
+    stop qualifying now.
+
+    THE CORRESPONDENCE IS SPELLED AS "THE SAME PATTERN MATCHES BOTH NAMES".
+    `is_contender_outcome` is handed `team_anchored` as an answered question;
+    here is where it is answered. The typed term must match the outcome's own
+    name AND the name of the team that outcome is anchored to — two independent
+    signals agreeing, rather than a `team_id` that is merely present. The term
+    is the same compiled pattern for both sides, so the test adds no new
+    vocabulary and stays injection-proof by construction (`contender_word_pattern`
+    reduces the term to alphanumeric runs).
+
+    What that refuses, measured on production 2026-09-19: "Mike Brown" on
+    `Coach of the Year Winner`, anchored to NEW ENGLAND PATRIOTS at 0.000000,
+    and "New York Mets" on the World Series, anchored to NEW YORK YANKEES —
+    #7188's team-identity poison, refused rather than papered over.
+
+    🔴 THE SECOND REFUSAL COSTS A READER (CERT-3128). `Mike Brown` is poison and
+    losing it is the point; `New York Mets` and `Los Angeles Angels` are real
+    clubs, and while their rows stay mis-anchored a fan typing "mets" gets no
+    championship card at row 1 and "angels" gets none at all. So this lane's
+    reach is every CORRECTLY ANCHORED club, 28 of the field's 30 — not the whole
+    field. The gap is **#7233**; it closes with #7188's ordered data repair
+    (lane1's by D39), never by dropping the `Team.name` term here, which would
+    take `Mike Brown` back with it.
+
+    COST: the join is `teams.id = futures_outcomes.team_id`, a primary-key
+    lookup on the row the outer predicate already selected, inside a subquery
+    the pg_trgm GIN on `futures_outcomes.name` still drives. It adds no scan.
+    """
+    return FuturesMarket.id.in_(
+        select(FuturesOutcome.market_id)
+        .outerjoin(Team, Team.id == FuturesOutcome.team_id)
+        .where(
+            FuturesOutcome.name.op("~*")(pattern),
+            FuturesOutcome.current_probability.isnot(None),
+            or_(
+                FuturesOutcome.current_probability >= MIN_CONTENDER_PROBABILITY,
+                and_(
+                    FuturesOutcome.team_id.isnot(None),
+                    Team.name.op("~*")(pattern),
+                ),
+            ),
+        )
+    )
+
+
 # LAT-P255/#3731: `/api/events/search`'s headline-contender lane bound, the
 # sibling of `_TYPEAHEAD_HEADLINE_ARM_TIMEOUT_MS` below. #3394 gave the DROPDOWN
 # this bound and a savepoint; the RESULTS endpoint runs the identical lane and
@@ -7410,13 +7469,7 @@ async def search_events(
                     FuturesMarket.volume >= MIN_CONTENDER_VOLUME,
                     *_futures_open_now,
                     *[
-                        FuturesMarket.id.in_(
-                            select(FuturesOutcome.market_id).where(
-                                FuturesOutcome.name.op("~*")(pattern),
-                                FuturesOutcome.current_probability
-                                >= MIN_CONTENDER_PROBABILITY,
-                            )
-                        )
+                        _headline_contender_outcome_clause(pattern)
                         for pattern in _headline_patterns
                     ],
                 )
@@ -9422,13 +9475,7 @@ async def typeahead_search(
                     FuturesMarket.volume >= MIN_CONTENDER_VOLUME,
                     *_ta_open_now,
                     *[
-                        FuturesMarket.id.in_(
-                            select(FuturesOutcome.market_id).where(
-                                FuturesOutcome.name.op("~*")(pattern),
-                                FuturesOutcome.current_probability
-                                >= MIN_CONTENDER_PROBABILITY,
-                            )
-                        )
+                        _headline_contender_outcome_clause(pattern)
                         for pattern in _ta_headline_patterns
                     ],
                 )
