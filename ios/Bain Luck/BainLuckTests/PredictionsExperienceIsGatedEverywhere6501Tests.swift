@@ -67,7 +67,10 @@ final class PredictionsExperienceIsGatedEverywhere6501Tests: XCTestCase {
             .filter { !$0.isWhitespace }
     }
 
-    private static let flag = "ifReleaseSurfaces.predictionsExperienceEnabled"
+    /// Internal, not private, because `InlineGuessSlotsAreGated7075Tests` runs
+    /// the same scan against a different needle (#7075) and a second copy of
+    /// the brace matcher is the duplication this repo keeps paying for.
+    static let flag = "ifReleaseSurfaces.predictionsExperienceEnabled"
 
     /// Every character index covered by a gated block.
     ///
@@ -77,10 +80,13 @@ final class PredictionsExperienceIsGatedEverywhere6501Tests: XCTestCase {
     /// comma-condition `if flag, let stats = …, stats.total > 0 {` of My
     /// Stuff's summary. Anything before the first `{` is a condition list, so
     /// braces are only counted once the body has been entered.
-    static func gatedRanges(in code: String) -> [Range<String.Index>] {
+    ///
+    /// `needle` defaults to this file's flag; #7075 passes its own guard token,
+    /// which has the identical comma-condition shape.
+    static func gatedRanges(in code: String, from needle: String = flag) -> [Range<String.Index>] {
         var ranges: [Range<String.Index>] = []
         var cursor = code.startIndex
-        while let hit = code.range(of: flag, range: cursor..<code.endIndex) {
+        while let hit = code.range(of: needle, range: cursor..<code.endIndex) {
             guard let open = code[hit.upperBound...].firstIndex(of: "{") else { break }
             var depth = 0
             var i = open

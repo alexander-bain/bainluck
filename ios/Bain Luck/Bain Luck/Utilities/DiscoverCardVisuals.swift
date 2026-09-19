@@ -57,6 +57,26 @@ let sportDefaultGradient: (Color, Color) = (Color(red: 0.06, green: 0.09, blue: 
 /// runs it over the production fixture and asserts BOTH arms are populated.
 enum FuturesHero {
 
+    /// The shortest the Discover card's hero may be drawn — a FLOOR, not a
+    /// height (#7074).
+    ///
+    /// It was `heroBackground.frame(height: 170)`, a fixed-height sibling of an
+    /// overlay that is free to be taller, which is how a card came to draw its
+    /// own pills off the top of its own photograph. Read by
+    /// `NativeFuturesDiscoverCard` as a `minHeight`, so the backdrop is exactly
+    /// as tall as whatever the overlay needs and never shorter than the 170 the
+    /// card has always drawn. Named here rather than inline because the number
+    /// is the card's shape and a test that pins it should not have to read a
+    /// `@ViewBuilder` to find it.
+    static let discoverCardMinimumHeight: CGFloat = 170
+
+    /// The same floor for the futures detail page's hero (#7074, second
+    /// instance). It was `frame(height: 220)` in the identical two-heights
+    /// shape, with MORE overlay than the card has — the pill row can carry a
+    /// RESOLVED badge and the block under the numeral a winner row. A larger
+    /// floor makes the spill rarer, never impossible.
+    static let detailPageMinimumHeight: CGFloat = 220
+
     /// The hero's backdrop for one card.
     enum Background: Equatable {
         /// A photograph from the market's `image_url`.

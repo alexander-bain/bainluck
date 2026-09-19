@@ -152,111 +152,117 @@ struct FuturesDetailView: View {
         let leader = market.outcomes.max(by: { ($0.probability ?? 0) < ($1.probability ?? 0) })
         let isResolved = market.status == "resolved"
 
-        return ZStack(alignment: .bottomLeading) {
-            // Background: image with gradient overlay, or category gradient
-            heroBackground(market: market)
-                .frame(height: 220)
-                .clipped()
+        // #7074, the second instance. The Discover card had this exact shape — a
+        // backdrop pinned to a height, a sibling overlay free to exceed it, and a
+        // `ZStack` that takes the taller — and it drew its own pills off the top
+        // of its own photograph on Alex's phone. This hero is the same two
+        // heights with a larger floor and MORE overlay: the pill row here can
+        // carry a RESOLVED badge, and the content below the 52pt numeral can
+        // carry a winner row the card has no equivalent of. A bigger floor is
+        // later, not never. Backdrop is the content's background; 220 is a floor.
+        return VStack(alignment: .leading, spacing: 10) {
+            // Top row: category pill + status badges
+            HStack {
+                if let category = market.llmSportCategory {
+                    // #5723: `.uppercased()` on the raw key put the
+                    // underscore on the hero — a table-tennis page's pill
+                    // read "TABLE_TENNIS". The four Discover cards already
+                    // upper-case the shared rule's output; this is the same
+                    // form, so the pill and the card agree.
+                    Text(sportCategoryDisplayName(category).uppercased())
+                        .font(.system(size: 9, weight: .heavy))
+                        .tracking(0.8)
+                        .foregroundStyle(.white.opacity(0.78))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.black.opacity(0.24), in: Capsule())
+                }
+                Spacer()
+                if isResolved {
+                    Text("RESOLVED")
+                        .font(.system(size: 9, weight: .heavy))
+                        .tracking(0.8)
+                        .foregroundStyle(.white.opacity(0.78))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.black.opacity(0.24), in: Capsule())
+                }
+                if let source = market.source, let label = sourceLabel(source) {
+                    Text(label.uppercased())
+                        .font(.system(size: 9, weight: .heavy))
+                        .tracking(0.8)
+                        .foregroundStyle(.white.opacity(0.78))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.black.opacity(0.24), in: Capsule())
+                }
+            }
 
-            // Overlay content
-            VStack(alignment: .leading, spacing: 10) {
-                // Top row: category pill + status badges
-                HStack {
-                    if let category = market.llmSportCategory {
-                        // #5723: `.uppercased()` on the raw key put the
-                        // underscore on the hero — a table-tennis page's pill
-                        // read "TABLE_TENNIS". The four Discover cards already
-                        // upper-case the shared rule's output; this is the same
-                        // form, so the pill and the card agree.
-                        Text(sportCategoryDisplayName(category).uppercased())
-                            .font(.system(size: 9, weight: .heavy))
-                            .tracking(0.8)
-                            .foregroundStyle(.white.opacity(0.78))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(.black.opacity(0.24), in: Capsule())
-                    }
-                    Spacer()
-                    if isResolved {
-                        Text("RESOLVED")
-                            .font(.system(size: 9, weight: .heavy))
-                            .tracking(0.8)
-                            .foregroundStyle(.white.opacity(0.78))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(.black.opacity(0.24), in: Capsule())
-                    }
-                    if let source = market.source, let label = sourceLabel(source) {
-                        Text(label.uppercased())
-                            .font(.system(size: 9, weight: .heavy))
-                            .tracking(0.8)
-                            .foregroundStyle(.white.opacity(0.78))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(.black.opacity(0.24), in: Capsule())
-                    }
+            Spacer(minLength: 16)
+
+            // Probability + movement
+            if let leader, let prob = leader.probability {
+                HStack(alignment: .bottom, spacing: 10) {
+                    // #5899: the 52pt figure said `0%` for a leader the venue
+                    // prices at 0.05%, three scrolls above `<1%` on every
+                    // other row of the same market.
+                    Text("\(percentNumber(prob * 100))%")
+                        .font(.system(size: 52, weight: .black).monospacedDigit())
+                        .minimumScaleFactor(0.76)
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 3)
+
+                    detailMovementBadge(leader.probabilityChange24h)
+                        .padding(.bottom, 8)
                 }
 
-                Spacer(minLength: 16)
-
-                // Probability + movement
-                if let leader, let prob = leader.probability {
-                    HStack(alignment: .bottom, spacing: 10) {
-                        // #5899: the 52pt figure said `0%` for a leader the venue
-                        // prices at 0.05%, three scrolls above `<1%` on every
-                        // other row of the same market.
-                        Text("\(percentNumber(prob * 100))%")
-                            .font(.system(size: 52, weight: .black).monospacedDigit())
-                            .minimumScaleFactor(0.76)
-                            .foregroundStyle(.white)
-                            .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 3)
-
-                        detailMovementBadge(leader.probabilityChange24h)
-                            .padding(.bottom, 8)
-                    }
-
-                    Text(leader.name)
-                        .font(.headline.weight(.bold))
-                        .foregroundStyle(.white.opacity(0.92))
-                        .lineLimit(3)
-                        .minimumScaleFactor(0.92)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    if leader.isWinner == true {
-                        Text("Winner")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(DS.emerald.opacity(0.6), in: Capsule())
-                    }
-                }
-
-                // Market name — larger and bolder
-                Text(market.name)
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(.white)
-                    .lineLimit(4)
+                Text(leader.name)
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .lineLimit(3)
+                    .minimumScaleFactor(0.92)
                     .fixedSize(horizontal: false, vertical: true)
 
-                // Share button
-                ShareLink(
-                    item: URL(string: futuresShareURL(marketId, style: .nativeCard)) ?? bainLuckFallbackURL,
-                    subject: Text(market.name),
-                    message: Text(shareMessage)
-                ) {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                        .font(.system(size: 12, weight: .semibold))
+                if leader.isWinner == true {
+                    Text("Winner")
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(.white.opacity(0.20), in: Capsule())
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(DS.emerald.opacity(0.6), in: Capsule())
                 }
-                .recordsShareOpened { recordShareOpened() }
-                .padding(.top, 2)
             }
-            .padding(14)
+
+            // Market name — larger and bolder
+            Text(market.name)
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(.white)
+                .lineLimit(4)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // Share button
+            ShareLink(
+                item: URL(string: futuresShareURL(marketId, style: .nativeCard)) ?? bainLuckFallbackURL,
+                subject: Text(market.name),
+                message: Text(shareMessage)
+            ) {
+                Label("Share", systemImage: "square.and.arrow.up")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(.white.opacity(0.20), in: Capsule())
+            }
+            .recordsShareOpened { recordShareOpened() }
+            .padding(.top, 2)
         }
+        .padding(14)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: FuturesHero.detailPageMinimumHeight,
+            alignment: .bottomLeading
+        )
+        .background { heroBackground(market: market) }
         .clipShape(RoundedRectangle(cornerRadius: 18))
     }
 

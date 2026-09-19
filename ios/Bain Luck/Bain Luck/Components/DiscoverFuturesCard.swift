@@ -100,75 +100,97 @@ struct NativeFuturesDiscoverCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ZStack(alignment: .bottomLeading) {
-                heroBackground
-                    .frame(height: 170)
-                    .clipped()
+            // 🔴 #7074 — THE BACKDROP WAS A FIXED-HEIGHT SIBLING OF CONTENT THAT
+            // IS FREE TO BE TALLER, so the card's own header spilled off its own
+            // photograph. `ZStack(alignment: .bottomLeading)` takes the height of
+            // its TALLEST child: the overlay below is a pill row, a 52pt
+            // `@ScaledMetric` numeral and a leader name of up to three lines
+            // inside 14pt padding, and at the default Dynamic Type size that is
+            // already more than 170. The backdrop stayed 170 and bottom-aligned,
+            // so the overflow came out of the TOP as a white band, the category
+            // and Trending pills landed on it — white text on white — and the
+            // photo's square top corners sat in the middle of a rounded card.
+            //
+            // MEASURED, not reasoned: `artifacts/native-239/BEFORE-discover-s2800.png`
+            // (iPhone 17 Pro, default type, "Xi Jinping out before 2027?") — card
+            // white begins at y=1316 and the photo at y=1339, a 23px @3x = 7.7pt
+            // band. On Alex's phone (build 15, `group-overlap.png`, larger type
+            // and a taller card) the same band swallowed most of both pills, which
+            // is the "overlap" in #7074's title.
+            //
+            // The fix is to stop expressing the hero as two independent heights.
+            // The backdrop is now the content's BACKGROUND, so it is exactly as
+            // tall as the content, and 170 is a FLOOR rather than a value — a
+            // short card still draws the full hero it always did.
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text(categoryLabel)
+                        .font(.caption2.weight(.heavy))
+                        .tracking(0.8)
+                        .foregroundStyle(.white.opacity(0.78))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.black.opacity(0.24), in: Capsule())
 
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text(categoryLabel)
+                    Spacer()
+
+                    if isTrending(data) {
+                        Label("Trending", systemImage: "flame.fill")
                             .font(.caption2.weight(.heavy))
-                            .tracking(0.8)
-                            .foregroundStyle(.white.opacity(0.78))
+                            .foregroundStyle(.orange)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                             .background(.black.opacity(0.24), in: Capsule())
-
-                        Spacer()
-
-                        if isTrending(data) {
-                            Label("Trending", systemImage: "flame.fill")
-                                .font(.caption2.weight(.heavy))
-                                .foregroundStyle(.orange)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(.black.opacity(0.24), in: Capsule())
-                        }
-                    }
-
-                    Spacer(minLength: 16)
-
-                    if let leader {
-                        HStack(alignment: .bottom, spacing: 10) {
-                            // #1772: the hero numeral and the name below it used
-                            // to use DIFFERENT metrics — 52pt frozen over a
-                            // `.headline` that scales. Raise the text size and
-                            // only the name grew, the bottom-aligned HStack got
-                            // tight, and `minimumScaleFactor` compressed the
-                            // string until the trailing `%` read as a subscript.
-                            // That is the glyph in Alex's report #143.
-                            //
-                            // Both now ramp together. `%` is split into its own
-                            // Text because it is not a digit: inside a
-                            // `monospacedDigit()` run it kept proportional
-                            // metrics against black-weight numerals, so it was
-                            // the first glyph to lose width under compression.
-                            HStack(alignment: .firstTextBaseline, spacing: 0) {
-                                Text("\(Int((leaderProbability * 100).rounded()))")
-                                    .font(.system(size: heroNumeralSize, weight: .black).monospacedDigit())
-                                Text("%")
-                                    .font(.system(size: heroNumeralSize, weight: .black))
-                            }
-                                .minimumScaleFactor(0.76)
-                                .lineLimit(1)
-                                .foregroundStyle(.white)
-                                .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 3)
-
-                            MovementBadge(movement: leader.movement)
-                                .padding(.bottom, 8)
-                        }
-
-                        Text(leader.name)
-                            .font(.headline.weight(.bold))
-                            .foregroundStyle(.white.opacity(0.92))
-                            .lineLimit(3)
-                            .minimumScaleFactor(0.92)
-                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .padding(14)
+
+                Spacer(minLength: 16)
+
+                if let leader {
+                    HStack(alignment: .bottom, spacing: 10) {
+                        // #1772: the hero numeral and the name below it used
+                        // to use DIFFERENT metrics — 52pt frozen over a
+                        // `.headline` that scales. Raise the text size and
+                        // only the name grew, the bottom-aligned HStack got
+                        // tight, and `minimumScaleFactor` compressed the
+                        // string until the trailing `%` read as a subscript.
+                        // That is the glyph in Alex's report #143.
+                        //
+                        // Both now ramp together. `%` is split into its own
+                        // Text because it is not a digit: inside a
+                        // `monospacedDigit()` run it kept proportional
+                        // metrics against black-weight numerals, so it was
+                        // the first glyph to lose width under compression.
+                        HStack(alignment: .firstTextBaseline, spacing: 0) {
+                            Text("\(Int((leaderProbability * 100).rounded()))")
+                                .font(.system(size: heroNumeralSize, weight: .black).monospacedDigit())
+                            Text("%")
+                                .font(.system(size: heroNumeralSize, weight: .black))
+                        }
+                            .minimumScaleFactor(0.76)
+                            .lineLimit(1)
+                            .foregroundStyle(.white)
+                            .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 3)
+
+                        MovementBadge(movement: leader.movement)
+                            .padding(.bottom, 8)
+                    }
+
+                    Text(leader.name)
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .lineLimit(3)
+                        .minimumScaleFactor(0.92)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
+            .padding(14)
+            .frame(
+                maxWidth: .infinity,
+                minHeight: FuturesHero.discoverCardMinimumHeight,
+                alignment: .bottomLeading
+            )
+            .background { heroBackground }
             .clipShape(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18))
 
             VStack(alignment: .leading, spacing: 12) {

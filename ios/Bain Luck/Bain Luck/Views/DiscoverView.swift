@@ -902,7 +902,14 @@ struct DiscoverView: View {
         totalCount: Int,
         proxy: ScrollViewProxy
     ) -> some View {
-        let isGuessSlot = (idx + 1) % 5 == 0
+        // #7075: every fifth card used to become a "What's the probability?"
+        // guess in place. #6445 hid the Higher/Lower experience's advertised
+        // entry points and these two were not among them — they navigate
+        // nowhere, so the scan that guards that class could not see them, and
+        // Alex met two guess cards in one pass down build 15's feed. Switched
+        // off, both branches below fall through to the ordinary card: the
+        // market, its rank and its swipe handling are untouched.
+        let isGuessSlot = ReleaseSurfaces.insertsInlineGuessSlot(at: idx)
         Group {
             switch gi {
             case .group(let title, let items, let kind, let theme):
@@ -2135,6 +2142,14 @@ private struct NativeGroupCard: View {
     var theme: String? = nil
     @State private var expanded = false
 
+    /// Whether every row is on screen: because the group is small enough to be
+    /// drawn whole, or because the reader opened it (#7074). The rule, and the
+    /// reason it is ONE expression rather than two agreeing conditions, is in
+    /// `DiscoverGroupRows`.
+    private var showsAllRows: Bool {
+        DiscoverGroupRows.showsEveryRow(itemCount: items.count, expanded: expanded)
+    }
+
     private var category: String {
         items.first?.futures?.llmSportCategory?.lowercased() ?? ""
     }
@@ -2190,7 +2205,7 @@ private struct NativeGroupCard: View {
                         .padding(.vertical, 8)
                 }
 
-                if expanded {
+                if showsAllRows {
                     ForEach(items.dropFirst(), id: \.id) { item in
                         if let f = item.futures {
                             Divider().padding(.horizontal, 12)
@@ -2211,7 +2226,7 @@ private struct NativeGroupCard: View {
                         .padding(.vertical, 8)
                 }
                 .buttonStyle(.plain)
-            } else if !expanded && items.count > 1 && kind != "comparison" {
+            } else if !showsAllRows && items.count > 1 && kind != "comparison" {
                 Button { withAnimation { expanded = true } } label: {
                     Text("Show \(items.count - 1) more")
                         .font(.caption.weight(.medium))
