@@ -12585,13 +12585,18 @@ async def _venue_settlement(db: AsyncSession, event) -> dict | None:
 
     ``is_(True)`` and not ``== True``: the column is nullable and NULL means
     "nobody graded this", which is a third answer rather than a false one.
+
+    THE WHERE AND THE ORDER ARE SHARED, THE SELECT IS NOT (#6739, second half).
+    The league rails now ask the same question for a rail of rows at a time, and
+    a batch read has to carry a grouping key this one does not — so the two
+    SELECTs legitimately differ and the two things that may NEVER differ are
+    imported rather than retyped: ``venue_grade_filters`` (positive grades only)
+    and ``settlement_from_graded_rows`` (score first, winner second). The
+    refusals documented above are unchanged and are now enforced in one place
+    for both readers.
     """
-    from app.utils.venue_settlement import (
-        VENUE_SETTLEMENT_SOURCE,
-        choose_settled_score,
-        choose_settled_winner,
-        is_full_scope_score_market,
-    )
+    from app.utils.venue_settlement import settlement_from_graded_rows
+    from app.utils.venue_settlement_reader import venue_grade_filters
 
     try:
         graded = (
@@ -12604,8 +12609,7 @@ async def _venue_settlement(db: AsyncSession, event) -> dict | None:
                 .join(FuturesOutcome, FuturesOutcome.market_id == FuturesMarket.id)
                 .where(
                     FuturesMarket.event_id == event.id,
-                    FuturesOutcome.is_winner.is_(True),
-                    FuturesOutcome.resolution_source == VENUE_SETTLEMENT_SOURCE,
+                    *venue_grade_filters(),
                 )
             )
         ).all()
@@ -12614,30 +12618,13 @@ async def _venue_settlement(db: AsyncSession, event) -> dict | None:
         # key existed rather than being told the venue said nothing.
         return None
 
-    if not graded:
-        return {"venue_settled": False, "venue_settled_result": None}
-
     # Unbounded row read, and that is measured rather than assumed: across the
     # 1,344 events that can reach here the graded-row count is max 84, p99 20,
     # mean 3.2. A LIMIT would bound a read that is already bounded, at the cost
     # of silently truncating the one market whose name carries the score.
-    # SCORE FIRST, WINNER SECOND, AND THE ORDER IS NOT A PREFERENCE (#6739).
-    # A full-scope score already names the winner — "Aryna Sabalenka wins 2-0"
-    # — so the winner sentence is strictly the same statement with the score
-    # dropped. Asking for it first would replace 56 richer strings with poorer
-    # ones; `or` reaches it only where the score vocabulary has nothing, which
-    # is 265 of the 305 side-graded `suspended` rows measured 2026-09-17.
-    return {
-        "venue_settled": True,
-        "venue_settled_result": choose_settled_score(
-            outcome_name
-            for market_name, _market_external_id, outcome_name in graded
-            if is_full_scope_score_market(market_name)
-        )
-        or choose_settled_winner(
-            graded, event.home_team_name, event.away_team_name
-        ),
-    }
+    return settlement_from_graded_rows(
+        graded, event.home_team_name, event.away_team_name
+    )
 
 
 # ═══ #6975: WHICH ROW A READER WHO ASKED FOR AN ID IS SERVED ══════════════════

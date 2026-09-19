@@ -47,7 +47,7 @@ rather than inside it.
 from __future__ import annotations
 
 import re
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Sequence
 
 from app.utils.event_completion import EVENT_SUSPENDED
 
@@ -352,3 +352,50 @@ def venue_settlement_is_askable(
     if status == EVENT_SUSPENDED:
         return True
     return status == "live" and live_claim_is_unbacked
+
+
+#: What a row with no positive venue grade is told: a PRESENT pair of keys
+#: saying "the venue graded nothing". Different from the keys being ABSENT,
+#: which is what a failed read must produce — there the surface keeps whatever
+#: it said before this module existed rather than being handed a confident
+#: ``False`` nobody established.
+NO_VENUE_GRADE: dict = {"venue_settled": False, "venue_settled_result": None}
+
+
+def settlement_from_graded_rows(
+    graded: Sequence[tuple[Optional[str], Optional[str], Optional[str]]],
+    home_team_name: Optional[str],
+    away_team_name: Optional[str],
+) -> dict:
+    """The two keys a surface serves, from this event's positive venue grades.
+
+    ``graded`` is ``(market_name, market_external_id, outcome_name)`` per
+    winning leg, which is the shape :func:`choose_settled_winner` needs and the
+    shape both readers' queries already produce.
+
+    🔴 THIS FUNCTION IS THE POLICY, AND THE POLICY IS THE ORDER (#6739).
+    SCORE FIRST, WINNER SECOND. A full-scope score already names the winner —
+    "Aryna Sabalenka wins 2-0" — so the winner sentence is strictly the same
+    statement with the score dropped. Asking for the winner first would replace
+    56 richer strings with poorer ones; ``or`` reaches it only where the score
+    vocabulary has nothing, which is 265 of the 305 side-graded ``suspended``
+    rows measured 2026-09-17.
+
+    It lives here, pure, because it now has TWO readers — the event detail
+    route asks it per event and the league rails ask it per rail (#6739's
+    second half, ``venue_settlement_reader``). Their QUERIES legitimately
+    differ: a batch has to carry the grouping key and a single read does not.
+    Their ANSWER may not, and an order copied into two files is the #1951 drift
+    this repo keeps paying for. One order, one place, two callers.
+    """
+    if not graded:
+        return dict(NO_VENUE_GRADE)
+    return {
+        "venue_settled": True,
+        "venue_settled_result": choose_settled_score(
+            outcome_name
+            for market_name, _market_external_id, outcome_name in graded
+            if is_full_scope_score_market(market_name)
+        )
+        or choose_settled_winner(graded, home_team_name, away_team_name),
+    }

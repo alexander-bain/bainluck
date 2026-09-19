@@ -48,6 +48,7 @@ from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
 from app.utils.resolution_authority import can_write_winner
 from app.utils.matchup_sides import sided_yes_no_labels
 from app.utils.lifecycle import event_is_playable, served_event_status
+from app.utils.event_completion import started_without_result
 from app.utils.entity_page_tiers import (
     AVAILABILITY_DEGRADED,
     AVAILABILITY_EMPTY,
@@ -1339,6 +1340,77 @@ def _event_probability(event: Event) -> float | None:
     if not isinstance(event.win_probability_sources, (dict, type(None))):
         return None
     return compute_aggregate_probability(event)
+
+
+async def _attach_venue_settlement(
+    db: AsyncSession, events: Sequence[Event], briefs: list[dict], now: datetime
+) -> None:
+    """Put the venue's own verdict on the rail cards that deny having one (#6739).
+
+    Mutates the briefs in place and returns nothing: the keys are an ADDITION to
+    the shared event card's contract (ruling 047 — extend the contract, never
+    fork the card), placed under the names ``/api/events/{id}`` has served since
+    #6381 so a second reader has nothing new to learn.
+
+    🔴 THE BRIEFS ARE MATCHED TO THEIR ROWS BY ID, NEVER BY POSITION.
+    ``_format_all`` drops a row it cannot format (gotcha #42), so the two lists
+    are the same length only on a page where nothing went wrong — and the page
+    where something went wrong is the one where a positional zip would put
+    Schoolkate's result on Mikrut's card. There is no correct wrong answer here:
+    a card that names the loser is worse than a card that names nobody.
+
+    🔴 THE GATE IS THE DETAIL ROUTE'S GATE, ASKED OF THE BRIEF. A rail may not
+    publish a sentence the event's own page would refuse to publish, so
+    ``venue_settlement_is_askable`` reads the values THIS payload is about to
+    carry — the ``served_event_status`` status, the scores as published — plus
+    the one input a list brief does not carry, ``started_without_result``,
+    computed here from the same house predicate the detail route uses. A row
+    holding a score of our own is refused by that gate and keeps it: our result
+    outranks the venue's grade, and publishing both invites a page to choose.
+    """
+    from app.utils.venue_settlement_reader import (
+        askable_briefs,
+        venue_settlements_for_events,
+    )
+
+    by_id: dict[int, Event] = {}
+    for event in events:
+        event_id = getattr(event, "id", None)
+        if event_id is not None:
+            by_id[int(event_id)] = event
+
+    started = {
+        event_id: started_without_result(
+            served_event_status(
+                event.status, getattr(event, "commence_time", None), now
+            ),
+            getattr(event, "commence_time", None),
+            now,
+        )
+        for event_id, event in by_id.items()
+    }
+
+    candidates = askable_briefs(briefs, started)
+    if not candidates:
+        # THE ORDINARY PAGE PAYS NOTHING. Every rail row with a score, and every
+        # scheduled row still ahead of its own kickoff, is refused by the gate
+        # before any query is issued — so a league mid-slate issues zero extra
+        # statements and only a page actually carrying an ungraded-looking
+        # finished match issues one.
+        return
+
+    settlements = await venue_settlements_for_events(
+        db,
+        [
+            by_id[int(brief["id"])]
+            for brief in candidates
+            if int(brief["id"]) in by_id
+        ],
+    )
+    for brief in candidates:
+        settlement = settlements.get(int(brief["id"]))
+        if settlement is not None:
+            brief.update(settlement)
 
 
 def _format_game_brief(
@@ -3155,6 +3227,46 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         _urows = _format_all(_u_events)
         more_unreported = len(_urows) > UNREPORTED_LIMIT
         unreported_games = _urows[:UNREPORTED_LIMIT]
+
+        # ── #6739: the rail stops denying a result the venue already named ──
+        #
+        # ONE call for all three rails, after the caps, so the read is sized to
+        # the cards that will actually be drawn rather than to the +1 candidate
+        # lists. Measured through the routes themselves on production
+        # 2026-09-18 23:5xZ: of the six `unreported_games` rows `tennis_atp`
+        # served, SIX carried a venue winner on their own detail payload —
+        # "Schoolkate wins", "Mikrut wins" — while the card on this page read
+        # "No result reported · Sep 18". `tennis_wta` 5 of 6, `boxing_boxing`
+        # 6 of 6, and three other leagues 0 of 6, which is the honest shape: the
+        # sentence appears where the venue graded and nowhere else.
+        #
+        # ALL THREE RAILS, AND THE GATE — NOT THE RAIL — DECIDES. `suspended`
+        # rows reach the results rail too (`RECENT_RAIL_STATUSES`), and they
+        # print the same sentence there. Scoping this to `unreported_games`
+        # because that is the rail the defect was photographed on would pin one
+        # card and leave its sibling saying the opposite thing on the same page.
+        #
+        # Guarded and timed out like the drain and the team lookup above
+        # (gotcha #42): the sentence is an addition to a card, so a failed read
+        # must cost the reader that sentence and nothing else. The rails block's
+        # own `except` would take all sixteen games with it.
+        _settlement_rows = [*upcoming_games, *recent_results, *unreported_games]
+        if _settlement_rows:
+            try:
+                await asyncio.wait_for(
+                    _attach_venue_settlement(
+                        db,
+                        [*_g_events, *_r_events, *_u_events],
+                        _settlement_rows,
+                        now,
+                    ),
+                    timeout=10,
+                )
+            except Exception:  # noqa: BLE001 — see the gotcha #42 note above
+                logger.exception(
+                    "league page: venue-settlement attach failed; rails keep "
+                    "their current sentence"
+                )
     except Exception:
         logger.exception("league page: games rails failed for %s", sport_key)
 
