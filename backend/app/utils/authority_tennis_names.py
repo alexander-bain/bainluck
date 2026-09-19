@@ -780,6 +780,25 @@ def tennis_names_agree(ours: object, theirs: object) -> bool:
     of the string the initial sits at. Until #4095 the doubles arm was
     whole-string equality instead, which is why the same initial that
     disambiguates a singles player made a doubles row unjoinable.
+
+    **DIRECTIONAL: the arguments are `(ours, theirs)` and swapping them is not
+    the same question** (#3258). The two sides are parsed by two different
+    functions — `our_tennis_keys` reads our four vocabularies and returns EVERY
+    reading the tokens allow; `statpal_tennis_key` reads StatPal's one regular
+    `I. Surname` form and returns exactly one — so the relation this function
+    computes is between two different vocabularies, not within one. Measured:
+    `tennis_names_agree("Garcia Garcia", "Garcia")` is True while
+    `tennis_names_agree("Garcia", "Garcia Garcia")` is False, because
+    `our_tennis_keys("Garcia Garcia")` yields `("garcia", "g")` as well as
+    `("garcia garcia", None)` and `statpal_tennis_key` yields neither.
+
+    That is a property of the call, not a defect in the relation: the identity
+    rule underneath it, `keys_agree`, IS reflexive and symmetric (and not
+    transitive). Do not "fix" the asymmetry by normalising both sides through
+    one parser — that is the surname-only join this module exists to refuse.
+    If you need an order-independent answer, `tennis_twin_pairs` is the
+    symmetric counterpart; it is a different question and it says so.
+    `test_tennis_identity_invariants_3258.py` pins all of this.
     """
     if is_doubles_name(ours) or is_doubles_name(theirs):
         return doubles_teams_agree(ours, theirs)
