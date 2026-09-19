@@ -4526,6 +4526,51 @@ async def get_probability_timeline(
         market.outcomes, lambda o: o.external_id
     )
 
+    # 🔴 #7284 — THE PARTICIPANT TABLE ASKS THE BOARD; IT DOES NOT RE-DERIVE IT.
+    #
+    # #6641 above fixed ONE of the ways this reader disagreed with the board
+    # below it on the same phone screen. It was not one drop that had been
+    # missed, it was the whole display policy: every value in `outcomes_meta`
+    # came straight off `futures_outcomes`, so the table served raw prices where
+    # the ladder served squeezed ones, and per-write deltas where the ladder
+    # served #4079's dated amount or refused to speak.
+    #
+    # WHAT A READER SAW (native/255, iPhone 17 Pro, 2026-09-19 18:48Z, both
+    # tables inside ONE viewport):
+    #
+    #   /futures/58776433   table `October 1 - 31, 2026  59%  +12.5%`
+    #                       ladder `October 1 - 31, 2026  49%  (no movement)`
+    #   /futures/60268421   table 10 movement claims, three of them disagreeing
+    #                       with the ladder's 7 and two on rows it withheld
+    #   /futures/58321581   table -0.4% on a row whose detail value is null
+    #
+    # So this reader asks `_format_market_detail` — the one place the display
+    # policy lives — and takes its answer. Not a copy of the rules: the call.
+    # Every drop, every withheld price, the #23 squeeze, the dated movement and
+    # its refusals arrive together and cannot drift from the ladder, because
+    # there is nothing here to drift.
+    #
+    # ROWS THE BOARD DROPS LEAVE THE CHART TOO, for #6641's own reason stated one
+    # comment above: the `> top` test and the Field sum must count the outcomes
+    # the participants come from. Leaving a dropped row inside Field would
+    # re-publish, as part of a line, exactly the number the board refused to
+    # print as a row.
+    #
+    # THE PLOTTED HISTORY IS NOT RESCALED, and that is codex's ruling of
+    # 2026-09-19 rather than an oversight: the series are real observations at
+    # real instants, and dividing them by TODAY's field sum would assert a
+    # historic displayed percent nobody observed — the same arithmetic #4079's
+    # scale ruling rejected by name. On a squeezed board the line and the table
+    # are therefore on different scales; the honest fix for that is the board
+    # not being squeezed (#7274), not a second fiction here.
+    canonical_board = {
+        row["id"]: row
+        for row in _format_market_detail(
+            market, None, await _withheld_price_outcome_ids(db, market)
+        )["outcomes"]
+    }
+    charted_outcomes = [o for o in charted_outcomes if o.id in canonical_board]
+
     requested_hours = hours
     actual_hours = hours
     now = datetime.now(timezone.utc)
@@ -4628,14 +4673,23 @@ async def get_probability_timeline(
     else:
         bucket_seconds = 3600  # 1 hour
 
-    # Determine the top N outcomes by current probability
+    # Determine the top N outcomes by current probability.
+    #
+    # #7284: the BOARD's probability, not the stored one, so the table cannot be
+    # ordered by one number and labelled with another. A withheld row reads
+    # `None` here and sinks, exactly as it does on the ladder (`probability ?? 0`
+    # is the clients' own rule).
     sorted_outcomes = sorted(
         charted_outcomes,
-        key=lambda o: o.current_probability or 0,
+        key=lambda o: canonical_board[o.id]["probability"] or 0,
         reverse=True,
     )
     top_outcome_ids = {o.id for o in sorted_outcomes[:top]}
-    outcome_names = {o.id: o.name for o in charted_outcomes}
+    # #7284: the SERIES KEY is a name, so the label the table prints and the key
+    # the line is filed under have to be the same string or the phone cannot join
+    # them. Taking both from the board means a repaired rung name (#6479's
+    # `Los Angeles R` -> `Los Angeles Rams`) reaches the chart legend too.
+    outcome_names = {o.id: canonical_board[o.id]["name"] for o in charted_outcomes}
 
     # Group snapshots: outcome_id -> bucket_key -> [probabilities]
     # bucket_key is the truncated timestamp
@@ -4689,13 +4743,17 @@ async def get_probability_timeline(
     # Build outcome metadata list (ordered by current probability)
     outcomes_meta = []
     for o in sorted_outcomes[:top]:
+        # #7284: every served value comes off the board. `rank` and the team
+        # enrichment below stay on the ORM row deliberately — they are identity,
+        # not display, and the ladder does not restate them.
+        served = canonical_board[o.id]
         meta: dict = {
             "id": o.id,
-            "name": o.name,
-            "current_probability": float(o.current_probability) if o.current_probability is not None else None,
+            "name": served["name"],
+            "current_probability": served["probability"],
             "rank": o.rank,
-            "probability_change_24h": float(o.probability_change_24h) if o.probability_change_24h else None,
-            "opening_probability": float(o.opening_probability) if o.opening_probability else None,
+            "probability_change_24h": served["probability_change_24h"],
+            "opening_probability": served["opening_probability"],
         }
         # Team enrichment (logos, colors, record)
         if o.team:
@@ -4712,10 +4770,12 @@ async def get_probability_timeline(
             meta["team_id"] = o.team_id  # FK may exist without loaded team
         outcomes_meta.append(meta)
     if len(charted_outcomes) > top:
-        # Sum remaining probabilities for Field
+        # Sum remaining probabilities for Field — #7284: the BOARD's numbers, or
+        # the Field row is the one line on the table still on the raw scale, and
+        # a reader adding the column up gets a total the page disagrees with.
         field_current = sum(
-            float(o.current_probability) for o in sorted_outcomes[top:]
-            if o.current_probability
+            canonical_board[o.id]["probability"] or 0.0
+            for o in sorted_outcomes[top:]
         )
         outcomes_meta.append({
             "id": None,
