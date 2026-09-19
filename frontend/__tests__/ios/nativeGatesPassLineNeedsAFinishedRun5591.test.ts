@@ -34,21 +34,59 @@ import { join } from "node:path";
 const REPO_ROOT = join(__dirname, "..", "..", "..");
 const GATE = join(REPO_ROOT, "tools", "native-gates.sh");
 
+/**
+ * 🪤 **Run ONCE and shared, because this file was paying for it ten times.**
+ * ux/1344 measured (2026-09-18) that `--selftest` takes **~57.4s unloaded on this
+ * VM against a 60s kill** — a 2.6-second margin. What made that margin dangerous
+ * is that `runSelftest()` was being called from **each of the ten cases below**:
+ * ~570s of wall clock for one file, and ten independent chances to overrun under
+ * a parallel `npx jest`. Caching is sound rather than merely convenient because
+ * the selftest is deterministic *by construction* — needing no Xcode, no
+ * simulator and no git tree is the property it exists to have (see the header),
+ * so ten invocations could only ever produce one answer.
+ *
+ * 🪤 **A kill is not a verdict.** On timeout `execFileSync` throws with no numeric
+ * `status`, and the old `?? -1` handed that to `expect({status}).toMatchObject({status: 0})`
+ * — so a slow machine reported *"the gate is broken"* when what happened was
+ * *"the gate never finished"*. That is gotcha #54 exactly: `1` is a result,
+ * everything else is a story about the harness. A timeout now throws under its
+ * own name instead of being laundered into an exit code.
+ */
+let selftestResult: { status: number; output: string } | undefined;
+
 function runSelftest(): { status: number; output: string } {
+  if (selftestResult) return selftestResult;
   try {
     const output = execFileSync("bash", [GATE, "--selftest"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: 60_000,
+      // Headroom over the ~57s measured runtime, so a loaded CI box does not
+      // turn a passing gate into a red one. The cache above is what makes this
+      // affordable: it is now paid once per file, not once per case.
+      timeout: 240_000,
     });
-    return { status: 0, output };
+    selftestResult = { status: 0, output };
   } catch (err) {
-    const e = err as { status?: number; stdout?: string; stderr?: string };
-    return {
+    const e = err as {
+      status?: number;
+      stdout?: string;
+      stderr?: string;
+      code?: string;
+      signal?: string;
+    };
+    if (e.code === "ETIMEDOUT" || e.signal === "SIGTERM") {
+      throw new Error(
+        "native-gates.sh --selftest was KILLED at the timeout, not failed. " +
+          "This is a harness story (gotcha #54), not a defect in the gate: " +
+          "re-run it unloaded before reading anything into it.",
+      );
+    }
+    selftestResult = {
       status: typeof e.status === "number" ? e.status : -1,
       output: `${e.stdout ?? ""}${e.stderr ?? ""}`,
     };
   }
+  return selftestResult;
 }
 
 describe("#5591 native-gates.sh only offers a pass line from a finished run", () => {
