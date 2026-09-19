@@ -11,6 +11,50 @@ enum EvolutionTimeRange: String, CaseIterable, Identifiable {
     case today = "Today"
 
     var id: String { rawValue }
+
+    /// The word this chip PRINTS, which is not always the case's own name.
+    ///
+    /// 🔴 #7077 — `Season` WAS PRINTED OVER *The Game Awards: Game of the Year*
+    /// and over *Meta announces a training pause by October 31?*. Neither question
+    /// has a season; the chip is the widest window the chart offers, and calling
+    /// it a season on a video-game award is the kind of borrowed sports vocabulary
+    /// a reader has to translate before they can use the control.
+    ///
+    /// Only the `.season` case is affected — every other chip already names a real
+    /// duration — so the substitution is one word and the case keys never move.
+    func label(seasonWord: String) -> String {
+        self == .season ? seasonWord : rawValue
+    }
+}
+
+/// What to call the widest range this chart offers.
+///
+/// "Season" is kept for the questions that have one — a league's own competitions,
+/// and any market carrying tournament dates, where `Season` sits beside `Event` and
+/// means the tour around it. Everything else gets `6M`, which is what the chart
+/// actually fetches (4,320 hours) and cannot be wrong about.
+///
+/// 🔴 `6M` RATHER THAN `All`: a 2028 election market has been trading since 2025,
+/// so a chip reading "All" over a six-month fetch would trade one wrong word for
+/// another. The default for an unknown or absent category is therefore the honest
+/// generic, never the specific claim (this is an allowlist whose MISS is safe).
+enum EvolutionRangeVocabulary {
+    /// Categories whose markets belong to a season, from
+    /// `futures_markets.llm_sport_category` as production actually writes it.
+    static let seasonShapedCategories: Set<String> = [
+        "football", "basketball", "baseball", "hockey", "soccer",
+        "cricket", "rugby", "handball", "lacrosse", "softball", "motorsports",
+    ]
+
+    static let genericWidestWindow = "6M"
+
+    static func seasonWord(sportCategory: String?, hasTournamentDates: Bool) -> String {
+        if hasTournamentDates { return EvolutionTimeRange.season.rawValue }
+        let key = (sportCategory ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return seasonShapedCategories.contains(key)
+            ? EvolutionTimeRange.season.rawValue
+            : genericWidestWindow
+    }
 }
 
 // MARK: - Chart Point
@@ -69,6 +113,17 @@ struct EvolutionChartView: View {
     @State private var showCombinedProbability = false
     @State private var selectedRange: EvolutionTimeRange = .week
     @State private var crosshair: CrosshairData?
+
+    /// The window the loaded payload was ASKED for, kept so the coverage note can
+    /// compare it against the coverage that came back. Written by `loadData` on
+    /// every fetch, because `selectedRange` alone does not say it (`.tournament`
+    /// computes its hours from the tournament's own start).
+    @State private var requestedHours: Int = 0
+
+    /// The plot's measured width, for the axis planner's geometric fit. 0 until the
+    /// first layout, which the planner reads as "no geometry" and answers from its
+    /// fallback tick budget.
+    @State private var plotWidth: CGFloat = 0
 
     /// Which drags on the chart are a crosshair scrub and which belong to the
     /// page's scroll (#6705). Pure and unit-tested — see `ChartScrubState`.
@@ -170,6 +225,18 @@ struct EvolutionChartView: View {
                 VStack(spacing: 0) {
                     controlBar
                     chartSection
+                    if let note = Self.coverageNote(
+                        coverageHours: data?.coverageHours,
+                        observationTimes: data?.observationTimes,
+                        requestedHours: requestedHours
+                    ) {
+                        Text(note)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal)
+                            .padding(.bottom, 6)
+                    }
                     if crosshair != nil {
                         crosshairTooltip
                     }
@@ -246,6 +313,7 @@ struct EvolutionChartView: View {
                 marketId: marketId, top: 50, hours: fetchHours
             )
             data = result
+            requestedHours = fetchHours
             if selectedNames.isEmpty {
                 selectedNames = Set(result.outcomes.prefix(3).map(\.name))
             }
@@ -354,6 +422,78 @@ struct EvolutionChartView: View {
         return points
     }
 
+    // MARK: - Axis, Coverage and Observation Marks (#7077)
+
+    /// How to tick and label this chart's time axis.
+    ///
+    /// 🔴 #7077 — THE AXIS WAS LABELLED FROM THE CHIP THE READER PRESSED, NOT FROM
+    /// THE DATA IT DREW. `7d` took `month().day()` whatever came back, so *The Game
+    /// Awards: Game of the Year* — 20 hours of prices inside a 168-hour request —
+    /// printed **Sep 18 · Sep 18 · Sep 18 · Sep 18 · Sep 18 · Sep…** across the
+    /// bottom of Alex's phone, six labels touching each other, the last one cut off.
+    /// *Meta announces a training pause* printed **Sep 15 · Sep 16 · Sep 16 · Sep 17
+    /// · Sep 17 · …** for the same reason. A duplicated label is the same lie as a
+    /// wrong one (#3269).
+    ///
+    /// ✅ THERE IS NO NEW RULE HERE. `OddsChartView.xAxisPlan` already chooses a
+    /// stride from the domain and adds a weekday or an hour exactly when the domain
+    /// needs one, its label widths are re-measured by the suite at the axis's own
+    /// 9pt across a locale set, and `ScoreDifferentialChartView` adopted it for
+    /// precisely this reason — the copy it used to carry had silently stopped
+    /// matching, and two stacked charts drew two clocks (#3238). This chart was the
+    /// third one, still on `.automatic(desiredCount: 5)`.
+    static func axisPlan(
+        for dates: [Date], plotWidth: CGFloat = 0, calendar: Calendar = .current
+    ) -> OddsChartView.XAxisPlan {
+        guard let lo = dates.min(), let hi = dates.max() else {
+            let now = Date()
+            return OddsChartView.xAxisPlan(for: now...now, plotWidth: plotWidth, calendar: calendar)
+        }
+        return OddsChartView.xAxisPlan(for: lo...hi, plotWidth: plotWidth, calendar: calendar)
+    }
+
+    /// A series this sparse is drawn with its observations ON it.
+    ///
+    /// 🔴 THE META CHART WAS TWO STRAIGHT LINES CROSSING, drawn from **two** prices
+    /// per outcome 75 hours apart, and it reads as a market sliding steadily from
+    /// 85% to 5% over three days. Nothing between those two instants was observed
+    /// and nothing may be invented — so the honest change is not to the line, it is
+    /// to say where the line has evidence. Above this count the dots stop being
+    /// information and become texture, and the line alone is fair.
+    static let sparseObservationLimit = 12
+
+    static func showsObservationMarks(distinctInstants: Int) -> Bool {
+        distinctInstants >= 1 && distinctInstants <= sparseObservationLimit
+    }
+
+    /// One plain line about how much of the chosen window this market has actually
+    /// been priced for — or nil when the window is substantially covered and the
+    /// chart needs no caption at all.
+    ///
+    /// The reader presses `7d` and gets a chart; nothing on it could say that the
+    /// market has only existed for a day of that week. This is the smallest true
+    /// sentence that closes the gap, and it is silent in the ordinary case — an
+    /// absent explanation beats an unhelpful one (#871).
+    ///
+    /// Count first, span second: at one or two prices the count IS the story, and
+    /// "prices only go back 3d" would imply a line where there are two dots.
+    static func coverageNote(
+        coverageHours: Double?, observationTimes: Int?, requestedHours: Int
+    ) -> String? {
+        if let seen = observationTimes, seen > 0, seen <= 3 {
+            return seen == 1 ? "Only one price seen so far" : "Only \(seen) prices seen so far"
+        }
+        guard let covered = coverageHours, covered >= 0, requestedHours > 0 else { return nil }
+        guard covered < Double(requestedHours) * 0.5 else { return nil }
+        return "Prices only go back \(coverageSpanWord(covered))"
+    }
+
+    static func coverageSpanWord(_ hours: Double) -> String {
+        if hours < 1 { return "under an hour" }
+        if hours < 48 { return "\(Int(hours.rounded()))h" }
+        return "\(Int((hours / 24).rounded()))d"
+    }
+
     // MARK: - Control Bar
 
     /// 🔴 #4199 — THREE GROUPS COMPETED FOR ONE ROW AND `Text` WAS THE ONLY THING
@@ -386,6 +526,10 @@ struct EvolutionChartView: View {
             selectedRange: $selectedRange,
             showCombinedProbability: $showCombinedProbability,
             topFilter: $topFilter,
+            seasonWord: EvolutionRangeVocabulary.seasonWord(
+                sportCategory: data?.sportCategory,
+                hasTournamentDates: hasTournamentDates
+            ),
             onRangeChange: {
                 crosshair = nil
                 Task { await loadData() }
@@ -397,6 +541,11 @@ struct EvolutionChartView: View {
 
     private var chartSection: some View {
         let entries = chartEntries
+        // #7077 — how many instants this chart has evidence for, counted off the
+        // points it is about to draw rather than off `observation_times`, which
+        // describes the payload before the range cutoff filtered it.
+        let showsObservationMarks = Self.showsObservationMarks(
+            distinctInstants: Set(entries.map(\.date)).count)
         let visibleBoundaries: [EvolutionRoundBoundary]
         if let minDate = entries.map(\.date).min(),
            let maxDate = entries.map(\.date).max() {
@@ -430,6 +579,12 @@ struct EvolutionChartView: View {
                     y: .value("Probability", point.probability)
                 )
                 .foregroundStyle(by: .value("Participant", point.name))
+                // #7077 — the dots ARE the observations. `symbolSize(0)` rather
+                // than a branch: a conditional mark inside a ChartContentBuilder
+                // is a second code path for the same series, and this is one
+                // property of one mark.
+                .symbol(.circle)
+                .symbolSize(showsObservationMarks ? 14 : 0)
                 .lineStyle(StrokeStyle(
                     lineWidth: point.isCombined ? 2.2 :
                         (highlightedName == point.name ? 2.5 :
@@ -450,6 +605,12 @@ struct EvolutionChartView: View {
         // Round boundary labels
         .chartOverlay { proxy in
             GeometryReader { geo in
+                // The PLOT's width, not the chart's — the axis planner fits labels
+                // into the drawing area, and the y-axis gutter is not part of it.
+                Color.clear.preference(
+                    key: PlotWidthPreferenceKey.self,
+                    value: geo[proxy.plotAreaFrame].width)
+
                 ForEach(visibleBoundaries) { boundary in
                     if let xPos = proxy.position(forX: boundary.date) {
                         Text(boundary.label)
@@ -527,17 +688,22 @@ struct EvolutionChartView: View {
             }
         }
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 5)) { _ in
+            // #7077 — planned from the domain that is DRAWN, at the 9pt the
+            // planner's label widths were measured in. See `axisPlan`.
+            let plan = Self.axisPlan(for: entries.map(\.date), plotWidth: plotWidth)
+            AxisMarks(values: .stride(by: plan.component, count: plan.count)) { value in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
                     .foregroundStyle(.secondary.opacity(0.3))
                 AxisValueLabel(
-                    format: (selectedRange == .day || selectedRange == .today)
-                        ? .dateTime.hour()
-                        : selectedRange == .tournament
-                            ? .dateTime.weekday(.abbreviated).day()
-                            : .dateTime.month(.abbreviated).day()
+                    format: plan.format,
+                    anchor: OddsChartView.xAxisLabelAnchor(
+                        index: value.index, count: value.count)
                 )
+                .font(.system(size: 9))
             }
+        }
+        .onPreferenceChange(PlotWidthPreferenceKey.self) { width in
+            plotWidth = width
         }
         .chartLegend(.hidden)
         .frame(height: height)
@@ -845,6 +1011,10 @@ struct EvolutionControlBar: View {
     @Binding var selectedRange: EvolutionTimeRange
     @Binding var showCombinedProbability: Bool
     @Binding var topFilter: Int
+    /// What the widest chip is called for THIS market (#7077). Defaulted so the
+    /// bar still composes on its own — every caller that shows a real market
+    /// passes `EvolutionRangeVocabulary.seasonWord`.
+    var seasonWord: String = EvolutionTimeRange.season.rawValue
     var onRangeChange: () -> Void = {}
 
     var body: some View {
@@ -878,7 +1048,7 @@ struct EvolutionControlBar: View {
                     selectedRange = range
                     onRangeChange()
                 } label: {
-                    Text(range.rawValue)
+                    Text(range.label(seasonWord: seasonWord))
                         .font(.caption2)
                         .fontWeight(selectedRange == range ? .semibold : .regular)
                         .lineLimit(1)
