@@ -622,9 +622,30 @@ export default function CalibrationPage() {
   // deleted because reversing this is one line if Alex rules the other way.
   const scheduleClause = staleness ? stalenessScheduleClause(staleness) : null;
 
-  const topCats = categories.slice(0, 3).map(c =>
-    `${categoryLabel(c)} (${normalized.filter(b => b.category === c).reduce((s, b) => s + b.n, 0).toLocaleString()})`
-  ).join(", ");
+  // #7190. The three biggest categories IN THE COHORT ON SCREEN, read off the
+  // same `categoryMetrics` the Category Breakdown table renders — so the card
+  // and that table are structurally incapable of disagreeing, rather than
+  // agreeing by coincidence. This is the rule the `Sources` card below already
+  // follows (UX-P080 item 2: "so the card cannot say 5 while they say 3"); the
+  // categories card's detail string was the one that skipped it.
+  //
+  // What it printed before: the old expression summed raw `normalized` with no
+  // `cohortFilter`, so it reported the whole 747,028-outcome superset while
+  // every other figure on the page respected the traded/untraded toggle.
+  // Production at 390px on 2026-09-19 read "Baseball (190,958)" in this card and
+  // "Baseball 129,771" in its own table — 190,958 being exactly the all-cohort
+  // rollup of the four baseball keys (140,893 + 33,011 + 12,919 + 4,135).
+  //
+  // The re-sort is load-bearing, not tidiness: `categories` is ordered by the
+  // UNFILTERED total and the cohort reorders it — traded basketball (118,714)
+  // outranks traded soccer (58,440) while all-cohort soccer outranks basketball.
+  // Correcting the counts without the order would print a mis-sorted list, so
+  // the two have to move together.
+  const topCats = [...categoryMetrics]
+    .sort((a, b) => b.n - a.n)
+    .slice(0, 3)
+    .map(cm => `${categoryLabel(cm.category)} (${cm.n.toLocaleString()})`)
+    .join(", ");
 
   // L2-127 (Alex's Option 4): show EVERY populated bucket — no floor filter. A
   // small-sample bucket renders as a faded hollow dot with a wide 95% CI bar (the
@@ -2633,7 +2654,18 @@ function StatCard({ label, value, detail, valueClass, testId }: {
       >
         {value}
       </div>
-      <div className="text-[11px] text-text-muted mt-0.5 leading-tight">{detail}</div>
+      {/* #7190: the detail carries numbers a probe must be able to read without
+          guessing where the card ends. The VALUE has had its own testid since
+          #6265, whose suite recorded why — a window sliced around the card has
+          to guess its closing tag, and the nearest landmark is a PREFIX of this
+          card's own id, so the slice collapses onto the label. Same fix, same
+          reason, for the line underneath it. */}
+      <div
+        className="text-[11px] text-text-muted mt-0.5 leading-tight"
+        data-testid={testId ? `${testId}-detail` : undefined}
+      >
+        {detail}
+      </div>
     </div>
   );
 }
