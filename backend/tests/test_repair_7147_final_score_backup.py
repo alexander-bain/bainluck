@@ -294,7 +294,10 @@ class _FakeESPN:
 def stub_espn(monkeypatch):
     import app.services.espn_api as espn_api
 
-    monkeypatch.setattr(espn_api, "get_espn_service", lambda: _FakeESPN())
+    # The class IS the factory the repair wants: `get_espn_service()` calls it
+    # and gets an instance. A `lambda: _FakeESPN()` wrapper would be the same
+    # thing spelled twice (CodeQL py/unnecessary-lambda).
+    monkeypatch.setattr(espn_api, "get_espn_service", _FakeESPN)
 
 
 @pytest.mark.asyncio
