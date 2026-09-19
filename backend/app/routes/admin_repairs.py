@@ -959,9 +959,17 @@ _REPAIRS = {
     # window (a module constant, not a query param) that they report back as
     # `window_days`, so `scan_exhausted` means "none left INSIDE THE WINDOW".
     # Capped at APPLY_LEG_CAP=120 legs per call; the measured cohort is two
-    # calls. Accepts ?limit=&sport=&after_id=.
+    # calls. Accepts ?limit=&sport=&after_id=&undo_identity=.
+    # D51: the undo receipt is built from the write's own `RETURNING` ids —
+    # never from a pre-apply snapshot, which cannot cover a cohort that REGROWS
+    # (185 legs at 10:00Z, 186 at 10:44Z on 2026-09-19) — and is staged in the
+    # SAME transaction as the write, so a receipt that will not persist takes
+    # the relabel down with it. Restore with `?undo_identity=<id>&apply=true`;
+    # every apply prints the command, and each CALL banks its own, so a two-page
+    # drain is two restore commands and both must run.
     # ATTENDED ONLY: never wire this to a beat — it is a drain with an end
-    # state, not a standing job.
+    # state, not a standing job. That is a statement about SCHEDULING, not about
+    # who may invoke it; D51(b) governs the latter.
     "polymarket-single-leg-label": (
         "app.tasks.repair_polymarket_single_leg_label",
         "repair",
