@@ -33,9 +33,37 @@ Each test below fails if the safety it names is removed.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from app.utils.outcome_display import drop_unbacked_legs, is_unbacked_leg
+
+
+@contextmanager
+def _while_the_rungs_are_live(instant=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc)):
+    """113545's real rungs are `May 31` and `September 30`, and this board is OPEN.
+
+    #7274 gave the detail serializer the feed's expired-rung rule, so from June
+    onwards a wall-clock run deletes both `May 31` rows before this file's rule
+    is ever consulted — the subject of the assertion below disappears and the
+    test reports the wrong finding. Freezing the clock inside the rungs' own
+    window keeps the production names (which this file's docstring leans on)
+    AND keeps the unbacked-row rule the thing under test.
+
+    The settled board below needs no freeze: expiry is open-markets-only, which
+    is #7274's own gate, and that is worth leaving unwrapped as the control.
+    """
+    import app.routes.futures as futures_routes
+
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return instant if tz is None else instant.astimezone(tz)
+
+    with patch.object(futures_routes, "datetime", _Frozen):
+        yield
 
 
 def _row(name, external_id, prob, is_winner=None):
@@ -274,7 +302,8 @@ def test_the_detail_payload_no_longer_serves_the_unbacked_row_6524():
         _detail_outcome(3, "May 31", "0xec843b01", 0.02),
     ])
 
-    served = _format_market_detail(board)
+    with _while_the_rungs_are_live():
+        served = _format_market_detail(board)
     names = [o["name"] for o in served["outcomes"]]
 
     assert 1.0 not in [o["probability"] for o in served["outcomes"]]
