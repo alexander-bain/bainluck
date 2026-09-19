@@ -32,6 +32,7 @@ shipping a futures change that returned HTTP 200 with the primary result class
 missing — it read as "no matches" and survived a full deploy verification.
 """
 
+import ast
 import inspect
 
 from sqlalchemy import select
@@ -207,7 +208,37 @@ def test_the_python_reranker_still_runs_after_the_sql_tier():
     """SQL and Python must agree, not compete.
 
     The SQL tier fixes WHICH rows reach the page; `_rerank_search_futures` still
-    owns ordering within it (volume, narrower-scope demotion, wrong-league). This
-    pins that the SQL key did not become an excuse to delete the reranker.
+    owns ordering within it (volume, narrower-scope demotion, wrong-league,
+    wrong-sport). This pins that the SQL key did not become an excuse to delete
+    the reranker.
+
+    POSITIONAL (AST), not a substring. The assertion used to be the literal text
+    `"_rerank_search_futures(futures_markets_raw, expanded)"`, which pins the
+    ARGUMENT LIST as much as the call and so reds on any signal added to the
+    reranker — #7259 added a third argument and this test failed while the
+    property it names was untouched. What it means to assert is "the call is
+    still there and still reads the raw window FIRST", so that is what it now
+    reads off the tree: the two positional arguments it cares about, by position,
+    with anything after them free to change.
     """
-    assert "_rerank_search_futures(futures_markets_raw, expanded)" in SEARCH_CODE
+    # `SEARCH_SRC`, not the comment-stripped `SEARCH_CODE`: an AST has no use for
+    # comments, and parsing the text the file actually holds keeps this guard
+    # independent of how the module's other (substring) guards preprocess it.
+    tree = ast.parse(SEARCH_SRC)
+    calls = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "_rerank_search_futures"
+        and len(n.args) >= 2
+        and isinstance(n.args[0], ast.Name)
+        and n.args[0].id == "futures_markets_raw"
+        and isinstance(n.args[1], ast.Name)
+        and n.args[1].id == "expanded"
+    ]
+    assert calls, (
+        "no `_rerank_search_futures(futures_markets_raw, expanded, ...)` call "
+        "found in search_events — the Python reranker no longer runs on the raw "
+        "window the SQL tier selected"
+    )

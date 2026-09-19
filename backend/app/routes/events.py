@@ -1592,6 +1592,94 @@ def _demote_wrong_league(markets: list, expanded: list[tuple[str, str | None]]) 
     return keep + wrong if wrong else markets
 
 
+# `llm_sport_category` values that assert nothing. NULL is 4,391 open markets and
+# `other` is 368 (production 2026-09-19), and neither is evidence that a market
+# belongs to a different sport — only that nobody has said which. The demotion
+# below acts on positive disagreement or not at all, so both are inert here.
+_UNRESOLVED_LLM_SPORT_CATEGORIES = frozenset({"other"})
+
+
+def _resolved_search_sport_category(sport_facets) -> str | None:
+    """The one `llm_sport_category` a query's GAMES resolve to, or None.
+
+    #7259. `_demote_wrong_league` keys on a league token IN THE QUERY, so it is
+    structurally blind to a bare club name: `astros` carries no league token, the
+    arm never engages, and `Dorados de Chihuahua vs Astros de Jalisco` — a Kalshi
+    LNBP market, `external_id=KXLNBPGAME-…`, Mexico's professional BASKETBALL
+    league — headlined the ANSWERS card above four Houston Astros markets on the
+    substring `astros` alone. The cousin is a club-name cousin across SPORTS, not
+    a league-token cousin, and the query text cannot see it.
+
+    The disambiguator is already on the page and already computed: `sport_facets`
+    is `_search_sport_facets`' grouped tally over the WHOLE matched event set (not
+    this page's rows — #5514), and it lands at :5797, far above the futures stage
+    that needs it. For `q=astros` it is exactly one facet, `baseball_mlb` × 39.
+
+    **ONE facet or nothing.** Unanimity is the entire safety argument, and it is a
+    property of the corpus rather than a threshold someone can tune. `giants`
+    resolves MLB *and* NFL, `trump` resolves no games at all, and both come back
+    None — so the demotion can only ever arm on a query whose games agree with
+    each other. That also keeps it off every non-sport query by construction.
+
+    🪤 THE MAP IS NOT THE IDENTITY, so the prefix is translated rather than
+    compared. `SPORT_PREFIX_TO_LLM_CATEGORY` sends `americanfootball` → `football`,
+    `icehockey` → `hockey`, `motorsport` → `motorsports`, and the stored column
+    holds the map's OUTPUTS (measured over the 43 distinct values on open markets:
+    `football` 6,004 rows, no `americanfootball`; `hockey` 623, no `icehockey`).
+    Comparing the raw prefix would have called every NFL market wrong-sport on
+    every NFL query — the loudest possible false positive, silently.
+
+    🪤 `.get`, NO FALLBACK. An unmapped prefix returns None and the demotion
+    no-ops; it never substitutes a plausible neighbour. `_sport_facet_labels`
+    folds a sport-less row to the literal `"unknown"`, which is unmapped and so
+    lands on that path by construction rather than by a special case.
+    """
+    if not sport_facets or len(sport_facets) != 1:
+        return None
+    key = (sport_facets[0].get("key") or "").strip().lower()
+    prefix = key.split("_", 1)[0]
+    if not prefix:
+        return None
+    return SPORT_PREFIX_TO_LLM_CATEGORY.get(prefix)
+
+
+def _demote_wrong_sport(markets: list, resolved_category: str | None) -> list:
+    """#7259: sink markets from a DIFFERENT sport than the one the query's games
+    resolved to, below the ones that agree with it.
+
+    Runs LAST of the three partitions, so a wrong-sport market sits below even a
+    wrong-league one: disagreeing about the sport is a stronger statement of
+    irrelevance than being a league cousin, and WNBA-on-`nba` is same-sport and
+    therefore untouched here — `_demote_wrong_league` keeps it exactly where it
+    put it. All three are stable partitions, so composing them preserves
+    within-group order and the volume sort that `_rerank_search_futures` applied.
+
+    FAIL-OPEN, and that is the design rather than a caveat: a market is demoted
+    only when it CLAIMS a category and that claim disagrees. A null or `other`
+    category — 4,759 of the open corpus — is the absence of a claim, so it keeps
+    its place. The guard can be wrong only about rows that told us what they are.
+
+    🔴 NOT "reorders, never filters" — the honest version of `_demote_wrong_league`'s
+    line. Within this function nothing is dropped, but the page is sliced to
+    `_SEARCH_FUTURES_PAGE` downstream, so a demoted row CAN fall off page one.
+    That is the intended effect on the specimen and it is the same exposure the
+    two sibling partitions already carry; it is written down here so the next
+    reader does not inherit a safety claim the call site does not honour.
+    """
+    if not resolved_category or len(markets) < 2:
+        return markets
+
+    def _wrong(m) -> bool:
+        cat = (getattr(m, "llm_sport_category", None) or "").strip().lower()
+        if not cat or cat in _UNRESOLVED_LLM_SPORT_CATEGORIES:
+            return False
+        return cat != resolved_category
+
+    keep = [m for m in markets if not _wrong(m)]
+    wrong = [m for m in markets if _wrong(m)]
+    return keep + wrong if wrong else markets
+
+
 # Award-narrowing scope tokens. A market whose NAME carries one of these but the
 # QUERY does not is a sub-award (e.g. "Eastern Conference Finals MVP" vs the bare
 # season "MVP Winner"). Word-boundary matched so "final" inside another word can't
@@ -1630,7 +1718,11 @@ def _demote_narrower_scope(name_matches: list, low: list[tuple[str, str]]) -> li
     return broad + narrow if narrow else name_matches
 
 
-def _rerank_search_futures(markets: list, expanded: list[tuple[str, str | None]]) -> list:
+def _rerank_search_futures(
+    markets: list,
+    expanded: list[tuple[str, str | None]],
+    resolved_sport_category: str | None = None,
+) -> list:
     """#993 Slice C — surface the entity's real markets on entity queries.
 
     TWO deterministic signals, in order (no LLM):
@@ -1651,6 +1743,12 @@ def _rerank_search_futures(markets: list, expanded: list[tuple[str, str | None]]
 
     Politics queries ("trump approval") are unaffected: those markets name Trump
     and lead on their own volume.
+
+    `resolved_sport_category` (#7259) is the third signal and it does not come
+    from the query text — it is what the query's GAMES resolved to, passed in by
+    the caller that computed it. Optional and defaulted because only `/search`
+    has it: see the demotion's own docstring, and the typeahead call site for why
+    that endpoint deliberately passes nothing.
     """
     if len(markets) < 2:
         return markets
@@ -1672,9 +1770,13 @@ def _rerank_search_futures(markets: list, expanded: list[tuple[str, str | None]]
     # correct-league sub-award still outranks a wrong-league market (WNBA stays
     # last). Both are stable partitions; composition preserves within-group order.
     ordered = _demote_narrower_scope(ordered, low)
-    # Finally, push substring-cousin wrong-league markets to the absolute bottom
+    # Then push substring-cousin wrong-league markets to the bottom
     # ("nba mvp" must not lead with "WNBA: 2026 MVP").
-    return _demote_wrong_league(ordered, expanded)
+    ordered = _demote_wrong_league(ordered, expanded)
+    # And finally the wrong SPORT (#7259), below even the wrong league — the one
+    # signal here that the query text cannot supply. `astros` must not lead with
+    # an LNBP basketball fixture. No-op when the caller resolved no single sport.
+    return _demote_wrong_sport(ordered, resolved_sport_category)
 
 
 def _query_name_match(market, expanded: list[tuple[str, str | None]]) -> bool:
@@ -6780,6 +6882,21 @@ async def search_events(
     #
     # So the pills track `total_results` in both regimes by construction, and
     # neither number can drift from the other without this branch moving too.
+    # #7259 — TAKEN HERE, AND THE LINE BELOW IS THE WHOLE REASON WHY.
+    #
+    # `_resolved_search_sport_category` needs the GROUPED tally, and two lines
+    # from now a single-page query throws it away. That nulling is a DISPLAY
+    # decision — "serve the page-local tally so single-page queries stay
+    # byte-identical to their pre-#5514 behaviour" — not a statement that the
+    # sport is unknown; on a one-page query the two tallies are the same numbers
+    # by definition, since every matched row is on the page.
+    #
+    # 🪤 Derived after it (at the futures stage, where it is consumed) the guard
+    # reads None on every query returning <= `per_page` games and is INERT on
+    # most of the population it exists for — `astros` itself only escapes because
+    # 39 games happen to spill onto a second page. It would have passed its own
+    # specimen and done nothing for the class, which is the worst of both.
+    _resolved_sport_category = _resolved_search_sport_category(sport_facets)
     if total_pages <= 1:
         sport_facets = None
 
@@ -7313,7 +7430,13 @@ async def search_events(
     # let dedup keep the highest-ts_rank variant — e.g. the 820-vol "English
     # Premier League Champion" over the 16M-vol "…Winner?" — which then lost the
     # volume sort to lacrosse.) #993
-    reranked_futures = _rerank_search_futures(futures_markets_raw, expanded)
+    # #7259. `_resolved_sport_category` was bound far above, before the pill
+    # tally is discarded for single-page queries — see the trap note at its
+    # assignment. Resolved once, so this window and its refill below are
+    # partitioned on the same answer.
+    reranked_futures = _rerank_search_futures(
+        futures_markets_raw, expanded, _resolved_sport_category
+    )
     seen_search_keys: set[str] = set()
     deduped_futures = []
     for m in reranked_futures:
@@ -7393,7 +7516,9 @@ async def search_events(
             refill_rows = []
         else:
             await _refill_savepoint.commit()
-        for m in _rerank_search_futures(refill_rows, expanded):
+        for m in _rerank_search_futures(
+            refill_rows, expanded, _resolved_sport_category
+        ):
             dkey = _normalize_futures_dedup_key(m)
             if dkey in seen_search_keys:
                 continue
@@ -9497,6 +9622,26 @@ async def typeahead_search(
     # the entity's real correct-league market instead of a cross-category novelty
     # or a substring-cousin league before the 5-item cut. Shared helpers end-to-end
     # (query recall + rerank) → the two paths agree (L2-45).
+    #
+    # 🔴 NO `resolved_sport_category` HERE, AND THE TWIN WAS CHECKED RATHER THAN
+    # ASSUMED (#7259; #3394's standing lesson in this file is a fix landing on one
+    # endpoint while its copy keeps the defect). Two independent reasons, either
+    # sufficient:
+    #   1. THE SIGNAL DOES NOT EXIST ON THIS ENDPOINT. The argument is not derived
+    #      from the query text — it is `_search_sport_facets`' grouped tally over
+    #      the matched EVENT set, and this endpoint never runs that statement.
+    #      There is nothing to pass, and inventing a cheaper substitute here would
+    #      be a second definition of "what sport is this query" for the two
+    #      surfaces to drift apart on.
+    #   2. THE DEFECT DOES NOT MANIFEST HERE. Measured on production 2026-09-19,
+    #      `/typeahead?q=astros` returns the LNBP market (61496478) SECOND, below
+    #      `MLB World Series Champion 2026` (114584) — this endpoint's ORDER BY
+    #      leads with `market_tier`, and tier 1 beats the tier-5 cousin before the
+    #      reranker is reached. #7259 is a wrong-HEADLINE defect on /search's
+    #      ANSWERS card, and this surface has no such headline to get wrong.
+    # So the parity L2-45 asks for is preserved by passing nothing: both paths run
+    # the same reranker, and the one extra signal is supplied only where it is
+    # both available and needed.
     ta_futures_ranked = _rerank_search_futures(
         futures_result.scalars().unique().all() if futures_result is not None else [],
         ta_expanded,
