@@ -1,4 +1,14 @@
-"""#6430 — a club reaches its own championship market by typing its name.
+"""#6430 — a CORRECTLY ANCHORED club reaches its championship market by its name.
+
+🔴 THE SCOPE IS THE FIRST LINE ON PURPOSE (CERT-3128). This ship rescues every club
+whose outcome is anchored to the club it names — 28 of the 30 anchored rows in market
+114584. It does NOT rescue the other two: `New York Mets` is anchored to NEW YORK
+YANKEES and `Los Angeles Angels` to LOS ANGELES DODGERS, so a fan typing "mets" still
+gets no championship card at row 1 and "angels" gets none at all. That is a live,
+reader-visible gap, it is carried on **#7233**, and its fix is #7188's ordered data
+repair (lane1's by D39), not a change in this file. An earlier draft of this docstring
+called the ship "the whole club field"; it was 28 of 30 then too, and CERT-3128 blocked
+it for the difference. Do not restore the wider wording without the data repair.
 
 THE DEFECT, measured on production 2026-09-19 via `GET /api/events/search`:
 
@@ -18,10 +28,12 @@ LeBron case at scale. Both carry ZERO `team_id`; market 114584 carries 30 of 31.
 
 WHY THERE IS NO ANCHORED PRICE FLOOR — CERT-3125. The first version of this fix
 kept a 0.005 sub-floor and this file sampled only the twelve clubs ABOVE it, so
-the "whole club field" test could not see that sixteen clubs were still refused.
-That is the vacuous-guard trap: a fixture drawn from the passing side of a
-threshold cannot test the threshold. `WORLD_SERIES_FIELD` below is now the WHOLE
-thirty-row anchored field as production serves it, dust included.
+the field test could not see that sixteen clubs were still refused. That is the
+vacuous-guard trap: a fixture drawn from the passing side of a threshold cannot
+test the threshold. `WORLD_SERIES_FIELD` below is now the whole thirty-row
+anchored field as production serves it, dust included — the fixture is the whole
+field precisely so that the two rows this ship does NOT rescue are visible in it
+rather than filtered out of it.
 
 WHAT REPLACED THE FLOOR. Price cannot separate a real longshot from a bad
 anchor: the Diamondbacks (0.0015, against a real two-sided book of 0.0010/0.0020)
@@ -113,18 +125,34 @@ class TestTheDefect:
             "championship market at 4.55% — this is the reported defect"
         )
 
-    def test_the_whole_club_field_reaches_it_not_just_the_favourites(self):
+    def test_every_correctly_anchored_club_reaches_it_not_just_the_favourites(
+        self,
+    ):
         """CERT-3125's finding: the ship is the FIELD, not the priced cohort.
 
         This is the test that was vacuous before — it sampled twelve rows that
         all sat above the floor being tested. It now carries every anchored row
         production serves, so a floor reintroduced anywhere reddens it.
+
+        CERT-3128: the claim is "every CORRECTLY ANCHORED club", and the
+        arithmetic below is asserted out loud so the scope cannot be misread as
+        the whole field. 28 reach it, 2 do not, 30 exist — and the 2 are named
+        on #7233, not silently filtered away.
         """
         admitted = _admitted(CORRESPONDING)
         assert len(admitted) == len(CORRESPONDING), (
             f"only {len(admitted)} of {len(CORRESPONDING)} corresponding clubs "
             f"reach their own championship market; missing: "
             f"{[c for c, _, _ in CORRESPONDING if c not in admitted]}"
+        )
+        # The ship's exact reach, stated as arithmetic. If #7188's data repair
+        # lands and these numbers move to 30/0, this assertion is the thing that
+        # tells you to widen the claim in the docstring and close #7233.
+        assert (len(CORRESPONDING), len(MIS_ANCHORED)) == (28, 2), (
+            "the anchored field changed shape: "
+            f"{len(CORRESPONDING)} corresponding + {len(MIS_ANCHORED)} "
+            f"mis-anchored = {len(WORLD_SERIES_FIELD)}. If the mis-anchors are "
+            "gone, #7188 landed — widen the ship claim and close #7233."
         )
 
     @pytest.mark.parametrize(
@@ -199,8 +227,17 @@ class TestTheControl:
 
     def test_the_two_mis_anchored_clubs_in_the_live_field_are_refused(self):
         """Mets→Yankees and Angels→Dodgers, #7188's poison, on the ship's own
-        specimen market. When #7188 lands these become corresponding rows and
-        this field reads 30 of 30 with no change to the rule."""
+        specimen market.
+
+        🔴 THIS TEST PINS A READER-VISIBLE GAP, NOT JUST A RULE (CERT-3128). While
+        it is green, a fan typing "mets" gets no championship card at row 1 and
+        "angels" gets none at all — measured on production 2026-09-19. It is green
+        because the rule fails CLOSED on bad data: loosening it to rescue these two
+        re-admits `Mike Brown` → NEW ENGLAND PATRIOTS, which is the trade CERT-3125
+        blocked. The gap is carried on **#7233** and closes when #7188's ordered
+        data repair lands (lane1's by D39) — then these become corresponding rows
+        and the field reads 30 of 30 with no change to the rule.
+        """
         assert _admitted(MIS_ANCHORED) == [], (
             "a mis-anchored club reached a headline slot: "
             f"{_admitted(MIS_ANCHORED)}"

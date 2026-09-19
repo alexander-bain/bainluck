@@ -4146,6 +4146,15 @@ def _headline_contender_outcome_clause(pattern):
     and "New York Mets" on the World Series, anchored to NEW YORK YANKEES —
     #7188's team-identity poison, refused rather than papered over.
 
+    🔴 THE SECOND REFUSAL COSTS A READER (CERT-3128). `Mike Brown` is poison and
+    losing it is the point; `New York Mets` and `Los Angeles Angels` are real
+    clubs, and while their rows stay mis-anchored a fan typing "mets" gets no
+    championship card at row 1 and "angels" gets none at all. So this lane's
+    reach is every CORRECTLY ANCHORED club, 28 of the field's 30 — not the whole
+    field. The gap is **#7233**; it closes with #7188's ordered data repair
+    (lane1's by D39), never by dropping the `Team.name` term here, which would
+    take `Mike Brown` back with it.
+
     COST: the join is `teams.id = futures_outcomes.team_id`, a primary-key
     lookup on the row the outer predicate already selected, inside a subquery
     the pg_trgm GIN on `futures_outcomes.name` still drives. It adds no scan.

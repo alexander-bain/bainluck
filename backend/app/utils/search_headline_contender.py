@@ -148,11 +148,11 @@ MIN_CONTENDER_PROBABILITY = 0.05
 # histogram (a 144-row mode at the venues' 1c tick over a thin dust tail). That
 # floor was measured against the wrong question. It admits 14 of the World
 # Series market's 30 anchored clubs, so the ship this arm exists to deliver —
-# "a club reaches its own championship market by typing its name" — still fails
-# for sixteen clubs, the Diamondbacks among them at 0.0015 against a real
-# two-sided book (bid 0.0010 / ask 0.0020). A floor that answers "is this club
-# likely to win" cannot answer "is this market about this club", and the second
-# is the only question this lane asks.
+# "a correctly anchored club reaches its championship market by typing its
+# name" — still fails for sixteen clubs, the Diamondbacks among them at 0.0015
+# against a real two-sided book (bid 0.0010 / ask 0.0020). A floor that answers
+# "is this club likely to win" cannot answer "is this market about this club",
+# and the second is the only question this lane asks.
 #
 # PRICE IS NOT THE DISCRIMINATOR. IDENTITY AGREEMENT IS. Dropping the floor with
 # nothing in its place is not safe either, and the corpus says so by name:
@@ -171,6 +171,15 @@ MIN_CONTENDER_PROBABILITY = 0.05
 # anchored to LOS ANGELES DODGERS — the same team-identity poison #7188 is
 # repairing, which this rule correctly REFUSES rather than papers over. When
 # #7188 lands those two become 30 of 30 here with no change to this file.
+#
+# 🔴 SAY THE COST OUT LOUD (CERT-3128). "Correctly refused" is still a reader
+# losing something: a fan typing "mets" gets no championship card at row 1 and
+# "angels" gets none at all, measured the same minute. This ship's reach is
+# therefore EVERY CORRECTLY ANCHORED CLUB — 28 of 30 here — and not the whole
+# field; an earlier draft claimed the whole field and CERT-3128 blocked it for
+# the difference. The gap is carried on **#7233**, its fix is #7188's ordered
+# data repair (lane1's by D39), and the fix is NOT to loosen this rule: dropping
+# the correspondence term to rescue those two re-admits "Mike Brown" below.
 #
 # THE WHOLE CORPUS REPLAY, tier 1 + volume >= 10,000, newly-admitted outcomes:
 #
