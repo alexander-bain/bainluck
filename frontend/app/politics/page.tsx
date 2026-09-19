@@ -386,9 +386,17 @@ function PresBarRace({ sorted, sourceMode, data }: {
           rows carry the DIMMING and this carries the definition. Rendered only
           when at least one row is actually dimmed: a note that is always there
           teaches a reader to stop seeing it, and #2961's acceptance is that a
-          complete series is NOT marked. */}
+          complete series is NOT marked.
+
+          #7250 — and only when the lines it defines are on the screen.
+          `trendNote` is gated on whether any row IS dimmed; it was never gated
+          on whether the dimming can be SEEN. Under 720px the spark cell (377)
+          and its heading (346) are `display: none`, so a phone reader met the
+          definition of a visual convention absent from their screen, with a
+          precise "the longest is 9 days" attached to nothing. The caption
+          carries the same gate as its referent — one breakpoint, not two. */}
       {trendNote && (
-        <div className={s.sourceLegend} data-testid="politics-trend-note">
+        <div className={`${s.sourceLegend} ${s.hideOnMobile}`} data-testid="politics-trend-note">
           <span>{trendNote}</span>
         </div>
       )}
