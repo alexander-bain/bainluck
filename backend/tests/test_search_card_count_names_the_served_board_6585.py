@@ -65,10 +65,16 @@ twin at 0.000 / ask 0.0010. The detail route collapses those with
 survive. Adding that drop here would change the served LADDER on an unmeasured
 population rather than a count, so it is **#7180** and not this diff.
 
-`TestTheNamedRemainder` below pins that gap OPEN on purpose. If a later change
-closes it, that test fails and tells its reader the remainder moved — it is not
-asserting the bug is good, it is asserting nobody closed it by accident while
-believing they were only fixing a count.
+`TestTheNamedRemainder` below pinned that gap OPEN on purpose, so that closing
+it could not happen silently.
+
+**CLOSED 2026-09-19 by #7180**, and the pin did its job: that class now asserts
+the closure instead, and the paragraph above is history rather than current
+behaviour. `_search_surviving_legs` runs `drop_superseded_name_twins` — the same
+helper, in the same chain position, as `_format_market_detail` — so market
+112938 badges 25, and all six affected boards now equal the number
+`/api/futures/{id}` serves. The measurement, the two boards whose LADDER moved
+and the guards are in `test_search_card_drops_the_superseded_name_twin_7180.py`.
 
 ═══ NOT VACUOUS ═══
 
@@ -100,7 +106,7 @@ class _Outcome:
     """The attributes the search builder reads off an ORM outcome row."""
 
     def __init__(self, oid, name="Leg", prob=None, bid=None, ask=None, ext=None,
-                 winner=False):
+                 winner=False, resolution_source=None):
         self.id = oid
         self.name = name
         self.current_probability = prob
@@ -112,6 +118,10 @@ class _Outcome:
         self.last_updated = None
         self.external_id = f"ext-{oid}" if ext is None else ext
         self.is_winner = winner
+        # #7180 reads this column through `drop_superseded_name_twins`. Default
+        # None = the venue has not answered this leg, which is what every fixture
+        # in this file means: a settled row is spelled out where it is intended.
+        self.resolution_source = resolution_source
 
 
 class _Market:
@@ -152,6 +162,35 @@ def _badge(market, withheld=None):
 #: gave all three the identical id would not reproduce the defect at all.
 _COND_DEC = "0x348f98e8ce6dcba76c4cd149701cec47e203b3978d73bc1fb03cffd69095a880"
 _COND_JUN = "0xc159b8f7eb457df1803d7fff5e35e0952dbe42ddb6f459e5f28c086c0bb715ea"
+
+
+#: Market 112938 (*Who will Trump nominate as Fed Chair?*), the five rows that
+#: matter, read off production 2026-09-19 with their real condition ids, prices,
+#: books, grades and `resolution_source`. Two candidates are each stored TWICE —
+#: a live leg (`resolution_source` NULL) and a dead twin graded a loss at
+#: 0.000000 on an ask of 0.0010. The ids DIFFER, which is why the external_id
+#: dedup cannot fold them and #6585 left this card over-counting; #7180 folds
+#: them on the settled-loss correspondence instead.
+def _fed_chair_superseded_twins():
+    return _Market(
+        [
+            _Outcome(1626332, "Kevin Warsh", 1.0, bid=0.999, ask=1.0,
+                     ext="0x61b66d02793b4a68ab0cc25be60d65f517fe18c7d654041281bb130341244fcc",
+                     winner=True, resolution_source="api_settlement"),
+            _Outcome(1626333, "Rick Rieder", 0.075, bid=None, ask=0.15,
+                     ext="0xb9e50edb73f13ebddb16bc35e65e96d4b7e3883964ce085203ee95a2c6fc0e69"),
+            _Outcome(1626340, "Rick Rieder", 0.0, bid=None, ask=0.001,
+                     ext="0xbd603617895e199d4042781ee55a7a9614af3130ca8e90d257424ca246f66197",
+                     resolution_source="api_settlement"),
+            _Outcome(1626334, "James Bullard", 0.038, bid=0.02, ask=0.056,
+                     ext="0x83a36918851b6c074f1df8cd657d5cba6af1a9ba37e9ad86858b3f7fde617af2"),
+            _Outcome(1626350, "James Bullard", 0.0, bid=None, ask=0.001,
+                     ext="0x582c62c350aac2720711abeb30b16c41c5cdc9b342bfa30da380b6ea6bdeb1ac",
+                     resolution_source="api_settlement"),
+        ],
+        id=112938,
+        name="Who will Trump nominate as Fed Chair?",
+    )
 
 
 def _q480_yes_no_twins():
@@ -348,35 +387,39 @@ class TestHonestBoardsDoNotMove:
 
 
 class TestTheNamedRemainder:
-    def test_superseded_name_twins_are_still_counted_and_that_is_7180(self):
-        """Market 112938's real residue: badge 27 against the board's 25.
+    """CLOSED by #7180 on 2026-09-19. This class now pins the closure.
 
-        Two legs, same NAME, two different condition ids — a live leg and a dead
-        twin. Detail collapses these with `drop_superseded_name_twins`; this path
-        does not, so the badge still over-counts by 2 on this one card.
+    It used to assert the opposite — that market 112938 still badged 27 against
+    its board's 25 — and it said in terms that a failure meant the remainder had
+    moved, not that something broke. It moved: `_search_surviving_legs` now runs
+    `drop_superseded_name_twins`, the same helper and the same chain position the
+    detail route has used since #6508, so the twin no longer reaches either half
+    of this card.
+    """
 
-        Pinned so the gap cannot close silently. If this fails, #7180 moved and
-        this file's docstring is out of date — that is the message, not a bug.
-        """
-        m = _Market(
-            [
-                _Outcome(1, "Kevin Warsh", 0.41, bid=0.39, ask=0.43),
-                _Outcome(2, "Rick Rieder", 0.075, bid=None, ask=0.15, ext="0xb9e50e"),
-                _Outcome(3, "Rick Rieder", 0.0, bid=None, ask=0.001, ext="0xbd6036"),
-                _Outcome(4, "James Bullard", 0.038, bid=0.02, ask=0.056, ext="0x83a369"),
-                _Outcome(5, "James Bullard", 0.0, bid=None, ask=0.001, ext="0x582c62"),
-            ],
-            id=112938,
-            name="Who will Trump nominate as Fed Chair?",
-        )
+    def test_the_superseded_twin_no_longer_counts_and_that_was_7180(self):
+        m = _fed_chair_superseded_twins()
         names = [o.name for o in _search_surviving_legs(m)]
-        assert names.count("Rick Rieder") == 2, (
-            "the twin survives this path's external_id-keyed dedup — #7180"
+        assert names.count("Rick Rieder") == 1, (
+            "the dead twin is a graded LOSS beside a live id-anchored sibling — "
+            "#7180 drops it here exactly as the detail route does"
         )
+        assert names.count("James Bullard") == 1
         assert _badge(m) == len(_search_surviving_legs(m)), (
-            "even carrying the remainder, the badge still names the ladder's own "
-            "universe — #6585's contract holds, the universe is what is wrong"
+            "#6585's contract is unchanged: the badge names the ladder's own "
+            "universe, whatever that universe turns out to be"
         )
+
+    def test_the_badge_now_lands_on_the_number_the_board_serves(self):
+        """The whole point of both issues, on the card that carried the residue.
+
+        `_retired_formula` is 5 on this fixture and #6585 alone left it at 5 (the
+        two twins carry distinct condition ids, so the external_id dedup cannot
+        see them). The board serves 3.
+        """
+        m = _fed_chair_superseded_twins()
+        assert _retired_formula(m) == 5
+        assert _badge(m) == 3
 
 
 # ---------------------------------------------------------------------------

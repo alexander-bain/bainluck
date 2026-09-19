@@ -25461,6 +25461,9 @@ from app.utils.outcome_display import (  # noqa: E402
 from app.utils.duplicate_condition_outcomes import (  # noqa: E402
     drop_duplicate_legs as _drop_duplicate_legs,
 )
+from app.utils.superseded_name_twins import (  # noqa: E402
+    drop_superseded_name_twins as _drop_superseded_name_twins,
+)
 
 # #5516. The search card's ladder depth, named ONCE so the withdrawal predicate
 # and the call site cannot drift: `_futures_board_is_mostly_unserved` reads it to
@@ -25687,10 +25690,53 @@ def _search_surviving_legs(market: "FuturesMarket") -> list:
     # unbacked `April 8 1.0` at rank 1, so this list's top row is the fabricated
     # one. Same drop as browse and detail, for #993's reason: the click-through has
     # to match what search showed.
+    # #7180: one question, one row — on the SEARCH card, which is where #6508 did
+    # not reach. `_drop_duplicate_legs` above folds two rows that share an
+    # `external_id`; a candidate stored under two Polymarket condition ids has two
+    # DIFFERENT ids, so both rows survive it and the card draws them both. Detail
+    # has collapsed these since #6508 (`_format_market_detail`, same helper, same
+    # position in the chain) — this line is that rule arriving at the second
+    # surface, which is #993's contract: the click-through must match what search
+    # showed.
+    #
+    # NOT a count fix, and that was measured rather than assumed. Driving this
+    # function on the production rows of all six affected boards (2026-09-19; the
+    # population is 7 rows on 6 open markets, every one priced 0.000000) says two
+    # of them print the repeated label INSIDE the five-row slice:
+    #
+    #     113039  Israel x Hamas ceasefire cancelled by...?
+    #                December 31  16%   <- live
+    #                ...
+    #                December 31   -    <- superseded, rank 5, no number at all
+    #     61404610  Korea Open ... Mai Hontama vs Eun-Hye Lee
+    #                ... Set Handicap +/-1.5  12.5%
+    #                ... Set Handicap +/-1.5    -
+    #
+    # The other four move only the badge, which is #7180's headline specimen:
+    # 112938 (*Who will Trump nominate as Fed Chair?*) counted 27 against the
+    # board's 25 because `Rick Rieder` and `James Bullard` are each stored twice.
+    # Its two twins sit below the slice, so that card's ladder does not move.
+    #
+    # HERE, before the sort and the `[:limit]` slice, for the reason every other
+    # refusal in this function gives: a post-slice drop would shorten the ladder
+    # instead of letting an honest rung take the freed slot — on 61404610 (four
+    # legs) that is the difference between three rows and four.
+    #
+    # The helper picks NO survivor on a sort key: it drops only a row the venue
+    # has already graded a LOSS while an unsettled, id-anchored sibling carries
+    # the same label, and says nothing when every row in the group is settled.
+    # Its three guards, and the five labels the first wrong spelling deleted, are
+    # in `app/utils/superseded_name_twins.py` — do not re-derive them here.
     real = [
         o
         for o in _drop_unbacked_legs(
-            _drop_duplicate_legs(market.outcomes, lambda o: o.external_id),
+            _drop_superseded_name_twins(
+                _drop_duplicate_legs(market.outcomes, lambda o: o.external_id),
+                name_of=lambda o: o.name,
+                external_id_of=lambda o: o.external_id,
+                is_winner_of=lambda o: o.is_winner,
+                resolution_source_of=lambda o: o.resolution_source,
+            ),
             lambda o: o.external_id,
             market_is_open=getattr(market, "status", None) == "open",
             is_winner_of=lambda o: bool(o.is_winner),
