@@ -79,11 +79,23 @@ async def _reset_and_seed(rows):
     predicate is `current_probability - probability_change_24h` landing outside
     [0, 1], which no fixture with a constant price can express.
 
+    An eighth element, `observations`, is a list of `(hours_ago, probability)`
+    written into `futures_odds_snapshots` and defaults to NONE AT ALL (#4079).
+    That default is what keeps every pre-A4 case in this file meaning exactly
+    what it meant: A4 reads the observed extremes through a lateral aggregate
+    and `MIN` over an empty set is NULL, so a row with no observations is out of
+    its scope by construction and is left to A's age sweep. A case only enters
+    A4's population by deliberately saying what this outcome was seen at.
+
     A market is created per label so each case is independent.
     """
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
-    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.models.models import (
+        FuturesMarket,
+        FuturesOddsSnapshot,
+        FuturesOutcome,
+    )
     from app.services.database import Base
 
     engine = _engine()
@@ -99,6 +111,7 @@ async def _reset_and_seed(rows):
             label, status, hours, delta, seed_max = row[:5]
             resolution_source = row[5] if len(row) > 5 else None
             current_probability = row[6] if len(row) > 6 else 0.5
+            observations = row[7] if len(row) > 7 else ()
             market = FuturesMarket(
                 source="kalshi",
                 external_id=f"KXWINDOW-{label}",
@@ -152,6 +165,15 @@ async def _reset_and_seed(rows):
             )
             session.add(outcome)
             await session.flush()
+            for hours_ago, probability in observations:
+                session.add(
+                    FuturesOddsSnapshot(
+                        outcome_id=outcome.id,
+                        bookmaker="kalshi",
+                        probability=probability,
+                        captured_at=now - timedelta(hours=hours_ago),
+                    )
+                )
             ids[label] = (market.id, outcome.id)
         await session.commit()
 
@@ -163,6 +185,7 @@ def _run_task(
     batch: int | None = None,
     graded_batch: int | None = None,
     impossible_batch: int | None = None,
+    unobserved_batch: int | None = None,
 ):
     """Drive the REAL `update_max_movement` against this database."""
     import app.tasks.base as base_mod
@@ -191,6 +214,7 @@ def _run_task(
     real_batch = tasks_mod.STALE_DELTA_BATCH
     real_graded_batch = tasks_mod.GRADED_DELTA_BATCH
     real_impossible_batch = tasks_mod.IMPOSSIBLE_PRIOR_BATCH
+    real_unobserved_batch = tasks_mod.UNOBSERVED_PRIOR_BATCH
     base_mod.get_task_session = lambda: _Ctx()
     warm_mod.warm_futures_movers = _no_warm
     if batch is not None:
@@ -199,6 +223,8 @@ def _run_task(
         tasks_mod.GRADED_DELTA_BATCH = graded_batch
     if impossible_batch is not None:
         tasks_mod.IMPOSSIBLE_PRIOR_BATCH = impossible_batch
+    if unobserved_batch is not None:
+        tasks_mod.UNOBSERVED_PRIOR_BATCH = unobserved_batch
     try:
         return update_max_movement.run()
     finally:
@@ -207,6 +233,7 @@ def _run_task(
         tasks_mod.STALE_DELTA_BATCH = real_batch
         tasks_mod.GRADED_DELTA_BATCH = real_graded_batch
         tasks_mod.IMPOSSIBLE_PRIOR_BATCH = real_impossible_batch
+        tasks_mod.UNOBSERVED_PRIOR_BATCH = real_unobserved_batch
 
 
 async def _read(ids):
@@ -848,4 +875,371 @@ def test_the_impossible_sweep_is_bounded_and_takes_the_biggest_first() -> None:
     assert after["quieter"][0] == pytest.approx(0.550), (
         "the smaller impossibility should still be waiting for the next run. "
         f"got {after['quieter'][0]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# A4 — the OVERSTATED-MOVE sweep (#4079).
+#
+# Every row here is seeded FRESH (1 hour), UNGRADED and PRICE-POSSIBLE, which is
+# the isolation this section rests on and it is stricter than A3's. A row that
+# is also stale goes to A, also graded goes to A2, and — the trap specific to
+# this statement — a row whose implied prior falls outside [0, 1] goes to A3,
+# which runs first. A case that fails A3 as well proves nothing about A4, so
+# every liar below implies a perfectly legal price; what is wrong with it is the
+# DISTANCE it claims to have travelled, not the arithmetic.
+# ---------------------------------------------------------------------------
+
+
+def test_a_move_the_series_cannot_support_is_retired() -> None:
+    """THE ship, on rows: a 7% market did not fall 74 points today.
+
+    `liar` is the production specimen in miniature — "Kanye West performs in
+    Russia by October 31?", read off Discover page one at 01:50Z on 2026-09-19
+    as "Down 74 points today — now 7% chance". Its own polymarket day ran 0.0525
+    to 0.1005, so the deepest fall its series can support is about three points.
+
+    It is fresh, ungraded, and its implied prior (0.809) is a legal probability,
+    so A, A2 and A3 all structurally decline it. If A4 is removed, nothing else
+    in the task can clear this row — which is exactly the state production was
+    in when it was photographed.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                (
+                    "liar",
+                    "open",
+                    1,
+                    -0.740,
+                    0.740,
+                    None,
+                    0.069,
+                    [(1, 0.0985), (2, 0.0975), (13, 0.0525), (20, 0.1005)],
+                ),
+            ]
+        )
+    )
+    result = _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert after["liar"][0] is None, (
+        "a fresh, ungraded row claiming a 74-point fall survived on an outcome "
+        "whose whole observed day ran between 0.0525 and 0.1005. This is #4079 "
+        f"verbatim. got {after['liar'][0]}"
+    )
+    assert result["unobserved_retired"] == 1, (
+        "the run must report what it retired under its own counter: folded into "
+        "`impossible_retired` the first big drain would be invisible. "
+        f"got {result}"
+    )
+
+
+def test_a_move_the_series_does_support_keeps_its_delta_byte_for_byte() -> None:
+    """THE control, and the one that decides whether this statement may ship.
+
+    `honest` is the other production card read in the same pass — "Rain in
+    Denver in Sep 2026?" / "Above 1 inch", served as "up 54 points today". Its
+    own kalshi series holds 0.28 inside the window, so a 57-point rise is
+    supported and the caption is TRUE.
+
+    `drifted` is the SAME card after the delta-blind writer nudged its price
+    0.83 -> 0.85 without touching the delta — which is what actually happened
+    between two reads twenty minutes apart. The first draft of A4 asked whether
+    the implied prior (now 0.31 rather than 0.29) appeared in the series and
+    retired this row; the shipped predicate widens the supportable rise to 0.57
+    and keeps it. Drift in the direction the delta already claims must never be
+    able to convert an honest caption into a swept one.
+
+    Both assertions are on the VALUE, not on "not None": a statement that
+    rewrote an honest delta to something else would pass a null check.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("honest", "open", 1, 0.540, 0.540, None, 0.83,
+                 [(1, 0.83), (4, 0.29), (8, 0.28), (14, 0.44)]),
+                ("drifted", "open", 1, 0.540, 0.540, None, 0.85,
+                 [(1, 0.85), (4, 0.29), (8, 0.28), (14, 0.44)]),
+            ]
+        )
+    )
+    result = _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert after["honest"][0] == pytest.approx(0.540), (
+        "0.83 against a +0.54 delta is supported by a series holding 0.28 four "
+        f"hours earlier. The move happened; retiring it deletes a true caption. "
+        f"got {after['honest'][0]}"
+    )
+    assert after["drifted"][0] == pytest.approx(0.540), (
+        "two points of delta-blind drift retired an honest caption — this is "
+        "the exact-prior draft's failure, and the reason the shipped predicate "
+        f"tests overstatement instead. got {after['drifted'][0]}"
+    )
+    assert result["unobserved_retired"] == 0, (
+        f"nothing should have been retired on this fixture. got {result}"
+    )
+
+
+def test_an_understated_delta_is_never_swept() -> None:
+    """One-directional: a claim SMALLER than the real move is left standing.
+
+    `shy` moved 30 points by its own series and claims 10. That is not a lie a
+    reader is harmed by, it is not provable as wrong from a per-write delta, and
+    sweeping it would make the statement bidirectional — which is what makes the
+    drift-safety argument above true. If a comparator is ever flipped, this is
+    the case that notices.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("shy", "open", 1, 0.100, 0.100, None, 0.50,
+                 [(1, 0.50), (6, 0.20)]),
+            ]
+        )
+    )
+    _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert after["shy"][0] == pytest.approx(0.100), (
+        "a delta understating its own observed move was swept, so the predicate "
+        f"is no longer one-directional. got {after['shy'][0]}"
+    )
+
+
+def test_a_row_we_never_observed_in_the_window_is_left_to_the_age_sweep() -> None:
+    """"We never looked" is not "we looked and it never went there" (#53).
+
+    `MIN` over an empty set is NULL, so `obs.lo IS NOT NULL` is what confines
+    the sweep to rows we actually watched. Without it — if the CASE were ever
+    rewritten into something NULL-tolerant — A4 would retire the entire
+    unobserved tail on a comparison that examined nothing. Those rows are A's
+    population by construction. This one is seeded FRESH so A declines it too:
+    if A4 over-reaches, nothing else in the task hides it.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("unseen", "open", 1, 0.300, 0.300, None, 0.40),
+            ]
+        )
+    )
+    result = _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert after["unseen"][0] == pytest.approx(0.300), (
+        "an outcome with no observations in the window was swept by a "
+        "comparison that could not evaluate it — absence of evidence read as "
+        f"evidence. got {after['unseen'][0]}"
+    )
+    assert result["unobserved_retired"] == 0, (
+        f"nothing should have been retired on this fixture. got {result}"
+    )
+
+
+def test_an_observation_outside_the_window_does_not_rescue_a_liar() -> None:
+    """The extremes come from MOVEMENT_WINDOW_HOURS of series, nothing wider.
+
+    `rescued_late` was at 0.809 thirty hours ago and nowhere near it since. The
+    price WAS 0.809 once — it was not today, and "today" is the only claim the
+    caption makes. `rescued_inside` held the same price eighteen hours ago,
+    inside the window, so its fall really is supported and it must survive. If
+    the lateral loses its window bound the first row lives and the sweep
+    silently becomes a lifetime test that fires on almost nothing.
+    """
+    from app.tasks import MOVEMENT_WINDOW_HOURS
+
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("rescued_late", "open", 1, -0.740, 0.740, None, 0.069,
+                 [(1, 0.0985), (MOVEMENT_WINDOW_HOURS + 6, 0.809)]),
+                ("rescued_inside", "open", 1, -0.740, 0.740, None, 0.069,
+                 [(1, 0.0985), (MOVEMENT_WINDOW_HOURS - 6, 0.809)]),
+            ]
+        )
+    )
+    _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert after["rescued_late"][0] is None, (
+        "an observation OUTSIDE the window kept a delta alive, so the sweep is "
+        "asking about the outcome's lifetime rather than about today. got "
+        f"{after['rescued_late'][0]}"
+    )
+    assert after["rescued_inside"][0] == pytest.approx(-0.740), (
+        "an observation INSIDE the window at 0.809 makes a 74-point fall "
+        f"supported, and a supported move must keep its delta. got "
+        f"{after['rescued_inside'][0]}"
+    )
+
+
+def test_the_tolerance_is_a_pad_and_not_a_second_opinion() -> None:
+    """A hair of overstatement is forgiven; a real one is not.
+
+    The pad exists because `current_probability` can be a blend while a snapshot
+    row is one book's raw number. It must be small enough that it cannot rescue
+    a lie: `near` overstates its supportable rise by half a tolerance and
+    survives, `far` overstates by ten and is retired.
+    """
+    from app.tasks import UNOBSERVED_PRIOR_TOLERANCE as TOL
+
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                # supportable rise 0.50 - 0.205 = 0.295; claim 0.30 is TOL/2 over
+                ("near", "open", 1, 0.300, 0.300, None, 0.50,
+                 [(1, 0.50), (3, 0.20 + TOL / 2)]),
+                # supportable rise 0.50 - 0.30 = 0.20; claim 0.30 is 10x TOL over
+                ("far", "open", 1, 0.300, 0.300, None, 0.50,
+                 [(1, 0.50), (3, 0.20 + TOL * 10)]),
+            ]
+        )
+    )
+    _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert after["near"][0] == pytest.approx(0.300), (
+        "a claim half a tolerance beyond what the series supports was treated "
+        f"as a lie. got {after['near'][0]}"
+    )
+    assert after["far"][0] is None, (
+        "a claim ten tolerances beyond what the series supports survived, so "
+        f"the pad has become a second opinion about the move. got "
+        f"{after['far'][0]}"
+    )
+
+
+def test_a_delta_below_the_card_floor_is_left_alone() -> None:
+    """The floor is a COST bound on a beat, and it is the copy layer's own.
+
+    Below `MODERATE_MOVEMENT_THRESHOLD` no card names a mover and no chip is
+    drawn, so a sub-floor delta cannot reach a reader to lie to them. Bounding
+    the statement there is what keeps a snapshot join affordable every ten
+    minutes.
+
+    Both rows are seeded against a series whose minimum IS the current price, so
+    the supportable rise is zero and BOTH claims are overstatements. The only
+    thing separating them is the floor — which is what makes this a test of the
+    floor rather than of the predicate.
+    """
+    from app.utils.futures_highlights import MODERATE_MOVEMENT_THRESHOLD
+
+    under = MODERATE_MOVEMENT_THRESHOLD - 0.001
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("under_floor", "open", 1, under, under, None, 0.50,
+                 [(1, 0.50), (3, 0.51)]),
+                ("at_floor", "open", 1, MODERATE_MOVEMENT_THRESHOLD,
+                 MODERATE_MOVEMENT_THRESHOLD, None, 0.50,
+                 [(1, 0.50), (3, 0.51)]),
+            ]
+        )
+    )
+    _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert after["under_floor"][0] == pytest.approx(under), (
+        "a delta below the threshold at which a card names a mover was swept, "
+        "so the beat is paying a snapshot join for rows no reader can see. got "
+        f"{after['under_floor'][0]}"
+    )
+    assert after["at_floor"][0] is None, (
+        "a delta exactly AT the threshold is nameable on a card, so it is in "
+        f"scope. got {after['at_floor'][0]}"
+    )
+
+
+def test_a_closed_market_is_not_swept_here() -> None:
+    """A4 is scoped to open markets; the graded tail is A2's, by its own design.
+
+    Not defensive narrowing: A2 drains 1.87 M graded rows on a predicate that
+    needs no snapshot join, and duplicating that population here would pay for
+    the join twice and drain it slower.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("closed", "closed", 1, -0.740, 0.740, None, 0.069,
+                 [(1, 0.0985), (3, 0.0975)]),
+            ]
+        )
+    )
+    result = _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert after["closed"][0] == pytest.approx(-0.740), (
+        "a closed market was swept by A4 — that population is A2's and the "
+        f"scopes now overlap. got {after['closed'][0]}"
+    )
+    assert result["unobserved_retired"] == 0, (
+        f"nothing should have been retired on this fixture. got {result}"
+    )
+
+
+def test_the_superset_identity_survives_the_overstated_sweep() -> None:
+    """`max_movement_24h == MAX(ABS(change))`, still exactly true after A4.
+
+    The property `/api/futures/movers` rests on (LAT-P108). A4 clears outcomes,
+    so B and C must run over what it left — and a market whose only delta A4
+    retired must go NULL, not keep its seeded maximum.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("swept_alone", "open", 1, -0.740, 0.740, None, 0.069,
+                 [(1, 0.0985), (3, 0.0975)]),
+                ("kept", "open", 1, 0.120, 0.120, None, 0.40,
+                 [(1, 0.40), (3, 0.28)]),
+            ]
+        )
+    )
+    _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert after["swept_alone"] == (None, None), (
+        "a market whose only surviving delta was retired kept its old maximum, "
+        f"so the superset bound is now false. got {after['swept_alone']}"
+    )
+    assert after["kept"][0] == pytest.approx(0.120)
+    assert after["kept"][1] == pytest.approx(0.120), (
+        "the market maximum must equal MAX(ABS(change)) over what survived. "
+        f"got {after['kept']}"
+    )
+    assert asyncio.run(_identity_holds()) == []
+
+
+def test_the_overstated_sweep_is_bounded_and_takes_the_biggest_first() -> None:
+    """Bounded like A, A2 and A3, and magnitude-ordered for the same reason.
+
+    The larger the claimed move, the more likely this task's own
+    `ORDER BY abs(probability_change_24h) DESC` and `/api/futures/movers` pick
+    the row as a card's headline mover, so a bounded run must clear the loudest
+    lie first.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("loudest", "open", 1, -0.740, 0.740, None, 0.069,
+                 [(1, 0.0985), (3, 0.0975)]),
+                ("quieter", "open", 1, -0.300, 0.300, None, 0.069,
+                 [(1, 0.0985), (3, 0.0975)]),
+            ]
+        )
+    )
+    result = _run_task(unobserved_batch=1)
+    after = asyncio.run(_read(ids))
+
+    assert result["unobserved_retired"] == 1, (
+        f"the batch bound was not honoured. got {result['unobserved_retired']}"
+    )
+    assert after["loudest"][0] is None, (
+        "a bounded run must retire the biggest liar first — the one most likely "
+        f"to be chosen as a headline mover. got {after['loudest'][0]}"
+    )
+    assert after["quieter"][0] == pytest.approx(-0.300), (
+        "the smaller lie should still be waiting for the next run. got "
+        f"{after['quieter'][0]}"
     )

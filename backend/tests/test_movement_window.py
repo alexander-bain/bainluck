@@ -49,8 +49,11 @@ from app.tasks import (
     IMPOSSIBLE_PRIOR_BATCH,
     MOVEMENT_WINDOW_HOURS,
     STALE_DELTA_BATCH,
+    UNOBSERVED_PRIOR_BATCH,
+    UNOBSERVED_PRIOR_TOLERANCE,
     update_max_movement,
 )
+from app.utils.futures_highlights import MODERATE_MOVEMENT_THRESHOLD
 
 
 # ---------------------------------------------------------------------------
@@ -366,15 +369,19 @@ def test_a_full_batch_reports_the_backlog_as_undrained(run_task) -> None:
 def test_a_short_batch_reports_the_backlog_as_drained(run_task) -> None:
     """And the day it comes up short, the sweep has caught up.
 
-    Five rowcounts because A3 (#6536) is the third statement to touch
+    Six rowcounts because A4 (#4079) is the FOURTH statement to touch
     `futures_outcomes`; the list is consumed in execution order, so the two
-    market statements are now positions 4 and 5.
+    market statements are now positions 5 and 6. Each retirement counter is
+    asserted against a DISTINCT value so a statement that read its sibling's
+    rowcount could not pass — which is the whole reason this fixture is a
+    sequence rather than a repeated number.
     """
-    result, _ = run_task([12, 6, 9, 4, 2])
+    result, _ = run_task([12, 6, 9, 8, 4, 2])
 
     assert result["expired"] == 12
     assert result["graded_retired"] == 6
     assert result["impossible_retired"] == 9
+    assert result["unobserved_retired"] == 8
     assert result["cleared_markets"] == 2
     assert result["backlog_drained"] is True, (
         f"a short run did not report the backlog drained: {result}"
@@ -383,7 +390,7 @@ def test_a_short_batch_reports_the_backlog_as_drained(run_task) -> None:
 
 def test_the_result_still_carries_the_original_contract(run_task) -> None:
     """LAT-P115's keys survive: the warm is still reported, never swallowed."""
-    result, _ = run_task([5, 3, 7, 9, 1])
+    result, _ = run_task([5, 3, 7, 2, 9, 1])
 
     assert result["updated"] == 9, f"the recompute's rowcount moved key: {result}"
     assert result["movers_warm"] == {"terminal": "ok", "completed": 1}
@@ -597,15 +604,15 @@ def test_both_sweeps_run_before_either_market_statement(run_task) -> None:
 
     If A2 landed after them the recompute would read rows A2 was about to
     retire, and the market maximum would be a full run stale. #6536 adds a
-    THIRD outcome sweep (A3) under the same obligation, so the count is the
-    number of sweeps and the ordering claim is unchanged.
+    THIRD outcome sweep (A3) and #4079 a FOURTH (A4) under the same obligation,
+    so the count is the number of sweeps and the ordering claim is unchanged.
     """
     events = _statements(run_task()[1])
     outcome_idx = [i for i, s in enumerate(events) if "UPDATE futures_outcomes" in s]
     market_idx = [i for i, s in enumerate(events) if "UPDATE futures_markets" in s]
 
-    assert len(outcome_idx) == 3, (
-        f"expected all three outcome sweeps, saw {len(outcome_idx)}: {events}"
+    assert len(outcome_idx) == 4, (
+        f"expected all four outcome sweeps, saw {len(outcome_idx)}: {events}"
     )
     assert max(outcome_idx) < min(market_idx), (
         "a market statement ran before an outcome sweep, so it recomputed over "
@@ -713,3 +720,195 @@ class TestTheFieldStillDoesNotMeanWhatItIsNamed:
         for mod in (kalshi_task, polymarket_task, futures_task):
             src = inspect.getsource(mod)
             assert "interval '24 hours'" not in src, mod.__name__
+
+
+# ---------------------------------------------------------------------------
+# #4079 — a delta claiming a move FROM A PRICE THIS OUTCOME NEVER HELD
+#
+# A3 asks whether the implied previous price is a legal probability. This asks
+# the question A3 stands in for: whether it is a price this outcome actually
+# quoted today. A3's population was 47 rows for exactly that reason, while 1,365
+# of 2,403 reader-visible movers (57%, 903 markets, production 2026-09-19) claim
+# a move from a price their own series never recorded in 24 hours.
+#
+# The wiring is pinned here and the BEHAVIOUR in the real-Postgres sibling: no
+# double can evaluate a correlated EXISTS against `futures_odds_snapshots`.
+# ---------------------------------------------------------------------------
+
+
+def _phase_a4(session: _RecordingSession) -> tuple[str, dict]:
+    """The UNOBSERVED-PRIOR sweep: the fourth statement to touch outcomes."""
+    hits = [(sql, params) for sql, params in session.calls
+            if "UPDATE futures_outcomes" in sql]
+    if len(hits) < 4:
+        raise AssertionError(
+            "only three statements update futures_outcomes, so the "
+            "UNOBSERVED-PRIOR sweep is GONE. Without it a delta stranded by a "
+            "delta-blind price writer survives whenever the price it implies "
+            "happens to be a legal probability — which is the overwhelming "
+            "majority of them (#4079: 'Down 74 points today - now 7% chance' on "
+            "Discover page one, on an outcome whose whole observed day ran "
+            "between 5% and 10%). A, A2 and A3 all structurally decline those "
+            "rows. Statements seen: " + repr(_statements(session))
+        )
+    return hits[3]
+
+
+def test_the_unobserved_sweep_asks_the_series_not_the_row(run_task) -> None:
+    """A4's predicate is a question about observations, not about arithmetic.
+
+    A3 decides on the row alone. What makes this a different statement is that
+    it reaches `futures_odds_snapshots` for what this outcome was actually seen
+    at, and compares the claim against the extremes it finds there. A predicate
+    that never reaches that table is A3 with extra words.
+    """
+    sql, _ = _phase_a4(run_task()[1])
+    flat = " ".join(sql.split())
+
+    assert "futures_odds_snapshots" in flat, (
+        "the sweep never consults the observation record, so it cannot know "
+        f"how far this outcome actually travelled: {flat}"
+    )
+    assert "min(s.probability) AS lo" in flat and "max(s.probability) AS hi" in flat, (
+        "the sweep does not take the observed extremes, which are what bound "
+        f"the largest rise and the largest fall the window can justify: {flat}"
+    )
+    assert "SET probability_change_24h = NULL" in flat, (
+        "the honest value for a move that did not happen is NULL — recomputing "
+        "it from the series would convert a per-write delta into a windowed one "
+        f"for the whole served book: {flat}"
+    )
+
+
+def test_the_unobserved_sweep_only_fires_on_OVERSTATEMENT(run_task) -> None:
+    """Both arms compare the CLAIM against what the series supports, one way.
+
+    The rise arm must read `change > (current - lo) + tol` and the fall arm
+    `change < (current - hi) - tol`. Flip either comparator, or point an arm at
+    the wrong extreme, and the statement starts retiring deltas that UNDERSTATE
+    a real move — which is not a lie a reader is harmed by and is not provable
+    from the series anyway. The one-directionality is also the drift safety
+    property: a delta-blind writer pushing the price further the way the delta
+    already points widens the observed range and can only make this fire less.
+    """
+    sql, _ = _phase_a4(run_task()[1])
+    flat = " ".join(sql.split())
+
+    assert (
+        "WHEN fo.probability_change_24h > 0 THEN fo.probability_change_24h > "
+        "(fo.current_probability - obs.lo) + :tolerance" in flat
+    ), (
+        "the rise arm is not 'claimed rise exceeds the largest rise the window "
+        f"supports': {flat}"
+    )
+    assert (
+        "ELSE fo.probability_change_24h < (fo.current_probability - obs.hi) "
+        "- :tolerance" in flat
+    ), (
+        "the fall arm is not 'claimed fall exceeds the deepest fall the window "
+        f"supports': {flat}"
+    )
+
+
+def test_the_unobserved_sweep_separates_never_looked_from_never_happened(
+    run_task,
+) -> None:
+    """`obs.lo IS NOT NULL` is load-bearing, not a null-safety habit.
+
+    `MIN` over an empty set is NULL, and every comparison against NULL is NULL
+    — so on an outcome with no observations the CASE is NULL and the row is not
+    selected. The clause states that rather than leaving it to be rediscovered,
+    because the failure it prevents is silent and total: absence of evidence
+    read as evidence, over the whole unobserved tail (gotcha #53). Those rows
+    are A's population anyway — nothing observed them, so nothing wrote them.
+    """
+    sql, _ = _phase_a4(run_task()[1])
+    flat = " ".join(sql.split())
+
+    assert "obs.lo IS NOT NULL" in flat, (
+        "the sweep does not say it needs observations, so it cannot be read as "
+        f"telling 'we never looked' from 'we looked and it never went there': {flat}"
+    )
+
+
+def test_the_unobserved_sweep_windows_the_observations(run_task) -> None:
+    """The extremes come from MOVEMENT_WINDOW_HOURS of series, nothing wider.
+
+    The caption this statement defends says "today". Unbounded, the lateral
+    takes an outcome's lifetime extremes, every claim becomes supportable and
+    the sweep fires on almost nothing — a green statement that does no work.
+    """
+    sql, params = _phase_a4(run_task()[1])
+    flat = " ".join(sql.split())
+
+    assert "s.captured_at > now() - (:window_hours * interval '1 hour')" in flat, (
+        f"the observation window is not bounded by the named constant: {flat}"
+    )
+    assert params.get("window_hours") == MOVEMENT_WINDOW_HOURS, (
+        f"the sweep does not run on the named window constant: {params}"
+    )
+
+
+def test_the_unobserved_sweep_is_scoped_to_what_a_reader_can_see(run_task) -> None:
+    """Open markets, and deltas big enough for a card to name a mover.
+
+    Both bounds are cost bounds on a ten-minute beat that now pays a snapshot
+    join, and both are stated rather than assumed. The floor is imported from
+    the module that owns the "is this a mover" decision, so the sweep and the
+    copy layer cannot drift into disagreeing about which deltas reach a reader;
+    the graded tail stays A2's, which needs no join to drain it.
+    """
+    sql, params = _phase_a4(run_task()[1])
+    flat = " ".join(sql.split())
+
+    assert "fm.status = 'open'" in flat, (
+        f"the sweep is not scoped to open markets: {flat}"
+    )
+    assert "abs(fo.probability_change_24h) >= :floor" in flat, (
+        f"the sweep has no magnitude floor, so it pays the join on rows no "
+        f"reader can see: {flat}"
+    )
+    assert params.get("floor") == MODERATE_MOVEMENT_THRESHOLD, (
+        "the floor is not the copy layer's own mover threshold — restate it as "
+        f"a literal and the two records drift silently apart: {params}"
+    )
+    assert params.get("tolerance") == UNOBSERVED_PRIOR_TOLERANCE, (
+        f"the sweep does not run on its own tolerance constant: {params}"
+    )
+
+
+def test_the_unobserved_sweep_is_bounded_and_magnitude_ordered(run_task) -> None:
+    """Bounded like its three siblings, biggest liar first.
+
+    Same reason as A3's: this task's own sweep and `/api/futures/movers` both
+    rank by `abs(probability_change_24h)`, so the larger the fictional move the
+    likelier the row is chosen as a card's headline mover.
+    """
+    sql, params = _phase_a4(run_task()[1])
+    flat = " ".join(sql.split())
+
+    assert re.search(r"ORDER BY abs\(fo\.probability_change_24h\) DESC", flat), (
+        f"the unobserved-prior sweep is not magnitude-ordered: {flat}"
+    )
+    assert "LIMIT :batch" in flat, f"the sweep is unbounded: {flat}"
+    assert params.get("batch") == UNOBSERVED_PRIOR_BATCH, (
+        f"the sweep does not run on its own batch constant: {params}"
+    )
+
+
+def test_the_unobserved_count_is_reported_under_its_own_key(run_task) -> None:
+    """`unobserved_retired`, never folded into `impossible_retired`.
+
+    The two counters answer different questions about the same writers: one says
+    a writer produced an arithmetically impossible pair, the other that it is
+    stranding deltas that look legal. Folding them hides the first big drain
+    behind a number that was already moving.
+    """
+    result, _ = run_task([1, 2, 3, 4, 5, 6])
+
+    assert result["unobserved_retired"] == 4, (
+        f"the fourth sweep's rowcount is not reported: {result}"
+    )
+    assert result["impossible_retired"] == 3, (
+        f"A3's counter moved when A4 was added: {result}"
+    )
