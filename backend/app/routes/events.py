@@ -120,6 +120,7 @@ from app.config.team_aliases import (
 )
 from app.utils.search_headline_contender import (
     HEADLINE_MARKET_TIER,
+    MIN_ANCHORED_CONTENDER_PROBABILITY,
     MIN_CONTENDER_PROBABILITY,
     MIN_CONTENDER_VOLUME,
     contender_patterns,
@@ -4117,6 +4118,36 @@ def _headline_arm_bound_ms(deadline: float | None, budget_ms: int) -> int | None
     return None if bound_ms < _SEARCH_MIN_STAGE_TIMEOUT_MS else bound_ms
 
 
+def _headline_contender_outcome_clause(pattern):
+    """The outcome half of the headline-contender rule, as SQL.
+
+    ONE helper for BOTH call sites (`/search` and `/typeahead`) on purpose. The
+    two lanes are textual copies of each other, and #3394 is the standing
+    evidence of what that costs: a fix landed on the dropdown, the identical
+    arm in the results endpoint was left alone, and the same query broke the
+    same way the day after it was declared fixed.
+
+    Mirrors `is_contender_outcome` exactly — see #6430 at
+    `MIN_ANCHORED_CONTENDER_PROBABILITY` for why an outcome anchored to a club
+    we hold is judged against a lower floor than a bare name match. The `or_`
+    is strictly additive: the left arm is the previous predicate unchanged, so
+    no market that qualified before can stop qualifying now.
+    """
+    return FuturesMarket.id.in_(
+        select(FuturesOutcome.market_id).where(
+            FuturesOutcome.name.op("~*")(pattern),
+            or_(
+                FuturesOutcome.current_probability >= MIN_CONTENDER_PROBABILITY,
+                and_(
+                    FuturesOutcome.team_id.isnot(None),
+                    FuturesOutcome.current_probability
+                    >= MIN_ANCHORED_CONTENDER_PROBABILITY,
+                ),
+            ),
+        )
+    )
+
+
 # LAT-P255/#3731: `/api/events/search`'s headline-contender lane bound, the
 # sibling of `_TYPEAHEAD_HEADLINE_ARM_TIMEOUT_MS` below. #3394 gave the DROPDOWN
 # this bound and a savepoint; the RESULTS endpoint runs the identical lane and
@@ -7410,13 +7441,7 @@ async def search_events(
                     FuturesMarket.volume >= MIN_CONTENDER_VOLUME,
                     *_futures_open_now,
                     *[
-                        FuturesMarket.id.in_(
-                            select(FuturesOutcome.market_id).where(
-                                FuturesOutcome.name.op("~*")(pattern),
-                                FuturesOutcome.current_probability
-                                >= MIN_CONTENDER_PROBABILITY,
-                            )
-                        )
+                        _headline_contender_outcome_clause(pattern)
                         for pattern in _headline_patterns
                     ],
                 )
@@ -9422,13 +9447,7 @@ async def typeahead_search(
                     FuturesMarket.volume >= MIN_CONTENDER_VOLUME,
                     *_ta_open_now,
                     *[
-                        FuturesMarket.id.in_(
-                            select(FuturesOutcome.market_id).where(
-                                FuturesOutcome.name.op("~*")(pattern),
-                                FuturesOutcome.current_probability
-                                >= MIN_CONTENDER_PROBABILITY,
-                            )
-                        )
+                        _headline_contender_outcome_clause(pattern)
                         for pattern in _ta_headline_patterns
                     ],
                 )
