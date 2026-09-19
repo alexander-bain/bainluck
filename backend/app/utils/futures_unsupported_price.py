@@ -100,7 +100,11 @@ from __future__ import annotations
 
 from typing import Iterable, Optional
 
-from app.utils.feed_market_quality import book_bounds_nothing, is_fabricated_midpoint
+from app.utils.feed_market_quality import (
+    EMPTY_BOOK_MAX_BID,
+    book_bounds_nothing,
+    is_fabricated_midpoint,
+)
 from app.utils.field_opening_coherence import MIN_FIELD_LEGS
 from app.utils.kalshi_empty_book import (
     KALSHI_BOOKMAKER,
@@ -164,8 +168,16 @@ SECOND_FAVOURITE_CEILING = 0.5
 #: futures market carries. One spelling, named once.
 POLYMARKET_BOOKMAKER = "polymarket"
 
+#: The two venues whose midpoint the trade arm can refute, and the ONLY two
+#: whose writers record a ``last_price`` at all (#7222). Named as a set so the
+#: screen and the snapshot read below cannot disagree about who is in scope —
+#: the bug this ship fixes is precisely a predicate and a query that named
+#: different populations.
+MIDPOINT_TRADE_SOURCES = frozenset({POLYMARKET_BOOKMAKER, KALSHI_BOOKMAKER})
+
 __all__ = [
     "EXCLUSIVITY_PROVED_RELATIONS",
+    "MIDPOINT_TRADE_SOURCES",
     "POLYMARKET_BOOKMAKER",
     "RETRACTED_GRADE_SOURCES",
     "SECOND_FAVOURITE_CEILING",
@@ -749,9 +761,9 @@ def needs_trade_disconfirmation(
     yes_bid: Optional[float],
     yes_ask: Optional[float],
 ) -> bool:
-    """True if this Polymarket row is a fabricated midpoint a trade read can refute.
+    """True if this row is a fabricated midpoint a trade read can refute.
 
-    The screen half of the Polymarket arm, and the mirror of
+    The screen half of the trade arm, and the mirror of
     :func:`needs_trade_evidence`: everything it reads is on the outcome row
     already, so a market holding no candidate never touches the snapshot table.
 
@@ -767,19 +779,98 @@ def needs_trade_disconfirmation(
     set the number is a settlement value, not a quote, and withholding it would
     delete a result and pre-empt the settled-language ship (#4788, #5549, #5820).
 
-    THIS CLAUSE KEEPS THE BARE ``is not None`` TEST WHILE ITS TWO SIBLINGS MOVED TO
-    :func:`row_carries_a_verdict` (#6876), and that is measured, not an oversight.
-    The retraction the helper carves out is written on KALSHI rows only - 34,993
-    open plus 3,854 resolved, and **zero** Polymarket legs on production 2026-09-18
-    - while this function returns False for anything that is not Polymarket two
-    lines down. Routing it through the helper would read as consistency and would in
-    fact be an unmeasured widening on a population that does not exist. If a
-    Polymarket writer ever mints a retraction, this is the line that has to change,
-    and this paragraph is why.
+    🔴 THE KALSHI ARM (#7222), AND THE PARAGRAPH BELOW IT PREDICTED THE TRIGGER.
+    Until this ship the function returned False for anything that was not
+    Polymarket, and the shape it screens for was live on Kalshi at scale. What a
+    reader saw: ``/futures/55674185`` ("2027 CONCACAF Gold Cup Champion", tier 1)
+    printed **eighteen of twenty-three teams at the same 18%**, ranked 4 through 21
+    by nothing, over a single-winner column summing to **447%** with
+    ``prices_withheld: 0``. Bermuda was 18% to win the Gold Cup; Costa Rica —
+    three-time champion, beaten finalist in 2025 — sat at 2%, below Bermuda, Cuba
+    and Guyana.
+
+    THE MECHANISM IS THE WRITER'S TIGHT-BOOK RULE, AND THE TRADE WAS SITTING RIGHT
+    THERE. ``_kalshi_yes_probability`` rule 1 takes the midpoint of any two-sided
+    book narrower than ``_KALSHI_TIGHT_SPREAD_MAX`` (0.50), so a bid of 1c against
+    an ask of 35c is "tight" and publishes 18% — while rule 2, the real trade, is
+    never reached. Every one of those eighteen legs carries a newest Kalshi
+    snapshot whose ``last_price`` is **0.01 or 0.02**. The two legs that came out
+    right are not rescued by any rail: their bid is 0.00, rule 1 does not fire, and
+    rule 2 reads their 2c trade. So the defect is not "one cent outside the
+    empty-book rail" — it is the venue's own trade being outvoted by the midpoint
+    of a spread nobody will trade inside, which is the exact sentence
+    ``is_fabricated_midpoint`` was written for.
+
+    WHY THE READ SIDE AND NOT THE WRITER. The poller SKIPS rather than nulls
+    (``_kalshi_yes_probability`` rule 4 returns ``None`` and the caller moves on),
+    so tightening rule 1 would stop the next fabrication and preserve all 1,004
+    standing ones. That asymmetry is this module's founding observation (#6532:
+    "the guard that stops a new fabrication is what preserves the old one"), and it
+    is why the repair a reader can see is here.
+
+    THE BID BOUND IS THE KALSHI-ONLY TERM, AND IT IS AN EXISTING CONSTANT. A
+    two-sided Kalshi book with real money on both sides has a defensible midpoint
+    even when the spread is wide, so the arm is scoped to books that state almost
+    nothing on the bid: ``yes_bid <= EMPTY_BOOK_MAX_BID``, imported from
+    ``feed_market_quality``, which is the sibling rail's already-shipped 0.05 and
+    the tolerance the issue's own acceptance names. No new constant is introduced
+    and none is restated. Measured on production 2026-09-19 over open Kalshi
+    markets, legs whose served price is the exact midpoint of a >=0.20 spread and
+    whose newest trade disagrees by at least ``_DISPLAY_ROUNDING``::
+
+        bid bucket                         legs   markets   served   newest trade
+        0.00 bid / 1.00 ask (the 0.5 seed)  339        42   0.5000       0.0720
+        0.00 bid, real ask                   88        11   0.4411       0.0531
+        0.00 < bid <= 0.05 (the Gold Cup)   577       355   0.1898       0.2394
+        ------------------------------------------------ IN SCOPE: 1,004 legs
+        bid > 0.05 (two-sided book)       2,129     1,007   0.5694       0.6082
+                                                     ^ deliberately OUT of scope
+
+    The 2,129 excluded legs are the judgement call this bound makes, and it is made
+    in the withholding rule's fail-open direction: their books quote real money on
+    both sides, their mean trade (0.61) sits ABOVE their mean served midpoint
+    (0.57), and calling them fabricated would be an unmeasured claim about price
+    discovery rather than a claim about an absent bid. They are not fixed here and
+    are not asserted to be wrong.
+
+    A REAL LONGSHOT THAT TRADES AT A CENT IS SPARED BY CONSTRUCTION, which is the
+    issue's last acceptance bullet. ``is_fabricated_midpoint`` requires a spread of
+    at least ``FEED_PHANTOM_MIN_SPREAD`` (0.20), so a 1c bid against a 3c ask — a
+    genuine longshot with a tight book — never reaches this arm. It is the SPREAD,
+    not the bid, that separates the two populations; the bid bound only keeps the
+    arm off books that are genuinely two-sided.
+
+    A RECORDED BOOK IS REQUIRED ON BOTH SIDES, and that is ``_is_ask_only_book``'s
+    rule restated for the same reason it exists there: a ``None`` bid means the
+    poller never recorded a book (the candle rails store none), not that the bid is
+    zero, and this arm must not claim to know anything about those rows.
+    ``is_fabricated_midpoint`` would coalesce them into a 0.0/1.0 book; requiring
+    both columns keeps that coalescing inert on the Kalshi side.
+
+    THE GRADE TEST IS PER-SOURCE, AND THE SIBLING PARAGRAPH BELOW IS WHY. This
+    clause kept a bare ``is not None`` while its two siblings moved to
+    :func:`row_carries_a_verdict` (#6876) because the retraction that helper carves
+    out was written on KALSHI rows only — 34,993 open plus 3,854 resolved, and
+    **zero** Polymarket legs on production 2026-09-18 — and the function returned
+    False for anything that was not Polymarket. That reasoning is unchanged for
+    Polymarket and it is exactly what makes the helper mandatory now that Kalshi is
+    in scope: every one of the twenty-three Gold Cup legs carries
+    ``resolution_source = 'ungradeable_result'``, so a bare ``is not None`` would
+    disarm this arm on its own specimen — #6876's defect rebuilt one arm over.
+    Polymarket keeps the narrower test rather than being widened onto a population
+    that does not exist.
     """
-    if (source or "").strip().lower() != POLYMARKET_BOOKMAKER:
+    venue = (source or "").strip().lower()
+    if venue not in MIDPOINT_TRADE_SOURCES:
         return False
-    if resolution_source is not None:
+    if venue == KALSHI_BOOKMAKER:
+        if row_carries_a_verdict(resolution_source):
+            return False
+        if yes_bid is None or yes_ask is None:
+            return False
+        if float(yes_bid) > EMPTY_BOOK_MAX_BID:
+            return False
+    elif resolution_source is not None:
         return False
     return is_fabricated_midpoint(probability, yes_bid, yes_ask)
 
@@ -823,12 +914,29 @@ def midpoint_refuted_by_last_trade(
     database, and on the specimen they were written in the same microsecond, so
     this cannot drift into "our stored value versus what the venue says today" —
     a shape that invents a second writer and blames the market for moving.
+
+    🔴 A ZERO ``last_price`` IS EVIDENCE ON POLYMARKET AND IS *NOT* EVIDENCE ON
+    KALSHI, AND INVERTING THAT WOULD BE THE WORST BUG THIS ARM COULD HAVE (#7222).
+    The paragraph above earns Polymarket's reading from its writer: ``polymarket.py``
+    assigns ``last_trade_price`` straight through, so a stored 0.0 means the venue
+    said zero. Kalshi's writers say the opposite with the same number — an untraded
+    Kalshi leg is quoted ``last_price 0``, which is why
+    ``_kalshi_yes_probability`` rule 2 requires ``last_price > 0`` before it will
+    read a trade at all and why ``kalshi_empty_book._is_ask_only_book`` reads a zero
+    there as "no trade" when identifying a book nobody has touched. Taking a Kalshi
+    zero as evidence would therefore refute every untraded Kalshi midpoint against a
+    trade that never happened — it would blank the honest longshots and cite a
+    fabrication while doing it. So the Kalshi side requires a strictly positive
+    trade, which is the same bar its own writer sets one module over, and the
+    Polymarket side is untouched.
     """
     if not needs_trade_disconfirmation(
         source, resolution_source, probability, yes_bid, yes_ask
     ):
         return False
     if not has_trade_evidence or last_price is None or probability is None:
+        return False
+    if (source or "").strip().lower() == KALSHI_BOOKMAKER and float(last_price) <= 0:
         return False
     return abs(float(last_price) - float(probability)) >= _DISPLAY_ROUNDING
 
