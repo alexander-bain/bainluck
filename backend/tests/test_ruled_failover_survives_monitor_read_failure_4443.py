@@ -81,7 +81,12 @@ from tests.test_authority_failover_3473 import (  # noqa: F401 — fixtures
 #: NBA shipped as the second ruled release (#4493) — the specimen moves, the
 #: test stays, exactly as `STILL_GATED` in `test_authority_failover_3473` has
 #: now done twice.
-UNRULED = "icehockey_nhl"
+#:
+#: **#7089 ruled the NHL and there is no third real sport to move to** — the
+#: ruled set is now every key in `AUTHORITY_BY_SPORT`. So the name is now a
+#: CONSTRUCTED key, registered per test by `register_specimen`, and the moving
+#: stops here: the branch is asserted instead of today's config.
+UNRULED = "unruled_4443_monitor_read_failure"
 
 #: What `read_ledger_days` hands back when the snapshot store cannot be read.
 #: `None` for the days — NOT `[]`. The distinction is the whole defect: `[]` is
@@ -199,7 +204,9 @@ async def test_an_unreadable_ledger_cannot_open_the_gate_for_an_unruled_sport(
     """
     import app.tasks.espn_sync as espn_sync
     from app.utils import authority_failover as failover
+    from tests.authority_specimens import register_specimen
 
+    register_specimen(monkeypatch, UNRULED)
     _ledger_unreadable(monkeypatch)
 
     decisions = await espn_sync._decide_failovers({}, {UNRULED}, {"errors": []})

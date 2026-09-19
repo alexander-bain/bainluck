@@ -129,21 +129,31 @@ class TestOnlyTheNbaShipsOnThisIssue:
         two, and never opens the assertion. The principle this class exists for
         is unchanged: the set grows one graded release at a time.
         """
-        assert FLIP_RULED_WITHOUT_STREAK == frozenset({NFL, NBA, MLB}), (
+        assert FLIP_RULED_WITHOUT_STREAK == frozenset({NFL, NBA, MLB, NHL}), (
             "the ruled set must equal what has actually been graded: football "
-            "on #4417, the NBA on #4493, MLB on #4436 under D113. NHL is its "
-            "own release under #2867; adding it here lands two flips under a "
-            "cert that graded one"
+            "on #4417, the NBA on #4493, MLB on #4436 under D113, the NHL on "
+            "#7089. That is every sport the switch names, so a fifth member is "
+            "a NEW sport and needs a release of its own"
         )
 
-    def test_the_nhl_still_waits(self):
-        """The control that proves this ship is one sport wide."""
-        permitted, why = flip_permitted(NHL, _days(5))
+    def test_a_sport_outside_the_set_still_waits(self, monkeypatch):
+        """The control that proves this ship was one sport wide.
+
+        Was `test_the_nhl_still_waits` until #7089 ruled the NHL — the last
+        real sport that could play this part. A control that goes green because
+        the config moved under it is the failure #4564 built the specimen for,
+        so the subject is CONSTRUCTED and the branch is what is asserted.
+        """
+        sport = register_specimen(monkeypatch, "nba_4493_still_waiting")
+        permitted, why = flip_permitted(sport, _days(5))
         assert permitted is False, why
         assert f"5/{REQUIRED_STREAK_DAYS}" in why, why
 
-    def test_the_nhl_is_still_refused_on_an_empty_ledger(self):
-        permitted, why = flip_permitted(NHL, [])
+    def test_a_sport_outside_the_set_is_still_refused_on_an_empty_ledger(
+        self, monkeypatch
+    ):
+        sport = register_specimen(monkeypatch, "nba_4493_empty_ledger")
+        permitted, why = flip_permitted(sport, [])
         assert permitted is False, why
 
 
@@ -284,9 +294,15 @@ class TestTheServedNoteStoppedDescribingARetiredRequirement:
             f"{sport} is ruled; its note still describes the retired wait: {note}"
         )
 
-    def test_an_unruled_sports_note_still_describes_the_gate(self):
+    def test_an_unruled_sports_note_still_describes_the_gate(self, monkeypatch):
+        """Was asserted against the NHL until #7089 ruled it.
+
+        The note is DERIVED from `FLIP_RULED_WITHOUT_STREAK`, so this branch is
+        still live for anything outside the set — there is simply no real sport
+        outside it any more.
+        """
         from app.routes.admin_providers import _authority_note
 
-        note = _authority_note(NHL)
-        assert NHL not in FLIP_RULED_WITHOUT_STREAK
-        assert "seven consecutive daily gate states" in note, note
+        key = register_specimen(monkeypatch, "nba_4493_unruled_note")
+        assert key not in FLIP_RULED_WITHOUT_STREAK
+        assert "seven consecutive daily gate states" in _authority_note(key)

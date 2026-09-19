@@ -2385,25 +2385,24 @@ async def test_no_sport_served_means_the_live_writer_is_never_called(
     all, and an unconditional post-loop call would look correct in every test
     above.
 
-    Football is excluded from the set here since D104 = A4 (2026-09-09, #4417):
-    it is ruled and would serve, which would make this pass a served one and the
-    test would be asserting the opposite of its own name. `THREE_DARK` minus the
-    ruled sports is derived rather than written out, so the day NBA or NHL is
-    ruled this shrinks by itself instead of silently becoming a one-sport pass.
-    """
-    from app.config.authority_by_sport import FLIP_RULED_WITHOUT_STREAK
-    from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
+    Football was excluded from the set here when D104 = A4 landed (2026-09-09,
+    #4417): a ruled sport serves, which would make this pass a served one and
+    the test would assert the opposite of its own name. `THREE_DARK` minus the
+    ruled sports was derived rather than written out, so that the day NBA or NHL
+    was ruled this shrank by itself instead of silently becoming a one-sport
+    pass.
 
-    gated_only = THREE_DARK - set(FLIP_RULED_WITHOUT_STREAK)
-    assert gated_only, (
-        "every sport in THREE_DARK is now ruled, so there is no unserved pass "
-        "left to test — rewrite this against a sport that is still gated. "
-        "There may no longer be a real one: since #4588 the way to get a gated "
-        "sport is tests/authority_specimens.register_specimen(...), and this "
-        "test also needs _three_dark_sports_wiring to wire the key it returns."
-    )
+    **That day came on #7089 and the subtraction went empty**, which is what the
+    assertion below was for. Every sport in `THREE_DARK` is now ruled — the
+    ruled set is every key in `AUTHORITY_BY_SPORT` — so the gated sport is
+    CONSTRUCTED, exactly as the old message instructed. This is the last of the
+    borrowed-control migrations #4564 built the specimen for.
+    """
+    from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
+    from tests.authority_specimens import register_specimen
 
     calls = _three_dark_sports_wiring(monkeypatch)
+    gated_only = {register_specimen(monkeypatch, "failover_3473_still_gated")}
     _no_ledger(monkeypatch, days=[], why="no days")  # shut the gate again
 
     stats = {"errors": []}

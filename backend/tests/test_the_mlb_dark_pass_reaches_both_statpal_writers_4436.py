@@ -54,8 +54,10 @@ WHY THE CONTROL IS HERE
 Without it, an actor that served every sport it was handed — or a monkeypatch
 wired to the wrong module — would pass the positive arm for the wrong reason.
 The control shows the gate is what does the work: same pass, same readings, same
-patched writers, and the NHL (still waiting on D50's streak, `#4436`'s
-`test_the_nhl_still_waits`) gets nothing written for it.
+patched writers, and an UNRULED sport gets nothing written for it. That subject
+was `icehockey_nhl` until #7089 ruled it; it is a constructed specimen now,
+because the ruled set is every key in `AUTHORITY_BY_SPORT` and no real sport is
+left in the state this control needs.
 
 WHAT THIS FILE DOES NOT RE-TEST
 ═══════════════════════════════
@@ -78,7 +80,12 @@ from app.utils.authority_failover import (
 )
 
 MLB = "baseball_mlb"
-NHL = "icehockey_nhl"
+
+#: The unruled control. Was `icehockey_nhl` until #7089 ruled it — the ruled set
+#: is now every key in `AUTHORITY_BY_SPORT`, so no real sport can play this part
+#: and the subject is CONSTRUCTED by `tests.authority_specimens.register_specimen`
+#: (#4564's substrate, spent here as #4588 said this release would spend it).
+UNRULED = "mlb_dark_pass_4436_unruled_control"
 
 
 def _decision_for(sport_key):
@@ -247,28 +254,34 @@ class TestTheGateIsWhatDoesTheWork:
 
     @pytest.mark.asyncio
     async def test_an_unruled_sport_on_the_same_dark_pass_writes_nothing(
-        self, writer_calls
+        self, writer_calls, monkeypatch
     ):
         """Same pass, same readings, same patched writers — and no writes.
 
-        The NHL is still waiting on D50's streak (`#4436`'s
-        `test_the_nhl_still_waits`), so its gate refuses and its decision never
-        enters `FAILOVER_CODES`. If this arm ever goes green alongside a served
-        NHL, the actor has stopped consulting the gate and every unruled sport
-        is failing over.
+        The subject is an UNRULED sport, so its gate refuses and its decision
+        never enters `FAILOVER_CODES`. If this arm ever goes green alongside a
+        served subject, the actor has stopped consulting the gate and every
+        unruled sport is failing over.
 
         It also proves the positive arms are not passing on a blanket serve or a
         misdirected monkeypatch: the identical fixture records nothing here.
+
+        The subject was `icehockey_nhl` until #7089 ruled it. Borrowing a real
+        sport made this control assert today's config; the specimen makes it
+        assert the GATE, which is what the class is named after.
         """
+        from tests.authority_specimens import register_specimen
+
         from app.tasks.espn_sync import _act_on_failovers
 
-        decision = _decision_for(NHL)
+        register_specimen(monkeypatch, UNRULED)
+        decision = _decision_for(UNRULED)
         assert decision.code not in FAILOVER_CODES, (
-            f"the NHL is failing over on an unruled gate: {decision.why}"
+            f"an unruled sport is failing over: {decision.why}"
         )
 
         stats: dict = {"errors": []}
-        await _act_on_failovers({NHL: decision}, stats)
+        await _act_on_failovers({UNRULED: decision}, stats)
 
         assert writer_calls == [], (
             f"a sport the gate refused reached StatPal's writers: {writer_calls}"

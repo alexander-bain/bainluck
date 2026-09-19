@@ -238,16 +238,25 @@ class TestOnlyFootballShipsOnThisIssue:
     set, and `icehockey_nhl` stays behind as the control. This is the same
     resolution the unreadable-ledger test above took when #4443 landed: the
     specimen moves, the test stays.
+
+    AMENDED AGAIN BY #7089 (the NHL's release, the fourth and last). The
+    borrowed control is gone — the ruled set is now every key in
+    `AUTHORITY_BY_SPORT`, so "a real sport that still waits" no longer exists
+    and the parametrize below had nothing left to name. It is a CONSTRUCTED
+    specimen now, which is what #4564 built `tests/authority_specimens.py` for
+    and what #4588 said this release would force. The principle is untouched:
+    the set contains exactly what has been graded, and the wait is still real
+    for anything outside it.
     """
 
     def test_the_ruled_set_is_exactly_what_has_shipped(self):
         assert FLIP_RULED_WITHOUT_STREAK == frozenset(
-            {NFL, "basketball_nba", "baseball_mlb"}
+            {NFL, "basketball_nba", "baseball_mlb", "icehockey_nhl"}
         ), (
             "the ruled set must equal the sports that have been graded: "
-            "football on #4417, the NBA on #4493, MLB on #4436 under D113. NHL "
-            "is one release of its own under #2867; adding it lands two flips "
-            "under a cert that graded one"
+            "football on #4417, the NBA on #4493, MLB on #4436 under D113, the "
+            "NHL on #7089. That is every sport the switch names, so a fifth "
+            "member is a NEW sport and needs a release of its own"
         )
 
     def test_football_is_still_ruled(self):
@@ -256,8 +265,14 @@ class TestOnlyFootballShipsOnThisIssue:
         permitted, why = flip_permitted(NFL, _days(5))
         assert permitted is True, why
 
-    @pytest.mark.parametrize("sport", ["icehockey_nhl"])
-    def test_the_sports_that_have_not_shipped_still_wait(self, sport):
+    def test_a_sport_that_has_not_shipped_still_waits(self, monkeypatch):
+        """The wait, still real — proved on a sport built to be in it.
+
+        Was `@parametrize("sport", ["icehockey_nhl"])` until #7089 ruled the
+        NHL. Borrowing a real sport made this test assert today's config; the
+        specimen makes it assert the BRANCH, which is what it is named after.
+        """
+        sport = register_specimen(monkeypatch, "d104_4417_still_waiting")
         assert sport not in FLIP_RULED_WITHOUT_STREAK
         permitted, why = flip_permitted(sport, _days(5))
         assert permitted is False, why

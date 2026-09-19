@@ -441,7 +441,12 @@ ESPN_ANSWERED = "ESPN-ANSWERED"
 #: here is a sport refused for a STRUCTURAL reason — no shadow stamper, no
 #: working discovery pass, no governing identity number (`baseball_mlb` today),
 #: a measurement population rather than a sport key — or one that simply has not
-#: been ruled yet (NBA, NHL). Read the `why`: it carries which.
+#: been ruled yet. Read the `why`: it carries which.
+#:
+#: The clause above used to name "(NBA, NHL)" as the unruled examples. Both have
+#: since shipped — the NBA on #4493 and the NHL on #7089 — so after the fourth
+#: release the ruled set is every key in `AUTHORITY_BY_SPORT` and the only
+#: sports that reach here for a WAIT are ones not yet in the switch at all.
 NOT_GATED = "NO-FAILOVER-NOT-GATED"
 
 #: Both providers answered and neither has a game. A quiet slate, not an outage
