@@ -125,6 +125,32 @@ _REAL_CONCLUSIVE = pcl.cancellation_is_conclusive
 PROD_UNIT_MEAN_MS = 656_889
 PROD_UNIT_WORST_MS = 1_181_085
 
+#: Production's deadline horizon, 2026-09-19T06:37:54Z row: ``soft_limit_ms``
+#: 1,500,000 less ``cleanup_margin_ms`` 120,000. The rig derives the same number
+#: from ``window_ms`` (``_ledger`` adds the margin back), so passing this as
+#: ``window_ms`` reproduces production's horizon exactly.
+PROD_DEADLINE_MS = 1_380_000
+#: **The futures phase's own measured budget, and the second fence — #6599.**
+#: ``plan.futures`` on that row: ``budget_ms`` 1,283,522 with
+#: ``budget_basis: measured_elastic_cut``, less ``STATEMENT_INNER_MARGIN_MS``.
+#: Traced to ``max(history.futures) = 873_486`` (a completed phase duration)
+#: times ``BUDGET_SAFETY``, cut elastically to fit the deadline.
+#:
+#: 🔴 **Every arm written before this constant existed ran with no phase budget
+#: at all** (``_ledger`` passed ``statement_timeout_ms=None``), so ``phase_bound``
+#: was always the deadline bound and this term has never been exercised. It is
+#: currently what fences production's first unit, 68,734 ms inside the deadline
+#: bound — see :class:`TestTheSecondFenceIsThePhaseBudget`.
+PROD_PHASE_STATEMENT_TIMEOUT_MS = 1_253_522
+#: What that fence let production's first unit run to before Postgres cancelled
+#: it, same row: ``staged:unit_cancelled:2b09538b85aaef4c``. 2,422 ms past the
+#: bound, which is what the cancellation itself costs.
+PROD_UNIT1_CANCELLED_AFTER_MS = 1_255_944
+#: The scraps the second unit got, and what it ran to:
+#: ``staged:unit_bound_ms:futures`` / ``staged:unit_cancelled:a7e9285632deabab``.
+PROD_UNIT2_BOUND_MS = 65_272
+PROD_UNIT2_CANCELLED_AFTER_MS = 65_847
+
 
 class _StatementCancelled(Exception):
     """Postgres cancelling at its own backstop; the message is what it emits."""
@@ -138,6 +164,7 @@ def _ledger(
     units_done: int,
     buckets: int,
     unit_ms_worst_observed: int | None = None,
+    phase_statement_timeout_ms: int | None = None,
 ) -> PhaseLedger:
     plan = PhasePlan(
         budgets=(
@@ -145,7 +172,11 @@ def _ledger(
                 name=PHASE_FUTURES,
                 required=True,
                 budget_ms=None,
-                statement_timeout_ms=None,
+                # #6599, second fence. ``statement_timeout_for`` returns
+                # ``min(deadline_bound, this)``, so ``None`` — every arm before
+                # this parameter — means the deadline bound always wins and the
+                # phase term is never exercised. Production carries 1,253,522.
+                statement_timeout_ms=phase_statement_timeout_ms,
                 measured_input=True,
                 unit_ms=unit_ms,
                 unit_ms_worst=unit_ms_worst,
@@ -187,6 +218,7 @@ class _Runner:
         carried: bool,
         withdrawn: bool = False,
         ring_readable: bool = True,
+        phase_statement_timeout_ms: int | None = None,
     ):
         # CAL-P1304. ``withdrawn`` is the state production has actually been in
         # since #6275: ``unit_costs.futures`` carries the withdrawal marker, so
@@ -202,6 +234,7 @@ class _Runner:
             unit_ms_worst_observed=base_worst if ring_readable else None,
             units_done=1 if carried else 0,
             buckets=buckets,
+            phase_statement_timeout_ms=phase_statement_timeout_ms,
         )
         self._elapsed = 0
         self.population_version = "q268"
@@ -392,6 +425,7 @@ def drive(monkeypatch):
         transient=None,
         withdrawn=False,
         ring_readable=True,
+        phase_statement_timeout_ms=None,
     ):
         roster = _roster(buckets * VMS_PER_SLOT)
         population = _values(buckets * VMS_PER_SLOT)
@@ -445,6 +479,7 @@ def drive(monkeypatch):
                 carried=carried,
                 withdrawn=withdrawn,
                 ring_readable=ring_readable,
+                phase_statement_timeout_ms=phase_statement_timeout_ms,
             )
             if reset_every and beat_no > 1 and (beat_no - 1) % reset_every == 0:
                 era = (beat_no - 1) // reset_every
@@ -1545,4 +1580,227 @@ class TestTheProductionRegimeIsNotAnEraAndTheBuildPublishesInIt:
         assert (base.splits, cand.splits) == (73, 91), (
             f"refinements: graded {base.splits} / repaired {cand.splits}, "
             "expected 73 / 91"
+        )
+
+
+# =============================================================================
+# 9. THE SECOND FENCE — the futures PHASE BUDGET, which no arm above exercises
+# =============================================================================
+
+
+class TestTheSecondFenceIsThePhaseBudget:
+    """🔴 **The candidate is INERT in the regime production is in TODAY.**
+
+    Every class above runs with ``statement_timeout_ms=None`` on the futures
+    budget, so ``statement_timeout_for`` returns the deadline bound and the
+    PHASE term has never been exercised by this rig. Production carries a
+    measured one, and it is what is currently stopping the repair.
+
+    ## The row, read 07:50-07:53Z 2026-09-19
+
+    ``durable_state_snapshots``, identity ``calibration:main:phase_ledger``,
+    generation ``1789799874144`` = the **06:37:54Z** beat. Two units, and the
+    whole point is that they are fenced by two DIFFERENT things:
+
+    ======================  ==================  ==================
+    ..                       slot 103 (unit 1)   slot 104 (unit 2)
+    ======================  ==================  ==================
+    armed bound             1,253,522 ms        65,272 ms
+    source of the bound     the PHASE BUDGET    the window (scraps)
+    ran before cancelling   1,255,944 ms        65,847 ms
+    remaining when armed    1,352,256 ms        72,522 ms
+    headroom                98,734 ms           7,250 ms
+    headroom ceiling        30,000 ms           7,252 ms
+    condition 1 (window)    **no**              yes
+    condition 2 (outran)    yes                 **no**
+    ======================  ==================  ==================
+
+    The unit-1 reconstruction is exact rather than inferred:
+    ``plan.futures.statement_timeout_ms`` is 1,253,522 and the unit ran
+    1,255,944 — 2,422 ms over, which is what a Postgres cancellation costs. The
+    deadline bound at that moment was 1,322,256, so ``min(phase_bound,
+    unit_bound)`` picked the phase budget and not the window.
+
+    ## Where that budget comes from, and why it is not going to widen
+
+    ``plan.futures.budget_basis`` is ``measured_elastic_cut``::
+
+        max(history.futures) = 873,486        # a COMPLETED phase duration
+          x BUDGET_SAFETY (1.5) = 1,310,229
+          elastic cut           -> budget_ms = 1,283,522
+          - STATEMENT_INNER_MARGIN_MS         -> 1,253,522   # the row, exactly
+
+    Condition 1 declines because *"the build can still hand this slot a bigger
+    bound on a beat with more room"*. For a per-unit measured basis that is
+    right. For the phase budget it is false — it is not a per-unit basis at all,
+    it does not grow with room, and ``history.futures`` only appends when the
+    phase COMPLETES, which it has not done in forty beats. The fence is frozen.
+
+    🪤 **This does not make the shipped discriminator tests wrong.**
+    :class:`TestTheDiscriminatorOnTheRealSpecimen` reads the 2026-09-17T17:37:55Z
+    beat, where unit 1 WAS window-bounded at 1,320,000 ms and the predicate
+    fires. Production moved into a different regime between grading and release.
+    A granted token is a statement about a sha and the world it was measured in.
+
+    ## What that costs, measured
+
+    Same population, same latched state, same absent era, same 1,380,000 ms
+    deadline — only the phase budget differs:
+
+    =========  ======================  =====================
+    oversized   with the phase budget   without (every arm above)
+    =========  ======================  =====================
+    16         first split **14**      first split 1
+    32         first split **21**      first split 1
+    64         first split **36**      first split 1
+    =========  ======================  =====================
+
+    14 / 21 / 36 are the GRADED TREE's own first-split beats
+    (:meth:`TestTheProductionRegimeIsNotAnEraAndTheBuildPublishesInIt.test_the_first_refinement_lands_on_beat_one_at_the_real_plan_size`).
+    The candidate does not merely lose ground here — it reproduces the tree it
+    was written to beat. **This class is the failing BEFORE for the next
+    candidate, and it is not itself a fix.**
+    """
+
+    #: Production's measured regime: forty consecutive resumable beats.
+    NO_INVALIDATION = None
+
+    # -- the predicate, on the 06:37:54Z row's own two units -----------------
+
+    def test_the_unit_fenced_by_the_phase_budget_is_declined(self):
+        """Unit 1: outran every completion in the ring, and is still declined.
+
+        1,255,944 >= 1,181,085, so condition 2 holds — which is precisely what
+        ``00fca1140`` restored by making the ring legible beside a withdrawn
+        basis. Condition 1 is what refuses it: 98,734 ms of headroom against a
+        30,000 ms ceiling, because the fence was the phase budget.
+        """
+        assert not pcl.cancellation_is_conclusive(
+            remaining_ms=1_352_256,
+            bound_ms=PROD_PHASE_STATEMENT_TIMEOUT_MS,
+            cancelled_after_ms=PROD_UNIT1_CANCELLED_AFTER_MS,
+            worst_completed_ms=PROD_UNIT_WORST_MS,
+        )
+
+    def test_condition_two_does_hold_on_that_unit_so_the_ring_repair_is_not_what_failed(
+        self,
+    ):
+        """The half ``00fca1140`` owns works; it is the other fence that bites.
+
+        Stated separately so a flat ``rebuild_units_banked`` after the release
+        is not read as a falsification of the ring repair.
+        """
+        assert PROD_UNIT1_CANCELLED_AFTER_MS >= PROD_UNIT_WORST_MS
+        assert pcl.cancellation_is_conclusive(
+            remaining_ms=1_352_256,
+            # The same unit, same beat, had the phase term not bound it: the
+            # deadline bound was 1,322,256, leaving exactly the 30,000 ms margin.
+            bound_ms=1_322_256,
+            cancelled_after_ms=PROD_UNIT1_CANCELLED_AFTER_MS,
+            worst_completed_ms=PROD_UNIT_WORST_MS,
+        )
+
+    def test_the_scraps_unit_is_declined_for_the_other_reason(self):
+        """Unit 2: window-bounded to the millisecond, and rightly declined.
+
+        7,250 ms of headroom against a 7,252 ms ceiling — condition 1 holds —
+        but 65,847 ms is no evidence about a slot whose population completes at
+        1,181,085 ms. This is the predicate working as designed, and it means
+        the beat has no unit that satisfies both conditions.
+        """
+        remaining = PROD_UNIT2_BOUND_MS + 7_250
+        assert pcl.deadline_bound_headroom_ceiling_ms(remaining) == 7_252
+        assert not pcl.cancellation_is_conclusive(
+            remaining_ms=remaining,
+            bound_ms=PROD_UNIT2_BOUND_MS,
+            cancelled_after_ms=PROD_UNIT2_CANCELLED_AFTER_MS,
+            worst_completed_ms=PROD_UNIT_WORST_MS,
+        )
+
+    # -- the same thing, driven through the real beat loop -------------------
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "oversized,fenced_first_split,fenced_publish,free_publish",
+        [(16, 14, 46, 43), (32, 21, 90, 83), (64, 36, 174, 160)],
+    )
+    async def test_the_phase_budget_erases_the_beat_one_cut(
+        self, drive, oversized, fenced_first_split, fenced_publish, free_publish
+    ):
+        """THE FAILING BEFORE: the candidate's whole saving, gone.
+
+        Both arms are the candidate — ``ring_readable=True`` in each — so the
+        difference cannot be attributed to CAL-P1304. The only thing that moves
+        is whether the futures budget fences the unit.
+        """
+        fenced = await drive(
+            buckets=128,
+            oversized_slots=oversized,
+            max_beats=200,
+            withdrawn=True,
+            ring_readable=True,
+            reset_every=self.NO_INVALIDATION,
+            window_ms=PROD_DEADLINE_MS,
+            phase_statement_timeout_ms=PROD_PHASE_STATEMENT_TIMEOUT_MS,
+        )
+        free = await drive(
+            buckets=128,
+            oversized_slots=oversized,
+            max_beats=200,
+            withdrawn=True,
+            ring_readable=True,
+            reset_every=self.NO_INVALIDATION,
+            window_ms=PROD_DEADLINE_MS,
+            phase_statement_timeout_ms=None,
+        )
+
+        assert fenced.first_armed[0] == PROD_PHASE_STATEMENT_TIMEOUT_MS, (
+            "the fenced arm must arm its first unit at production's own bound; "
+            f"got {fenced.first_armed[0]}"
+        )
+        assert free.first_split_beat == 1, (
+            "the control must still cut on beat 1, or this measures the rig "
+            f"rather than the fence; got {free.first_split_beat}"
+        )
+        assert fenced.first_split_beat == fenced_first_split, (
+            f"{oversized}/128 fenced first split expected {fenced_first_split}; "
+            f"got {fenced.first_split_beat}"
+        )
+        assert (fenced.completed_at, free.completed_at) == (
+            fenced_publish,
+            free_publish,
+        ), (
+            f"{oversized}/128 publish: fenced {fenced.completed_at} / free "
+            f"{free.completed_at}, expected {fenced_publish} / {free_publish}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_fenced_first_splits_are_the_graded_trees_own_numbers(
+        self, drive
+    ):
+        """The candidate reproduces the tree it was written to beat.
+
+        Asserted as its own row because it is the finding, not a detail: with
+        the phase budget binding, ``cancellation_is_conclusive`` contributes
+        nothing at all at the plan size production runs.
+        """
+        graded_first_splits = {16: 14, 32: 21, 64: 36}
+        measured = {}
+        for oversized in graded_first_splits:
+            fenced = await drive(
+                buckets=128,
+                oversized_slots=oversized,
+                max_beats=200,
+                withdrawn=True,
+                ring_readable=True,
+                reset_every=self.NO_INVALIDATION,
+                window_ms=PROD_DEADLINE_MS,
+                phase_statement_timeout_ms=PROD_PHASE_STATEMENT_TIMEOUT_MS,
+            )
+            measured[oversized] = fenced.first_split_beat
+
+        assert measured == graded_first_splits, (
+            "with the phase budget fencing every first unit the candidate is "
+            f"inert; expected the graded tree's {graded_first_splits}, got "
+            f"{measured}"
         )
