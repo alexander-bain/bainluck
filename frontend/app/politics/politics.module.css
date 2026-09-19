@@ -747,6 +747,15 @@
     gap: 8px;
   }
 
+  /* #7250 — this rule now has to WIN a `display` it did not used to contest.
+     Every other holder of `.hideOnMobile` carries it as its only class, so the
+     `display: none` had nothing to beat. The trend caption carries
+     `.sourceLegend .hideOnMobile`, and `.sourceLegend` (line 434) declares
+     `display: flex`. Both selectors are one class — (0,1,0) — and a media query
+     adds no specificity, so the ONLY reason the caption disappears on a phone is
+     that this rule comes LATER IN THE FILE. Do not move it above `.sourceLegend`,
+     and do not re-declare `display` for `.sourceLegend` inside this block.
+     `politicsTrendNoteBreakpoint7250.test.ts` fails if either happens. */
   .hideOnMobile {
     display: none;
   }
