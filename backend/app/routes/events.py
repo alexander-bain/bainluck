@@ -347,6 +347,76 @@ def _sport_facet_labels(sport) -> tuple[str, str]:
     return key or "unknown", derived or "Unknown"
 
 
+class _SportFacetRow:
+    """The two attributes :func:`_sport_facet_labels` reads, off a grouped row.
+
+    The label has to be derived the SAME way for a counted group as for a
+    rendered event or #5657 comes straight back — that issue exists because
+    the pill's name was computed in one place and the card's in another, and
+    `baseball_other` reached the screen. Rather than teach the helper a second
+    calling convention, give it the shape it already understands.
+    """
+
+    __slots__ = ("key", "name")
+
+    def __init__(self, key, name):
+        self.key = key
+        self.name = name
+
+
+async def _search_sport_facets(db, conditions) -> tuple[int, list[dict]]:
+    """The search page's game count AND its sport pills, from ONE statement.
+
+    #5514: the pills used to be tallied from the page's own rows while
+    `total_results` was counted over the whole matched set, so a reader saw
+    "MLB (24)" sitting a centimetre under "61 games" — the pill was reporting
+    `per_page`, not a count, and it under-reported by more the deeper the
+    result set ran. Tapping it then re-queried and returned far more than the
+    number it had just promised.
+
+    The fix is not a second query beside the count. It is the SAME statement
+    grouped: the total is the sum of the parts, so the header and the pills
+    cannot drift apart, and there is no second predicate to keep in step with
+    the four places this function is called from. Measured on production
+    2026-09-19 against the `red sox` predicate, three runs each: plain
+    `COUNT(*)` 3.17 / 4.81 / 5.09 ms, grouped 4.05 / 4.33 / 3.56 ms — the two
+    distributions overlap, because the grouping rides a scan that was already
+    being paid for.
+
+    The ORDER IS PART OF THE CONTRACT, not a detail. `frontend/app/search/
+    page.tsx` renders `results.sports` with no sort, filter or slice of its
+    own, so whatever order this returns is the order of the pills on screen,
+    and an ungrouped `GROUP BY` would let them shuffle between identical
+    requests. Biggest first, ties broken by name, so the sequence is stable
+    across pages and repeat queries.
+
+    Returns `(total, facets)`; a caller that only wants the number ignores the
+    second element.
+    """
+    result = await db.execute(
+        select(Sport.key, Sport.name, func.count())
+        .select_from(Event)
+        .join(Sport, Event.sport_id == Sport.id)
+        .where(*conditions)
+        .group_by(Sport.key, Sport.name)
+    )
+
+    # Keyed by facet key, not by `Sport.key`, because the label helper folds a
+    # missing key to "unknown" and two such rows must not become two identical
+    # pills. `+=` rather than assignment for the same reason.
+    facets: dict[str, dict] = {}
+    total = 0
+    for key, name, count in result.all():
+        total += count
+        facet_key, facet_name = _sport_facet_labels(_SportFacetRow(key, name))
+        if facet_key not in facets:
+            facets[facet_key] = {"key": facet_key, "name": facet_name, "count": 0}
+        facets[facet_key]["count"] += count
+
+    ordered = sorted(facets.values(), key=lambda f: (-f["count"], f["name"]))
+    return total, ordered
+
+
 _FUTURES_DEDUP_STRIP = re.compile(
     r"(nba\s+playoffs:\s*)?"
     r"(nhl\s+playoffs:\s*)?"
@@ -5574,15 +5644,13 @@ async def search_events(
     # predicate, NOT from `query.subquery()` — identity only, no ORDER BY, no entity
     # projection. Postgres does not strip a subquery's ORDER BY, so the old form made
     # the count pay the full sort-key cost per candidate row for a number nobody sorts.
-    count_query = (
-        select(func.count())
-        .select_from(Event)
-        .join(Sport, Event.sport_id == Sport.id)
-        .where(*event_conditions)
-    )
+    #
+    # #5514: and the same statement yields the sport pills, grouped. They used to be
+    # tallied from the page's own rows further down, which is why "MLB (24)" could sit
+    # under "61 games". `sport_facets` travels beside `total_count` from here on and is
+    # replaced wherever `total_count` is.
     try:
-        total_result = await db.execute(count_query)
-        total_count = total_result.scalar()
+        total_count, sport_facets = await _search_sport_facets(db, event_conditions)
     except Exception as exc:  # noqa: BLE001
         if not _is_query_timeout(exc):
             raise
@@ -5592,6 +5660,14 @@ async def search_events(
         logger.warning("search count timed out for %r", q)
         await _recover_search_session(db, _deadline)
         total_count = 0
+        # #5514: bind the name so the response can read it, and bind it to the
+        # page-local fallback. This assignment is NOT what delivers the fallback
+        # today and the next reader should not have to work that out: a degraded
+        # count is 0, so `total_pages` is 0, so the `total_pages <= 1` branch
+        # further down would reach the page tally anyway. It is here because the
+        # alternative is an unbound name on this path, and because the day that
+        # branch changes is not the day to discover the pills depended on it.
+        sport_facets = None
         degraded.append("event_count")
     _mark("event_count")
 
@@ -5668,17 +5744,17 @@ async def search_events(
                     Event.id.in_(_bridged_canonical_ids),
                     *event_scope_conditions,
                 ]
-                _bridge_count_r = await db.execute(
-                    select(func.count())
-                    .select_from(Event)
-                    .join(Sport, Event.sport_id == Sport.id)
-                    .where(*_bridge_conditions)
+                _bridge_count, _bridge_facets = await _search_sport_facets(
+                    db, _bridge_conditions
                 )
-                _bridge_count = _bridge_count_r.scalar()
                 # Counted BEFORE `query` is replaced, exactly as the resolved-team
                 # arm does it: a bridge that lands on nothing printable leaves the
                 # primary statement untouched rather than swapping in an empty one.
                 if _bridge_count:
+                    # #5514: the pills describe whatever set the rows come from, so
+                    # they are swapped in the same breath as `query` and never a
+                    # statement later.
+                    sport_facets = _bridge_facets
                     query = (
                         select(Event)
                         .join(Sport, Event.sport_id == Sport.id)
@@ -5856,22 +5932,19 @@ async def search_events(
                     _resolved_team_event_filter(_resolved_teams),
                     *event_scope_conditions,
                 ]
-                # `execute(...).scalar()`, not `db.scalar(...)`: both counts
-                # already in this function are built that way (the primary one
-                # above and the fuzzy fallback's below), and the number lands in
-                # `total_count`, which the response arithmetic then compares and
-                # divides. One count idiom per function is worth more than one
-                # saved line.
-                _rescue_count_r = await db.execute(
-                    select(func.count())
-                    .select_from(Event)
-                    .join(Sport, Event.sport_id == Sport.id)
-                    .where(*_rescue_conditions)
+                # One count idiom per function is worth more than one saved
+                # line — and since #5514 that idiom is `_search_sport_facets`,
+                # which every count in this function now goes through. The
+                # number still lands in `total_count`, which the response
+                # arithmetic compares and divides.
+                _rescue_count, _rescue_facets = await _search_sport_facets(
+                    db, _rescue_conditions
                 )
-                _rescue_count = _rescue_count_r.scalar()
                 # Counted BEFORE `query` is replaced, so a rail that is still
                 # empty leaves the primary statement exactly as it was.
                 if _rescue_count:
+                    # #5514: pills follow the rows they describe.
+                    sport_facets = _rescue_facets
                     query = (
                         select(Event)
                         .join(Sport, Event.sport_id == Sport.id)
@@ -6041,13 +6114,13 @@ async def search_events(
                     fuzzy_search_rank.desc(),
                     Event.commence_time.desc().nulls_last(),
                 )
-                total_count_r = await db.execute(
-                    select(func.count())
-                    .select_from(Event)
-                    .join(Sport, Event.sport_id == Sport.id)
-                    .where(*fuzzy_conditions)
+                # #5514: this arm replaces `query` and `total_count` wholesale, so
+                # it replaces the pills too — a facet list left over from the
+                # unmisspelled predicate would describe a set these rows are not
+                # drawn from.
+                total_count, sport_facets = await _search_sport_facets(
+                    db, fuzzy_conditions
                 )
-                total_count = total_count_r.scalar()
         except Exception as exc:  # noqa: BLE001 — the fallback is best-effort
             # LAT-P002/#1494 (1e): a timeout in here ABORTS the transaction, so the
             # old bare `pass` would have left every later stage failing on
@@ -6432,7 +6505,14 @@ async def search_events(
         )
         formatted_results.append(formatted)
 
-        # Track sports for disambiguation info
+        # Track sports for disambiguation info.
+        #
+        # #5514: this tally is PAGE-LOCAL and stays that way deliberately. It is
+        # no longer what the `sports` pills are built from — those are counted
+        # over the whole matched set — but the World Cup surfacing rule below
+        # asks "is a WC game in the RESULTS", which is a question about these
+        # rows and not about the corpus behind them. It is also the fallback
+        # when the grouped count times out.
         sport_key, sport_name = _sport_facet_labels(event.sport)
         if sport_key not in sports_found:
             sports_found[sport_key] = {
@@ -6529,6 +6609,35 @@ async def search_events(
     _page_duplicates_dropped = _fixture_duplicates_dropped + _twin_duplicates_dropped
     if _page_duplicates_dropped and total_pages <= 1:
         total_count = max(len(formatted_results), total_count - _page_duplicates_dropped)
+
+    # #5514, and it is the SAME boundary as the line above rather than a second
+    # rule that happens to look like it.
+    #
+    # The grouped count (`_search_sport_facets`) counts raw rows over the whole
+    # matched set. The page's own tally counts SURVIVORS, because it is built
+    # after `collapse_duplicate_fixtures` and `fold_twin_events` have run. Each
+    # is exact in one regime and wrong in the other:
+    #
+    # * the set does NOT fit on the page — the page-local tally is reporting
+    #   `per_page`, which is #5514's whole complaint ("MLB (24)" under "61
+    #   games"). The grouped count is the only one that can see the rest of the
+    #   set, and it is un-adjusted for folds for exactly the reason
+    #   `total_results` is un-adjusted here: the collapse happens after the
+    #   limit, so later pages' duplicates are not knowable without joining every
+    #   candidate row. An under-count of the collapse, never an over-count.
+    #
+    # * the set DOES fit on the page — then the page IS the set, so its tally is
+    #   not an approximation of the grouped count, it is the grouped count minus
+    #   the duplicates the reader cannot see. #5513's
+    #   `test_the_sport_count_follows_the_surviving_rows` pins this: a folded
+    #   twin pair must read "MLB (1)", not "MLB (2)". Serving the page tally
+    #   here keeps single-page queries byte-identical to their pre-#5514
+    #   behaviour — order included — which is most queries.
+    #
+    # So the pills track `total_results` in both regimes by construction, and
+    # neither number can drift from the other without this branch moving too.
+    if total_pages <= 1:
+        sport_facets = None
 
     # Also search futures markets by name or outcome name.
     # #993 index-usage: recall is trigram-ILIKE only (name + outcome). The old
@@ -7865,7 +7974,16 @@ async def search_events(
             "has_next": page < total_pages,
             "has_prev": page > 1,
         },
-        "sports": list(sports_found.values()),
+        # #5514: on a paginated result set the pills are counted over the WHOLE
+        # matched set by `_search_sport_facets`, not over this page's rows —
+        # "MLB (24)" under "61 games" was `sports_found` reporting `per_page`.
+        #
+        # `sport_facets is None` means the page-local tally is the right answer,
+        # and it is set that way in exactly two places: a single-page result set
+        # (the page IS the set — see the pagination block) and a grouped count
+        # that timed out (`degraded` carries "event_count", and an approximate
+        # pill a reader can still tap beats an empty filter bar).
+        "sports": sport_facets if sport_facets is not None else list(sports_found.values()),
         "filters": {
             "sport": sport,
             "days_back": days_back,
